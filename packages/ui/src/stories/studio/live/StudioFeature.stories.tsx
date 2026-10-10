@@ -321,3 +321,126 @@ function dropUndefined(values: OptionalOverrides): Partial<StudioFeatureProps> {
   }
   return out as Partial<StudioFeatureProps>;
 }
+
+/** Draft fields stay local until explicit Create forwards their chosen content and base lineage. */
+const EDIT_REVIEW_LOCALES = ["en", "ru"] as const;
+const EDIT_REVIEW_VALUES = {
+  en: {
+    title: "Edited scope discipline",
+    bodyText: "This edited draft preserves the saved page.\nThe next line records the evidence limitation.",
+    editNote: "Clarify scope without changing the saved revision.",
+  },
+  ru: {
+    title: "Уточнённая область исследования и ограничения выводов для выбранных источников",
+    bodyText: "Сохранённая страница остаётся прежней; эти изменения относятся только к новому черновику.\nВо второй строке указаны проверяемые основания, ограничения выводов и необходимость явной проверки перед публикацией.",
+    editNote: "Уточнить область и сохранить прежнюю страницу без автоматической публикации.",
+  },
+};
+const EDIT_REVIEW_SPIES = {
+  verified: { en: { create: fn(), publish: fn() }, ru: { create: fn(), publish: fn() } },
+  missing: { en: { create: fn(), publish: fn() }, ru: { create: fn(), publish: fn() } },
+};
+
+/** Keep accepted fixtures; omit optional artifact capabilities and absent body. */
+function editReviewProps(locale: StudioFeatureProps["locale"], verifiedBody: boolean): StudioFeatureProps {
+  const {
+    body, expectedPublishHead,
+    artifactRef: _artifactRef, declaredSectionRefs: _declaredSectionRefs,
+    onOpenArtifact: _onOpenArtifact, onReviseSection: _onReviseSection,
+    ...props
+  } = buildProps({ locale, copy: STUDIO_COPY[locale] });
+  return {
+    ...props,
+    cowVerified: verifiedBody,
+    ...(verifiedBody && body !== undefined ? { body } : {}),
+    ...(verifiedBody && expectedPublishHead !== undefined ? { expectedPublishHead } : {}),
+  };
+}
+
+/** Independent editors; the original proposal/page refs are shared fixture values. */
+function StudioEditReviewPair({ verifiedBody }: { readonly verifiedBody: boolean }) {
+  const spies = verifiedBody ? EDIT_REVIEW_SPIES.verified : EDIT_REVIEW_SPIES.missing;
+  return <>{EDIT_REVIEW_LOCALES.map(locale => <StudioFeature
+    key={locale}
+    {...editReviewProps(locale, verifiedBody)}
+    onCreateEdit={spies[locale].create}
+    onPublish={spies[locale].publish}
+  />)}</>;
+}
+
+/** Typing is local; only explicit Create forwards exact edited content/lineage. */
+export const EditReviewBeforeCreate: Story = {
+  args: editReviewProps("en", true),
+  render: () => <StudioEditReviewPair verifiedBody />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    for (const locale of EDIT_REVIEW_LOCALES) {
+      const copy = STUDIO_COPY[locale], values = EDIT_REVIEW_VALUES[locale];
+      const spy = EDIT_REVIEW_SPIES.verified[locale];
+      spy.create.mockClear(); spy.publish.mockClear();
+      const feature = within(canvas.getByRole("region", { name: copy.title, exact: true }));
+      const editSection = feature.getByRole("region", { name: copy.edit_note_label, exact: true });
+      const edit = within(editSection);
+      const title = edit.getByRole("textbox", { name: copy.edit_title_label, exact: true });
+      const text = edit.getByRole("textbox", { name: copy.edit_body_field_label, exact: true });
+      const note = edit.getByRole("textbox", { name: copy.edit_note_field_label, exact: true });
+      const create = edit.getByRole("button", { name: copy.create_edit, exact: true });
+      await expect(editSection).toBeVisible();
+      for (const input of [title, text, note]) await expect(input).toBeVisible();
+      await userEvent.clear(title); await userEvent.type(title, values.title);
+      await userEvent.clear(text); await userEvent.type(text, values.bodyText);
+      await userEvent.clear(note); await userEvent.type(note, values.editNote);
+      await expect(title).toHaveValue(values.title);
+      await expect(text).toHaveValue(values.bodyText);
+      await expect(note).toHaveValue(values.editNote);
+      await expect(spy.create).not.toHaveBeenCalled();
+      await expect(spy.publish).not.toHaveBeenCalled();
+      await expect(feature.getByRole("heading", { name: PAGE.title, level: 3, exact: true })).toBeVisible();
+      await expect(feature.queryByRole("button", { name: copy.open_artifact, exact: true })).not.toBeInTheDocument();
+      await expect(feature.queryByRole("button", { name: copy.revise_section, exact: true })).not.toBeInTheDocument();
+      await expect(create).toBeEnabled();
+      await userEvent.click(create);
+      const expected = editReviewProps(locale, true);
+      if (!expected.selected) throw new globalThis.Error("Selected edit-review fixture is missing");
+      await expect(spy.create).toHaveBeenCalledTimes(1);
+      await expect(spy.create).toHaveBeenCalledWith({
+        baseProposalRef: expected.selected.proposal_ref,
+        basePageRef: expected.selected.page.page_ref,
+        expectedHeadRevision: expected.selected.page.page_ref.revision,
+        title: values.title, bodyText: values.bodyText, editNote: values.editNote,
+      });
+      await expect(spy.publish).not.toHaveBeenCalled();
+    }
+  },
+};
+
+/** Entered text cannot stand in for a missing digest-verified supplied body. */
+export const EditReviewRequiresVerifiedBody: Story = {
+  args: editReviewProps("en", false),
+  render: () => <StudioEditReviewPair verifiedBody={false} />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    for (const locale of EDIT_REVIEW_LOCALES) {
+      const copy = STUDIO_COPY[locale], values = EDIT_REVIEW_VALUES[locale];
+      const spy = EDIT_REVIEW_SPIES.missing[locale];
+      spy.create.mockClear(); spy.publish.mockClear();
+      const feature = within(canvas.getByRole("region", { name: copy.title, exact: true }));
+      const editSection = feature.getByRole("region", { name: copy.edit_note_label, exact: true });
+      const edit = within(editSection);
+      const create = edit.getByRole("button", { name: copy.create_edit, exact: true });
+      await expect(editSection).toBeVisible();
+      await expect(feature.getByText(copy.body_unavailable, { exact: true })).toBeVisible();
+      await expect(create).toBeDisabled();
+      await userEvent.type(edit.getByRole("textbox", { name: copy.edit_title_label, exact: true }), values.title);
+      await userEvent.type(edit.getByRole("textbox", { name: copy.edit_body_field_label, exact: true }), values.bodyText);
+      await userEvent.type(edit.getByRole("textbox", { name: copy.edit_note_field_label, exact: true }), values.editNote);
+      await expect(create).toBeDisabled();
+      await userEvent.click(create);
+      await expect(spy.create).not.toHaveBeenCalled();
+      await expect(spy.publish).not.toHaveBeenCalled();
+      await expect(feature.queryByRole("button", { name: copy.publish, exact: true })).not.toBeInTheDocument();
+      await expect(feature.queryByRole("button", { name: copy.open_artifact, exact: true })).not.toBeInTheDocument();
+      await expect(feature.queryByRole("button", { name: copy.revise_section, exact: true })).not.toBeInTheDocument();
+    }
+  },
+};

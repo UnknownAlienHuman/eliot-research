@@ -364,23 +364,6 @@ export function StudioFeature({
                     </Button>
                   )
                 ) : null}
-                <Button
-                  variant="tonal"
-                  icon="bookmarks"
-                  disabled={!editReady}
-                  onClick={() => {
-                    onCreateEdit({
-                      baseProposalRef: selected.proposal_ref,
-                      basePageRef: page.page_ref,
-                      expectedHeadRevision: page.page_ref.revision,
-                      title: editTitle === "" ? page.title : editTitle,
-                      bodyText: chosenBody,
-                      editNote,
-                    });
-                  }}
-                >
-                  {copy.create_edit}
-                </Button>
                 {declaredSectionRefs !== undefined && declaredSectionRefs.length > 0 && onReviseSection !== undefined ? <Button
                   variant="tonal"
                   icon="more"
@@ -403,17 +386,8 @@ export function StudioFeature({
                   {copy.open_artifact}
                 </Button> : null}
               </div>
-              <details className="er-studio-live__disclosure">
-                <summary>{copy.edit_note_label}</summary>
-                <label className="er-studio-live__field">
-                  <span>{copy.edit_note_field_label}</span>
-                  <textarea
-                    id={notesId}
-                    className="er-studio-live__note"
-                    value={editNote}
-                    onChange={(event) => setEditNote(event.target.value)}
-                  />
-                </label>
+              <section className="er-studio-live__edit-section" aria-labelledby={`${notesId}-edit-review`}>
+                <h4 className="er-studio-live__edit-heading" id={`${notesId}-edit-review`}>{copy.edit_note_label}</h4>
                 <label className="er-studio-live__field">
                   <span>{copy.edit_title_label}</span>
                   <input
@@ -430,7 +404,35 @@ export function StudioFeature({
                     onChange={(event) => setEditBodyChoice(event.target.value)}
                   />
                 </label>
-              </details>
+                <label className="er-studio-live__field">
+                  <span>{copy.edit_note_field_label}</span>
+                  <textarea
+                    id={notesId}
+                    className="er-studio-live__note"
+                    value={editNote}
+                    onChange={(event) => setEditNote(event.target.value)}
+                  />
+                </label>
+                <div className="er-studio-live__actions">
+                  <Button
+                    variant="tonal"
+                    icon="bookmarks"
+                    disabled={!editReady}
+                    onClick={() => {
+                      onCreateEdit({
+                        baseProposalRef: selected.proposal_ref,
+                        basePageRef: page.page_ref,
+                        expectedHeadRevision: page.page_ref.revision,
+                        title: editTitle === "" ? page.title : editTitle,
+                        bodyText: chosenBody,
+                        editNote,
+                      });
+                    }}
+                  >
+                    {copy.create_edit}
+                  </Button>
+                </div>
+              </section>
             </article>
           )}
         </div>
@@ -466,7 +468,7 @@ const EN_COPY: StudioFeatureCopy = {
   publication_accepted: "This revision has an owner acceptance.",
   publication_other: "Publication state is unknown for this revision.",
   create_edit: "Create a new draft from this page",
-  edit_note_label: "Write an edit note",
+  edit_note_label: "Prepare a new draft",
   publish_review: "Proposal state",
   publish: "Publish page",
   publish_confirm: "Confirm publication",
@@ -514,7 +516,7 @@ const RU_COPY: StudioFeatureCopy = {
   publication_accepted: "Эта версия имеет принятие владельцем.",
   publication_other: "Состояние публикации для этой версии неизвестно.",
   create_edit: "Создать новый черновик из этой страницы",
-  edit_note_label: "Написать примечание к правке",
+  edit_note_label: "Подготовить новый черновик",
   publish_review: "Состояние предложения",
   publish: "Опубликовать страницу",
   publish_confirm: "Подтвердить публикацию",

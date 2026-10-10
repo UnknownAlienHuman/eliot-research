@@ -223,3 +223,41 @@
 @media (forced-colors: active) {
   .er-studio-live__item[aria-current="true"] { forced-color-adjust: none; }
 }
+
+.er-studio-live__edit-section {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--eliot-space-panel);
+  min-inline-size: 0;
+  overflow-wrap: anywhere;
+}
+
+.er-studio-live__edit-heading {
+  margin: 0;
+  color: var(--md-sys-color-on-surface);
+  font-size: var(--eliot-type-title-medium-size);
+  line-height: var(--eliot-type-title-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.er-studio-live__edit-section > .er-studio-live__field {
+  min-inline-size: 0;
+  margin-block-start: 0;
+  line-height: var(--eliot-type-label-large-line-height);
+}
+
+.er-studio-live__edit-section .er-studio-live__note {
+  box-sizing: border-box;
+  inline-size: 100%;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  font-size: var(--eliot-type-body-large-size);
+  line-height: var(--eliot-type-body-large-line-height);
+}
+
+.er-studio-live__edit-section textarea.er-studio-live__note {
+  min-block-size: var(--eliot-space-touch-target);
+  resize: vertical;
+  overflow-wrap: anywhere;
+}
