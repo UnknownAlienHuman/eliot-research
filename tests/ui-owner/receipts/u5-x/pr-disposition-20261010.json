@@ -4,10 +4,10 @@
   "repository": "UnknownAlienHuman/eliot-research",
   "source_inventory_main": "6d4ac645ec6c82190a1bb11374646f3d6bce92d9",
   "current_main": "9ca22849a140cdbe50dd56ed5066c2fedc745fcd",
-  "root_review": "Read-only owning review of Newton Step matrix; all51 open PR heads and draft states checked fresh. No closure qualification inferred from a docs-only diff.",
+  "root_review": "Read-only owning review of Newton Step matrix; all51 open PR heads and draft states checked fresh. No closure qualification inferred from a docs-only diff. Counts are recomputed from all51 row dispositions:3 retained,39 active,9 live/release. The supplied backend summary4/38/9 was an arithmetic transcription error; row assignments were not changed.",
   "counts": {
-    "RETAINED_EVIDENCE_ONLY": 4,
-    "ACTIVE_IMPLEMENTATION": 38,
+    "RETAINED_EVIDENCE_ONLY": 3,
+    "ACTIVE_IMPLEMENTATION": 39,
     "RELEASE_OR_LIVE_GATE": 9,
     "SUPERSEDED_BY_MAIN": 0
   },

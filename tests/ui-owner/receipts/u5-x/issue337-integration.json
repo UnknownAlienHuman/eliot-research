@@ -194,8 +194,8 @@
   "pr_disposition": {
     "path": "tests/ui-owner/receipts/u5-x/pr-disposition-20261010.json",
     "counts": {
-      "RETAINED_EVIDENCE_ONLY": 4,
-      "ACTIVE_IMPLEMENTATION": 38,
+      "RETAINED_EVIDENCE_ONLY": 3,
+      "ACTIVE_IMPLEMENTATION": 39,
       "RELEASE_OR_LIVE_GATE": 9,
       "SUPERSEDED_BY_MAIN": 0
     },
