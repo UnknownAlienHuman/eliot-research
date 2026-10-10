@@ -131,3 +131,38 @@ export const LongRussianDark: Story = {
   args: { ...base("useful"), locale: "ru", document: russianDocument },
   render: args => <div data-theme="dark" lang="ru"><DocumentReader {...args} /></div>,
 };
+
+export const SectionsUnsupported: Story = {
+  // Production `LiveWorkspace` supplies no `sections`, so the reader must render no Sections
+  // surface at all: no region, no unavailable notice and no section control.
+  args: {
+    locale: 'en',
+    state: 'useful',
+    sourceRevisionRef: revisionRef,
+    expectedDeploymentGeneration: generation,
+    document,
+  },
+  render: args => (
+    <>
+      <DocumentReader key="en" {...args} locale="en" />
+      <DocumentReader key="ru" {...args} locale="ru" />
+    </>
+  ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+
+    // Both readers mounted, so a false pass cannot come from a blank canvas.
+    expect(canvas.getAllByRole('heading', { level: 2 })).toHaveLength(2);
+
+    // The Sections region itself is gone, not merely emptied.
+    expect(canvas.queryAllByRole('region', { name: 'Sections' })).toEqual([]);
+    expect(canvas.queryAllByRole('region', { name: 'Разделы' })).toEqual([]);
+    expect(canvas.queryAllByRole('heading', { name: /^Sections$/u })).toEqual([]);
+    expect(canvas.queryAllByRole('heading', { name: /^Разделы$/u })).toEqual([]);
+
+    // Neither the permanent unavailable notice nor a decorative section action survives.
+    expect(canvas.queryAllByText(/Sections are unavailable for this revision\./u)).toEqual([]);
+    expect(canvas.queryAllByText(/Разделы этой версии недоступны\./u)).toEqual([]);
+    expect(canvas.queryAllByRole('button', { name: /Back to sections|Назад к разделам/u })).toEqual([]);
+  },
+};

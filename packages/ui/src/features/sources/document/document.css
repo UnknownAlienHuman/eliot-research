@@ -7,6 +7,7 @@
   background: var(--md-sys-color-surface-container-low);
   color: var(--md-sys-color-on-surface);
   font-family: var(--eliot-type-font-family);
+  min-width: 0;
 }
 
 .er-document-reader__head {
@@ -55,6 +56,7 @@
   margin: 0;
   font-size: var(--eliot-type-body-medium-size);
   line-height: var(--eliot-type-body-medium-line-height);
+  overflow-wrap: anywhere;
 }
 
 .er-document-reader__whole-read {
@@ -130,9 +132,12 @@
 .er-safe-markdown {
   display: grid;
   gap: var(--eliot-space-block-control);
-  max-width: var(--eliot-type-reading-measure);
+  max-width: var(--eliot-layout-reading-max);
   font-size: var(--eliot-type-reading-size);
   line-height: var(--eliot-type-reading-line-height);
+  overflow-wrap: anywhere;
+  justify-self: center;
+  width: 100%;
 }
 
 .er-safe-markdown__caption {
@@ -146,18 +151,24 @@
 }
 
 
-.er-document-reader__disclosure summary { cursor: pointer; color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-label-large-size); }
-.er-safe-markdown { max-width: var(--eliot-layout-reading-max); overflow-wrap: anywhere; }
+.er-document-reader__disclosure summary {
+  cursor: pointer;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-large-size);
+  min-height: var(--eliot-size-touch-target);
+  align-content: center;
+}
+
 .er-safe-markdown p, .er-safe-markdown__plain { white-space: pre-wrap; }
 .er-safe-markdown > * + * { margin-block-start: var(--eliot-space-panel); }
 .er-safe-markdown pre { overflow-x: auto; padding: var(--eliot-space-panel); border-radius: var(--eliot-shape-medium); background: var(--md-sys-color-surface-container); }
 .er-safe-markdown blockquote { margin-inline: 0; padding-inline-start: var(--eliot-space-panel); border-inline-start: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant); }
 
-.er-document-reader { min-width: 0; }
-.er-document-reader__fact dd { overflow-wrap: anywhere; }
-.er-document-reader__disclosure summary { min-height: var(--eliot-size-touch-target); align-content: center; }
+
+
+
 .er-document-reader__disclosure summary:focus-visible { outline: var(--eliot-focus-width) solid var(--md-sys-color-primary); outline-offset: var(--eliot-focus-offset); }
-.er-safe-markdown { justify-self: center; width: 100%; }
+
 .er-safe-markdown > * { margin: 0; }
 .er-safe-markdown h3 { font-size: var(--eliot-type-headline-small-size); line-height: var(--eliot-type-headline-small-line-height); font-weight: var(--eliot-type-font-weight-medium); }
 .er-safe-markdown a { color: var(--md-sys-color-primary); text-underline-offset: var(--eliot-focus-offset); }

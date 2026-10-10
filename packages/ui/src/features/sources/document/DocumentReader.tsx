@@ -131,6 +131,14 @@ export function DocumentReader(props: DocumentReaderProps) {
     props.onBack?.();
   };
 
+  /**
+   * Section navigation exists only when the server supplied sections for this exact revision. A
+   * production reader that supplies none renders no Sections region, no unavailable notice and no
+   * section controls, because an always-unavailable panel is an unsupported decorative surface.
+   * Omitting the props therefore omits the surface, never a degraded version of it.
+   */
+  const supportsSections = props.sections !== undefined && rows.length > 0;
+
   return (
     <section className="er-document-reader" aria-labelledby={`${instanceId}-heading`}>
       <header className="er-document-reader__head">
@@ -171,9 +179,8 @@ export function DocumentReader(props: DocumentReaderProps) {
         </>
       )}
 
-      <section className="er-document-reader__sections" aria-label={copy.sectionsLabel}>
+      {supportsSections ? <section className="er-document-reader__sections" aria-label={copy.sectionsLabel}>
         <h3 className="er-document-reader__subheading">{copy.sectionsLabel}</h3>
-        {rows.length === 0 ? <Status>{props.locale === 'ru' ? 'Разделы этой версии недоступны.' : 'Sections are unavailable for this revision.'}</Status> : null}
         <ul className="er-document-reader__section-list">
           {rows.map((row) => (
             <li key={row.sectionRef} className="er-document-reader__section">
@@ -199,7 +206,7 @@ export function DocumentReader(props: DocumentReaderProps) {
             <Button variant="text" onClick={goBack}>{copy.back}</Button>
           </div>
         )}
-      </section>
+      </section> : null}
 
       {props.onRetry && <div className="er-document-reader__actions">
         <Button variant="tonal" onClick={() => props.onRetry?.()}>{copy.refresh}</Button>
