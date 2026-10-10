@@ -1,0 +1,32 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "checkpoint": "C3-RP",
+  "status": "ACCEPTED_INTERNAL_CLIENT",
+  "source_commit": "7451b7b679d9da26a89563fb8752343976c4cb0e",
+  "scope": [
+    "packages/owner-api-client/src/research/session-projection/adapter.test.ts",
+    "packages/owner-api-client/src/research/session-projection/adapter.ts",
+    "packages/owner-api-client/src/research/session-projection/projection.test.ts",
+    "packages/owner-api-client/src/research/session-projection/projection.ts",
+    "packages/owner-api-client/src/research/session-projection/session.test.ts",
+    "packages/owner-api-client/src/research/session-projection/session.ts"
+  ],
+  "behavior": "Official AgentClient no-argument strict projection callable only, expected history410, frozen authority/currentness fences. Stale cleanup rejects original pending promises before closing. No run/cancel/chat/history/effect authority.",
+  "checks": {
+    "compiler": "Owning client TypeScript6.0.3 PASS0/714",
+    "tests": "Original20 retained; worker31 established; last changed fence4 plus adapter11 PASS; no unchanged blanket repeat",
+    "lint": "Exact6 PASS",
+    "audit": "Fresh current lifecycle audit: no actionable defects. EOF-only normalization followed audit; root typing-only repair retained."
+  },
+  "source_blobs": {
+    "packages/owner-api-client/src/research/session-projection/adapter.test.ts": "cd4b5d2d47101ab5176d5353c036105610630a62",
+    "packages/owner-api-client/src/research/session-projection/adapter.ts": "57f42bc1f50bdae8a8aa41a870a0db13c22faae9",
+    "packages/owner-api-client/src/research/session-projection/projection.test.ts": "de1294e6024f064afba6d4e41be7b92e13fba580",
+    "packages/owner-api-client/src/research/session-projection/projection.ts": "76b51de96234864c9ea0f051205599eb92f6eb16",
+    "packages/owner-api-client/src/research/session-projection/session.test.ts": "130a4b8cd50114d001162168c5c29370b08aba1c",
+    "packages/owner-api-client/src/research/session-projection/session.ts": "8806a96c75da98e889587e8464c4bccc06fd0c2c"
+  },
+  "limitations": [
+    "Internal client source acceptance only; composed exports and rendered product U3-U5/FINAL-UI pending. Native/staging/live/release not evaluated."
+  ]
+}

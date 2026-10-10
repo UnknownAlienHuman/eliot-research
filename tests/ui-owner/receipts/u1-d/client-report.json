@@ -1,0 +1,31 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "checkpoint": "C3-EM",
+  "status": "ACCEPTED_INTERNAL_CLIENT",
+  "source_commit": "19c1b916ee895f3dcb5c3dd475b3b241a17049d6",
+  "scope": [
+    "packages/owner-api-client/src/evidence/report/export.test.ts",
+    "packages/owner-api-client/src/evidence/report/export.ts",
+    "packages/owner-api-client/src/evidence/report/manifest.test.ts",
+    "packages/owner-api-client/src/evidence/report/manifest.ts",
+    "packages/owner-api-client/src/evidence/report/sections.test.ts",
+    "packages/owner-api-client/src/evidence/report/sections.ts"
+  ],
+  "behavior": "Strict report manifests, lazy reauthorized section reads and complete export inputs. Real VersionedRef schema rejects zero, negative and unsafe revisions before transport or digest.",
+  "checks": {
+    "compiler": "Owning TypeScript6.0.3 PASS0/614",
+    "tests": "Original45 retained; new revision-negative1PASS18SKIP; no blanket repeat",
+    "lint": "Exact6 PASS"
+  },
+  "source_blobs": {
+    "packages/owner-api-client/src/evidence/report/export.test.ts": "27e0aa22d7c5279dfc1d6d750fdf739934a48512",
+    "packages/owner-api-client/src/evidence/report/export.ts": "56b8cd6d1f3b0cc7fb978d5b56f7937d8a366fc7",
+    "packages/owner-api-client/src/evidence/report/manifest.test.ts": "0a466659eb8d74fb02ec196915b562007cf7a3fe",
+    "packages/owner-api-client/src/evidence/report/manifest.ts": "08495dc9b4da4aab4fbaf3c816829a8843d06ba2",
+    "packages/owner-api-client/src/evidence/report/sections.test.ts": "5c30c693099081515e06d5d6a770fc45ff6fee0f",
+    "packages/owner-api-client/src/evidence/report/sections.ts": "07b9590233f12b65c39612d5ddb3dacbd1eb2c30"
+  },
+  "limitations": [
+    "Internal client source acceptance only; composed exports and rendered product U3-U5/FINAL-UI pending. Native/staging/live/release not evaluated."
+  ]
+}

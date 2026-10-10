@@ -1,0 +1,39 @@
+{
+  "protocol": "eliotr.ui-review-receipt.v1",
+  "checkpoint": "C3-S",
+  "status": "ACCEPTED_INTERNAL_CLIENT",
+  "source_commit": "18c36cdd4cf146e0aaa783f55f0fc8dc7dffc0d1",
+  "scope": [
+    "packages/owner-api-client/src/studio/artifact.test.ts",
+    "packages/owner-api-client/src/studio/artifact.ts",
+    "packages/owner-api-client/src/studio/collaborators.ts",
+    "packages/owner-api-client/src/studio/publish.test.ts",
+    "packages/owner-api-client/src/studio/publish.ts",
+    "packages/owner-api-client/src/studio/wiki-create.test.ts",
+    "packages/owner-api-client/src/studio/wiki-create.ts",
+    "packages/owner-api-client/src/studio/wiki-read.test.ts",
+    "packages/owner-api-client/src/studio/wiki-read.ts",
+    "packages/owner-api-client/src/studio/wiki-types.ts"
+  ],
+  "behavior": "Implemented Wiki and artifact reads, typed create/copy-on-write/publication operations; regenerate remains separate from edit. Existing seven fallback cases relocated into claimed artifact test.",
+  "checks": {
+    "compiler": "Owning TypeScript6.0.3 PASS0/654 including report",
+    "tests": "Original64 retained; no repeat",
+    "lint": "Exact10 PASS"
+  },
+  "source_blobs": {
+    "packages/owner-api-client/src/studio/artifact.test.ts": "c4a4bbe58ecfec17b26fc79beeff608c19902121",
+    "packages/owner-api-client/src/studio/artifact.ts": "f915651c1f2d9931d32a14d6ba686155a7d66c73",
+    "packages/owner-api-client/src/studio/collaborators.ts": "1ca137b44bd3d69641168226756ad45cd67cf471",
+    "packages/owner-api-client/src/studio/publish.test.ts": "bd7a520d9eaf7d70dda717e957da68391a7d805b",
+    "packages/owner-api-client/src/studio/publish.ts": "ad2d4406252cf395779c0da24e089c798a7a679d",
+    "packages/owner-api-client/src/studio/wiki-create.test.ts": "96653bc2dbf45adda0bbe56af3edf39612ac1766",
+    "packages/owner-api-client/src/studio/wiki-create.ts": "c23055c842a84eeec63fc8399186dbc9ebe659ac",
+    "packages/owner-api-client/src/studio/wiki-read.test.ts": "5d90cc885d2ea1d07257af3ff202479b1cce4a77",
+    "packages/owner-api-client/src/studio/wiki-read.ts": "f9b9d89bba098f080714b4dbebcc5118b94616ac",
+    "packages/owner-api-client/src/studio/wiki-types.ts": "5fa9be56cb5446062dd8ed4cd416f82f7232f61d"
+  },
+  "limitations": [
+    "Internal client source acceptance only; composed exports and rendered product U3-U5/FINAL-UI pending. Native/staging/live/release not evaluated."
+  ]
+}
