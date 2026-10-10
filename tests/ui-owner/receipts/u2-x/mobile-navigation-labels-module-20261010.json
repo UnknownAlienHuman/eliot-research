@@ -1,0 +1,101 @@
+{
+  "protocol": "eliotr.mobile-navigation-labels-module.v1",
+  "status": "PASS_BOUNDED_NAVIGATION_MODULE",
+  "source_commit": "b21992e9c4d119eea5c6b6fe20186ef9f3ca95f4",
+  "dependency": "61ea49296e5540678c4fb373cf6e7092cd924d46",
+  "module": "Mobile bottom navigation label width",
+  "changed_source_paths": [
+    "apps/eliotr-web/src/app/shell.css"
+  ],
+  "source_binding": {
+    "git_blob": "77c84eb00109770939d514c4fabd0fdf62b265ae",
+    "sha256": "dadcfad9db6112961692a3e2f478602330d7b4602258bf3ef0f67e65b2af3d78"
+  },
+  "behavior": "Four native localized destination names fit one text line at 320px; footer stays inside viewport with existing native hrefs/icons, at least48px targets, native Tab/focus and existing pane scrolling.",
+  "evidence": {
+    "source_frontier": {
+      "path": "C:\\Development\\Research\\eliot-research\\.eliotr-state\\frontend-ui-proposals\\mobile-navigation-labels-20261010\\report61ea-module\\source-frontier.json",
+      "sha256": "981341ca91ec740c5061f7f2b488f1e95b9c3a0a29abb868b10f25ea05c99c58"
+    },
+    "proposal": {
+      "path": "C:\\Development\\Research\\eliot-research\\.eliotr-state\\frontend-ui-proposals\\mobile-navigation-labels-20261010\\proposal.json",
+      "sha256": "611450a04aad83b9b0948be553fe3fdca25c051b67d29e9f2789e3ebe99d8533"
+    },
+    "source_review": {
+      "path": "C:\\Development\\Research\\eliot-research\\.eliotr-state\\frontend-ui-proposals\\mobile-navigation-labels-20261010\\nav-source-review.json",
+      "sha256": "34983d7dae52f96de1a39d64daf1195ecd38fd638fad0b6038adf1adce669973"
+    },
+    "owning_build": {
+      "path": "C:\\Development\\Research\\eliot-research\\.eliotr-state\\frontend-ui-proposals\\mobile-navigation-labels-20261010\\report61ea-module\\build.json",
+      "sha256": "d88d11135f17d1b85adf2dc7a61047c5d432f07f72b10b9b78be5e9731ccc505",
+      "artifacts": 9,
+      "all_emitted_js_gzip_bytes": 239550
+    },
+    "actual_browser": {
+      "path": "C:\\Development\\Research\\eliot-research\\.eliotr-state\\frontend-ui-proposals\\mobile-navigation-labels-20261010\\run-b21992e9c4d1\\result.json",
+      "sha256": "9924b7fa0f9ca010f9539c9237c8f6d03cd6ad968c5a8a4e9ba1420b48f82344",
+      "browser": "155.0.8059.40",
+      "cases": [
+        {
+          "id": "320-ru-light",
+          "status": "PASS",
+          "scroll_status": "MEASURED_NATIVE_PANE_MOVEMENT",
+          "screenshots": [
+            "320-ru-light-labels.png",
+            "320-ru-light-focus-1.png",
+            "320-ru-light-focus-2.png",
+            "320-ru-light-focus-3.png",
+            "320-ru-light-focus-4.png",
+            "320-ru-light-pane-after-wheel.png"
+          ]
+        },
+        {
+          "id": "320-en-dark",
+          "status": "PASS",
+          "scroll_status": "MEASURED_NATIVE_PANE_MOVEMENT",
+          "screenshots": [
+            "320-en-dark-labels.png",
+            "320-en-dark-focus-1.png",
+            "320-en-dark-focus-2.png",
+            "320-en-dark-focus-3.png",
+            "320-en-dark-focus-4.png",
+            "320-en-dark-pane-after-wheel.png"
+          ]
+        },
+        {
+          "id": "390-ru-dark",
+          "status": "PASS",
+          "scroll_status": "NOT_MEASURED_EMPTY_PANE",
+          "screenshots": [
+            "390-ru-dark-labels.png",
+            "390-ru-dark-focus-1.png",
+            "390-ru-dark-focus-2.png",
+            "390-ru-dark-focus-3.png",
+            "390-ru-dark-focus-4.png",
+            "390-ru-dark-pane-after-wheel.png"
+          ]
+        },
+        {
+          "id": "640x360-ru-light",
+          "status": "PASS",
+          "scroll_status": "MEASURED_NATIVE_PANE_MOVEMENT",
+          "screenshots": [
+            "640x360-ru-light-labels.png",
+            "640x360-ru-light-focus-1.png",
+            "640x360-ru-light-focus-2.png",
+            "640x360-ru-light-focus-3.png",
+            "640x360-ru-light-focus-4.png",
+            "640x360-ru-light-pane-after-wheel.png"
+          ]
+        }
+      ]
+    }
+  },
+  "limitations": [
+    "Synthetic external localhost GET fixtures; no live/backend qualification",
+    "No full scanner/tool/Worker/generated agents parity or performance qualification",
+    "Physical screenreader/IME/native zoom and whole FINAL-UI remain open",
+    "Empty-pane native scroll measurement stays explicitly unmeasured where receipt says so"
+  ],
+  "old_successes_repeated": false
+}
