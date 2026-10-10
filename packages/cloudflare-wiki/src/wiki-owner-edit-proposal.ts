@@ -1,5 +1,5 @@
 import { canonicalEvidenceJson } from "@eliotr/cloudflare-evidence";
-import { VersionedRefSchema, type VersionedRef, type WikiPageRevision } from "@eliotr/contracts";
+import { validateUnicodeText, VersionedRefSchema, type VersionedRef, type WikiPageRevision } from "@eliotr/contracts";
 import { createWikiPublisher, WikiPublicationError, type WikiPublicationPort } from "@eliotr/research";
 import { CatalogInputError } from "@eliotr/cloudflare-navigation";
 import type { WikiStorageRuntime, WikiVerifiedActor } from "./wiki-runtime.js";
@@ -31,25 +31,15 @@ function requireOwner(context: WikiVerifiedActor): void { if (context.client_cla
 function sameRef(left: VersionedRef, right: VersionedRef): boolean { return left.id === right.id && left.revision === right.revision; }
 function sameBytes(left: Uint8Array, right: Uint8Array): boolean { return left.byteLength === right.byteLength && left.every((value, index) => value === right[index]); }
 
-function hasLoneSurrogate(value: string): boolean {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code >= 0xd800 && code <= 0xdbff) {
-      const next = value.charCodeAt(index + 1);
-      if (!(next >= 0xdc00 && next <= 0xdfff)) return true;
-      index += 1;
-    } else if (code >= 0xdc00 && code <= 0xdfff) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function boundedText(value: unknown, label: string, maximumChars: number, allowEmpty = false): string {
-  if (typeof value !== "string" || hasLoneSurrogate(value) || value.length > maximumChars || (!allowEmpty && value.trim().length === 0) || value.includes("\u0000")) {
+  if (typeof value !== "string") {
     fail("WIKI_INPUT_INVALID", `${label} is invalid`);
   }
-  return value;
+  const checked = validateUnicodeText(value, { unit: "utf16-code-units", maximum: maximumChars });
+  if (!checked.valid || (!allowEmpty && value.trim().length === 0) || value.includes("\u0000")) {
+    fail("WIKI_INPUT_INVALID", `${label} is invalid`);
+  }
+  return checked.text;
 }
 
 function exactKeys(value: Record<string, unknown>, expected: readonly string[]): boolean { const actual = Object.keys(value).sort(); const wanted = [...expected].sort(); return actual.length === wanted.length && actual.every((key, index) => key === wanted[index]); }

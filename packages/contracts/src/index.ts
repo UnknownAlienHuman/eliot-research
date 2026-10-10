@@ -1,4 +1,5 @@
 export * from "./common.js";
+export { validateUnicodeText } from "./unicode-text.js";
 export * from "./security.js";
 export * from "./residency.js";
 export * from "./source.js";

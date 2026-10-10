@@ -111,6 +111,47 @@ describe("S25 actual owner-edit writer/commit/reader parity", () => {
     expect(head).toBe(2);
     expect(outbox).toBe(2);
   });
+
+  it("captures the legacy whitespace, metadata error mapping, and edit digests", async () => {
+    const input = edit(value, " \t\r\n", "e\u0301 😀");
+    const ctx = context("edit-s77-baseline");
+    const proposed = await proposeWikiFromOwnerEdit(runtime, ctx, input, "edit-s77-baseline");
+    const reader = createWikiProposalReaderService(runtime);
+    const read = await reader.readWikiProposal(ctx, proposed.proposal_ref);
+    expect(read.page.title).toBe(input.title);
+    expect(parseMetadata(read.page.publication_metadata).edit_note).toBe(input.edit_note);
+    expect(await (await reader.readWikiProposalBody(ctx, proposed.proposal_ref)).text()).toBe(input.body_text);
+    expect(() => parseInput(rawEdit({ title: " padded " }))).toThrowError(expect.objectContaining({
+      code: "WIKI_INPUT_INVALID", status: 400,
+      message: "Wiki edit title must not have surrounding whitespace",
+    }));
+    expect(() => parseMetadata({ ...read.page.publication_metadata, edit_note: "\ud800" })).toThrowError(expect.objectContaining({
+      code: "WIKI_INPUT_INVALID", status: 400, message: "Wiki edit note is invalid",
+    }));
+    const binding = await db.prepare("SELECT request_sha256 FROM wiki_owner_edit_binding WHERE proposal_id=?1")
+      .bind(proposed.proposal_ref.id).first<{ request_sha256: string }>();
+    expect(binding?.request_sha256).toBe(await textDigest(canonicalEvidenceJson(input)));
+    expect(await textDigest(input.body_text)).toBe("491214d714a003472fb3603ec43b11ffee673a438aaff7858ecb3266e22f4317");
+  });
+
+  it("round-trips the exact UTF-8 body ceiling and rejects one byte over before writes", async () => {
+    const bodyLimit = 8 * 1024 * 1024;
+    const maximumBody = "a".repeat(bodyLimit);
+    const input = { ...edit(value, "body byte ceiling", "Body byte ceiling"), body_text: maximumBody };
+    const ctx = context("edit-s77-body-limit");
+    const proposed = await proposeWikiFromOwnerEdit(runtime, ctx, input, "edit-s77-body-limit");
+    const reader = createWikiProposalReaderService(runtime);
+    const read = await reader.readWikiProposal(ctx, proposed.proposal_ref);
+    expect(read.page.body_sha256).toBe("ad97f87076920684e2ca66fc44e5d322797dc9d64706b174e51b5d0828937043");
+    expect(read.page.body_sha256).toBe(await textDigest(maximumBody));
+    expect(await (await reader.readWikiProposalBody(ctx, proposed.proposal_ref)).text()).toBe(maximumBody);
+
+    const beforeOversize = await effects();
+    const oversized = { ...input, body_text: `${maximumBody}a` };
+    await expect(proposeWikiFromOwnerEdit(runtime, context("edit-s77-body-limit-plus-one"), oversized,
+      "edit-s77-body-limit-plus-one")).rejects.toMatchObject({ code: "WIKI_INPUT_INVALID" });
+    expect(await effects()).toEqual(beforeOversize);
+  });
 });
 
 
