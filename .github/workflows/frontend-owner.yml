@@ -38,6 +38,8 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 22.13.0
+      - name: Frontend owner checkpoint mechanics
+        run: node scripts/check-frontend-owner-checkpoints.mjs --history-base c37e56e0ebdfc7f6d294879008a4036d1b95b985 --head "$GITHUB_SHA"
       - name: Install current package-manager signing keys
         run: npm install --global corepack@0.34.7
       - run: corepack enable
@@ -54,8 +56,6 @@ jobs:
         run: pnpm --dir packages/ui exec playwright install --with-deps chromium
       - name: Focused Storybook integration
         run: pnpm --dir packages/ui exec vitest run --config .storybook/vitest.config.ts --reporter=verbose --testNamePattern 'Cross Page Selection Recovery|Replaced Selected Page Refused|Sections Unsupported|Optional Failure Facts|Targeted Retry Hierarchy|Readiness Renewal Is Not Blocked|Readiness Blocked|Google Transport Is Routing Only|Diagnostic Issued|Diagnostic Expired|Details Journey'
-      - name: Frontend owner checkpoint mechanics
-        run: node scripts/check-frontend-owner-checkpoints.mjs
       - name: Owner web production build
         run: pnpm --dir apps/eliotr-web exec vite build --manifest
       - name: Upload owner web static build
