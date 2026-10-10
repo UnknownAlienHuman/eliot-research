@@ -1,0 +1,62 @@
+{
+  "protocol": "eliotr.frontend-module-source-delivery.v1",
+  "status": "ACCEPTED_OWNING_FRONTEND_SOURCE_WITH_EXPLICIT_DOWNSTREAM_LIMITS",
+  "module": "Protected workspace integration, strict CSP startup, bounded navigation and static asset security",
+  "source_commit": "39e63dd7c050669426fea84ca37de32ae3c76cd4",
+  "manager_identity": "frontend-manager",
+  "manager_context_id": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
+  "source_commits": [
+    {
+      "name": "preserve-original-studio-launch",
+      "commit": "2383e2e15ba2cf5cb8a1d562352cbc0f7a0a0020"
+    },
+    {
+      "name": "preserve-original-caption-claim",
+      "commit": "f31a1de0d60d26a815392fb3994584ae77ae7d09"
+    },
+    {
+      "name": "native-primitive-caption",
+      "commit": "81f4425a19d0e104d3cd08074123db117ed1b8bc"
+    },
+    {
+      "name": "studio-system-caption",
+      "commit": "162585ffa3c56ff69b860c2b613645416b662fbc"
+    },
+    {
+      "name": "bounded-runtime-asset-registry",
+      "commit": "c801ab899002032f535de4f34703576b1b896a2a"
+    },
+    {
+      "name": "isolated-owner-runtime",
+      "commit": "043bd070ebadff9f8783e5731b2444310ffa405f"
+    },
+    {
+      "name": "qualified-workspace-csp-navigation-assets",
+      "commit": "39e63dd7c050669426fea84ca37de32ae3c76cd4"
+    }
+  ],
+  "preserved_original_fourth_leaf": "44b31683a1fef747397766d28117fb7b768123c5",
+  "preserved_backend_launch_docs": "25192c8ce27a9d43cf6d63b62ccd80d9d77b4020",
+  "preserved_prior_caption_claim": "4ee1312680ffa277b23a711c3897ad04ec30da79",
+  "compiler_equivalent_inputs": 221,
+  "qualified_original_manifest_sha256": "5ee108c12e8e236423463f7facd04e4b89ab11d725661426c627a969ea3f96bb",
+  "equivalence_record_sha256": "e5350835f8c95eb4225bf9e283f11b2dc0e3359281a0cfe9be356751250e6b17",
+  "historical_checks": {
+    "compiler": "TS6.0.3/1066 outputs/0 diagnostics; identical owning 221 inputs",
+    "Shell": "10 passed; identical source and harness bytes",
+    "transform_guards": "5 passed; exact pinned Router7.18.4 production grouping",
+    "generated_asset_headers": "3 passed in retained original actual Assets context",
+    "generated_browser_startup": "Chrome155 strict-CSP startup; eval0/style0; expected inline-script denial"
+  },
+  "check_execution": "Accepted compiler/tests/build/browser/native suites reused by exact owning input identity; no repeat execution.",
+  "canonical_budget_at_new_sha": "NOT_REQUALIFIED; original receipt and metadata unchanged",
+  "generated_worker_publication_scope": "Original Worker/config bytes and actual /agents + descendants parity remain retained at original mixed shared-source context. Complete published backend import graph not established here.",
+  "pending": [
+    "U3-X/U4-X/U5-X full manager wiring and composed acceptance",
+    "Sources compact-selection polish remains a separate private candidate",
+    "Successful authenticated Agents browser transport and live/staging/U6 cutover",
+    "Performance timings, physical screenreader/zoom and FINAL-UI owner decision"
+  ],
+  "history": "Fully additive descendants of publishedad13. Original Studio/Launch/claim commit IDs retained; mixed d89/d0/9c and equal-tree e1f are excluded and preserved locally. No local or remote rewrite."
+}
