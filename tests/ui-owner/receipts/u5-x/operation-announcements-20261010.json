@@ -1,0 +1,204 @@
+{
+  "protocol": "eliotr.frontend.operation-announcements.v1",
+  "issue": "https://github.com/UnknownAlienHuman/eliot-research/issues/337#issuecomment-6098641558",
+  "manager_context": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "input_main": "053112190807449f44437c65a958241035dd9b52",
+  "source_commit": "7c6f40e5e197f9c5c69be13489068c8c5c643a01",
+  "status": "ACCEPTED_BOUNDED_PANE_OPERATION_ANNOUNCEMENTS",
+  "named_gap": "Addendum 5 section 6: persistent facts stay quiet; actual asynchronous panes share one initially empty operation channel.",
+  "source_paths": [
+    "packages/ui/src/primitives/primitives.css",
+    "packages/ui/src/primitives/primitives.stories.tsx",
+    "packages/ui/src/primitives/primitives.tsx",
+    "packages/ui/src/features/sources/projects/ProjectsLibraryFeature.tsx",
+    "packages/ui/src/stories/sources/projects/ProjectsLibraryFeature.stories.tsx",
+    "apps/eliotr-web/src/app/ConnectionsPanel.tsx",
+    "apps/eliotr-web/src/app/FiniteReaderPreview.tsx",
+    "apps/eliotr-web/src/app/FiniteTruthDisclosurePreview.tsx",
+    "apps/eliotr-web/src/app/LiveWorkspace.tsx",
+    "apps/eliotr-web/src/app/ResearchPanel.tsx",
+    "apps/eliotr-web/src/app/ResearchPreview.tsx",
+    "apps/eliotr-web/src/app/Shell.stories.tsx",
+    "apps/eliotr-web/src/app/usePaneAnnouncement.ts",
+    "packages/ui/src/index.ts",
+    ".github/workflows/frontend-owner.yml",
+    "apps/eliotr-web/src/app/NextQuestionScope.tsx",
+    "apps/eliotr-web/src/app/announcementAssertions.ts",
+    "apps/eliotr-web/src/app/StudioPanel.tsx",
+    "apps/eliotr-web/src/app/StudioPreview.tsx"
+  ],
+  "ROOT_COMPOSITION": {
+    "owner": "frontend-manager",
+    "shared": [
+      "apps/eliotr-web/src/app/usePaneAnnouncement.ts",
+      "packages/ui/src/primitives/primitives.tsx"
+    ],
+    "U3-X": {
+      "paths": [
+        "apps/eliotr-web/src/app/LiveWorkspace.tsx",
+        "apps/eliotr-web/src/app/NextQuestionScope.tsx"
+      ],
+      "negatives": [
+        "Readiness recovery keeps project/source and does not refetch unrelated queries",
+        "Versions recovery targets only its failed query",
+        "Late protected read after privacy loss cannot restore data or channel"
+      ]
+    },
+    "U4-X": {
+      "paths": [
+        "apps/eliotr-web/src/app/ResearchPanel.tsx"
+      ],
+      "negatives": [
+        "Input validation and unknown admission share one channel",
+        "Unknown admission retains original body/key; readback does not mint a replacement intent"
+      ]
+    },
+    "U5-X": {
+      "paths": [
+        "apps/eliotr-web/src/app/StudioPanel.tsx",
+        "apps/eliotr-web/src/app/ConnectionsPanel.tsx"
+      ],
+      "negatives": [
+        "Studio unknown recovery retains body/key/CAS and cannot duplicate effects",
+        "Canonical PUBLISHED readback announces success and updates the selected list row; another proposal inherits no edit/publication message",
+        "Privacy loss disconnects channel and removes protected data",
+        "Connection check failure reports read outcome without inferring connectivity"
+      ]
+    }
+  },
+  "retained_gate_decisions": {
+    "receipt": "tests/ui-owner/receipts/u5-x/issue337-integration.json",
+    "commit": "053112190807449f44437c65a958241035dd9b52",
+    "U3-X": "ACCEPTED_NONPRODUCTION_SOURCES_BASELINE",
+    "U4-X": "BLOCKED_ADMISSION_EFFECT_PHASE_PRODUCER_AND_ER48",
+    "U5-X": "BLOCKED_WIKI_CONTINUATION_AND_U4_PREDECESSOR",
+    "FINAL-UI": "BLOCKED_PRODUCER_HANDOFFS_THEN_OWNER_REVIEW"
+  },
+  "verification": {
+    "typescript": {
+      "version": "6.0.3",
+      "observed_inputs": 1145,
+      "owning_roots": 279,
+      "outputs": 1106,
+      "diagnostics": 0
+    },
+    "lint": "PASS; every changed TypeScript file matches a retained passing source blob",
+    "semantic_values": "PASS:18 changed files; seeded raw color rejected; standard hidden accessibility geometry",
+    "cases": [
+      {
+        "name": "Operation Announcement Channel",
+        "log": "story-r2.log"
+      },
+      {
+        "name": "Readiness And Versions Failed",
+        "log": "story-r2.log"
+      },
+      {
+        "name": "Readiness And Versions Failed Russian",
+        "log": "story-r2.log"
+      },
+      {
+        "name": "Research Operation Announcements",
+        "log": "story-r2.log"
+      },
+      {
+        "name": "Connections Operation Announcements",
+        "log": "story-r2.log"
+      },
+      {
+        "name": "Sources Announcement Privacy",
+        "log": "story-r3.log"
+      },
+      {
+        "name": "Sources Readiness Announcement",
+        "log": "story-r4.log"
+      },
+      {
+        "name": "Sources Versions Announcement",
+        "log": "story-r4.log"
+      },
+      {
+        "name": "Studio Operation Announcements",
+        "log": "story-r7.log"
+      }
+    ],
+    "logs": [
+      {
+        "name": "story-r2.log",
+        "sha256": "089db52f538bfd3d4a23899e40b2f2efb99e4d2aea1ee9962db582addefb49c9"
+      },
+      {
+        "name": "story-r3.log",
+        "sha256": "a28d104403f09b943ac97e67eae5254d3a641f24d4d726832b8984cdb2a83ea6"
+      },
+      {
+        "name": "story-r4.log",
+        "sha256": "84b7955f173f7d2c9363bfb8bb86856cdbec11a616d801484f7c160c7c2be1c0"
+      },
+      {
+        "name": "story-r7.log",
+        "sha256": "abae818f0b1950c409f586d920905c35ab4ad3e78d90896150b48076b576661a"
+      }
+    ],
+    "retained_failures": [
+      "Initial preparation EOF whitespace failure",
+      "compiler-r1 TS2367 fixture narrowing",
+      "story-r2 four failures",
+      "story-r3 three fixture observation failures",
+      "story-r5 stale Studio chooser fixture observation",
+      "Official c22961da SOURCE_WITHOUT_SINGLE_PRIOR_CLAIM: two separately claimed leaves were grouped into one source commit"
+    ],
+    "failure_repairs": "Static selected-count live region removed; fixtures observe remounted controls and protected data rather than assuming an empty Query-cache inventory. Studio visible success is scoped to the current proposal, and the current list row reflects canonical PUBLISHED readback.",
+    "browser": {
+      "sources_connections_source_commit": "e14bbf9e06b04bc2b9903315b9f26d6c304e1add",
+      "studio_source_commit": "7c6f40e5e197f9c5c69be13489068c8c5c643a01",
+      "reviewed_production_source_equivalent": true,
+      "states": [
+        "Sources RU390x844: one channel, no horizontal overflow",
+        "Connections EN1440x1024: one channel, one primary action",
+        "Studio EN1440x1024: canonical selected row Published, one success message, no old edit or second-publication controls"
+      ],
+      "private_screenshots": [
+        {
+          "name": "sources-ru-390.jpg",
+          "sha256": "a4359fe363a834e82a5e5bc0da10d09a353a41fee0afdb80a389e48bb2460dc3"
+        },
+        {
+          "name": "connections-en-1440.jpg",
+          "sha256": "e1296448fc11cf0abcb3c270f1280188cbc008b4e1a41e4c9d3532349d9c04c1"
+        },
+        {
+          "name": "studio-published-r7-1440.jpg",
+          "sha256": "a1b207b4ae1ddf08060120eb715ee5a6721d31652c3543c200461504168913fb"
+        }
+      ]
+    },
+    "reproduce": "The existing exact-head frontend-owner GitHub workflow runs these nine stories with the retained focused suite, TypeScript, lint and a standalone production Vite build. No manual backend suite or Worker build is added.",
+    "current_head_ci": "PENDING_FIRST_AUTOMATIC_EXECUTION_AFTER_PUBLICATION",
+    "retained_source_tree_equivalence": {
+      "status": "PASS",
+      "tree": "548af1b82bf40a8d7fb3a092001693519ff46579",
+      "tested_commit": "64fd2d433c372cbb4c0810434ca6b2e59afa944c",
+      "corrected_reachable_source_commit": "7c6f40e5e197f9c5c69be13489068c8c5c643a01",
+      "scope": "Every repository blob and mode identical; only unpublished commit ancestry changes. All accepted compiler/lint/story/browser results retained without replay."
+    }
+  },
+  "limits": [
+    "No physical screen-reader qualification",
+    "Nested Import/Erasure/Report operation announcements not assessed",
+    "No current generated Worker/assets route parity or live qualification",
+    "No private question/body/key persistence across reload"
+  ],
+  "claims": {
+    "handed_off": [
+      "u1-3-announcement-337-20261010",
+      "u3-p-quiet-337-20261010"
+    ],
+    "active_after_handoff": 0
+  },
+  "next": [
+    "Backend/ER48 accepted admission provenance and exact-key reconciliation handoff",
+    "Backend/ER48 versioned Wiki continuation or bounded complete list handoff",
+    "One integrated FINAL-UI review package after those predecessors"
+  ]
+}

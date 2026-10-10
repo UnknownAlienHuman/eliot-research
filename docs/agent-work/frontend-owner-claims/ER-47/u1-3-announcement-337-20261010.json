@@ -20,7 +20,11 @@
       "commit_sha": "6aa4504d78b7fbeb4c1182eb7ecece52016b97db"
     }
   ],
-  "state": "ACTIVE",
-  "evidence_refs": [],
-  "blocker_refs": []
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "tests/ui-owner/receipts/u5-x/operation-announcements-20261010.json"
+  ],
+  "blocker_refs": [],
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "tests/ui-owner/receipts/u5-x/operation-announcements-20261010.json"
 }
