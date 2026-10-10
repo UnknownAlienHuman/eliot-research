@@ -1,7 +1,7 @@
 // U3-P Projects Library feature surface. Presentation and local selection only.
 // Server state arrives as props from the app's query layer; this component never fetches,
 // never instantiates a factory or transport, and never derives readiness from a revision.
-import { useId, type Ref } from "react";
+import { useId, type ReactNode, type Ref } from "react";
 import { Button, IconButton, Status } from "../../../primitives/primitives";
 import type { LibraryPage, LibraryReadinessView, SourceRevisionPage, ProjectListView } from "@eliotr/owner-api-client";
 import {
@@ -22,6 +22,7 @@ export interface ProjectsLibraryFeatureProps {
   readonly selectedProjectId: string | undefined;
   readonly onSelectProject: (projectId: string) => void;
   readonly projectSelectRef?: Ref<HTMLSelectElement>;
+  readonly sourceActions?: ReactNode;
   readonly library: LibraryPage | undefined;
   readonly readiness: LibraryReadinessView | undefined;
   readonly readinessState: ProjectsLibraryPanelState;
@@ -78,7 +79,7 @@ const COPY: Readonly<Record<"en" | "ru", Copy>> = {
     projectLabel: "Project",
     projectChoose: "Choose a project",
     projectEmpty: "No projects are available yet.",
-    sourcesLabel: "Sources",
+    sourcesLabel: "Project sources",
     recordedOnly: "Saved versions do not establish current search readiness.",
     readinessHeading: "Search readiness",
     checked: "Currentness verified",
@@ -115,7 +116,7 @@ const COPY: Readonly<Record<"en" | "ru", Copy>> = {
     projectLabel: "Проект",
     projectChoose: "Выберите проект",
     projectEmpty: "Пока нет доступных проектов.",
-    sourcesLabel: "Источники",
+    sourcesLabel: "Источники проекта",
     recordedOnly: "Сохранённые версии не подтверждают текущую готовность к поиску.",
     readinessHeading: "Готовность к поиску",
     checked: "Актуальность проверена",
@@ -225,6 +226,7 @@ export function ProjectsLibraryFeature(props: ProjectsLibraryFeatureProps) {
           </select>
         </div>
       )}
+      {props.sourceActions}
 
       {status === undefined ? null : <Status tone={status[1]}>{status[0]}</Status>}
 

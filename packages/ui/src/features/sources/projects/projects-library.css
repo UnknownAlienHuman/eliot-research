@@ -204,3 +204,7 @@
 .er-projects-library__facts summary { min-height: var(--eliot-size-touch-target); align-content: center; }
 .er-projects-library__facts summary:focus-visible { outline: var(--eliot-focus-width) solid var(--md-sys-color-primary); outline-offset: var(--eliot-focus-offset); }
 @media (max-width: 48rem) { .er-projects-library__panels { grid-template-columns: minmax(0, 1fr); } }
+
+.er-projects-library > .er-button {
+  justify-self: start;
+}
