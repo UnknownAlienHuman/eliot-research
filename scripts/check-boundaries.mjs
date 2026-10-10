@@ -29,6 +29,7 @@ const FORBIDDEN_IMPORTS = [
 // repository path and specifier. Backup tests read checked-in migration SQL,
 // and the PWA build script reads local source files to generate its asset.
 const HOST_TOOL_IMPORTS = new Map([
+  ["apps/eliotr-web/vite.config.ts", new Set(["node:fs"])],
   ["packages/cloudflare-workflows/src/external-agent-result-outbox.test.ts", new Set(["node:fs", "node:sqlite"])],
   ["packages/ui/src/tokens/contrast.test.ts", new Set(["node:fs", "node:crypto"])],
   ["packages/backup-o2/src/coverage-full-chain.test.ts", new Set(["node:fs"])],
