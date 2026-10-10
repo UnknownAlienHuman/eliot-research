@@ -1,0 +1,118 @@
+{
+  "protocol": "eliotr.studio-empty-state-and-scope-d1-modules.v1",
+  "status": "PASS_BOUNDED_INDEPENDENT_MODULES",
+  "source_commit": "922458249c33c5cdca187eec0de0bdf181eaa944",
+  "dependency": "e71356ef9e94bfeff4d7e0d26bee3bbb3c8809ab",
+  "modules": [
+    {
+      "id": "Studio distinct empty states",
+      "source_commit": "922458249c33c5cdca187eec0de0bdf181eaa944",
+      "paths": [
+        "packages/ui/src/features/studio/StudioFeature.tsx"
+      ],
+      "behavior": "The saved proposal list and unselected reader use distinct concise EN/RU messages. New copy keys are optional; legacy generic fallback and all existing state/controls remain.",
+      "verifiers": {
+        "compiler": "TS6.0.3 PASS276roots/1142inputs/0diagnostics",
+        "scoped_lint": "PASS changed Feature only",
+        "owning_build": {
+          "status": "PASS",
+          "inputs": 3017,
+          "artifacts": 9,
+          "all_emitted_js_gzip_bytes": 239603
+        },
+        "existing_story": "Empty PASS1/13 originalcases skipped; no new story source",
+        "actual_chrome": {
+          "version": "155.0.8059.40",
+          "cases": [
+            {
+              "id": "1440-en-light",
+              "status": "PASS",
+              "screenshots": [
+                "1440-en-light-list.png",
+                "1440-en-light-reader.png"
+              ]
+            },
+            {
+              "id": "320-ru-dark",
+              "status": "PASS",
+              "screenshots": [
+                "320-ru-dark-list.png",
+                "320-ru-dark-reader.png"
+              ]
+            }
+          ]
+        },
+        "pixels": "Manager inspected actual320RUdark reader and1440ENlight list captures"
+      }
+    },
+    {
+      "id": "Scope D1 exact literal freeze/readback/replay case",
+      "source_commit": "2cefc0674eb1815fef10ec115f6f06107df2c15b",
+      "paths": [
+        "apps/eliotr-core/test/scope-persistence.test.ts"
+      ],
+      "behavior": "Add one literal identity/digest/canonical storage column and replay case; preserve twelve existing test bodies/calls/order.",
+      "verifiers": {
+        "original_owning_native": "PASS1/12skipped, exit0/nullsignal; reused without rerun",
+        "independent_readback": "Frozen raw/canonical/proof/log hashes and installed TypeScript AST original12 equality accepted",
+        "source_final_lint": "Backend original final ESLint PASS reused"
+      },
+      "limits": "C12/nativeRustWasm/scopefloor/full270 remain OPEN; modified fixture/vector checker inputs are excluded, no input-hermeticity or full-core claim."
+    }
+  ],
+  "evidence": {
+    "compiler": {
+      "path": "C:\\Development\\Research\\eliot-research\\.eliotr-state\\sc-b1-20261010\\compiler.json",
+      "sha256": "0fac7393a214b27d63494cd15fee6ee94c6da212d7fa78e212901675eeac3427"
+    },
+    "lint": {
+      "path": "C:\\Development\\Research\\eliot-research\\.eliotr-state\\sc-b1-20261010\\lint.json",
+      "sha256": "5cad81a6d08990b5f68f1094323b77b07517e3c1537d1ecd608db00a255d8185"
+    },
+    "build": {
+      "path": "C:\\Development\\Research\\eliot-research\\.eliotr-state\\sc-b1-20261010\\build.json",
+      "sha256": "08d103bb4922ce271d8cab3368736ad04765ffc670594c533325af1a17e2ff9c"
+    },
+    "story": {
+      "path": "C:\\Development\\Research\\eliot-research\\.eliotr-state\\sc-b1-20261010\\stories.json",
+      "sha256": "b28947b04c408a12f2fa95adf43c4051a9e98d19ffcd7be2ce8b5aae5b46297c"
+    },
+    "browser": {
+      "path": "C:\\Development\\Research\\eliot-research\\.eliotr-state\\frontend-ui-proposals\\studio-empty-list-copy-20261010\\run-922458249c33\\result.json",
+      "sha256": "7be7ebc92788d04254209206a38cb3872b687b9d0565eb0c6e713399ff793f81"
+    },
+    "backend_review": {
+      "path": "C:\\Development\\Research\\eliot-research\\.eliotr-state\\frontend-ui-proposals\\studio-empty-list-copy-20261010\\backend-scope-d1-handoff-review.json",
+      "sha256": "bcd0201f6eadfb74f22f926f4bbd36c65c8197709b73eed5bc7bcda5961a006b"
+    },
+    "backend_handoff": {
+      "path": "C:\\Development\\Research\\eliot-research\\.eliotr-state\\backend-full-20261008\\scope-d1-final-literal-root-20261010\\handoff.json",
+      "sha256": "1a95f369ee90a0b7a2c0ff570da5f0c08df13d7260911e24733abefedbf3c91c"
+    },
+    "backend_native": {
+      "path": "C:\\Development\\Research\\eliot-research\\.eliotr-state\\backend-full-20261008\\scope-d1-final-literal-root-20261010\\native.json",
+      "sha256": "b7ff4218ca4e85f993851a0be77092c356e2ce1006bdc4cefe93a0cf8243cd1f"
+    }
+  },
+  "source_bindings": [
+    {
+      "path": "packages/ui/src/features/studio/StudioFeature.tsx",
+      "git_blob": "80315f95952382c8d72982d98d973bbac04d558d",
+      "sha256": "4eea6de26673166fb97b15978a18a7c7ad606bb0e0ac95bb0cc71ce7c4e61071",
+      "mode": "100644"
+    },
+    {
+      "path": "apps/eliotr-core/test/scope-persistence.test.ts",
+      "git_blob": "6aebfb8dda40581c5635776403b1efaa834ac7c4",
+      "sha256": "7feab737da928a818e7522ca85edd67cddfb1c3ad9be8efdaa9b6ac1b2fd6eff",
+      "mode": "100644"
+    }
+  ],
+  "limitations": [
+    "Synthetic local GET Studio wire; no mutations/providers/live/backend/C11 acceptance",
+    "No full scanner/tool/native input closure or integrated Worker/generated agents parity promotion",
+    "Physical screenreader/IME/zoom, whole U5/U5-X/FINAL-UI remain open",
+    "Metadata three manualJSON parse failures retained; structured final serialization validates exact source instead of retrying failed metadata approach"
+  ],
+  "old_successes_repeated": false
+}
