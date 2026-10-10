@@ -147,6 +147,7 @@ const reviewSpy = fn();
 
 /** A state harness around the real component, so assertions exercise the feature itself. */
 function ErasureHarness() {
+  const [announcement] = useState("");
   const [reviewOpen, setReviewOpen] = useState(false);
   return (
     <ErasureFeature
@@ -160,8 +161,58 @@ function ErasureHarness() {
       onConfirm={() => confirmSpy()}
       onCancel={() => setReviewOpen(false)}
       onRefresh={() => {}}
+      operationAnnouncement={announcement}
       onToggleDisclosure={() => setReviewOpen((open) => !open)}
     />
+  );
+}
+
+/**
+ * One bounded harness over the real component. A single button cycles
+ * useful+COMPLETE -> error+BLOCKED -> degraded+UNKNOWN, the sequence of branch and status
+ * changes a manager actually derives, so channel invariants can be asserted across real
+ * transitions instead of one static frame.
+ *
+ * The announcement text is a separate explicit value, which proves a branch change alone
+ * never writes the channel. A second caller that omits the prop shares the canvas, so
+ * the omitted-prop shape is exercised in the same render rather than a sibling story.
+ */
+const BRANCHES: readonly ErasureFeatureProps[] = [
+  { locale: "en", copy: ERASURE_COPY.en, state: "useful", prepared: PREPARED, hasSavedStatus: true, status: COMPLETE_STATUS, completeVerified: true, onRefresh: () => {}, onReview: () => {}, onConfirm: () => {}, onCancel: () => {}, onToggleDisclosure: () => {} },
+  { locale: "en", copy: ERASURE_COPY.en, state: "error", hasSavedStatus: true, status: BLOCKED_STATUS, onRefresh: () => {}, onReview: () => {}, onConfirm: () => {}, onCancel: () => {}, onToggleDisclosure: () => {} },
+  { locale: "en", copy: ERASURE_COPY.en, state: "degraded", hasSavedStatus: true, status: { state: "UNKNOWN" }, onRefresh: () => {}, onReview: () => {}, onConfirm: () => {}, onCancel: () => {}, onToggleDisclosure: () => {} },
+];
+
+/**
+ * A caller that omits the prop entirely. It renders the quiet empty branch, which shows
+ * no refresh control and no status role, so it contributes zero regions while still
+ * proving the omitted shape mounts on the same canvas.
+ */
+const OMITTED_CALLER: ErasureFeatureProps = {
+  locale: "en", copy: ERASURE_COPY.en, state: "empty",
+  onRefresh: () => {}, onReview: () => {}, onConfirm: () => {}, onCancel: () => {}, onToggleDisclosure: () => {},
+};
+
+const CYCLE_LABEL = "Next branch";
+
+function ErasureAnnouncementHarness() {
+  const [branch, setBranch] = useState(0);
+  const [announcement, setAnnouncement] = useState("");
+  const view = BRANCHES[branch];
+  if (!view) throw new TypeError("Unexpected erasure fixture branch");
+  return (
+    <>
+      <ErasureFeature
+        {...view}
+        operationAnnouncement={announcement}
+        onRefresh={() => setAnnouncement(ERASURE_COPY.en.refresh)}
+      />
+      <div hidden><ErasureFeature {...OMITTED_CALLER} /></div>
+      <button type="button" onClick={() => setAnnouncement("Deletion status read.")}>Announce deletion status</button>
+      <button type="button" onClick={() => setBranch((value) => (value + 1) % BRANCHES.length)}>
+        {CYCLE_LABEL}
+      </button>
+    </>
   );
 }
 
@@ -216,5 +267,58 @@ export const CompleteLeavesNoConfirm: Story = {
     const canvas = within(canvasElement);
     await expect(canvas.getByText(ERASURE_COPY.en.complete_verified)).toBeVisible();
     await expect(canvas.queryByRole("button", { name: ERASURE_COPY.en.confirm })).not.toBeInTheDocument();
+  },
+};
+
+/**
+ * One operation channel, owned by the manager. Omitted prop means no region at all;
+ * an explicit empty string renders the region initially empty. Only an explicit text
+ * change updates it, so cached and static facts stay quiet and no branch duplicates
+ * the channel.
+ */
+export const ErasureOperationAnnouncements: Story = {
+  args: buildProps({
+    prepared: PREPARED,
+    hasSavedStatus: true,
+    status: COMPLETE_STATUS,
+    completeVerified: true,
+    operationAnnouncement: "",
+  }),
+  render: () => <ErasureAnnouncementHarness />,
+  play: async ({ canvasElement }) => {
+    // The second caller omits the prop entirely, so it must contribute zero regions.
+    // This is counted first so a regression cannot hide behind later assertions.
+    const regions = () => canvasElement.querySelectorAll('[role="status"], [aria-live], [role="alert"]');
+    expect(regions()).toHaveLength(1);
+
+    // A cached verified COMPLETE renders the feature with its channel initially empty.
+    const channel = canvasElement.querySelector(".er-operation-announcement");
+    expect(channel).not.toBeNull();
+    await expect(within(canvasElement).getByText(ERASURE_COPY.en.complete_verified)).toBeVisible();
+
+    const node = () => canvasElement.querySelector(".er-operation-announcement");
+    expect(node()).toBe(channel);
+    await expect(channel).toHaveAttribute("aria-live", "polite");
+    await expect(channel).toHaveAttribute("aria-atomic", "true");
+    await expect(channel).toHaveTextContent("");
+
+    // An explicit text supplies content to that channel.
+    await userEvent.click(within(canvasElement).getByRole("button", { name: "Announce deletion status" }));
+    await expect(channel).toHaveTextContent("Deletion status read.");
+
+    // Branch change alone never rewrites the channel, and never adds a region.
+    await userEvent.click(within(canvasElement).getByRole("button", { name: CYCLE_LABEL }));
+    expect(canvasElement.querySelectorAll('.er-operation-announcement')).toHaveLength(1);
+    expect(node()).toBe(channel);
+    await expect(within(canvasElement).getByText(ERASURE_COPY.en.blocked)).toBeVisible();
+    await expect(channel).toHaveTextContent("Deletion status read.");
+
+    // The degraded branch keeps its facts and controls with the same single channel.
+    await userEvent.click(within(canvasElement).getByRole("button", { name: CYCLE_LABEL }));
+    expect(canvasElement.querySelectorAll('.er-operation-announcement')).toHaveLength(1);
+    expect(node()).toBe(channel);
+    await expect(within(canvasElement).getByText(ERASURE_COPY.en.unknown_state)).toBeVisible();
+    await expect(channel).toHaveTextContent("Deletion status read.");
+    expect(regions()).toHaveLength(1);
   },
 };

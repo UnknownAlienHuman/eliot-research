@@ -6,7 +6,7 @@
  * The prepared view and the status view are the accepted decoder types, re-exported by the
  * owner-api-client barrel, so no ad hoc DTO is invented here.
  */
-import { Button, IconButton, Status } from "../../../primitives/primitives";
+import { Button, IconButton, OperationAnnouncement, Status } from "../../../primitives/primitives";
 import type {
   ErasurePrepareView,
   ErasureStatusView,
@@ -56,6 +56,16 @@ export interface ErasureFeatureProps {
   readonly completeVerified?: boolean;
   readonly hasSavedStatus?: boolean;
   readonly reviewOpen?: boolean;
+  /**
+   * One ephemeral manager-owned message for the pane's operation channel. The prop is
+   * deliberately optional: when it is omitted no channel is rendered at all, so every
+   * prepared, blocked, unknown and complete fact stays quiet. Passing an explicit string,
+   * including the empty string, renders exactly one persistent channel that starts empty.
+   *
+   * Whether a message is announced is the root's derivation, never this component's: there
+   * is no transition tracking, effect or local hook here.
+   */
+  readonly operationAnnouncement?: string;
   readonly onReview: () => void;
   readonly onConfirm: () => void;
   readonly onCancel: () => void;
@@ -133,6 +143,12 @@ export function ErasureFeature(props: ErasureFeatureProps) {
     receipt.state === "COMPLETE" && receipt.purge_ledger_entry_ref.length > 0;
   return (
     <section className="er-erasure" lang={props.locale} aria-label={copy.title}>
+      {/* One channel for the whole feature. It renders only when the manager supplied the
+          prop, so a quiet pane has no announcement region at all. An explicit empty string
+          still renders the region initially empty. */}
+      {props.operationAnnouncement === undefined ? null : (
+        <OperationAnnouncement>{props.operationAnnouncement}</OperationAnnouncement>
+      )}
       <header className="er-erasure__head">
         <h2 className="er-erasure__title">{copy.title}</h2>
         {completeVerified ? <Status tone="neutral" icon="check">{copy.complete_verified}</Status> : null}
@@ -140,7 +156,7 @@ export function ErasureFeature(props: ErasureFeatureProps) {
       {state === "loading" ? <Status tone="neutral" icon="search">{copy.loading}</Status> : null}
       {state === "empty" ? <Status tone="neutral" icon="search">{copy.empty}</Status> : null}
       {state === "degraded" ? (
-        <div className="er-erasure__degraded" role="status">
+        <div className="er-erasure__degraded">
           {status?.state === "UNKNOWN" ? <p>{copy.unknown_state}</p> : null}
           {props.hasSavedStatus === false ? <p>{copy.saved_none}</p> : null}
           {status === undefined && props.hasSavedStatus !== false ? <p>{copy.closed_context}</p> : null}
@@ -148,7 +164,7 @@ export function ErasureFeature(props: ErasureFeatureProps) {
         </div>
       ) : null}
       {state === "error" ? (
-        <div className="er-erasure__error" role="alert">
+        <div className="er-erasure__error">
           {status?.state === "BLOCKED" && receipt !== undefined ? (
             <>
               <p>{copy.blocked}</p>
