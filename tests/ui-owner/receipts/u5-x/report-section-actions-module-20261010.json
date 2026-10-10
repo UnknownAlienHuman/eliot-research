@@ -1,0 +1,127 @@
+{
+  "protocol": "eliotr.report-section-actions-module-receipt.v1",
+  "status": "ACCEPTED_FINITE_REPORT_SECTION_ACTION_MODULE",
+  "module": "Exact localized targets for native report section Read/loading/Open actions",
+  "source_commit": "e810c207a8504274538b8b82cda5c50dee566333",
+  "published_dependency_base": "30bab45e58d1fe905a10a980f40edbb9f4948be3",
+  "changes": "Default verbs stay concise; visible localized section ordinal identifies every action. Native callbacks/refs/read/currentness/completeness unchanged. Two owning React preview consumers and two catalog story entries accompany the feature.",
+  "source_inputs": [
+    {
+      "path": "packages/ui/src/features/research/report/ReportFeature.tsx",
+      "git_blob": "cb7ebe4a6ec4c3738d86f14e5550201da79aadb4",
+      "sha256": "15f59accb7e1a027cd708e2834928217f6e730f3574d1468ac93e799a8b9a20e"
+    },
+    {
+      "path": "packages/ui/src/stories/research/report/ReportFeature.stories.tsx",
+      "git_blob": "530aca03851037222baec3730886d7ba647ccbc0",
+      "sha256": "40a145ca53a67063bdaa65c7f14aab65b4ac86c20ffdc3c46ac6a34d52cfe523"
+    },
+    {
+      "path": "apps/eliotr-web/src/app/ResearchPreview.tsx",
+      "git_blob": "bf51cbd5983b35c8a61b961cdc8cbb8e7d0b27fd",
+      "sha256": "6ee487cd19ab4eee26f726447c418992179fca22eb23dd7de223751f5e7bb4a8"
+    },
+    {
+      "path": "apps/eliotr-web/src/app/FiniteExcerptPreview.tsx",
+      "git_blob": "1faa102c3b431da5ab8fe9fdbe0ddf6f09f09577",
+      "sha256": "b6fec2021e60742cad8a85cecb8902029a6a882d338463033ef1e1ac09f69cf6"
+    },
+    {
+      "path": "packages/ui/src/catalog/catalog.json",
+      "git_blob": "34bc6e7dc118571ad49a4fc7164aa9c51fd1897b",
+      "sha256": "6d04834948a1b960e4c27d9a3652c33070a9db683d4b71ab9f706768031f07e8"
+    }
+  ],
+  "diagnostics": {
+    "compiler": {
+      "version": "6.0.3",
+      "status": "PASS",
+      "expected_roots": 276,
+      "observed_inputs": 1142,
+      "diagnostics": 0,
+      "receipt": ".eliotr-state\\rl-b1-20261010\\compiler.json",
+      "sha256": "ff5acd3428eeea5dd9f6a1fee06614abd3974720dab1473d6e4a4993d0dc809c"
+    },
+    "build": {
+      "status": "PASS",
+      "receipt": ".eliotr-state\\rl-b1-20261010\\build.json",
+      "sha256": "8c3dfd5e846c3c07db711477f8d99d549af52310e4d2125cfe1c155878fb3610",
+      "observed_inputs": 3017,
+      "artifacts": 9,
+      "all_js_gzip_bytes": 239554
+    }
+  },
+  "stories": {
+    "status": "PASS",
+    "changed_complete_after_readback": 1,
+    "new_en_ru_target_cases": 2,
+    "actual_run": ".eliotr-state\\rl-b1-20261010\\stories-run.json",
+    "sha256": "d334af917b2d5ea1506f0b0712348f6333413dcc44b5502a42e756bb1a40bfc1"
+  },
+  "browser": {
+    "status": "PASS_BOUNDED_REPORT_LABELS",
+    "receipt": ".eliotr-state/frontend-ui-proposals/report-action-labels-20261010/run-e810c207a850-heading3/browser.json",
+    "sha256": "50ef9b7fc10aab70e9af3d9961cbcd762e957f02272333423f85c3dcce6a9af7",
+    "cases": [
+      {
+        "id": "desktop1440-en-light",
+        "status": "PASS_BOUNDED_REPORT_LABELS",
+        "width": 1440,
+        "locale": "en",
+        "theme": "light"
+      },
+      {
+        "id": "mobile390-ru-dark",
+        "status": "PASS_BOUNDED_REPORT_LABELS",
+        "width": 390,
+        "locale": "ru",
+        "theme": "dark"
+      },
+      {
+        "id": "narrow320-ru-light",
+        "status": "PASS_BOUNDED_REPORT_LABELS",
+        "width": 320,
+        "locale": "ru",
+        "theme": "light"
+      }
+    ],
+    "scope": "Actual current standalone owner-web artifact and external deterministic localhost HTTP; no native Worker authority inferred"
+  },
+  "lint": {
+    "status": "PASS",
+    "paths": [
+      "apps/eliotr-web/src/app/FiniteExcerptPreview.tsx",
+      "apps/eliotr-web/src/app/ResearchPreview.tsx",
+      "packages/ui/src/features/research/report/ReportFeature.tsx",
+      "packages/ui/src/stories/research/report/ReportFeature.stories.tsx"
+    ],
+    "receipt": ".eliotr-state\\rl-b1-20261010\\lint-run.json",
+    "sha256": "ba3d52d59b46e4c201291b34069a4fec17d2c454021927fc77b78bfd3861d7e3"
+  },
+  "review": {
+    "source_receipt": ".eliotr-state\\frontend-ui-proposals\\report-action-labels-20261010\\report-assembled-source-audit.json",
+    "sha256": "73ef5c0fd956f75cd638858e2c6231044406fb1a742e05aab70c1126fb8e0ef8",
+    "verdict": "ACCEPT_BOUNDED_REPORT_ACTION_LABELS_SOURCE"
+  },
+  "preserved": [
+    "Existing exact declared refs/object/digest and callback guards",
+    "Lazy requested-section reads and incomplete-export refusal",
+    "Original full CSS bytes",
+    "Legacy PWA browser fixture and its generic labels",
+    "Backend WIP, shared local9c/index, manifests/lock/dependencies"
+  ],
+  "limits": [
+    "Bounded Report module only; whole U4/U5/U5-X/FINAL-UI not closed",
+    "Physical screenreader/IME/zoom and full accessibility matrix not measured",
+    "Standalone Vite build; integrated30b artifact and backend native qualification kept distinct",
+    "Full scanner/tool/native read closure and full CSP remain open",
+    "No C11 transport/auth workaround; trusted backend acquisition remains backend-owned"
+  ],
+  "retained_failures": [
+    "Private initial redundant copy preimage retained",
+    "Private PowerShell collapsed-byte proposal rejected before source use; raw Git Buffer repair required",
+    "Original preparation postwrite ephemeral file guard failure/recovery baseline rejects retained; no retrospective allworkingbytes PASS",
+    "First actual browser run failed on harness Markdown heading2 expectation; existing reader maps Markdown level2 to h3. One private harness-only correction, no product change or successful source checks replay"
+  ],
+  "owner_authorization": "Current direct user authorization to finish frontend and publish meaningful complete modules to main; normal FF only"
+}
