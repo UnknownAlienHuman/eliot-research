@@ -1,3 +1,4 @@
+import { OWNER_RESEARCH_MAX_SELECTED_SOURCES, RESEARCH_REQUEST_MAX_BYTES } from '@eliotr/contracts';
 import { describe, expect, it, vi } from 'vitest';
 import { createResearchRunsApi, type ResearchRunRequest } from './authority';
 import { OwnerClientError } from '../../transport/client';
@@ -141,3 +142,23 @@ describe('C3-RR run authority', () => {
 function api_body(): string {
   return JSON.stringify({ question: 'q', scope: { kind: 'GLOBAL_LIBRARY' }, max_results: 4 });
 }
+
+describe('Research RUN selected-source envelope', () => {
+  it.each([65, 1000])('accepts %i distinct source identifiers within the existing server bound', count => {
+    const { api } = build(null, [200], createSessionEpoch());
+    const sources = Array.from({ length: count }, (_, i) => 'source-' + i);
+    expect(JSON.parse(api.researchRunBody('Compare selected evidence', sources)).scope_expression.source_ids).toEqual(sources);
+  });
+  it('rejects 1001 sources and preserves duplicate, identifier, mixed-project and UTF-8 guards', () => {
+    const { api } = build(null, [200], createSessionEpoch());
+    expect(OWNER_RESEARCH_MAX_SELECTED_SOURCES).toBe(1000);
+    expect(() => api.researchRunBody('q', Array.from({ length: 1001 }, (_, i) => 'source-' + i))).toThrow();
+    expect(() => api.researchRunBody('q', ['source-1', 'source-1'])).toThrow();
+    expect(() => api.researchRunBody('q', [''])).toThrow();
+    expect(() => api.researchRunBody('q', ['source-1'], 4, 'project-1')).toThrow();
+    const question = 'я'.repeat(RESEARCH_REQUEST_MAX_BYTES / 2);
+    expect(question.length).toBeLessThan(RESEARCH_REQUEST_MAX_BYTES);
+    try { api.researchRunBody(question, ['source-1']); throw new Error('Expected UTF-8 request rejection'); }
+    catch (error) { expect(error).toBeInstanceOf(OwnerClientError); expect((error as OwnerClientError).code).toBe('RESEARCH_INPUT_LIMIT'); }
+  });
+});

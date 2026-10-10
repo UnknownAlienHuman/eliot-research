@@ -23,7 +23,11 @@
       "commit_sha": "4f7c99546bd7adfcf766bdc1a398a94a8e20fedb"
     }
   ],
-  "state": "ACTIVE",
-  "evidence_refs": [],
-  "blocker_refs": []
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "tests/ui-owner/receipts/u5-x/issue337-integration.json"
+  ],
+  "blocker_refs": [],
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "tests/ui-owner/receipts/u5-x/issue337-integration.json"
 }

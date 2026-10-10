@@ -9,7 +9,7 @@ import type { LegacyErrorFactory } from "../../legacy/http";
 import type { EpochPort } from "../../transport/client";
 import { createResearchRunWire, type ResearchRunWire } from "./wire";
 import { createResearchFailureDecoder, type ResearchRunFailureDecoder, type ResearchEngineStatus, type ResearchRunFailureView } from "./failure";
-import { isResearchQuestionText, RESEARCH_REQUEST_MAX_BYTES } from "@eliotr/contracts";
+import { isResearchQuestionText, RESEARCH_REQUEST_MAX_BYTES, OWNER_RESEARCH_MAX_SELECTED_SOURCES } from "@eliotr/contracts";
 import { ScopeExpressionSchema } from "@eliotr/contracts";
 
 const MAX_RESULTS = 16;
@@ -126,7 +126,7 @@ export function createResearchRunsApi(ports: ResearchRunsApiPorts): ResearchRuns
       throw errors({ code: "RESEARCH_INPUT_INVALID", status: 400, message: "query is invalid", traceId: null, retryable: false });
     }
     if (!Number.isSafeInteger(maxResults) || maxResults < 1 || maxResults > MAX_RESULTS) invalid("max_results is invalid");
-    if (sourceIds.length > 64 || new Set(sourceIds).size !== sourceIds.length) invalid("source scope is invalid");
+    if (sourceIds.length > OWNER_RESEARCH_MAX_SELECTED_SOURCES || new Set(sourceIds).size !== sourceIds.length) invalid("source scope is invalid");
     for (const sourceId of sourceIds) identifier(sourceId, "source id");
     if (projectId !== undefined) {
       if (sourceIds.length !== 0) invalid("project scope cannot include source ids");
