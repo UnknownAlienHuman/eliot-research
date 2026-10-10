@@ -1,4 +1,4 @@
-import { useState, type RefObject } from "react";
+import { useCallback, useLayoutEffect, useRef, useState, type Ref, type RefObject } from "react";
 import { skipToken, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router";
 import { WorkspaceLink } from "../routes/WorkspaceLink";
@@ -31,6 +31,13 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
   const client = useQueryClient();
   const [projectPages, setProjectPages] = useState<readonly (string | undefined)[]>([undefined]);
   const [projectId, setProjectId] = useState<string>();
+  const projectSelectFocus = useRef<{
+    readonly projectId: string; readonly context: SessionContext;
+    readonly projectPage: ProjectListView; readonly after: string | undefined;
+  } | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (destination !== "sources") projectSelectFocus.current = undefined;
+  }, [destination]);
   const [sourceId, setSourceId] = useState<string>();
   const [libraryPages, setLibraryPages] = useState<readonly (string | undefined)[]>([undefined]);
   const [scope, setScope] = useState<readonly NextQuestionSource[]>([]);
@@ -47,8 +54,30 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
     : { queryKey: [...key, "library-unselected"], queryFn: skipToken });
   const scopeCurrent = scope.length > 0 && scope.every(item => item.page === library.data &&
     item.page.generation === context.deploymentGeneration && item.page.sources.some(source => source.id === item.id));
+  const restoreProjectSelectFocus = useCallback((node: HTMLSelectElement | null) => {
+    if (node === null) return;
+    const target = projectSelectFocus.current;
+    if (target === undefined) return;
+    try {
+      const currentCachedProjectPage = client.getQueryData<ProjectListView>(
+        [...protectedQueryKey(context, "sources"), "projects", after ?? null],
+      );
+      if (destination === "sources" && target.projectId === selected?.project_id && target.after === after &&
+        target.projectPage === projects.data && target.projectPage === currentCachedProjectPage &&
+        privacy.isCurrent(target.context) && privacy.isCurrent(context)) {
+        node.focus({ preventScroll: true });
+      }
+    } finally {
+      projectSelectFocus.current = undefined;
+    }
+  }, [after, client, context, destination, privacy, projects.data, selected?.project_id]);
   const chooseProject = (id: string) => {
-    if (projects.data?.projects.some(project => project.project_id === id) && privacy.isCurrent(context)) {
+    const projectPage = projects.data;
+    if (projectPage?.projects.some(project => project.project_id === id) && privacy.isCurrent(context)) {
+      if (destination === "sources" && id !== projectId &&
+        client.getQueryData<ProjectListView>([...key, "projects", after ?? null]) === projectPage) {
+        projectSelectFocus.current = { projectId: id, context, projectPage, after };
+      }
       setProjectId(id); setSourceId(undefined); setLibraryPages([undefined]); setScope([]);
     }
   };
@@ -72,7 +101,7 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
       {destination === "sources" ? <>
         <p className="er-shell-lead">{text.detail}</p>
         <ActiveSources key={selected?.project_id ?? "no-project"} locale={locale} apis={apis} privacy={privacy} context={context}
-          projectId={selected?.project_id} projects={projects} after={after} onProject={chooseProject}
+          projectId={selected?.project_id} projects={projects} after={after} onProject={chooseProject} projectSelectRef={restoreProjectSelectFocus}
           sourceId={sourceId} onSource={setSourceId}
           libraryPages={libraryPages} onLibraryPages={setLibraryPages} scope={scope} onScope={toggleScope} onClearScope={() => setScope([])} />
         <div className="er-live-pagination">
@@ -91,11 +120,12 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
   </div>;
 }
 
-function ActiveSources({ locale, apis, privacy, context, projectId, projects, after, onProject, sourceId, onSource, libraryPages, onLibraryPages, scope, onScope, onClearScope }: {
+function ActiveSources({ locale, apis, privacy, context, projectId, projects, after, onProject, projectSelectRef, sourceId, onSource, libraryPages, onLibraryPages, scope, onScope, onClearScope }: {
   readonly locale: "en" | "ru"; readonly apis: BoundWorkspaceApis; readonly privacy: PrivacyController;
   readonly context: SessionContext; readonly projectId: string | undefined;
   readonly projects: UseQueryResult<ProjectListView, Error>;
   readonly after: string | undefined; readonly onProject: (id: string) => void;
+  readonly projectSelectRef: Ref<HTMLSelectElement>;
   readonly sourceId: string | undefined; readonly onSource: (id: string | undefined) => void;
   readonly libraryPages: readonly (string | undefined)[]; readonly onLibraryPages: (pages: readonly (string | undefined)[]) => void;
   readonly scope: readonly NextQuestionSource[]; readonly onScope: (page: LibraryPage, id: string, checked: boolean) => void; readonly onClearScope: () => void;
@@ -136,7 +166,7 @@ function ActiveSources({ locale, apis, privacy, context, projectId, projects, af
   return <>
     <ImportPanel locale={locale} apis={apis} privacy={privacy} context={context} />
     <NextQuestionScope locale={locale} page={library.data} selected={scope} onToggle={onScope} onClear={onClearScope} />
-    <ProjectsLibraryFeature locale={locale} state={pending ? "loading" : error ? "error" : "useful"}
+    <ProjectsLibraryFeature locale={locale} projectSelectRef={projectSelectRef} state={pending ? "loading" : error ? "error" : "useful"}
       projects={projects.data?.projects ?? []} selectedProjectId={projectId} onSelectProject={id => { if (projects.data?.projects.some(row => row.project_id === id)) onProject(id); }}
       library={library.data} readiness={readiness.data} readinessState={!source ? "idle" : readiness.isPending ? "loading" : readiness.isError ? "degraded" : "useful"}
       revisions={revisions.data} revisionsState={!source ? "idle" : revisions.isPending ? "loading" : revisions.isError ? "error" : "useful"}
