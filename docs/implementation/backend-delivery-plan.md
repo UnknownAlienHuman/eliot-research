@@ -1898,3 +1898,33 @@ Worker-side run; final hash/readback uses no runtime repeat. The
 owns the limits. Both new Go2 tasks are completed/closed/archived; all 87 native
 manager descendants are closed. Useful source review and corrected mapping
 still do not demonstrate model superiority. Broader acceptance and Goal remain open.
+
+One new idle-connected Access-expiry native case now passes on the same immutable
+custom Core candidate. After one exact projection, the Worker-side client sends
+no further frame, mutates no grant and makes no direct expiry call. The persisted
+Agents schedule closes cleanly with 1008 `SESSION_AUTHORITY_STALE`, ready state 3,
+31 ms after the rounded schedule. Initial RPC arrives 2,741 ms before expiry;
+the exact grant row and completed stage 18/revision 19/counts 18 remain unchanged.
+Child exit 0/null signal and resolved disposal pass. The
+[qualification record](r05-local-native-qualification-2026-10-09.md#connected-access-expiry--one-idle-socket-native-case)
+owns scope, source hashes and receipts. This closes only the added local
+connected-expiry case; signed public Access, browser, hibernation, full #334,
+scientific/selected-provider/official-build/live/release acceptance stay open.
+
+Darwin completed the separate exact-four Go2/high source audit with actual
+owning-context metadata and hash verification. Root authored the new harness
+after the Go2 cleanup/source writers were stopped without deliverables following
+PowerShell/path/scope errors. Their three temporary command probes (1,585 bytes)
+were reversibly archived under `.codex-archive/20261010T014633Z-go2-shell-probes`.
+Raw source-review inference is kept separate from measured native behavior.
+All 90 backend descendants are closed and archived; this trial establishes no
+comparative model superiority. Fresh seven-worktree HEAD/status/ancestry and
+top-level generated-directory metadata preserve five heads absent from main and
+two dirty source trees (3/25 paths). Full cleanup remains incomplete.
+
+The documentation index's two missing R05 links are corrected in `edf0a0b1`;
+the changed index gate and whitespace pass. Its scoped README commit is released
+to the sole frontend publisher. PR #327 reconciliation finds eight exact and
+sixteen changed documentation blobs; substantive preservation review remains
+pending, so the historical branch is neither merged wholesale nor closed.
+No Issue/PR or Goal is completed by these checkpoints.

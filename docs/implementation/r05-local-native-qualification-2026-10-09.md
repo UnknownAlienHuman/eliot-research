@@ -545,3 +545,40 @@ root variant qualifies only the earlier expiry boundary described here. Signed
 public Access/JWT, connected timers, browser, two-tab, hibernation, whole #334,
 scientific/provider/live and release remain open. No implementation status or
 Issue/PR is promoted. The project Goal remains active.
+
+## Connected Access expiry — one idle-socket native case
+
+One added case passes against the same immutable `2607583d` custom Core
+candidate, actual `ResearchSession`/`ResearchWorkflow`, local migrated D1/R2 and
+internal confirmatory owner/policy/grant fixture. The Worker-side client receives
+one exact completed-operation projection RPC before its selected three-second
+Access deadline, then sends no further frame, changes no grant and invokes no
+expiry callback. The product uses its persisted Agents schedule to close the
+idle connection. Node receives only HTTP JSON.
+
+The initial RPC is observed 2,741 ms before Access expiry. Closure is observed
+31 ms after the product's deadline rounded up to whole seconds, with code 1008,
+reason `SESSION_AUTHORITY_STALE`, ready state 3 and a clean close. The exact grant
+full row remains unchanged with research use allowed. The completed operation
+remains stage 18/revision 19 with 18 attempts and 18 checkpoints. Child exits 0
+without a signal and `Miniflare.dispose()` resolves. These are selected
+business/grant readbacks, not an all-table or transcript zero-effects proof.
+
+Fresh Go2 Step 5/high exact-four source ACCEPT and persisted owning-context/model
+verification precede the single native attempt. The parent checks the four new
+and four retained harness hashes before spawn and after child exit, before
+receipt acceptance; an existing process or receipt prevents unchanged replay.
+The private runtime differs from the accepted base only in its isolated resource
+tag and probe path. All 346 unique seed input records match the retained baseline.
+Final receipt/hash readback runs without a native repeat; seven committed Session
+modules match the candidate at local frontier `edf0a0b1`. This is not whole
+current-Core equality or official Wrangler emission. Tool versions, compatibility
+date and flags remain those recorded for the earlier Worker-side case.
+
+Private receipts are `core-product-session-deadline-{source-audit,receipt,process}-20261010.json`
+and `session-deadline-completion-proof-20261010.json`. The raw review's routing
+identity is checked against persisted metadata by root; root writes the audit
+receipt. Source inference about exclusive closure causes is not broader runtime
+instrumentation. No hibernation/eviction, browser/reconnect/two-tab, signed public
+Access/JWT, complete #334, scientific/provider/official-build/live/release result
+is established. `IMPLEMENTED_NOT_LIVE`, original Issue/PR and Goal remain open.
