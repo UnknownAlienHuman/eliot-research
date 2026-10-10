@@ -34,7 +34,7 @@ html, body, #root { margin: 0; min-height: 100%; }
   .er-shell, .er-shell[data-destination="sources"], .er-shell[data-destination="studio"], .er-shell[data-destination="connections"] { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; grid-template-areas: "header" "reading" "nav"; gap: var(--eliot-space-inline-control); padding: var(--eliot-space-inline-control); }
   .er-shell-header { gap: var(--eliot-space-inline-control); }
   .er-shell-preview { flex-basis: 100%; }
-  .er-shell-nav { flex-direction: row; justify-content: space-around; }
+  .er-shell-nav { flex-direction: row; justify-content: space-around; gap: 0; margin-inline: calc(-1 * var(--eliot-space-block-control)); }
   .er-shell-destination { flex: 1; min-width: 0; }
   .er-shell-reading, #privacy-guard, .er-access { padding: var(--eliot-space-panel); }
 }
