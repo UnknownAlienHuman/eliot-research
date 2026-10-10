@@ -94,9 +94,11 @@ export interface ConnectionsFeatureProps {
   readonly readiness?: ConnectionsReadiness | undefined;
   readonly diagnostic?: ConnectionsDiagnostic | undefined;
   readonly onRefresh?: () => void;
+  readonly pendingActions?: Partial<Record<FeatureAction, boolean>>;
   readonly onSignIn?: () => void;
   readonly onRequestAccess?: () => void;
   readonly onRetry?: () => void;
+  readonly onRetryRow?: (row: RowId) => void;
   readonly onOpenDiagnostics?: () => void;
 }
 
@@ -108,6 +110,78 @@ type FeatureAction = "signIn" | "requestAccess" | "retry" | "diagnostics" | "ref
 const ROW_IDS: readonly RowId[] =
   ["health", "session", "grant", "providerConfig", "projectModel",
     "providerModelUse", "researchReadiness", "googleTransport", "diagnostic"];
+
+/**
+ * A state that reads as connected while nothing was performed is a false connection, so
+ * every finish the decoder admits is mapped to words that claim only what happened.
+ */
+const TRANSPORT_TEXT: Record<ConnectionsGoogleTransport, Record<"en" | "ru", string>> = {
+  "disabled": { en: "No Google routing is enabled on this deployment", ru: "Маршрутизация Google отключена в этом развёртывании" },
+  "gemini-mcp": { en: "Google routing uses the Gemini MCP service", ru: "Маршрутизация Google использует сервис Gemini MCP" },
+  "drive-exchange": { en: "Google routing uses Google Drive Exchange", ru: "Маршрутизация Google использует обмен с Google Drive" },
+};
+
+/** The session client classes the decoder admits, described without asserting trust. */
+const CLIENT_CLASS_TEXT: Record<string, Record<"en" | "ru", string>> = {
+  owner_pwa: { en: "Owner web application", ru: "Веб-приложение владельца" },
+  named_api_client: { en: "Named API client", ru: "Именованный API-клиент" },
+  trusted_agent: { en: "Trusted agent", ru: "Доверенный агент" },
+  federation_client: { en: "Federation client", ru: "Федеративный клиент" },
+};
+
+/** Grant lifecycle from the contract. REVOKED is stated as revoked, never as missing. */
+const GRANT_STATE_TEXT: Record<ConnectionsGrantState, Record<"en" | "ru", string>> = {
+  ACTIVE: { en: "Active", ru: "Действует" },
+  REVOKED: { en: "Revoked", ru: "Отозвано" },
+};
+
+const PROVIDER_STATUS_TEXT: Record<ConnectionsProviderStatus, Record<"en" | "ru", string>> = {
+  pending: { en: "Configuration started, still being written", ru: "Настройка начата, ещё записывается" },
+  configured_not_qualified: { en: "Configured, not yet qualified", ru: "Настроено, ещё не квалифицировано" },
+  outcome_unknown: { en: "Configuration outcome is not confirmed", ru: "Результат настройки не подтверждён" },
+  not_configured: { en: "No provider key configured", ru: "Ключ поставщика не настроен" },
+};
+
+const MODEL_USE_STATE_TEXT: Record<ConnectionsModelUseState, Record<"en" | "ru", string>> = {
+  accepted: { en: "Operation accepted, work has not finished", ru: "Операция принята, работа не завершена" },
+  preparing: { en: "Preparation in progress", ru: "Идёт подготовка" },
+  qualifying: { en: "Qualification in progress", ru: "Идёт квалификация" },
+  importing: { en: "Configuration import in progress", ru: "Идёт импорт настройки" },
+  selected: { en: "Configuration selected", ru: "Настройка выбрана" },
+  blocked: { en: "Operation blocked", ru: "Операция заблокирована" },
+  uncertain: { en: "Operation outcome is not confirmed", ru: "Результат операции не подтверждён" },
+  conflict: { en: "Operation conflicted with a newer selection", ru: "Операция конфликтует с более новой выборкой" },
+};
+
+const MODEL_USE_PHASE_TEXT: Record<ConnectionsModelUsePhase, Record<"en" | "ru", string>> = {
+  intent: { en: "Requested", ru: "Запрошено" },
+  native_prepare: { en: "Preparing the provider service", ru: "Подготовка сервиса поставщика" },
+  free_price_check: { en: "Checking the price is free", ru: "Проверяем, что стоимость нулевая" },
+  native_qualify: { en: "Qualifying the provider service", ru: "Квалификация сервиса поставщика" },
+  configuration_import: { en: "Importing the configuration", ru: "Импорт настройки" },
+  selection_readback: { en: "Reading the selection back", ru: "Читаем выбранную настройку" },
+  complete: { en: "Finished", ru: "Завершено" },
+};
+
+const QUALIFICATION_TEXT: Record<ConnectionsQualificationState, Record<"en" | "ru", string>> = {
+  qualified: { en: "Model qualified", ru: "Модель квалифицирована" },
+  qualification_required: { en: "Qualification required", ru: "Требуется квалификация" },
+};
+
+const DIAGNOSTIC_STATUS_TEXT: Record<ConnectionsDiagnosticStatus, Record<"en" | "ru", string>> = {
+  CONFIRMED: { en: "Client call observed, checked ", ru: "Вызов клиента зафиксирован, проверено " },
+  EXPIRED: { en: "Observation expired", ru: "Наблюдение истекло" },
+  ISSUED: { en: "Challenge issued, awaiting callback", ru: "Вызов выдан, ожидается ответ" },
+};
+
+const READINESS_REASON_TEXT: Record<ConnectionsReadinessReason, Record<"en" | "ru", string>> = {
+  CONFIGURATION_NOT_READY: { en: "the configuration is incomplete", ru: "настройка неполная" },
+  MODEL_TRANSPORT_UNAVAILABLE: { en: "the model transport is unavailable", ru: "транспорт модели недоступен" },
+  QUALIFICATION_PROOFS_CURRENT: { en: "the qualification proofs are current", ru: "свидетельства квалификации актуальны" },
+  QUALIFICATION_RENEWAL_AT_RUN: { en: "qualification is renewed at the moment the run starts", ru: "квалификация обновляется в момент запуска" },
+  QUALIFICATION_RENEWAL_READ_TOKEN_REQUIRED: { en: "renewal needs a read token that was not supplied", ru: "для обновления нужен токен чтения, который не передан" },
+  QUALIFICATION_UNAVAILABLE: { en: "qualification is unavailable", ru: "квалификация недоступна" },
+};
 
 export const IDLE_QUERIES: ConnectionsRowQueries = {
   health: "idle",
@@ -203,9 +277,6 @@ function en(locale: "en" | "ru", english: string, russian: string): string {
   return locale === "en" ? english : russian;
 }
 
-const PENDING_USE: readonly ConnectionsModelUseState[] =
-  ["accepted", "preparing", "qualifying", "importing"];
-
 /** Project one row from its own query state and its own fact. */
 function project(
   locale: "en" | "ru",
@@ -217,7 +288,7 @@ function project(
 ): RowView {
   const text = TEXT[locale];
   if (query === "idle") {
-    return { id, label: LABEL[locale][id], detail: text.idle, tone: "neutral", action: "retry" };
+    return { id, label: LABEL[locale][id], detail: text.idle, tone: "neutral", action: null };
   }
   if (query === "loading") {
     return { id, label: LABEL[locale][id], detail: text.loading, tone: "neutral", action: null };
@@ -237,29 +308,27 @@ function projectHealth(locale: "en" | "ru", health: ConnectionsHealth | undefine
 
 function projectSession(locale: "en" | "ru", session: ConnectionsSession | undefined): string | null {
   if (session === undefined) return null;
-  return en(locale, "Signed in as owner", "Вход выполнен");
+  const described = CLIENT_CLASS_TEXT[session.client_class];
+  // The client class names who is signed in. An unknown class is stated as unrecognised rather
+  // than described as the owner client, because a wrong identity claim is a false connection.
+  return described === undefined
+    ? en(locale, "Signed in, client type not recognised", "Выполнен вход, тип клиента не распознан")
+    : en(locale, "Signed in from " + described.en, "Выполнен вход из " + described.ru);
 }
 
 function projectGrants(locale: "en" | "ru", grants: readonly ConnectionsGrant[] | undefined): string | null {
   if (grants === undefined) return null;
+  // Both lifecycle states are counted, so a REVOKED grant is never merged into a missing one.
   const active = grants.filter(function (grant) { return grant.state === "ACTIVE"; }).length;
+  const revoked = grants.length - active;
   return en(locale,
-    "Active grants: " + active,
-    "Активных разрешений: " + active);
+    GRANT_STATE_TEXT.ACTIVE.en + ": " + active + ", " + GRANT_STATE_TEXT.REVOKED.en + ": " + revoked,
+    GRANT_STATE_TEXT.ACTIVE.ru + ": " + active + ", " + GRANT_STATE_TEXT.REVOKED.ru + ": " + revoked);
 }
 
 function projectProviderConfig(locale: "en" | "ru", config: ConnectionsProviderConfig | undefined): string | null {
   if (config === undefined) return null;
-  if (config.status === "pending") {
-    return en(locale, "Configuration pending", "Настройка ожидается");
-  }
-  if (config.status === "configured_not_qualified") {
-    return en(locale, "Configured, not yet qualified", "Настроено, ещё не квалифицировано");
-  }
-  if (config.status === "outcome_unknown") {
-    return en(locale, "Configuration outcome unknown", "Результат настройки неизвестен");
-  }
-  return en(locale, "Not configured", "Не настроено");
+  return PROVIDER_STATUS_TEXT[config.status][locale];
 }
 
 function projectProjectModel(locale: "en" | "ru", model: ConnectionsProjectModel | undefined): string | null {
@@ -267,30 +336,19 @@ function projectProjectModel(locale: "en" | "ru", model: ConnectionsProjectModel
   if (model.selected === null) {
     return en(locale, "No model selected", "Модель не выбрана");
   }
-  if (model.selected.qualification_state === "qualified") {
-    return en(locale, "Model qualified", "Модель квалифицирована");
-  }
-  if (model.selected.qualification_state === "qualification_required") {
-    return en(locale, "Qualification required", "Требуется квалификация");
-  }
-  return en(locale, "Model selected, qualification unknown", "Модель выбрана, квалификация неизвестна");
+  return QUALIFICATION_TEXT[model.selected.qualification_state][locale];
 }
 
 function projectProviderModelUse(locale: "en" | "ru", use: ConnectionsProviderModelUse | undefined): string | null {
   if (use === undefined) return null;
+  // State and phase are separate facts: a selected operation still reports its phase, so the
+  // row never collapses two values into one ambiguous word.
+  const state = MODEL_USE_STATE_TEXT[use.state][locale];
+  const phase = MODEL_USE_PHASE_TEXT[use.phase][locale];
   if (use.state === "selected" && use.phase === "complete") {
-    return en(locale, "Operation complete", "Операция завершена");
+    return state;
   }
-  if (use.state === "blocked" || use.state === "conflict") {
-    return en(locale, "Operation blocked", "Операция заблокирована");
-  }
-  if (use.state === "uncertain") {
-    return en(locale, "Operation outcome uncertain", "Результат операции неизвестен");
-  }
-  if (PENDING_USE.indexOf(use.state) >= 0) {
-    return en(locale, "Operation in progress", "Операция выполняется");
-  }
-  return en(locale, "Operation accepted", "Операция принята");
+  return state + en(locale, ", stage: ", ", этап: ") + phase;
 }
 
 /**
@@ -300,7 +358,7 @@ function projectProviderModelUse(locale: "en" | "ru", use: ConnectionsProviderMo
  */
 function projectReadiness(locale: "en" | "ru", readiness: ConnectionsReadiness | undefined): string | null {
   if (readiness === undefined) return null;
-  const reason = readiness.readiness_reason;
+  const reason = READINESS_REASON_TEXT[readiness.readiness_reason][locale];
   if (readiness.run_readiness === "ready") {
     return en(locale, "Ready to run", "Готово к запуску");
   }
@@ -329,20 +387,13 @@ function projectGoogleTransport(locale: "en" | "ru", input: ConnectionsRowInput)
   if (transport === "disabled") {
     return en(locale, "Routing disabled", "Маршрутизация отключена");
   }
-  return en(locale, "Routing: " + transport, "Маршрутизация: " + transport);
+  return TRANSPORT_TEXT[transport][locale];
 }
 
 function projectDiagnostic(locale: "en" | "ru", diagnostic: ConnectionsDiagnostic | undefined): string | null {
   if (diagnostic === undefined) return null;
-  if (diagnostic.status === "CONFIRMED") {
-    return en(locale,
-      "Client call observed, checked " + diagnostic.observed_at,
-      "Вызов клиента зафиксирован, проверено " + diagnostic.observed_at);
-  }
-  if (diagnostic.status === "EXPIRED") {
-    return en(locale, "Observation expired", "Наблюдение истекло");
-  }
-  return en(locale, "Challenge issued, awaiting callback", "Вызов выдан, ожидается ответ");
+  const label = DIAGNOSTIC_STATUS_TEXT[diagnostic.status][locale];
+  return diagnostic.status === "CONFIRMED" ? label + diagnostic.observed_at : label;
 }
 
 function deriveRows(locale: "en" | "ru", queries: ConnectionsRowQueries, input: ConnectionsRowInput): readonly RowView[] {
@@ -412,9 +463,11 @@ export function ConnectionsFeature({
   readiness,
   diagnostic,
   onRefresh,
+  pendingActions,
   onSignIn,
   onRequestAccess,
   onRetry,
+  onRetryRow,
   onOpenDiagnostics,
 }: ConnectionsFeatureProps) {
   const [disclosed, setDisclosed] = useState<boolean>(false);
@@ -438,10 +491,11 @@ export function ConnectionsFeature({
     retry: onRetry,
     diagnostics: onOpenDiagnostics,
   };
-  const rowAction = function (action: RowAction): (() => void) | undefined {
+  const primaryAction = ACTION_ORDER.find(action => handlers[action] !== undefined);
+  const rowAction = function (action: RowAction, id: RowId): (() => void) | undefined {
     if (action === "signIn") return onSignIn;
     if (action === "requestAccess") return onRequestAccess;
-    if (action === "retry") return onRetry;
+    if (action === "retry") return queries[id] === "failed" ? onRetryRow ? () => onRetryRow(id) : onRetry : undefined;
     if (action === "diagnostics") return onOpenDiagnostics;
     return undefined;
   };
@@ -457,10 +511,10 @@ export function ConnectionsFeature({
               <div className="connections-feature__row-content">
               <p className="connections-feature__detail" data-tone={entry.tone}>{entry.detail}</p>
               {/* An unsupported action is omitted entirely, never a decorative disabled control. */}
-              {entry.action === null || rowAction(entry.action) === undefined ? null : (
+              {entry.action === null || rowAction(entry.action, entry.id) === undefined ? null : (
                 <Button
                   variant="text"
-                  onClick={rowAction(entry.action)}
+                  onClick={rowAction(entry.action, entry.id)}
                 >
                   {ACTION_LABEL[locale][entry.action]}
                 </Button>
@@ -485,7 +539,7 @@ export function ConnectionsFeature({
           const run = handlers[action];
           if (run === undefined) return null;
           return (
-            <Button key={action} variant="primary" loading={queries.health === "loading"} onClick={run}>
+            <Button key={action} variant={action === primaryAction ? "primary" : "tonal"} loading={pendingActions?.[action] ?? false} onClick={run}>
               {ACTION_LABEL[locale][action]}
             </Button>
           );

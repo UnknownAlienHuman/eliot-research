@@ -1,5 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, userEvent, within } from "storybook/test";
+import { expect, fn, userEvent, within } from "storybook/test";
 import {
   ConnectionsFeature, IDLE_QUERIES,
   type ConnectionsFeatureProps, type ConnectionsRowQueries,
@@ -265,7 +265,7 @@ export const ReadinessRenewalIsNotBlocked: Story = {
   args: { ...ALL_LOADED, readiness: READINESS_LAZY },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    expect(canvas.getByText("Renewal at run: QUALIFICATION_RENEWAL_AT_RUN")).toBeInTheDocument();
+    expect(canvas.getByText("Renewal at run: qualification is renewed at the moment the run starts")).toBeInTheDocument();
     expect(canvas.queryByText("Blocked")).not.toBeInTheDocument();
   },
 };
@@ -274,7 +274,7 @@ export const ReadinessBlocked: Story = {
   args: { ...ALL_LOADED, readiness: READINESS_BLOCKED },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    expect(canvas.getByText("Blocked, CONFIGURATION_NOT_READY, fields: 2")).toBeInTheDocument();
+    expect(canvas.getByText("Blocked, the configuration is incomplete, fields: 2")).toBeInTheDocument();
   },
 };
 
@@ -308,7 +308,7 @@ export const GoogleTransportIsRoutingOnly: Story = {
   args: ALL_LOADED,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    expect(canvas.getByText("Routing: gemini-mcp")).toBeInTheDocument();
+    expect(canvas.getByText("Google routing uses the Gemini MCP service")).toBeInTheDocument();
     const text = canvasElement.textContent ?? "";
     expect(text.indexOf("accounts.google.com")).toBe(-1);
     expect(text.indexOf("authorizationUrl")).toBe(-1);
@@ -323,5 +323,22 @@ export const DetailsJourney: Story = {
     expect(canvas.queryByText("Confirmed")).not.toBeInTheDocument();
     await userEvent.click(canvas.getByRole("button", { name: "Details" }));
     await expect(canvas.getByText("Confirmed")).toBeInTheDocument();
+  },
+};
+
+export const TargetedRetryHierarchy: Story = {
+  args: { ...ALL_LOADED, queries: allQueries({ providerConfig: 'failed' }), onRefresh: fn(), onRetry: fn(), onRetryRow: fn(), onOpenDiagnostics: fn() },
+  play: async ({ canvasElement, args }) => {
+    const canvas = within(canvasElement);
+    expect(canvasElement.querySelectorAll('.connections-feature__actions .er-button--primary')).toHaveLength(1);
+    const row = canvas.getByText('Model provider configuration').closest('li');
+    if (row === null) throw new Error('Provider row did not render');
+    await userEvent.click(within(row).getByRole('button', { name: 'Check again' }));
+    expect(args.onRetryRow).toHaveBeenCalledTimes(1);
+    expect(args.onRetryRow).toHaveBeenCalledWith('providerConfig');
+    expect(args.onRefresh).not.toHaveBeenCalled();
+    expect(args.onRetry).not.toHaveBeenCalled();
+    expect(args.onOpenDiagnostics).not.toHaveBeenCalled();
+    expect(canvasElement.querySelectorAll('[role="status"], [aria-live]')).toHaveLength(0);
   },
 };
