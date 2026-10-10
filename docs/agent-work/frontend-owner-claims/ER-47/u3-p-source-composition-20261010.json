@@ -24,7 +24,12 @@
       "commit_sha": "ff85ee4827366bac620750010f2e648c51d3bea9"
     }
   ],
-  "state": "ACTIVE",
-  "evidence_refs": [],
-  "blocker_refs": []
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "git:637ec07f7133c7f1c1967de265f60da384df8873",
+    "tests/ui-owner/receipts/u3-x/source-context-and-report-module-20261010.json"
+  ],
+  "blocker_refs": [],
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "tests/ui-owner/receipts/u3-x/source-context-and-report-module-20261010.json"
 }

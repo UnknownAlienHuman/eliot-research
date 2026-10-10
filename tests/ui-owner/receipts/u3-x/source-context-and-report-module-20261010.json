@@ -1,0 +1,769 @@
+{
+  "protocol": "eliotr.frontend-module-source-delivery.v1",
+  "status": "ACCEPTED_BOUNDED_SOURCE_CONTEXT_AND_REPORT_MODULE",
+  "module": "Sources context ordering, truthful scope load states, report reading spacing and exact Vite tooling boundary",
+  "source_commit": "637ec07f7133c7f1c1967de265f60da384df8873",
+  "claim_id": "u3-p-source-composition-20261010",
+  "claim_commit": "49a240194b8bca036671532cb3c4fc2aa9eb21e7",
+  "predecessor_refs": [
+    {
+      "checkpoint_id": "C2-P",
+      "commit_sha": "3e40e1b8956c140196d658cbfb337cafd8cc1c8c",
+      "approval_ref": "tests/ui-owner/receipts/u1-d/client-source-catalog.json"
+    },
+    {
+      "checkpoint_id": "U2-S",
+      "commit_sha": "ff85ee4827366bac620750010f2e648c51d3bea9"
+    }
+  ],
+  "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
+  "manager_identity": "frontend-manager",
+  "manager_context_id": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "source_inputs": [
+    {
+      "path": "packages/ui/src/features/sources/projects/ProjectsLibraryFeature.tsx",
+      "git_blob": "96dba6f600124c88b3196f4106cbe909d452c8af",
+      "sha256": "762fb433ac51ed963154885382c4ac50c2bd19e803a4f50a3347b3069d493237",
+      "mode": "100644"
+    },
+    {
+      "path": "packages/ui/src/features/sources/projects/projects-library.css",
+      "git_blob": "23b0db51d6d524b072454ab40ebaaf70fb2e4142",
+      "sha256": "10c36ca8ce5efeeeb12a25e1e7c231fb2c79106c1297d3ab7b66bdfbe9809732",
+      "mode": "100644"
+    },
+    {
+      "path": "apps/eliotr-web/src/app/LiveWorkspace.tsx",
+      "git_blob": "e6dda0a61513cd8bed8300259bfcd8df4ac62ec1",
+      "sha256": "69d1a6527d4c5814b8626c3c403b55535d1acf199f5818161c130ed3ab8f13b8",
+      "mode": "100644"
+    },
+    {
+      "path": "apps/eliotr-web/src/app/NextQuestionScope.tsx",
+      "git_blob": "a1010104e146ed3556be5432ad14e05f5b1a838c",
+      "sha256": "6fe74e1fc85cee5fe994fa11d35b35a44acdaaa64d2c8e3a42a55f8525445ccb",
+      "mode": "100644"
+    },
+    {
+      "path": "packages/ui/src/features/research/report/report.css",
+      "git_blob": "1fdd34fd77c195ecdb58a0c38043223001362659",
+      "sha256": "bc4558f3228fc5989d48dd7fc8f73593ae22258e409c6eaecd8b381c5e947a8c",
+      "mode": "100644"
+    },
+    {
+      "path": "apps/eliotr-web/src/app/ResearchPreview.tsx",
+      "git_blob": "f38891066dd1de3b079cd18b3e2994f35677d4e3",
+      "sha256": "d8f495dec9bac170a132d7889370261c4e67c8b3fdd2baa95f748ba1a6ade28f",
+      "mode": "100644"
+    },
+    {
+      "path": "scripts/check-boundaries.mjs",
+      "git_blob": "0125ff0ccf7f6afaa256373db1f7e5ca239743b3",
+      "sha256": "32f0c7309b2d796f42cdf1b1cf8b563c9af184d20dfab98526b5bf937e568637",
+      "mode": "100644"
+    }
+  ],
+  "qualification": [
+    {
+      "path": ".eliotr-state/frontend-sources-composition-20261010/compiler.json",
+      "sha256": "27328b2bc444b6c6e2062a26a0ee36e5d577ede5a89120232e2b04340bcc9a94"
+    },
+    {
+      "path": ".eliotr-state/frontend-sources-composition-20261010/compiler-input-equivalence.json",
+      "sha256": "11fdf21acd34eb8373947c050213ff14100e91fef3bbc6b918a8dae199e8604d"
+    },
+    {
+      "path": ".eliotr-state/frontend-sources-composition-20261010/lint.json",
+      "sha256": "71e8e1c4ff8be831c5c0945c4d700042630e11de7f074c59a7a8c4e72945d405"
+    },
+    {
+      "path": ".eliotr-state/frontend-sources-composition-20261010/research-journey.log",
+      "sha256": "8b7c3e55fada2b32e187f5d04923c69b34f836233ab5351224e6f0731a9d475a"
+    },
+    {
+      "path": ".eliotr-state/frontend-sources-composition-20261010/sources-browser.json",
+      "sha256": "1bf86a67abd07272df2755df3e84f7b1f54ca262211a5d50cf4d7b36d165ba35"
+    },
+    {
+      "path": ".eliotr-state/frontend-sources-composition-20261010/report-browser.json",
+      "sha256": "1966b3d42b57e8a8aeb619dc59b8ac0459202ef8fab28d10ee46d071a07313f6"
+    },
+    {
+      "path": ".eliotr-state/frontend-sources-composition-20261010/boundaries.log",
+      "sha256": "a1aad74e5695c873ad8a3076ce135ad8293b4c5025ee024d98a0e4ee61a02d2e"
+    },
+    {
+      "path": ".eliotr-state/frontend-sources-composition-20261010/boundary-lint.json",
+      "sha256": "67695330dc003ff4232f80c95b5e17dd5a687dde0d169a39146fee70ae1dd5ee"
+    },
+    {
+      "path": ".eliotr-state/frontend-sources-composition-20261010/boundary-lint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  ],
+  "compiler": {
+    "version": "6.0.3",
+    "source": "0602fd91f368a29129dc8ff59434031de73497c2",
+    "read_inputs": 1135,
+    "in_memory_outputs": 1066,
+    "diagnostics": 0,
+    "scope": "Full owning web/UI/client/contracts solution; all tracked source/config read from immutable Git target; shared backend source WIP and foreign untracked source excluded; installed external/generated inputs individually hashed. Outputs only in memory, no build/install/dist/index writes.",
+    "input_coherence": "PASS_RECORDED_COMPILER_INPUT_COHERENCE",
+    "fully_virtual_inventory": "NOT_CLAIMED; exact recorded roots/aliases verified separately"
+  },
+  "sources_browser": {
+    "cases": 10,
+    "summary": {
+      "cases": 10,
+      "composition_viewports": "EN1440/RU390 light+dark",
+      "native_keyed_focus_once": 1,
+      "scope_copy": [
+        "choose",
+        "pending",
+        "error",
+        "missing"
+      ],
+      "old_18_suite_rerun": false
+    },
+    "limits": [
+      "Ready positive libraries preseeded; no HTTP/schema/backend/auth qualification",
+      "Pending/error are actual Query with injected synthetic ports",
+      "Missing case is actual component prop fallback, not a successful undefined Query page",
+      "Dark coverage is ready/unselected slot composition; pending/error/missing cases use light theme",
+      "No OS pointer-only, route/privacy/refusal reruns, full a11y/assistive technology, Worker/CSP/parity/live or FINAL-UI acceptance"
+    ],
+    "manual_review": {
+      "status": "ACCEPT_BOUNDED_PRESENTATION",
+      "screenshots": [
+        "new-slot-en-1440-light.png",
+        "new-slot-ru-390-dark.png"
+      ],
+      "observations": [
+        "Project before dependent import/scope",
+        "compact import control",
+        "long Russian narrow viewport without horizontal overflow",
+        "clear reading hierarchy; source scope intentionally expanded by qualifier"
+      ],
+      "physical_screenreader": "UNASSESSED"
+    }
+  },
+  "report_browser": {
+    "status": "PASS",
+    "source_commit": "637ec07f7133c7f1c1967de265f60da384df8873",
+    "browser": "155.0.8059.40",
+    "cases": 4,
+    "inputs": [
+      {
+        "path": "apps/eliotr-web/src/app/ReportPanel.tsx",
+        "sha256": "8b787ba7d6e90279744179ffdd4678914ad17163fc8d13bdf99e7b337c8bb1be"
+      },
+      {
+        "path": "apps/eliotr-web/src/query/reports.ts",
+        "sha256": "9f3a7be76f1b83021d6f8d7b65127e54fa24af4848eaa560f9eabd4f82eee04e"
+      },
+      {
+        "path": "apps/eliotr-web/src/app/runtime.ts",
+        "sha256": "e7607470e14d53a21603754c032e4622f7f2637fe96ea690010e6e35eb70b303"
+      },
+      {
+        "path": "apps/eliotr-web/src/app/privacy.ts",
+        "sha256": "a5c19fec9a2becbaca1094ab906149171757322acb91039ca7fea96c219b9409"
+      },
+      {
+        "path": "apps/eliotr-web/src/query/client.ts",
+        "sha256": "02225ccaee6be6e85e64732875acde981f78eb979d9a849e65649cfa106ab495"
+      },
+      {
+        "path": "apps/eliotr-web/src/app/Shell.tsx",
+        "sha256": "1394492700b65c4be318b64b767f55de843870315ba228e03a3bdd470f6bcd4e"
+      },
+      {
+        "path": "apps/eliotr-web/src/app/shell.css",
+        "sha256": "cf166b3cbf2277f56cb64bf32cc86aba72846bb5cfc500a68c2c2f9770e4b382"
+      },
+      {
+        "path": "apps/eliotr-web/src/app/live-workspace.css",
+        "sha256": "32d1d9b05cac4390dd2a21d1e6920fb4df6e1ba7d01fa022efcb471e3d0d61bc"
+      },
+      {
+        "path": "packages/ui/src/features/sources/document/SafeMarkdown.tsx",
+        "sha256": "39b1f18bdbe644e88c034760c97af1f4cc26ca776fc4f458c765f31a2942f657"
+      },
+      {
+        "path": "packages/ui/src/features/sources/document/document.css",
+        "sha256": "93ce66805490301ce9f78621dc2f241ea95fcaa819a199774404bc156236bd1d"
+      },
+      {
+        "path": "packages/ui/src/features/research/report/report.css",
+        "sha256": "bc4558f3228fc5989d48dd7fc8f73593ae22258e409c6eaecd8b381c5e947a8c"
+      },
+      {
+        "path": "packages/ui/src/tokens/theme.css",
+        "sha256": "a740bff7be0ce65b4bbab772af638dd7fedfc6d1cce2fb9526de1434c42e4183"
+      },
+      {
+        "path": ".eliotr-state/frontend-ui-proposals/report-body-harness-20261010/root-report-body-harness-v2.jsx",
+        "sha256": "58a2b6a07d1b656aa615f6537e758d728edfc17c110f6591625e16b52ad53282"
+      },
+      {
+        "path": ".eliotr-state/frontend-sources-composition-20261010/report-body-harness-v2.html",
+        "sha256": "16f1b890de5be23c791de74200afa6868fcf67e42ec51d4a61e3cf245efd20a7"
+      }
+    ],
+    "inputs_stable": true,
+    "results": [
+      {
+        "case": "report-en-1440-light",
+        "pass": true,
+        "locale": "en",
+        "width": 1440,
+        "theme": "light",
+        "measured": {
+          "blocks": [
+            {
+              "tag": "H3",
+              "margin": 0,
+              "gap": null,
+              "overflow": false
+            },
+            {
+              "tag": "P",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "P",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "H4",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "P",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "H3",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "P",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "P",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "H4",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "P",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "H5",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "P",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            }
+          ],
+          "rowGap": 8,
+          "panelToken": 16,
+          "fontSize": "18px",
+          "lineHeight": "28px",
+          "bodyWidth": 760,
+          "documentOverflow": false,
+          "paneOverflow": false,
+          "bodyOverflow": false,
+          "sectionFocused": true,
+          "bodyHasEnglish": true,
+          "bodyHasRussian": true,
+          "calls": [
+            {
+              "path": "/api/v1/system/health",
+              "method": "GET"
+            },
+            {
+              "path": "/api/v1/system/session",
+              "method": "GET"
+            },
+            {
+              "path": "/api/v1/research/artifact/report-fixture%3A1",
+              "method": "GET"
+            },
+            {
+              "path": "/api/v1/research/artifact/report-fixture%3A1",
+              "method": "GET"
+            },
+            {
+              "path": "/api/v1/research/artifact/report-fixture%3A1/sections/section-1%3A1",
+              "method": "GET"
+            },
+            {
+              "path": "/api/v1/research/artifact/report-fixture%3A1/sections/section-1%3A1/citations",
+              "method": "GET"
+            }
+          ],
+          "bodySha256": "93c135513605fe85a08a0260d6c8a18fbc1745c8bb9bc5ce7af43b1219bd0e68",
+          "bodyLength": 3176
+        },
+        "page_errors": [],
+        "external_requests": [],
+        "screenshot": "report-en-1440-light.png",
+        "sha256": "fc4f940353c3cb83f329d0c1c2ddf518c9d4e8190113f669d2ee8b066dece095"
+      },
+      {
+        "case": "report-en-1440-dark",
+        "pass": true,
+        "locale": "en",
+        "width": 1440,
+        "theme": "dark",
+        "measured": {
+          "blocks": [
+            {
+              "tag": "H3",
+              "margin": 0,
+              "gap": null,
+              "overflow": false
+            },
+            {
+              "tag": "P",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "P",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "H4",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "P",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "H3",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "P",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "P",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "H4",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "P",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "H5",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "P",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            }
+          ],
+          "rowGap": 8,
+          "panelToken": 16,
+          "fontSize": "18px",
+          "lineHeight": "28px",
+          "bodyWidth": 760,
+          "documentOverflow": false,
+          "paneOverflow": false,
+          "bodyOverflow": false,
+          "sectionFocused": true,
+          "bodyHasEnglish": true,
+          "bodyHasRussian": true,
+          "calls": [
+            {
+              "path": "/api/v1/system/health",
+              "method": "GET"
+            },
+            {
+              "path": "/api/v1/system/session",
+              "method": "GET"
+            },
+            {
+              "path": "/api/v1/research/artifact/report-fixture%3A1",
+              "method": "GET"
+            },
+            {
+              "path": "/api/v1/research/artifact/report-fixture%3A1",
+              "method": "GET"
+            },
+            {
+              "path": "/api/v1/research/artifact/report-fixture%3A1/sections/section-1%3A1",
+              "method": "GET"
+            },
+            {
+              "path": "/api/v1/research/artifact/report-fixture%3A1/sections/section-1%3A1/citations",
+              "method": "GET"
+            }
+          ],
+          "bodySha256": "93c135513605fe85a08a0260d6c8a18fbc1745c8bb9bc5ce7af43b1219bd0e68",
+          "bodyLength": 3176
+        },
+        "page_errors": [],
+        "external_requests": [],
+        "screenshot": "report-en-1440-dark.png",
+        "sha256": "9bb90e874c660605d2af69661c46928ec67051f3a9fa6f89618215de96b881dc"
+      },
+      {
+        "case": "report-ru-390-light",
+        "pass": true,
+        "locale": "ru",
+        "width": 390,
+        "theme": "light",
+        "measured": {
+          "blocks": [
+            {
+              "tag": "H3",
+              "margin": 0,
+              "gap": null,
+              "overflow": false
+            },
+            {
+              "tag": "P",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "P",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "H4",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "P",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "H3",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "P",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "P",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "H4",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "P",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "H5",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "P",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            }
+          ],
+          "rowGap": 8,
+          "panelToken": 16,
+          "fontSize": "18px",
+          "lineHeight": "28px",
+          "bodyWidth": 326,
+          "documentOverflow": false,
+          "paneOverflow": false,
+          "bodyOverflow": false,
+          "sectionFocused": true,
+          "bodyHasEnglish": true,
+          "bodyHasRussian": true,
+          "calls": [
+            {
+              "path": "/api/v1/system/health",
+              "method": "GET"
+            },
+            {
+              "path": "/api/v1/system/session",
+              "method": "GET"
+            },
+            {
+              "path": "/api/v1/research/artifact/report-fixture%3A1",
+              "method": "GET"
+            },
+            {
+              "path": "/api/v1/research/artifact/report-fixture%3A1",
+              "method": "GET"
+            },
+            {
+              "path": "/api/v1/research/artifact/report-fixture%3A1/sections/section-1%3A1",
+              "method": "GET"
+            },
+            {
+              "path": "/api/v1/research/artifact/report-fixture%3A1/sections/section-1%3A1/citations",
+              "method": "GET"
+            }
+          ],
+          "bodySha256": "93c135513605fe85a08a0260d6c8a18fbc1745c8bb9bc5ce7af43b1219bd0e68",
+          "bodyLength": 3176
+        },
+        "page_errors": [],
+        "external_requests": [],
+        "screenshot": "report-ru-390-light.png",
+        "sha256": "6aafe842851ab27e47eb3f88e3d425ce4325e81992e5c14a131525eeba06b334"
+      },
+      {
+        "case": "report-ru-390-dark",
+        "pass": true,
+        "locale": "ru",
+        "width": 390,
+        "theme": "dark",
+        "measured": {
+          "blocks": [
+            {
+              "tag": "H3",
+              "margin": 0,
+              "gap": null,
+              "overflow": false
+            },
+            {
+              "tag": "P",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "P",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "H4",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "P",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "H3",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "P",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "P",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "H4",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "P",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "H5",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            },
+            {
+              "tag": "P",
+              "margin": 16,
+              "gap": 24,
+              "overflow": false
+            }
+          ],
+          "rowGap": 8,
+          "panelToken": 16,
+          "fontSize": "18px",
+          "lineHeight": "28px",
+          "bodyWidth": 326,
+          "documentOverflow": false,
+          "paneOverflow": false,
+          "bodyOverflow": false,
+          "sectionFocused": true,
+          "bodyHasEnglish": true,
+          "bodyHasRussian": true,
+          "calls": [
+            {
+              "path": "/api/v1/system/health",
+              "method": "GET"
+            },
+            {
+              "path": "/api/v1/system/session",
+              "method": "GET"
+            },
+            {
+              "path": "/api/v1/research/artifact/report-fixture%3A1",
+              "method": "GET"
+            },
+            {
+              "path": "/api/v1/research/artifact/report-fixture%3A1",
+              "method": "GET"
+            },
+            {
+              "path": "/api/v1/research/artifact/report-fixture%3A1/sections/section-1%3A1",
+              "method": "GET"
+            },
+            {
+              "path": "/api/v1/research/artifact/report-fixture%3A1/sections/section-1%3A1/citations",
+              "method": "GET"
+            }
+          ],
+          "bodySha256": "93c135513605fe85a08a0260d6c8a18fbc1745c8bb9bc5ce7af43b1219bd0e68",
+          "bodyLength": 3176
+        },
+        "page_errors": [],
+        "external_requests": [],
+        "screenshot": "report-ru-390-dark.png",
+        "sha256": "4d806826c456818ae77d6881c3b003e76dc87a0bba7586b4482cc836671d006e"
+      }
+    ],
+    "manual_review": "ACCEPT_BOUNDED_REPORT_BODY",
+    "scope": "Actual Shell/ReportPanel/SafeMarkdown protected Query and public section decoder with injected synthetic HTTP reads; one explicit section, bilingual body, EN1440/RU390 light/dark. Report-only CSS geometry and section focus. Citations deliberately unsupported; no evidence/export/mutation acceptance.",
+    "limits": [
+      "Synthetic health/session/body transport; no authenticated backend/Worker/live acceptance",
+      "No timeout/expiry or physical assistive technology qualification",
+      "No prior accepted report/citation/export suites rerun"
+    ],
+    "manual_observations": {
+      "screenshots": [
+        "report-en-1440-light.png",
+        "report-ru-390-dark.png"
+      ],
+      "reading_rhythm": "Actual direct blocks: first margin0; subsequent margin16 plus gridgap8 =24px, across all four cases",
+      "hierarchy": "h3/h4/h5 mapped Markdown inside actual ReportPanel; bilingual wrapping without horizontal overflow",
+      "section_focus": "Actual section h2 focused after explicit read",
+      "scope": "Rendered synthetic body; physical/access/backend acceptance pending"
+    },
+    "original_failures_retained": [
+      "report-browser-failure.json",
+      "report-fixture-startup-diagnostic.json",
+      "report-browser-failure-v2.json",
+      "report-fixture-failure-analysis.md"
+    ]
+  },
+  "story": {
+    "case": "Live Research Journey",
+    "passed": 1,
+    "unrelated_skipped": 9
+  },
+  "boundary": {
+    "change": "Only apps/eliotr-web/vite.config.ts -> node:fs in the exact HOST_TOOL_IMPORTS map",
+    "current_shared_boundary_check": "PASS",
+    "runtime_exception_added": false
+  },
+  "retained_evidence": [
+    "Prior published native chooser/focus/source truth module exact43b/b1a",
+    "Prior report/citation/export/erasure/import evidence at original scope"
+  ],
+  "scope": "New presentation composition, exact changed story consumer and report-only CSS; prior protected query/privacy/native callbacks unchanged. Fresh U3-P leaf completed; existing U4-M report claim and whole manager gates remain open.",
+  "initial_failure_preserved": "Private new browser runner CommonJS import failed before cases; original failure retained, product unchanged",
+  "pending": [
+    "Full U3-X/U4-X/U5-X/FINAL-UI review package",
+    "Remaining finite reader stale/privacy/foreign route cases",
+    "Research projection full canonical session binding",
+    "Authenticated application/HTTP/backend and generated Worker input/route/live parity",
+    "Physical accessibility and performance/U6"
+  ],
+  "tests_repeated": false,
+  "history": "Additive Git objects from published b1a; shared local9c/index/backend WIP preserved"
+}
