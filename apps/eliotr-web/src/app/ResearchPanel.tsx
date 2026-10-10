@@ -81,7 +81,7 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     write(old => old.intent?.key === intent.key ? { ...old, intent: { ...intent, phase: 'admitted', launch: result } } : old);
   };
   const ask = (question: string) => {
-    if (read().intent || running.current || !scopeCurrent || !isScopeCurrent() || !privacy.isCurrent(context) ||
+    if (read().intent || read().observedLaunch || running.current || !scopeCurrent || !isScopeCurrent() || !privacy.isCurrent(context) ||
       configuration.isError || configuration.isFetching || !configuration.data ||
       client.getQueryData(options.configuration().queryKey) !== configuration.data || configuration.data.run_readiness === 'blocked') return;
     try {
@@ -124,10 +124,11 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     {inputError && <Status tone="error">{text.input}</Status>}
     <ResearchRunFeature key={saved?.intent?.key ?? 'next-question'} locale={locale} state={state}
       scope={saved?.intent?.scope ?? scope} busy={busy}
+      questionHeld={saved?.intent !== undefined || saved?.observedLaunch !== undefined}
       draftQuestion={nextQuestionDraft} onDraftQuestionChange={value => {
         if (mounted.current && privacy.isCurrent(context)) setHeldDraft({ context, text: value });
       }}
-      canSubmit={!saved?.intent && scopeCurrent && !configuration.isError && !configuration.isFetching && configuration.data !== undefined && configuration.data.run_readiness !== 'blocked'}
+      canSubmit={!saved?.intent && !saved?.observedLaunch && scopeCurrent && !configuration.isError && !configuration.isFetching && configuration.data !== undefined && configuration.data.run_readiness !== 'blocked'}
       {...(saved?.intent ? { question: saved.intent.question } : {})}
       {...(progress ? { progress, ...(progress.failure ? { firstCause: progress.failure } : {}) } : {})}
       onAsk={ask} {...(launch ? { onReadStatus: () => { void status.refetch(); } } : {})}

@@ -49,6 +49,8 @@ export interface ResearchRunFeatureProps {
   readonly locale?: 'en' | 'ru';
   readonly state?: ResearchRunState;
   readonly question?: string;
+  /** The viewed run remains held even when its current status read fails. */
+  readonly questionHeld?: boolean;
   /** Optional parent-owned unsaved draft; keep its owner above an intent-key remount. */
   readonly draftQuestion?: string;
   /** Controlled drafts change only through this callback; value-only mode is read-only. */
@@ -278,6 +280,7 @@ export function ResearchRunFeature({
   locale = 'en',
   state = 'empty',
   question,
+  questionHeld = false,
   draftQuestion,
   onDraftQuestionChange,
   scope,
@@ -303,7 +306,7 @@ export function ResearchRunFeature({
   const selected = scope ?? [];
   const frozen = selected.slice();
   const unknownOutcome = firstCause !== undefined && firstCause.dispatch_state === 'OUTCOME_UNKNOWN';
-  const hasQuestion = question !== undefined || progress !== undefined || firstCause !== undefined
+  const hasQuestion = questionHeld || question !== undefined || progress !== undefined || firstCause !== undefined
     || (controlledDraft && snapshot !== undefined);
   const draftHeld = hasQuestion || busy;
   const controlledWithoutAsk = controlledDraft && onAsk === undefined;
