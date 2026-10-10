@@ -5,8 +5,10 @@
   "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
   "base_sha": "fb7c4e4477405cba59078d92e85f037c395be7ea",
   "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
-  "state": "ACTIVE",
-  "evidence_refs": [],
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "tests/ui-owner/receipts/u4-x/presentation-modules-20261010.json"
+  ],
   "blocker_refs": [],
   "checkpoint_id": "U4-M",
   "claim_id": "u4-m-report-20261010",
@@ -28,5 +30,7 @@
       "commit_sha": "273577c9ae45a1bf94ebcb5be77906c1f15ded92",
       "approval_ref": "tests/ui-owner/receipts/u2-x/u2-r.json"
     }
-  ]
+  ],
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "tests/ui-owner/receipts/u4-x/presentation-modules-20261010.json"
 }

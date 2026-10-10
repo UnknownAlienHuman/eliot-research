@@ -5,8 +5,10 @@
   "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
   "base_sha": "fb7c4e4477405cba59078d92e85f037c395be7ea",
   "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
-  "state": "ACTIVE",
-  "evidence_refs": [],
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "tests/ui-owner/receipts/u5-x/studio-empty-state-and-scope-d1-modules-20261010.json"
+  ],
   "blocker_refs": [],
   "checkpoint_id": "U5-S",
   "claim_id": "u5-s-studio-20261010",
@@ -28,5 +30,7 @@
       "commit_sha": "0cd674968809e64526f411d228802f10457cf492",
       "approval_ref": "tests/ui-owner/receipts/u2-x/u2-t.json"
     }
-  ]
+  ],
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "tests/ui-owner/receipts/u5-x/studio-empty-state-and-scope-d1-modules-20261010.json"
 }
