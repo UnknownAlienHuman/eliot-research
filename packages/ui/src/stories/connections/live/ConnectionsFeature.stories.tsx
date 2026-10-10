@@ -320,9 +320,36 @@ export const DetailsJourney: Story = {
   args: { ...ALL_LOADED, onOpenDiagnostics: () => {} },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    expect(canvas.queryByText("Confirmed")).not.toBeInTheDocument();
-    await userEvent.click(canvas.getByRole("button", { name: "Details" }));
-    await expect(canvas.getByText("Confirmed")).toBeInTheDocument();
+    const details = canvas.getByRole("button", { name: "Details" });
+
+    // Closed diagnostics remain mounted behind their hidden wrapper.
+    await expect(details).toHaveAttribute("aria-expanded", "false");
+    const controls = details.getAttribute("aria-controls");
+    expect(controls).not.toBeNull();
+    expect((controls ?? "").length).toBeGreaterThan(0);
+    const panel = canvasElement.ownerDocument.getElementById(controls ?? "");
+    expect(panel).not.toBeNull();
+    expect(canvasElement.contains(panel)).toBe(true);
+    await expect(canvas.queryByText("Confirmed")).not.toBeVisible();
+
+    // Clicking the button expands the disclosure and reveals the diagnostic value.
+    await userEvent.click(details);
+    await expect(details).toHaveAttribute("aria-expanded", "true");
+    expect(panel).not.toBeNull();
+    await expect(panel).toBeVisible();
+    await expect(canvas.getByText("Confirmed")).toBeVisible();
+
+    // Keyboard Space collapses the disclosure; native focus stays on the button.
+    await userEvent.keyboard(" ");
+    await expect(details).toHaveAttribute("aria-expanded", "false");
+    await expect(canvas.queryByText("Confirmed")).not.toBeVisible();
+    await expect(details).toHaveFocus();
+
+    // A repeat Enter reopens the disclosure with focus still on the button.
+    await userEvent.keyboard("{Enter}");
+    await expect(details).toHaveAttribute("aria-expanded", "true");
+    await expect(canvas.getByText("Confirmed")).toBeVisible();
+    await expect(details).toHaveFocus();
   },
 };
 

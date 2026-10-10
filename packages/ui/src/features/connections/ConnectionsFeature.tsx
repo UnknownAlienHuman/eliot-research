@@ -484,6 +484,7 @@ export function ConnectionsFeature({
     diagnostic,
   });
   const headingId = useId();
+  const diagnosticsId = useId();
   const handlers: Record<FeatureAction, (() => void) | undefined> = {
     refresh: onRefresh,
     signIn: onSignIn,
@@ -524,16 +525,6 @@ export function ConnectionsFeature({
           );
         })}
       </ul>
-      {disclosed ? (
-        <dl className="connections-feature__diagnostics">
-          <dt>{en(locale, "Diagnostic state", "Состояние диагностики")}</dt>
-          <dd className="connections-feature__diagnostic-value">
-            {diagnostic === undefined ? text.unknown : en(locale,
-              diagnostic.status === "CONFIRMED" ? "Confirmed" : "Not confirmed",
-              diagnostic.status === "CONFIRMED" ? "Подтверждено" : "Не подтверждено")}
-          </dd>
-        </dl>
-      ) : null}
       <div className="connections-feature__actions">
         {ACTION_ORDER.map(function (action) {
           const run = handlers[action];
@@ -544,9 +535,19 @@ export function ConnectionsFeature({
             </Button>
           );
         })}
-        <Button variant="text" onClick={function () { setDisclosed(function (value) { return !value; }); }}>
+        <Button variant="text" aria-expanded={disclosed} aria-controls={diagnosticsId} onClick={function () { setDisclosed(function (value) { return !value; }); }}>
           {en(locale, "Details", "Подробности")}
         </Button>
+      </div>
+      <div id={diagnosticsId} hidden={!disclosed}>
+        <dl className="connections-feature__diagnostics">
+          <dt>{en(locale, "Diagnostic state", "Состояние диагностики")}</dt>
+          <dd className="connections-feature__diagnostic-value">
+            {diagnostic === undefined ? text.unknown : en(locale,
+              diagnostic.status === "CONFIRMED" ? "Confirmed" : "Not confirmed",
+              diagnostic.status === "CONFIRMED" ? "Подтверждено" : "Не подтверждено")}
+          </dd>
+        </dl>
       </div>
     </section>
   );

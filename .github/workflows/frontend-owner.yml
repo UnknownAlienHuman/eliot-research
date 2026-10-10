@@ -53,4 +53,4 @@ jobs:
       - name: Install UI browser
         run: pnpm --dir packages/ui exec playwright install --with-deps chromium
       - name: Focused Storybook integration
-        run: pnpm --dir packages/ui exec vitest run --config .storybook/vitest.config.ts --reporter=verbose --testNamePattern 'Cross Page Selection Recovery|Replaced Selected Page Refused|Sections Unsupported|Optional Failure Facts|Targeted Retry Hierarchy|Readiness Renewal Is Not Blocked|Readiness Blocked|Google Transport Is Routing Only|Diagnostic Issued|Diagnostic Expired'
+        run: pnpm --dir packages/ui exec vitest run --config .storybook/vitest.config.ts --reporter=verbose --testNamePattern 'Cross Page Selection Recovery|Replaced Selected Page Refused|Sections Unsupported|Optional Failure Facts|Targeted Retry Hierarchy|Readiness Renewal Is Not Blocked|Readiness Blocked|Google Transport Is Routing Only|Diagnostic Issued|Diagnostic Expired|Details Journey'
