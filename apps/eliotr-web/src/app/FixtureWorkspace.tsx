@@ -1,6 +1,11 @@
 import { useLayoutEffect, useState, type RefObject } from "react";
-import { NavLink, useLocation, useNavigate } from "react-router";
-import { Button, ConnectionsFixture, Dialog, ResearchFixture, SourcesFixture, StudioFixture } from "@eliotr/ui";
+import { useLocation, useNavigate } from "react-router";
+import { WorkspaceLink } from "../routes/WorkspaceLink";
+import { Button, Dialog } from "@eliotr/ui";
+import { SourcesFixture } from "../../../../packages/ui/src/patterns/sources/fixtures/SourcesFixture";
+import { ResearchFixture } from "../../../../packages/ui/src/patterns/research/fixtures/ResearchFixture";
+import { StudioFixture } from "../../../../packages/ui/src/patterns/studio/fixtures/StudioFixture";
+import { ConnectionsFixture } from "../../../../packages/ui/src/patterns/connections/fixtures/ConnectionsFixture";
 import type { destinations } from "../routes/location";
 import "./fixture-workspace.css";
 
@@ -75,7 +80,7 @@ function LocalProject({ destination, locale, headingRef, project, projectTitle, 
       <h2>{text.sources}</h2>
       <p className="er-shell-eyebrow">{projectTitle}</p>
       <p>{text.nextScope}</p><strong>{text.selected(selection.length)}</strong>
-      <NavLink className="er-shell-link" to="/sources">{text.choose}</NavLink>
+      <WorkspaceLink className="er-shell-link" to="/sources">{text.choose}</WorkspaceLink>
       <div className="er-fixture-original"><p>{text.frozen(reportScope.length)}</p><p>{text.original}</p></div>
     </aside>
     <main className="er-shell-reading" id="workspace-main">

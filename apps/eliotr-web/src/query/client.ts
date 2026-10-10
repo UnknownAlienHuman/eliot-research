@@ -11,7 +11,7 @@ export function createWorkspaceQueryClient() {
 }
 /** No URL, storage, dehydration or credentials are used to construct this key. */
 export function protectedQueryKey(context: SessionContext, resource: string) {
-  return ["owner", context.cacheEpoch, context.principal, context.session, context.credentialGeneration, context.deploymentGeneration, resource] as const;
+  return ["owner", context.cacheEpoch, context.principal, context.credentialGeneration, context.deploymentGeneration, resource] as const;
 }
 export function clearWorkspaceQueries(client: QueryClient) {
   client.clear();

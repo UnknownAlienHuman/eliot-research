@@ -1,6 +1,6 @@
 export const destinations = ["sources", "research", "studio", "connections"] as const;
 export type Destination = typeof destinations[number];
-export function workspacePath(destination: Destination): string {
+export function workspacePath(destination: Destination): `/${Destination}` {
   if (!destinations.includes(destination)) throw new TypeError("Unknown workspace destination");
   return `/${destination}`;
 }

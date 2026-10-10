@@ -4,6 +4,7 @@ import process from "node:process";
 import { cloudflare } from "@cloudflare/vite-plugin";
 import agents from "agents/vite";
 import { defineConfig } from "vite";
+import { libraryRouterOnlyOptimization } from "./vite.config";
 
 export default defineConfig(() => {
   if (process.env.CLOUDFLARE_ENV !== "test") {
@@ -11,6 +12,7 @@ export default defineConfig(() => {
   }
   return {
     plugins: [
+      libraryRouterOnlyOptimization(),
       agents(),
       react(),
       cloudflare({ configPath: "../eliotr-core/wrangler.jsonc", remoteBindings: false }),

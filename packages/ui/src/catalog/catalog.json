@@ -199,6 +199,169 @@
         "error"
       ],
       "truth": "Seven independent facts; synthetic observations remain samples, configuration never proves connection"
+    },
+    {
+      "id": "pattern.research-run-feature",
+      "export": "ResearchRunFeature",
+      "consumer": "U4-R Research route; root LiveResearchJourney",
+      "variants": [],
+      "states": [
+        "useful",
+        "loading",
+        "empty",
+        "degraded",
+        "error"
+      ],
+      "props": [
+        "locale",
+        "state",
+        "question",
+        "scope",
+        "progress",
+        "firstCause",
+        "snapshot",
+        "canSubmit",
+        "busy",
+        "onAsk",
+        "onRefreshSnapshot",
+        "onReadStatus",
+        "onRecover"
+      ],
+      "stories": [
+        "product-research-run--cancelled",
+        "product-research-run--completion-is-not-acceptance",
+        "product-research-run--degraded",
+        "product-research-run--empty",
+        "product-research-run--error",
+        "product-research-run--loading",
+        "product-research-run--long-russian",
+        "product-research-run--readback-cannot-start-a-run",
+        "product-research-run--useful"
+      ]
+    },
+    {
+      "id": "pattern.report-feature",
+      "export": "ReportFeature",
+      "consumer": "U4-M saved draft report route; root LiveResearchJourney",
+      "variants": [],
+      "states": [
+        "useful",
+        "loading",
+        "empty",
+        "degraded",
+        "error"
+      ],
+      "props": [
+        "locale",
+        "copy",
+        "state",
+        "manifest",
+        "sections",
+        "freshness",
+        "readingRef",
+        "rejectedSectionRef",
+        "interrupted",
+        "onReadSection",
+        "onOpenManifest",
+        "onExport"
+      ],
+      "stories": [
+        "product-report--complete-after-readback",
+        "product-report--degraded",
+        "product-report--duplicate-rows-cannot-complete",
+        "product-report--empty",
+        "product-report--error",
+        "product-report--export-blocked-by-unread-section",
+        "product-report--foreign-artifact-cannot-complete",
+        "product-report--loading",
+        "product-report--long-russian",
+        "product-report--partial-rows-cannot-complete",
+        "product-report--useful"
+      ]
+    },
+    {
+      "id": "pattern.evidence-feature",
+      "export": "EvidenceFeature",
+      "consumer": "U4-E cited evidence rail under the report section",
+      "variants": [],
+      "states": [
+        "useful",
+        "loading",
+        "empty",
+        "degraded",
+        "error"
+      ],
+      "props": [
+        "citations",
+        "loading",
+        "emptyMessage",
+        "errorMessage",
+        "onOpenExcerpt",
+        "onRetry",
+        "longLocale"
+      ],
+      "stories": [
+        "product-research-evidence--coordinate-mismatch-fails-closed",
+        "product-research-evidence--degraded",
+        "product-research-evidence--empty",
+        "product-research-evidence--error",
+        "product-research-evidence--loading",
+        "product-research-evidence--long-russian",
+        "product-research-evidence--open-requests-current-excerpt",
+        "product-research-evidence--quarantined-is-not-unsupported",
+        "product-research-evidence--resolution-never-becomes-support",
+        "product-research-evidence--revoked-never-renders-bytes",
+        "product-research-evidence--revoked-suppresses-text",
+        "product-research-evidence--stale-excerpt-suppresses-text",
+        "product-research-evidence--useful"
+      ]
+    },
+    {
+      "id": "pattern.studio-feature",
+      "export": "StudioFeature",
+      "consumer": "U5-S Studio route; root LiveStudioJourney",
+      "variants": [],
+      "states": [
+        "useful",
+        "loading",
+        "empty",
+        "degraded",
+        "error"
+      ],
+      "props": [
+        "locale",
+        "copy",
+        "state",
+        "proposals",
+        "selected",
+        "body",
+        "publication",
+        "revise",
+        "cowVerified",
+        "expectedPublishHead",
+        "artifactRef",
+        "declaredSectionRefs",
+        "onOpenArtifact",
+        "onReviseSection",
+        "onOpenProposal",
+        "onCreateEdit",
+        "onPublish",
+        "onBack"
+      ],
+      "stories": [
+        "product-studio-live--degraded",
+        "product-studio-live--edit-carries-exact-lineage",
+        "product-studio-live--empty",
+        "product-studio-live--error",
+        "product-studio-live--loading",
+        "product-studio-live--long-russian",
+        "product-studio-live--no-publication-is-not-complete",
+        "product-studio-live--no-regenerate-control",
+        "product-studio-live--publish-needs-confirmation",
+        "product-studio-live--published-has-no-publish",
+        "product-studio-live--uncertain-section-effect",
+        "product-studio-live--useful"
+      ]
     }
   ],
   "scenarios": {
@@ -277,6 +440,148 @@
       "tokens-colorroles--semantic-pairings",
       "tokens-colorroles--english-sample",
       "tokens-colorroles--long-russian"
+    ],
+    "u3-sources-rendered": [
+      "product-sources-projectslibrary--populated",
+      "product-sources-projectslibrary--long-russian-dark",
+      "product-sources-document--useful",
+      "product-sources-document--long-russian-dark"
+    ],
+    "u3-live-root": [
+      "workspace-shell--live-sources-journey"
+    ],
+    "u3-import-rendered": [
+      "product-sources-import--file-review",
+      "product-sources-import--loading",
+      "product-sources-import--empty",
+      "product-sources-import--failed",
+      "product-sources-import--long-russian",
+      "product-sources-import--uncertain-outcome",
+      "product-sources-import--interrupted-import"
+    ],
+    "u3-erasure-rendered": [
+      "product-erasure--useful",
+      "product-erasure--loading",
+      "product-erasure--empty",
+      "product-erasure--degraded",
+      "product-erasure--error",
+      "product-erasure--long-russian-dark-narrow"
+    ],
+    "u5-connections-rendered": [
+      "product-connections-live--useful",
+      "product-connections-live--empty",
+      "product-connections-live--loading",
+      "product-connections-live--degraded",
+      "product-connections-live--failed",
+      "product-connections-live--long-russian"
+    ],
+    "u3-erasure-root": [
+      "workspace-shell--live-erasure-journey"
+    ],
+    "u5-provider-empty": [
+      "product-connections-live--provider-empty-list"
+    ],
+    "u3-import-current": [
+      "product-sources-import--empty",
+      "product-sources-import--uncertain-outcome",
+      "product-sources-import--long-russian"
+    ],
+    "u3-import-root": [
+      "workspace-shell--live-import-journey"
+    ],
+    "u5-connections-dark": [
+      "product-connections-live--long-russian-dark"
+    ],
+    "u3-import-picker": [
+      "product-sources-import--empty"
+    ],
+    "u4-research-run": [
+      "product-research-run--useful",
+      "product-research-run--loading",
+      "product-research-run--empty",
+      "product-research-run--error",
+      "product-research-run--degraded",
+      "product-research-run--cancelled",
+      "product-research-run--long-russian"
+    ],
+    "u4-research-run-negative": [
+      "product-research-run--readback-cannot-start-a-run",
+      "product-research-run--completion-is-not-acceptance"
+    ],
+    "u4-report": [
+      "product-report--useful",
+      "product-report--loading",
+      "product-report--empty",
+      "product-report--error",
+      "product-report--degraded",
+      "product-report--long-russian"
+    ],
+    "u4-report-negative": [
+      "product-report--export-blocked-by-unread-section",
+      "product-report--complete-after-readback",
+      "product-report--partial-rows-cannot-complete",
+      "product-report--duplicate-rows-cannot-complete",
+      "product-report--foreign-artifact-cannot-complete"
+    ],
+    "u4-evidence": [
+      "product-research-evidence--useful",
+      "product-research-evidence--loading",
+      "product-research-evidence--empty",
+      "product-research-evidence--error",
+      "product-research-evidence--degraded",
+      "product-research-evidence--long-russian"
+    ],
+    "u4-evidence-negative": [
+      "product-research-evidence--resolution-never-becomes-support",
+      "product-research-evidence--revoked-never-renders-bytes",
+      "product-research-evidence--open-requests-current-excerpt",
+      "product-research-evidence--quarantined-is-not-unsupported",
+      "product-research-evidence--revoked-suppresses-text",
+      "product-research-evidence--stale-excerpt-suppresses-text",
+      "product-research-evidence--coordinate-mismatch-fails-closed"
+    ],
+    "u5-studio": [
+      "product-studio-live--useful",
+      "product-studio-live--loading",
+      "product-studio-live--empty",
+      "product-studio-live--error",
+      "product-studio-live--degraded",
+      "product-studio-live--long-russian"
+    ],
+    "u5-studio-negative": [
+      "product-studio-live--published-has-no-publish",
+      "product-studio-live--no-regenerate-control",
+      "product-studio-live--publish-needs-confirmation",
+      "product-studio-live--no-publication-is-not-complete",
+      "product-studio-live--uncertain-section-effect",
+      "product-studio-live--edit-carries-exact-lineage"
+    ],
+    "u4-current": [
+      "product-research-run--useful",
+      "product-research-run--empty",
+      "product-research-run--error",
+      "product-research-run--long-russian",
+      "product-report--useful",
+      "product-report--empty",
+      "product-report--error",
+      "product-report--long-russian",
+      "product-research-evidence--useful",
+      "product-research-evidence--empty",
+      "product-research-evidence--error",
+      "product-research-evidence--long-russian"
+    ],
+    "u5-studio-current": [
+      "product-studio-live--useful",
+      "product-studio-live--empty",
+      "product-studio-live--error",
+      "product-studio-live--long-russian"
+    ],
+    "u4-u5-shell-journeys": [
+      "workspace-shell--live-research-journey",
+      "workspace-shell--live-studio-journey"
+    ],
+    "u4-action-recovery": [
+      "workspace-shell--artifact-actions-journey"
     ]
   },
   "mathematical_layout_allowlist": [

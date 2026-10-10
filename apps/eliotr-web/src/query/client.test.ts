@@ -10,7 +10,9 @@ describe("protected query boundary", () => {
     clearWorkspaceQueries(client); expect(client.getQueryCache().getAll()).toHaveLength(0); expect(client.getMutationCache().getAll()).toHaveLength(0);
   });
   it("rejects a late old-context read, and gives a fresh session a separate key", async () => {
-    const privacy = createPrivacyController({ mask() {}, reveal() {}, cancelReads() {}, clearProtected() {}, async verify() { return { principal: "owner", session: "session", credentialGeneration: "cg", deploymentGeneration: "dg" }; } });
+    const privacy = createPrivacyController({
+    now: () => Date.parse("2026-10-09T00:00:00.000Z"),
+    timers: { setTimeout: () => 0, clearTimeout() {} }, mask() {}, reveal() {}, cancelReads() {}, clearProtected() {}, async verify() { return { principal: "owner", credentialGeneration: "cg", deploymentGeneration: "dg", expiresAt: "2027-01-01T00:00:00.000Z" }; } });
     await privacy.refresh(); const initial = privacy.getSnapshot(); if (initial.phase !== "available") throw new Error("Fixture unavailable");
     let complete!: (value: string) => void; const pending = new Promise<string>(resolve => { complete = resolve; });
     const result = runProtectedRead(privacy, initial.context, new AbortController().signal, async () => pending);
