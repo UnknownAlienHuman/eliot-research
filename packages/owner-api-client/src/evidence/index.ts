@@ -1,0 +1,14 @@
+export { createManifestApi } from './report/manifest';
+export type { ManifestApi, ManifestPorts, ResearchArtifactDraftReauthorizationView, ResearchSourceFreshness, ResearchScopeAuthorizationView } from './report/manifest';
+export { createSectionApi, MAX_SECTION_BYTES } from './report/sections';
+export type { SectionApi, SectionPorts, DeclaredSection, ArtifactSectionResponse } from './report/sections';
+export { assembleResearchDraftMarkdown, exportResearchDraftMarkdown } from './report/export';
+export type { ReportExportInput, ReportExportResult, ReportExportMetadata, ReportCitationProjection, MarkdownSink } from './report/export';
+export { createCitationApi } from './citations/citations';
+export type { CitationApi, SectionCitationsView, CitedEvidence, CitationResolutionItem, CitationResolutionOutcome, CitationResolutionReceiptV1, CitationResolutionReceiptV2 } from './citations/citations';
+export { createCitationAuditHelpers } from './citations/audit';
+export type { CitationAuditDisposition, CitationAuditClaim, CitationAuditView } from './citations/audit';
+export { createEvidenceBytesApi } from './citations/bytes';
+export type { EvidenceBytesApi, OpenedEvidence, VerifiedEvidence } from './citations/bytes';
+export { createReauthorizationApi } from './citations/reauthorization';
+export type { ReauthorizationApi, ReauthorizedSectionCitationsView, ReauthorizedCitedEvidence } from './citations/reauthorization';
