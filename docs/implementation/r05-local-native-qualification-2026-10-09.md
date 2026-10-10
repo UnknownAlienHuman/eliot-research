@@ -514,3 +514,34 @@ Owner/grant/policy preconditions remain injected. Signed production HTTP/Access,
 browser lifecycle, hibernation/transcript, full #334, scientific/external-wait,
 selected providers, staging/live and release acceptance remain open. #326 and
 the project Goal remain open.
+
+## Expired Access before Session upgrade — added bounded negative
+
+One separate Worker-side case passes against the same immutable Core candidate.
+A valid ISO Access-expiry header set 60 seconds in the past returns HTTP 409
+`SESSION_AUTHORITY_STALE` with no socket. This observes the `/status` guard before
+upgrade, not the later `onConnect` 1008 or scheduled-expiry behavior. It uses the
+existing internal owner/policy/grant and service-created ledger seed, with no
+Workflow or stored Session prerequisite. The three operation-specific
+run/attempt/checkpoint counts remain zero; one exact grant full row is unchanged.
+No all-table, transcript, R2, Queue or provider-effect conclusion follows.
+
+Root's first direct host-proxy request carried `upgrade: websocket` and failed
+with unhandled `ECONNRESET` before a child observation. That unaccepted process
+and runner remain preserved; no product or platform defect is established.
+The revised candidate keeps the upgrade request inside a Worker and returns
+only HTTP JSON to Node. Its private runtime differs from the accepted base only
+in the isolated resource tag and probe path. Original accepted four files remain
+unchanged. Four syntax checks and fresh exact-four Go2 Step 5/high source review
+precede the one revised native case; child exit 0/null signal and resolved dispose
+pass. Separate final readback rechecks all four hashes without a runtime repeat.
+The raw review's prose overstated automatic parent checks before receipt writing;
+the parent checks before spawn and the final verifier checks after completion.
+
+Receipts are `core-product-session-expired-access-{source-audit,receipt,process}-20261010.json`
+and `expired-access-completion-proof-20261010.json` in the private checkpoint
+directory. The mapper's earlier completed-run proposal remains unexecuted; this
+root variant qualifies only the earlier expiry boundary described here. Signed
+public Access/JWT, connected timers, browser, two-tab, hibernation, whole #334,
+scientific/provider/live and release remain open. No implementation status or
+Issue/PR is promoted. The project Goal remains active.

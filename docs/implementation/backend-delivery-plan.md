@@ -1875,3 +1875,26 @@ owns exact scope and receipts. Session-module equality at fetched `bc027c62`
 does not establish whole current-Core, signed public/Access, browser/hibernation,
 scientific/provider, official emitted/live/release or full #334 acceptance.
 Original Issue/PR and the project Goal remain open.
+
+Frontend also identified and released four inactive loose diagnostics:
+`C-tmp-vitest.log`, `check-out.txt`, `check-out2.txt` and `test-out.log`.
+Their exact 6,554 bytes are reversibly archived under
+`C:\Development\Research\.codex-archive\20261010T005637Z-loose-frontend-logs`,
+with four SHA256 readbacks and an adjacent recovery manifest. All four original
+paths are absent. The first timestamp-representation guard stopped before any
+move; the metadata reader was corrected while retaining actual byte/time,
+containment, reparse, process and exclusive-read checks. Frontend source and
+bootstrap, private inputs, receipts and protected worktrees remain preserved.
+
+A separate added Worker-side expired-Access case passes on that immutable Core
+candidate: HTTP 409/no socket, unchanged full grant row and three zero canonical
+operation counts, child exit 0/null signal/resolved dispose. It uses no Workflow
+or stored Session premise and does not qualify `onConnect`, timers or public JWT.
+The first direct host-proxy attempt failed `ECONNRESET` before observation;
+its original process/runner remain preserved and that host approach was not
+repeated. Fresh exact-four Go2/high source acceptance precedes the revised
+Worker-side run; final hash/readback uses no runtime repeat. The
+[local qualification record](r05-local-native-qualification-2026-10-09.md#expired-access-before-session-upgrade--added-bounded-negative)
+owns the limits. Both new Go2 tasks are completed/closed/archived; all 87 native
+manager descendants are closed. Useful source review and corrected mapping
+still do not demonstrate model superiority. Broader acceptance and Goal remain open.
