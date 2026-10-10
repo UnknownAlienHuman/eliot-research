@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   decodeSynthesisClaimsCandidateV2,
+  decodeSynthesisClaimsCandidateV3,
   decodeSynthesisSectionCandidateV1,
   normalizeSynthesisClaimsCandidateV2,
+  normalizeSynthesisClaimsCandidateV3,
   SynthesisClaimsCandidateError,
   type SynthesisClaimsCandidateV2,
 } from "./synthesis-candidate.js";
@@ -88,5 +90,56 @@ describe("versioned synthesis claims candidate v2", () => {
     const loneSurrogate = String.fromCharCode(0xd800);
     await expect(normalize({ ...base, section_text: loneSurrogate, material_claims: [{ ...baseClaim, text: loneSurrogate, span: { start: 0, end: 1 } }] }))
       .rejects.toMatchObject({ code: "SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID" });
+  });
+
+  it("preserves Unicode scalar bytes and captured v2/v3 identities", async () => {
+    const text = "\uFEFF\u0000e\u0301😀";
+    const decodedSection = decodeSynthesisSectionCandidateV1(JSON.stringify({
+      schema: "eliotr.research.synthesis-section-candidate.v1",
+      section_text: text,
+      cited_handle_refs: [allowed[0]],
+    }));
+    expect(decodedSection.section_text).toBe(text);
+    expect(Array.from(new TextEncoder().encode(decodedSection.section_text)))
+      .toEqual([0xef, 0xbb, 0xbf, 0x00, 0x65, 0xcc, 0x81, 0xf0, 0x9f, 0x98, 0x80]);
+
+    const candidateV2 = {
+      ...base,
+      section_text: text,
+      material_claims: [{ ...baseClaim, text, span: { start: 0, end: text.length } }],
+    };
+    expect(decodeSynthesisClaimsCandidateV2(JSON.stringify(candidateV2)).material_claims[0]?.text).toBe(text);
+    const normalizedV2 = await normalize(candidateV2);
+    expect(normalizedV2.claims[0]).toMatchObject({
+      claim_ref: { id: "research-claim:d082a64da9aa23de045fdda2af6979f6e1b4b6778353d3edb17d9092d1b3692d" },
+      text,
+      text_digest: "28ae8acebeb038878c3903b43ca9d34b7ed927ea9eef1b5ee30c70c889c7ccce",
+      span: { start: 0, end: 6 },
+    });
+
+    const candidateV3 = {
+      schema: "eliotr.research.synthesis-claims-candidate.v3" as const,
+      material_claims: [{
+        text,
+        kind: "observation" as const,
+        support_handle_refs: [allowed[0]],
+        counterevidence_handle_refs: [allowed[1]],
+      }],
+    };
+    expect(decodeSynthesisClaimsCandidateV3(JSON.stringify(candidateV3)).material_claims[0]?.text).toBe(text);
+    const normalizedV3 = await normalizeSynthesisClaimsCandidateV3({
+      candidate: candidateV3,
+      operation_id: "operation-1",
+      section_ref: { id: "section-1", revision: 1 },
+      allowed_handle_refs: allowed,
+      required_precision: "exact-excerpt",
+      required_source_class: "official",
+    });
+    expect(normalizedV3.claims[0]).toMatchObject({
+      claim_ref: { id: "research-claim:0aef0d231dc9dfb6be21c17a2e09c49d7c1925a56adaa618cc3c5144e93fcc82" },
+      text,
+      text_digest: "28ae8acebeb038878c3903b43ca9d34b7ed927ea9eef1b5ee30c70c889c7ccce",
+      span: { start: 0, end: 6 },
+    });
   });
 });

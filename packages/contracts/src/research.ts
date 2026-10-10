@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { validateUnicodeText } from "./unicode-text.js";
 import { IdentifierSchema, IsoDateTimeSchema, PositiveIntegerSchema, Sha256Schema, VersionedRefSchema } from "./common.js";
 import { EvidenceHandleSchema } from "./evidence.js";
 import { ScopeSnapshotSchema } from "./scope.js";
@@ -11,12 +12,8 @@ export const RESEARCH_REQUEST_MAX_BYTES = 262144;
 export function isResearchQuestionText(value: unknown): value is string {
   if (typeof value !== "string" || value.length === 0 ||
       /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value) || /\r(?!\n)/u.test(value)) return false;
-  // for-of combines valid pairs but leaves lone surrogate code units observable.
-  for (const scalar of value) {
-    const code = scalar.codePointAt(0);
-    if (code === undefined || (code >= 0xd800 && code <= 0xdfff)) return false;
-  }
-  return true;
+  // Match the input's UTF-16 length so this predicate adds no text-size limit.
+  return validateUnicodeText(value, { unit: "utf16-code-units", maximum: value.length }).valid;
 }
 
 export const EvidenceGradeSchema = z.enum(["E0", "E1", "E2", "E3"]);

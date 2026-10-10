@@ -1,4 +1,4 @@
-import { IdentifierSchema, VersionedRefSchema, type VersionedRef } from "@eliotr/contracts";
+import { IdentifierSchema, validateUnicodeText, VersionedRefSchema, type VersionedRef } from "@eliotr/contracts";
 import { z } from "zod";
 import type { MaterialClaim } from "./claim-audit.js";
 import { parseSingleJsonContent } from "./json-content.js";
@@ -77,16 +77,8 @@ function refKey(ref: VersionedRef): string {
 }
 
 function assertWellFormedUtf16(value: string, label: string): void {
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code >= 0xd800 && code <= 0xdbff) {
-      const next = value.charCodeAt(index + 1);
-      if (Number.isNaN(next) || next < 0xdc00 || next > 0xdfff) fail("SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID", `${label} contains an unpaired surrogate`);
-      index += 1;
-    } else if (code >= 0xdc00 && code <= 0xdfff) {
-      fail("SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID", `${label} contains an unpaired surrogate`);
-    }
-  }
+  const result = validateUnicodeText(value, { unit: "utf16-code-units", maximum: value.length });
+  if (!result.valid) fail("SYNTHESIS_CLAIMS_CANDIDATE_INPUT_INVALID", `${label} contains an unpaired surrogate`);
 }
 
 function compareUtf16(left: string, right: string): number {
