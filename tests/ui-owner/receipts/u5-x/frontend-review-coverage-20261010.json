@@ -1,0 +1,1218 @@
+{
+  "protocol": "eliotr.frontend-manager-review-coverage.v1",
+  "date": "2026-10-10",
+  "status": "RETAINED_AND_NEW_FINITE_COMPOSITION_QUALIFIED_WITH_OPEN_GATES",
+  "repo_root": "C:/Development/Research/eliot-research",
+  "whole_gate_acceptance": false,
+  "gates": {
+    "U3-X": "PENDING",
+    "U4-X": "PENDING",
+    "U5-X": "PENDING",
+    "FINAL-UI": "PENDING"
+  },
+  "authority": {
+    "published_target": "4e9762860800389190a77ac604b51beddd03de8d",
+    "qualified_frontend_frontier": "887de890208877727abcd3c4a3119e2d8475e315",
+    "presentation_source": "637ec07f7133c7f1c1967de265f60da384df8873",
+    "original_compiler_source": "0602fd91f368a29129dc8ff59434031de73497c2",
+    "merged_full_graph": "NOT_REQUALIFIED",
+    "current_live_refs": "NOT_PROBED",
+    "published_frontend_bindings": [
+      {
+        "path": "apps/eliotr-web/src/app/LiveWorkspace.tsx",
+        "git_blob": "e6dda0a61513cd8bed8300259bfcd8df4ac62ec1",
+        "canonical_sha256": "69d1a6527d4c5814b8626c3c403b55535d1acf199f5818161c130ed3ab8f13b8",
+        "remote_match": true
+      },
+      {
+        "path": "apps/eliotr-web/src/app/NextQuestionScope.tsx",
+        "git_blob": "a1010104e146ed3556be5432ad14e05f5b1a838c",
+        "canonical_sha256": "6fe74e1fc85cee5fe994fa11d35b35a44acdaaa64d2c8e3a42a55f8525445ccb",
+        "remote_match": true
+      },
+      {
+        "path": "apps/eliotr-web/src/app/ResearchPreview.tsx",
+        "git_blob": "f38891066dd1de3b079cd18b3e2994f35677d4e3",
+        "canonical_sha256": "d8f495dec9bac170a132d7889370261c4e67c8b3fdd2baa95f748ba1a6ade28f",
+        "remote_match": true
+      },
+      {
+        "path": "docs/agent-work/frontend-owner-claims/ER-47/u3-p-source-composition-20261010.json",
+        "git_blob": "897321990b2609332a6cff426eb02f4b6072b69b",
+        "canonical_sha256": "aafb352971070e6773a8346649cebccfb896ae9a30c4aad37ca22238a8b26bb7",
+        "remote_match": true
+      },
+      {
+        "path": "packages/ui/src/features/research/report/report.css",
+        "git_blob": "1fdd34fd77c195ecdb58a0c38043223001362659",
+        "canonical_sha256": "bc4558f3228fc5989d48dd7fc8f73593ae22258e409c6eaecd8b381c5e947a8c",
+        "remote_match": true
+      },
+      {
+        "path": "packages/ui/src/features/sources/projects/ProjectsLibraryFeature.tsx",
+        "git_blob": "96dba6f600124c88b3196f4106cbe909d452c8af",
+        "canonical_sha256": "762fb433ac51ed963154885382c4ac50c2bd19e803a4f50a3347b3069d493237",
+        "remote_match": true
+      },
+      {
+        "path": "packages/ui/src/features/sources/projects/projects-library.css",
+        "git_blob": "23b0db51d6d524b072454ab40ebaaf70fb2e4142",
+        "canonical_sha256": "10c36ca8ce5efeeeb12a25e1e7c231fb2c79106c1297d3ab7b66bdfbe9809732",
+        "remote_match": true
+      },
+      {
+        "path": "scripts/check-boundaries.mjs",
+        "git_blob": "0125ff0ccf7f6afaa256373db1f7e5ca239743b3",
+        "canonical_sha256": "efd9c79d6f19425754895d77dd98b1e3a8f684b17c347a218006174e51cfeaff",
+        "remote_match": true
+      },
+      {
+        "path": "tests/ui-owner/receipts/u3-x/source-context-and-report-module-20261010.json",
+        "git_blob": "224542b22dc568c79e13ed6d267e1064f01a2eba",
+        "canonical_sha256": "c90d3c664255153dbb376a780d44a7288402e936fcb3ba119d29edf409449ad8",
+        "remote_match": true
+      }
+    ],
+    "current_frontend_source": "ddcd9096df46c360ae1244f959d7403ecd89a90d",
+    "current_owning_web_ui_client_contracts_graph": "COMPILER_PASS_AT_EXACT_SOURCE",
+    "compiler_receipt": "tests/ui-owner/receipts/u3-x/finite-composed-lifecycle-module-20261010.json",
+    "current_static_review": "PASS_WITH_EXACT_PRODUCTION_INPUT_EQUIVALENCE",
+    "worker_and_live_graph": "NOT_REQUALIFIED"
+  },
+  "manager_requirements": [
+    {
+      "checkpoint": "U3-X",
+      "evidence_classes": [
+        "INTERNAL_GATE_ACCEPTANCE",
+        "MANAGER_RECEIPT"
+      ],
+      "mandatory_negative_case": "Direct fetch, a legacy import or lost currentness, scope behavior, Back or focus proves the Sources root uncertified.",
+      "status": "PENDING"
+    },
+    {
+      "checkpoint": "U4-X",
+      "evidence_classes": [
+        "INTERNAL_GATE_ACCEPTANCE",
+        "MANAGER_RECEIPT"
+      ],
+      "mandatory_negative_case": "A second run authority, a strict-union violation, an unexpected history 410 or a hidden reasoning path proves the Research wiring uncertified.",
+      "status": "PENDING"
+    },
+    {
+      "checkpoint": "U5-X",
+      "evidence_classes": [
+        "INTERNAL_GATE_ACCEPTANCE",
+        "FINAL_UI_REVIEW_PACKAGE"
+      ],
+      "mandatory_negative_case": "An unavailable product appears present, connectivity is implied without server facts, or a secret or provider payload is disclosed.",
+      "status": "PENDING"
+    }
+  ],
+  "coverage": [
+    {
+      "id": "U3.roots-catalog",
+      "gate": "U3-X",
+      "requirement": "Serialize Sources roots and catalog",
+      "status": "PENDING",
+      "retained_proof_ids": [
+        "SOURCE7",
+        "ADDITIVE",
+        "COMPACT"
+      ],
+      "boundary": "Published module delivery does not create INTERNAL_GATE_ACCEPTANCE or MANAGER_RECEIPT. Root assembles final catalog/receipts."
+    },
+    {
+      "id": "U3.currentness",
+      "gate": "U3-X",
+      "requirement": "Currentness at dispatch, awaited adoption and protected reader lifetime",
+      "status": "PENDING",
+      "retained_proof_ids": [
+        "C2D",
+        "CHOOSER18",
+        "QUERY5"
+      ],
+      "boundary": "Native chooser refusal and Query units do not cover visible stale reader/cache adoption. New ten finite cases are bound separately; original whole-gate status is retained.",
+      "pending_case_ids": [],
+      "new_finite_case_ids": [
+        "S1",
+        "S2",
+        "S3"
+      ]
+    },
+    {
+      "id": "U3.scope",
+      "gate": "U3-X",
+      "requirement": "Explicit source selection; import/admission does not rewrite future or historical scope",
+      "status": "ACCEPTED_FINITE_PROOF",
+      "retained_proof_ids": [
+        "CHOOSER18",
+        "IMPORT",
+        "SHELL10",
+        "SOURCES10"
+      ],
+      "boundary": "Accepted synthetic same-project/clear and explicit selection at original scope; no live authority promotion."
+    },
+    {
+      "id": "U3.back",
+      "gate": "U3-X",
+      "requirement": "Back preserves correct document/project/source authority",
+      "status": "PENDING",
+      "retained_proof_ids": [
+        "SOURCES3",
+        "SHELL10"
+      ],
+      "boundary": "Ordinary valid Back already qualified; foreign/old-epoch history refusal awaits composed proof. New ten finite cases are bound separately; original whole-gate status is retained.",
+      "pending_case_ids": [],
+      "new_finite_case_ids": [
+        "S3",
+        "S4",
+        "S5"
+      ]
+    },
+    {
+      "id": "U3.focus",
+      "gate": "U3-X",
+      "requirement": "Native/keyed and Back focus without stale opener restoration",
+      "status": "PENDING",
+      "retained_proof_ids": [
+        "CHOOSER18",
+        "SOURCES3",
+        "SOURCES10"
+      ],
+      "boundary": "Native remount/once-only attach and positive opener focus retained; stale reader/history lifetime remains pending. New ten finite cases are bound separately; original whole-gate status is retained.",
+      "pending_case_ids": [],
+      "new_finite_case_ids": [
+        "S3",
+        "S4",
+        "S5"
+      ]
+    },
+    {
+      "id": "U3.bundle",
+      "gate": "U3-X",
+      "requirement": "Frozen bundle review, same identity/readback and uncertainty",
+      "status": "ACCEPTED_FINITE_PROOF",
+      "retained_proof_ids": [
+        "IMPORT",
+        "SHELL10"
+      ],
+      "boundary": "Bounded synthetic import/bundle journeys; capture/conversion/admission/readiness stay distinct."
+    },
+    {
+      "id": "U3.no-direct-fetch",
+      "gate": "U3-X",
+      "requirement": "No direct feature fetch",
+      "status": "ACCEPTED_FINITE_PROOF",
+      "retained_proof_ids": [
+        "BOUNDARY",
+        "SOURCE7",
+        "ADDITIVE"
+      ],
+      "boundary": "Retained static source/boundary scope only; manager gate remains pending and no new source audit was done."
+    },
+    {
+      "id": "U3.no-legacy-import",
+      "gate": "U3-X",
+      "requirement": "No legacy browser-root import",
+      "status": "ACCEPTED_FINITE_PROOF",
+      "retained_proof_ids": [
+        "BOUNDARY",
+        "ADDITIVE"
+      ],
+      "boundary": "Retained static source/boundary scope only, not a newly qualified merged graph."
+    },
+    {
+      "id": "U3.truth",
+      "gate": "U3-X",
+      "requirement": "Truthful loading/error/unselected/known-empty/readiness/currentness states",
+      "status": "ACCEPTED_FINITE_PROOF",
+      "retained_proof_ids": [
+        "TRUTH6",
+        "SOURCES10",
+        "PROJECTS"
+      ],
+      "boundary": "Blocked channels and VERIFIED currentness are independent; known absence is not unknown/missing."
+    },
+    {
+      "id": "U3.reader-erasure",
+      "gate": "U3-X",
+      "requirement": "Exact reader/navigation and partial/held/unknown erasure never complete",
+      "status": "ACCEPTED_FINITE_PROOF",
+      "retained_proof_ids": [
+        "DOC",
+        "C2D",
+        "ERASURE"
+      ],
+      "boundary": "Leaf and saved-identity/readback synthetic proof retained; live release remains separate."
+    },
+    {
+      "id": "U4.one-run-authority",
+      "gate": "U4-X",
+      "requirement": "One durable run authority; reads/reconnect do not create another effect",
+      "status": "PENDING",
+      "retained_proof_ids": [
+        "RR",
+        "RH",
+        "RC",
+        "RESEARCH1"
+      ],
+      "boundary": "Lost-ack same-key reconciliation is accepted; active poll/manual/reconnect effect count is missing. New ten finite cases are bound separately; original whole-gate status is retained.",
+      "pending_case_ids": [],
+      "new_finite_case_ids": [
+        "R1"
+      ]
+    },
+    {
+      "id": "U4.strict-union",
+      "gate": "U4-X",
+      "requirement": "Strict projection ACTIVE/CANCELLED/ENGINE_COMPLETED union",
+      "status": "PENDING",
+      "retained_proof_ids": [
+        "RP",
+        "RC",
+        "PRESENTATION"
+      ],
+      "boundary": "Client strict union accepted; integrated selected-session snapshot requires C11 full public binding. New ten finite cases are bound separately; original whole-gate status is retained.",
+      "pending_case_ids": [
+        "C11"
+      ],
+      "new_finite_case_ids": []
+    },
+    {
+      "id": "U4.history-410",
+      "gate": "U4-X",
+      "requirement": "Expected typed history410 and no chat fallback/replay",
+      "status": "PENDING",
+      "retained_proof_ids": [
+        "RP",
+        "RC"
+      ],
+      "boundary": "Expected client410 handling retained; actual bound root/Agent/route result awaits C11/generated/live qualification. New ten finite cases are bound separately; original whole-gate status is retained.",
+      "pending_case_ids": [
+        "C11"
+      ],
+      "new_finite_case_ids": []
+    },
+    {
+      "id": "U4.http-reconciliation",
+      "gate": "U4-X",
+      "requirement": "Canonical HTTP owns detailed progress, failure and reconciliation",
+      "status": "ACCEPTED_FINITE_PROOF",
+      "retained_proof_ids": [
+        "RR",
+        "RH",
+        "RC",
+        "RESEARCH1"
+      ],
+      "boundary": "Synthetic double Ask/away-back/lost-ack recovery retains original body/key; snapshot grants no effect authority."
+    },
+    {
+      "id": "U4.lazy-completeness",
+      "gate": "U4-X",
+      "requirement": "Lazy manifest/sections; failed required section prevents export delivery",
+      "status": "PENDING",
+      "retained_proof_ids": [
+        "EM",
+        "E_COMPOSE",
+        "RUN_REPORT_EVIDENCE32",
+        "RESEARCH1",
+        "REPORT4"
+      ],
+      "boundary": "Unread/partial/duplicate/foreign and one-of40 covered; required fresh failure with zero sink/download remains missing. New ten finite cases are bound separately; original whole-gate status is retained.",
+      "pending_case_ids": [],
+      "new_finite_case_ids": [
+        "R2"
+      ]
+    },
+    {
+      "id": "U4.protected-clearing",
+      "gate": "U4-X",
+      "requirement": "Protected state clears and cannot return from late open-evidence response",
+      "status": "PENDING",
+      "retained_proof_ids": [
+        "EC",
+        "QUERY5",
+        "EVIDENCE13"
+      ],
+      "boundary": "Client epochs/holder/digest and leaf suppressed text retained; actual open/late invalidation trace missing. New ten finite cases are bound separately; original whole-gate status is retained.",
+      "pending_case_ids": [],
+      "new_finite_case_ids": [
+        "R3"
+      ]
+    },
+    {
+      "id": "U4.no-reasoning-transcript",
+      "gate": "U4-X",
+      "requirement": "No hidden reasoning/transcript or raw provider material",
+      "status": "PENDING",
+      "retained_proof_ids": [
+        "RP",
+        "RC",
+        "PRESENTATION",
+        "EVIDENCE13"
+      ],
+      "boundary": "Strict DTO/leaf omissions are accepted; bounded composed disclosure decision remains pending. New ten finite cases are bound separately; original whole-gate status is retained.",
+      "pending_case_ids": [
+        "C11"
+      ],
+      "new_finite_case_ids": [
+        "T2"
+      ]
+    },
+    {
+      "id": "U4.completion-not-acceptance",
+      "gate": "U4-X",
+      "requirement": "ENGINE_COMPLETED is not accepted/published report",
+      "status": "ACCEPTED_FINITE_PROOF",
+      "retained_proof_ids": [
+        "RR",
+        "RP",
+        "PRESENTATION",
+        "RUN_REPORT_EVIDENCE32"
+      ],
+      "boundary": "Accepted client/feature separation only; successful live snapshot not claimed."
+    },
+    {
+      "id": "U4.resolution-not-support",
+      "gate": "U4-X",
+      "requirement": "Citation resolution remains separate from semantic support",
+      "status": "ACCEPTED_FINITE_PROOF",
+      "retained_proof_ids": [
+        "EC",
+        "E_COMPOSE",
+        "EVIDENCE13",
+        "RESEARCH1"
+      ],
+      "boundary": "Exact synthetic opening and explicit negative retained; no authority weakened."
+    },
+    {
+      "id": "U4.report-body",
+      "gate": "U4-X",
+      "requirement": "Readable bilingual central report and explicit lazy section focus",
+      "status": "ACCEPTED_FINITE_PROOF",
+      "retained_proof_ids": [
+        "REPORT4"
+      ],
+      "boundary": "Changed report-only CSS/body four renders; excludes citations/export/mutation acceptance."
+    },
+    {
+      "id": "U4.roots-catalog",
+      "gate": "U4-X",
+      "requirement": "Serialize Research/Report/Evidence root/catalog and manager receipt",
+      "status": "PENDING",
+      "retained_proof_ids": [
+        "SOURCE7",
+        "PRESENTATION",
+        "ADDITIVE"
+      ],
+      "boundary": "Standalone/source delivery and finite journeys do not accept U4-X."
+    },
+    {
+      "id": "U5.roots-catalog",
+      "gate": "U5-X",
+      "requirement": "Serialize Studio/Connections roots and catalog",
+      "status": "PENDING",
+      "retained_proof_ids": [
+        "ADDITIVE",
+        "STUDIO1",
+        "SHELL10"
+      ],
+      "boundary": "Manager acceptance and FINAL_UI_REVIEW_PACKAGE still require root assembly/decision."
+    },
+    {
+      "id": "U5.unavailable-absent",
+      "gate": "U5-X",
+      "requirement": "Unavailable products/actions are absent",
+      "status": "PENDING",
+      "retained_proof_ids": [
+        "STUDIO_CLIENT",
+        "CONNECTIONS",
+        "ADDITIVE"
+      ],
+      "boundary": "Leaf/callback support retained; composed capability state mapping is missing. New ten finite cases are bound separately; original whole-gate status is retained.",
+      "pending_case_ids": [],
+      "new_finite_case_ids": [
+        "T1"
+      ]
+    },
+    {
+      "id": "U5.connectivity-truth",
+      "gate": "U5-X",
+      "requirement": "No connectivity implied without server/session/grant/transport/client facts",
+      "status": "PENDING",
+      "retained_proof_ids": [
+        "CONNECTIONS",
+        "CONNECTIONS_CLIENT"
+      ],
+      "boundary": "Health/configuration and valid empty provider configuration are independent; composed decision remains missing. New ten finite cases are bound separately; original whole-gate status is retained.",
+      "pending_case_ids": [],
+      "new_finite_case_ids": [
+        "T1"
+      ]
+    },
+    {
+      "id": "U5.disclosure",
+      "gate": "U5-X",
+      "requirement": "No secret or provider payload disclosure in primary or details/error UI",
+      "status": "PENDING",
+      "retained_proof_ids": [
+        "CONNECTIONS",
+        "CONNECTIONS_CLIENT",
+        "RP"
+      ],
+      "boundary": "Routing/detail leaf assertions retained; composed details/error decision is missing. New ten finite cases are bound separately; original whole-gate status is retained.",
+      "pending_case_ids": [],
+      "new_finite_case_ids": [
+        "T2"
+      ]
+    },
+    {
+      "id": "U5.cow-publication",
+      "gate": "U5-X",
+      "requirement": "Only implemented operations; typed COW and same-identity publication/readback",
+      "status": "ACCEPTED_FINITE_PROOF",
+      "retained_proof_ids": [
+        "STUDIO_CLIENT",
+        "STUDIO1",
+        "ARTIFACT1",
+        "SHELL10",
+        "QUERY5"
+      ],
+      "boundary": "Existing lost-ack recovery, duplicate/away-back and foreign-report protection retained; no regeneration-as-edit inference."
+    },
+    {
+      "id": "U5.caption-theme",
+      "gate": "U5-X",
+      "requirement": "Readable selected captions in forced/dark Studio",
+      "status": "ACCEPTED_FINITE_PROOF",
+      "retained_proof_ids": [
+        "STUDIO_CAPTION10",
+        "FORCED20",
+        "ADDITIVE"
+      ],
+      "boundary": "Latest accepted caption proof supersedes older named contrast concern; no whole theme/a11y gate inferred."
+    },
+    {
+      "id": "ALL.C11",
+      "gate": "C11",
+      "requirement": "Accepted full public selected-session snapshot binding producer/handoff",
+      "status": "PENDING",
+      "retained_proof_ids": [
+        "RP",
+        "C11_NOTE"
+      ],
+      "boundary": "Do not derive handler/session/route/authority expiry from workflow, owner-session expiry or snapshot equality. Existing readProjection(binding) is the application seam; wire RPC remains zero-argument. New ten finite cases are bound separately; original whole-gate status is retained.",
+      "pending_case_ids": [
+        "C11"
+      ],
+      "new_finite_case_ids": []
+    },
+    {
+      "id": "ALL.owning-graph",
+      "gate": "cross-gate",
+      "requirement": "Owning contracts/client/UI/web source graph at merged published target",
+      "status": "PENDING",
+      "retained_proof_ids": [
+        "COMPILER_EQ",
+        "COHERENCE4E",
+        "OFFICIAL887"
+      ],
+      "boundary": "Original compiler0602 exact-run equivalence retained; backend changes contracts barrel at4e, merged full graph explicitly NOT_REQUALIFIED."
+    },
+    {
+      "id": "ALL.physical-a11y",
+      "gate": "cross-gate",
+      "requirement": "Physical screenreader and native 200percent zoom/touch/keyboard relationships",
+      "status": "PENDING",
+      "retained_proof_ids": [
+        "CHOOSER18",
+        "DOC",
+        "SOURCES10",
+        "REPORT4",
+        "STUDIO_CAPTION10"
+      ],
+      "boundary": "Synthetic/native DOM and axe/render checks do not qualify physical assistive technology."
+    },
+    {
+      "id": "ALL.native-pointer",
+      "gate": "cross-gate",
+      "requirement": "OS pointer-only native option commit",
+      "status": "PENDING",
+      "retained_proof_ids": [
+        "CHOOSER18"
+      ],
+      "boundary": "Existing pointer-open/keyboard-commit proof is retained; pointer-only OS commit remains unassessed."
+    },
+    {
+      "id": "ALL.performance",
+      "gate": "cross-gate",
+      "requirement": "P1-P10 and canonical initial JS<=614400 gzip plus integrated budgets",
+      "status": "PENDING",
+      "retained_proof_ids": [
+        "ADDITIVE"
+      ],
+      "boundary": "Latest delivery records canonical budget NOT_REQUALIFIED; no current merged performance/timing claim."
+    },
+    {
+      "id": "ALL.generated",
+      "gate": "cross-gate",
+      "requirement": "One generated Vite+Worker/config/input graph and route/RPC/410/assets parity",
+      "status": "PENDING",
+      "retained_proof_ids": [
+        "ADDITIVE",
+        "COHERENCE4E"
+      ],
+      "boundary": "Historical generated Assets header3, Router transform5 and strict-CSP startup retained at original inputs; complete published backend import/generated graph not established."
+    },
+    {
+      "id": "ALL.CSP",
+      "gate": "cross-gate",
+      "requirement": "Current complete integrated CSP qualification",
+      "status": "PENDING",
+      "retained_proof_ids": [
+        "ADDITIVE"
+      ],
+      "boundary": "Historical Chrome155 eval0/style0 startup and expected inline-script denial supersede old startup blocker only at their original scope; current merged CSP not requalified."
+    },
+    {
+      "id": "ALL.live",
+      "gate": "cross-gate",
+      "requirement": "Authenticated HTTP/Agent owner/grant/session behavior in staging/live",
+      "status": "PENDING",
+      "retained_proof_ids": [
+        "RP",
+        "ADDITIVE",
+        "COHERENCE4E"
+      ],
+      "boundary": "Synthetic ports and IMPLEMENTED_NOT_LIVE protocol are not successful authenticated or live transport."
+    },
+    {
+      "id": "ALL.release",
+      "gate": "U6",
+      "requirement": "Attested deployment/cutover, retirement/rollback/inbox/tombstone and ordered release",
+      "status": "PENDING",
+      "retained_proof_ids": [
+        "ADDITIVE"
+      ],
+      "boundary": "Separate owner authorization and generated/live qualification required; not performed or accepted here."
+    },
+    {
+      "id": "ALL.FINAL-UI",
+      "gate": "FINAL-UI",
+      "requirement": "Owner review and explicit baseline decision on complete integrated interface",
+      "status": "PENDING",
+      "retained_proof_ids": [
+        "SOURCE7",
+        "REPORT4",
+        "STUDIO_CAPTION10"
+      ],
+      "boundary": "Named bounded reviews do not supply final owner approval; U3-X/U4-X/U5-X remain pending."
+    }
+  ],
+  "root_owned_missing_ten": [
+    {
+      "id": "S1",
+      "gate": "U3-X",
+      "case": "Same-generation library holder replaced during deferred document read",
+      "status": "ACCEPTED_BOUNDED_SYNTHETIC_ROOT_CASE",
+      "owner": "ROOT",
+      "basis": "Existing finite gap maps; new root cases/proofs not assessed in this assembly",
+      "run_id": "reader5",
+      "source_commit": "afe4fc800ae37d24fc8e279fe4798e7754959673",
+      "log_sha256": "a342d2d6ef2144862bb292bf7b3012b2435716fe9c274ab65b1b5ef9b458c8e7",
+      "module_receipt": "tests/ui-owner/receipts/u3-x/finite-composed-lifecycle-module-20261010.json"
+    },
+    {
+      "id": "S2",
+      "gate": "U3-X",
+      "case": "Same-generation revision-page holder replaced during deferred document read",
+      "status": "ACCEPTED_BOUNDED_SYNTHETIC_ROOT_CASE",
+      "owner": "ROOT",
+      "basis": "Existing finite gap maps; new root cases/proofs not assessed in this assembly",
+      "run_id": "reader5",
+      "source_commit": "afe4fc800ae37d24fc8e279fe4798e7754959673",
+      "log_sha256": "a342d2d6ef2144862bb292bf7b3012b2435716fe9c274ab65b1b5ef9b458c8e7",
+      "module_receipt": "tests/ui-owner/receipts/u3-x/finite-composed-lifecycle-module-20261010.json"
+    },
+    {
+      "id": "S3",
+      "gate": "U3-X",
+      "case": "Session closure plus late document and old-epoch history replay",
+      "status": "ACCEPTED_BOUNDED_SYNTHETIC_ROOT_CASE",
+      "owner": "ROOT",
+      "basis": "Existing finite gap maps; new root cases/proofs not assessed in this assembly",
+      "run_id": "reader5",
+      "source_commit": "afe4fc800ae37d24fc8e279fe4798e7754959673",
+      "log_sha256": "a342d2d6ef2144862bb292bf7b3012b2435716fe9c274ab65b1b5ef9b458c8e7",
+      "module_receipt": "tests/ui-owner/receipts/u3-x/finite-composed-lifecycle-module-20261010.json"
+    },
+    {
+      "id": "S4",
+      "gate": "U3-X",
+      "case": "Same-epoch foreign project history refusal",
+      "status": "ACCEPTED_BOUNDED_SYNTHETIC_ROOT_CASE",
+      "owner": "ROOT",
+      "basis": "Existing finite gap maps; new root cases/proofs not assessed in this assembly",
+      "run_id": "reader5",
+      "source_commit": "afe4fc800ae37d24fc8e279fe4798e7754959673",
+      "log_sha256": "a342d2d6ef2144862bb292bf7b3012b2435716fe9c274ab65b1b5ef9b458c8e7",
+      "module_receipt": "tests/ui-owner/receipts/u3-x/finite-composed-lifecycle-module-20261010.json"
+    },
+    {
+      "id": "S5",
+      "gate": "U3-X",
+      "case": "Same-epoch foreign source history refusal",
+      "status": "ACCEPTED_BOUNDED_SYNTHETIC_ROOT_CASE",
+      "owner": "ROOT",
+      "basis": "Existing finite gap maps; new root cases/proofs not assessed in this assembly",
+      "run_id": "reader5",
+      "source_commit": "afe4fc800ae37d24fc8e279fe4798e7754959673",
+      "log_sha256": "a342d2d6ef2144862bb292bf7b3012b2435716fe9c274ab65b1b5ef9b458c8e7",
+      "module_receipt": "tests/ui-owner/receipts/u3-x/finite-composed-lifecycle-module-20261010.json"
+    },
+    {
+      "id": "R1",
+      "gate": "U4-X",
+      "case": "Active poll/manual status-history/reconnect produces no extra effect or identity",
+      "status": "ACCEPTED_BOUNDED_SYNTHETIC_ROOT_CASE",
+      "owner": "ROOT",
+      "basis": "Existing finite gap maps; new root cases/proofs not assessed in this assembly",
+      "run_id": "reads-export2",
+      "source_commit": "572486fae16338de2996871608cc0d50a0bcba9f",
+      "log_sha256": "bb38cacdf1953c3ddfdb17bccb5a7a0b5bf3d11cfaa7cc4f6c90c87f6d3c4583",
+      "module_receipt": "tests/ui-owner/receipts/u3-x/finite-composed-lifecycle-module-20261010.json"
+    },
+    {
+      "id": "R2",
+      "gate": "U4-X",
+      "case": "Fresh failure of required section blocks export and sink/download",
+      "status": "ACCEPTED_BOUNDED_SYNTHETIC_ROOT_CASE",
+      "owner": "ROOT",
+      "basis": "Existing finite gap maps; new root cases/proofs not assessed in this assembly",
+      "run_id": "reads-export2",
+      "source_commit": "572486fae16338de2996871608cc0d50a0bcba9f",
+      "log_sha256": "bb38cacdf1953c3ddfdb17bccb5a7a0b5bf3d11cfaa7cc4f6c90c87f6d3c4583",
+      "module_receipt": "tests/ui-owner/receipts/u3-x/finite-composed-lifecycle-module-20261010.json"
+    },
+    {
+      "id": "R3",
+      "gate": "U4-X",
+      "case": "Open excerpt and late evidence cannot return after invalidation",
+      "status": "ACCEPTED_BOUNDED_SYNTHETIC_ROOT_CASE",
+      "owner": "ROOT",
+      "basis": "Existing finite gap maps; new root cases/proofs not assessed in this assembly",
+      "run_id": "excerpt1",
+      "source_commit": "1329f6a2848b6317dcea20fae9b76adbf8d6c671",
+      "log_sha256": "6c033fdb9ea5ec4f01a13f1d17445ce6f6558c42c961b996577833f04284b040",
+      "module_receipt": "tests/ui-owner/receipts/u3-x/finite-composed-lifecycle-module-20261010.json"
+    },
+    {
+      "id": "T1",
+      "gate": "U5-X",
+      "case": "Composed capability/connection truth",
+      "status": "ACCEPTED_BOUNDED_SYNTHETIC_ROOT_CASE",
+      "owner": "ROOT",
+      "basis": "Existing finite gap maps; new root cases/proofs not assessed in this assembly",
+      "run_id": "truth2",
+      "source_commit": "304df8d6b63531dc6bb15d131f63cb058ed726e8",
+      "log_sha256": "371fd6a58fffc9c4ed3e0a19ad8df2d8bf1d166cb6ab505c818ca044e8b2611a",
+      "module_receipt": "tests/ui-owner/receipts/u3-x/finite-composed-lifecycle-module-20261010.json"
+    },
+    {
+      "id": "T2",
+      "gate": "U5-X",
+      "case": "Bounded composed details/error disclosure",
+      "status": "ACCEPTED_BOUNDED_SYNTHETIC_ROOT_CASE",
+      "owner": "ROOT",
+      "basis": "Existing finite gap maps; new root cases/proofs not assessed in this assembly",
+      "run_id": "truth2",
+      "source_commit": "304df8d6b63531dc6bb15d131f63cb058ed726e8",
+      "log_sha256": "371fd6a58fffc9c4ed3e0a19ad8df2d8bf1d166cb6ab505c818ca044e8b2611a",
+      "module_receipt": "tests/ui-owner/receipts/u3-x/finite-composed-lifecycle-module-20261010.json"
+    }
+  ],
+  "C11": {
+    "status": "PENDING_FULL_PUBLIC_BINDING_DEPENDENCY",
+    "accepted_application_method": "readProjection(binding: ResearchSessionBinding)",
+    "accepted_wire_rpc": "readResearchSessionProjection()",
+    "wire_arguments": [],
+    "required_binding_fields": [
+      "agent",
+      "name",
+      "session_id",
+      "operation_id",
+      "investigation_ref.id",
+      "investigation_ref.revision",
+      "handler_generation",
+      "principal_ref",
+      "credential_generation",
+      "deployment_generation",
+      "authority_expires_at",
+      "timeoutMs"
+    ],
+    "limits": [
+      "timeoutMs is explicit caller policy, not backend authority",
+      "Owner-session expiry is not exact session/grant authority expiry",
+      "Workflow/investigation IDs or snapshot equality cannot manufacture missing session/grant/routing tuple",
+      "Missing tuple keeps canonical HTTP and explicit UNKNOWN/degraded projection; private draft remains unapplied",
+      "Accepted client union/410/disposal does not prove full public binding production or authenticated Agent transport"
+    ]
+  },
+  "proofs": [
+    {
+      "id": "PUB4E",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/publication.json",
+      "sha256": "2485a8b0359feff8bee07543050a11db1a4205862d858cce0eca25c899d88a54",
+      "recorded_status": "PUBLISHED_NORMAL_FF_READBACK_PASS",
+      "source_commit": null,
+      "scope": "Saved normal FF/readback; frontend source plus separately accepted backend five; no live qualification"
+    },
+    {
+      "id": "OFFICIAL887",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/qualification.json",
+      "sha256": "270ee2e8bbebcef0a587e9a709483e51c69810eb78bf0ef3afac66a1fe9df12b",
+      "recorded_status": "PASS",
+      "source_commit": null,
+      "scope": "Structure/scope/history only; semantic approval NOT_EVALUATED"
+    },
+    {
+      "id": "COHERENCE4E",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/backend-source-coherence.json",
+      "sha256": "dd94096a36adbd322050a53a8200070217beba223ab58474e3f39d9c19ac62b8",
+      "recorded_status": "PASS_EXACT5_BACKEND_SOURCE_FRONTEND_UNCHANGED",
+      "source_commit": null,
+      "scope": "Exact backend five and frontend preservation; merged full owning graph NOT_REQUALIFIED"
+    },
+    {
+      "id": "SOURCE7",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/module-receipt.source.json",
+      "sha256": "c90d3c664255153dbb376a780d44a7288402e936fcb3ba119d29edf409449ad8",
+      "recorded_status": "ACCEPTED_BOUNDED_SOURCE_CONTEXT_AND_REPORT_MODULE",
+      "source_commit": "637ec07f7133c7f1c1967de265f60da384df8873",
+      "scope": "Accepted bounded context/order/report/tooling source module"
+    },
+    {
+      "id": "COMPILER_EQ",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/compiler-input-equivalence.json",
+      "sha256": "11fdf21acd34eb8373947c050213ff14100e91fef3bbc6b918a8dae199e8604d",
+      "recorded_status": "PASS_RECORDED_COMPILER_INPUT_COHERENCE",
+      "source_commit": null,
+      "scope": "Read-only equivalence of original compiler run; no rerun",
+      "recorded_count": "269 expected roots; none omitted; all 278 recorded Git inputs unchanged; four alias metadata equivalents"
+    },
+    {
+      "id": "AUTH4E",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/publication-authorization.json",
+      "sha256": "c73151d3ca8e425ea9fe2d7003aed753a1d1056cc80b907b0165bbe41ff7188e",
+      "recorded_status": "PUBLISH_NORMAL_FF_THIS_TARGET",
+      "source_commit": null,
+      "scope": "Existing finite authorization/audit bindings; audit not repeated"
+    },
+    {
+      "id": "COMPACT",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/immutable-snapshot/tests/ui-owner/receipts/u3-x/compact-project-module-20261010.json",
+      "sha256": "afcb0d2a90ed1593b97c92d8420886e10b319fdd70ccdb6570002a98bde5618f",
+      "recorded_status": "ACCEPTED_BOUNDED_COMPACT_PROJECT_MODULE",
+      "source_commit": "893704a6b4bdd6e7afc9300a6621ec60bbf15765",
+      "scope": "Accepted native chooser module; whole U3-X pending"
+    },
+    {
+      "id": "CHOOSER18",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-module-20261010/project-browser/review.json",
+      "sha256": "e5076067c080a6d27e4a8519c2481988327ce071843d7813b414df057af488b2",
+      "recorded_status": "PASS",
+      "source_commit": null,
+      "scope": "Synthetic actual LiveWorkspace/Query/privacy; keyboard/remount/context refusal; no protected reader lifecycle",
+      "recorded_count": "18"
+    },
+    {
+      "id": "TRUTH6",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-module-20261010/truth-browser.json",
+      "sha256": "83fcd457133a94c2b02b84f95250cd284abdbb586c405fc8d7b3ea00e57d07ec",
+      "recorded_status": "PASS",
+      "source_commit": null,
+      "scope": "Rendered missing/foreign/known-empty props; no API authority",
+      "recorded_count": "6"
+    },
+    {
+      "id": "SOURCES10",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/sources-browser.json",
+      "sha256": "1bf86a67abd07272df2755df3e84f7b1f54ca262211a5d50cf4d7b36d165ba35",
+      "recorded_status": "PASS",
+      "source_commit": "0602fd91f368a29129dc8ff59434031de73497c2",
+      "scope": "New order/slot plus choose/pending/error/missing; bounded EN1440/RU390 light/dark; no physical a11y",
+      "recorded_count": "10"
+    },
+    {
+      "id": "SOURCES3",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-module-20261010/shell-sources-repaired-command.log",
+      "sha256": "808cab69b7d984bcfc15eb7551675b7e689074da25f5b1cd96132a8f45f1c108",
+      "recorded_status": "LOG_RETAINED",
+      "source_commit": null,
+      "scope": "Changed source stories including ordinary reader Back/opener focus",
+      "recorded_count": "3 passed; 7 skipped"
+    },
+    {
+      "id": "IMPORT",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/immutable-snapshot/tests/ui-owner/receipts/u3-x/import-feature.json",
+      "sha256": "bc05caf3de45e1375a1d72aeecaa26308fcf1c9fe00d3901d800dd7477e33ce2",
+      "recorded_status": "ACCEPTED_INTERNAL_FEATURE",
+      "source_commit": "b01b68b09b0f024bbf05bfba84308af033a02211",
+      "scope": "Accepted import/capture/conversion/admission/uncertainty and explicit bundle scope",
+      "recorded_count": "Original10; targeted uncertain1; root Import/Bundle2; current15 and picker5 renders"
+    },
+    {
+      "id": "ERASURE",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/immutable-snapshot/tests/ui-owner/receipts/u3-x/erasure-feature.json",
+      "sha256": "65348041cc5537cef9a16f6d1aa40ce2239beb30169624673528491dbb44e4ea",
+      "recorded_status": "ACCEPTED_INTERNAL_FEATURE",
+      "source_commit": "65d4d32b7e8f5ce6e54d1ebe52719b4be933ea23",
+      "scope": "Accepted partial/held/unknown distinction and same-identity destructive readback",
+      "recorded_count": "Original10; root saved identity; failed readback1; renders30"
+    },
+    {
+      "id": "DOC",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/immutable-snapshot/tests/ui-owner/receipts/u1-d/sources-document.json",
+      "sha256": "0376ba2585edffa8f38ea20641aaba327b715b8bf4a7d5663ee83849c454d19e",
+      "recorded_status": "ACCEPTED_INTERNAL_UI_SOURCE",
+      "source_commit": "819f13e734478ec88f6bab7d3e90f951de857a97",
+      "scope": "Accepted bounded SafeMarkdown/exact reader source; synthetic coordinates",
+      "recorded_count": "Rendered10 at five widths"
+    },
+    {
+      "id": "PROJECTS",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/immutable-snapshot/tests/ui-owner/receipts/u1-d/sources-projects.json",
+      "sha256": "c2f15493a70bbb89da2971e5983b85dfaa7e2727e96a24b268ab36a7ef384f4e",
+      "recorded_status": "ACCEPTED_INTERNAL_UI_SOURCE",
+      "source_commit": "80e88e19204bdefdba88c309cc38f8db0048db20",
+      "scope": "Accepted readiness/currentness/revisions presentation; old contrast failure retained"
+    },
+    {
+      "id": "C2D",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/immutable-snapshot/tests/ui-owner/receipts/u1-d/client-document.json",
+      "sha256": "1a5dd6a9b4ca31176a9f4affb9f90fabac3bc048524ff97983299d200f8da1d0",
+      "recorded_status": "ACCEPTED_INTERNAL_CLIENT",
+      "source_commit": [
+        "f37333d5d462e8520f2a7dc7758b49db9e5dd8c4",
+        "0b7bde384d7d5cbe0566caf3f0520f0b5c7b8192"
+      ],
+      "scope": "Admitted bytes/header/digest/navigation and epoch; client scope"
+    },
+    {
+      "id": "RR",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/immutable-snapshot/tests/ui-owner/receipts/u1-d/client-research-runs.json",
+      "sha256": "fe6302547ff092262e06a89d1d202ddabc8921cdfd6c265e375b570ff1f2111f",
+      "recorded_status": "ACCEPTED_INTERNAL_CLIENT",
+      "source_commit": "97762ce928236a198a88e7059b512ca768e60196",
+      "scope": "Canonical run identity/body/readback; client scope"
+    },
+    {
+      "id": "RH",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/immutable-snapshot/tests/ui-owner/receipts/u1-d/client-research-history.json",
+      "sha256": "e9d24d7d6ec34656bb17841014c4851904ffe490502f1437c1be46afd1d44cc8",
+      "recorded_status": "ACCEPTED_INTERNAL_CLIENT",
+      "source_commit": [
+        "544a65cf822603001cf1ed543367e9a20493bf5f"
+      ],
+      "scope": "History/change currentness and report independence; client scope"
+    },
+    {
+      "id": "RC",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/immutable-snapshot/tests/ui-owner/receipts/u1-d/client-research-composition.json",
+      "sha256": "5344e2e2e4ab867b679ec4cd0485e6afedbc4f13baa000f9a0aa34adc2d7f2c3",
+      "recorded_status": "ACCEPTED_INTERNAL_CLIENT_COMPOSITION",
+      "source_commit": "32163c05d9f7ae5cb1874119e2769262c028dec4",
+      "scope": "HTTP owns progress/reconciliation; projection creates no effect authority; client scope"
+    },
+    {
+      "id": "RP",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/immutable-snapshot/tests/ui-owner/receipts/u1-d/client-session-projection.json",
+      "sha256": "7656be72605d78972753818d01ecede3bbee61ad20d916c74e4da28e2f919223",
+      "recorded_status": "ACCEPTED_INTERNAL_CLIENT",
+      "source_commit": "7451b7b679d9da26a89563fb8752343976c4cb0e",
+      "scope": "Strict no-arg wire snapshot, typed expected410, frozen tuple/epoch/disposal; client scope only"
+    },
+    {
+      "id": "EM",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/immutable-snapshot/tests/ui-owner/receipts/u1-d/client-report.json",
+      "sha256": "0ff3eeac32cd518d2263c7034432105a74b715e6e8be92da3ac7743437564ff2",
+      "recorded_status": "ACCEPTED_INTERNAL_CLIENT",
+      "source_commit": "19c1b916ee895f3dcb5c3dd475b3b241a17049d6",
+      "scope": "Manifest/lazy reauthorized sections/complete export contract; client scope",
+      "recorded_count": "Original45 plus revision-negative1; 18 skipped"
+    },
+    {
+      "id": "EC",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/immutable-snapshot/tests/ui-owner/receipts/u1-d/client-citations.json",
+      "sha256": "57ba3ba5f8b6c10ad71ff6d0ead72cfce9e6862007f6b9abb870b58f4f2ff4a6",
+      "recorded_status": "ACCEPTED_INTERNAL_CLIENT",
+      "source_commit": "ff15da4f752810d02cf25ecbac25be80a88a9a7d",
+      "scope": "V1/V2 order, POST reauthorization, digest/UTF8/epoch; client scope",
+      "recorded_count": "Original44 plus affected10; no blanket repeat"
+    },
+    {
+      "id": "E_COMPOSE",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/immutable-snapshot/tests/ui-owner/receipts/u1-d/client-evidence-composition.json",
+      "sha256": "2528957f7c11bcf9bd22c48f11a2f2937ffa9cea3f66040e4d9d5877acd24ad0",
+      "recorded_status": "ACCEPTED_INTERNAL_CLIENT_COMPOSITION",
+      "source_commit": "32163c05d9f7ae5cb1874119e2769262c028dec4",
+      "scope": "Citation resolution separate from support; required sections own export completeness"
+    },
+    {
+      "id": "PRESENTATION",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/immutable-snapshot/tests/ui-owner/receipts/u4-x/presentation-modules-20261010.json",
+      "sha256": "94321272b7d4a8d59d7f5a229c20bde92470825e2b45c96879c9c13a653150a7",
+      "recorded_status": "ACCEPTED_STANDALONE_PRESENTATION_SOURCE_ONLY",
+      "source_commit": [
+        "93e0bd6e5739623be17f9b4261ed9e00a21c447d",
+        "01357eab2d2a650cad0c54a8050bba35e13b55b8",
+        "c8542b40564d89fa834ea83598b66a2a52fc6ecc"
+      ],
+      "scope": "Accepted standalone Run/Report/Evidence source only"
+    },
+    {
+      "id": "RUN_REPORT_EVIDENCE32",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-ui-proposals/u4-u5-affected-leaves-20261010-B.log",
+      "sha256": "cc194efe4a0457ffdf0bff79f1d49fe4a27244e8797b7cd8abde1934efbabe27",
+      "recorded_status": "LOG_RETAINED",
+      "source_commit": null,
+      "scope": "Three feature families combined, not 32 per leaf",
+      "recorded_count": "3 files; 32 passed total"
+    },
+    {
+      "id": "EVIDENCE13",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-ui-proposals/evidence-current-20261010.receipt.json",
+      "sha256": "bb365b9b643513c472bbfab157f51732c485cd1d899c928ea49102c4cc171024",
+      "recorded_status": "PASS",
+      "source_commit": null,
+      "scope": "One affected Evidence story family; stale/revoked/coordinate/explicit-open/resolution-not-support",
+      "recorded_count": "13"
+    },
+    {
+      "id": "RESEARCH1",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/research-journey.log",
+      "sha256": "8b7c3e55fada2b32e187f5d04923c69b34f836233ab5351224e6f0731a9d475a",
+      "recorded_status": "LOG_RETAINED",
+      "source_commit": null,
+      "scope": "Actual synthetic runtime/Query/components: double Ask, lost ack, same-key recovery, one-of40, exact evidence; no new lifecycle/effect-count negatives",
+      "recorded_count": "1 passed; 9 skipped"
+    },
+    {
+      "id": "REPORT4",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/report-browser.json",
+      "sha256": "1966b3d42b57e8a8aeb619dc59b8ac0459202ef8fab28d10ee46d071a07313f6",
+      "recorded_status": "PASS",
+      "source_commit": "637ec07f7133c7f1c1967de265f60da384df8873",
+      "scope": "Actual report body/section focus/spacing, EN1440/RU390 light/dark; citations unsupported; no export acceptance",
+      "recorded_count": "4"
+    },
+    {
+      "id": "QUERY5",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-ui-proposals/reports-studio-tests-fixed-20261010.log",
+      "sha256": "f5a3d252353b9a711e1845b1ea952433ce857f98fe6af0804f49c00981b084f0",
+      "recorded_status": "LOG_RETAINED",
+      "source_commit": null,
+      "scope": "Report/Studio holder before/after, fresh citation scope, digest cache refusal; Query units",
+      "recorded_count": "2 files; 5 passed"
+    },
+    {
+      "id": "STUDIO_CLIENT",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/immutable-snapshot/tests/ui-owner/receipts/u1-d/client-studio.json",
+      "sha256": "b30ee14e1904d58b028bdddb0b0c5fe95780fe814c5cc8cdfbc7e3f0be982b52",
+      "recorded_status": "ACCEPTED_INTERNAL_CLIENT",
+      "source_commit": "18c36cdd4cf146e0aaa783f55f0fc8dc7dffc0d1",
+      "scope": "Implemented reads/COW/publication; regenerate differs from edit; client scope"
+    },
+    {
+      "id": "STUDIO1",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-ui-proposals/root-studio-journey-20261010-D.log",
+      "sha256": "078be95355426b2dc37ebf17fe1fff1c23d37719aa519e3be83a11dabbed7414",
+      "recorded_status": "LOG_RETAINED",
+      "source_commit": null,
+      "scope": "Synthetic composed Studio COW and confirmed publication readback",
+      "recorded_count": "1 passed; 7 skipped"
+    },
+    {
+      "id": "ARTIFACT1",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-ui-proposals/artifact-actions-recovery-qualified-20261010.log",
+      "sha256": "ca3601ea50242b339037cc89eced893321224c2a90c937bd201b2998acb7f217",
+      "recorded_status": "LOG_RETAINED",
+      "source_commit": null,
+      "scope": "Synthetic lost-ack acceptance/revision recovery and foreign-report pending-action protection",
+      "recorded_count": "1 passed; 8 skipped"
+    },
+    {
+      "id": "SHELL10",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-ui-proposals/workspace-link-shell-storybook-qualified-20261010.log",
+      "sha256": "377a7b4af3e59f408be70bff1bb8d77552d62652d64801ea5138ffa0534cd1fe",
+      "recorded_status": "LOG_RETAINED",
+      "source_commit": null,
+      "scope": "Historical exact-input navigation/Sources/import/erasure/Studio/artifact journeys; changed Research selector superseded by RESEARCH1",
+      "recorded_count": "10 passed"
+    },
+    {
+      "id": "CONNECTIONS",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/immutable-snapshot/tests/ui-owner/receipts/u5-x/connections-feature.json",
+      "sha256": "2f8ae830274e5a164d0db1d317ae54dd32601fb92e009fa0f0ede30fcb84a9be",
+      "recorded_status": "ACCEPTED_INTERNAL_FEATURE",
+      "source_commit": "00c4f9139f38473b5f956e39aca492c2e626f72f",
+      "scope": "Independent connectivity facts, routing-only transport, valid-empty providers; feature scope",
+      "recorded_count": "Original23 plus empty-provider1; refined30/provider-empty5/dark5 renders"
+    },
+    {
+      "id": "CONNECTIONS_CLIENT",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/immutable-snapshot/tests/ui-owner/receipts/u1-d/client-connections.json",
+      "sha256": "e96442bdf5a0f67ff79366ee9dc9682231adae2ccca50d572bb151df3199b621",
+      "recorded_status": "ACCEPTED_INTERNAL_CLIENT",
+      "source_commit": "70fc1bd31c6d079037513da32812ac4d3c3dad6b",
+      "scope": "Actual strict health/session/grant/provider/transport/currentness; client scope"
+    },
+    {
+      "id": "STUDIO_CAPTION10",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-u5-studio-system-caption-qualified-20261010/review.json",
+      "sha256": "0b015b7d7ebcc28e60f08c57773404c7558827b5536b2f32d0eb717568bca3a2",
+      "recorded_status": "PASS",
+      "source_commit": null,
+      "scope": "Actual result set covers Studio despite broad four-family header; final forced/dark captions",
+      "recorded_count": "10 actual results"
+    },
+    {
+      "id": "FORCED20",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-forced-system-caption-20261010/review.json",
+      "sha256": "6bee0c1cc62be03e13b56c4bdda8739c35de26745b129b78be12e7aa646ab9ca",
+      "recorded_status": "PASS",
+      "source_commit": null,
+      "scope": "Retained bounded forced-system-caption results; no physical assistive-technology acceptance",
+      "recorded_count": "20"
+    },
+    {
+      "id": "ADDITIVE",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/immutable-snapshot/tests/ui-owner/receipts/u5-x/csp-navigation-assets-module-20261010.json",
+      "sha256": "871c1f56e813db0c8bced647fe733ee8497743687d9a40bf61ed7ddff1ea98d0",
+      "recorded_status": "ACCEPTED_OWNING_FRONTEND_SOURCE_WITH_EXPLICIT_DOWNSTREAM_LIMITS",
+      "source_commit": "39e63dd7c050669426fea84ca37de32ae3c76cd4",
+      "scope": "Accepted owning source, preserved Studio/caption and prior runtime/Query; historical generated/CSP checks only; budget NOT_REQUALIFIED"
+    },
+    {
+      "id": "BOUNDARY",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/boundaries.log",
+      "sha256": "a1aad74e5695c873ad8a3076ce135ad8293b4c5025ee024d98a0e4ee61a02d2e",
+      "recorded_status": "LOG_RETAINED",
+      "source_commit": null,
+      "scope": "Retained package/forbidden-import static check; exact tooling exception fixed; no new check here"
+    },
+    {
+      "id": "C11_NOTE",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-ui-proposals/research-projection-binding-preparation-20261010/notes.md",
+      "sha256": "3639b6ca8df91f9d6934563c4e2f84d08679bbef7d65868279365511bc358b0f",
+      "recorded_status": "LOG_RETAINED",
+      "source_commit": null,
+      "scope": "Blocked, unapplied private preparation; authoritative tuple dependency, not acceptance"
+    }
+  ],
+  "prior_maps": [
+    {
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-ui-proposals/u4-u5-final-evidence-map-20261010.md",
+      "sha256": "74f0dd9f28d931e86671dcf564e78040bba9db4d4906d43857978560f33c74b7",
+      "role": "PRIVATE_GAP_MAP_NOT_ACCEPTANCE"
+    },
+    {
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-ui-proposals/u3-x-remaining-finite-cases-20261010.md",
+      "sha256": "9c95a5a7dabc07c153c6ec8fe76c04a90155fa95e0fb65abe05f02322d8fd1ec",
+      "role": "PRIVATE_GAP_MAP_NOT_ACCEPTANCE"
+    }
+  ],
+  "failures_preserved": [
+    {
+      "id": "OLD_SHELL",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-ui-proposals/final-shell-journeys-qualified-20261010.log",
+      "sha256": "387a95801c0472d9db24f9800cefe4d7dc3fd67744b0f63c02a1ac2b338848ab",
+      "original_result": "1 failed; 8 passed",
+      "superseding_finite_proof_ids": [
+        "ARTIFACT1",
+        "SHELL10"
+      ],
+      "boundary": "Specific artifact recovery repaired; original log stays failed"
+    },
+    {
+      "id": "OLD_QUERY",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-ui-proposals/web-root-query-final-20261010.log",
+      "sha256": "45e92c44bc2261c18262a2694eb3dd62c740d291f116f3de12099271bb2e8c90",
+      "original_result": "1 failed; 45 passed",
+      "superseding_finite_proof_ids": [
+        "QUERY5"
+      ],
+      "boundary": "Targeted holder cases repaired; original aggregate stays failed"
+    },
+    {
+      "id": "REPORT_FIXTURE_1",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/report-browser-failure.json",
+      "sha256": "2d3c5c69604a3ecd06f1a147f3446b3ed33a3d9c62849aeb508b54dda4f80a3e",
+      "original_result": "FAIL; zero completed results",
+      "superseding_finite_proof_ids": [
+        "REPORT4"
+      ],
+      "boundary": "Synthetic fixture startup failure, not a passed UI case"
+    },
+    {
+      "id": "REPORT_FIXTURE_2",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-sources-composition-20261010/report-browser-failure-v2.json",
+      "sha256": "bef8aecb51c11e59ce979f341d311381bd5a99817e235861046feb5e6b587474",
+      "original_result": "FAIL; zero completed results",
+      "superseding_finite_proof_ids": [
+        "REPORT4"
+      ],
+      "boundary": "Fixture correction qualified only by later Report4"
+    },
+    {
+      "id": "ORIGINAL9C",
+      "path": "C:/Development/Research/eliot-research/.eliotr-state/frontend-ui-proposals/official-9c-failure-coverage-audit.json",
+      "sha256": "1af0dba3471362128aadb0c1b37a39b6df7389fb4960900f6fc57c76abe9e19a",
+      "original_result": "Original history failures retained",
+      "superseding_finite_proof_ids": [
+        "OFFICIAL887"
+      ],
+      "boundary": "Different qualified frontier does not repair or relabel original9c"
+    }
+  ],
+  "historical_failure_notes": [
+    {
+      "proof": "PROJECTS",
+      "original": "15 initial PASS and five dark contrast FAIL reported in accepted leaf receipt",
+      "supersession": "Five corrected dark PASS retained; no earlier matrix relabeled"
+    },
+    {
+      "proof": "IMPORT",
+      "original": "Original34PASS/1overflowFAIL reported in accepted import receipt",
+      "supersession": "Repaired empty5, current15 and picker5 retained; no earlier matrix relabeled"
+    },
+    {
+      "proof": "COHERENCE4E",
+      "original": "Backend boundary FAIL OUTSIDE OWNERSHIP retained",
+      "supersession": "SOURCE7/BOUNDARY correct exact Vite tooling exception; no full graph inference"
+    },
+    {
+      "proof": "STUDIO_CAPTION10",
+      "original": "Earlier caption/theme concerns and aggregate failures remain historical",
+      "supersession": "Latest system-caption Studio10 and forced20 accepted; old theme-fixed is not a current FAIL"
+    }
+  ],
+  "assembly_policy": {
+    "executed_checks": [],
+    "new_source_audit": false,
+    "source_edits": false,
+    "canonical_receipts_or_claims_written": false,
+    "new_root_ten_cases_assessed": false,
+    "metadata_hash_policy": "Hashes bind evidence bytes read, including archived CRLF copies; published canonical blob/input hashes remain separate. No stale precommit log comparison or invented drift.",
+    "old_drafts": "Read for historical context only; stale jitless/source-drift/whole-gate assertions are not promoted",
+    "unknown_historical_exit": "NOT_CAPTURED unless existing proof records it"
+  },
+  "assembly_basis": {
+    "path": ".eliotr-state/frontend-ui-proposals/frontend-manager-coverage-20261010/retained-coverage.json",
+    "sha256": "6f7cff45fe10df9669191bfac008a88b633c5b0e3a943a9b965e5f00635fd3cf",
+    "old_status": "PRIVATE_RETAINED_FINITE_COVERAGE_ONLY"
+  },
+  "new_module_receipt": "tests/ui-owner/receipts/u3-x/finite-composed-lifecycle-module-20261010.json",
+  "physical_and_performance_and_generated_live": "PENDING_UNCHANGED",
+  "no_old_successful_suite_repeat": true
+}

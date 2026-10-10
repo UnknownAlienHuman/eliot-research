@@ -1,0 +1,244 @@
+{
+  "protocol": "eliotr.frontend-finite-composition-module.v1",
+  "status": "ACCEPTED_BOUNDED_COMPOSED_LIFECYCLE_SOURCE_MODULE",
+  "source_commit": "ddcd9096df46c360ae1244f959d7403ecd89a90d",
+  "published_dependency_base": "4e9762860800389190a77ac604b51beddd03de8d",
+  "manager_context_id": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
+  "manager_scope": "U1.5 root-only fixtures; no leaf product source edits or new claims",
+  "source_inputs": [
+    {
+      "path": "apps/eliotr-web/src/app/FiniteReaderPreview.tsx",
+      "git_blob": "dfec30ac3c2b72c10dc6df44ab4f7dce4241a7bc",
+      "sha256": "1e07e911733310e70758a39d90181ca095506f400a7fd9033047d554e4a291f1",
+      "mode": "100644"
+    },
+    {
+      "path": "apps/eliotr-web/src/app/FiniteExcerptPreview.tsx",
+      "git_blob": "9c33aad69a5f1e0f5050e6edb53fff91f6cdcb27",
+      "sha256": "4cceb112497f3ca09adf81103fa3ad8a1a61887d5cb36e426376295eff038b7d",
+      "mode": "100644"
+    },
+    {
+      "path": "apps/eliotr-web/src/app/FiniteReadExportPreview.tsx",
+      "git_blob": "fad5111a432c44738f2457784385cbfe9ff32120",
+      "sha256": "359367b4ef3e4a6bf7e10f58cca6130e50046bfbd2944aa8ee2192707a50f65d",
+      "mode": "100644"
+    },
+    {
+      "path": "apps/eliotr-web/src/app/FiniteTruthDisclosurePreview.tsx",
+      "git_blob": "70aad162abf530f1ced6de24d66ba423cde75844",
+      "sha256": "0989ce4cd082692dd8b2ccd3ab75f8fd70005f0619e74c4367df5c553235ce4c",
+      "mode": "100644"
+    },
+    {
+      "path": "apps/eliotr-web/src/app/Shell.stories.tsx",
+      "git_blob": "79c25ae762823acfb6fd9872e09e96cd22133ca4",
+      "sha256": "d3b13a9cf3bf06c3a1a9be5c43163dd0e65b3fdb22cff8aa425d8bbc0a7e898f",
+      "mode": "100644"
+    }
+  ],
+  "qualification": [
+    {
+      "path": ".eliotr-state/frontend-finite-composition-20261010/reader-browser.json",
+      "sha256": "7f4138dde04f75aa62408968b8742c8749f99c497840163632fbd1387e4da19b"
+    },
+    {
+      "path": ".eliotr-state/frontend-finite-composition-20261010/reader-browser.log",
+      "sha256": "a342d2d6ef2144862bb292bf7b3012b2435716fe9c274ab65b1b5ef9b458c8e7"
+    },
+    {
+      "path": ".eliotr-state/frontend-finite-composition-20261010/excerpt-browser.log",
+      "sha256": "6c033fdb9ea5ec4f01a13f1d17445ce6f6558c42c961b996577833f04284b040"
+    },
+    {
+      "path": ".eliotr-state/frontend-finite-composition-20261010/read-truth-browser-repaired.log",
+      "sha256": "bb38cacdf1953c3ddfdb17bccb5a7a0b5bf3d11cfaa7cc4f6c90c87f6d3c4583"
+    },
+    {
+      "path": ".eliotr-state/frontend-finite-composition-20261010/truth-browser-final.log",
+      "sha256": "371fd6a58fffc9c4ed3e0a19ad8df2d8bf1d166cb6ab505c818ca044e8b2611a"
+    },
+    {
+      "path": ".eliotr-state/frontend-finite-composition-20261010/compiler-qualified.json",
+      "sha256": "fdd5c221539a03a3b9a7fb171e0ca26cbdcb9487b2bb7bcbb65f5ab2559912be"
+    },
+    {
+      "path": ".eliotr-state/frontend-finite-composition-20261010/accepted-input-equivalence.json",
+      "sha256": "ce427da362582a89378d1558e414445c788919b15e5339f52b3f204fa708fcee"
+    },
+    {
+      "path": ".eliotr-state/frontend-finite-composition-20261010/lint.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".eliotr-state/frontend-finite-composition-20261010/lint-repaired.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".eliotr-state/frontend-finite-composition-20261010/lint-final.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".eliotr-state/frontend-finite-composition-20261010/lint-qualified.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".eliotr-state/frontend-finite-composition-20261010/static-build.json",
+      "sha256": "08ab74c19f519911e38d48050da2e97c109da854897cf83e3ea8363cdd2ecfcf"
+    }
+  ],
+  "browser": {
+    "accepted_new_cases": 10,
+    "runs": [
+      {
+        "id": "reader5",
+        "source": "afe4fc800ae37d24fc8e279fe4798e7754959673",
+        "file": "reader-browser.log",
+        "passed": 5,
+        "skipped": 10,
+        "summary": "5 passed | 10 skipped",
+        "case_ids": [
+          "S1",
+          "S2",
+          "S3",
+          "S4",
+          "S5"
+        ],
+        "log_sha256": "a342d2d6ef2144862bb292bf7b3012b2435716fe9c274ab65b1b5ef9b458c8e7"
+      },
+      {
+        "id": "excerpt1",
+        "source": "1329f6a2848b6317dcea20fae9b76adbf8d6c671",
+        "file": "excerpt-browser.log",
+        "passed": 1,
+        "skipped": 15,
+        "summary": "1 passed | 15 skipped",
+        "case_ids": [
+          "R3"
+        ],
+        "log_sha256": "6c033fdb9ea5ec4f01a13f1d17445ce6f6558c42c961b996577833f04284b040"
+      },
+      {
+        "id": "reads-export2",
+        "source": "572486fae16338de2996871608cc0d50a0bcba9f",
+        "file": "read-truth-browser-repaired.log",
+        "passed": 2,
+        "skipped": 16,
+        "failed_other_cases": 2,
+        "summary": "2 failed | 2 passed | 16 skipped",
+        "case_ids": [
+          "R1",
+          "R2"
+        ],
+        "log_sha256": "bb38cacdf1953c3ddfdb17bccb5a7a0b5bf3d11cfaa7cc4f6c90c87f6d3c4583"
+      },
+      {
+        "id": "truth2",
+        "source": "304df8d6b63531dc6bb15d131f63cb058ed726e8",
+        "file": "truth-browser-final.log",
+        "passed": 2,
+        "skipped": 18,
+        "summary": "2 passed | 18 skipped",
+        "case_ids": [
+          "T1",
+          "T2"
+        ],
+        "log_sha256": "371fd6a58fffc9c4ed3e0a19ad8df2d8bf1d166cb6ab505c818ca044e8b2611a"
+      }
+    ],
+    "old_successful_cases_repeated": false,
+    "a11y": "Storybook addon-a11y error mode; finite cases only, no physical screenreader/zoom claim"
+  },
+  "compiler": {
+    "version": "6.0.3",
+    "source_commit": "ddcd9096df46c360ae1244f959d7403ecd89a90d",
+    "inputs": 1141,
+    "expected_roots": 275,
+    "missing_roots": 0,
+    "in_memory_outputs": 1090,
+    "diagnostics": 0,
+    "scope": "Full owning web/UI/client/contracts solution for new finite fixture module. Tracked source/config and workspace symlink aliases read from immutable Git target; tracked directory inventory enumerated from Git. Installed external inputs hashed separately. In-memory outputs only; no install/dist/build/index mutations."
+  },
+  "static_review": {
+    "source_commit": "afe4fc800ae37d24fc8e279fe4798e7754959673",
+    "final_source_equivalence": "accepted-input-equivalence.json",
+    "artifact_directory": "C:\\Development\\Research\\eliot-research\\.eliotr-state\\frontend-finite-composition-20261010\\static-review-dist",
+    "artifacts": [
+      {
+        "path": ".vite/manifest.json",
+        "bytes": 1031,
+        "sha256": "987c1633516dac6b7bd61ab54b31d4f211ae0ca882138d1966da4cee42a38c20"
+      },
+      {
+        "path": "assets/bootstrap-CiMz0wdY.js",
+        "bytes": 776597,
+        "sha256": "cf2789283e838052c9e1b1781c75b2b4214618d8fdd483c9621687e6dd480fe7",
+        "gzip_bytes": 215425,
+        "brotli_bytes": 180287
+      },
+      {
+        "path": "assets/bootstrap-CjCL0jh0.css",
+        "bytes": 50487,
+        "sha256": "d66d2d5442b0f31e4fad3b593d8e7b8dd2897f0c55d6095178f7a5963b3c0780",
+        "gzip_bytes": 5294,
+        "brotli_bytes": 4738
+      },
+      {
+        "path": "assets/client-DD1Jkd23.js",
+        "bytes": 74869,
+        "sha256": "a75fc3acd8d0482818a2ee6135905cea971e0e38619cbe78ef9ca928ec7052da",
+        "gzip_bytes": 21395,
+        "brotli_bytes": 19052
+      },
+      {
+        "path": "assets/index-DwiDn0eZ.js",
+        "bytes": 3780,
+        "sha256": "8b91bdb14113168a4cfb6dc95f200003a34a2bc3bb4b78bb6df8f2b295895c96",
+        "gzip_bytes": 1766,
+        "brotli_bytes": 1561
+      },
+      {
+        "path": "assets/index-yUqyXvGR.css",
+        "bytes": 18770,
+        "sha256": "d5386b90e02b9e5639625c4be62cdaed607620e6a91d6ae0a5f44b079bc5f2c7",
+        "gzip_bytes": 3686,
+        "brotli_bytes": 3119
+      },
+      {
+        "path": "favicon.svg",
+        "bytes": 347,
+        "sha256": "d8e65831fe50e0d69afe6518a61895af3a45b93fa359666858be2f005e194c2e"
+      },
+      {
+        "path": "index.html",
+        "bytes": 674,
+        "sha256": "7e0670c87b76cc1462433995b0ae306ace5964834b3e6aaa23a749edbd3625be"
+      },
+      {
+        "path": "_headers",
+        "bytes": 308,
+        "sha256": "83832e230847bcc70bcdcaba4fe8aa8a3bf0d0fa6d38cacc6aeb790e4d9621c5"
+      }
+    ],
+    "all_client_js_gzip_bytes": 238586,
+    "ceiling_bytes": 614400,
+    "worker_build": "NOT_RUN",
+    "agents_route_parity": "NOT_CHECKED"
+  },
+  "failures_preserved": [
+    "compiler.json",
+    "compiler-repaired.json",
+    "compiler-final.json",
+    "read-truth-browser.log",
+    "read-truth-browser-repaired.log"
+  ],
+  "scope": "Ten previously missing synthetic root cases are qualified using actual Shell/runtime/strict client/protected Query. No backend/client/product/root/lock/index/install edits, no new product authority or public session binding. Accepted old successful suites are retained without rerun.",
+  "pending": [
+    "C11 accepted public full ResearchSessionBinding lookup and composed snapshot proof",
+    "Full U3-X/U4-X/U5-X and FINAL-UI acceptance",
+    "Physical screenreader/native zoom/pointer-only OS commit",
+    "Production performance timings",
+    "Owning generated Vite+Worker/config/input/agents route parity and authenticated staging/live/U6"
+  ]
+}
