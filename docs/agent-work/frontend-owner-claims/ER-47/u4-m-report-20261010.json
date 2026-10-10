@@ -1,0 +1,32 @@
+{
+  "protocol": "eliotr.frontend-owner-claim.v1",
+  "manager_identity": "frontend-manager",
+  "manager_context_id": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
+  "base_sha": "fb7c4e4477405cba59078d92e85f037c395be7ea",
+  "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
+  "state": "ACTIVE",
+  "evidence_refs": [],
+  "blocker_refs": [],
+  "checkpoint_id": "U4-M",
+  "claim_id": "u4-m-report-20261010",
+  "packet_id": "ER-47",
+  "leaf_identity": "01a120cf-91a7-78e0-9dba-76234e6f7d5e",
+  "write_paths": [
+    "packages/ui/src/features/research/report/ReportFeature.tsx",
+    "packages/ui/src/features/research/report/report.css",
+    "packages/ui/src/stories/research/report/ReportFeature.stories.tsx"
+  ],
+  "predecessor_refs": [
+    {
+      "checkpoint_id": "C3-EM",
+      "commit_sha": "19c1b916ee895f3dcb5c3dd475b3b241a17049d6",
+      "approval_ref": "tests/ui-owner/receipts/u1-d/client-report.json"
+    },
+    {
+      "checkpoint_id": "U2-R",
+      "commit_sha": "273577c9ae45a1bf94ebcb5be77906c1f15ded92",
+      "approval_ref": "tests/ui-owner/receipts/u2-x/u2-r.json"
+    }
+  ]
+}

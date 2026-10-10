@@ -1,0 +1,32 @@
+{
+  "protocol": "eliotr.frontend-owner-claim.v1",
+  "manager_identity": "frontend-manager",
+  "manager_context_id": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
+  "base_sha": "fb7c4e4477405cba59078d92e85f037c395be7ea",
+  "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
+  "state": "ACTIVE",
+  "evidence_refs": [],
+  "blocker_refs": [],
+  "checkpoint_id": "U4-R",
+  "claim_id": "u4-r-research-run-20261010",
+  "packet_id": "ER-47",
+  "leaf_identity": "01a120dc-563e-7df1-8e10-a494dcb21204",
+  "write_paths": [
+    "packages/ui/src/features/research/run/ResearchRunFeature.tsx",
+    "packages/ui/src/features/research/run/research-run.css",
+    "packages/ui/src/stories/research/run/ResearchRunFeature.stories.tsx"
+  ],
+  "predecessor_refs": [
+    {
+      "checkpoint_id": "C3-R",
+      "commit_sha": "32163c05d9f7ae5cb1874119e2769262c028dec4",
+      "approval_ref": "tests/ui-owner/receipts/u1-d/client-research-composition.json"
+    },
+    {
+      "checkpoint_id": "U2-R",
+      "commit_sha": "273577c9ae45a1bf94ebcb5be77906c1f15ded92",
+      "approval_ref": "tests/ui-owner/receipts/u2-x/u2-r.json"
+    }
+  ]
+}
