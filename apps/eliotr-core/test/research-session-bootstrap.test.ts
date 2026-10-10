@@ -37,12 +37,18 @@ it("binds an SDK session from canonical run readback and rejects foreign or stal
     ).bind(operationId).first();
     const history = await send();
     expect(history.status).toBe(410);
+    expect(history.headers.get("content-type")).toBe("application/json; charset=utf-8");
+    expect(history.headers.get("cache-control")).toBe("no-store");
+    expect(history.headers.get("x-content-type-options")).toBe("nosniff");
     expect(await history.json()).toMatchObject({ code: "SESSION_CHAT_HISTORY_DISABLED" });
     const stub = runtime.RESEARCH_SESSION.get(runtime.RESEARCH_SESSION.idFromName(operationId));
     const record = await stub.fetch(new Request(`https://session.example/session/${operationId}`, {
       headers: fixture.session_headers,
     }));
     expect(record.status).toBe(200);
+    expect(record.headers.get("content-type")).toBe("application/json; charset=utf-8");
+    expect(record.headers.get("cache-control")).toBe("no-store");
+    expect(record.headers.get("x-content-type-options")).toBe("nosniff");
     expect(await record.json()).toMatchObject({ session_id: operationId, operation_id: operationId });
     const foreign = await send("foreign-reader");
     expect(foreign.status).toBe(404);

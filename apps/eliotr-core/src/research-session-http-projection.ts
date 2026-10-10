@@ -13,6 +13,7 @@ import { requireResearchDeploymentCompatibility } from "./research-deployment-co
 import { checkId, readResearchRunStatus } from "./research-run-service.js";
 import { readCurrentSessionAuthority } from "./research-session-current-authority.js";
 import { RESEARCH_SESSION_PROJECTION_PROTOCOL } from "./research-session-chat-authority.js";
+import { jsonResponse } from "./http-response.js";
 
 export const RESEARCH_SESSION_PROTOCOL = "eliotr.research-session.v1";
 
@@ -63,7 +64,7 @@ function sessionReopenRequired(request: Request, sessionId: string, operationId:
 }
 
 export function json(request: Request, value: unknown, status = 200): Response {
-  return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" } });
+  return jsonResponse(value, status);
 }
 
 export function problem(request: Request, status: number, code: string, retryable = status === 503): Response {
