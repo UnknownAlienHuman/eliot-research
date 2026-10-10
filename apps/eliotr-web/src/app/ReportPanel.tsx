@@ -45,12 +45,16 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
   const [picked, setPicked] = useState<CitedEvidence | ReauthorizedCitedEvidence>();
   const [exportError, setExportError] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(true);
+  const [sectionActivation, setSectionActivation] = useState(0);
   const outlineSummary = useRef<HTMLElement>(null);
   const sectionHeading = useRef<HTMLHeadingElement>(null);
   const active = artifact?.sections.find(row => selected && sameRef(row.section_ref, selected.section_ref) &&
     row.body_object_ref === selected.body_object_ref && row.body_sha256 === selected.body_sha256);
   const activeRef = active ? refKey(active.section_ref) : undefined;
-  useEffect(() => { if (activeRef) sectionHeading.current?.focus(); }, [activeRef]);
+  useEffect(() => { if (activeRef) sectionHeading.current?.focus(); }, [activeRef, sectionActivation]);
+  useEffect(() => {
+    if (activeRef === undefined) setOutlineOpen(true);
+  }, [activeRef, manifest.status, manifest.isFetching]);
   const sectionOptions = (held: ArtifactRevision, declared: DeclaredSection) => grant
     ? options.reauthorizedSection(grant, declared) : options.section(held, declared);
   const section = useQuery(artifact && active ? { ...sectionOptions(artifact, active), gcTime: Infinity }
@@ -75,6 +79,7 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
       !artifact.sections.some(row => sameRef(row.section_ref, declared.section_ref) && row.body_object_ref === declared.body_object_ref && row.body_sha256 === declared.body_sha256)) return;
     setSelected(declared); setPicked(undefined); setExportError(false);
     setOutlineOpen(false);
+    setSectionActivation(value => value + 1);
   };
   const exportReport = () => {
     if (!artifact || currentArtifact() !== artifact) return;
@@ -113,7 +118,7 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
     {mode === 'author' && isWorkspaceRequestError(author.error) && author.error.status === 404 && author.error.code === 'ARTIFACT_DRAFT_READ_NOT_FOUND' &&
       <Button variant="tonal" onClick={() => { setSelected(undefined); setPicked(undefined); setMode('reauthorized'); }}>{text.reauthorize}</Button>}
     {grant && <p>{text.access}</p>}
-    <details className="er-live-report-outline" open={active === undefined || outlineOpen}
+    <details className="er-live-report-outline" open={outlineOpen}
       onToggle={event => { if (event.target === event.currentTarget) setOutlineOpen(event.currentTarget.open); }}>
     <summary ref={outlineSummary}>{text.outline}</summary>
     <ReportFeature locale={locale} copy={REPORT_COPY[locale]} state={manifest.isPending ? 'loading' : manifest.isError ? 'error' : artifact ? 'useful' : 'empty'}
