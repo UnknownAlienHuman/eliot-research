@@ -1,0 +1,278 @@
+{
+  "protocol": "eliotr.frontend-native-modal-module.v1",
+  "status": "BROWSER_VERIFIED_BOUNDED_NATIVE_MODAL_MODULE",
+  "source_commit": "a1483c6af8b45914b13e934dd6078e0767984daa",
+  "published_dependency_base": "896c7ebe9be393d6aa9059c1b316447f99ee6002",
+  "manager_context_id": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
+  "claim": "docs/agent-work/frontend-owner-claims/ER-47/u1-3-forced-caption-20261010.json",
+  "source_inputs": [
+    {
+      "path": "packages/ui/src/primitives/primitives.css",
+      "git_blob": "80b7078b329b48054c773209c9327a16cda4cde0",
+      "sha256": "2f1504e3a9177ede130f66900406092e22fcf9e49f2300a8ec64aaef5b6a6f36",
+      "mode": "100644"
+    }
+  ],
+  "problem": "Tailwind preflight resets native dialog margin and places the Material reader at the viewport origin. Long content needs a viewport height bound.",
+  "change": "Explicit native modal margin:auto, dynamic viewport max-block-size with existing Material spacing token, and overflow:auto. Native Dialog focus/Escape/router/currentness behavior is unchanged.",
+  "browser": {
+    "version": "155.0.8059.40",
+    "viewport_cases": [
+      {
+        "viewport": {
+          "width": 1440,
+          "height": 960
+        },
+        "long": false,
+        "body_bytes": null,
+        "rect": {
+          "x": 340,
+          "y": 108,
+          "width": 760,
+          "height": 744,
+          "right": 1100,
+          "bottom": 852
+        },
+        "scrollable": false,
+        "modal": true,
+        "escape_closed": true,
+        "opener_focus_restored": true,
+        "console_errors": 0,
+        "server_faults": 0
+      },
+      {
+        "viewport": {
+          "width": 1440,
+          "height": 960
+        },
+        "long": true,
+        "body_bytes": 41750,
+        "rect": {
+          "x": 340,
+          "y": 16,
+          "width": 760,
+          "height": 928,
+          "right": 1100,
+          "bottom": 944
+        },
+        "scrollable": true,
+        "modal": true,
+        "escape_closed": true,
+        "opener_focus_restored": true,
+        "console_errors": 0,
+        "server_faults": 0
+      },
+      {
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "long": false,
+        "body_bytes": null,
+        "rect": {
+          "x": 16,
+          "y": 16,
+          "width": 358,
+          "height": 812,
+          "right": 374,
+          "bottom": 828
+        },
+        "scrollable": true,
+        "modal": true,
+        "escape_closed": true,
+        "opener_focus_restored": true,
+        "console_errors": 0,
+        "server_faults": 0
+      },
+      {
+        "viewport": {
+          "width": 390,
+          "height": 844
+        },
+        "long": true,
+        "body_bytes": 41750,
+        "rect": {
+          "x": 16,
+          "y": 16,
+          "width": 358,
+          "height": 812,
+          "right": 374,
+          "bottom": 828
+        },
+        "scrollable": true,
+        "modal": true,
+        "escape_closed": true,
+        "opener_focus_restored": true,
+        "console_errors": 0,
+        "server_faults": 0
+      },
+      {
+        "viewport": {
+          "width": 844,
+          "height": 390
+        },
+        "long": false,
+        "body_bytes": null,
+        "rect": {
+          "x": 42,
+          "y": 16,
+          "width": 760,
+          "height": 358,
+          "right": 802,
+          "bottom": 374
+        },
+        "scrollable": true,
+        "modal": true,
+        "escape_closed": true,
+        "opener_focus_restored": true,
+        "console_errors": 0,
+        "server_faults": 0
+      },
+      {
+        "viewport": {
+          "width": 844,
+          "height": 390
+        },
+        "long": true,
+        "body_bytes": 41750,
+        "rect": {
+          "x": 42,
+          "y": 16,
+          "width": 760,
+          "height": 358,
+          "right": 802,
+          "bottom": 374
+        },
+        "scrollable": true,
+        "modal": true,
+        "escape_closed": true,
+        "opener_focus_restored": true,
+        "console_errors": 0,
+        "server_faults": 0
+      }
+    ],
+    "case_count": 6
+  },
+  "standalone_build": {
+    "vite": "8.2.2",
+    "source_commit": "a1483c6af8b45914b13e934dd6078e0767984daa",
+    "artifacts": [
+      {
+        "path": ".vite/manifest.json",
+        "bytes": 1067,
+        "sha256": "ea8841fb5a8e91b6e3e0a6f23d21fc89bfe00914ac91778b2d756a94da3dc8e9"
+      },
+      {
+        "path": "assets/bootstrap-BtAkvq3b.css",
+        "bytes": 50572,
+        "sha256": "450d860e8eae38c6581065110a543c27bf9e3a0db3ca4ae54e7d0fe63fe4069f",
+        "gzip_bytes": 5316,
+        "brotli_bytes": 4756
+      },
+      {
+        "path": "assets/bootstrap-CDUI9cjV.js",
+        "bytes": 776597,
+        "sha256": "2750664076662954b0a1f6df2ccc69a4964db78fda060fb9dde2913919a34ed2",
+        "gzip_bytes": 215425,
+        "brotli_bytes": 180349
+      },
+      {
+        "path": "assets/client-DD1Jkd23.js",
+        "bytes": 74869,
+        "sha256": "a75fc3acd8d0482818a2ee6135905cea971e0e38619cbe78ef9ca928ec7052da",
+        "gzip_bytes": 21395,
+        "brotli_bytes": 19052
+      },
+      {
+        "path": "assets/index-BlysS7PD.css",
+        "bytes": 71310,
+        "sha256": "10f5824720a7c615c6a19f9e4a7d599a34c7a31a33ddbd701ea2b66dca5c1e26",
+        "gzip_bytes": 13092,
+        "brotli_bytes": 11129
+      },
+      {
+        "path": "assets/index-CbrrwWlP.js",
+        "bytes": 3780,
+        "sha256": "77a8371ffd524a289bec2929d9229b730a92d9d81e876da2775556d869808cd4",
+        "gzip_bytes": 1770,
+        "brotli_bytes": 1567
+      },
+      {
+        "path": "favicon.svg",
+        "bytes": 350,
+        "sha256": "e8490bd5b835bd427a4120c45d58b7dbadabaa841caf0c2b468dbfe972393fcf"
+      },
+      {
+        "path": "index.html",
+        "bytes": 690,
+        "sha256": "9673a6874ef6811fbc463e1011f4bde23cebde2c4620de299650575d1c70fe78"
+      },
+      {
+        "path": "_headers",
+        "bytes": 313,
+        "sha256": "162f9302f3ddc5281bdb4772e5276e28a3f3acc83f44ea738cd016572c7c8a36"
+      }
+    ],
+    "observed_load_inputs": 322,
+    "source_archive_sha256": "bbe4173714665c7f6dbf8bbc5c7ad7adde3983ae784069d9cb25c26c33e30a78",
+    "all_emitted_js_gzip_bytes": 238590,
+    "ceiling_bytes": 614400,
+    "scope": "New owning standalone build for modified primitive CSS, immutable source + installed dependencies reused; explicit nested theme CSS and Vite loads observed, not proof of every Tailwind scanner candidate or external runtime read; no Worker/parity/live acceptance"
+  },
+  "qualification": [
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/performance-review-20261010/modal-source.json",
+      "sha256": "de94df8652e1f93cca46ce090ecb1a2253af93b34ce520602b217db8dcb02822"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/performance-review-20261010/modal-build-repaired.json",
+      "sha256": "036ab20baba801d0041fdb1bcb06f86ce77a8d6042e9f223fc3adee9c63a702b"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/performance-review-20261010/modal-browser.json",
+      "sha256": "1776fda193c2b5493c5e33a6fe77d84b89eda042b4939537857360dba3db7e3b"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/performance-review-20261010/modal-code-understanding.json",
+      "sha256": "c25b0e7de303f88d7e129ffd1f72c01fe53131c8c9acb71dd4b25ab55987f3f2"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/performance-review-20261010/server.mjs",
+      "sha256": "6c047bdbc3d92cd377222fbfefe0f6f8edc2db10b564648fce77d2c7434375ab"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/performance-review-20261010/modal-browser.mjs",
+      "sha256": "fdfbb26f15785422742039ea7ba126fd5521acd7305ada1630f64a9f5de35c9f"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/performance-review-20261010/build-modal.mjs",
+      "sha256": "32ee79a870a5b2b257d7948056537af878e7243349d9aca8de28d6284d1de7d2"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/performance-review-20261010/modal-build.json",
+      "sha256": "e1b2819c4d25df0139e9a6bb693eb8c03f4138a0c02f0052d53f40eb8297f47d"
+    },
+    {
+      "path": ".eliotr-state/frontend-ui-proposals/performance-review-20261010/build-modal-original.mjs",
+      "sha256": "abd668633d4a453a7accfd23b707b879725cd20c1c41eb74a8e3f0efba91448d"
+    }
+  ],
+  "failed_attempts_preserved": [
+    "modal-build.json: unsupported getWatchFiles instrumentation, repaired without source change"
+  ],
+  "not_repeated": [
+    "Old successful browser suites",
+    "Prior TS compiler (no TypeScript inputs changed)",
+    "Old official checkers",
+    "Backend tests/Worker build"
+  ],
+  "pending": [
+    "Whole frontend/FINAL-UI",
+    "Physical screenreader/native200percentzoom/pointer-onlychooser",
+    "Full Tailwind scanner/config/dependency provenance",
+    "Worker/generatedAssets/agentsroot+wildcardparity/live/U6",
+    "C11 public full ResearchSessionBinding lookup"
+  ],
+  "scope": "One completed presentation primitive repair; six actual browser cases; no product authority/client/backend/root/lock/index/install changes. No performance speedup or field/staging evidence inferred."
+}
