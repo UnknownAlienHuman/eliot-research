@@ -1,3 +1,4 @@
+import { validateApplicationOperationComposition } from "./lib/launch-operation-composition.mjs";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
@@ -23,8 +24,14 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 /** Negative release gate, not a completeness proof or replacement for retained live conformance. */
 export function launchCodeBlockers(registry, composition) {
   if (registry?.protocol !== "eliotr.implementation-status.v1" || !Array.isArray(registry.entries) || !registry.entries.length ||
-      typeof composition !== "string" || !composition.includes("createApplication")) {
+      typeof composition !== "string") {
     throw new Error("Launch implementation registry or composition is invalid");
+  }
+  const ts = require("typescript");
+  const source = ts.createSourceFile("composition-root.ts", composition, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+  if (source.parseDiagnostics.length || !source.statements.some((statement) =>
+    ts.isFunctionDeclaration(statement) && statement.name?.text === "createApplication" && statement.body !== undefined)) {
+    throw new Error("Launch composition has no createApplication function");
   }
   const profile = registry.release_profile;
   if (profile?.protocol !== RELEASE_PROFILE_PROTOCOL || !GOOGLE_TRANSPORTS.has(profile.google_external_transport)) {
@@ -50,9 +57,6 @@ export function launchCodeBlockers(registry, composition) {
   }
   // Load the already pinned compiler only when checking a release, not at module import.
   // Parsing excludes comments/string examples and refuses dynamic declarations instead of guessing.
-  const ts = require("typescript");
-  const source = ts.createSourceFile("composition-root.ts", composition, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
-  if (source.parseDiagnostics.length) throw new Error("Launch composition cannot be parsed");
   const profiles = source.statements.filter((statement) =>
     ts.isFunctionDeclaration(statement) && statement.name?.text === "capabilities");
   const returns = profiles.length === 1 && profiles[0].body !== undefined
@@ -138,11 +142,15 @@ export async function readCompositionCapabilityProfile({ root: repositoryRoot = 
     if (typeof value !== "string") throw new Error("Capability profile source is unreadable");
     return value;
   };
-  const composition = tsSource(await readText(resolve(repositoryRoot, "apps/eliotr-core/src/composition-root.ts")), "composition-root.ts");
+  const compositionText = await readText(resolve(repositoryRoot, "apps/eliotr-core/src/composition-root.ts"));
+  const composition = tsSource(compositionText, "composition-root.ts");
   const routeSource = tsSource(await readText(resolve(repositoryRoot, "packages/interfaces/src/routes.ts")), "routes.ts");
   const contractSource = tsSource(await readText(resolve(repositoryRoot, "packages/contracts/src/research.ts")), "research.ts");
   const orientationSource = tsSource(await readText(resolve(repositoryRoot,
     "packages/cloudflare-navigation/src/orientation-input.ts")), "orientation-input.ts");
+  const compositionSources = new Map([
+    [resolve(repositoryRoot, "apps/eliotr-core/src/composition-root.ts"), compositionText],
+  ]);
   if (assertNamedImport(composition, "@eliotr/interfaces", "ROUTES") !== "ROUTES" ||
       assertNamedImport(composition, "@eliotr/cloudflare-navigation", "ORIENTATION_PROFILE") !== "ORIENTATION_PROFILE") {
     throw new Error("Capability profile imports may not be aliased");
@@ -239,12 +247,18 @@ export async function readCompositionCapabilityProfile({ root: repositoryRoot = 
       safetyInvariants.ingest_live_qualified !== false) {
     throw new Error("Capability profile safety invariants are invalid");
   }
+  const enabledSlices = array(property("enabled_slices"), "enabled slices");
+  const partialSlices = array(property("partial_slices"), "partial slices");
+  const disabledSlices = array(property("disabled_slices"), "disabled slices");
+  const operationComposition = validateApplicationOperationComposition(
+    repositoryRoot, compositionText, compositionSources, enabledSlices, partialSlices, disabledSlices,
+  );
 
   return Object.freeze({
     protocol,
-    enabled_slices: Object.freeze(array(property("enabled_slices"), "enabled slices")),
-    partial_slices: Object.freeze(array(property("partial_slices"), "partial slices")),
-    disabled_slices: Object.freeze(array(property("disabled_slices"), "disabled slices")),
+    enabled_slices: Object.freeze(enabledSlices),
+    partial_slices: Object.freeze(partialSlices),
+    disabled_slices: Object.freeze(disabledSlices),
     federation_configuration: Object.freeze({
       principal_ref: "FEDERATION_SERVER_PRINCIPAL_REF", cursor_key: "FEDERATION_CURSOR_HMAC_KEY",
     }),
@@ -253,15 +267,15 @@ export async function readCompositionCapabilityProfile({ root: repositoryRoot = 
     orientation_max_results: literal(property("orientation_max_results"), "orientation result limit"),
     routes: Object.freeze(routeTable.map((route) => Object.freeze(route))),
     safety_invariants: Object.freeze(safetyInvariants),
+    mandatory_handlers: operationComposition.mandatory_handlers,
+    federation_availability: operationComposition.federation_availability,
   });
 }
-
 function tsSource(text, fileName) {
   const source = require("typescript").createSourceFile(fileName, text, require("typescript").ScriptTarget.Latest, true, require("typescript").ScriptKind.TS);
   if (source.parseDiagnostics.length) throw new Error(`Capability profile source cannot be parsed (${fileName})`);
   return source;
 }
-
 function assertNamedImport(source, moduleName, importedName) {
   const ts = require("typescript");
   const matches = [];
@@ -297,18 +311,15 @@ function isImportedIdentifier(node, name) {
 
 function isEnvProperty(node, name) {
   const ts = require("typescript");
-  return ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "env" &&
-    node.name.text === name;
+  return ts.isPropertyAccessExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "env" && node.name.text === name;
 }
 
 function isFederationConfigurationExpression(node) {
   const ts = require("typescript");
   const expected = ["FEDERATION_SERVER_PRINCIPAL_REF", "FEDERATION_CURSOR_HMAC_KEY"];
-  const condition = (item, name) => ts.isBinaryExpression(item) &&
-    item.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken && isEnvProperty(item.left, name) &&
-    ts.isIdentifier(item.right) && item.right.text === "undefined";
-  return ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken &&
-    condition(node.left, expected[0]) && condition(node.right, expected[1]);
+  const condition = (item, name) => ts.isBinaryExpression(item) && item.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken &&
+    isEnvProperty(item.left, name) && ts.isIdentifier(item.right) && item.right.text === "undefined";
+  return ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken && condition(node.left, expected[0]) && condition(node.right, expected[1]);
 }
 
 function staticRoutes(routeSource, contractSource) {
@@ -317,9 +328,7 @@ function staticRoutes(routeSource, contractSource) {
   const initializer = routeInitializer && ts.isAsExpression(routeInitializer) && ts.isTypeReferenceNode(routeInitializer.type) &&
     ts.isIdentifier(routeInitializer.type.typeName) && routeInitializer.type.typeName.text === "const"
     ? routeInitializer.expression : null;
-  if (!ts.isArrayLiteralExpression(initializer) || initializer.elements.length < 1 || initializer.elements.length > 512) {
-    throw new Error("Capability profile routes are dynamic or oversized");
-  }
+  if (!ts.isArrayLiteralExpression(initializer) || initializer.elements.length < 1 || initializer.elements.length > 512) throw new Error("Capability profile routes are dynamic or oversized");
   const maxRequestBytes = uniqueVariableInitializer(contractSource, "RESEARCH_REQUEST_MAX_BYTES");
   if (!ts.isNumericLiteral(maxRequestBytes)) throw new Error("Capability profile route byte limit is dynamic");
   const route = (node) => {
@@ -359,21 +368,18 @@ function routeLiteral(node, maxRequestBytes, ts) {
   if (node.kind === ts.SyntaxKind.FalseKeyword) return false;
   if (ts.isIdentifier(node) && node.text === "RESEARCH_REQUEST_MAX_BYTES") return Number(maxRequestBytes.text);
   if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-    const left = routeLiteral(node.left, maxRequestBytes, ts);
-    const right = routeLiteral(node.right, maxRequestBytes, ts);
+    const left = routeLiteral(node.left, maxRequestBytes, ts), right = routeLiteral(node.right, maxRequestBytes, ts);
     if (typeof left === "number" && typeof right === "number" && Number.isSafeInteger(left + right)) return left + right;
   }
   if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.AsteriskToken) {
-    const left = routeLiteral(node.left, maxRequestBytes, ts);
-    const right = routeLiteral(node.right, maxRequestBytes, ts);
+    const left = routeLiteral(node.left, maxRequestBytes, ts), right = routeLiteral(node.right, maxRequestBytes, ts);
     if (typeof left === "number" && typeof right === "number" && Number.isSafeInteger(left * right)) return left * right;
   }
   throw new Error("Capability profile route value is dynamic");
 }
 
 export function readConfiguredTransport(config) {
-  if (config === null || typeof config !== "object" || Array.isArray(config) ||
-      config.vars === null || typeof config.vars !== "object" || Array.isArray(config.vars)) {
+  if (config === null || typeof config !== "object" || Array.isArray(config) || config.vars === null || typeof config.vars !== "object" || Array.isArray(config.vars)) {
     throw new Error("Launch deployment config is invalid");
   }
   const value = config.vars.GOOGLE_EXTERNAL_TRANSPORT;

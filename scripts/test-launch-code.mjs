@@ -118,9 +118,102 @@ const profileRead = async (changed = sourceMap) => readCompositionCapabilityProf
   } });
 const capabilityProfile = await profileRead();
 assert.equal(capabilityProfile.protocol, "eliotr.capabilities.v1");
-assert.equal(capabilityProfile.routes.length, 116);
 assert.ok(capabilityProfile.routes.some((route) => route.path === "/api/v1/system/capabilities"));
+assert.deepEqual(Object.keys(capabilityProfile.mandatory_handlers).sort(), ["federation", "owner", "semantic"]);
+assert.deepEqual(capabilityProfile.mandatory_handlers.federation,
+  ["cancel", "changes", "readBundle", "readBundleManifest", "result", "status", "submit"]);
+assert.equal(capabilityProfile.federation_availability, "conditional-denial");
+const compositionPath = resolve(repositoryRoot, "apps/eliotr-core/src/composition-root.ts");
+const compositionText = sourceMap.get(compositionPath).replace(/\r\n/gu, "\n");
+const missingFederationHandler = compositionText
+  .replace('    changes: () => denied("federation.changes"),\n', "") +
+  '\nconst operationNameOnly = "federation.changes";\n';
+assert.notEqual(missingFederationHandler, compositionText, "missing federation handler fixture must change the source");
+await assert.rejects(profileRead(new Map(sourceMap).set(compositionPath, missingFederationHandler)),
+  /Missing mandatory federation handlers: changes/u);
+const assertedMissingHandler = compositionText.replace('changes: () => denied("federation.changes"),',
+  'changes: undefined as unknown as FederationApi["changes"],');
+assert.notEqual(assertedMissingHandler, compositionText, "asserted missing-handler fixture must change the source");
+await assert.rejects(profileRead(new Map(sourceMap).set(compositionPath, assertedMissingHandler)),
+  /Missing mandatory federation handlers: changes/u);
+const conditionalFederationHandler = compositionText.replace('changes: () => denied("federation.changes"),',
+  'changes: Math.random() > 0 ? () => denied("federation.changes") : undefined as unknown as FederationApi["changes"],');
+assert.notEqual(conditionalFederationHandler, compositionText, "conditional-handler fixture must change the source");
+await assert.rejects(profileRead(new Map(sourceMap).set(compositionPath, conditionalFederationHandler)),
+  /Missing mandatory federation handlers: changes/u);
+const factoryFallthrough = compositionText.replace('  return {\n    submit: () => denied("federation.submit"),',
+  '  if (Math.random() > 0) return {\n    submit: () => denied("federation.submit"),');
+assert.notEqual(factoryFallthrough, compositionText, "factory fallthrough fixture must change the source");
+await assert.rejects(profileRead(new Map(sourceMap).set(compositionPath, factoryFallthrough)),
+  /factory has an uncovered or opaque return path/u);
+const unclassifiedDenial = compositionText
+  .replaceAll("denied", "renamedRefusal")
+  .replace('"RESEARCH"],\n    partial_slices: ["WIKI", "FEDERATION"]',
+    '"RESEARCH", "FEDERATION"],\n    partial_slices: ["WIKI"]');
+assert.notEqual(unclassifiedDenial, compositionText, "conditional federation denial fixture must change the source");
+await assert.rejects(profileRead(new Map(sourceMap).set(compositionPath, unclassifiedDenial)),
+  /Conditional federation denial must be classified in partial_slices/u);
+const directRefusalAlias = compositionText
+  .replace('  const denied = (operation: string): Promise<never> =>\n    Promise.reject(new CapabilityUnavailableError(operation));',
+    '  const renamedRefusal = (): Promise<never> =>\n    Promise.reject(new CapabilityUnavailableError("federation.refused"));')
+  .replaceAll(/\(\) => denied\("federation\.[^"]+"\)/gu, "renamedRefusal")
+  .replace('"RESEARCH"],\n    partial_slices: ["WIKI", "FEDERATION"]',
+    '"RESEARCH", "FEDERATION"],\n    partial_slices: ["WIKI"]');
+assert.notEqual(directRefusalAlias, compositionText, "direct refusal alias fixture must change the source");
+await assert.rejects(profileRead(new Map(sourceMap).set(compositionPath, directRefusalAlias)),
+  /Conditional federation denial must be classified in partial_slices/u);
+const disabledStart = compositionText.indexOf("function disabledFederationApi()");
+const disabledEnd = compositionText.indexOf("function federationApi(", disabledStart);
+assert.ok(disabledStart > 0 && disabledEnd > disabledStart);
+const disabledSource = compositionText.slice(disabledStart, disabledEnd);
+const disabledFixture = (replacement) => {
+  assert.notEqual(replacement, disabledSource, "operation factory fixture must change the source");
+  return compositionText.slice(0, disabledStart) + replacement + compositionText.slice(disabledEnd);
+};
+const frozenDisabled = disabledSource.replace("  return {", "  return Object.freeze({")
+  .replace("  };\n}", "  });\n}");
+assert.equal((await profileRead(new Map(sourceMap).set(compositionPath,
+  disabledFixture(frozenDisabled)))).federation_availability, "conditional-denial",
+"intrinsic Object.freeze preserves source handler composition");
+for (const invalidFreeze of [
+  frozenDisabled.replace("Object.freeze({", "Object?.freeze({"),
+  frozenDisabled.replace("Object.freeze({", "Object.freeze?.({"),
+  frozenDisabled.replace("  return Object.freeze", "  const Object = { freeze(value: unknown) { return value; } };\n  return Object.freeze"),
+  frozenDisabled.replace("  return Object.freeze", "  const custom = { freeze(value: unknown) { return value; } };\n  return custom.freeze"),
+  frozenDisabled.replace(/return Object\.freeze\(\{[\s\S]*?\}\);/u, "return Object.freeze();"),
+  frozenDisabled.replace("  });\n}", "  }, {});\n}"),
+  frozenDisabled.replace("return Object.freeze({", "return Object.freeze(...[{")
+    .replace("  });\n}", "  }]);\n}"),
+]) {
+  await assert.rejects(profileRead(new Map(sourceMap).set(compositionPath, disabledFixture(invalidFreeze))),
+    /Application handler factory is not a source function/u);
+}
+const castedShorthand = disabledSource.replace("  return {",
+  '  const changes = undefined as unknown as FederationApi["changes"];\n  return {')
+  .replace('changes: () => denied("federation.changes"),', "changes,");
+await assert.rejects(profileRead(new Map(sourceMap).set(compositionPath, disabledFixture(castedShorthand))),
+  /Missing mandatory federation handlers: changes/u);
+const shorthandRefusal = disabledSource.replace("  return {",
+  '  const changes = () => denied("federation.changes");\n  return {')
+  .replace('changes: () => denied("federation.changes"),', "changes,");
+assert.equal((await profileRead(new Map(sourceMap).set(compositionPath,
+  disabledFixture(shorthandRefusal)))).federation_availability, "conditional-denial");
+await assert.rejects(profileRead(new Map(sourceMap).set(compositionPath, disabledFixture(shorthandRefusal)
+  .replace('"RESEARCH"],\n    partial_slices: ["WIKI", "FEDERATION"]',
+    '"RESEARCH", "FEDERATION"],\n    partial_slices: ["WIKI"]'))),
+  /Conditional federation denial must be classified in partial_slices/u);
+const chainedShorthandRefusal = disabledSource.replace("  return {",
+  '  const refusal = () => denied("federation.changes");\n  const alias = refusal;\n  const changes = alias;\n  return {')
+  .replace('changes: () => denied("federation.changes"),', "changes,");
+await assert.rejects(profileRead(new Map(sourceMap).set(compositionPath, disabledFixture(chainedShorthandRefusal)
+  .replace('"RESEARCH"],\n    partial_slices: ["WIKI", "FEDERATION"]',
+    '"RESEARCH", "FEDERATION"],\n    partial_slices: ["WIKI"]'))),
+  /Conditional federation denial must be classified in partial_slices/u);
 for (const expected of [
+  { method: "GET", path: "/agents/research-session/:session_id", operation: "research.session.transport",
+    auth: "owner", maximum_request_bytes: 0, response_mode: "stream" },
+  { method: "GET", path: "/agents/research-session/:session_id/get-messages", operation: "research.session.transport",
+    auth: "owner", maximum_request_bytes: 0, response_mode: "stream" },
   { method: "GET", path: "/api/v1/projects/:project_id/model-provider-key", operation: "project.provider-key-configuration.read",
     auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "POST", path: "/api/v1/projects/:project_id/model-provider-key", operation: "project.provider-key-configuration.create",
