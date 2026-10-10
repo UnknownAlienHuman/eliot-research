@@ -130,12 +130,14 @@ export function Field({
 export type StatusProps = {
   readonly tone?: StatusTone;
   readonly icon?: MaterialSymbolName;
+  /** Static labels stay quiet; live operation feedback opts in explicitly. */
+  readonly announce?: boolean;
   readonly children: string;
 };
 
-export function Status({ tone = "neutral", icon = tone === "error" ? "close" : "evidence", children }: StatusProps) {
+export function Status({ tone = "neutral", icon = tone === "error" ? "close" : "evidence", announce = false, children }: StatusProps) {
   return (
-    <span className={`er-status er-status--${tone}`} role="status" aria-live="polite">
+    <span className={`er-status er-status--${tone}`} role={announce ? "status" : undefined} aria-live={announce ? "polite" : undefined}>
       <MaterialSymbol name={icon} />
       <span>{children}</span>
     </span>
