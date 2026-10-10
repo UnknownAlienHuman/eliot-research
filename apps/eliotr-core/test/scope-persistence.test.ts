@@ -168,4 +168,102 @@ describe("ScopeService -> real local D1 -> evidence authority", () => {
     const persisted = await db.prepare("SELECT participant_generations_json FROM scope_snapshot").first("participant_generations_json");
     expect(persisted).toBe(canonicalEvidenceJson(scope.participant_generations));
   });
+
+  it("freezes the exact pre-edit baseline material into D1 and reads the canonical literal back", async () => {
+    // Independent-literal gate for row 78.4. The expected snapshot_id, digest, participant generations
+    // and stored canonical column bytes below are the literals captured from the actual producer before
+    // the current source edits and independently recomputed with a .NET SHA-256 oracle over the
+    // documented canonical protocol. None of them is computed here through the TypeScript Domain
+    // payload helpers or evidenceSha256, so this case fails if createD1ScopeService, the D1 store or the
+    // evidence reader changes any canonical field, ordering, escaping or timestamp byte.
+    //
+    // Material: pre-edit b1a freeze() capture, GLOBAL_LIBRARY, fence1, created
+    // 2026-01-01T00:00:00.000Z, TTL 900000, atom generation g1, member sr1 with owner generation
+    // og1 and policy closure pc1, policy authority pa1, disclosure digest all zero, purge 0.
+    // The protected fixture row derive_service_freeze_pre_edit_baseline carries this material.
+    // Timestamps stay exact original strings, and the client fence is supplied by this caller, so no
+    // caller currentness is forged and no expected value is read back from the code under test.
+    const frozenNow = Date.parse("2026-01-01T00:00:00.000Z");
+    const ttlMs = 900_000;
+    const provenance = (): Pick<ScopeRepository, "resolveAtom" | "resolveAuthorityClosure"> => ({
+      async resolveAtom() {
+        return { atom_generation_ref: "g1", members: [
+          { source_revision_ref: "sr1", source_owner_generation: "og1", policy_closure_ref: "pc1" },
+        ] };
+      },
+      async resolveAuthorityClosure() {
+        return {
+          policy_authority_ref: "pa1",
+          disclosure_closure_digest: "0".repeat(64),
+          purge_ledger_revision: 0,
+          client_fence_valid: true,
+          denied_source_revision_refs: [],
+        };
+      },
+    });
+    const service = () => createD1ScopeService(db, provenance(), { now: () => frozenNow, ttl_ms: ttlMs });
+    const scope = await service().freeze({ kind: "GLOBAL_LIBRARY" }, "fence1");
+    // Exact literal identity, digest and member policy closure participant.
+    expect(scope.snapshot_id).toBe("scope-5c8e93a9e4d26c206e9e067ab7b26577165d294673f89e16");
+    expect(scope.digest).toBe("b5e287fe4be60649e00918688e728e535b47f8485dbf30a2e4e4abdae37493ff");
+    expect(scope.participant_generations).toEqual({
+      "member-policy-closure": "policy-closure-0ed3f37bd572a79b2216e61e79a270cddc665296e0e29c14",
+      "participant-126703c05b1cb7e9257f5b868b2fb1f4314d11e92a959d77": "g1",
+    });
+    // Every remaining material field, including the exact original timestamp strings.
+    expect(scope.revision).toBe(1);
+    expect(scope.resolved_scope_expression).toEqual({ kind: "GLOBAL_LIBRARY" });
+    expect(scope.member_source_revision_refs).toEqual(["sr1"]);
+    expect(scope.source_owner_generations).toEqual({ sr1: "og1" });
+    expect(scope.policy_authority_ref).toBe("pa1");
+    expect(scope.disclosure_closure_digest).toBe("0".repeat(64));
+    expect(scope.purge_ledger_revision).toBe(0);
+    expect(scope.client_fence_ref).toBe("fence1");
+    expect(scope.created_at).toBe("2026-01-01T00:00:00.000Z");
+    expect(scope.expires_at).toBe("2026-01-01T00:15:00.000Z");
+    // The actual D1 frozen row read back through the production storage reader equals the whole
+    // literal snapshot: one durable row, canonical bytes on both sides of the store.
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM scope_snapshot").first("n")).toBe(1);
+    const row = await db.prepare(
+      "SELECT snapshot_id, revision, snapshot_digest, member_source_revision_refs_json, " +
+      "participant_generations_json, source_owner_generations_json, resolved_scope_expression_json, " +
+      "policy_authority_ref, disclosure_closure_digest, purge_ledger_revision, client_fence_ref, " +
+      "created_at, expires_at, invalidated_at, invalidation_reason FROM scope_snapshot",
+    ).first<Record<string, unknown>>();
+    if (row === null) throw new Error("expected the frozen scope row to be durable");
+    expect(await readD1ScopeSnapshot(db, scope.snapshot_id, 1)).toEqual({
+      snapshot: scope, invalidated_at: null, invalidation_reason: null,
+    });
+    // Stored column bytes, each compared against an independently written literal rather than a value
+    // recomputed through the canonical JSON helper.
+    expect(row.snapshot_id).toBe("scope-5c8e93a9e4d26c206e9e067ab7b26577165d294673f89e16");
+    expect(row.snapshot_digest).toBe("b5e287fe4be60649e00918688e728e535b47f8485dbf30a2e4e4abdae37493ff");
+    expect(row.revision).toBe(1);
+    expect(row.purge_ledger_revision).toBe(0);
+    expect(row.client_fence_ref).toBe("fence1");
+    expect(row.policy_authority_ref).toBe("pa1");
+    expect(row.disclosure_closure_digest).toBe(
+      "0000000000000000000000000000000000000000000000000000000000000000");
+    expect(row.member_source_revision_refs_json).toBe("[\"sr1\"]");
+    expect(row.source_owner_generations_json).toBe("{\"sr1\":\"og1\"}");
+    expect(row.resolved_scope_expression_json).toBe("{\"kind\":\"GLOBAL_LIBRARY\"}");
+    expect(row.participant_generations_json).toBe(
+      "{\"member-policy-closure\":\"policy-closure-0ed3f37bd572a79b2216e61e79a270cddc665296e0e29c14\"," +
+      "\"participant-126703c05b1cb7e9257f5b868b2fb1f4314d11e92a959d77\":\"g1\"}");
+    expect(row.created_at).toBe("2026-01-01T00:00:00.000Z");
+    expect(row.expires_at).toBe("2026-01-01T00:15:00.000Z");
+    expect(row.invalidated_at).toBeNull();
+    expect(row.invalidation_reason).toBeNull();
+    // The frozen output is admitted as current through the existing seam without a second freeze,
+    // and a replay of the same caller material reports REPLAY instead of rewriting the canonical row.
+    await expect(service().requireCurrent(scope)).resolves.toEqual(scope);
+    expect(await createD1ScopeSnapshotStore(db).persistSnapshot(scope)).toBe("REPLAY");
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM scope_snapshot").first("n")).toBe(1);
+    // Exact replay across service instances: same caller material, same durable literal.
+    const again = await service().freeze({ kind: "GLOBAL_LIBRARY" }, "fence1");
+    expect(again).toEqual(scope);
+    expect(await createD1ScopeSnapshotStore(db).readSnapshot(again.snapshot_id, 1)).toEqual(scope);
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM scope_snapshot").first("n")).toBe(1);
+  });
+
 });
