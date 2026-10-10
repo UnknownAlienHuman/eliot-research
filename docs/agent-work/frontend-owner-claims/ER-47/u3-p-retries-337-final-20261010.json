@@ -1,0 +1,29 @@
+{
+  "protocol": "eliotr.frontend-owner-claim.v1",
+  "claim_id": "u3-p-retries-337-final-20261010",
+  "checkpoint_id": "U3-P",
+  "packet_id": "ER-47",
+  "manager_identity": "frontend-manager",
+  "manager_context_id": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "leaf_identity": "frontend-manager-337-serialized",
+  "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
+  "base_sha": "3c5b214a3ae1c83fe24300570029f2bb7f91d2bc",
+  "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
+  "write_paths": [
+    "packages/ui/src/features/sources/projects/ProjectsLibraryFeature.tsx"
+  ],
+  "predecessor_refs": [
+    {
+      "checkpoint_id": "C2-P",
+      "commit_sha": "3e40e1b8956c140196d658cbfb337cafd8cc1c8c",
+      "approval_ref": "tests/ui-owner/receipts/u1-d/client-source-catalog.json"
+    },
+    {
+      "checkpoint_id": "U2-S",
+      "commit_sha": "ff85ee4827366bac620750010f2e648c51d3bea9"
+    }
+  ],
+  "state": "ACTIVE",
+  "evidence_refs": [],
+  "blocker_refs": []
+}
