@@ -7,6 +7,7 @@ import { createPrivacyController } from './privacy';
 import { createWorkspaceQueryClient, clearWorkspaceQueries, protectedQueryKey } from '../query/client';
 import type { LibraryPage } from '@eliotr/owner-api-client';
 import type { playResearchJourney } from './ResearchPreview';
+import { paneAnnouncement, announcementUntil, unchangedChannel } from './announcementAssertions';
 
 /** Synthetic contract fixture. Only stories import it; every interaction uses the real workspace. */
 export function IntegrationRepairsPreview({ stalePage = false }: { readonly stalePage?: boolean }) {
@@ -77,11 +78,17 @@ export async function playIntegrationRepairs({ canvas, userEvent }: Journey) {
   await userEvent.click(canvas.getByRole('button', { name: 'Next page', exact: true }));
   await userEvent.click(await canvas.findByRole('checkbox', { name: 'Second selected source' }));
   await userEvent.click(canvas.getByRole('link', { name: 'Research', exact: true }));
-  await userEvent.type(await canvas.findByRole('textbox', { name: 'Research question' }), 'Compare the two selected sources.');
+  const question = await canvas.findByRole('textbox', { name: 'Research question' });
+  const root = question.closest<HTMLElement>('main');
+  if (!root) throw new Error('Actual Research root absent');
+  const region = paneAnnouncement(root);
+  await userEvent.type(question, 'Compare the two selected sources.');
   await userEvent.click(canvas.getByRole('button', { name: 'Ask', exact: true }));
-  await canvas.findByText('The launch outcome is unknown. The original question and request identity are preserved.');
+  await canvas.findByText('The launch outcome is unknown. The original question and request identity are preserved.', { selector: '.er-status > span' });
+  await announcementUntil(() => unchangedChannel(root, region, 'The launch outcome is unknown. The original question and request identity are preserved.'));
   await userEvent.click(canvas.getByRole('button', { name: 'Reconcile this question', exact: true }));
   await canvas.findByText('The run finished. Review the draft answer.');
+  await announcementUntil(() => unchangedChannel(root, region, 'The engine finished. Review its result.'));
   const count = canvas.getByRole('button', { name: 'Read fixture request counts', exact: true });
   await userEvent.click(count);
   if (count.textContent !== '2/1/2') throw new Error('Unexpected reads or duplicated run identity: ' + count.textContent);
