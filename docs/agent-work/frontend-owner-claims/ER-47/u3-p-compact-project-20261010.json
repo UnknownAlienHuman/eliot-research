@@ -25,7 +25,12 @@
       "commit_sha": "ff85ee4827366bac620750010f2e648c51d3bea9"
     }
   ],
-  "state": "ACTIVE",
-  "evidence_refs": [],
-  "blocker_refs": []
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "git:893704a6b4bdd6e7afc9300a6621ec60bbf15765",
+    "tests/ui-owner/receipts/u3-x/compact-project-module-20261010.json"
+  ],
+  "blocker_refs": [],
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "tests/ui-owner/receipts/u3-x/compact-project-module-20261010.json"
 }

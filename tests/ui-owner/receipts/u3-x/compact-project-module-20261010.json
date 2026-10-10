@@ -1,0 +1,128 @@
+{
+  "protocol": "eliotr.frontend-module-source-delivery.v1",
+  "status": "ACCEPTED_BOUNDED_COMPACT_PROJECT_MODULE",
+  "module": "Compact Sources project selection and protected keyed focus",
+  "source_commit": "893704a6b4bdd6e7afc9300a6621ec60bbf15765",
+  "claim_id": "u3-p-compact-project-20261010",
+  "claim_commit": "07229029106d40d80746556779cb1d254c57e72e",
+  "predecessor_refs": [
+    {
+      "checkpoint_id": "C2-P",
+      "commit_sha": "3e40e1b8956c140196d658cbfb337cafd8cc1c8c",
+      "approval_ref": "tests/ui-owner/receipts/u1-d/client-source-catalog.json"
+    },
+    {
+      "checkpoint_id": "U2-S",
+      "commit_sha": "ff85ee4827366bac620750010f2e648c51d3bea9"
+    }
+  ],
+  "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
+  "manager_identity": "frontend-manager",
+  "manager_context_id": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "source_inputs": [
+    {
+      "path": "packages/ui/src/features/sources/projects/ProjectsLibraryFeature.tsx",
+      "git_blob": "2caa45fcd09fbc8ff1d46b0a77c360d5a4843ede",
+      "sha256": "e7e44bd8f35d80f6ff9e880bf67a2c8995c9f52bbcfe3248f63e52ea5fa9960e",
+      "mode": "100644"
+    },
+    {
+      "path": "packages/ui/src/features/sources/projects/projects-library.css",
+      "git_blob": "7c4295db576eea9c2a2076566f6aa9bbb188972e",
+      "sha256": "c505ffa43a4495ed0d3441e511b70a89ac0a5903119a323e3724e2bf679ca8e7",
+      "mode": "100644"
+    },
+    {
+      "path": "apps/eliotr-web/src/app/LiveWorkspace.tsx",
+      "git_blob": "590d87af6af98fd9396710887525b40df810fec3",
+      "sha256": "ce7c6ae2d5ef8acfdae260ad4174d05620777f7a64bde63a4acbf97054b1a68b",
+      "mode": "100644"
+    },
+    {
+      "path": "packages/ui/src/stories/sources/projects/ProjectsLibraryFeature.stories.tsx",
+      "git_blob": "da0b69663fd758d16fdc1ca7f9a5d6561e24393c",
+      "sha256": "a956d6cccab0436a68c4932710b87f04ccd5838482b1ba6b351c6689f1ffe982",
+      "mode": "100644"
+    },
+    {
+      "path": "apps/eliotr-web/src/app/Shell.stories.tsx",
+      "git_blob": "17750f3e4a86307b8734224ca33f419562b0788b",
+      "sha256": "600baf5559eae2a44202d8c1c80c94c0664e02e873049b64ba052b9ef0d06c2e",
+      "mode": "100644"
+    }
+  ],
+  "qualification": [
+    {
+      "path": ".eliotr-state/frontend-sources-module-20261010/story-repaired.log",
+      "sha256": "4fc4cf1267c0f2acdf771864c89c46820064d9563111f1eb9dcc096e9b79c769"
+    },
+    {
+      "path": ".eliotr-state/frontend-sources-module-20261010/shell-sources-repaired-command.log",
+      "sha256": "808cab69b7d984bcfc15eb7551675b7e689074da25f5b1cd96132a8f45f1c108"
+    },
+    {
+      "path": ".eliotr-state/frontend-sources-module-20261010/compiler-final.log",
+      "sha256": "b8a512abf4ae3b27667a4d89e6aaf93031f025b4a9dfae07dbff68ea5686e6e0"
+    },
+    {
+      "path": ".eliotr-state/frontend-sources-module-20261010/lint-final.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".eliotr-state/frontend-sources-module-20261010/story-browser/review.json",
+      "sha256": "a3faabc18597040d6b40b36458a8383febe582b2b8b95257a8d7a09ced91976f"
+    },
+    {
+      "path": ".eliotr-state/frontend-sources-module-20261010/project-browser/review.json",
+      "sha256": "e5076067c080a6d27e4a8519c2481988327ce071843d7813b414df057af488b2"
+    },
+    {
+      "path": ".eliotr-state/frontend-sources-module-20261010/truth-browser.json",
+      "sha256": "83fcd457133a94c2b02b84f95250cd284abdbb586c405fc8d7b3ea00e57d07ec"
+    }
+  ],
+  "compiler": {
+    "version": "6.0.3",
+    "inputs": 221,
+    "outputs": 1066,
+    "diagnostics": 0,
+    "receipt": ".eliotr-state/frontend-ui-proposals/integrated-web-2026-10-10T06-14-28-827Z.json",
+    "sha256": "2bc2c67a348539d2f19f7beef350760f891ec7ee0d274c6a4e0811bc77b8c06e"
+  },
+  "storybook": "10.6.1",
+  "browser": "155.0.8059.40",
+  "playwright": "1.63.0",
+  "visual": {
+    "cases": 46,
+    "baseline": "MANUAL_REVIEW_ACCEPTED"
+  },
+  "composed": {
+    "cases": 18,
+    "native_keyboard": true,
+    "native_popup_commit": "Pointer-open/keyboard-commit",
+    "protected_key_retained": true,
+    "focus_scroll": true,
+    "refusal": [
+      "replacement page holder",
+      "expired actual privacy context",
+      "changed project cursor",
+      "committed route away/back"
+    ],
+    "same_project_scope": true,
+    "strict_mode": true
+  },
+  "scope": "Native labeled project select; explicit unselected state; confirmed empty observations; current context/page/cursor guarded focus across protected keyed remount; same-project selection retains next-question scope.",
+  "original_failed_receipts_retained": [
+    "story.log",
+    "shell-sources.log",
+    "story-browser-original-failure.log"
+  ],
+  "pending": [
+    "Whole U3-X/U4-X/U5-X manager acceptance",
+    "Authenticated browser/backend transport and generated Worker input parity",
+    "Full performance and physical accessibility",
+    "FINAL-UI and staging/live/U6"
+  ],
+  "tests_repeated_reason": "Only changed-input qualifiers and repairs of actual failed/new selector assertions; accepted backend/build/checker suites not repeated",
+  "history": "Additive object frontier; shared local9c/index/foreign WIP preserved"
+}
