@@ -1,7 +1,7 @@
 import { StrictMode, useState } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, userEvent, waitFor, within } from "storybook/test";
-import { Button, Dialog, Field, IconButton, Status } from "./primitives";
+import { Button, Dialog, Field, IconButton, OperationAnnouncement, Status } from "./primitives";
 
 const meta = {
   title: "Primitives/Native",
@@ -37,6 +37,33 @@ export const FieldError: Story = {
 };
 export const NeutralStatus: Story = { render: () => <Status>Source readiness unknown</Status> };
 export const ErrorStatus: Story = { render: () => <Status tone="error">Source could not be read</Status> };
+function AnnouncementSample() {
+  const [message, setMessage] = useState('');
+  return <><Status>Saved source</Status><Status tone="error">A static check failed</Status>
+    <OperationAnnouncement>{message}</OperationAnnouncement>
+    <Button onClick={() => setMessage('Saved versions loaded.')}>Announce in English</Button>
+    <Button onClick={() => setMessage('Сохранённые версии прочитаны.')}>Сообщить по-русски</Button>
+    <Button onClick={() => setMessage('')}>Clear announcement</Button></>;
+}
+export const OperationAnnouncementChannel: Story = {
+  render: () => <AnnouncementSample />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement), region = canvas.getByRole('status');
+    const count = () => canvasElement.querySelectorAll('[role="status"], [aria-live], [role="alert"]').length;
+    await expect(region).toHaveTextContent('');
+    await expect(region).toHaveAttribute('aria-live', 'polite');
+    await expect(region).toHaveAttribute('aria-atomic', 'true');
+    await expect(count()).toBe(1);
+    await userEvent.click(canvas.getByRole('button', { name: 'Announce in English' }));
+    await expect(region).toHaveTextContent('Saved versions loaded.');
+    await userEvent.click(canvas.getByRole('button', { name: 'Сообщить по-русски' }));
+    await expect(region).toHaveTextContent('Сохранённые версии прочитаны.');
+    await userEvent.click(canvas.getByRole('button', { name: 'Clear announcement' }));
+    await expect(region).toHaveTextContent('');
+    await expect(canvas.getByRole('status')).toBe(region);
+    await expect(count()).toBe(1);
+  },
+};
 export const LongRussian: Story = {
   render: () => <div lang="ru"><Field label="Название источника для следующего исследования" hint="Сохранённая область выполненного исследования остаётся неизменной" defaultValue="Исследование надёжных систем знаний и точных доказательств" /><Button variant="tonal">Проверить доступную версию источника</Button></div>,
 };

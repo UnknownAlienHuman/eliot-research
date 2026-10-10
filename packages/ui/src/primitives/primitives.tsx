@@ -144,6 +144,11 @@ export function Status({ tone = "neutral", icon = tone === "error" ? "close" : "
   );
 }
 
+/** One persistent, initially empty channel for a pane's asynchronous feedback. */
+export function OperationAnnouncement({ children }: { readonly children: string }) {
+  return <span className="er-operation-announcement" role="status" aria-live="polite" aria-atomic="true">{children}</span>;
+}
+
 export type DialogProps = {
   readonly open: boolean;
   readonly title: string;
