@@ -1,3 +1,4 @@
+import { paneAnnouncement, announcementUntil, unchangedChannel } from './announcementAssertions';
 import { IntegrationRepairsPreview, playIntegrationRepairs, playReplacedSelection } from './IntegrationRepairsPreview';
 import { FiniteReadExportPreview, playReadsNoEffects, playFailedRequiredSectionNoExport } from "./FiniteReadExportPreview";
 import { FiniteTruthDisclosurePreview, playCapabilityConnectionTruth, playBoundedRootDisclosure, playConnectionAnnouncements } from "./FiniteTruthDisclosurePreview";
@@ -161,7 +162,7 @@ export const LiveSourcesJourney = {
       findByRole(role: string, options: { readonly name: string }): Promise<HTMLElement>;
       getByRole(role: string, options: { readonly name: string }): HTMLElement;
       queryByRole(role: string): HTMLElement | null;
-      findByText(text: RegExp): Promise<HTMLElement>;
+      findByText(text: RegExp, options?: { readonly selector: string }): Promise<HTMLElement>;
     };
     readonly userEvent: { click(element: HTMLElement): Promise<void>; selectOptions(element: HTMLElement, value: string): Promise<void> };
   }) => {
@@ -192,7 +193,7 @@ export const LiveErasureJourney = {
       findByRole(role: string, options: { readonly name: string }): Promise<HTMLElement>;
       getByRole(role: string, options: { readonly name: string; readonly exact?: boolean }): HTMLElement;
       queryByRole(role: string, options?: { readonly name: string }): HTMLElement | null;
-      findByText(text: RegExp): Promise<HTMLElement>;
+      findByText(text: RegExp, options?: { readonly selector: string }): Promise<HTMLElement>;
     };
     readonly userEvent: { click(element: HTMLElement): Promise<void>; selectOptions(element: HTMLElement, value: string): Promise<void> };
   }) => {
@@ -201,10 +202,13 @@ export const LiveErasureJourney = {
     await userEvent.click(await canvas.findByText(/Manage selected source/));
     const opener = await canvas.findByRole("button", { name: "Review deletion" });
     await userEvent.click(opener);
+    const erasureDialog = await canvas.findByRole("dialog", { name: "How source versions preserve evidence" });
+    const erasureRegion = paneAnnouncement(erasureDialog);
     const confirm = await canvas.findByRole("button", { name: "Confirm deletion" });
     // Two immediate real gestures must share one destructive dispatch, before a React render.
     confirm.click(); confirm.click();
     await canvas.findByRole("button", { name: "Refresh status" });
+    await announcementUntil(() => unchangedChannel(erasureDialog, erasureRegion, "The deletion request is unresolved. Read its saved status."));
     if (canvas.queryByRole("button", { name: "Confirm deletion" })) throw new Error("Uncertain result exposed repeat confirmation");
     await userEvent.click(canvas.getByRole("button", { name: "Back to sources" }));
     if (opener !== document.activeElement) throw new Error("Deletion review did not restore opener focus");
@@ -212,12 +216,16 @@ export const LiveErasureJourney = {
     await canvas.findByRole("heading", { name: "Studio" });
     await userEvent.click(canvas.getByRole("link", { name: "Sources", exact: true }));
     await userEvent.click(await canvas.findByRole("button", { name: "Check deletion request" }));
+    const reopenedDialog = await canvas.findByRole("dialog", { name: "How source versions preserve evidence" });
+    const reopenedRegion = paneAnnouncement(reopenedDialog);
+    if (erasureRegion.isConnected || reopenedRegion.textContent !== "") throw new Error("Reopened cached deletion facts announced or retained their old channel");
     if (canvas.queryByRole("button", { name: "Confirm deletion" })) throw new Error("Reopened saved request exposed repeat confirmation");
     await userEvent.click(canvas.getByRole("button", { name: "Refresh status" }));
     await canvas.findByText(/The deletion result is unknown/);
     if (canvas.queryByRole("button", { name: "Confirm deletion" })) throw new Error("Unknown saved status exposed repeat confirmation");
     await userEvent.click(canvas.getByRole("button", { name: "Refresh status" }));
-    await canvas.findByText(/Deletion confirmed by the saved server receipt/);
+    await canvas.findByText(/Deletion confirmed by the saved server receipt/, { selector: ".er-status > span" });
+    await announcementUntil(() => unchangedChannel(reopenedDialog, reopenedRegion, "Deletion confirmed by the saved server receipt."));
     if (canvas.queryByRole("button", { name: "Confirm deletion" })) throw new Error("Completed readback exposed repeat confirmation");
   },
 };
@@ -266,12 +274,16 @@ export const LiveImportJourney = {
     };
   }) => {
     await userEvent.click(await canvas.findByRole('button', { name: 'Import sources' }));
+    const importDialog = await canvas.findByRole('dialog', { name: 'Import sources' });
+    const importRegion = paneAnnouncement(importDialog);
     await userEvent.selectOptions(await canvas.findByLabelText('Save the file in'), 'workspace-live-1');
     await userEvent.upload(canvas.getByLabelText('Choose a file'), new File(['# Imported evidence\n'], 'Imported report.md', { type: 'text/markdown' }));
     await userEvent.click(await canvas.findByRole('button', { name: 'Review the selected file' }));
     const capture = await canvas.findByRole('button', { name: 'Capture the selected file' });
     capture.click(); capture.click();
+    await announcementUntil(() => unchangedChannel(importDialog, importRegion, 'The last step could not be verified. Check its saved status before starting again.'));
     await userEvent.click(await canvas.findByRole('button', { name: 'Check the previous capture' }));
+    await announcementUntil(() => unchangedChannel(importDialog, importRegion, 'The exact file was captured.'));
     await canvas.findByText('Imported report.md');
     if (canvas.queryByRole('button', { name: 'Process the captured file' })) throw new Error('Processing appeared before explicit limits');
     await userEvent.type(await canvas.findByLabelText('Maximum result size (bytes)'), '131072');
@@ -286,9 +298,13 @@ export const LiveImportJourney = {
     await canvas.findByRole('heading', { name: 'Studio', exact: true });
     await userEvent.click(canvas.getByRole('link', { name: 'Sources', exact: true }));
     await userEvent.click(await canvas.findByRole('button', { name: 'Import sources' }));
+    const reopenedImport = await canvas.findByRole('dialog', { name: 'Import sources' });
+    const reopenedImportRegion = paneAnnouncement(reopenedImport);
+    if (importRegion.isConnected || reopenedImportRegion.textContent !== '') throw new Error('Reopened cached import announced or retained the old channel');
     if (canvas.queryByRole('button', { name: 'Process the captured file' })) throw new Error('Unknown processing exposed a new operation');
     await userEvent.click(await canvas.findByRole('button', { name: 'Check processing status' }));
     await canvas.findByText('Outcome not yet known');
+    await announcementUntil(() => unchangedChannel(reopenedImport, reopenedImportRegion, 'The import step is unresolved. Check the same request before continuing.'));
     if (canvas.queryByRole('button', { name: 'Add to Library' })) throw new Error('Unknown processing exposed admission');
     if (canvas.queryByRole('button', { name: 'Capture the selected file' })) throw new Error('Unknown processing exposed new capture');
   },
@@ -338,3 +354,9 @@ export const SourcesAnnouncementPrivacy = { render: () => <FiniteReaderPreview r
 export const StudioOperationAnnouncements = { render: () => <StudioPreview />, play: playStudioAnnouncements };
 export const ResearchOperationAnnouncements = { render: () => <ResearchPreview />, play: playResearchAnnouncements };
 export const ConnectionsOperationAnnouncements = { render: () => <FiniteTruthDisclosurePreview scenario="disclosure" holdDiagnostic />, play: playConnectionAnnouncements };
+
+export const NestedImportOperation = { ...LiveImportJourney };
+export const NestedErasureOperation = { ...LiveErasureJourney };
+export const NestedBundleOperation = { ...LiveBundleJourney };
+export const NestedArtifactOperation = { render: () => <ArtifactActionsPreview />, play: playArtifactActionsJourney };
+export const NestedEvidenceOperation = { render: () => <FiniteExcerptPreview />, play: playFiniteExcerptLifecycle };

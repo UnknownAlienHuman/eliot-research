@@ -1,3 +1,4 @@
+import { paneAnnouncement, announcementUntil, unchangedChannel } from './announcementAssertions';
 import { useEffect, useState } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
@@ -99,7 +100,9 @@ export const playBundleJourney = async ({ canvas, userEvent }: {
       content: { markdown: 'content.md', markdown_sha256: contentHash }, capabilities: { text_ranges: true, pages: false, bounding_boxes: false, tables: false, figures: false }, quality: { state: 'high_fidelity', assurance_ceiling: 'ceiling-1', warnings: [] }, export: { purpose: 'owner workspace import', receipt_ref: 'receipt-1' } });
     const files = [new File([manifest], 'manifest.json'), new File([content], 'content.md'), new File([contentHash + ' *content.md\n' + await digest(encode(manifest)) + ' *manifest.json\n'], 'hashes.sha256')];
     await userEvent.click(await canvas.findByRole('button', { name: 'Import sources' }));
+    const dialog = await canvas.findByRole('dialog', { name: 'Import sources' });
     await userEvent.click(canvas.getByRole('button', { name: 'Saved bundle' }));
+    const region = paneAnnouncement(dialog);
     await userEvent.upload(canvas.getByLabelText('Choose bundle files'), files);
     await userEvent.click(await canvas.findByRole('button', { name: 'Review bundle files' }));
     await canvas.findByText('content.md');
@@ -108,6 +111,7 @@ export const playBundleJourney = async ({ canvas, userEvent }: {
     await userEvent.click(canvas.getByRole('checkbox', { name: 'Review the exact bytes below before anything is uploaded.' }));
     start.click(); start.click();
     await canvas.findByText('Import outcome is unknown. Check the same import identity again.');
+    await announcementUntil(() => unchangedChannel(dialog, region, 'The last step could not be verified. Check its saved status before starting again.'));
     if (canvas.queryByRole('button', { name: 'Start the import' })) throw new Error('Lost commit acknowledgement exposed a replacement import');
     await userEvent.click(canvas.getByRole('button', { name: 'Back to sources' }));
     await userEvent.click(canvas.getByRole('link', { name: 'Studio', exact: true }));
@@ -115,8 +119,12 @@ export const playBundleJourney = async ({ canvas, userEvent }: {
     await userEvent.click(canvas.getByRole('link', { name: 'Sources', exact: true }));
     await userEvent.click(await canvas.findByRole('button', { name: 'Import sources' }));
     await userEvent.click(canvas.getByRole('button', { name: 'Saved bundle' }));
+    const reopened = await canvas.findByRole('dialog', { name: 'Import sources' });
+    const restoredRegion = paneAnnouncement(reopened);
+    if (region.isConnected || restoredRegion.textContent !== '') throw new Error('Cached bundle facts announced on reopen');
     await userEvent.click(await canvas.findByRole('button', { name: 'Check import status' }));
     await canvas.findByText('Committed with a verified receipt.');
+    await announcementUntil(() => unchangedChannel(reopened, restoredRegion, 'The import is committed with a verified receipt.'));
     if (canvas.queryByRole('button', { name: 'Start the import' })) throw new Error('Committed readback exposed a new import');
     await userEvent.click(canvas.getByRole('button', { name: 'Clear this import' }));
     if (!(canvas.getByLabelText('Choose bundle files') instanceof HTMLInputElement)) throw new Error('Confirmed import could not release its local file selection');

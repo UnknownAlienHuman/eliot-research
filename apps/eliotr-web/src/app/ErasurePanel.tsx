@@ -5,11 +5,12 @@ import type { ErasurePrepareView, LibraryPage } from "@eliotr/owner-api-client";
 import type { BoundWorkspaceApis } from "./runtime";
 import type { PrivacyController, SessionContext } from "./privacy";
 import { protectedQueryKey } from "../query/client";
+import { OperationFeedback } from "./OperationFeedback";
 import { erasureActions, isErasureComplete } from "../query/erasure";
 
 const copy = {
-  en: { manage: "Manage selected source", requests: "Deletion requests in this session", open: "Review deletion", resume: "Check deletion request", close: "Back to sources", failed: "The deletion review could not be read. Try again with the same request.", retry: "Read review again", completed: "Deletion confirmed by the saved server receipt.", refresh: "Refresh status" },
-  ru: { manage: "Управление выбранным источником", requests: "Запросы удаления в этом сеансе", open: "Проверить удаление", resume: "Проверить запрос удаления", close: "Вернуться к источникам", failed: "Не удалось прочитать сведения об удалении. Повторите чтение того же запроса.", retry: "Прочитать сведения снова", completed: "Удаление подтверждено сохранённой квитанцией сервера.", refresh: "Обновить статус" },
+  en: { preparing: "Reading the deletion review.", confirming: "Checking the original deletion request.", readingStatus: "Reading saved deletion status.", ready: "Deletion review loaded. Confirm only after reviewing it.", unknown: "The deletion request is unresolved. Read its saved status.", blocked: "Deletion is blocked. Review the affected locations.", manage: "Manage selected source", requests: "Deletion requests in this session", open: "Review deletion", resume: "Check deletion request", close: "Back to sources", failed: "The deletion review could not be read. Try again with the same request.", retry: "Read review again", completed: "Deletion confirmed by the saved server receipt.", refresh: "Refresh status" },
+  ru: { preparing: "Читаем сведения об удалении.", confirming: "Проверяем исходный запрос удаления.", readingStatus: "Читаем сохранённый статус удаления.", ready: "Сведения об удалении прочитаны. Подтвердите после проверки.", unknown: "Исход запроса удаления не определён. Прочитайте сохранённый статус.", blocked: "Удаление заблокировано. Проверьте затронутые расположения.", manage: "Управление выбранным источником", requests: "Запросы удаления в этом сеансе", open: "Проверить удаление", resume: "Проверить запрос удаления", close: "Вернуться к источникам", failed: "Не удалось прочитать сведения об удалении. Повторите чтение того же запроса.", retry: "Прочитать сведения снова", completed: "Удаление подтверждено сохранённой квитанцией сервера.", refresh: "Обновить статус" },
 } as const;
 
 interface Props {
@@ -105,6 +106,11 @@ function ErasureReview({ sourceId, selected, onIntent, ...props }: Props & {
   const submitted = intent.data?.submitted === true;
   const completed = prepared.data !== undefined && isErasureComplete(prepared.data, status.data, props.privacy, props.context);
   const pending = prepare.isPending || confirm.isPending || (status.data === undefined && status.isFetching);
+  const operationMessage = prepare.isPending ? text.preparing : confirm.isPending ? text.confirming
+    : status.isFetching ? text.readingStatus : completed ? text.completed
+    : prepare.isError || status.isError ? text.failed
+    : submitted ? status.data?.state === "BLOCKED" ? text.blocked : text.unknown
+    : prepared.data ? text.ready : '';
   const title = prepared.data?.source_title ?? props.page?.sources.find(source => source.id === sourceId)?.title ?? text.resume;
   const trigger = <Button variant="text" onClick={() => {
     setOpen(true);
@@ -113,6 +119,7 @@ function ErasureReview({ sourceId, selected, onIntent, ...props }: Props & {
   return <>
     {selected ? <details><summary>{text.manage}</summary>{trigger}</details> : submitted ? trigger : null}
     <Dialog open={open} title={title} onClose={close}>
+      {open && <OperationFeedback message={operationMessage} />}
       {completed ? <><Status icon="check">{text.completed}</Status><Button variant="tonal" onClick={refresh}>{text.refresh}</Button></>
         : !prepared.data && prepare.isError ? <><Status tone="error">{text.failed}</Status><Button variant="tonal" onClick={review}>{text.retry}</Button></>
         : <ErasureFeature locale={props.locale} copy={ERASURE_COPY[props.locale]}

@@ -1,3 +1,4 @@
+import { paneAnnouncement, announcementUntil } from './announcementAssertions';
 import { useEffect, useRef, useState, useSyncExternalStore, type ComponentProps, type RefObject } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
@@ -147,8 +148,17 @@ export async function playFiniteExcerptLifecycle(test: ExcerptPlayContext) {
   const host = test.canvasElement.querySelector<HTMLElement>('[data-finite-excerpt]'), environment = host && environments.get(host);
   assert(environment && host, 'Finite excerpt fixture was not registered');
   await test.userEvent.click(await test.canvas.findByRole('button', { name: 'Read · Section 1', exact: true }));
+  const reportRoot = test.canvasElement.querySelector<HTMLElement>('.er-live-report');
+  assert(reportRoot, 'Actual report root absent');
+  const reportRegion = reportRoot.querySelector<HTMLElement>(':scope > .er-operation-announcement');
+  assert(reportRegion && reportRegion.getAttribute('aria-live') === 'polite' && reportRegion.getAttribute('aria-atomic') === 'true', 'Report operation channel absent');
   await test.userEvent.click(await test.canvas.findByRole('button', { name: 'Open cited excerpt 1', exact: true }));
   await test.canvas.findByText(excerpt);
+  await announcementUntil(() => reportRegion.isConnected && reportRegion.textContent === 'The selected cited excerpt was verified.');
+  const rail = reportRoot.querySelector<HTMLElement>('.evidence');
+  assert(rail && rail.querySelectorAll('[role="status"], [role="alert"], [aria-live]').length === 0, 'Static citation rows created live regions');
+  const actionRoot = reportRoot.querySelector<HTMLElement>('section[aria-label="Review and acceptance"]');
+  assert(actionRoot && paneAnnouncement(actionRoot).textContent === '', 'Cached artifact facts announced while reading evidence');
   assert(!test.canvas.queryByText('Supported'), 'Resolution was promoted into semantic support');
   const original = await environment.holdRead();
   try {
@@ -158,10 +168,12 @@ export async function playFiniteExcerptLifecycle(test: ExcerptPlayContext) {
     assert(oldCacheCount(environment, original.context) === 0, 'Invalidation retained old protected Query entries');
     await frame();
     assert(!test.canvasElement.textContent?.includes(excerpt), 'Open excerpt remained in the invalidated Shell');
+    assert(!reportRegion.isConnected && test.canvasElement.querySelectorAll('[role="status"], [role="alert"], [aria-live]').length === 0, 'Privacy loss retained an operation channel');
     environment.held.release(); await environment.finishLateRead(); await frame();
     const metrics = environment.metrics();
     assert(metrics.opened === 2 && metrics.verifications === 2 && metrics.lateReturned === 1 && metrics.heldAborted, 'The exact held response did not return after accepted transport cancellation');
     assert(!test.canvasElement.textContent?.includes(excerpt), 'Late response restored old excerpt text');
+    assert(test.canvasElement.querySelectorAll('[role="status"], [role="alert"], [aria-live]').length === 0, 'Late protected response recreated a channel');
     assert(environment.client.getQueryData(original.queryKey) === undefined && oldCacheCount(environment, original.context) === 0, 'Late response restored an old protected cache entry');
     assert(!test.canvas.queryByText('Supported'), 'Late resolution became semantic support');
   } finally { environment.held.release(); }

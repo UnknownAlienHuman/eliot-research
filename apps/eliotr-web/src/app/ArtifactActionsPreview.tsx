@@ -1,3 +1,4 @@
+import { paneAnnouncement, announcementUntil, unchangedChannel } from './announcementAssertions';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { Button } from '@eliotr/ui';
@@ -97,20 +98,32 @@ export function ArtifactActionsPreview() {
 }
 
 export const playArtifactActionsJourney = async ({ canvas, userEvent }: Parameters<typeof playResearchJourney>[0]) => {
-  await userEvent.click(await canvas.findByRole('button', { name: 'Accept this report' }));
+  const accept = await canvas.findByRole('button', { name: 'Accept this report' });
+  const actionRoot = accept.closest<HTMLElement>('section'); if (!actionRoot) throw new Error('Report action root absent');
+  const firstRegion = paneAnnouncement(actionRoot);
+  if (firstRegion.textContent !== '') throw new Error('Initial report facts announced');
+  await userEvent.click(accept);
   await userEvent.click(canvas.getByRole('button', { name: 'Confirm owner acceptance' }));
-  await canvas.findByText('The action could not be confirmed. Read its status before continuing.');
+  await canvas.findByText('The action could not be confirmed. Read its status before continuing.', { selector: '.er-status > span' });
   await userEvent.click(canvas.getByRole('button', { name: 'Reconcile the original action' }));
-  await canvas.findByText('Owner acceptance is confirmed for this revision.');
+  await canvas.findByText('Owner acceptance is confirmed for this revision.', { selector: '.er-status > span' });
+  await announcementUntil(() => unchangedChannel(actionRoot, firstRegion, 'Owner acceptance is confirmed for this revision.'));
   await userEvent.click(canvas.getByRole('button', { name: 'Open other draft' }));
+  const revise = await canvas.findByRole('button', { name: 'Revise this section' });
+  const otherRoot = revise.closest<HTMLElement>('section'); if (!otherRoot) throw new Error('Other report root absent');
+  const otherRegion = paneAnnouncement(otherRoot);
+  if (firstRegion.isConnected || otherRegion.textContent !== '') throw new Error('Another report inherited operation feedback');
   await userEvent.click(await canvas.findByRole('button', { name: 'Revise this section' }));
-  await canvas.findByText('The previous action is unresolved. Its original request is preserved.');
+  await canvas.findByText('The previous action is unresolved. Its original request is preserved.', { selector: '.er-status > span' });
   await userEvent.click(canvas.getByRole('button', { name: 'Back to first report' }));
-  await canvas.findByText('An action on another report is unresolved. Return to that report to reconcile it.');
+  await canvas.findByText('An action on another report is unresolved. Return to that report to reconcile it.', { selector: '.er-status > span' });
   const review = canvas.getByRole('button', { name: 'Read acceptance status' });
   if (!(review instanceof HTMLButtonElement) || !review.disabled) throw new Error('Another report could overwrite an unresolved revision identity');
   await userEvent.click(canvas.getByRole('button', { name: 'Open other draft' }));
   await userEvent.click(await canvas.findByRole('button', { name: 'Reconcile the original action' }));
-  await canvas.findByText('A new section revision was saved. The previous revision is preserved.');
+  await canvas.findByText('A new section revision was saved. The previous revision is preserved.', { selector: '.er-status > span' });
+  const completedRoot = canvas.getByRole('button', { name: 'Read acceptance status' }).closest<HTMLElement>('section');
+  if (!completedRoot) throw new Error('Completed report root absent');
+  await announcementUntil(() => paneAnnouncement(completedRoot).textContent === 'A new section revision was saved. The previous revision is preserved.');
   await canvas.findByText('Opened child revision 2');
 };

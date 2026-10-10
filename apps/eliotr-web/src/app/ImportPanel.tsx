@@ -5,6 +5,7 @@ import type { BrowserBundle, BrowserBundleImport, ImportIdentity, RawFileSelecti
 import { RAW_MARKDOWN_MAX_OUTPUT_BYTES, RAW_MARKDOWN_MAX_TOKENS, RAW_MARKDOWN_TIMEOUT_MS } from '@eliotr/owner-api-client';
 import type { BoundWorkspaceApis } from './runtime';
 import type { PrivacyController, SessionContext } from './privacy';
+import { OperationFeedback } from './OperationFeedback';
 import { importActions } from '../query/imports';
 import { protectedQueryKey, runProtectedRead } from '../query/client';
 
@@ -20,8 +21,8 @@ interface ImportMemory {
   readonly submitted?: boolean;
 }
 const copy = {
-  en: { open: 'Import sources', close: 'Back to sources', workspace: 'Save the file in', choose: 'Choose a workspace', read: 'Refresh workspaces', options: 'Choose processing limits', size: 'Maximum result size (bytes)', tokens: 'Maximum processing tokens', timeout: 'Time limit (milliseconds)', review: 'Review processing options', waiting: 'Choose each limit before processing. No request is selected automatically.', error: 'The last step could not be verified. Check its saved status before starting again.' },
-  ru: { open: 'Импортировать источники', close: 'Вернуться к источникам', workspace: 'Сохранить файл в', choose: 'Выберите рабочую область', read: 'Обновить рабочие области', options: 'Выбрать ограничения обработки', size: 'Максимальный размер результата (байт)', tokens: 'Максимум токенов обработки', timeout: 'Ограничение времени (миллисекунды)', review: 'Проверить параметры обработки', waiting: 'Укажите каждое ограничение перед обработкой. Запрос не выбирается автоматически.', error: 'Последний шаг не удалось проверить. Прочитайте сохранённый статус перед повторным действием.' },
+  en: { working: 'Checking the current import step.', prepared: 'The selected file is ready for capture.', captured: 'The exact file was captured.', converted: 'Processing finished. Review the captured file.', admitted: 'The source was added to the Library.', rejected: 'The source was not admitted. Review its saved status.', bundleReady: 'The exact bundle files are ready for review.', bundleCommitted: 'The import is committed with a verified receipt.', unknown: 'The import step is unresolved. Check the same request before continuing.', namespaces: 'Workspaces loaded.', namespaceError: 'Workspaces could not be loaded.', open: 'Import sources', close: 'Back to sources', workspace: 'Save the file in', choose: 'Choose a workspace', read: 'Refresh workspaces', options: 'Choose processing limits', size: 'Maximum result size (bytes)', tokens: 'Maximum processing tokens', timeout: 'Time limit (milliseconds)', review: 'Review processing options', waiting: 'Choose each limit before processing. No request is selected automatically.', error: 'The last step could not be verified. Check its saved status before starting again.' },
+  ru: { working: 'Проверяем текущий шаг импорта.', prepared: 'Выбранный файл готов к захвату.', captured: 'Точный файл захвачен.', converted: 'Обработка завершена. Проверьте захваченный файл.', admitted: 'Источник добавлен в библиотеку.', rejected: 'Источник не допущен. Проверьте сохранённый статус.', bundleReady: 'Точные файлы набора готовы к проверке.', bundleCommitted: 'Импорт завершён и подтверждён проверенной квитанцией.', unknown: 'Исход шага импорта не определён. Проверьте тот же запрос перед продолжением.', namespaces: 'Рабочие области прочитаны.', namespaceError: 'Не удалось прочитать рабочие области.', open: 'Импортировать источники', close: 'Вернуться к источникам', workspace: 'Сохранить файл в', choose: 'Выберите рабочую область', read: 'Обновить рабочие области', options: 'Выбрать ограничения обработки', size: 'Максимальный размер результата (байт)', tokens: 'Максимум токенов обработки', timeout: 'Ограничение времени (миллисекунды)', review: 'Проверить параметры обработки', waiting: 'Укажите каждое ограничение перед обработкой. Запрос не выбирается автоматически.', error: 'Последний шаг не удалось проверить. Прочитайте сохранённый статус перед повторным действием.' },
 } as const;
 const withoutUncertainty = (file: ImportFileState | undefined) => {
   const { uncertain: _uncertain, ...rest } = file ?? { phase: 'useful' as const };
@@ -133,9 +134,21 @@ export function ImportPanel({ apis, privacy, context, locale }: {
         ...(status.receipt ? { receipt: status.receipt } : {}), uncertain: status.state !== 'COMMITTED' } }));
     }, () => write(old => ({ ...old, bundleState: { ...old.bundleState, phase: 'degraded', uncertain: true } })));
   };
+  const operationMessage = busy ? text.working : error ? text.error
+    : view === 'bundle' ? saved.bundleState?.uncertain ? text.unknown
+      : saved.bundleState?.status?.state === 'COMMITTED' && saved.bundleState.receipt ? text.bundleCommitted
+      : saved.review ? text.bundleReady : ''
+    : fileState?.uncertain ? text.unknown
+    : fileState?.admission?.state === 'COMMITTED' ? text.admitted
+    : fileState?.admission?.state === 'REJECTED' || fileState?.admission?.state === 'QUARANTINED' ? text.rejected
+    : fileState?.conversion?.state === 'COMPLETE' ? text.converted
+    : fileState?.conversion?.state === 'FAILED' ? text.error
+    : fileState?.receipt ? text.captured : saved.selection ? text.prepared
+    : namespaces.isFetching ? text.working : namespaces.isError ? text.namespaceError : namespaces.data ? text.namespaces : '';
   return <>
     <Button variant="tonal" onClick={() => setOpen(true)}>{text.open}</Button>
     <Dialog open={open} title={text.open} onClose={() => setOpen(false)}>
+      {open && <OperationFeedback key={view} message={operationMessage} />}
       {view === 'file' && !saved.selection && <div className="er-live-import-settings">
         <label className="er-field__label" htmlFor={selectId}>{text.workspace}</label>
         <select className="er-field__control" id={selectId} value={namespace} onChange={event => setNamespace(event.target.value)} disabled={busy}>
@@ -144,7 +157,7 @@ export function ImportPanel({ apis, privacy, context, locale }: {
         </select>
         {namespaces.isError && <Button variant="text" onClick={() => { void namespaces.refetch(); }}>{text.read}</Button>}
       </div>}
-      {error && <p role="status">{text.error}</p>}
+      {error && <p>{text.error}</p>}
       <ImportFlow locale={locale} copy={IMPORT_FLOW_COPY[locale]} view={view} active={open} onViewChange={busy ? undefined : setView}
         fileState={{ ...fileState, phase }} bundleState={busy && view === 'bundle' ? { ...saved.bundleState, phase: 'loading' } : saved.bundleState}
         bundleReview={saved.review} conversionRequest={saved.request} selectionName={saved.selection?.original_file_name ?? selectedFile?.name}

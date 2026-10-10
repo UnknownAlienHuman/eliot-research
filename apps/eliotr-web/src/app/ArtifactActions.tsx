@@ -4,6 +4,7 @@ import { Button, Status } from '@eliotr/ui';
 import type { ArtifactPublicationView, ArtifactRevision, ArtifactSectionRevisionView, VersionedRef } from '@eliotr/owner-api-client';
 import type { BoundWorkspaceApis } from './runtime';
 import type { PrivacyController, SessionContext } from './privacy';
+import { OperationFeedback } from './OperationFeedback';
 import { protectedQueryKey, runProtectedRead } from '../query/client';
 
 const sameRef = (a: VersionedRef, b: VersionedRef) => a.id === b.id && a.revision === b.revision;
@@ -21,7 +22,7 @@ interface Memory {
   readonly revision?: ArtifactSectionRevisionView;
 }
 const copy = {
-  en: { title: 'Review and acceptance', review: 'Read acceptance status', accept: 'Accept this report',
+  en: { working: 'Checking the original report action.', title: 'Review and acceptance', review: 'Read acceptance status', accept: 'Accept this report',
     confirm: 'Confirm owner acceptance', cancel: 'Cancel', revise: 'Revise this section',
     recover: 'Reconcile the original action', pending: 'The previous action is unresolved. Its original request is preserved.',
     elsewhere: 'An action on another report is unresolved. Return to that report to reconcile it.',
@@ -31,7 +32,7 @@ const copy = {
     revised: 'A new section revision was saved. The previous revision is preserved.',
     cancelled: 'The section revision was cancelled.', details: 'Acceptance receipt',
     caution: 'Accepting records your decision for this exact revision. The server checks its evidence before accepting it.' },
-  ru: { title: 'Проверка и принятие', review: 'Прочитать состояние принятия', accept: 'Принять этот отчёт',
+  ru: { working: 'Проверяем исходное действие с отчётом.', title: 'Проверка и принятие', review: 'Прочитать состояние принятия', accept: 'Принять этот отчёт',
     confirm: 'Подтвердить принятие владельцем', cancel: 'Отмена', revise: 'Пересмотреть этот раздел',
     recover: 'Сверить исходное действие', pending: 'Предыдущее действие не завершено. Исходный запрос сохранён.',
     elsewhere: 'Действие с другим отчётом не завершено. Вернитесь к нему для сверки.',
@@ -166,7 +167,13 @@ export function ArtifactActions(props: ArtifactActionsProps) {
     }));
   });
 
+  const operationMessage = busy ? text.working : notice ? text[notice]
+    : sameIntent ? text.pending : intent ? text.elsewhere
+    : accepted ? text.accepted : heldResult?.revision?.state === 'COMMITTED' ? text.revised
+    : heldResult?.revision?.state === 'CANCELLED' ? text.cancelled
+    : heldResult?.publication === null ? text.none : '';
   return <section aria-label={text.title} aria-busy={busy}>
+    <OperationFeedback message={operationMessage} />
     <h3>{text.title}</h3>
     <div className="er-live-actions">
       <Button variant="text" disabled={busy || (intent !== undefined && !sameIntent)} onClick={review}>{text.review}</Button>

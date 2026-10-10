@@ -9,13 +9,14 @@ import { isWorkspaceRequestError } from './runtime';
 import type { PrivacyController, SessionContext } from './privacy';
 import { reportQueryOptions } from '../query/reports';
 import { protectedQueryKey } from '../query/client';
+import { OperationFeedback } from './OperationFeedback';
 import { ArtifactActions } from './ArtifactActions';
 
 const refKey = (ref: VersionedRef) => `${ref.id}:${ref.revision}`;
 const sameRef = (left: VersionedRef, right: VersionedRef) => left.id === right.id && left.revision === right.revision;
 const copy = {
-  en: { title: 'Saved report', back: 'Close report', outline: 'Sections and export', backToSections: 'Back to sections', read: 'Read report again', reauthorize: 'Read with current access', access: 'This read uses a fresh authorization. The saved source scope is preserved.', section: (index: number) => `Section ${index + 1}`, evidence: 'Evidence for this section', noAudit: 'Semantic claim assessment was not executed for this section.', unknown: 'This section could not be read or verified.', exportError: 'A complete export could not be prepared. Read every declared section again.', reading: 'Reading the selected section.', noEvidence: 'No citations are declared for this section.', evidenceError: 'These exact evidence bytes could not be verified for the current scope.' },
-  ru: { title: 'Сохранённый отчёт', back: 'Закрыть отчёт', outline: 'Разделы и экспорт', backToSections: 'К разделам отчёта', read: 'Прочитать отчёт снова', reauthorize: 'Прочитать с текущим доступом', access: 'Чтение использует новое разрешение. Сохранённая область источников остаётся прежней.', section: (index: number) => `Раздел ${index + 1}`, evidence: 'Доказательства этого раздела', noAudit: 'Семантическая оценка утверждений для этого раздела не выполнялась.', unknown: 'Не удалось прочитать или проверить этот раздел.', exportError: 'Не удалось подготовить полный экспорт. Прочитайте все объявленные разделы ещё раз.', reading: 'Читаем выбранный раздел.', noEvidence: 'Для этого раздела не объявлены цитаты.', evidenceError: 'Не удалось проверить точные байты доказательства в текущей области доступа.' },
+  en: { readingCitations: 'Reading citations for this section.', readingReport: 'Reading the saved report.', reportReady: 'Saved report loaded.', sectionReady: 'The selected section was read and verified.', readingEvidence: 'Reading the selected cited excerpt.', evidenceReady: 'The selected cited excerpt was verified.', title: 'Saved report', back: 'Close report', outline: 'Sections and export', backToSections: 'Back to sections', read: 'Read report again', reauthorize: 'Read with current access', access: 'This read uses a fresh authorization. The saved source scope is preserved.', section: (index: number) => `Section ${index + 1}`, evidence: 'Evidence for this section', noAudit: 'Semantic claim assessment was not executed for this section.', unknown: 'This section could not be read or verified.', exportError: 'A complete export could not be prepared. Read every declared section again.', reading: 'Reading the selected section.', noEvidence: 'No citations are declared for this section.', evidenceError: 'These exact evidence bytes could not be verified for the current scope.' },
+  ru: { readingCitations: 'Читаем цитаты для этого раздела.', readingReport: 'Читаем сохранённый отчёт.', reportReady: 'Сохранённый отчёт прочитан.', sectionReady: 'Выбранный раздел прочитан и проверен.', readingEvidence: 'Читаем выбранный цитируемый фрагмент.', evidenceReady: 'Выбранный цитируемый фрагмент проверен.', title: 'Сохранённый отчёт', back: 'Закрыть отчёт', outline: 'Разделы и экспорт', backToSections: 'К разделам отчёта', read: 'Прочитать отчёт снова', reauthorize: 'Прочитать с текущим доступом', access: 'Чтение использует новое разрешение. Сохранённая область источников остаётся прежней.', section: (index: number) => `Раздел ${index + 1}`, evidence: 'Доказательства этого раздела', noAudit: 'Семантическая оценка утверждений для этого раздела не выполнялась.', unknown: 'Не удалось прочитать или проверить этот раздел.', exportError: 'Не удалось подготовить полный экспорт. Прочитайте все объявленные разделы ещё раз.', reading: 'Читаем выбранный раздел.', noEvidence: 'Для этого раздела не объявлены цитаты.', evidenceError: 'Не удалось проверить точные байты доказательства в текущей области доступа.' },
 } as const;
 
 /** One requested section at a time. Exact verified bytes remain in protected memory-only Query. */
@@ -112,7 +113,18 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
       state: isSelected ? evidence.isFetching ? 'loading' as const : evidence.isError ? 'failed' as const : opened ? 'loaded' as const : 'idle' as const : 'idle' as const,
     };
   }) ?? [];
+  const operationMessage = exportError ? text.exportError
+    : manifest.isFetching ? text.readingReport : manifest.isError ? text.unknown
+    : active && section.isFetching ? text.reading
+    : active && (section.isError || body === undefined) ? text.unknown
+    : active && citations.isFetching ? text.readingCitations
+    : active && citations.isError ? text.evidenceError
+    : currentCitation && evidence.isFetching ? text.readingEvidence
+    : currentCitation && evidence.isError ? text.evidenceError
+    : currentCitation && evidenceRows.some(row => row.state === 'loaded' && sameRef(row.citation.handle_ref, currentCitation.handle_ref)) ? text.evidenceReady
+    : active && body !== undefined ? text.sectionReady : artifact ? text.reportReady : '';
   return <section className="er-live-report" aria-label={text.title}>
+    <OperationFeedback message={operationMessage} />
     <div className="er-live-actions"><Button variant="text" onClick={onClose}>{text.back}</Button>
       <Button variant="tonal" disabled={manifest.isFetching} onClick={() => { void manifest.refetch(); }}>{text.read}</Button></div>
     {mode === 'author' && isWorkspaceRequestError(author.error) && author.error.status === 404 && author.error.code === 'ARTIFACT_DRAFT_READ_NOT_FOUND' &&
