@@ -83,6 +83,9 @@
   line-height: var(--eliot-type-label-medium-line-height);
   font-variant-numeric: var(--eliot-type-numerals);
 }
+.er-studio-live__item[aria-current="true"] .er-studio-live__item-meta {
+  color: var(--md-sys-color-on-primary-container);
+}
 
 .er-studio-live__more {
   color: var(--md-sys-color-on-surface-variant);
@@ -215,4 +218,8 @@
   .er-studio-live__list {
     max-height: none;
   }
+}
+
+@media (forced-colors: active) {
+  .er-studio-live__item[aria-current="true"] { forced-color-adjust: none; }
 }
