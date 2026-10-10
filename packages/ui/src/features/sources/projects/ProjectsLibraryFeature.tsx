@@ -32,6 +32,8 @@ export interface ProjectsLibraryFeatureProps {
   readonly onOpenSource: (sourceId: string) => void;
   readonly onLoadRevisions: (sourceId: string) => void;
   readonly onRetry: () => void;
+  readonly onRetryReadiness?: () => void;
+  readonly onRetryRevisions?: () => void;
   readonly onReadRevision?: (sourceRevisionRef: string) => void;
 }
 
@@ -228,12 +230,12 @@ export function ProjectsLibraryFeature(props: ProjectsLibraryFeatureProps) {
       )}
       {props.sourceActions}
 
-      {status === undefined ? null : <Status tone={status[1]}>{status[0]}</Status>}
+      {status === undefined ? null : <Status announce={props.state === "error" || props.state === "degraded"} tone={status[1]}>{status[0]}</Status>}
 
       <div className="er-projects-library__body">
         <h2 id={sourcesHeadingId} className="er-projects-library__subheading">{copy.sourcesLabel}</h2>
-        {showProjectPrompt ? <Status>{copy.projectChoose}</Status> : null}
-        {showSourceEmpty ? <Status>{copy.empty}</Status> : null}
+        {showProjectPrompt ? <Status announce={false}>{copy.projectChoose}</Status> : null}
+        {showSourceEmpty ? <Status announce={false}>{copy.empty}</Status> : null}
         <ul className="er-projects-library__sources" aria-labelledby={sourcesHeadingId}>
           {rows.map(row => (
             <li key={row.sourceId} className="er-projects-library__source" data-selected={row.sourceId === props.selectedSourceId}>
@@ -281,7 +283,10 @@ export function ProjectsLibraryFeature(props: ProjectsLibraryFeatureProps) {
           )}
           {readiness && <p className="er-projects-library__hint">{readiness.currentnessVerified ? copy.checked : copy.unverified}</p>}
           {readinessStatus === undefined ? null : (
-            <Status tone={readinessStatus[1]}>{readinessStatus[0]}</Status>
+            <Status announce={props.readinessState === "error" || props.readinessState === "degraded"} tone={readinessStatus[1]}>{readinessStatus[0]}</Status>
+          )}
+          {(props.readinessState === "error" || props.readinessState === "degraded") && props.onRetryReadiness && (
+            <Button variant="text" onClick={props.onRetryReadiness}>{copy.retry}</Button>
           )}
         </section>
 
@@ -309,7 +314,10 @@ export function ProjectsLibraryFeature(props: ProjectsLibraryFeatureProps) {
             </ul>
           )}
           {revisionsStatus === undefined ? null : (
-            <Status tone={revisionsStatus[1]}>{revisionsStatus[0]}</Status>
+            <Status announce={props.revisionsState === "error" || props.revisionsState === "degraded"} tone={revisionsStatus[1]}>{revisionsStatus[0]}</Status>
+          )}
+          {(props.revisionsState === "error" || props.revisionsState === "degraded") && props.onRetryRevisions && (
+            <Button variant="text" onClick={props.onRetryRevisions}>{copy.retry}</Button>
           )}
         </section>
       </div>
