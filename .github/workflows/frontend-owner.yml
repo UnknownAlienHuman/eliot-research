@@ -54,3 +54,15 @@ jobs:
         run: pnpm --dir packages/ui exec playwright install --with-deps chromium
       - name: Focused Storybook integration
         run: pnpm --dir packages/ui exec vitest run --config .storybook/vitest.config.ts --reporter=verbose --testNamePattern 'Cross Page Selection Recovery|Replaced Selected Page Refused|Sections Unsupported|Optional Failure Facts|Targeted Retry Hierarchy|Readiness Renewal Is Not Blocked|Readiness Blocked|Google Transport Is Routing Only|Diagnostic Issued|Diagnostic Expired|Details Journey'
+      - name: Frontend owner checkpoint mechanics
+        run: node scripts/check-frontend-owner-checkpoints.mjs
+      - name: Owner web production build
+        run: pnpm --dir apps/eliotr-web exec vite build --manifest
+      - name: Upload owner web static build
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: owner-web-build-${{ github.sha }}
+          path: apps/eliotr-web/dist
+          retention-days: 30
+          if-no-files-found: error
+          include-hidden-files: true
