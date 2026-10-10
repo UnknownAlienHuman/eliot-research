@@ -103,7 +103,7 @@ function createEnvironment(scenario: Scenario) {
     }
     if (url.origin !== origin) return unexpected('foreign origin');
     if (init?.signal?.aborted) throw new DOMException('Fixture read aborted', 'AbortError');
-    if (init?.credentials !== 'same-origin' || init.redirect !== 'manual' || init.cache !== 'no-store') {
+    if (init?.credentials !== 'same-origin' || init?.redirect !== 'manual' || init?.cache !== 'no-store') {
       return unexpected('owner transport policy changed');
     }
     if (url.pathname === '/api/v1/system/health') return json({
@@ -307,7 +307,7 @@ function commonFacts(root: HTMLElement) {
   assert(row(root, 'Selected model') === 'No model selected', 'Empty model selection was inferred');
   assert(row(root, 'Research configuration readiness') === 'Ready to run', 'Readiness was replaced by another row');
   assert(row(root, 'Google transport routing') === 'Routing: drive-exchange', 'Routing was promoted into a connection');
-  assert(row(root, 'Project access grant') === 'Active grants: 0', 'Empty grants were inferred as access');
+  assert(row(root, 'Project permission') === 'Active grants: 0', 'Empty grants were inferred as access');
   assert(!/\bConnected\b/iu.test(root.querySelector('.connections-feature')?.textContent ?? ''), 'Unobserved connectivity was inferred');
 }
 
@@ -319,12 +319,12 @@ export async function playCapabilityConnectionTruth({ canvas, userEvent }: PlayC
     commonFacts(root);
     assert(row(root, 'Model provider configuration') === 'Not configured', 'Valid empty provider configuration became a failed read');
     assert(row(root, 'Observed client call') === 'Challenge issued, awaiting callback', 'Issued diagnostic became an observed connection');
-    assert(row(root, 'Saved model operation') === 'Not checked yet', 'An unrequested saved operation was read');
+    assert(row(root, 'Provider-key operation') === 'Not checked yet', 'An unrequested saved operation was read');
   });
   onlyButtons(root, ['Refresh', 'Check again', 'Show diagnostics', 'Details', 'Read saved status']);
   noRawMaterial(root);
   await userEvent.click(canvas.getByRole('link', { name: 'Studio', exact: true }));
-  await canvas.findByRole('heading', { name: 'Studio', exact: true });
+  await canvas.findByRole('heading', { name: 'Studio', exact: true, level: 1 });
   await waitForState(root, () => {
     const audit = readOnlyAudit(root);
     assert(audit.proposals > 0 && audit.history > 0, 'Studio did not read its actual public lists');
@@ -370,7 +370,7 @@ export async function playBoundedRootDisclosure({ canvas, userEvent }: PlayConte
   });
   onlyButtons(root, ['Refresh', 'Check again', 'Show diagnostics', 'Details', 'Read saved status']);
   await userEvent.click(canvas.getByRole('link', { name: 'Studio', exact: true }));
-  await canvas.findByRole('heading', { name: 'Studio', exact: true });
+  await canvas.findByRole('heading', { name: 'Studio', exact: true, level: 1 });
   await waitForState(root, () => {
     assert(root.querySelector('.er-studio-live__list')?.textContent?.includes('Saved proposals could not be read. Nothing was shown.'), 'Rejected Wiki list did not render the bounded public error');
     assert(readOnlyAudit(root).proposals > 0 && readOnlyAudit(root).history > 0, 'Studio rejection checks were vacuous');
