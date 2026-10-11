@@ -10,8 +10,8 @@ const workPacketPath = resolve(
   "docs/agent-work/ER-17-access-observability-and-runtime-limits.md",
 );
 
-function runGate(script, expectedStatus, expectedFragments, label, cwd = root) {
-  const result = spawnSync(process.execPath, [script], {
+function runGate(script, expectedStatus, expectedFragments, label, cwd = root, args = []) {
+  const result = spawnSync(process.execPath, [script, ...args], {
     cwd,
     encoding: "utf8",
     timeout: 15_000,
@@ -27,6 +27,7 @@ function runGate(script, expectedStatus, expectedFragments, label, cwd = root) {
       throw new Error(`${label} failed for the wrong reason:\n${output}`);
     }
   }
+  return output;
 }
 
 function runGateExpectingFailure(script, expectedFragments, label) {
@@ -67,7 +68,7 @@ async function proveCheckoutPathsArePortable() {
     const budgets = resolve(checkout, "scripts/check-budgets.mjs");
     // An unrelated CWD cannot change which checkout is checked.
     runGate(boundaries, 0, ["Package boundaries and forbidden imports: PASS"], "portable boundary gate", temporary);
-    runGate(budgets, 0, ["Source budgets: PASS"], "portable budget gate", temporary);
+    runGate(budgets, 0, ["Source maintainability: ADVISORY"], "portable budget diagnostics", temporary);
     await writeFile(fixture, 'import { readFile } from "node:fs/promises";\nvoid readFile;\n');
     runGate(boundaries, 1, ["packages/domain/src/fixture.ts imports forbidden module node:fs/promises"],
       "portable forbidden-import rejection", temporary);
@@ -127,8 +128,8 @@ async function proveCheckoutPathsArePortable() {
     ], "host filesystem exception preserves PWA and forbidden-import boundaries", temporary);
 
     await writeFile(fixture, "// budget fixture\n".repeat(601));
-    runGate(budgets, 1, ["packages/domain/src/fixture.ts has 601 lines (max 600)"],
-      "portable source-budget rejection", temporary);
+    runGate(budgets, 0, ["Source maintainability: ADVISORY", "packages/domain/src/fixture.ts has 601 lines (max 600)"],
+      "portable advisory source diagnostics", temporary);
     console.log("Checkout portability: PASS (space/Unicode/#/% paths; unrelated CWD; exact negative exits).");
   } finally {
     await rm(temporary, { recursive: true, force: true });
@@ -264,7 +265,8 @@ async function proveWorkPacketParityFailsClosed() {
   );
 }
 
-if (!process.argv.includes("--owner-web") && !process.argv.includes("--owner-client")) {
+if (!process.argv.includes("--owner-web") && !process.argv.includes("--owner-client") &&
+    !process.argv.includes("--source-budgets")) {
   await proveCheckoutPathsArePortable();
   await proveForbiddenImportFailsClosed();
   await proveUnregisteredPendingStateFailsClosed();
@@ -397,21 +399,56 @@ async function proveWebAndUiBoundariesFailClosed() {
   }
 }
 
+async function removeSourceDiagnosticFixture(temporary) {
+  if (dirname(temporary) !== resolve(tmpdir()) || !temporary.startsWith(resolve(tmpdir(), "eliotr-source-diagnostics-")) ||
+      (await lstat(temporary)).isSymbolicLink()) throw new Error("Unsafe source-diagnostic fixture cleanup");
+  await rm(temporary, { recursive: true, force: false });
+}
+
 async function proveSourceBudgetEntrypoints() {
-  const uiDir = resolve(root, "packages/ui/src");
-  await mkdir(uiDir, { recursive: true });
-  const oversized = Array.from({ length: 601 }, () => "// ui budget fixture").join("\n");
-  const fixture = resolve(uiDir, "__eliotr_ui_budget__.ts");
-  let created = false;
+  const temporary = await mkdtemp(resolve(tmpdir(), "eliotr-source-diagnostics-"));
+  const checkout = resolve(temporary, "проверка # % 日本語");
   try {
-    await writeFile(fixture, oversized, { flag: "wx" });
-    created = true;
-    runGateExpectingFailure("scripts/check-budgets.mjs",
-      ["packages/ui/src/__eliotr_ui_budget__.ts has 601 lines (max 600)"],
-      "ui source line budget rejection");
-    console.log("Owner-web and UI source budget negatives: PASS.");
+    for (const directory of ["scripts", "packages/ui/src", "packages/domain/src",
+      "apps/eliotr-core/src", "apps/eliotr-pwa/src"]) {
+      await mkdir(resolve(checkout, directory), { recursive: true });
+    }
+    const checker = resolve(checkout, "scripts/check-budgets.mjs");
+    await copyFile(resolve(root, "scripts/check-budgets.mjs"), checker);
+    await writeFile(resolve(checkout, "packages/ui/src/limit.ts"), "// я\n".repeat(600));
+    for (const args of [[], ["--source"]]) {
+      const output = runGate(checker, 0, ["Source maintainability: ADVISORY (no threshold observations)"],
+        "advisory at exact line boundary", temporary, args);
+      if (output.includes("has 601 lines")) throw new Error("Exact line boundary was miscounted");
+    }
+    await writeFile(resolve(checkout, "packages/ui/src/lf.test.ts"), "// я\n".repeat(601));
+    await writeFile(resolve(checkout, "packages/ui/src/crlf.ts"), "// я\r\n".repeat(601));
+    for (let index = 0; index < 20; index += 1) {
+      await writeFile(resolve(checkout, `packages/domain/src/${index}.ts`), "// domain\n".repeat(501));
+    }
+    const worker = "/*" + "я".repeat(307201) + "*/";
+    const pwa = "/*" + "я".repeat(1048577) + "*/";
+    await writeFile(resolve(checkout, "apps/eliotr-core/src/index.ts"), worker);
+    await writeFile(resolve(checkout, "apps/eliotr-pwa/src/index.ts"), pwa);
+    const expected = ["Source maintainability: ADVISORY", "Emitted artifacts, startup, heap and CPU: NOT_MEASURED",
+      "packages/ui/src/lf.test.ts has 601 lines (max 600)",
+      "packages/ui/src/crlf.ts has 601 lines (max 600)",
+      "packages/domain has 10020 source lines (max 10000)",
+      `Worker source is ${Buffer.byteLength(worker)} bytes (max 614400)`,
+      `PWA source is ${Buffer.byteLength(pwa)} bytes (max 2097152)`];
+    for (const args of [[], ["--source"]]) {
+      runGate(checker, 0, expected, "threshold observations remain advisory", temporary, args);
+    }
+    runGate(checker, 2, ["Unknown budget option: --unknown"], "invalid option still fails", temporary, ["--unknown"]);
+    await mkdir(resolve(checkout, "packages/broken"));
+    await writeFile(resolve(checkout, "packages/broken/src"), "not a source directory");
+    for (const args of [[], ["--source"]]) {
+      runGate(checker, 1, ["Budget check failed:"], "scanner failure stays failure", temporary, args);
+    }
+    console.log("Source budget entrypoints: PASS (default/explicit advisory, LF/CRLF/Unicode/test inventory, scan/argument failures).");
   } finally {
-    if (created) await removeCreatedFile(fixture, oversized);
+    // The child has exited, and this path is the exact directory created above.
+    await removeSourceDiagnosticFixture(temporary);
   }
 }
 
@@ -437,8 +474,12 @@ async function proveOwnerClientBoundariesFailClosed() {
   console.log("Owner-client boundary negatives: PASS (renderer import and DOM global rejected).");
 }
 
-if (!process.argv.includes("--owner-client")) {
-  await proveWebAndUiBoundariesFailClosed();
+if (process.argv.includes("--source-budgets")) {
   await proveSourceBudgetEntrypoints();
+} else {
+  if (!process.argv.includes("--owner-client")) {
+    await proveWebAndUiBoundariesFailClosed();
+    await proveSourceBudgetEntrypoints();
+  }
+  if (!process.argv.includes("--owner-web")) await proveOwnerClientBoundariesFailClosed();
 }
-if (!process.argv.includes("--owner-web")) await proveOwnerClientBoundariesFailClosed();

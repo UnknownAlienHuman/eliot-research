@@ -124,9 +124,11 @@ applies until assembly. Preserve final negatives and mark unexecuted checks pend
   PR/protection and expected-head conditional deletion.
 - Do not edit another agent's barrel, manifest, migration, claim directory or shared fixture unless granted.
 - Add behind existing interfaces; do not rename public fields/enums.
-- Maintainability: ≤600 physical lines/file and ≤10,000 source lines/package under `src`; Worker/PWA raw source
-  ceilings 600 KiB/2 MiB. ER-00 B-U deliberately adds new source/emitted gates. Split by capability, never
-  game counts. Initial owner-web JS release ceiling remains ≤600 KiB gzip.
+- Maintainability diagnostics are advisory: 600 physical lines/file, 10,000 source lines/package under `src`,
+  and Worker/PWA raw source observations at 600 KiB/2 MiB. Formatting and source relocation do not measure
+  runtime size; do not split capabilities or move tests merely to satisfy counters. Separate emitted release
+  gates retain Worker ≤4 MiB gzip and initial owner-web JS ≤600 KiB gzip. Missing/stale measurements do not
+  establish readiness. Security/request/reader/SQL/model byte limits remain mandatory and unchanged.
 - Mutations implement Intent → Attempt → Receipt → Readback → Reconciliation.
 - Expensive/retryable operations accept idempotency identity and cancellation/budget context.
 - Tests cover packet negative case, not only happy path.

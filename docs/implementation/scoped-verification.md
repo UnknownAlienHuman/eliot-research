@@ -58,6 +58,23 @@ executable. The override selects the installed executable without installing a
 browser. This local verifier does not establish authenticated production flows
 or live edge readback.
 
+## Source diagnostics and emitted budgets
+
+`pnpm budgets:check` and the bare `node scripts/check-budgets.mjs` entry point report source-line and
+source-byte observations as advisory diagnostics. The existing `--source` option has the same semantics.
+Unknown options, unreadable source and scanner failures still fail. Inventory and diagnostic thresholds
+are unchanged, including colocated tests; formatting or source relocation cannot establish runtime savings.
+The existing isolated source-budget regression is
+`node scripts/test-boundary-negative.mjs --source-budgets`; it runs the actual checker through both CLI
+entries and verifies LF/CRLF, Unicode byte counts and preserved scanner/argument failures.
+
+`pnpm budgets:emitted` and `pnpm budgets:emitted:check` inspect emitted evidence separately. The existing
+owner-web mode is `node scripts/check-emitted-budgets.mjs --owner-web` (add `--check-only` for retained
+receipt validation). Worker ≤4 MiB gzip and initial owner-web JavaScript ≤600 KiB gzip remain release
+limits. Missing/stale artifacts, incomplete startup observations and unsupported native measurements do
+not establish readiness. Startup/CPU/heap/workload acceptance remains S96 on the attested build; request,
+reader, SQL and model security limits are unaffected.
+
 ## Full repository and release checks
 
 After assembly, run the explicit full repository chain:

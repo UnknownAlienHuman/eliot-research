@@ -531,8 +531,13 @@ Measure at least:
 - [ ] Measure Queue lag, redelivery and DLQ behavior.
 - [ ] Measure DO/WebSocket reconnect and Workflow checkpoint overhead.
 - [ ] Compare promoted Rust/Wasm operations with the transitional TypeScript baseline.
-- [ ] Verify compressed Worker ≤ 4 MiB, startup ≤ 400 ms, first-party heap target ≤ 32 MiB and PWA
-      initial JavaScript ≤ 600 KiB gzip.
+- [ ] Verify emitted Worker ≤ 4 MiB gzip, startup ≤ 400 ms, first-party heap target ≤ 32 MiB and
+      initial owner-web JavaScript ≤ 600 KiB gzip on the pinned build. Include reachable JS/Wasm in the
+      native aggregate Worker payload and distinguish observed initial eager/shared scripts from lazy
+      chunks, standalone inbox assets and total dist. Missing/stale/unsupported measurements remain
+      unmeasured. Source-line/raw-source-byte diagnostics are advisory and cannot prove runtime size or
+      savings; security/input/model byte limits remain unchanged. S90 build-size evidence and S96
+      startup/CPU/heap/workload acceptance retain their separate scopes.
 - [ ] Establish capacity limits and explicit overload responses.
 
 **Exit evidence**

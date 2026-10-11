@@ -13,7 +13,7 @@ const args = process.argv.slice(2);
 function usage() {
   console.log("Usage: node scripts/check-budgets.mjs [--source]");
   console.log("This entrypoint checks source maintainability; emitted artifacts use the separate emitted checker.");
-  console.log("--source   print source maintainability diagnostics without gating");
+  console.log("--source   explicit alias for the default advisory source diagnostics");
 }
 
 export function countPhysicalLines(text) {
@@ -34,7 +34,7 @@ async function walk(dir) {
   return out;
 }
 
-async function runSourceBudgetScan(advisory) {
+async function runSourceBudgetScan() {
   console.log("Source scope: packages/*/src and apps/*/src (.ts/.tsx/.js/.mjs), including colocated tests.");
   console.log("Source limits are maintainability heuristics only; emitted artifacts and runtime remain separate metrics.");
   console.log("Source limits: " + MAX_FILE_LINES + " physical lines/file; " + MAX_PACKAGE_SOURCE_LINES +
@@ -44,7 +44,7 @@ async function runSourceBudgetScan(advisory) {
   const errors = [];
   if (countPhysicalLines("a\nb\n") !== 2 || countPhysicalLines("a\r\nb\r\n") !== 2 ||
       countPhysicalLines("a\rb") !== 2 || countPhysicalLines("") !== 0) {
-    errors.push("physical line counter is not cross-platform exact");
+    throw new Error("physical line counter is not cross-platform exact");
   }
   for (const rootName of PACKAGE_ROOTS) {
     const parent = join(ROOT, rootName);
@@ -86,17 +86,11 @@ async function runSourceBudgetScan(advisory) {
   }
 
   if (errors.length > 0) {
-    if (advisory) {
-      console.log("Source maintainability: ADVISORY (" + errors.length + " observations)");
-      console.error(errors.join("\n"));
-      return 0;
-    }
-    console.log("Source budgets: FAIL (" + errors.length + " violations)");
+    console.log("Source maintainability: ADVISORY (" + errors.length + " observations)");
     console.error(errors.join("\n"));
-    return 1;
+    return 0;
   }
-  if (advisory) console.log("Source maintainability: ADVISORY (no threshold observations)");
-  else console.log("Source budgets: PASS");
+  console.log("Source maintainability: ADVISORY (no threshold observations)");
   return 0;
 }
 
@@ -105,14 +99,13 @@ async function main() {
     usage();
     return 0;
   }
-  const source = args.includes("--source");
   const unknown = args.filter((argument) => argument !== "--source");
   if (unknown.length > 0) {
     console.error("Unknown budget option: " + unknown[0]);
     usage();
     return 2;
   }
-  return runSourceBudgetScan(source);
+  return runSourceBudgetScan();
 }
 
 main().then((code) => {
