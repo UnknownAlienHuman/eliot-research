@@ -45,7 +45,7 @@ export const LiveStudioJourney = { render: () => <StudioPreview />, play: playSt
 export const WorkspaceLinkJourney = { render: () => <WorkspaceLinkPreview />, play: playWorkspaceLinkJourney };
 export const StrictModeJourney = {
   async play({ canvas }: { readonly canvas: { getByRole(role: string, options?: { readonly name?: string; readonly exact?: boolean }): HTMLElement; findByRole(role: string, options?: { readonly name?: string; readonly exact?: boolean }): Promise<HTMLElement> } }) {
-    if (canvas.getByRole("heading", { name: "Research", exact: true }).tabIndex !== -1) throw new Error("Route heading needs programmatic focus");
+    if ((await canvas.findByRole("heading", { name: "Research", exact: true })).tabIndex !== -1) throw new Error("Route heading needs programmatic focus");
     const navigation = canvas.getByRole("navigation");
     const studio = navigation.querySelector<HTMLAnchorElement>('a[href="/studio"]');
     if (!studio) throw new Error("Stable Studio destination missing");

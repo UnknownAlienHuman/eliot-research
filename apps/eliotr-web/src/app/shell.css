@@ -32,8 +32,10 @@ html, body, #root { margin: 0; min-height: 100%; }
 @media (max-width: 64rem) { .er-shell { grid-template-columns: var(--eliot-layout-rail-size) minmax(0, 1fr); grid-template-areas: "header header" "nav reading"; } .er-shell-sources { display: none; } }
 @media (max-width: 48rem) {
   .er-shell, .er-shell[data-destination="sources"], .er-shell[data-destination="studio"], .er-shell[data-destination="connections"] { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; grid-template-areas: "header" "reading" "nav"; gap: var(--eliot-space-inline-control); padding: var(--eliot-space-inline-control); }
-  .er-shell-header { gap: var(--eliot-space-inline-control); }
-  .er-shell-preview { flex-basis: 100%; }
+  .er-shell-header { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--eliot-space-inline-control); }
+  .er-shell-brand, .er-shell-preview { grid-column: 1 / -1; }
+  .er-shell-header label { min-width: 0; flex-direction: column; align-items: start; flex-wrap: nowrap; gap: var(--eliot-space-block-control); }
+  .er-shell-header select { width: 100%; min-width: 0; }
   .er-shell-nav { flex-direction: row; justify-content: space-around; gap: 0; margin-inline: calc(-1 * var(--eliot-space-block-control)); }
   .er-shell-destination { flex: 1; min-width: 0; }
   .er-shell-reading, #privacy-guard, .er-access { padding: var(--eliot-space-panel); }

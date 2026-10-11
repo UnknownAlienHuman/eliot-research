@@ -379,7 +379,8 @@ export async function playFailedRequiredSectionNoExport({ canvasElement, canvas,
     'The failure did not come from the actual typed section decoder');
   check(client.getQueryData(held.key) === previous, 'The negative did not retain formerly successful cached bytes');
   check(trace.sectionReads.length === 3 && trace.sectionReads[2] === 'required-alpha:1', 'Failure was not a fresh exact required-section GET');
-  await canvas.findByText('This section could not be read or verified.');
+  await until(() => root.querySelector('.er-live-report-section .er-status')?.textContent ===
+    'This section could not be read or verified.', 'The selected failed section did not show its bounded error');
   check(canvas.queryByText('Alpha verified bytes remain bound to the saved report.') === null, 'Rejected old body remained visible');
   await openOutline(root, userEvent);
   const blocked = exportButton(canvas); check(blocked.disabled, 'Failed required read left export enabled');

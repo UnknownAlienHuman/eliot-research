@@ -308,11 +308,11 @@ async function chooseProject(root: HTMLElement, userEvent: PlayContext['userEven
 }
 function commonFacts(root: HTMLElement) {
   assert(row(root, 'Server and API') === 'Server answered', 'Health did not remain an independent positive fact');
-  assert(row(root, 'Owner session') === 'Signed in as owner', 'The exact owner session was not verified');
+  assert(row(root, 'Owner session') === 'Signed in from Owner web application', 'The exact owner web client was not described');
   assert(row(root, 'Selected model') === 'No model selected', 'Empty model selection was inferred');
   assert(row(root, 'Research configuration readiness') === 'Ready to run', 'Readiness was replaced by another row');
-  assert(row(root, 'Google transport routing') === 'Routing: drive-exchange', 'Routing was promoted into a connection');
-  assert(row(root, 'Project permission') === 'Active grants: 0', 'Empty grants were inferred as access');
+  assert(row(root, 'Google transport routing') === 'Google routing uses Google Drive Exchange', 'Routing was promoted into a connection');
+  assert(row(root, 'Project permission') === 'Active: 0, Revoked: 0', 'Empty active and revoked grants were not kept distinct');
   assert(!/\bConnected\b/iu.test(root.querySelector('.connections-feature')?.textContent ?? ''), 'Unobserved connectivity was inferred');
 }
 
@@ -333,7 +333,8 @@ export async function playCapabilityConnectionTruth({ canvas, userEvent }: PlayC
   await waitForState(root, () => {
     const audit = readOnlyAudit(root);
     assert(audit.proposals > 0 && audit.history > 0, 'Studio did not read its actual public lists');
-    assert(root.querySelector('.er-studio-live__list')?.textContent?.includes('No saved drafts or proposals are available yet.'), 'Valid empty Studio list was not retained');
+    assert(root.querySelector('.er-studio-live__list')?.textContent?.includes('No saved proposals yet.') &&
+      root.querySelector('.er-studio-live__reader')?.textContent?.includes('No proposal is selected.'), 'Valid empty Studio list was not retained');
     onlyButtons(root, ['Refresh saved work']);
   });
   const audit = readOnlyAudit(root);
