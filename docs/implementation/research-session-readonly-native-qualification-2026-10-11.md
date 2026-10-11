@@ -1,6 +1,6 @@
 # ResearchSession read-only native qualification
 
-Recorded October11,2026 UTC (October10 America/New_York). These are bounded local
+Updated 2026-10-11T01:33:42.186Z (October10 America/New_York). These are bounded local
 results for Issue334. The issue and full development Goal remain open.
 
 The selected three-module emitted Worker comes from published source
@@ -63,11 +63,24 @@ remain unchanged. Installed local pause accepts only running/waiting and
 schedules the actual paused transition asynchronously. Status at the failed
 pause call itself was not retained; its exact timing cause is unknown.
 
-A separate private source candidate first requires actual nonterminal and
-canonical ACTIVE admission, invokes pause once, waits for actual paused and
-saves timed setup observations on failure. Strict before/after abrupt1006,
-original-handle completion and canonical progress remain mandatory. Its source
-review and native execution are pending; no product delay/fixture change is used.
+The corrected R2 source was independently admitted, then ONE guarded native
+attempt ran01:33:03.144-01:33:42.057Z, PID76600, exit1/nullsignal/no process error.
+Its first status observation was already complete at01:33:42.011Z. It failed
+ORIGINAL_WORKFLOW_TERMINAL_BEFORE_ACTIVE_SETUP before any Session connection;
+pause_calls was0. No resume, disconnect or cancellation case was exercised.
+Source admission did not qualify the active setup.
+
+R2 proof bda4aaca9427a793f8375d356273d9d1ad6a3640f524b72ff777635a35781ef1,
+process 5afff4b6e1d550a00b2abd789d2d8c9c8fdd6abc37f0099bedfcfeda8d54c83c
+and timed observations 5a5d91d6c8ee8cfccbf81e93608f9f97fd9405141b6f732bb83e5f201ee77470
+are retained. Pins, HEAD and raw/semantic index preservation passed. This result
+does not establish why the engine completed before observation, or the state at
+the earlier R1 pause call. The queued-after-resume risk was not exercised.
+
+There is no retry of this run, widened active predicate or product delay/fixture
+change. Active-disconnect and cancellation require a separately documented,
+admitted genuine nonterminal setup. Official local pause/resume availability
+does not itself supply that setup.
 
 The public-owner-API cancellation candidate uses the existing empty DTO, current
 owner authentication, same-origin control, original operation id and one
