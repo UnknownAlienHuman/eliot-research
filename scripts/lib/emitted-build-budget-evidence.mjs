@@ -4,7 +4,9 @@ import { lstat, readFile, readdir, realpath, stat } from "node:fs/promises";
 import { extname, dirname, relative, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { gzipSync } from "node:zlib";
-import ts from "typescript";
+import { collectModuleLoadOccurrences } from "./emitted-load-occurrences.mjs";
+import { describeHtmlEntry, reconcileRouteLoadMembership } from "./emitted-route-membership.mjs";
+export { aggregateClosure } from "./emitted-route-membership.mjs";
 
 const KIB = 1024;
 const BINARY_UNITS = new Map([
@@ -231,47 +233,7 @@ function resolveLocalSpecifier(specifier, importerPath, distRoot) {
 }
 
 function moduleEdges(source, fileName) {
-  const parsed = ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.JS);
-  if (parsed.parseDiagnostics?.length) throw new Error("An emitted JavaScript asset could not be parsed");
-  const edges = { staticImports: [], dynamicImports: [], workerImports: [], unresolved: [] };
-
-  function literalText(node) {
-    return node && ts.isStringLiteralLike(node) ? node.text : null;
-  }
-
-  function visit(node) {
-    if (ts.isImportDeclaration(node) && node.moduleSpecifier) {
-      const specifier = literalText(node.moduleSpecifier);
-      if (specifier === null) edges.unresolved.push("static import");
-      else edges.staticImports.push(specifier);
-    } else if (ts.isExportDeclaration(node) && node.moduleSpecifier) {
-      const specifier = literalText(node.moduleSpecifier);
-      if (specifier === null) edges.unresolved.push("re-export");
-      else edges.staticImports.push(specifier);
-    } else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
-      const specifier = literalText(node.arguments[0]);
-      if (specifier === null) edges.unresolved.push("dynamic import");
-      else edges.dynamicImports.push(specifier);
-    } else if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) &&
-        ["Worker", "SharedWorker"].includes(node.expression.text)) {
-      let urlNode;
-      function findUrl(child) {
-        if (!urlNode && ts.isNewExpression(child) && ts.isIdentifier(child.expression) &&
-            child.expression.text === "URL") {
-          urlNode = child;
-        }
-        ts.forEachChild(child, findUrl);
-      }
-      for (const argument of node.arguments ?? []) findUrl(argument);
-      const specifier = urlNode && literalText(urlNode.arguments?.[0]);
-      if (specifier === null || specifier === undefined) edges.unresolved.push("worker URL");
-      else edges.workerImports.push(specifier);
-    }
-    ts.forEachChild(node, visit);
-  }
-
-  visit(parsed);
-  return edges;
+  return collectModuleLoadOccurrences(source, fileName);
 }
 
 function parseHtmlScripts(html, htmlPath, distRoot) {
@@ -306,26 +268,11 @@ function parseHtmlScripts(html, htmlPath, distRoot) {
   return { roots, inline };
 }
 
-export function aggregateClosure(startPaths, graph, followDynamicImports) {
-  const seen = new Set();
-  const pending = [...startPaths];
-  while (pending.length > 0) {
-    const current = pending.pop();
-    if (seen.has(current)) continue;
-    seen.add(current);
-    const edges = graph.get(current);
-    if (!edges) continue;
-    pending.push(...edges.staticImports);
-    if (followDynamicImports) pending.push(...edges.dynamicImports);
-  }
-  return seen;
-}
-
 function formatPathForReceipt(prefix, path) {
   return normalizedPath(prefix + "/" + path);
 }
 
-export async function inspectPwaBuild(root, buildStartedAt) {
+export async function inspectPwaBuild(root, buildStartedAt, options = {}) {
   const distRoot = resolve(root, "apps/eliotr-pwa/dist");
   const files = (await listFiles(root, "apps/eliotr-pwa/dist")).filter((entry) =>
     !entry.relative.split("/").some((part) => part.startsWith(".")),
@@ -354,12 +301,15 @@ export async function inspectPwaBuild(root, buildStartedAt) {
   const graphFiles = files.filter((file) => isJavaScriptPath(file.relative));
   for (const file of graphFiles) {
     try {
-      const source = (await readFile(file.absolute)).toString("utf8");
+      const bytes = bytesByPath.get(file.relative);
+      const source = bytes.toString("utf8");
+      if (!Buffer.from(source, "utf8").equals(bytes)) throw new Error("Emitted JavaScript is not canonical UTF-8");
       const unresolved = moduleEdges(source, file.relative);
       const resolveAll = (values) => values
         .map((value) => resolveLocalSpecifier(value, file.relative, distRoot))
         .filter(isJavaScriptPath);
       graph.set(file.relative, {
+        ...unresolved,
         staticImports: resolveAll(unresolved.staticImports),
         dynamicImports: resolveAll(unresolved.dynamicImports),
         workerImports: resolveAll(unresolved.workerImports),
@@ -371,23 +321,22 @@ export async function inspectPwaBuild(root, buildStartedAt) {
   }
 
   for (const htmlFile of htmlFiles) {
-    const html = (await readFile(htmlFile.absolute)).toString("utf8");
+    const html = bytesByPath.get(htmlFile.relative).toString("utf8");
     try {
       const scripts = parseHtmlScripts(html, htmlFile.relative, distRoot);
-      const entryPaths = [...new Set(scripts.roots.map((rootEntry) => rootEntry.path))];
+      const entryPaths = [...new Set(scripts.roots.filter((entry) => entry.kind !== "modulepreload").map((entry) => entry.path))];
+      const preloadPaths = [...new Set(scripts.roots.filter((entry) => entry.kind === "modulepreload").map((entry) => entry.path))];
       for (const rootEntry of scripts.roots) {
         if (!bytesByPath.has(rootEntry.path)) issues.push("HTML references missing JavaScript: " + htmlFile.relative);
         else if (!isJavaScriptPath(rootEntry.path)) issues.push("HTML script reference is not a JavaScript asset: " + htmlFile.relative);
       }
-      const routeSegments = htmlFile.relative
-        .replace(/(^|\/)index\.html$/u, "$1")
-        .replace(/\/+$/u, "");
-      const routePath = routeSegments ? "/" + routeSegments + "/" : "/";
+      const entry = describeHtmlEntry(htmlFile.relative);
       routeScripts.push({
         htmlPath: htmlFile.relative,
-        routePath,
-        isInbox: routePath.startsWith("/agent-inbox/"),
+        routePath: entry.route,
+        isInbox: entry.category === "agent-inbox",
         entryPaths,
+        preloadPaths,
         inline: scripts.inline,
       });
     } catch (error) {
@@ -404,7 +353,6 @@ export async function inspectPwaBuild(root, buildStartedAt) {
     asset.path.replace("apps/eliotr-pwa/dist/", ""),
     asset,
   ]));
-  const ownerRouteClosures = [];
   const usageCounts = new Map();
   const routeSummaries = [];
   const workerAll = new Set();
@@ -417,6 +365,7 @@ export async function inspectPwaBuild(root, buildStartedAt) {
       const result = moduleEdges(inline.source, inline.key + ".js");
       if (result.unresolved.length) issues.push("Inline script has unresolved imports: " + route.htmlPath);
       const resolved = {
+        ...result,
         staticImports: result.staticImports
           .map((value) => resolveLocalSpecifier(value, route.htmlPath, distRoot))
           .filter(isJavaScriptPath),
@@ -433,41 +382,28 @@ export async function inspectPwaBuild(root, buildStartedAt) {
       bytesByPath.set(inline.key, inlineBytes);
     }
 
-    const initial = aggregateClosure([
-      ...route.entryPaths.filter((path) => bytesByPath.has(path)),
-      ...route.inline.map((item) => item.key),
-    ], graph, false);
-    const pendingDynamic = [...initial];
-    const dynamicSeen = new Set();
-    const processedDynamic = new Set();
-    const routeWorkers = new Set();
-    while (pendingDynamic.length > 0) {
-      const current = pendingDynamic.pop();
-      if (processedDynamic.has(current)) continue;
-      processedDynamic.add(current);
+    const membership = reconcileRouteLoadMembership({
+      htmlPath: route.htmlPath, entryPaths: route.entryPaths,
+      inlinePaths: route.inline.map((item) => item.key), preloadPaths: route.preloadPaths,
+      graph, bytesByPath,
+      startupObservation: options.startupObservations instanceof Map
+        ? options.startupObservations.get(route.htmlPath) : undefined,
+    });
+    issues.push(...membership.issues.map((issue) => issue + ": " + route.htmlPath));
+    const initial = membership.initialPaths;
+    const dynamicSeen = new Set(membership.unobservedDynamicJavaScript.map((item) => item.path));
+    const routeWorkers = membership.workerPaths;
+    for (const target of routeWorkers) workerAll.add(target);
+    for (const current of membership.reachablePaths) {
       const edges = graph.get(current);
       if (!edges) continue;
-      if (edges.unresolved.length > 0) {
-        issues.push("Reachable JavaScript has an unresolved import: " + route.htmlPath);
-      }
+      if (edges.unresolved.length) issues.push("Reachable JavaScript has an unresolved import: " + route.htmlPath);
       for (const target of [...edges.staticImports, ...edges.dynamicImports, ...edges.workerImports]) {
         if (!bytesByPath.has(target)) issues.push("Reachable JavaScript references a missing asset: " + route.htmlPath);
-      }
-      for (const target of edges.workerImports) {
-        workerAll.add(target);
-        routeWorkers.add(target);
-      }
-      for (const target of edges.dynamicImports) {
-        const closure = aggregateClosure([target], graph, true);
-        for (const item of closure) {
-          if (!initial.has(item)) dynamicSeen.add(item);
-          pendingDynamic.push(item);
-        }
       }
     }
 
     if (!route.isInbox) {
-      ownerRouteClosures.push({ route, initial });
       for (const path of initial) usageCounts.set(path, (usageCounts.get(path) ?? 0) + 1);
     }
     const initialRecords = [...initial].map((path) => {
@@ -487,18 +423,18 @@ export async function inspectPwaBuild(root, buildStartedAt) {
         gzipBytes: gzipSync(bytesByPath.get(path), { level: 9 }).byteLength,
       }));
     routeSummaries.push({
+      htmlPath: route.htmlPath,
       route: route.routePath,
       category: route.isInbox ? "agent-inbox" : "owner-web",
       initialJavaScript: {
-        rawBytes: initialRecords.reduce((sum, item) => sum + item.rawBytes, 0),
-        gzipBytes: initialRecords.reduce((sum, item) => sum + item.gzipBytes, 0),
+        ...membership.initialJavaScript,
         resources: initialRecords,
       },
-      lazyJavaScript: {
-        rawBytes: dynamicRecords.reduce((sum, item) => sum + item.rawBytes, 0),
-        gzipBytes: dynamicRecords.reduce((sum, item) => sum + item.gzipBytes, 0),
-        resources: dynamicRecords,
-      },
+      staticImportJavaScript: membership.staticImportJavaScript,
+      preloadJavaScript: membership.preloadJavaScript,
+      startupMeasurement: membership.measurement,
+      lazyJavaScript: membership.lazyJavaScript,
+      unobservedDynamicJavaScript: dynamicRecords,
       workerJavaScript: [...routeWorkers]
         .filter((path) => assetByPath.has(path))
         .map((path) => assetByPath.get(path)),
@@ -529,7 +465,9 @@ export async function inspectPwaBuild(root, buildStartedAt) {
   for (const route of routeSummaries) {
     for (const item of [
       ...route.initialJavaScript.resources,
-      ...route.lazyJavaScript.resources,
+      ...route.staticImportJavaScript,
+      ...route.preloadJavaScript,
+      ...route.unobservedDynamicJavaScript,
     ]) {
       if (!item.path.startsWith("inline:")) referencedPaths.add(item.path.replace("apps/eliotr-pwa/dist/", ""));
     }
@@ -543,7 +481,7 @@ export async function inspectPwaBuild(root, buildStartedAt) {
   const requiredFreshPaths = new Set([
     "index.html",
     "agent-inbox/index.html",
-    ...routeScripts.flatMap((route) => route.entryPaths),
+    ...routeScripts.flatMap((route) => [...route.entryPaths, ...route.preloadPaths]),
   ]);
   let buildOutputFresh = true;
   for (const path of requiredFreshPaths) {
@@ -574,18 +512,26 @@ export async function inspectPwaBuild(root, buildStartedAt) {
       route: mainRoute?.route ?? null,
       rawBytes: initialRawBytes,
       gzipBytes: initialGzipBytes,
-      method: "sum gzip level 9 bytes per distinct eager JS resource in the route static import graph",
+      method: "gzip level 9 per distinct script response completed by the pinned startup boundary",
+      measurement: mainRoute?.startupMeasurement ?? null,
       status: !mainRoute || issues.length > 0
         ? "NOT_MEASURED"
         : initialGzipBytes > OWNER_WEB_INITIAL_GZIP_BUDGET_BYTES ? "FAIL" : "PASS",
     },
     routes: routeSummaries,
     sharedInitialChunks: sharedRecords,
+    sharedInitialJavaScript: {
+      status: ownerEntries.every((route) => route.initialJavaScript.status === "MEASURED") && issues.length === 0
+        ? "MEASURED" : "NOT_MEASURED",
+      resources: sharedRecords,
+    },
     lazyJavaScript: {
+      status: "NOT_MEASURED",
       rawBytes: mainRoute?.lazyJavaScript.rawBytes ?? null,
       gzipBytes: mainRoute?.lazyJavaScript.gzipBytes ?? null,
       resources: mainRoute?.lazyJavaScript.resources ?? [],
     },
+    unobservedDynamicJavaScript: mainRoute?.unobservedDynamicJavaScript ?? [],
     workerJavaScript: workerRecords,
     agentInbox: inbox,
     otherIndependentJavaScript: independentJavaScript,
@@ -617,21 +563,25 @@ export async function inspectWebBuild(root, buildStartedAt, options = {}) {
   const graph = new Map();
   for (const file of graphFiles) {
     try {
-      const source = (await readFile(file.absolute)).toString("utf8");
+      const bytes = bytesByPath.get(file.relative);
+      const source = bytes.toString("utf8");
+      if (!Buffer.from(source, "utf8").equals(bytes)) throw new Error("Emitted JavaScript is not canonical UTF-8");
       const edges = moduleEdges(source, file.relative);
       const resolveAll = (values) => values
         .map((value) => resolveLocalSpecifier(value, file.relative, distRoot))
         .filter(isJavaScriptPath);
       if (edges.unresolved.length) issues.push("Candidate module contains an unresolved load edge: " + file.relative);
-      const staticImports = resolveAll([...edges.staticImports, ...edges.workerImports]);
+      const staticImports = resolveAll(edges.staticImports);
+      const workerImports = resolveAll(edges.workerImports);
       const dynamicImports = resolveAll(edges.dynamicImports);
-      for (const target of [...staticImports, ...dynamicImports]) {
+      for (const target of [...staticImports, ...dynamicImports, ...workerImports]) {
         if (!bytesByPath.has(target)) issues.push("Candidate module references a missing asset: " + target);
       }
       graph.set(file.relative, {
+        ...edges,
         staticImports,
         dynamicImports,
-        workerImports: [],
+        workerImports,
         unresolved: edges.unresolved,
       });
     } catch (error) {
@@ -646,7 +596,7 @@ export async function inspectWebBuild(root, buildStartedAt, options = {}) {
   for (const htmlFile of htmlFiles) {
     try {
       const scripts = parseHtmlScripts(
-        (await readFile(htmlFile.absolute)).toString("utf8"),
+        bytesByPath.get(htmlFile.relative).toString("utf8"),
         htmlFile.relative,
         distRoot,
       );
@@ -659,7 +609,8 @@ export async function inspectWebBuild(root, buildStartedAt, options = {}) {
       }
       const routeScript = {
         htmlPath: htmlFile.relative,
-        entryPaths: [...new Set(scripts.roots.map((rootEntry) => rootEntry.path))],
+        entryPaths: [...new Set(scripts.roots.filter((entry) => entry.kind !== "modulepreload").map((entry) => entry.path))],
+        preloadPaths: [...new Set(scripts.roots.filter((entry) => entry.kind === "modulepreload").map((entry) => entry.path))],
         inline: scripts.inline,
       };
       routeScripts.push(routeScript);
@@ -681,8 +632,15 @@ export async function inspectWebBuild(root, buildStartedAt, options = {}) {
       graph.set(key, moduleEdges(inline.source, key + ".js"));
       bytesByPath.set(key, Buffer.from(inline.source, "utf8"));
     }
-    const initial = aggregateClosure(route.entryPaths, graph, false);
-    for (const path of initial) {
+    const membership = reconcileRouteLoadMembership({
+      htmlPath: route.htmlPath, entryPaths: route.entryPaths, preloadPaths: route.preloadPaths,
+      inlinePaths: route.inline.map((item) => item.key), graph, bytesByPath,
+      startupObservation: options.startupObservations instanceof Map
+        ? options.startupObservations.get(route.htmlPath) : undefined,
+    });
+    issues.push(...membership.issues.map((issue) => issue + ": " + route.htmlPath));
+    const initial = membership.initialPaths;
+    for (const path of membership.staticImportPaths) {
       if (!bytesByPath.has(path)) {
         issues.push("Reachable JavaScript references a missing asset: " + route.htmlPath);
       }
@@ -698,25 +656,30 @@ export async function inspectWebBuild(root, buildStartedAt, options = {}) {
       }));
     const routeSummary = {
       htmlPath: route.htmlPath,
-      initialJavaScript: {
-        rawBytes: resources.reduce((sum, item) => sum + item.rawBytes, 0),
-        gzipBytes: resources.reduce((sum, item) => sum + item.gzipBytes, 0),
-        resources,
-      },
+      ...describeHtmlEntry(route.htmlPath),
+      initialJavaScript: { ...membership.initialJavaScript, resources },
+      staticImportJavaScript: membership.staticImportJavaScript,
+      preloadJavaScript: membership.preloadJavaScript,
+      workerJavaScript: [...membership.workerPaths].filter((path) => bytesByPath.has(path)),
+      startupMeasurement: membership.measurement,
+      lazyJavaScript: membership.lazyJavaScript,
+      unobservedDynamicJavaScript: membership.unobservedDynamicJavaScript,
     };
 
     routeSummaries.push(routeSummary);
   }
 
-  // The candidate total sums each emitted HTML entry's initial closure, so an
-  // extra entry cannot hide bytes from the measured candidate.
-  const initialGzipBytes = routeSummaries.reduce(
-    (sum, route) => sum + route.initialJavaScript.gzipBytes, 0);
-  const initialRawBytes = routeSummaries.reduce(
-    (sum, route) => sum + route.initialJavaScript.rawBytes, 0);
+  // The release ceiling belongs to the concrete owner entry. Each route keeps
+  // its own observed resources; shared chunks are already distinct within that
+  // entry, and the independent inbox is never added to the owner metric.
+  const mainRoute = routeSummaries.find((route) =>
+    route.category === "owner-web" && route.route === "/") ?? null;
+  if (!mainRoute) issues.push("The required root owner-web route is missing");
+  const initialGzipBytes = mainRoute?.initialJavaScript.gzipBytes ?? null;
+  const initialRawBytes = mainRoute?.initialJavaScript.rawBytes ?? null;
   let buildOutputFresh = checkMtimeFreshness ? htmlFiles.length > 0 && graphFiles.length > 0 : null;
   if (checkMtimeFreshness) {
-    for (const path of routeScripts.flatMap((route) => route.entryPaths)) {
+    for (const path of routeScripts.flatMap((route) => [...route.entryPaths, ...route.preloadPaths])) {
       const file = files.find((entry) => entry.relative === path);
       if (!file || (await stat(file.absolute)).mtimeMs < Date.parse(buildStartedAt) - 1500) {
         buildOutputFresh = false;
@@ -738,12 +701,15 @@ export async function inspectWebBuild(root, buildStartedAt, options = {}) {
     metric: {
       rawBytes: initialRawBytes,
       gzipBytes: initialGzipBytes,
-      gzipMethod: "node:zlib gzip level 9 over the static initial closure per emitted HTML entry",
+      entryHtmlPath: mainRoute?.htmlPath ?? null,
+      entryRoute: mainRoute?.route ?? null,
+      gzipMethod: "node:zlib gzip level 9 over distinct completed script responses per pinned HTML startup window",
       routeCount: routeSummaries.length,
       entryCount: routeScripts.flatMap((route) => route.entryPaths).length,
     },
     distRoot: artifactRoot,
     routes: routeSummaries,
+    agentInbox: routeSummaries.find((route) => route.category === "agent-inbox") ?? null,
     referencedJavaScript: [...referenced],
     allDistAssets: files.map((file) => file.relative),
     artifactFiles: files.map((file) => ({
@@ -794,7 +760,7 @@ export async function inspectWebWorkerBuild(root, buildStartedAt, output) {
     threshold: { gzipBytes: WORKER_GZIP_BUDGET_BYTES }, nativeReport: report, artifactFiles, issues };
 }
 
-async function validateWebReceipt(root, receipt, currentIdentity) {
+async function validateWebReceipt(root, receipt, currentIdentity, options = {}) {
   if (receipt.purpose !== "candidate" || receipt.build?.command !== "vite build --config vite.integrated.config.ts + wrangler deploy --dry-run --no-bundle" ||
       receipt.build?.environmentProfile !== "CLOUDFLARE_ENV=test; remoteBindings=false; local candidate only" ||
       receipt.build?.commandStatus !== 0 || receipt.source?.stableDuringBuild !== true ||
@@ -803,7 +769,8 @@ async function validateWebReceipt(root, receipt, currentIdentity) {
       receipt.source?.commitAfterBuild !== currentIdentity.commit || receipt.source?.lockfileSha256 !== currentIdentity.lockfileSha256 ||
       !isDeepStrictEqual(receipt.build?.inputDigestsAfter, currentIdentity.buildInputDigests) ||
       !isDeepStrictEqual(receipt.build?.inputDigests, receipt.build?.inputDigestsAfter)) return notMeasured("Candidate source/build identity is incomplete or inconsistent");
-  const client = await inspectWebBuild(root, receipt.build.startedAt);
+  const client = await inspectWebBuild(root, receipt.build.startedAt,
+    { startupObservations: options.startupObservations });
   const worker = await inspectWebWorkerBuild(root, receipt.build.startedAt, receipt.build.nativeSizeOutput);
   if (!isDeepStrictEqual(client, receipt.ownerWeb) || !isDeepStrictEqual(worker, receipt.worker) ||
       !isDeepStrictEqual(receipt.artifacts, [...worker.artifactFiles, ...client.artifactFiles])) return notMeasured("Candidate evidence differs from the exact generated graph");
@@ -1196,7 +1163,7 @@ export async function validateReceipt(root, receipt, currentIdentity, options = 
 
   if (receipt.graph === "owner-web") {
     if (!options.ownerWeb) return notMeasured("Owner-web candidate cannot satisfy the legacy release gate");
-    try { return await validateWebReceipt(root, receipt, currentIdentity); }
+    try { return await validateWebReceipt(root, receipt, currentIdentity, options); }
     catch { return notMeasured("Generated candidate graph could not be verified"); }
   }
 
@@ -1215,7 +1182,8 @@ export async function validateReceipt(root, receipt, currentIdentity, options = 
     if (!workerReport) return notMeasured("Receipt omits the native Wrangler size report");
     const [worker, pwa] = await Promise.all([
       inspectWorkerBuildWithReport(root, receipt.build.startedAt, workerReport),
-      inspectPwaBuild(root, receipt.build.startedAt),
+      inspectPwaBuild(root, receipt.build.startedAt,
+        { startupObservations: options.startupObservations }),
     ]);
     const expectedArtifacts = [...worker.artifactFiles, ...pwa.artifactFiles];
     if (receipt.artifacts.length !== expectedArtifacts.length ||

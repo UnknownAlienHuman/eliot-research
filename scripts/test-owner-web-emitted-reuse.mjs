@@ -76,11 +76,13 @@ await check("retained bytes bind to the cited tree and remain a Worker-incomplet
     );
     assert.ok(receipt.ownerWeb.issues.includes("Whole-build input stability is unproven by listed-input equivalence"));
     assert.ok(receipt.issues.includes("No current-source Worker build or native Wrangler measurement was supplied"));
-    assert.equal(receipt.ownerWeb.initialOwnerWebJavaScript.gzipBytes, 1766);
+    assert.equal(receipt.ownerWeb.initialOwnerWebJavaScript.gzipBytes, null);
+    assert.equal(receipt.ownerWeb.routes[0].staticImportJavaScript.reduce((sum, item) => sum + item.gzipBytes, 0), 1766);
     assert.equal(receipt.ownerWeb.initialOwnerWebJavaScript.unit, "bytes");
     assert.equal(receipt.ownerWeb.sharedInitialJavaScript.gzipBytes, 0);
     assert.equal(receipt.ownerWeb.sharedInitialJavaScript.unit, "bytes");
-    assert.equal(receipt.ownerWeb.lazyJavaScript.gzipBytes, 236820);
+    assert.equal(receipt.ownerWeb.lazyJavaScript.gzipBytes, null);
+    assert.equal(receipt.ownerWeb.unobservedDynamicJavaScript.reduce((sum, item) => sum + item.gzipBytes, 0), 236820);
     assert.equal(receipt.ownerWeb.lazyJavaScript.unit, "bytes");
     assert.equal(receipt.ownerWeb.agentInboxJavaScript.status, "NOT_MEASURED");
     assert.equal(receipt.ownerWeb.allDistJavaScript.gzipBytes, 238586);
@@ -91,14 +93,15 @@ await check("retained bytes bind to the cited tree and remain a Worker-incomplet
     assert.equal(receipt.ownerWeb.viteManifest.sha256, "987c1633516dac6b7bd61ab54b31d4f211ae0ca882138d1966da4cee42a38c20");
     assert.deepEqual(
       receipt.ownerWeb.referencedJavaScript,
-      receipt.ownerWeb.initialOwnerWebJavaScript.resources.map((resource) => resource.path),
+      receipt.ownerWeb.routes[0].staticImportJavaScript.map((resource) => resource.path),
       "the established referencedJavaScript field remains the initial static-import closure only",
     );
     const defaultInspection = await inspectWebBuild(fixture.evidenceRoot, "2026-10-10T07:36:38.433Z", {
       artifactRoot: RETAINED_OWNER_WEB_REUSE_PATHS.distRoot,
       checkMtimeFreshness: false,
     });
-    assert.equal(defaultInspection.routes[0].initialJavaScript.gzipBytes, 1766);
+    assert.equal(defaultInspection.routes[0].initialJavaScript.gzipBytes, null);
+    assert.equal(defaultInspection.routes[0].staticImportJavaScript.reduce((sum, item) => sum + item.gzipBytes, 0), 1766);
     assert.deepEqual(defaultInspection.referencedJavaScript, receipt.ownerWeb.referencedJavaScript);
     assert.equal(Object.hasOwn(defaultInspection, "lazyJavaScript"), false);
     assert.equal(Object.hasOwn(defaultInspection, "allAssets"), false);

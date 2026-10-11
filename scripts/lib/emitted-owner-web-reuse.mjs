@@ -3,7 +3,6 @@ import { extname, relative, resolve, sep } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { gzipSync } from "node:zlib";
 import {
-  aggregateClosure,
   compareReceiptArtifacts,
   inspectWebBuild,
   isJavaScriptPath,
@@ -29,65 +28,25 @@ const RETAINED_OWNER_WEB_EXPECTED_DIGESTS = Object.freeze({
   manifest: "987c1633516dac6b7bd61ab54b31d4f211ae0ca882138d1966da4cee42a38c20",
 });
 
-function projectRetainedOwnerWebAnalysis({ report, graph, bytesByPath, files, routeScripts, issues }) {
-  const routeForHtml = (htmlPath) => {
-    const segments = htmlPath.replace(/(^|\/)index\.html$/u, "$1").replace(/\/+$/u, "");
-    const route = segments ? "/" + segments + "/" : "/";
-    return {
-      route,
-      category: route === "/agent-inbox/" || route.startsWith("/agent-inbox/")
-        ? "agent-inbox" : "owner-web",
-    };
-  };
-  const scriptsByHtml = new Map(routeScripts.map((script) => [script.htmlPath, script]));
+export function projectRetainedOwnerWebAnalysis({ report, graph, bytesByPath, files, issues }) {
   const initialUsage = new Map();
   const routeSummaries = report.routes.map((summary) => {
-    const script = scriptsByHtml.get(summary.htmlPath);
-    const { route, category } = routeForHtml(summary.htmlPath);
-    const initial = aggregateClosure(script?.entryPaths ?? [], graph, false);
-    if (category !== "agent-inbox") {
-      for (const path of initial) initialUsage.set(path, (initialUsage.get(path) ?? 0) + 1);
-    }
-
-    const pendingDynamic = [...initial];
-    const processedDynamic = new Set();
-    const dynamicPaths = new Set();
-    while (pendingDynamic.length > 0) {
-      const current = pendingDynamic.pop();
-      if (processedDynamic.has(current)) continue;
-      processedDynamic.add(current);
-      const edges = graph.get(current);
-      if (!edges) continue;
-      for (const target of edges.dynamicImports) {
-        for (const path of aggregateClosure([target], graph, true)) {
-          if (!initial.has(path)) dynamicPaths.add(path);
-          pendingDynamic.push(path);
-        }
+    const { route, category } = summary;
+    if (category !== "agent-inbox" && summary.initialJavaScript.status === "MEASURED") {
+      for (const item of summary.initialJavaScript.resources) {
+        initialUsage.set(item.path, (initialUsage.get(item.path) ?? 0) + 1);
       }
     }
-    const lazyResources = [...dynamicPaths]
-      .filter((path) => bytesByPath.has(path))
-      .map((path) => ({
-        path,
-        rawBytes: bytesByPath.get(path).byteLength,
-        gzipBytes: gzipSync(bytesByPath.get(path), { level: 9 }).byteLength,
-      }));
     return {
       ...summary,
       route,
       category,
       initialJavaScript: {
         ...summary.initialJavaScript,
-        status: issues.length === 0 ? "MEASURED" : "NOT_MEASURED",
+        status: issues.length === 0 ? summary.initialJavaScript.status : "NOT_MEASURED",
         unit: "bytes",
       },
-      lazyJavaScript: {
-        status: issues.length === 0 ? "MEASURED" : "NOT_MEASURED",
-        unit: "bytes",
-        rawBytes: lazyResources.reduce((sum, item) => sum + item.rawBytes, 0),
-        gzipBytes: lazyResources.reduce((sum, item) => sum + item.gzipBytes, 0),
-        resources: lazyResources,
-      },
+      lazyJavaScript: { ...summary.lazyJavaScript, unit: "bytes" },
     };
   });
   report.routes = routeSummaries;
@@ -116,11 +75,12 @@ function projectRetainedOwnerWebAnalysis({ report, graph, bytesByPath, files, ro
       rawBytes: rootRoute?.initialJavaScript.rawBytes ?? null,
       gzipBytes: rootRoute?.initialJavaScript.gzipBytes ?? null,
       unit: "bytes",
-      method: "gzip level 9 per distinct resource in the root entry static-import closure",
+      method: "gzip level 9 per distinct script response completed by the pinned startup boundary",
+      measurement: rootRoute?.startupMeasurement ?? null,
       resources: rootRoute?.initialJavaScript.resources ?? [],
     },
     sharedInitialJavaScript: {
-      status: issues.length === 0 ? "MEASURED" : "NOT_MEASURED",
+      status: issues.length === 0 && routeSummaries.every((route) => route.initialJavaScript.status === "MEASURED") ? "MEASURED" : "NOT_MEASURED",
       unit: "bytes",
       rawBytes: sharedResources.reduce((sum, item) => sum + item.rawBytes, 0),
       gzipBytes: sharedResources.reduce((sum, item) => sum + item.gzipBytes, 0),
@@ -135,6 +95,7 @@ function projectRetainedOwnerWebAnalysis({ report, graph, bytesByPath, files, ro
       resources: [],
       issue: "No independent agent-inbox HTML entry exists in this owner-web artifact set",
     },
+    unobservedDynamicJavaScript: rootRoute?.unobservedDynamicJavaScript ?? [],
     lazyJavaScript: rootRoute?.lazyJavaScript ?? {
       status: "NOT_MEASURED",
       unit: "bytes",
@@ -169,6 +130,10 @@ function projectRetainedOwnerWebAnalysis({ report, graph, bytesByPath, files, ro
       dynamicImports: edges.dynamicImports,
       workerImports: edges.workerImports,
       unresolved: edges.unresolved,
+      sourceSha256: edges.sourceSha256,
+      utf8Bytes: edges.utf8Bytes,
+      offsetUnit: edges.offsetUnit,
+      occurrences: edges.occurrences,
     })),
   });
   // Preserve the inspector's referencedJavaScript static-import-only contract.
@@ -308,6 +273,7 @@ export async function inspectRetainedOwnerWebReuse(root, sourceTreeCommit, optio
     includeHidden: true,
     checkMtimeFreshness: false,
     analysisProjection: projectRetainedOwnerWebAnalysis,
+    startupObservations: options.startupObservations,
   });
   const recordedArtifacts = Array.isArray(staticBuild.artifacts) ? staticBuild.artifacts : [];
   const expectedArtifacts = recordedArtifacts.map((item) => ({
@@ -406,7 +372,7 @@ export async function inspectRetainedOwnerWebReuse(root, sourceTreeCommit, optio
   const sourcePackage = JSON.parse(runGit(gitRoot, ["show", `${staticBuild.source_commit}:apps/eliotr-web/package.json`]).toString("utf8"));
   const lockfileBytes = runGit(gitRoot, ["show", `${staticBuild.source_commit}:pnpm-lock.yaml`]);
   const lockfileText = lockfileBytes.toString("utf8");
-  const webImporter = /(?:^|\r?\n)  apps\/eliotr-web:\r?\n([\s\S]*?)(?=\r?\n  [^\s\r\n][^\r\n]*:\r?$|$)/u.exec(lockfileText)?.[1] ?? "";
+  const webImporter = /(?:^|\r?\n) {2}apps\/eliotr-web:\r?\n([\s\S]*?)(?=\r?\n {2}[^\s\r\n][^\r\n]*:\r?$|$)/u.exec(lockfileText)?.[1] ?? "";
   const viteLockMatch = /^ {8}vite:\r?\n^ {10}specifier: ([^\r\n]+)\r?\n^ {10}version: (\d+\.\d+\.\d+)/mu.exec(webImporter);
   const declaredViteVersion = sourcePackage.devDependencies?.vite;
   const viteVersion = viteLockMatch?.[2] ?? "NOT_RECORDED";
@@ -506,7 +472,8 @@ export async function inspectRetainedOwnerWebReuse(root, sourceTreeCommit, optio
         fullGraphStatus: "NOT_MEASURED",
         reason: "The retained capture does not prove whole-build input stability; manifest membership is not graph-closure evidence",
         referencedJavaScriptSemantics: "HTML entry roots plus recursive static imports only; dynamic imports are excluded",
-        inspectedInitialStaticClosureStatus: ownerWeb.initialOwnerWebJavaScript?.status ?? "NOT_MEASURED",
+        inspectedInitialNetworkStatus: ownerWeb.initialOwnerWebJavaScript?.status ?? "NOT_MEASURED",
+        staticImportDiagnosticOnly: true,
         inspectedLazyDynamicClosureStatus: ownerWeb.lazyJavaScript?.status ?? "NOT_MEASURED",
         unresolvedLoadEdges,
         manifestUsedAsClosureAuthority: false,

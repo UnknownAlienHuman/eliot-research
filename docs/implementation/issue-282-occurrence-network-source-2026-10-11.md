@@ -1,0 +1,13 @@
+# S90 occurrence inventory and observed startup membership
+
+This source checkpoint repairs the build-budget tooling for #282. One public TypeScript AST collector records module-load occurrences and their exact UTF-16 source ranges. It inventories static imports, re-exports, dynamic imports and direct Worker/SharedWorker URL constructors. It does not interpret JavaScript execution. Unsupported or computed load forms remain unresolved.
+
+PWA and Web inspectors use one startup membership owner and one HTML-entry classification. The retained owner-web adapter projects the inspector result. Worker constructors and module preloads remain separate from the executable import diagnostic. An unobserved dynamic chunk does not prove lazy evaluation.
+
+Initial JavaScript requires an explicitly admitted observation of distinct script responses completed by a pinned startup boundary, matched to the complete emitted artifact manifest and response bytes. Absent, unadmitted, stale, incomplete or mismatched evidence returns NOT_MEASURED with null initial bytes. A persisted budget JSON cannot recreate the process-local admission token. The token records the caller's pinned evidence; digest equality does not authenticate the observer process. Existing source, lockfile, output freshness, native Worker and path fences remain in force.
+
+The 600 KiB gzip ceiling applies to the concrete root owner entry. Other owner HTML entries and the independent agent inbox are reported separately. A shared chunk is counted once within the observed entry. Worker compressed size retains its 4 MiB ceiling and its native measurement method.
+
+Scoped validation passed: syntax and ESLint on changed files; nine owning occurrence cases; a multiple-owner-entry/inbox aggregation regression; rejection of 715814 gzip bytes against the 614400-byte ceiling in all three consumers; and six receipt integrity, native replay and path cases. Reading the previously retained migrated-empty, locally signed-JWT /research observation through the new code reproduced 803330 raw bytes and 223550 gzip-level-9 bytes. This readback performed no new browser, build, native upload or provider call.
+
+The independent review covers the exact source method and two new tests. CLI observation acquisition/intake and its native/receipt lifecycle are still open. The existing CLI does not acquire these observations, so this checkpoint does not establish a complete emitted release gate, full S90 A/B acceptance, formatting readiness, configured Research, live/scientific acceptance or closure of #282. Other routes, profiles, module evaluation, complete graph and runtime measurements keep their own acceptance requirements.
