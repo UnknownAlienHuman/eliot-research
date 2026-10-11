@@ -66,6 +66,12 @@
   padding-inline: var(--eliot-space-block-control);
 }
 
+/* Filled actions carry Material full shape; text actions stay compact. */
+.er-button--primary,
+.er-button--tonal {
+  border-radius: var(--eliot-shape-full);
+}
+
 /* Keep the system-color token pairs together, including transparent label descendants. */
 @media (forced-colors: active) {
   .er-button { forced-color-adjust: none; }
@@ -162,16 +168,23 @@
   color: var(--md-sys-color-error);
 }
 
+/* A native checkbox stays native: token size, native accent, inherited visible focus. */
+.er-field__control[type="checkbox"] {
+  box-sizing: border-box;
+  inline-size: var(--eliot-size-checkbox);
+  block-size: var(--eliot-size-checkbox);
+  min-height: var(--eliot-size-checkbox);
+  padding: 0;
+  border-radius: var(--eliot-shape-extra-small);
+  accent-color: var(--md-sys-color-primary);
+}
+
 /* ---- Status ---- */
 
 .er-status {
   display: inline-flex;
   align-items: center;
   gap: var(--eliot-space-inline-control);
-  padding-inline: var(--eliot-space-inline-control);
-  padding-block: var(--eliot-space-block-control);
-  border-radius: var(--eliot-shape-medium);
-  background-color: var(--md-sys-color-surface-container);
   font-family: var(--eliot-type-font-family);
   font-size: var(--eliot-type-body-medium-size);
   line-height: var(--eliot-type-body-medium-line-height);
@@ -179,8 +192,7 @@
 }
 
 .er-status--error {
-  background-color: var(--md-sys-color-error-container);
-  color: var(--md-sys-color-on-error-container);
+  color: var(--md-sys-color-error);
 }
 
 /* ---- Dialog ---- */
@@ -216,6 +228,8 @@
 /* Accessibility geometry: keep the persistent text in the accessibility tree without layout. */
 .er-operation-announcement {
   position: absolute;
+  inset-block-start: 0;
+  inset-inline-start: 0;
   width: 1px;
   height: 1px;
   padding: 0;
