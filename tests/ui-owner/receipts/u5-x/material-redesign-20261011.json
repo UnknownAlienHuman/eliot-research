@@ -1,0 +1,914 @@
+{
+  "protocol": "eliotr.material-redesign-module.v1",
+  "status": "INTERNAL_MODULE_VERIFIED_OWNER_REVIEW_PENDING",
+  "base": "a4c9a029ff9567aac19574616b7a91ab177eca6e",
+  "sourceTarget": "95f874e35d4f7108d64301ab7e8ec130a7d8d716",
+  "sourceInputs": [
+    {
+      "path": "apps/eliotr-web/src/app/live-workspace.css",
+      "before": "32d1d9b05cac4390dd2a21d1e6920fb4df6e1ba7d01fa022efcb471e3d0d61bc",
+      "after": "f2f2eade49a29bf828e6f2ef2bda940c5b61dc0b2073c75c67cdc225dd6d306c",
+      "bytes": 5987
+    },
+    {
+      "path": "apps/eliotr-web/src/app/LiveWorkspace.tsx",
+      "before": "a2449e895806060eb72396fe772d0963a608985474f2f431d8b5b88aadb89e93",
+      "after": "7f72fa89b0f9491dcad57e71b89c12f7efc2845be6d4b1445da7e1fa36d763fe",
+      "bytes": 20711
+    },
+    {
+      "path": "apps/eliotr-web/src/app/materialReviewData.ts",
+      "before": null,
+      "after": "2e8d6d8f4bf7d968b576d0e0021035d924df0c5b1d782c0ba0320ebaefd2440e",
+      "bytes": 3327
+    },
+    {
+      "path": "apps/eliotr-web/src/app/MaterialReviewPreview.tsx",
+      "before": null,
+      "after": "eb12bc5015a99a3996452f059cee27b12348602b2c759c9ea01108b5c31d3f1d",
+      "bytes": 4601
+    },
+    {
+      "path": "apps/eliotr-web/src/app/ReportPanel.tsx",
+      "before": "873e1dab78f9704fd9df65e3622fdb4897710947868226f053a0da737b28043f",
+      "after": "e45e0c702ca25d4bd28c12414e080494852de541c814fbe14c54d943aa06dd47",
+      "bytes": 16551
+    },
+    {
+      "path": "apps/eliotr-web/src/app/ResearchPanel.tsx",
+      "before": "fe92f4837595bf259d1cbcb44a38ba91516a061e4ff00563771fa804a1976264",
+      "after": "0d51f2ef59a8da69dfb15595aa8432af7713585f39ddcfac1a85f33bf882d26e",
+      "bytes": 16123
+    },
+    {
+      "path": "apps/eliotr-web/src/app/ResearchPreview.tsx",
+      "before": "955aa986727a37dd243b04ab197bd525063b6ce4fdd984a2b1fc40ad33fa5417",
+      "after": "61f72ec2786bf68625d6ff933d14b8e1d18f4cefeac32f221986dd5cf33a17ab",
+      "bytes": 19122
+    },
+    {
+      "path": "apps/eliotr-web/src/app/shell.css",
+      "before": "8d34fdd48b2e19891698f293c8a7bc9889f60b170d48c32c70fa2e5a224376c9",
+      "after": "ad8a82d1944d5b432c94bb22b4748b0f6915b43d2fae57bf05bf7097f97e7a77",
+      "bytes": 9110
+    },
+    {
+      "path": "apps/eliotr-web/src/app/Shell.stories.tsx",
+      "before": "c85848a53be2c90ca9cbad5f67803c7e96d67917051f7608c9fc13f366082c12",
+      "after": "251c0128e2217f158c41430f339cc7080a668cf5b99943147cdd2310b917e27d",
+      "bytes": 30019
+    },
+    {
+      "path": "apps/eliotr-web/src/app/Shell.tsx",
+      "before": "1394492700b65c4be318b64b767f55de843870315ba228e03a3bdd470f6bcd4e",
+      "after": "b59f135e64ab5030402d12430bdd11f4d7062e8593211626dc47b2b99128f3e3",
+      "bytes": 8597
+    },
+    {
+      "path": "apps/eliotr-web/src/app/StudioPanel.tsx",
+      "before": "e3468d163070015d077611348e1ab3b12294d54439276d6aa5b64abb2d3e044c",
+      "after": "424c36b1e7d3f8a042bf744212cc964a866b7701caa6962c442f61cbbb234712",
+      "bytes": 16820
+    },
+    {
+      "path": "apps/eliotr-web/src/app/StudioPreview.tsx",
+      "before": "b282bbb1fa8e4d210812f5cb7df7f5fce2e205e3b23ec860cf36b5b9101f410f",
+      "after": "65c27f9ced828a5ee4a1d6a4abcaa9f6d9a53633204e05f691113fd3cf61ccbd",
+      "bytes": 17040
+    },
+    {
+      "path": "packages/ui/src/catalog/catalog.json",
+      "before": "6d04834948a1b960e4c27d9a3652c33070a9db683d4b71ab9f706768031f07e8",
+      "after": "dfe7ee4b411e1fb9e4512353cc8a491a94c5173321268620ea769d0369699fa3",
+      "bytes": 18923
+    },
+    {
+      "path": "packages/ui/src/features/connections/connections.css",
+      "before": "693c8b38f6ae5c40f7422ffda071f7ccebb21b5113fba91a61696ea4df560c4d",
+      "after": "aabaea1cb46105d588549610e36a40c57c49b2242de674b37cb8ff5d8ea02677",
+      "bytes": 4275
+    },
+    {
+      "path": "packages/ui/src/features/research/report/report.css",
+      "before": "bc4558f3228fc5989d48dd7fc8f73593ae22258e409c6eaecd8b381c5e947a8c",
+      "after": "cd5841e25d40286c45a6e1f99ea848c47fc71ae079ce361bbcc1f9859c174b94",
+      "bytes": 6372
+    },
+    {
+      "path": "packages/ui/src/features/research/run/research-run.css",
+      "before": "c3e592c71ce93dea408729210ea8aeba220a3852500c0ebd60c635bb4aa7d532",
+      "after": "053a162905a63515863491c4a2db3b1c6494527f5e6ec2dd6aea349b1e49bd65",
+      "bytes": 10053
+    },
+    {
+      "path": "packages/ui/src/features/research/run/ResearchRunFeature.tsx",
+      "before": "965322e7d1497427304f8e7953299676394e1d806ecbec2da50b9152c1ff52bc",
+      "after": "d440f8784e3e4e173a742029709fa364d3bae16255cb847da851ee37febb32c4",
+      "bytes": 27324
+    },
+    {
+      "path": "packages/ui/src/features/sources/projects/projects-library.css",
+      "before": "b3cd5105fec1394764422e5635296e785c861f6653610caf0b05a5fa8e345bc9",
+      "after": "d3ea3898539c6e4697813abf037c7f76a031918e9c32a371beb47fa65f2051d7",
+      "bytes": 9166
+    },
+    {
+      "path": "packages/ui/src/features/sources/projects/ProjectsLibraryFeature.tsx",
+      "before": "7107bee676b6a6ae262e7c6fb94270681c4b8955edad57261417dd57e1f52bda",
+      "after": "32c81b22b872dfbafce3803a493c6bf2198f95ff755b62232f05185cff26fb16",
+      "bytes": 15544
+    },
+    {
+      "path": "packages/ui/src/features/studio/studio.css",
+      "before": "e38586b5158e4576265d0fe9e9729eab217fcbb113eec68b6740ae9d8c23bd19",
+      "after": "1a44bfdece6c512600dd58a57e4a3759f5257b30444f7a9004329f27aa04e077",
+      "bytes": 11699
+    },
+    {
+      "path": "packages/ui/src/features/studio/StudioFeature.tsx",
+      "before": "1b9128d8ed7155d03eb358d3ad3a0eccc01de388975df444bbcab9bc3a6b6b52",
+      "after": "f0b8e717159cf2dbef5f32be40eee6fba3568de8269c3cf27a9b0af0b1e2b2c0",
+      "bytes": 26825
+    },
+    {
+      "path": "packages/ui/src/primitives/primitives.css",
+      "before": "3f19af9bae5cac6ff758d36b1976ad21c53403cbf5a073f7857b3aa555333463",
+      "after": "76844cd124c8ee0fd073f337575bb2339d142810ebc560a772ebbaffd8b277e6",
+      "bytes": 7080
+    },
+    {
+      "path": "packages/ui/src/stories/studio/live/StudioFeature.stories.tsx",
+      "before": "e34c1040986ce45441b4a5075e946d5a5014bd46dc6fad34e7d99bf7a094c0b1",
+      "after": "f6bf41ed2066778f87c174218c24a6d0ab121e15ec4cf7d1c55a37c1fb0a29cb",
+      "bytes": 19497
+    }
+  ],
+  "checks": {
+    "lint": {
+      "sha256": "487aaa3ba894ece46dc8012ce83a1c341d95eb9009a621a51ee99fd4fe64bb69",
+      "scope": "lint",
+      "inputs": [
+        {
+          "path": "apps/eliotr-web/src/app/live-workspace.css",
+          "hash": "e380a92fb3773474d74aa6fd8d420c549d084a77c35633e6e60ffe0016e61c0c"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/LiveWorkspace.tsx",
+          "hash": "43957588ebadaa07e097ef5309d034c3795469ee8abb56ab2802f493774e5f1a"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/materialReviewData.ts",
+          "hash": "2e8d6d8f4bf7d968b576d0e0021035d924df0c5b1d782c0ba0320ebaefd2440e"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/MaterialReviewPreview.tsx",
+          "hash": "eb12bc5015a99a3996452f059cee27b12348602b2c759c9ea01108b5c31d3f1d"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/ReportPanel.tsx",
+          "hash": "7c0c3a03f5e008e2533819a154a948861dfd67a01a64567df16207fc85c3ed17"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/ResearchPanel.tsx",
+          "hash": "0d51f2ef59a8da69dfb15595aa8432af7713585f39ddcfac1a85f33bf882d26e"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/ResearchPreview.tsx",
+          "hash": "b21e513f1f94bf0221b053d622508b89a6504b99fcfa0abcabffc513eb81ccc6"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/shell.css",
+          "hash": "ad8a82d1944d5b432c94bb22b4748b0f6915b43d2fae57bf05bf7097f97e7a77"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/Shell.stories.tsx",
+          "hash": "b43f4b7ed94aca5e00e4d0c58c476e93e0eac98f2f4e33ce6cddb679bd40252e"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/Shell.tsx",
+          "hash": "e3ddf134e5ac393c72a68cf8707296b7e3d16ab927716c06d1213cb29bfb51f6"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/StudioPanel.tsx",
+          "hash": "dfc044c9925ce586e1dec9bd1680cc2aaef42f037dc9967d6d42887881effff1"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/StudioPreview.tsx",
+          "hash": "8fb62c908d40c84b2afc02266d466548f2998c32cfacfe723decbb15b87942ad"
+        },
+        {
+          "path": "packages/ui/src/catalog/catalog.json",
+          "hash": "04b5a63f3fd3b8fb946b08dc1d65f71c1e18f1f2687b7dacbd9bfc171e6f97f7"
+        },
+        {
+          "path": "packages/ui/src/features/connections/connections.css",
+          "hash": "118d803a95adf5be99f7a7dcf7f9aae04faa389d64bace0179793b62e75137e2"
+        },
+        {
+          "path": "packages/ui/src/features/research/report/report.css",
+          "hash": "8e1a4ded3aafba7f7708c26a5a1f696bfdda01413e153de5a6f4fcd6d70365f8"
+        },
+        {
+          "path": "packages/ui/src/features/research/run/research-run.css",
+          "hash": "0eef2946330aa043887d0baedda36d26cc57d21c84663ae75a3c96ae58fa8e93"
+        },
+        {
+          "path": "packages/ui/src/features/research/run/ResearchRunFeature.tsx",
+          "hash": "d440f8784e3e4e173a742029709fa364d3bae16255cb847da851ee37febb32c4"
+        },
+        {
+          "path": "packages/ui/src/features/sources/projects/projects-library.css",
+          "hash": "58f5cc777f965b8ba536256274522ec2a7fd88e244438021468b5956f5569ff2"
+        },
+        {
+          "path": "packages/ui/src/features/sources/projects/ProjectsLibraryFeature.tsx",
+          "hash": "f59550e5c3811aebe873eafefb3bd10b8dd09deac683c8e7e10f24f022b8789d"
+        },
+        {
+          "path": "packages/ui/src/features/studio/studio.css",
+          "hash": "eb54da964867740ca5bfa79778e595e9659daafbb93af1f692e3317d8edb38b1"
+        },
+        {
+          "path": "packages/ui/src/features/studio/StudioFeature.tsx",
+          "hash": "22ccbc7d25e257084d5e87d254a7c200f4bc7dfbddeb4ab2a51d9118bef60c03"
+        },
+        {
+          "path": "packages/ui/src/primitives/primitives.css",
+          "hash": "6a028b59866f60187eaa3996703d91c0b1a26dd869d4d701affe5ea472d3f9cc"
+        },
+        {
+          "path": "packages/ui/src/stories/studio/live/StudioFeature.stories.tsx",
+          "hash": "94f6e56ef9fc016553b7a094a01b601fe0eda07ebcc870a301fa4498bf23880a"
+        }
+      ]
+    },
+    "types": {
+      "sha256": "cdf9c89a8b5a0ffe7fc4e9ab6b0f77e6e20778375cb5669f6bb5816eaba9d69c",
+      "scope": "types",
+      "inputs": [
+        {
+          "path": "apps/eliotr-web/src/app/live-workspace.css",
+          "hash": "e380a92fb3773474d74aa6fd8d420c549d084a77c35633e6e60ffe0016e61c0c"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/LiveWorkspace.tsx",
+          "hash": "43957588ebadaa07e097ef5309d034c3795469ee8abb56ab2802f493774e5f1a"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/materialReviewData.ts",
+          "hash": "2e8d6d8f4bf7d968b576d0e0021035d924df0c5b1d782c0ba0320ebaefd2440e"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/MaterialReviewPreview.tsx",
+          "hash": "eb12bc5015a99a3996452f059cee27b12348602b2c759c9ea01108b5c31d3f1d"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/ReportPanel.tsx",
+          "hash": "7c0c3a03f5e008e2533819a154a948861dfd67a01a64567df16207fc85c3ed17"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/ResearchPanel.tsx",
+          "hash": "0d51f2ef59a8da69dfb15595aa8432af7713585f39ddcfac1a85f33bf882d26e"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/ResearchPreview.tsx",
+          "hash": "b21e513f1f94bf0221b053d622508b89a6504b99fcfa0abcabffc513eb81ccc6"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/shell.css",
+          "hash": "ad8a82d1944d5b432c94bb22b4748b0f6915b43d2fae57bf05bf7097f97e7a77"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/Shell.stories.tsx",
+          "hash": "b43f4b7ed94aca5e00e4d0c58c476e93e0eac98f2f4e33ce6cddb679bd40252e"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/Shell.tsx",
+          "hash": "e3ddf134e5ac393c72a68cf8707296b7e3d16ab927716c06d1213cb29bfb51f6"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/StudioPanel.tsx",
+          "hash": "dfc044c9925ce586e1dec9bd1680cc2aaef42f037dc9967d6d42887881effff1"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/StudioPreview.tsx",
+          "hash": "8fb62c908d40c84b2afc02266d466548f2998c32cfacfe723decbb15b87942ad"
+        },
+        {
+          "path": "packages/ui/src/catalog/catalog.json",
+          "hash": "04b5a63f3fd3b8fb946b08dc1d65f71c1e18f1f2687b7dacbd9bfc171e6f97f7"
+        },
+        {
+          "path": "packages/ui/src/features/connections/connections.css",
+          "hash": "118d803a95adf5be99f7a7dcf7f9aae04faa389d64bace0179793b62e75137e2"
+        },
+        {
+          "path": "packages/ui/src/features/research/report/report.css",
+          "hash": "8e1a4ded3aafba7f7708c26a5a1f696bfdda01413e153de5a6f4fcd6d70365f8"
+        },
+        {
+          "path": "packages/ui/src/features/research/run/research-run.css",
+          "hash": "0eef2946330aa043887d0baedda36d26cc57d21c84663ae75a3c96ae58fa8e93"
+        },
+        {
+          "path": "packages/ui/src/features/research/run/ResearchRunFeature.tsx",
+          "hash": "d440f8784e3e4e173a742029709fa364d3bae16255cb847da851ee37febb32c4"
+        },
+        {
+          "path": "packages/ui/src/features/sources/projects/projects-library.css",
+          "hash": "58f5cc777f965b8ba536256274522ec2a7fd88e244438021468b5956f5569ff2"
+        },
+        {
+          "path": "packages/ui/src/features/sources/projects/ProjectsLibraryFeature.tsx",
+          "hash": "f59550e5c3811aebe873eafefb3bd10b8dd09deac683c8e7e10f24f022b8789d"
+        },
+        {
+          "path": "packages/ui/src/features/studio/studio.css",
+          "hash": "eb54da964867740ca5bfa79778e595e9659daafbb93af1f692e3317d8edb38b1"
+        },
+        {
+          "path": "packages/ui/src/features/studio/StudioFeature.tsx",
+          "hash": "22ccbc7d25e257084d5e87d254a7c200f4bc7dfbddeb4ab2a51d9118bef60c03"
+        },
+        {
+          "path": "packages/ui/src/primitives/primitives.css",
+          "hash": "6a028b59866f60187eaa3996703d91c0b1a26dd869d4d701affe5ea472d3f9cc"
+        },
+        {
+          "path": "packages/ui/src/stories/studio/live/StudioFeature.stories.tsx",
+          "hash": "49fc46faeb35f6edbdf160144fcb29ad7425f0759412e02ff0294d16979a64bf"
+        }
+      ]
+    },
+    "stories": {
+      "sha256": "996d3afa509ef94f867578534e213537db86875f2c1dae7dad87871b4892212c",
+      "scope": "stories",
+      "inputs": [
+        {
+          "path": "apps/eliotr-web/src/app/live-workspace.css",
+          "hash": "e380a92fb3773474d74aa6fd8d420c549d084a77c35633e6e60ffe0016e61c0c"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/LiveWorkspace.tsx",
+          "hash": "43957588ebadaa07e097ef5309d034c3795469ee8abb56ab2802f493774e5f1a"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/materialReviewData.ts",
+          "hash": "2e8d6d8f4bf7d968b576d0e0021035d924df0c5b1d782c0ba0320ebaefd2440e"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/MaterialReviewPreview.tsx",
+          "hash": "eb12bc5015a99a3996452f059cee27b12348602b2c759c9ea01108b5c31d3f1d"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/ReportPanel.tsx",
+          "hash": "7c0c3a03f5e008e2533819a154a948861dfd67a01a64567df16207fc85c3ed17"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/ResearchPanel.tsx",
+          "hash": "0d51f2ef59a8da69dfb15595aa8432af7713585f39ddcfac1a85f33bf882d26e"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/ResearchPreview.tsx",
+          "hash": "b21e513f1f94bf0221b053d622508b89a6504b99fcfa0abcabffc513eb81ccc6"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/shell.css",
+          "hash": "ad8a82d1944d5b432c94bb22b4748b0f6915b43d2fae57bf05bf7097f97e7a77"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/Shell.stories.tsx",
+          "hash": "b43f4b7ed94aca5e00e4d0c58c476e93e0eac98f2f4e33ce6cddb679bd40252e"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/Shell.tsx",
+          "hash": "e3ddf134e5ac393c72a68cf8707296b7e3d16ab927716c06d1213cb29bfb51f6"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/StudioPanel.tsx",
+          "hash": "dfc044c9925ce586e1dec9bd1680cc2aaef42f037dc9967d6d42887881effff1"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/StudioPreview.tsx",
+          "hash": "8fb62c908d40c84b2afc02266d466548f2998c32cfacfe723decbb15b87942ad"
+        },
+        {
+          "path": "packages/ui/src/catalog/catalog.json",
+          "hash": "04b5a63f3fd3b8fb946b08dc1d65f71c1e18f1f2687b7dacbd9bfc171e6f97f7"
+        },
+        {
+          "path": "packages/ui/src/features/connections/connections.css",
+          "hash": "118d803a95adf5be99f7a7dcf7f9aae04faa389d64bace0179793b62e75137e2"
+        },
+        {
+          "path": "packages/ui/src/features/research/report/report.css",
+          "hash": "8e1a4ded3aafba7f7708c26a5a1f696bfdda01413e153de5a6f4fcd6d70365f8"
+        },
+        {
+          "path": "packages/ui/src/features/research/run/research-run.css",
+          "hash": "0eef2946330aa043887d0baedda36d26cc57d21c84663ae75a3c96ae58fa8e93"
+        },
+        {
+          "path": "packages/ui/src/features/research/run/ResearchRunFeature.tsx",
+          "hash": "d440f8784e3e4e173a742029709fa364d3bae16255cb847da851ee37febb32c4"
+        },
+        {
+          "path": "packages/ui/src/features/sources/projects/projects-library.css",
+          "hash": "58f5cc777f965b8ba536256274522ec2a7fd88e244438021468b5956f5569ff2"
+        },
+        {
+          "path": "packages/ui/src/features/sources/projects/ProjectsLibraryFeature.tsx",
+          "hash": "f59550e5c3811aebe873eafefb3bd10b8dd09deac683c8e7e10f24f022b8789d"
+        },
+        {
+          "path": "packages/ui/src/features/studio/studio.css",
+          "hash": "eb54da964867740ca5bfa79778e595e9659daafbb93af1f692e3317d8edb38b1"
+        },
+        {
+          "path": "packages/ui/src/features/studio/StudioFeature.tsx",
+          "hash": "22ccbc7d25e257084d5e87d254a7c200f4bc7dfbddeb4ab2a51d9118bef60c03"
+        },
+        {
+          "path": "packages/ui/src/primitives/primitives.css",
+          "hash": "6a028b59866f60187eaa3996703d91c0b1a26dd869d4d701affe5ea472d3f9cc"
+        },
+        {
+          "path": "packages/ui/src/stories/studio/live/StudioFeature.stories.tsx",
+          "hash": "94f6e56ef9fc016553b7a094a01b601fe0eda07ebcc870a301fa4498bf23880a"
+        }
+      ]
+    },
+    "design": {
+      "sha256": "ad0eada441bc2181596d395333816544df2e89c0acaba7e9e0fdeb1dbe9d4073",
+      "scope": "design",
+      "inputs": [
+        {
+          "path": "apps/eliotr-web/src/app/live-workspace.css",
+          "hash": "e380a92fb3773474d74aa6fd8d420c549d084a77c35633e6e60ffe0016e61c0c"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/LiveWorkspace.tsx",
+          "hash": "43957588ebadaa07e097ef5309d034c3795469ee8abb56ab2802f493774e5f1a"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/materialReviewData.ts",
+          "hash": "2e8d6d8f4bf7d968b576d0e0021035d924df0c5b1d782c0ba0320ebaefd2440e"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/MaterialReviewPreview.tsx",
+          "hash": "eb12bc5015a99a3996452f059cee27b12348602b2c759c9ea01108b5c31d3f1d"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/ReportPanel.tsx",
+          "hash": "7c0c3a03f5e008e2533819a154a948861dfd67a01a64567df16207fc85c3ed17"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/ResearchPanel.tsx",
+          "hash": "0d51f2ef59a8da69dfb15595aa8432af7713585f39ddcfac1a85f33bf882d26e"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/ResearchPreview.tsx",
+          "hash": "b21e513f1f94bf0221b053d622508b89a6504b99fcfa0abcabffc513eb81ccc6"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/shell.css",
+          "hash": "ad8a82d1944d5b432c94bb22b4748b0f6915b43d2fae57bf05bf7097f97e7a77"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/Shell.stories.tsx",
+          "hash": "b43f4b7ed94aca5e00e4d0c58c476e93e0eac98f2f4e33ce6cddb679bd40252e"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/Shell.tsx",
+          "hash": "e3ddf134e5ac393c72a68cf8707296b7e3d16ab927716c06d1213cb29bfb51f6"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/StudioPanel.tsx",
+          "hash": "dfc044c9925ce586e1dec9bd1680cc2aaef42f037dc9967d6d42887881effff1"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/StudioPreview.tsx",
+          "hash": "8fb62c908d40c84b2afc02266d466548f2998c32cfacfe723decbb15b87942ad"
+        },
+        {
+          "path": "packages/ui/src/catalog/catalog.json",
+          "hash": "04b5a63f3fd3b8fb946b08dc1d65f71c1e18f1f2687b7dacbd9bfc171e6f97f7"
+        },
+        {
+          "path": "packages/ui/src/features/connections/connections.css",
+          "hash": "118d803a95adf5be99f7a7dcf7f9aae04faa389d64bace0179793b62e75137e2"
+        },
+        {
+          "path": "packages/ui/src/features/research/report/report.css",
+          "hash": "8e1a4ded3aafba7f7708c26a5a1f696bfdda01413e153de5a6f4fcd6d70365f8"
+        },
+        {
+          "path": "packages/ui/src/features/research/run/research-run.css",
+          "hash": "0eef2946330aa043887d0baedda36d26cc57d21c84663ae75a3c96ae58fa8e93"
+        },
+        {
+          "path": "packages/ui/src/features/research/run/ResearchRunFeature.tsx",
+          "hash": "d440f8784e3e4e173a742029709fa364d3bae16255cb847da851ee37febb32c4"
+        },
+        {
+          "path": "packages/ui/src/features/sources/projects/projects-library.css",
+          "hash": "58f5cc777f965b8ba536256274522ec2a7fd88e244438021468b5956f5569ff2"
+        },
+        {
+          "path": "packages/ui/src/features/sources/projects/ProjectsLibraryFeature.tsx",
+          "hash": "f59550e5c3811aebe873eafefb3bd10b8dd09deac683c8e7e10f24f022b8789d"
+        },
+        {
+          "path": "packages/ui/src/features/studio/studio.css",
+          "hash": "eb54da964867740ca5bfa79778e595e9659daafbb93af1f692e3317d8edb38b1"
+        },
+        {
+          "path": "packages/ui/src/features/studio/StudioFeature.tsx",
+          "hash": "22ccbc7d25e257084d5e87d254a7c200f4bc7dfbddeb4ab2a51d9118bef60c03"
+        },
+        {
+          "path": "packages/ui/src/primitives/primitives.css",
+          "hash": "6a028b59866f60187eaa3996703d91c0b1a26dd869d4d701affe5ea472d3f9cc"
+        },
+        {
+          "path": "packages/ui/src/stories/studio/live/StudioFeature.stories.tsx",
+          "hash": "94f6e56ef9fc016553b7a094a01b601fe0eda07ebcc870a301fa4498bf23880a"
+        }
+      ]
+    },
+    "build": {
+      "sha256": "a3edb8515b234c3a5f700472c7aa0e6f3ba24882ea243b8d1dbe826b71a3872c",
+      "scope": "Synthetic static review graph; no Worker graph or route parity",
+      "inputs": [
+        {
+          "path": "apps/eliotr-web/src/app/live-workspace.css",
+          "hash": "e380a92fb3773474d74aa6fd8d420c549d084a77c35633e6e60ffe0016e61c0c"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/LiveWorkspace.tsx",
+          "hash": "43957588ebadaa07e097ef5309d034c3795469ee8abb56ab2802f493774e5f1a"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/materialReviewData.ts",
+          "hash": "2e8d6d8f4bf7d968b576d0e0021035d924df0c5b1d782c0ba0320ebaefd2440e"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/MaterialReviewPreview.tsx",
+          "hash": "eb12bc5015a99a3996452f059cee27b12348602b2c759c9ea01108b5c31d3f1d"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/ReportPanel.tsx",
+          "hash": "7c0c3a03f5e008e2533819a154a948861dfd67a01a64567df16207fc85c3ed17"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/ResearchPanel.tsx",
+          "hash": "0d51f2ef59a8da69dfb15595aa8432af7713585f39ddcfac1a85f33bf882d26e"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/ResearchPreview.tsx",
+          "hash": "b21e513f1f94bf0221b053d622508b89a6504b99fcfa0abcabffc513eb81ccc6"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/shell.css",
+          "hash": "ad8a82d1944d5b432c94bb22b4748b0f6915b43d2fae57bf05bf7097f97e7a77"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/Shell.stories.tsx",
+          "hash": "b43f4b7ed94aca5e00e4d0c58c476e93e0eac98f2f4e33ce6cddb679bd40252e"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/Shell.tsx",
+          "hash": "e3ddf134e5ac393c72a68cf8707296b7e3d16ab927716c06d1213cb29bfb51f6"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/StudioPanel.tsx",
+          "hash": "dfc044c9925ce586e1dec9bd1680cc2aaef42f037dc9967d6d42887881effff1"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/StudioPreview.tsx",
+          "hash": "8fb62c908d40c84b2afc02266d466548f2998c32cfacfe723decbb15b87942ad"
+        },
+        {
+          "path": "packages/ui/src/catalog/catalog.json",
+          "hash": "04b5a63f3fd3b8fb946b08dc1d65f71c1e18f1f2687b7dacbd9bfc171e6f97f7"
+        },
+        {
+          "path": "packages/ui/src/features/connections/connections.css",
+          "hash": "118d803a95adf5be99f7a7dcf7f9aae04faa389d64bace0179793b62e75137e2"
+        },
+        {
+          "path": "packages/ui/src/features/research/report/report.css",
+          "hash": "8e1a4ded3aafba7f7708c26a5a1f696bfdda01413e153de5a6f4fcd6d70365f8"
+        },
+        {
+          "path": "packages/ui/src/features/research/run/research-run.css",
+          "hash": "0eef2946330aa043887d0baedda36d26cc57d21c84663ae75a3c96ae58fa8e93"
+        },
+        {
+          "path": "packages/ui/src/features/research/run/ResearchRunFeature.tsx",
+          "hash": "d440f8784e3e4e173a742029709fa364d3bae16255cb847da851ee37febb32c4"
+        },
+        {
+          "path": "packages/ui/src/features/sources/projects/projects-library.css",
+          "hash": "58f5cc777f965b8ba536256274522ec2a7fd88e244438021468b5956f5569ff2"
+        },
+        {
+          "path": "packages/ui/src/features/sources/projects/ProjectsLibraryFeature.tsx",
+          "hash": "f59550e5c3811aebe873eafefb3bd10b8dd09deac683c8e7e10f24f022b8789d"
+        },
+        {
+          "path": "packages/ui/src/features/studio/studio.css",
+          "hash": "eb54da964867740ca5bfa79778e595e9659daafbb93af1f692e3317d8edb38b1"
+        },
+        {
+          "path": "packages/ui/src/features/studio/StudioFeature.tsx",
+          "hash": "22ccbc7d25e257084d5e87d254a7c200f4bc7dfbddeb4ab2a51d9118bef60c03"
+        },
+        {
+          "path": "packages/ui/src/primitives/primitives.css",
+          "hash": "6a028b59866f60187eaa3996703d91c0b1a26dd869d4d701affe5ea472d3f9cc"
+        },
+        {
+          "path": "packages/ui/src/stories/studio/live/StudioFeature.stories.tsx",
+          "hash": "94f6e56ef9fc016553b7a094a01b601fe0eda07ebcc870a301fa4498bf23880a"
+        }
+      ]
+    },
+    "a11y": {
+      "sha256": "5256635e6ed936436aac74981de83eb6647ab5aabeded674c4f5b221705fd943",
+      "scope": "50 Storybook geometry/axe/error/network cases",
+      "inputs": [
+        {
+          "path": "apps/eliotr-web/src/app/live-workspace.css",
+          "hash": "e380a92fb3773474d74aa6fd8d420c549d084a77c35633e6e60ffe0016e61c0c"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/LiveWorkspace.tsx",
+          "hash": "43957588ebadaa07e097ef5309d034c3795469ee8abb56ab2802f493774e5f1a"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/materialReviewData.ts",
+          "hash": "2e8d6d8f4bf7d968b576d0e0021035d924df0c5b1d782c0ba0320ebaefd2440e"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/MaterialReviewPreview.tsx",
+          "hash": "eb12bc5015a99a3996452f059cee27b12348602b2c759c9ea01108b5c31d3f1d"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/ReportPanel.tsx",
+          "hash": "7c0c3a03f5e008e2533819a154a948861dfd67a01a64567df16207fc85c3ed17"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/ResearchPanel.tsx",
+          "hash": "0d51f2ef59a8da69dfb15595aa8432af7713585f39ddcfac1a85f33bf882d26e"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/ResearchPreview.tsx",
+          "hash": "b21e513f1f94bf0221b053d622508b89a6504b99fcfa0abcabffc513eb81ccc6"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/shell.css",
+          "hash": "ad8a82d1944d5b432c94bb22b4748b0f6915b43d2fae57bf05bf7097f97e7a77"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/Shell.stories.tsx",
+          "hash": "b43f4b7ed94aca5e00e4d0c58c476e93e0eac98f2f4e33ce6cddb679bd40252e"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/Shell.tsx",
+          "hash": "e3ddf134e5ac393c72a68cf8707296b7e3d16ab927716c06d1213cb29bfb51f6"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/StudioPanel.tsx",
+          "hash": "dfc044c9925ce586e1dec9bd1680cc2aaef42f037dc9967d6d42887881effff1"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/StudioPreview.tsx",
+          "hash": "8fb62c908d40c84b2afc02266d466548f2998c32cfacfe723decbb15b87942ad"
+        },
+        {
+          "path": "packages/ui/src/catalog/catalog.json",
+          "hash": "04b5a63f3fd3b8fb946b08dc1d65f71c1e18f1f2687b7dacbd9bfc171e6f97f7"
+        },
+        {
+          "path": "packages/ui/src/features/connections/connections.css",
+          "hash": "118d803a95adf5be99f7a7dcf7f9aae04faa389d64bace0179793b62e75137e2"
+        },
+        {
+          "path": "packages/ui/src/features/research/report/report.css",
+          "hash": "8e1a4ded3aafba7f7708c26a5a1f696bfdda01413e153de5a6f4fcd6d70365f8"
+        },
+        {
+          "path": "packages/ui/src/features/research/run/research-run.css",
+          "hash": "0eef2946330aa043887d0baedda36d26cc57d21c84663ae75a3c96ae58fa8e93"
+        },
+        {
+          "path": "packages/ui/src/features/research/run/ResearchRunFeature.tsx",
+          "hash": "d440f8784e3e4e173a742029709fa364d3bae16255cb847da851ee37febb32c4"
+        },
+        {
+          "path": "packages/ui/src/features/sources/projects/projects-library.css",
+          "hash": "58f5cc777f965b8ba536256274522ec2a7fd88e244438021468b5956f5569ff2"
+        },
+        {
+          "path": "packages/ui/src/features/sources/projects/ProjectsLibraryFeature.tsx",
+          "hash": "f59550e5c3811aebe873eafefb3bd10b8dd09deac683c8e7e10f24f022b8789d"
+        },
+        {
+          "path": "packages/ui/src/features/studio/studio.css",
+          "hash": "eb54da964867740ca5bfa79778e595e9659daafbb93af1f692e3317d8edb38b1"
+        },
+        {
+          "path": "packages/ui/src/features/studio/StudioFeature.tsx",
+          "hash": "22ccbc7d25e257084d5e87d254a7c200f4bc7dfbddeb4ab2a51d9118bef60c03"
+        },
+        {
+          "path": "packages/ui/src/primitives/primitives.css",
+          "hash": "6a028b59866f60187eaa3996703d91c0b1a26dd869d4d701affe5ea472d3f9cc"
+        },
+        {
+          "path": "packages/ui/src/stories/studio/live/StudioFeature.stories.tsx",
+          "hash": "94f6e56ef9fc016553b7a094a01b601fe0eda07ebcc870a301fa4498bf23880a"
+        }
+      ]
+    }
+  },
+  "tests": {
+    "passed": 10,
+    "failed": 0
+  },
+  "browser": {
+    "cases": 50,
+    "version": "155.0.8059.40",
+    "axeViolations": 0,
+    "overflow": 0,
+    "remoteRequests": 0,
+    "developmentOnly": true
+  },
+  "reviewBuild": [
+    {
+      "path": "review-build/assets/client-DD1Jkd23.js",
+      "bytes": 74869,
+      "sha256": "a75fc3acd8d0482818a2ee6135905cea971e0e38619cbe78ef9ca928ec7052da"
+    },
+    {
+      "path": "review-build/assets/index-T8a-S4ba.css",
+      "bytes": 78991,
+      "sha256": "65842327538522f6b57508c7c26148c2c3bc4b4f0e140b0fa431634dc6af2366"
+    },
+    {
+      "path": "review-build/assets/index-_rU582HO.js",
+      "bytes": 831270,
+      "sha256": "a60ffd7b6b88268f270cca47c8159f199222027c93b746973141b7fbe614bc69"
+    },
+    {
+      "path": "review-build/index.html",
+      "bytes": 417,
+      "sha256": "875848ec93c413c8065f38e50d72d89d305b1f066dc70611f789df4251f1eb16"
+    }
+  ],
+  "retainedDifference": {
+    "testPath": "packages/ui/src/stories/studio/live/StudioFeature.stories.tsx",
+    "change": "Removed unsupported exact property from Testing Library role lookup after TS diagnostic; role name string matching was already exact and UI/fixture/runtime remain unchanged",
+    "cssTail": [
+      {
+        "path": "packages/ui/src/features/sources/projects/projects-library.css",
+        "before": "58f5cc777f965b8ba536256274522ec2a7fd88e244438021468b5956f5569ff2",
+        "after": "d3ea3898539c6e4697813abf037c7f76a031918e9c32a371beb47fa65f2051d7",
+        "change": "Removed trailing blank line at EOF only",
+        "cssRuleTextUnchanged": true
+      },
+      {
+        "path": "packages/ui/src/features/studio/studio.css",
+        "before": "eb54da964867740ca5bfa79778e595e9659daafbb93af1f692e3317d8edb38b1",
+        "after": "1a44bfdece6c512600dd58a57e4a3759f5257b30444f7a9004329f27aa04e077",
+        "change": "Removed trailing blank line at EOF only",
+        "cssRuleTextUnchanged": true
+      }
+    ],
+    "affected": [
+      {
+        "kind": "lint",
+        "path": "packages/ui/src/features/sources/projects/projects-library.css",
+        "previous": "58f5cc777f965b8ba536256274522ec2a7fd88e244438021468b5956f5569ff2",
+        "current": "d3ea3898539c6e4697813abf037c7f76a031918e9c32a371beb47fa65f2051d7"
+      },
+      {
+        "kind": "lint",
+        "path": "packages/ui/src/features/studio/studio.css",
+        "previous": "eb54da964867740ca5bfa79778e595e9659daafbb93af1f692e3317d8edb38b1",
+        "current": "1a44bfdece6c512600dd58a57e4a3759f5257b30444f7a9004329f27aa04e077"
+      },
+      {
+        "kind": "lint",
+        "path": "packages/ui/src/stories/studio/live/StudioFeature.stories.tsx",
+        "previous": "94f6e56ef9fc016553b7a094a01b601fe0eda07ebcc870a301fa4498bf23880a",
+        "current": "49fc46faeb35f6edbdf160144fcb29ad7425f0759412e02ff0294d16979a64bf"
+      },
+      {
+        "kind": "types",
+        "path": "packages/ui/src/features/sources/projects/projects-library.css",
+        "previous": "58f5cc777f965b8ba536256274522ec2a7fd88e244438021468b5956f5569ff2",
+        "current": "d3ea3898539c6e4697813abf037c7f76a031918e9c32a371beb47fa65f2051d7"
+      },
+      {
+        "kind": "types",
+        "path": "packages/ui/src/features/studio/studio.css",
+        "previous": "eb54da964867740ca5bfa79778e595e9659daafbb93af1f692e3317d8edb38b1",
+        "current": "1a44bfdece6c512600dd58a57e4a3759f5257b30444f7a9004329f27aa04e077"
+      },
+      {
+        "kind": "stories",
+        "path": "packages/ui/src/features/sources/projects/projects-library.css",
+        "previous": "58f5cc777f965b8ba536256274522ec2a7fd88e244438021468b5956f5569ff2",
+        "current": "d3ea3898539c6e4697813abf037c7f76a031918e9c32a371beb47fa65f2051d7"
+      },
+      {
+        "kind": "stories",
+        "path": "packages/ui/src/features/studio/studio.css",
+        "previous": "eb54da964867740ca5bfa79778e595e9659daafbb93af1f692e3317d8edb38b1",
+        "current": "1a44bfdece6c512600dd58a57e4a3759f5257b30444f7a9004329f27aa04e077"
+      },
+      {
+        "kind": "stories",
+        "path": "packages/ui/src/stories/studio/live/StudioFeature.stories.tsx",
+        "previous": "94f6e56ef9fc016553b7a094a01b601fe0eda07ebcc870a301fa4498bf23880a",
+        "current": "49fc46faeb35f6edbdf160144fcb29ad7425f0759412e02ff0294d16979a64bf"
+      },
+      {
+        "kind": "design",
+        "path": "packages/ui/src/features/sources/projects/projects-library.css",
+        "previous": "58f5cc777f965b8ba536256274522ec2a7fd88e244438021468b5956f5569ff2",
+        "current": "d3ea3898539c6e4697813abf037c7f76a031918e9c32a371beb47fa65f2051d7"
+      },
+      {
+        "kind": "design",
+        "path": "packages/ui/src/features/studio/studio.css",
+        "previous": "eb54da964867740ca5bfa79778e595e9659daafbb93af1f692e3317d8edb38b1",
+        "current": "1a44bfdece6c512600dd58a57e4a3759f5257b30444f7a9004329f27aa04e077"
+      },
+      {
+        "kind": "design",
+        "path": "packages/ui/src/stories/studio/live/StudioFeature.stories.tsx",
+        "previous": "94f6e56ef9fc016553b7a094a01b601fe0eda07ebcc870a301fa4498bf23880a",
+        "current": "49fc46faeb35f6edbdf160144fcb29ad7425f0759412e02ff0294d16979a64bf"
+      },
+      {
+        "kind": "build",
+        "path": "packages/ui/src/features/sources/projects/projects-library.css",
+        "previous": "58f5cc777f965b8ba536256274522ec2a7fd88e244438021468b5956f5569ff2",
+        "current": "d3ea3898539c6e4697813abf037c7f76a031918e9c32a371beb47fa65f2051d7"
+      },
+      {
+        "kind": "build",
+        "path": "packages/ui/src/features/studio/studio.css",
+        "previous": "eb54da964867740ca5bfa79778e595e9659daafbb93af1f692e3317d8edb38b1",
+        "current": "1a44bfdece6c512600dd58a57e4a3759f5257b30444f7a9004329f27aa04e077"
+      },
+      {
+        "kind": "build",
+        "path": "packages/ui/src/stories/studio/live/StudioFeature.stories.tsx",
+        "previous": "94f6e56ef9fc016553b7a094a01b601fe0eda07ebcc870a301fa4498bf23880a",
+        "current": "49fc46faeb35f6edbdf160144fcb29ad7425f0759412e02ff0294d16979a64bf"
+      },
+      {
+        "kind": "a11y",
+        "path": "packages/ui/src/features/sources/projects/projects-library.css",
+        "previous": "58f5cc777f965b8ba536256274522ec2a7fd88e244438021468b5956f5569ff2",
+        "current": "d3ea3898539c6e4697813abf037c7f76a031918e9c32a371beb47fa65f2051d7"
+      },
+      {
+        "kind": "a11y",
+        "path": "packages/ui/src/features/studio/studio.css",
+        "previous": "eb54da964867740ca5bfa79778e595e9659daafbb93af1f692e3317d8edb38b1",
+        "current": "1a44bfdece6c512600dd58a57e4a3759f5257b30444f7a9004329f27aa04e077"
+      },
+      {
+        "kind": "a11y",
+        "path": "packages/ui/src/stories/studio/live/StudioFeature.stories.tsx",
+        "previous": "94f6e56ef9fc016553b7a094a01b601fe0eda07ebcc870a301fa4498bf23880a",
+        "current": "49fc46faeb35f6edbdf160144fcb29ad7425f0759412e02ff0294d16979a64bf"
+      }
+    ],
+    "finalTypecheck": "PASS before CSS tail-only repair"
+  },
+  "references": {
+    "liveNotebookLM": "https://notebook.google.com/notebook/37721ade-c372-4718-a785-0273e440c169",
+    "material": "https://m3.material.io/foundations/layout/canonical-examples/overview",
+    "privateEvidenceDirectory": "C:\\Development\\Research\\eliot-research\\.eliotr-state\\frontend-material-redesign-20261011"
+  },
+  "publication": "Meaningful module chain; one normal fast-forward push after immutable history check",
+  "pending": [
+    "Owner FINAL-UI acceptance",
+    "Integrated Vite/Worker graph and /agents + /agents/* parity for #333",
+    "Full product CSP/performance/native screen reader/native zoom",
+    "Deployment/cutover/live authorization"
+  ],
+  "protected": {
+    "head": "9c6350039fbf9612abea2b47c804cbc8f95e3646",
+    "index": "004739a80c32e8948405d7a284b108e654386895e9ccac6eb8d5498acf76f582",
+    "staged": "",
+    "diff": "3a53494072e177712284a478aa9bb6f3d0587413c40a00817ca49141678a08e7",
+    "status": "ebac3774cba97a2d94b3a87e07d45ddc8f20ff65fe2edc2b6626c1b708452c55"
+  }
+}
