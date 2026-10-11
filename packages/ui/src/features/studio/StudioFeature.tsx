@@ -279,7 +279,7 @@ export function StudioFeature({
       <div className="er-studio-live__panes">
         <aside className="er-studio-live__list" aria-label={copy.list_label}>
           {state === "loading" || state === "degraded" ? (
-            <Status>{copy.loading}</Status>
+            <Status>{state === "degraded" ? copy.degraded : copy.loading}</Status>
           ) : state === "empty" ? (
             <Status>{copy.empty_list ?? copy.empty}</Status>
           ) : state === "error" ? (
