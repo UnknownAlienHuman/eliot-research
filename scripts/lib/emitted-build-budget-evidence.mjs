@@ -6,6 +6,7 @@ import { isDeepStrictEqual } from "node:util";
 import { gzipSync } from "node:zlib";
 import { collectModuleLoadOccurrences } from "./emitted-load-occurrences.mjs";
 import { describeHtmlEntry, reconcileRouteLoadMembership } from "./emitted-route-membership.mjs";
+import { verifyOwnerWebNativeDryRun } from "./emitted-owner-native-dry-run.mjs";
 export { aggregateClosure } from "./emitted-route-membership.mjs";
 
 const KIB = 1024;
@@ -727,7 +728,7 @@ export async function inspectWebBuild(root, buildStartedAt, options = {}) {
   return report;
 }
 
-export async function inspectWebWorkerBuild(root, buildStartedAt, output) {
+export async function inspectWebWorkerBuild(root, buildStartedAt, output, options = {}) {
   const prefix = "apps/eliotr-web/dist/eliotr_core";
   const report = parseWranglerBundleReport(output);
   const issues = [...(report.issues ?? [])];
@@ -750,14 +751,41 @@ export async function inspectWebWorkerBuild(root, buildStartedAt, output) {
   }
   if (!isDeepStrictEqual(config.durable_objects?.bindings, [{ name: "RESEARCH_SESSION", class_name: "ResearchSession" }])) issues.push("Candidate changes the ResearchSession namespace");
   const artifactFiles = [];
+  const modules = [];
   for (const file of files) {
     if ((await stat(file.absolute)).mtimeMs < Date.parse(buildStartedAt) - 1500) issues.push("Generated Worker artifact predates candidate build");
     const bytes = await readFile(file.absolute);
     artifactFiles.push({ path: formatPathForReceipt(prefix, file.relative), sha256: sha256(bytes), rawBytes: bytes.byteLength });
-    if (file.relative.endsWith(".wasm")) issues.push("Candidate multipart Wasm requires native receipt qualification");
+    if (/\.(?:m?js|wasm)$/u.test(file.relative)) {
+      modules.push({ path: formatPathForReceipt(prefix, file.relative), sha256: sha256(bytes), rawBytes: bytes.byteLength,
+        type: file.relative.endsWith(".wasm") ? "CompiledWasm" : "ESModule" });
+    } else if (file.relative !== "wrangler.json" && !file.relative.endsWith(".map")) {
+      issues.push("Generated Worker contains an unsupported native module type");
+    }
   }
-  return { status: issues.length ? "NOT_MEASURED" : report.gzip.bytes > WORKER_GZIP_BUDGET_BYTES ? "FAIL" : "PASS",
-    threshold: { gzipBytes: WORKER_GZIP_BUDGET_BYTES }, nativeReport: report, artifactFiles, issues };
+  const aggregateRawBytes = modules.reduce((sum, row) => sum + row.rawBytes, 0);
+  if (report.raw && Math.abs(aggregateRawBytes - report.raw.bytes) > report.raw.precisionBytes) {
+    issues.push("Native Worker raw total differs from the complete generated module set");
+  }
+  if (modules.length > 1 || modules.some(row => row.type === "CompiledWasm")) {
+    if (!verifyOwnerWebNativeDryRun(options.nativeMeasurement, root, artifactFiles, output)) {
+      issues.push("Generated multipart Worker requires its actual producing-process native measurement");
+    }
+  } else if (modules.length === 1 && report.gzip) {
+    const bytes = await readFile(resolve(root, modules[0].path));
+    if (Math.abs(gzipSync(bytes).byteLength - report.gzip.bytes) > report.gzip.precisionBytes) {
+      issues.push("Native Worker gzip does not match its single emitted module");
+    }
+  }
+  let budgetStatus = "NOT_MEASURED";
+  if (report.gzip) {
+    if (report.gzip.bytes - report.gzip.precisionBytes > WORKER_GZIP_BUDGET_BYTES) budgetStatus = "FAIL";
+    else if (report.gzip.bytes + report.gzip.precisionBytes <= WORKER_GZIP_BUDGET_BYTES) budgetStatus = "PASS";
+    else issues.push("Native Worker gzip rounding interval straddles the release ceiling");
+  }
+  return { status: issues.length ? "NOT_MEASURED" : budgetStatus,
+    threshold: { gzipBytes: WORKER_GZIP_BUDGET_BYTES }, nativeReport: report, modules,
+    aggregateRawBytes, artifactFiles, issues };
 }
 
 async function validateWebReceipt(root, receipt, currentIdentity, options = {}) {
@@ -770,8 +798,9 @@ async function validateWebReceipt(root, receipt, currentIdentity, options = {}) 
       !isDeepStrictEqual(receipt.build?.inputDigestsAfter, currentIdentity.buildInputDigests) ||
       !isDeepStrictEqual(receipt.build?.inputDigests, receipt.build?.inputDigestsAfter)) return notMeasured("Candidate source/build identity is incomplete or inconsistent");
   const client = await inspectWebBuild(root, receipt.build.startedAt,
-    { startupObservations: options.startupObservations });
-  const worker = await inspectWebWorkerBuild(root, receipt.build.startedAt, receipt.build.nativeSizeOutput);
+    { includeHidden: true, startupObservations: options.startupObservations });
+  const worker = await inspectWebWorkerBuild(root, receipt.build.startedAt, receipt.build.nativeSizeOutput,
+    { nativeMeasurement: options.nativeMeasurement });
   if (!isDeepStrictEqual(client, receipt.ownerWeb) || !isDeepStrictEqual(worker, receipt.worker) ||
       !isDeepStrictEqual(receipt.artifacts, [...worker.artifactFiles, ...client.artifactFiles])) return notMeasured("Candidate evidence differs from the exact generated graph");
   const artifacts = await compareReceiptArtifacts(root, receipt, receipt.artifacts);

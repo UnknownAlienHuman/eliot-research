@@ -2,6 +2,8 @@ import { spawnSync } from "node:child_process";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readOwnerWebStartupEvidence } from "./lib/emitted-owner-startup-intake.mjs";
+import { runOwnerWebNativeDryRun } from "./lib/emitted-owner-native-dry-run.mjs";
 import {
   inspectRetainedOwnerWebReuse,
   RETAINED_OWNER_WEB_REUSE_PATHS,
@@ -58,7 +60,7 @@ function spawnPnpm(args, options = {}) {
   });
 }
 
-function parseArguments(args) {
+export function parseArguments(args) {
   const options = {
     checkOnly: false,
     receiptPath: DEFAULT_RECEIPT_PATH,
@@ -66,6 +68,9 @@ function parseArguments(args) {
     ownerWeb: false,
     retainedOwnerWebReuse: false,
     sourceTree: null,
+    inspectOwnerWebStartup: false,
+    artifactReadbackPath: null,
+    observationPaths: [],
   };
   for (let index = 0; index < args.length; index += 1) {
     if (args[index] === "--check-only") {
@@ -74,6 +79,16 @@ function parseArguments(args) {
       options.ownerWeb = true;
     } else if (args[index] === "--reuse-retained-owner-web") {
       options.retainedOwnerWebReuse = true;
+    } else if (args[index] === "--inspect-owner-web-startup") {
+      options.inspectOwnerWebStartup = true;
+    } else if (["--artifact-readback", "--startup-observation"].includes(args[index])) {
+      const value = args[index + 1];
+      if (!value || value.startsWith("--")) throw new Error(args[index] + " requires a path");
+      if (args[index] === "--artifact-readback") {
+        if (options.artifactReadbackPath !== null) throw new Error("Only one artifact readback is allowed");
+        options.artifactReadbackPath = value;
+      } else options.observationPaths.push(value);
+      index += 1;
     } else if (args[index] === "--source-tree") {
       const value = args[index + 1];
       if (!value) throw new Error("--source-tree requires an exact commit SHA");
@@ -94,13 +109,26 @@ function parseArguments(args) {
     options.receiptPath = "apps/eliotr-web/.wrangler/s90-emitted-budget-receipt.json";
   }
   if (options.retainedOwnerWebReuse) {
-    if (options.ownerWeb || options.checkOnly || options.receiptPath !== DEFAULT_RECEIPT_PATH ||
+    if (options.ownerWeb || options.checkOnly || options.inspectOwnerWebStartup || options.artifactReadbackPath ||
+        options.observationPaths.length || options.receiptPath !== DEFAULT_RECEIPT_PATH ||
         !/^[0-9a-f]{40}$/u.test(options.sourceTree ?? "")) {
       throw new Error("Retained owner-web reuse requires only --reuse-retained-owner-web and an exact --source-tree SHA");
     }
     options.receiptPath = RETAINED_OWNER_WEB_REUSE_PATHS.receipt;
+  } else if (options.inspectOwnerWebStartup) {
+    if (options.ownerWeb || options.checkOnly || !/^[0-9a-f]{40}$/u.test(options.sourceTree ?? "") ||
+        !options.artifactReadbackPath || !options.observationPaths.length) {
+      throw new Error("Startup inspection requires exact --source-tree, --artifact-readback and --startup-observation inputs");
+    }
+    if (options.receiptPath === DEFAULT_RECEIPT_PATH) {
+      options.receiptPath = ".eliotr-state/owner-web-startup-budget-receipt.json";
+    }
   } else if (options.sourceTree !== null) {
     throw new Error("--source-tree is available only with --reuse-retained-owner-web");
+  }
+  if (!options.inspectOwnerWebStartup && (options.artifactReadbackPath || options.observationPaths.length) &&
+      (!options.ownerWeb || !options.artifactReadbackPath || !options.observationPaths.length)) {
+    throw new Error("Owner-web startup intake requires both --artifact-readback and --startup-observation");
   }
   return options;
 }
@@ -251,14 +279,15 @@ export async function runEmittedBudgetCheck(args = []) {
     options = parseArguments(args);
   } catch (error) {
     console.error(error.message);
-    console.error("Usage: node scripts/check-emitted-budgets.mjs [--check-only] [--receipt <path>] | --reuse-retained-owner-web --source-tree <commit-sha>");
+    console.error(usage());
     return 2;
   }
   if (options.help) {
-    console.log("Usage: node scripts/check-emitted-budgets.mjs [--check-only] [--receipt <path>] | --reuse-retained-owner-web --source-tree <commit-sha>");
+    console.log(usage());
     return 0;
   }
   if (options.retainedOwnerWebReuse) return runRetainedOwnerWebReuse(options);
+  if (options.inspectOwnerWebStartup) return runOwnerWebStartupInspection(ROOT, options);
   if (options.ownerWeb) return runOwnerWebBudgetCheck(options);
   if (options.checkOnly) return checkExistingReceipt(options);
 
@@ -348,11 +377,13 @@ export async function runEmittedBudgetCheck(args = []) {
     };
 
     const finalStatus = await validateReceipt(ROOT, receipt, after);
-    if (finalStatus.status === "STALE" && sourceStable) {
-      receipt.status = "STALE";
+    if (finalStatus.status !== receipt.status) {
+      receipt.status = finalStatus.status;
       receipt.issues.push(...finalStatus.issues);
-      worker.status = "STALE";
-      pwa.status = "STALE";
+      if (finalStatus.status === "STALE") {
+        worker.status = "STALE";
+        pwa.status = "STALE";
+      }
     }
     await writeReceipt(options.receiptPath, receipt);
     printSummary(receipt, options.receiptPath);
@@ -416,7 +447,9 @@ async function runOwnerWebBudgetCheck(options) {
   const before = await captureSourceIdentity(ROOT, inputDigests);
   if (options.checkOnly) {
     const receipt = JSON.parse(await readFile(resolve(ROOT, options.receiptPath), "utf8"));
-    const result = await validateReceipt(ROOT, receipt, before, { ownerWeb: true });
+    const startup = await readStartupForCurrentBuild(options, before);
+    const result = await validateReceipt(ROOT, receipt, before,
+      { ownerWeb: true, startupObservations: startup?.startupObservations });
     console.log(JSON.stringify({ graph: "owner-web", ...result }));
     return statusCode(result.status);
   }
@@ -426,16 +459,13 @@ async function runOwnerWebBudgetCheck(options) {
     cwd: webRoot, env: { ...process.env, CLOUDFLARE_ENV: "test" }, encoding: "utf8", maxBuffer: 32 * 1024 * 1024, windowsHide: true,
   });
   if (build.status !== 0) throw new Error("Owner-web integrated build failed");
-  const dryEnv = { ...process.env };
-  for (const key of ["CLOUDFLARE_ENV", "CLOUDFLARE_API_TOKEN", "CF_API_TOKEN", "CLOUDFLARE_API_KEY", "CF_API_KEY"]) delete dryEnv[key];
-  const dryRun = spawnSync(process.execPath, [resolve(ROOT, "node_modules/wrangler/bin/wrangler.js"), "deploy", "--dry-run", "--no-bundle",
-    "--config", resolve(webRoot, "dist/eliotr_core/wrangler.json"), "--outdir", resolve(ROOT, ".eliotr-state/frontend-owner-dry-run")], {
-    cwd: ROOT, env: dryEnv, encoding: "utf8", maxBuffer: 32 * 1024 * 1024, windowsHide: true,
-  });
-  if (dryRun.status !== 0) throw new Error("Owner-web native dry-run failed: " + (dryRun.stderr ?? "").slice(-600));
-  const nativeSizeOutput = ((dryRun.stdout ?? "") + "\n" + (dryRun.stderr ?? "")).split(/\r?\n/u)
-    .filter(line => /wrangler\s+\d+\.\d+\.\d+|Total Upload:|--dry-run:\s*exiting now|Read \d+ files?/iu.test(line)).join("\n");
-  const [worker, ownerWeb] = await Promise.all([inspectWebWorkerBuild(ROOT, startedAt, nativeSizeOutput), inspectWebBuild(ROOT, startedAt)]);
+  const dryRun = await runOwnerWebNativeDryRun(ROOT);
+  if (dryRun.status !== 0 || dryRun.error || dryRun.signal) throw new Error("Owner-web native dry-run failed");
+  const nativeSizeOutput = dryRun.output;
+  const startup = await readStartupForCurrentBuild(options, before);
+  const [worker, ownerWeb] = await Promise.all([inspectWebWorkerBuild(ROOT, startedAt, nativeSizeOutput,
+    { nativeMeasurement: dryRun.token }),
+    inspectWebBuild(ROOT, startedAt, { includeHidden: true, startupObservations: startup?.startupObservations })]);
   const inputDigestsAfter = await readBuildInputs();
   const after = await captureSourceIdentity(ROOT, inputDigestsAfter);
   const stable = before.fingerprint === after.fingerprint;
@@ -451,11 +481,46 @@ async function runOwnerWebBudgetCheck(options) {
       toolVersions: { node: process.version, vite: JSON.parse(await readFile(resolve(webRoot, "node_modules/vite/package.json"), "utf8")).version } },
     worker, ownerWeb, artifacts: [...worker.artifactFiles, ...ownerWeb.artifactFiles], issues,
   };
-  const checked = await validateReceipt(ROOT, receipt, after, { ownerWeb: true });
+  const checked = await validateReceipt(ROOT, receipt, after,
+    { ownerWeb: true, startupObservations: startup?.startupObservations, nativeMeasurement: dryRun.token });
   if (checked.status !== status) { receipt.status = checked.status; receipt.issues.push(...checked.issues); }
   await writeReceipt(options.receiptPath, receipt);
   console.log(JSON.stringify({ graph: "owner-web", status: receipt.status, workerGzipBytes: worker.nativeReport.gzip?.bytes,
     initialJavaScriptGzipBytes: ownerWeb.metric.gzipBytes, receipt: options.receiptPath, issues: receipt.issues }));
+  return statusCode(receipt.status);
+}
+
+function usage() {
+  return "Usage: node scripts/check-emitted-budgets.mjs [--owner-web] [--check-only] [--receipt <path>] " +
+    "[--artifact-readback <path> --startup-observation <path> ...] | --reuse-retained-owner-web --source-tree <sha> | " +
+    "--inspect-owner-web-startup --source-tree <sha> --artifact-readback <path> --startup-observation <path> ... [--receipt <path>]";
+}
+
+async function readStartupForCurrentBuild(options, identity) {
+  if (!options.artifactReadbackPath) return null;
+  return readOwnerWebStartupEvidence(ROOT, { artifactReadbackPath: options.artifactReadbackPath,
+    observationPaths: options.observationPaths, sourceCommit: identity.commit, expectedSourceDirectory: ROOT });
+}
+
+export async function runOwnerWebStartupInspection(root, options) {
+  const evidence = await readOwnerWebStartupEvidence(root, { artifactReadbackPath: options.artifactReadbackPath,
+    observationPaths: options.observationPaths, sourceCommit: options.sourceTree });
+  const ownerWeb = await inspectWebBuild(evidence.sourceDirectory, evidence.buildStartedAt,
+    { includeHidden: true, checkMtimeFreshness: false, startupObservations: evidence.startupObservations });
+  const receipt = { protocol: RECEIPT_PROTOCOL, graph: "owner-web", purpose: "retained-startup-observation",
+    status: "NOT_MEASURED", source: { commit: evidence.sourceCommit },
+    build: { sha256: evidence.buildSha256, artifactReadbackSha256: evidence.artifactReadbackSha256 },
+    observations: { sha256: evidence.observationDigests, authentication: evidence.observerAuthentication },
+    worker: { status: "NOT_MEASURED" }, ownerWeb,
+    issues: ["Retained startup inspection does not measure the Worker or satisfy the combined release gate", ...ownerWeb.issues] };
+  const absolute = resolve(root, options.receiptPath);
+  await mkdir(dirname(absolute), { recursive: true });
+  await writeFile(absolute, JSON.stringify(receipt, null, 2) + "\n", { flag: "wx" });
+  console.log(JSON.stringify({ protocol: receipt.protocol, graph: receipt.graph, purpose: receipt.purpose,
+    status: receipt.status, sourceTree: evidence.sourceCommit, ownerWeb: { status: ownerWeb.status,
+      initialJavaScript: ownerWeb.initialOwnerWebJavaScript, routes: ownerWeb.routes.map(route => ({
+        htmlPath: route.htmlPath, startupMeasurement: route.startupMeasurement, initialJavaScript: route.initialJavaScript,
+      })) }, issues: receipt.issues }, null, 2));
   return statusCode(receipt.status);
 }
 
