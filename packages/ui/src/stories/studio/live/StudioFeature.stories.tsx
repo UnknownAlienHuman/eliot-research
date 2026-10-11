@@ -146,6 +146,31 @@ export const Degraded: Story = { args: buildProps({ state: "degraded" }) };
 
 export const Error: Story = { args: stateProps("error", ["selected", "body"]) };
 
+/** List read failure leaves the independently verified selected proposal visible. */
+export const ListFailureWithSelected: Story = {
+  args: stateProps("error", ["proposals"]),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByText(STUDIO_COPY.en.error, { exact: true })).toBeVisible();
+    await expect(canvas.getByRole('heading', { name: PAGE.title })).toBeVisible();
+  },
+};
+
+/** A first body read does not imply that the selected proposal text is unavailable. */
+export const BodyLoading: Story = {
+  args: {
+    ...stateProps("useful", ["body", "expectedPublishHead"]),
+    cowVerified: false,
+    bodyLoading: true,
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByText('Reading proposal text.', { exact: true })).toBeVisible();
+    await expect(canvas.queryByText(STUDIO_COPY.en.body_unavailable, { exact: true })).not.toBeInTheDocument();
+    await expect(canvas.queryByRole('button', { name: STUDIO_COPY.en.publish })).not.toBeInTheDocument();
+  },
+};
+
 export const LongRussian: Story = {
   args: buildProps({
     locale: "ru",

@@ -1,49 +1,74 @@
-/* StudioFeature - U5-S styles. Semantic tokens only; no raw visual values. */
+/* StudioFeature - U5-S styles. Committed semantic tokens only; no raw visual values.
+ *
+ * Calm saved-work organization: one quiet list column beside a single reading column. Hierarchy comes
+ * from spacing, type scale and tonal surface, never a border or card around every fact. Controls stay
+ * compact and aligned; reading copy keeps a deliberate measure. */
 
 .er-studio-live {
   display: grid;
-  gap: var(--eliot-space-section);
+  gap: var(--eliot-space-block-control);
   color: var(--md-sys-color-on-surface);
   font-family: var(--eliot-type-font-family);
+  min-inline-size: 0;
 }
 
 .er-studio-live__head {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
-  gap: var(--eliot-space-panel);
+  gap: var(--eliot-space-inline-control);
   flex-wrap: wrap;
+  min-inline-size: 0;
 }
 
+/* Pane headings stay compact and aligned with the list they label. */
 .er-studio-live__title {
   margin: 0;
-  font-size: var(--eliot-type-title-large-size);
-  line-height: var(--eliot-type-title-large-line-height);
+  font-size: var(--eliot-type-title-medium-size);
+  line-height: var(--eliot-type-title-medium-line-height);
   font-weight: var(--eliot-type-font-weight-medium);
   letter-spacing: var(--eliot-type-letter-spacing-label);
 }
 
 .er-studio-live__intro {
   margin: 0;
-  max-width: var(--eliot-layout-reading-max);
+  max-width: var(--eliot-type-reading-measure);
   color: var(--md-sys-color-on-surface-variant);
-  font-size: var(--eliot-type-body-large-size);
-  line-height: var(--eliot-type-body-large-line-height);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
 }
 
-/* The containing primary pane owns scrolling; the bounded list and reader flow with it. */
+/* The containing primary pane owns scrolling; both columns flow with it as one surface. */
 .er-studio-live__panes {
   display: grid;
   grid-template-columns: minmax(0, var(--eliot-layout-source-width)) minmax(0, 1fr);
   gap: var(--eliot-space-panel);
   align-items: start;
+  min-inline-size: 0;
 }
+.er-studio-live:not([data-selected]) .er-studio-live__panes { grid-template-columns: minmax(0, 1fr); }
+.er-studio-live:not([data-selected]) .er-studio-live__reader { display: none; }
 
-.er-studio-live__list {
+/* A quiet label above each column, not a boxed panel heading. */
+.er-studio-live__list,
+.er-studio-live__reader {
   display: grid;
   gap: var(--eliot-space-block-control);
+  min-inline-size: 0;
+  align-content: start;
 }
 
+.er-studio-live__list-label,
+.er-studio-live__reader-label {
+  margin: 0;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  letter-spacing: var(--eliot-type-letter-spacing-label);
+}
+
+/* Separated by a divider and spacing, not by per-row cards. */
 .er-studio-live__items {
   display: grid;
   gap: var(--eliot-space-block-control);
@@ -54,60 +79,139 @@
 
 .er-studio-live__item {
   display: grid;
-  gap: var(--eliot-space-block-control);
+  gap: var(--eliot-space-inline-control);
   inline-size: 100%;
   padding: var(--eliot-space-block-control);
+  padding-inline: var(--eliot-space-panel);
   border: 0;
-  border-radius: var(--eliot-shape-small);
+  border-radius: var(--eliot-shape-extra-small);
   background: transparent;
   color: inherit;
   font: inherit;
   text-align: start;
   cursor: pointer;
+  min-inline-size: 0;
 }
 
+.er-studio-live__item:hover {
+  background: var(--md-sys-color-surface-container-low);
+}
+
+/* Selection reads through a tonal surface, and the label is carried in text, never color alone. */
 .er-studio-live__item[aria-current="true"] {
-  background: var(--md-sys-color-primary-container);
-  color: var(--md-sys-color-on-primary-container);
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+
+.er-studio-live__item:hover .er-studio-live__item-title,
+.er-studio-live__item[aria-current="true"] .er-studio-live__item-title {
+  text-decoration: underline;
+  text-decoration-thickness: var(--eliot-divider-width);
+  text-underline-offset: var(--eliot-focus-offset);
 }
 
 .er-studio-live__item-title {
-  font-size: var(--eliot-type-title-small-size);
-  line-height: var(--eliot-type-title-small-line-height);
-  font-weight: var(--eliot-type-font-weight-medium);
+  font-size: var(--eliot-type-body-large-size);
+  line-height: var(--eliot-type-body-large-line-height);
+  font-weight: var(--eliot-type-font-weight-regular);
+  overflow-wrap: anywhere;
 }
 
+/* Secondary metadata aligns under the title on one compact line. */
 .er-studio-live__item-meta {
+  display: flex;
+  align-items: baseline;
+  gap: var(--eliot-space-inline-control);
+  flex-wrap: wrap;
   color: var(--md-sys-color-on-surface-variant);
   font-size: var(--eliot-type-label-medium-size);
   line-height: var(--eliot-type-label-medium-line-height);
   font-variant-numeric: var(--eliot-type-numerals);
 }
+
 .er-studio-live__item[aria-current="true"] .er-studio-live__item-meta {
-  color: var(--md-sys-color-on-primary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+
+/* The state word is the accessible selection signal; the dot is redundant support. */
+.er-studio-live__item-dot {
+  inline-size: var(--eliot-icon-standard-size);
+  block-size: var(--eliot-icon-standard-size);
+  border-radius: var(--eliot-shape-full);
+  background: currentColor;
+  flex: none;
 }
 
 .er-studio-live__more {
+  margin: var(--eliot-space-block-control) 0 0;
   color: var(--md-sys-color-on-surface-variant);
   font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
 }
 
-.er-studio-live__reader {
+/* A genuine empty state: one compact instruction on a quiet surface, not a disabled generator card. */
+.er-studio-live__empty {
   display: grid;
-  gap: var(--eliot-space-panel);
-  align-content: start;
+  gap: var(--eliot-space-block-control);
+  justify-items: start;
+  padding: var(--eliot-space-panel);
+  border-radius: var(--eliot-shape-small);
+  background: var(--md-sys-color-surface-container-low);
+}
+
+.er-studio-live__empty-text {
+  margin: 0;
+  max-width: var(--eliot-type-reading-measure);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+}
+
+.er-studio-live__empty-hint {
+  margin: 0;
+  max-width: var(--eliot-type-reading-measure);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
 }
 
 .er-studio-live__detail {
   display: grid;
-  gap: var(--eliot-space-panel);
+  gap: var(--eliot-space-block-control);
+  min-inline-size: 0;
 }
 
+/* The reader is the reading surface, so its heading is the largest thing here. */
 .er-studio-live__detail-title {
   margin: 0;
-  font-size: var(--eliot-type-headline-small-size);
-  line-height: var(--eliot-type-headline-small-line-height);
+  font-size: var(--eliot-type-title-large-size);
+  line-height: var(--eliot-type-title-large-line-height);
   font-weight: var(--eliot-type-font-weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.er-studio-live__list-label:focus,
+.er-studio-live__detail-title:focus {
+  outline: var(--eliot-focus-width) solid var(--md-sys-color-primary);
+  outline-offset: var(--eliot-focus-offset);
+}
+
+/* One aligned status row, so readiness and publication never float in unrelated places. */
+.er-studio-live__status-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--eliot-space-inline-control);
+  flex-wrap: wrap;
+  padding-block: var(--eliot-space-block-control);
+}
+
+.er-studio-live__status-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--eliot-space-inline-control);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
 }
 
 .er-studio-live__subhead {
@@ -136,38 +240,43 @@
 .er-studio-live__facts dt {
   color: var(--md-sys-color-on-surface-variant);
   font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
 }
 
 .er-studio-live__facts dd {
   margin: 0;
   font-size: var(--eliot-type-label-large-size);
   font-variant-numeric: var(--eliot-type-numerals);
+  text-align: end;
 }
 
-.er-studio-live__freshness,
-.er-studio-live__publication,
-.er-studio-live__publish-state {
-  margin: 0;
-  color: var(--md-sys-color-on-surface-variant);
-  font-size: var(--eliot-type-body-medium-size);
-  line-height: var(--eliot-type-body-medium-line-height);
-}
-
+/* Deliberate reading measure for the proposal body. */
 .er-studio-live__body {
   margin: 0;
   max-width: var(--eliot-type-reading-measure);
   font-size: var(--eliot-type-reading-size);
   line-height: var(--eliot-type-reading-line-height);
+  overflow-wrap: anywhere;
 }
 
 .er-studio-live__disclosure {
   border-top: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
   padding-block: var(--eliot-space-block-control);
+  min-inline-size: 0;
 }
 
 .er-studio-live__disclosure > summary {
   cursor: pointer;
+  min-block-size: var(--eliot-size-touch-target);
+  align-content: center;
+  color: var(--md-sys-color-on-surface-variant);
   font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+}
+
+.er-studio-live__disclosure > summary:focus-visible {
+  outline: var(--eliot-focus-width) solid var(--md-sys-color-primary);
+  outline-offset: var(--eliot-focus-offset);
 }
 
 .er-studio-live__changes {
@@ -179,8 +288,10 @@
 
 .er-studio-live__hint {
   margin: var(--eliot-space-block-control) 0 0;
+  max-width: var(--eliot-type-reading-measure);
   color: var(--md-sys-color-on-surface-variant);
   font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
 }
 
 .er-studio-live__field {
@@ -188,6 +299,7 @@
   gap: var(--eliot-space-block-control);
   margin-top: var(--eliot-space-block-control);
   font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
 }
 
 .er-studio-live__note {
@@ -195,18 +307,25 @@
   color: inherit;
   padding: var(--eliot-space-block-control);
   border: var(--eliot-divider-width) solid var(--md-sys-color-outline);
-  border-radius: var(--eliot-shape-small);
+  border-radius: var(--eliot-shape-extra-small);
   background: var(--md-sys-color-surface-container-lowest);
 }
 
+.er-studio-live__note:focus-visible {
+  outline: var(--eliot-focus-width) solid var(--md-sys-color-primary);
+  outline-offset: var(--eliot-focus-offset);
+}
+
+/* Compact aligned action row: primary first, supporting actions follow, all on one baseline. */
 .er-studio-live__actions {
   display: flex;
   gap: var(--eliot-space-inline-control);
   flex-wrap: wrap;
   align-items: center;
+  min-inline-size: 0;
 }
 
-/* The phone composition changes instead of squeezing three panes into a narrow column. */
+/* The phone composition changes instead of squeezing two columns into a narrow pair. */
 @media (width < 48rem) {
   .er-studio-live[data-selected] .er-studio-live__list {
     display: none;

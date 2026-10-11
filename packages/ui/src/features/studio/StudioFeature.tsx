@@ -7,7 +7,7 @@
  * The accepted C3-S owner-client view types are used directly, so no ad hoc DTO is invented here and
  * no wire field is renamed. Where the screen narrows a shape it uses Pick rather than a local copy.
  */
-import { useId, useState } from "react";
+import { useId, useState, type Ref } from "react";
 import { Button, IconButton, Status } from "../../primitives/primitives";
 import type {
   ArtifactPublicationView,
@@ -62,6 +62,7 @@ export interface StudioFeatureCopy {
   readonly edit_note_field_label: string;
   readonly edit_body_field_label: string;
   readonly body_label: string;
+  readonly body_loading?: string;
   readonly body_unavailable: string;
   readonly publication_none: string;
   readonly publication_accepted: string;
@@ -104,8 +105,13 @@ export interface StudioFeatureProps {
   readonly proposals?: Pick<WikiProposalListView, "items" | "has_more">;
   /** The accepted read view for the selected proposal, already decoded by the root. */
   readonly selected?: SelectedProposal;
+  /** Native heading refs let the root hand focus across its keyed proposal lifecycle. */
+  readonly libraryHeadingRef?: Ref<HTMLHeadingElement>;
+  readonly readerHeadingRef?: Ref<HTMLHeadingElement>;
   /** The accepted, digest-verified body for the selected proposal. */
   readonly body?: { readonly text: string; readonly byte_length: number };
+  /** A pending body read is distinct from an unavailable body; supplied by the root. */
+  readonly bodyLoading?: boolean;
   /** The accepted publication view for the opened artifact, or null for no owner acceptance. */
   readonly publication?: ArtifactPublicationView | null;
   /** The accepted section revise result for the most recent section action. */
@@ -188,7 +194,10 @@ export function StudioFeature({
   state,
   proposals,
   selected,
+  libraryHeadingRef,
+  readerHeadingRef,
   body,
+  bodyLoading = false,
   publication,
   revise,
   cowVerified = false,
@@ -275,17 +284,17 @@ export function StudioFeature({
         )}
       </header>
       <p className="er-studio-live__intro">{copy.intro}</p>
+      {state === "error" ? <Status tone="error">{copy.error}</Status> : null}
 
       <div className="er-studio-live__panes">
         <aside className="er-studio-live__list" aria-label={copy.list_label}>
+          <h3 className="er-studio-live__list-label" ref={libraryHeadingRef} tabIndex={-1}>{copy.list_label}</h3>
           {state === "loading" || state === "degraded" ? (
             <Status>{state === "degraded" ? copy.degraded : copy.loading}</Status>
-          ) : state === "empty" ? (
-            <Status>{copy.empty_list ?? copy.empty}</Status>
-          ) : state === "error" ? (
-            <Status tone="error">{copy.error}</Status>
-          ) : proposals === undefined || proposals.items.length === 0 ? (
-            <Status>{copy.empty_list ?? copy.empty}</Status>
+          ) : state === "error" ? null : proposals === undefined || proposals.items.length === 0 ? (
+            <div className="er-studio-live__empty">
+              <p className="er-studio-live__empty-text">{copy.empty_list ?? copy.empty}</p>
+            </div>
           ) : (
             <ul className="er-studio-live__items">
               {proposals.items.map((item) => (
@@ -298,6 +307,7 @@ export function StudioFeature({
                   >
                     <strong className="er-studio-live__item-title">{item.title}</strong>
                     <span className="er-studio-live__item-meta">
+                      <span className="er-studio-live__item-dot" aria-hidden="true" />
                       {PROPOSAL_LABEL[locale][item.state]}
                     </span>
                   </button>
@@ -311,11 +321,12 @@ export function StudioFeature({
         </aside>
 
         <div className="er-studio-live__reader" aria-label={copy.reader_label}>
+          <h3 className="er-studio-live__reader-label">{copy.reader_label}</h3>
           {selected === undefined || page === undefined ? (
             <Status>{copy.empty_reader ?? copy.empty}</Status>
           ) : (
             <article className="er-studio-live__detail">
-              <h3 className="er-studio-live__detail-title">{page.title}</h3>
+              <h3 className="er-studio-live__detail-title" ref={readerHeadingRef} tabIndex={-1}>{page.title}</h3>
               <details className="er-studio-live__disclosure">
               <summary>{copy.publish_review} · {copy.risk_label}</summary>
               <dl className="er-studio-live__facts">
@@ -335,7 +346,7 @@ export function StudioFeature({
               )}
               <h4 className="er-studio-live__subhead">{copy.body_label}</h4>
               {body === undefined ? (
-                <Status>{copy.body_unavailable}</Status>
+                <Status>{bodyLoading ? copy.body_loading ?? copy.loading : copy.body_unavailable}</Status>
               ) : (
                 <p className="er-studio-live__body">{body.text}</p>
               )}
@@ -470,6 +481,7 @@ const EN_COPY: StudioFeatureCopy = {
   saved_revision: "Saved revision",
   head_revision: "Current revision",
   body_label: "Proposal body",
+  body_loading: "Reading proposal text.",
   body_unavailable: "This proposal body is not available.",
   edit_title_label: "New title",
   edit_note_field_label: "Edit note",
@@ -498,7 +510,7 @@ const EN_COPY: StudioFeatureCopy = {
   empty_list: "No saved proposals yet.",
   empty_reader: "No proposal is selected.",
   degraded: "Some saved data could not be read. What is shown is what was verified.",
-  error: "Saved proposals could not be read. Nothing was shown.",
+  error: "Saved proposals could not be read.",
 };
 const RU_COPY: StudioFeatureCopy = {
   title: "Студия",
@@ -520,6 +532,7 @@ const RU_COPY: StudioFeatureCopy = {
   saved_revision: "Сохранённая версия",
   head_revision: "Текущая версия",
   body_label: "Текст предложения",
+  body_loading: "Читаем текст предложения.",
   body_unavailable: "Текст этого предложения недоступен.",
   edit_title_label: "Новый заголовок",
   edit_note_field_label: "Примечание к правке",
@@ -548,7 +561,7 @@ const RU_COPY: StudioFeatureCopy = {
   empty_list: "Сохранённых предложений пока нет.",
   empty_reader: "Предложение не выбрано.",
   degraded: "Часть сохранённых данных не прочитана. Показано только проверенное.",
-  error: "Сохранённые предложения не прочитаны. Ничего не показано.",
+  error: "Не удалось прочитать сохранённые предложения.",
 };
 
 export const STUDIO_COPY: {
