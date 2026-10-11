@@ -1,4 +1,5 @@
 import { validateApplicationOperationComposition } from "./lib/launch-operation-composition.mjs";
+import { parseDeploymentJsonc } from "./lib/deployment-jsonc.mjs";
 import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
@@ -394,7 +395,7 @@ export async function assertLaunchCodeComplete() {
   const composition = await readFile(resolve(root, "apps/eliotr-core/src/composition-root.ts"), "utf8");
   const resources = JSON.parse(await readFile(resolve(root, "infra/cloudflare/resources.json"), "utf8"));
   const canonicalPath = resolve(root, resources?.worker?.canonical_config ?? "");
-  const config = JSON.parse(await readFile(canonicalPath, "utf8"));
+  const config = parseDeploymentJsonc(await readFile(canonicalPath, "utf8"), "Canonical Wrangler config");
   const configuredTransport = readConfiguredTransport(config);
   if (registry.release_profile.google_external_transport !== configuredTransport) {
     throw new Error("Launch release profile does not match the canonical deployment config");

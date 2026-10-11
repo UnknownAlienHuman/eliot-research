@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readDeploymentJson } from "./deployment-verification.mjs";
+import { parseDeploymentJsonc } from "./deployment-jsonc.mjs";
 import { launchCodeBlockers, readConfiguredTransport } from "../check-launch-code.mjs";
 import { assertRouteUpdateProfile, assertRouteUpdateReadback } from "./deployment-route-update.mjs";
 import { assertMaintenanceAiSearchBootstrapProfile } from "./deployment-ai-search-bootstrap.mjs";
@@ -285,7 +286,7 @@ export async function readFullReleaseBlockers({ root = ROOT, read = readFile } =
   };
   const registry = JSON.parse(await readText(resolve(root, "docs/implementation/implementation-status.json")));
   const composition = await readText(resolve(root, "apps/eliotr-core/src/composition-root.ts"));
-  const canonical = JSON.parse(await readText(resolve(root, "apps/eliotr-core/wrangler.jsonc")));
+  const canonical = parseDeploymentJsonc(await readText(resolve(root, "apps/eliotr-core/wrangler.jsonc")), "Canonical Wrangler config");
   const blockers = launchCodeBlockers(registry, composition);
   if (readConfiguredTransport(canonical) !== registry.release_profile.google_external_transport) {
     blockers.push("launch implementation registry Google transport differs from canonical deployment config");
