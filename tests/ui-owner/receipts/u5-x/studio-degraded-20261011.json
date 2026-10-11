@@ -1,0 +1,56 @@
+{
+  "protocol": "eliotr.frontend.studio-degraded.v1",
+  "status": "ACCEPTED_BOUNDED_NONPRODUCTION",
+  "source_commit": "3b94a9f2c6be23e3fb31603edef94a963eec084e",
+  "prior_claim_commit": "05a367ea326786b010bd48a87c587cfa551d2933",
+  "source_path": "packages/ui/src/features/studio/StudioFeature.tsx",
+  "source_sha256": "1b9128d8ed7155d03eb358d3ad3a0eccc01de388975df444bbcab9bc3a6b6b52",
+  "change": "Existing degraded Status text only",
+  "checks": [
+    {
+      "path": "typecheck-r6-process.json",
+      "sha256": "b71bb6fc6a01ae0f7ca9e29b529926acb83cf098db244d0dcc88beb9c5afbb31",
+      "status": "PASS",
+      "started": "2026-10-11T12:44:20.565Z",
+      "finished": "2026-10-11T12:44:29.013Z"
+    },
+    {
+      "path": "lint-r6-process.json",
+      "sha256": "81c62b2309e3a36fffb2730ab3fe92fe0b7afcc0a82f094356fe63d606dc59e6",
+      "status": "PASS",
+      "started": "2026-10-11T12:44:20.566Z",
+      "finished": "2026-10-11T12:44:22.380Z"
+    },
+    {
+      "path": "stories-r6-process.json",
+      "sha256": "23df44a2478a229ef6fa26f206c5985871657cf7a6a0aab6bcfcbca89dec20d5",
+      "status": "PASS",
+      "started": "2026-10-11T12:44:57.703Z",
+      "finished": "2026-10-11T12:45:10.831Z"
+    },
+    {
+      "path": "storybook-r6-process.json",
+      "sha256": "c247a2386d8d195a6832750fde6857afff7318183bfdb908c907421be8c83b43",
+      "status": "PASS",
+      "started": "2026-10-11T12:49:33.549Z",
+      "finished": "2026-10-11T12:49:38.816Z"
+    }
+  ],
+  "rendered": {
+    "accepted_cells": 450,
+    "retained_wide_cells": 270,
+    "remaining_narrow_cells": 180,
+    "original_process_status": "FAIL_RETAINED_HARNESS_VISIBILITY_ASSUMPTION",
+    "wide_rows_sha256": "6a4f25b6d115e13d4cad864d1139797a7942c8ec675c120ebf6674ddf256a232",
+    "original_result_sha256": "e911435d21b9b08ff46f2123a3bc09c3085194eadf467407d27a46fd2e75d2d5",
+    "narrow_result_sha256": "a1090c66eb590bdbdbde4b7cb7436c2a753b16f2d4f5eebdb47c3e0fa4ad9e5f",
+    "scope": "Five affected Studio states plus ten original LongRussian payloads across five widths, three themes and EN/RU UI. Selected phone reader hides the proposal list by existing responsive design; degraded text verified in DOM there. EN UI around RU payloads is not new long-English content proof."
+  },
+  "limits": [
+    "No producer-state change",
+    "No authenticated/live/generated Worker/agents/staging/release qualification",
+    "Visual baseline requires owner review",
+    "Full FINAL-UI package remains in preparation"
+  ],
+  "at": "2026-10-11T12:53:53.415Z"
+}
