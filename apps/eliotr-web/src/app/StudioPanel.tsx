@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { skipToken, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button, OperationAnnouncement, Status, StudioFeature, STUDIO_COPY } from '@eliotr/ui';
 import type { VersionedRef, WikiProposalReadView, WikiProposalFromRunView, WikiPublicationView } from '@eliotr/owner-api-client';
@@ -101,6 +101,38 @@ export function StudioPanel({ apis, privacy, context, locale }: {
     });
   };
   const saved = memory.data, blocked = busy || saved?.intent !== undefined;
+  const reportsHeading = useRef<HTMLHeadingElement>(null), returningFromReport = useRef(false);
+  const libraryHeading = useRef<HTMLHeadingElement>(null), readerHeading = useRef<HTMLHeadingElement>(null);
+  const pendingProposalFocus = useRef<{ readonly context: SessionContext; readonly target: VersionedRef | 'library' } | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (!saved?.artifact && returningFromReport.current) {
+      returningFromReport.current = false;
+      reportsHeading.current?.focus();
+    }
+  }, [saved?.artifact]);
+  useLayoutEffect(() => {
+    const pending = pendingProposalFocus.current;
+    if (pending === undefined) return;
+    if (pending.context !== context || !privacy.isCurrent(context) || saved?.artifact) {
+      pendingProposalFocus.current = undefined;
+      return;
+    }
+    const requested = pending.target;
+    if (requested === 'library') {
+      if (saved?.selected !== undefined || !libraryHeading.current) return;
+      libraryHeading.current.focus();
+    } else {
+      if (!view || !saved?.selected || selected.isError || selected.isFetching ||
+        !sameRef(requested, saved.selected) || !sameRef(requested, view.proposal_ref) ||
+        client.getQueryData(proposalKey) !== view || !readerHeading.current) return;
+      readerHeading.current.focus();
+    }
+    pendingProposalFocus.current = undefined;
+  }, [client, context, privacy, proposalKey, saved?.artifact, saved?.selected, selected.isError, selected.isFetching, view]);
+  const displayTime = (iso: string) => {
+    const date = new Date(iso);
+    return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(date) : iso;
+  };
   const featureCopy = { ...STUDIO_COPY[locale], title: text.drafts };
   const currentProposals = proposals.data && !proposals.isError ? { ...proposals.data,
     items: proposals.data.items.map(proposal => view && sameRef(proposal.proposal_ref, view.proposal_ref)
@@ -116,7 +148,7 @@ export function StudioPanel({ apis, privacy, context, locale }: {
     : view && saved?.edited && sameRef(view.proposal_ref, saved.edited.proposal_ref) ? text.edited : proposals.data ? text.loaded : '');
   if (saved?.artifact) return <ReportPanel key={`${saved.artifact.id}:${saved.artifact.revision}`} locale={locale} apis={apis} privacy={privacy} context={context} artifactRef={saved.artifact}
     onOpenDraft={artifact => write(old => ({ ...old, artifact }))}
-    onClose={() => write(old => { const { artifact: _artifact, ...rest } = old; return rest; })} />;
+    onClose={() => { if (privacy.isCurrent(context)) { returningFromReport.current = true; write(old => { const { artifact: _artifact, ...rest } = old; return rest; }); } }} />;
   return <>
     <OperationAnnouncement>{announcement}</OperationAnnouncement>
     <div className="er-live-actions"><Button variant="tonal" disabled={proposals.isFetching || busy} onClick={() => { void proposals.refetch(); void history.refetch(); }}>{text.read}</Button></div>
@@ -125,9 +157,14 @@ export function StudioPanel({ apis, privacy, context, locale }: {
     {view?.state === 'PUBLISHED' && <Status>{text.published}</Status>}
     {view && view.state !== 'PUBLISHED' && saved?.edited && sameRef(view.proposal_ref, saved.edited.proposal_ref) && <Status>{text.edited}</Status>}
     {selected.isError || body.isError ? <div><Status tone="error">{text.failed}</Status><Button variant="tonal" disabled={selected.isFetching || body.isFetching} onClick={() => { void selected.refetch(); if (view) void body.refetch(); }}>{text.reread}</Button></div> : null}
+    {!history.isError && history.data && history.data.saved_drafts.length > 0 && <section className="er-live-history" aria-label={text.recent}><h2 ref={reportsHeading} tabIndex={-1}>{text.recent}</h2><ul>{history.data.saved_drafts.map(draft => <li key={`${draft.artifact_ref.id}:${draft.artifact_ref.revision}`}>
+      <time dateTime={draft.created_at}>{displayTime(draft.created_at)}</time><Button variant="tonal" onClick={() => write(old => ({ ...old, artifact: draft.artifact_ref }))}>{text.report}</Button>
+    </li>)}</ul></section>}
     <fieldset className="er-live-plain-fieldset" disabled={blocked} aria-label={text.drafts}>
       <StudioFeature key={view ? `${view.proposal_ref.id}:${view.proposal_ref.revision}` : 'list'} locale={locale} copy={featureCopy}
         state={proposals.isPending ? 'loading' : proposals.isError ? 'error' : !proposals.data?.items.length ? 'empty' : 'useful'}
+        libraryHeadingRef={libraryHeading} readerHeadingRef={readerHeading}
+        bodyLoading={view !== undefined && (body.isPending || body.isFetching) && (body.data === undefined || body.isError)}
         {...(currentProposals ? { proposals: currentProposals } : {})}
         {...(view ? { selected: view } : {})}
         {...(body.data && !body.isError && !selected.isError ? { body: body.data } : {})}
@@ -135,7 +172,10 @@ export function StudioPanel({ apis, privacy, context, locale }: {
         cowVerified={expectedPublishHead !== undefined && body.data !== undefined && !body.isError && view !== undefined && body.data.body_sha256 === view.page.body_sha256}
         onOpenProposal={summary => {
           if (privacy.isCurrent(context) && client.getQueryData(options.proposals().queryKey) === proposals.data &&
-            proposals.data?.items.some(row => sameRef(row.proposal_ref, summary.proposal_ref))) write(old => ({ ...old, selected: summary.proposal_ref }));
+            proposals.data?.items.some(row => sameRef(row.proposal_ref, summary.proposal_ref))) {
+            pendingProposalFocus.current = { context, target: summary.proposal_ref };
+            write(old => ({ ...old, selected: summary.proposal_ref }));
+          }
         }}
         onCreateEdit={input => {
           const base = currentView();
@@ -155,10 +195,11 @@ export function StudioPanel({ apis, privacy, context, locale }: {
             key: apis.sources.mintIntent(), phase: 'pending' });
           write(old => ({ ...old, intent })); run(signal => execute(intent, signal));
         }}
-        onBack={() => write(old => { const { selected: _selected, ...rest } = old; return rest; })} />
+        onBack={() => {
+          if (!privacy.isCurrent(context)) return;
+          pendingProposalFocus.current = { context, target: 'library' };
+          write(old => { const { selected: _selected, ...rest } = old; return rest; });
+        }} />
     </fieldset>
-    {!history.isError && history.data && history.data.saved_drafts.length > 0 && <section className="er-live-history" aria-label={text.recent}><h2>{text.recent}</h2><ul>{history.data.saved_drafts.map(draft => <li key={`${draft.artifact_ref.id}:${draft.artifact_ref.revision}`}>
-      <span>{draft.created_at}</span><Button variant="tonal" onClick={() => write(old => ({ ...old, artifact: draft.artifact_ref }))}>{text.report}</Button>
-    </li>)}</ul></section>}
   </>;
 }

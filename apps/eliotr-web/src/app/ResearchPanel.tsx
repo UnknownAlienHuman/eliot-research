@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { skipToken, useQuery, useQueryClient } from '@tanstack/react-query';
 import { WorkspaceLink } from '../routes/WorkspaceLink';
 import { Button, OperationAnnouncement, ResearchRunFeature, Status } from '@eliotr/ui';
@@ -40,6 +40,17 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
   const configuration = useQuery(options.configuration());
   const history = useQuery(options.history());
   const saved = memory.data, launch = saved?.intent?.launch ?? saved?.observedLaunch;
+  const historyHeading = useRef<HTMLHeadingElement>(null), returningFromReport = useRef(false);
+  useLayoutEffect(() => {
+    if (!saved?.artifact && returningFromReport.current) {
+      returningFromReport.current = false;
+      historyHeading.current?.focus();
+    }
+  }, [saved?.artifact]);
+  const displayTime = (iso: string) => {
+    const date = new Date(iso);
+    return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(date) : iso;
+  };
   const status = useQuery(launch ? { ...options.status(launch),
     refetchInterval: query => query.state.data?.execution_state === 'ACTIVE' &&
       ['queued', 'running', 'waiting'].includes(query.state.data.engine_status) ? 5000 : false,
@@ -123,7 +134,7 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     : progress ? text.runRead : history.isError ? text.unavailable : history.data ? text.historyLoaded : '');
   if (saved?.artifact) return <ReportPanel key={`${saved.artifact.id}:${saved.artifact.revision}`} locale={locale} apis={apis} privacy={privacy} context={context} artifactRef={saved.artifact}
     onOpenDraft={artifact => write(old => ({ ...old, artifact }))}
-    onClose={() => write(old => { const { artifact: _artifact, ...rest } = old; return rest; })} />;
+    onClose={() => { if (privacy.isCurrent(context)) { returningFromReport.current = true; write(old => { const { artifact: _artifact, ...rest } = old; return rest; }); } }} />;
   return <>
     <OperationAnnouncement>{announcement}</OperationAnnouncement>
     {!scopeCurrent && !saved?.intent && <p>{text.scopeStale} <WorkspaceLink className="er-shell-link" to="/sources">{text.scope}</WorkspaceLink></p>}
@@ -131,6 +142,14 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
       <Status>{text.blocked}</Status><div className="er-live-actions"><Button variant="tonal" disabled={configuration.isFetching} onClick={() => { void configuration.refetch(); }}>{text.check}</Button><WorkspaceLink className="er-shell-link" to="/connections">{text.connections}</WorkspaceLink></div>
     </div> : null}
     {inputError && <Status tone="error">{text.input}</Status>}
+    {(terminal || progress?.answer.availability === 'draft') && <div className="er-live-actions">
+    {progress?.answer.availability === 'draft' && <><Button variant="primary" onClick={() => { if (privacy.isCurrent(context) && progress.answer.availability === 'draft') { const artifact = progress.answer.artifact_ref; write(old => ({ ...old, artifact })); } }}>{text.report}</Button></>}
+    {terminal && <Button variant="text" onClick={() => {
+      if (privacy.isCurrent(context) && !running.current) write(old => {
+        const { intent: _intent, observedLaunch: _launch, ...rest } = old; return rest;
+      });
+    }}>{text.next}</Button>}
+    </div>}
     <ResearchRunFeature key={saved?.intent?.key ?? 'next-question'} locale={locale} state={state}
       scope={saved?.intent?.scope ?? scope} busy={busy}
       questionHeld={saved?.intent !== undefined || saved?.observedLaunch !== undefined}
@@ -144,17 +163,11 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
       {...(saved?.intent?.phase === 'unknown' ? { onRecover: reconcile } : {})} />
     {saved?.intent?.phase === 'unknown' && <div><Status>{text.unknown}</Status><p>{text.same}</p>
       <Button variant="tonal" disabled={busy} onClick={reconcile}>{text.recover}</Button></div>}
-    {terminal && <Button variant="text" onClick={() => {
-      if (privacy.isCurrent(context) && !running.current) write(old => {
-        const { intent: _intent, observedLaunch: _launch, ...rest } = old; return rest;
-      });
-    }}>{text.next}</Button>}
-    {progress?.answer.availability === 'draft' && <div className="er-live-actions"><Button variant="primary" onClick={() => { if (privacy.isCurrent(context) && progress.answer.availability === 'draft') { const artifact = progress.answer.artifact_ref; write(old => ({ ...old, artifact })); } }}>{text.report}</Button></div>}
-    <section className="er-live-history" aria-label={text.history}><h2>{text.history}</h2>
-      <Button variant="text" disabled={history.isFetching} onClick={() => { void history.refetch(); }}>{text.readHistory}</Button>
-      {history.isError ? <Status>{text.unavailable}</Status> : history.data?.runs.length === 0 ? <p>{text.noRuns}</p> : null}
+    <section className="er-live-history" aria-label={text.history}><div className="er-live-history-heading"><h2 ref={historyHeading} tabIndex={-1}>{text.history}</h2>
+      <Button variant="text" disabled={history.isFetching} onClick={() => { void history.refetch(); }}>{text.readHistory}</Button></div>
+      {history.isError ? <Status>{text.unavailable}</Status> : history.data?.runs.length === 0 && history.data.saved_drafts.length === 0 ? <p>{text.noRuns}</p> : null}
       <ul>{!history.isError && history.data?.runs.map(entry => <li key={entry.status.workflow_instance_id}>
-        <span>{entry.created_at}</span><Button variant="text" disabled={saved?.intent !== undefined} onClick={() => {
+        <time dateTime={entry.created_at}>{displayTime(entry.created_at)}</time><Button variant="text" disabled={saved?.intent !== undefined} onClick={() => {
           const observed = entry.status; write(old => ({ ...old, observedLaunch: { workflow_instance_id: observed.workflow_instance_id, investigation_ref: observed.investigation_ref, deployment_generation: observed.deployment_generation } }));
         }}>{text.openRun}</Button>
         {entry.status.answer.availability === 'draft' && <Button variant="tonal" onClick={() => {
@@ -162,7 +175,7 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
         }}>{text.report}</Button>}
       </li>)}</ul>
       <ul>{!history.isError && history.data?.saved_drafts.map(draft => <li key={`${draft.artifact_ref.id}:${draft.artifact_ref.revision}`}>
-        <span>{draft.created_at}</span><Button variant="tonal" onClick={() => write(old => ({ ...old, artifact: draft.artifact_ref }))}>{text.report}</Button>
+        <time dateTime={draft.created_at}>{displayTime(draft.created_at)}</time><Button variant="tonal" onClick={() => write(old => ({ ...old, artifact: draft.artifact_ref }))}>{text.report}</Button>
       </li>)}</ul>
     </section>
   </>;

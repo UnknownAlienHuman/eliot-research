@@ -1,4 +1,5 @@
 import { paneAnnouncement, announcementUntil, unchangedChannel } from './announcementAssertions';
+import { playMaterialPreferences, playMaterialReading } from './MaterialReviewPreview';
 import { IntegrationRepairsPreview, playIntegrationRepairs, playReplacedSelection } from './IntegrationRepairsPreview';
 import { FiniteReadExportPreview, playReadsNoEffects, playFailedRequiredSectionNoExport } from "./FiniteReadExportPreview";
 import { FiniteTruthDisclosurePreview, playCapabilityConnectionTruth, playBoundedRootDisclosure, playConnectionAnnouncements } from "./FiniteTruthDisclosurePreview";
@@ -41,6 +42,9 @@ function ShellPreview() {
 export default { title: "Workspace/Shell", component: ShellPreview, parameters: { layout: "fullscreen" } };
 export const ArtifactActionsJourney = { render: () => <ArtifactActionsPreview />, play: playArtifactActionsJourney };
 export const LiveResearchJourney = { render: () => <ResearchPreview />, play: playResearchJourney };
+export const MaterialWorkspace = { render: () => <ResearchPreview designReview /> };
+export const MaterialPreferencesJourney = { render: () => <ResearchPreview designReview />, play: playMaterialPreferences };
+export const MaterialReadingJourney = { render: () => <ResearchPreview designReview />, play: playMaterialReading };
 export const LiveStudioJourney = { render: () => <StudioPreview />, play: playStudioJourney };
 export const WorkspaceLinkJourney = { render: () => <WorkspaceLinkPreview />, play: playWorkspaceLinkJourney };
 export const StrictModeJourney = {

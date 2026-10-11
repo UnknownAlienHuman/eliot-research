@@ -98,6 +98,13 @@ export const playStudioJourney = async ({ canvas, userEvent }: {
 }) => {
   await userEvent.click(await canvas.findByRole('button', { name: /Evidence scope in a saved page/u }));
   await canvas.findByText(baseBody, { selector: '.er-studio-live__body' });
+  const readerHeading = await canvas.findByRole('heading', { name: 'Evidence scope in a saved page', exact: true });
+  if (document.activeElement !== readerHeading) throw new Error('Proposal open lost keyboard focus');
+  await userEvent.click(canvas.getByRole('button', { name: 'Back to the list', exact: true }));
+  const libraryHeading = await canvas.findByRole('heading', { name: 'Saved proposals', exact: true });
+  if (document.activeElement !== libraryHeading) throw new Error('Proposal Back lost keyboard focus');
+  await userEvent.click(await canvas.findByRole('button', { name: /Evidence scope in a saved page/u }));
+  await canvas.findByText(baseBody, { selector: '.er-studio-live__body' });
   const edit = await canvas.findByRole('button', { name: 'Create a new draft from this page' }); edit.click(); edit.click();
   await canvas.findByText('The last action has no confirmed outcome. Its original draft, content and request identity are preserved.', { selector: '.er-status > span' });
   await userEvent.click(canvas.getByRole('link', { name: 'Research', exact: true }));

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { skipToken, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button, EvidenceFeature, ReportFeature, REPORT_COPY, SafeMarkdown, Status } from '@eliotr/ui';
 import { assembleResearchDraftMarkdown, type ArtifactRevision, type ArtifactSectionResponse,
@@ -48,6 +48,8 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
   const [outlineOpen, setOutlineOpen] = useState(true);
   const [sectionActivation, setSectionActivation] = useState(0);
   const outlineSummary = useRef<HTMLElement>(null);
+  const reportHeading = useRef<HTMLHeadingElement>(null);
+  useLayoutEffect(() => { reportHeading.current?.focus(); }, [mode]);
   const sectionHeading = useRef<HTMLHeadingElement>(null);
   const active = artifact?.sections.find(row => selected && sameRef(row.section_ref, selected.section_ref) &&
     row.body_object_ref === selected.body_object_ref && row.body_sha256 === selected.body_sha256);
@@ -124,6 +126,7 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
     : currentCitation && evidenceRows.some(row => row.state === 'loaded' && sameRef(row.citation.handle_ref, currentCitation.handle_ref)) ? text.evidenceReady
     : active && body !== undefined ? text.sectionReady : artifact ? text.reportReady : '';
   return <section className="er-live-report" aria-label={text.title}>
+    <h2 className="er-live-report-title" ref={reportHeading} tabIndex={-1}>{text.title}</h2>
     <OperationFeedback message={operationMessage} />
     <div className="er-live-actions"><Button variant="text" onClick={onClose}>{text.back}</Button>
       <Button variant="tonal" disabled={manifest.isFetching} onClick={() => { void manifest.refetch(); }}>{text.read}</Button></div>
@@ -142,9 +145,10 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
     {exportError && <Status tone="error">{text.exportError}</Status>}
     {active && <section className="er-live-report-section" aria-label={text.section(artifact?.sections.findIndex(row => sameRef(row.section_ref, active.section_ref)) ?? 0)}>
       <h2 ref={sectionHeading} tabIndex={-1}>{text.section(artifact?.sections.findIndex(row => sameRef(row.section_ref, active.section_ref)) ?? 0)}</h2>
+      <div className="er-live-report-layout"><div className="er-live-report-body">
       {section.isFetching ? <Status>{text.reading}</Status> : section.isError || body === undefined ? <Status tone="error">{text.unknown}</Status> : <SafeMarkdown text={body} />}
-      {citations.data?.semantic_verification === 'NOT_EXECUTED' && <p>{text.noAudit}</p>}
-      <h3>{text.evidence}</h3><EvidenceFeature citations={evidenceRows}
+      {citations.data?.semantic_verification === 'NOT_EXECUTED' && <p className="er-shell-note">{text.noAudit}</p>}
+      </div><aside className="er-live-report-evidence" aria-label={text.evidence}><EvidenceFeature citations={evidenceRows}
         loading={citations.isFetching} emptyMessage={text.noEvidence} longLocale={locale}
         {...(citations.isError ? { errorMessage: text.evidenceError } : {})}
         onOpenExcerpt={citation => {
@@ -155,6 +159,7 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
           }
         }}
         onRetry={() => { if (citations.isError) void citations.refetch(); else if (currentCitation) void evidence.refetch(); }} />
+      </aside></div>
       <div className="er-live-actions">
         <Button variant="text" onClick={() => { setOutlineOpen(true); outlineSummary.current?.focus(); }}>{text.backToSections}</Button>
       </div>

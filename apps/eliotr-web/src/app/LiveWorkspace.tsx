@@ -2,7 +2,7 @@ import { useCallback, useLayoutEffect, useRef, useState, type Ref, type RefObjec
 import { skipToken, useQueries, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router";
 import { WorkspaceLink } from "../routes/WorkspaceLink";
-import { Button, Dialog, DocumentReader, OperationAnnouncement, ProjectsLibraryFeature } from "@eliotr/ui";
+import { Button, Dialog, DocumentReader, MaterialSymbol, OperationAnnouncement, ProjectsLibraryFeature } from "@eliotr/ui";
 import type { LibraryPage, ProjectListView, SourceRevisionPage } from "@eliotr/owner-api-client";
 import type { PrivacyController, SessionContext } from "./privacy";
 import type { BoundWorkspaceApis } from "./runtime";
@@ -105,8 +105,12 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
   const text = copy[locale];
   return <div className="er-live-workspace">
     <aside className="er-shell-sources" hidden={destination !== "research"} aria-label={text.sources}>
-      <h2>{text.sources}</h2><p>{selected?.title ?? text.untitled}</p><p>{text.sourceScope}</p>
+      <h2>{text.sources}</h2><p className="er-shell-eyebrow">{selected?.title ?? text.untitled}</p>
       <p>{text.selected(scope.length)}</p>
+      <ul className="er-live-source-context">{scope.map(source => <li key={source.id}>
+        <MaterialSymbol name="file" /><span>{source.label}</span>
+      </li>)}</ul>
+      <p className="er-shell-note">{text.sourceScope}</p>
       <WorkspaceLink className="er-shell-link" to="/sources">{text.openSources}</WorkspaceLink>
     </aside>
     <main className="er-shell-reading" id="workspace-main">
@@ -191,11 +195,11 @@ function ActiveSources({ locale, apis, privacy, context, projectId, projects, af
   return <>
     <OperationAnnouncement>{announcement}</OperationAnnouncement>
     <ProjectsLibraryFeature locale={locale} projectSelectRef={projectSelectRef} state={pending ? "loading" : error ? "error" : "useful"}
-      sourceActions={<>
-        <ImportPanel locale={locale} apis={apis} privacy={privacy} context={context} />
+      sourceActions={<ImportPanel locale={locale} apis={apis} privacy={privacy} context={context} />}
+      scopeActions={
         <NextQuestionScope locale={locale} page={library.data} projectSelected={projectId !== undefined} isLoading={pending} isError={error}
           selected={scope} selectionLimit={selectedSourceLimit} onToggle={onScope} onClear={onClearScope} />
-      </>}
+      }
       projects={projects.data?.projects ?? []} selectedProjectId={projectId} onSelectProject={id => { if (projects.data?.projects.some(row => row.project_id === id)) onProject(id); }}
       library={library.data} readiness={readiness.isError ? undefined : readiness.data} readinessState={!source ? "idle" : readiness.isPending ? "loading" : readiness.isError ? "degraded" : "useful"}
       revisions={revisions.isError ? undefined : revisions.data} revisionsState={!source ? "idle" : revisions.isPending ? "loading" : revisions.isError ? "error" : "useful"}

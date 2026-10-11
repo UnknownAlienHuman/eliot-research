@@ -1,4 +1,4 @@
-import { Suspense, useLayoutEffect, useRef, useState, useSyncExternalStore, type ComponentType } from "react";
+import { Suspense, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ComponentType } from "react";
 import { useLocation } from "react-router";
 import { WorkspaceLink } from "../routes/WorkspaceLink";
 import { Button, MaterialSymbol, Status } from "@eliotr/ui";
@@ -29,7 +29,10 @@ export function Shell({ privacy, fixture, fixtureOutlet: FixtureOutlet, runtime 
   const destination = decodeWorkspaceLocation(location) ?? "research";
   const text = copy[locale];
   const heading = useRef<HTMLHeadingElement>(null);
+  const preferences = useRef<HTMLDetailsElement>(null);
+  const preferencesId = useId();
   useLayoutEffect(() => {
+    if (preferences.current) preferences.current.open = false;
     if (privacy.commitVisible(snapshot)) heading.current?.focus();
   }, [privacy, snapshot, destination]);
   if (snapshot.phase === "verifying") return null;
@@ -50,8 +53,20 @@ export function Shell({ privacy, fixture, fixtureOutlet: FixtureOutlet, runtime 
       <header className="er-shell-header">
         <WorkspaceLink className="er-shell-brand" to="/research" aria-label="Eliot Research"><MaterialSymbol name="research" /><span>Eliot Research</span></WorkspaceLink>
         <p className="er-shell-preview">{fixture ? text.preview : text.scope}</p>
-        <label>{text.language}<select value={locale} onChange={event => setLocale(event.target.value === "ru" ? "ru" : "en")}><option value="en">English</option><option value="ru">Русский</option></select></label>
-        <label>{text.theme}<select value={theme} onChange={event => setTheme(event.target.value === "dark" ? "dark" : "light")}><option value="light">{text.light}</option><option value="dark">{text.dark}</option></select></label>
+        <details ref={preferences} className="er-shell-preferences" onKeyDown={event => {
+          if (event.key === "Escape" && preferences.current?.open) {
+            event.stopPropagation(); preferences.current.open = false;
+            preferences.current.querySelector("summary")?.focus();
+          }
+        }}>
+          <summary aria-label={locale === "ru" ? "Настройки интерфейса" : "Workspace preferences"}>
+            <MaterialSymbol name="settings" /><span>{locale === "ru" ? "Настройки" : "Preferences"}</span>
+          </summary>
+          <div className="er-shell-preferences-panel">
+            <label htmlFor={preferencesId + '-language'}>{text.language}<select id={preferencesId + '-language'} aria-label={text.language} value={locale} onChange={event => setLocale(event.target.value === "ru" ? "ru" : "en")}><option value="en">English</option><option value="ru">Русский</option></select></label>
+            <label htmlFor={preferencesId + '-theme'}>{text.theme}<select id={preferencesId + '-theme'} aria-label={text.theme} value={theme} onChange={event => setTheme(event.target.value === "dark" ? "dark" : "light")}><option value="light">{text.light}</option><option value="dark">{text.dark}</option></select></label>
+          </div>
+        </details>
       </header>
       <nav className="er-shell-nav" aria-label={text.scope}>
         {destinations.map(item => <WorkspaceLink key={item} to={workspacePath(item)} className="er-shell-destination"><span><MaterialSymbol name={icons[item]} /></span>{text[item]}</WorkspaceLink>)}
