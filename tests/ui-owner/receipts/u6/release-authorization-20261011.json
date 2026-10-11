@@ -1,0 +1,18 @@
+{
+  "protocol": "eliotr.owner-web-release-authorization.v1",
+  "at": "2026-10-11T18:00:07.002Z",
+  "owner_instruction": "Делай релиз того что есть и подключайте сервис!!! Чтобы работало!!!",
+  "source_thread": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "previous_design_review": "REJECTED",
+  "design_acceptance": "NOT_CLAIMED",
+  "authorization": [
+    "release existing owner-web module",
+    "connect real backend services",
+    "deploy and cut over using preserved security/session invariants"
+  ],
+  "verification_required": [
+    "actual generated Worker+client",
+    "native legacy service-worker retirement",
+    "same-origin real owner API and browser readback"
+  ]
+}
