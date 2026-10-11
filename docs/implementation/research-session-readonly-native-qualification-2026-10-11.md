@@ -1,6 +1,6 @@
 # ResearchSession read-only native qualification
 
-Updated 2026-10-11T01:33:42.186Z (October10 America/New_York). These are bounded local
+Updated 2026-10-11T02:01:17.683Z (October10 America/New_York). These are bounded local
 results for Issue334. The issue and full development Goal remain open.
 
 The selected three-module emitted Worker comes from published source
@@ -23,6 +23,7 @@ result without reexecution.
 | Repeated projection | Three strict RPC replies; selected SQL and finite original canonical data unchanged | 37875ba2ba907b7bb23f35bc147d0d582333fb3fcb462d04428d584386f3a61a |
 | Peer injection | Two authenticated connections; injector1008 SESSION_PROJECTION_READ_ONLY; surviving peer returns the original strict projection and closes1000; exact injector1/peer2 frames | 810f082ce92ca67c76a506e75ac3d46602eba47e0180aa9c0f8ea925b25b0dd2 |
 | Forbidden9 | Every original published fixture closes1008 read-only, produces one strict initial frame and returns disabled history410 after rejection | ffc9a6b28c91f9f80028993ea3eefef5f668084f41e16d5693a0440d5d4af4be |
+| Completed-run reconnect | Abrupt1006, canonical owner HTTP GET, same-existing-DO reconnect101, strict projection and normal1000; selected SQL and finite canonical data unchanged | af499d452088cef9f1efc1fa4634f2c41d64229a4e4b549c442d823ecac6b7f0 |
 
 Forbidden9 covers clear, regenerate, tool approval, tool result, state, malformed
 input, unrelated RPC, projection RPC arguments and a projection RPC unknown
@@ -35,6 +36,23 @@ ran00:03:32.094-00:04:08.179Z, PID65576.
 Forbidden proof66d121dd503f88b13b00e387aa742b8f7b0a5b273dc8c87ce7903a12a1b39f63
 ran00:17:34.804-00:18:11.606Z, PID72000.
 Both processes exited0, null signal, no process error.
+
+The completed-run reconnect proof
+e8bb68fa34afb74cf24cecc6be9d928482ca2dad7eae84e0e0ca2b869d064a5e
+ran01:44:59.961-01:45:33.395Z, PID27440, exit0/nullsignal/no process error.
+Process053072f9665f62b736523fcecbf0ff604d34d0f7bad2485938c4a480368de5b8
+and resultba19522c034e9ca2400bab84ba8ff3216151370f90ce065d2cc8d6a1f259c908
+are independently bound to the raw output and admitted source.
+
+It made two authenticated101 connections to the same already-existing serving
+object. The first projection was followed by abrupt1006, an actual canonical
+owner GET /api/v1/research/run/:id, reconnect101 and the same strict projection.
+Normal1000 was followed by a second owner GET. Both HTTP200 responses used
+eliotr.research-run-status.v1 and identical canonical data: ENGINE_COMPLETED,
+revision19, stage18, answer unavailable. Each connection produced exactly one
+strict RPC reply. Four selected SQL observations and the finite original
+D1/grants/R2 baseline were identical. The original Workflow was already complete
+before disconnect; active-work survival and browser gap handling remain pending.
 
 ## Exact storage scope
 
@@ -90,7 +108,7 @@ qualified, so cancellation native execution remains pending.
 
 ## Remaining acceptance
 
-Browser disposal, AgentClient, reconnect/gap/duplicate handling, hibernation,
+Browser disposal, AgentClient, browser reconnect/gap/reorder/duplicate handling, hibernation,
 connected stale-authority frames, live/staging, global effects and selected
 scientific qualification remain separate. Native descendant cleanup is
 NOT_ASSESSED; normal process exit is not proof of descendant shutdown.
