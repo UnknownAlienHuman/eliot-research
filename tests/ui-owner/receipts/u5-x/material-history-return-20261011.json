@@ -1,0 +1,250 @@
+{
+  "protocol": "eliotr.material-history-return.v1",
+  "status": "INTERNAL_MODULE_VERIFIED_OWNER_REVIEW_PENDING",
+  "issue": "https://github.com/UnknownAlienHuman/eliot-research/issues/338",
+  "parent": "68572ebbd87dd07e24d3d27c170ef152dcb0a7a3",
+  "changes": [
+    "Separate completed/cancelled read-only history dismissal from local-intent settlement",
+    "Recheck exact successful idle status and current observation at activation",
+    "Restore native composer focus and retain current unsent draft/source selection",
+    "Add completed/cancelled history actual-component regressions and uncertain-local-intent negative",
+    "Correct singular English source count"
+  ],
+  "checks": {
+    "types": {
+      "sha256": "136567545d6b6428e810284c27f3685395558770265b8b31836d340db863088e",
+      "args": [
+        "C:\\Development\\Research\\eliot-research\\node_modules\\.pnpm\\typescript@6.0.3\\node_modules\\typescript\\bin\\tsc",
+        "-b",
+        "apps/eliotr-web/tsconfig.json",
+        "--pretty",
+        "false"
+      ],
+      "started": "2026-10-11T17:26:25.945Z",
+      "finished": "2026-10-11T17:26:28.266Z",
+      "inputs": [
+        {
+          "path": "apps/eliotr-web/src/app/ResearchPanel.tsx",
+          "sha256": "a6b3d5980416f05ae484681626ed7c1bb22a51079cf13a0fb325cfa9f771b323"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/ResearchPreview.tsx",
+          "sha256": "3c4995ca5812a2b98484e395b8449c160345015e81f5f4614e8e5cba152891ad"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/Shell.stories.tsx",
+          "sha256": "41cf446ef591b33a438ef1f061b97a9c600bb1cabbebd78adec1ec1c276a516d"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/LiveWorkspace.tsx",
+          "sha256": "84dc2fc3ace55b21b9e9d3e64daa9d696eb05bed1524f0f3588afd1b8dde850b"
+        },
+        {
+          "path": "packages/ui/src/catalog/catalog.json",
+          "sha256": "633aea634584bfe9e46d0cabe840d1b8e4e65a723c9eac94b9572600e146ed10"
+        }
+      ]
+    },
+    "lint": {
+      "sha256": "a46a932ba4d0bf90285baae580fc04022df79bab152479030b5b34779ada77a6",
+      "args": [
+        "C:\\Development\\Research\\eliot-research\\node_modules\\.pnpm\\eslint@10.9.1_jiti@2.7.0_supports-color@10.2.2\\node_modules\\eslint\\bin\\eslint.js",
+        "apps/eliotr-web/src/app/ResearchPanel.tsx",
+        "apps/eliotr-web/src/app/ResearchPreview.tsx",
+        "apps/eliotr-web/src/app/Shell.stories.tsx",
+        "apps/eliotr-web/src/app/LiveWorkspace.tsx",
+        "--format",
+        "json",
+        "--output-file",
+        "C:\\Development\\Research\\eliot-research\\.eliotr-state\\frontend-material-redesign-20261011\\issue338-lint-diagnostics.json"
+      ],
+      "started": "2026-10-11T17:26:29.081Z",
+      "finished": "2026-10-11T17:26:30.310Z",
+      "inputs": [
+        {
+          "path": "apps/eliotr-web/src/app/ResearchPanel.tsx",
+          "sha256": "a6b3d5980416f05ae484681626ed7c1bb22a51079cf13a0fb325cfa9f771b323"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/ResearchPreview.tsx",
+          "sha256": "3c4995ca5812a2b98484e395b8449c160345015e81f5f4614e8e5cba152891ad"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/Shell.stories.tsx",
+          "sha256": "41cf446ef591b33a438ef1f061b97a9c600bb1cabbebd78adec1ec1c276a516d"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/LiveWorkspace.tsx",
+          "sha256": "84dc2fc3ace55b21b9e9d3e64daa9d696eb05bed1524f0f3588afd1b8dde850b"
+        },
+        {
+          "path": "packages/ui/src/catalog/catalog.json",
+          "sha256": "633aea634584bfe9e46d0cabe840d1b8e4e65a723c9eac94b9572600e146ed10"
+        }
+      ]
+    },
+    "stories": {
+      "sha256": "70ed93a27902d82446ec080d6cce08dad309ae6166d7d8d071a544ae7ae4be1c",
+      "args": [
+        "C:\\Development\\Research\\eliot-research\\node_modules\\.pnpm\\vitest@4.1.11_@types+node@2_92a04f979e508bf9ee263570e86c407c\\node_modules\\vitest\\vitest.mjs",
+        "run",
+        "--config",
+        "C:\\Development\\Research\\eliot-research\\.eliotr-state\\frontend-material-redesign-20261011\\vitest.redesign.config.mjs",
+        "--testNamePattern",
+        "History Completed Research Return$|History Cancelled Research Return$|Live Research Journey$|Material Reading Journey$|Material Preferences Journey$",
+        "--reporter",
+        "json",
+        "--outputFile",
+        "C:\\Development\\Research\\eliot-research\\.eliotr-state\\frontend-material-redesign-20261011\\issue338-stories-results.json"
+      ],
+      "started": "2026-10-11T17:26:46.131Z",
+      "finished": "2026-10-11T17:26:58.918Z",
+      "inputs": [
+        {
+          "path": "apps/eliotr-web/src/app/ResearchPanel.tsx",
+          "sha256": "a6b3d5980416f05ae484681626ed7c1bb22a51079cf13a0fb325cfa9f771b323"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/ResearchPreview.tsx",
+          "sha256": "3c4995ca5812a2b98484e395b8449c160345015e81f5f4614e8e5cba152891ad"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/Shell.stories.tsx",
+          "sha256": "41cf446ef591b33a438ef1f061b97a9c600bb1cabbebd78adec1ec1c276a516d"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/LiveWorkspace.tsx",
+          "sha256": "84dc2fc3ace55b21b9e9d3e64daa9d696eb05bed1524f0f3588afd1b8dde850b"
+        },
+        {
+          "path": "packages/ui/src/catalog/catalog.json",
+          "sha256": "633aea634584bfe9e46d0cabe840d1b8e4e65a723c9eac94b9572600e146ed10"
+        }
+      ]
+    },
+    "build": {
+      "sha256": "cd8b492da5b3acf4df928fc2f58a957d0f1de712ed0a41fbc7db69a5d8fbb984",
+      "args": [
+        "C:\\Development\\Research\\eliot-research\\.eliotr-state\\frontend-material-redesign-20261011\\preview.mjs",
+        "build",
+        "review-build-338"
+      ],
+      "started": "2026-10-11T17:27:09.309Z",
+      "finished": "2026-10-11T17:27:10.075Z",
+      "inputs": [
+        {
+          "path": "apps/eliotr-web/src/app/ResearchPanel.tsx",
+          "sha256": "a6b3d5980416f05ae484681626ed7c1bb22a51079cf13a0fb325cfa9f771b323"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/ResearchPreview.tsx",
+          "sha256": "3c4995ca5812a2b98484e395b8449c160345015e81f5f4614e8e5cba152891ad"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/Shell.stories.tsx",
+          "sha256": "41cf446ef591b33a438ef1f061b97a9c600bb1cabbebd78adec1ec1c276a516d"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/LiveWorkspace.tsx",
+          "sha256": "84dc2fc3ace55b21b9e9d3e64daa9d696eb05bed1524f0f3588afd1b8dde850b"
+        },
+        {
+          "path": "packages/ui/src/catalog/catalog.json",
+          "sha256": "633aea634584bfe9e46d0cabe840d1b8e4e65a723c9eac94b9572600e146ed10"
+        }
+      ]
+    },
+    "a11y": {
+      "sha256": "89a2089ce5e61394df6603baf3cbb31007b7d793347ebb5a78062c0877858d41",
+      "args": [
+        "C:\\Development\\Research\\eliot-research\\.eliotr-state\\frontend-material-redesign-20261011\\source\\scripts\\ui-owner\\verify.mjs",
+        "a11y",
+        "--base-url",
+        "http://127.0.0.1:6104",
+        "--scenario",
+        "research-history-return",
+        "--output",
+        ".eliotr-state/research-history-return-browser"
+      ],
+      "started": "2026-10-11T17:26:46.128Z",
+      "finished": "2026-10-11T17:26:56.824Z",
+      "inputs": [
+        {
+          "path": "apps/eliotr-web/src/app/ResearchPanel.tsx",
+          "sha256": "a6b3d5980416f05ae484681626ed7c1bb22a51079cf13a0fb325cfa9f771b323"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/ResearchPreview.tsx",
+          "sha256": "3c4995ca5812a2b98484e395b8449c160345015e81f5f4614e8e5cba152891ad"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/Shell.stories.tsx",
+          "sha256": "41cf446ef591b33a438ef1f061b97a9c600bb1cabbebd78adec1ec1c276a516d"
+        },
+        {
+          "path": "apps/eliotr-web/src/app/LiveWorkspace.tsx",
+          "sha256": "84dc2fc3ace55b21b9e9d3e64daa9d696eb05bed1524f0f3588afd1b8dde850b"
+        },
+        {
+          "path": "packages/ui/src/catalog/catalog.json",
+          "sha256": "633aea634584bfe9e46d0cabe840d1b8e4e65a723c9eac94b9572600e146ed10"
+        }
+      ]
+    }
+  },
+  "stories": {
+    "passed": 5,
+    "failed": 0
+  },
+  "browser": {
+    "cases": 10,
+    "browser": "155.0.8059.40",
+    "axeViolations": 0,
+    "overflow": 0,
+    "remoteRequests": 0
+  },
+  "build": [
+    {
+      "path": "review-build-338/assets/client-DD1Jkd23.js",
+      "bytes": 74869,
+      "sha256": "a75fc3acd8d0482818a2ee6135905cea971e0e38619cbe78ef9ca928ec7052da"
+    },
+    {
+      "path": "review-build-338/assets/index-SeiGcOAL.js",
+      "bytes": 834782,
+      "sha256": "b4c8f668d8e039e17f3746f27eae906ec84504717f021e897a44e0dee5502992"
+    },
+    {
+      "path": "review-build-338/assets/index-T8a-S4ba.css",
+      "bytes": 78991,
+      "sha256": "65842327538522f6b57508c7c26148c2c3bc4b4f0e140b0fa431634dc6af2366"
+    },
+    {
+      "path": "review-build-338/index.html",
+      "bytes": 417,
+      "sha256": "e407ad1d80ae634ff072999e67923fdaa5c6558f101751dde48dc25ebdf1542f"
+    }
+  ],
+  "retainedRedesign": {
+    "sourceTarget": "95f874e35d4f7108d64301ab7e8ec130a7d8d716",
+    "receipt": "tests/ui-owner/receipts/u5-x/material-redesign-20261011.json",
+    "receiptSha256": "a29956eafb582c3f20905dd7086c98cadc332571d646d7d94adb93ecf0fea375",
+    "initialFocusedStories": 10,
+    "initialBrowserCases": 50,
+    "unchangedLeafSourceMapped": true
+  },
+  "scope": "Private synthetic HTTP/React component and static review build only; no integrated Worker graph or agents route parity",
+  "pending": [
+    "Owner FINAL-UI acceptance after rejection",
+    "Integrated Vite/Worker graph and /agents + /agents/* parity for #333",
+    "Full product CSP/performance/native screen reader/native zoom",
+    "Deployment/cutover/live authorization"
+  ],
+  "protected": {
+    "head": "9c6350039fbf9612abea2b47c804cbc8f95e3646",
+    "index": "004739a80c32e8948405d7a284b108e654386895e9ccac6eb8d5498acf76f582",
+    "staged": "",
+    "diff": "3a53494072e177712284a478aa9bb6f3d0587413c40a00817ca49141678a08e7",
+    "status": "ebac3774cba97a2d94b3a87e07d45ddc8f20ff65fe2edc2b6626c1b708452c55"
+  }
+}

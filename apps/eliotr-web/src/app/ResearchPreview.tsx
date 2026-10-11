@@ -1,12 +1,12 @@
 import { useEffect, useState } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
-import type { ArtifactRevision } from '@eliotr/owner-api-client';
+import type { ArtifactRevision, ResearchRunStatusView } from '@eliotr/owner-api-client';
 import { Shell } from './Shell';
 import { paneAnnouncement, announcementUntil, unchangedChannel } from './announcementAssertions';
 import { createWorkspaceRuntime } from './runtime';
 import { createPrivacyController } from './privacy';
-import { clearWorkspaceQueries, createWorkspaceQueryClient } from '../query/client';
+import { clearWorkspaceQueries, createWorkspaceQueryClient, protectedQueryKey } from '../query/client';
 import { materialSources, materialReading, materialSections } from './materialReviewData';
 
 const stamp = '2026-10-09T12:00:00.000Z', generation = 'research-fixture';
@@ -15,11 +15,25 @@ const excerpt = 'The saved question keeps its original source scope.';
 const encode = (value: string) => new TextEncoder().encode(value);
 const digest = async (bytes: Uint8Array) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new Uint8Array(bytes).buffer))].map(value => value.toString(16).padStart(2, '0')).join('');
 
-/** Production runtime, Query and components; the synthetic HTTP boundary loses one durable ack. */
-export function ResearchPreview({ designReview = false }: { readonly designReview?: boolean } = {}) {
+export type ResearchHistoryState = Extract<ResearchRunStatusView['execution_state'], 'ENGINE_COMPLETED' | 'CANCELLED'>;
+export interface ResearchPreviewProbe {
+  assertEffects(admissions: number, intents: number): void;
+  assertNoIntent(): void;
+  assertHistorySelected(): void;
+  holdUnknownIntent(): () => void;
+  assertAdmission(question: string): void;
+}
+
+/** Actual runtime/Query/components; only the default recovery mode loses a durable ack. */
+export function ResearchPreview({ designReview = false, historyState, onProbe }: {
+  readonly designReview?: boolean;
+  readonly historyState?: ResearchHistoryState;
+  readonly onProbe?: (probe: ResearchPreviewProbe) => void;
+} = {}) {
   const [environment] = useState(() => {
     const client = createWorkspaceQueryClient(), timers = { setTimeout: () => 0, clearTimeout() {} };
     let starts = 0, mints = 0, sectionsRead = 0, verifications = 0, opened = 0;
+    let admissionPosts = 0, cancellations = 0, otherMutations = 0;
     let originalBody: string | undefined, originalKey: string | undefined;
     const sectionTexts = designReview ? materialSections : Array.from({ length: 40 }, (_, index) => `## Section ${index + 1}\n\nA saved draft keeps the question and its evidence together.\n`);
     const sourceRows = (designReview ? [...materialSources] : [{ id: 'source-fixture', title: 'How source versions preserve evidence' }]).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
@@ -36,8 +50,19 @@ export function ResearchPreview({ designReview = false }: { readonly designRevie
     const json = (data: unknown) => new Response(JSON.stringify({ data, trace_id: 'research-trace', deployment_generation: generation }), { headers: { 'content-type': 'application/json' } });
     const launch = { investigation_ref: { id: 'investigation-fixture', revision: 1 }, workflow_instance_id: 'workflow-fixture' };
     const status = { ...launch, protocol: 'eliotr.research-run-status.v2', execution_state: 'ENGINE_COMPLETED', engine_status: 'complete', next_stage_index: 18, answer: { availability: 'draft', artifact_ref: artifactRef } };
+    const historyLaunch = { investigation_ref: { id: 'investigation-history-fixture', revision: 1 }, workflow_instance_id: 'workflow-history-fixture' };
+    const historyStatus = historyState === 'CANCELLED'
+      ? { ...status, ...historyLaunch, execution_state: 'CANCELLED', engine_status: 'terminated',
+        answer: { availability: 'unavailable' }, cancellation_receipt_ref: 'workflow-cancelled:workflow-history-fixture' }
+      : { ...status, ...historyLaunch };
     const fetchFixture: typeof fetch = async (input, init) => {
       const url = new URL(String(input), 'https://fixture.invalid');
+      const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
+      if (method !== 'GET' && method !== 'HEAD') {
+        if (url.pathname === '/api/v1/research/run' && method === 'POST') admissionPosts++;
+        else if (/\/cancel(?:\/|$)/u.test(url.pathname)) cancellations++;
+        else otherMutations++;
+      }
       if (url.pathname === '/api/v1/system/health') return json({ ready: true, deployment_generation: generation, core_schema_generation: 'schema-1', search_schema_generation: 'schema-1', blocking_reason_codes: [], checked_at: stamp });
       if (url.pathname === '/api/v1/system/session') return json({ protocol: 'eliotr.owner-session.v1', principal_ref: 'research-owner', credential_generation: 'research-credential', client_class: 'owner_pwa', expires_at: '2027-01-01T00:00:00.000Z' });
       if (url.pathname === '/api/v1/research/projects') return json({ protocol: 'eliotr.project-owner-list.v1', projects: [{ protocol: 'eliotr.project-owner.v1', project_ref: { id: 'project-fixture', revision: 1 }, title: 'Evidence in context', revision: 1, owner_principal_ref: 'research-owner', deployment_generation: generation, source_ids: sourceRows.map(source => source.id).sort(), created_at: stamp }] });
@@ -59,18 +84,28 @@ export function ResearchPreview({ designReview = false }: { readonly designRevie
       if (designReview && url.pathname.endsWith('/model-provider-key')) return json({ protocol: 'eliotr.research-provider-key-configuration.v1', project_id: 'project-fixture', provider_id: 'openrouter', configurations: [], truncated: false });
       if (designReview && url.pathname.endsWith('/model-configuration')) return json({ protocol: 'eliotr.research-project-model-configuration.v1', project_id: 'project-fixture', selection_revision: null, selected: null, revisions: [], next_cursor: null });
       if (url.pathname === '/api/v1/system/research-configuration') return json({ protocol: 'eliotr.research-configuration-readiness.v1', configuration: 'present', model_transport: 'available', qualification_state: 'current', run_readiness: 'ready', readiness_reason: 'QUALIFICATION_PROOFS_CURRENT', model_route: 'research-route', qualification_expires_at: '2027-01-01T00:00:00.000Z', missing_fields: [], invalid_fields: [], checked_at: stamp });
-      if (url.pathname === '/api/v1/research/runs') return json({ protocol: 'eliotr.research-runs.v3', runs: starts ? [{ created_at: stamp, status }] : [], saved_drafts: starts || designReview ? [{ created_at: stamp, artifact_ref: artifactRef, workflow_instance_id: launch.workflow_instance_id }] : [], configuration_state: 'INSTALLED', checked_at: stamp });
+      if (url.pathname === '/api/v1/research/runs') return json({ protocol: 'eliotr.research-runs.v3',
+        runs: [...(historyState || designReview ? [{ created_at: stamp, status: historyStatus }] : []), ...(starts ? [{ created_at: stamp, status }] : [])],
+        saved_drafts: starts || designReview || historyState ? [{ created_at: stamp, artifact_ref: artifactRef, workflow_instance_id: historyState || designReview ? historyLaunch.workflow_instance_id : launch.workflow_instance_id }] : [],
+        configuration_state: 'INSTALLED', checked_at: stamp });
       if (url.pathname === '/api/v1/research/wiki/proposals') return json({ protocol: 'eliotr.wiki-proposals.v1', items: [], has_more: false });
       if (url.pathname === '/api/v1/research/run' && init?.method === 'POST') {
         const headers = new Headers(init.headers), body = String(init.body), key = headers.get('idempotency-key');
         if (!key || headers.get('x-eliotr-csrf') !== '1' || (!designReview && mints !== 1)) throw new Error('Run intent or CSRF changed');
         starts++;
-        if (designReview) return json(launch);
+        if (designReview || historyState) {
+          if (historyState) {
+            if (starts !== 1 || mints !== 1) throw new Error('History return repeated admission or intent');
+            originalBody = body; originalKey = key;
+          }
+          return json(launch);
+        }
         if (starts === 1) { originalBody = body; originalKey = key; throw new TypeError('Synthetic lost launch acknowledgement after durable admission'); }
         if (starts !== 2 || body !== originalBody || key !== originalKey) throw new Error('Recovery replaced the original question or request identity');
         return json(launch);
       }
       if (url.pathname === '/api/v1/research/run/workflow-fixture') return json(status);
+      if (url.pathname === '/api/v1/research/run/workflow-history-fixture') return json(historyStatus);
       const prefix = '/api/v1/research/artifact/report-fixture%3A1';
       if (url.pathname === prefix) return json(await readyManifest);
       if (url.pathname.startsWith(prefix + '/sections/')) {
@@ -99,8 +134,51 @@ export function ResearchPreview({ designReview = false }: { readonly designRevie
     const runtime = createWorkspaceRuntime({ fetch: fetchFixture, baseUrl: 'https://fixture.invalid', timers, now: () => Date.parse(stamp), sha256: digest,
       mint() { mints++; return designReview ? crypto.randomUUID() : '11111111-1111-4111-8111-111111111111'; }, isCurrent: context => privacy.isCurrent(context), onAuthorizationLoss() { privacy.close(); } });
     const privacy = createPrivacyController({ timers, now: () => Date.parse(stamp), mask() { runtime.close(); }, reveal() {}, cancelReads() { void client.cancelQueries(undefined, { revert: false, silent: true }); }, clearProtected() { clearWorkspaceQueries(client); }, verify: signal => runtime.verify(signal) });
-    return { client, runtime, privacy };
+    const memory = () => {
+      const snapshot = privacy.getSnapshot();
+      if (snapshot.phase !== 'available') throw new Error('Research fixture context is unavailable');
+      return client.getQueryData<Record<string, unknown>>([...protectedQueryKey(snapshot.context, 'research'), 'local-intent']);
+    };
+    const probe: ResearchPreviewProbe = {
+      assertEffects(admissions, intents) {
+        if (admissionPosts !== admissions || mints !== intents || cancellations !== 0 || otherMutations !== 0)
+          throw new Error('Research effect counts changed: ' + [admissionPosts, mints, cancellations, otherMutations].join('/'));
+      },
+      assertNoIntent() { if (memory()?.intent !== undefined) throw new Error('History observation allocated a local intent'); },
+      assertHistorySelected() {
+        probe.assertNoIntent();
+        const observed = memory()?.observedLaunch;
+        if (!observed || typeof observed !== 'object' || !('workflow_instance_id' in observed) ||
+          observed.workflow_instance_id !== historyLaunch.workflow_instance_id ||
+          !('investigation_ref' in observed) || JSON.stringify(observed.investigation_ref) !== JSON.stringify(historyLaunch.investigation_ref))
+          throw new Error('Navigation or report return replaced the observed history run');
+      },
+      holdUnknownIntent() {
+        const intent = memory()?.intent;
+        if (!intent || typeof intent !== 'object' || !('phase' in intent) || intent.phase !== 'unknown')
+          throw new Error('The original unknown local intent is missing');
+        const held = JSON.stringify(intent);
+        return () => {
+          probe.assertEffects(1, 1);
+          if (memory()?.intent !== intent || JSON.stringify(memory()?.intent) !== held)
+            throw new Error('Navigation or history changed the original unknown intent');
+        };
+      },
+      assertAdmission(question) {
+        probe.assertEffects(1, 1);
+        const intent = memory()?.intent;
+        if (!intent || typeof intent !== 'object' || !('phase' in intent) || intent.phase !== 'admitted' ||
+          !('body' in intent) || intent.body !== originalBody || !('key' in intent) || intent.key !== originalKey)
+          throw new Error('Explicit Ask did not preserve its one acknowledged admission intent');
+        const request: unknown = JSON.parse(originalBody ?? 'null');
+        if (!request || typeof request !== 'object' || !('query' in request) || request.query !== question ||
+          !('scope_expression' in request) || JSON.stringify(request.scope_expression) !== JSON.stringify({ kind: 'SELECTED_SOURCES', source_ids: ['source-fixture'] }))
+          throw new Error('Explicit Ask lost its held draft or selected source scope');
+      },
+    };
+    return { client, runtime, privacy, probe };
   });
+  useEffect(() => { onProbe?.(environment.probe); }, [environment, onProbe]);
   useEffect(() => {
     const unsubscribe = environment.privacy.subscribe(() => { const snapshot = environment.privacy.getSnapshot(); if (snapshot.phase === 'available') environment.runtime.bind(snapshot.context); });
     void environment.privacy.refresh();
@@ -111,10 +189,11 @@ export function ResearchPreview({ designReview = false }: { readonly designRevie
 export const playResearchJourney = async ({ canvas, userEvent }: {
   readonly canvas: { findByRole(role: string, options: { readonly name: string; readonly exact?: boolean }): Promise<HTMLElement>;
     getByRole(role: string, options: { readonly name: string; readonly exact?: boolean }): HTMLElement;
+    queryByRole(role: string, options: { readonly name: string; readonly exact?: boolean }): HTMLElement | null;
     getAllByRole(role: string, options: { readonly name: string }): HTMLElement[];
     findByText(text: string | RegExp, options?: { readonly selector: string }): Promise<HTMLElement>; queryByText(text: string): HTMLElement | null };
   readonly userEvent: { click(element: HTMLElement): Promise<void>; type(element: HTMLElement, text: string): Promise<void>; selectOptions(element: HTMLElement, value: string): Promise<void> };
-}) => {
+}, probe: ResearchPreviewProbe) => {
   await userEvent.selectOptions(await canvas.findByRole('combobox', { name: 'Project', exact: true }), 'project-fixture');
   await userEvent.click(await canvas.findByText('Sources for your next question'));
   await userEvent.click(await canvas.findByRole('checkbox', { name: 'How source versions preserve evidence' }));
@@ -122,9 +201,19 @@ export const playResearchJourney = async ({ canvas, userEvent }: {
   await userEvent.type(await canvas.findByRole('textbox', { name: 'Research question' }), 'How does a saved question preserve its evidence?');
   const ask = await canvas.findByRole('button', { name: 'Ask', exact: true }); ask.click(); ask.click();
   await canvas.findByText('The launch outcome is unknown. The original question and request identity are preserved.', { selector: '.er-status > span' });
+  const unknownUnchanged = probe.holdUnknownIntent();
+  if (canvas.queryByRole('button', { name: 'Ask another question', exact: true })) throw new Error('Unknown local intent exposed history dismissal');
+  await userEvent.click(canvas.getByRole('button', { name: 'Refresh recent research' }));
+  const historyRun = await canvas.findByRole('button', { name: 'Read this run' });
+  if (!(historyRun instanceof HTMLButtonElement) || !historyRun.disabled) throw new Error('Unknown intent allowed history to replace its run');
+  await userEvent.click(historyRun);
+  unknownUnchanged();
   await userEvent.click(canvas.getByRole('link', { name: 'Studio', exact: true }));
   await canvas.findByRole('heading', { name: 'Studio', exact: true });
   await userEvent.click(canvas.getByRole('link', { name: 'Research', exact: true }));
+  await canvas.findByRole('button', { name: 'Reconcile this question' });
+  if (canvas.queryByRole('button', { name: 'Ask another question', exact: true })) throw new Error('Navigation exposed dismissal of an unknown local intent');
+  unknownUnchanged();
   await userEvent.click(await canvas.findByRole('button', { name: 'Reconcile this question' }));
   await canvas.findByText('The run finished. Review the draft answer.');
   await userEvent.click(canvas.getAllByRole('button', { name: 'Open saved report' })[0] as HTMLElement);
@@ -138,6 +227,55 @@ export const playResearchJourney = async ({ canvas, userEvent }: {
   await canvas.findByText(excerpt);
   if (canvas.queryByText('Supported')) throw new Error('Verified citation was promoted to semantic claim support');
 };
+
+/** One preexisting terminal history row, no local intent; only explicit Ask admits new work. */
+export async function playResearchHistoryReturn({ canvas, userEvent }: Parameters<typeof playResearchJourney>[0],
+  probe: ResearchPreviewProbe, historyState: ResearchHistoryState) {
+  const sourceName = 'How source versions preserve evidence', draft = 'Which source revisions should the next question keep?';
+  await userEvent.selectOptions(await canvas.findByRole('combobox', { name: 'Project', exact: true }), 'project-fixture');
+  await userEvent.click(await canvas.findByText('Sources for your next question'));
+  await userEvent.click(await canvas.findByRole('checkbox', { name: sourceName }));
+  await userEvent.click(canvas.getByRole('link', { name: 'Research', exact: true }));
+  const read = await canvas.findByRole('button', { name: 'Read this run' });
+  probe.assertNoIntent(); probe.assertEffects(0, 0);
+  await userEvent.click(read);
+  await canvas.findByText(historyState === 'CANCELLED'
+    ? 'This run was cancelled. Cancellation is not completion.' : 'The run finished. Review the draft answer.');
+  await canvas.findByRole('button', { name: 'Ask another question', exact: true });
+  probe.assertHistorySelected(); probe.assertEffects(0, 0);
+  await userEvent.click(canvas.getByRole('link', { name: 'Sources', exact: true }));
+  const source = await canvas.findByRole('checkbox', { name: sourceName });
+  if (!(source instanceof HTMLInputElement) || !source.checked) throw new Error('History navigation cleared next-question source selection');
+  await userEvent.click(canvas.getByRole('link', { name: 'Research', exact: true }));
+  await canvas.findByRole('button', { name: 'Ask another question', exact: true });
+  probe.assertHistorySelected(); probe.assertEffects(0, 0);
+  await userEvent.click(canvas.getAllByRole('button', { name: 'Open saved report' })[0] as HTMLElement);
+  await canvas.findByText('40 declared');
+  probe.assertHistorySelected(); probe.assertEffects(0, 0);
+  await userEvent.click(canvas.getByRole('button', { name: 'Close report', exact: true }));
+  const held = await canvas.findByRole('textbox', { name: 'Next question draft (unsent)', exact: true });
+  await userEvent.type(held, draft);
+  probe.assertHistorySelected(); probe.assertEffects(0, 0);
+  if (canvas.queryByRole('button', { name: 'Ask', exact: true })) throw new Error('Viewed history exposed admission before release');
+  await userEvent.click(canvas.getByRole('button', { name: 'Ask another question', exact: true }));
+  const question = await canvas.findByRole('textbox', { name: 'Research question', exact: true });
+  await announcementUntil(() => document.activeElement === question);
+  if (!(question instanceof HTMLTextAreaElement) || question.value !== draft) throw new Error('History release lost the held next-question draft');
+  probe.assertNoIntent(); probe.assertEffects(0, 0);
+  if (canvas.queryByRole('button', { name: 'Ask another question', exact: true })) throw new Error('History release kept the old run selected');
+  const details = canvas.getByRole('heading', { name: 'Selected scope', exact: true }).closest('details');
+  if (!(details instanceof HTMLDetailsElement)) throw new Error('Next-question source scope is missing');
+  if (!details.open) await userEvent.click(canvas.getByRole('heading', { name: 'Selected scope', exact: true }));
+  const labels = details.querySelectorAll('li');
+  if (labels.length !== 1 || labels[0]?.textContent !== sourceName) throw new Error('History release changed the next-question source scope');
+  const ask = canvas.getByRole('button', { name: 'Ask', exact: true });
+  if (!(ask instanceof HTMLButtonElement) || ask.disabled) throw new Error('Released history did not enable the held question');
+  probe.assertEffects(0, 0);
+  await userEvent.click(ask);
+  await canvas.findByText('The run finished. Review the draft answer.');
+  probe.assertAdmission(draft);
+  if (canvas.queryByRole('button', { name: 'Reconcile this question' })) throw new Error('History fixture simulated a lost launch acknowledgement');
+}
 
 export async function playResearchAnnouncements({ canvas, userEvent }: Parameters<typeof playResearchJourney>[0]) {
   await userEvent.selectOptions(await canvas.findByRole('combobox', { name: 'Project', exact: true }), 'project-fixture');

@@ -24,7 +24,8 @@ import { Shell } from "./Shell";
 import { FixtureWorkspace } from "./FixtureWorkspace";
 import { createPrivacyController } from "./privacy";
 import { BundlePreview, playBundleJourney } from "./ImportBundlePreview";
-import { ResearchPreview, playResearchJourney, playResearchAnnouncements } from "./ResearchPreview";
+import { ResearchPreview, playResearchJourney, playResearchAnnouncements, playResearchHistoryReturn,
+  type ResearchHistoryState, type ResearchPreviewProbe } from "./ResearchPreview";
 import { StudioPreview, playStudioJourney, playStudioAnnouncements } from "./StudioPreview";
 import { ArtifactActionsPreview, playArtifactActionsJourney } from "./ArtifactActionsPreview";
 import { WorkspaceLinkPreview, playWorkspaceLinkJourney } from "./WorkspaceLinkJourney";
@@ -41,7 +42,21 @@ function ShellPreview() {
 }
 export default { title: "Workspace/Shell", component: ShellPreview, parameters: { layout: "fullscreen" } };
 export const ArtifactActionsJourney = { render: () => <ArtifactActionsPreview />, play: playArtifactActionsJourney };
-export const LiveResearchJourney = { render: () => <ResearchPreview />, play: playResearchJourney };
+function researchJourneyStory(historyState?: ResearchHistoryState) {
+  let probe: ResearchPreviewProbe | undefined;
+  return {
+    render: () => <ResearchPreview {...(historyState === undefined ? {} : { historyState })} onProbe={value => { probe = value; }} />,
+    play: async (context: Parameters<typeof playResearchJourney>[0]) => {
+      await announcementUntil(() => probe !== undefined);
+      if (!probe) throw new Error('Research fixture probe is missing');
+      if (historyState === undefined) await playResearchJourney(context, probe);
+      else await playResearchHistoryReturn(context, probe, historyState);
+    },
+  };
+}
+export const LiveResearchJourney = researchJourneyStory();
+export const HistoryCompletedResearchReturn = researchJourneyStory('ENGINE_COMPLETED');
+export const HistoryCancelledResearchReturn = researchJourneyStory('CANCELLED');
 export const MaterialWorkspace = { render: () => <ResearchPreview designReview /> };
 export const MaterialPreferencesJourney = { render: () => <ResearchPreview designReview />, play: playMaterialPreferences };
 export const MaterialReadingJourney = { render: () => <ResearchPreview designReview />, play: playMaterialReading };

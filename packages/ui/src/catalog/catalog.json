@@ -367,6 +367,10 @@
     }
   ],
   "scenarios": {
+    "research-history-return": [
+      "workspace-shell--history-completed-research-return",
+      "workspace-shell--history-cancelled-research-return"
+    ],
     "material-redesign": [
       "workspace-shell--material-preferences-journey",
       "workspace-shell--material-reading-journey",

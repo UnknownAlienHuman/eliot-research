@@ -41,12 +41,19 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
   const history = useQuery(options.history());
   const saved = memory.data, launch = saved?.intent?.launch ?? saved?.observedLaunch;
   const historyHeading = useRef<HTMLHeadingElement>(null), returningFromReport = useRef(false);
+  const composer = useRef<HTMLDivElement>(null), returningToComposer = useRef(false);
   useLayoutEffect(() => {
     if (!saved?.artifact && returningFromReport.current) {
       returningFromReport.current = false;
       historyHeading.current?.focus();
     }
   }, [saved?.artifact]);
+  useLayoutEffect(() => {
+    if (returningToComposer.current && !saved?.intent && !saved?.observedLaunch && privacy.isCurrent(context)) {
+      returningToComposer.current = false;
+      composer.current?.querySelector('textarea')?.focus();
+    }
+  }, [saved?.intent, saved?.observedLaunch, privacy, context]);
   const displayTime = (iso: string) => {
     const date = new Date(iso);
     return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(date) : iso;
@@ -120,6 +127,23 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
   const progress = status.isError ? undefined : status.data;
   const terminal = saved?.intent?.launch && progress?.workflow_instance_id === saved.intent.launch.workflow_instance_id &&
     progress.execution_state !== 'ACTIVE' && !status.isError && !status.isFetching;
+  const observed = saved?.intent ? undefined : saved?.observedLaunch;
+  const historyTerminal = observed && status.isSuccess && !status.isFetching &&
+    progress?.workflow_instance_id === observed.workflow_instance_id &&
+    progress.investigation_ref.id === observed.investigation_ref.id &&
+    progress.investigation_ref.revision === observed.investigation_ref.revision &&
+    (progress.execution_state === 'ENGINE_COMPLETED' || progress.execution_state === 'CANCELLED');
+  const dismissHistory = () => {
+    if (!observed || !historyTerminal || running.current || !privacy.isCurrent(context)) return;
+    const currentStatus = client.getQueryState(options.status(observed).queryKey);
+    if (currentStatus?.status !== 'success' || currentStatus.fetchStatus !== 'idle' || currentStatus.data !== progress) return;
+    write(old => {
+      // A history view owns only its selection, never a pending or uncertain mutation intent.
+      if (old.intent || old.observedLaunch !== observed) return old;
+      returningToComposer.current = true;
+      const { observedLaunch: _launch, ...rest } = old; return rest;
+    });
+  };
   const state = saved?.intent?.phase === 'unknown' || status.isError ? 'degraded'
     : progress?.execution_state === 'CANCELLED' ? 'cancelled'
     : progress?.failure ? 'error' : progress?.execution_state === 'ENGINE_COMPLETED' ? 'useful'
@@ -142,15 +166,18 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
       <Status>{text.blocked}</Status><div className="er-live-actions"><Button variant="tonal" disabled={configuration.isFetching} onClick={() => { void configuration.refetch(); }}>{text.check}</Button><WorkspaceLink className="er-shell-link" to="/connections">{text.connections}</WorkspaceLink></div>
     </div> : null}
     {inputError && <Status tone="error">{text.input}</Status>}
-    {(terminal || progress?.answer.availability === 'draft') && <div className="er-live-actions">
+    {(terminal || historyTerminal || progress?.answer.availability === 'draft') && <div className="er-live-actions">
     {progress?.answer.availability === 'draft' && <><Button variant="primary" onClick={() => { if (privacy.isCurrent(context) && progress.answer.availability === 'draft') { const artifact = progress.answer.artifact_ref; write(old => ({ ...old, artifact })); } }}>{text.report}</Button></>}
     {terminal && <Button variant="text" onClick={() => {
       if (privacy.isCurrent(context) && !running.current) write(old => {
+        if (old.intent?.key !== saved?.intent?.key) return old;
+        returningToComposer.current = true;
         const { intent: _intent, observedLaunch: _launch, ...rest } = old; return rest;
       });
     }}>{text.next}</Button>}
+    {historyTerminal && <Button variant="text" onClick={dismissHistory}>{text.next}</Button>}
     </div>}
-    <ResearchRunFeature key={saved?.intent?.key ?? 'next-question'} locale={locale} state={state}
+    <div ref={composer}><ResearchRunFeature key={saved?.intent?.key ?? 'next-question'} locale={locale} state={state}
       scope={saved?.intent?.scope ?? scope} busy={busy}
       questionHeld={saved?.intent !== undefined || saved?.observedLaunch !== undefined}
       draftQuestion={nextQuestionDraft} onDraftQuestionChange={value => {
@@ -160,7 +187,7 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
       {...(saved?.intent ? { question: saved.intent.question } : {})}
       {...(progress ? { progress, ...(progress.failure ? { firstCause: progress.failure } : {}) } : {})}
       onAsk={ask} {...(launch ? { onReadStatus: () => { void status.refetch(); } } : {})}
-      {...(saved?.intent?.phase === 'unknown' ? { onRecover: reconcile } : {})} />
+      {...(saved?.intent?.phase === 'unknown' ? { onRecover: reconcile } : {})} /></div>
     {saved?.intent?.phase === 'unknown' && <div><Status>{text.unknown}</Status><p>{text.same}</p>
       <Button variant="tonal" disabled={busy} onClick={reconcile}>{text.recover}</Button></div>}
     <section className="er-live-history" aria-label={text.history}><div className="er-live-history-heading"><h2 ref={historyHeading} tabIndex={-1}>{text.history}</h2>
