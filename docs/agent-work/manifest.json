@@ -361,7 +361,6 @@
       ],
       "owned_paths": [
         "packages/platform-cloudflare/src/outbox.ts",
-        "packages/platform-cloudflare/src/queue.ts",
         "packages/platform-cloudflare/src/delivery-types.ts",
         "packages/platform-cloudflare/src/delivery-runtime.ts",
         "packages/platform-cloudflare/src/outbox-dispatcher.ts",

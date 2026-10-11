@@ -20,3 +20,11 @@ The local replay uses captured Queue send/ACK ports and injected failures. It pr
 Changed production TypeScript: minus 31 nonblank lines, counting comments and excluding tests/fixtures/JSONC. The sentinel, primary terminal branch and consumer backoff policy are removed. Bundle delta: `NOT_MEASURED`; no previous bundle result is promoted to this candidate.
 
 Remaining S64 gates include disposable native Queue/DLQ transfer, the applicable terminal-diagnostic/current-authority replay path and their own retained acceptance. This stage does not close PR #256, S92 or release acceptance.
+
+## Legacy Queue API retirement
+
+A subsequent source pass against `1f3f4e85e5ecb5fbe1f540f0da747fbdab63364a` removes the unused `platform-cloudflare/src/queue.ts` scaffold and its root re-export. Its six declarations had no named consumer outside their definitions in the published tree. The classifier still offered an application attempt ceiling and exponential retry policy; retaining that unused API would leave a second policy available beside the accepted native consumer. The private workspace package exposes only its root, so no declared subpath needs compatibility treatment.
+
+ER-15 and its manifest remove the retired path together. The active consumer, producer outbox recovery, persisted codecs, D1 leases and receipts are unchanged. This retirement removes another 47 nonblank production TypeScript lines, including comments and excluding documentation. Emitted bundle delta remains `NOT_MEASURED`.
+
+The owning Core/platform source graph and packet consistency are checked for the narrowed export surface. Earlier behavioral checks remain evidence for their original candidate; no unchanged unit or Workerd case is repeated, and this source retirement does not qualify native DLQ transfer or owner replay.

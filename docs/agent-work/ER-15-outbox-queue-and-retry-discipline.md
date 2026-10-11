@@ -12,7 +12,6 @@ authority. A Queue acknowledgement is emitted only after durable consumer settle
 ## Owned paths
 
 - `packages/platform-cloudflare/src/outbox.ts`
-- `packages/platform-cloudflare/src/queue.ts`
 - `packages/platform-cloudflare/src/delivery-types.ts`
 - `packages/platform-cloudflare/src/delivery-runtime.ts`
 - `packages/platform-cloudflare/src/outbox-dispatcher.ts`
@@ -58,7 +57,7 @@ Failure rules:
 - `FAILED`, `BLOCKED` and `CANCELLED` operation receipts never acknowledge successful delivery;
 - malformed/poison messages remain unacknowledged for Cloudflare DLQ handling;
 - settlement uncertainty never triggers a compensating side effect;
-- retries are bounded by explicit backoff and the configured platform `max_retries`/DLQ policy.
+- consumer retries use the supplied bounded native delay; Cloudflare owns configured `max_retries` and DLQ transfer.
 
 ## Acceptance
 
