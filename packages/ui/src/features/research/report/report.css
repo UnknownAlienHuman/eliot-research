@@ -1,4 +1,12 @@
-/* U4-M Report feature styles. Semantic tokens only; no raw visual values. */
+/* U4-M Report feature styles. Semantic tokens only; no raw visual values.
+ *
+ * Direction: a report reads as an article, not a stack of cards. Facts are separated by
+ * divider and spacing rhythm, the manifest columns align on one baseline, and the reading
+ * column is bounded by the reading-measure token so long Russian or long English body copy
+ * keeps its 65-80 character measure. Technical identifiers wrap inside their own diagnostic
+ * block and never widen the reading column.
+ */
+
 .er-report {
   display: grid;
   gap: var(--eliot-space-section);
@@ -11,10 +19,12 @@
 
 .er-report__head {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   justify-content: space-between;
   gap: var(--eliot-space-panel);
   flex-wrap: wrap;
+  padding-block-end: var(--eliot-space-panel);
+  border-block-end: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
 }
 
 .er-report__title {
@@ -30,8 +40,11 @@
 .er-report__export {
   display: grid;
   gap: var(--eliot-space-panel);
+  max-width: var(--eliot-type-reading-measure);
 }
 
+/* Manifest facts align as label-over-value rows on a shared baseline instead of three equal
+ * cards. The label row is small and quiet; the value row carries the reading type. */
 .er-report__facts {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -41,30 +54,32 @@
 
 .er-report__fact {
   display: grid;
-  gap: var(--eliot-space-block-control);
+  gap: var(--eliot-space-inline-control);
+  align-content: start;
 }
 
 .er-report__fact dt {
   color: var(--md-sys-color-on-surface-variant);
-  font-size: var(--eliot-type-label-large-size);
-  line-height: var(--eliot-type-label-large-line-height);
+  font-size: var(--eliot-type-label-small-size);
+  line-height: var(--eliot-type-label-small-line-height);
   font-weight: var(--eliot-type-font-weight-medium);
   letter-spacing: var(--eliot-type-letter-spacing-label);
 }
 
 .er-report__fact dd {
   margin: 0;
-  font-size: var(--eliot-type-body-large-size);
-  line-height: var(--eliot-type-body-large-line-height);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
   overflow-wrap: anywhere;
 }
 
 .er-report__freshness h3,
 .er-report__export h3 {
   margin: 0;
-  font-size: var(--eliot-type-title-medium-size);
-  line-height: var(--eliot-type-title-medium-line-height);
+  font-size: var(--eliot-type-title-small-size);
+  line-height: var(--eliot-type-title-small-line-height);
   font-weight: var(--eliot-type-font-weight-medium);
+  letter-spacing: var(--eliot-type-letter-spacing-label);
 }
 
 .er-report__freshness p,
@@ -76,6 +91,8 @@
   overflow-wrap: anywhere;
 }
 
+/* Reader typography: section rows use the reading size and line height, so a section that is
+ * already read back reads as report body rather than interface copy. */
 .er-report__sections {
   display: grid;
   gap: var(--eliot-space-block-control);
@@ -92,20 +109,18 @@
   border-block-end: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
   overflow-wrap: anywhere;
 }
+
 .er-report__section > button,
 .er-report__export > button {
   justify-self: start;
 }
+
 @media (width < 48rem) {
-  .er-report__facts { grid-template-columns: minmax(0, 1fr); }
+  .er-report__facts {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
-.er-report__section-body {
-  font-size: var(--eliot-type-body-medium-size);
-  line-height: var(--eliot-type-body-medium-line-height);
-  font-family: var(--eliot-type-font-family-mono);
-  overflow-wrap: anywhere;
-}
 
 .er-report__section-label {
   font-size: var(--eliot-type-body-large-size);
@@ -114,6 +129,8 @@
   overflow-wrap: anywhere;
 }
 
+/* Diagnostics stay recessive: small type, outline separation, no box. Identifiers wrap here
+ * and never widen the reading column. */
 .er-report__section-details {
   display: grid;
   grid-column: 1 / -1;
@@ -132,13 +149,14 @@
 
 .er-report__section-technical {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--eliot-space-block-control);
   margin: 0;
 }
 
 .er-report__section-technical > div {
   display: grid;
-  gap: var(--eliot-space-block-control);
+  gap: var(--eliot-space-inline-control);
 }
 
 .er-report__section-technical dt {
@@ -157,6 +175,8 @@
   line-height: var(--eliot-type-label-medium-line-height);
 }
 
+/* Degraded and error keep a surface because they must not be missed, but they are now quiet
+ * bands at the reading measure instead of full-width blocks. */
 .er-report__degraded,
 .er-report__error {
   display: grid;
@@ -165,6 +185,7 @@
   padding: var(--eliot-space-panel);
   border-radius: var(--eliot-shape-medium);
   background: var(--md-sys-color-surface-container-highest);
+  max-width: var(--eliot-type-reading-measure);
 }
 
 .er-report__error {
@@ -188,7 +209,7 @@
   overflow-wrap: anywhere;
 }
 
-/* Report reading: preserve block rhythm after the shared reader's margin reset. */
-.er-live-report-section > .er-safe-markdown > * + * {
+/* Report reading: preserve block rhythm after the shared reader''s margin reset. */
+.er-live-report-body > .er-safe-markdown > * + * {
   margin-block-start: var(--eliot-space-panel);
 }
