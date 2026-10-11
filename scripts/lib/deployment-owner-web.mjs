@@ -5,6 +5,7 @@ import { createRequire, isBuiltin } from "node:module";
 import { parseDeploymentJsonc } from "./deployment-jsonc.mjs";
 import { inspectWebBuild, OWNER_WEB_INITIAL_GZIP_BUDGET_BYTES, WORKER_GZIP_BUDGET_BYTES } from "./emitted-build-budget-evidence.mjs";
 import { assertCoreWorkerRouteParity } from "./core-worker-route-parity.mjs";
+import { pinGeneratedDeploymentConfig } from "./deployment-build-inputs.mjs";
 import { DEPLOYMENT_SCHEMA_MANIFEST_PROTOCOL, DEPLOYMENT_SCHEMA_SCOPE,
   DEPLOYMENT_SCHEMA_EXCLUSIONS, deploymentSchemaCatalogueSha256 } from "./deployment-schema-attestation.mjs";
 import { DEPLOYMENT_SCHEMA_MANIFEST_PROVENANCE_PROTOCOL,
@@ -91,9 +92,8 @@ export async function normalizeOwnerWebDeploymentConfig({ root, expectedBytes })
   const normalized = Buffer.from(JSON.stringify(config, null, 2) + "\n", "utf8");
   await writeFile(absolute, normalized);
   if (!(await stableFile(root, absolute)).equals(normalized)) fail("normalized config changed during pin");
-  return { bytes: normalized, config, pin: Object.freeze({ path: CONFIG, sha256: digest(normalized),
-    byte_length: normalized.byteLength, worker_name: config.name, worker_main: "apps/eliotr-core/src/index.ts",
-    assets_directory: CLIENT }) };
+  return { bytes: normalized, config, pin: await pinGeneratedDeploymentConfig({ root,
+    path: absolute, assetProfile: "owner-web" }) };
 }
 
 export function createOwnerWebBuildContext({ manifest, generatedConfigPin }) {
@@ -203,9 +203,10 @@ function stringArray(value, label) {
   }
   return value;
 }
-function platformImport(id) { return isBuiltin(id) || ["cloudflare:workers", "cloudflare:sockets", "cloudflare:email"].includes(id); }
+function platformImport(id) { return isBuiltin(id) || ["cloudflare:workers", "cloudflare:sockets", "cloudflare:email", "cloudflare:workflows"].includes(id); }
 function moduleInputPath(root, id) {
-  if (id.startsWith("\0") || id.startsWith("virtual:") || platformImport(id)) return null;
+  if (id.startsWith("\0") || id.startsWith("virtual:") || platformImport(id) ||
+      id === "builtin:esm-external-require-path") return null;
   const filename = id.split("?")[0];
   if (!path.isAbsolute(filename)) fail("unclassified module id in observed graph: " + id);
   const absolute = path.resolve(filename);
@@ -258,7 +259,13 @@ function validateObservedWorkerGraph(root, graph, inputs, outputs) {
     if (chunk.facadeModuleId !== null && (typeof chunk.facadeModuleId !== "string" || !observed.has(chunk.facadeModuleId))) {
       fail("entry facade is absent from observed module graph");
     }
-    if (stringArray(chunk.moduleIds, "chunk modules").some((id) => !observed.has(id))) fail("chunk contains unobserved modules");
+    // Rolldown's emitted runtime is created after getModuleIds() observation.
+    // Admit only its exact output-only identity, with no entry facade or dynamic entry.
+    if (stringArray(chunk.moduleIds, "chunk modules").some((id) => !observed.has(id) &&
+        (id !== "\0rolldown/runtime.js" || chunk.facadeModuleId !== null || chunk.isEntry || chunk.isDynamicEntry ||
+          !Array.isArray(chunk.renderedModules) || !chunk.renderedModules.some(module => module.id === id)))) {
+      fail("chunk contains unobserved modules");
+    }
     stringArray(chunk.imports, "chunk imports");
     stringArray(chunk.dynamicImports, "chunk dynamic imports");
     chunks.set(chunk.fileName, chunk);
@@ -306,7 +313,8 @@ async function verifyPreparedBudget(root, payload, graphBytes, graph, manifest, 
     for (const module of chunk.renderedModules) {
       if (!isRecord(module) || typeof module.id !== "string") fail("invalid rendered source observation");
       const id = module.id;
-      if (id.includes("\0") || id.startsWith("virtual:") || id.startsWith("cloudflare:")) {
+      if (id.includes("\0") || id.startsWith("virtual:") || id.startsWith("cloudflare:") ||
+          id === "builtin:esm-external-require-path") {
         virtualInputs.add(id);
         continue;
       }

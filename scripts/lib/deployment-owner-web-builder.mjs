@@ -11,6 +11,21 @@ const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const slash = value => value.split(path.sep).join("/");
 const fail = message => { throw new Error("Owner-web build: " + message); };
 
+/** frame-ancestors is enforced by the response header, never an HTML meta tag. */
+export function normalizeInboxDocumentPolicy(html, headers) {
+  const policy = "default-src 'none'; connect-src 'self'; script-src 'self'; style-src 'self'; base-uri 'none'; form-action 'none'; object-src 'none'; frame-ancestors 'none'; img-src 'none'; font-src 'none'; manifest-src 'none'; worker-src 'none'";
+  const meta = '<meta http-equiv="Content-Security-Policy" content="' + policy + '">';
+  const headerPolicy = "default-src 'none'; script-src 'self'; style-src 'self'; style-src-elem 'self'; style-src-attr 'none'; img-src 'self'; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'; frame-ancestors 'none'; form-action 'self'";
+  const declarations = headers.split("\n").filter(line => /^\s+Content-Security-Policy:/iu.test(line));
+  if (html.split(meta).length !== 2 || !headers.startsWith("/*\n") ||
+      declarations.length !== 1 || declarations[0].trim() !== "Content-Security-Policy: " + headerPolicy ||
+      /^\s+!\s*Content-Security-Policy\b/imu.test(headers)) {
+    fail("inbox document/header policy delivery differs from the closed profile");
+  }
+  return html.replace(meta, '<meta http-equiv="Content-Security-Policy" content="' +
+    policy.replace("; frame-ancestors 'none'", "") + '">');
+}
+
 async function inventory(root, prefix) {
   const records = [];
   async function walk(directory) {
@@ -49,6 +64,9 @@ export async function buildOwnerWebDeploymentGraph({ root, environment, execute 
   // The rollback cannot reinstall the historical cache/fetch worker.
   await cp(path.join(webPublic, "sw.js"), path.join(pwa, "sw.js"));
   await cp(path.join(webPublic, "_headers"), path.join(pwa, "_headers"));
+  const inboxDocument = path.join(pwa, "agent-inbox/index.html");
+  await writeFile(inboxDocument, normalizeInboxDocumentPolicy(await readFile(inboxDocument, "utf8"),
+    (await readFile(path.join(pwa, "_headers"), "utf8")).replaceAll("\r\n", "\n")));
   const legacyOutputs = await inventory(root, "apps/eliotr-pwa/dist");
   const rollbackDirectory = path.resolve(root, ".eliotr-state", "owner-web-rollback-" + randomUUID());
   await mkdir(rollbackDirectory);
@@ -74,7 +92,8 @@ export async function buildOwnerWebDeploymentGraph({ root, environment, execute 
   const observedSourceInputs = new Set();
   const virtualInputs = [];
   for (const id of new Set(observed.chunks.flatMap(chunk => chunk.renderedModules.map(module => module.id)))) {
-    if (id.includes("\0") || id.startsWith("virtual:") || id.startsWith("cloudflare:")) { virtualInputs.push(id); continue; }
+    if (id.includes("\0") || id.startsWith("virtual:") || id.startsWith("cloudflare:") ||
+        id === "builtin:esm-external-require-path") { virtualInputs.push(id); continue; }
     const filename = id.split("?")[0];
     if (!path.isAbsolute(filename)) fail("unclassified compiler module " + id);
     const actual = await realpath(filename);

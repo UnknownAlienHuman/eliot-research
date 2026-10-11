@@ -14,7 +14,8 @@ import { assertMaintenanceCapabilityProfile, readActiveDeploymentIdentity, readA
   readFullReleaseBlockers, requireSameMaintenanceCapabilityReadback,
   selectDeploymentGoogleTransport, selectDeploymentAiSearchNamespaces,
   verifyDeploymentSchemaGenerations } from "./lib/deployment-maintenance.mjs";
-import { loadMaintenanceRouteUpdate, requireUnchangedMaintenanceRouteUpdate } from "./lib/deployment-route-update.mjs";
+import { loadMaintenanceRouteUpdate, maintenanceRouteBaselineConfiguration,
+  requireUnchangedMaintenanceRouteUpdate } from "./lib/deployment-route-update.mjs";
 import { captureMaintenanceAiGateways, requireSameMaintenanceAiGateways } from "./lib/deployment-ai-gateways.mjs";
 import { loadMaintenanceAiSearchBootstrap, requireUnchangedMaintenanceAiSearchBootstrap } from
   "./lib/deployment-ai-search-bootstrap.mjs";
@@ -182,9 +183,10 @@ export function parseDeploymentArguments(args) {
 }
 
 function run(command, args, cwd, env) {
-  const spawnArgs = process.platform === "win32" ? args.map((argument, index) =>
+  const useShell = process.platform === "win32" && command !== process.execPath;
+  const spawnArgs = useShell ? args.map((argument, index) =>
     args[index - 1] === "--secrets-file" ? `"${argument}"` : argument) : args;
-  const result = spawnSync(command, spawnArgs, { cwd, env, stdio: "inherit", shell: process.platform === "win32" });
+  const result = spawnSync(command, spawnArgs, { cwd, env, stdio: "inherit", shell: useShell });
   if (result.error || result.status !== 0) throw new Error(`Deployment command failed: ${command} (exit ${result.status ?? "unknown"})`);
 }
 
@@ -653,8 +655,10 @@ export async function deployCloudflare({ confirmLive = false, ownerWeb = false, 
   const maintenanceBindingBaselineReadback = maintenanceAiSearchBootstrap !== null
     ? maintenanceAiSearchBaselineReadback : maintenancePrimaryBindingBootstrap !== null
       ? maintenancePrimaryBaselineReadback : null;
+  const maintenanceRuntimeBaselineConfig = maintenanceRouteBaselineConfiguration({ routeUpdate, config,
+    bindingBootstrap: maintenanceBindingBootstrap });
   const priorWorkerReadback = maintenanceBindingBootstrap === null
-    ? await readWorker(priorWorkerEnv, input, config, {
+    ? await readWorker(priorWorkerEnv, input, maintenanceRuntimeBaselineConfig, {
     fetchImpl, observedDeploymentGeneration: activeWorkerBaseline.generation,
     approvedRuntimeCandidate,
     approvedMcpAccessTransition: maintenanceMcpAccessTransition,
@@ -753,7 +757,7 @@ export async function deployCloudflare({ confirmLive = false, ownerWeb = false, 
       ? await readCapabilities({ input, fetchImpl: ownerFetch }) : null;
     const currentIdentity = await readActiveWorker({ env, input, fetchImpl });
     const currentWorker = await readWorker(priorWorkerEnv, input,
-      maintenanceBindingBootstrap === null ? config : maintenanceBindingBaselineConfig, {
+      maintenanceBindingBootstrap === null ? maintenanceRuntimeBaselineConfig : maintenanceBindingBaselineConfig, {
       fetchImpl,
       observedDeploymentGeneration: activeWorkerBaseline.generation,
       expectedConfigurationBaseline: priorWorkerConfigurationBaseline,
@@ -931,6 +935,10 @@ export async function deployCloudflare({ confirmLive = false, ownerWeb = false, 
       candidate_route_count: routeUpdate.candidate_routes.length,
       added_route_count: routeUpdate.added_routes.length,
       changed_route_count: routeUpdate.changed_routes.length,
+      ...(routeUpdate.runtime_compatibility === undefined ? {} : {
+        runtime_compatibility: routeUpdate.runtime_compatibility,
+      }),
+      ...(routeUpdate.browser_binding === undefined ? {} : { browser_binding: routeUpdate.browser_binding }),
       removed_route_count: 0,
       service_principal_allowlist: "EMPTY_PRESERVED",
     } }),

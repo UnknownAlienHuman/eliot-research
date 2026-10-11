@@ -13,7 +13,12 @@ export function boundaryModuleImports(text, filename) {
     else if (ts.isImportEqualsDeclaration(node) && ts.isExternalModuleReference(node.moduleReference)) {
       add(node.moduleReference.expression);
     } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) add(node.argument.literal);
-    else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) add(node.arguments[0]);
+    else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+      if (!node.arguments[0] || !ts.isStringLiteralLike(node.arguments[0])) {
+        throw new Error(filename + " contains non-literal dynamic module import");
+      }
+      add(node.arguments[0]);
+    }
     ts.forEachChild(node, visit);
   }
   visit(source);

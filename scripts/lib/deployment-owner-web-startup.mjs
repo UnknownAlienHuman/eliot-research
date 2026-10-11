@@ -140,7 +140,9 @@ function diagnosticGet({ origin, environment, signal, remaining, children }) {
     "CLOUDFLARE_ACCESS_CLIENT_ID", "CLOUDFLARE_ACCESS_CLIENT_SECRET"]) delete env[key];
   return pathname => {
     if (!STARTUP_GETS.has(pathname) || signal.aborted) fail("diagnostic GET outside allowlist or deadline");
-    const timeout = Math.min(15_000, remaining()), trailer = "\nELIOTR_OWNER_HTTP:";
+    // An observed current-backend GET exceeded 15 seconds. Keep the transport
+    // window within the observer's existing total deadline and cleanup bounds.
+    const timeout = Math.min(45_000, remaining()), trailer = "\nELIOTR_OWNER_HTTP:";
     const args = ["access", "curl", origin + pathname, "--silent", "--show-error", "--no-location", "--compressed",
       "--max-time", String(Math.max(1, Math.ceil(timeout / 1000))), "--connect-timeout", "10",
       "--max-filesize", String(MAX_BODY), "--request", "GET", "--output", "-", "--header", "Accept: application/json",

@@ -3,6 +3,8 @@ import { lstat, realpath, readFile } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 
 const PROTOCOL = "eliotr.maintenance-route-update.v1";
+const RUNTIME_PROTOCOL = "eliotr.maintenance-route-update.v2";
+const BROWSER_PROTOCOL = "eliotr.maintenance-route-update.v3";
 const ROUTE_KEYS = Object.freeze(["method", "path", "operation", "auth", "maximum_request_bytes", "response_mode"]);
 const INTENT_KEYS = Object.freeze(["protocol", "account_id", "hostname", "baseline", "candidate",
   "baseline_routes", "candidate_routes", "added_routes", "changed_routes", "service_principals"]);
@@ -41,10 +43,29 @@ export async function loadMaintenanceRouteUpdate({ path, root, sourceHead, candi
 
   const file = await readIntentFile({ path, root, read });
   const parsed = parseIntent(file.bytes);
-  exactKeys(parsed, INTENT_KEYS, "Maintenance route update intent fields are invalid");
-  if (parsed.protocol !== PROTOCOL || parsed.account_id !== accountId || parsed.hostname !== hostname ||
+  const browserTransition = parsed.protocol === BROWSER_PROTOCOL;
+  const runtimeTransition = parsed.protocol === RUNTIME_PROTOCOL || browserTransition;
+  exactKeys(parsed, [...INTENT_KEYS, ...(runtimeTransition ? ["runtime_compatibility"] : []),
+    ...(browserTransition ? ["browser_binding"] : [])],
+    "Maintenance route update intent fields are invalid");
+  if (![PROTOCOL, RUNTIME_PROTOCOL, BROWSER_PROTOCOL].includes(parsed.protocol) || parsed.account_id !== accountId || parsed.hostname !== hostname ||
       parsed.service_principals !== "") {
     fail("Maintenance route update intent identity or service-principal pin is invalid");
+  }
+  if (browserTransition) {
+    exactKeys(parsed.browser_binding, ["baseline_present", "candidate"], "Maintenance route browser binding fields are invalid");
+    exactKeys(parsed.browser_binding.candidate, ["name", "type"], "Maintenance route browser candidate fields are invalid");
+    if (parsed.browser_binding.baseline_present !== false || parsed.browser_binding.candidate.name !== "BROWSER" ||
+        parsed.browser_binding.candidate.type !== "browser") fail("Maintenance route browser transition supports only absent-to-BROWSER");
+  }
+  if (runtimeTransition) {
+    exactKeys(parsed.runtime_compatibility, ["compatibility_date", "baseline_flags", "candidate_flags"],
+      "Maintenance route runtime compatibility fields are invalid");
+    const runtime = parsed.runtime_compatibility;
+    if (runtime.compatibility_date !== "2026-08-28" || !sameJson(runtime.baseline_flags, []) ||
+        !sameJson(runtime.candidate_flags, ["enhanced_error_serialization"])) {
+      fail("Maintenance route runtime compatibility supports only the exact error-serialization addition");
+    }
   }
   exactKeys(parsed.baseline, BASELINE_KEYS, "Maintenance route update baseline fields are invalid");
   exactKeys(parsed.candidate, CANDIDATE_KEYS, "Maintenance route update candidate fields are invalid");
@@ -87,11 +108,35 @@ export async function loadMaintenanceRouteUpdate({ path, root, sourceHead, candi
     added_routes: delta.added,
     changed_routes: delta.changed,
     service_principals: "",
+    ...(runtimeTransition ? { runtime_compatibility: structuredClone(parsed.runtime_compatibility) } : {}),
+    ...(browserTransition ? { browser_binding: structuredClone(parsed.browser_binding) } : {}),
     intent_sha256: file.sha256,
   });
   VALIDATED.add(routeUpdate);
   PRIVATE.set(routeUpdate, { path: file.path, root: file.root, read, intentSha256: file.sha256 });
   return routeUpdate;
+}
+
+/** A declared v2 transition changes only the flags used to verify the OLD version. */
+export function maintenanceRouteBaselineConfiguration({ routeUpdate, config, bindingBootstrap = null } = {}) {
+  if (routeUpdate === null) return config;
+  requireValidated(routeUpdate);
+  if (![RUNTIME_PROTOCOL, BROWSER_PROTOCOL].includes(routeUpdate.protocol)) return config;
+  if (bindingBootstrap !== null) fail("Runtime compatibility transition cannot be combined with a binding bootstrap");
+  const runtime = routeUpdate.runtime_compatibility;
+  if (!isRecord(config) || config.compatibility_date !== runtime.compatibility_date ||
+      !sameJson(config.compatibility_flags, runtime.candidate_flags)) {
+    fail("Maintenance route runtime compatibility does not match the candidate configuration");
+  }
+  const baseline = { ...config, compatibility_flags: [...runtime.baseline_flags] };
+  if (routeUpdate.protocol === BROWSER_PROTOCOL) {
+    exactKeys(config.browser, ["binding"], "Maintenance route browser configuration fields are invalid");
+    if (config.browser.binding !== routeUpdate.browser_binding.candidate.name) {
+      fail("Maintenance route browser binding does not match the candidate configuration");
+    }
+    delete baseline.browser;
+  }
+  return baseline;
 }
 
 /** Re-read the original regular file and verify its bytes have not changed since load. */
