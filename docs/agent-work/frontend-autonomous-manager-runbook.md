@@ -7,8 +7,21 @@
 **Deployment authority:** none. F5, production/account mutation, cutover, legacy deletion and final merge remain
 separately authorized actions.
 
-The manager owns one worktree and one implementation branch. Subagents receive small tasks inside that manager
-context and create no branches or worktrees. Routine checkpoint completion never requires another owner prompt.
+Use the existing manager context and its one worktree. Direct-main publication is already authorized for this
+program; do not create another branch for process compliance. Subagents receive small tasks inside that context
+and create no branches or worktrees. Routine checkpoint completion never requires another owner prompt.
+
+### Execution clarification — 2026-10-11
+
+The owner has withdrawn the extra process restrictions introduced by the earlier #337 audit addenda. Read the
+current #335/#337 disposition, not an old receipt's BLOCKED snapshot, when selecting work. The execution map,
+API/security contracts, claim checker and actual acceptance requirements are unchanged. After ER-49 the
+manager chooses useful parallelism from dependency-ready disjoint paths; the audit-added two-leaf cap is not
+an additional prerequisite. Ordinary in-scope UI/copy/layout repairs do not need a new Issue or auditor approval.
+
+Execution eligibility is not verified acceptance. Withdrawing a prerequisite does not execute tests, repair a
+product defect or accept FINAL-UI. Required checks still need actual evidence. Reuse accepted early gates and
+unchanged evidence; do not restart U1-R/U1-D/U2-X solely because the manager resumed or main changed.
 
 ## 1. Continuous authorized program
 
@@ -64,7 +77,18 @@ Repeat until U5-X is accepted:
 8. immediately select the next ready checkpoint;
 9. update the task only for meaningful tranche progress, hard blockers and final review readiness.
 
-A leaf performs the task rather than returning a plan and waiting.
+A leaf performs the task rather than returning a plan and waiting. A failing test is work to repair; a pending
+cross-owner handoff does not stop independent implementation, verification or review-package preparation.
+
+Use local focused checks during iteration and compact checkpoint receipts at completion. Reference unchanged
+source/evidence instead of duplicating complete hash inventories. A coherent publication batch may contain
+several commits required by separate prior claims; do not rewrite history to force a single commit. Existing
+CI/checker behavior remains unchanged. Run the applicable full gate/final matrix at its actual boundary.
+
+Maintain the existing #335 status for material results. A denied comment edit is a reporting limitation, not
+a development stop; retain the result in the existing handoff or one explicitly superseding status. Historical
+PR cleanup is a separate operator lane, not a prerequisite for UI delivery. A posted instruction alone does
+not prove that the local manager received it or resumed.
 
 ## 4. Default decisions
 
@@ -172,15 +196,29 @@ remaining hard blocker
 ```
 
 Then change approach. Do not add a third CSS override or repeat the same library/configuration strategy.
+Count materially different failed attempts, not status observations. A third check is not an automatic
+Goal=BLOCKED condition. Record diagnosis in the existing work record and execute the different approach.
 
 ## 9. Cross-owner handoffs
 
 For B-U, B-C and other named gates, prepare an exact handoff with input commits, shared paths, finite changes,
 commands, mandatory negative, rollback condition and downstream checkpoints. Delegate to an authorized
 integrator when available and review the result. Continue independent ready work while a handoff is pending.
-Do not ask the owner to restate architecture already recorded in the repository.
+Do not ask the owner to restate architecture already recorded in the repository. A named handoff is not proof
+of an active recipient; confirm delivery where tools permit and continue ready work. Do not silently take
+another writer's paths or fabricate a missing contract.
+
+For the selected non-production baseline, the withdrawn admission-effect DTO, private cross-reload persistence
+and Wiki-continuation requests are not new prerequisites. Preserve same-body/key reconciliation, disclose the
+reload and bounded-list limitations, and verify the actual selected HTTP baseline. Optional C11/staging/live
+work does not hold that baseline. A newly reproduced failure still needs a repair.
 
 ## 10. Hard stops
+
+Apply a stop to the affected action or acceptance, not automatically to every workstream. Mark the whole
+program BLOCKED only when no authorized independent implementation, verification or integration work can
+proceed and the exact unresolved external decision/capability is identified. Resolve superseded audit prose
+through current owner instructions and contracts; a new unrelated main SHA is not a semantic conflict.
 
 Escalate only for:
 

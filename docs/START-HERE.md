@@ -54,6 +54,14 @@ legacy rollback without registration/old fetch worker and retains permanent iner
 
 Open planning PRs, old Launch plans and audits are evidence, not competing queues.
 
+For owner-web execution, the current #335 authorization and the manager runbook's 2026-10-11 clarification
+supersede audit-added process restrictions in older #335/#337 comments. Keep the existing manager context and
+authorized direct-main publication. No fixed two-leaf cap or new auditor approval applies after ER-49;
+parallelism follows disjoint paths and dependencies. A blocked case, a missing status edit or a new main SHA
+alone does not stop independent implementation or verification. Reuse accepted early gates and unchanged
+evidence; do not restart them on every resume. Execution eligibility is not verified acceptance: pending or
+failed required checks still need execution/repair, and FINAL-UI still needs the complete review package.
+
 ## 1. Orient from current main
 
 ```bash
@@ -81,7 +89,8 @@ discussion is authoritative.
 
 ## 2. Claim one checkpoint inside the authorized program
 
-A tranche manager claims/delegates one checkpoint at a time but continues through the tranche automatically.
+Each leaf receives one checkpoint. The tranche manager continues automatically and may dispatch independent
+dependency-ready leaves in parallel after ER-49, preserving disjoint paths and shared-file serialization.
 Post:
 
 ```text
@@ -108,7 +117,8 @@ Rules:
 - shared root/Worker/CI/deploy files require named integrator;
 - if `origin/main` moves, reconcile before publication; never force-push except the exact owner-authorized
   manager review branch under an expected-head lease;
-- finish/handoff before next checkpoint.
+- each leaf finishes/hands off its checkpoint before taking another; unrelated pending handoffs do not
+  serialize the whole manager.
 
 ER-47 owns web/UI/tests/scripts and ER-47 claims. ER-48 owns owner client, three legacy browser packages and
 ER-48 claims. ER-49 owns static registry/checker. ER-25 is compatibility authority and bounded U6 rollback
@@ -194,11 +204,16 @@ A local patch, manifest, claim or unattached blob is not published work.
 | Failure/security | [failure-model.md](implementation/failure-model.md), [security checklist](implementation/security-checklist.md) |
 | Branch/tools | [branch-discipline.md](implementation/branch-discipline.md), [toolchain.md](implementation/toolchain.md) |
 
-Conflict stops work and names exact issue; no leaf-local hidden exception.
+An unresolved authoritative conflict stops only the affected edit or acceptance. Reconcile stale audit prose
+against current owner instructions and contracts; continue independent work. For owner-web, use the manager
+runbook's scoped hard-stop procedure. Do not infer a whole-program freeze from unrelated moving-main changes,
+reporting failures or historical receipt status strings; no leaf-local security/ownership exception is allowed.
 
 ## 6. Final acceptance
 
-GitHub Actions are manual-only. Do not restore automatic triggers or broad workflows without authorization.
+General repository workflows remain manual-only unless separately authorized. The existing narrow
+`.github/workflows/frontend-owner.yml` has scoped push/pull-request triggers; preserve its current behavior.
+Do not disable it to match old prose, add broad triggers, or change CI/security rules as process cleanup.
 
 After assembly: S92 local integration → S94 staging → S93/S95/S96 on attested build → S97 release.
 `pnpm check:full` does not replace ordered release acceptance.
