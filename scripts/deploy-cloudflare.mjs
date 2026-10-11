@@ -33,6 +33,10 @@ import { captureDeploymentBuildInputs, requireUnchangedDeploymentBuildInputs,
   pinGeneratedDeploymentConfig, attestDeploymentBundle,
   requireUnchangedDeploymentBundle } from "./lib/deployment-build-inputs.mjs";
 import { persistDeploymentBuildEvidence } from "./lib/deployment-build-evidence.mjs";
+import { parseDeploymentJsonc } from "./lib/deployment-jsonc.mjs";
+import { normalizeOwnerWebDeploymentConfig, createOwnerWebBuildContext, buildOwnerWebDeployment,
+  attestOwnerWebDeployment, requireUnchangedOwnerWebDeployment,
+  persistOwnerWebDeploymentEvidence } from "./lib/deployment-owner-web.mjs";
 import { createDeploymentSchemaManifest } from "./lib/deployment-schema-manifest.mjs";
 import { attestDeploymentApplicationSchemas } from "./lib/deployment-schema-attestation.mjs";
 import { validateStagingTarget } from "./lib/staging-isolation.mjs";
@@ -157,13 +161,14 @@ export function parseDeploymentArguments(args) {
       index += 1;
       continue;
     }
-    if (!["--confirm-live", "--maintenance"].includes(argument) || flags.has(argument)) {
+    if (!["--confirm-live", "--maintenance", "--owner-web"].includes(argument) || flags.has(argument)) {
       throw new Error("Deployment arguments are invalid");
     }
     flags.add(argument);
   }
   return { confirmLive: flags.has("--confirm-live"), purpose: flags.has("--maintenance") ? MAINTENANCE_PURPOSE : FULL_RELEASE_PURPOSE,
-    ...(secretsFilePath === undefined ? {} : { secretsFilePath }) };
+    ...(secretsFilePath === undefined ? {} : { secretsFilePath }),
+    ...(flags.has("--owner-web") ? { ownerWeb: true } : {}) };
 }
 
 function run(command, args, cwd, env) {
@@ -212,7 +217,7 @@ async function saveReceipt(receipt) {
 }
 
 /** Effects are explicit so failure ordering can be tested without Cloudflare credentials. */
-export async function deployCloudflare({ confirmLive = false, secretsFilePath, environment = process.env,
+export async function deployCloudflare({ confirmLive = false, ownerWeb = false, secretsFilePath, environment = process.env,
   execute = run, captureCommand = capture, read = readFile, archive = archiveReceipt,
   save = saveReceipt, fetchImpl = fetch, now = Date.now, log = console.log,
   verifyCode = assertLaunchCodeComplete, readWranglerFile, runWranglerWhoami,
@@ -233,6 +238,8 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
   readApplicationSchemas = attestDeploymentApplicationSchemas,
   readAssetManifest = readDeploymentAssetManifest } = {}) {
   if (![FULL_RELEASE_PURPOSE, MAINTENANCE_PURPOSE].includes(purpose)) throw new Error("Deployment purpose is invalid");
+  if (typeof ownerWeb !== "boolean") throw new Error("Owner-web deployment profile is invalid");
+  const assetOptions = ownerWeb ? { assetProfile: "owner-web" } : {};
   if (secretsFilePath !== undefined && !confirmLive) {
     throw new Error("A deployment secrets file requires a confirmed live deployment");
   }
@@ -300,7 +307,7 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
     else env.NODE_OPTIONS = stripped;
   }
   // Capture bytes and path membership before profile inspection or any local gate.
-  const testedInputs = await captureBuildInputs({ root });
+  const testedInputs = await captureBuildInputs({ root, ...assetOptions });
   let input;
   let ownerFetch = fetchImpl;
   let oauth = null;
@@ -331,6 +338,9 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
       candidateCapabilityProfile = await readCapabilityProfile({ root, read });
     }
     env.ELIOTR_ENVIRONMENT ??= "production";
+    if (ownerWeb && env.ELIOTR_ENVIRONMENT !== "production") {
+      throw new Error("Owner-web deployment requires the production runtime profile");
+    }
     // A staging label does not isolate fixed-name resources. Reject a missing,
     // mismatched or protected target before credential load or any command.
     stagingTarget = validateStagingTarget(env);
@@ -342,7 +352,7 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
       if (!revision) throw new Error("Set ELIOTR_DEPLOYMENT_GENERATION when Git revision is unavailable");
       env.ELIOTR_DEPLOYMENT_GENERATION = `git-${revision}`;
     }
-    const canonicalConfig = JSON.parse(await read(resolve(core, "wrangler.jsonc"), "utf8"));
+    const canonicalConfig = parseDeploymentJsonc(await read(resolve(core, "wrangler.jsonc"), "utf8"), "apps/eliotr-core/wrangler.jsonc");
     validateDeploymentMigrationDirectories(canonicalConfig, { root });
     env.ELIOTR_GOOGLE_EXTERNAL_TRANSPORT = preserveGoogleTransport ?? readConfiguredTransport(canonicalConfig);
     input = validateDeploymentInput(env, { authMode: resolveAuthMode(env) });
@@ -358,7 +368,7 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
   if (purpose === FULL_RELEASE_PURPOSE) {
     exec("pnpm", ["check"]);
     exec("pnpm", ["--filter", "@eliotr/core", "cf:types"]);
-    exec("pnpm", ["budgets:emitted"]);
+    if (!ownerWeb) exec("pnpm", ["budgets:emitted"]);
   } else {
     fullReleaseBlockers ??= await readReleaseBlockers({ root, read });
     candidateCapabilityProfile ??= await readCapabilityProfile({ root, read });
@@ -390,14 +400,17 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
     exec("pnpm", ["boundaries:check"]);
     exec("pnpm", ["boundaries:negative"]);
     exec("pnpm", ["--filter", "@eliotr/core", "cf:types"]);
-    exec("pnpm", ["budgets:emitted"]);
+    if (!ownerWeb) exec("pnpm", ["budgets:emitted"]);
   }
-  await checkBuildInputs({ root, manifest: testedInputs });
+  await checkBuildInputs({ root, manifest: testedInputs, ...assetOptions });
   if (!confirmLive) {
     if (purpose === MAINTENANCE_PURPOSE) {
       log(JSON.stringify({ purpose, full_release_blockers: fullReleaseBlockers,
-        source_budget_gate: sourceBudgetState, deployment: "NOT_EXECUTED" }));
-    } else log("Dry-run gates passed. No remote provisioning or deployment was executed.");
+        source_budget_gate: sourceBudgetState, deployment: "NOT_EXECUTED",
+        ...(ownerWeb ? { owner_web_build_and_emitted_budget: "NOT_EXECUTED" } : {}) }));
+    } else log(ownerWeb
+      ? "Local source gates passed. Owner-web combined build/emitted-budget gate and remote deployment were NOT_EXECUTED; verified generated production config requires --confirm-live."
+      : "Dry-run gates passed. No remote provisioning or deployment was executed.");
     return null;
   }
 
@@ -441,7 +454,7 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
         activeWorkerIdentity: activeWorkerBaseline, candidateRoutes: candidateCapabilityProfile.routes,
         observedRoutes: current.capabilities.routes, read });
     }
-    const canonicalConfig = JSON.parse(await read(resolve(core, "wrangler.jsonc"), "utf8"));
+    const canonicalConfig = parseDeploymentJsonc(await read(resolve(core, "wrangler.jsonc"), "utf8"), "apps/eliotr-core/wrangler.jsonc");
     let maintenanceProfileConfig = canonicalConfig;
     if (maintenanceAiSearchBootstrapPath !== undefined || maintenancePrimaryBindingBootstrapPath !== undefined ||
         maintenanceMcpAccessTransitionPath !== undefined) {
@@ -564,24 +577,41 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
   await archive();
   for (const name of activeProvisioners) execute("node", [`scripts/${name}.mjs`, "--verify-existing"], root, provisionerEnv(name));
   const configPath = resolve(core, deployConfig);
-  const bytes = Buffer.from(await read(configPath));
+  let bytes = Buffer.from(await read(configPath));
   if (maintenanceAiSearchCandidateBytes !== null && !bytes.equals(maintenanceAiSearchCandidateBytes)) {
     throw new Error("Generated maintenance bootstrap candidate config changed during deployment preparation");
   }
-  const config = maintenanceAiSearchCandidateConfig ?? validateGeneratedDeployment(bytes, env, input);
+  let config = maintenanceAiSearchCandidateConfig ?? validateGeneratedDeployment(bytes, env, input);
   if (maintenanceAiGateways !== null) assertMaintenanceAiGatewayTargets(maintenanceAiGateways, config);
   verifyGeneratedSemanticConfiguration(config, env);
   assertGeneratedOwnerTemplatesCurrent(config);
-  const digest = createHash("sha256").update(bytes).digest("hex");
+  let digest = createHash("sha256").update(bytes).digest("hex");
   if (maintenanceAiSearchCandidateDigest !== null && digest !== maintenanceAiSearchCandidateDigest) {
     throw new Error("Generated maintenance bootstrap candidate config digest changed during deployment preparation");
   }
-  const generatedConfigPin = await pinGeneratedConfig({ root, path: configPath });
+  let generatedConfigPin = await pinGeneratedConfig({ root, path: configPath });
   if (generatedConfigPin.sha256 !== digest) throw new Error("Generated deployment config changed before artifact preparation");
+  let schemaManifestResult;
+  let schemaSource = null;
+  if (ownerWeb) {
+    // Existing local schema materialization verifies the original provisioner config.
+    // Retain that exact provenance before the explicit assets-only build-profile change.
+    schemaManifestResult = await createSchemaManifest({ root, config,
+      accountId: env.CLOUDFLARE_ACCOUNT_ID, generatedConfigPin });
+    const originalSchemaConfig = { bytes, pin: generatedConfigPin };
+    const normalized = await normalizeOwnerWebDeploymentConfig({ root, expectedBytes: bytes });
+    bytes = normalized.bytes;
+    config = validateGeneratedDeployment(bytes, env, input);
+    verifyGeneratedSemanticConfiguration(config, env);
+    assertGeneratedOwnerTemplatesCurrent(config);
+    generatedConfigPin = normalized.pin;
+    digest = generatedConfigPin.sha256;
+    schemaSource = { ...originalSchemaConfig, normalizedConfig: config };
+  }
   const migrationPlan = await readDeploymentMigrationPlan(config, { root });
-  const schemaManifestResult = await createSchemaManifest({ root, config,
+  schemaManifestResult ??= await createSchemaManifest({ root, config,
     accountId: env.CLOUDFLARE_ACCOUNT_ID, generatedConfigPin });
-  const assetManifest = await readAssetManifest(config, { root });
+  let assetManifest = ownerWeb ? null : await readAssetManifest(config, { root });
   const backendFingerprint = readBackendFingerprint({ root, generated_config: config });
   const coreDatabase = config.d1_databases.find((database) => database.binding === "CORE_DB");
   if (coreDatabase === undefined || typeof coreDatabase.database_id !== "string") {
@@ -651,6 +681,7 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
     }
   };
   let workerBundle = null;
+  let ownerWebBuildContext = null;
   const requireUnchangedInputs = async () => {
     if (deploymentSecretsFile !== null && !deploymentUploadCompleted) {
       await requireUnchangedDeploymentSecretsFile(deploymentSecretsFile);
@@ -666,24 +697,37 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
       await requireUnchangedMaintenanceMcpAccessTransition({ transition: maintenanceMcpAccessTransition, read });
     }
     await requireUnchangedConfig();
-    await checkBuildInputs({ root, manifest: testedInputs, generatedConfigPin });
-    if (workerBundle !== null) await checkBundle({ root, manifest: testedInputs, attestation: workerBundle });
+    await checkBuildInputs({ root, manifest: testedInputs, generatedConfigPin, ...assetOptions });
+    if (workerBundle !== null) {
+      if (ownerWeb) await requireUnchangedOwnerWebDeployment({ root, manifest: testedInputs,
+        attestation: workerBundle, context: ownerWebBuildContext });
+      else await checkBundle({ root, manifest: testedInputs, attestation: workerBundle });
+    }
     if (readBackendFingerprint({ root, generated_config: config }) !== backendFingerprint) {
       throw new Error("Backend execution inputs changed during deployment");
     }
     await requireUnchangedMigrationPlan(config, migrationPlan, { root });
-    if (JSON.stringify(await readAssetManifest(config, { root })) !== JSON.stringify(assetManifest)) {
+    if (assetManifest !== null &&
+        JSON.stringify(await readAssetManifest(config, { root, ...assetOptions })) !== JSON.stringify(assetManifest)) {
       throw new Error("Deployment assets changed during release");
     }
   };
   // The account-neutral build does not validate generated IDs, routes and runtime variables.
   await requireUnchangedInputs();
-  const bundleDirectory = resolve(root, ".eliotr-state", `deployment-worker-${randomUUID()}`);
-  const metafilePath = resolve(bundleDirectory, "bundle-meta.json");
-  exec("pnpm", ["exec", "wrangler", "deploy", "--dry-run", "--minify", "--config", deployConfig,
-    "--outdir", bundleDirectory, "--metafile", metafilePath], core);
-  workerBundle = await attestBundle({ root, manifest: testedInputs, outdir: bundleDirectory,
-    metafilePath, generatedConfigPin });
+  if (ownerWeb) {
+    ownerWebBuildContext = createOwnerWebBuildContext({ manifest: testedInputs, generatedConfigPin });
+    await buildOwnerWebDeployment({ root, environment: env, execute, context: ownerWebBuildContext });
+    workerBundle = await attestOwnerWebDeployment({ root, manifest: testedInputs, generatedConfigPin,
+      context: ownerWebBuildContext });
+    assetManifest = await readAssetManifest(config, { root, ...assetOptions });
+  } else {
+    const bundleDirectory = resolve(root, ".eliotr-state", `deployment-worker-${randomUUID()}`);
+    const metafilePath = resolve(bundleDirectory, "bundle-meta.json");
+    exec("pnpm", ["exec", "wrangler", "deploy", "--dry-run", "--minify", "--config", deployConfig,
+      "--outdir", bundleDirectory, "--metafile", metafilePath], core);
+    workerBundle = await attestBundle({ root, manifest: testedInputs, outdir: bundleDirectory,
+      metafilePath, generatedConfigPin });
+  }
   await requireUnchangedInputs();
   const migrationReadback = await verifyDeploymentMigrationLedgers(env, input, migrationPlan, { fetchImpl });
   await requireUnchangedInputs();
@@ -745,7 +789,7 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
   }
   // Canonical generated vars win; Wrangler preserves secrets without --keep-vars.
   const deployArgs = ["exec", "wrangler", "deploy", workerBundle.entrypoint,
-    "--no-bundle", "--config", deployConfig];
+    "--no-bundle", "--config", ownerWeb ? workerBundle.deployment_config : deployConfig];
   if (deploymentSecretsFile !== null) {
     await requireUnchangedDeploymentSecretsFile(deploymentSecretsFile);
     deployArgs.push("--secrets-file", deploymentSecretsFile.path);
@@ -844,8 +888,11 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
     throw new Error("Core/Search application schema changed during deployment");
   }
   await requireUnchangedInputs();
-  const buildEvidence = await persistBuildEvidence({ root, manifest: testedInputs,
-    bundle: workerBundle, generatedConfigPin, schemaManifestResult });
+  const buildEvidence = ownerWeb
+    ? await persistOwnerWebDeploymentEvidence({ root, manifest: testedInputs, bundle: workerBundle,
+      generatedConfigPin, schemaManifestResult, schemaSource, context: ownerWebBuildContext })
+    : await persistBuildEvidence({ root, manifest: testedInputs,
+      bundle: workerBundle, generatedConfigPin, schemaManifestResult });
   const receipt = {
     protocol: "eliotr.cloudflare-deployment-receipt.v1",
     deployment_generation: env.ELIOTR_DEPLOYMENT_GENERATION,
@@ -858,6 +905,7 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
     assets: { manifest: assetManifest, readback: assetReadback },
     generated_config_sha256: digest,
     build_evidence: buildEvidence,
+    ...(ownerWeb ? { asset_profile: "owner-web", input_proof_kind: "SIGNED_LOCAL_CUSTODY_INVENTORY" } : {}),
     backend_fingerprint: backendFingerprint,
     remote_http_smoke: remoteHttpSmoke,
     deployment_authority_sync: deploymentAuthority,
@@ -928,8 +976,9 @@ export async function deployCloudflare({ confirmLive = false, secretsFilePath, e
         maintenancePrimaryBindingBootstrap)
       : "Active version, configured resource bindings and migration names are verified. ETag and local migration hashes are not remote content proof; asset body hashes are observed only with authenticated readback and stable active-version observations. Product/T4/T6 gates remain separate. HTTP generation is verified only when authenticated smoke passes.") +
       ` Build input manifest captured before gates: ${testedInputs.sha256}; prepared Worker artifact: ${workerBundle.sha256}. ` +
-      "Source membership/bytes, generated config, metafile inputs and emitted files were rechecked immediately before upload; the prepared entrypoint was deployed with --no-bundle. " +
-      "Metafile paths and byte counts do not attest the exact bytes read by the compiler; a same-size edit restored between checks may evade this observation. " +
+      (ownerWeb
+        ? "Captured source membership/bytes, generated/emitted config, Rawls observed Worker entry/import graph, signed local custody inventory and complete client/Worker output were rechecked before upload; the same prepared combined graph was budget-checked and deployed with --no-bundle. The local signature binds custody/freshness only; the separately pinned generateBundle graph is an observed compiler graph, not cryptographic compiler attestation or proof of every byte read. "
+        : "Source membership/bytes, generated config, metafile inputs and emitted files were rechecked immediately before upload; the prepared entrypoint was deployed with --no-bundle. Metafile paths and byte counts do not attest the exact bytes read by the compiler; a same-size edit restored between checks may evade this observation. ") +
       "These are bounded local integrity checks, not an immutable source-to-artifact seal, a cryptographic attestation of compiler/tool internals or an atomic remote source/build seal.",
     created_at: new Date(now()).toISOString(),
   };

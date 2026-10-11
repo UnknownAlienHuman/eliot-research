@@ -158,7 +158,8 @@ function requestHeaders(
 }
 
 function requireUncontrolledPage(): void {
-  if ("serviceWorker" in navigator && navigator.serviceWorker.controller !== null) {
+  if (document.documentElement.dataset.eliotrWorkerRetired !== "true" ||
+      ("serviceWorker" in navigator && navigator.serviceWorker.controller !== null)) {
     throw new Error(
       "Agent inbox refuses to send credentials while a service worker controls this page. " +
       "Open it in the dedicated clean computer-agent profile and reload.",

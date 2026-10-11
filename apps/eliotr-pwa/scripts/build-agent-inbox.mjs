@@ -12,6 +12,15 @@ const cssPath = resolve(appRoot, "src/agent-inbox.css");
 const outputDirectory = resolve(appRoot, "public/agent-inbox");
 const outputScript = resolve(outputDirectory, "app.js");
 const outputCss = resolve(outputDirectory, "app.css");
+const retirementSourcePath = resolve(appRoot, "../eliotr-web/src/app/legacy-worker-retirement.ts");
+const retirementSource = await readFile(retirementSourcePath, "utf8");
+if (/\b(?:import|fetch|XMLHttpRequest|indexedDB)\b/u.test(retirementSource) || retirementSource.includes("document.cookie")) {
+  fail("retirement helper must remain browser-local and independent of owner UI/API");
+}
+const retirement = ts.transpileModule(retirementSource, {
+  fileName: retirementSourcePath,
+  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022, newLine: ts.NewLineKind.LineFeed },
+});
 
 function fail(message) {
   throw new Error(`agent-inbox build: ${message}`);
@@ -81,6 +90,9 @@ await mkdir(outputDirectory, { recursive: true });
 await Promise.all([
   writeFile(outputScript, result.outputText, { encoding: "utf8", mode: 0o644 }),
   writeFile(outputCss, css, { encoding: "utf8", mode: 0o644 }),
+  writeFile(resolve(outputDirectory, "retirement.js"), retirement.outputText +
+    '\nif (await ensureLegacyWorkerRetired()) { document.documentElement.dataset.eliotrWorkerRetired = "true"; window.dispatchEvent(new Event("eliotr:worker-retired")); }\n',
+    { encoding: "utf8", mode: 0o644 }),
 ]);
 
 stdout.write(JSON.stringify({

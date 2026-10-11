@@ -18,6 +18,57 @@ const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const accountId = "mock-account";
 const accessHostname = "research.example.test";
 const ownerEmail = "owner@example.test";
+async function checkMaintenanceAccessSelection() {
+  const source = await readFile(resolve(repositoryRoot, "scripts/provision-cloudflare-access.mjs"), "utf8");
+  const desired = JSON.parse(await readFile(resolve(repositoryRoot, "infra/cloudflare/access.json"), "utf8"));
+  const selectionStart = source.indexOf("let application;");
+  const selectionEnd = source.indexOf("let applicationDisposition", selectionStart);
+  const helperStart = source.indexOf("function destinationUsesHostname(");
+  const helperEnd = source.indexOf("function maintenanceApplicationAud(", helperStart);
+  assert.ok(selectionStart >= 0 && selectionEnd > selectionStart && helperStart >= 0 && helperEnd > helperStart,
+    "Maintenance selection source boundaries must remain explicit");
+  const select = (applications, priorReceipt = null) => runInNewContext(
+    `${source.slice(helperStart, helperEnd)}\n${source.slice(selectionStart, selectionEnd)}\napplication;`, {
+      URL, maintenancePreservation: true, applicationsResult: applications, applications,
+      mcpConfig: null, mcpDesired: desired.mcp, hostname: accessHostname, accountId, priorReceipt,
+      ACCESS_RECEIPT_PROTOCOL: "eliotr.cloudflare-access-receipt.v1",
+    });
+  const rootApplication = { id: "existing-owner-app", name: "Eliot Research", domain: accessHostname,
+    type: "self_hosted", destinations: [{ type: "public", uri: accessHostname }] };
+  const mcpDestination = `${accessHostname}/mcp`;
+  const mcpApplication = { id: "existing-mcp-app", name: `Eliot Research MCP: ${mcpDestination}`,
+    domain: mcpDestination, type: "self_hosted", destinations: [{ type: "public", uri: mcpDestination }] };
+  assert.equal(select([rootApplication, mcpApplication]), rootApplication,
+    "Disabled MCP must select the existing root while preserving the exact dedicated MCP app");
+  assert.equal(select([rootApplication]), rootApplication, "MCP absence must not alter root selection");
+  const malformedCases = [
+    ["foreign name", { name: "Foreign MCP application" }],
+    ["foreign domain", { domain: "other.example.test/mcp" }],
+    ["wrong type", { type: "bookmark" }],
+    ["no destinations", { destinations: [] }],
+    ["private destination", { destinations: [{ type: "private", uri: mcpDestination }] }],
+    ["foreign destination", { destinations: [{ type: "public", uri: "other.example.test/mcp" }] }],
+    ["other path", { domain: `${accessHostname}/other`, destinations: [{ type: "public", uri: `${accessHostname}/other` }] }],
+    ["wildcard path", { domain: `${accessHostname}/*`, destinations: [{ type: "public", uri: `${accessHostname}/*` }] }],
+    ["wildcard host", { domain: `*.${accessHostname}/mcp`, destinations: [{ type: "public", uri: `*.${accessHostname}/mcp` }] }],
+    ["multiple destinations", { destinations: [...mcpApplication.destinations, { type: "public", uri: accessHostname }] }],
+  ];
+  for (const [label, changed] of malformedCases) {
+    assert.throws(() => select([rootApplication, { ...mcpApplication, ...changed }]),
+      /multiple Access applications claim/u, `Malformed dedicated MCP contour must remain a collision: ${label}`);
+  }
+  assert.throws(() => select([rootApplication, { ...rootApplication, id: "second-root" }, mcpApplication]),
+    /multiple Access applications claim/u, "The dedicated MCP exclusion must not permit a second root app");
+  assert.throws(() => select([mcpApplication]), /found missing resource/u,
+    "The dedicated MCP app must not substitute for a missing root");
+  assert.throws(() => select([rootApplication, mcpApplication], {
+    protocol: "eliotr.cloudflare-access-receipt.v1", account_id: accountId, hostname: accessHostname,
+    application: { id: "different-owner-app" },
+  }), /application id differs/u, "Root receipt identity must remain pinned");
+  console.log("Access maintenance selection regression: PASS");
+}
+await checkMaintenanceAccessSelection();
+if (process.argv.includes("--access-maintenance-selection-only")) process.exit(0);
 const generatedConfigPath = resolve(repositoryRoot, "apps/eliotr-core/wrangler.deploy.jsonc");
 // Scratch isolation: spawned provisioners write receipts under
 // ELIOTR_STATE_DIRECTORY (temp, per-run) instead of the shared gitignored

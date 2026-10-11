@@ -5,7 +5,10 @@ import path from "node:path";
 
 const MANIFEST_PROTOCOL = "eliotr.cloudflare-assets-manifest.v1";
 const MANIFEST_STATE = "LOCAL_ONLY";
-const MANIFEST_DIRECTORY = "apps/eliotr-pwa/dist";
+const ASSET_PROFILE_DIRECTORIES = Object.freeze({
+  legacy: "apps/eliotr-pwa/dist",
+  "owner-web": "apps/eliotr-web/dist/client",
+});
 const EXCLUDED_ROUTING_FILES = Object.freeze(["_headers", "_redirects"]);
 const DEFAULT_LIMITS = Object.freeze({
   fileCount: 20_000,
@@ -17,21 +20,24 @@ const DEFAULT_LIMITS = Object.freeze({
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 
 /**
- * Hash the exact bounded PWA output directory represented by generated Core config.
+ * Hash the exact bounded output selected by the explicit asset profile.
  * The returned manifest is local preparation evidence only; it is not a deployment
  * receipt or an atomic seal over a complete build.
  */
-export async function readDeploymentAssetManifest(config, { root } = {}) {
+export async function readDeploymentAssetManifest(config, { root, assetProfile = "legacy" } = {}) {
+  const manifestDirectory = directoryForAssetProfile(assetProfile);
   if (typeof root !== "string" || !path.isAbsolute(root) || !isRecord(config?.assets) ||
       typeof config.assets.directory !== "string") {
     throw new Error("Deployment asset manifest inputs are invalid");
   }
 
   const repositoryRoot = path.resolve(root);
-  const expectedDirectory = path.resolve(repositoryRoot, "apps", "eliotr-pwa", "dist");
+  const expectedDirectory = path.resolve(repositoryRoot, manifestDirectory);
   const configuredDirectory = path.resolve(repositoryRoot, "apps", "eliotr-core", config.assets.directory);
   if (configuredDirectory !== expectedDirectory) {
-    throw new Error("Generated asset directory does not match the pinned PWA output");
+    throw new Error(assetProfile === "legacy"
+      ? "Generated asset directory does not match the pinned PWA output"
+      : "Generated asset directory does not match the pinned owner-web client output");
   }
   let directoryStats;
   try {
@@ -60,11 +66,11 @@ export async function readDeploymentAssetManifest(config, { root } = {}) {
   const manifest = {
     protocol: MANIFEST_PROTOCOL,
     state: MANIFEST_STATE,
-    directory: MANIFEST_DIRECTORY,
+    directory: manifestDirectory,
     files,
     excluded_routing_files: [...EXCLUDED_ROUTING_FILES],
   };
-  return { ...manifest, manifest_sha256: digestManifest(manifest.files, manifest.excluded_routing_files) };
+  return { ...manifest, manifest_sha256: digestManifest(manifest.files, manifest.excluded_routing_files, manifestDirectory) };
 }
 
 /**
@@ -72,8 +78,8 @@ export async function readDeploymentAssetManifest(config, { root } = {}) {
  * compare the decoded response body bytes with the local manifest.
  */
 export async function verifyDeploymentAssets(manifest, input, { fetchImpl = globalThis.fetch,
-  timeoutMs = DEFAULT_LIMITS.deadlineMs } = {}) {
-  const normalized = validateManifest(manifest);
+  timeoutMs = DEFAULT_LIMITS.deadlineMs, assetProfile = "legacy" } = {}) {
+  const normalized = validateManifest(manifest, directoryForAssetProfile(assetProfile));
   if (!input || typeof input !== "object" || typeof input.origin !== "string") {
     throw new Error("Deployment asset readback inputs are invalid");
   }
@@ -255,9 +261,9 @@ async function cancelBody(response) {
   }
 }
 
-function validateManifest(manifest) {
+function validateManifest(manifest, manifestDirectory) {
   if (!isRecord(manifest) || manifest.protocol !== MANIFEST_PROTOCOL || manifest.state !== MANIFEST_STATE ||
-      manifest.directory !== MANIFEST_DIRECTORY || !Array.isArray(manifest.files) || manifest.files.length === 0 ||
+      manifest.directory !== manifestDirectory || !Array.isArray(manifest.files) || manifest.files.length === 0 ||
       manifest.files.length > DEFAULT_LIMITS.fileCount || !Array.isArray(manifest.excluded_routing_files) ||
       manifest.excluded_routing_files.length !== EXCLUDED_ROUTING_FILES.length ||
       manifest.excluded_routing_files.some((file, index) => file !== EXCLUDED_ROUTING_FILES[index]) ||
@@ -279,7 +285,7 @@ function validateManifest(manifest) {
   }
   const sortedFiles = [...manifest.files].sort((left, right) => compareCodePoints(left.path, right.path));
   if (sortedFiles.some((file, index) => file.path !== manifest.files[index].path) ||
-      digestManifest(manifest.files, manifest.excluded_routing_files) !== manifest.manifest_sha256) {
+      digestManifest(manifest.files, manifest.excluded_routing_files, manifestDirectory) !== manifest.manifest_sha256) {
     throw new Error("Deployment asset manifest digest or order is invalid");
   }
   return { files: manifest.files };
@@ -307,10 +313,17 @@ function encodeSegments(value) {
   return value.split("/").map((segment) => encodeURIComponent(segment)).join("/");
 }
 
-function digestManifest(files, excludedFiles) {
+function directoryForAssetProfile(assetProfile) {
+  if (assetProfile !== "legacy" && assetProfile !== "owner-web") {
+    throw new Error("Deployment asset profile is invalid");
+  }
+  return ASSET_PROFILE_DIRECTORIES[assetProfile];
+}
+
+function digestManifest(files, excludedFiles, manifestDirectory) {
   const canonical = JSON.stringify({
     protocol: MANIFEST_PROTOCOL,
-    directory: MANIFEST_DIRECTORY,
+    directory: manifestDirectory,
     excluded_routing_files: excludedFiles,
     files: files.map(({ path: filePath, bytes, sha256 }) => ({ path: filePath, bytes, sha256 })),
   });

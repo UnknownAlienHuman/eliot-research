@@ -17,6 +17,8 @@ import { readConfiguredTransport, readCompositionCapabilityProfile } from "./che
 import { readActiveDeploymentIdentity, selectDeploymentGoogleTransport,
   selectDeploymentAiSearchNamespaces } from "./lib/deployment-maintenance.mjs";
 import { assertCoreWorkerRouteParity } from "./lib/core-worker-route-parity.mjs";
+import { assertFoundationQueueConsumers } from "./lib/cloudflare-foundation-queue-profile.mjs";
+import { parseDeploymentJsonc as parseStrictJsonCompatibleJsonc } from "./lib/deployment-jsonc.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // Isolated state root for tests: ELIOTR_STATE_DIRECTORY overrides the shared
@@ -154,14 +156,6 @@ const aiSearchNamespaces = selectDeploymentAiSearchNamespaces({ purpose: "MAINTE
   preserve: preserveAiSearch, activeWorkerIdentity: activeTransport,
   candidate: preserveAiSearch === undefined ? undefined : await readCompositionCapabilityProfile({ root: repositoryRoot }) });
 
-function parseStrictJsonCompatibleJsonc(text, label) {
-  try {
-    return JSON.parse(text);
-  } catch (error) {
-    throw new Error(`${label} must remain strict-JSON-compatible JSONC so the audited deploy generator can parse it without executing code: ${error.message}`, { cause: error });
-  }
-}
-
 function assertNonEmptyString(value, label) {
   if (typeof value !== "string" || value.trim() === "") throw new Error(`${label} must be a non-empty string`);
   return value;
@@ -246,11 +240,7 @@ function assertCanonicalBindingAlignment() {
     const item = canonicalQueues.get(spec.binding);
     if (!item || item.queue !== spec.name) throw new Error(`canonical Queue binding ${spec.binding} must name ${spec.name}`);
   }
-  const expectedDlq = desired.queues.find((item) => item.role === "dead_letter")?.name;
-  const consumers = canonicalConfig.queues?.consumers ?? [];
-  if (consumers.length !== 1 || consumers[0].queue !== desired.queues.find((item) => item.role === "primary")?.name || consumers[0].dead_letter_queue !== expectedDlq) {
-    throw new Error("canonical Queue consumer must bind the desired primary Queue and DLQ exactly");
-  }
+  assertFoundationQueueConsumers(canonicalConfig, desired.queues);
 }
 
 async function inspectD1(spec) {

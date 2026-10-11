@@ -34,6 +34,73 @@ try {
     /pinned PWA output/,
   );
 
+  // Owner-web is an explicit profile for the generated client directory only.
+  const ownerDist = path.join(root, "apps", "eliotr-web", "dist", "client");
+  const ownerConfig = { assets: { directory: "../eliotr-web/dist/client" } };
+  await mkdir(path.join(ownerDist, "assets"), { recursive: true });
+  await writeFile(path.join(ownerDist, "index.html"), "<!doctype html><main>owner home</main>");
+  await writeFile(path.join(ownerDist, "assets", "app.js"), "owner client");
+  await writeFile(path.join(ownerDist, "_headers"), "/\n  Cache-Control: no-store");
+  const ownerManifest = await readDeploymentAssetManifest(ownerConfig, { root, assetProfile: "owner-web" });
+  assert.equal(ownerManifest.directory, "apps/eliotr-web/dist/client");
+  assert.deepEqual(ownerManifest.files.map(({ path: assetPath }) => assetPath), ["assets/app.js", "index.html"]);
+  assert.equal(ownerManifest.manifest_sha256, digestManifestForTest(ownerManifest));
+  await assert.rejects(readDeploymentAssetManifest(ownerConfig, { root }), /pinned PWA output/);
+  await assert.rejects(readDeploymentAssetManifest(coreConfig, { root, assetProfile: "owner-web" }), /pinned owner-web client output/);
+  await assert.rejects(readDeploymentAssetManifest({ assets: { directory: "../eliotr-web/dist" } }, {
+    root, assetProfile: "owner-web",
+  }), /pinned owner-web client output/);
+  await assert.rejects(readDeploymentAssetManifest({ assets: { directory: "../client" } }, {
+    root, assetProfile: "owner-web",
+  }), /pinned owner-web client output/);
+  await assert.rejects(readDeploymentAssetManifest({ assets: { directory: "../../outside" } }, {
+    root, assetProfile: "owner-web",
+  }), /pinned owner-web client output/);
+  await assert.rejects(readDeploymentAssetManifest(ownerConfig, { root, assetProfile: "constructor" }), /asset profile is invalid/);
+
+  let ownerRequests = 0;
+  const ownerNoCookie = await verifyDeploymentAssets(ownerManifest, { origin: "https://staging.example" }, {
+    assetProfile: "owner-web", fetchImpl: () => assert.fail("unauthenticated owner asset request"),
+  });
+  assert.deepEqual(ownerNoCookie, { state: "NOT_EXECUTED", reason: "access_cookie_missing" });
+  const ownerExpected = new Map(await Promise.all(ownerManifest.files.map(async (file) => [
+    routeFor(file.path), await readFile(path.join(ownerDist, ...file.path.split("/"))),
+  ])));
+  const ownerSuccess = await verifyDeploymentAssets(ownerManifest, {
+    origin: "https://staging.example", cookie: "verified-access-cookie",
+  }, {
+    assetProfile: "owner-web",
+    fetchImpl: async (url, options) => {
+      ownerRequests += 1;
+      assert.equal(options.headers.Cookie, "CF_Authorization=verified-access-cookie");
+      assert.equal(options.redirect, "manual");
+      assert.equal(url.origin, "https://staging.example");
+      assert.equal(ownerExpected.has(url.pathname), true);
+      return new globalThis.Response(ownerExpected.get(url.pathname), { status: 200 });
+    },
+  });
+  assert.equal(ownerSuccess.state, "PASS");
+  assert.equal(ownerRequests, ownerManifest.files.length);
+  assert.deepEqual(ownerSuccess.results.map(({ sha256 }) => sha256), ownerManifest.files.map(({ sha256 }) => sha256));
+  await assert.rejects(verifyDeploymentAssets(ownerManifest, {
+    origin: "https://staging.example", cookie: "secret",
+  }, { fetchImpl: () => assert.fail("owner-web must not verify as legacy") }), /manifest is invalid/);
+  await assert.rejects(verifyDeploymentAssets(manifest, {
+    origin: "https://staging.example", cookie: "secret",
+  }, { assetProfile: "owner-web", fetchImpl: () => assert.fail("legacy must not verify as owner-web") }), /manifest is invalid/);
+  await assert.rejects(verifyDeploymentAssets({ ...ownerManifest, directory: manifest.directory }, {
+    origin: "https://staging.example", cookie: "secret",
+  }, { fetchImpl: () => assert.fail("directory is part of the digest") }), /digest or order/);
+  await assert.rejects(verifyDeploymentAssets(ownerManifest, {
+    origin: "https://staging.example", cookie: "secret",
+  }, { assetProfile: "constructor", fetchImpl: () => assert.fail("invalid profile must not fetch") }), /asset profile is invalid/);
+  await assert.rejects(verifyDeploymentAssets(ownerManifest, {
+    origin: "https://staging.example", cookie: "verified-access-cookie",
+  }, {
+    assetProfile: "owner-web",
+    fetchImpl: async () => new globalThis.Response(Buffer.alloc(ownerManifest.files[0].bytes), { status: 200 }),
+  }), /content mismatch/);
+
   let requests = 0;
   const noCookie = await verifyDeploymentAssets(manifest, { origin: "https://staging.example" }, {
     fetchImpl: async () => { requests += 1; throw new Error("should not run"); },

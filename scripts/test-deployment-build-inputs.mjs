@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promis
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import ts from "typescript";
 import {
   attestDeploymentBundle,
   captureDeploymentBuildInputs,
@@ -13,7 +14,7 @@ import {
 } from "./lib/deployment-build-inputs.mjs";
 
 const FIXTURE_ROOT = path.resolve(os.tmpdir());
-const CORE_ASSETS = JSON.parse(await readFile(new URL("../apps/eliotr-core/wrangler.jsonc", import.meta.url), "utf8")).assets;
+const CORE_ASSETS = parseJsonc("wrangler.jsonc", await readFile(new URL("../apps/eliotr-core/wrangler.jsonc", import.meta.url), "utf8")).assets;
 const FIXTURE_PREFIX = "eliotr-build-inputs-";
 const SCRIPT_ENTRYPOINTS = [
   "scripts/check-boundaries.mjs", "scripts/check-budgets.mjs", "scripts/check-launch-code.mjs",
@@ -22,6 +23,16 @@ const SCRIPT_ENTRYPOINTS = [
   "scripts/provision-cloudflare-access.mjs", "scripts/provision-cloudflare-core.mjs",
   "scripts/test-boundary-negative.mjs",
 ];
+
+function parseJsonc(filePath, source) {
+  const parsed = ts.parseConfigFileTextToJson(filePath, source);
+  if (parsed.error) throw new SyntaxError(ts.flattenDiagnosticMessageText(parsed.error.messageText, "\n"));
+  return parsed.config;
+}
+
+function fixtureJsonc(value) {
+  return `// fixture JSONC with a trailing comma\n${JSON.stringify(value).slice(0, -1)},\n}\n`;
+}
 
 async function put(root, relative, value) {
   const target = path.join(root, relative);
@@ -42,7 +53,7 @@ async function fixture() {
     "tsconfig.json": JSON.stringify({ files: [] }),
     "apps/eliotr-core/package.json": JSON.stringify({ name: "@eliotr/core", dependencies: { zod: "4.4.3" } }),
     "apps/eliotr-core/tsconfig.json": JSON.stringify({ extends: "../../tsconfig.base.json", include: ["src/**/*.ts"] }),
-    "apps/eliotr-core/wrangler.jsonc": JSON.stringify({ name: "eliotr-core", main: "src/index.ts", assets: CORE_ASSETS }),
+    "apps/eliotr-core/wrangler.jsonc": fixtureJsonc({ name: "eliotr-core", main: "src/index.ts", assets: CORE_ASSETS }),
     "apps/eliotr-core/src/index.ts": "export default { fetch() { return new Response('ok'); } };\n",
     "apps/eliotr-core/src/worker-configuration.d.ts": "// generated; excluded\n",
     "apps/eliotr-pwa/astro.config.mjs": "export default {};\n",
@@ -94,7 +105,7 @@ async function withFixture(run) {
 
 async function generatedConfig(root) {
   return put(root, "apps/eliotr-core/wrangler.deploy.jsonc",
-    JSON.stringify({ name: "eliotr-core", main: "src/index.ts", assets: CORE_ASSETS, vars: { DEPLOYMENT_GENERATION: "candidate" } }));
+    fixtureJsonc({ name: "eliotr-core", main: "src/index.ts", assets: CORE_ASSETS, vars: { DEPLOYMENT_GENERATION: "candidate" } }));
 }
 
 function outputDirectory(root) {
@@ -140,6 +151,26 @@ test("captures exact source and runtime inputs while excluding generated source 
   });
 });
 
+test("rejects malformed JSONC and keeps package JSON parsing strict", async () => {
+  await withFixture(async (root) => {
+    await put(root, "apps/eliotr-core/wrangler.jsonc", '{ "name": "eliotr-core", "assets": }');
+    await assert.rejects(() => captureDeploymentBuildInputs({ root }), (error) => {
+      assert.match(error.message, /could not read apps\/eliotr-core\/wrangler\.jsonc/u);
+      assert.ok(error.cause instanceof SyntaxError);
+      return true;
+    });
+  });
+  await withFixture(async (root) => {
+    const packagePath = path.join(root, "package.json");
+    await writeFile(packagePath, fixtureJsonc(JSON.parse(await readFile(packagePath, "utf8"))));
+    await assert.rejects(() => captureDeploymentBuildInputs({ root }), (error) => {
+      assert.match(error.message, /could not read package\.json/u);
+      assert.ok(error.cause instanceof SyntaxError);
+      return true;
+    });
+  });
+});
+
 test("rejects a stale installed Wrangler against the exact workspace pin", async () => {
   await withFixture(async (root) => {
     await put(root, "node_modules/wrangler/package.json", JSON.stringify({ name: "wrangler", version: "4.127.1" }));
@@ -181,7 +212,7 @@ test("pins only the explicit generated config and catches later mutation", async
 test("generated config pin rejects stale agent routing before artifact preparation", async () => {
   await withFixture(async (root) => {
     const configPath = await generatedConfig(root);
-    const baseline = JSON.parse(await readFile(configPath, "utf8"));
+    const baseline = parseJsonc(configPath, await readFile(configPath, "utf8"));
     await assert.doesNotReject(() => pinGeneratedDeploymentConfig({ root }));
     for (const route of ["/agents", "/agents/*"]) {
       const stale = structuredClone(baseline);
@@ -194,7 +225,8 @@ test("generated config pin rejects stale agent routing before artifact preparati
     await writeFile(configPath, JSON.stringify(broad));
     await assert.rejects(() => pinGeneratedDeploymentConfig({ root }), /selective Worker-first routing/u);
     await writeFile(configPath, JSON.stringify(baseline));
-    const canonical = JSON.parse(await readFile(path.join(root, "apps/eliotr-core/wrangler.jsonc"), "utf8"));
+    const canonicalPath = path.join(root, "apps/eliotr-core/wrangler.jsonc");
+    const canonical = parseJsonc(canonicalPath, await readFile(canonicalPath, "utf8"));
     canonical.assets.not_found_handling = "404-page";
     await writeFile(path.join(root, "apps/eliotr-core/wrangler.jsonc"), JSON.stringify(canonical));
     await assert.rejects(() => pinGeneratedDeploymentConfig({ root }), /static asset fallback configuration/u);

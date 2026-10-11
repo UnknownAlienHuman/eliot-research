@@ -535,9 +535,11 @@ function updateHealth(health: SystemHealth, failure?: HealthFailure): void {
 }
 
 window.addEventListener("pageshow", (event) => { if (event.persisted) window.location.reload(); });
-render(null);
-refreshHealth();
-
-if ("serviceWorker" in navigator) {
-  void navigator.serviceWorker.register("/sw.js");
+function startRetirementSafeWorkspace(): void {
+  if (document.documentElement.dataset.eliotrWorkerRetired !== "true" ||
+      ("serviceWorker" in navigator && navigator.serviceWorker.controller !== null)) return;
+  render(null);
+  refreshHealth();
 }
+if (document.documentElement.dataset.eliotrWorkerRetired === "true") startRetirementSafeWorkspace();
+else window.addEventListener("eliotr:worker-retired", startRetirementSafeWorkspace, { once: true });

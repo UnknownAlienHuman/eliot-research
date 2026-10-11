@@ -9,6 +9,7 @@ import { CLOUDFLARE_MCP_TRANSPORT, createCloudflareMcpTransport } from "./lib/cl
 import { isUsageAdmissionCapability, runUsagePreflight } from "./lib/cloudflare-usage-admission.mjs";
 import { readConfiguredTransport } from "./check-launch-code.mjs";
 import { readActiveDeploymentIdentity, selectDeploymentGoogleTransport } from "./lib/deployment-maintenance.mjs";
+import { parseDeploymentJsonc } from "./lib/deployment-jsonc.mjs";
 import {
   applyMcp,
   buildMcpReceipt,
@@ -175,7 +176,7 @@ if (desired.protocol !== "eliotr.cloudflare-access.v1" || desired.requirements?.
 const appName = `${desired.application.name_prefix}: ${hostname}`;
 const policyName = desired.policy.name;
 const configuredGoogleTransport = process.env.ELIOTR_GOOGLE_EXTERNAL_TRANSPORT;
-const canonicalConfig = JSON.parse(await readFile(resolve(repositoryRoot, "apps/eliotr-core/wrangler.jsonc"), "utf8"));
+const canonicalConfig = parseDeploymentJsonc(await readFile(resolve(repositoryRoot, "apps/eliotr-core/wrangler.jsonc"), "utf8"), "apps/eliotr-core/wrangler.jsonc");
 const canonicalGoogleTransport = readConfiguredTransport(canonicalConfig);
 const activeTransport = preserveGoogleTransport === undefined ? null :
   await readActiveDeploymentIdentity({ env: { CLOUDFLARE_ACCOUNT_ID: accountId, CLOUDFLARE_API_TOKEN: token },
@@ -462,9 +463,18 @@ if (maintenancePreservation) {
       (priorReceipt.account_id !== accountId || priorReceipt.hostname !== hostname)) {
     throw new Error("Maintenance Access receipt binds a different account or hostname");
   }
-  // The explicitly configured /mcp app has its own strict preflight below.
-  const hostnameApps = applications.filter((candidate) => (!mcpConfig || candidate?.name !== mcpConfig.appName) &&
-    (candidate?.domain === hostname || (Array.isArray(candidate?.destinations) &&
+  // The dedicated /mcp app can remain installed while its transport is disabled.
+  // Exclude only its exact desired contour; a matching name alone is not authority.
+  const mcpDestination = `${hostname}/mcp`;
+  const mcpApplicationName = `${mcpDesired?.application?.name_prefix}: ${mcpDestination}`;
+  const isDedicatedMcpApplication = (candidate) => mcpDesired?.path === "/mcp" &&
+    mcpDesired.application?.type === "self_hosted" && mcpDesired.application?.destination_type === "public" &&
+    candidate?.name === mcpApplicationName && candidate?.domain === mcpDestination && candidate?.type === "self_hosted" &&
+    Array.isArray(candidate.destinations) && candidate.destinations.length === 1 &&
+    candidate.destinations[0]?.type === "public" && candidate.destinations[0]?.uri === mcpDestination;
+  const hostnameApps = applications.filter((candidate) => !isDedicatedMcpApplication(candidate) &&
+    (candidate?.name === mcpApplicationName || destinationUsesHostname({ uri: candidate?.domain }, hostname) ||
+      (Array.isArray(candidate?.destinations) &&
       candidate.destinations.some((destination) => destinationUsesHostname(destination, hostname)))));
   if (hostnameApps.length !== 1) {
     throw new Error(hostnameApps.length === 0

@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { lstat, readFile, readdir, realpath } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
+import ts from "typescript";
 import { assertCoreWorkerRouteParity } from "./core-worker-route-parity.mjs";
 
 export const DEPLOYMENT_BUILD_INPUT_PROTOCOL = "eliotr.deployment-build-inputs.v1";
@@ -12,6 +13,14 @@ export const DEPLOYMENT_BUILD_INPUT_LIMITS = Object.freeze({
   metafileBytes: 16 * 1024 * 1024,
   artifactBytes: 32 * 1024 * 1024,
   artifactFiles: 8,
+});
+// Owner-web's measured materialized closure: 205 packages / 155,922,854 bytes.
+// Its conservative source/runtime inventory does not change artifact limits.
+export const OWNER_WEB_DEPLOYMENT_BUILD_INPUT_LIMITS = Object.freeze({
+  ...DEPLOYMENT_BUILD_INPUT_LIMITS,
+  packages: 256,
+  files: 32768,
+  bytes: 256 * 1024 * 1024,
 });
 
 const REQUIRED_ROOT_INPUTS = Object.freeze([
@@ -33,6 +42,16 @@ const REQUIRED_PWA_INPUTS = Object.freeze([
   "apps/eliotr-pwa/package.json",
   "apps/eliotr-pwa/tsconfig.json",
   "apps/eliotr-pwa/vite.config.ts",
+]);
+const REQUIRED_OWNER_WEB_INPUTS = Object.freeze([
+  "apps/eliotr-web/package.json",
+  "apps/eliotr-web/tsconfig.json",
+  "apps/eliotr-web/index.html",
+  "apps/eliotr-web/vite.config.ts",
+  "apps/eliotr-web/vite.integrated.config.ts",
+]);
+const OWNER_WEB_INPUT_DIRECTORIES = Object.freeze([
+  "apps/eliotr-web/src", "apps/eliotr-web/public",
 ]);
 const REQUIRED_DEPLOYMENT_SCRIPTS = Object.freeze([
   "scripts/check-boundaries.mjs",
@@ -59,12 +78,28 @@ const EXCLUDED_GENERATED_INPUTS = new Set([
   "apps/eliotr-core/src/worker-configuration.d.ts",
   "apps/eliotr-pwa/public/agent-inbox/app.js",
   "apps/eliotr-pwa/public/agent-inbox/app.css",
+  "apps/eliotr-pwa/public/agent-inbox/retirement.js",
 ]);
 const EXCLUDED_DIRECTORY_NAMES = new Set([
   ".astro", ".git", ".wrangler", "coverage", "dist", "dist-types", "node_modules",
 ]);
 const ALLOWED_EXTERNAL_IMPORTS = new Set(["cloudflare:workers", "cloudflare:workflows"]);
 const DEPLOYMENT_OUTDIR_PATTERN = /^\.eliotr-state\/deployment-worker-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u;
+
+function requireAssetProfile(assetProfile) {
+  if (assetProfile !== "legacy" && assetProfile !== "owner-web") {
+    throw new Error("Deployment build-input asset profile is invalid");
+  }
+  return assetProfile;
+}
+
+function manifestAssetProfile(manifest) {
+  return requireAssetProfile(manifest?.profile?.asset_profile === undefined ? "legacy" : manifest.profile.asset_profile);
+}
+
+function assetDirectory(assetProfile) {
+  return requireAssetProfile(assetProfile) === "legacy" ? "../eliotr-pwa/dist" : "../eliotr-web/dist/client";
+}
 
 function slash(value) {
   return value.split(path.sep).join("/");
@@ -127,7 +162,8 @@ async function readRegularInput(root, relativePath, committedPaths, records, tot
   const bytes = await readFile(absolute);
   totals.files += 1;
   totals.bytes += bytes.byteLength;
-  if (totals.files > DEPLOYMENT_BUILD_INPUT_LIMITS.files || totals.bytes > DEPLOYMENT_BUILD_INPUT_LIMITS.bytes) {
+  const limits = totals.limits ?? DEPLOYMENT_BUILD_INPUT_LIMITS;
+  if (totals.files > limits.files || totals.bytes > limits.bytes) {
     throw new Error("Deployment build-input seal exceeded its file or byte bound");
   }
   records.set(normalized, { path: normalized, kind, byte_length: bytes.byteLength, sha256: digest(bytes) });
@@ -147,7 +183,8 @@ async function walkRepositoryInputs(root, relativeDirectory, committedPaths, rec
       continue;
     }
     if (entry.isSymbolicLink()) throw new Error(`Symlink in deployment build inputs is refused: ${relativePath}`);
-    if (!entry.isFile() || EXCLUDED_GENERATED_INPUTS.has(slash(relativePath)) || entry.name.endsWith(".tsbuildinfo")) continue;
+    if (!entry.isFile()) throw new Error(`Unsupported deployment build input: ${relativePath}`);
+    if (EXCLUDED_GENERATED_INPUTS.has(slash(relativePath)) || entry.name.endsWith(".tsbuildinfo")) continue;
     await readRegularInput(root, relativePath, committedPaths, records, totals);
   }
 }
@@ -187,7 +224,7 @@ async function resolveRepositoryModule(root, importer, specifier) {
   throw new Error(`Deployment script import could not be resolved: ${importer} -> ${specifier}`);
 }
 
-async function captureDeploymentScriptGraph(root, committedPaths, records, totals) {
+async function captureDeploymentScriptGraph(root, committedPaths, records, totals, extraEntrypoints = []) {
   const visited = new Set();
   async function visit(relativePath) {
     const normalized = slash(relativePath);
@@ -199,7 +236,7 @@ async function captureDeploymentScriptGraph(root, committedPaths, records, total
       await visit(await resolveRepositoryModule(root, normalized, specifier));
     }
   }
-  for (const entrypoint of REQUIRED_DEPLOYMENT_SCRIPTS) await visit(entrypoint);
+  for (const entrypoint of [...REQUIRED_DEPLOYMENT_SCRIPTS, ...extraEntrypoints]) await visit(entrypoint);
 }
 
 async function walkInstalledFiles(root, absoluteDirectory, records, totals) {
@@ -223,9 +260,28 @@ async function walkInstalledFiles(root, absoluteDirectory, records, totals) {
 
 async function resolveInstalledPackage(root, fromDirectory, packageName) {
   let entrypoint;
+  const ownerRequire = createRequire(path.join(fromDirectory, "package.json"));
   try {
-    entrypoint = createRequire(path.join(fromDirectory, "package.json")).resolve(packageName);
+    entrypoint = ownerRequire.resolve(packageName);
   } catch (error) {
+    // Type-only packages can have package metadata without a JavaScript entry.
+    // Use Node's nearest lookup order, then retain the same realpath fence.
+    for (const directory of ownerRequire.resolve.paths(packageName) ?? []) {
+      const candidate = path.resolve(directory, packageName, "package.json");
+      if (!inside(root, candidate)) continue;
+      let actualMetadata;
+      try { actualMetadata = await realpath(candidate); }
+      catch (metadataError) {
+        if (metadataError.code === "ENOENT" || metadataError.code === "ENOTDIR") continue;
+        throw metadataError;
+      }
+      if (!inside(root, actualMetadata)) throw new Error(`Installed runtime dependency resolves outside the repository: ${packageName}`, { cause: error });
+      const info = await lstat(actualMetadata);
+      if (!info.isFile() || info.isSymbolicLink()) throw new Error(`Installed runtime dependency metadata is not a regular file: ${packageName}`, { cause: error });
+      const metadata = JSON.parse(await readFile(actualMetadata, "utf8"));
+      if (metadata.name !== packageName) throw new Error(`Installed runtime dependency has no matching package metadata: ${packageName}`, { cause: error });
+      return { root: path.dirname(actualMetadata), metadata };
+    }
     throw new Error(`Installed runtime dependency could not be resolved (${packageName}): ${error.message}`, { cause: error });
   }
   const actualEntrypoint = await realpath(entrypoint);
@@ -254,7 +310,7 @@ async function captureRuntimePackageClosure(root, ownerDirectory, packageName, e
   if (expectedVersion && version !== expectedVersion) {
     throw new Error(`Installed runtime dependency version drift (${packageName}@${version}; expected ${expectedVersion})`);
   }
-  if (visited.size >= 128) throw new Error("Installed runtime dependency closure exceeded its package bound");
+  if (visited.size >= (totals.limits?.packages ?? 128)) throw new Error("Installed runtime dependency closure exceeded its package bound");
   const record = { name: packageName, version, path: slash(path.relative(root, actualRoot)), files: 0 };
   visited.set(actualRoot, record);
   const files = await walkInstalledFiles(root, actualRoot, records, totals);
@@ -281,9 +337,16 @@ async function recordInstalledFile(root, absolute, records, totals) {
   return records.get(relative);
 }
 
+function parseJson(source, filePath) {
+  if (path.extname(filePath) !== ".jsonc") return JSON.parse(source);
+  const parsed = ts.parseConfigFileTextToJson(filePath, source);
+  if (parsed.error) throw new SyntaxError(ts.flattenDiagnosticMessageText(parsed.error.messageText, "\n"));
+  return parsed.config;
+}
+
 async function readJson(root, relativePath) {
   try {
-    return JSON.parse(await readFile(path.resolve(root, relativePath), "utf8"));
+    return parseJson(await readFile(path.resolve(root, relativePath), "utf8"), relativePath);
   } catch (error) {
     throw new Error(`Deployment build-input seal could not read ${relativePath}: ${error.message}`, { cause: error });
   }
@@ -299,7 +362,8 @@ function assertPackageVersions(rootPackage, corePackage, wranglerPackage, zodPac
   }
 }
 
-async function captureInstalledState(root, records, totals, rootPackage, corePackage, pwaPackage) {
+async function captureInstalledState(root, records, totals, rootPackage, corePackage, pwaPackage,
+  ownerWebPackage, workspacePackages = new Map()) {
   const installedLockPath = path.resolve(root, "node_modules/.pnpm/lock.yaml");
   const installedModulesPath = path.resolve(root, "node_modules/.modules.yaml");
   const installedLock = await readFile(installedLockPath);
@@ -321,6 +385,26 @@ async function captureInstalledState(root, records, totals, rootPackage, corePac
     corePackage.dependencies.zod, records, totals, runtimePackages);
   const pwaRuntime = await captureRuntimePackageClosure(root, path.resolve(root, "apps/eliotr-pwa"), "markdown-it",
     markdownItRange, records, totals, runtimePackages);
+  if (ownerWebPackage) {
+    const visited = new Set();
+    async function visit(directory, metadata) {
+      if (visited.has(directory)) return;
+      visited.add(directory);
+      for (const [name, version] of Object.entries(metadata.dependencies ?? {}).sort(([a], [b]) => a.localeCompare(b))) {
+        if (typeof version !== "string") throw new Error(`Invalid runtime dependency selection: ${name}`);
+        if (version.startsWith("workspace:")) {
+          const dependency = workspacePackages.get(name);
+          if (!dependency) throw new Error(`Unsealed workspace runtime dependency: ${name}`);
+          await visit(dependency.directory, dependency.metadata);
+        } else {
+          await captureRuntimePackageClosure(root, directory, name,
+            /^\d+\.\d+\.\d+(?:-[\w.-]+)?$/u.test(version) ? version : null, records, totals, runtimePackages);
+        }
+      }
+    }
+    await visit(path.resolve(root, "apps/eliotr-core"), corePackage);
+    await visit(path.resolve(root, "apps/eliotr-web"), ownerWebPackage);
+  }
   await recordInstalledFile(root, installedLockPath, records, totals);
   await recordInstalledFile(root, installedModulesPath, records, totals);
   await recordInstalledFile(root, wranglerPackagePath, records, totals);
@@ -349,24 +433,34 @@ function validateManifest(root, manifest) {
     || typeof manifest.sha256 !== "string" || digest(Buffer.from(stableJson(manifestBody(manifest)))) !== manifest.sha256) {
     throw new Error("Deployment build-input manifest is invalid or was modified");
   }
+  manifestAssetProfile(manifest);
 }
 
-async function captureManifest(root) {
+async function captureManifest(root, assetProfile = "legacy") {
+  requireAssetProfile(assetProfile);
   const absoluteRoot = path.resolve(root);
   const rootRealpath = await realpath(absoluteRoot);
   if (rootRealpath !== absoluteRoot) throw new Error("Deployment build-input root must not be a symlink");
   const committedPaths = readCommittedPaths(absoluteRoot);
   const records = new Map();
-  const totals = { files: 0, bytes: 0 };
+  const totals = { files: 0, bytes: 0,
+    limits: assetProfile === "owner-web" ? OWNER_WEB_DEPLOYMENT_BUILD_INPUT_LIMITS : DEPLOYMENT_BUILD_INPUT_LIMITS };
+  const ownerWebConfigs = assetProfile === "owner-web" ? (await readdir(path.resolve(absoluteRoot, "apps/eliotr-web")))
+    .filter((name) => /^vite(?:\.[^/]+)?\.config\.(?:ts|[cm]?js)$/u.test(name))
+    .sort().map((name) => `apps/eliotr-web/${name}`) : [];
   for (const relative of REQUIRED_ROOT_INPUTS) await readRegularInput(absoluteRoot, relative, committedPaths, records, totals);
-  for (const relative of [...REQUIRED_CORE_INPUTS, ...REQUIRED_PWA_INPUTS]) {
+  for (const relative of [...REQUIRED_CORE_INPUTS, ...REQUIRED_PWA_INPUTS,
+    ...(assetProfile === "owner-web" ? REQUIRED_OWNER_WEB_INPUTS : [])]) {
     await readRegularInput(absoluteRoot, relative, committedPaths, records, totals);
   }
-  for (const relativeDirectory of INPUT_DIRECTORIES) {
+  for (const relativeDirectory of [...INPUT_DIRECTORIES,
+    ...(assetProfile === "owner-web" ? OWNER_WEB_INPUT_DIRECTORIES : [])]) {
     await walkRepositoryInputs(absoluteRoot, relativeDirectory, committedPaths, records, totals);
   }
-  await captureDeploymentScriptGraph(absoluteRoot, committedPaths, records, totals);
+  await captureDeploymentScriptGraph(absoluteRoot, committedPaths, records, totals,
+    ownerWebConfigs);
   const packageEntries = await readdir(path.resolve(absoluteRoot, "packages"), { withFileTypes: true });
+  const workspacePackages = new Map();
   if (packageEntries.some((item) => item.isSymbolicLink())) throw new Error("Symlink workspace package entry is refused");
   for (const entry of packageEntries.filter((item) => item.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
     const base = `packages/${entry.name}`;
@@ -381,6 +475,13 @@ async function captureManifest(root) {
     catch (error) { if (error.code !== "ENOENT") throw error; }
     if (!hasSource) continue;
     await readRegularInput(absoluteRoot, `${base}/package.json`, committedPaths, records, totals);
+    if (assetProfile === "owner-web") {
+      const metadata = await readJson(absoluteRoot, `${base}/package.json`);
+      if (typeof metadata.name !== "string" || workspacePackages.has(metadata.name)) {
+        throw new Error(`Invalid or duplicate workspace package identity: ${base}`);
+      }
+      workspacePackages.set(metadata.name, { directory: path.resolve(absoluteRoot, base), metadata });
+    }
     for (const config of (await readdir(path.resolve(absoluteRoot, base), { withFileTypes: true }))
       .filter((item) => item.isFile() && /^tsconfig[^/]*\.json$/u.test(item.name))) {
       await readRegularInput(absoluteRoot, `${base}/${config.name}`, committedPaths, records, totals);
@@ -390,12 +491,17 @@ async function captureManifest(root) {
   const rootPackage = await readJson(absoluteRoot, "package.json");
   const corePackage = await readJson(absoluteRoot, "apps/eliotr-core/package.json");
   const pwaPackage = await readJson(absoluteRoot, "apps/eliotr-pwa/package.json");
+  const ownerWebPackage = assetProfile === "owner-web" ? await readJson(absoluteRoot, "apps/eliotr-web/package.json") : null;
+  if (ownerWebPackage && (!workspacePackages.has("@eliotr/ui") || !workspacePackages.has("@eliotr/owner-api-client"))) {
+    throw new Error("Owner-web deployment requires the UI and owner-api-client workspace sources");
+  }
   const canonicalConfig = await readJson(absoluteRoot, "apps/eliotr-core/wrangler.jsonc");
   if (canonicalConfig.name !== "eliotr-core" || canonicalConfig.main !== "src/index.ts"
-    || canonicalConfig.assets?.directory !== "../eliotr-pwa/dist") {
+    || canonicalConfig.assets?.directory !== assetDirectory("legacy")) {
     throw new Error("Canonical Worker entrypoint or PWA asset directory differs from the pinned build profile");
   }
-  const installed = await captureInstalledState(absoluteRoot, records, totals, rootPackage, corePackage, pwaPackage);
+  const installed = await captureInstalledState(absoluteRoot, records, totals, rootPackage, corePackage, pwaPackage,
+    ownerWebPackage, workspacePackages);
   const inputs = [...records.values()].sort((a, b) => a.path.localeCompare(b.path));
   const body = {
     protocol: DEPLOYMENT_BUILD_INPUT_PROTOCOL,
@@ -409,8 +515,10 @@ async function captureManifest(root) {
       pwa_tsconfig: "apps/eliotr-pwa/tsconfig.json",
       pwa_assets: "apps/eliotr-pwa/dist",
       generated_worker_config: "apps/eliotr-core/wrangler.deploy.jsonc",
+      ...(assetProfile === "owner-web" ? { asset_profile: assetProfile,
+        owner_web_tsconfig: "apps/eliotr-web/tsconfig.json", owner_web_assets: "apps/eliotr-web/dist/client" } : {}),
     },
-    limits: { ...DEPLOYMENT_BUILD_INPUT_LIMITS, captured_files: totals.files, captured_bytes: totals.bytes },
+    limits: { ...totals.limits, captured_files: totals.files, captured_bytes: totals.bytes },
     installed,
     inputs,
   };
@@ -418,32 +526,34 @@ async function captureManifest(root) {
   return freezeDeep(manifest);
 }
 
-export async function captureDeploymentBuildInputs({ root = process.cwd() } = {}) {
-  return captureManifest(root);
+export async function captureDeploymentBuildInputs({ root = process.cwd(), assetProfile = "legacy" } = {}) {
+  return captureManifest(root, assetProfile);
 }
 
-export async function pinGeneratedDeploymentConfig({ root = process.cwd(), path: configPath } = {}) {
+export async function pinGeneratedDeploymentConfig({ root = process.cwd(), path: configPath, assetProfile = "legacy" } = {}) {
+  requireAssetProfile(assetProfile);
   const absoluteRoot = pathResolveRoot(root);
   const expected = path.resolve(absoluteRoot, "apps/eliotr-core/wrangler.deploy.jsonc");
   const absoluteConfig = path.resolve(absoluteRoot, configPath ?? expected);
   if (absoluteConfig !== expected) throw new Error("Only the provisioner-generated Worker config can be pinned");
   const info = await lstat(absoluteConfig);
   if (!info.isFile() || info.isSymbolicLink()) throw new Error("Generated deployment config is not a regular file");
+  if (await realpath(absoluteConfig) !== absoluteConfig) throw new Error("Generated deployment config traverses a symlink");
   const bytes = await readFile(absoluteConfig);
   let config;
-  try { config = JSON.parse(bytes.toString("utf8")); }
+  try { config = parseJson(bytes.toString("utf8"), absoluteConfig); }
   catch (error) { throw new Error(`Generated deployment config is invalid JSON: ${error.message}`, { cause: error }); }
   if (config.name !== "eliotr-core" || config.main !== "src/index.ts"
-    || config.assets?.directory !== "../eliotr-pwa/dist") {
+    || config.assets?.directory !== assetDirectory(assetProfile)) {
     throw new Error("Generated deployment config changes the pinned Worker entrypoint or assets directory");
   }
-  const canonicalConfig = JSON.parse(await readFile(
-    path.resolve(absoluteRoot, "apps/eliotr-core/wrangler.jsonc"), "utf8"));
-  assertCoreWorkerRouteParity(canonicalConfig, config);
+  const canonicalConfig = await readJson(absoluteRoot, "apps/eliotr-core/wrangler.jsonc");
+  assertCoreWorkerRouteParity(canonicalConfig, config, { assetProfile });
   return freezeDeep({ path: slash(path.relative(absoluteRoot, absoluteConfig)),
     sha256: digest(bytes), byte_length: bytes.byteLength, worker_name: config.name,
     worker_main: `apps/eliotr-core/${config.main}`,
-    assets_directory: `apps/eliotr-core/${config.assets.directory}` });
+    assets_directory: `apps/eliotr-core/${config.assets.directory}`,
+    ...(assetProfile === "owner-web" ? { asset_profile: assetProfile } : {}) });
 }
 
 function pathResolveRoot(root) {
@@ -451,7 +561,7 @@ function pathResolveRoot(root) {
   return path.resolve(root);
 }
 
-async function verifyConfigPin(root, pin) {
+async function verifyConfigPin(root, pin, assetProfile) {
   if (!pin || pin.path !== "apps/eliotr-core/wrangler.deploy.jsonc"
     || !/^[0-9a-f]{64}$/u.test(pin.sha256) || !Number.isSafeInteger(pin.byte_length)) {
     throw new Error("Generated deployment config pin is invalid");
@@ -464,14 +574,19 @@ async function verifyConfigPin(root, pin) {
   if (bytes.byteLength !== pin.byte_length || digest(bytes) !== pin.sha256) {
     throw new Error("Generated deployment config changed after its pin was recorded");
   }
+  if ((pin.asset_profile ?? "legacy") !== assetProfile) throw new Error("Generated deployment config pin belongs to a different asset profile");
+  const current = await pinGeneratedDeploymentConfig({ root, path: pin.path, assetProfile });
+  if (stableJson(current) !== stableJson(pin)) throw new Error("Generated deployment config pin metadata was modified");
 }
 
-export async function requireUnchangedDeploymentBuildInputs({ root = process.cwd(), manifest, generatedConfigPin } = {}) {
+export async function requireUnchangedDeploymentBuildInputs({ root = process.cwd(), manifest, generatedConfigPin,
+  assetProfile = manifest?.profile?.asset_profile ?? "legacy" } = {}) {
   const absoluteRoot = pathResolveRoot(root);
   validateManifest(absoluteRoot, manifest);
-  const current = await captureManifest(absoluteRoot);
+  if (requireAssetProfile(assetProfile) !== manifestAssetProfile(manifest)) throw new Error("Deployment build-input asset profile changed after its seal");
+  const current = await captureManifest(absoluteRoot, assetProfile);
   if (current.sha256 !== manifest.sha256) throw new Error("Deployment build inputs changed after their initial seal");
-  if (generatedConfigPin) await verifyConfigPin(absoluteRoot, generatedConfigPin);
+  if (generatedConfigPin) await verifyConfigPin(absoluteRoot, generatedConfigPin, assetProfile);
   return true;
 }
 
@@ -550,10 +665,10 @@ function artifactDigestBody(attestation) {
 }
 
 export async function attestDeploymentBundle({ root = process.cwd(), manifest, outdir, metafilePath,
-  generatedConfigPin } = {}) {
+  generatedConfigPin, assetProfile = manifest?.profile?.asset_profile ?? "legacy" } = {}) {
   const absoluteRoot = pathResolveRoot(root);
   validateManifest(absoluteRoot, manifest);
-  await requireUnchangedDeploymentBuildInputs({ root: absoluteRoot, manifest, generatedConfigPin });
+  await requireUnchangedDeploymentBuildInputs({ root: absoluteRoot, manifest, generatedConfigPin, assetProfile });
   if (!generatedConfigPin) throw new Error("Deployment bundle attestation requires the generated-config pin");
   const absoluteOutdir = path.resolve(absoluteRoot, outdir ?? "");
   const relativeOutdir = slash(path.relative(absoluteRoot, absoluteOutdir));
@@ -584,6 +699,8 @@ export async function attestDeploymentBundle({ root = process.cwd(), manifest, o
   if (inputFiles.length === 0) throw new Error("Wrangler metafile contains no Worker inputs");
   const entryOutputs = [];
   const declaredOutputs = new Set();
+  const outputImports = new Map();
+  const outputBytes = new Map();
   for (const [outputName, details] of Object.entries(metafile.outputs).sort(([a], [b]) => a.localeCompare(b))) {
     if (!details || typeof details !== "object") throw new Error(`Invalid Wrangler output metadata: ${outputName}`);
     const normalized = normalizeMetaPath(outputName);
@@ -592,6 +709,11 @@ export async function attestDeploymentBundle({ root = process.cwd(), manifest, o
     const actual = await assertSafeRegularFile(absoluteRoot, absolute, "Wrangler metafile output");
     if (!inside(absoluteOutdir, actual)) throw new Error(`Wrangler output escaped its dedicated directory: ${outputName}`);
     declaredOutputs.add(slash(path.relative(absoluteOutdir, actual)));
+    outputImports.set(actual, details.imports ?? []);
+    if (assetProfile === "owner-web") {
+      if (!Number.isSafeInteger(details.bytes) || details.bytes < 0) throw new Error(`Invalid byte count for Worker output ${outputName}`);
+      outputBytes.set(slash(path.relative(absoluteOutdir, actual)), details.bytes);
+    }
     if (details.entryPoint !== undefined) entryOutputs.push({ output: actual, entry_point: details.entryPoint });
     validateImports(details.imports ?? [], `Wrangler output ${normalized}`);
   }
@@ -602,8 +724,11 @@ export async function attestDeploymentBundle({ root = process.cwd(), manifest, o
   if (entrySource.path !== canonicalMain) throw new Error("Wrangler bundled an entrypoint outside the pinned Worker main");
   const inventory = await enumerateArtifactFiles(absoluteRoot, absoluteOutdir);
   const entryRelative = slash(path.relative(absoluteOutdir, entry.output));
-  if (!entryRelative.endsWith(".js")) throw new Error("Bundled Worker entrypoint must be emitted JavaScript");
-  const allowedInventory = new Set([entryRelative, "README.md", `${entryRelative}.map`, slash(path.relative(absoluteOutdir, actualMetaPath))]);
+  if (!entryRelative.endsWith(".js") && !(assetProfile === "owner-web" && entryRelative.endsWith(".mjs"))) {
+    throw new Error("Bundled Worker entrypoint must be emitted JavaScript");
+  }
+  const allowedInventory = new Set([entryRelative, "README.md", `${entryRelative}.map`, slash(path.relative(absoluteOutdir, actualMetaPath)),
+    ...(assetProfile === "owner-web" ? declaredOutputs : [])]);
   for (const file of inventory) {
     if (!allowedInventory.has(file.path)) throw new Error(`Unexpected Wrangler output file: ${file.path}`);
   }
@@ -611,7 +736,23 @@ export async function attestDeploymentBundle({ root = process.cwd(), manifest, o
   for (const declared of declaredOutputs) {
     if (!inventory.some((file) => file.path === declared)) throw new Error(`Wrangler output metadata references missing file: ${declared}`);
     if (declared !== entryRelative && declared !== `${entryRelative}.map`) {
-      throw new Error(`Unsupported Wrangler emitted module: ${declared}`);
+      const module = /\.(?:m?js|wasm)$/u.test(declared);
+      const sourceMap = declared.endsWith(".map") && declaredOutputs.has(declared.slice(0, -4));
+      if (assetProfile !== "owner-web" || (!module && !sourceMap)) {
+        throw new Error(`Unsupported Wrangler emitted module: ${declared}`);
+      }
+    }
+  }
+  if (assetProfile === "owner-web") {
+    for (const [importer, imports] of outputImports) {
+      for (const item of imports.filter((edge) => edge.external !== true)) {
+        const candidates = new Set(path.isAbsolute(item.path) ? [path.resolve(item.path)] : [
+          path.resolve(absoluteRoot, "apps/eliotr-core", item.path), path.resolve(path.dirname(importer), item.path),
+        ]);
+        const matches = [...candidates].filter((candidate) => outputImports.has(candidate)
+          && /\.(?:m?js|wasm)$/u.test(candidate));
+        if (matches.length !== 1) throw new Error(`Worker module imported an unknown or ambiguous output: ${item.path}`);
+      }
     }
   }
   const files = [];
@@ -620,8 +761,12 @@ export async function attestDeploymentBundle({ root = process.cwd(), manifest, o
     const bytes = await readFile(file.absolute);
     totalBytes += bytes.byteLength;
     if (totalBytes > DEPLOYMENT_BUILD_INPUT_LIMITS.artifactBytes) throw new Error("Wrangler output exceeded its artifact byte bound");
+    if (outputBytes.has(file.path) && outputBytes.get(file.path) !== bytes.byteLength) {
+      throw new Error(`Worker output byte count changed: ${file.path}`);
+    }
     files.push({ path: file.path, byte_length: bytes.byteLength, sha256: digest(bytes),
-      kind: file.path === entryRelative ? "worker-entrypoint" : file.path === `${entryRelative}.map` ? "source-map"
+      kind: file.path === entryRelative ? "worker-entrypoint" : file.path.endsWith(".map") ? "source-map"
+        : assetProfile === "owner-web" && declaredOutputs.has(file.path) ? "worker-module"
         : file.path === "README.md" ? "wrangler-readme" : "metafile" });
   }
   const metafileRelative = slash(path.relative(absoluteOutdir, actualMetaPath));
@@ -633,6 +778,7 @@ export async function attestDeploymentBundle({ root = process.cwd(), manifest, o
     root: absoluteRoot,
     manifest_sha256: manifest.sha256,
     generated_config: generatedConfigPin,
+    ...(assetProfile === "owner-web" ? { asset_profile: assetProfile } : {}),
     outdir: relativeOutdir,
     entrypoint: path.resolve(absoluteOutdir, entryRelative),
     entrypoint_sha256: entryRecord.sha256,
@@ -645,15 +791,20 @@ export async function attestDeploymentBundle({ root = process.cwd(), manifest, o
   return freezeDeep({ ...body, sha256: digest(Buffer.from(stableJson(body))) });
 }
 
-export async function requireUnchangedDeploymentBundle({ root = process.cwd(), manifest, attestation } = {}) {
+export async function requireUnchangedDeploymentBundle({ root = process.cwd(), manifest, attestation,
+  assetProfile = attestation?.asset_profile ?? "legacy" } = {}) {
   if (!attestation || attestation.protocol !== "eliotr.deployment-worker-bundle.v1"
     || !/^[0-9a-f]{64}$/u.test(attestation.sha256)
     || digest(Buffer.from(stableJson(artifactDigestBody(attestation)))) !== attestation.sha256) {
     throw new Error("Deployment bundle attestation is invalid or was modified");
   }
+  if (requireAssetProfile(assetProfile) !== (attestation.asset_profile ?? "legacy")) {
+    throw new Error("Deployment bundle asset profile changed after attestation");
+  }
   if (attestation.manifest_sha256 !== manifest?.sha256) throw new Error("Deployment bundle belongs to a different build-input manifest");
   const current = await attestDeploymentBundle({ root, manifest, outdir: attestation.outdir,
-    metafilePath: attestation.metafile.path, generatedConfigPin: attestation.generated_config });
+    metafilePath: attestation.metafile.path, generatedConfigPin: attestation.generated_config,
+    assetProfile });
   if (current.sha256 !== attestation.sha256) throw new Error("Deployment bundle, inputs, metafile, or config changed after attestation");
   return true;
 }
