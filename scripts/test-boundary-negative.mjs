@@ -1,4 +1,4 @@
-import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { copyFile, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -55,9 +55,13 @@ async function proveCheckoutPathsArePortable() {
     for (const name of ["check-boundaries.mjs", "check-budgets.mjs"]) {
       await copyFile(resolve(root, "scripts", name), resolve(checkout, "scripts", name));
     }
-    for (const name of ["boundary-registration-discovery.mjs"]) {
+    for (const name of ["boundary-registration-discovery.mjs", "boundary-module-imports.mjs"]) {
       await copyFile(resolve(root, "scripts", "lib", name), resolve(checkout, "scripts", "lib", name));
     }
+    // The copied gate uses the same pinned compiler, independently of the caller's CWD.
+    await mkdir(resolve(checkout, "node_modules"));
+    await symlink(await realpath(resolve(root, "node_modules/typescript")),
+      resolve(checkout, "node_modules/typescript"), process.platform === "win32" ? "junction" : "dir");
     // Registration discovery reads the reference graph. An empty graph is the
     // honest portable fixture; the live graph is proven by real repository runs.
     await writeFile(resolve(checkout, "tsconfig.json"),

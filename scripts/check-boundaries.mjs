@@ -2,6 +2,7 @@ import { readFile, readdir } from "node:fs/promises";
 import { extname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { discoverRegistrationDefects, parsePackageRuleKeys } from "./lib/boundary-registration-discovery.mjs";
+import { boundaryModuleImports } from "./lib/boundary-module-imports.mjs";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const SOURCE_ROOTS = ["packages", "apps"];
@@ -30,6 +31,8 @@ const FORBIDDEN_IMPORTS = [
 // and the PWA build script reads local source files to generate its asset.
 const HOST_TOOL_IMPORTS = new Map([
   ["apps/eliotr-web/vite.config.ts", new Set(["node:fs"])],
+  ["apps/eliotr-web/vite.integrated.config.ts", new Set(["node:fs"])],
+  ["packages/platform-cloudflare/src/d1-queue-terminal-store.test.ts", new Set(["node:fs"])],
   ["packages/cloudflare-workflows/src/external-agent-result-outbox.test.ts", new Set(["node:fs", "node:sqlite"])],
   ["packages/ui/src/tokens/contrast.test.ts", new Set(["node:fs", "node:crypto"])],
   ["packages/backup-o2/src/coverage-full-chain.test.ts", new Set(["node:fs"])],
@@ -376,11 +379,6 @@ function ownerFor(file) {
   return [...PACKAGE_RULES.keys()].find((prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`));
 }
 
-function importsOf(source) {
-  const matches = source.matchAll(/(?:from\s+|import\s*\()\s*["']([^"']+)["']/g);
-  return [...matches].map((match) => match[1]);
-}
-
 const errors = [];
 const gateSource = await readFile(fileURLToPath(import.meta.url), "utf8");
 errors.push(...await discoverRegistrationDefects(
@@ -399,7 +397,10 @@ for (const sourceRoot of SOURCE_ROOTS) {
     }
     const normalizedPath = projectPath(file);
     const source = await readFile(file, "utf8");
-    for (const specifier of importsOf(source)) {
+    let imports;
+    try { imports = boundaryModuleImports(source, normalizedPath); }
+    catch (error) { errors.push(error.message); continue; }
+    for (const specifier of imports) {
       const allowedHostToolImport = HOST_TOOL_IMPORTS.get(normalizedPath)?.has(specifier) === true;
       if (!allowedHostToolImport &&
           FORBIDDEN_IMPORTS.some((prefix) => specifier === prefix || specifier.startsWith(prefix))) {
