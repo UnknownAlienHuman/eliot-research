@@ -43,6 +43,7 @@ function queueMessage(body: unknown = {
 describe("Queue outer consume failure handling", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.writeDataPoint.mockReset();
   });
 
   it("records bounded diagnostics for an actual runtime throw and retries with the configured delay without ACK", async () => {
@@ -58,7 +59,7 @@ describe("Queue outer consume failure handling", () => {
     await handleQueue({ messages: [message] } as unknown as MessageBatch<unknown>, environment());
 
     expect(message.retry).toHaveBeenCalledOnce();
-    expect(message.retry).toHaveBeenCalledWith();
+    expect(message.retry).toHaveBeenCalledWith({ delaySeconds: 30 });
     expect(message.ack).not.toHaveBeenCalled();
 
     const point = mocks.writeDataPoint.mock.calls[0]?.[0] as {
@@ -91,11 +92,22 @@ describe("Queue outer consume failure handling", () => {
 
     await handleQueue({ messages: [message] } as unknown as MessageBatch<unknown>, environment());
 
-    expect(message.retry).toHaveBeenCalledWith();
+    expect(message.retry).toHaveBeenCalledWith({ delaySeconds: 30 });
     expect(message.ack).not.toHaveBeenCalled();
     const point = mocks.writeDataPoint.mock.calls[0]?.[0] as { blobs: string[] } | undefined;
     expect(point?.blobs).toContain("MALFORMED_MESSAGE");
     expect(point?.blobs).toContain("DELIVERY_INPUT_INVALID");
     expect(JSON.stringify(point)).not.toContain("private prompt");
+  });
+
+  it("preserves poison-message retry when observational metrics fail", async () => {
+    const message = queueMessage({ protocol: "invalid" });
+    mocks.writeDataPoint.mockImplementation(() => { throw new Error("metrics unavailable"); });
+
+    await handleQueue({ messages: [message] } as unknown as MessageBatch<unknown>, environment());
+
+    expect(message.retry).toHaveBeenCalledOnce();
+    expect(message.retry).toHaveBeenCalledWith({ delaySeconds: 30 });
+    expect(message.ack).not.toHaveBeenCalled();
   });
 });

@@ -37,7 +37,8 @@ describe("delivery telemetry boundaries", () => {
 
   it("allowlists result codes and caps retry correlation independently of payloads", () => {
     const point = queueDeliveryMetric({ deployment_generation: "generation-1",
-      result: { message_id: "private", disposition: "RETRY_SCHEDULED", error_code: "private-secret" } });
+      result: { message_id: "private", platform_message_id: "queue-1", platform_attempt: 1,
+        disposition: "RETRY_SCHEDULED", error_code: "private-secret" } });
     expect(point.blobs).toEqual(["queue", "RETRY_SCHEDULED", "QUEUE_DELIVERY_HANDLED", "generation-1"]);
     expect(queueDeliveryMetric({ deployment_generation: "generation-1", result: null,
       failure: { error: null, platform_message_id: "queue-1", attempt: 1_000_001 } }).doubles).toEqual([0, 1_000_000]);

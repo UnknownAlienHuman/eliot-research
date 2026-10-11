@@ -91,6 +91,8 @@ function dispatcherOptions(workerId: string, now: () => number): OutboxDispatche
 function createRecordedDelivery(body: unknown, events: string[]): QueueDelivery {
   return {
     body,
+    id: "local-queue-delivery",
+    attempts: 1,
     ack() {
       events.push("ack");
     },
@@ -147,6 +149,35 @@ async function captureAcceptedEnvelope(now: () => number): Promise<DeliveryMessa
 }
 
 describe("Q1 delivery replay boundaries (private draft)", () => {
+  it("keeps legacy terminal metadata quarantined without a business handler or terminal ACK", async () => {
+    await importQ1Bundle(world);
+    const nowMs = Date.now() + 10_000;
+    const message = await captureAcceptedEnvelope(() => nowMs);
+    const inbox = createD1InboxStore(db);
+    const begin = await inbox.begin({ message, worker_id: "q1-legacy-terminal", now_ms: nowMs, lease_ms: 5_000 });
+    if (begin.disposition !== "ACQUIRED" || begin.lease === undefined) throw new Error("Legacy fixture did not acquire its inbox lease");
+    await inbox.terminalFailure(begin.lease, "LEGACY_POISON", nowMs + 1);
+    const before = await readInbox(message);
+    expect(before.state).toBe("TERMINAL_FAILURE");
+    const consumer = createQueueConsumerRuntime(inbox, {
+      worker_id: "q1-primary-consumer", lease_ms: 5_000,
+      terminal_policy: "PLATFORM_DLQ", retry_delay_seconds: 30, now: () => nowMs + 2,
+    });
+    const events: string[] = [];
+    let handlerCalls = 0;
+    const result = await consumer.consume({ ...createRecordedDelivery(message, events),
+      id: "native-legacy-redelivery", attempts: 6 }, async () => {
+      handlerCalls += 1;
+      return { receipt_ref: "unexpected-legacy-effect" };
+    });
+    expect(result).toMatchObject({ disposition: "RETRY_SCHEDULED", error_code: "DELIVERY_INPUT_INVALID",
+      platform_message_id: "native-legacy-redelivery", platform_attempt: 6, retry_delay_seconds: 30 });
+    expect(result).not.toHaveProperty("inbox_attempt");
+    expect(handlerCalls).toBe(0);
+    expect(events).toEqual(["retry:30"]);
+    expect(await readInbox(message)).toEqual(before);
+  });
+
   it("retries an accepted-but-unacknowledged send with stable idempotency and consumer dedupe", async () => {
     await importQ1Bundle(world);
     let nowMs = Date.now() + 5_000;
@@ -380,9 +411,8 @@ describe("Q1 delivery replay boundaries (private draft)", () => {
     const consumer = createQueueConsumerRuntime(inbox, {
       worker_id: "q1-corrected-consumer",
       lease_ms: 5_000,
-      maximum_attempts: 4,
-      retry_base_ms: 1_000,
-      retry_maximum_ms: 5_000,
+      retry_delay_seconds: 1,
+      terminal_policy: "PLATFORM_DLQ",
       now: () => consumerNow,
     });
     let handlerCalls = 0;

@@ -153,13 +153,18 @@ export function createD1InboxStore(database: D1Database): InboxStore {
         );
       }
       validateStoredIdentity(existing, message);
-      if (existing.state === "COMPLETED" || existing.state === "TERMINAL_FAILURE") {
+      if (existing.state === "COMPLETED") {
         const receipt = existing.result_receipt_ref;
-        if (receipt !== null && receipt !== undefined) assertPayloadRef(receipt);
+        assertPayloadRef(receipt);
         return {
           disposition: "DUPLICATE_COMPLETED",
-          ...(typeof receipt === "string" ? { prior_receipt_ref: receipt } : {}),
+          prior_receipt_ref: receipt,
         } satisfies InboxBeginResult;
+      }
+      if (existing.state === "TERMINAL_FAILURE") {
+        // Legacy terminal metadata is not an exact business completion receipt.
+        // The primary consumer retries without executing business work or acknowledging it.
+        throw new DeliveryRuntimeError("DELIVERY_INPUT_INVALID", "legacy terminal inbox requires explicit terminal-owner handling");
       }
       if (existing.state === "PROCESSING" || existing.state === "RETRYABLE_FAILURE") {
         return { disposition: "DUPLICATE_PROCESSING" };

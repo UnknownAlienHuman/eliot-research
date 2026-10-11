@@ -6,7 +6,6 @@ import {
   assertPayloadRef,
   assertPositiveInteger,
   decodeDeliveryMessage,
-  retryDelayMs,
   type DeliveryHandler,
   type InboxBeginResult,
   type InboxLease,
@@ -23,6 +22,11 @@ export type QueueConsumptionDisposition =
 
 export interface QueueConsumptionResult {
   readonly message_id: string;
+  readonly platform_message_id: string;
+  readonly platform_attempt: number;
+  readonly inbox_lease_generation?: number;
+  readonly inbox_attempt?: number;
+  readonly retry_delay_seconds?: number;
   readonly disposition: QueueConsumptionDisposition;
   readonly receipt_ref?: string;
   readonly error_code?: string;
@@ -31,18 +35,13 @@ export interface QueueConsumptionResult {
 export interface QueueConsumerOptions {
   readonly worker_id: string;
   readonly lease_ms: number;
-  readonly maximum_attempts: number;
-  readonly retry_base_ms: number;
-  readonly retry_maximum_ms: number;
+  readonly terminal_policy: "PLATFORM_DLQ";
+  readonly retry_delay_seconds: number;
   readonly now?: () => number;
 }
 
 export interface QueueConsumerRuntime {
   consume(delivery: QueueDelivery, handler: DeliveryHandler): Promise<QueueConsumptionResult>;
-}
-
-function retrySeconds(attempt: number, baseMs: number, maximumMs: number): number {
-  return Math.max(1, Math.ceil(retryDelayMs(attempt, baseMs, maximumMs) / 1000));
 }
 
 function errorCode(error: unknown): string {
@@ -101,7 +100,7 @@ function validateBeginResult(result: InboxBeginResult): void {
     if (result.lease !== undefined) {
       throw new DeliveryRuntimeError("DELIVERY_INPUT_INVALID", "completed duplicate returned a lease");
     }
-    if (result.prior_receipt_ref !== undefined) assertPayloadRef(result.prior_receipt_ref);
+    assertPayloadRef(result.prior_receipt_ref);
   }
   if (result.disposition === "DUPLICATE_PROCESSING" && result.lease !== undefined) {
     throw new DeliveryRuntimeError("DELIVERY_INPUT_INVALID", "processing duplicate exposed another worker lease");
@@ -114,27 +113,47 @@ export function createQueueConsumerRuntime(
 ): QueueConsumerRuntime {
   assertDeliveryIdentifier(inputOptions.worker_id, "worker_id");
   assertPositiveInteger(inputOptions.lease_ms, "lease_ms", 24 * 60 * 60 * 1000);
-  assertPositiveInteger(inputOptions.maximum_attempts, "maximum_attempts", 10_000);
-  assertPositiveInteger(inputOptions.retry_base_ms, "retry_base_ms");
-  assertPositiveInteger(inputOptions.retry_maximum_ms, "retry_maximum_ms");
-  if (inputOptions.retry_base_ms > inputOptions.retry_maximum_ms) {
+  if (inputOptions.terminal_policy !== "PLATFORM_DLQ") {
     throw new DeliveryRuntimeError(
       "DELIVERY_INPUT_INVALID",
-      "retry_base_ms exceeds retry_maximum_ms",
+      "primary consumer terminal policy must be PLATFORM_DLQ",
     );
   }
+  assertPositiveInteger(inputOptions.retry_delay_seconds, "retry_delay_seconds", 86_400);
   const now = inputOptions.now ?? Date.now;
   const options = {
     worker_id: inputOptions.worker_id,
     lease_ms: inputOptions.lease_ms,
-    maximum_attempts: inputOptions.maximum_attempts,
-    retry_base_ms: inputOptions.retry_base_ms,
-    retry_maximum_ms: inputOptions.retry_maximum_ms,
+    retry_delay_seconds: inputOptions.retry_delay_seconds,
   } as const;
 
   return {
     async consume(delivery, handler) {
+      assertDeliveryIdentifier(delivery.id, "platform message_id");
+      assertPositiveInteger(delivery.attempts, "platform attempt");
       const message = decodeDeliveryMessage(delivery.body);
+      const identity = {
+        message_id: message.message_id,
+        platform_message_id: delivery.id,
+        platform_attempt: delivery.attempts,
+      };
+      function retry(
+        disposition: "RETRY_SCHEDULED" | "SETTLEMENT_UNCERTAIN",
+        code: string,
+        lease?: InboxLease,
+      ): QueueConsumptionResult {
+        delivery.retry({ delaySeconds: options.retry_delay_seconds });
+        return {
+          ...identity,
+          disposition,
+          error_code: code,
+          retry_delay_seconds: options.retry_delay_seconds,
+          ...(lease === undefined ? {} : {
+            inbox_lease_generation: lease.lease_generation,
+            inbox_attempt: lease.attempt,
+          }),
+        };
+      }
       const beginAt = now();
       assertDeliveryTimestamp(beginAt, "now_ms");
       let begin: InboxBeginResult;
@@ -147,24 +166,13 @@ export function createQueueConsumerRuntime(
         });
         validateBeginResult(begin);
       } catch (error) {
-        delivery.retry({
-          delaySeconds: retrySeconds(
-            message.outbox_attempt,
-            options.retry_base_ms,
-            options.retry_maximum_ms,
-          ),
-        });
-        return {
-          message_id: message.message_id,
-          disposition: "RETRY_SCHEDULED",
-          error_code: errorCode(error),
-        };
+        return retry("RETRY_SCHEDULED", errorCode(error));
       }
 
       if (begin.disposition === "DUPLICATE_COMPLETED") {
         delivery.ack();
         return {
-          message_id: message.message_id,
+          ...identity,
           disposition: "DUPLICATE_ACKNOWLEDGED",
           ...(begin.prior_receipt_ref === undefined
             ? {}
@@ -172,18 +180,7 @@ export function createQueueConsumerRuntime(
         };
       }
       if (begin.disposition === "DUPLICATE_PROCESSING") {
-        delivery.retry({
-          delaySeconds: retrySeconds(
-            message.outbox_attempt,
-            options.retry_base_ms,
-            options.retry_maximum_ms,
-          ),
-        });
-        return {
-          message_id: message.message_id,
-          disposition: "RETRY_SCHEDULED",
-          error_code: "DUPLICATE_PROCESSING",
-        };
+        return retry("RETRY_SCHEDULED", "DUPLICATE_PROCESSING");
       }
 
       let lease: InboxLease;
@@ -197,12 +194,7 @@ export function createQueueConsumerRuntime(
           beginAt,
         );
       } catch (error) {
-        delivery.retry({ delaySeconds: 1 });
-        return {
-          message_id: message.message_id,
-          disposition: "SETTLEMENT_UNCERTAIN",
-          error_code: errorCode(error),
-        };
+        return retry("SETTLEMENT_UNCERTAIN", errorCode(error));
       }
 
       let handlerReceipt: string;
@@ -218,40 +210,15 @@ export function createQueueConsumerRuntime(
       } catch (handlerError) {
         const code = errorCode(handlerError);
         assertErrorCode(code);
-        const failedAt = now();
         try {
-          if (lease.attempt >= options.maximum_attempts) {
-            await inbox.terminalFailure(lease, code, failedAt);
-            delivery.ack();
-            return {
-              message_id: message.message_id,
-              disposition: "TERMINAL_FAILURE_RECORDED",
-              error_code: code,
-            };
-          }
-          const delaySeconds = retrySeconds(
-            lease.attempt,
-            options.retry_base_ms,
-            options.retry_maximum_ms,
-          );
-          const availableAt = failedAt + delaySeconds * 1000;
-          if (!Number.isSafeInteger(availableAt)) {
-            throw new DeliveryRuntimeError("DELIVERY_INPUT_INVALID", "retry timestamp is unsafe");
-          }
+          const failedAt = now();
+          assertDeliveryTimestamp(failedAt, "failed_at_ms");
+          const availableAt = failedAt + options.retry_delay_seconds * 1000;
+          assertDeliveryTimestamp(availableAt, "retry available_at_ms");
           await inbox.retryableFailure(lease, code, availableAt, failedAt);
-          delivery.retry({ delaySeconds });
-          return {
-            message_id: message.message_id,
-            disposition: "RETRY_SCHEDULED",
-            error_code: code,
-          };
+          return retry("RETRY_SCHEDULED", code, lease);
         } catch (settlementError) {
-          delivery.retry({ delaySeconds: 1 });
-          return {
-            message_id: message.message_id,
-            disposition: "SETTLEMENT_UNCERTAIN",
-            error_code: errorCode(settlementError),
-          };
+          return retry("SETTLEMENT_UNCERTAIN", errorCode(settlementError), lease);
         }
       }
 
@@ -259,19 +226,16 @@ export function createQueueConsumerRuntime(
         await inbox.complete(lease, handlerReceipt, now());
         delivery.ack();
         return {
-          message_id: message.message_id,
+          ...identity,
+          inbox_lease_generation: lease.lease_generation,
+          inbox_attempt: lease.attempt,
           disposition: "COMPLETED",
           receipt_ref: handlerReceipt,
         };
       } catch (settlementError) {
         // The handler may already have produced a durable effect. Do not acknowledge and do not
         // execute any compensating side effect here. Redelivery reuses the same idempotency key.
-        delivery.retry({ delaySeconds: 1 });
-        return {
-          message_id: message.message_id,
-          disposition: "SETTLEMENT_UNCERTAIN",
-          error_code: errorCode(settlementError),
-        };
+        return retry("SETTLEMENT_UNCERTAIN", errorCode(settlementError), lease);
       }
     },
   };

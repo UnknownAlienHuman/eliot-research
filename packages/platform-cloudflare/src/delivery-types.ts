@@ -94,6 +94,8 @@ export interface InboxStore {
 }
 
 export interface QueueDelivery {
+  readonly id: string;
+  readonly attempts: number;
   readonly body: unknown;
   ack(): void;
   retry(options?: { readonly delaySeconds?: number }): void;

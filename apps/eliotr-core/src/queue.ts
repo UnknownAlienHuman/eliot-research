@@ -12,7 +12,7 @@ import { createExternalTaskResultDeliveryHandler, EXTERNAL_AGENT_RESULT_WAKE_TOP
 
 const CONSUMER_WORKER_ID = "eliotr-queue-consumer";
 const CONSUMER_LEASE_MS = 60_000;
-const PLATFORM_OWNS_TERMINAL_RETRY = 10_000;
+const CONSUMER_RETRY_DELAY_SECONDS = 30;
 
 function metric(env: Env, input: QueueDeliveryMetricInput): void {
   try {
@@ -55,11 +55,8 @@ export async function handleQueue(batch: MessageBatch<unknown>, env: Env): Promi
     {
       worker_id: CONSUMER_WORKER_ID,
       lease_ms: CONSUMER_LEASE_MS,
-      // Cloudflare's configured max_retries and DLQ own poison-message termination. Keeping this
-      // internal ceiling above the platform retry count prevents an application ACK from bypassing DLQ.
-      maximum_attempts: PLATFORM_OWNS_TERMINAL_RETRY,
-      retry_base_ms: 5_000,
-      retry_maximum_ms: 5 * 60_000,
+      terminal_policy: "PLATFORM_DLQ",
+      retry_delay_seconds: CONSUMER_RETRY_DELAY_SECONDS,
     },
   );
   const handler = deliveryHandler(env);
@@ -70,14 +67,14 @@ export async function handleQueue(batch: MessageBatch<unknown>, env: Env): Promi
       metric(env, { result, deployment_generation: env.DEPLOYMENT_GENERATION });
     } catch (error) {
       // The bounded diagnostic excludes the thrown message and Queue body. Malformed messages and
-      // unexpected failures remain unacknowledged for the configured retry delay/max_retries/DLQ.
-      // Omitting per-message delaySeconds preserves the consumer's configured retry_delay.
+      // unexpected failures remain unacknowledged for Cloudflare's max_retries/DLQ.
+      // Every primary retry uses the same installed delay, including failures before inbox acquisition.
       metric(env, {
         result: null,
         deployment_generation: env.DEPLOYMENT_GENERATION,
         failure: { error, platform_message_id: message.id, attempt: message.attempts },
       });
-      message.retry();
+      message.retry({ delaySeconds: CONSUMER_RETRY_DELAY_SECONDS });
     }
   }
 }

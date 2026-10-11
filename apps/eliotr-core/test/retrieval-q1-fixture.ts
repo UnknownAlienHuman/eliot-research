@@ -414,9 +414,8 @@ export function createQ1Consumer(world: Q1Namespace): Q1Consumer {
   const consumer = createQueueConsumerRuntime(createD1InboxStore(db), {
     worker_id: "q1-queue-consumer",
     lease_ms: 60_000,
-    maximum_attempts: 10_000,
-    retry_base_ms: 5_000,
-    retry_maximum_ms: 5 * 60_000,
+    retry_delay_seconds: 5,
+    terminal_policy: "PLATFORM_DLQ",
   });
   const accept = createProjectionDeliveryHandler(db);
   const executor = createProjectionExecutionHandler({
@@ -454,6 +453,8 @@ export function createQ1Consumer(world: Q1Namespace): Q1Consumer {
       const events: string[] = [];
       const delivery: QueueDelivery = {
         body: message,
+        id: "local-queue-message:" + message.message_id,
+        attempts: 1,
         ack() {
           events.push("ack");
         },

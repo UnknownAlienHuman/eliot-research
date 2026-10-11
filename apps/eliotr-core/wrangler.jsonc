@@ -109,7 +109,6 @@
             "max_retries": 5,
             "dead_letter_queue": "eliotr-dlq-test",
             "max_concurrency": 10,
-            "retry_delay": 30
           }
         ]
       },
@@ -178,7 +177,6 @@
         "max_retries": 5,
         "dead_letter_queue": "eliotr-dlq",
         "max_concurrency": 10,
-        "retry_delay": 30
       }
     ]
   },
