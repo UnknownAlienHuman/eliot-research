@@ -1,19 +1,26 @@
-/* Semantic tokens only. No raw visual values, no inline styles, no nested scroll. */
+/*
+ * Connections rows. One calm grouped list on a recessive tonal surface: compact aligned
+ * pane heading, one deliberate reading measure, dividers and spacing instead of a card or
+ * border around every fact. Semantic tokens only; no raw visual values, no inline styles,
+ * no nested scroll, no new icons or palette.
+ */
 
 .connections-feature {
   display: grid;
   min-width: 0;
   gap: var(--eliot-space-panel);
-  padding: var(--eliot-space-panel);
+  padding: var(--eliot-space-block-control);
   background: var(--md-sys-color-surface-container-low);
   color: var(--md-sys-color-on-surface);
   border-radius: var(--eliot-shape-medium);
 }
 
+/* Compact heading: a section label, not a page display title. */
 .connections-feature__title {
   margin: var(--eliot-shape-none);
-  font-size: var(--eliot-type-title-large-size);
-  line-height: var(--eliot-type-title-large-line-height);
+  font-size: var(--eliot-type-title-medium-size);
+  line-height: var(--eliot-type-title-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
 }
 
 .connections-feature__note,
@@ -25,6 +32,7 @@
   overflow-wrap: anywhere;
 }
 
+/* One deliberate reading measure; long labels never widen the column. */
 .connections-feature__note {
   max-width: var(--eliot-layout-reading-max);
 }
@@ -36,51 +44,73 @@
 .connections-feature__rows {
   display: grid;
   gap: var(--eliot-shape-none);
+  min-width: 0;
+  max-width: var(--eliot-layout-reading-max);
   margin: var(--eliot-shape-none);
   padding: var(--eliot-shape-none);
   list-style: none;
 }
 
+/* Compact row: one vertical scroll owner, one divider per gap, no per-fact card. */
 .connections-feature__row {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
   gap: var(--eliot-space-block-control);
-  padding-block: var(--eliot-space-panel);
+  align-items: baseline;
+  padding-block: var(--eliot-space-block-control);
   border-block-end: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
 }
 
+/* The list closes on content, not on a trailing rule. */
+.connections-feature__row:last-child {
+  border-block-end: var(--eliot-shape-none);
+}
+
 .connections-feature__label {
-  font-weight: var(--eliot-type-font-weight-medium);
-  font-size: var(--eliot-type-body-medium-size);
-  line-height: var(--eliot-type-body-medium-line-height);
-}
-
-.connections-feature__row-content {
-  display: grid;
   min-width: 0;
-  justify-items: start;
-  gap: var(--eliot-space-block-control);
+  font-weight: var(--eliot-type-font-weight-medium);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  color: var(--md-sys-color-on-surface);
 }
 
+/* Facts and their action sit on one compact line and wrap only when the measure runs out. */
+.connections-feature__row-content {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--eliot-space-block-control);
+  min-width: 0;
+}
+
+.connections-feature__detail {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* Compact desktop: label column sized to its own text, facts fill the measure. */
 @media (min-width: 48rem) {
   .connections-feature__row {
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, auto) minmax(0, 1fr);
     gap: var(--eliot-space-panel);
-    align-items: start;
   }
 }
 
+/* Compact action row: 8px rhythm, never a stacked wall of giant controls. */
 .connections-feature__actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--eliot-space-inline-control);
+  gap: var(--eliot-space-block-control);
+  max-width: var(--eliot-layout-reading-max);
 }
 
 .connections-feature__diagnostics {
   display: grid;
   gap: var(--eliot-space-block-control);
   margin: var(--eliot-shape-none);
+  max-width: var(--eliot-layout-reading-max);
 }
 
 .connections-feature__diagnostics dt {
@@ -93,6 +123,7 @@
   margin: var(--eliot-shape-none);
 }
 
+/* Diagnostic identifiers wrap inside the third level and never widen the reading column. */
 .connections-feature__diagnostic-value {
   min-width: 0;
   font-family: var(--eliot-type-font-family-mono);
