@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { readOwnerWebStartupEvidence } from "./lib/emitted-owner-startup-intake.mjs";
+import { readLegacyPwaStartupEvidence, readOwnerWebStartupEvidence } from "./lib/emitted-owner-startup-intake.mjs";
 import { runOwnerWebNativeDryRun } from "./lib/emitted-owner-native-dry-run.mjs";
 import {
   inspectRetainedOwnerWebReuse,
@@ -127,8 +127,8 @@ export function parseArguments(args) {
     throw new Error("--source-tree is available only with --reuse-retained-owner-web");
   }
   if (!options.inspectOwnerWebStartup && (options.artifactReadbackPath || options.observationPaths.length) &&
-      (!options.ownerWeb || !options.artifactReadbackPath || !options.observationPaths.length)) {
-    throw new Error("Owner-web startup intake requires both --artifact-readback and --startup-observation");
+      (!options.artifactReadbackPath || !options.observationPaths.length)) {
+    throw new Error("Startup intake requires both --artifact-readback and --startup-observation");
   }
   return options;
 }
@@ -257,7 +257,9 @@ async function checkExistingReceipt(options) {
 
   const currentInputDigests = await readBuildInputs();
   const currentIdentity = await captureSourceIdentity(ROOT, currentInputDigests);
-  const validation = await validateReceipt(ROOT, receipt, currentIdentity);
+  const startup = await readStartupForCurrentBuild(options, currentIdentity);
+  const validation = await validateReceipt(ROOT, receipt, currentIdentity,
+    { startupObservations: startup?.startupObservations });
   const result = receipt
     ? { ...receipt, status: validation.status, issues: validation.issues }
     : { protocol: RECEIPT_PROTOCOL, status: validation.status, issues: validation.issues };
@@ -312,9 +314,10 @@ export async function runEmittedBudgetCheck(args = []) {
     const inputDigestsAfter = await readBuildInputs();
     const after = await captureSourceIdentity(ROOT, inputDigestsAfter);
     const sourceStable = before.fingerprint === after.fingerprint;
+    const startup = await readStartupForCurrentBuild(options, after);
     [worker, pwa] = await Promise.all([
       inspectWorkerBuild(ROOT, buildStartedAt, output),
-      inspectPwaBuild(ROOT, buildStartedAt),
+      inspectPwaBuild(ROOT, buildStartedAt, { startupObservations: startup?.startupObservations }),
     ]);
     if (build.error) commandIssues.push("Build process could not start: " + (build.error.code ?? "unknown"));
     if (build.status !== 0) commandIssues.push("The pinned local dry-run exited unsuccessfully");
@@ -376,7 +379,8 @@ export async function runEmittedBudgetCheck(args = []) {
       issues,
     };
 
-    const finalStatus = await validateReceipt(ROOT, receipt, after);
+    const finalStatus = await validateReceipt(ROOT, receipt, after,
+      { startupObservations: startup?.startupObservations });
     if (finalStatus.status !== receipt.status) {
       receipt.status = finalStatus.status;
       receipt.issues.push(...finalStatus.issues);
@@ -498,7 +502,8 @@ function usage() {
 
 async function readStartupForCurrentBuild(options, identity) {
   if (!options.artifactReadbackPath) return null;
-  return readOwnerWebStartupEvidence(ROOT, { artifactReadbackPath: options.artifactReadbackPath,
+  const reader = options.ownerWeb ? readOwnerWebStartupEvidence : readLegacyPwaStartupEvidence;
+  return reader(ROOT, { artifactReadbackPath: options.artifactReadbackPath,
     observationPaths: options.observationPaths, sourceCommit: identity.commit, expectedSourceDirectory: ROOT });
 }
 

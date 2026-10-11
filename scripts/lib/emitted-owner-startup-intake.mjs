@@ -6,7 +6,18 @@ import { admitStartupObservation } from "./emitted-route-membership.mjs";
 
 const digest = bytes => createHash("sha256").update(bytes).digest("hex");
 const gitBlob = bytes => createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
-const clientPrefix = "apps/eliotr-web/dist/client/";
+const ownerWebGraph = {
+  clientPrefix: "apps/eliotr-web/dist/client/",
+  artifactPrefixes: ["apps/eliotr-web/dist/"],
+  artifactPaths: ["apps/eliotr-web/.wrangler/deploy/config.json"],
+  description: "generated owner-web build",
+};
+const legacyPwaGraph = {
+  clientPrefix: "apps/eliotr-pwa/dist/",
+  artifactPrefixes: ["apps/eliotr-pwa/dist/", "apps/eliotr-core/dist/"],
+  artifactPaths: [],
+  description: "legacy PWA build",
+};
 const validPath = value => typeof value === "string" && value.length > 0 &&
   !isAbsolute(value) && !value.includes("\\") && !value.includes(":") &&
   !value.split("/").some(part => ["", ".", ".."].includes(part));
@@ -42,7 +53,7 @@ async function readRecord(root, filename, maxBytes) {
   return { absolute, bytes, sha256: digest(bytes), value: JSON.parse(bytes.toString("utf8")) };
 }
 
-async function clientMembership(repositoryRoot, sourceDirectory) {
+async function clientMembership(repositoryRoot, sourceDirectory, clientPrefix) {
   const entries = [], start = clientPrefix.slice(0, -1);
   const walk = async prefix => {
     const directory = await safePath(repositoryRoot, resolve(sourceDirectory, prefix), true);
@@ -62,7 +73,8 @@ async function clientMembership(repositoryRoot, sourceDirectory) {
 
 // These are the existing retained observer/build records, joined by their own
 // pointers and byte digests. Their JSON labels are not an observer attestation.
-export async function readOwnerWebStartupEvidence(repositoryRoot, options) {
+async function readStartupEvidence(repositoryRoot, options, graph) {
+  const { clientPrefix } = graph;
   const root = resolve(repositoryRoot);
   if ((await lstat(root)).isSymbolicLink()) throw new Error("Startup repository root is a symbolic link");
   if (!/^[a-f0-9]{40}$/u.test(options.sourceCommit ?? "") ||
@@ -114,8 +126,8 @@ export async function readOwnerWebStartupEvidence(repositoryRoot, options) {
   const artifacts = [], seenArtifacts = new Set();
   for (const row of rb.artifacts) {
     if (!validPath(row.path) || seenArtifacts.has(row.path) ||
-        !(row.path.startsWith("apps/eliotr-web/dist/") || row.path === "apps/eliotr-web/.wrangler/deploy/config.json")) {
-      throw new Error("Startup artifact path is duplicate or outside the generated owner-web build");
+        !(graph.artifactPrefixes.some(prefix => row.path.startsWith(prefix)) || graph.artifactPaths.includes(row.path))) {
+      throw new Error("Startup artifact path is duplicate or outside the " + graph.description);
     }
     const bytes = await readFile(await safePath(root, resolve(sourceDirectory, row.path)));
     if (bytes.length !== row.bytes || digest(bytes) !== row.sha256) throw new Error("Startup artifact bytes changed");
@@ -124,7 +136,7 @@ export async function readOwnerWebStartupEvidence(repositoryRoot, options) {
       artifacts.push({ path: row.path.slice(clientPrefix.length), sha256: row.sha256, rawBytes: row.bytes });
     }
   }
-  const actual = await clientMembership(root, sourceDirectory);
+  const actual = await clientMembership(root, sourceDirectory, clientPrefix);
   const declared = [...seenArtifacts].filter(p => p.startsWith(clientPrefix)).sort();
   if (JSON.stringify(actual) !== JSON.stringify(declared)) throw new Error("Startup client artifact manifest is incomplete");
   const startupObservations = new Map(), observationDigests = [];
@@ -145,4 +157,12 @@ export async function readOwnerWebStartupEvidence(repositoryRoot, options) {
   return { sourceDirectory, sourceCommit: options.sourceCommit, buildStartedAt: b.started,
     buildSha256: build.sha256, artifactReadbackSha256: readback.sha256, observationDigests,
     startupObservations, observerAuthentication: "NOT_ESTABLISHED_BY_BYTE_DIGESTS" };
+}
+
+export async function readOwnerWebStartupEvidence(repositoryRoot, options) {
+  return readStartupEvidence(repositoryRoot, options, ownerWebGraph);
+}
+
+export async function readLegacyPwaStartupEvidence(repositoryRoot, options) {
+  return readStartupEvidence(repositoryRoot, options, legacyPwaGraph);
 }
