@@ -46,6 +46,15 @@ retrieval, authentication semantics, or database schemas.
 - `scripts/local-runtime.mjs`
 - `scripts/test-local-runtime.mjs`
 - `docs/implementation/local-launch.md`
+- `scripts/lib/deployment-migration-operation.mjs`
+- `scripts/lib/deployment-migration-schema-probes.mjs`
+- `scripts/test-deployment-migration-operation.mjs`
+- `scripts/lib/deployment-constraint-scans.mjs`
+- `scripts/test-deployment-constraint-scans.mjs`
+- `scripts/lib/deployment-nullable-column-check.mjs`
+- `scripts/test-deployment-nullable-column-check.mjs`
+- `docs/implementation/d1-nullable-check-operator-2026-10-11.md`
+- `docs/adr/0009-control-plane-deployment-and-runtime-cost-authority.md`
 
 ## Read only
 

@@ -68,7 +68,8 @@ export function createDeploymentMigrationSchemaProbeGroups(probes) {
 
 export function flattenDeploymentMigrationSchemaProbes(intent) {
   if (intent?.protocol === "eliotr.cloudflare-d1-migration-intent.v1") return intent.schema_probes;
-  if (intent?.protocol === "eliotr.cloudflare-d1-migration-intent.v2" && Array.isArray(intent.schema_probe_groups)) {
+  if (["eliotr.cloudflare-d1-migration-intent.v2", "eliotr.cloudflare-d1-migration-intent.v3"].includes(intent?.protocol) &&
+      Array.isArray(intent.schema_probe_groups)) {
     return intent.schema_probe_groups.flatMap((group) => Array.isArray(group?.probes) ? group.probes : []);
   }
   return [];

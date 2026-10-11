@@ -9,14 +9,19 @@ import { readDeploymentMigrationEntries, inspectDeploymentMigrationLedger,
   validateDeploymentMigrationDirectories } from "./deployment-migrations.mjs";
 import { readDeploymentJson } from "./deployment-verification.mjs";
 import { validateStagingTarget } from "./staging-isolation.mjs";
+import { supportsNullableColumnCheck } from "./deployment-nullable-column-check.mjs";
+import { assertConstraintScanCoverage, readConstraintScanPreconditions,
+  validConstraintScanBounds, validConstraintScanObservations } from "./deployment-constraint-scans.mjs";
 import { createDeploymentMigrationSchemaProbeGroups, flattenDeploymentMigrationSchemaProbes,
   groupDeploymentMigrationSchemaProbeObservations, validateDeploymentMigrationSchemaProbeGroups,
   validateGroupedSchemaProbeObservations } from "./deployment-migration-schema-probes.mjs";
 
 const INTENT_PROTOCOL_V1 = "eliotr.cloudflare-d1-migration-intent.v1";
 const INTENT_PROTOCOL_V2 = "eliotr.cloudflare-d1-migration-intent.v2";
+const INTENT_PROTOCOL_V3 = "eliotr.cloudflare-d1-migration-intent.v3";
 const RECEIPT_PROTOCOL_V1 = "eliotr.cloudflare-d1-migration-receipt.v1";
 const RECEIPT_PROTOCOL_V2 = "eliotr.cloudflare-d1-migration-receipt.v2";
+const RECEIPT_PROTOCOL_V3 = "eliotr.cloudflare-d1-migration-receipt.v3";
 const EMPTY_SEMANTIC_REVISION_REPAIR = Object.freeze({
   migrationName: "0108_research_semantic_config_revision_glob_limits.sql",
   baselineName: "0097_research_semantic_config_revision.sql",
@@ -128,11 +133,12 @@ function validateSchemaProbes(probes, migrationNames) {
 export function validateDeploymentMigrationIntent(intent) {
   const version1 = intent?.protocol === INTENT_PROTOCOL_V1;
   const version2 = intent?.protocol === INTENT_PROTOCOL_V2;
+  const version3 = intent?.protocol === INTENT_PROTOCOL_V3;
   const schemaProbeKey = version1 ? "schema_probes" : "schema_probe_groups";
   const keys = ["protocol", "intent_id", "account_id", "generated_config_sha256", "database",
     "migration_names", "migration_hashes", "local_migration_bundle_sha256", "risk_review",
     schemaProbeKey, "max_migrations", "max_sql_bytes", "deadline_at", "max_runtime_ms"];
-  if ((!version1 && !version2) || !exactKeys(intent, keys) || !UUID.test(intent.intent_id ?? "") ||
+  if ((!version1 && !version2 && !version3) || !exactKeys(intent, keys) || !UUID.test(intent.intent_id ?? "") ||
       !ACCOUNT.test(intent.account_id ?? "") || !HASH.test(intent.generated_config_sha256 ?? "") ||
       !HASH.test(intent.local_migration_bundle_sha256 ?? "") ||
       !exactKeys(intent.database, ["binding", "database_name", "database_id"]) ||
@@ -143,9 +149,12 @@ export function validateDeploymentMigrationIntent(intent) {
       intent.migration_hashes.length !== intent.migration_names.length ||
       !intent.migration_hashes.every((entry, index) => exactKeys(entry, ["name", "sha256"]) &&
         entry.name === intent.migration_names[index] && HASH.test(entry.sha256 ?? "")) ||
-      !exactKeys(intent.risk_review, ["classification", "summary", "reviewed_bundle_sha256", "index_build_cost_reviewed"]) ||
-      !["additive_schema_only", "schema_metadata_only", "data_preserving_bounded_copy_rebuild"]
+      !exactKeys(intent.risk_review, ["classification", "summary", "reviewed_bundle_sha256", "index_build_cost_reviewed",
+        ...(version3 ? ["constraint_scan_bounds"] : [])]) ||
+      !["additive_schema_only", "schema_metadata_only", "data_preserving_bounded_copy_rebuild",
+        ...(version3 ? ["schema_constraint_validation"] : [])]
         .includes(intent.risk_review.classification) ||
+      (version3 && !validConstraintScanBounds(intent.risk_review.constraint_scan_bounds)) ||
       typeof intent.risk_review.summary !== "string" || intent.risk_review.summary.trim().length < 16 ||
       intent.risk_review.summary.length > 512 || /[\u0000-\u0008\u000b\u000c\u000e-\u001f]/u.test(intent.risk_review.summary) ||
       intent.risk_review.reviewed_bundle_sha256 !== sha256(JSON.stringify(intent.migration_hashes)) ||
@@ -222,7 +231,6 @@ function splitSqlStatements(sqlTokens) {
   const firstWords = [];
   let trigger = false;
   let triggerBody = false;
-  let triggerParenDepth = 0;
   const triggerBlocks = [];
   const finish = () => {
     if (statement.length > 0) statements.push(statement);
@@ -230,7 +238,6 @@ function splitSqlStatements(sqlTokens) {
     firstWords.length = 0;
     trigger = false;
     triggerBody = false;
-    triggerParenDepth = 0;
     triggerBlocks.length = 0;
   };
   for (const token of sqlTokens) {
@@ -241,18 +248,13 @@ function splitSqlStatements(sqlTokens) {
     statement.push(token);
     if (token.type === "word" && firstWords.length < 2) firstWords.push(token.value);
     if (firstWords[0] === "CREATE" && firstWords[1] === "TRIGGER") trigger = true;
-    if (triggerBody && token.type === "symbol") {
-      if (token.value === "(") triggerParenDepth += 1;
-      else if (token.value === ")" && triggerParenDepth > 0) triggerParenDepth -= 1;
-    }
     if (trigger && token.type === "word") {
       if (!triggerBody && token.value === "BEGIN") {
         triggerBody = true;
         triggerBlocks.push("BEGIN");
       } else if (triggerBody && token.value === "CASE") {
-        if (triggerParenDepth === 0) {
-          fail("Unparenthesized CASE expressions are incompatible with native D1 trigger parsing");
-        }
+        // The exact pinned Wrangler 4.143.1 splitter keeps CASE END inside a
+        // trigger statement; only a semicolon followed by END closes its body.
         triggerBlocks.push("CASE");
       }
       else if (triggerBody && token.value === "END" && triggerBlocks.length > 0) triggerBlocks.pop();
@@ -454,38 +456,6 @@ function createIndexDefinition(statement) {
   return close > index + 1 && (noPredicate || partialPredicate) ? { name, table } : null;
 }
 
-function consumeNonnegativeInteger(statement, state) {
-  let value = "";
-  while (statement[state.index]?.type === "symbol" && /^\d$/u.test(statement[state.index].value)) {
-    value += statement[state.index++].value;
-  }
-  return value.length > 0 && Number.isSafeInteger(Number(value));
-}
-
-function supportedNullableColumnCheck(expression, columnName) {
-  const state = { index: 0 };
-  const name = columnName.toLowerCase();
-  if (!consumeIdentifier(expression, state, name) || !consumeWord(expression, state, "IS") ||
-      !consumeWord(expression, state, "NULL") || !consumeWord(expression, state, "OR")) return false;
-
-  const grouped = consumeSymbol(expression, state, "(");
-  if (consumeWord(expression, state, "LENGTH")) {
-    if (!consumeSymbol(expression, state, "(") || !consumeIdentifier(expression, state, name) ||
-        !consumeSymbol(expression, state, ")") || !consumeSymbol(expression, state, "=") ||
-        !consumeNonnegativeInteger(expression, state) || !consumeWord(expression, state, "AND") ||
-        !consumeIdentifier(expression, state, name) || !consumeWord(expression, state, "NOT") ||
-        !consumeWord(expression, state, "GLOB")) return false;
-    const pattern = expression[state.index];
-    if (pattern?.type !== "literal" || pattern.value !== "*[^0-9a-f]*") return false;
-    state.index += 1;
-  } else if (!consumeIdentifier(expression, state, name) || !consumeSymbol(expression, state, ">") ||
-      !consumeNonnegativeInteger(expression, state)) {
-    return false;
-  }
-
-  return (!grouped || consumeSymbol(expression, state, ")")) && state.index === expression.length;
-}
-
 function nullableColumnCheckDefinition(statement, state, columnName) {
   if (!consumeWord(statement, state, "CHECK") || !consumeSymbol(statement, state, "(")) return false;
   const open = state.index - 1;
@@ -494,7 +464,7 @@ function nullableColumnCheckDefinition(statement, state, columnName) {
   const expression = statement.slice(open + 1, close);
   if (expression.some((token) => (token.type === "symbol" && token.value === ";") ||
       (token.type === "literal" && token.value.includes(";")))) return false;
-  if (!supportedNullableColumnCheck(expression, columnName)) return false;
+  if (!supportsNullableColumnCheck(expression, columnName)) return false;
   state.index = statement.length;
   return true;
 }
@@ -514,6 +484,7 @@ function alterAddColumnDefinition(statement) {
   }
   let notNull = false;
   let defaultValue = false;
+  let hasCheck = false;
   while (state.index < statement.length) {
     if (!notNull && consumeWord(statement, state, "NOT")) {
       if (!consumeWord(statement, state, "NULL")) return null;
@@ -532,9 +503,10 @@ function alterAddColumnDefinition(statement) {
       defaultValue = true;
     } else if (wordAt(statement, state.index, "CHECK")) {
       if (!hasType || notNull || defaultValue || !nullableColumnCheckDefinition(statement, state, columnName)) return null;
+      hasCheck = true;
     } else return null;
   }
-  return state.index === statement.length ? true : null;
+  return state.index === statement.length ? { hasCheck } : null;
 }
 
 function sameSqlTokens(left, right) {
@@ -743,6 +715,7 @@ export function classifyDeploymentMigrationSql(text, { earlierCreatedTables = []
   const metadataMarkers = new Map();
   let hasMetadataOperation = false;
   let hasIndexBuild = false;
+  const constraintScans = new Map();
   const registerCreated = (objectType, name, statementIndex) => {
     if (name.toLowerCase().startsWith("sqlite_")) fail("SQLite internal schema objects are outside the migration profile");
     const key = `${objectType}:${name.toLowerCase()}`;
@@ -827,10 +800,15 @@ export function classifyDeploymentMigrationSql(text, { earlierCreatedTables = []
 
     if (firstWords[0] === "ALTER" && firstWords[1] === "TABLE") {
       const tableName = identifierAt(statement, 2);
-      if (tableName === null || alterAddColumnDefinition(statement) !== true) {
-        fail("Only bounded ALTER TABLE ADD COLUMN without table scans is supported");
+      const definition = alterAddColumnDefinition(statement);
+      if (tableName === null || definition === null) {
+        fail("Only bounded ALTER TABLE ADD COLUMN with reviewed nullable constraints is supported");
       }
       addRequired("table", tableName);
+      if (definition.hasCheck) {
+        const name = tableName.toLowerCase();
+        constraintScans.set(name, (constraintScans.get(name) ?? 0) + 1);
+      }
       continue;
     }
 
@@ -848,8 +826,11 @@ export function classifyDeploymentMigrationSql(text, { earlierCreatedTables = []
     mustProbeSchemaObjects.push({ object_type: dropped.object_type, name: created.name });
   }
   if (requiredSchemaObjects.length > 64) fail("Migration requires more schema probes than the bounded readback supports");
-  const classification = hasMetadataOperation ? "schema_metadata_only" : "additive_schema_only";
+  const classification = constraintScans.size > 0 ? "schema_constraint_validation" :
+    hasMetadataOperation ? "schema_metadata_only" : "additive_schema_only";
   return Object.freeze({ classification, statement_count: statements.length,
+    constraint_scans: Object.freeze([...constraintScans].sort(([a], [b]) => a < b ? -1 : 1)
+      .map(([table_name, validation_count]) => Object.freeze({ table_name, validation_count }))),
     index_build_cost_reviewed: hasIndexBuild, newly_created_tables: Object.freeze(newlyCreatedTables),
     required_schema_objects: Object.freeze(requiredSchemaObjects.map((entry) => Object.freeze(entry))),
     created_schema_objects: Object.freeze([...createdObjects.values()].map((entry) => Object.freeze({
@@ -874,6 +855,7 @@ async function readPendingSql(intent, root, localBundle, read) {
   const requiredObjectsByMigration = [];
   const metadataMarkers = new Map();
   const firstCreatedObjects = new Map();
+  const constraintScans = new Map();
   for (let index = 0; index < intent.migration_names.length; index += 1) {
     const name = intent.migration_names[index];
     const local = entries.get(name);
@@ -924,11 +906,16 @@ async function readPendingSql(intent, root, localBundle, read) {
     catch (error) { fail(`Unsupported scoped migration SQL in ${name}: ${error.message}`); }
     if (admitted.classification === "data_preserving_bounded_copy_rebuild") {
       classification = admitted.classification;
-    } else if (classification !== "data_preserving_bounded_copy_rebuild" &&
+    } else if (classification !== "data_preserving_bounded_copy_rebuild" && admitted.classification === "schema_constraint_validation") {
+      classification = admitted.classification;
+    } else if (!["data_preserving_bounded_copy_rebuild", "schema_constraint_validation"].includes(classification) &&
         admitted.classification === "schema_metadata_only") {
       classification = admitted.classification;
     }
     indexBuildCostReviewed ||= admitted.index_build_cost_reviewed;
+    for (const scan of admitted.constraint_scans ?? []) {
+      constraintScans.set(scan.table_name, (constraintScans.get(scan.table_name) ?? 0) + scan.validation_count);
+    }
     createdTables.push(...admitted.newly_created_tables);
     for (const object of admitted.created_schema_objects) {
       const key = `${object.object_type}:${object.name.toLowerCase()}`;
@@ -940,6 +927,12 @@ async function readPendingSql(intent, root, localBundle, read) {
     pending.push({ name, sha256: approved.sha256, byte_length: bytes.byteLength,
       statement_count: admitted.statement_count });
   }
+  const derivedScans = [...constraintScans].sort(([a], [b]) => a < b ? -1 : 1)
+    .map(([table_name, validation_count]) => ({ table_name, validation_count }));
+  if (derivedScans.length > 0 && intent.protocol !== INTENT_PROTOCOL_V3) {
+    fail("Nullable CHECK validation requires a v3 intent with explicit observed-row scan bounds");
+  }
+  if (intent.protocol === INTENT_PROTOCOL_V3) assertConstraintScanCoverage(derivedScans, intent.risk_review.constraint_scan_bounds);
   if (intent.risk_review.index_build_cost_reviewed !== indexBuildCostReviewed ||
       intent.risk_review.classification !== classification) {
     fail("Migration risk review classification or index cost acknowledgment differs from approved SQL");
@@ -968,6 +961,7 @@ async function readPendingSql(intent, root, localBundle, read) {
   }
   if (metadataMarkers.size > 64) fail("Approved migration set writes more metadata markers than the bounded readback supports");
   return { pending, totalBytes, classification, indexBuildCostReviewed, createdTables, requiredObjectsByMigration,
+    constraintScans: derivedScans,
     metadataMarkers: [...metadataMarkers].sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
       .map(([key, value]) => ({ key, value })) };
 }
@@ -1121,9 +1115,11 @@ function validObservationV2(value, intent, expectedMetadataMarkers) {
 
 function validateSavedReceipt(receipt, intent, intentSha256, expectedMetadataMarkers) {
   const version1 = intent.protocol === INTENT_PROTOCOL_V1;
-  const receiptProtocol = version1 ? RECEIPT_PROTOCOL_V1 : RECEIPT_PROTOCOL_V2;
+  const version3 = intent.protocol === INTENT_PROTOCOL_V3;
+  const receiptProtocol = receiptProtocolForIntent(intent);
   const keys = ["protocol", "intent_id", "intent_sha256", "target", "generated_config_sha256",
-    "local_migration_bundle_sha256", "risk_review", "time_travel", "attempt_history", "observations", "overall_state"];
+    "local_migration_bundle_sha256", "risk_review", "time_travel", "attempt_history", "observations", "overall_state",
+    ...(version3 ? ["constraint_scan_observations"] : [])];
   if (!exactKeys(receipt, keys) || receipt.protocol !== receiptProtocol || receipt.intent_id !== intent.intent_id ||
       receipt.intent_sha256 !== intentSha256 || !exactKeys(receipt.target, ["account_id", "binding", "database_name", "database_id"]) ||
       receipt.target.account_id !== intent.account_id || receipt.target.binding !== intent.database.binding ||
@@ -1138,6 +1134,9 @@ function validateSavedReceipt(receipt, intent, intentSha256, expectedMetadataMar
         isoDate(receipt.time_travel.captured_at) && receipt.time_travel.restore_performed === false)) ||
       !Array.isArray(receipt.attempt_history) || receipt.attempt_history.length > MAX_RECEIPT_HISTORY ||
       !Array.isArray(receipt.observations) || receipt.observations.length > MAX_RECEIPT_HISTORY * 2 ||
+      (version3 && !validConstraintScanObservations(receipt.constraint_scan_observations,
+        intent.risk_review.constraint_scan_bounds, { required: receipt.overall_state === "PASS" ||
+          receipt.attempt_history.some((attempt) => attempt.command_outcome === "SUCCEEDED") })) ||
       !receipt.observations.every((observation) => version1 ? validObservationV1(observation) :
         validObservationV2(observation, intent, expectedMetadataMarkers)) ||
       !["ATTEMPT_STARTED", "PASS", "FAILED", "PARTIAL", "UNKNOWN", "ALREADY_APPLIED", "RECONCILIATION_REQUIRED"].includes(receipt.overall_state)) {
@@ -1356,7 +1355,8 @@ async function readSchemaPreconditions(env, input, intent, { fetchImpl, signal, 
 }
 
 function receiptProtocolForIntent(intent) {
-  return intent.protocol === INTENT_PROTOCOL_V1 ? RECEIPT_PROTOCOL_V1 : RECEIPT_PROTOCOL_V2;
+  return intent.protocol === INTENT_PROTOCOL_V1 ? RECEIPT_PROTOCOL_V1 :
+    intent.protocol === INTENT_PROTOCOL_V3 ? RECEIPT_PROTOCOL_V3 : RECEIPT_PROTOCOL_V2;
 }
 
 function makeObservation(intent, kind, observedAt, ledger, schema = { state: "NOT_RUN", observations: [], metadata_markers: [] }) {
@@ -1375,6 +1375,7 @@ function makeObservation(intent, kind, observedAt, ledger, schema = { state: "NO
 function createReceipt(intent, intentSha256, timeTravel, before, now) {
   const startedAt = new Date(now()).toISOString();
   return { protocol: receiptProtocolForIntent(intent), intent_id: intent.intent_id, intent_sha256: intentSha256,
+    ...(intent.protocol === INTENT_PROTOCOL_V3 ? { constraint_scan_observations: [] } : {}),
     target: { account_id: intent.account_id, binding: intent.database.binding,
       database_name: intent.database.database_name, database_id: intent.database.database_id },
     generated_config_sha256: intent.generated_config_sha256,
@@ -1508,6 +1509,7 @@ export async function runDeploymentMigrationOperation({ intent, root = ROOT, env
         timeoutMs: Math.min(30_000, deadline()), now, metadataMarkers: local.sql.metadataMarkers });
       if (schema.state !== "PASS") fail("D1 ledger contains approved migration names but schema contract probes did not pass");
       const receipt = { protocol: receiptProtocolForIntent(intent), intent_id: intent.intent_id, intent_sha256: intentSha256,
+        ...(intent.protocol === INTENT_PROTOCOL_V3 ? { constraint_scan_observations: [] } : {}),
         target: { account_id: intent.account_id, binding: intent.database.binding,
           database_name: intent.database.database_name, database_id: intent.database.database_id },
         generated_config_sha256: intent.generated_config_sha256,
@@ -1565,6 +1567,14 @@ export async function runDeploymentMigrationOperation({ intent, root = ROOT, env
     receipt.observations[receipt.observations.length - 1] = makeObservation(intent, "BEFORE_APPLY", new Date(now()).toISOString(), before, preconditions);
     await persistObservedReceipt(receipt, path, saveReceipt);
     if (preconditions.state !== "PASS") fail("Exact schema object preconditions failed before migration apply");
+    if (intent.protocol === INTENT_PROTOCOL_V3) {
+      const scans = await readConstraintScanPreconditions(input, intent, {
+        Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}`, "Content-Type": "application/json",
+      }, { fetchImpl, signal, timeoutMs: Math.min(30_000, deadline()), now });
+      receipt.constraint_scan_observations = scans.observations;
+      await persistObservedReceipt(receipt, path, saveReceipt);
+      if (scans.state !== "PASS") fail("CHECK validation observed-row admission bound exceeded or unavailable before migration apply");
+    }
     check();
   } catch (error) {
     await markAttemptNotStarted(receipt, path, saveReceipt, now);

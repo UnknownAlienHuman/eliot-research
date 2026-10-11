@@ -40,7 +40,12 @@ must have separate operation records.
    rechecks those inputs and the pending ledger immediately before the effect. Local `--plan`
    inspection without `--confirm-live` makes no Cloudflare or Wrangler calls.
 4. The migration operation's SQL classifier accepts only its explicit bounded DDL and metadata
-   forms. It rejects rebuild/copy/backfill operations, unsupported data changes, and indexes on
+   forms. The October 11 amendment admits nullable `ADD COLUMN CHECK` only through the
+   [v3 constraint-validation operation](../implementation/d1-nullable-check-operator-2026-10-11.md),
+   with explicit derived table/validation counts, reviewed observed-row bounds and fresh pre-effect
+   SELECT readback. CHECK can scan existing rows; the observation is not an atomic cap on
+   concurrent growth or physical cost. Legacy v1/v2 intents cannot authorize that validation work.
+   It rejects rebuild/copy/backfill operations, unsupported data changes, and indexes on
    pre-existing tables. The sole empty semantic-revision constraint repair is specified separately
    in [ADR-0013](0013-empty-semantic-revision-constraint-repair.md); it does not permit nonempty
    table rebuilding or row copying. Every accepted migration must have its required schema probes, including

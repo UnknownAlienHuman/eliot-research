@@ -81,15 +81,16 @@ function removeTemporaryDirectory(path, parent, prefix) {
   return rm(target, { recursive: true, force: true });
 }
 
-async function createFixture(action, { ifNotExists = false } = {}) {
+async function createFixture(action, { ifNotExists = false, nullableCheck = false } = {}) {
   const parent = resolve(tmpdir());
   const prefix = "eliotr-d1-operation-";
   const root = await mkdtemp(join(parent, prefix));
   try {
     const fixtureMigrationA = ifNotExists ? migrationA.replace("CREATE VIEW", "CREATE VIEW IF NOT EXISTS") : migrationA;
-    const fixtureMigrationB = ifNotExists ? migrationB
+    let fixtureMigrationB = ifNotExists ? migrationB
       .replace("CREATE INDEX", "CREATE INDEX IF NOT EXISTS")
       .replace("CREATE TRIGGER", "CREATE TRIGGER IF NOT EXISTS") : migrationB;
+    if (nullableCheck) fixtureMigrationB += "ALTER TABLE scan_target ADD COLUMN outcome TEXT CHECK(outcome IS NULL OR json_valid(outcome));\n";
     const coreDirectory = join(root, "infra/d1/core/migrations");
     const searchDirectory = join(root, "infra/d1/search/migrations");
     const configDirectory = join(root, "apps/eliotr-core");
@@ -139,7 +140,7 @@ async function createFixture(action, { ifNotExists = false } = {}) {
 function cloudflareHarness({ root, intent, applied = [], failure = null, mismatch = null, preflightMismatch = null,
   preflightNameVariant = false, preflightTypeOverride = null,
   ledgerOverride = null, databaseVersion = "production", bookmark = "fixture-bookmark", cancel = () => {},
-  additionalSchemaObjects = [] } = {}) {
+  additionalSchemaObjects = [], scanRows = 0, scanMutation = false } = {}) {
   const fixtureSchemaObjects = [...schemaObjects, ...additionalSchemaObjects];
   const calls = [];
   const receipts = new Map();
@@ -175,7 +176,10 @@ function cloudflareHarness({ root, intent, applied = [], failure = null, mismatc
     }
     const query = apiCalls.at(-1).body;
     let rows;
-    if (query.sql.startsWith("SELECT name FROM d1_migrations")) {
+    if (query.sql === 'SELECT COUNT(*) AS n FROM (SELECT 1 FROM "scan_target" LIMIT 3)') {
+      return Response.json({ success: true, result: [{ success: true, results: [{ n: scanRows }],
+        meta: { changed_db: scanMutation, rows_written: scanMutation ? 1 : 0 } }] });
+    } else if (query.sql.startsWith("SELECT name FROM d1_migrations")) {
       rows = ledgerOverride === null ? appliedNames.map((name) => ({ name })) : ledgerOverride.map((name) => ({ name }));
     } else if (query.sql === "SELECT type, name, sql FROM sqlite_master WHERE type = ? AND name = ? LIMIT 2") {
       if (schemaFailureName === query.params[1]) throw new Error("fixture schema read unavailable");
@@ -210,6 +214,10 @@ function cloudflareHarness({ root, intent, applied = [], failure = null, mismatc
     const saved = [...receipts.values()].at(-1);
     assert.ok(saved && JSON.parse(saved).time_travel?.bookmark === "fixture-bookmark",
       "receipt with the Time Travel bookmark is durable before apply starts");
+    if (intent.protocol === "eliotr.cloudflare-d1-migration-intent.v3") {
+      assert.deepEqual(JSON.parse(saved).constraint_scan_observations.map((o) => [o.table_name, o.state]),
+        [["scan_target", "PASS"]], "fresh observed-row admission must be durable before apply starts");
+    }
     if (failure === "PARTIAL") {
       appliedNames = [intent.migration_names[0]];
       throw Object.assign(new Error("fixture timeout after first migration"), { started: true, uncertain: true });
@@ -282,7 +290,7 @@ await check("SQL allowlist ignores comments and literals, permits bounded trigge
   assert.equal(classifyDeploymentMigrationSql("-- UPDATE source SET v=1\nCREATE TABLE \"safe_table\" (note TEXT DEFAULT 'DROP TABLE');").newly_created_tables[0], "safe_table");
   assert.equal(classifyDeploymentMigrationSql(triggerSql).required_schema_objects[0].object_type, "trigger");
   const plainTriggerCase = "CREATE TRIGGER plain_case AFTER INSERT ON fixture_table BEGIN SELECT CASE WHEN NEW.id = 1 THEN RAISE(ABORT, 'blocked') END; END;";
-  assert.throws(() => classifyDeploymentMigrationSql(plainTriggerCase), /Unparenthesized CASE expressions.*native D1/iu);
+  assert.equal(classifyDeploymentMigrationSql(plainTriggerCase).statement_count, 1);
   for (const triggerCase of [
     "CREATE TRIGGER parenthesized_case AFTER INSERT ON fixture_table BEGIN SELECT (CASE WHEN NEW.id = 1 THEN RAISE(ABORT, 'blocked') END); END;",
     "CREATE TRIGGER nested_parenthesized_case AFTER INSERT ON fixture_table BEGIN SELECT ((CASE WHEN NEW.id = 1 THEN RAISE(ABORT, 'blocked') END)); END;",
@@ -306,7 +314,7 @@ await check("SQL allowlist ignores comments and literals, permits bounded trigge
 
 await check("0117 admits only nullable bounded ADD COLUMN CHECK predicates", async () => {
   const result = classifyDeploymentMigrationSql(backupErasurePrimaryClosureSql);
-  assert.equal(result.classification, "schema_metadata_only");
+  assert.equal(result.classification, "schema_constraint_validation");
   assert.equal(result.newly_created_tables.length, 7);
   assert.equal(result.created_schema_objects.length, 36);
   assert.equal(result.required_schema_objects.length, 38);
@@ -321,6 +329,79 @@ await check("0117 admits only nullable bounded ADD COLUMN CHECK predicates", asy
   ]) {
     assert.throws(() => classifyDeploymentMigrationSql(sql));
   }
+});
+
+async function withConstraintScanFixture(action) {
+  await createFixture(async ({ root, intentFor }) => {
+    const existingSql = "CREATE TABLE scan_target (id INTEGER PRIMARY KEY) STRICT";
+    const finalSql = "CREATE TABLE scan_target (id INTEGER PRIMARY KEY, outcome TEXT CHECK(outcome IS NULL OR json_valid(outcome))) STRICT";
+    const additionalSchemaObjects = [{ object_type: "table", name: "scan_target", before_sql: existingSql,
+      sql: finalSql, migration_names: [migrationNames[1]] }];
+    const intent = expandedV2Intent(intentFor(), 0).intent;
+    intent.protocol = "eliotr.cloudflare-d1-migration-intent.v3";
+    intent.risk_review.classification = "schema_constraint_validation";
+    intent.risk_review.constraint_scan_bounds = [{ table_name: "scan_target", max_rows: 2, validation_count: 1 }];
+    intent.schema_probe_groups = createDeploymentMigrationSchemaProbeGroups([
+      ...flattenDeploymentMigrationSchemaProbes(intent), { object_type: "table", name: "scan_target",
+        before_sql_sha256: sha256(existingSql), create_sql_sha256: sha256(finalSql), migration_names: [migrationNames[1]] },
+    ]);
+    await action({ root, intent, additionalSchemaObjects });
+  }, { nullableCheck: true });
+}
+
+await check("v3 CHECK scans bind exact cost coverage, persist fresh admission and never repeat apply", async () => {
+  await withConstraintScanFixture(async (fixture) => {
+    const harness = cloudflareHarness({ ...fixture, scanRows: 2 });
+    const receipt = await harness.run();
+    assert.equal(receipt.protocol, "eliotr.cloudflare-d1-migration-receipt.v3");
+    assert.equal(receipt.overall_state, "PASS");
+    assert.equal(receipt.constraint_scan_observations[0].observed_rows, 2);
+    const replay = await harness.run();
+    assert.equal(replay.overall_state, "ALREADY_APPLIED");
+    assert.equal(harness.calls.filter((call) => call.includes("migrations apply")).length, 1);
+  });
+});
+
+await check("v3 CHECK row overflow, unavailable read and forged success stop before apply", async () => {
+  for (const options of [{ scanRows: 3 }, { scanRows: 2, scanMutation: true }, { scanRows: null }]) {
+    await withConstraintScanFixture(async (fixture) => {
+      const harness = cloudflareHarness({ ...fixture, ...options });
+      await assert.rejects(harness.run(), /observed-row admission bound/iu);
+      assert.equal(harness.calls.some((call) => call.includes("migrations apply")), false);
+      const receipt = JSON.parse([...harness.receipts.values()].at(-1));
+      assert.equal(receipt.attempt_history[0].command_outcome, "NOT_STARTED");
+    });
+  }
+  await withConstraintScanFixture(async (fixture) => {
+    const harness = cloudflareHarness({ ...fixture, scanRows: 0 });
+    await harness.run();
+    const [key, raw] = [...harness.receipts].at(-1);
+    const forged = JSON.parse(raw);
+    forged.constraint_scan_observations = [];
+    harness.receipts.set(key, JSON.stringify(forged));
+    await assert.rejects(harness.run(), /exact canonical intent/iu);
+    assert.equal(harness.calls.filter((call) => call.includes("migrations apply")).length, 1);
+  });
+});
+
+await check("v1/v2 cannot authorize CHECK scans and v3 rejects missing, foreign or wrong count bounds", async () => {
+  await withConstraintScanFixture(async (fixture) => {
+    for (const bounds of [[], [{ table_name: "other_target", max_rows: 2, validation_count: 1 }],
+      [{ table_name: "scan_target", max_rows: 2, validation_count: 2 }]]) {
+      const changed = structuredClone(fixture.intent);
+      changed.risk_review.constraint_scan_bounds = bounds;
+      const harness = cloudflareHarness({ ...fixture, intent: changed });
+      await assert.rejects(harness.run(), /exact derived tables/iu);
+      assert.equal(harness.apiCalls.length, 0);
+    }
+    const legacy = structuredClone(fixture.intent);
+    legacy.protocol = "eliotr.cloudflare-d1-migration-intent.v2";
+    legacy.risk_review.classification = "schema_metadata_only";
+    delete legacy.risk_review.constraint_scan_bounds;
+    const harness = cloudflareHarness({ ...fixture, intent: legacy });
+    await assert.rejects(harness.run(), /v3 intent/iu);
+    assert.equal(harness.apiCalls.length, 0);
+  });
 });
 
 await check("0108 is admitted only as the exact guarded empty semantic-revision replacement", async () => {
