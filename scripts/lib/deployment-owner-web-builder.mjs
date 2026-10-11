@@ -5,6 +5,7 @@ import path from "node:path";
 import { captureDeploymentBuildInputs, requireUnchangedDeploymentBuildInputs } from "./deployment-build-inputs.mjs";
 import { inspectWebBuild, OWNER_WEB_INITIAL_GZIP_BUDGET_BYTES, WORKER_GZIP_BUDGET_BYTES } from "./emitted-build-budget-evidence.mjs";
 import { observeOwnerWebStartup, ownerWebStartupBindings } from "./deployment-owner-web-startup.mjs";
+import { assertOwnerWebNativeRoutes } from "./deployment-owner-web-native.mjs";
 
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const slash = value => value.split(path.sep).join("/");
@@ -105,6 +106,7 @@ export async function buildOwnerWebDeploymentGraph({ root, environment, execute 
   if (native.error || native.status !== 0 || !match || !/--dry-run:\s*exiting now\./u.test(log)) fail("native prepared Worker dry-run failed");
   const workerGzipUpperBytes = Math.ceil((Number(match[3]) + 0.005) * multipliers[match[4]]);
   if (workerGzipUpperBytes > WORKER_GZIP_BUDGET_BYTES) fail("Worker gzip exceeds emitted budget");
+  const nativeRoutes = await assertOwnerWebNativeRoutes({ root, environment: buildEnvironment });
   await requireUnchangedDeploymentBuildInputs({ root, manifest, assetProfile: "owner-web" });
   const payload = {
     protocol: "eliotr.owner-web-build-inputs.v1", asset_profile: "owner-web",
@@ -117,6 +119,7 @@ export async function buildOwnerWebDeploymentGraph({ root, environment, execute 
       client: webBudget, client_limit: OWNER_WEB_INITIAL_GZIP_BUDGET_BYTES, native_log_sha256: hash(Buffer.from(log)) },
     rollback: slash(path.relative(root, rollbackDirectory)),
     startup: { evidence: startup.evidence, scope: startup.scope },
+    native_routes: nativeRoutes,
     signature_scope: "Local custody of the observed inventory; not independent compiler attestation",
   };
   const signature = createHmac("sha256", environment.ELIOTR_OWNER_WEB_INPUT_MANIFEST_KEY).update(JSON.stringify(payload)).digest("hex");

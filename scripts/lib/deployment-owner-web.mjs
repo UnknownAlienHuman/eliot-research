@@ -347,6 +347,35 @@ async function verifyPreparedBudget(root, payload, graphBytes, graph, manifest, 
   return { ...budget, native_log: { path: NATIVE_LOG, sha256: digest(nativeBytes), byte_length: nativeBytes.byteLength } };
 }
 
+async function verifyNativeRoutes(root, payload, manifest, generatedConfigPin, outputs) {
+  const evidence = payload.native_routes?.evidence;
+  if (payload.native_routes?.state !== "PASS" ||
+      payload.native_routes?.scope !== "LOCAL_PREPARED_WORKER_ROUTE_DENIAL_AND_STATIC_BYTES_ONLY" ||
+      !isRecord(evidence) || !/^\.eliotr-state\/owner-web-native-routes-[a-f0-9-]{36}\.json$/u.test(evidence.path ?? "") ||
+      !Number.isSafeInteger(evidence.byte_length) || evidence.byte_length < 1 || evidence.byte_length > MAX_OBJECT_BYTES ||
+      !SHA256.test(evidence.sha256 ?? "")) fail("missing genuine prepared native route evidence");
+  const bytes = await stableFile(root, relativeFile(root, evidence.path));
+  if (bytes.byteLength !== evidence.byte_length || digest(bytes) !== evidence.sha256) fail("native route evidence changed");
+  const receipt = parsed(bytes, "native route evidence");
+  const entry = outputs.find(item => item.path === WORKER + "/index.js");
+  const emitted = outputs.find(item => item.path === WORKER + "/wrangler.json");
+  const pins = receipt.pins;
+  if (receipt.protocol !== "eliotr.owner-web-native-routes.v1" || receipt.state !== "PASS" ||
+      receipt.scope !== payload.native_routes.scope || receipt.source_head !== manifest.git_head ||
+      receipt.wrangler_version !== "4.143.1" || receipt.failure !== null ||
+      receipt.process?.local !== true || receipt.process.no_bundle !== true ||
+      receipt.process.ready_from_owned_process !== true || receipt.process.shutdown_confirmed !== true ||
+      !isRecord(pins) || !same(pins.generated_config, { path: CONFIG, byte_length: generatedConfigPin.byte_length, sha256: generatedConfigPin.sha256 }) ||
+      !same(pins.entrypoint, entry) || !same(pins.emitted_config, emitted)) fail("native route evidence does not bind this prepared graph");
+  const expected = [["/agents", false, 404], ["/agents/research-session/probe", false, 401],
+    ["/agents/research-session/probe", true, 401], ["/sw.js", false, 200], ["/agent-inbox/", false, 200]];
+  if (!Array.isArray(receipt.routes) || receipt.routes.length !== expected.length || expected.some(([route, upgrade, status], index) => {
+    const observed = receipt.routes[index];
+    return observed.path !== route || observed.upgrade !== upgrade || observed.status !== status || observed.state !== "PASS";
+  })) fail("prepared native route checks are incomplete");
+  return { ...payload.native_routes, source_head: receipt.source_head, checks: receipt.routes.length };
+}
+
 export async function attestOwnerWebDeployment({ root, manifest, generatedConfigPin, context }) {
   root = path.resolve(root);
   assertManifest(root, manifest);
@@ -395,12 +424,13 @@ export async function attestOwnerWebDeployment({ root, manifest, generatedConfig
   const graph = parsed(graphBytes, "observed Worker graph");
   const graphObservation = validateObservedWorkerGraph(root, graph, inputs, outputs);
   const preparedBudget = await verifyPreparedBudget(root, payload, graphBytes, graph, manifest, context);
+  const nativeRoutes = await verifyNativeRoutes(root, payload, manifest, generatedConfigPin, outputs);
   const emittedConfigBytes = await stableFile(root, path.resolve(root, WORKER, "wrangler.json"));
   await assertEmittedConfig(root, parsed(emittedConfigBytes, "emitted config"), generatedConfigPin);
   const body = { protocol: "eliotr.owner-web-deployment-bundle.v1", scope: "BOUNDED_LOCAL_INTEGRITY", root,
     manifest_sha256: manifest.sha256, generated_config: generatedConfigPin,
     outdir: WORKER, entrypoint: path.resolve(root, WORKER, "index.js"), deployment_config: path.resolve(root, WORKER, "wrangler.json"),
-    inputs, outputs, prepared_budget: preparedBudget, worker_graph: { path: WORKER_GRAPH, sha256: digest(graphBytes),
+    inputs, outputs, prepared_budget: preparedBudget, native_routes: nativeRoutes, worker_graph: { path: WORKER_GRAPH, sha256: digest(graphBytes),
       byte_length: graphBytes.byteLength, ...graphObservation },
     input_proof: { kind: "SIGNED_LOCAL_CUSTODY_INVENTORY", path: PROOF,
       sha256: digest(proofBytes), byte_length: proofBytes.byteLength, nonce: context.nonce } };
