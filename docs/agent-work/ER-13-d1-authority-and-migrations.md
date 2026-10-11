@@ -29,6 +29,9 @@ D1 authority transaction.
 - `scripts/check-delivery-authority.mjs`
 
 - `infra/d1/core/migrations/0042_wiki_publication.sql`
+- `packages/platform-cloudflare/src/d1-queue-terminal-store.ts`
+- `packages/platform-cloudflare/src/d1-queue-terminal-store.test.ts`
+
 ## Implemented contour
 
 ```text

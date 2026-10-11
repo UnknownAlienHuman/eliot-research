@@ -19,6 +19,10 @@ authority. A Queue acknowledgement is emitted only after durable consumer settle
 - `packages/platform-cloudflare/src/queue-consumer.ts`
 - `packages/platform-cloudflare/src/queue-consumer.test.ts`
 
+- `packages/platform-cloudflare/src/queue-terminal-types.ts`
+- `packages/platform-cloudflare/src/dlq-consumer.ts`
+- `packages/platform-cloudflare/src/dlq-consumer.test.ts`
+
 ## Read only
 
 ER-13 owns the D1 implementations consumed by this packet:

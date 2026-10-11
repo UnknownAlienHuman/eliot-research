@@ -11,6 +11,7 @@ fail-closed. The Worker is a composition and transport boundary, not a second do
 
 ## Owned paths
 
+- `apps/eliotr-core/test/queue-dlq-routing.test.ts`
 - `apps/eliotr-core/src/client-grant-http.ts`
 - `apps/eliotr-core/src/ingest-composition.ts`
 - `packages/cloudflare-navigation/src/client-grant-store.ts`
@@ -116,6 +117,7 @@ integration handoff without claiming those paths.
 
 - `apps/eliotr-core/src/federation-http.ts`
 - `apps/eliotr-core/test/federation-runtime-http.test.ts`
+
 ## Implemented HTTP contour
 
 ```text

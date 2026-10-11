@@ -5,3 +5,6 @@ export { encodeCanonicalBase64Bytes, decodeCanonicalBase64Bytes, type CanonicalB
 export { queueDeliveryMetric, scheduledOutboxMetric, type QueueDeliveryMetricInput, type ScheduledOutboxMetricInput } from "./delivery-metrics.js";
 export * from "./native-web-search.js";
 export * from "./native-web-search-capture.js";
+export * from "./queue-terminal-types.js";
+export { createD1QueueTerminalStore } from "./d1-queue-terminal-store.js";
+export { createDlqConsumerRuntime } from "./dlq-consumer.js";

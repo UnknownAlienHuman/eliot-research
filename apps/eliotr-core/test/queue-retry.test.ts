@@ -56,7 +56,7 @@ describe("Queue outer consume failure handling", () => {
       },
     });
 
-    await handleQueue({ messages: [message] } as unknown as MessageBatch<unknown>, environment());
+    await handleQueue({ queue: "eliotr-jobs-test", messages: [message] } as unknown as MessageBatch<unknown>, environment());
 
     expect(message.retry).toHaveBeenCalledOnce();
     expect(message.retry).toHaveBeenCalledWith({ delaySeconds: 30 });
@@ -90,7 +90,7 @@ describe("Queue outer consume failure handling", () => {
       prompt: "private prompt body",
     });
 
-    await handleQueue({ messages: [message] } as unknown as MessageBatch<unknown>, environment());
+    await handleQueue({ queue: "eliotr-jobs-test", messages: [message] } as unknown as MessageBatch<unknown>, environment());
 
     expect(message.retry).toHaveBeenCalledWith({ delaySeconds: 30 });
     expect(message.ack).not.toHaveBeenCalled();
@@ -104,7 +104,7 @@ describe("Queue outer consume failure handling", () => {
     const message = queueMessage({ protocol: "invalid" });
     mocks.writeDataPoint.mockImplementation(() => { throw new Error("metrics unavailable"); });
 
-    await handleQueue({ messages: [message] } as unknown as MessageBatch<unknown>, environment());
+    await handleQueue({ queue: "eliotr-jobs-test", messages: [message] } as unknown as MessageBatch<unknown>, environment());
 
     expect(message.retry).toHaveBeenCalledOnce();
     expect(message.retry).toHaveBeenCalledWith({ delaySeconds: 30 });

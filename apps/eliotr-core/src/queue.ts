@@ -1,5 +1,7 @@
 import {
   createD1InboxStore,
+  createD1QueueTerminalStore,
+  createDlqConsumerRuntime,
   createQueueConsumerRuntime,
   queueDeliveryMetric,
   type QueueDeliveryMetricInput,
@@ -50,6 +52,46 @@ function deliveryHandler(env: Env): DeliveryHandler {
 
 // IMPLEMENTED_NOT_LIVE: ER-24 Queue dispatch requires remote duplicate-delivery and DLQ receipts.
 export async function handleQueue(batch: MessageBatch<unknown>, env: Env): Promise<void> {
+  if (batch.queue === "eliotr-dlq" || batch.queue === "eliotr-dlq-test") {
+    const terminal = createDlqConsumerRuntime(createD1QueueTerminalStore(env.CORE_DB), {
+      queue_name: batch.queue,
+      retry_delay_seconds: CONSUMER_RETRY_DELAY_SECONDS,
+    });
+    for (const message of batch.messages) {
+      try {
+        const observation = await terminal.consume(message);
+        try {
+          env.METRICS.writeDataPoint({
+            indexes: ["queue-dlq"],
+            blobs: ["queue", "DLQ", observation.disposition, observation.queue_name,
+              observation.platform_message_id],
+            doubles: [observation.platform_attempt],
+          });
+        } catch {
+          // The durable diagnostic is already acknowledged; observational metrics cannot undo it.
+        }
+      } catch (error) {
+        // The DLQ runtime has already marked this message for native retry. Never retry twice.
+        try {
+          metric(env, {
+            result: null,
+            deployment_generation: env.DEPLOYMENT_GENERATION,
+            failure: { error, platform_message_id: message.id, attempt: message.attempts },
+          });
+        } catch {
+          // Native metadata access itself may fail; do not expose arbitrary error text.
+        }
+        // If native retry itself throws, successful handler return must not auto-ACK the batch.
+        // eslint-disable-next-line preserve-caught-error -- Original transport error/cause may contain private payload text.
+        throw new Error("DLQ_SETTLEMENT_UNCERTAIN");
+      }
+    }
+    return;
+  }
+  if (batch.queue !== "eliotr-jobs" && batch.queue !== "eliotr-jobs-test") {
+    // A successful return would auto-ACK an unknown batch. Reject it before constructing a handler.
+    throw new Error("QUEUE_NAME_UNRECOGNIZED");
+  }
   const runtime = createQueueConsumerRuntime(
     createD1InboxStore(env.CORE_DB),
     {
