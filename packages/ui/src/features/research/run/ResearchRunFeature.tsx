@@ -4,7 +4,7 @@ import type {
   ResearchSessionProjection,
 } from '@eliotr/owner-api-client';
 import { useId, useState } from 'react';
-import { Button, Field, Status } from '../../../primitives/primitives';
+import { Button, Status } from '../../../primitives/primitives';
 import './research-run.css';
 
 /**
@@ -330,27 +330,30 @@ export function ResearchRunFeature({
     if (onAsk !== undefined) onAsk(trimmed, frozen);
   }
 
-  return (
-    <section className="er-research-run" aria-labelledby={headingId}>
-      <h2 className="er-research-run__heading" id={headingId}>{copy.heading}</h2>
-      <p className="er-research-run__lead">{copy.lead}</p>
-
-      {(controlledDraft || !hasQuestion) && <Field
+  const questionEditor = (
+    <div className="er-research-run__composer" data-held={hasQuestion ? 'true' : 'false'}>
+      {(controlledDraft || !hasQuestion) && <div className="er-research-run__question">
+        <label htmlFor={questionId}>{controlledDraft && draftHeld ? copy.nextQuestionLabel : copy.questionLabel}</label>
+        <textarea className="er-research-run__question-input"
         id={questionId}
-        label={controlledDraft && draftHeld ? copy.nextQuestionLabel : copy.questionLabel}
-        hint={controlledDraft && draftHeld ? copy.nextQuestionHint : copy.questionHint}
+        aria-describedby={questionId + '-hint'} rows={hasQuestion ? 1 : 2}
         placeholder={copy.questionPlaceholder}
         value={draft}
         disabled={!controlledDraft && busy}
         readOnly={controlledDraft && onDraftQuestionChange === undefined}
-        onChange={function (event: React.ChangeEvent<HTMLInputElement>) {
+        onChange={function (event: React.ChangeEvent<HTMLTextAreaElement>) {
           const value = event.currentTarget.value;
           if (!controlledDraft) setLocalDraft(value);
           onDraftQuestionChange?.(value);
         }}
-      />}
-      <div className="er-research-run__scope">
-        <h3 className="er-research-run__scope-heading">{controlledDraft && question !== undefined ? copy.currentScopeHeading : copy.scopeHeading}</h3>
+        />
+        <p id={questionId + '-hint'} className="er-research-run__question-hint">{controlledDraft && draftHeld ? copy.nextQuestionHint : copy.questionHint}</p>
+      </div>}
+
+      {!hasQuestion ? <>
+      <details className="er-research-run__scope" open={selected.length === 0}>
+        <summary><h3 className="er-research-run__scope-heading">{controlledDraft && question !== undefined ? copy.currentScopeHeading : copy.scopeHeading}</h3>
+          <span className="er-research-run__scope-count">{controlledDraft && question !== undefined ? copy.currentScopeCount(selected.length) : copy.scopeCount(selected.length)}</span></summary>
         {selected.length === 0 ? (
           <p className="er-research-run__scope-empty">{controlledDraft && question !== undefined ? copy.currentScopeEmpty : copy.scopeEmpty}</p>
         ) : (
@@ -360,12 +363,11 @@ export function ResearchRunFeature({
             })}
           </ul>
         )}
-        <p className="er-research-run__scope-count">{controlledDraft && question !== undefined ? copy.currentScopeCount(selected.length) : copy.scopeCount(selected.length)}</p>
-      </div>
-
+      </details>
       <div className="er-research-run__actions">
         {!hasQuestion && <Button
           variant="primary"
+          icon="send"
           loading={busy}
           disabled={busy || canSubmit === false || draft.trim().length === 0 || controlledWithoutAsk}
           onClick={submit}
@@ -379,8 +381,16 @@ export function ResearchRunFeature({
           <Button variant="text" disabled={busy} onClick={onRefreshSnapshot}>{copy.refreshSnapshot}</Button>
         )}
       </div>
+      </> : <p className="er-research-run__question-hint">{copy.heldQuestionHint}</p>}
+    </div>
+  );
 
-      {controlledDraft && draftHeld ? <p className="er-research-run__caution">{copy.heldQuestionHint}</p> : null}
+  return (
+    <section className="er-research-run" aria-labelledby={headingId}>
+      <header className="er-research-run__intro"><h2 className="er-research-run__heading" id={headingId}>{hasQuestion ? (locale === 'ru' ? 'Ваше исследование' : 'Your research') : (locale === 'ru' ? 'Спросите свои источники' : 'Ask your sources')}</h2>
+      {!hasQuestion ? <p className="er-research-run__lead">{copy.lead}</p> : null}</header>
+
+      {!hasQuestion ? questionEditor : null}
 
       {recordedQuestion === null ? null : (
         <p className="er-research-run__recorded">
@@ -390,6 +400,39 @@ export function ResearchRunFeature({
       )}
 
       <Status tone={state === 'error' ? 'error' : 'neutral'}>{notice}</Status>
+
+      {hasQuestion ? <div className="er-research-run__current-controls">
+      <details className="er-research-run__scope" open={selected.length === 0}>
+        <summary><h3 className="er-research-run__scope-heading">{controlledDraft && question !== undefined ? copy.currentScopeHeading : copy.scopeHeading}</h3>
+          <span className="er-research-run__scope-count">{controlledDraft && question !== undefined ? copy.currentScopeCount(selected.length) : copy.scopeCount(selected.length)}</span></summary>
+        {selected.length === 0 ? (
+          <p className="er-research-run__scope-empty">{controlledDraft && question !== undefined ? copy.currentScopeEmpty : copy.scopeEmpty}</p>
+        ) : (
+          <ul className="er-research-run__scope-list">
+            {selected.map(function (item) {
+              return <li className="er-research-run__scope-item" key={item.id}>{item.label}</li>;
+            })}
+          </ul>
+        )}
+      </details>
+      <div className="er-research-run__actions">
+        {!hasQuestion && <Button
+          variant="primary"
+          icon="send"
+          loading={busy}
+          disabled={busy || canSubmit === false || draft.trim().length === 0 || controlledWithoutAsk}
+          onClick={submit}
+        >
+          {busy ? copy.asking : copy.ask}
+        </Button>}
+        {onReadStatus === undefined ? null : (
+          <Button variant="tonal" disabled={busy} onClick={onReadStatus}>{copy.readStatus}</Button>
+        )}
+        {onRefreshSnapshot === undefined ? null : (
+          <Button variant="text" disabled={busy} onClick={onRefreshSnapshot}>{copy.refreshSnapshot}</Button>
+        )}
+      </div>
+      </div> : null}
 
       {progress === undefined ? null : (
         <section className="er-research-run__progress" aria-label={copy.progressHeading}>
@@ -487,6 +530,7 @@ export function ResearchRunFeature({
           </details>
         </section>
       )}
+      {hasQuestion && controlledDraft ? questionEditor : null}
     </section>
   );
 }
