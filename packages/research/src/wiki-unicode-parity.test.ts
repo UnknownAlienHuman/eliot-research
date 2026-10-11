@@ -1,3 +1,4 @@
+/// <reference types="node" />
 import { createHash } from "node:crypto";
 import type { VersionedRef, WikiPageRevision } from "@eliotr/contracts";
 import { createWikiPublisher, WikiPublicationError, type WikiPublicationPort } from "./wiki.js";

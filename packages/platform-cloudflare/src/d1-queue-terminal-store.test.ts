@@ -1,3 +1,4 @@
+/// <reference types="node" />
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";

@@ -1,4 +1,3 @@
-// @ts-expect-error - node:sqlite runtime types ship with Node 22.13+, not @types/node
 import { DatabaseSync } from "node:sqlite";
 import { expect } from "vitest";
 import {
