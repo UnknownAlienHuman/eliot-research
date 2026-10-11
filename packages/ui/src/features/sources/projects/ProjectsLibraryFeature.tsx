@@ -23,6 +23,7 @@ export interface ProjectsLibraryFeatureProps {
   readonly onSelectProject: (projectId: string) => void;
   readonly projectSelectRef?: Ref<HTMLSelectElement>;
   readonly sourceActions?: ReactNode;
+  readonly scopeActions?: ReactNode;
   readonly library: LibraryPage | undefined;
   readonly readiness: LibraryReadinessView | undefined;
   readonly readinessState: ProjectsLibraryPanelState;
@@ -202,7 +203,7 @@ export function ProjectsLibraryFeature(props: ProjectsLibraryFeatureProps) {
 
   return (
     <section className="er-projects-library" aria-labelledby={sourcesHeadingId} aria-busy={props.state === "loading"}>
-      {props.projects.length === 0 ? (
+      <div className="er-projects-library__toolbar">{props.projects.length === 0 ? (
         showProjectEmpty ? <p className="er-projects-library__project-empty">{copy.projectEmpty}</p> : null
       ) : (
         <div className="er-projects-library__project-context">
@@ -228,7 +229,8 @@ export function ProjectsLibraryFeature(props: ProjectsLibraryFeatureProps) {
           </select>
         </div>
       )}
-      {props.sourceActions}
+      {props.sourceActions}</div>
+      {props.scopeActions}
 
       {status === undefined ? null : <Status tone={status[1]}>{status[0]}</Status>}
 
@@ -241,7 +243,7 @@ export function ProjectsLibraryFeature(props: ProjectsLibraryFeatureProps) {
             <li key={row.sourceId} className="er-projects-library__source" data-selected={row.sourceId === props.selectedSourceId}>
               <div className="er-projects-library__source-head">
                 <h3 className="er-projects-library__source-title">
-                  <Button variant="text" aria-pressed={row.sourceId === props.selectedSourceId} onClick={() => props.onOpenSource(row.sourceId)}>
+                  <Button variant="text" icon="file" aria-pressed={row.sourceId === props.selectedSourceId} onClick={() => props.onOpenSource(row.sourceId)}>
                     {row.title}
                   </Button>
                 </h3>
@@ -251,21 +253,12 @@ export function ProjectsLibraryFeature(props: ProjectsLibraryFeatureProps) {
                   onClick={() => props.onLoadRevisions(row.sourceId)}
                 />
               </div>
-              <details className={"er-projects-library__facts"}>
-                <summary>{copy.technicalDetails}</summary>
-                <dl>
-                  <dt>{copy.readinessRefLabel}</dt>
-                  <dd>{row.readinessRef}</dd>
-                  <dt>{copy.sourceIdLabel}</dt>
-                  <dd>{row.sourceId}</dd>
-                </dl>
-              </details>
             </li>
           ))}
         </ul>
       </div>
 
-      <div className="er-projects-library__panels">
+      {selectedSource && <div className="er-projects-library__panels">
         <section className="er-projects-library__panel" aria-label={copy.readinessHeading}>
           <h3 className="er-projects-library__panel-heading">{copy.readinessHeading}</h3>
           {selectedSource && <p className="er-projects-library__hint">{selectedSource.title}</p>}
@@ -282,6 +275,10 @@ export function ProjectsLibraryFeature(props: ProjectsLibraryFeatureProps) {
             </dl>
           )}
           {readiness && <p className="er-projects-library__hint">{readiness.currentnessVerified ? copy.checked : copy.unverified}</p>}
+          <details className="er-projects-library__facts"><summary>{copy.technicalDetails}</summary><dl>
+            <dt>{copy.readinessRefLabel}</dt><dd>{selectedSource.readinessRef}</dd>
+            <dt>{copy.sourceIdLabel}</dt><dd>{selectedSource.sourceId}</dd>
+          </dl></details>
           {readinessStatus === undefined ? null : (
             <Status tone={readinessStatus[1]}>{readinessStatus[0]}</Status>
           )}
@@ -320,7 +317,7 @@ export function ProjectsLibraryFeature(props: ProjectsLibraryFeatureProps) {
             <Button variant="text" onClick={props.onRetryRevisions}>{copy.retry}</Button>
           )}
         </section>
-      </div>
+      </div>}
 
       {props.state === "error" ? (
         <div className="er-projects-library__actions">

@@ -1,16 +1,20 @@
-/* U3-P Projects Library feature surface. Committed semantic tokens only. */
+/* U3-P Projects Library feature surface. Committed semantic tokens only.
+   Compact Material list-detail: tonal rows instead of cards around every fact, aligned row
+   actions, a deliberate reading measure for prose, and raw identifiers confined to native
+   disclosures rather than primary content. */
 .er-projects-library {
   display: grid;
-  background: var(--md-sys-color-surface);
-  color: var(--md-sys-color-on-surface);
-  gap: var(--eliot-space-panel);
+  gap: var(--eliot-space-block-control);
   min-width: 0;
   font-family: var(--eliot-type-font-family);
+  color: var(--md-sys-color-on-surface);
 }
+.er-projects-library__toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--eliot-space-panel); margin-block-end: var(--eliot-space-block-control); }
+.er-projects-library__body { margin-block: var(--eliot-space-panel); }
 
+/* Compact project context: label and control share one quiet row, no framed tile. */
 .er-projects-library__project-context {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  display: flex;
   align-items: center;
   gap: var(--eliot-space-inline-control);
   min-width: 0;
@@ -18,19 +22,20 @@
 
 .er-projects-library__project-label {
   color: var(--md-sys-color-on-surface-variant);
-  font-size: var(--eliot-type-body-medium-size);
-  line-height: var(--eliot-type-body-medium-line-height);
+  font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
+  white-space: nowrap;
 }
 
 .er-projects-library__project-select {
   box-sizing: border-box;
-  width: 100%;
   min-width: 0;
-  max-width: 100%;
+  max-width: var(--eliot-layout-context-width);
   min-height: var(--eliot-size-touch-target);
-  padding: var(--eliot-space-block-control) var(--eliot-space-inline-control);
+  padding-block: calc(var(--eliot-space-block-control) / 2);
+  padding-inline: var(--eliot-space-inline-control);
   border: var(--eliot-divider-width) solid var(--md-sys-color-outline);
-  border-radius: var(--eliot-shape-small);
+  border-radius: var(--eliot-shape-extra-small);
   background: var(--md-sys-color-surface-container-low);
   color: var(--md-sys-color-on-surface);
   font-family: var(--eliot-type-font-family);
@@ -43,79 +48,122 @@
   outline-offset: var(--eliot-focus-offset);
 }
 
+/* Quiet secondary text; the deliberate reading measure applies to prose only. */
 .er-projects-library__hint,
 .er-projects-library__note {
   margin: 0;
   max-width: var(--eliot-type-reading-measure);
   color: var(--md-sys-color-on-surface-variant);
-  font-family: var(--eliot-type-font-family);
   font-size: var(--eliot-type-body-medium-size);
   line-height: var(--eliot-type-body-medium-line-height);
+  font-family: var(--eliot-type-font-family);
+}
+
+.er-projects-library__note {
+  font-size: var(--eliot-type-body-small-size);
+  line-height: var(--eliot-type-body-small-line-height);
 }
 
 .er-projects-library__project-empty {
   margin: 0;
   color: var(--md-sys-color-on-surface-variant);
-  font-family: var(--eliot-type-font-family);
   font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
 }
 
 .er-projects-library__body {
   display: grid;
-  gap: var(--eliot-space-panel);
+  gap: var(--eliot-space-block-control);
+  min-width: 0;
 }
 
+/* Compact aligned pane headings: title-small, medium weight, one clear level. */
 .er-projects-library__subheading,
 .er-projects-library__panel-heading {
   margin: 0;
   color: var(--md-sys-color-on-surface);
   font-family: var(--eliot-type-font-family);
-  font-size: var(--eliot-type-title-medium-size);
+  font-size: var(--eliot-type-title-small-size);
+  line-height: var(--eliot-type-title-small-line-height);
   font-weight: var(--eliot-type-font-weight-medium);
-  line-height: var(--eliot-type-title-medium-line-height);
 }
 
 .er-projects-library__sources,
 .er-projects-library__revisions {
   display: grid;
-  gap: var(--eliot-space-panel);
+  gap: var(--eliot-space-block-control);
   margin: 0;
   padding: 0;
   list-style: none;
+  min-width: 0;
 }
 
-.er-projects-library__sources {
-  gap: var(--eliot-space-block-control);
-}
-
+/* Source rows: calm tonal surface with a hairline divider, not a card per row. */
 .er-projects-library__source {
   display: grid;
-  gap: var(--eliot-space-block-control);
-  padding: var(--eliot-space-panel);
-  padding-block: var(--eliot-space-block-control);
+  gap: calc(var(--eliot-space-block-control) / 2);
+  padding: 0 var(--eliot-space-panel);
+  border-radius: var(--eliot-shape-extra-small);
   border-block-end: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
 }
 
+.er-projects-library__source:last-child {
+  border-block-end: none;
+}
+
+/* Aligned row head: the title takes the measure, the action shares one baseline row. */
 .er-projects-library__source-head {
   display: flex;
   align-items: center;
   gap: var(--eliot-space-inline-control);
+  min-width: 0;
 }
 
 .er-projects-library__source-title {
   margin: 0;
+  flex: 1;
+  min-width: 0;
   font-size: var(--eliot-type-body-large-size);
+  line-height: var(--eliot-type-body-large-line-height);
   font-weight: var(--eliot-type-font-weight-regular);
+  color: var(--md-sys-color-on-surface);
 }
 
+.er-projects-library__source-title button {
+  white-space: normal;
+  text-align: start;
+  padding-inline: 0;
+  min-height: var(--eliot-size-touch-target);
+  color: var(--md-sys-color-on-surface);
+  border-radius: var(--eliot-shape-extra-small);
+}
+
+.er-projects-library__source[data-selected="true"] {
+  background: var(--md-sys-color-surface-container-low);
+}
+
+/* Selected state reads through the title weight, not only through the row background. */
+.er-projects-library__source[data-selected="true"] .er-projects-library__source-title {
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+
+/* Identifiers live behind a native disclosure; they never occupy primary content. */
 .er-projects-library__facts {
   font-family: var(--eliot-type-font-family);
   font-size: var(--eliot-type-body-small-size);
+  line-height: var(--eliot-type-body-small-line-height);
 }
 
 .er-projects-library__facts summary {
+  min-height: var(--eliot-size-touch-target);
+  align-content: center;
   color: var(--md-sys-color-on-surface-variant);
   cursor: pointer;
+}
+
+.er-projects-library__facts summary:focus-visible {
+  outline: var(--eliot-focus-width) solid var(--md-sys-color-primary);
+  outline-offset: var(--eliot-focus-offset);
 }
 
 .er-projects-library__facts dl {
@@ -139,22 +187,24 @@
 .er-projects-library__panels {
   display: grid;
   gap: var(--eliot-space-panel);
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--eliot-layout-source-width)), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--eliot-layout-context-width)), 1fr));
   align-items: start;
 }
 
+/* Calm detail grouping: one tonal block per pane, not a card around every fact. */
 .er-projects-library__panel {
   display: grid;
   gap: var(--eliot-space-block-control);
   padding: var(--eliot-space-panel);
   background: var(--md-sys-color-surface-container-low);
   border-radius: var(--eliot-shape-small);
+  align-content: start;
 }
 
 .er-projects-library__readiness {
   display: grid;
   grid-template-columns: minmax(0, auto) minmax(0, 1fr);
-  gap: var(--eliot-space-block-control);
+  gap: calc(var(--eliot-space-block-control) / 2) var(--eliot-space-block-control);
   margin: 0;
 }
 
@@ -162,6 +212,7 @@
   color: var(--md-sys-color-on-surface-variant);
   font-family: var(--eliot-type-font-family);
   font-size: var(--eliot-type-body-small-size);
+  line-height: var(--eliot-type-body-small-line-height);
 }
 
 .er-projects-library__readiness dd {
@@ -169,6 +220,7 @@
   color: var(--md-sys-color-on-surface);
   font-family: var(--eliot-type-font-family);
   font-size: var(--eliot-type-body-small-size);
+  line-height: var(--eliot-type-body-small-line-height);
 }
 
 .er-projects-library__readiness dd[data-state="unavailable"] {
@@ -181,9 +233,10 @@
 
 .er-projects-library__revision {
   display: grid;
-  gap: var(--eliot-space-block-control);
+  gap: calc(var(--eliot-space-block-control) / 2);
   font-family: var(--eliot-type-font-family);
   font-size: var(--eliot-type-body-small-size);
+  line-height: var(--eliot-type-body-small-line-height);
 }
 
 .er-projects-library__revision-ref {
@@ -201,14 +254,47 @@
   gap: var(--eliot-space-inline-control);
 }
 
-.er-projects-library__version-head { display: flex; align-items: center; justify-content: space-between; gap: var(--eliot-space-panel); flex-wrap: wrap; }
-.er-projects-library__version-title { margin: 0; color: var(--md-sys-color-on-surface); font-size: var(--eliot-type-body-large-size); line-height: var(--eliot-type-body-large-line-height); }
-.er-projects-library__source[data-selected="true"] { background: var(--md-sys-color-surface-container-low); border-radius: var(--eliot-shape-medium); }
-.er-projects-library__source-title { flex: 1; min-width: 0; }
-.er-projects-library__source-title button { white-space: normal; text-align: start; }
-.er-projects-library__facts summary { min-height: var(--eliot-size-touch-target); align-content: center; }
-.er-projects-library__facts summary:focus-visible { outline: var(--eliot-focus-width) solid var(--md-sys-color-primary); outline-offset: var(--eliot-focus-offset); }
-@media (max-width: 48rem) { .er-projects-library__panels { grid-template-columns: minmax(0, 1fr); } }
+.er-projects-library__version-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--eliot-space-block-control);
+  flex-wrap: wrap;
+}
+
+.er-projects-library__version-title {
+  margin: 0;
+  color: var(--md-sys-color-on-surface);
+  font-size: var(--eliot-type-body-small-size);
+  line-height: var(--eliot-type-body-small-line-height);
+}
+
+/* Compact: one column, rows keep their aligned head, panels drop extra chrome. */
+@media (max-width: 48rem) {
+  .er-projects-library__panels {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--eliot-space-block-control);
+  }
+
+  .er-projects-library__project-context {
+    flex-wrap: wrap;
+  }
+
+  .er-projects-library__project-select {
+    max-width: none;
+    flex: 1;
+  }
+
+  .er-projects-library__source {
+    padding-inline: 0;
+  }
+
+  .er-projects-library__panel {
+    padding-inline: 0;
+    background: none;
+    border-radius: var(--eliot-shape-none);
+  }
+}
 
 .er-projects-library > .er-button {
   justify-self: start;
