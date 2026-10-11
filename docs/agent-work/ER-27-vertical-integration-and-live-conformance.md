@@ -50,6 +50,9 @@ outside the paths below.
 - `apps/eliotr-core/test/erasure-admission-policy.test.ts`
 - `apps/eliotr-core/test/raw-markdown-conversion-http.test.ts`
 - `apps/eliotr-core/test/raw-normalized-admission-http.test.ts`
+- `apps/eliotr-core/test/index-generation-promotion.test.ts`
+- `apps/eliotr-core/test/index-generation-promotion-fixture.ts`
+- `docs/implementation/s91-managed-registry-transaction-qualification-2026-10-11.md`
 
 ## Read only
 

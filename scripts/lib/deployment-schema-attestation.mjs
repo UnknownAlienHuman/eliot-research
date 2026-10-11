@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import { readDeploymentJson } from "./deployment-verification.mjs";
 
+import { SUPPORTED_SCHEMA_MANIFEST_PROTOCOL, SUPPORTED_SCHEMA_ATTESTATION_PROTOCOL,
+  validateSupportedSchemaRepresentation, projectSupportedDeploymentSchema, matchSupportedDeploymentSchema } from "./deployment-native-platform-schema.mjs";
+
 export const DEPLOYMENT_SCHEMA_CATALOGUE_PROTOCOL = "eliotr.cloudflare-d1.application-schema-catalogue.v1";
 export const DEPLOYMENT_SCHEMA_MANIFEST_PROTOCOL = "eliotr.cloudflare-d1.application-schema-manifest.v1";
 export const DEPLOYMENT_SCHEMA_ATTESTATION_PROTOCOL = "eliotr.cloudflare-d1.application-schema-attestation.v1";
@@ -206,9 +209,11 @@ export async function readDeploymentApplicationSchemaCatalogue(env, input, conte
 }
 
 function resolveDeploymentContexts(env, config, expectedManifest) {
+  const supported = expectedManifest?.protocol === SUPPORTED_SCHEMA_MANIFEST_PROTOCOL;
+  if (supported) validateSupportedSchemaRepresentation(expectedManifest.representation);
   if (!isRecord(config) || !Array.isArray(config.d1_databases) || config.d1_databases.length !== 2 ||
-      !exactKeys(expectedManifest, ["protocol", "streams"]) ||
-      expectedManifest.protocol !== DEPLOYMENT_SCHEMA_MANIFEST_PROTOCOL ||
+      !exactKeys(expectedManifest, ["protocol", "streams", ...(supported ? ["representation"] : [])]) ||
+      expectedManifest.protocol !== (supported ? SUPPORTED_SCHEMA_MANIFEST_PROTOCOL : DEPLOYMENT_SCHEMA_MANIFEST_PROTOCOL) ||
       !Array.isArray(expectedManifest.streams) || expectedManifest.streams.length !== 2) {
     fail("expected manifest or generated D1 bindings are malformed");
   }
@@ -236,7 +241,8 @@ function resolveDeploymentContexts(env, config, expectedManifest) {
         expected.objects.length < 1 || expected.objects.length > MAX_OBJECTS) {
       fail("expected manifest does not match exact Core/Search resource identity");
     }
-    const objects = normalizeSchemaObjects(expected.objects);
+    const rawObjects = normalizeSchemaObjects(expected.objects);
+    const objects = supported ? normalizeSchemaObjects(projectSupportedDeploymentSchema(rawObjects, expectedManifest.representation)) : rawObjects;
     contexts.push({
       context: {
         protocol: "eliotr.cloudflare-d1.schema-database-context.v1",
@@ -247,6 +253,8 @@ function resolveDeploymentContexts(env, config, expectedManifest) {
       },
       migration_bundle_sha256: expected.migration_bundle_sha256,
       expected_objects: objects,
+      expected_raw_objects: rawObjects,
+      expected_raw_catalogue_sha256: deploymentSchemaCatalogueSha256(rawObjects),
       expected_catalogue_sha256: deploymentSchemaCatalogueSha256(objects),
     });
     seenIds.add(configured.database_id);
@@ -261,13 +269,16 @@ function resolveDeploymentContexts(env, config, expectedManifest) {
  * A failure on either database rejects the whole operation and returns no partial PASS receipt.
  */
 export async function attestDeploymentApplicationSchemas(env, input, config, expectedManifest, options = {}) {
+  const supported = expectedManifest?.protocol === SUPPORTED_SCHEMA_MANIFEST_PROTOCOL;
   const contexts = resolveDeploymentContexts(env, config, expectedManifest);
   const streams = [];
   for (let index = 0; index < contexts.length; index += 1) {
     const expected = contexts[index];
     const observed = await readDeploymentApplicationSchemaCatalogue(env, input, expected.context, options);
-    if (observed.catalogue_sha256 !== expected.expected_catalogue_sha256 ||
-        canonicalizeDeploymentSchemaCatalogue(observed.objects) !==
+    const observedObjects = supported ? matchSupportedDeploymentSchema(expected.expected_raw_objects, observed.objects, expectedManifest.representation) : observed.objects;
+    const observedDigest = deploymentSchemaCatalogueSha256(observedObjects);
+    if (observedDigest !== expected.expected_catalogue_sha256 ||
+        canonicalizeDeploymentSchemaCatalogue(observedObjects) !==
           canonicalizeDeploymentSchemaCatalogue(expected.expected_objects)) {
       fail(`application schema catalogue mismatch for ${expected.context.binding}`);
     }
@@ -278,11 +289,14 @@ export async function attestDeploymentApplicationSchemas(env, input, config, exp
       database_name: expected.context.database_name,
       migration_bundle_sha256: expected.migration_bundle_sha256,
       object_count: observed.object_count,
-      catalogue_sha256: observed.catalogue_sha256,
+      catalogue_sha256: observedDigest,
+      ...(supported ? { raw_catalogue_sha256: observed.catalogue_sha256,
+        expected_raw_catalogue_sha256: expected.expected_raw_catalogue_sha256, raw_objects: observed.objects } : {}),
     }));
   }
   return Object.freeze({
-    protocol: DEPLOYMENT_SCHEMA_ATTESTATION_PROTOCOL,
+    protocol: supported ? SUPPORTED_SCHEMA_ATTESTATION_PROTOCOL : DEPLOYMENT_SCHEMA_ATTESTATION_PROTOCOL,
+    ...(supported ? { representation: expectedManifest.representation } : {}),
     state: "PASS",
     scope: DEPLOYMENT_SCHEMA_SCOPE,
     catalogue_protocol: DEPLOYMENT_SCHEMA_CATALOGUE_PROTOCOL,

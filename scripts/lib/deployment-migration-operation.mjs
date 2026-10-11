@@ -1,7 +1,13 @@
+import { tokenizeDeploymentSql as tokens } from "./deployment-sql-tokens.mjs";
+import { validNativeTriggerTransport, projectDeploymentNativeTriggerSql,
+  materializeNativeMigrationMirror, verifyNativeMigrationMirror } from "./deployment-native-trigger-representation.mjs";
+import { NATIVE_COMMENTLESS_TRIGGER_PROTOCOL, projectDeploymentNativeCommentlessSql,
+  projectDeploymentCommentlessSql } from "./deployment-native-sql-representation.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdir, open, readFile, rename, stat, unlink } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { injectOAuthBearer, loadWranglerOAuthCredential, resolveAuthMode, scrubTokenEnv,
   stripNodeOptionsLoaderTokens, verifyWranglerOAuthAccount, WRANGLER_OAUTH_MODE } from "./cloudflare-wrangler-oauth.mjs";
@@ -19,9 +25,14 @@ import { createDeploymentMigrationSchemaProbeGroups, flattenDeploymentMigrationS
 const INTENT_PROTOCOL_V1 = "eliotr.cloudflare-d1-migration-intent.v1";
 const INTENT_PROTOCOL_V2 = "eliotr.cloudflare-d1-migration-intent.v2";
 const INTENT_PROTOCOL_V3 = "eliotr.cloudflare-d1-migration-intent.v3";
+const INTENT_PROTOCOL_V4 = "eliotr.cloudflare-d1-migration-intent.v4";
+const INTENT_PROTOCOL_V5 = "eliotr.cloudflare-d1-migration-intent.v5";
+const nativeIntent = intent => [INTENT_PROTOCOL_V4, INTENT_PROTOCOL_V5].includes(intent?.protocol);
 const RECEIPT_PROTOCOL_V1 = "eliotr.cloudflare-d1-migration-receipt.v1";
 const RECEIPT_PROTOCOL_V2 = "eliotr.cloudflare-d1-migration-receipt.v2";
 const RECEIPT_PROTOCOL_V3 = "eliotr.cloudflare-d1-migration-receipt.v3";
+const RECEIPT_PROTOCOL_V4 = "eliotr.cloudflare-d1-migration-receipt.v4";
+const RECEIPT_PROTOCOL_V5 = "eliotr.cloudflare-d1-migration-receipt.v5";
 const EMPTY_SEMANTIC_REVISION_REPAIR = Object.freeze({
   migrationName: "0108_research_semantic_config_revision_glob_limits.sql",
   baselineName: "0097_research_semantic_config_revision.sql",
@@ -133,11 +144,13 @@ function validateSchemaProbes(probes, migrationNames) {
 export function validateDeploymentMigrationIntent(intent) {
   const version1 = intent?.protocol === INTENT_PROTOCOL_V1;
   const version2 = intent?.protocol === INTENT_PROTOCOL_V2;
-  const version3 = intent?.protocol === INTENT_PROTOCOL_V3;
+  const version4 = nativeIntent(intent);
+  const version3 = intent?.protocol === INTENT_PROTOCOL_V3 || version4;
   const schemaProbeKey = version1 ? "schema_probes" : "schema_probe_groups";
   const keys = ["protocol", "intent_id", "account_id", "generated_config_sha256", "database",
     "migration_names", "migration_hashes", "local_migration_bundle_sha256", "risk_review",
-    schemaProbeKey, "max_migrations", "max_sql_bytes", "deadline_at", "max_runtime_ms"];
+    schemaProbeKey, "max_migrations", "max_sql_bytes", "deadline_at", "max_runtime_ms",
+    ...(version4 ? ["migration_transport"] : [])];
   if ((!version1 && !version2 && !version3) || !exactKeys(intent, keys) || !UUID.test(intent.intent_id ?? "") ||
       !ACCOUNT.test(intent.account_id ?? "") || !HASH.test(intent.generated_config_sha256 ?? "") ||
       !HASH.test(intent.local_migration_bundle_sha256 ?? "") ||
@@ -149,6 +162,8 @@ export function validateDeploymentMigrationIntent(intent) {
       intent.migration_hashes.length !== intent.migration_names.length ||
       !intent.migration_hashes.every((entry, index) => exactKeys(entry, ["name", "sha256"]) &&
         entry.name === intent.migration_names[index] && HASH.test(entry.sha256 ?? "")) ||
+      (version4 && (!validNativeTriggerTransport(intent.migration_transport, intent.migration_names) ||
+        intent.migration_transport.protocol !== (intent.protocol === INTENT_PROTOCOL_V5 ? NATIVE_COMMENTLESS_TRIGGER_PROTOCOL : "eliotr.d1-native-trigger-case.v1"))) ||
       !exactKeys(intent.risk_review, ["classification", "summary", "reviewed_bundle_sha256", "index_build_cost_reviewed",
         ...(version3 ? ["constraint_scan_bounds"] : [])]) ||
       !["additive_schema_only", "schema_metadata_only", "data_preserving_bounded_copy_rebuild",
@@ -160,7 +175,8 @@ export function validateDeploymentMigrationIntent(intent) {
       intent.risk_review.reviewed_bundle_sha256 !== sha256(JSON.stringify(intent.migration_hashes)) ||
       typeof intent.risk_review.index_build_cost_reviewed !== "boolean" ||
       !(version1 ? validateSchemaProbes(intent.schema_probes, intent.migration_names) :
-        validateDeploymentMigrationSchemaProbeGroups(intent.schema_probe_groups, intent.migration_names)) ||
+        validateDeploymentMigrationSchemaProbeGroups(intent.schema_probe_groups, intent.migration_names,
+          { commentless: intent.protocol === INTENT_PROTOCOL_V5 })) ||
       !Number.isSafeInteger(intent.max_migrations) || intent.max_migrations !== intent.migration_names.length ||
       !Number.isSafeInteger(intent.max_sql_bytes) || intent.max_sql_bytes < 1 || intent.max_sql_bytes > MAX_APPROVED_SQL_BYTES ||
       !isoDate(intent.deadline_at) || !Number.isSafeInteger(intent.max_runtime_ms) ||
@@ -173,56 +189,9 @@ export function validateDeploymentMigrationIntent(intent) {
 
 export { createDeploymentMigrationSchemaProbeGroups };
 
-function tokens(sql) {
-  const result = [];
-  const wordPattern = /[A-Za-z_][A-Za-z0-9_$]*/uy;
-  for (let index = 0; index < sql.length;) {
-    const char = sql[index];
-    if (/\s/u.test(char)) { index += 1; continue; }
-    if (char === "-" && sql[index + 1] === "-") {
-      index += 2;
-      while (index < sql.length && sql[index] !== "\n" && sql[index] !== "\r") index += 1;
-      continue;
-    }
-    if (char === "/" && sql[index + 1] === "*") {
-      const end = sql.indexOf("*/", index + 2);
-      if (end < 0) fail("Unterminated SQL comment in approved migration");
-      index = end + 2;
-      continue;
-    }
-    if (char === "'" || char === "\"" || char === "`" || char === "[") {
-      const close = char === "[" ? "]" : char;
-      let value = "";
-      let closed = false;
-      index += 1;
-      while (index < sql.length) {
-        if (sql[index] === close) {
-          if (sql[index + 1] === close && char !== "[") { value += close; index += 2; continue; }
-          index += 1;
-          closed = true;
-          break;
-        }
-        value += sql[index];
-        index += 1;
-      }
-      if (!closed) fail("Unterminated quoted SQL token in approved migration");
-      if (result.length >= 100_000) fail("Migration SQL exceeds the bounded token admission limit");
-      result.push({ type: char === "'" ? "literal" : "identifier", value });
-      continue;
-    }
-    wordPattern.lastIndex = index;
-    const word = wordPattern.exec(sql);
-    if (word) {
-      if (result.length >= 100_000) fail("Migration SQL exceeds the bounded token admission limit");
-      result.push({ type: "word", value: word[0].toUpperCase(), raw: word[0] });
-      index += word[0].length;
-      continue;
-    }
-    if (result.length >= 100_000) fail("Migration SQL exceeds the bounded token admission limit");
-    result.push({ type: "symbol", value: char });
-    index += 1;
-  }
-  return result;
+export function deploymentMigrationIntentSha256(intent) {
+  validateDeploymentMigrationIntent(intent);
+  return sha256(canonicalJson(intent));
 }
 
 function splitSqlStatements(sqlTokens) {
@@ -231,6 +200,7 @@ function splitSqlStatements(sqlTokens) {
   const firstWords = [];
   let trigger = false;
   let triggerBody = false;
+  let triggerParenDepth = 0;
   const triggerBlocks = [];
   const finish = () => {
     if (statement.length > 0) statements.push(statement);
@@ -238,6 +208,7 @@ function splitSqlStatements(sqlTokens) {
     firstWords.length = 0;
     trigger = false;
     triggerBody = false;
+    triggerParenDepth = 0;
     triggerBlocks.length = 0;
   };
   for (const token of sqlTokens) {
@@ -248,13 +219,20 @@ function splitSqlStatements(sqlTokens) {
     statement.push(token);
     if (token.type === "word" && firstWords.length < 2) firstWords.push(token.value);
     if (firstWords[0] === "CREATE" && firstWords[1] === "TRIGGER") trigger = true;
+    if (triggerBody && token.type === "symbol") {
+      if (token.value === "(") triggerParenDepth += 1;
+      else if (token.value === ")" && triggerParenDepth > 0) triggerParenDepth -= 1;
+    }
     if (trigger && token.type === "word") {
       if (!triggerBody && token.value === "BEGIN") {
         triggerBody = true;
         triggerBlocks.push("BEGIN");
       } else if (triggerBody && token.value === "CASE") {
-        // The exact pinned Wrangler 4.143.1 splitter keeps CASE END inside a
-        // trigger statement; only a semicolon followed by END closes its body.
+        // Remote migrations send one script to /query, without the local
+        // splitter. Retain the native D1 guard documented in workers-sdk#4727.
+        if (triggerParenDepth === 0) {
+          fail("Unparenthesized CASE expressions are incompatible with native D1 trigger parsing");
+        }
         triggerBlocks.push("CASE");
       }
       else if (triggerBody && token.value === "END" && triggerBlocks.length > 0) triggerBlocks.pop();
@@ -845,6 +823,7 @@ export function classifyDeploymentMigrationSql(text, { earlierCreatedTables = []
 }
 
 async function readPendingSql(intent, root, localBundle, read) {
+  const version4 = nativeIntent(intent);
   const schemaProbes = flattenDeploymentMigrationSchemaProbes(intent);
   const entries = new Map(localBundle.migration_entries.map((entry) => [entry.name, entry]));
   const pending = [];
@@ -865,11 +844,20 @@ async function readPendingSql(intent, root, localBundle, read) {
     }
     const bytes = await read(resolve(root, "infra/d1", intent.database.binding === "CORE_DB" ? "core" : "search", "migrations", name));
     if (sha256(bytes) !== approved.sha256) fail("Approved migration changed while preparing the operation");
-    totalBytes += bytes.byteLength;
-    if (totalBytes > intent.max_sql_bytes) fail("Pending migration SQL exceeds the approved byte budget");
     let sql;
-    try { sql = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+    try { sql = new TextDecoder("utf-8", { fatal: true, ignoreBOM: version4 }).decode(bytes); }
     catch { fail("Migration SQL is not valid UTF-8"); }
+    let representation = null;
+    if (version4) {
+      representation = intent.protocol === INTENT_PROTOCOL_V5 ? projectDeploymentNativeCommentlessSql(sql) : projectDeploymentNativeTriggerSql(sql);
+      if (representation.source_sha256 !== approved.sha256 ||
+          representation.sha256 !== intent.migration_transport.migration_hashes[index].sha256) {
+        fail("Native migration representation differs from approved effect pin");
+      }
+      sql = representation.sql;
+    }
+    totalBytes += representation?.bytes ?? bytes.byteLength;
+    if (totalBytes > intent.max_sql_bytes) fail("Pending migration SQL exceeds the approved byte budget");
     let baselineMigrationSql = null;
     let predecessorMigrationHashes = null;
     if (name === EMPTY_SEMANTIC_REVISION_REPAIR.migrationName) {
@@ -925,14 +913,15 @@ async function readPendingSql(intent, root, localBundle, read) {
     requiredObjectsByMigration.push({ name, required_schema_objects: admitted.required_schema_objects,
       must_probe_schema_objects: admitted.must_probe_schema_objects });
     pending.push({ name, sha256: approved.sha256, byte_length: bytes.byteLength,
-      statement_count: admitted.statement_count });
+      statement_count: admitted.statement_count,
+      ...(version4 ? { effect_sha256: representation.sha256, effect_byte_length: representation.bytes } : {}) });
   }
   const derivedScans = [...constraintScans].sort(([a], [b]) => a < b ? -1 : 1)
     .map(([table_name, validation_count]) => ({ table_name, validation_count }));
-  if (derivedScans.length > 0 && intent.protocol !== INTENT_PROTOCOL_V3) {
+  if (derivedScans.length > 0 && ![INTENT_PROTOCOL_V3, INTENT_PROTOCOL_V4, INTENT_PROTOCOL_V5].includes(intent.protocol)) {
     fail("Nullable CHECK validation requires a v3 intent with explicit observed-row scan bounds");
   }
-  if (intent.protocol === INTENT_PROTOCOL_V3) assertConstraintScanCoverage(derivedScans, intent.risk_review.constraint_scan_bounds);
+  if ([INTENT_PROTOCOL_V3, INTENT_PROTOCOL_V4, INTENT_PROTOCOL_V5].includes(intent.protocol)) assertConstraintScanCoverage(derivedScans, intent.risk_review.constraint_scan_bounds);
   if (intent.risk_review.index_build_cost_reviewed !== indexBuildCostReviewed ||
       intent.risk_review.classification !== classification) {
     fail("Migration risk review classification or index cost acknowledgment differs from approved SQL");
@@ -966,7 +955,8 @@ async function readPendingSql(intent, root, localBundle, read) {
       .map(([key, value]) => ({ key, value })) };
 }
 
-async function readPinnedLocalPlan(intent, root, read) {
+export async function readDeploymentMigrationLocalPlan(intent, root, read = readFile) {
+  validateDeploymentMigrationIntent(intent);
   const configPath = resolve(root, "apps/eliotr-core", CONFIG_NAME);
   const configBytes = await read(configPath);
   if (sha256(configBytes) !== intent.generated_config_sha256) fail("Generated Wrangler config differs from approved intent");
@@ -989,6 +979,14 @@ async function readPinnedLocalPlan(intent, root, read) {
     fail("Approved migration names are not the complete ordered pending suffix");
   }
   const sql = await readPendingSql(intent, root, bundle, read);
+  if (nativeIntent(intent)) {
+    const effective = new Map(sql.pending.map(entry => [entry.name, entry.effect_sha256]));
+    const effectBundle = bundle.migration_entries.map(entry => ({ name: entry.name,
+      sha256: effective.get(entry.name) ?? entry.sha256 }));
+    if (sha256(JSON.stringify(effectBundle)) !== intent.migration_transport.local_migration_bundle_sha256) {
+      fail("Complete native migration bundle differs from approved effect pin");
+    }
+  }
   return { config, configPath, configBytes, bundle, sql };
 }
 
@@ -1003,7 +1001,7 @@ class OperationCommandError extends Error {
 }
 
 function runChild(command, args, cwd, env, { signal, timeoutMs, captureOutput = false, maxOutputBytes = 256 * 1024,
-  onStarted = () => {} } = {}) {
+  shell = process.platform === "win32", onStarted = () => {} } = {}) {
   return new Promise((resolvePromise, rejectPromise) => {
     if (signal?.aborted) {
       rejectPromise(new OperationCommandError("Operation cancelled before command start"));
@@ -1027,7 +1025,7 @@ function runChild(command, args, cwd, env, { signal, timeoutMs, captureOutput = 
       finishError(new OperationCommandError("Operation command cancelled after start", { started, uncertain: started }));
     };
     try {
-      child = spawn(command, args, { cwd, env, shell: process.platform === "win32", windowsHide: true,
+      child = spawn(command, args, { cwd, env, shell, windowsHide: true,
         stdio: captureOutput ? ["ignore", "pipe", "pipe"] : "inherit" });
       child.once("spawn", () => { started = true; onStarted(); });
       child.once("error", () => finishError(new OperationCommandError("Operation command could not start", { started })));
@@ -1062,6 +1060,8 @@ function runChild(command, args, cwd, env, { signal, timeoutMs, captureOutput = 
     }
   });
 }
+
+export { runChild as runDeploymentMigrationChild };
 
 function cleanChildEnvironment(environment) {
   const env = { ...environment };
@@ -1110,22 +1110,24 @@ function validObservationV2(value, intent, expectedMetadataMarkers) {
     validMigrationNames(value.pending_names, { allowEmpty: true }) && ["NOT_RUN", "PASS", "MISMATCH", "UNAVAILABLE"].includes(value.schema_state) &&
     Array.isArray(value.metadata_markers) && value.metadata_markers.length <= 64 && value.metadata_markers.every(validMetadataMarkerObservation) &&
     validateGroupedSchemaProbeObservations({ groups: intent.schema_probe_groups, observedGroups: value.schema_probe_groups,
-      kind: value.kind, schemaState: value.schema_state, metadataMarkers: value.metadata_markers, expectedMetadataMarkers });
+      kind: value.kind, schemaState: value.schema_state, metadataMarkers: value.metadata_markers, expectedMetadataMarkers, commentless: intent.protocol === INTENT_PROTOCOL_V5 });
 }
 
 function validateSavedReceipt(receipt, intent, intentSha256, expectedMetadataMarkers) {
   const version1 = intent.protocol === INTENT_PROTOCOL_V1;
-  const version3 = intent.protocol === INTENT_PROTOCOL_V3;
+  const version3 = [INTENT_PROTOCOL_V3, INTENT_PROTOCOL_V4, INTENT_PROTOCOL_V5].includes(intent.protocol);
   const receiptProtocol = receiptProtocolForIntent(intent);
   const keys = ["protocol", "intent_id", "intent_sha256", "target", "generated_config_sha256",
     "local_migration_bundle_sha256", "risk_review", "time_travel", "attempt_history", "observations", "overall_state",
-    ...(version3 ? ["constraint_scan_observations"] : [])];
+    ...(version3 ? ["constraint_scan_observations"] : []),
+    ...(nativeIntent(intent) ? ["migration_transport"] : [])];
   if (!exactKeys(receipt, keys) || receipt.protocol !== receiptProtocol || receipt.intent_id !== intent.intent_id ||
       receipt.intent_sha256 !== intentSha256 || !exactKeys(receipt.target, ["account_id", "binding", "database_name", "database_id"]) ||
       receipt.target.account_id !== intent.account_id || receipt.target.binding !== intent.database.binding ||
       receipt.target.database_name !== intent.database.database_name || receipt.target.database_id !== intent.database.database_id ||
       receipt.generated_config_sha256 !== intent.generated_config_sha256 ||
       receipt.local_migration_bundle_sha256 !== intent.local_migration_bundle_sha256 ||
+      (nativeIntent(intent) && canonicalJson(receipt.migration_transport) !== canonicalJson(intent.migration_transport)) ||
       !exactKeys(receipt.risk_review, ["classification", "reviewed_bundle_sha256"]) ||
       receipt.risk_review.classification !== intent.risk_review.classification ||
       receipt.risk_review.reviewed_bundle_sha256 !== intent.risk_review.reviewed_bundle_sha256 ||
@@ -1243,28 +1245,31 @@ async function readSchemaProbes(env, input, intent, { fetchImpl, signal, timeout
           !Array.isArray(result.results) || result.results.length > 2 || result.meta?.changed_db !== false ||
           result.meta?.rows_written !== 0) {
         observations.push({ object_type: probe.object_type, name: probe.name, expected_sql_sha256: probe.create_sql_sha256,
-          observed_sql_sha256: null, migration_names: [...probe.migration_names], state: "UNAVAILABLE" });
+          observed_sql_sha256: null, ...(intent.protocol === INTENT_PROTOCOL_V5 ? { raw_sql_sha256: null } : {}), migration_names: [...probe.migration_names], state: "UNAVAILABLE" });
         return outcome("UNAVAILABLE");
       }
       if (result.results.length !== 1) {
         observations.push({ object_type: probe.object_type, name: probe.name, expected_sql_sha256: probe.create_sql_sha256,
-          observed_sql_sha256: null, migration_names: [...probe.migration_names], state: "MISMATCH" });
+          observed_sql_sha256: null, ...(intent.protocol === INTENT_PROTOCOL_V5 ? { raw_sql_sha256: null } : {}), migration_names: [...probe.migration_names], state: "MISMATCH" });
         return outcome("MISMATCH");
       }
       const row = result.results[0];
       if (!isObject(row) || Object.keys(row).length !== 3 || row.type !== probe.object_type || row.name !== probe.name ||
           typeof row.sql !== "string") {
         observations.push({ object_type: probe.object_type, name: probe.name, expected_sql_sha256: probe.create_sql_sha256,
-          observed_sql_sha256: null, migration_names: [...probe.migration_names], state: "MISMATCH" });
+          observed_sql_sha256: null, ...(intent.protocol === INTENT_PROTOCOL_V5 ? { raw_sql_sha256: null } : {}), migration_names: [...probe.migration_names], state: "MISMATCH" });
         return outcome("MISMATCH");
       }
-      const observed = sha256(Buffer.from(row.sql, "utf8"));
+      const raw = sha256(Buffer.from(row.sql, "utf8"));
+      const observed = intent.protocol === INTENT_PROTOCOL_V5 ? projectDeploymentCommentlessSql(row.sql).sha256 : raw;
+      const matches = observed === probe.create_sql_sha256 && (intent.protocol !== INTENT_PROTOCOL_V5 ||
+        [probe.create_raw_sql_sha256, probe.create_sql_sha256].includes(raw));
       observations.push({ object_type: probe.object_type, name: probe.name, expected_sql_sha256: probe.create_sql_sha256,
-        observed_sql_sha256: observed, migration_names: [...probe.migration_names], state: observed === probe.create_sql_sha256 ? "PASS" : "MISMATCH" });
-      if (observed !== probe.create_sql_sha256) return outcome("MISMATCH");
+        observed_sql_sha256: observed, ...(intent.protocol === INTENT_PROTOCOL_V5 ? { raw_sql_sha256: raw } : {}), migration_names: [...probe.migration_names], state: matches ? "PASS" : "MISMATCH" });
+      if (!matches) return outcome("MISMATCH");
     } catch {
       observations.push({ object_type: probe.object_type, name: probe.name, expected_sql_sha256: probe.create_sql_sha256,
-        observed_sql_sha256: null, migration_names: [...probe.migration_names], state: "UNAVAILABLE" });
+        observed_sql_sha256: null, ...(intent.protocol === INTENT_PROTOCOL_V5 ? { raw_sql_sha256: null } : {}), migration_names: [...probe.migration_names], state: "UNAVAILABLE" });
       return outcome("UNAVAILABLE");
     }
   }
@@ -1324,6 +1329,7 @@ async function readSchemaPreconditions(env, input, intent, { fetchImpl, signal, 
       ...(signal === undefined ? {} : { signal: AbortSignal.any([init.signal, signal]) }), method: "POST", body });
     const observation = { object_type: probe.object_type, name: probe.name,
       expected_sql_sha256: probe.before_sql_sha256, observed_sql_sha256: null,
+      ...(intent.protocol === INTENT_PROTOCOL_V5 ? { raw_sql_sha256: null } : {}),
       migration_names: [...probe.migration_names], state: "UNAVAILABLE" };
     try {
       const { data } = await readDeploymentJson(url, {
@@ -1338,11 +1344,16 @@ async function readSchemaPreconditions(env, input, intent, { fetchImpl, signal, 
         return outcome("UNAVAILABLE");
       }
       const row = result.results.length === 1 ? result.results[0] : null;
-      if (isObject(row) && typeof row.sql === "string") observation.observed_sql_sha256 = sha256(Buffer.from(row.sql, "utf8"));
+      if (isObject(row) && typeof row.sql === "string") {
+        const raw = sha256(Buffer.from(row.sql, "utf8"));
+        observation.observed_sql_sha256 = intent.protocol === INTENT_PROTOCOL_V5 ? projectDeploymentCommentlessSql(row.sql).sha256 : raw;
+        if (intent.protocol === INTENT_PROTOCOL_V5) observation.raw_sql_sha256 = raw;
+      }
       const matches = probe.before_sql_sha256 === null ? result.results.length === 0 :
         isObject(row) && Object.keys(row).length === 3 && row.type === probe.object_type &&
         typeof row.name === "string" && row.name.toLowerCase() === probe.name.toLowerCase() &&
-        observation.observed_sql_sha256 === probe.before_sql_sha256;
+        observation.observed_sql_sha256 === probe.before_sql_sha256 &&
+        (intent.protocol !== INTENT_PROTOCOL_V5 || [probe.before_raw_sql_sha256, probe.before_sql_sha256].includes(observation.raw_sql_sha256));
       observation.state = matches ? "PASS" : "MISMATCH";
       observations.push(observation);
       if (!matches) return outcome("MISMATCH");
@@ -1356,6 +1367,8 @@ async function readSchemaPreconditions(env, input, intent, { fetchImpl, signal, 
 
 function receiptProtocolForIntent(intent) {
   return intent.protocol === INTENT_PROTOCOL_V1 ? RECEIPT_PROTOCOL_V1 :
+    intent.protocol === INTENT_PROTOCOL_V5 ? RECEIPT_PROTOCOL_V5 :
+    intent.protocol === INTENT_PROTOCOL_V4 ? RECEIPT_PROTOCOL_V4 :
     intent.protocol === INTENT_PROTOCOL_V3 ? RECEIPT_PROTOCOL_V3 : RECEIPT_PROTOCOL_V2;
 }
 
@@ -1375,7 +1388,8 @@ function makeObservation(intent, kind, observedAt, ledger, schema = { state: "NO
 function createReceipt(intent, intentSha256, timeTravel, before, now) {
   const startedAt = new Date(now()).toISOString();
   return { protocol: receiptProtocolForIntent(intent), intent_id: intent.intent_id, intent_sha256: intentSha256,
-    ...(intent.protocol === INTENT_PROTOCOL_V3 ? { constraint_scan_observations: [] } : {}),
+    ...([INTENT_PROTOCOL_V3, INTENT_PROTOCOL_V4, INTENT_PROTOCOL_V5].includes(intent.protocol) ? { constraint_scan_observations: [] } : {}),
+    ...(nativeIntent(intent) ? { migration_transport: intent.migration_transport } : {}),
     target: { account_id: intent.account_id, binding: intent.database.binding,
       database_name: intent.database.database_name, database_id: intent.database.database_id },
     generated_config_sha256: intent.generated_config_sha256,
@@ -1435,7 +1449,7 @@ export async function runDeploymentMigrationOperation({ intent, root = ROOT, env
   validateDeploymentMigrationIntent(intent);
   const startedAt = now();
   if (!Number.isSafeInteger(startedAt) || startedAt < 0) fail("Operation clock is invalid");
-  const local = await readPinnedLocalPlan(intent, root, read);
+  const local = await readDeploymentMigrationLocalPlan(intent, root, read);
   if (!confirmLive) {
     return Object.freeze({ state: "PLAN_ONLY", intent_id: intent.intent_id,
       intent_sha256: sha256(canonicalJson(intent)), binding: intent.database.binding,
@@ -1509,7 +1523,8 @@ export async function runDeploymentMigrationOperation({ intent, root = ROOT, env
         timeoutMs: Math.min(30_000, deadline()), now, metadataMarkers: local.sql.metadataMarkers });
       if (schema.state !== "PASS") fail("D1 ledger contains approved migration names but schema contract probes did not pass");
       const receipt = { protocol: receiptProtocolForIntent(intent), intent_id: intent.intent_id, intent_sha256: intentSha256,
-        ...(intent.protocol === INTENT_PROTOCOL_V3 ? { constraint_scan_observations: [] } : {}),
+        ...([INTENT_PROTOCOL_V3, INTENT_PROTOCOL_V4, INTENT_PROTOCOL_V5].includes(intent.protocol) ? { constraint_scan_observations: [] } : {}),
+        ...(nativeIntent(intent) ? { migration_transport: intent.migration_transport } : {}),
         target: { account_id: intent.account_id, binding: intent.database.binding,
           database_name: intent.database.database_name, database_id: intent.database.database_id },
         generated_config_sha256: intent.generated_config_sha256,
@@ -1542,8 +1557,9 @@ export async function runDeploymentMigrationOperation({ intent, root = ROOT, env
   await persistObservedReceipt(receipt, path, saveReceipt, { createOnly: true });
 
   // Re-read every approval pin and target readback immediately before apply.
+  let nativeMirror = null;
   try {
-    const current = await readPinnedLocalPlan(intent, root, read);
+    const current = await readDeploymentMigrationLocalPlan(intent, root, read);
     if (sha256(current.configBytes) !== sha256(local.configBytes) ||
         current.bundle.local_migration_bundle_sha256 !== local.bundle.local_migration_bundle_sha256 ||
         current.sql.totalBytes !== local.sql.totalBytes) {
@@ -1567,7 +1583,7 @@ export async function runDeploymentMigrationOperation({ intent, root = ROOT, env
     receipt.observations[receipt.observations.length - 1] = makeObservation(intent, "BEFORE_APPLY", new Date(now()).toISOString(), before, preconditions);
     await persistObservedReceipt(receipt, path, saveReceipt);
     if (preconditions.state !== "PASS") fail("Exact schema object preconditions failed before migration apply");
-    if (intent.protocol === INTENT_PROTOCOL_V3) {
+    if ([INTENT_PROTOCOL_V3, INTENT_PROTOCOL_V4, INTENT_PROTOCOL_V5].includes(intent.protocol)) {
       const scans = await readConstraintScanPreconditions(input, intent, {
         Authorization: `Bearer ${env.CLOUDFLARE_API_TOKEN}`, "Content-Type": "application/json",
       }, { fetchImpl, signal, timeoutMs: Math.min(30_000, deadline()), now });
@@ -1576,6 +1592,15 @@ export async function runDeploymentMigrationOperation({ intent, root = ROOT, env
       if (scans.state !== "PASS") fail("CHECK validation observed-row admission bound exceeded or unavailable before migration apply");
     }
     check();
+    if (nativeIntent(intent)) {
+      nativeMirror = await materializeNativeMigrationMirror({ root, intent, configBytes: current.configBytes,
+        bundle: current.bundle, read,
+        ...(intent.protocol === INTENT_PROTOCOL_V5 ? { projectSql: projectDeploymentNativeCommentlessSql } : {}) });
+      // Materialization cannot replace the final original-source approval check.
+      await readDeploymentMigrationLocalPlan(intent, root, read);
+      await verifyNativeMigrationMirror({ mirror: nativeMirror, intent, bundle: current.bundle });
+      check();
+    }
   } catch (error) {
     await markAttemptNotStarted(receipt, path, saveReceipt, now);
     throw error;
@@ -1584,9 +1609,21 @@ export async function runDeploymentMigrationOperation({ intent, root = ROOT, env
   let commandOutcome;
   let commandError = null;
   try {
-    await run("pnpm", ["exec", "wrangler", "d1", "migrations", "apply", intent.database.database_name,
-      "--remote", "--config", CONFIG_NAME], resolve(root, "apps/eliotr-core"), childEnv,
-    { signal, timeoutMs: deadline(), maxOutputBytes: 256 * 1024, onStarted: () => {} });
+    let command = "pnpm", prefix = ["exec", "wrangler"];
+    if (nativeMirror !== null) {
+      // The isolated mirror has no package manifest. Resolve the ordinary
+      // pinned CLI from this operator's dependency tree, retaining mirror cwd.
+      const manifestPath = createRequire(import.meta.url).resolve("wrangler/package.json");
+      const installed = JSON.parse(await readFile(manifestPath, "utf8"));
+      const sourcePackage = JSON.parse(await readFile(resolve(ROOT, "package.json"), "utf8"));
+      if (installed.version !== sourcePackage.devDependencies?.wrangler) fail("Native Wrangler version differs from pinned operator dependency");
+      command = process.execPath;
+      prefix = [resolve(dirname(manifestPath), "bin/wrangler.js")];
+    }
+    await run(command, [...prefix, "d1", "migrations", "apply", intent.database.database_name,
+      "--remote", "--config", CONFIG_NAME], nativeMirror?.cwd ?? resolve(root, "apps/eliotr-core"), childEnv,
+    { signal, timeoutMs: deadline(), maxOutputBytes: 256 * 1024,
+      shell: nativeMirror === null && process.platform === "win32", onStarted: () => {} });
     commandOutcome = "SUCCEEDED";
   } catch (error) {
     commandError = error;

@@ -8,8 +8,13 @@ import {
   DEPLOYMENT_SCHEMA_SCOPE,
   deploymentSchemaCatalogueSha256,
 } from "./deployment-schema-attestation.mjs";
-import { DEPLOYMENT_SCHEMA_MANIFEST_PROVENANCE_PROTOCOL } from "./deployment-schema-manifest.mjs";
+import { DEPLOYMENT_SCHEMA_MANIFEST_PROVENANCE_PROTOCOL,
+  DEPLOYMENT_SCHEMA_MANIFEST_NATIVE_PROVENANCE_PROTOCOL } from "./deployment-schema-manifest.mjs";
+import { validateDeploymentNativeSchemaProvenance } from "./deployment-native-schema-provenance.mjs";
 import { validateDeploymentMigrationDirectories } from "./deployment-migrations.mjs";
+
+import { SUPPORTED_SCHEMA_MANIFEST_PROTOCOL, SUPPORTED_SCHEMA_PROVENANCE_PROTOCOL,
+  validateSupportedSchemaRepresentation, projectSupportedDeploymentSchema } from "./deployment-native-platform-schema.mjs";
 
 export const DEPLOYMENT_BUILD_EVIDENCE_PROTOCOL = "eliotr.deployment-build-evidence.v1";
 export const DEPLOYMENT_BUILD_EVIDENCE_SCOPE = "BOUNDED_LOCAL_INTEGRITY";
@@ -305,15 +310,19 @@ function validateApplicationSchemaPayload({
   }
   if (databases.size !== APPLICATION_SCHEMA_BINDINGS.length) reject("generated Core/Search D1 pair is incomplete");
 
-  assertExactKeys(expectedManifest, ["protocol", "streams"], "Expected schema manifest");
-  if (expectedManifest.protocol !== DEPLOYMENT_SCHEMA_MANIFEST_PROTOCOL ||
+  const supported = provenance?.protocol === SUPPORTED_SCHEMA_PROVENANCE_PROTOCOL;
+  assertExactKeys(expectedManifest, ["protocol", "streams", ...(supported ? ["representation"] : [])], "Expected schema manifest");
+  if (supported) validateSupportedSchemaRepresentation(expectedManifest.representation);
+  if (expectedManifest.protocol !== (supported ? SUPPORTED_SCHEMA_MANIFEST_PROTOCOL : DEPLOYMENT_SCHEMA_MANIFEST_PROTOCOL) ||
       !Array.isArray(expectedManifest.streams) || expectedManifest.streams.length !== APPLICATION_SCHEMA_BINDINGS.length) {
     reject("expected schema manifest protocol or Core/Search pair is invalid");
   }
+  const nativeRepresentation = supported || provenance?.protocol === DEPLOYMENT_SCHEMA_MANIFEST_NATIVE_PROVENANCE_PROTOCOL;
   assertExactKeys(provenance,
-    ["protocol", "scope", "exclusions", "generated_config", "streams", "expected_manifest_sha256", "expected_manifest_byte_length"],
+    ["protocol", "scope", "exclusions", "generated_config", "streams", "expected_manifest_sha256", "expected_manifest_byte_length",
+      ...(nativeRepresentation ? ["migration_representation"] : [])],
     "Schema provenance");
-  if (provenance.protocol !== DEPLOYMENT_SCHEMA_MANIFEST_PROVENANCE_PROTOCOL ||
+  if ((!nativeRepresentation && provenance.protocol !== DEPLOYMENT_SCHEMA_MANIFEST_PROVENANCE_PROTOCOL) ||
       provenance.scope !== DEPLOYMENT_SCHEMA_SCOPE ||
       canonicalJson(provenance.exclusions) !== canonicalJson(DEPLOYMENT_SCHEMA_EXCLUSIONS) ||
       !Array.isArray(provenance.streams) || provenance.streams.length !== APPLICATION_SCHEMA_BINDINGS.length) {
@@ -406,6 +415,7 @@ function validateApplicationSchemaPayload({
     let catalogueSha256;
     try {
       canonicalizeDeploymentSchemaCatalogue(schemaStream.objects);
+      if (supported) projectSupportedDeploymentSchema(schemaStream.objects, expectedManifest.representation);
       catalogueSha256 = deploymentSchemaCatalogueSha256(schemaStream.objects);
     } catch (error) {
       reject(`${expectedIdentity.binding} schema catalogue is invalid (${error.message})`);
@@ -427,6 +437,11 @@ function validateApplicationSchemaPayload({
   if (accountIds.size !== 1 || usedDatabaseIds.size !== APPLICATION_SCHEMA_BINDINGS.length) {
     reject("Core/Search schema streams do not identify one account and two distinct databases");
   }
+  if (supported && provenance.migration_representation?.intent?.protocol !== "eliotr.cloudflare-d1-migration-intent.v5") reject("supported schema representation requires v5 intent");
+  if (!supported && provenance.migration_representation?.intent?.protocol === "eliotr.cloudflare-d1-migration-intent.v5") reject("v5 cannot downgrade schema provenance");
+  if (nativeRepresentation) validateDeploymentNativeSchemaProvenance({ root,
+    representation: provenance.migration_representation, sourceStreams: provenance.streams,
+    capturedMigrations, generatedConfigPin });
 
   const rawManifestBytes = Buffer.from(JSON.stringify(expectedManifest), "utf8");
   if (rawManifestBytes.byteLength > MAX_PERSISTED_OBJECT_BYTES ||

@@ -290,7 +290,7 @@ await check("SQL allowlist ignores comments and literals, permits bounded trigge
   assert.equal(classifyDeploymentMigrationSql("-- UPDATE source SET v=1\nCREATE TABLE \"safe_table\" (note TEXT DEFAULT 'DROP TABLE');").newly_created_tables[0], "safe_table");
   assert.equal(classifyDeploymentMigrationSql(triggerSql).required_schema_objects[0].object_type, "trigger");
   const plainTriggerCase = "CREATE TRIGGER plain_case AFTER INSERT ON fixture_table BEGIN SELECT CASE WHEN NEW.id = 1 THEN RAISE(ABORT, 'blocked') END; END;";
-  assert.equal(classifyDeploymentMigrationSql(plainTriggerCase).statement_count, 1);
+  assert.throws(() => classifyDeploymentMigrationSql(plainTriggerCase), /Unparenthesized CASE/u);
   for (const triggerCase of [
     "CREATE TRIGGER parenthesized_case AFTER INSERT ON fixture_table BEGIN SELECT (CASE WHEN NEW.id = 1 THEN RAISE(ABORT, 'blocked') END); END;",
     "CREATE TRIGGER nested_parenthesized_case AFTER INSERT ON fixture_table BEGIN SELECT ((CASE WHEN NEW.id = 1 THEN RAISE(ABORT, 'blocked') END)); END;",

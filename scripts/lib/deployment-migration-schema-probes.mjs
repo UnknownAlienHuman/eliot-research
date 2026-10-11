@@ -30,8 +30,10 @@ function validMigrationNames(names) {
       (index === 0 || names[index - 1] < name));
 }
 
-function validProbe(probe, migrationNames) {
-  return exactKeys(probe, PROBE_KEYS) && ["table", "index", "trigger", "view"].includes(probe.object_type) &&
+function validProbe(probe, migrationNames, commentless) {
+  return exactKeys(probe, [...PROBE_KEYS, ...(commentless ? ["before_raw_sql_sha256", "create_raw_sql_sha256"] : [])]) &&
+    (!commentless || ((probe.before_sql_sha256 === null ? probe.before_raw_sql_sha256 === null : HASH.test(probe.before_raw_sql_sha256)) &&
+      HASH.test(probe.create_raw_sql_sha256))) && ["table", "index", "trigger", "view"].includes(probe.object_type) &&
     typeof probe.name === "string" && SCHEMA_NAME.test(probe.name) && !probe.name.toLowerCase().startsWith("sqlite_") &&
     (probe.before_sql_sha256 === null || HASH.test(probe.before_sql_sha256)) && HASH.test(probe.create_sql_sha256) &&
     validMigrationNames(probe.migration_names) && probe.migration_names.every((name) => migrationNames.includes(name));
@@ -68,14 +70,15 @@ export function createDeploymentMigrationSchemaProbeGroups(probes) {
 
 export function flattenDeploymentMigrationSchemaProbes(intent) {
   if (intent?.protocol === "eliotr.cloudflare-d1-migration-intent.v1") return intent.schema_probes;
-  if (["eliotr.cloudflare-d1-migration-intent.v2", "eliotr.cloudflare-d1-migration-intent.v3"].includes(intent?.protocol) &&
+  if (["eliotr.cloudflare-d1-migration-intent.v2", "eliotr.cloudflare-d1-migration-intent.v3",
+    "eliotr.cloudflare-d1-migration-intent.v4", "eliotr.cloudflare-d1-migration-intent.v5"].includes(intent?.protocol) &&
       Array.isArray(intent.schema_probe_groups)) {
     return intent.schema_probe_groups.flatMap((group) => Array.isArray(group?.probes) ? group.probes : []);
   }
   return [];
 }
 
-export function validateDeploymentMigrationSchemaProbeGroups(groups, migrationNames) {
+export function validateDeploymentMigrationSchemaProbeGroups(groups, migrationNames, { commentless = false } = {}) {
   if (!Array.isArray(groups) || groups.length < 1 || groups.length > MAX_GROUPS) return false;
   let total = 0;
   const covered = new Set();
@@ -90,7 +93,7 @@ export function validateDeploymentMigrationSchemaProbeGroups(groups, migrationNa
     total += group.probes.length;
     if (total > MAX_PROBES) return false;
     for (const probe of group.probes) {
-      if (!validProbe(probe, migrationNames) || (previous !== null && compareProbe(previous, probe) >= 0)) return false;
+      if (!validProbe(probe, migrationNames, commentless) || (previous !== null && compareProbe(previous, probe) >= 0)) return false;
       const identity = `${probe.object_type}\u0000${probe.name.toLowerCase()}`;
       if (unique.has(identity)) return false;
       unique.add(identity);
@@ -112,7 +115,7 @@ export function groupDeploymentMigrationSchemaProbeObservations(groups, observat
 }
 
 export function validateGroupedSchemaProbeObservations({ groups, observedGroups, kind, schemaState,
-  metadataMarkers, expectedMetadataMarkers }) {
+  metadataMarkers, expectedMetadataMarkers, commentless = false }) {
   if (!Array.isArray(groups) || !Array.isArray(observedGroups) || observedGroups.length !== groups.length ||
       !["BEFORE_APPLY", "AFTER_APPLY", "RETRY_RECONCILIATION"].includes(kind) ||
       !["NOT_RUN", "PASS", "MISMATCH", "UNAVAILABLE"].includes(schemaState) ||
@@ -132,7 +135,14 @@ export function validateGroupedSchemaProbeObservations({ groups, observedGroups,
       const observation = observedGroup.observations[probeIndex];
       const probe = expectedGroup.probes[probeIndex];
       const expectedSql = before ? probe.before_sql_sha256 : probe.create_sql_sha256;
-      if (!exactKeys(observation, ["object_type", "name", "expected_sql_sha256", "observed_sql_sha256", "migration_names", "state"]) ||
+      const expectedRaw = before ? probe.before_raw_sql_sha256 : probe.create_raw_sql_sha256;
+      if (!exactKeys(observation, ["object_type", "name", "expected_sql_sha256", "observed_sql_sha256", "migration_names", "state", ...(commentless ? ["raw_sql_sha256"] : [])]) ||
+          (commentless && !(observation.raw_sql_sha256 === null || HASH.test(observation.raw_sql_sha256))) ||
+          (commentless && observation.state === "PASS" && expectedSql !== null && observation.raw_sql_sha256 === null) ||
+          (commentless && observation.state === "PASS" &&
+            !(expectedSql === null ? observation.raw_sql_sha256 === null :
+              [expectedRaw, expectedSql].includes(observation.raw_sql_sha256))) ||
+          (commentless && observation.state === "UNAVAILABLE" && observation.raw_sql_sha256 !== null) ||
           observation.object_type !== probe.object_type || observation.name !== probe.name ||
           observation.expected_sql_sha256 !== expectedSql ||
           JSON.stringify(observation.migration_names) !== JSON.stringify(probe.migration_names) ||

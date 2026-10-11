@@ -12,10 +12,18 @@ import {
 } from "./deployment-schema-attestation.mjs";
 import { pinGeneratedDeploymentConfig } from "./deployment-build-inputs.mjs";
 import { readDeploymentMigrationEntries, validateDeploymentMigrationDirectories } from "./deployment-migrations.mjs";
+import { deploymentMigrationIntentSha256, readDeploymentMigrationLocalPlan } from "./deployment-migration-operation.mjs";
+import { materializeNativeMigrationMirror, verifyNativeMigrationMirror } from "./deployment-native-trigger-representation.mjs";
 import { executeLocal, localEnvironment, ROOT, wranglerArgs } from "./local-launch.mjs";
+
+import { projectDeploymentNativeCommentlessSql } from "./deployment-native-sql-representation.mjs";
+import { SUPPORTED_SCHEMA_MANIFEST_PROTOCOL, SUPPORTED_SCHEMA_PROVENANCE_PROTOCOL,
+  SUPPORTED_SCHEMA_REPRESENTATION, projectSupportedDeploymentSchema } from "./deployment-native-platform-schema.mjs";
 
 export const DEPLOYMENT_SCHEMA_MANIFEST_PROVENANCE_PROTOCOL =
   "eliotr.cloudflare-d1.expected-schema-manifest-provenance.v1";
+export const DEPLOYMENT_SCHEMA_MANIFEST_NATIVE_PROVENANCE_PROTOCOL =
+  "eliotr.cloudflare-d1.expected-schema-manifest-provenance.v2";
 export const MAX_DEPLOYMENT_SCHEMA_MANIFEST_BYTES = 16 * 1024 * 1024;
 
 const GENERATED_CONFIG_PATH = "apps/eliotr-core/wrangler.deploy.jsonc";
@@ -284,6 +292,7 @@ export async function createDeploymentSchemaManifest({
   config,
   accountId,
   generatedConfigPin,
+  migrationIntentFile,
   execute = executeLocal,
 } = {}) {
   if (typeof root !== "string" || root.length === 0 || typeof execute !== "function") {
@@ -293,15 +302,42 @@ export async function createDeploymentSchemaManifest({
   const pinnedConfig = await readPinnedConfig(absoluteRoot, config, generatedConfigPin);
   const databases = validateSelectedConfig(pinnedConfig, accountId, absoluteRoot);
   const migrationPins = await readMigrationPins(pinnedConfig, absoluteRoot);
+  let nativePlan, intentBytes, intentPath;
+  if (migrationIntentFile !== undefined) {
+    if (typeof migrationIntentFile !== "string" || migrationIntentFile.trim() === "") fail("migration intent file is invalid");
+    intentPath = resolve(absoluteRoot, migrationIntentFile);
+    intentBytes = await readStableFile(absoluteRoot, intentPath, "Migration representation intent");
+    let intent;
+    try { intent = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(intentBytes)); }
+    catch { fail("migration representation intent is not JSON"); }
+    if (!["eliotr.cloudflare-d1-migration-intent.v4", "eliotr.cloudflare-d1-migration-intent.v5"].includes(intent?.protocol) || intent.account_id !== accountId ||
+        intent.generated_config_sha256 !== generatedConfigPin.sha256) fail("migration representation intent differs from selected config/account");
+    nativePlan = await readDeploymentMigrationLocalPlan(intent, absoluteRoot);
+    nativePlan.intent = intent;
+    const selected = migrationPins.find(pin => pin.binding === intent.database.binding);
+    if (!sameMigrationPin(selected, nativePlan.bundle)) fail("migration representation source stream differs from selected bundle");
+  }
   const syntheticPaths = await createSyntheticPaths();
 
   try {
+    let materializationRoot = absoluteRoot;
+    let nativeMirror;
+    const companions = nativePlan ? migrationPins.filter(pin => pin.binding !== nativePlan.intent.database.binding) : [];
+    if (nativePlan) {
+      nativeMirror = await materializeNativeMigrationMirror({ root: absoluteRoot, intent: nativePlan.intent,
+        configBytes: nativePlan.configBytes, bundle: nativePlan.bundle, companionBundles: companions,
+        mirrorParentRoot: syntheticPaths.directory,
+        ...(nativePlan.intent.protocol === "eliotr.cloudflare-d1-migration-intent.v5" ? { projectSql: projectDeploymentNativeCommentlessSql } : {}) });
+      materializationRoot = nativeMirror.root;
+    }
     const paths = {
-      config: resolve(absoluteRoot, GENERATED_CONFIG_PATH),
+      config: resolve(materializationRoot, GENERATED_CONFIG_PATH),
       persist: syntheticPaths.persist,
     };
     for (const { binding } of DATABASES) {
-      await runLocal(execute, paths, absoluteRoot,
+      if (nativeMirror) await verifyNativeMigrationMirror({ mirror: nativeMirror, intent: nativePlan.intent,
+        bundle: nativePlan.bundle, companionBundles: companions });
+      await runLocal(execute, paths, materializationRoot,
         ["d1", "migrations", "apply", binding], binding, "d1-migrations");
     }
 
@@ -309,7 +345,7 @@ export async function createDeploymentSchemaManifest({
     const provenanceStreams = [];
     for (let index = 0; index < DATABASES.length; index += 1) {
       const { binding } = DATABASES[index];
-      const objects = await readLocalCatalogue(execute, paths, absoluteRoot, binding);
+      const objects = await readLocalCatalogue(execute, paths, materializationRoot, binding);
       const migrationPin = migrationPins[index];
       const database = databases[index];
       streams.push(freezeStream(database, accountId, migrationPin, objects));
@@ -334,14 +370,35 @@ export async function createDeploymentSchemaManifest({
     if (migrationPins.some((pin, index) => !sameMigrationPin(pin, afterMigrationPins[index]))) {
       fail("migration bundle changed during local materialization");
     }
+    let migrationRepresentation;
+    if (nativePlan) {
+      if (!(await readStableFile(absoluteRoot, intentPath, "Migration representation intent")).equals(intentBytes)) {
+        fail("migration representation intent changed during materialization");
+      }
+      await readDeploymentMigrationLocalPlan(nativePlan.intent, absoluteRoot);
+      await verifyNativeMigrationMirror({ mirror: nativeMirror, intent: nativePlan.intent,
+        bundle: nativePlan.bundle, companionBundles: companions });
+      const effectivePins = await readMigrationPins(pinnedConfig, materializationRoot);
+      migrationRepresentation = {
+        intent: nativePlan.intent,
+        intent_sha256: deploymentMigrationIntentSha256(nativePlan.intent),
+        intent_file: { path: relative(absoluteRoot, intentPath).split(sep).join("/"),
+          sha256: sha256(intentBytes), byte_length: intentBytes.byteLength },
+        streams: effectivePins.map(pin => ({ binding: pin.binding, migration_entries: pin.migration_entries,
+          migration_bundle_sha256: pin.local_migration_bundle_sha256, total_sql_bytes: pin.total_sql_bytes })),
+      };
+    }
 
+    const supported = nativePlan?.intent.protocol === "eliotr.cloudflare-d1-migration-intent.v5";
+    if (supported) for (const stream of streams) projectSupportedDeploymentSchema(stream.objects, SUPPORTED_SCHEMA_REPRESENTATION);
     const expectedManifest = freezeDeep({
-      protocol: DEPLOYMENT_SCHEMA_MANIFEST_PROTOCOL,
+      protocol: supported ? SUPPORTED_SCHEMA_MANIFEST_PROTOCOL : DEPLOYMENT_SCHEMA_MANIFEST_PROTOCOL,
+      ...(supported ? { representation: SUPPORTED_SCHEMA_REPRESENTATION } : {}),
       streams,
     });
     const manifestBytes = Buffer.from(JSON.stringify(expectedManifest), "utf8");
     const provenance = freezeDeep({
-      protocol: DEPLOYMENT_SCHEMA_MANIFEST_PROVENANCE_PROTOCOL,
+      protocol: supported ? SUPPORTED_SCHEMA_PROVENANCE_PROTOCOL : nativePlan ? DEPLOYMENT_SCHEMA_MANIFEST_NATIVE_PROVENANCE_PROTOCOL : DEPLOYMENT_SCHEMA_MANIFEST_PROVENANCE_PROTOCOL,
       scope: DEPLOYMENT_SCHEMA_SCOPE,
       exclusions: [...DEPLOYMENT_SCHEMA_EXCLUSIONS],
       generated_config: {
@@ -352,6 +409,7 @@ export async function createDeploymentSchemaManifest({
       streams: provenanceStreams,
       expected_manifest_sha256: sha256(manifestBytes),
       expected_manifest_byte_length: manifestBytes.byteLength,
+      ...(migrationRepresentation ? { migration_representation: migrationRepresentation } : {}),
     });
     const result = { expectedManifest, provenance };
     const persistedShape = Buffer.from(JSON.stringify(result, null, 2) + "\n", "utf8");

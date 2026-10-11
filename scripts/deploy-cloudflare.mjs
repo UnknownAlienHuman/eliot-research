@@ -151,8 +151,17 @@ async function requireUnchangedDeploymentSecretsFile(pin) {
 export function parseDeploymentArguments(args) {
   const flags = new Set();
   let secretsFilePath;
+  let migrationIntentFile;
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
+    if (argument === "--migration-intent-file") {
+      if (migrationIntentFile !== undefined || index + 1 >= args.length ||
+          typeof args[index + 1] !== "string" || args[index + 1].trim() === "" || args[index + 1].startsWith("--")) {
+        throw new Error("Deployment arguments are invalid");
+      }
+      migrationIntentFile = args[++index];
+      continue;
+    }
     if (argument === "--secrets-file") {
       if (secretsFilePath !== undefined || index + 1 >= args.length || args[index + 1].startsWith("--")) {
         throw new Error("Deployment arguments are invalid");
@@ -167,6 +176,7 @@ export function parseDeploymentArguments(args) {
     flags.add(argument);
   }
   return { confirmLive: flags.has("--confirm-live"), purpose: flags.has("--maintenance") ? MAINTENANCE_PURPOSE : FULL_RELEASE_PURPOSE,
+    ...(migrationIntentFile === undefined ? {} : { migrationIntentFile }),
     ...(secretsFilePath === undefined ? {} : { secretsFilePath }),
     ...(flags.has("--owner-web") ? { ownerWeb: true } : {}) };
 }
@@ -217,7 +227,7 @@ async function saveReceipt(receipt) {
 }
 
 /** Effects are explicit so failure ordering can be tested without Cloudflare credentials. */
-export async function deployCloudflare({ confirmLive = false, ownerWeb = false, secretsFilePath, environment = process.env,
+export async function deployCloudflare({ confirmLive = false, ownerWeb = false, secretsFilePath, migrationIntentFile, environment = process.env,
   execute = run, captureCommand = capture, read = readFile, archive = archiveReceipt,
   save = saveReceipt, fetchImpl = fetch, now = Date.now, log = console.log,
   verifyCode = assertLaunchCodeComplete, readWranglerFile, runWranglerWhoami,
@@ -597,7 +607,8 @@ export async function deployCloudflare({ confirmLive = false, ownerWeb = false, 
     // Existing local schema materialization verifies the original provisioner config.
     // Retain that exact provenance before the explicit assets-only build-profile change.
     schemaManifestResult = await createSchemaManifest({ root, config,
-      accountId: env.CLOUDFLARE_ACCOUNT_ID, generatedConfigPin });
+      accountId: env.CLOUDFLARE_ACCOUNT_ID, generatedConfigPin,
+      ...(migrationIntentFile === undefined ? {} : { migrationIntentFile }) });
     const originalSchemaConfig = { bytes, pin: generatedConfigPin };
     const normalized = await normalizeOwnerWebDeploymentConfig({ root, expectedBytes: bytes });
     bytes = normalized.bytes;
@@ -610,7 +621,8 @@ export async function deployCloudflare({ confirmLive = false, ownerWeb = false, 
   }
   const migrationPlan = await readDeploymentMigrationPlan(config, { root });
   schemaManifestResult ??= await createSchemaManifest({ root, config,
-    accountId: env.CLOUDFLARE_ACCOUNT_ID, generatedConfigPin });
+    accountId: env.CLOUDFLARE_ACCOUNT_ID, generatedConfigPin,
+    ...(migrationIntentFile === undefined ? {} : { migrationIntentFile }) });
   let assetManifest = ownerWeb ? null : await readAssetManifest(config, { root });
   const backendFingerprint = readBackendFingerprint({ root, generated_config: config });
   const coreDatabase = config.d1_databases.find((database) => database.binding === "CORE_DB");

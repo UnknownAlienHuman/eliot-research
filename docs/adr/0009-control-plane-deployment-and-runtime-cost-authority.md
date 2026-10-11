@@ -82,6 +82,34 @@ must have separate operation records.
 
 ## Platform consequences
 
+### Native D1 representation amendment, 2026-10-11
+
+A reviewed migration intent v4 may bind a deterministic native representation
+in addition to the unchanged original SQL/config/file/full-stream pins. Its
+`migration_transport` uses `eliotr.d1-native-trigger-case.v1`, the exact ordered
+effective pending file hashes and complete effective stream hash. It inserts
+only parentheses around original depth-zero CASE expressions in CREATE TRIGGER
+bodies; prefixes and historical repository SQL remain unchanged. The same
+schema/risk/scan classifier and preconditions apply to the effective bytes.
+
+The operator materializes an exclusive per-intent canonical-directory mirror
+with byte-identical config and invokes ordinary pinned Wrangler migrations apply.
+Wrangler retains migration/ledger ownership. No manual ledger, raw SQL bypass or
+dependency patch is permitted. Its v4 receipt binds original and effective pins;
+UNKNOWN/replay/new-intent semantics remain unchanged.
+
+Deployment's explicit migration-intent-file input produces the complete expected
+Core/Search catalogue from the same pinned source representation in fresh local
+D1. Provenance v2 retains original source pins and adds the exact intent-file,
+intent digest and both effective stream pins. The deployment evidence validator
+reproduces the representation from captured original bytes. The existing
+assets-only deployment bridge retains its original materialization config pin.
+Exact raw catalogue comparison remains mandatory; live state cannot supply
+expected definitions. Representative parser probes and local whole-script
+qualification do not replace real target ledger/schema/catalogue readback.
+
+See [the bounded operator checkpoint](../implementation/d1-native-representation-operator-2026-10-11.md).
+
 Cloudflare versions contain Worker code, static assets, bindings, and compatibility settings;
 attached D1/R2 state is not versioned. Standard `wrangler deploy` creates a version and immediately
 sends it to 100% traffic. A Worker rollback creates a deployment of an older version, but does not
@@ -103,6 +131,25 @@ maintenance/release-check findings; they are not the Cloudflare upload limit and
 receipts must report them honestly. Full S92 and live product acceptance remain pending.
 
 ## Official references
+
+### 2026-10-11: explicit source-derived D1 representation
+
+The distinct migration intent/receipt v5 and schema manifest v2/provenance v3/
+attestation v2 admit the finite source representation described in
+[D1 supported schema representation](../implementation/d1-supported-schema-representation-2026-10-11.md).
+Every application object admits only its exact source raw SQL or its source-only,
+quote-aware commentless bytes; all other bytes, identities and complete membership
+remain exact. Both variants are generated before observing deployed values.
+Complete raw source and observed catalogues/pins are retained. No lexical,
+whitespace or keyword equivalence, wildcard platform exclusion, live-derived
+expectation, manual SQL or ledger repair is admitted.
+
+Closed platform profiles pin the two distinct workerd vendor constructor shapes;
+a match asserts that exact shape, not the deployed runtime version or bootstrap
+history. Unknown, changed, duplicated or missing platform objects reject.
+Original migration files and v1-v4 semantics remain unchanged. A previous UNKNOWN
+intent cannot be reapplied. New representation source acceptance and native remote
+effect qualification remain separate.
 
 - [Workers versions and deployments](https://developers.cloudflare.com/workers/versions-and-deployments/)
 - [Workers rollbacks](https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/)

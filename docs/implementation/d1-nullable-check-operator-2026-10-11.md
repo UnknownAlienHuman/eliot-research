@@ -1,17 +1,29 @@
 # Guarded D1 nullable CHECK validation — October 11, 2026
 
-This ER-26 amendment supports the unchanged published migration suffix through
-the existing migration operator. It changes neither product SQL nor the normal
-Wrangler apply transport. Source publication, migration application, Worker
+This ER-26 amendment adds nullable CHECK admission to the existing migration
+operator. The unchanged published suffix is not remote-qualified. It changes
+neither product SQL nor the normal Wrangler apply transport. Source publication, migration application, Worker
 deployment and full release remain separate transitions.
 
-The dependency graph pins Wrangler 4.143.1 exactly. Its current statement
-splitter recognizes a trigger's terminating semicolon/END/semicolon and does not
-terminate on a CASE expression's END. The historical operator refusal of
-unparenthesized CASE is removed while balanced BEGIN/CASE/END validation remains.
-The actual installed splitter and unchanged nine-file suffix were exercised in
-SQLite 3.51.2 against all 129 Core migrations. This local parser/schema result
-does not establish remote migration execution or ledger acceptance.
+The dependency graph pins Wrangler 4.143.1 exactly. Its local path uses a
+statement splitter; remote `d1 migrations apply` appends the migration-ledger
+INSERT and sends the whole normalized script as one `sql` string to D1 `/query`.
+The retained installed-splitter/SQLite 3.51.2 check of all 129 Core migrations
+and the nine-file suffix covers only the local parser/schema boundary.
+It does not qualify the remote transport. The native trigger guard for
+unparenthesized CASE is restored, with balanced BEGIN/CASE/END validation retained.
+The existing backup parser-compatibility fixture and workers-sdk #4727 document
+this restriction; the issue was closed as a duplicate, not as evidence of a fix.
+
+The sole deployer attempted the unchanged suffix once on October 11, 2026.
+Remote `/query` returned `incomplete input: SQLITE_ERROR [code: 7500]` on migration
+0123. Intent `cc9e8049-780b-4701-b840-544bd08f4e28` remains UNKNOWN and must never
+be reapplied. Subsequent SELECT-only readback observed all 47 schema objects and
+the 120-name ledger unchanged. This does not identify the exact server parser
+failure or establish general rollback guarantees. The failed request body was
+sanitized out of the retained Wrangler log. A new intent alone cannot repair an
+incompatible script. Historical migrations remain append-only; no SQL rewrite,
+raw apply or manual ledger insertion is authorized by this amendment.
 
 SQLite may validate an added CHECK against existing rows. Nullable constraints
 are therefore classified `schema_constraint_validation`, including constraints
@@ -48,7 +60,8 @@ deadline does not prove cancellation of a started remote effect. The existing
 Time Travel bookmark, exact source pins and full schema/ledger readback remain
 required. No raw SQL/Wrangler bypass is introduced.
 
-Required verification covers current splitter compatibility, strict predicate
+Required verification covers the remote-transport trigger preflight guard,
+strict predicate
 negatives, exact cost coverage, pre-effect overflow/unavailable/cancellation,
 receipt tampering, no repeated apply, and the owning migration-operation suite.
 Remote counts and actual migration/readback are the sole deployer's distinct
@@ -56,4 +69,6 @@ gate. Full S64, S92, provider qualification and project acceptance stay open.
 
 References: [ADR-0009](../adr/0009-control-plane-deployment-and-runtime-cost-authority.md),
 [D1 migrations](https://developers.cloudflare.com/d1/reference/migrations/),
+[trigger parser report](https://github.com/cloudflare/workers-sdk/issues/4727),
+[current remote /query report](https://github.com/cloudflare/workers-sdk/issues/15690),
 [SQLite ADD COLUMN](https://www.sqlite.org/lang_altertable.html#alter_table_add_column).

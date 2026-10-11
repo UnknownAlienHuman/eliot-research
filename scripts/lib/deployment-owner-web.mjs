@@ -7,8 +7,13 @@ import { inspectWebBuild, OWNER_WEB_INITIAL_GZIP_BUDGET_BYTES, WORKER_GZIP_BUDGE
 import { assertCoreWorkerRouteParity } from "./core-worker-route-parity.mjs";
 import { DEPLOYMENT_SCHEMA_MANIFEST_PROTOCOL, DEPLOYMENT_SCHEMA_SCOPE,
   DEPLOYMENT_SCHEMA_EXCLUSIONS, deploymentSchemaCatalogueSha256 } from "./deployment-schema-attestation.mjs";
-import { DEPLOYMENT_SCHEMA_MANIFEST_PROVENANCE_PROTOCOL } from "./deployment-schema-manifest.mjs";
+import { DEPLOYMENT_SCHEMA_MANIFEST_PROVENANCE_PROTOCOL,
+  DEPLOYMENT_SCHEMA_MANIFEST_NATIVE_PROVENANCE_PROTOCOL } from "./deployment-schema-manifest.mjs";
+import { validateDeploymentNativeSchemaProvenance } from "./deployment-native-schema-provenance.mjs";
 import { readOwnerWebStartup, ownerWebStartupBindings } from "./deployment-owner-web-startup.mjs";
+
+import { SUPPORTED_SCHEMA_MANIFEST_PROTOCOL, SUPPORTED_SCHEMA_PROVENANCE_PROTOCOL,
+  validateSupportedSchemaRepresentation, projectSupportedDeploymentSchema } from "./deployment-native-platform-schema.mjs";
 
 const CONFIG = "apps/eliotr-core/wrangler.deploy.jsonc";
 const CLIENT = "apps/eliotr-web/dist/client";
@@ -441,7 +446,7 @@ export async function requireUnchangedOwnerWebDeployment({ root, manifest, attes
   if (current.sha256 !== attestation.sha256) fail("prepared Vite graph changed after attestation");
 }
 
-function validateSchemaMaterialization(manifest, bundle, source, result) {
+export function validateOwnerWebSchemaMaterialization(manifest, bundle, source, result) {
   const sourceConfig = parsed(source.bytes, "schema source config");
   if (digest(source.bytes) !== source.pin.sha256 || source.bytes.byteLength !== source.pin.byte_length ||
       sourceConfig.assets?.directory !== "../eliotr-pwa/dist") fail("invalid original schema config pin");
@@ -450,8 +455,18 @@ function validateSchemaMaterialization(manifest, bundle, source, result) {
   if (!same(expected, source.normalizedConfig)) fail("schema-to-deployment transition changes more than assets");
   const expectedManifest = result?.expectedManifest;
   const provenance = result?.provenance;
-  if (expectedManifest?.protocol !== DEPLOYMENT_SCHEMA_MANIFEST_PROTOCOL ||
-      provenance?.protocol !== DEPLOYMENT_SCHEMA_MANIFEST_PROVENANCE_PROTOCOL ||
+  const supported = provenance?.protocol === SUPPORTED_SCHEMA_PROVENANCE_PROTOCOL;
+  const nativeRepresentation = supported || provenance?.protocol === DEPLOYMENT_SCHEMA_MANIFEST_NATIVE_PROVENANCE_PROTOCOL;
+  if (supported) validateSupportedSchemaRepresentation(expectedManifest?.representation);
+  const manifestKeys = ["protocol", "streams", ...(supported ? ["representation"] : [])];
+  if (!isRecord(expectedManifest) || Object.keys(expectedManifest).length !== manifestKeys.length ||
+      manifestKeys.some(key => !Object.hasOwn(expectedManifest, key))) fail("invalid schema manifest fields");
+  const provenanceKeys = ["protocol", "scope", "exclusions", "generated_config", "streams",
+    "expected_manifest_sha256", "expected_manifest_byte_length", ...(nativeRepresentation ? ["migration_representation"] : [])];
+  if (!isRecord(provenance) || Object.keys(provenance).length !== provenanceKeys.length ||
+      provenanceKeys.some(key => !Object.hasOwn(provenance, key))) fail("invalid schema provenance fields");
+  if (expectedManifest?.protocol !== (supported ? SUPPORTED_SCHEMA_MANIFEST_PROTOCOL : DEPLOYMENT_SCHEMA_MANIFEST_PROTOCOL) ||
+      (!nativeRepresentation && provenance?.protocol !== DEPLOYMENT_SCHEMA_MANIFEST_PROVENANCE_PROTOCOL) ||
       provenance.scope !== DEPLOYMENT_SCHEMA_SCOPE || !same(provenance.exclusions, DEPLOYMENT_SCHEMA_EXCLUSIONS) ||
       !same(provenance.generated_config, { path: CONFIG, sha256: source.pin.sha256, byte_length: source.pin.byte_length }) ||
       digest(json(expectedManifest)) !== provenance.expected_manifest_sha256 ||
@@ -459,6 +474,7 @@ function validateSchemaMaterialization(manifest, bundle, source, result) {
       expectedManifest.streams?.length !== 2 || provenance.streams?.length !== 2 ||
       bundle.manifest_sha256 !== manifest.sha256) fail("invalid preserved schema materialization provenance");
   const accountIds = new Set();
+  const capturedMigrations = new Map();
   for (const [index, binding] of ["CORE_DB", "SEARCH_DB"].entries()) {
     const database = sourceConfig.d1_databases.find((item) => item.binding === binding);
     const stream = expectedManifest.streams[index];
@@ -467,6 +483,8 @@ function validateSchemaMaterialization(manifest, bundle, source, result) {
     const migrations = manifest.inputs.filter((item) => item.path.startsWith("infra/d1/" + folder + "/migrations/") && item.path.endsWith(".sql"))
       .sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
     const entries = migrations.map((item) => ({ name: path.posix.basename(item.path), sha256: item.sha256 }));
+    capturedMigrations.set(binding, migrations.map(item => ({ name: path.posix.basename(item.path),
+      sha256: item.sha256, byte_length: item.byte_length })));
     if (!database || stream.binding !== binding || origin.binding !== binding ||
         stream.database_id !== database.database_id || origin.database_id !== database.database_id ||
         stream.database_name !== database.database_name || origin.database_name !== database.database_name ||
@@ -477,16 +495,24 @@ function validateSchemaMaterialization(manifest, bundle, source, result) {
         stream.objects.length !== origin.object_count || deploymentSchemaCatalogueSha256(stream.objects) !== origin.catalogue_sha256) {
       fail("schema catalogue/migration identity differs from captured inputs");
     }
+    if (supported) projectSupportedDeploymentSchema(stream.objects, expectedManifest.representation);
     accountIds.add(stream.account_id);
   }
   if (accountIds.size !== 1) fail("schema account differs between Core and Search");
+  if (supported && provenance.migration_representation?.intent?.protocol !== "eliotr.cloudflare-d1-migration-intent.v5") fail("supported schema requires v5 intent");
+  if (!supported && provenance.migration_representation?.intent?.protocol === "eliotr.cloudflare-d1-migration-intent.v5") fail("v5 cannot downgrade schema provenance");
+  if (nativeRepresentation) {
+    validateDeploymentNativeSchemaProvenance({ root: manifest.root,
+      representation: provenance.migration_representation, sourceStreams: provenance.streams,
+      capturedMigrations, generatedConfigPin: source.pin });
+  }
 }
 
 /** Owner-web evidence has its own truthful protocol; legacy metafile evidence is untouched. */
 export async function persistOwnerWebDeploymentEvidence({ root, manifest, bundle, generatedConfigPin,
   schemaManifestResult, schemaSource, context }) {
   await requireUnchangedOwnerWebDeployment({ root, manifest, attestation: bundle, context });
-  validateSchemaMaterialization(manifest, bundle, schemaSource, schemaManifestResult);
+  validateOwnerWebSchemaMaterialization(manifest, bundle, schemaSource, schemaManifestResult);
   const directory = path.resolve(root, ".eliotr-state", "deployment-build-evidence-" + randomUUID());
   await mkdir(directory, { mode: 0o700 });
   if (await realpath(directory) !== directory) fail("evidence directory traverses a symlink");

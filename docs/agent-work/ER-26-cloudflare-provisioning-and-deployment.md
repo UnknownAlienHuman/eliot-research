@@ -55,6 +55,18 @@ retrieval, authentication semantics, or database schemas.
 - `scripts/test-deployment-nullable-column-check.mjs`
 - `docs/implementation/d1-nullable-check-operator-2026-10-11.md`
 - `docs/adr/0009-control-plane-deployment-and-runtime-cost-authority.md`
+- `scripts/lib/deployment-sql-tokens.mjs`
+- `scripts/lib/deployment-native-trigger-representation.mjs`
+- `scripts/lib/deployment-native-schema-provenance.mjs`
+- `scripts/test-deployment-native-control-plane.mjs`
+- `scripts/test-deployment-native-trigger-representation.mjs`
+- `scripts/test-deployment-migration-process.mjs`
+- `scripts/lib/deployment-native-sql-representation.mjs`
+- `scripts/lib/deployment-native-platform-schema.mjs`
+- `scripts/test-deployment-native-sql-representation.mjs`
+- `scripts/test-deployment-native-platform-schema.mjs`
+- `docs/implementation/d1-supported-schema-representation-2026-10-11.md`
+- `docs/implementation/d1-native-representation-operator-2026-10-11.md`
 
 ## Read only
 
