@@ -1,0 +1,66 @@
+{
+  "protocol": "eliotr.owner-web-native-retirement.v1",
+  "source_sha": "dff3061093d4379ce2f53a46618d6e463a8eb15d",
+  "source_hashes": [
+    {
+      "path": "apps/eliotr-web/src/app/bootstrap.tsx",
+      "sha256": "e28432ec7d5068ee412e8c82ede5b405997640d9fefaf7d657e0535c18759d05"
+    },
+    {
+      "path": "apps/eliotr-web/src/app/legacy-worker-retirement.ts",
+      "sha256": "bbbdd229e43c399c971850491b2ad878405e95c31733550f63ad37db5888f49b"
+    },
+    {
+      "path": "apps/eliotr-web/public/sw.js",
+      "sha256": "4b59c83a0714a166cb18dbb30986a7e3d8225600ed9ab453cd5a5ba0acaa5f7c"
+    },
+    {
+      "path": "apps/eliotr-web/public/_headers",
+      "sha256": "2c2e233f3285c42e593f52714046561f7d5b353ad5681123ccd17f5bb1ac736c"
+    },
+    {
+      "path": "apps/eliotr-web/vite.integrated.config.ts",
+      "sha256": "e6898b65d0318b364b3edd797de0451fecef90d0a384cb526d5ac5dd62dce00f"
+    },
+    {
+      "path": "tests/ui-owner/harness/legacy-worker-retirement.test.ts",
+      "sha256": "25ae52a8822ea291b898e5fd2caf65f5701a7081afc6c113501620e2e3d029fd"
+    }
+  ],
+  "scope": "Native helper/startup source qualification; production graph, served headers and product inbox/rollback remain separately required.",
+  "checks": {
+    "helper_unit_cases": {
+      "status": "PASS",
+      "cases": 20
+    },
+    "web_and_pwa_types": {
+      "status": "PASS",
+      "typescript": "6.0.3"
+    },
+    "vite_config_types": {
+      "status": "PASS",
+      "resolution": "bundler"
+    },
+    "scoped_lint": {
+      "status": "PASS"
+    },
+    "native_browser": {
+      "status": "PASS_WITH_LIMITED_SCOPE",
+      "origin": "http://127.0.0.1:6107",
+      "cases": [
+        "fresh",
+        "already retired",
+        "active exact legacy",
+        "waiting update",
+        "two controlled tabs",
+        "interrupted marker denied second reload then manual navigation",
+        "unrelated registration/cache preserved",
+        "retained legacy returning page"
+      ],
+      "observations": "private native-retirement-observations.jsonl",
+      "product_inbox_and_rollback": "PENDING"
+    }
+  },
+  "release_authorization_ref": "tests/ui-owner/receipts/u6/release-authorization-20261011.json",
+  "design_acceptance": "NOT_CLAIMED"
+}

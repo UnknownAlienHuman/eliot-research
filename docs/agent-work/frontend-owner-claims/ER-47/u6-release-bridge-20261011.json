@@ -24,7 +24,11 @@
       "approval_ref": "tests/ui-owner/receipts/u6/release-authorization-20261011.json"
     }
   ],
-  "state": "ACTIVE",
-  "evidence_refs": [],
-  "blocker_refs": []
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "tests/ui-owner/receipts/u6/native-retirement-20261011.json"
+  ],
+  "blocker_refs": [],
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "tests/ui-owner/receipts/u6/native-retirement-20261011.json"
 }
