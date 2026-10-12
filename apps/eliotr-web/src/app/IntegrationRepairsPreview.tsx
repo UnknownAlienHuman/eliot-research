@@ -33,8 +33,13 @@ export function IntegrationRepairsPreview({ stalePage = false }: { readonly stal
       if (url.pathname === '/api/v1/research/run' && init?.method === 'POST') {
         const body = String(init.body), key = new Headers(init.headers).get('idempotency-key') ?? '';
         if (mints !== 1 || !key) throw new Error('Request identity was not minted exactly once');
-        const request = JSON.parse(body) as { scope_expression?: { source_ids?: unknown } };
-        if (JSON.stringify(request.scope_expression?.source_ids) !== JSON.stringify(['integration-source-1', 'integration-source-2'])) throw new Error('Cross-page source selection was lost');
+        const request = JSON.parse(body) as { scope_expression?: unknown };
+        const expectedScope = {
+          kind: 'INTERSECT',
+          left: { kind: 'PROJECT', project_id: 'integration-project' },
+          right: { kind: 'SELECTED_SOURCES', source_ids: ['integration-source-1', 'integration-source-2'] },
+        };
+        if (JSON.stringify(request.scope_expression) !== JSON.stringify(expectedScope)) throw new Error('Cross-page project/source selection was lost');
         starts++;
         if (starts === 1) { originalBody = body; originalKey = key; throw new TypeError('Synthetic lost admission acknowledgement'); }
         if (starts !== 2 || body !== originalBody || key !== originalKey) throw new Error('Recovery changed the original request');

@@ -171,9 +171,14 @@ export function ResearchPreview({ designReview = false, historyState, onProbe }:
           !('body' in intent) || intent.body !== originalBody || !('key' in intent) || intent.key !== originalKey)
           throw new Error('Explicit Ask did not preserve its one acknowledged admission intent');
         const request: unknown = JSON.parse(originalBody ?? 'null');
+        const expectedScope = {
+          kind: 'INTERSECT',
+          left: { kind: 'PROJECT', project_id: 'project-fixture' },
+          right: { kind: 'SELECTED_SOURCES', source_ids: ['source-fixture'] },
+        };
         if (!request || typeof request !== 'object' || !('query' in request) || request.query !== question ||
-          !('scope_expression' in request) || JSON.stringify(request.scope_expression) !== JSON.stringify({ kind: 'SELECTED_SOURCES', source_ids: ['source-fixture'] }))
-          throw new Error('Explicit Ask lost its held draft or selected source scope');
+          !('scope_expression' in request) || JSON.stringify(request.scope_expression) !== JSON.stringify(expectedScope))
+          throw new Error('Explicit Ask lost its held draft or selected project/source scope');
       },
     };
     return { client, runtime, privacy, probe };
