@@ -208,6 +208,47 @@ function assertCurrentSnapshot(snapshot: ResearchModelPricingSnapshot, nowMs: nu
   }
 }
 
+export interface ResearchModelPricingAdmissionOptions extends ResearchModelPricingQuotePortOptions {
+  /** Existing earliest W2/W3/spend expiry, verified by trusted composition. No renewal. */
+  readonly valid_through_ms: number;
+}
+
+/** Reads approved pricing covering one existing allowed effect window before dispatch. */
+export async function readD1CurrentResearchModelPricingSnapshot(
+  database: D1Database,
+  rawDeployment: ModelRouteDeployment,
+  options: ResearchModelPricingAdmissionOptions,
+): Promise<ResearchModelPricingSnapshot> {
+  const deployment = decodeModelRouteDeployment(rawDeployment);
+  let selected: { readonly provider: unknown; readonly exact_model_id: unknown } | null;
+  try {
+    selected = await database.prepare(
+      "SELECT provider,exact_model_id FROM research_model_pricing_snapshot WHERE pricing_snapshot_ref=?1 LIMIT 1",
+    ).bind(deployment.pricing_snapshot_ref).first<{ readonly provider: unknown; readonly exact_model_id: unknown }>();
+  } catch (cause) {
+    pricingFailure("pricing snapshot identity could not be read", { cause });
+  }
+  if (selected === null) pricingFailure("approved pricing snapshot is unavailable");
+  // The initial projection selects identity only. The existing store verifies
+  // canonical bytes, digest, every stored column and the full deployment binding.
+  const snapshot = await readSnapshot(createD1ResearchModelPricingSnapshotStore(database), {
+    pricing_snapshot_ref: deployment.pricing_snapshot_ref,
+    route_ref: deployment.route_ref,
+    route_version: deployment.route_version,
+    provider: identifier(selected.provider, "pricing snapshot provider"),
+    exact_model_id: identifier(selected.exact_model_id, "pricing snapshot model"),
+  });
+  const nowMs = currentMilliseconds(options.now ?? (() => Date.now()));
+  assertCurrentSnapshot(snapshot, nowMs);
+  if (!Number.isSafeInteger(options.valid_through_ms) || options.valid_through_ms <= nowMs) {
+    pricingFailure("pricing admission effect deadline is invalid or expired");
+  }
+  if (Date.parse(snapshot.expires_at) <= options.valid_through_ms) {
+    pricingFailure("pricing snapshot does not cover the admitted effect deadline");
+  }
+  return snapshot;
+}
+
 async function quoteRef(
   snapshot: ResearchModelPricingSnapshot,
   fingerprint: RouteFingerprint,

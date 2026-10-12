@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from "vitest";
+import { createD1ResearchModelPricingSnapshotStore } from "@eliotr/cloudflare-model-control";
 import type { ModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import {
   createD1ResearchModelAttemptRevalidator,
@@ -6,6 +7,7 @@ import {
   type SpendAuthorizationReadback,
 } from "../../../packages/cloudflare-research/src/research-model-attempt-revalidator.js";
 import {
+  createGovernedModelAttemptHandler,
   deriveModelAttemptIdentity,
   type ModelAttemptPreparationContext,
 } from "../../../packages/cloudflare-research/src/model-attempt-handler.js";
@@ -43,7 +45,11 @@ async function countModelRows(idempotencyKey: string): Promise<number> {
   return Number(row?.count ?? 0);
 }
 
-async function revalidatorCase(tag: string): Promise<RevalidatorCase> {
+async function revalidatorCase(tag: string, pricingOptions: {
+  readonly kind?: "missing" | "expired" | "future" | "wrong-route";
+  readonly expires_at?: string;
+  readonly begin?: boolean;
+} = {}): Promise<RevalidatorCase> {
   const workflow = await workflowFixture(`revalidator-${tag}`);
   const workflowStore = new WorkflowCheckpointStore(workflow.db);
   const stageRequestSha256 = await digest(new TextEncoder().encode(JSON.stringify(workflow.request)));
@@ -87,9 +93,11 @@ async function revalidatorCase(tag: string): Promise<RevalidatorCase> {
     quote: Object.freeze({ ...original.quote, selected_routes: [SUPPORTED_ROUTE] }),
   });
   const reservation = await fixture.dependencies.attempts.reserve(prepared);
-  const started = await fixture.dependencies.attempts.beginAttempt(reservation);
-  if (started.state !== "STARTED" || started.attempt === null) {
-    throw new Error("revalidator fixture did not create a real STARTED W3 attempt");
+  if (pricingOptions.begin !== false) {
+    const started = await fixture.dependencies.attempts.beginAttempt(reservation);
+    if (started.state !== "STARTED" || started.attempt === null) {
+      throw new Error("revalidator fixture did not create a real STARTED W3 attempt");
+    }
   }
 
   const deployment: ModelRouteDeployment = Object.freeze({
@@ -100,6 +108,26 @@ async function revalidatorCase(tag: string): Promise<RevalidatorCase> {
     parameters_digest: "c".repeat(64),
     pricing_snapshot_ref: `${tag}-pricing`,
   });
+  if (pricingOptions.kind !== "missing") {
+    const identity = {
+      pricing_snapshot_ref: deployment.pricing_snapshot_ref,
+      route_ref: deployment.route_ref,
+      route_version: pricingOptions.kind === "wrong-route" ? tag + "-different-route" : deployment.route_version,
+      provider: "controlled-provider",
+      exact_model_id: "controlled-model",
+    };
+    await createD1ResearchModelPricingSnapshotStore(runtime.CORE_DB, {
+      now: () => "2026-09-10T11:59:00.000Z",
+    }).putImmutable({ identity, snapshot: {
+      protocol: "eliotr.research-model-pricing.v1", ...identity,
+      pricing_basis: "EXACT_TOKEN_RATES_V1",
+      input_rate_usd_per_1k_tokens: "0", output_rate_usd_per_1k_tokens: "0",
+      effective_at: pricingOptions.kind === "future" ? "2026-09-10T12:01:00.000Z" : "2026-09-10T11:59:00.000Z",
+      expires_at: pricingOptions.expires_at ?? (pricingOptions.kind === "expired"
+        ? "2026-09-10T12:00:00.000Z" : "2026-09-10T13:00:00.000Z"),
+      provenance_ref: tag + "-pricing-provenance", approval_receipt_ref: tag + "-pricing-approval",
+    } });
+  }
   const read = async (request: SpendAuthorizationReadRequest): Promise<SpendAuthorizationReadback> => ({
     authorization_ref: `${tag}-spend-authorization`,
     decision_digest: DECISION_DIGEST,
@@ -163,6 +191,56 @@ async function revokeGrant(value: RevalidatorCase): Promise<void> {
 }
 
 describe("research model attempt revalidation over actual D1", () => {
+  it("durably cancels expired pricing before dispatch instead of retaining an uncertain model attempt", async () => {
+    const value = await revalidatorCase("pricing-durable-preeffect", { kind: "expired", begin: false });
+    const handler = createGovernedModelAttemptHandler({
+      ...value.fixture.dependencies,
+      prepare: async () => value.prepared,
+      revalidate: async (context, prepared) => { await makeRevalidator(value)(context, prepared); },
+    });
+    await expect(handler.handler(value.fixture.invocation("FREEZE_PROTOCOL_AND_SCOPE", value.fixture.stageAttemptRef)))
+      .rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+    const row = await runtime.CORE_DB.prepare(
+      "SELECT state,error_code,receipt_json,output_sha256,ended_at FROM research_model_attempt WHERE idempotency_key=?1",
+    ).bind(value.prepared.idempotency_key).first<{
+      readonly state: string; readonly error_code: string; readonly receipt_json: string | null;
+      readonly output_sha256: string | null; readonly ended_at: string | null;
+    }>();
+    expect(row).toMatchObject({ state: "CANCELLED", error_code: "WORKFLOW_AUTHORITY_STALE", receipt_json: null, output_sha256: null });
+    expect(row?.ended_at).not.toBeNull();
+    expect(await countModelRows(value.prepared.idempotency_key)).toBe(1);
+    expect(value.fixture.calls()).toBe(0);
+  });
+  it.each(["missing", "expired", "future", "wrong-route"] as const)(
+    "rejects %s approved pricing before a provider call",
+    async (kind) => {
+      const value = await revalidatorCase("pricing-" + kind, { kind });
+      await expect(assertNoNewAttempt(value, () => makeRevalidator(value)(value.context, value.prepared)))
+        .rejects.toMatchObject({ code: "MODEL_ATTEMPT_AUTHORITY_STALE" });
+      expect(value.fixture.calls()).toBe(0);
+    },
+  );
+
+  it("rejects current pricing expiring inside the existing admitted effect window", async () => {
+    const value = await revalidatorCase("pricing-short-window", { expires_at: "2026-09-10T12:00:00.001Z" });
+    await expect(assertNoNewAttempt(value, () => makeRevalidator(value)(value.context, value.prepared)))
+      .rejects.toMatchObject({ code: "MODEL_ATTEMPT_AUTHORITY_STALE" });
+    expect(value.fixture.calls()).toBe(0);
+  });
+
+  it("rejects pricing expiry crossed during final authority readback", async () => {
+    const expiry = "2026-09-10T13:00:00.000Z";
+    const value = await revalidatorCase("pricing-crosses-final-read", { expires_at: expiry });
+    let clockReads = 0;
+    const now = () => {
+      clockReads += 1;
+      return Date.parse(clockReads >= 4 ? expiry : "2026-09-10T12:00:00.000Z");
+    };
+    await expect(assertNoNewAttempt(value, () => makeRevalidator(value, { now })(value.context, value.prepared)))
+      .rejects.toMatchObject({ code: "MODEL_ATTEMPT_AUTHORITY_STALE" });
+    expect(clockReads).toBeGreaterThanOrEqual(4);
+    expect(value.fixture.calls()).toBe(0);
+  });
   it("accepts a real STARTED W2-bound attempt with opaque trusted currentness", async () => {
     const value = await revalidatorCase("positive");
     let resolves = 0;

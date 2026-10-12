@@ -2,7 +2,7 @@ import { canonicalJson, decodeModelRouteDeployment, type ModelRouteDeployment } 
 import type { ModelAttemptPreparationContext } from "./model-attempt-handler.js";
 import { validatedRequest } from "./model-attempt-store.js";
 import { ModelAttemptError, type ModelAttemptReservationInput } from "./model-attempt-types.js";
-import type { PinnedModelSelection } from "@eliotr/cloudflare-model-control";
+import { readD1CurrentResearchModelPricingSnapshot, type PinnedModelSelection } from "@eliotr/cloudflare-model-control";
 import {
   decodeProviderNativeModelSelection,
   type ProviderNativeModelAuthorityPort,
@@ -487,6 +487,26 @@ export function createD1ResearchModelAttemptRevalidator(
     const expectedDeployment = verifySpendAuthorization(authorization, spendRequest, prepared, nowMs);
     phase = "ROUTE_READ";
     const currentDeployment = await resolveCurrentDeployment(authorization, expectedDeployment, prepared.call.route_ref);
+    const pricingDeadlineMs = Math.min(
+      integer(workflow.budget_expires_at_ms, "workflow budget deadline"),
+      Date.parse(prepared.quote.expires_at),
+      Date.parse(prepared.authority.expires_at),
+      Date.parse(authorization.expires_at),
+    );
+    phase = "PRICING_READ";
+    let pricing: Awaited<ReturnType<typeof readD1CurrentResearchModelPricingSnapshot>>;
+    try {
+      pricing = await readD1CurrentResearchModelPricingSnapshot(input.database, expectedDeployment, { now, valid_through_ms: pricingDeadlineMs });
+    } catch (cause) {
+      stale("approved deployment pricing is unavailable or not current", cause);
+    }
+    const pricingSelection = authorization.model_selection;
+    if (pricingSelection !== undefined && "candidate_kind" in pricingSelection &&
+        pricingSelection.candidate_kind === "provider-native-v1" &&
+        (pricing.provider !== pricingSelection.transport_policy.provider ||
+         pricing.exact_model_id !== pricingSelection.transport_policy.model)) {
+      stale("approved pricing does not match the pinned Native provider and model");
+    }
     phase = "FINAL_READ";
     const finalWorkflow = await readWorkflow(input.database, context, prepared);
     const finalModel = await readModel(input.database, prepared);
@@ -502,6 +522,12 @@ export function createD1ResearchModelAttemptRevalidator(
       phase = "FINAL_NATIVE_READ";
       const finalDeployment = await resolveCurrentDeployment(authorization, expectedDeployment, prepared.call.route_ref);
       if (canonicalJson(finalDeployment) !== canonicalJson(currentDeployment)) stale("pinned Native model changed during final W2 fencing");
+    }
+    phase = "FINAL_PRICING_VERIFY";
+    const pricingNowMs = now();
+    if (!Number.isSafeInteger(pricingNowMs)) stale("model revalidation clock is invalid");
+    if (Date.parse(pricing.effective_at) > pricingNowMs || Date.parse(pricing.expires_at) <= pricingNowMs) {
+      stale("approved deployment pricing is no longer current");
     }
     return expectedDeployment;
     } catch (cause) {
