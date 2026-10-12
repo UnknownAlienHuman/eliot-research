@@ -20,11 +20,12 @@ html, body, #root { margin: 0; min-height: 100%; }
 .er-shell-preferences-panel label { display: grid; gap: var(--eliot-space-block-control); font-size: var(--eliot-type-label-large-size); }
 .er-shell-preferences-panel select { min-height: var(--eliot-size-touch-target); width: 100%; min-width: 0; font: inherit; color: inherit; background: var(--md-sys-color-surface-container); border: var(--eliot-divider-width) solid var(--md-sys-color-outline); border-radius: var(--eliot-shape-small); padding-inline: var(--eliot-space-inline-control); }
 .er-shell-nav { grid-area: nav; display: flex; flex-direction: column; gap: var(--eliot-space-block-control); }
-.er-shell-destination { display: flex; flex-direction: column; align-items: center; text-align: center; gap: var(--eliot-space-block-control); padding-block: var(--eliot-space-block-control); text-decoration: none; font-size: var(--eliot-type-label-medium-size); line-height: var(--eliot-type-label-medium-line-height); overflow-wrap: anywhere; }
-.er-shell-destination > span { display: grid; place-items: center; width: var(--eliot-layout-nav-indicator-width); min-height: var(--eliot-size-touch-target); border-radius: var(--eliot-shape-full); }
-.er-shell-destination:hover > span { background: var(--md-sys-color-surface-container-high); }
+.er-shell-destination { display: flex; flex-direction: column; align-items: center; text-align: center; gap: var(--eliot-space-block-control); min-width: 0; padding-block: var(--eliot-space-block-control); text-decoration: none; font-size: var(--eliot-type-label-small-size); line-height: var(--eliot-type-label-small-line-height); overflow-wrap: normal; }
+.er-shell-destination-icon { display: grid; place-items: center; width: var(--eliot-layout-nav-indicator-width); min-height: var(--eliot-size-touch-target); border-radius: var(--eliot-shape-full); }
+.er-shell-destination-label { display: block; max-inline-size: 100%; white-space: nowrap; }
+.er-shell-destination:hover > .er-shell-destination-icon { background: var(--md-sys-color-surface-container-high); }
 .er-shell-destination[aria-current="page"] { font-weight: var(--eliot-type-font-weight-medium); }
-.er-shell-destination[aria-current="page"] > span { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+.er-shell-destination[aria-current="page"] > .er-shell-destination-icon { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
 .er-shell-sources { grid-area: sources; min-width: 0; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: stretch; gap: var(--eliot-space-panel); background: var(--md-sys-color-surface-container); border-radius: var(--eliot-shape-extra-large); padding: var(--eliot-space-panel); }
 .er-shell-sources h2 { font-size: var(--eliot-type-title-medium-size); line-height: var(--eliot-type-title-medium-line-height); font-weight: var(--eliot-type-font-weight-medium); }
 .er-shell-sources > p { color: var(--md-sys-color-on-surface-variant); }
@@ -47,7 +48,7 @@ html, body, #root { margin: 0; min-height: 100%; }
   .er-shell-preferences > summary { padding-inline: var(--eliot-space-block-control); }
   .er-shell-nav { flex-direction: row; justify-content: space-around; gap: 0; padding-block: var(--eliot-space-block-control); }
   .er-shell-destination { flex: 1; min-width: 0; gap: 0; padding-block: 0; }
-  .er-shell-destination > span { min-height: var(--eliot-size-touch-target); }
+  .er-shell-destination-icon { min-height: var(--eliot-size-touch-target); }
   .er-shell-reading { padding: var(--eliot-space-panel); border-radius: var(--eliot-shape-large); }
   .er-shell-reading h1 { margin-block-end: var(--eliot-space-panel); }
   #privacy-guard, .er-access { padding: var(--eliot-space-panel); }

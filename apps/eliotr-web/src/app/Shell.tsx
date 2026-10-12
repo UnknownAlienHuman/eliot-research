@@ -69,7 +69,10 @@ export function Shell({ privacy, fixture, fixtureOutlet: FixtureOutlet, runtime 
         </details>
       </header>
       <nav className="er-shell-nav" aria-label={text.scope}>
-        {destinations.map(item => <WorkspaceLink key={item} to={workspacePath(item)} className="er-shell-destination"><span><MaterialSymbol name={icons[item]} /></span>{text[item]}</WorkspaceLink>)}
+        {destinations.map(item => <WorkspaceLink key={item} to={workspacePath(item)} className="er-shell-destination">
+          <span className="er-shell-destination-icon"><MaterialSymbol name={icons[item]} /></span>
+          <span className="er-shell-destination-label">{text[item]}</span>
+        </WorkspaceLink>)}
       </nav>
       {fixture && FixtureOutlet ? <Suspense fallback={<Status>{text.scope}</Status>}><FixtureOutlet destination={destination} locale={locale} headingRef={heading} /></Suspense> : apis ? <LiveWorkspace destination={destination} locale={locale} headingRef={heading} apis={apis} privacy={privacy} context={snapshot.context} /> : <><aside className="er-shell-sources" hidden={destination !== "research"} aria-label={text.sources}>
         <h2>{text.sources}</h2><Status>{text.list}</Status><p>{text.sourceBody}</p>

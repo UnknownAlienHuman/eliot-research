@@ -19,6 +19,16 @@ export async function playMaterialPreferences({ canvas, userEvent }: Parameters<
   }
   await userEvent.selectOptions(await canvas.findByRole('combobox', { name: 'Language', exact: true }), 'ru');
   await userEvent.selectOptions(await canvas.findByRole('combobox', { name: 'Оформление', exact: true }), 'dark');
+  const navigationLabels = [...shell.querySelectorAll<HTMLElement>('.er-shell-destination-label')];
+  if (navigationLabels.length !== 4) throw new Error('Workspace navigation labels are incomplete');
+  for (const label of navigationLabels) {
+    const lineHeight = Number.parseFloat(getComputedStyle(label).lineHeight);
+    const labelBounds = label.getBoundingClientRect();
+    const linkBounds = label.parentElement?.getBoundingClientRect();
+    if (!Number.isFinite(lineHeight) || !linkBounds || label.scrollWidth > label.clientWidth + 1 ||
+      label.scrollHeight > lineHeight + 1 || labelBounds.left < linkBounds.left - 1 || labelBounds.right > linkBounds.right + 1)
+      throw new Error(`Workspace navigation label wrapped or overflowed: ${label.textContent ?? ''}`);
+  }
   await userEvent.keyboard('{Escape}');
   if (preferences.open || document.activeElement !== summary) throw new Error('Escape must close preferences and return focus to their summary');
   if (shell.lang !== 'ru' || shell.dataset.theme !== 'dark') throw new Error('Language or appearance did not change');
