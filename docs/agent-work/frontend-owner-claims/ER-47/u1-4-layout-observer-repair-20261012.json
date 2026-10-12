@@ -28,7 +28,13 @@
       "commit_sha": "06e7a3b09978a95311d03fd3aec4706ce3a68d22"
     }
   ],
-  "state": "ACTIVE",
-  "evidence_refs": [],
-  "blocker_refs": []
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "Private current-frontier browser matrix: .eliotr-state/ui-owner/material-redesign-20261012-current/review.json; sha256=79b9e8cd3dcf6c4bec67762eb7314436c14e1893ca4aa91ab54fc391f56ce311; 50 cases PASS; exact source input hashes retained; visual baseline PENDING_NAMED_REVIEW",
+    "node tests/ui-owner/harness/layout-observer.test.mjs: 8 cases PASS, including serialized observer and missing/nested owner negatives",
+    "Scoped ESLint PASS for scripts/ui-owner/verify.mjs and tests/ui-owner/harness/layout-observer.test.mjs; no backend or release acceptance inferred"
+  ],
+  "blocker_refs": [],
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "private:.eliotr-state/ui-owner/material-redesign-20261012-current/review.json"
 }

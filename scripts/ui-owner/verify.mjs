@@ -1,5 +1,5 @@
 // U1.4 pinned local UI qualification. Pure preflight exports never launch a browser.
-/* global document: readonly, innerWidth: readonly, getComputedStyle: readonly, axe: readonly */
+/* global document: readonly, innerWidth: readonly, axe: readonly */
 
 import { readFile, readdir, mkdir, writeFile, mkdtemp, rm } from "node:fs/promises";
 import { createHash } from "node:crypto";
@@ -98,7 +98,7 @@ function requireBrowserVersion(options) {
 }
 
 async function sourceInputs() {
-  const files = [];
+  const files = ["scripts/ui-owner/verify.mjs", "tests/ui-owner/harness/layout-observer.test.mjs"];
   async function visit(folder) {
     for (const entry of await readdir(folder, { withFileTypes: true })) {
       const file = resolve(folder, entry.name);
@@ -141,6 +141,41 @@ export async function checkUndocumentedProp() {
   } finally { await rm(folder, { recursive: true }); }
 }
 
+/**
+ * Read the rendered application root, never Storybook's outer document. The harness must
+ * observe the locale and the real Material scroll owners, and report a shell that declares
+ * no owner instead of passing it vacuously.
+ */
+export function observeShellLayout(document = globalThis.document, computedStyle = globalThis.getComputedStyle) {
+  const shell = document.querySelector(".er-shell");
+  const visible = node => !node.hidden && computedStyle(node).display !== "none"
+    && computedStyle(node).visibility !== "hidden" && node.getClientRects?.().length !== 0;
+  const ownsScroll = node => ["auto", "scroll"].includes(computedStyle(node).overflowY);
+  const panes = [...document.querySelectorAll(".er-pane, .er-shell-sources, .er-shell-reading")]
+    .filter(visible).map(node => {
+      const rootScrollOwners = ownsScroll(node) ? [node.className] : [];
+      const nested = [...node.querySelectorAll("*:not(textarea):not(input):not(select)")]
+        .filter(child => visible(child) && ownsScroll(child) && child.scrollHeight > child.clientHeight);
+      return { class: node.className, overflow: computedStyle(node).overflowY,
+        height: node.clientHeight, scrollHeight: node.scrollHeight, rootScrollOwners,
+        nestedScrollOwners: nested.length, nestedScrollOwnerClasses: nested.map(child => child.className) };
+    });
+  const scrollOwners = panes.flatMap(pane => [...pane.rootScrollOwners, ...pane.nestedScrollOwnerClasses]);
+  return {
+    locale: (shell ?? document.querySelector("[lang]"))?.getAttribute("lang") ?? null,
+    shellPresent: shell !== null,
+    panes,
+    scrollOwners,
+    ownerObservation: scrollOwners.length ? "OWNERS_PRESENT" : "NONE_DECLARED",
+  };
+}
+
+export function hasScrollOwnerFailure(layout) {
+  return (layout.shellPresent && !layout.panes.length) || layout.panes.some(pane =>
+    pane.nestedScrollOwners > 0 || (layout.shellPresent && pane.rootScrollOwners.length !== 1));
+}
+
+// Playwright serializes this self-contained observer; regressions exercise that same function.
 async function runBrowser(command, options) {
   const base = requireLocalBaseUrl(options["base-url"] ?? "http://127.0.0.1:6006");
   const catalog = JSON.parse(await readFile(resolve(ROOT, "packages/ui/src/catalog/catalog.json"), "utf8"));
@@ -177,7 +212,9 @@ async function runBrowser(command, options) {
         await page.evaluate(() => document.fonts.ready);
         await page.addScriptTag({ path: uiRequire.resolve("axe-core/axe.min.js") });
         const violations = await page.evaluate(async () => (await axe.run(document.getElementById("storybook-root"))).violations.map(item => ({ id: item.id, impact: item.impact, targets: item.nodes.map(node => node.target) })));
-        const layout = await page.evaluate(() => ({ overflow: document.documentElement.scrollWidth > innerWidth, theme: document.querySelector("[data-theme]")?.getAttribute("data-theme"), locale: document.querySelector("[lang]")?.getAttribute("lang"), panes: [...document.querySelectorAll(".er-pane")].filter(node => getComputedStyle(node).display !== "none" && getComputedStyle(node).visibility !== "hidden").map(node => ({ class: node.className, overflow: getComputedStyle(node).overflowY, height: node.clientHeight, scrollHeight: node.scrollHeight, nestedScrollOwners: [...node.querySelectorAll("*:not(textarea):not(input):not(select)")].filter(child => ["auto", "scroll"].includes(getComputedStyle(child).overflowY) && child.scrollHeight > child.clientHeight).length })) }));
+        const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
+        const theme = await page.evaluate(() => document.querySelector("[data-theme]")?.getAttribute("data-theme"));
+        const layout = { overflow, theme, ...await page.evaluate(observeShellLayout) };
         // Capture the initial canonical composition; journey screenshots are separate evidence.
         const screenshot = `${width}-${story}.png`;
         await page.screenshot({ path: resolve(output, screenshot), animations: "disabled" });
@@ -207,7 +244,7 @@ async function runBrowser(command, options) {
       receipt.changed_baselines = changes.map(row => ({ width: row.width, story: row.story }));
     } else if (command === "visual") throw new Error("Visual comparison requires an explicitly reviewed --baseline receipt");
     await writeFile(resolve(output, "review.json"), JSON.stringify(receipt, null, 2) + "\n");
-    const failed = results.filter(row => row.overflow || row.violations.length || row.errors.length || row.network.length || row.panes.some(pane => pane.nestedScrollOwners > 0));
+    const failed = results.filter(row => row.overflow || row.violations.length || row.errors.length || row.network.length || hasScrollOwnerFailure(row));
     if (failed.length || !receipt.inputs_stable || receipt.baseline === "CHANGED_REVIEW_REQUIRED") throw new Error(`UI review failed: ${failed.length} cases; receipt ${relative(ROOT, output)}/review.json`);
     return { cases: results.length, receipt: relative(ROOT, output).replaceAll("\\", "/") + "/review.json", baseline: receipt.baseline };
   } finally { await browser.close(); }
