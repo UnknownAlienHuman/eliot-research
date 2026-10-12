@@ -17,6 +17,16 @@ export interface ResearchQueryApis {
   readonly configuration: BoundWorkspaceApis["connections"]["configuration"];
 }
 
+/** Admission pins revision 1; canonical stage checkpoints advance the same investigation. */
+export function matchesResearchRunLaunch(
+  view: { readonly workflow_instance_id: string; readonly investigation_ref: { readonly id: string; readonly revision: number } },
+  launch: ResearchRunLaunchView,
+): boolean {
+  return view.workflow_instance_id === launch.workflow_instance_id &&
+    view.investigation_ref.id === launch.investigation_ref.id &&
+    view.investigation_ref.revision >= launch.investigation_ref.revision;
+}
+
 export function researchQueryOptions(
   apis: ResearchQueryApis,
   privacy: PrivacyController,
@@ -30,14 +40,6 @@ export function researchQueryOptions(
   const statusKey = (launch: ResearchRunLaunchView) =>
     [...key, "status", launch.workflow_instance_id, launch.investigation_ref.id, launch.investigation_ref.revision];
 
-  /**
-   * Identity fence around a status read: the response must belong to the launch that requested it,
- * and the session must still be the one that produced it.
-   */
-  const matchesLaunch = (view: { workflow_instance_id: string; investigation_ref: { id: string; revision: number } }, launch: ResearchRunLaunchView): boolean =>
-    view.workflow_instance_id === launch.workflow_instance_id &&
-    view.investigation_ref.id === launch.investigation_ref.id &&
-    view.investigation_ref.revision === launch.investigation_ref.revision;
 
   return {
     configuration() {
@@ -68,7 +70,7 @@ export function researchQueryOptions(
         refetchOnMount: false,
         queryFn: ({ signal }) => runProtectedRead(privacy, context, signal, async readSignal => {
           const view = await apis.runs.readResearchRunStatus(launch.workflow_instance_id, generation, readSignal);
-          if (!matchesLaunch(view, launch)) {
+          if (!matchesResearchRunLaunch(view, launch)) {
             throw new Error("Status response does not belong to the requested run");
           }
           return view;

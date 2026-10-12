@@ -6,7 +6,7 @@ import type { ResearchRunLaunchView, VersionedRef } from '@eliotr/owner-api-clie
 import type { BoundWorkspaceApis } from './runtime';
 import type { PrivacyController, SessionContext } from './privacy';
 import type { NextQuestionSource } from './NextQuestionScope';
-import { researchQueryOptions } from '../query/research';
+import { matchesResearchRunLaunch, researchQueryOptions } from '../query/research';
 import { protectedQueryKey, runProtectedRead } from '../query/client';
 import { ReportPanel } from './ReportPanel';
 import { usePaneAnnouncement } from './usePaneAnnouncement';
@@ -131,9 +131,7 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     progress.execution_state !== 'ACTIVE' && !status.isError && !status.isFetching;
   const observed = saved?.intent ? undefined : saved?.observedLaunch;
   const historyTerminal = observed && status.isSuccess && !status.isFetching &&
-    progress?.workflow_instance_id === observed.workflow_instance_id &&
-    progress.investigation_ref.id === observed.investigation_ref.id &&
-    progress.investigation_ref.revision === observed.investigation_ref.revision &&
+    progress !== undefined && matchesResearchRunLaunch(progress, observed) &&
     (progress.execution_state === 'ENGINE_COMPLETED' || progress.execution_state === 'CANCELLED');
   const dismissHistory = () => {
     if (!observed || !historyTerminal || running.current || !privacy.isCurrent(context)) return;

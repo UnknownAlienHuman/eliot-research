@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createWorkspaceRuntime } from "../app/runtime";
 import { createPrivacyController } from "../app/privacy";
 import { createWorkspaceQueryClient } from "./client";
-import { researchQueryOptions } from "./research";
+import { matchesResearchRunLaunch, researchQueryOptions } from "./research";
 
 const generation = "deployment-1";
 const stamp = "2026-10-09T12:00:00.000Z";
@@ -59,6 +59,47 @@ describe("Research selected project readiness", () => {
     current = false; finish(json(readiness));
     await expect(pending).rejects.toThrow("project is no longer current");
     expect(test.client.getQueryData(options.configuration().queryKey)).toBeUndefined();
+    test.privacy.close(); test.client.clear();
+  });
+});
+
+
+describe("Research run revision advancement", () => {
+  const launch = { workflow_instance_id: "run-1", investigation_ref: { id: "investigation-1", revision: 1 }, deployment_generation: generation };
+  const current = { protocol: "eliotr.research-run-status.v2", workflow_instance_id: launch.workflow_instance_id,
+    investigation_ref: { id: launch.investigation_ref.id, revision: 12 }, execution_state: "ACTIVE", engine_status: "errored",
+    next_stage_index: 11, answer: { availability: "unavailable" },
+    failure: { code: "WORKFLOW_EFFECT_UNCERTAIN", phase: "STAGE", retryable: false, stage: "FREEZE_EVIDENCE",
+      protocol: "eliotr.workflow-failure-outcome.v1", dispatch_state: "OUTCOME_UNKNOWN", references_intact: "UNKNOWN",
+      recovery_action: "RECONCILE", consequence: { code: "WORKFLOW_EFFECT_UNCERTAIN", phase: "STAGE", retryable: false, stage: "FREEZE_EVIDENCE" },
+      consequences: [{ code: "WORKFLOW_EFFECT_UNCERTAIN", phase: "STAGE", retryable: false, stage: "FREEZE_EVIDENCE" }] } };
+  it("reads the actual failure after an admitted investigation advances to revision 12", async () => {
+    const test = await fixture(); test.reply(async () => json(current));
+    const view = await test.client.fetchQuery(researchQueryOptions(test.apis, test.privacy, test.context).status(launch));
+    expect(String(test.fetcher.mock.calls[0]?.[0])).toBe("/api/v1/research/run/run-1");
+    expect(view.investigation_ref.revision).toBe(12); expect(view.failure?.code).toBe("WORKFLOW_EFFECT_UNCERTAIN");
+    test.privacy.close(); test.client.clear();
+  });
+  it("accepts a completed current revision for a run selected from history", async () => {
+    const test = await fixture();
+    test.reply(async () => json({ protocol: "eliotr.research-run-status.v1", workflow_instance_id: launch.workflow_instance_id,
+      investigation_ref: { id: launch.investigation_ref.id, revision: 19 }, execution_state: "ENGINE_COMPLETED", engine_status: "complete",
+      next_stage_index: 18, answer: { availability: "draft", artifact_ref: { id: "artifact-1", revision: 1 } } }));
+    const historyLaunch = { ...launch, investigation_ref: { ...launch.investigation_ref, revision: 12 } };
+    const view = await test.client.fetchQuery(researchQueryOptions(test.apis, test.privacy, test.context).status(historyLaunch));
+    expect(view.answer).toEqual({ availability: "draft", artifact_ref: { id: "artifact-1", revision: 1 } });
+    expect(matchesResearchRunLaunch(view, historyLaunch)).toBe(true);
+    test.privacy.close(); test.client.clear();
+  });
+  it("rejects foreign investigation identity and a revision older than the held history snapshot", async () => {
+    const test = await fixture();
+    test.reply(async () => json({ ...current, investigation_ref: { id: "foreign-investigation", revision: 12 } }));
+    const options = researchQueryOptions(test.apis, test.privacy, test.context);
+    await expect(test.client.fetchQuery(options.status(launch))).rejects.toThrow("does not belong");
+    const historyLaunch = { ...launch, investigation_ref: { ...launch.investigation_ref, revision: 13 } };
+    test.reply(async () => json(current));
+    await expect(test.client.fetchQuery(options.status(historyLaunch))).rejects.toThrow("does not belong");
+    expect(test.client.getQueryData(options.status(historyLaunch).queryKey)).toBeUndefined();
     test.privacy.close(); test.client.clear();
   });
 });
