@@ -69,6 +69,9 @@ jobs:
           pnpm exec vitest run --config vitest.config.ts
           apps/eliotr-web/src/query/research.test.ts
           packages/owner-api-client/src/research/runs/authority.test.ts
+          packages/owner-api-client/src/research/session-projection/adapter.test.ts
+          packages/owner-api-client/src/research/session-projection/projection.test.ts
+          packages/owner-api-client/src/research/session-projection/session.test.ts
           --reporter=verbose
       - name: Install UI browser
         run: pnpm --dir packages/ui exec playwright install --with-deps chromium
