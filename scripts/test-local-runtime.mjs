@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { parseDeploymentJsonc } from "./lib/deployment-jsonc.mjs";
 import { devArguments, executeLocal, localConfig, localEnvironment, localPaths, prepareLocal, ROOT, signalLocalProcess, validateLocalVars, wranglerArgs } from "./lib/local-launch.mjs";
 import { classifyRuntimeDiagnostic, sanitizeRuntimeDiagnostic } from "./lib/local-worker.mjs";
 
-const canonical = JSON.parse(await readFile(resolve(ROOT, "apps/eliotr-core/wrangler.jsonc"), "utf8"));
+const canonical = parseDeploymentJsonc(await readFile(resolve(ROOT, "apps/eliotr-core/wrangler.jsonc"), "utf8"), "canonical Worker configuration");
 const runtimeSource = await readFile(resolve(ROOT, "scripts/local-runtime.mjs"), "utf8");
 assert.match(runtimeSource, /reserveMiniflareForbiddenPorts/u, "local runtime must reserve the shared Fetch-forbidden port guard");
 assert.match(runtimeSource, /portGuard\.release\(\)/u, "local runtime must release the shared port guard");

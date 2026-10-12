@@ -20,6 +20,20 @@
   },
   "entries": [
     {
+      "id": "research-session-http-projection",
+      "path": "apps/eliotr-core/src/research-session-http-projection.ts",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-24 HTTP projection handlers extracted from ResearchSession; the DO class keeps lifecycle and session persistence.",
+      "owner_packets": [
+        "ER-24"
+      ],
+      "state": "IMPLEMENTED_NOT_LIVE",
+      "behavior": "HTTP projection handlers are extracted from ResearchSession; the Durable Object retains lifecycle and session persistence. This source contour does not establish native, browser or live qualification.",
+      "completion_evidence": [
+        "apps/eliotr-core/src/research-session-http-projection.ts: existing extracted project/start/read/execute/cancel handlers at source e7b83d2acb117170508ecbf3423c3eff869b4013; ResearchSession imports these handlers.",
+        "This registration records the existing source marker only. Native, browser, multi-tab and live acceptance remains pending; no implementation-state promotion."
+      ]
+    },
+    {
       "id": "scaffold-001",
       "path": "apps/eliotr-core/src/research-workflow.ts",
       "sentinel": "IMPLEMENTED_NOT_LIVE: ER-09 monotone bounded Workflow executor over durable D1/R2 checkpoints; governed model/evidence handlers and live qualification remain separate.",

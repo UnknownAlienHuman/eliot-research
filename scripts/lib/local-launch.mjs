@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CHROMIUM_UNSAFE_PORTS } from "./local-owner-bridge.mjs";
+import { parseDeploymentJsonc } from "./deployment-jsonc.mjs";
 import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS } from "./research-runtime-config.mjs";
 
 export const ROOT = fileURLToPath(new URL("../../", import.meta.url));
@@ -486,7 +487,7 @@ export async function prepareLocal({ stateDirectory, execute = executeLocal, log
   environment = process.env } = {}) {
   const paths = localPaths(stateDirectory);
   const bytes = await readFile(resolve(CORE, "wrangler.jsonc"), "utf8");
-  const config = localConfig(JSON.parse(bytes));
+  const config = localConfig(parseDeploymentJsonc(bytes, "canonical Worker configuration"));
   forwardExplicitServerConfiguration(config, await loadResearchRuntimeEnvironment(environment, ROOT));
   config.vars.DEPLOYMENT_GENERATION = `local-${createHash("sha256").update(paths.directory).digest("hex").slice(0, 16)}`;
   await mkdir(paths.directory, { recursive: true });
