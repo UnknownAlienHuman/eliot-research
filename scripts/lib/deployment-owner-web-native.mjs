@@ -155,7 +155,7 @@ export async function assertOwnerWebNativeRoutes({ root, environment }) {
   const workRemaining = () => { if (Date.now() >= workDeadline) fail("NATIVE_OBSERVATION_DEADLINE"); return workDeadline - Date.now(); };
   const uuid = randomUUID(), state = path.resolve(root, ".eliotr-state/owner-web-native-state-" + uuid);
   const receiptPath = ".eliotr-state/owner-web-native-routes-" + uuid + ".json";
-  let before, child, closed, origin, childFailure, failure, args;
+  let before, child, closed, origin, childFailure, failure = null, args;
   const results = [], log = { stdout: { bytes: 0, digest: createHash("sha256"), tail: "" },
     stderr: { bytes: 0, digest: createHash("sha256"), tail: "" } };
   const recordLog = (channel, chunk) => {
