@@ -1,3 +1,4 @@
+import type { ModelGatewayApi } from "@eliotr/cloudflare-ai";
 import type { CloudflareEvidenceResolver, NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import type { ArtifactDraftAdmissionPort, ArtifactDraftSemanticAudit } from "@eliotr/cloudflare-artifacts";
 import type { CoverageReceipt } from "@eliotr/contracts";
@@ -54,6 +55,8 @@ export type ResearchMaterializeTrustedMetadata = Pick<ResearchMaterializeResultW
   "section_residency" | "referenced_objects" | "manifest_residency" | "created_at">;
 
 export interface ResearchMaterializeStageDependencies {
+  /** Captured SYNTH transport API, supplied by server composition rather than report metadata. */
+  readonly synthesis_body_api?: ModelGatewayApi;
   readonly database: D1Database;
   readonly work_bucket: R2Bucket;
   readonly navigation: NavigationReadAuthority;
@@ -78,6 +81,7 @@ export interface ResearchMaterializeStageDependencies {
 export function createResearchMaterializeStageHandler(
   dependencies: ResearchMaterializeStageDependencies,
 ): WorkflowStageHandler {
+  const synthesisBodyApi = dependencies.synthesis_body_api ?? "compat-chat-completions";
   return async ({ request, principal, input_bytes, attempt_ref }) => {
     if (request.stage !== "MATERIALIZE" || !(input_bytes instanceof Uint8Array)) fail("WORKFLOW_INPUT_INVALID");
     const persistedInputBytes = new Uint8Array(input_bytes);
@@ -105,6 +109,7 @@ export function createResearchMaterializeStageHandler(
         principal,
         context,
         synthesis_readback: synthesis,
+        synthesis_body_api: synthesisBodyApi,
       });
     if (dependencies.read_claim_audit !== undefined && normalizedSynthesis === undefined) fail("WORKFLOW_OUTPUT_CORRUPT");
     const claimAudit = dependencies.read_claim_audit === undefined || normalizedSynthesis === undefined ? undefined
@@ -133,6 +138,7 @@ export function createResearchMaterializeStageHandler(
         require_v2_synthesis: true,
       }),
       synthesis_readback: synthesis,
+      synthesis_body_api: synthesisBodyApi,
     });
   };
 }

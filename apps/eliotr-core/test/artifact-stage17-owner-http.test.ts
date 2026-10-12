@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { modelGatewayDynamicRouteTarget } from "@eliotr/cloudflare-ai";
+import { modelGatewayDynamicRouteTarget, type ModelGatewayApi } from "@eliotr/cloudflare-ai";
 import { canonicalEvidenceJson, evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
 import {
   createEvidenceFreezeMaterializeContextReader, createEvidenceFreezePostSynthesisContextReader,
@@ -131,7 +131,7 @@ async function supportedAudit(): Promise<Audited> {
   return { fixture, stage14, auditHandler, auditProviderCalls: () => calls };
 }
 
-async function throughCoverage(audited: Audited) {
+async function throughCoverage(audited: Audited, synthesisBodyApi?: ModelGatewayApi) {
   const freeze = audited.fixture.freeze;
   const environment = { database: freeze.db, work_bucket: freeze.bucket, manifest_store: freeze.freeze_store, read_stage_five: freeze.readers.read_stage_five };
   const status = new WorkflowCheckpointStore(freeze.db);
@@ -158,7 +158,8 @@ async function throughCoverage(audited: Audited) {
       context: createEvidenceFreezePostSynthesisContextReader(environment, freeze.navigation, freeze.readers, "RESOLVE_CITATIONS") },
     calculate_coverage: createResearchCoverageStageHandlerFromFreeze(environment, freeze.navigation, freeze.readers, { ledger: freeze.ledger }),
     materialize_handler: createResearchCoverageMaterializeStageHandlerFromFreeze(environment, freeze.navigation, freeze.readers, {
-      database: freeze.db, work_bucket: freeze.bucket, evidence_resolver: freeze.resolver, recheck_authority: recheck, report_policy: policy, policy_source: policySource }) });
+      database: freeze.db, work_bucket: freeze.bucket, evidence_resolver: freeze.resolver, recheck_authority: recheck, report_policy: policy, policy_source: policySource,
+      ...(synthesisBodyApi === undefined ? {} : { synthesis_body_api: synthesisBodyApi }) }) });
   let previous = await freeze.executor.execute(audited.stage14, principal, audited.auditHandler);
   const auditReceipt = previous;
   for (const stage of ["RESOLVE_CITATIONS", "CALCULATE_COVERAGE"] as const) {
@@ -287,5 +288,70 @@ describe("Stage17 audit-derived labels through native owner publication", () => 
     expect(accepted.status).toBe(201);
     const effects = await nativeEffects(data); expect(effects.counts).toMatchObject({ drafts: 1, publications: 1 });
     expect(data.audited.fixture.provider_calls()).toBe(1); expect(data.audited.auditProviderCalls()).toBe(1);
+  }, 120_000);
+});
+
+function synthesisReasoningOutput(body: Readonly<Record<string, unknown>>): unknown {
+  const choices = body.choices as readonly { readonly message: Readonly<Record<string, unknown>> }[];
+  const first = choices[0];
+  if (first === undefined) throw new Error("Controlled synthesis has no choice");
+  return {
+    ...body,
+    choices: [{ ...first, message: { ...first.message, reasoning_content: "Hidden final-reader fixture reasoning" } }],
+    usage: { ...(body.usage as Readonly<Record<string, unknown>>), neurons: 0.25 },
+  };
+}
+
+describe("Stored SYNTH API through final MATERIALIZE", () => {
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  it("saves the actual governed draft from compatibility reasoning and neurons through both final readers", async () => {
+    const data = await throughCoverage(await researchClaimAuditStageFixture({
+      synthesis_response_body: synthesisReasoningOutput,
+      synthesis_body_api: "compat-chat-completions",
+    }), "compat-chat-completions");
+    const output = await materialized(data);
+    expect(output.receipt.stage).toBe("MATERIALIZE");
+    expect(output.receipt.output_manifest.byte_length).toBeGreaterThan(0);
+    expect((await nativeEffects(data)).counts).toMatchObject({ drafts: 1, publications: 0, models: 2 });
+    expect(data.audited.fixture.provider_calls()).toBe(1);
+    expect(data.audited.auditProviderCalls()).toBe(1);
+  }, 120_000);
+
+  it("refuses an explicit wrong final API in V2 and draft readers without new artifact or R2 effects", async () => {
+    const data = await throughCoverage(await researchClaimAuditStageFixture({
+      synthesis_response_body: synthesisReasoningOutput,
+      synthesis_body_api: "compat-chat-completions",
+    }));
+    const inputBytes = await readWorkflowObject(data.freeze.bucket, data.request.input_manifest, true);
+    const context = await createEvidenceFreezeMaterializeContextReader(data.environment, data.freeze.navigation, data.freeze.readers)
+      .read({ request: data.request, principal, input_bytes: inputBytes });
+    const synthesis = await readCommittedResearchSynthesisOutput({ database: data.freeze.db, work_bucket: data.freeze.bucket,
+      operation_id: data.freeze.operation_id, principal, recheck_authority: data.recheck });
+    if (synthesis === null) throw new Error("Committed synthesis is missing");
+    const readerInput = { database: data.freeze.db, work_bucket: data.freeze.bucket,
+      request: data.request, principal, context, synthesis_readback: synthesis };
+    const beforeReader = await nativeEffects(data);
+    await expect(readCommittedResearchV2MaterializationCandidate({ ...readerInput, synthesis_body_api: "openrouter-chat-completions" }))
+      .rejects.toMatchObject({ code: "WORKFLOW_OUTPUT_CORRUPT" });
+    expect(await nativeEffects(data)).toEqual(beforeReader);
+    const normalized = await readCommittedResearchV2MaterializationCandidate({ ...readerInput, synthesis_body_api: "compat-chat-completions" });
+    const audit = await readCommittedResearchMaterializeAudit({ database: data.freeze.db, work_bucket: data.freeze.bucket,
+      request: data.request, principal, context, input_bytes: inputBytes, synthesis_readback: synthesis, normalized_synthesis: normalized });
+    const admission = await prepareResearchReportAdmission({ database: data.freeze.db, navigation: data.freeze.navigation,
+      request: data.request, principal, policy_source: data.policySource });
+    const metadataProducer = createResearchArtifactMetadataProducer({ intent: admission.intent, expected_draft_head_revision: null, policy: data.policy });
+    const metadata = await metadataProducer({ request: data.request, principal, context });
+    const beforeDraft = await nativeEffects(data);
+    await expect(materializeResearchArtifactDraft({ ...metadata, database: data.freeze.db, work_bucket: data.freeze.bucket,
+      operation_id: data.freeze.operation_id, evidence_freeze: context.freeze, reference_manifest: context.manifest,
+      evidence_pack: context.stage_five.evidence_pack, navigation: data.freeze.navigation, evidence_resolver: data.freeze.resolver,
+      synthesis_readback: synthesis, synthesis_body_api: "openrouter-chat-completions", normalized_synthesis: normalized,
+      require_v2_synthesis: true, admission: admission.admission, claim_audit: audit }))
+      .rejects.toMatchObject({ code: "RESEARCH_ARTIFACT_DRAFT_EVIDENCE_INVALID" });
+    expect(await nativeEffects(data)).toEqual(beforeDraft);
+    expect(beforeDraft.counts).toMatchObject({ drafts: 0, publications: 0, models: 2 });
+    expect(data.audited.fixture.provider_calls()).toBe(1);
+    expect(data.audited.auditProviderCalls()).toBe(1);
   }, 120_000);
 });

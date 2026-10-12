@@ -22,7 +22,7 @@ import {
 import { canonicalEvidenceJson, evidenceSha256, evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
 import type { CloudflareEvidenceResolver, NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import { canonicalDigest } from "@eliotr/platform-cloudflare";
-import { decodeModelGatewayBody } from "@eliotr/cloudflare-ai";
+import { decodeModelGatewayBody, type ModelGatewayApi } from "@eliotr/cloudflare-ai";
 import { encodeArtifactDraftVerification, type ArtifactDraftSemanticAudit } from "@eliotr/cloudflare-artifacts";
 import { decodeSynthesisSectionCandidateV1, SynthesisClaimsCandidateError, type SynthesisSectionCandidateV1, type NormalizedSynthesisClaims } from "@eliotr/research";
 import { validateCoverageReceipt as validateDomainCoverageReceipt } from "@eliotr/domain";
@@ -51,6 +51,8 @@ export interface ResearchArtifactDraftMaterializationInput {
   readonly navigation: NavigationReadAuthority;
   readonly evidence_resolver: CloudflareEvidenceResolver;
   readonly synthesis_readback: ResearchSynthesisOutputReadback;
+  /** API of the same immutable server-owned SYNTH selection; omitted legacy execution is compatible. */
+  readonly synthesis_body_api?: ModelGatewayApi;
   /** Server-normalized V2 synthesis candidate; absent for legacy V1 callers. */
   readonly normalized_synthesis?: {
     readonly section_text: string;
@@ -350,6 +352,7 @@ function auditedStatementLabels(
 export async function materializeResearchArtifactDraft(input: ResearchArtifactDraftMaterializationInput): Promise<PrepareArtifactDraftResult> {
   /* Snapshot the optional server-owned receipt before any awaited readback. */
   const coverageReceipt = snapshotCoverageReceipt(input.coverage_receipt);
+  const synthesisBodyApi = input.synthesis_body_api ?? "compat-chat-completions";
   const normalizedSynthesis = input.normalized_synthesis === undefined ? undefined
     : deepFreeze(JSON.parse(canonicalEvidenceJson(input.normalized_synthesis)) as NonNullable<ResearchArtifactDraftMaterializationInput["normalized_synthesis"]>);
   const claimAudit = input.claim_audit === undefined ? undefined
@@ -367,7 +370,7 @@ export async function materializeResearchArtifactDraft(input: ResearchArtifactDr
   }
   let assistantContent: string;
   try {
-    assistantContent = (await decodeModelGatewayBody(readback.bytes)).assistant_content;
+    assistantContent = (await decodeModelGatewayBody(readback.bytes, synthesisBodyApi)).assistant_content;
   } catch (cause) {
     fail("RESEARCH_ARTIFACT_DRAFT_EVIDENCE_INVALID", `SYNTHESIZE gateway output is invalid: ${cause instanceof Error ? cause.message : "decode failed"}`);
   }

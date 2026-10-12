@@ -1,4 +1,4 @@
-import { decodeModelGatewayBody } from "@eliotr/cloudflare-ai";
+import { decodeModelGatewayBody, type ModelGatewayApi } from "@eliotr/cloudflare-ai";
 import { canonicalEvidenceJson } from "@eliotr/cloudflare-evidence";
 import {
   IdentifierSchema,
@@ -259,7 +259,10 @@ export async function readCommittedResearchV2MaterializationCandidate(input: {
   readonly principal: WorkflowPrincipal;
   readonly context: ResearchMaterializeContext;
   readonly synthesis_readback: ResearchSynthesisOutputReadback;
+  /** API of the same captured server-owned SYNTH selection. */
+  readonly synthesis_body_api?: ModelGatewayApi;
 }): Promise<ResearchV2MaterializationCandidate> {
+  const synthesisBodyApi = input.synthesis_body_api ?? "compat-chat-completions";
   const verify = await readCommittedStageLineage(
     new WorkflowCheckpointStore(input.database), input.request.operation_id, "VERIFY",
   );
@@ -270,7 +273,7 @@ export async function readCommittedResearchV2MaterializationCandidate(input: {
 
   let assistantContent: string;
   try {
-    assistantContent = (await decodeModelGatewayBody(input.synthesis_readback.bytes)).assistant_content;
+    assistantContent = (await decodeModelGatewayBody(input.synthesis_readback.bytes, synthesisBodyApi)).assistant_content;
   } catch {
     failCorrupt();
   }

@@ -430,6 +430,7 @@ export function createResearchSemanticWorkflowHandlerFactory(
     materialize_handler: createResearchCoverageMaterializeStageHandlerFromFreeze(
       environment, semantic.navigation, semantic.readers, {
         ...input.report,
+        synthesis_body_api: semantic.verification.synthesis_body_api ?? "compat-chat-completions",
         database: input.database,
         work_bucket: input.work_bucket,
         evidence_resolver: semantic.evidence_resolver,
