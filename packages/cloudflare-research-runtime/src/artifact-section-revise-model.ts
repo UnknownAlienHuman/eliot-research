@@ -27,7 +27,10 @@ import { parseResearchSemanticConfiguration, researchSemanticPromptParameters } 
 import type { ArtifactSectionReviseAttempt } from "@eliotr/cloudflare-workflows";
 import type { ResolvedEvidence, VersionedRef } from "@eliotr/contracts";
 import type { ModelAttemptAuthority } from "@eliotr/cloudflare-research";
-import type { ResearchSelectedModelTransportResolution } from "./research-selected-model-transport.js";
+import {
+  resolveResearchSelectedModelTransport,
+  type ResearchSelectedModelTransportResolution,
+} from "./research-selected-model-transport.js";
 import type { ArtifactCowModelAdmissionRunConfiguration } from "./artifact-cow-model-admission.js";
 
 type RuntimeFactoryDependencies = Omit<ArtifactCowModelRuntimeDependencies, "database" | "work_bucket">;
@@ -99,6 +102,15 @@ function refKey(ref: VersionedRef): string { return ref.id + ":" + ref.revision;
 
 /** Composes the COW model runtime from Core-resolved run, owner and storage ports. */
 export async function createArtifactSectionReviseModelApplication(input: ArtifactSectionReviseModelApplicationInput) {
+  // Snapshot each call slot before asynchronous profile or model work.
+  const legacyBodyApi = input.gateway.transport_policy?.api ?? "compat-chat-completions";
+  const selectedApiBySlot = Object.freeze({
+    SYNTHESIZE: resolveResearchSelectedModelTransport({
+      ...(input.run_configuration === null ? {} : { run_configuration: input.run_configuration }),
+      stage: "SYNTHESIZE",
+    })?.transport_policy.api ?? legacyBodyApi,
+    INDEPENDENT_VERIFY: input.audit_selection?.transport_policy.api ?? legacyBodyApi,
+  });
   const { attempt, navigation, cow } = input;
   const now = input.now ?? Date.now;
   const config: ResearchSemanticConfiguration = parseResearchSemanticConfiguration(input.semantic_config_json);
@@ -270,6 +282,7 @@ export async function createArtifactSectionReviseModelApplication(input: Artifac
       }
     },
     resolve_current_evidence: cow.resolve_current_evidence,
+    selected_api_by_slot: selectedApiBySlot,
   };
   return { model: runtime.executor, model_authority: input.admission.authority, producer, output_residency_domains: domains };
 }

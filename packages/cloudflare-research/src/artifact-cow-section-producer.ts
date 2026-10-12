@@ -20,7 +20,7 @@ import {
   type ArtifactDraftSemanticAudit,
 } from "@eliotr/cloudflare-artifacts";
 import type { ArtifactSectionContract } from "@eliotr/contracts";
-import { decodeModelGatewayBody } from "@eliotr/cloudflare-ai";
+import { decodeModelGatewayBody, type ModelGatewayApi } from "@eliotr/cloudflare-ai";
 import {
   decodeSemanticVerifierBatch,
   decodeSynthesisClaimsCandidateAny,
@@ -40,6 +40,12 @@ const MAX_MODEL_INPUT_BYTES = 256 * 1024;
 export interface ArtifactCowSectionProducerDependencies {
   readonly execute: (context: ArtifactCowModelCallContext) => Promise<ArtifactCowModelOutput>;
   readonly attempt: ArtifactSectionReviseAttempt;
+  /** Exact immutable provider API that will be used to reread each slot's stored model
+   * body. Omitted keeps the existing legacy compatibility HTTP path decoder default. */
+  readonly selected_api_by_slot?: Readonly<Partial<Record<
+    "SYNTHESIZE" | "INDEPENDENT_VERIFY",
+    ModelGatewayApi | undefined
+  >>>;
   readonly principal: WorkflowPrincipal;
   readonly model_authority: ModelAttemptAuthority;
   readonly output_residency_domains: ResidencyDomainProfile;
@@ -217,6 +223,8 @@ function residency(template: ObjectResidencyKey): Omit<ObjectResidencyKey, "cont
  * model output and the repository's strict candidate/verifier normalizers.
  */
 export function createArtifactCowSectionProducer(dependencies: ArtifactCowSectionProducerDependencies) {
+  const synthesisApi = dependencies.selected_api_by_slot?.SYNTHESIZE ?? "compat-chat-completions";
+  const verificationApi = dependencies.selected_api_by_slot?.INDEPENDENT_VERIFY ?? "compat-chat-completions";
   let synthesisOutput: ArtifactCowModelOutput | null = null;
   let verificationOutput: ArtifactCowModelOutput | null = null;
   const compileSection = async (input: {
@@ -258,7 +266,7 @@ export function createArtifactCowSectionProducer(dependencies: ArtifactCowSectio
     });
     const synthesis = await dependencies.execute(modelContext(dependencies, "SYNTHESIZE", synthesisInput));
     synthesisOutput = synthesis;
-    const synthesisAssistant = (await decodeModelGatewayBody(synthesis.bytes)).assistant_content;
+    const synthesisAssistant = (await decodeModelGatewayBody(synthesis.bytes, synthesisApi)).assistant_content;
     const constraints = dependencies.normalization_constraints(contract);
     const normalizedRaw = await normalizeSynthesisClaimsCandidateAny({
       candidate: decodeSynthesisClaimsCandidateAny(synthesisAssistant),
@@ -291,7 +299,7 @@ export function createArtifactCowSectionProducer(dependencies: ArtifactCowSectio
     const verificationCall = await dependencies.execute(modelContext(dependencies, "INDEPENDENT_VERIFY", auditInputBytes));
     verificationOutput = verificationCall;
     const expectedInputSha = await evidenceSha256Bytes(auditInputBytes);
-    const semanticBatch = decodeSemanticVerifierBatch((await decodeModelGatewayBody(verificationCall.bytes)).assistant_content, {
+    const semanticBatch = decodeSemanticVerifierBatch((await decodeModelGatewayBody(verificationCall.bytes, verificationApi)).assistant_content, {
       verifier_ref: dependencies.verifier.verifier_ref,
       verifier_schema_generation: dependencies.verifier.schema_generation,
       evidence_input_sha256: expectedInputSha,

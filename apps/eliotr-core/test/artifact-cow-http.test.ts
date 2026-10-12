@@ -129,4 +129,61 @@ describe("owner COW HTTP/runner on native Workerd D1/R2", () => {
     expect(await requestBytes(row.operation_id)).toBe(saved);
     await data.originalsUnchanged();
   }, 120_000);
+
+  it.each(["SYNTHESIZE", "INDEPENDENT_VERIFY"] as const)(
+    "decodes stored COW %s reasoning_content and neurons using its trusted compatibility API",
+    async (slot) => {
+      const data = await fixture();
+      let decorated = 0;
+      const originalAi = data.configuredEnv.AI;
+      if (originalAi === undefined) throw new Error("COW regression has no controlled AI binding");
+      const ai = new Proxy(originalAi, { get(target, property) {
+        if (property === "run") return async (...args: unknown[]) => {
+          const run = Reflect.get(target, property, target) as (...values: unknown[]) => Promise<unknown>;
+          const result: unknown = await Reflect.apply(run, target, args);
+          if (!(result instanceof Response)) throw new Error("COW controlled model response is not HTTP bytes");
+          const currentSlot = data.modelCalls() === 1 ? "SYNTHESIZE" : "INDEPENDENT_VERIFY";
+          if (currentSlot !== slot) return result;
+          const body = await result.json() as {
+            readonly choices: readonly { readonly message: { readonly content: string; readonly role: string } }[];
+            readonly usage: Readonly<Record<string, number>>;
+          };
+          expect(body.choices[0]?.message.role).toBe("assistant");
+          expect(body.usage.total_tokens).toBe(12);
+          decorated += 1;
+          return new Response(JSON.stringify({ ...body,
+            choices: body.choices.map((choice) => ({ ...choice,
+              message: { ...choice.message, reasoning_content: "Controlled private COW reasoning" } })),
+            usage: { ...body.usage, neurons: 1 } }), { status: result.status, headers: result.headers });
+        };
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      } });
+      const configured = { ...data.configuredEnv, AI: ai };
+      const key = "cow-body-api-creation201-" + slot.toLowerCase();
+      const first = await data.post(configured, key);
+      expect(first.status, JSON.stringify(first.body)).toBe(201);
+      expect(first.body.data?.state).toBe("COMMITTED");
+      expect(first.body.data?.draft?.artifact_ref).toEqual({ ...data.artifact_ref, revision: 2 });
+      expect(decorated).toBe(1);
+      expect(data.modelCalls()).toBe(2);
+      const operation = first.body.data?.operation_id;
+      if (operation === undefined) throw new Error("COW regression did not return its durable W2 operation");
+      const saved = await requestBytes(operation);
+      const puts = data.counted.puts();
+      await data.originalsUnchanged();
+      const withoutModels = withoutResearchSemanticConfiguration({ ...configured,
+        ELIOTR_MODEL_PROFILE_DEFINITION_JSON: "invalid" });
+      const replay = await data.post(withoutModels, key);
+      expect(replay.status, JSON.stringify(replay.body)).toBe(200);
+      expect(replay.body.data?.state).toBe("COMMITTED");
+      expect(replay.body.data?.draft?.artifact_ref).toEqual(first.body.data?.draft?.artifact_ref);
+      expect(data.modelCalls()).toBe(2);
+      expect(decorated).toBe(1);
+      expect(data.counted.puts()).toBe(puts);
+      expect(await requestBytes(operation)).toBe(saved);
+      await data.originalsUnchanged();
+    }, 120_000,
+  );
+
 });
