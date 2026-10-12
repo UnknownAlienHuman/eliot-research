@@ -9,6 +9,7 @@ import {
 } from "@eliotr/cloudflare-evidence";
 import {
   decodeModelGatewayBody,
+  type ModelGatewayApi,
 } from "@eliotr/cloudflare-ai";
 import {
   IdentifierSchema,
@@ -158,6 +159,8 @@ export interface ResearchClaimAuditInputReaderDependencies {
   readonly recheck_authority: Parameters<typeof readCommittedResearchSynthesisOutput>[0]["recheck_authority"];
   readonly context: EvidenceFreezeVerificationContextReader;
   readonly normalization: ResearchClaimAuditNormalizationConfig;
+  /** API from the immutable server-owned SYNTH selection; legacy execution uses compatibility. */
+  readonly synthesis_body_api?: ModelGatewayApi;
   readonly verifier: ResearchClaimAuditVerifierSelection;
   /** Explicit server-owned policy; no Stage14 audit dimension has a default. */
   readonly audit_policy: ResearchClaimAuditPolicy;
@@ -335,6 +338,7 @@ export function createResearchClaimAuditInputReader(
     fail("WORKFLOW_INPUT_INVALID");
   }
   const normalization = snapshotNormalization(dependencies.normalization);
+  const synthesisBodyApi = dependencies.synthesis_body_api ?? "compat-chat-completions";
   const verifierSelection = snapshotVerifierSelection(dependencies.verifier);
   let auditPolicy: ResearchClaimAuditPolicy;
   try { auditPolicy = parseResearchClaimAuditPolicy(dependencies.audit_policy); }
@@ -418,7 +422,7 @@ export function createResearchClaimAuditInputReader(
       diagnostics.phase = "NORMALIZE";
       let normalized: NormalizedSynthesisClaims;
       try {
-        const assistant = (await decodeModelGatewayBody(synthesis.bytes)).assistant_content;
+        const assistant = (await decodeModelGatewayBody(synthesis.bytes, synthesisBodyApi)).assistant_content;
         normalized = await normalizeSynthesisClaimsCandidateAny({
           candidate: decodeSynthesisClaimsCandidateAny(assistant),
           operation_id: request.operation_id,

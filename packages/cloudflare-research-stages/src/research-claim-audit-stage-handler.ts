@@ -1,4 +1,4 @@
-import { decodeModelGatewayBody } from "@eliotr/cloudflare-ai";
+import { decodeModelGatewayBody, validateModelGatewayTransportPolicy, type ModelGatewayApi } from "@eliotr/cloudflare-ai";
 import { canonicalEvidenceJson } from "@eliotr/cloudflare-evidence";
 import { type ClaimAuditItem, type VersionedRef } from "@eliotr/contracts";
 import {
@@ -341,9 +341,10 @@ async function encodeAuditOutput(input: {
   readonly stage_request_sha256: string;
   readonly model_attempt: ModelAttemptReadback;
   readonly model_bytes: Uint8Array;
+  readonly body_api: ModelGatewayApi;
 }): Promise<Uint8Array> {
   let assistantContent: string;
-  try { assistantContent = (await decodeModelGatewayBody(input.model_bytes)).assistant_content; }
+  try { assistantContent = (await decodeModelGatewayBody(input.model_bytes, input.body_api)).assistant_content; }
   catch { return outputCorrupt(); }
 
   let batch: ReturnType<typeof decodeSemanticVerifierBatch> | null;
@@ -394,6 +395,10 @@ export function createResearchClaimAuditStageHandler(
     prompt: auditPrompt,
     ...modelDependencies
   } = dependencies;
+  // The immutable selected request API also governs rereading its stored response.
+  const auditBodyApi = auditPrompt.selected_transport_policy === undefined
+    ? "compat-chat-completions"
+    : validateModelGatewayTransportPolicy(auditPrompt.selected_transport_policy).api;
 
   function createModelAdapter(audit: ResearchClaimAuditInputSnapshot | null): ResearchModelStageHandler {
     return createResearchModelStageHandler({
@@ -450,6 +455,7 @@ export function createResearchClaimAuditStageHandler(
       stage_request_sha256: stageRequestSha256,
       model_attempt: modelAttempt,
       model_bytes: modelBytes,
+      body_api: auditBodyApi,
     });
   }
 
@@ -496,6 +502,7 @@ export function createResearchClaimAuditStageHandler(
       stage_request_sha256: stageRequestSha256,
       model_attempt: modelAttempt,
       model_bytes: modelBytes,
+      body_api: auditBodyApi,
     });
   }
 

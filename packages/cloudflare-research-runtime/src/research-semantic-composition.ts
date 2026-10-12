@@ -1,3 +1,4 @@
+import { validateModelGatewayTransportPolicy } from "@eliotr/cloudflare-ai";
 import {
   createCloudflareEvidenceResolver,
   createD1EvidenceAuthorityPort,
@@ -252,6 +253,10 @@ export function createResearchSemanticComposition(
     input.navigation,
     readers,
   );
+  const synthesisPrompt = composeSynthesisPrompt(input, synthesisContext, evidenceResolver, manifestService);
+  const synthesisBodyApi = synthesisPrompt.selected_transport_policy === undefined
+    ? "compat-chat-completions"
+    : validateModelGatewayTransportPolicy(synthesisPrompt.selected_transport_policy).api;
   const synthesis: ResearchSemanticSynthesisDependencies = {
     context: synthesisContext,
     model: {
@@ -260,7 +265,7 @@ export function createResearchSemanticComposition(
       operation_kind: "REPORT",
       deployment_environment: input.deployment_environment,
       gateway: input.model.synthesis.gateway,
-      prompt: composeSynthesisPrompt(input, synthesisContext, evidenceResolver, manifestService),
+      prompt: synthesisPrompt,
       pricing: input.model.synthesis.pricing ?? pricing,
       spend_authorization: input.model.synthesis.spend_authorization,
       ...(input.native_model_authority === undefined ? {} : { native_model_authority: input.native_model_authority }),
@@ -280,6 +285,7 @@ export function createResearchSemanticComposition(
     recheck_authority: input.recheck_authority,
     context: verificationContext,
     v2_config: input.verification.config,
+    synthesis_body_api: synthesisBodyApi,
   };
   const auditInput: ResearchClaimAuditInputReader = createResearchClaimAuditInputReaderFromFreeze(
     readerEnvironment,
@@ -291,6 +297,7 @@ export function createResearchSemanticComposition(
       evidence_resolver: evidenceResolver,
       recheck_authority: input.recheck_authority,
       normalization: input.audit.normalization,
+      synthesis_body_api: synthesisBodyApi,
       verifier: input.audit.verifier,
       audit_policy: input.audit.policy,
     },

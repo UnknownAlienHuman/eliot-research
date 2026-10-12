@@ -1,5 +1,5 @@
 import { canonicalEvidenceJson, type CloudflareEvidenceResolver, type NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
-import { decodeModelGatewayBody } from "@eliotr/cloudflare-ai";
+import { decodeModelGatewayBody, type ModelGatewayApi } from "@eliotr/cloudflare-ai";
 import { IdentifierSchema, VersionedRefSchema, type VersionedRef } from "@eliotr/contracts";
 import {
   decodeSynthesisSectionCandidate,
@@ -42,6 +42,8 @@ export interface ResearchVerificationStageDependencies {
   readonly context: EvidenceFreezeVerificationContextReader;
   /** Optional server-owned v2 normalization contract; presence selects v2 only. */
   readonly v2_config?: ResearchVerificationV2Config;
+  /** API from the same immutable server-owned SYNTH selection that produced these bytes. */
+  readonly synthesis_body_api?: ModelGatewayApi;
 }
 
 function sameRef(left: VersionedRef, right: VersionedRef): boolean {
@@ -178,6 +180,7 @@ export function createResearchVerificationStageHandler(
   dependencies: ResearchVerificationStageDependencies,
 ): WorkflowStageHandler {
   const v2Config = snapshotV2Config(dependencies.v2_config);
+  const synthesisBodyApi = dependencies.synthesis_body_api ?? "compat-chat-completions";
   return async ({ request, principal, input_bytes, attempt_ref }) => {
     if (request.stage !== "VERIFY" || !(input_bytes instanceof Uint8Array)) fail("WORKFLOW_INPUT_INVALID");
     const persistedInputBytes = new Uint8Array(input_bytes);
@@ -205,7 +208,7 @@ export function createResearchVerificationStageHandler(
       let normalized: NormalizedSynthesisClaims | undefined;
       let citedHandleRefs: readonly VersionedRef[];
       let assistantContent: string;
-      try { assistantContent = (await decodeModelGatewayBody(synthesis.bytes)).assistant_content; }
+      try { assistantContent = (await decodeModelGatewayBody(synthesis.bytes, synthesisBodyApi)).assistant_content; }
       catch { return failCorrupt(); }
       if (v2Config !== undefined) {
         try {

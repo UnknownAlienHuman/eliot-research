@@ -1,5 +1,6 @@
 import type { SemanticResearchHandlerGeneration } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import { modelGatewayDynamicRouteTarget } from "@eliotr/cloudflare-ai";
+import { createD1ResearchModelPricingSnapshotStore } from "@eliotr/cloudflare-model-control";
 import type { AllowedReferenceManifest, SelectionIntegrityReceipt, VersionedRef } from "@eliotr/contracts";
 import { modelGatewayRequestParametersSha256 } from "@eliotr/cloudflare-ai";
 import type { CompiledEvidenceContext } from "@eliotr/policy";
@@ -42,6 +43,8 @@ export interface CommittedFreezeSynthesisFixtureOptions {
   readonly include_counterevidence?: boolean;
   /** Use the production execution-bound ORIENT lifecycle for the original scope. */
   readonly orientation_backed_scope?: boolean;
+  /** Controlled immutable Gateway output variant for downstream stored-body readers. */
+  readonly synthesis_response_body?: (body: Readonly<Record<string, unknown>>) => unknown;
 }
 
 /** Seed the same row state that 0104 preserves for runs already present at migration time. */
@@ -395,6 +398,28 @@ export async function committedFreezeSynthesisFixture(options: CommittedFreezeSy
     inputBytes: new TextEncoder().encode("freeze-synthesis-input"),
   });
   const deployment = await stageDeployment(freeze.db, { qualificationTier: "FIXTURE", deployment: freeze.profile_definition.deployment });
+  // Governed preparation reads canonical pricing in addition to the quote port.
+  const pricingIdentity = {
+    pricing_snapshot_ref: deployment.pricing_snapshot_ref,
+    route_ref: deployment.route_ref,
+    route_version: deployment.route_version,
+    provider: "controlled-provider",
+    exact_model_id: "controlled-model",
+  };
+  await createD1ResearchModelPricingSnapshotStore(freeze.db).putImmutable({
+    identity: pricingIdentity,
+    snapshot: {
+      protocol: "eliotr.research-model-pricing.v1",
+      ...pricingIdentity,
+      pricing_basis: "EXACT_TOKEN_RATES_V1",
+      input_rate_usd_per_1k_tokens: "0",
+      output_rate_usd_per_1k_tokens: "0",
+      effective_at: new Date().toISOString(),
+      expires_at: freeze.profile_definition.expires_at,
+      provenance_ref: "freeze-synthesis-controlled-pricing",
+      approval_receipt_ref: "freeze-synthesis-controlled-pricing-approval",
+    },
+  });
   const context = createEvidenceFreezeSynthesisContextReader({
     database: freeze.db, work_bucket: freeze.bucket, manifest_store: freeze.freeze_store,
     read_stage_five: freeze.readers.read_stage_five,
@@ -429,6 +454,7 @@ export async function committedFreezeSynthesisFixture(options: CommittedFreezeSy
   let prepared: ModelAttemptReservationInput | null = null;
   let provider_calls = 0;
   const request_bodies: string[] = [];
+  const synthesisResponseBody = options.synthesis_response_body ?? ((body: Readonly<Record<string, unknown>>) => body);
   const model: EvidenceFreezeSynthesisModelDependencies = {
     database: freeze.db, work_bucket: freeze.bucket, operation_kind: "REPORT", deployment_environment: "TEST",
     gateway: { reasoning_gateway_base_url: BASE_URL, ai_gateway_binding: { gateway: (gatewayId) => {
@@ -442,11 +468,11 @@ export async function committedFreezeSynthesisFixture(options: CommittedFreezeSy
         if (headers.has("cf-aig-authorization") || headers.get("cf-aig-max-attempts") !== "1" || headers.get("cf-aig-collect-log-payload") !== "false") throw new Error("synthesis binding policy changed");
         provider_calls += 1;
         request_bodies.push(JSON.stringify(inputs));
-        return new Response(JSON.stringify({
+        return new Response(JSON.stringify(synthesisResponseBody({
           id: "freeze-synthesis-response", object: "chat.completion", created: 1, model: deployment.route_ref,
           choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: candidate } }],
           usage: { prompt_tokens: 4, completion_tokens: 8, total_tokens: 12 },
-        }), { status: 200, headers: { "content-type": "application/json", "cf-aig-provider": "controlled", "cf-aig-model": "controlled", "cf-aig-log-id": "freeze-synthesis-gateway-log" } });
+        })), { status: 200, headers: { "content-type": "application/json", "cf-aig-provider": "controlled", "cf-aig-model": "controlled", "cf-aig-log-id": "freeze-synthesis-gateway-log" } });
       } } },
     prompt: freezePrompt(freeze, stage_five, deployment, "freeze", synthesis_prompt, options.allowed_verifier_refs), pricing: { quote: async () => ({ quote_ref: "freeze-synthesis-quote", pricing_snapshot_ref: deployment.pricing_snapshot_ref, billed_usd: 0 }) },
     spend_authorization: { read: async (request: SpendAuthorizationReadRequest): Promise<SpendAuthorizationReadback> => {

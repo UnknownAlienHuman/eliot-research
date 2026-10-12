@@ -1,5 +1,5 @@
 import type { SemanticResearchHandlerGeneration } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
-import { modelGatewayDynamicRouteTarget } from "@eliotr/cloudflare-ai";
+import { modelGatewayDynamicRouteTarget, type ModelGatewayTransportPolicyV1, type ModelGatewayApi } from "@eliotr/cloudflare-ai";
 import type { VersionedRef } from "@eliotr/contracts";
 import { canonicalEvidenceJson, evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
 import type { ModelRouteDeployment } from "@eliotr/platform-cloudflare";
@@ -190,12 +190,18 @@ export interface ResearchClaimAuditStageFixtureOptions {
   readonly include_counterevidence?: boolean;
   /** Use the production execution-bound ORIENT lifecycle for the original scope. */
   readonly orientation_backed_scope?: boolean;
+  /** Controlled Gateway body variants exercise rereading immutable provider output. */
+  readonly audit_response_body?: (body: Readonly<Record<string, unknown>>) => unknown;
+  readonly audit_transport_policy?: ModelGatewayTransportPolicyV1;
+  readonly synthesis_response_body?: (body: Readonly<Record<string, unknown>>) => unknown;
+  readonly synthesis_body_api?: ModelGatewayApi;
 }
 
 async function committedAuditInputFixture(options: ResearchClaimAuditStageFixtureOptions = {}) {
   const fixture = await committedFreezeSynthesisFixture({
     ...(options.handler_generation === undefined ? {} : { handler_generation: options.handler_generation }),
     candidate_protocol: "v2",
+    ...(options.synthesis_response_body === undefined ? {} : { synthesis_response_body: options.synthesis_response_body }),
     synthesis_prompt: "Produce eliotr.research.synthesis-claims-candidate.v2 from the frozen evidence.",
     allowed_verifier_refs: [AUDIT_VERIFIER_REF],
     ...(options.include_counterevidence === true ? { include_counterevidence: true } : {}),
@@ -225,6 +231,7 @@ async function committedAuditInputFixture(options: ResearchClaimAuditStageFixtur
       }),
       context: createVerificationContext(fixture),
       v2_config: AUDIT_NORMALIZATION_CONFIG,
+      ...(options.synthesis_body_api === undefined ? {} : { synthesis_body_api: options.synthesis_body_api }),
     },
   })("VERIFY");
   const verificationReceipt = await fixture.freeze.executor.execute(stage13, principal, verification);
@@ -250,6 +257,7 @@ async function committedAuditInputFixture(options: ResearchClaimAuditStageFixtur
       scope_snapshot_revision: fixture.freeze.scope.revision,
     }),
     normalization: AUDIT_NORMALIZATION_CONFIG,
+    ...(options.synthesis_body_api === undefined ? {} : { synthesis_body_api: options.synthesis_body_api }),
     verifier: verifierSelection(fixture),
     audit_policy: AUDIT_POLICY,
   });
@@ -308,6 +316,7 @@ export async function researchClaimAuditStageFixture(
     principal,
     inputBytes: prepared.inputBytes,
   });
+  const auditResponseBody = options.audit_response_body ?? ((body: Readonly<Record<string, unknown>>) => body);
   const gatewayResponse = (binding: AuditPromptBinding) => JSON.stringify({
     schema: "eliotr.research.semantic-verifier-observation.v1",
     verifier_ref: binding.verifier_ref,
@@ -360,12 +369,12 @@ export async function researchClaimAuditStageFixture(
                 throw new Error("audit response was not bound to the trusted prompt");
               }
               providerCalls += 1;
-              return new Response(JSON.stringify({
+              return new Response(JSON.stringify(auditResponseBody({
                 id: "freeze-audit-response", object: "chat.completion", created: 1,
                 model: deployment.route_ref,
                 choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: gatewayResponse(binding) } }],
                 usage: { prompt_tokens: 8, completion_tokens: 16, total_tokens: 24 },
-              }), {
+              })), {
                 status: 200,
                 headers: {
                   "content-type": "application/json",
@@ -377,7 +386,7 @@ export async function researchClaimAuditStageFixture(
         },
       },
     },
-    prompt,
+    prompt: { ...prompt, ...(options.audit_transport_policy === undefined ? {} : { selected_transport_policy: options.audit_transport_policy }) },
     pricing: {
       // Zero price is explicit test accounting; production pricing remains governed.
       quote: async () => ({ quote_ref: "freeze-audit-quote", pricing_snapshot_ref: deployment.pricing_snapshot_ref, billed_usd: 0 }),
