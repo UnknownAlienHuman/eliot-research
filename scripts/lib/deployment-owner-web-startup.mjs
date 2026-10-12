@@ -21,10 +21,11 @@ const ROUTES = [
   { route: "/", htmlPath: "index.html", boundary: "SETTLED_ROOT_RESEARCH_NO_ACTIONS" },
   { route: "/agent-inbox/", htmlPath: "agent-inbox/index.html", boundary: "SETTLED_IDLE_INBOX_NO_ACTIONS" },
 ];
-// Initial queries supply neither after_project_id nor project_id. No product action is taken.
+// Initial queries have no selected project. Project readiness begins only after
+// an explicit current project selection; no unscoped readiness request is sent.
 const STARTUP_GETS = new Set([
   "/api/v1/system/health", "/api/v1/system/session", "/api/v1/research/projects",
-  "/api/v1/system/research-configuration", "/api/v1/research/runs",
+  "/api/v1/research/runs",
 ]);
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const fail = message => { throw new Error("Owner-web startup: " + message); };

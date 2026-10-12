@@ -65,7 +65,9 @@ describe('C3-RR run authority', () => {
     expect(JSON.parse(api.researchRunBody('q', [])).scope_expression).toEqual({ kind: 'GLOBAL_LIBRARY' });
     expect(() => api.researchRunBody('q', [], 17)).toThrow();
     expect(() => api.researchRunBody('q', ['a', 'a'])).toThrow();
-    expect(() => api.researchRunBody('q', ['a'], 4, 'proj-1')).toThrow();
+    expect(JSON.parse(api.researchRunBody('q', ['a'], 4, 'proj-1')).scope_expression).toEqual({
+      kind: 'INTERSECT', left: { kind: 'PROJECT', project_id: 'proj-1' }, right: { kind: 'SELECTED_SOURCES', source_ids: ['a'] },
+    });
   });
 
   it('rejects a bare carriage return and an oversized UTF-8 body', () => {
@@ -155,7 +157,9 @@ describe('Research RUN selected-source envelope', () => {
     expect(() => api.researchRunBody('q', Array.from({ length: 1001 }, (_, i) => 'source-' + i))).toThrow();
     expect(() => api.researchRunBody('q', ['source-1', 'source-1'])).toThrow();
     expect(() => api.researchRunBody('q', [''])).toThrow();
-    expect(() => api.researchRunBody('q', ['source-1'], 4, 'project-1')).toThrow();
+    expect(JSON.parse(api.researchRunBody('q', ['source-1'], 4, 'project-1')).scope_expression).toEqual({
+      kind: 'INTERSECT', left: { kind: 'PROJECT', project_id: 'project-1' }, right: { kind: 'SELECTED_SOURCES', source_ids: ['source-1'] },
+    });
     const question = 'я'.repeat(RESEARCH_REQUEST_MAX_BYTES / 2);
     expect(question.length).toBeLessThan(RESEARCH_REQUEST_MAX_BYTES);
     try { api.researchRunBody(question, ['source-1']); throw new Error('Expected UTF-8 request rejection'); }

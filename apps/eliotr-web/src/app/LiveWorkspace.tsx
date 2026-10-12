@@ -68,6 +68,9 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
         item.page.sources.some(source => source.id === item.id);
     });
   const scopeCurrent = isScopeCurrent();
+  const isProjectCurrent = () => selected !== undefined && privacy.isCurrent(context) &&
+    client.getQueryData([...key, "projects", after ?? null]) === projects.data &&
+    projects.data?.deployment_generation === context.deploymentGeneration;
   const restoreProjectSelectFocus = useCallback((node: HTMLSelectElement | null) => {
     if (node === null) return;
     const target = projectSelectFocus.current;
@@ -131,7 +134,7 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
         onPrevious={projectPages.length > 1 ? () => { setProjectId(undefined); setProjectPages(pages => pages.slice(0, -1)); } : undefined}
         onNext={projects.data?.next_project_id ? () => { const next = projects.data?.next_project_id; if (next) { setProjectId(undefined); setProjectPages(pages => [...pages, next]); } } : undefined} />
         : destination === "research" ? <ResearchPanel locale={locale} apis={apis} privacy={privacy} context={context} scope={scope} scopeCurrent={scopeCurrent}
-          isScopeCurrent={isScopeCurrent} />
+          isScopeCurrent={isScopeCurrent} projectId={selected?.project_id} isProjectCurrent={isProjectCurrent} />
         : <StudioPanel locale={locale} apis={apis} privacy={privacy} context={context} />}
     </main>
   </div>;

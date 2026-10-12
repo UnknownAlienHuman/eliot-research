@@ -21,6 +21,7 @@ export function researchQueryOptions(
   apis: ResearchQueryApis,
   privacy: PrivacyController,
   context: SessionContext,
+  project?: { readonly id: string; readonly isCurrent: () => boolean },
 ) {
   const generation = context.deploymentGeneration;
   const key = protectedQueryKey(context, "research");
@@ -41,10 +42,14 @@ export function researchQueryOptions(
   return {
     configuration() {
       return queryOptions({
-        queryKey: [...key, "configuration"],
+        queryKey: [...key, "configuration", project?.id ?? null],
         refetchOnMount: false,
-        queryFn: ({ signal }) => runProtectedRead(privacy, context, signal,
-          readSignal => apis.configuration.readResearchConfiguration(generation, { signal: readSignal })),
+        queryFn: ({ signal }) => runProtectedRead(privacy, context, signal, async readSignal => {
+          if (!project?.isCurrent()) throw new Error("Research project is no longer current");
+          const result = await apis.configuration.readResearchConfiguration(generation, { projectId: project.id, signal: readSignal });
+          if (!project.isCurrent()) throw new Error("Research project is no longer current");
+          return result;
+        }),
       });
     },
 

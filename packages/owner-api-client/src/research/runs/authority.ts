@@ -129,11 +129,13 @@ export function createResearchRunsApi(ports: ResearchRunsApiPorts): ResearchRuns
     if (sourceIds.length > OWNER_RESEARCH_MAX_SELECTED_SOURCES || new Set(sourceIds).size !== sourceIds.length) invalid("source scope is invalid");
     for (const sourceId of sourceIds) identifier(sourceId, "source id");
     if (projectId !== undefined) {
-      if (sourceIds.length !== 0) invalid("project scope cannot include source ids");
       identifier(projectId, "project id");
     }
+    const selectedSources = { kind: "SELECTED_SOURCES" as const, source_ids: [...sourceIds] };
     const scope = projectId !== undefined
-      ? { kind: "PROJECT" as const, project_id: projectId }
+      ? sourceIds.length
+        ? { kind: "INTERSECT" as const, left: { kind: "PROJECT" as const, project_id: projectId }, right: selectedSources }
+        : { kind: "PROJECT" as const, project_id: projectId }
       : sourceIds.length ? { kind: "SELECTED_SOURCES" as const, source_ids: [...sourceIds] } : { kind: "GLOBAL_LIBRARY" as const };
     if (!ScopeExpressionSchema.safeParse(scope).success) invalid("source scope is invalid");
     const body = JSON.stringify({ query, product: "RESEARCH", scope_expression: scope, literals: [], evidence_grade: "E0", budget_ref: "research-budget-v1", max_results: maxResults });

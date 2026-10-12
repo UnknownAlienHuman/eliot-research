@@ -28,15 +28,17 @@ const copy = {
 } as const;
 
 /** One explicit intent owns admission. Polling, navigation and history never allocate a run. */
-export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurrent, isScopeCurrent }: {
+export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurrent, isScopeCurrent, projectId, isProjectCurrent }: {
   readonly apis: BoundWorkspaceApis; readonly privacy: PrivacyController; readonly context: SessionContext;
   readonly locale: 'en' | 'ru'; readonly scope: readonly NextQuestionSource[]; readonly scopeCurrent: boolean;
   readonly isScopeCurrent: () => boolean;
+  readonly projectId: string | undefined; readonly isProjectCurrent: () => boolean;
 }) {
   const client = useQueryClient(), text = copy[locale];
   const memoryKey = [...protectedQueryKey(context, 'research'), 'local-intent'];
   const memory = useQuery<ResearchMemory>({ queryKey: memoryKey, queryFn: skipToken, gcTime: Infinity });
-  const options = researchQueryOptions({ ...apis.research, configuration: apis.connections.configuration }, privacy, context);
+  const options = researchQueryOptions({ ...apis.research, configuration: apis.connections.configuration }, privacy, context,
+    projectId === undefined ? undefined : { id: projectId, isCurrent: isProjectCurrent });
   const configuration = useQuery(options.configuration());
   const history = useQuery(options.history());
   const saved = memory.data, launch = saved?.intent?.launch ?? saved?.observedLaunch;
@@ -100,11 +102,11 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     write(old => old.intent?.key === intent.key ? { ...old, intent: { ...intent, phase: 'admitted', launch: result } } : old);
   };
   const ask = (question: string) => {
-    if (read().intent || read().observedLaunch || running.current || !scopeCurrent || !isScopeCurrent() || !privacy.isCurrent(context) ||
+    if (read().intent || read().observedLaunch || running.current || projectId === undefined || !isProjectCurrent() || !scopeCurrent || !isScopeCurrent() || !privacy.isCurrent(context) ||
       configuration.isError || configuration.isFetching || !configuration.data ||
       client.getQueryData(options.configuration().queryKey) !== configuration.data || configuration.data.run_readiness === 'blocked') return;
     try {
-      const body = apis.research.runs.researchRunBody(question, scope.map(source => source.id));
+      const body = apis.research.runs.researchRunBody(question, scope.map(source => source.id), undefined, projectId);
       const intent: ResearchIntent = Object.freeze({ body, key: apis.sources.mintIntent(), question,
         scope: Object.freeze(scope.map(source => Object.freeze({ id: source.id, label: source.label }))), phase: 'pending' });
       write(old => ({ ...old, intent }));
