@@ -23,12 +23,18 @@ const copy = {
   en: { working: 'Checking the current action.', reading: 'Reading saved work.', loaded: 'Saved work loaded.', drafts: 'Wiki drafts', read: 'Refresh saved work', previous: 'Previous page', next: 'More drafts', recent: 'Saved reports', report: 'Open saved report', unknown: 'The last action has no confirmed outcome. Its original draft, content and request identity are preserved.', recover: 'Check the same action', inputs: 'The edit could not be prepared. Review its title and text.', review: 'Review the edit again', published: 'Publication confirmed for this Wiki page.', edited: 'A new draft revision was returned. The previous page was preserved.', failed: 'The selected draft could not be read. No saved text is shown.', reread: 'Read the selected draft again' },
   ru: { working: 'Проверяется текущее действие.', reading: 'Читаются сохранённые материалы.', loaded: 'Сохранённые материалы прочитаны.', drafts: 'Черновики Wiki', read: 'Обновить сохранённые материалы', previous: 'Предыдущая страница', next: 'Другие черновики', recent: 'Сохранённые отчёты', report: 'Открыть сохранённый отчёт', unknown: 'Исход последнего действия не подтверждён. Исходный черновик, текст и идентификатор запроса сохранены.', recover: 'Проверить то же действие', inputs: 'Не удалось подготовить правку. Проверьте заголовок и текст.', review: 'Проверить правку ещё раз', published: 'Публикация этой страницы Wiki подтверждена.', edited: 'Получена новая версия черновика. Предыдущая страница сохранена.', failed: 'Не удалось прочитать выбранный черновик. Сохранённый текст не показывается.', reread: 'Прочитать выбранный черновик снова' },
 } as const;
+const savedReportsCopy = {
+  en: { reading: 'Reading saved reports.', failed: 'Saved reports could not be read. Try a fresh read.',
+    refresh: 'Refresh saved reports', empty: 'No saved reports yet.' },
+  ru: { reading: 'Читаются сохранённые отчёты.', failed: 'Не удалось прочитать сохранённые отчёты. Повторите чтение.',
+    refresh: 'Обновить сохранённые отчёты', empty: 'Сохранённых отчётов пока нет.' },
+} as const;
 
 /** Read, copy-on-write edit and publication use only the accepted owner client. */
 export function StudioPanel({ apis, privacy, context, locale }: {
   readonly apis: BoundWorkspaceApis; readonly privacy: PrivacyController; readonly context: SessionContext; readonly locale: 'en' | 'ru';
 }) {
-  const client = useQueryClient(), text = copy[locale];
+  const client = useQueryClient(), text = copy[locale], reportText = savedReportsCopy[locale];
   const memoryKey = [...protectedQueryKey(context, 'studio'), 'local-intent'];
   const memory = useQuery<StudioMemory>({ queryKey: memoryKey, queryFn: skipToken, gcTime: Infinity });
   let proposalKey: (string | number)[] = [];
@@ -143,7 +149,8 @@ export function StudioPanel({ apis, privacy, context, locale }: {
     : saved?.intent?.phase === 'input-error' ? text.inputs
     : selected.isError || body.isError ? text.failed
     : proposals.isError ? featureCopy.error
-    : selected.isFetching || body.isFetching || proposals.isFetching ? text.reading
+    : history.isError ? reportText.failed
+    : selected.isFetching || body.isFetching || proposals.isFetching || history.isPending || history.isFetching ? text.reading
     : view?.state === 'PUBLISHED' ? text.published
     : view && saved?.edited && sameRef(view.proposal_ref, saved.edited.proposal_ref) ? text.edited : proposals.data ? text.loaded : '');
   if (saved?.artifact) return <ReportPanel key={`${saved.artifact.id}:${saved.artifact.revision}`} locale={locale} apis={apis} privacy={privacy} context={context} artifactRef={saved.artifact}
@@ -157,9 +164,16 @@ export function StudioPanel({ apis, privacy, context, locale }: {
     {view?.state === 'PUBLISHED' && <Status>{text.published}</Status>}
     {view && view.state !== 'PUBLISHED' && saved?.edited && sameRef(view.proposal_ref, saved.edited.proposal_ref) && <Status>{text.edited}</Status>}
     {selected.isError || body.isError ? <div><Status tone="error">{text.failed}</Status><Button variant="tonal" disabled={selected.isFetching || body.isFetching} onClick={() => { void selected.refetch(); if (view) void body.refetch(); }}>{text.reread}</Button></div> : null}
-    {!history.isError && history.data && history.data.saved_drafts.length > 0 && <section className="er-live-history" aria-label={text.recent}><h2 ref={reportsHeading} tabIndex={-1}>{text.recent}</h2><ul>{history.data.saved_drafts.map(draft => <li key={`${draft.artifact_ref.id}:${draft.artifact_ref.revision}`}>
+    <section className="er-live-history" aria-label={text.recent}>
+      <div className="er-live-history-heading"><h2 ref={reportsHeading} tabIndex={-1}>{text.recent}</h2>
+        <Button variant="text" disabled={history.isFetching} onClick={() => { void history.refetch(); }}>{reportText.refresh}</Button></div>
+      {history.isError ? <Status tone="error">{reportText.failed}</Status>
+        : history.isPending || history.isFetching ? <Status>{reportText.reading}</Status>
+        : history.data?.saved_drafts.length === 0 ? <p>{reportText.empty}</p> : null}
+      <ul>{!history.isError && history.data?.saved_drafts.map(draft => <li key={`${draft.artifact_ref.id}:${draft.artifact_ref.revision}`}>
       <time dateTime={draft.created_at}>{displayTime(draft.created_at)}</time><Button variant="tonal" onClick={() => write(old => ({ ...old, artifact: draft.artifact_ref }))}>{text.report}</Button>
-    </li>)}</ul></section>}
+      </li>)}</ul>
+    </section>
     <fieldset className="er-live-plain-fieldset" disabled={blocked} aria-label={text.drafts}>
       <StudioFeature key={view ? `${view.proposal_ref.id}:${view.proposal_ref.revision}` : 'list'} locale={locale} copy={featureCopy}
         state={proposals.isPending ? 'loading' : proposals.isError ? 'error' : !proposals.data?.items.length ? 'empty' : 'useful'}

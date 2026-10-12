@@ -14,11 +14,12 @@ const encode = (text: string) => new TextEncoder().encode(text);
 const digest = async (bytes: Uint8Array) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new Uint8Array(bytes).buffer))].map(value => value.toString(16).padStart(2, '0')).join('');
 
 /** Real client and protected memory; one durable edit and one publication each lose an ack. */
-const studioEnvironments = new WeakMap<HTMLElement, { privacy: ReturnType<typeof createPrivacyController>; client: ReturnType<typeof createWorkspaceQueryClient> }>();
-export function StudioPreview() {
+const studioEnvironments = new WeakMap<HTMLElement, { privacy: ReturnType<typeof createPrivacyController>; client: ReturnType<typeof createWorkspaceQueryClient>;
+  assertHistoryReads(expected: number): void }>();
+export function StudioPreview({ historyReadFailure = false }: { readonly historyReadFailure?: boolean } = {}) {
   const [environment] = useState(() => {
     const client = createWorkspaceQueryClient(), timers = { setTimeout: () => 0, clearTimeout() {} };
-    let edits = 0, publishes = 0, mints = 0, created = false, published = false;
+    let edits = 0, publishes = 0, mints = 0, historyReads = 0, created = false, published = false;
     let originalBody: string | undefined, originalKey: string | undefined;
     const page = async (revision: number): Promise<WikiProposalReadView['page']> => ({
       page_ref: { id: 'wiki-page-fixture', revision }, page_type: 'Topic', title: 'Evidence scope in a saved page',
@@ -37,7 +38,14 @@ export function StudioPreview() {
       if (url.pathname === '/api/v1/system/health') return json({ ready: true, deployment_generation: generation, core_schema_generation: 'schema-1', search_schema_generation: 'schema-1', blocking_reason_codes: [], checked_at: stamp });
       if (url.pathname === '/api/v1/system/session') return json({ protocol: 'eliotr.owner-session.v1', principal_ref: 'studio-owner', credential_generation: 'studio-credential', client_class: 'owner_pwa', expires_at: '2027-01-01T00:00:00.000Z' });
       if (url.pathname === '/api/v1/research/projects') return json({ protocol: 'eliotr.project-owner-list.v1', projects: [] });
-      if (url.pathname === '/api/v1/research/runs') return json({ protocol: 'eliotr.research-runs.v3', runs: [], saved_drafts: [], configuration_state: 'INSTALLED', checked_at: stamp });
+      if (url.pathname === '/api/v1/research/runs') {
+        historyReads++;
+        if (historyReadFailure && historyReads === 1) return new Response(JSON.stringify({ error: {
+          code: 'RESEARCH_RUN_HISTORY_UNAVAILABLE', message: 'Controlled saved-report read failure', retryable: true },
+          trace_id: 'studio-history-trace', deployment_generation: generation }),
+        { status: 503, headers: { 'content-type': 'application/json' } });
+        return json({ protocol: 'eliotr.research-runs.v3', runs: [], saved_drafts: [], configuration_state: 'INSTALLED', checked_at: stamp });
+      }
       if (url.pathname === '/api/v1/system/research-configuration') return json({ protocol: 'eliotr.research-configuration-readiness.v1', configuration: 'present', model_transport: 'available', qualification_state: 'current', run_readiness: 'ready', readiness_reason: 'QUALIFICATION_PROOFS_CURRENT', model_route: 'research-route', qualification_expires_at: '2027-01-01T00:00:00.000Z', missing_fields: [], invalid_fields: [], checked_at: stamp });
       if (url.pathname === '/api/v1/research/wiki/proposals') return json({ protocol: 'eliotr.wiki-proposals.v1', items: created ? [summary(1), summary(2)] : [summary(1)], has_more: false });
       if (url.pathname === '/api/v1/research/wiki/proposals/from-edit' && init?.method === 'POST') {
@@ -80,7 +88,11 @@ export function StudioPreview() {
       isCurrent: context => privacy.isCurrent(context), onAuthorizationLoss() { privacy.close(); } });
     const privacy = createPrivacyController({ timers, now: () => Date.parse(stamp), mask() { runtime.close(); }, reveal() {},
       cancelReads() { void client.cancelQueries(undefined, { revert: false, silent: true }); }, clearProtected() { clearWorkspaceQueries(client); }, verify: signal => runtime.verify(signal) });
-    return { client, runtime, privacy };
+    return { client, runtime, privacy, assertHistoryReads(expected: number) {
+      if (historyReads !== expected || edits !== 0 || publishes !== 0 || mints !== 0) {
+        throw new Error('Saved-report recovery changed read count or caused a mutation/intent');
+      }
+    } };
   });
   useEffect(() => {
     const unsubscribe = environment.privacy.subscribe(() => { const snapshot = environment.privacy.getSnapshot(); if (snapshot.phase === 'available') environment.runtime.bind(snapshot.context); });
@@ -123,6 +135,26 @@ export const playStudioJourney = async ({ canvas, userEvent }: {
   await canvas.findByText('Published', { selector: 'dd' });
   if (canvas.queryByRole('button', { name: 'Publish page' }) || canvas.queryByRole('button', { name: 'Confirm publication' })) throw new Error('Canonical published readback exposed another publication');
 };
+
+/** Wiki success cannot hide a report-read failure; retry performs only the requested read. */
+export async function playStudioHistoryRecovery({ canvas, userEvent }: Parameters<typeof playStudioJourney>[0]) {
+  await canvas.findByRole('button', { name: /Evidence scope in a saved page/u });
+  const failed = await canvas.findByText('Saved reports could not be read. Try a fresh read.',
+    { selector: '.er-live-history .er-status > span' });
+  const root = failed.closest<HTMLElement>('[data-studio-announcements]');
+  if (!root) throw new Error('Actual Studio report recovery root missing');
+  const environment = studioEnvironments.get(root);
+  if (!environment) throw new Error('Studio report recovery effects probe missing');
+  const region = paneAnnouncement(root);
+  await announcementUntil(() => unchangedChannel(root, region, 'Saved reports could not be read. Try a fresh read.'));
+  if (root.textContent?.includes('No saved reports yet.')) throw new Error('Failed report read became an empty library');
+  environment.assertHistoryReads(1);
+  await userEvent.click(canvas.getByRole('button', { name: 'Refresh saved reports', exact: true }));
+  await canvas.findByText('No saved reports yet.', { selector: '.er-live-history > p' });
+  await announcementUntil(() => unchangedChannel(root, region, 'Saved work loaded.'));
+  await canvas.findByRole('button', { name: /Evidence scope in a saved page/u });
+  environment.assertHistoryReads(2);
+}
 
 export async function playStudioAnnouncements(test: Parameters<typeof playStudioJourney>[0]) {
   const { canvas, userEvent } = test;

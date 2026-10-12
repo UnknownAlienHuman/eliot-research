@@ -598,6 +598,9 @@
       "workspace-shell--live-research-journey",
       "workspace-shell--live-studio-journey"
     ],
+    "u5-history-recovery": [
+      "workspace-shell--studio-history-failure-recovery"
+    ],
     "u4-action-recovery": [
       "workspace-shell--artifact-actions-journey"
     ]

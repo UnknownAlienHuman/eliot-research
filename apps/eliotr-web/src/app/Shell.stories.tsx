@@ -26,7 +26,7 @@ import { createPrivacyController } from "./privacy";
 import { BundlePreview, playBundleJourney } from "./ImportBundlePreview";
 import { ResearchPreview, playResearchJourney, playResearchAnnouncements, playResearchHistoryReturn,
   type ResearchHistoryState, type ResearchPreviewProbe } from "./ResearchPreview";
-import { StudioPreview, playStudioJourney, playStudioAnnouncements } from "./StudioPreview";
+import { StudioPreview, playStudioJourney, playStudioAnnouncements, playStudioHistoryRecovery } from "./StudioPreview";
 import { ArtifactActionsPreview, playArtifactActionsJourney } from "./ArtifactActionsPreview";
 import { WorkspaceLinkPreview, playWorkspaceLinkJourney } from "./WorkspaceLinkJourney";
 
@@ -61,6 +61,7 @@ export const MaterialWorkspace = { render: () => <ResearchPreview designReview /
 export const MaterialPreferencesJourney = { render: () => <ResearchPreview designReview />, play: playMaterialPreferences };
 export const MaterialReadingJourney = { render: () => <ResearchPreview designReview />, play: playMaterialReading };
 export const LiveStudioJourney = { render: () => <StudioPreview />, play: playStudioJourney };
+export const StudioHistoryFailureRecovery = { render: () => <StudioPreview historyReadFailure />, play: playStudioHistoryRecovery };
 export const WorkspaceLinkJourney = { render: () => <WorkspaceLinkPreview />, play: playWorkspaceLinkJourney };
 export const StrictModeJourney = {
   async play({ canvas }: { readonly canvas: { getByRole(role: string, options?: { readonly name?: string; readonly exact?: boolean }): HTMLElement; findByRole(role: string, options?: { readonly name?: string; readonly exact?: boolean }): Promise<HTMLElement> } }) {
