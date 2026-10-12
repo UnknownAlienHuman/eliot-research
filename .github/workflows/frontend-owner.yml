@@ -8,6 +8,7 @@ on:
       - 'packages/ui/**'
       - 'packages/owner-api-client/**'
       - 'packages/contracts/**'
+      - 'scripts/ui-owner/verify.mjs'
       - 'pnpm-lock.yaml'
       - '.github/workflows/frontend-owner.yml'
   pull_request:
@@ -16,6 +17,7 @@ on:
       - 'packages/ui/**'
       - 'packages/owner-api-client/**'
       - 'packages/contracts/**'
+      - 'scripts/ui-owner/verify.mjs'
       - 'pnpm-lock.yaml'
       - '.github/workflows/frontend-owner.yml'
 
@@ -145,11 +147,12 @@ jobs:
             printf '%s\n' 'Storybook index did not become ready' | tee "$output/qualification-error.txt"
             exit 1
           fi
-          node scripts/ui-owner/verify.mjs browser \
+          node --experimental-strip-types scripts/ui-owner/verify.mjs browser \
             --base-url http://127.0.0.1:6006 \
             --scenario material-redesign \
             --output "$output" \
-            --browser "$chrome"
+            --browser "$chrome" \
+            --browser-version 155.0.8059.39
       - name: Upload Material visual evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
