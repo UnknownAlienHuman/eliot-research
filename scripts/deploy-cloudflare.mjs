@@ -814,7 +814,7 @@ export async function deployCloudflare({ confirmLive = false, ownerWeb = false, 
   deploymentUploadCompleted = true;
   await requireUnchangedInputs();
   const worker = await readWorker(env, input, config, { fetchImpl });
-  let assetReadback = await verifyDeploymentAssets(assetManifest, input, { fetchImpl: ownerFetch });
+  let assetReadback = await verifyDeploymentAssets(assetManifest, input, { fetchImpl: ownerFetch, ...assetOptions });
   if (assetReadback.state === "PASS") {
     const afterAssets = await readWorker(env, input, config, { fetchImpl });
     if (afterAssets.deployment_id !== worker.deployment_id || afterAssets.version_id !== worker.version_id) {

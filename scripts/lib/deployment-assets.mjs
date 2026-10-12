@@ -146,7 +146,9 @@ async function walkAssetDirectory(directory, relativeDirectory, files, addSize, 
       continue;
     }
     if (!stats.isFile()) throw new Error("Deployment asset directory contains a non-regular entry");
-    if (!relativeDirectory && EXCLUDED_ROUTING_FILES.includes(entry.name)) continue;
+    // Wrangler 4.143.1 createAssetsIgnoreFunction excludes these root metafiles.
+    // Nested .gitignore files remain ordinary assets in its buildAssetManifest.
+    if (!relativeDirectory && (entry.name === ".assetsignore" || EXCLUDED_ROUTING_FILES.includes(entry.name))) continue;
     if (stats.size > DEFAULT_LIMITS.fileBytes) throw new Error("Deployment asset exceeds the per-file byte limit");
     if (files.length >= DEFAULT_LIMITS.fileCount) throw new Error("Deployment asset directory exceeds the file-count limit");
 

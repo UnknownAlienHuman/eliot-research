@@ -41,9 +41,12 @@ try {
   await writeFile(path.join(ownerDist, "index.html"), "<!doctype html><main>owner home</main>");
   await writeFile(path.join(ownerDist, "assets", "app.js"), "owner client");
   await writeFile(path.join(ownerDist, "_headers"), "/\n  Cache-Control: no-store");
+  await writeFile(path.join(ownerDist, ".assetsignore"), "wrangler.json\n.dev.vars\n");
+  await mkdir(path.join(ownerDist, "agent-inbox"), { recursive: true });
+  await writeFile(path.join(ownerDist, "agent-inbox", ".gitignore"), "*\n!.gitignore\n");
   const ownerManifest = await readDeploymentAssetManifest(ownerConfig, { root, assetProfile: "owner-web" });
   assert.equal(ownerManifest.directory, "apps/eliotr-web/dist/client");
-  assert.deepEqual(ownerManifest.files.map(({ path: assetPath }) => assetPath), ["assets/app.js", "index.html"]);
+  assert.deepEqual(ownerManifest.files.map(({ path: assetPath }) => assetPath), ["agent-inbox/.gitignore", "assets/app.js", "index.html"]);
   assert.equal(ownerManifest.manifest_sha256, digestManifestForTest(ownerManifest));
   await assert.rejects(readDeploymentAssetManifest(ownerConfig, { root }), /pinned PWA output/);
   await assert.rejects(readDeploymentAssetManifest(coreConfig, { root, assetProfile: "owner-web" }), /pinned owner-web client output/);
