@@ -166,7 +166,7 @@ export function StudioPanel({ apis, privacy, context, locale }: {
     {selected.isError || body.isError ? <div><Status tone="error">{text.failed}</Status><Button variant="tonal" disabled={selected.isFetching || body.isFetching} onClick={() => { void selected.refetch(); if (view) void body.refetch(); }}>{text.reread}</Button></div> : null}
     <section className="er-live-history" aria-label={text.recent}>
       <div className="er-live-history-heading"><h2 ref={reportsHeading} tabIndex={-1}>{text.recent}</h2>
-        <Button variant="text" disabled={history.isFetching} onClick={() => { void history.refetch(); }}>{reportText.refresh}</Button></div>
+        {history.isError ? <Button variant="text" disabled={history.isFetching} onClick={() => { void history.refetch(); }}>{reportText.refresh}</Button> : null}</div>
       {history.isError ? <Status tone="error">{reportText.failed}</Status>
         : history.isPending || history.isFetching ? <Status>{reportText.reading}</Status>
         : history.data?.saved_drafts.length === 0 ? <p>{reportText.empty}</p> : null}
