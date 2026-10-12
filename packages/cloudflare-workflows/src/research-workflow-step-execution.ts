@@ -125,9 +125,17 @@ function mayRetryNativeFailure(
   effectClass: WorkflowNativeStagePolicy["effect_class"],
   failure: WorkflowFailureOutcome,
 ): boolean {
-  return effectClass === "PURE_COMPUTE" && failure.retryable &&
+  return (effectClass === "PURE_COMPUTE" ||
+    (effectClass === "AUTHORIZED_READ" && failure.code === "WORKFLOW_STORAGE_UNAVAILABLE")) && failure.retryable &&
     failure.dispatch_state === "NOT_STARTED" && failure.references_intact === "INTACT" &&
     failure.recovery_action !== "RECONCILE" && !isNativeTerminalFailureCode(failure.code);
+}
+
+/** The first compiled retry budget cannot widen; every repeated callback requires the same current policy. */
+function sameNativeRetrySettings(first: WorkflowNativeStagePolicy, current: WorkflowNativeStagePolicy): boolean {
+  return first.effect_class === current.effect_class &&
+    first.effect_policy_generation === current.effect_policy_generation &&
+    first.retry_limit === current.retry_limit && first.retry_delay_ms === current.retry_delay_ms;
 }
 
 /** Runs ordered checkpoint callbacks inside native Workflow steps with the existing retry and retention behavior. */
@@ -144,15 +152,25 @@ export async function executeResearchWorkflowNativeSteps(
       const nativeHandler = external ? undefined : input.native_handler(stage);
       const nativePolicy = nativeHandler === undefined ? null : await input.native_stage_policy(request, input.principal);
       const native = nativeHandler === undefined || nativePolicy === null ? null : { handler: nativeHandler, policy: nativePolicy };
+      let nativeStageAttempts = 0;
       const executeStage = async (): Promise<WorkflowStageCompletion> => {
+        nativeStageAttempts += 1;
+        let activeNative = native;
         try {
+          if (native !== null && nativeStageAttempts > 1) {
+            const currentPolicy = await input.native_stage_policy(request, input.principal);
+            if (currentPolicy === null || !sameNativeRetrySettings(native.policy, currentPolicy)) {
+              failWorkflow("WORKFLOW_AUTHORITY_STALE");
+            }
+            activeNative = { handler: native.handler, policy: currentPolicy };
+          }
           if (external && input.external_task === undefined) failWorkflow("WORKFLOW_CONFIGURATION_MISSING");
           const outcome = external && input.external_task !== undefined
             ? { kind: "W2" as const, receipt: await executeNativeExternalTaskStep({ step: input.step, request,
               principal: input.principal, ...input.external_task }) }
-            : native === null
+            : activeNative === null
             ? { kind: "W2" as const, receipt: await input.execute_checkpoint(request, input.principal) }
-            : { kind: "NATIVE" as const, receipt: await input.execute_native(request, input.principal, native.handler, native.policy) };
+            : { kind: "NATIVE" as const, receipt: await input.execute_native(request, input.principal, activeNative.handler, activeNative.policy) };
           const completion = parseWorkflowStageCompletion(outcome);
           const text = JSON.stringify(completion);
           if (new TextEncoder().encode(text).byteLength > MAX_WORKFLOW_RECEIPT_BYTES) {
@@ -166,7 +184,7 @@ export async function executeResearchWorkflowNativeSteps(
           if (failure.code === "WORKFLOW_OUTPUT_CORRUPT") {
             input.non_retryable_output_corrupt(failure.code);
           }
-          if (native !== null && !mayRetryNativeFailure(native.policy.effect_class, failure)) {
+          if (activeNative !== null && !mayRetryNativeFailure(activeNative.policy.effect_class, failure)) {
             input.non_retryable_native_failure(failure.code);
           }
           throw error;
@@ -175,7 +193,7 @@ export async function executeResearchWorkflowNativeSteps(
       const stepName = `w2-stage-${String(index).padStart(2, "0")}-${stage}`;
       input.set_step_pending(true);
       const timeout = input.stage_timeout_ms(stage);
-      const retries = native === null || native.policy.effect_class !== "PURE_COMPUTE"
+      const retries = native === null || (native.policy.effect_class !== "PURE_COMPUTE" && native.policy.effect_class !== "AUTHORIZED_READ")
         ? { limit: 0, delay: 0 }
         : { limit: native.policy.retry_limit, delay: native.policy.retry_delay_ms, backoff: "constant" as const };
       // The helper owns sibling durable steps; never place its wait inside this outer do.
