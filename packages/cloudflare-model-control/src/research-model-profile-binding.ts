@@ -524,6 +524,32 @@ function assertCurrent(binding: ModelProfileBinding, current: ModelProfileCurren
   if (Date.parse(binding.expires_at) <= now) fail("MODEL_PROFILE_BINDING_EXPIRED", "model profile definition is expired");
 }
 
+async function revalidateFrozenDefinition(
+  normalized: ModelProfileDefinition,
+  frozenValue: unknown,
+  provenanceRef: string,
+  ownerTemplate: boolean,
+): Promise<ModelProfileDefinition> {
+  const frozen = await decodeDefinition(frozenValue, provenanceRef);
+  if (frozen.schema !== DEFINITION_SCHEMA) {
+    fail("MODEL_PROFILE_BINDING_CONFIG_INVALID", "committed model profile must be a concrete definition");
+  }
+  // A later stage can revalidate the committed deadline, never renew it.
+  // The normalized definition already carries every current authority ceiling.
+  if (Date.parse(frozen.expires_at) > Date.parse(normalized.expires_at)) {
+    fail("MODEL_PROFILE_BINDING_AUTHORITY_STALE", "committed model profile exceeds current authority deadline");
+  }
+  const expected = ownerTemplate ? await createModelProfileDefinition({
+    ...normalized,
+    expires_at: frozen.expires_at,
+    policy: { ...normalized.policy, expires_at: frozen.expires_at },
+  }) : normalized;
+  if (canonicalModelGatewayJson(frozen) !== canonicalModelGatewayJson(expected)) {
+    fail("MODEL_PROFILE_BINDING_AUTHORITY_STALE", "committed model profile differs from captured configuration");
+  }
+  return frozen;
+}
+
 export function createModelProfileBindingProducer(input: ModelProfileBindingProducerInput) {
   if (typeof input.source !== "object" || input.source === null || typeof input.source.read !== "function" ||
       typeof input.source.provenance_ref !== "string" || !ID.test(input.source.provenance_ref) ||
@@ -532,7 +558,7 @@ export function createModelProfileBindingProducer(input: ModelProfileBindingProd
   }
   const now = input.now ?? (() => Date.now());
   return Object.freeze({
-    async resolve(stage: ModelProfileStageAuthority): Promise<ResolvedModelProfileBinding> {
+    async resolve(stage: ModelProfileStageAuthority, frozenDefinition?: unknown): Promise<ResolvedModelProfileBinding> {
       const nowMs = now();
       if (typeof nowMs !== "number" || !Number.isFinite(nowMs)) fail("MODEL_PROFILE_BINDING_INPUT_INVALID", "binding clock is invalid");
       const parsedStage = stageFields(stage, "stage model profile authority", "MODEL_PROFILE_BINDING_INPUT_INVALID");
@@ -550,9 +576,12 @@ export function createModelProfileBindingProducer(input: ModelProfileBindingProd
       if (input.run_configuration?.mode !== "snapshot-v2" && v2Template !== null) {
         fail("MODEL_PROFILE_BINDING_CONFIG_INVALID", "version 2 owner model profile requires a snapshot-v2 run");
       }
-      const definition = v2Template === null
+      const normalizedDefinition = v2Template === null
         ? decodedDefinition as ModelProfileDefinition
         : await normalizeOwnerProfileTemplateV2(v2Template, first, nowMs);
+      const definition = frozenDefinition === undefined ? normalizedDefinition : await revalidateFrozenDefinition(
+        normalizedDefinition, frozenDefinition, input.source.provenance_ref, v2Template !== null,
+      );
       const binding = await resolvedBinding(definition, first);
       assertCurrent(binding, first, nowMs);
       let rawDeployment: unknown | null;

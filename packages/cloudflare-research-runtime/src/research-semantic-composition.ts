@@ -228,14 +228,14 @@ export function createResearchSemanticComposition(
     navigation: input.navigation,
     resolver: evidenceResolver,
     read_predecessors: predecessorReader,
-    resolve_model_binding: async ({ protocol_scope, w1_head }) => (await modelProfile.resolve({
+    resolve_model_binding: async ({ protocol_scope, w1_head, frozen_definition }) => (await modelProfile.resolve({
       model_profile_ref: protocol_scope.protocol_profile.model_profile_ref,
       policy_generation: w1_head.policy_generation,
       policy_authority_ref: w1_head.policy_authority_ref,
       deployment_generation: w1_head.deployment_generation,
       scope_snapshot_ref: protocol_scope.scope_snapshot_ref,
       scope_snapshot_digest: input.navigation.scope.digest,
-    })).binding,
+    }, frozen_definition)).binding,
     manifest_store_factory: manifestFactory,
     manifest_residency_template: input.manifest.residency_template,
     max_context_bytes: input.manifest.max_context_bytes,

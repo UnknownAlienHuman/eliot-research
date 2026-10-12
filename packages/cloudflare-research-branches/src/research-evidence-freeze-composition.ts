@@ -174,7 +174,11 @@ export interface EvidenceFreezeCompositionDependencies {
   readonly navigation: NavigationReadAuthority;
   readonly resolver: CloudflareEvidenceResolver;
   readonly read_predecessors: (request: StageRequest, principal: WorkflowPrincipal) => Promise<EvidenceFreezePredecessorReadback>;
-  readonly resolve_model_binding: (input: { readonly protocol_scope: ProtocolScopeCheckpoint; readonly w1_head: LedgerHead }) => Promise<EvidenceFreezeModelBinding>;
+  readonly resolve_model_binding: (input: {
+    readonly protocol_scope: ProtocolScopeCheckpoint;
+    readonly w1_head: LedgerHead;
+    readonly frozen_definition?: EvidenceFreezeStageInput["model_profile_definition"];
+  }) => Promise<EvidenceFreezeModelBinding>;
   readonly manifest_store_factory: EvidenceFreezeManifestStoreFactory;
   readonly manifest_residency_template: EvidenceFreezeResidencyTemplate;
   readonly max_context_bytes: number;
@@ -199,7 +203,11 @@ export function createEvidenceFreezeComposition(dependencies: EvidenceFreezeComp
   const authority: EvidenceFreezeAuthorityPort = {
     async read(input) {
       const predecessor = await dependencies.read_predecessors(input.request, input.principal);
-      const binding = await dependencies.resolve_model_binding({ protocol_scope: predecessor.stage_zero, w1_head: predecessor.w1_head });
+      const binding = await dependencies.resolve_model_binding({
+        protocol_scope: predecessor.stage_zero,
+        w1_head: predecessor.w1_head,
+        frozen_definition: input.stage_input.model_profile_definition,
+      });
       return deriveEvidenceFreezeAuthorityBinding({
         stage_zero: predecessor.stage_zero, stage_five: predecessor.stage_five,
         branch_reconciliation: predecessor.branch_reconciliation, w1_head: predecessor.w1_head,
