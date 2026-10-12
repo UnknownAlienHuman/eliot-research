@@ -10,6 +10,13 @@ export async function playMaterialPreferences({ canvas, userEvent }: Parameters<
   const summary = preferences?.querySelector<HTMLElement>('summary');
   if (!shell || !preferences || !summary || preferences.open) throw new Error('Preferences must start collapsed beside the workspace brand');
   await userEvent.click(summary);
+  const appearance = await canvas.findByRole('combobox', { name: 'Appearance', exact: true });
+  const bounds = appearance.getBoundingClientRect();
+  const sampleY = bounds.top + Math.min(8, bounds.height / 4);
+  for (const sampleX of [bounds.left + bounds.width / 2, bounds.right - Math.min(8, bounds.width / 4)]) {
+    const hit = document.elementFromPoint(sampleX, sampleY);
+    if (!hit || !preferences.contains(hit)) throw new Error('Preferences were visually occluded by workspace actions');
+  }
   await userEvent.selectOptions(await canvas.findByRole('combobox', { name: 'Language', exact: true }), 'ru');
   await userEvent.selectOptions(await canvas.findByRole('combobox', { name: 'Оформление', exact: true }), 'dark');
   await userEvent.keyboard('{Escape}');
@@ -48,7 +55,7 @@ export async function playMaterialReading({ canvas, userEvent }: Parameters<type
   if (document.activeElement !== recent) throw new Error('Report close did not return to recent research');
   await userEvent.click(canvas.getByRole('link', { name: 'Studio', exact: true }));
   await userEvent.click(await canvas.findByRole('button', { name: 'Open saved report', exact: true }));
-  await userEvent.click(await canvas.findByRole('button', { name: 'Close report' }));
+  await userEvent.click(await canvas.findByRole('button', { name: 'Close report', exact: true }));
   const reports = await canvas.findByRole('heading', { name: 'Saved reports', exact: true });
   if (document.activeElement !== reports) throw new Error('Studio report close did not return to its library');
 }
