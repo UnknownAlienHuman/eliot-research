@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { parseDeploymentJsonc } from "./lib/deployment-jsonc.mjs";
 import { createHash } from "node:crypto";
 import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,7 +17,7 @@ import {
 } from "./lib/deployment-schema-attestation.mjs";
 import { pinGeneratedDeploymentConfig } from "./lib/deployment-build-inputs.mjs";
 
-const CORE_ASSETS = JSON.parse(await readFile(new URL("../apps/eliotr-core/wrangler.jsonc", import.meta.url), "utf8")).assets;
+const CORE_ASSETS = parseDeploymentJsonc(await readFile(new URL("../apps/eliotr-core/wrangler.jsonc", import.meta.url), "utf8"), "canonical Worker configuration").assets;
 
 const digest = (value) => createHash("sha256").update(value).digest("hex");
 const jsonDigest = (value) => digest(Buffer.from(JSON.stringify(value), "utf8"));

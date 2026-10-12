@@ -9,8 +9,7 @@
 // Model dispatch remains NOT_EXECUTED in this local test mode after
 // proving the fail-closed path; model output is never invented).
 //
-// Execution (plain node; the module self-registers a resolver for the
-// compiled packages' own bare @eliotr/* imports):
+// Execution (plain node; uses the shared compiled workspace module loader):
 //   npx tsc -b packages/cloudflare-navigation packages/cloudflare-ai \
 //     packages/platform-cloudflare apps/eliotr-core
 //   node tests/integration/browser/s92-delegation.mjs
@@ -22,11 +21,12 @@
 // 0072/0075/0081/0082 DDL (in-memory SQLite; the only seam).
 /* global Request: readonly, URL: readonly, process: readonly, console: readonly */
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { parseDeploymentJsonc } from "../../../scripts/lib/deployment-jsonc.mjs";
+import { loadCompiledWorkspaceModule } from "../../../scripts/lib/compiled-workspace-module.mjs";
+import { existsSync, statSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { register } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -36,22 +36,10 @@ const NAV_DIST = resolve(ROOT, "packages/cloudflare-navigation/dist/index.js");
 const AI_DIST = resolve(ROOT, "packages/cloudflare-ai/dist/index.js");
 const PLATFORM_DIST = resolve(ROOT, "packages/platform-cloudflare/dist/index.js");
 const BINDING_DIST = resolve(ROOT, "packages/cloudflare-research/dist/research-model-gateway-binding.js");
-const ATTACH_DIST = resolve(ROOT, "apps/eliotr-core/dist/project-client-attachment.js");
-// The hook resolves the dist files' own bare @eliotr/* imports: the packages'
-// exports maps point at .ts sources whose .js-suffixed relative imports plain
-// node cannot follow, so without this mapping the real dist files do not load.
-const DIST_MAP = {};
-for (const pkg of readdirSync(resolve(ROOT, "packages"))) {
-  const index = resolve(ROOT, "packages", pkg, "dist", "index.js");
-  if (existsSync(index)) DIST_MAP[`@eliotr/${pkg}`] = index;
+const ATTACH_DIST = resolve(ROOT, "packages/cloudflare-navigation/dist/project-client-attachment.js");
+function loadDist(path) {
+  return loadCompiledWorkspaceModule(relative(ROOT, path).replaceAll("\\", "/"));
 }
-register(
-  `data:text/javascript,${encodeURIComponent(
-    `import { pathToFileURL } from "node:url"; export async function resolve(specifier, context, next) { const map = ${JSON.stringify(DIST_MAP)}; ` +
-      `if (Object.hasOwn(map, specifier)) return { url: pathToFileURL(map[specifier]).href, shortCircuit: true }; ` +
-      `return next(specifier, context); }`,
-  )}`,
-);
 
 function assertDistCurrent(distFile, srcFile) { // refuse stale dist
   assert.ok(
@@ -76,7 +64,7 @@ function checkDist() {
     [AI_DIST, resolve(ROOT, "packages/cloudflare-ai/src/index.ts")],
     [PLATFORM_DIST, resolve(ROOT, "packages/platform-cloudflare/src/index.ts")],
     [BINDING_DIST, resolve(ROOT, "packages/cloudflare-research/src/research-model-gateway-binding.ts")],
-    [ATTACH_DIST, resolve(ROOT, "apps/eliotr-core/src/project-client-attachment.ts")],
+    [ATTACH_DIST, resolve(ROOT, "packages/cloudflare-navigation/src/project-client-attachment.ts")],
   ]) {
     const blocked = distBlocked("dist prerequisite", dist);
     if (blocked) return blocked;
@@ -252,7 +240,7 @@ async function expectGrantFailure(ClientGrantError, label, action, expectedCode)
 async function verifyGrantIssuanceOwnerOnly() {
   const blocked = checkDist();
   if (blocked) return blocked;
-  const { ClientGrantError, createProjectClientGrantService } = await import(pathToFileURL(NAV_DIST).href);
+  const { ClientGrantError, createProjectClientGrantService } = await loadDist(NAV_DIST);
   const { database: machineDb, touches: machineTouches } = untouchedDatabase();
   const machineService = createProjectClientGrantService({ database: machineDb, trusted_issuers: [ISSUER] });
   await expectGrantFailure(
@@ -295,7 +283,7 @@ async function verifyGrantPositivePath() {
   const blocked = checkDist();
   if (blocked) return blocked;
   const { ClientGrantError, createProjectClientGrantService, authorizeProjectClientGrant, readClientGrant } =
-    await import(pathToFileURL(NAV_DIST).href);
+    await loadDist(NAV_DIST);
   const { d1 } = await createDelegationTestDb();
   const service = createProjectClientGrantService({ database: d1, trusted_issuers: [ISSUER] });
 
@@ -407,10 +395,9 @@ async function verifyNormalizedIngestGuards() {
 async function verifyDelegationReceiptDigestBinding() {
   const blocked = checkDist();
   if (blocked) return blocked;
-  const { prepareProjectAttachment } = await import(pathToFileURL(ATTACH_DIST).href);
-  const { canonicalJson, sha256Utf8 } = await import(pathToFileURL(PLATFORM_DIST).href);
-  const { ProjectClientGrantSchema } = await import(
-    pathToFileURL(resolve(ROOT, "packages/contracts/dist/index.js")).href);
+  const { prepareProjectAttachment } = await loadDist(ATTACH_DIST);
+  const { canonicalJson, sha256Utf8 } = await loadDist(PLATFORM_DIST);
+  const { ProjectClientGrantSchema } = await loadDist(resolve(ROOT, "packages/contracts/dist/index.js"));
   const { db, d1 } = await createDelegationTestDb();
   const nowIso = new Date().toISOString();
   const attachGrant = ProjectClientGrantSchema.parse({
@@ -474,10 +461,10 @@ async function verifyDelegationReceiptDigestBinding() {
 async function verifyModelDispatchFailClosed() {
   const blocked = checkDist();
   if (blocked) return blocked;
-  const { ModelGatewayExecutionError, resolveModelGatewayReasoningEndpoint } = await import(pathToFileURL(AI_DIST).href);
-  const { createResearchModelGatewayBindingFetch } = await import(pathToFileURL(BINDING_DIST).href);
+  const { ModelGatewayExecutionError, resolveModelGatewayReasoningEndpoint } = await loadDist(AI_DIST);
+  const { createResearchModelGatewayBindingFetch } = await loadDist(BINDING_DIST);
   const { localConfig } = await import("../../../scripts/lib/local-launch.mjs");
-  const canonical = JSON.parse(await readFile(resolve(ROOT, "apps/eliotr-core/wrangler.jsonc"), "utf8"));
+  const canonical = parseDeploymentJsonc(await readFile(resolve(ROOT, "apps/eliotr-core/wrangler.jsonc"), "utf8"), "canonical Worker configuration");
   const profile = localConfig(canonical, join(tmpdir(), "s92-delegation-fakeroot"));
   const localDisabled = "https://example.invalid/local-disabled";
   assert.equal(profile.vars.AI_GATEWAY_REASONING_URL, localDisabled,
