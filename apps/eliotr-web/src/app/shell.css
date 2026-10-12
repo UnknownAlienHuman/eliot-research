@@ -8,7 +8,7 @@ html, body, #root { margin: 0; min-height: 100%; }
 .er-shell h1, .er-shell h2, .er-shell p { margin: 0; }
 .er-shell a { color: inherit; }
 .er-shell :focus-visible, .er-access :focus-visible { outline: var(--eliot-focus-width) solid var(--md-sys-color-primary); outline-offset: var(--eliot-focus-offset); }
-.er-shell-header { grid-area: header; display: flex; align-items: center; gap: var(--eliot-space-panel); min-width: 0; padding-inline: var(--eliot-space-panel) var(--eliot-space-block-control); }
+.er-shell-header { grid-area: header; position: relative; z-index: 1; display: flex; align-items: center; gap: var(--eliot-space-panel); min-width: 0; padding-inline: var(--eliot-space-panel) var(--eliot-space-block-control); }
 .er-shell-brand { display: inline-flex; align-items: center; gap: var(--eliot-space-block-control); text-decoration: none; font-size: var(--eliot-type-title-medium-size); line-height: var(--eliot-type-title-medium-line-height); font-weight: var(--eliot-type-font-weight-medium); flex-shrink: 0; }
 .er-shell-brand > .er-symbol { color: var(--md-sys-color-primary); }
 .er-shell-preview { flex: 1; color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-body-small-size); }
