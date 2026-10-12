@@ -7,9 +7,12 @@ import { setTimeout as delay } from "node:timers/promises";
 import { chromium } from "playwright-core";
 import { admitStartupObservation } from "./emitted-route-membership.mjs";
 import { scrubTokenEnv } from "./cloudflare-wrangler-oauth.mjs";
+import { createPreparedCoreStartupRuntime, readPreparedCoreRuntimeProof } from "./deployment-owner-web-prepared-core.mjs";
 
 const PROFILE = "LOCAL_PREPARED_CLIENT_CURRENT_LIVE_BACKEND_READONLY";
 const SCOPE = "Prepared client bytes with the current live backend, read-only; does not qualify prepared Core, deployment or live cutover";
+const LOCAL_PROFILE = "LOCAL_PREPARED_CLIENT_CORE_SIGNED_JWT_EMPTY_D1_READONLY";
+const LOCAL_SCOPE = "Prepared client and Core with empty migrated local D1/R2 and signed JWT; does not qualify production, providers or live cutover";
 const CLIENT = "apps/eliotr-web/dist/client";
 const MAX_BODY = 16 * 1024 * 1024;
 const MAX_REQUESTS = 512;
@@ -192,7 +195,7 @@ function browserEnvironment(environment) {
 }
 
 async function observeEntry({ browser, entry, origin, files, sourceCommit, buildSha256,
-  artifactReadbackSha256, signal, remaining, bounded, errors }) {
+  artifactReadbackSha256, signal, remaining, bounded, errors, profile, scope }) {
   const context = await bounded(browser.newContext({ serviceWorkers: "block", acceptDownloads: false }));
   const rows = new Map(), pending = new Set(), api = new Map();
   let sequence = 0, lastActivity = Date.now(), collecting = true, pageErrors = 0, consoleErrors = 0;
@@ -229,7 +232,7 @@ async function observeEntry({ browser, entry, origin, files, sourceCommit, build
           artifact_matches: bytes.equals(pinned) });
         if (!row.artifact_matches || row.status !== 200) fail("static response bytes differ");
       } else {
-        row.response_role = "CURRENT_LIVE_BACKEND_READONLY_PROXY";
+        row.response_role = profile === LOCAL_PROFILE ? "LOCAL_PREPARED_CORE_READONLY_PROXY" : "CURRENT_LIVE_BACKEND_READONLY_PROXY";
         if (row.status !== 200 || !/^application\/json(?:;|$)/iu.test(response.headers()["content-type"] ?? "")) {
           fail("startup API did not return actual JSON 200");
         }
@@ -312,7 +315,7 @@ async function observeEntry({ browser, entry, origin, files, sourceCommit, build
     collecting = false;
     return { protocol: "eliotr.actual-owner-startup-observation.v1", status: "BOUNDED_ACTUAL_RESEARCH_STARTUP_OBSERVED",
       source_commit: sourceCommit, build_sha256: buildSha256, artifact_readback_sha256: artifactReadbackSha256,
-      route: entry.route, profile: PROFILE, boundary: entry.boundary, scope: SCOPE, origin,
+      route: entry.route, profile, boundary: entry.boundary, scope, origin,
       started_at: new Date(start).toISOString(), finished_at: new Date().toISOString(), boundary_epoch_ms: boundary,
       requests_at_boundary: records, requests: records.map(row => ({ ...row })), observer_errors: [],
       browser_errors: { page_error_count: pageErrors, console_error_count: consoleErrors },
@@ -328,20 +331,36 @@ export async function readOwnerWebStartup({ root, sourceCommit, buildSha256, art
   await snapshot(root, artifacts);
   if (!Array.isArray(evidence) || evidence.length !== ROUTES.length) fail("both entry observations are required");
   const result = new Map();
+  const profile = evidence[0]?.profile;
+  if (![PROFILE, LOCAL_PROFILE].includes(profile) || evidence.some(record => record.profile !== profile)) fail("unknown or mixed startup profile");
+  const scope = profile === LOCAL_PROFILE ? LOCAL_SCOPE : SCOPE;
+  if (profile === LOCAL_PROFILE) {
+    const a = evidence[0].native_runtime, b = evidence[1].native_runtime;
+    if (!a || !b || ["path", "byte_length", "sha256"].some(key => a[key] !== b[key])) {
+      fail("entry observations must share the same native Core proof");
+    }
+  }
   for (const record of evidence) {
     const entry = ROUTES.find(item => item.route === record.route && item.htmlPath === record.htmlPath);
-    if (!entry || record.profile !== PROFILE || record.boundary !== entry.boundary || result.has(entry.htmlPath) ||
+    if (!entry || record.boundary !== entry.boundary || result.has(entry.htmlPath) ||
         !relativePath(record.path) || !/^\.eliotr-state\/owner-web-startup-[a-f0-9-]{36}\/(?:root|agent-inbox)\.json$/u.test(record.path) ||
         !Number.isSafeInteger(record.byte_length) || record.byte_length < 1 || record.byte_length > 4 * 1024 * 1024 ||
         !/^[a-f0-9]{64}$/u.test(record.sha256 ?? "")) fail("invalid pinned observation descriptor");
     const filename = path.resolve(root, record.path);
     if (await realpath(filename) !== filename || (await lstat(filename)).size !== record.byte_length) fail("observation path or length differs");
     const bytes = await readFile(filename);
-    if (bytes.length !== record.byte_length || hash(bytes) !== record.sha256 || JSON.parse(bytes.toString("utf8")).scope !== SCOPE) {
+    if (bytes.length !== record.byte_length || hash(bytes) !== record.sha256 || JSON.parse(bytes.toString("utf8")).scope !== scope) {
       fail("observation bytes or scope differ");
     }
+    if (profile === LOCAL_PROFILE) {
+      if (record.native_runtime?.path !== record.path.slice(0, record.path.lastIndexOf("/")) + "/native-core.json") {
+        fail("native Core proof must belong to the observation directory");
+      }
+      await readPreparedCoreRuntimeProof(root, record.native_runtime, sourceCommit);
+    }
+    else if (record.native_runtime !== undefined) fail("live proxy may not claim native Core evidence");
     result.set(entry.htmlPath, admitStartupObservation(bytes, { sourceCommit, buildSha256, artifactReadbackSha256,
-      observationSha256: record.sha256, route: entry.route, htmlPath: entry.htmlPath, profile: PROFILE, boundary: entry.boundary, artifacts }));
+      observationSha256: record.sha256, route: entry.route, htmlPath: entry.htmlPath, profile, boundary: entry.boundary, artifacts }));
   }
   return result;
 }
@@ -349,8 +368,11 @@ export async function readOwnerWebStartup({ root, sourceCommit, buildSha256, art
 /** Root invokes once after the combined build; this function performs no build or Git operation. */
 export async function observeOwnerWebStartup({ root, environment, sourceCommit, buildSha256, artifacts, artifactReadbackSha256 }) {
   root = path.resolve(root); bindings({ sourceCommit, buildSha256, artifactReadbackSha256, artifacts });
-  const upstream = protectedOrigin(environment), deadline = Date.now() + 60_000;
-  const abort = new globalThis.AbortController(), children = new Set(); let browser, active, origin, server;
+  const selected = environment.ELIOTR_OWNER_WEB_STARTUP_PROFILE ?? "current-live-readonly";
+  if (!["current-live-readonly", "prepared-core-local"].includes(selected)) fail("unknown startup profile selection");
+  const local = selected === "prepared-core-local", profile = local ? LOCAL_PROFILE : PROFILE, scope = local ? LOCAL_SCOPE : SCOPE;
+  const upstream = local ? undefined : protectedOrigin(environment), deadline = Date.now() + 60_000;
+  const abort = new globalThis.AbortController(), children = new Set(); let browser, active, origin, server, nativeStartup;
   const remaining = () => { const left = deadline - Date.now(); if (left <= 0 || abort.signal.aborted) fail("60 second deadline exceeded"); return left; };
   const timer = setTimeout(() => abort.abort(), 60_000);
   const bounded = promise => new Promise((resolve, reject) => {
@@ -362,7 +384,15 @@ export async function observeOwnerWebStartup({ root, environment, sourceCommit, 
   try {
     const files = await bounded(snapshot(root, artifacts)), headers = parseHeaders(files.get("_headers"));
     if (ROUTES.some(entry => !headers(entry.route)["content-security-policy"])) fail("prepared CSP is missing");
-    const get = diagnosticGet({ origin: upstream, environment, signal: abort.signal, remaining, children });
+    if (local) {
+      const launch = createPreparedCoreStartupRuntime({ root, sourceCommit, signal: abort.signal, remaining }).then(async value => {
+        nativeStartup = value;
+        if (abort.signal.aborted) { await cleanupWithin(() => value.dispose(), "late prepared Core"); fail("prepared Core startup exceeded deadline"); }
+        return value;
+      });
+      await bounded(launch);
+    }
+    const get = local ? nativeStartup.get : diagnosticGet({ origin: upstream, environment, signal: abort.signal, remaining, children });
     server = createServer((request, response) => {
       void (async () => {
         const current = active;
@@ -404,28 +434,37 @@ export async function observeOwnerWebStartup({ root, environment, sourceCommit, 
     for (const entry of ROUTES) {
       active = { entry, errors: [], requestCount: 0 };
       observations.push(await bounded(observeEntry({ browser, entry, origin, files, sourceCommit, buildSha256,
-        artifactReadbackSha256, signal: abort.signal, remaining, bounded, errors: active.errors })));
+        artifactReadbackSha256, signal: abort.signal, remaining, bounded, errors: active.errors, profile, scope })));
       active = undefined;
     }
     const reread = await bounded(snapshot(root, artifacts));
     if (reread.size !== files.size || [...files].some(([name, bytes]) => !reread.get(name)?.equals(bytes))) fail("static inventory changed during observation");
     const folder = ".eliotr-state/owner-web-startup-" + randomUUID(), evidence = [];
     await bounded(mkdir(path.resolve(root, folder), { recursive: false }));
+    let nativeEvidence;
+    if (local) {
+      const nativeProof = await bounded(nativeStartup.evidence()), filename = folder + "/native-core.json";
+      const bytes = Buffer.from(JSON.stringify(nativeProof, null, 2) + "\n");
+      await bounded(writeFile(path.resolve(root, filename), bytes, { flag: "wx" }));
+      nativeEvidence = { path: filename, byte_length: bytes.length, sha256: hash(bytes) };
+    }
     for (const observation of observations) {
       const entry = ROUTES.find(item => item.route === observation.route);
       const filename = folder + "/" + (entry.route === "/" ? "root" : "agent-inbox") + ".json";
       const bytes = Buffer.from(JSON.stringify(observation, null, 2) + "\n");
       await bounded(writeFile(path.resolve(root, filename), bytes, { flag: "wx" }));
       evidence.push({ path: filename, byte_length: bytes.length, sha256: hash(bytes), route: entry.route,
-        htmlPath: entry.htmlPath, profile: PROFILE, boundary: entry.boundary });
+        htmlPath: entry.htmlPath, profile, boundary: entry.boundary,
+        ...(nativeEvidence ? { native_runtime: nativeEvidence } : {}) });
     }
     const startupObservations = await bounded(readOwnerWebStartup({ root, sourceCommit, buildSha256, artifacts, artifactReadbackSha256, evidence }));
-    return { startupObservations, evidence, scope: SCOPE };
+    return { startupObservations, evidence, scope };
   } finally {
     const pendingChildren = [...children];
     clearTimeout(timer); abort.abort(); active = undefined;
     // Stop the live proxy independently of browser/context close success.
     const cleanup = [];
+    if (nativeStartup) cleanup.push(cleanupWithin(() => nativeStartup.dispose(), "prepared Core"));
     if (server) {
       server.closeAllConnections();
       cleanup.push(cleanupWithin(() => new Promise((resolve, reject) => server.close(error => {
