@@ -27,9 +27,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  frontend-owner:
+  frontend-owner-provenance:
+    name: Frontend owner provenance
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -40,6 +41,19 @@ jobs:
           node-version: 22.13.0
       - name: Frontend owner checkpoint mechanics
         run: node scripts/check-frontend-owner-checkpoints.mjs --history-base c37e56e0ebdfc7f6d294879008a4036d1b95b985 --head "$GITHUB_SHA"
+
+  frontend-owner:
+    name: Frontend owner product
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.13.0
       - name: Install current package-manager signing keys
         run: npm install --global corepack@0.34.7
       - run: corepack enable
@@ -50,12 +64,21 @@ jobs:
         run: pnpm exec tsc -b apps/eliotr-web/tsconfig.json --pretty false
       - name: Lint owner frontend
         run: pnpm exec eslint apps/eliotr-web/src packages/owner-api-client/src packages/ui/src
-      - name: Research admission authority
-        run: pnpm exec vitest run --config vitest.config.ts packages/owner-api-client/src/research/runs/authority.test.ts --reporter=verbose
+      - name: Research client regressions
+        run: >-
+          pnpm exec vitest run --config vitest.config.ts
+          apps/eliotr-web/src/query/research.test.ts
+          packages/owner-api-client/src/research/runs/authority.test.ts
+          --reporter=verbose
       - name: Install UI browser
         run: pnpm --dir packages/ui exec playwright install --with-deps chromium
       - name: Focused Storybook integration
-        run: pnpm --dir packages/ui exec vitest run --config .storybook/vitest.config.ts --reporter=verbose --testNamePattern 'Operation Announcement|Readiness And Versions Failed|Sources Readiness Announcement|Sources Versions Announcement|Sources Announcement Privacy|Studio Operation Announcements|Research Operation Announcements|Connections Operation Announcements|Cross Page Selection Recovery|Replaced Selected Page Refused|Sections Unsupported|Optional Failure Facts|Targeted Retry Hierarchy|Readiness Renewal Is Not Blocked|Readiness Blocked|Google Transport Is Routing Only|Diagnostic Issued|Diagnostic Expired|Details Journey|Evidence Operation Announcements|Erasure Operation Announcements|Report Static Facts Quiet|Nested Import Operation|Nested Erasure Operation|Nested Bundle Operation|Nested Artifact Operation|Nested Evidence Operation'
+        run: >-
+          pnpm --dir packages/ui exec vitest run
+          --config .storybook/vitest.config.ts
+          --reporter=verbose
+          --testNamePattern
+          'Operation Announcement|Readiness And Versions Failed|Sources Readiness Announcement|Sources Versions Announcement|Sources Announcement Privacy|Studio Operation Announcements|Research Operation Announcements|Connections Operation Announcements|Cross Page Selection Recovery|Replaced Selected Page Refused|Sections Unsupported|Optional Failure Facts|Targeted Retry Hierarchy|Readiness Renewal Is Not Blocked|Readiness Blocked|Google Transport Is Routing Only|Diagnostic Issued|Diagnostic Expired|Details Journey|Evidence Operation Announcements|Erasure Operation Announcements|Report Static Facts Quiet|Nested Import Operation|Nested Erasure Operation|Nested Bundle Operation|Nested Artifact Operation|Nested Evidence Operation|Live Research Journey|History Completed Research Return|History Cancelled Research Return|Material Preferences Journey|Material Reading Journey|Strict Mode Journey|Live Failed Required Section No Export|Live Capability Connection Truth|Studio Degraded'
       - name: Owner web production build
         run: pnpm --dir apps/eliotr-web exec vite build --manifest
       - name: Upload owner web static build
