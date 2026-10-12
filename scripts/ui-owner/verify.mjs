@@ -78,7 +78,7 @@ export function rejectBaselineAcceptance(options) {
 /** Only known switches are allowed; a misspelled safety flag cannot be ignored. */
 export function parseOptions(args) {
   const options = {};
-  const allowed = new Set(["base-url", "scenario", "story", "output", "baseline", "browser"]);
+  const allowed = new Set(["base-url", "scenario", "story", "output", "baseline", "browser", "browser-version"]);
   for (let index = 0; index < args.length; index += 2) {
     const name = args[index];
     if (name?.includes("accept") || name?.includes("update-snapshot")) throw new Error("Baseline auto-acceptance is forbidden");
@@ -89,6 +89,12 @@ export function parseOptions(args) {
     options[name.slice(2)] = args[index + 1];
   }
   return options;
+}
+
+function requireBrowserVersion(options) {
+  const version = options["browser-version"] ?? "155.0.8059.40";
+  if (!/^\d+\.\d+\.\d+\.\d+$/u.test(version)) throw new TypeError(`Invalid browser version pin: ${version}`);
+  return version;
 }
 
 async function sourceInputs() {
@@ -153,7 +159,7 @@ async function runBrowser(command, options) {
   const browser = await chromium.launch({ executablePath: options.browser ?? "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: true });
   const inputs = await sourceInputs();
   const results = [];
-  const expectedBrowser = "155.0.8059.40";
+  const expectedBrowser = requireBrowserVersion(options);
   try {
     if (browser.version() !== expectedBrowser) throw new Error(`Browser version drift: ${browser.version()} expected ${expectedBrowser}`);
     for (const width of [1440, 1024, 768, 390, 320]) {
@@ -192,7 +198,7 @@ async function runBrowser(command, options) {
       }
     }
     const after = await sourceInputs();
-    const receipt = { protocol: "eliotr.ui-browser-review.v1", command, scenario, source_commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim(), inputs, inputs_stable: JSON.stringify(inputs) === JSON.stringify(after), browser: browser.version(), playwright: "1.63.0", storybook: "10.6.1", os: [os.platform(), os.release()], results, baseline: "PENDING_NAMED_REVIEW", csp: "Storybook development only; isolated native CSP receipt separate", pending: ["native screenreader", "actual native200percent zoom", "full product CSP and performance", "native/staging/live/release"] };
+    const receipt = { protocol: "eliotr.ui-browser-review.v1", command, scenario, source_commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim(), inputs, inputs_stable: JSON.stringify(inputs) === JSON.stringify(after), browser: browser.version(), expected_browser: expectedBrowser, playwright: "1.63.0", storybook: "10.6.1", os: [os.platform(), os.release()], results, baseline: "PENDING_NAMED_REVIEW", csp: "Storybook development only; isolated native CSP receipt separate", pending: ["native screenreader", "actual native200percent zoom", "full product CSP and performance", "native/staging/live/release"] };
     if (options.baseline) {
       const baseline = JSON.parse(await readFile(resolve(ROOT, options.baseline), "utf8"));
       if (baseline.browser !== receipt.browser || baseline.scenario !== scenario) throw new Error("Baseline environment/scenario mismatch");
@@ -235,9 +241,10 @@ async function runCsp(options) {
   const { chromium } = await import("playwright-core");
   let browser;
   const results = [];
+  const expectedBrowser = requireBrowserVersion(options);
   try {
     browser = await chromium.launch({ executablePath: options.browser ?? "C:/Program Files/Google/Chrome/Application/chrome.exe", headless: true });
-    if (browser.version() !== "155.0.8059.40") throw new Error("Pinned CSP browser changed");
+    if (browser.version() !== expectedBrowser) throw new Error(`Pinned CSP browser changed: ${browser.version()} expected ${expectedBrowser}`);
     for (const scheme of ["light", "dark"]) {
       const page = await browser.newPage({ viewport: { width: 390, height: 844 }, colorScheme: scheme, reducedMotion: "reduce" });
       const errors = [], network = [];
@@ -267,7 +274,7 @@ async function runCsp(options) {
       results.push({ scheme, errors: positiveErrors, violations, overflow, network, focus: "PASS physical Escape/Back/unmount/StrictMode remount", csp_negative: "BLOCKED_AND_DETECTED", screenshot, screenshot_sha256: sha256(await readFile(resolve(output, screenshot))) });
       await page.close();
     }
-    await writeFile(resolve(output, "review.json"), JSON.stringify({ protocol: "eliotr.ui-csp-review.v1", source_commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim(), scope: "Isolated native-control production bundle; full product pending", policy, browser: browser.version(), known_build_warning: "@theme is ignored in this non-Tailwind isolation; full application uses the pinned Tailwind plugin", results }, null, 2) + "\n");
+    await writeFile(resolve(output, "review.json"), JSON.stringify({ protocol: "eliotr.ui-csp-review.v1", source_commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim(), scope: "Isolated native-control production bundle; full product pending", policy, browser: browser.version(), expected_browser: expectedBrowser, known_build_warning: "@theme is ignored in this non-Tailwind isolation; full application uses the pinned Tailwind plugin", results }, null, 2) + "\n");
     if (results.some(row => row.errors.length || row.violations.length || row.overflow || row.network.length)) throw new Error("Native CSP qualification failed; inspect private review.json");
     return { cases: results.length, csp_negative: "BLOCKED_AND_DETECTED", receipt: ".eliotr-state/ui-owner/native-csp/review.json" };
   } finally { if (browser) await browser.close(); await new Promise(done => server.close(done)); }
@@ -298,7 +305,7 @@ async function main(args) {
     const names = stories.map(story => requireKnownStory(story, catalog, index).name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&") + "$" ).join("|");
     return execFileSync(process.execPath, [resolve(dirname(uiRequire.resolve("vitest/package.json")), "vitest.mjs"), "run", "--config", ".storybook/vitest.config.ts", "--testNamePattern", names, ...paths], { cwd: resolve(ROOT, "packages/ui"), encoding: "utf8" });
   }
-  throw new Error("Usage: node scripts/ui-owner/verify.mjs design|props|history|stories|browser|a11y|visual|receipt|csp [--base-url URL --scenario ID --story ID --output PRIVATE_PATH --baseline REVIEWED_RECEIPT --browser PINNED_EXECUTABLE]");
+  throw new Error("Usage: node scripts/ui-owner/verify.mjs design|props|history|stories|browser|a11y|visual|receipt|csp [--base-url URL --scenario ID --story ID --output PRIVATE_PATH --baseline REVIEWED_RECEIPT --browser PINNED_EXECUTABLE --browser-version EXACT_VERSION]");
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
