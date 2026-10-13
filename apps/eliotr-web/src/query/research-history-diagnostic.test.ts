@@ -18,7 +18,7 @@ describe("Recent history diagnostics", () => {
       isCurrent: () => true,
     } as unknown as PrivacyController;
     const failure = Object.assign(new Error("private response body"), {
-      code: "API_RESPONSE_INVALID",
+      code: "RESEARCH_RUN_RESPONSE_INVALID",
       status: 502,
       traceId: "private-trace",
     });
@@ -39,7 +39,7 @@ describe("Recent history diagnostics", () => {
     expect(observer.mock.calls[0]?.[0]).toEqual({
       protocol: "eliotr.research-history-read-diagnostic.v1",
       outcome: "api_rejected",
-      typedCode: "API",
+      typedCode: "RESEARCH_RUN_RESPONSE_INVALID",
       status: "HTTP_5XX",
       privacyPhase: "available",
       privacyRevision: 11,

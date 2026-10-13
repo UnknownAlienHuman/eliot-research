@@ -12,6 +12,12 @@ export type ResearchHistoryDiagnosticCode =
   | "PROTECTED_READ_CLOSED"
   | "API_SESSION_CLOSED"
   | "API_GENERATION_MISMATCH"
+  | "API_RESPONSE_SCHEMA_MISMATCH"
+  | "API_RESPONSE_TOO_LARGE"
+  | "API_REQUEST_ABORTED"
+  | "API_BODY_INTERRUPTED"
+  | "RESEARCH_RUN_RESPONSE_INVALID"
+  | "RESEARCH_RUN_DEPLOYMENT_CHANGED"
   | "API"
   | "RUNTIME"
   | "RESEARCH"
@@ -65,6 +71,9 @@ function diagnosticCode(error: unknown): ResearchHistoryDiagnosticCode {
   if (typeof code !== "string" || code.length === 0) return "UNTYPED";
   if (code === "API_SESSION_CLOSED") return "API_SESSION_CLOSED";
   if (code === "API_GENERATION_MISMATCH") return "API_GENERATION_MISMATCH";
+  if (code === "API_RESPONSE_SCHEMA_MISMATCH" || code === "API_RESPONSE_TOO_LARGE" ||
+      code === "API_REQUEST_ABORTED" || code === "API_BODY_INTERRUPTED" ||
+      code === "RESEARCH_RUN_RESPONSE_INVALID" || code === "RESEARCH_RUN_DEPLOYMENT_CHANGED") return code;
   if (code.startsWith("API_")) return "API";
   if (code.startsWith("RUNTIME_")) return "RUNTIME";
   if (code.startsWith("RESEARCH_")) return "RESEARCH";
@@ -120,7 +129,8 @@ function notifySafely(observer: ResearchHistoryReadDiagnosticObserver, event: Re
 
 /** Wraps the actual protected history read while preserving its value and exact rejection. */
 export async function readResearchRunHistoryWithDiagnostic<T>(input: ReadInput<T>): Promise<T> {
-  if (!input.observer) {
+  const observer = input.observer;
+  if (!observer) {
     return runProtectedRead(input.privacy, input.context, input.signal, input.read);
   }
 
@@ -130,7 +140,7 @@ export async function readResearchRunHistoryWithDiagnostic<T>(input: ReadInput<T
     const privacy = safePrivacyState(input.privacy, input.context);
     let signalAborted = false;
     try { signalAborted = input.signal.aborted === true; } catch { /* Keep diagnostics fail-soft. */ }
-    notifySafely(input.observer!, {
+    notifySafely(observer, {
       protocol: "eliotr.research-history-read-diagnostic.v1",
       outcome,
       typedCode: outcome === "resolved" ? "NONE" : diagnosticCode(error),

@@ -5,8 +5,10 @@
   "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
   "base_sha": "d777438880b9de7793225603c8ea4dcbcf8454a7",
   "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
-  "state": "ACTIVE",
-  "evidence_refs": [],
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "private:Recent diagnostic observer integration newnegative1/webTS6/exactlint PASS; finite known error codes, stable observer capture; livecause pending"
+  ],
   "blocker_refs": [],
   "checkpoint_id": "U4-R",
   "claim_id": "u4-r-recent-observer-integration-repair-20261013",
@@ -27,5 +29,7 @@
       "commit_sha": "273577c9ae45a1bf94ebcb5be77906c1f15ded92",
       "approval_ref": "tests/ui-owner/receipts/u2-x/u2-r.json"
     }
-  ]
+  ],
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "private:diagnostic-HANDOFF.json root-integration-repair"
 }
