@@ -110,6 +110,7 @@ const revisions: SourceRevisionPage = {
     { source_revision_ref: "rev-0002-bbbb", content_sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", captured_at: "2026-10-08T00:00:00.000Z", admitted_at: "2026-10-08T01:00:00.000Z", quality_state: "standard", currentness_state: "current_confirmed", readiness: [] },
     { source_revision_ref: "rev-0001-aaaa", content_sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", captured_at: "2026-10-07T00:00:00.000Z", admitted_at: "2026-10-07T01:00:00.000Z", quality_state: "high_fidelity", currentness_state: "observed_with_age", readiness: [] },
   ],
+  next_cursor: "older-revisions-cursor",
   generation: "gen-1",
   trace: "trace-1",
 };
@@ -199,12 +200,18 @@ export const LongRussian: StoryObj<typeof ProjectsLibraryFeature> = {
 };
 
 export const InteractionJourney: StoryObj<typeof ProjectsLibraryFeature> = {
-  args: base({ onReadRevision: recordAction() }),
+  args: base({
+    onReadRevision: recordAction(),
+    onPreviousRevisionPage: recordAction(),
+    onNextRevisionPage: recordAction(),
+  }),
   play: ({ canvasElement, args }) => {
     const opened = resetAction(args.onOpenSource);
     const selected = resetAction(args.onSelectProject);
     const loaded = resetAction(args.onLoadRevisions);
     const read = resetAction(args.onReadRevision);
+    const newer = resetAction(args.onPreviousRevisionPage);
+    const older = resetAction(args.onNextRevisionPage);
     requireButton(canvasElement, "Notes on evidence and clear thinking").click();
     const projectLabel = Array.from(canvasElement.getElementsByTagName("label"))
       .find(label => label.textContent?.trim() === "Project");
@@ -235,6 +242,10 @@ export const InteractionJourney: StoryObj<typeof ProjectsLibraryFeature> = {
       "Version facts must remain inside their closed native disclosure.");
     assert(requireText(canvasElement, "Currentness verified").getClientRects().length > 0, "Readiness currentness must stay visible.");
     assert(requireText(canvasElement, "High fidelity").getClientRects().length > 0, "Readiness quality must stay visible.");
+    requireButton(canvasElement, "Older versions").click();
+    assert(older.length === 1, "Older-page navigation must invoke its own callback once.");
+    requireButton(canvasElement, "Newer versions").click();
+    assert(newer.length === 1, "Prior-page navigation must invoke its own callback once.");
     requireButton(canvasElement, "Read version 1").click();
     assert(read.length === 1 && read[0] === "rev-0002-bbbb", "Read version must carry the exact revision reference.");
   },

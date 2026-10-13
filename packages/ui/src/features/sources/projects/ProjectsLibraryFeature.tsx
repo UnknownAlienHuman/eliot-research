@@ -35,6 +35,8 @@ export interface ProjectsLibraryFeatureProps {
   readonly onRetry: () => void;
   readonly onRetryReadiness?: () => void;
   readonly onRetryRevisions?: () => void;
+  readonly onPreviousRevisionPage?: () => void;
+  readonly onNextRevisionPage?: () => void;
   readonly onReadRevision?: (sourceRevisionRef: string) => void;
 }
 
@@ -69,6 +71,8 @@ type Copy = {
   readonly unknown: string;
   readonly openSource: string;
   readonly revisionsAction: string;
+  readonly newerRevisions: string;
+  readonly olderRevisions: string;
   readonly loading: string;
   readonly empty: string;
   readonly degraded: string;
@@ -108,6 +112,8 @@ const COPY: Readonly<Record<"en" | "ru", Copy>> = {
     unknown: "Unknown",
     openSource: "Open",
     revisionsAction: "Versions",
+    newerRevisions: "Newer versions",
+    olderRevisions: "Older versions",
     loading: "Loading project sources...",
     empty: "No sources in this project.",
     degraded: "Readiness is temporarily unavailable. You can still choose a project.",
@@ -145,6 +151,8 @@ const COPY: Readonly<Record<"en" | "ru", Copy>> = {
     unknown: "Неизвестно",
     openSource: "Открыть",
     revisionsAction: "Версии",
+    newerRevisions: "Более новые версии",
+    olderRevisions: "Более старые версии",
     loading: "Загрузка источников проекта...",
     empty: "В этом проекте нет источников.",
     degraded: "Готовность временно недоступна. Можно выбрать другой проект.",
@@ -312,6 +320,12 @@ export function ProjectsLibraryFeature(props: ProjectsLibraryFeatureProps) {
           )}
           {revisionsStatus === undefined ? null : (
             <Status tone={revisionsStatus[1]}>{revisionsStatus[0]}</Status>
+          )}
+          {(props.onPreviousRevisionPage || props.onNextRevisionPage) && (
+            <div className="er-projects-library__actions">
+              {props.onPreviousRevisionPage && <Button variant="text" onClick={props.onPreviousRevisionPage}>{copy.newerRevisions}</Button>}
+              {props.onNextRevisionPage && <Button variant="tonal" onClick={props.onNextRevisionPage}>{copy.olderRevisions}</Button>}
+            </div>
           )}
           {(props.revisionsState === "error" || props.revisionsState === "degraded") && props.onRetryRevisions && (
             <Button variant="text" onClick={props.onRetryRevisions}>{copy.retry}</Button>

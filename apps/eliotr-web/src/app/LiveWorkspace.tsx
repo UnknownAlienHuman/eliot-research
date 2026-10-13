@@ -145,6 +145,16 @@ const sourceReadCopy = {
   ru: { projectsLoading: 'Читаются проекты.', projectsError: 'Не удалось прочитать проекты.', libraryLoading: 'Читаются источники проекта.', libraryError: 'Не удалось прочитать источники проекта.', readinessLoading: 'Читается готовность поиска.', readinessError: 'Не удалось прочитать готовность поиска.', readinessLoaded: 'Готовность поиска прочитана.', revisionsLoading: 'Читаются сохранённые версии.', revisionsError: 'Не удалось прочитать сохранённые версии.', revisionsLoaded: 'Сохранённые версии прочитаны.' },
 } as const;
 
+type RevisionCursorAuthority = Pick<SessionContext, "cacheEpoch" | "principal" | "credentialGeneration" | "deploymentGeneration"> & {
+  readonly projectId: string;
+  readonly sourceId: string;
+};
+
+type RevisionCursorStack = {
+  readonly authority: RevisionCursorAuthority;
+  readonly cursors: readonly (string | undefined)[];
+};
+
 function ActiveSources({ locale, apis, privacy, context, projectId, projects, after, onProject, projectSelectRef, sourceId, onSource, libraryPages, onLibraryPages, scope, onScope, onClearScope }: {
   readonly locale: "en" | "ru"; readonly apis: BoundWorkspaceApis; readonly privacy: PrivacyController;
   readonly context: SessionContext; readonly projectId: string | undefined;
@@ -159,11 +169,40 @@ function ActiveSources({ locale, apis, privacy, context, projectId, projects, af
   const location = useLocation();
   const navigate = useNavigate();
   const cursor = libraryPages[libraryPages.length - 1];
+  const [revisionCursorStack, setRevisionCursorStack] = useState<RevisionCursorStack>();
+  const routeState: unknown = location.state;
+  const routeRevisionCursor = routeState !== null && typeof routeState === "object" &&
+    "sourceDocument" in routeState && typeof routeState.sourceDocument === "string" &&
+    "cacheEpoch" in routeState && routeState.cacheEpoch === context.cacheEpoch &&
+    "credentialGeneration" in routeState && routeState.credentialGeneration === context.credentialGeneration &&
+    "deploymentGeneration" in routeState && routeState.deploymentGeneration === context.deploymentGeneration &&
+    "sourceId" in routeState && routeState.sourceId === sourceId &&
+    "projectId" in routeState && routeState.projectId === projectId &&
+    "sourceRevisionCursor" in routeState &&
+    (routeState.sourceRevisionCursor === null || typeof routeState.sourceRevisionCursor === "string")
+    ? routeState.sourceRevisionCursor : undefined;
+  const revisionAuthority = projectId !== undefined && sourceId !== undefined
+    ? { cacheEpoch: context.cacheEpoch, principal: context.principal, credentialGeneration: context.credentialGeneration,
+      deploymentGeneration: context.deploymentGeneration, projectId, sourceId } : undefined;
+  const activeRevisionCursors = revisionAuthority !== undefined && revisionCursorStack !== undefined &&
+    revisionCursorStack.authority.cacheEpoch === revisionAuthority.cacheEpoch &&
+    revisionCursorStack.authority.principal === revisionAuthority.principal &&
+    revisionCursorStack.authority.credentialGeneration === revisionAuthority.credentialGeneration &&
+    revisionCursorStack.authority.deploymentGeneration === revisionAuthority.deploymentGeneration &&
+    revisionCursorStack.authority.projectId === revisionAuthority.projectId &&
+    revisionCursorStack.authority.sourceId === revisionAuthority.sourceId
+    ? revisionCursorStack.cursors : undefined;
+  const revisionCursors = routeRevisionCursor === null ? [undefined]
+    : typeof routeRevisionCursor === "string"
+      ? activeRevisionCursors?.[activeRevisionCursors.length - 1] === routeRevisionCursor
+        ? activeRevisionCursors : [undefined, routeRevisionCursor]
+      : activeRevisionCursors ?? [undefined];
+  const revisionCursor = revisionCursors[revisionCursors.length - 1];
   const key = protectedQueryKey(context, "sources");
   const current = {
     projects: () => client.getQueryData<NonNullable<typeof projects.data>>([...key, "projects", after ?? null]),
     library: () => client.getQueryData<LibraryPage>([...key, "library", projectId, cursor ?? null]),
-    revisions: () => client.getQueryData<SourceRevisionPage>([...key, "revisions", sourceId, null]),
+    revisions: () => client.getQueryData<SourceRevisionPage>([...key, "revisions", sourceId, revisionCursor ?? null]),
   };
   const options = sourcesQueryOptions(apis.sources, privacy, context, current);
   const library = useQuery(projectId && projects.data ? options.library(projects.data, projectId, cursor)
@@ -171,12 +210,13 @@ function ActiveSources({ locale, apis, privacy, context, projectId, projects, af
   const source = library.data?.sources.find(row => row.id === sourceId);
   const readiness = useQuery(source && library.data ? options.readiness(library.data, source.id)
     : { queryKey: [...key, "readiness-unselected"], queryFn: skipToken });
-  const revisions = useQuery(source && library.data ? options.revisions(library.data, source.id)
+  const revisions = useQuery(source && library.data ? options.revisions(library.data, source.id, revisionCursor)
     : { queryKey: [...key, "revisions-unselected"], queryFn: skipToken });
   const text = copy[locale];
-  const routeState: unknown = location.state;
   const ref = routeState !== null && typeof routeState === "object" && "sourceDocument" in routeState &&
     typeof routeState.sourceDocument === "string" && "cacheEpoch" in routeState && routeState.cacheEpoch === context.cacheEpoch &&
+    "credentialGeneration" in routeState && routeState.credentialGeneration === context.credentialGeneration &&
+    "deploymentGeneration" in routeState && routeState.deploymentGeneration === context.deploymentGeneration &&
     "sourceId" in routeState && routeState.sourceId === source?.id && "projectId" in routeState && routeState.projectId === projectId
     ? routeState.sourceDocument : undefined;
   const selectedRevision = revisions.data?.revisions.find(row => row.source_revision_ref === ref);
@@ -187,6 +227,25 @@ function ActiveSources({ locale, apis, privacy, context, projectId, projects, af
   const error = projects.isError || (projectId !== undefined && library.isError);
   const selectSource = (id: string) => {
     if (library.data?.sources.some(row => row.id === id) && current.library() === library.data && privacy.isCurrent(context)) onSource(id);
+  };
+  const isCurrentLibrarySource = () => source !== undefined && library.data !== undefined && projects.data !== undefined &&
+    library.data.sources.some(row => row.id === source.id) && privacy.isCurrent(context) &&
+    current.projects() === projects.data && current.library() === library.data;
+  const isCurrentRevisionPage = () => {
+    const state = client.getQueryState<SourceRevisionPage>([...key, "revisions", sourceId, revisionCursor ?? null]);
+    return isCurrentLibrarySource() && source !== undefined && revisions.data !== undefined &&
+      revisions.data.source_id === source.id && revisions.data.generation === context.deploymentGeneration &&
+      state?.status === "success" && state.fetchStatus === "idle" && !state.isInvalidated &&
+      state.data === revisions.data && current.revisions() === revisions.data;
+  };
+  const nextRevisionCursor = revisions.data?.next_cursor;
+  const canLoadOlderRevisions = nextRevisionCursor !== undefined && !revisionCursors.includes(nextRevisionCursor) &&
+    isCurrentRevisionPage();
+  const returnFromReader = () => {
+    if (routeRevisionCursor !== undefined && revisionAuthority && isCurrentLibrarySource()) {
+      setRevisionCursorStack({ authority: revisionAuthority, cursors: revisionCursors });
+    }
+    void navigate(-1);
   };
   const feedback = sourceReadCopy[locale];
   const announcement = usePaneAnnouncement([
@@ -207,10 +266,32 @@ function ActiveSources({ locale, apis, privacy, context, projectId, projects, af
       library={library.data} readiness={readiness.isError ? undefined : readiness.data} readinessState={!source ? "idle" : readiness.isPending ? "loading" : readiness.isError ? "degraded" : "useful"}
       revisions={revisions.isError ? undefined : revisions.data} revisionsState={!source ? "idle" : revisions.isPending ? "loading" : revisions.isError ? "error" : "useful"}
       selectedSourceId={source?.id} onOpenSource={selectSource} onLoadRevisions={selectSource}
+      {...(revisionCursors.length > 1 && isCurrentLibrarySource() ? { onPreviousRevisionPage: () => {
+        if (isCurrentLibrarySource() && revisionAuthority) {
+          setRevisionCursorStack({ authority: revisionAuthority, cursors: revisionCursors.slice(0, -1) });
+        }
+      } } : {})}
+      {...(canLoadOlderRevisions ? { onNextRevisionPage: () => {
+        if (isCurrentRevisionPage() && revisionAuthority && nextRevisionCursor !== undefined &&
+          revisions.data?.next_cursor === nextRevisionCursor) {
+          setRevisionCursorStack({ authority: revisionAuthority, cursors: [...revisionCursors, nextRevisionCursor] });
+        }
+      } } : {})}
       onReadRevision={revisionRef => {
         if (source && revisions.data?.revisions.some(revision => revision.source_revision_ref === revisionRef) &&
           privacy.isCurrent(context) && current.library() === library.data && current.revisions() === revisions.data) {
-          void navigate(location.pathname, { state: { sourceDocument: revisionRef, sourceId: source.id, projectId, cacheEpoch: context.cacheEpoch }, preventScrollReset: true });
+          void navigate(location.pathname, {
+            state: {
+              sourceDocument: revisionRef,
+              sourceId: source.id,
+              projectId,
+              cacheEpoch: context.cacheEpoch,
+              credentialGeneration: context.credentialGeneration,
+              deploymentGeneration: context.deploymentGeneration,
+              sourceRevisionCursor: revisionCursor ?? null,
+            },
+            preventScrollReset: true,
+          });
         }
       }}
       onRetry={() => { if (projects.isError) void projects.refetch(); else if (projectId) void library.refetch(); }}
@@ -222,11 +303,11 @@ function ActiveSources({ locale, apis, privacy, context, projectId, projects, af
       {libraryPages.length > 1 && <Button variant="text" onClick={() => { onSource(undefined); onLibraryPages(libraryPages.slice(0, -1)); }}>{text.previous}</Button>}
       {library.data?.next_cursor && <Button variant="tonal" onClick={() => { const next = library.data?.next_cursor; if (next) { onSource(undefined); onLibraryPages([...libraryPages, next]); } }}>{text.next}</Button>}
     </div>}
-    {ref !== undefined && <Dialog open title={source?.title ?? text.document} onClose={() => { void navigate(-1); }}>
+    {ref !== undefined && <Dialog open title={source?.title ?? text.document} onClose={returnFromReader}>
       {selectedRevision && <DocumentReader locale={locale} sourceRevisionRef={selectedRevision.source_revision_ref} expectedDeploymentGeneration={context.deploymentGeneration}
         state={document.isPending ? "loading" : document.isError ? "error" : document.data ? "useful" : "empty"}
         {...(document.data ? { document: document.data } : {})} onRetry={() => { void document.refetch(); }} />}
-      <Button variant="text" onClick={() => { void navigate(-1); }}>{text.close}</Button>
+      <Button variant="text" onClick={returnFromReader}>{text.close}</Button>
     </Dialog>}
   </>;
 }

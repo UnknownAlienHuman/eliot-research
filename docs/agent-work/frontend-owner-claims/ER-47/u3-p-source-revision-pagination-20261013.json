@@ -24,7 +24,13 @@
       "commit_sha": "ff85ee4827366bac620750010f2e648c51d3bea9"
     }
   ],
-  "state": "ACTIVE",
-  "evidence_refs": [],
-  "blocker_refs": []
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "private:revision-pagination-clean-publication-20261013.json sha256=27f00e08b8fa74487d72f89ebf9e4b77194aa3c0ff54fb8e659e7ae6ffc38d97 TS6 PASS154 on clean published dependencies",
+    "private:revision-pagination-private-diagnostics-r3-20261013.json sha256=def5cfb5a44c62f3fcfc0aa841e3d4116c0a313a33ea32cc105cefc07b9bebe4 changed app TS6/lint PASS153; unchanged feature/story lint reused",
+    "private:pagination-browser-r3-root-20261013/root-terminal-r3-20261013.json sha256=12d37557749dce539c7a7d7f1b5689e1e1f2b455ff44c81efb5788e17bde16f2 one actual browser scenario PASS/218 skipped; revision11 returns after unmount/rehydration; live backend not qualified"
+  ],
+  "blocker_refs": [],
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "private:pagination-browser-r3-root-20261013/root-terminal-r3-20261013.json"
 }
