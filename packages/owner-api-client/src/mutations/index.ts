@@ -16,4 +16,3 @@ export type {
   MutationOutcomeInput,
   MutationOutcomeSuccessInput,
 } from "./mutation-outcome";
-
