@@ -1001,6 +1001,9 @@ export function createRetrievalQueryService(ports: RetrievalQueryPorts): Retriev
         result,
         usage,
         ...(budgets === undefined ? {} : { request_budgets: budgets }),
+        ...(admissionReceipt === undefined
+          ? {}
+          : { scoped_invocation_id: admissionReceipt.scoped_invocation_id }),
       });
       const record: StoredRetrievalResult = {
         request_digest: digest,

@@ -1,9 +1,11 @@
+import { IdentifierSchema } from "@eliotr/contracts";
 import type { RetrievalRequestBudgets } from "./ports.js";
 import {
   canonicalRetrievalJson,
   decodeRetrievalRequestBudgets,
   hasExactRetrievalKeys as hasExactKeys,
   isRetrievalRecord as isRecord,
+  managedRetrievalRefIdV1,
   retrievalSha256Hex as sha256Hex,
 } from "./query-codec.js";
 import type { RetrievalResult } from "./service.js";
@@ -40,6 +42,13 @@ export interface SettleRetrievalBudgetUsageV1Input {
   readonly result: RetrievalResult;
   readonly usage: RetrievalBudgetUsageV1;
   readonly request_budgets?: RetrievalRequestBudgets;
+  /**
+   * Admitted invocation identity whose stable refinement produced managed
+   * `mrt1`/`mrp1` trace and pack refs. Required only for the managed path, where the
+   * refs are not derived from `execution_id`; the settlement recomputes them so a
+   * foreign or unrelated ref cannot be bound by shape alone.
+   */
+  readonly scoped_invocation_id?: string;
 }
 
 const USAGE_KEYS = [
@@ -111,6 +120,18 @@ export function createRetrievalExecutionIdV1(): string {
     .join("");
 }
 
+/**
+ * A settled ref is either the execution-lease derivation `query-<execution_id>` /
+ * `pack-<execution_id>`, or the managed invocation derivation `mrt1-`/`mrp1-` with a
+ * 48-hex digest. Byte equality against the bound result is enforced by the companion
+ * clauses and the canonical digest checks, so this guard fixes only the shape family.
+ */
+function isBudgetSettlementRefShape(refId: string, managedPrefix: "mrt1" | "mrp1"): boolean {
+  return /^mrt1-[a-f0-9]{48}$/u.test(refId) || /^mrp1-[a-f0-9]{48}$/u.test(refId)
+    ? refId.startsWith(managedPrefix + "-")
+    : /^(query|pack)-[a-f0-9]{48}$/u.test(refId);
+}
+
 /** Bind operation-time usage to the canonical public result and trace. Hashes provide integrity only. */
 export async function settleRetrievalBudgetUsageV1(
   input: SettleRetrievalBudgetUsageV1Input,
@@ -126,9 +147,26 @@ export async function settleRetrievalBudgetUsageV1(
   }
   const receiptRef = `budget-${executionId}`;
   const result = input.result;
+  // Trace and pack refs are derived from the execution lease on the legacy path
+  // (`query-`/`pack-`) and from the admitted invocation identity on the managed path
+  // (`mrt1-`/`mrp1-`). The managed derivation is recomputed here rather than accepted by
+  // prefix, so a ref belonging to another invocation cannot be bound to this execution.
+  let expectedTraceRefId = `query-${executionId}`;
+  let expectedPackRefId = `pack-${executionId}`;
+  if (result.trace.trace_ref.id.startsWith("mrt1-") ||
+      result.evidence_pack.pack_ref.id.startsWith("mrp1-")) {
+    if (input.scoped_invocation_id === undefined) {
+      throw new TypeError("managed trace and pack refs require the admitted invocation identity");
+    }
+    if (!IdentifierSchema.safeParse(input.scoped_invocation_id).success) {
+      throw new TypeError("admitted invocation identity is malformed");
+    }
+    expectedTraceRefId = await managedRetrievalRefIdV1(input.scoped_invocation_id, "trace");
+    expectedPackRefId = await managedRetrievalRefIdV1(input.scoped_invocation_id, "pack");
+  }
   if (result.trace.budget_receipt_ref !== receiptRef ||
-      result.trace.trace_ref.id !== `query-${executionId}` ||
-      result.evidence_pack.pack_ref.id !== `pack-${executionId}` ||
+      result.trace.trace_ref.id !== expectedTraceRefId ||
+      result.evidence_pack.pack_ref.id !== expectedPackRefId ||
       result.trace.evidence_pack_ref !== result.evidence_pack.pack_ref.id ||
       result.trace.trace_ref.id !== result.evidence_pack.trace_ref.id ||
       result.trace.trace_ref.revision !== result.evidence_pack.trace_ref.revision ||
@@ -171,8 +209,8 @@ export async function decodeRetrievalBudgetSettlementV1(
     : undefined;
   if (usage === null || (hasBudgets && budgets === undefined) ||
       result.trace.budget_receipt_ref !== value.receipt_ref ||
-      result.trace.trace_ref.id !== `query-${value.execution_id}` ||
-      result.evidence_pack.pack_ref.id !== `pack-${value.execution_id}` ||
+      !isBudgetSettlementRefShape(result.trace.trace_ref.id, "mrt1") ||
+      !isBudgetSettlementRefShape(result.evidence_pack.pack_ref.id, "mrp1") ||
       result.trace.evidence_pack_ref !== result.evidence_pack.pack_ref.id ||
       result.trace.trace_ref.id !== result.evidence_pack.trace_ref.id ||
       result.trace.trace_ref.revision !== result.evidence_pack.trace_ref.revision ||

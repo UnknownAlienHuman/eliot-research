@@ -135,6 +135,7 @@ describe("EXACT lane executor over the exact-phrase search surface", () => {
       lane: "EXACT",
       candidates: [],
       disposition: "SKIPPED_UNAVAILABLE",
+      failure_code: "SEARCH_UNAVAILABLE",
     });
   });
 });
@@ -189,7 +190,7 @@ describe("SEM lane executor over the managed-search surface", () => {
     expect(error.code).toBe("SEARCH_INCOMPLETE");
   });
 
-  it("passes other managed failures through with their original code", async () => {
+  it("reports an unavailable managed provider call as SEARCH_UNAVAILABLE", async () => {
     const executor = createSemLaneExecutor(
       managedStub(async () => {
         throw Object.assign(new Error("provider call failed"), {
@@ -198,6 +199,6 @@ describe("SEM lane executor over the managed-search surface", () => {
       }),
     );
     const error = await laneError(executor.execute("SEM", request()));
-    expect(error.code).toBe("AI_SEARCH_MANAGED_PROVIDER_CALL_FAILED");
+    expect(error.code).toBe("SEARCH_UNAVAILABLE");
   });
 });
