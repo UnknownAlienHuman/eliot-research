@@ -1,0 +1,31 @@
+{
+  "protocol": "eliotr.frontend-owner-claim.v1",
+  "claim_id": "c3-rh-bounded-visible-history-20261013",
+  "checkpoint_id": "C3-RH",
+  "packet_id": "ER-48",
+  "manager_identity": "frontend-manager",
+  "manager_context_id": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "leaf_identity": "frontend-recent-module-integrator",
+  "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
+  "base_sha": "cffdd97f696d64406a91f083eead555e1fee34ac",
+  "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
+  "write_paths": [
+    "packages/owner-api-client/src/research/history-changes/history-visibility.test.ts",
+    "packages/owner-api-client/src/research/history-changes/history.ts"
+  ],
+  "predecessor_refs": [
+    {
+      "checkpoint_id": "C0.3",
+      "commit_sha": "9029cbf18717365641c079c8180b8a9f7a4001b8"
+    },
+    {
+      "checkpoint_id": "C1.4",
+      "commit_sha": "4f7c99546bd7adfcf766bdc1a398a94a8e20fedb"
+    }
+  ],
+  "state": "ACTIVE",
+  "evidence_refs": [
+    "private:recent-new6-native-root-disposition-20261013.json sha256=c63cbad753922dd1da301b3fcca01ae2d32abd7e341a4cbe60ceba70227a1724"
+  ],
+  "blocker_refs": []
+}
