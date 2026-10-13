@@ -131,7 +131,7 @@ interruption acceptance remain required before the recovery path is accepted.
 
 ## ER-45 erasure-completion callback readiness
 
-The private candidate migration `0138_erasure_completion_feed_readiness.sql` proposes to record the installed callback
+The source-allocated migration `0138_erasure_completion_feed_readiness.sql` records the installed callback
 capability as `schema_state.erasure_completion_feed_generation = erasure-completion-feed-v1` only when
 `erasure_execution_completion_change_feed` exists on `erasure_execution`. It depends on the existing
 `0135_erasure_completion_change_feed.sql`; it does not rewrite that migration, backfill historical
@@ -139,4 +139,21 @@ cases, or change the event feed. The ER45 service must verify both the readiness
 trigger object from current D1 state before serving a successful changes page. Missing or unreadable
 state fails closed with a retryable typed 503.
 
-The 0138 number is free in the pinned publisher inventory but has no coordination-log allocation; publisher intake must confirm it. The migration loader sorts names and migration-ledger verification requires applied names to remain a prefix, so integrate 0138 only after the existing 0136 and 0137 reservations are present in the same source frontier.
+On 2026-10-13 the root publisher recorded the allocation in `C:/Development/Research/Agent_sync.md` and
+materialized the exact qualified bytes after the existing `0136_queue_owner_replay.sql` and
+`0137_research_workflow_authorized_read_stage_completion.sql` reservations. The clean publisher has 133
+Core migration names; its original 130 names through 0135 remain the unchanged sorted prefix. The
+protected, untracked 0134 role-binding candidate remains untouched and outside this installation tree.
+
+This is source allocation only. It does not apply D1 schema, enable a production guard or qualify native
+stage execution. The retained SQLite qualification proves the name-prefix and conditional-marker
+cases at its local scope. The six new authorized-read guard-bridge native cases remain unrun, and the
+production compiler/store/handler composition is separately required. The private-only header in the
+exact 0137 reservation records its original handoff status; this allocation adopts those bytes as
+source without promoting its runtime evidence.
+
+The proposed fresh identity `0139_research_branch_role_workflow_binding.sql` remains conditional and is
+not materialized here. Its stage 8/9 guard requires the exact W2 request digest to be persisted by the
+model-execution adapter and supplied by every applicable caller before schema/Worker cutover. Do not
+apply the pending migration stream or deploy the ER45 readiness guard until the coherent source and
+owning native gates pass.
