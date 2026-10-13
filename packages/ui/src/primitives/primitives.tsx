@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, type ButtonHTMLAttributes, type InputHTMLAttributes } from "react";
 import { MaterialSymbol, type MaterialSymbolName } from "../catalog/MaterialSymbol";
 import { captureFocus, restoreFocus, type FocusCapture } from "./focus";
+import "./controls.css";
 import "./primitives.css";
 
 export type ButtonVariant = "primary" | "tonal" | "text";
@@ -135,7 +136,7 @@ export type StatusProps = {
   readonly children: string;
 };
 
-export function Status({ tone = "neutral", icon = tone === "error" ? "close" : "evidence", announce = false, children }: StatusProps) {
+export function Status({ tone = "neutral", icon = tone === "error" ? "error" : "info", announce = false, children }: StatusProps) {
   return (
     <span className={`er-status er-status--${tone}`} role={announce ? "status" : undefined} aria-live={announce ? "polite" : undefined}>
       <MaterialSymbol name={icon} />
