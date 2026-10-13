@@ -1,0 +1,75 @@
+{
+  "protocol": "eliotr.research-session-projection-public-qualification.v1",
+  "original_run_id": "8b1530a8-c3c5-4104-b2a6-c00d4868228e",
+  "original_receipt_sha256": "8d423bd2c12d1ccaa54443bace1371079259803855ee97c3ff1a5a774ade6d26",
+  "original_receipt_preserved": true,
+  "state": "PASS_LOCAL_EMITTED_WORKER_BRANDED_CHROME_ONLY",
+  "emitted_product_source": "d4cdb8bf9adc0915920f898711473dd7e8594a21",
+  "emitted_worker_sha256": "09fa55cc549ec0390fca32fd29b89354120919de8f9ea891a08502d586ac59d5",
+  "emitted_graph_sha256": "8ec18c18e7da05552e705e5af9d92fcb941715fa31421a3db3f14c267a42034c",
+  "versions": {
+    "playwright_attestation": "POST_RUN_VERIFIED; exact historical module path UNKNOWN",
+    "playwright_core": "1.63.0",
+    "node": "25.6.1",
+    "chrome": "155.0.8059.40",
+    "miniflare": "5.20260926.1-alpha"
+  },
+  "cases": [
+    "repeated_snapshot PASS",
+    "disposal_reconnect PASS",
+    "two_tabs_peer_survives PASS",
+    "canonical_HTTP_reconciliation PASS",
+    "clean_close1000 owner-client-disposed PASS"
+  ],
+  "invariance": {
+    "d1_before_sha256": "ff317862c9e6e87957a4a5ba65f212296dd5114e0720d502a9b056c4bb8494fb",
+    "d1_after_sha256": "ff317862c9e6e87957a4a5ba65f212296dd5114e0720d502a9b056c4bb8494fb",
+    "d1_tables": 211,
+    "d1_table_rows": 49,
+    "r2_before": {
+      "key": "workflow-portfolio-emitted-browser-8b1530a8-c3c5-4104-b2a6-c00d4868228e",
+      "byte_length": 390,
+      "sha256": "91a25595f00e50b55474b14f352ce2f372e52b161e7ec6e5fa79bfaa2093cade"
+    },
+    "r2_after": {
+      "key": "workflow-portfolio-emitted-browser-8b1530a8-c3c5-4104-b2a6-c00d4868228e",
+      "byte_length": 390,
+      "sha256": "91a25595f00e50b55474b14f352ce2f372e52b161e7ec6e5fa79bfaa2093cade"
+    },
+    "durable_object_stable_before_sha256": "728142181821cda10cbc80c5194d5924c61d2a3d9836740457a7215fcb0443a9",
+    "durable_object_stable_after_sha256": "728142181821cda10cbc80c5194d5924c61d2a3d9836740457a7215fcb0443a9",
+    "connection_metadata": {
+      "allowed_key": "research-session-chat-binding:v1",
+      "before_count": 0,
+      "after_count": 1,
+      "before_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "after_sha256": "115322cd66030d0a53ebe4dc300cac8e8f8949e71829c5f490ee1281d307a4fd"
+    },
+    "workflow_before": {
+      "get": 1,
+      "create": 0
+    },
+    "workflow_after": {
+      "get": 22,
+      "create": 0
+    },
+    "provider_execution": "NOT_RUN",
+    "remote_effects": 0
+  },
+  "cleanup": {
+    "browser_closed": true,
+    "miniflare_disposed": true,
+    "port_released": true
+  },
+  "controls": [
+    "local synthetic Access cookie-to-header bridge and real ephemeral RS256/JWKS verification",
+    "Workflow get returns controlled waiting; create is denied and counted",
+    "real emitted Worker, ResearchSession DO, D1 and local R2",
+    "non-loopback egress denied"
+  ],
+  "not_run": [
+    "staging/live/public Access ingress",
+    "native Workflow progression/provider execution",
+    "final main emitted build/deployment/full product release"
+  ]
+}
