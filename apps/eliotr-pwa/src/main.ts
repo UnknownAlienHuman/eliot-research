@@ -172,7 +172,7 @@ function render(health: SystemHealth | null): void {
   const retrieval = retrievalHost ? mountRetrievalPanel(retrievalHost, () => app.dataset.healthReady === "true") : undefined;
   let researchConfigurationStartState: ResearchConfigurationStartState | null = null;
   const researchRunHost = app.querySelector<HTMLElement>("#research-run");
-  const researchRun = researchRunHost ? mountResearchRunPanel(researchRunHost, () => app.dataset.healthGeneration, () => app.dataset.healthReady === "true", () => researchConfigurationStartState?.configuration === "present" && researchConfigurationStartState.model_transport === "available" && researchConfigurationStartState.run_readiness !== "blocked") : undefined;
+  const researchRun = researchRunHost ? mountResearchRunPanel(researchRunHost, () => app.dataset.healthGeneration, ownerSessionLifecycle.epoch, () => app.dataset.healthReady === "true", () => researchConfigurationStartState?.configuration === "present" && researchConfigurationStartState.model_transport === "available" && researchConfigurationStartState.run_readiness !== "blocked") : undefined;
   const exhaustiveHost = app.querySelector<HTMLElement>("#exhaustive-workflow");
   const exhaustive = exhaustiveHost ? mountExhaustiveWorkflowPanel(exhaustiveHost, () => app.dataset.healthGeneration, () => app.dataset.healthReady === "true") : undefined;
   const researchChangesHost = app.querySelector<HTMLElement>("#research-changes");

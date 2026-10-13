@@ -197,7 +197,11 @@ export function historyStatusText(view: ResearchRunHistoryView): string {
   if (hasSavedDraft && hasSavedRuns) return "Saved drafts and recent runs are available below.";
   if (hasSavedDraft) return "Saved drafts are available below.";
   if (hasSavedRuns) return "Saved runs are available below.";
-  return "No saved research runs or drafts are available yet.";
+  const visibility = view.protocol === "eliotr.research-runs.v4" ? view.visibility_scan : undefined;
+  if (visibility !== undefined && visibility.runs === "SOURCE_EXHAUSTED" && visibility.saved_drafts === "SOURCE_EXHAUSTED") {
+    return "No saved research runs or drafts were found.";
+  }
+  return "No saved runs or drafts are visible in this response.";
 }
 export function shouldPollEngine(status: ResearchEngineStatus | undefined): boolean {
   return status === undefined || status === "queued" || status === "running" || status === "paused" || status === "waiting" || status === "waitingForPause";

@@ -303,7 +303,7 @@ const PACKAGE_RULES = new Map([
   ["packages/pwa-http-client", new Set(["@eliotr/contracts"])],
   ["packages/owner-api-client", new Set(["@eliotr/contracts", "@eliotr/contracts/runtime-config"])],
   ["packages/pwa-source-workspace", new Set(["@eliotr/contracts", "@eliotr/owner-api-client", "@eliotr/pwa-http-client"])],
-  ["packages/pwa-research-workspace", new Set(["@eliotr/contracts", "@eliotr/pwa-http-client", "@eliotr/pwa-source-workspace"])],
+  ["packages/pwa-research-workspace", new Set(["@eliotr/contracts", "@eliotr/owner-api-client", "@eliotr/pwa-http-client", "@eliotr/pwa-source-workspace"])],
   ["packages/pwa-knowledge-workspace", new Set(["@eliotr/contracts", "@eliotr/pwa-http-client", "@eliotr/pwa-source-workspace"])],
   ["packages/ui", new Set(["react", "react-dom", "@eliotr/owner-api-client"])],
   ["apps/eliotr-web", new Set(["@eliotr/ui", "@eliotr/owner-api-client", "@eliotr/owner-api-client/research-session-projection", "@eliotr/owner-api-client/runtime-config", "@tanstack/react-query", "react", "react-dom", "react-router"])],

@@ -1,10 +1,24 @@
 import { objectRecord, invalid, record, boundedString, isoTimestamp, identifier, versionedRef, sameRef, envelope, checkGeneration } from "./research-run-wire.js";
 export { invalid, record, boundedString, identifier, versionedRef, sameRef, envelope, checkGeneration } from "./research-run-wire.js";
-import { engineStatus, researchRunFailure, type ResearchEngineStatus, type ResearchRunFailureView } from "./research-run-failure-api.js";
+import { engineStatus, researchRunFailure } from "./research-run-failure-api.js";
 export type { ResearchEngineStatus, ResearchRunFailureCode, ResearchRunFailureContext, ResearchRunFailureView } from "./research-run-failure-api.js";
 import { isResearchQuestionText, RESEARCH_REQUEST_MAX_BYTES } from "@eliotr/contracts";
 import { ArtifactRevisionSchema, IdentifierSchema, ScopeExpressionSchema, Sha256Schema, type ArtifactRevision, type VersionedRef } from "@eliotr/contracts";
-import { ApiRequestError, requestApi, requestApiBytes, type ApiBytesResponse } from "@eliotr/pwa-http-client";
+import { ApiRequestError, requestApi, requestApiBytes, requestApiWithStatuses, type ApiBytesResponse } from "@eliotr/pwa-http-client";
+import {
+  createResearchRunWire,
+  createResearchRunsApi,
+  createRunHistoryApi,
+  createRunHistoryDecoder,
+  type LegacyErrorFactory,
+  type ResearchRunHistoryDecoder,
+  type ResearchRunHistoryEntry as OwnerResearchRunHistoryEntry,
+  type EpochPort,
+  type ResearchRunHistoryView as OwnerResearchRunHistoryView,
+  type ResearchRunSavedDraft as OwnerResearchRunSavedDraft,
+  type ResearchRunStatusDecoder,
+  type ResearchRunStatusView as OwnerResearchRunStatusView,
+} from "@eliotr/owner-api-client";
 
 export interface ResearchRunLaunchView {
   readonly investigation_ref: { readonly id: string; readonly revision: number };
@@ -12,40 +26,10 @@ export interface ResearchRunLaunchView {
   readonly deployment_generation: string;
 }
 
-export interface ResearchRunStatusView {
-  readonly workflow_instance_id: string;
-  readonly investigation_ref: { readonly id: string; readonly revision: number };
-  readonly execution_state: "ACTIVE" | "CANCELLED" | "ENGINE_COMPLETED";
-  readonly engine_status: ResearchEngineStatus;
-  readonly failure?: ResearchRunFailureView;
-  readonly next_stage_index: number;
-  readonly answer:
-    | { readonly availability: "unavailable" }
-    | { readonly availability: "draft"; readonly artifact_ref: { readonly id: string; readonly revision: number } };
-  readonly cancellation_receipt_ref?: string;
-  readonly deployment_generation: string;
-}
-
-export interface ResearchRunHistoryEntry {
-  readonly created_at: string;
-  readonly status: ResearchRunStatusView;
-}
-
-export interface ResearchRunSavedDraft {
-  readonly created_at: string;
-  readonly artifact_ref: VersionedRef;
-  readonly workflow_instance_id?: string;
-}
-
-export interface ResearchRunHistoryView {
-  readonly protocol: "eliotr.research-runs.v1" | "eliotr.research-runs.v2" | "eliotr.research-runs.v3";
-  readonly runs: readonly ResearchRunHistoryEntry[];
-  readonly saved_drafts: readonly ResearchRunSavedDraft[];
-  readonly configuration_state: "INSTALLED" | "MISSING";
-  readonly checked_at: string;
-  readonly deployment_generation: string;
-}
-
+export type ResearchRunStatusView = OwnerResearchRunStatusView;
+export type ResearchRunHistoryEntry = OwnerResearchRunHistoryEntry;
+export type ResearchRunSavedDraft = OwnerResearchRunSavedDraft;
+export type ResearchRunHistoryView = OwnerResearchRunHistoryView;
 export interface ResearchScopeAuthorizationView {
   readonly authorization_receipt_ref: string;
   readonly policy_authority_ref: string;
@@ -374,41 +358,38 @@ export function decodeResearchRunStatus(raw: unknown, expectedDeploymentGenerati
   return { workflow_instance_id: workflowId, investigation_ref: versionedRef(data.investigation_ref, "investigation_ref"), execution_state: state, engine_status: observedEngineStatus, ...(failure === undefined ? {} : { failure }), next_stage_index: stageIndex, answer: answer.availability === "draft" ? { availability: "draft", artifact_ref: versionedRef(answer.artifact_ref, "answer artifact_ref") } : { availability: "unavailable" }, ...(cancellation === undefined ? {} : { cancellation_receipt_ref: cancellation }), deployment_generation: parsed.deployment_generation };
 }
 
-export function decodeResearchRunHistory(raw: unknown, expectedDeploymentGeneration?: string): ResearchRunHistoryView {
-  const parsed = envelope(raw); checkGeneration(parsed.deployment_generation, expectedDeploymentGeneration);
-  const data = record(parsed.data, ["protocol", "runs", "configuration_state", "checked_at"], ["saved_drafts"]);
-  if (data.protocol !== "eliotr.research-runs.v1" && data.protocol !== "eliotr.research-runs.v2" && data.protocol !== "eliotr.research-runs.v3") invalid("research run history protocol is invalid");
-  if (data.configuration_state !== "INSTALLED" && data.configuration_state !== "MISSING") invalid("research run configuration state is invalid");
-  const checkedAt = isoTimestamp(data.checked_at, "checked_at");
-  if (!Array.isArray(data.runs) || data.runs.length > 8) invalid("research run history is invalid");
-  const seen = new Set<string>();
-  const runs = data.runs.map((value, index) => {
-    const entry = record(value, ["created_at", "status"]);
-    const createdAt = isoTimestamp(entry.created_at, `runs[${index}].created_at`);
-    const status = decodeResearchRunStatus({ data: entry.status, trace_id: "research-history", deployment_generation: parsed.deployment_generation }, parsed.deployment_generation);
-    if (seen.has(status.workflow_instance_id)) invalid("research run history contains a duplicate run");
-    seen.add(status.workflow_instance_id);
-    return { created_at: createdAt, status };
-  });
-  const savedDrafts: ResearchRunSavedDraft[] = [];
-  if (Object.hasOwn(data, "saved_drafts")) {
-    if (!Array.isArray(data.saved_drafts) || data.saved_drafts.length > 8) invalid("saved research drafts are invalid");
-    const draftRefs = new Set<string>();
-    data.saved_drafts.forEach((value, index) => {
-      const entry = record(value, ["created_at", "artifact_ref"], ["workflow_instance_id"]);
-      const createdAt = isoTimestamp(entry.created_at, `saved_drafts[${index}].created_at`);
-      const artifactRef = versionedRef(entry.artifact_ref, `saved_drafts[${index}].artifact_ref`);
-      const workflowInstanceId = Object.hasOwn(entry, "workflow_instance_id") ? checkWorkflowId(entry.workflow_instance_id) : undefined;
-      const key = `${artifactRef.id}:${artifactRef.revision}`;
-      if (draftRefs.has(key)) invalid("saved research drafts contain a duplicate artifact");
-      draftRefs.add(key);
-      savedDrafts.push({ created_at: createdAt, artifact_ref: artifactRef, ...(workflowInstanceId === undefined ? {} : { workflow_instance_id: workflowInstanceId }) });
-    });
-  }
-  if ((data.protocol === "eliotr.research-runs.v2" || data.protocol === "eliotr.research-runs.v3") && !Object.hasOwn(data, "saved_drafts")) invalid("research run history is missing saved drafts");
-  return { protocol: data.protocol, runs, saved_drafts: savedDrafts, configuration_state: data.configuration_state, checked_at: checkedAt, deployment_generation: parsed.deployment_generation };
+const researchRunHistoryErrorFactory: LegacyErrorFactory = (details) => new ApiRequestError({
+  status: details.status,
+  code: details.code,
+  message: details.message,
+  traceId: details.traceId,
+  retryable: details.retryable,
+});
+export function createPwaResearchRunsApiPorts(epoch: EpochPort) {
+  return { request: requestApiWithStatuses, errors: researchRunHistoryErrorFactory, epoch };
 }
-
+/** The actual panel uses the shared status/history APIs behind the verified owner epoch. */
+export function createPwaResearchRunHistoryApi(epoch: EpochPort): ReturnType<typeof createRunHistoryApi> {
+  const ports = createPwaResearchRunsApiPorts(epoch);
+  const runs = createResearchRunsApi(ports);
+  return createRunHistoryApi(ports, {
+    wire: createResearchRunWire(ports.errors), decodeStatus: runs.decodeResearchRunStatus,
+  });
+}
+const legacyResearchRunHistoryDecoder: ResearchRunHistoryDecoder = createRunHistoryDecoder(
+  researchRunHistoryErrorFactory,
+  decodeResearchRunStatus,
+);
+export function decodeResearchRunHistory(
+  raw: unknown,
+  expectedDeploymentGeneration?: string,
+  statusDecoder: ResearchRunStatusDecoder = decodeResearchRunStatus,
+): ResearchRunHistoryView {
+  const decoder = statusDecoder === decodeResearchRunStatus
+    ? legacyResearchRunHistoryDecoder
+    : createRunHistoryDecoder(researchRunHistoryErrorFactory, statusDecoder);
+  return decoder(raw, expectedDeploymentGeneration);
+}
 export async function readResearchArtifact(artifactRef: { readonly id: string; readonly revision: number }, expectedDeploymentGeneration?: string, signal?: AbortSignal): Promise<ArtifactRevision> {
   const ref = versionedRef(artifactRef, "artifact_ref");
   const raw = await requestApi(`/api/v1/research/artifact/${encodeURIComponent(`${ref.id}:${ref.revision}`)}`, signal ? { signal } : {});
@@ -587,7 +568,11 @@ export async function readResearchRunStatus(workflowInstanceId: string, expected
   return view;
 }
 
-export async function readResearchRunHistory(expectedDeploymentGeneration?: string, signal?: AbortSignal): Promise<ResearchRunHistoryView> {
+export async function readResearchRunHistory(
+  expectedDeploymentGeneration?: string,
+  signal?: AbortSignal,
+  statusDecoder: ResearchRunStatusDecoder = decodeResearchRunStatus,
+): Promise<ResearchRunHistoryView> {
   const raw = await requestApi("/api/v1/research/runs", signal ? { signal } : {});
-  return decodeResearchRunHistory(raw, expectedDeploymentGeneration);
+  return decodeResearchRunHistory(raw, expectedDeploymentGeneration, statusDecoder);
 }

@@ -22,6 +22,7 @@
   },
   "dependencies": {
     "@eliotr/contracts": "workspace:*",
+    "@eliotr/owner-api-client": "workspace:*",
     "@eliotr/pwa-http-client": "workspace:*",
     "@eliotr/pwa-source-workspace": "workspace:*"
   },

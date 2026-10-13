@@ -12,7 +12,19 @@ export interface OwnerSessionLifecycleOptions {
 export function createOwnerSessionLifecycle(options: OwnerSessionLifecycleOptions) {
   let verifiedSession: OwnerSession | undefined;
   let verifiedGeneration: string | undefined;
+  const currentSession = (): OwnerSession | undefined => {
+    if (!verifiedSession || verifiedGeneration !== options.deploymentGeneration() ||
+        !options.healthReady() || !isOwnerSessionUnexpired(verifiedSession)) return undefined;
+    return verifiedSession;
+  };
   return {
+    /** Read-only epoch of the actual verified owner, shared with Research history decoding. */
+    epoch: {
+      capture: currentSession,
+      isCurrent(capture: unknown): boolean {
+        return capture !== undefined && currentSession() === capture;
+      },
+    },
     onVerified(session: OwnerSession, deploymentGeneration: string): void {
       verifiedSession = session;
       verifiedGeneration = deploymentGeneration;

@@ -4,16 +4,19 @@ import { readArtifactPublication } from "./artifact-product-api.js";
 import { mountResearchRunControls, openRunArtifact, runArtifactRenderOptions, type OpenedRunArtifact } from "./research-run-controls.js";
 import { IdentifierSchema } from "@eliotr/contracts";
 import { ApiRequestError, isAuthorizationLoss } from "@eliotr/pwa-http-client";
-import { readResearchRunHistory, researchRunBody, readReauthorizedResearchArtifact, readResearchRunStatus, startResearchRun, type ResearchEngineStatus, type ResearchRunHistoryEntry, type ResearchRunSavedDraft, type ResearchRunStatusView } from "./research-run-api.js"; import { finishResearchStatusRead, readResearchStatusWithAuthorityRetry, shouldRetryResearchAuthority } from "./research-run-status-retry.js";
+import type { EpochPort } from "@eliotr/owner-api-client";
+import { createPwaResearchRunHistoryApi, researchRunBody, readReauthorizedResearchArtifact, readResearchRunStatus, startResearchRun, type ResearchEngineStatus, type ResearchRunHistoryEntry, type ResearchRunSavedDraft, type ResearchRunStatusView } from "./research-run-api.js"; import { finishResearchStatusRead, readResearchStatusWithAuthorityRetry, shouldRetryResearchAuthority } from "./research-run-status-retry.js";
 import type { ArtifactRevision } from "@eliotr/contracts";
 import type { LibrarySelectionContext } from "@eliotr/pwa-source-workspace";
 import { currentResearchRunBadge, RESEARCH_STATUS_REFRESH_MS, message, statusText, badgeText, idleBadgeText, idleProgressText, historyNoteText, historyStatusText,  shouldPollEngine, historyErrorMessage, sameArtifact, createResearchRunView, createResearchHistoryRow, renderResearchHistoryList, renderResearchStatusHeading } from "./research-run-view.js";
 export function mountResearchRunPanel(
   element: HTMLElement,
   deploymentGeneration: () => string | undefined,
+  ownerEpoch: EpochPort,
   healthReady: () => boolean = () => false,
   researchConfigurationReady: () => boolean = () => true,
 ): (() => void) & { clearPrivate(notice?: string): void; suspendPrivate(): void; refreshAvailability(): void; refreshHistory(): void; invalidateSourceRevision(): void; selectSource(id: string, context?: LibrarySelectionContext): void; setProject(projectId?: string, title?: string): void } {
+  const { readResearchRunHistory } = createPwaResearchRunHistoryApi(ownerEpoch);
   const { form, badge, progress, query, scope, projectOption, selectedOption, submit, refresh, workflowInput, recover, status, result, historyRefresh, historyStatus, historyList } = createResearchRunView(element, healthReady(), researchConfigurationReady());
   let serial = 0; let controller: AbortController | undefined;
   let workflowId: string | undefined; let workflowGeneration: string | undefined; let selectedSourceId: string | undefined; let selectedProjectId: string | undefined;
