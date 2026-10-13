@@ -6,8 +6,11 @@ import type {
   ExactSearchPort,
   LexicalSearchPort,
   ManagedSearchPort,
+  ManagedSearchExecution,
   RetrievalLaneExecutor,
+  RetrievalLaneExecutionContextV1,
   RetrievalRequest,
+  RetrievalLaneExecutionResult,
 } from "./ports.js";
 
 export interface RetrievalLaneRegistry {
@@ -17,29 +20,113 @@ export interface RetrievalLaneRegistry {
 export interface LaneExecutionReceipt {
   readonly lane: RetrievalLane;
   readonly candidates: readonly LocatorCandidate[];
-  readonly disposition: "EXECUTED" | "SKIPPED_UNAVAILABLE" | "FAILED";
+  readonly managed_execution?: ManagedSearchExecution;
+  readonly disposition: "EXECUTED" | "SKIPPED_UNAVAILABLE" | "SKIPPED_POLICY" | "FAILED";
   readonly failure_code?: string;
+  readonly failure_detail_code?: string;
+}
+
+export interface PlannedLaneExecutionOptions {
+  readonly beforeLane?: (
+    lane: RetrievalLane,
+    completed: readonly LaneExecutionReceipt[],
+  ) => void | Promise<void>;
+  readonly skipLane?: (
+    lane: RetrievalLane,
+    completed: readonly LaneExecutionReceipt[],
+  ) => string | undefined;
+  readonly propagateError?: (error: unknown, lane: RetrievalLane) => boolean;
+  readonly executionContext?: RetrievalLaneExecutionContextV1;
+}
+
+function errorCode(error: unknown): unknown {
+  if ((typeof error !== "object" || error === null) && typeof error !== "function") return undefined;
+  return (error as { readonly code?: unknown }).code;
+}
+
+function errorDetailCode(error: unknown): string | undefined {
+  if ((typeof error !== "object" || error === null) && typeof error !== "function") return undefined;
+  const detail = (error as { readonly failure_detail_code?: unknown }).failure_detail_code;
+  return typeof detail === "string" ? detail : undefined;
+}
+
+function isManagedSearchExecution(value: RetrievalLaneExecutionResult): value is ManagedSearchExecution {
+  if (typeof value !== "object" || value === null || Array.isArray(value) || !("execution_state" in value)) {
+    return false;
+  }
+  return value.execution_state === "EXECUTED" || value.execution_state === "NOT_EXECUTED";
+}
+
+function unavailableSearchError(message: string, detailCode: string): Error {
+  const error = new Error(message);
+  error.name = "SEARCH_UNAVAILABLE";
+  Object.assign(error, { code: "SEARCH_UNAVAILABLE", failure_detail_code: detailCode });
+  return error;
 }
 
 export async function executePlannedLanes(
   plan: QueryPlan,
   request: RetrievalRequest,
   registry: RetrievalLaneRegistry,
+  options: PlannedLaneExecutionOptions = {},
 ): Promise<readonly LaneExecutionReceipt[]> {
   const receipts: LaneExecutionReceipt[] = [];
   for (const lane of plan.lanes) {
+    await options.beforeLane?.(lane, receipts);
+    const skipReason = options.skipLane?.(lane, receipts);
+    if (skipReason !== undefined) {
+      receipts.push({
+        lane,
+        candidates: [],
+        disposition: "SKIPPED_POLICY",
+        failure_code: skipReason,
+      });
+      continue;
+    }
     const executor = registry.executorFor(lane);
     if (executor === null) {
-      receipts.push({ lane, candidates: [], disposition: "SKIPPED_UNAVAILABLE" });
+      receipts.push({
+        lane,
+        candidates: [],
+        disposition: "SKIPPED_UNAVAILABLE",
+        failure_code: "LANE_UNAVAILABLE",
+      });
       continue;
     }
     try {
-      const candidates = await executor.execute(lane, request);
-      receipts.push({ lane, candidates, disposition: "EXECUTED" });
+      const result = await executor.execute(lane, request, options.executionContext);
+      if (isManagedSearchExecution(result)) {
+        if (result.execution_state === "NOT_EXECUTED") {
+          receipts.push({
+            lane,
+            candidates: [],
+            managed_execution: result,
+            disposition: "SKIPPED_POLICY",
+            failure_code: "MANAGED_NOT_EXECUTED",
+          });
+          continue;
+        }
+        if (result.outcome === null) {
+          const error = new Error("executed managed search omitted its outcome");
+          Object.assign(error, { code: "RETRIEVAL_TRACE_CORRUPT", retryable: false });
+          throw error;
+        }
+        receipts.push({ lane, candidates: result.candidates, managed_execution: result, disposition: "EXECUTED" });
+        continue;
+      }
+      receipts.push({ lane, candidates: result, disposition: "EXECUTED" });
     } catch (error: unknown) {
-      const code = (error as { readonly code?: unknown }).code;
+      if (options.propagateError?.(error, lane) === true) throw error;
+      const code = errorCode(error);
       if (code === "SEARCH_UNAVAILABLE") {
-        receipts.push({ lane, candidates: [], disposition: "SKIPPED_UNAVAILABLE" });
+        const detailCode = errorDetailCode(error);
+        receipts.push({
+          lane,
+          candidates: [],
+          disposition: "SKIPPED_UNAVAILABLE",
+          failure_code: "SEARCH_UNAVAILABLE",
+          ...(detailCode === undefined ? {} : { failure_detail_code: detailCode }),
+        });
         continue;
       }
       receipts.push({
@@ -162,10 +249,12 @@ export function createExactLaneExecutor(
  */
 export function createSemLaneExecutor(managed: ManagedSearchPort): RetrievalLaneExecutor {
   return {
+    managed_outcome_capable: managed.searchManaged !== undefined,
     async execute(
       lane: RetrievalLane,
       request: RetrievalRequest,
-    ): Promise<readonly LocatorCandidate[]> {
+      context?: RetrievalLaneExecutionContextV1,
+    ): Promise<RetrievalLaneExecutionResult> {
       if (lane !== "SEM") {
         const error = new Error(`SEM executor cannot serve lane ${lane}`);
         error.name = "SEARCH_INPUT_INVALID";
@@ -183,6 +272,44 @@ export function createSemLaneExecutor(managed: ManagedSearchPort): RetrievalLane
         (invalid as unknown as { code: string }).code = "SEARCH_INPUT_INVALID";
         throw invalid;
       }
+      if (context?.beforeManagedCall !== undefined || context?.admission !== undefined) {
+        if (managed.searchManaged === undefined) {
+          const error = new Error("durable managed execution requires the single-call outcome adapter");
+          Object.assign(error, { code: "RETRIEVAL_AUTHORITY_STALE", retryable: false });
+          throw error;
+        }
+        const noProviderDispatch = context.provider_candidate_limit === 0 ||
+          request.scope_snapshot.member_source_revision_refs.length === 0;
+        if (noProviderDispatch) {
+          return {
+            execution_state: "NOT_EXECUTED",
+            submitted_query: "",
+            candidates: [],
+            outcome: null,
+          };
+        }
+        const admission = context.admission ?? await context.beforeManagedCall?.();
+        if (admission === undefined) {
+          const error = new Error("managed provider dispatch has no durable admission receipt");
+          Object.assign(error, { code: "RETRIEVAL_AUTHORITY_STALE", retryable: false });
+          throw error;
+        }
+        try {
+          const result = await managed.searchManaged(request, ["SEM"], expansion, admission);
+          const candidates = result.candidates.map((candidate) => {
+            const { proof_state: _localMarker, ...locator } = candidate as LocatorCandidate & {
+              readonly proof_state?: unknown;
+            };
+            void _localMarker;
+            return locator;
+          });
+          return { ...result, candidates };
+        } catch (error: unknown) {
+          // Preserve typed provider/domain codes and retryability for the caller. The managed
+          // path has no secondary LEX call or fabricated outcome on transport failure.
+          throw error;
+        }
+      }
       try {
         const results = await managed.search(request, ["SEM"], expansion);
         return results.map((candidate) => {
@@ -193,12 +320,12 @@ export function createSemLaneExecutor(managed: ManagedSearchPort): RetrievalLane
           return locator;
         });
       } catch (error: unknown) {
-        const code = (error as { readonly code?: unknown }).code;
-        if (code === "AI_SEARCH_MANAGED_NOT_PROMOTED") {
-          const unavailable = new Error("managed semantic generation is not promoted");
-          unavailable.name = "SEARCH_UNAVAILABLE";
-          (unavailable as unknown as { code: string }).code = "SEARCH_UNAVAILABLE";
-          throw unavailable;
+        const code = errorCode(error);
+        if (code === "AI_SEARCH_MANAGED_NOT_PROMOTED" || code === "AI_SEARCH_MANAGED_CAPABILITY_UNAVAILABLE") {
+          throw unavailableSearchError("managed semantic generation is not available", String(code));
+        }
+        if (code === "AI_SEARCH_MANAGED_PROVIDER_CALL_FAILED") {
+          throw unavailableSearchError("managed semantic provider call is unavailable", String(code));
         }
         if (code === "AI_SEARCH_MANAGED_REGISTRY_CHANGED") {
           const drifted = new Error("managed semantic generation drifted during readback");

@@ -1,19 +1,63 @@
 // IMPLEMENTED_NOT_LIVE: ER-04 D1-backed retrieval query persistence over migration 0021 with frozen-scope binding, idempotent result replay and exact trace linkage; lane/R2 composition and Worker wiring remain separate.
 import {
+  IdentifierSchema,
+  MANAGED_RETRIEVAL_TRACE_PROTOCOL,
   RetrievalTraceSchema,
   IsoDateTimeSchema,
   ScopeSnapshotSchema,
+  VersionedRefSchema,
   type RetrievalTrace,
   type ScopeSnapshot,
   type VersionedRef,
 } from "@eliotr/contracts";
-import type { RetrievalRequest } from "./ports.js";
+import type {
+  PendingRetrievalAdmissionV1,
+  RetrievalQueryAccess,
+  RetrievalQueryAdmissionReceiptV1,
+  RetrievalQueryD1,
+  RetrievalQueryD1Statement,
+  RetrievalRequest,
+  RetrievalSettlementBatchPlanV1,
+  RetrievalSettlementOwnerPortV1,
+  RetrievalTerminalSettlementIdentityV1,
+  RetrievalTracePersistenceOptions,
+} from "./ports.js";
+export type {
+  PendingRetrievalAdmissionV1,
+  RetrievalQueryAccess,
+  RetrievalQueryAdmissionReceiptV1,
+  RetrievalQueryAdmissionReceiptV1 as ManagedRetrievalAdmissionReceiptV1,
+  RetrievalQueryD1,
+  RetrievalQueryD1Statement,
+  RetrievalSettlementBatchPlanV1,
+  RetrievalSettlementOwnerPortV1,
+  RetrievalTerminalSettlementIdentityV1,
+} from "./ports.js";
+import { decodeRetrievalBudgetSettlementV1 } from "./query-budget-settlement.js";
 import {
   RetrievalQueryError,
   type RetrievalQueryErrorCode,
   type StoredRetrievalResult,
 } from "./service.js";
-import { canonicalRetrievalJson as canonicalJson, decodeCanonicalRetrievalJson, decodeEvidencePack, decodeRetrievalResult } from "./query-codec.js";
+import { createScopeProfilePort, type ScopeProfileBinding } from "./query-scope-profile.js";
+export type { ScopeProfileBinding } from "./query-scope-profile.js";
+import {
+  canonicalRetrievalJson as canonicalJson,
+  decodeCanonicalRetrievalJson,
+  decodeEvidencePack,
+  decodeRetrievalPersistenceValue,
+  decodeRetrievalResult,
+  decodeRetrievalTrace,
+  encodeRetrievalTraceForPersistence,
+  encodeRetrievalResultForPersistence,
+  canonicalRetrievalResultJson,
+  canonicalManagedRetrievalPublicOutputJsonV1,
+  isManagedRetrievalTrace,
+  managedRetrievalInvocationIdsV1,
+  managedRetrievalRefIdV1,
+  isRetrievalRecord as isRecord,
+  retrievalSha256Hex as sha256Hex,
+} from "./query-codec.js";
 
 export function canonicalRetrievalJson(value: unknown): string {
   try {
@@ -23,32 +67,16 @@ export function canonicalRetrievalJson(value: unknown): string {
   }
 }
 
-export interface RetrievalQueryAccess {
-  readonly principal_ref: string;
-  readonly client_class: "owner_pwa" | "named_api_client" | "trusted_agent" | "federation_client";
-  readonly credential_generation: string;
-}
-
-interface QueryD1Statement {
-  first<T>(): Promise<T | null>;
-  all<T>(): Promise<{ readonly results: readonly T[] }>;
-  run(): Promise<unknown>;
-}
-
-interface QueryD1Prepared {
-  bind(...values: unknown[]): QueryD1Statement;
-}
-
-export interface RetrievalQueryD1 {
-  prepare(sql: string): QueryD1Prepared;
-}
-
 function failQuery(code: RetrievalQueryErrorCode, message: string, retryable = false): never {
   throw new RetrievalQueryError(code, message, retryable);
 }
 
-function mapStoreError(error: unknown): never {
+function rethrowTypedQueryError(error: unknown): void {
   if (error instanceof RetrievalQueryError) throw error;
+}
+
+function mapStoreError(error: unknown): never {
+  rethrowTypedQueryError(error);
   const message = error instanceof Error ? error.message : String(error);
   if (message.includes("RETRIEVAL_AUTHORITY_STALE")) {
     failQuery("RETRIEVAL_AUTHORITY_STALE", "scope authorization is denied, purged or expired");
@@ -60,14 +88,6 @@ function mapStoreError(error: unknown): never {
     failQuery("RETRIEVAL_IDEMPOTENCY_CONFLICT", "idempotency identity is bound to different inputs");
   }
   failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "query result settlement is uncertain", true);
-}
-
-async function sha256Hex(text: string): Promise<string> {
-  const bytes = new TextEncoder().encode(text);
-  const copy = new ArrayBuffer(bytes.byteLength);
-  new Uint8Array(copy).set(bytes);
-  const digest = await crypto.subtle.digest("SHA-256", copy);
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function checkAccess(access: RetrievalQueryAccess): void {
@@ -123,7 +143,8 @@ async function readScopeAuthority(
     "AND g.principal_ref = ?3 AND g.client_class = ?4 AND g.credential_generation = ?5 " +
     "WHERE s.snapshot_id = ?1 AND s.revision = ?2 LIMIT 1",
   ).bind(snapshotId, revision, access.principal_ref, access.client_class, access.credential_generation)
-    .first<ScopeAuthorityRow>().catch(() => {
+    .first<ScopeAuthorityRow>().catch((error: unknown) => {
+      rethrowTypedQueryError(error);
       failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "scope authority read is unavailable", true);
     });
   return row;
@@ -190,6 +211,11 @@ export function createD1ScopePorts(
 }
 
 interface StoredResultRow {
+  readonly operation_id: unknown;
+  readonly principal_ref: unknown;
+  readonly client_class: unknown;
+  readonly credential_generation: unknown;
+  readonly idempotency_key: unknown;
   readonly request_digest: unknown;
   readonly result_json: unknown;
   readonly result_digest: unknown;
@@ -199,6 +225,75 @@ interface StoredResultRow {
   readonly trace_revision: unknown;
   readonly coverage_claim: unknown;
   readonly state: unknown;
+}
+
+interface PendingAdmissionRow {
+  readonly operation_id: unknown;
+  readonly principal_ref: unknown;
+  readonly client_class: unknown;
+  readonly credential_generation: unknown;
+  readonly idempotency_key: unknown;
+  readonly request_digest: unknown;
+  readonly scope_snapshot_id: unknown;
+  readonly scope_snapshot_revision: unknown;
+  readonly state: unknown;
+  readonly resolved_scope_expression_json: unknown;
+  readonly participant_generations_json: unknown;
+  readonly member_source_revision_refs_json: unknown;
+  readonly source_owner_generations_json: unknown;
+  readonly policy_authority_ref: unknown;
+  readonly disclosure_closure_digest: unknown;
+  readonly purge_ledger_revision: unknown;
+  readonly client_fence_ref: unknown;
+  readonly snapshot_digest: unknown;
+  readonly snapshot_created_at: unknown;
+  readonly scope_expires_at: unknown;
+}
+
+function parseStoredJson(value: unknown): unknown {
+  if (typeof value !== "string") return undefined;
+  try {
+    return JSON.parse(value) as unknown;
+  } catch {
+    return undefined;
+  }
+}
+
+function scopeFromPendingRow(row: PendingAdmissionRow): ScopeSnapshot {
+  const candidate = {
+    snapshot_id: row.scope_snapshot_id,
+    revision: row.scope_snapshot_revision,
+    resolved_scope_expression: parseStoredJson(row.resolved_scope_expression_json),
+    participant_generations: parseStoredJson(row.participant_generations_json),
+    member_source_revision_refs: parseStoredJson(row.member_source_revision_refs_json),
+    source_owner_generations: parseStoredJson(row.source_owner_generations_json),
+    policy_authority_ref: row.policy_authority_ref,
+    disclosure_closure_digest: row.disclosure_closure_digest,
+    purge_ledger_revision: row.purge_ledger_revision,
+    ...(row.client_fence_ref === null ? {} : { client_fence_ref: row.client_fence_ref }),
+    digest: row.snapshot_digest,
+    created_at: row.snapshot_created_at,
+    expires_at: row.scope_expires_at,
+  };
+  const parsed = ScopeSnapshotSchema.safeParse(candidate);
+  if (!parsed.success) {
+    failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "pending query scope snapshot is malformed", true);
+  }
+  return parsed.data;
+}
+
+function publicResultFromPersistedEnvelope(value: unknown): unknown | undefined {
+  if (!isRecord(value)) return undefined;
+  const decoded = decodeRetrievalPersistenceValue(value);
+  if (decoded === null) return undefined;
+  const wrapped = value.protocol === "eliotr.retrieval-result.managed.v1" ||
+    Object.prototype.hasOwnProperty.call(value, "budget_settlement") ||
+    Object.prototype.hasOwnProperty.call(value, "budget_settlement_digest");
+  return wrapped ? {
+    evidence_pack: decoded.result.evidence_pack,
+    trace: decoded.result.trace,
+    coverage_claim: decoded.result.coverage_claim,
+  } : undefined;
 }
 
 // Rejection-only shape: an old record missing its original expression cannot
@@ -219,7 +314,7 @@ function lacksOriginalExpression(value: unknown): boolean {
     pack.trace_ref.id === trace.data.trace_ref.id && pack.trace_ref.revision === trace.data.trace_ref.revision;
 }
 
-function decodeStoredResult(row: StoredResultRow, idempotencyKey: string): StoredRetrievalResult {
+async function decodeStoredResult(row: StoredResultRow, idempotencyKey: string): Promise<StoredRetrievalResult> {
   if (row.state === "INVALIDATED") {
     failQuery("RETRIEVAL_SCOPE_STALE", "stored query scope is invalidated");
   }
@@ -231,161 +326,611 @@ function decodeStoredResult(row: StoredResultRow, idempotencyKey: string): Store
     failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query result is unavailable", true);
   }
   const parsed = decodeCanonicalRetrievalJson(row.result_json);
-  const result = parsed === undefined ? null : decodeRetrievalResult(parsed);
+  const decoded = parsed === undefined ? null : decodeRetrievalPersistenceValue(parsed);
+  const resultValue = decoded === null ? parsed : {
+    evidence_pack: decoded.result.evidence_pack,
+    trace: decoded.result.trace,
+    coverage_claim: decoded.result.coverage_claim,
+  };
+  const result = decoded?.result ?? null;
   if (result === null) {
-    if (lacksOriginalExpression(parsed)) {
+    if (lacksOriginalExpression(resultValue)) {
       failQuery("RETRIEVAL_IDEMPOTENCY_CONFLICT", "stored query cannot prove its original scope expression");
     }
     failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query result is malformed or not a strict retrieval result", true);
   }
+  if (decoded?.budget_settlement_digest !== undefined) {
+    if (decoded.budget_settlement_digest !== await sha256Hex(
+      canonicalRetrievalJson(decoded.budget_settlement),
+    )) {
+      failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored budget settlement digest is invalid", true);
+    }
+    const budgetSettlement = await decodeRetrievalBudgetSettlementV1(
+      decoded.budget_settlement,
+      row.request_digest,
+      result,
+    );
+    if (budgetSettlement === null) {
+      failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored budget settlement is malformed or not bound to its result", true);
+    }
+    return {
+      request_digest: row.request_digest,
+      idempotency_key: idempotencyKey,
+      result,
+      budget_settlement: budgetSettlement,
+    };
+  }
   return { request_digest: row.request_digest, idempotency_key: idempotencyKey, result };
+}
+
+async function validateManagedAdmission(
+  receipt: RetrievalQueryAdmissionReceiptV1,
+  record: StoredRetrievalResult,
+  access: RetrievalQueryAccess,
+): Promise<void> {
+  const trace = isManagedRetrievalTrace(record.result.trace) ? record.result.trace : null;
+  const outcomes = trace?.managed_ranking_outcomes;
+  const fence = receipt?.fence;
+  const ids = await managedRetrievalInvocationIdsV1(
+    access.principal_ref,
+    access.client_class,
+    record.idempotency_key,
+  );
+  if (
+    receipt?.protocol !== "eliotr.retrieval-query-admission.v1" ||
+    trace === null || trace.protocol !== MANAGED_RETRIEVAL_TRACE_PROTOCOL ||
+    receipt.retrieval_operation_id !== ids.retrieval_operation_id ||
+    receipt.scoped_invocation_id !== ids.scoped_invocation_id ||
+    receipt.execution_id !== ids.execution_id ||
+    !IdentifierSchema.safeParse(receipt.scoped_invocation_id).success ||
+    !IdentifierSchema.safeParse(receipt.execution_id).success ||
+    receipt.execution_id !== fence?.operation_id ||
+    receipt.request_digest !== record.request_digest ||
+    !VersionedRefSchema.safeParse(receipt.scope_snapshot_ref).success ||
+    receipt.scope_snapshot_ref.id !== trace.scope_snapshot.snapshot_id ||
+    receipt.scope_snapshot_ref.revision !== trace.scope_snapshot.revision ||
+    receipt.scope_digest !== trace.scope_snapshot.digest ||
+    !VersionedRefSchema.safeParse(receipt.intent_ref).success ||
+    receipt.intent_ref.id !== receipt.retrieval_operation_id || receipt.intent_ref.revision !== 1 ||
+    receipt.attempt_ref !== `${receipt.retrieval_operation_id}-a1` ||
+    !IdentifierSchema.safeParse(fence.operation_id).success ||
+    !IdentifierSchema.safeParse(fence.lease_owner).success ||
+    fence.lease_generation !== 1 ||
+    receipt.scoped_invocation_id === receipt.request_digest ||
+    outcomes === undefined || outcomes.length < 1 || outcomes.some((outcome) =>
+      !isRecord(outcome) || outcome.scoped_invocation_id !== receipt.scoped_invocation_id ||
+      outcome.request_digest !== record.request_digest)
+  ) {
+    failQuery("RETRIEVAL_AUTHORITY_STALE", "managed retrieval has no exact caller-owned admission receipt");
+  }
+}
+
+function makeSettlementIdentity(input: {
+  readonly access: RetrievalQueryAccess;
+  readonly receipt: RetrievalQueryAdmissionReceiptV1;
+  readonly idempotency_key: string;
+  readonly request_digest: string;
+  readonly output_digest: string;
+  readonly result_json_sha256: string;
+  readonly trace_ref: VersionedRef;
+  readonly trace_json_sha256: string;
+}): RetrievalTerminalSettlementIdentityV1 {
+  return {
+    access: input.access,
+    retrieval_operation_id: input.receipt.retrieval_operation_id,
+    scoped_invocation_id: input.receipt.scoped_invocation_id,
+    execution_id: input.receipt.execution_id,
+    idempotency_key: input.idempotency_key,
+    scope_snapshot_ref: input.receipt.scope_snapshot_ref,
+    scope_digest: input.receipt.scope_digest,
+    intent_ref: input.receipt.intent_ref,
+    attempt_ref: input.receipt.attempt_ref,
+    request_digest: input.request_digest,
+    output_digest: input.output_digest,
+    result_json_sha256: input.result_json_sha256,
+    trace_ref: input.trace_ref,
+    trace_json_sha256: input.trace_json_sha256,
+  };
+}
+
+const D1_EXECUTION_LEASE_NOW_SQL = "CAST(unixepoch('subsec') * 1000 AS INTEGER)";
+
+function pendingOwnerPredicate(firstParam: number): string {
+  const p = (offset: number): string => `?${firstParam + offset}`;
+  return "EXISTS (SELECT 1 FROM retrieval_query_result q " +
+    "JOIN scope_snapshot s ON s.snapshot_id=q.scope_snapshot_id AND s.revision=q.scope_snapshot_revision " +
+    "JOIN operation_intent i ON i.intent_id=q.operation_id AND i.revision=" + p(9) + " " +
+    "JOIN operation_attempt a ON a.intent_id=i.intent_id AND a.intent_revision=i.revision " +
+    "JOIN operation_execution_lease l ON l.operation_id=" + p(11) + " " +
+    "WHERE q.operation_id=" + p(0) + " AND q.principal_ref=" + p(1) + " AND q.client_class=" + p(2) + " " +
+    "AND q.credential_generation=" + p(3) + " AND q.idempotency_key=" + p(4) + " " +
+    "AND q.request_digest=" + p(5) + " AND q.scope_snapshot_id=" + p(6) + " " +
+    "AND q.scope_snapshot_revision=" + p(7) + " AND q.state='PENDING' " +
+    "AND s.snapshot_digest=" + p(8) + " " +
+    "AND i.intent_id=" + p(0) + " AND i.operation_kind='QUERY' AND i.principal_ref=q.principal_ref " +
+    "AND i.idempotency_key=q.operation_id AND i.payload_ref='retrieval-query-result:'||q.operation_id " +
+    "AND i.policy_decision_ref=s.policy_authority_ref " +
+    "AND a.attempt_id=" + p(10) + " AND a.attempt_number=1 AND a.state='STARTED' " +
+    "AND l.operation_kind='QUERY' AND l.lease_owner=" + p(12) + " AND l.lease_generation=" + p(13) + " " +
+    "AND l.attempt=1 AND l.state='LEASED' AND l.lease_until > " + D1_EXECUTION_LEASE_NOW_SQL + ")";
+}
+
+function pendingOwnerValues(
+  access: RetrievalQueryAccess,
+  identity: RetrievalTerminalSettlementIdentityV1,
+  receipt: RetrievalQueryAdmissionReceiptV1,
+): readonly unknown[] {
+  return [
+    identity.retrieval_operation_id,
+    access.principal_ref,
+    access.client_class,
+    access.credential_generation,
+    identity.idempotency_key,
+    identity.request_digest,
+    identity.scope_snapshot_ref.id,
+    identity.scope_snapshot_ref.revision,
+    identity.scope_digest,
+    identity.intent_ref.revision,
+    identity.attempt_ref,
+    identity.execution_id,
+    receipt.fence.lease_owner,
+    receipt.fence.lease_generation,
+  ];
 }
 
 export function createD1RetrievalResultStore(
   database: RetrievalQueryD1,
   access: RetrievalQueryAccess,
   now: () => string = () => new Date().toISOString(),
+  settlementOwner?: RetrievalSettlementOwnerPortV1,
 ): {
   load(idempotencyKey: string): Promise<StoredRetrievalResult | null>;
+  loadPending(idempotencyKey: string): Promise<PendingRetrievalAdmissionV1 | null>;
   store(record: StoredRetrievalResult): Promise<void>;
+  settle(record: StoredRetrievalResult, receipt?: RetrievalQueryAdmissionReceiptV1): Promise<StoredRetrievalResult>;
 } {
   checkAccess(access);
+  const readResultRow = async (idempotencyKey: string): Promise<StoredResultRow | null> => {
+    try {
+      const currentCredentialRow = await database.prepare(
+        "SELECT operation_id, principal_ref, client_class, credential_generation, idempotency_key, request_digest, result_json, result_digest, " +
+        "scope_snapshot_id, scope_snapshot_revision, trace_id, trace_revision, coverage_claim, state FROM retrieval_query_result " +
+        "WHERE principal_ref = ?1 AND client_class = ?2 AND credential_generation = ?3 " +
+        "AND idempotency_key = ?4 LIMIT 1",
+      ).bind(access.principal_ref, access.client_class, access.credential_generation, idempotencyKey)
+        .first<StoredResultRow>();
+      if (currentCredentialRow !== null) return currentCredentialRow;
+      const ids = await managedRetrievalInvocationIdsV1(access.principal_ref, access.client_class, idempotencyKey);
+      return await database.prepare(
+        "SELECT operation_id, principal_ref, client_class, credential_generation, idempotency_key, request_digest, result_json, result_digest, " +
+        "scope_snapshot_id, scope_snapshot_revision, trace_id, trace_revision, coverage_claim, state FROM retrieval_query_result " +
+        "WHERE operation_id = ?1 AND principal_ref = ?2 AND client_class = ?3 AND idempotency_key = ?4 LIMIT 1",
+      ).bind(ids.retrieval_operation_id, access.principal_ref, access.client_class, idempotencyKey)
+        .first<StoredResultRow>();
+    } catch (error: unknown) {
+      rethrowTypedQueryError(error);
+      failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query result is unavailable", true);
+    }
+  };
+  const readPendingRow = async (idempotencyKey: string): Promise<PendingAdmissionRow | null> => {
+    try {
+      const ids = await managedRetrievalInvocationIdsV1(access.principal_ref, access.client_class, idempotencyKey);
+      return await database.prepare(
+        "SELECT q.operation_id,q.principal_ref,q.client_class,q.credential_generation,q.idempotency_key,q.request_digest," +
+        "q.scope_snapshot_id,q.scope_snapshot_revision,q.state,s.resolved_scope_expression_json," +
+        "s.participant_generations_json,s.member_source_revision_refs_json,s.source_owner_generations_json," +
+        "s.policy_authority_ref,s.disclosure_closure_digest,s.purge_ledger_revision,s.client_fence_ref," +
+        "s.snapshot_digest,s.created_at AS snapshot_created_at,s.expires_at AS scope_expires_at " +
+        "FROM retrieval_query_result q JOIN scope_snapshot s ON s.snapshot_id=q.scope_snapshot_id " +
+        "AND s.revision=q.scope_snapshot_revision WHERE q.operation_id=?1 AND q.principal_ref=?2 " +
+        "AND q.client_class=?3 AND q.idempotency_key=?4 AND q.state='PENDING' LIMIT 1",
+      ).bind(ids.retrieval_operation_id, access.principal_ref, access.client_class, idempotencyKey)
+        .first<PendingAdmissionRow>();
+    } catch (error: unknown) {
+      rethrowTypedQueryError(error);
+      failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "pending query admission is unavailable", true);
+    }
+  };
+  const readTraceRow = async (traceId: string, revision: number): Promise<{
+    readonly trace_json: unknown;
+    readonly trace_digest: unknown;
+    readonly scope_snapshot_id: unknown;
+    readonly scope_snapshot_revision: unknown;
+  } | null> => {
+    try {
+      return await database.prepare(
+        "SELECT trace_json, trace_digest, scope_snapshot_id, scope_snapshot_revision FROM retrieval_query_trace " +
+        "WHERE trace_id = ?1 AND revision = ?2 LIMIT 1",
+      ).bind(traceId, revision).first<{
+        readonly trace_json: unknown;
+        readonly trace_digest: unknown;
+        readonly scope_snapshot_id: unknown;
+        readonly scope_snapshot_revision: unknown;
+      }>();
+    } catch (error: unknown) {
+      rethrowTypedQueryError(error);
+      failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query trace is unavailable", true);
+    }
+  };
+  const load = async (idempotencyKey: string): Promise<StoredRetrievalResult | null> => {
+    if (
+      typeof idempotencyKey !== "string" || idempotencyKey.length < 1 || idempotencyKey.length > 256 ||
+      /[\u0000-\u0020\u007f]/u.test(idempotencyKey)
+    ) {
+      failQuery("RETRIEVAL_INPUT_INVALID", "idempotency-key is required");
+    }
+    const row = await readResultRow(idempotencyKey);
+    if (row === null) return null;
+    // PENDING is the canonical admission record, not a replayable result.
+    // Callers must loadPending before minting any replacement scope snapshot.
+    if (row.state === "PENDING") return null;
+    if (row.state === "COMPLETE" && typeof row.result_json === "string" &&
+        row.result_digest !== await sha256Hex(row.result_json)) {
+      const envelopeValue = decodeCanonicalRetrievalJson(row.result_json);
+      const publicResult = publicResultFromPersistedEnvelope(envelopeValue);
+      if (publicResult === undefined ||
+          row.result_digest !== await sha256Hex(canonicalRetrievalResultJson(publicResult))) {
+        failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query result metadata is not bound to its result", true);
+      }
+    }
+    const stored = await decodeStoredResult(row, idempotencyKey);
+    if (typeof row.result_json !== "string" ||
+        row.scope_snapshot_id !== stored.result.trace.scope_snapshot.snapshot_id ||
+        row.scope_snapshot_revision !== stored.result.trace.scope_snapshot.revision ||
+        row.scope_snapshot_id !== stored.result.evidence_pack.scope_snapshot_ref.id ||
+        row.scope_snapshot_revision !== stored.result.evidence_pack.scope_snapshot_ref.revision ||
+        row.trace_id !== stored.result.trace.trace_ref.id || row.trace_revision !== stored.result.trace.trace_ref.revision ||
+        row.trace_id !== stored.result.evidence_pack.trace_ref.id || row.trace_revision !== stored.result.evidence_pack.trace_ref.revision ||
+        row.coverage_claim !== stored.result.coverage_claim) {
+      failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query result metadata is not bound to its result", true);
+    }
+    const traceRow = await readTraceRow(stored.result.trace.trace_ref.id, stored.result.trace.trace_ref.revision);
+    const storedTraceValue = traceRow !== null && typeof traceRow.trace_json === "string"
+      ? decodeCanonicalRetrievalJson(traceRow.trace_json)
+      : undefined;
+    if (traceRow === null || typeof traceRow.trace_json !== "string" || typeof traceRow.trace_digest !== "string" ||
+        traceRow.trace_digest !== await sha256Hex(traceRow.trace_json) ||
+        traceRow.scope_snapshot_id !== stored.result.trace.scope_snapshot.snapshot_id ||
+        traceRow.scope_snapshot_revision !== stored.result.trace.scope_snapshot.revision ||
+        traceRow.scope_snapshot_id !== stored.result.evidence_pack.scope_snapshot_ref.id ||
+        traceRow.scope_snapshot_revision !== stored.result.evidence_pack.scope_snapshot_ref.revision ||
+        storedTraceValue === undefined ||
+        encodeRetrievalTraceForPersistence(storedTraceValue) !== encodeRetrievalTraceForPersistence(stored.result.trace)) {
+      failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query trace linkage is not bound to its result", true);
+    }
+    if (isManagedRetrievalTrace(stored.result.trace)) {
+      if (typeof row.operation_id !== "string" || typeof row.result_json !== "string" ||
+          typeof traceRow.trace_json !== "string" || typeof traceRow.trace_digest !== "string" ||
+          settlementOwner === undefined) {
+        failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "managed query owner readback is unavailable", true);
+      }
+      const scopeRow = await readScopeAuthority(
+        database,
+        stored.result.trace.scope_snapshot.snapshot_id,
+        stored.result.trace.scope_snapshot.revision,
+        access,
+      );
+      if (scopeRow === null) failQuery("RETRIEVAL_SCOPE_STALE", "managed query scope no longer exists");
+      requireLiveScope(scopeRow, stored.result.trace.scope_snapshot, now());
+      const outcomes = stored.result.trace.managed_ranking_outcomes;
+      const ids = await managedRetrievalInvocationIdsV1(access.principal_ref, access.client_class, idempotencyKey);
+      const outputDigest = await sha256Hex(canonicalManagedRetrievalPublicOutputJsonV1(stored.result));
+      if (row.operation_id !== ids.retrieval_operation_id || row.request_digest !== stored.request_digest ||
+          outcomes.length < 1 || outcomes.some((outcome) => outcome.scoped_invocation_id !== ids.scoped_invocation_id ||
+            outcome.request_digest !== stored.request_digest || outcome.output_digest !== outputDigest)) {
+        failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "managed query invocation identity is inconsistent", true);
+      }
+      const identity: RetrievalTerminalSettlementIdentityV1 = {
+        access,
+        retrieval_operation_id: ids.retrieval_operation_id,
+        scoped_invocation_id: ids.scoped_invocation_id,
+        execution_id: ids.execution_id,
+        idempotency_key: idempotencyKey,
+        scope_snapshot_ref: { id: stored.result.trace.scope_snapshot.snapshot_id, revision: stored.result.trace.scope_snapshot.revision },
+        scope_digest: stored.result.trace.scope_snapshot.digest,
+        intent_ref: { id: ids.retrieval_operation_id, revision: 1 },
+        attempt_ref: `${ids.retrieval_operation_id}-a1`,
+        request_digest: stored.request_digest,
+        output_digest: outputDigest,
+        result_json_sha256: await sha256Hex(row.result_json),
+        trace_ref: stored.result.trace.trace_ref,
+        trace_json_sha256: traceRow.trace_digest,
+      };
+      const committed = await settlementOwner.readCompletedSettlement(database, identity);
+      if (committed !== "COMMITTED") {
+        failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "managed query terminal authority is not committed", true);
+      }
+    }
+    return stored;
+  };
+  const loadPending = async (idempotencyKey: string): Promise<PendingRetrievalAdmissionV1 | null> => {
+    if (
+      typeof idempotencyKey !== "string" || idempotencyKey.length < 1 || idempotencyKey.length > 256 ||
+      /[\u0000-\u0020\u007f]/u.test(idempotencyKey)
+    ) {
+      failQuery("RETRIEVAL_INPUT_INVALID", "idempotency-key is required");
+    }
+    // Preserve historical completed replay as the first leg. A second load by
+    // the caller after a null result closes the completion race before scope freeze.
+    if (await load(idempotencyKey) !== null) return null;
+    const row = await readPendingRow(idempotencyKey);
+    if (row === null) return null;
+    const ids = await managedRetrievalInvocationIdsV1(access.principal_ref, access.client_class, idempotencyKey);
+    if (row.operation_id !== ids.retrieval_operation_id || row.principal_ref !== access.principal_ref ||
+        row.client_class !== access.client_class || row.idempotency_key !== idempotencyKey ||
+        typeof row.credential_generation !== "string" || typeof row.request_digest !== "string" ||
+        !/^[a-f0-9]{64}$/u.test(row.request_digest)) {
+      failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "pending query admission identity is malformed", true);
+    }
+    const scopeSnapshot = scopeFromPendingRow(row);
+    if (scopeSnapshot.snapshot_id !== row.scope_snapshot_id || scopeSnapshot.revision !== row.scope_snapshot_revision) {
+      failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "pending query scope binding is malformed", true);
+    }
+    return {
+      retrieval_operation_id: ids.retrieval_operation_id,
+      request_digest: row.request_digest,
+      idempotency_key: idempotencyKey,
+      credential_generation: row.credential_generation,
+      scope_snapshot: scopeSnapshot,
+    };
+  };
+  const persistSettlement = async (
+    record: StoredRetrievalResult,
+    admission?: RetrievalQueryAdmissionReceiptV1,
+  ): Promise<StoredRetrievalResult> => {
+    if (typeof record.idempotency_key !== "string" || typeof record.request_digest !== "string" ||
+        !/^[a-f0-9]{64}$/u.test(record.request_digest)) {
+      failQuery("RETRIEVAL_INPUT_INVALID", "query result identity is invalid");
+    }
+    const historical = await load(record.idempotency_key);
+    if (historical !== null) {
+      if (historical.request_digest !== record.request_digest) {
+        failQuery("RETRIEVAL_IDEMPOTENCY_CONFLICT", "idempotency identity is bound to different inputs");
+      }
+      return historical;
+    }
+    if (record.result.coverage_claim !== "NONE" && record.result.coverage_claim !== "SAMPLED") {
+      failQuery("RETRIEVAL_INPUT_INVALID", "coverage stronger than SAMPLED is never stored");
+    }
+    if (decodeRetrievalResult(record.result) === null) {
+      failQuery("RETRIEVAL_INPUT_INVALID", "query result fails strict validation");
+    }
+    const trace = decodeRetrievalTrace(record.result.trace);
+    if (trace === null) failQuery("RETRIEVAL_INPUT_INVALID", "query trace fails strict validation");
+    const managed = isManagedRetrievalTrace(trace);
+    let managedOutputDigest: string | undefined;
+    if (managed) {
+      if (admission === undefined || settlementOwner === undefined) {
+        failQuery("RETRIEVAL_AUTHORITY_STALE", "managed result settlement requires the caller's durable admission receipt");
+      }
+      await validateManagedAdmission(admission, record, access);
+      const pending = await readPendingRow(record.idempotency_key);
+      if (pending === null) {
+        // Another ACK may have completed between the initial replay read and
+        // this check. Re-read the completed path before treating it as lost.
+        const completed = await load(record.idempotency_key);
+        if (completed !== null && completed.request_digest === record.request_digest) return completed;
+        failQuery("RETRIEVAL_AUTHORITY_STALE", "managed result has no original PENDING admission row");
+      }
+      const pendingScope = scopeFromPendingRow(pending);
+      if (pending.request_digest !== record.request_digest || pending.request_digest !== admission.request_digest) {
+        failQuery("RETRIEVAL_IDEMPOTENCY_CONFLICT", "PENDING request digest differs from the admitted request");
+      }
+      if (pending.operation_id !== admission.retrieval_operation_id ||
+          pending.credential_generation !== access.credential_generation) {
+        failQuery("RETRIEVAL_AUTHORITY_STALE", "PENDING row is not owned by the current admission receipt");
+      }
+      if (pending.scope_snapshot_id !== admission.scope_snapshot_ref.id ||
+          pending.scope_snapshot_revision !== admission.scope_snapshot_ref.revision ||
+          pendingScope.digest !== admission.scope_digest ||
+          canonicalRetrievalJson(pendingScope) !== canonicalRetrievalJson(trace.scope_snapshot)) {
+        failQuery("RETRIEVAL_IDEMPOTENCY_CONFLICT", "managed result does not use the original frozen scope snapshot");
+      }
+      const outcomes = trace.managed_ranking_outcomes;
+      managedOutputDigest = await sha256Hex(canonicalManagedRetrievalPublicOutputJsonV1(record.result));
+      if (outcomes.length < 1 || outcomes.some((outcome) => outcome.output_digest !== managedOutputDigest)) {
+        failQuery("RETRIEVAL_TRACE_CORRUPT", "managed outcome output digest does not bind the public evidence payload");
+      }
+    } else {
+      if (admission !== undefined) {
+        failQuery("RETRIEVAL_INPUT_INVALID", "legacy result cannot consume a managed query admission receipt");
+      }
+      if (await readPendingRow(record.idempotency_key) !== null) {
+        failQuery("RETRIEVAL_AUTHORITY_STALE", "legacy result cannot settle a managed PENDING admission");
+      }
+    }
+    if (record.budget_settlement !== undefined && await decodeRetrievalBudgetSettlementV1(
+      record.budget_settlement,
+      record.request_digest,
+      record.result,
+    ) === null) {
+      failQuery("RETRIEVAL_TRACE_CORRUPT", "budget settlement is not bound to the query result");
+    }
+    const persistedValue = record.budget_settlement === undefined
+      ? record.result
+      : {
+        ...record.result,
+        budget_settlement: record.budget_settlement,
+        budget_settlement_digest: await sha256Hex(canonicalRetrievalJson(record.budget_settlement)),
+      };
+    const resultJson = encodeRetrievalResultForPersistence(persistedValue);
+    const traceJson = encodeRetrievalTraceForPersistence(trace);
+    if (new TextEncoder().encode(resultJson).byteLength > 1000000 ||
+        new TextEncoder().encode(traceJson).byteLength > 262144) {
+      failQuery("RETRIEVAL_INPUT_INVALID", "query result or trace exceeds its bound");
+    }
+    const resultDigest = await sha256Hex(canonicalRetrievalResultJson(record.result));
+    const traceDigest = await sha256Hex(traceJson);
+    const operationId = managed
+      ? admission!.retrieval_operation_id
+      : `q3-${(await sha256Hex(canonicalRetrievalJson({
+        principal: access.principal_ref,
+        client: access.client_class,
+        credential: access.credential_generation,
+        key: record.idempotency_key,
+      }))).slice(0, 48)}`;
+    if (managed) {
+      const traceId = await managedRetrievalRefIdV1(admission!.scoped_invocation_id, "trace");
+      const packId = await managedRetrievalRefIdV1(admission!.scoped_invocation_id, "pack");
+      if (trace.trace_ref.id !== traceId || trace.trace_ref.revision !== 1 ||
+          record.result.evidence_pack.pack_ref.id !== packId || record.result.evidence_pack.pack_ref.revision !== 1) {
+        failQuery("RETRIEVAL_TRACE_CORRUPT", "managed trace and pack refs are not bound to the stable invocation identity");
+      }
+    }
+    const createdAt = now();
+    if (!IsoDateTimeSchema.safeParse(createdAt).success) {
+      failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "settlement clock returned an invalid timestamp", true);
+    }
+    const batch = database.batch;
+    if (batch === undefined) {
+      failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "atomic D1 trace/result settlement is unavailable", true);
+    }
+    let identity: RetrievalTerminalSettlementIdentityV1 | undefined;
+    let batchPlan: RetrievalSettlementBatchPlanV1 | undefined;
+    if (managed) {
+      identity = makeSettlementIdentity({
+        access,
+        receipt: admission!,
+        idempotency_key: record.idempotency_key,
+        request_digest: record.request_digest,
+        output_digest: managedOutputDigest!,
+        result_json_sha256: await sha256Hex(resultJson),
+        trace_ref: trace.trace_ref,
+        trace_json_sha256: traceDigest,
+      });
+      batchPlan = settlementOwner!.prepareTerminalSettlement(database, admission!, identity, createdAt);
+    }
+    let traceWrite: RetrievalQueryD1Statement;
+    let resultWrite: RetrievalQueryD1Statement;
+    if (managed) {
+      const ownerValues = pendingOwnerValues(access, identity!, admission!);
+      const ownerPredicate = pendingOwnerPredicate(8);
+      traceWrite = database.prepare(
+        "INSERT INTO retrieval_query_trace (trace_id,revision,scope_snapshot_id,scope_snapshot_revision,trace_json,trace_digest,created_at) " +
+        `SELECT ?1,?2,?3,?4,?5,?6,?7 WHERE ${ownerPredicate} ` +
+        "AND NOT EXISTS (SELECT 1 FROM retrieval_query_trace WHERE trace_id=?1 AND revision=?2 " +
+        "AND (scope_snapshot_id IS NOT ?3 OR scope_snapshot_revision IS NOT ?4 OR trace_json IS NOT ?5 OR trace_digest IS NOT ?6)) " +
+        "ON CONFLICT DO NOTHING",
+      ).bind(
+        trace.trace_ref.id, trace.trace_ref.revision, trace.scope_snapshot.snapshot_id,
+        trace.scope_snapshot.revision, traceJson, traceDigest, createdAt, ...ownerValues,
+      );
+      const updateOwnerPredicate = pendingOwnerPredicate(6);
+      resultWrite = database.prepare(
+        "UPDATE retrieval_query_result SET state='COMPLETE',result_json=?1,result_digest=?2,trace_id=?3," +
+        "trace_revision=?4,coverage_claim=?5 WHERE operation_id=?6 AND state='PENDING' " +
+        `AND ${updateOwnerPredicate} AND EXISTS (SELECT 1 FROM retrieval_query_trace t ` +
+        "WHERE t.trace_id=?3 AND t.revision=?4 AND t.scope_snapshot_id=?20 AND t.scope_snapshot_revision=?21 " +
+        "AND t.trace_json=?22 AND t.trace_digest=?23)",
+      ).bind(resultJson, resultDigest, trace.trace_ref.id, trace.trace_ref.revision,
+        record.result.coverage_claim, ...ownerValues, trace.scope_snapshot.snapshot_id,
+        trace.scope_snapshot.revision, traceJson, traceDigest);
+    } else {
+      traceWrite = database.prepare(
+        "INSERT INTO retrieval_query_trace (trace_id,revision,scope_snapshot_id,scope_snapshot_revision,trace_json,trace_digest,created_at) " +
+        "SELECT ?1,?2,?3,?4,?5,?6,?7 WHERE NOT EXISTS (SELECT 1 FROM retrieval_query_result q " +
+        "WHERE q.operation_id=?8 OR (q.principal_ref=?9 AND q.client_class=?10 AND q.idempotency_key=?12 " +
+        "AND (q.credential_generation=?11 OR q.operation_id LIKE 'q4-%'))) " +
+        "AND NOT EXISTS (SELECT 1 FROM retrieval_query_trace WHERE trace_id=?1 AND revision=?2 " +
+        "AND (scope_snapshot_id IS NOT ?3 OR scope_snapshot_revision IS NOT ?4 OR trace_json IS NOT ?5 OR trace_digest IS NOT ?6)) " +
+        "ON CONFLICT DO NOTHING",
+      ).bind(
+        trace.trace_ref.id, trace.trace_ref.revision, trace.scope_snapshot.snapshot_id,
+        trace.scope_snapshot.revision, traceJson, traceDigest, createdAt,
+        operationId, access.principal_ref, access.client_class, access.credential_generation, record.idempotency_key,
+      );
+      resultWrite = database.prepare(
+        "INSERT INTO retrieval_query_result (operation_id,principal_ref,client_class,credential_generation,idempotency_key,request_digest," +
+        "scope_snapshot_id,scope_snapshot_revision,state,result_json,result_digest,trace_id,trace_revision,coverage_claim,created_at,expires_at) " +
+        "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,'COMPLETE',?9,?10,?11,?12,?13,?14,?15 " +
+        "WHERE EXISTS (SELECT 1 FROM retrieval_query_trace WHERE trace_id=?11 AND revision=?12 AND scope_snapshot_id=?7 " +
+        "AND scope_snapshot_revision=?8 AND trace_json=?16 AND trace_digest=?17) " +
+        "AND NOT EXISTS (SELECT 1 FROM retrieval_query_result q WHERE q.operation_id=?1 OR " +
+        "(q.principal_ref=?2 AND q.client_class=?3 AND q.credential_generation=?4 AND q.idempotency_key=?5)) " +
+        "ON CONFLICT DO NOTHING",
+      ).bind(
+        operationId, access.principal_ref, access.client_class, access.credential_generation,
+        record.idempotency_key, record.request_digest, trace.scope_snapshot.snapshot_id,
+        trace.scope_snapshot.revision, resultJson, resultDigest,
+        trace.trace_ref.id, trace.trace_ref.revision, record.result.coverage_claim,
+        createdAt, trace.scope_snapshot.expires_at, traceJson, traceDigest,
+      );
+    }
+    const statements: RetrievalQueryD1Statement[] = [
+      traceWrite,
+      resultWrite,
+      ...(batchPlan?.terminal_writes ?? []),
+      ...(batchPlan === undefined ? [] : [batchPlan.assert_terminal]),
+    ];
+    let batchError: unknown;
+    try {
+      await batch.call(database, statements);
+    } catch (error: unknown) {
+      batchError = error;
+    }
+
+    const durableRow = managed
+      ? await database.prepare(
+        "SELECT operation_id,principal_ref,client_class,credential_generation,idempotency_key,request_digest,result_json,result_digest," +
+        "scope_snapshot_id,scope_snapshot_revision,trace_id,trace_revision,coverage_claim,state FROM retrieval_query_result " +
+        "WHERE operation_id=?1 AND principal_ref=?2 AND client_class=?3 AND idempotency_key=?4 LIMIT 1",
+      ).bind(operationId, access.principal_ref, access.client_class, record.idempotency_key).first<StoredResultRow>()
+      : await readResultRow(record.idempotency_key);
+    if (durableRow !== null && durableRow.request_digest !== record.request_digest) {
+      failQuery("RETRIEVAL_IDEMPOTENCY_CONFLICT", "idempotency identity is bound to different inputs");
+    }
+    let exactRows = false;
+    if (durableRow !== null && typeof durableRow.result_json === "string" &&
+        typeof durableRow.result_digest === "string" && durableRow.operation_id === operationId &&
+        durableRow.result_json === resultJson && durableRow.result_digest === resultDigest &&
+        durableRow.scope_snapshot_id === trace.scope_snapshot.snapshot_id &&
+        durableRow.scope_snapshot_revision === trace.scope_snapshot.revision &&
+        durableRow.trace_id === trace.trace_ref.id && durableRow.trace_revision === trace.trace_ref.revision &&
+        durableRow.coverage_claim === record.result.coverage_claim && durableRow.state === "COMPLETE") {
+      const durableTrace = await readTraceRow(trace.trace_ref.id, trace.trace_ref.revision);
+      exactRows = durableTrace !== null && durableTrace.trace_json === traceJson &&
+        durableTrace.trace_digest === traceDigest &&
+        durableTrace.scope_snapshot_id === trace.scope_snapshot.snapshot_id &&
+        durableTrace.scope_snapshot_revision === trace.scope_snapshot.revision;
+    }
+
+    if (managed && admission !== undefined && settlementOwner !== undefined && identity !== undefined) {
+      const scopeRow = await readScopeAuthority(
+        database,
+        trace.scope_snapshot.snapshot_id,
+        trace.scope_snapshot.revision,
+        access,
+      );
+      if (scopeRow === null) failQuery("RETRIEVAL_SCOPE_STALE", "managed query scope no longer exists");
+      requireLiveScope(scopeRow, trace.scope_snapshot, now());
+      const authority = batchError === undefined && exactRows
+        ? await settlementOwner.readCompletedSettlement(database, identity)
+        : await settlementOwner.reconcileLostAck(database, admission, identity);
+      if (authority !== "COMMITTED" || !exactRows) {
+        failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "managed settlement ACK cannot be reconciled to current owner authority", true);
+      }
+    } else if (batchError !== undefined && !exactRows) {
+      mapStoreError(batchError);
+    }
+
+    if (!exactRows) {
+      if (batchError !== undefined) mapStoreError(batchError);
+      failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "query result and trace were not durably settled together", true);
+    }
+    const winner = await load(record.idempotency_key);
+    if (winner === null) failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "query result settlement is uncertain", true);
+    if (winner.request_digest !== record.request_digest) {
+      failQuery("RETRIEVAL_IDEMPOTENCY_CONFLICT", "idempotency identity is bound to different inputs");
+    }
+    return winner;
+  };
   return {
-    async load(idempotencyKey: string): Promise<StoredRetrievalResult | null> {
-      if (
-        typeof idempotencyKey !== "string" || idempotencyKey.length < 1 || idempotencyKey.length > 256 ||
-        /[\u0000-\u0020\u007f]/u.test(idempotencyKey)
-      ) {
-        failQuery("RETRIEVAL_INPUT_INVALID", "idempotency-key is required");
-      }
-      let row: StoredResultRow | null;
-      try {
-        row = await database.prepare(
-          "SELECT request_digest, result_json, result_digest, scope_snapshot_id, scope_snapshot_revision, trace_id, trace_revision, coverage_claim, state FROM retrieval_query_result " +
-          "WHERE principal_ref = ?1 AND client_class = ?2 AND credential_generation = ?3 " +
-          "AND idempotency_key = ?4 LIMIT 1",
-        ).bind(access.principal_ref, access.client_class, access.credential_generation, idempotencyKey)
-          .first<StoredResultRow>();
-      } catch {
-        failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query result is unavailable", true);
-      }
-      if (row === null) return null;
-      // Integrity precedes compatibility classification: damaged bytes are not
-      // evidence of a legacy identity, even when their JSON has a legacy shape.
-      if (row.state === "COMPLETE" && typeof row.result_json === "string" &&
-          row.result_digest !== await sha256Hex(row.result_json)) {
-        failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query result metadata is not bound to its result", true);
-      }
-      const stored = decodeStoredResult(row, idempotencyKey);
-      if (typeof row.result_json !== "string" ||
-          row.scope_snapshot_id !== stored.result.trace.scope_snapshot.snapshot_id ||
-          row.scope_snapshot_revision !== stored.result.trace.scope_snapshot.revision ||
-          row.scope_snapshot_id !== stored.result.evidence_pack.scope_snapshot_ref.id ||
-          row.scope_snapshot_revision !== stored.result.evidence_pack.scope_snapshot_ref.revision ||
-          row.trace_id !== stored.result.trace.trace_ref.id || row.trace_revision !== stored.result.trace.trace_ref.revision ||
-          row.trace_id !== stored.result.evidence_pack.trace_ref.id || row.trace_revision !== stored.result.evidence_pack.trace_ref.revision ||
-          row.coverage_claim !== stored.result.coverage_claim) {
-        failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query result metadata is not bound to its result", true);
-      }
-      let traceRow: { readonly trace_json: unknown; readonly trace_digest: unknown; readonly scope_snapshot_id: unknown; readonly scope_snapshot_revision: unknown } | null;
-      try {
-        traceRow = await database.prepare(
-          "SELECT trace_json, trace_digest, scope_snapshot_id, scope_snapshot_revision FROM retrieval_query_trace WHERE trace_id = ?1 AND revision = ?2 LIMIT 1",
-        ).bind(stored.result.trace.trace_ref.id, stored.result.trace.trace_ref.revision)
-          .first<{ readonly trace_json: unknown; readonly trace_digest: unknown; readonly scope_snapshot_id: unknown; readonly scope_snapshot_revision: unknown }>();
-      } catch {
-        failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query trace is unavailable", true);
-      }
-      const storedTraceValue = traceRow !== null && typeof traceRow.trace_json === "string"
-        ? decodeCanonicalRetrievalJson(traceRow.trace_json)
-        : undefined;
-      if (traceRow === null || typeof traceRow.trace_json !== "string" || typeof traceRow.trace_digest !== "string" ||
-          traceRow.trace_digest !== await sha256Hex(traceRow.trace_json) ||
-          traceRow.scope_snapshot_id !== stored.result.trace.scope_snapshot.snapshot_id ||
-          traceRow.scope_snapshot_revision !== stored.result.trace.scope_snapshot.revision ||
-          traceRow.scope_snapshot_id !== stored.result.evidence_pack.scope_snapshot_ref.id ||
-          traceRow.scope_snapshot_revision !== stored.result.evidence_pack.scope_snapshot_ref.revision ||
-          storedTraceValue === undefined ||
-          canonicalRetrievalJson(storedTraceValue) !== canonicalRetrievalJson(stored.result.trace)) {
-        failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query trace linkage is not bound to its result", true);
-      }
-      return stored;
-    },
+    load,
+    loadPending,
     async store(record: StoredRetrievalResult): Promise<void> {
-      if (
-        typeof record.idempotency_key !== "string" || typeof record.request_digest !== "string" ||
-        !/^[a-f0-9]{64}$/u.test(record.request_digest)
-      ) {
-        failQuery("RETRIEVAL_INPUT_INVALID", "query result identity is invalid");
-      }
-      if (record.result.coverage_claim !== "NONE" && record.result.coverage_claim !== "SAMPLED") {
-        failQuery("RETRIEVAL_INPUT_INVALID", "coverage stronger than SAMPLED is never stored");
-      }
-      const traceParsed = RetrievalTraceSchema.safeParse(record.result.trace);
-      if (!traceParsed.success) failQuery("RETRIEVAL_INPUT_INVALID", "query trace fails strict validation");
-      const trace = traceParsed.data;
-      const resultJson = canonicalRetrievalJson(record.result);
-      if (new TextEncoder().encode(resultJson).byteLength > 1000000) {
-        failQuery("RETRIEVAL_INPUT_INVALID", "query result exceeds its bound");
-      }
-      const resultDigest = await sha256Hex(resultJson);
-      const operationId = `q3-${(await sha256Hex(
-        canonicalRetrievalJson({
-          principal: access.principal_ref,
-          client: access.client_class,
-          credential: access.credential_generation,
-          key: record.idempotency_key,
-        }),
-      )).slice(0, 48)}`;
-      const createdAt = now();
-      try {
-        await database.prepare(
-          "INSERT INTO retrieval_query_result (operation_id, principal_ref, client_class, " +
-          "credential_generation, idempotency_key, request_digest, scope_snapshot_id, " +
-          "scope_snapshot_revision, state, result_json, result_digest, trace_id, trace_revision, " +
-          "coverage_claim, created_at, expires_at) VALUES " +
-          "(?1,?2,?3,?4,?5,?6,?7,?8,'COMPLETE',?9,?10,?11,?12,?13,?14,?15) " +
-          "ON CONFLICT DO NOTHING",
-        ).bind(
-          operationId, access.principal_ref, access.client_class, access.credential_generation,
-          record.idempotency_key, record.request_digest, trace.scope_snapshot.snapshot_id,
-          trace.scope_snapshot.revision, resultJson, resultDigest,
-          trace.trace_ref.id, trace.trace_ref.revision, record.result.coverage_claim,
-          createdAt, trace.scope_snapshot.expires_at,
-        ).run();
-      } catch (error) {
-        mapStoreError(error);
-      }
-      let settled: StoredResultRow | null;
-      try {
-        settled = await database.prepare(
-          "SELECT request_digest, result_json, result_digest, state FROM retrieval_query_result " +
-          "WHERE operation_id = ?1 LIMIT 1",
-        ).bind(operationId).first<StoredResultRow>();
-      } catch {
-        failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "query result settlement is uncertain", true);
-      }
-      if (settled === null) {
-        failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "query result settlement is uncertain", true);
-      }
-      if (settled.request_digest !== record.request_digest || settled.result_digest !== resultDigest) {
-        failQuery("RETRIEVAL_IDEMPOTENCY_CONFLICT", "idempotency identity is bound to different inputs");
-      }
-      if (settled.result_json !== resultJson) {
-        failQuery("RETRIEVAL_IDEMPOTENCY_CONFLICT", "idempotency identity is bound to different inputs");
-      }
-      let traceRow: { readonly trace_json: unknown } | null;
-      try {
-        traceRow = await database.prepare(
-          "SELECT trace_json FROM retrieval_query_trace WHERE trace_id = ?1 AND revision = ?2 LIMIT 1",
-        ).bind(trace.trace_ref.id, trace.trace_ref.revision).first<{ readonly trace_json: unknown }>();
-      } catch {
-        failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "query result settlement is uncertain", true);
-      }
-      if (traceRow === null || traceRow.trace_json !== canonicalRetrievalJson(trace)) {
-        failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "query trace linkage is uncertain", true);
-      }
+      await persistSettlement(record);
     },
+    settle: persistSettlement,
   };
 }
 
@@ -393,17 +938,25 @@ export function createD1RetrievalTracePort(
   database: RetrievalQueryD1,
   access: RetrievalQueryAccess,
   now: () => string = () => new Date().toISOString(),
-): { persistTrace(trace: RetrievalTrace): Promise<VersionedRef> } {
+): {
+  persistTrace(trace: RetrievalTrace, options?: RetrievalTracePersistenceOptions): Promise<VersionedRef>;
+} {
   checkAccess(access);
   return {
-    async persistTrace(trace: RetrievalTrace): Promise<VersionedRef> {
-      const parsed = RetrievalTraceSchema.safeParse(trace);
-      if (!parsed.success) failQuery("RETRIEVAL_INPUT_INVALID", "query trace fails strict validation");
-      const body = parsed.data;
-      const traceJson = canonicalRetrievalJson(body);
+    async persistTrace(
+      trace: RetrievalTrace,
+      options?: RetrievalTracePersistenceOptions,
+    ): Promise<VersionedRef> {
+      const body = decodeRetrievalTrace(trace);
+      if (body === null) failQuery("RETRIEVAL_INPUT_INVALID", "query trace fails strict validation");
+      if (isManagedRetrievalTrace(body) && options?.defer_until_result_settlement !== true) {
+        failQuery("RETRIEVAL_AUTHORITY_STALE", "managed trace must be deferred into atomic result settlement");
+      }
+      const traceJson = encodeRetrievalTraceForPersistence(body);
       if (new TextEncoder().encode(traceJson).byteLength > 262144) {
         failQuery("RETRIEVAL_INPUT_INVALID", "query trace exceeds its bound");
       }
+      if (options?.defer_until_result_settlement === true) return body.trace_ref;
       const traceDigest = await sha256Hex(traceJson);
       try {
         await database.prepare(
@@ -424,7 +977,8 @@ export function createD1RetrievalTracePort(
           "WHERE trace_id = ?1 AND revision = ?2 LIMIT 1",
         ).bind(body.trace_ref.id, body.trace_ref.revision)
           .first<{ readonly trace_json: unknown; readonly trace_digest: unknown }>();
-      } catch {
+      } catch (error: unknown) {
+        rethrowTypedQueryError(error);
         failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "trace persistence is unavailable", true);
       }
       if (settled === null || settled.trace_json !== traceJson || settled.trace_digest !== traceDigest) {
@@ -450,72 +1004,6 @@ export function createQueryBudgetGuard(
   };
 }
 
-export interface ScopeProfileBinding {
-  readonly version: string;
-  readonly max_sources: number;
-  readonly max_results: number;
-}
-
-interface ScopeProfileRow {
-  readonly profile_version: unknown;
-  readonly max_sources: unknown;
-  readonly max_results: unknown;
-}
-
-async function readScopeProfileBinding(
-  database: RetrievalQueryD1,
-  snapshotId: string,
-  revision: number,
-): Promise<ScopeProfileRow | null> {
-  try {
-    return await database.prepare(
-      "SELECT profile_version, max_sources, max_results FROM retrieval_scope_profile " +
-      "WHERE snapshot_id = ?1 AND revision = ?2 LIMIT 1",
-    ).bind(snapshotId, revision).first<ScopeProfileRow>();
-  } catch {
-    failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "scope profile readback is unavailable", true);
-  }
-}
-
-function decodeScopeProfileBinding(row: ScopeProfileRow | null): ScopeProfileBinding {
-  if (
-    row === null || typeof row.profile_version !== "string" ||
-    row.profile_version.length < 1 || row.profile_version.length > 128 ||
-    typeof row.max_sources !== "number" || !Number.isSafeInteger(row.max_sources) || row.max_sources < 1 ||
-    typeof row.max_results !== "number" || !Number.isSafeInteger(row.max_results) || row.max_results < 1
-  ) {
-    failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "scope profile readback is malformed", true);
-  }
-  return {
-    version: row.profile_version,
-    max_sources: row.max_sources,
-    max_results: row.max_results,
-  };
-}
-
-async function loadScopeProfileBinding(
-  database: RetrievalQueryD1,
-  snapshot: ScopeSnapshot,
-): Promise<ScopeProfileBinding> {
-  const parsed = ScopeSnapshotSchema.safeParse(snapshot);
-  if (!parsed.success) failQuery("RETRIEVAL_INPUT_INVALID", "scope snapshot fails strict validation");
-  return decodeScopeProfileBinding(
-    await readScopeProfileBinding(database, parsed.data.snapshot_id, parsed.data.revision),
-  );
-}
-
-function requireBindingMatch(row: ScopeProfileBinding | null, binding: ScopeProfileBinding): void {
-  if (row === null) {
-    failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "scope profile readback is unavailable", true);
-  }
-  if (
-    row.version !== binding.version || row.max_sources !== binding.max_sources ||
-    row.max_results !== binding.max_results
-  ) {
-    failQuery("RETRIEVAL_IDEMPOTENCY_CONFLICT", "scope frozen under another profile version does not replay here");
-  }
-}
-
 export function createD1ScopeProfilePort(
   database: RetrievalQueryD1,
   now: () => string = () => new Date().toISOString(),
@@ -524,44 +1012,7 @@ export function createD1ScopeProfilePort(
   recordBinding(snapshot: ScopeSnapshot, binding: ScopeProfileBinding): Promise<void>;
   requireBinding(snapshot: ScopeSnapshot, binding: ScopeProfileBinding): Promise<void>;
 } {
-  return {
-    async loadBinding(snapshot: ScopeSnapshot): Promise<ScopeProfileBinding> {
-      return loadScopeProfileBinding(database, snapshot);
-    },
-    async recordBinding(snapshot: ScopeSnapshot, binding: ScopeProfileBinding): Promise<void> {
-      const parsed = ScopeSnapshotSchema.safeParse(snapshot);
-      if (!parsed.success) failQuery("RETRIEVAL_INPUT_INVALID", "scope snapshot fails strict validation");
-      try {
-        await database.prepare(
-          "INSERT INTO retrieval_scope_profile (snapshot_id, revision, profile_version, " +
-          "max_sources, max_results, created_at) VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT DO NOTHING",
-        ).bind(
-          parsed.data.snapshot_id, parsed.data.revision,
-          binding.version, binding.max_sources, binding.max_results, now(),
-        ).run();
-      } catch (error) {
-        mapStoreError(error);
-      }
-      requireBindingMatch(await loadScopeProfileBinding(database, parsed.data), binding);
-    },
-    async requireBinding(snapshot: ScopeSnapshot, binding: ScopeProfileBinding): Promise<void> {
-      requireBindingMatch(await loadScopeProfileBinding(database, snapshot), binding);
-    },
-  };
+  return createScopeProfilePort(database, now, { failQuery, mapStoreError, rethrowTypedQueryError });
 }
 
-export async function retrievalRequestDigest(input: {
-  readonly raw_query: string;
-  readonly product: string;
-  readonly literals: readonly string[];
-  readonly requested_limit: number;
-  readonly scope_digest: string;
-}): Promise<string> {
-  return sha256Hex(canonicalRetrievalJson({
-    raw_query: input.raw_query,
-    product: input.product,
-    literals: [...input.literals],
-    requested_limit: input.requested_limit,
-    scope_digest: input.scope_digest,
-  }));
-}
+export { retrievalRequestDigest } from "./query-codec.js";
