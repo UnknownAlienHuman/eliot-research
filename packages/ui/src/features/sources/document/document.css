@@ -1,26 +1,34 @@
-/* DocumentReader and SafeMarkdown, U3-D. Semantic tokens only, no raw visual values. */
+/* DocumentReader and SafeMarkdown, U3-D. Semantic tokens only, no raw visual values.
+ *
+ * Direction: the reader lives inside the Dialog surface, so the root draws no background of its own.
+ * The article is one centred column at the reading measure; facts and the sections list are soft
+ * tonal groups. Inside the dialog the shared group role is scoped one step below the dialog surface,
+ * so groups stay visible in dark mode. No nested scroll area is introduced: the dialog stays the only
+ * vertical scroll owner, and wide content wraps instead of scrolling.
+ */
 .er-document-reader {
   display: grid;
   gap: var(--eliot-space-section);
-  padding: var(--eliot-space-panel);
-  border-radius: var(--eliot-shape-large);
-  background: var(--md-sys-color-surface-container-low);
+  min-width: 0;
   color: var(--md-sys-color-on-surface);
   font-family: var(--eliot-type-font-family);
-  min-width: 0;
+  --eliot-color-group: var(--md-sys-color-surface-container);
 }
 
 .er-document-reader__head {
   display: grid;
+  min-width: 0;
   gap: var(--eliot-space-block-control);
 }
 
 .er-document-reader__heading {
   margin: 0;
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--eliot-type-font-family-display);
   font-size: var(--eliot-type-title-large-size);
   line-height: var(--eliot-type-title-large-line-height);
-  font-weight: var(--eliot-type-font-weight-medium);
-  letter-spacing: var(--eliot-type-letter-spacing-label);
+  font-weight: var(--eliot-type-font-weight-regular);
+  letter-spacing: var(--eliot-type-letter-spacing-headline);
 }
 
 .er-document-reader__hint {
@@ -31,18 +39,39 @@
   line-height: var(--eliot-type-body-large-line-height);
 }
 
+/* Version details: a disclosure whose summary keeps one control-height row. */
+.er-document-reader__disclosure {
+  min-width: 0;
+}
+
+.er-document-reader__disclosure summary {
+  display: flex;
+  align-items: center;
+  min-height: var(--eliot-size-control);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  cursor: pointer;
+}
+
+/* One tonal group of label/value facts. Each fact is a subgrid row of the group. */
 .er-document-reader__facts {
   display: grid;
-  gap: var(--eliot-space-panel);
-  margin: 0;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: var(--eliot-space-tight) var(--eliot-space-panel);
+  margin: var(--eliot-space-block-control) 0 0;
+  padding: var(--eliot-space-panel) var(--eliot-space-group);
+  border-radius: var(--eliot-shape-large-increased);
+  background: var(--eliot-color-group);
+  font-variant-numeric: var(--eliot-type-numerals);
 }
 
 .er-document-reader__fact {
   display: grid;
-  gap: var(--eliot-space-block-control);
-  padding: var(--eliot-space-panel);
-  border-radius: var(--eliot-shape-medium);
-  background: var(--md-sys-color-surface-container-highest);
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  min-width: 0;
 }
 
 .er-document-reader__fact dt {
@@ -52,35 +81,42 @@
   font-weight: var(--eliot-type-font-weight-medium);
 }
 
+/* Every fact value is an identifier, digest or byte count, so the values read in mono. */
 .er-document-reader__fact dd {
   margin: 0;
+  min-width: 0;
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--eliot-type-font-family-mono);
   font-size: var(--eliot-type-body-medium-size);
   line-height: var(--eliot-type-body-medium-line-height);
   overflow-wrap: anywhere;
 }
 
 .er-document-reader__whole-read {
-  margin: 0;
+  margin: var(--eliot-space-block-control) 0 0;
   color: var(--md-sys-color-on-surface-variant);
   font-size: var(--eliot-type-body-small-size);
   line-height: var(--eliot-type-body-small-line-height);
 }
 
+/* The article sits on the dialog surface, so code and quotes keep their own group tone. */
 .er-document-reader__text {
-  padding: var(--eliot-space-reading);
-  border-radius: var(--eliot-shape-medium);
-  background: var(--md-sys-color-surface-container-lowest);
+  display: grid;
+  min-width: 0;
 }
 
 .er-document-reader__sections {
   display: grid;
   gap: var(--eliot-space-panel);
+  min-width: 0;
 }
 
 .er-document-reader__subheading {
   margin: 0;
+  color: var(--md-sys-color-on-surface);
   font-size: var(--eliot-type-title-medium-size);
   line-height: var(--eliot-type-title-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
 }
 
 .er-document-reader__section-list {
@@ -91,11 +127,14 @@
   list-style: none;
 }
 
+/* Each section row reserves one control-height line, so the byte label never shifts the button. */
 .er-document-reader__section {
   display: flex;
-  align-items: center;
-  gap: var(--eliot-space-inline-control);
   flex-wrap: wrap;
+  align-items: center;
+  gap: var(--eliot-space-tight) var(--eliot-space-inline-control);
+  min-width: 0;
+  min-height: var(--eliot-size-control);
 }
 
 .er-document-reader__section-bytes {
@@ -105,39 +144,135 @@
   font-variant-numeric: var(--eliot-type-numerals);
 }
 
+/* The active section is a selection: a primary bar on a tonal group, end-rounded. */
 .er-document-reader__active {
   display: grid;
   gap: var(--eliot-space-block-control);
   justify-items: start;
-  padding: var(--eliot-space-panel);
-  border-left: var(--eliot-focus-width) solid var(--md-sys-color-primary);
-  border-radius: var(--eliot-shape-extra-small);
-  background: var(--md-sys-color-surface-container);
+  min-width: 0;
+  padding: var(--eliot-space-panel) var(--eliot-space-group);
+  border-inline-start: var(--eliot-focus-width) solid var(--md-sys-color-primary);
+  border-start-start-radius: var(--eliot-shape-none);
+  border-end-start-radius: var(--eliot-shape-none);
+  border-start-end-radius: var(--eliot-shape-large-increased);
+  border-end-end-radius: var(--eliot-shape-large-increased);
+  background: var(--eliot-color-group);
 }
 
 .er-document-reader__active-heading {
   margin: 0;
+  color: var(--md-sys-color-on-surface);
   font-size: var(--eliot-type-title-small-size);
   line-height: var(--eliot-type-title-small-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
 }
 
 .er-document-reader__active-source {
   margin: 0;
   color: var(--md-sys-color-on-surface-variant);
+  font-family: var(--eliot-type-font-family-mono);
   font-size: var(--eliot-type-label-medium-size);
   line-height: var(--eliot-type-label-medium-line-height);
+  overflow-wrap: anywhere;
 }
 
-/* SafeMarkdown: one bounded reading measure, one horizontal scroll owner for tables. */
+/* Action row: one fixed line at the trailing edge; the retry action never moves the text above it. */
+.er-document-reader__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--eliot-space-block-control);
+  min-height: var(--eliot-size-control);
+}
+
+/* SafeMarkdown: one bounded reading measure, reading size and block rhythm.
+ * The bounded parser emits no table nodes; the table rules are the presentation for a table that
+ * a future parser might produce. Nothing here owns a horizontal scroll area: wide content wraps. */
 .er-safe-markdown {
   display: grid;
+  justify-self: center;
   gap: var(--eliot-space-block-control);
-  max-width: var(--eliot-layout-reading-max);
+  width: 100%;
+  max-width: var(--eliot-type-reading-measure);
+  min-width: 0;
+  color: var(--md-sys-color-on-surface);
   font-size: var(--eliot-type-reading-size);
   line-height: var(--eliot-type-reading-line-height);
   overflow-wrap: anywhere;
-  justify-self: center;
-  width: 100%;
+}
+
+.er-safe-markdown > * {
+  margin: 0;
+}
+
+/* Paragraphs and lists are separated by a panel-sized step; headings get more air above than below. */
+.er-safe-markdown > * + * {
+  margin-block-start: var(--eliot-space-panel);
+}
+
+.er-safe-markdown > :first-child {
+  margin-block-start: 0;
+}
+
+.er-safe-markdown > :is(h3, h4, h5) + * {
+  margin-block-start: var(--eliot-space-tight);
+}
+
+.er-safe-markdown > h3,
+.er-safe-markdown > h4,
+.er-safe-markdown > h5 {
+  margin-block: var(--eliot-space-section) 0;
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--eliot-type-font-family-display);
+  letter-spacing: var(--eliot-type-letter-spacing-headline);
+}
+
+.er-safe-markdown > :first-child:is(h3, h4, h5) {
+  margin-block-start: 0;
+}
+
+/* Markdown levels 1-2 render as h3, level 3 as h4, levels 4-6 as h5. */
+.er-safe-markdown h3 {
+  font-size: var(--eliot-type-headline-small-size);
+  line-height: var(--eliot-type-headline-small-line-height);
+  font-weight: var(--eliot-type-font-weight-regular);
+}
+
+.er-safe-markdown h4 {
+  font-size: var(--eliot-type-title-large-size);
+  line-height: var(--eliot-type-title-large-line-height);
+  font-weight: var(--eliot-type-font-weight-regular);
+}
+
+.er-safe-markdown h5 {
+  font-size: var(--eliot-type-title-medium-size);
+  line-height: var(--eliot-type-title-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+
+.er-safe-markdown p,
+.er-safe-markdown .er-safe-markdown__plain {
+  white-space: pre-wrap;
+}
+
+.er-safe-markdown ul,
+.er-safe-markdown ol {
+  padding-inline-start: var(--eliot-space-section);
+}
+
+.er-safe-markdown li + li {
+  margin-block-start: var(--eliot-space-tight);
+}
+
+.er-safe-markdown li::marker {
+  color: var(--md-sys-color-primary);
+  font-variant-numeric: var(--eliot-type-numerals);
+}
+
+.er-safe-markdown a {
+  color: var(--md-sys-color-primary);
+  text-underline-offset: var(--eliot-space-hairline);
 }
 
 .er-safe-markdown__caption {
@@ -146,30 +281,94 @@
   line-height: var(--eliot-type-body-small-line-height);
 }
 
-.er-safe-markdown__table-scroll {
-  overflow-x: auto;
+/* Blockquote: a primary inline-start bar on a tonal group, square on the bar side. */
+.er-safe-markdown blockquote {
+  padding: var(--eliot-space-gutter) var(--eliot-space-panel);
+  border-inline-start: var(--eliot-focus-width) solid var(--md-sys-color-primary);
+  border-start-start-radius: var(--eliot-shape-none);
+  border-end-start-radius: var(--eliot-shape-none);
+  border-start-end-radius: var(--eliot-shape-medium);
+  border-end-end-radius: var(--eliot-shape-medium);
+  background: var(--eliot-color-group);
 }
 
+/* Inline code and code blocks: mono on the group tone with a medium radius. Blocks wrap, never scroll. */
+.er-safe-markdown code,
+.er-safe-markdown pre {
+  font-family: var(--eliot-type-font-family-mono);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+}
 
-.er-document-reader__disclosure summary {
-  cursor: pointer;
+.er-safe-markdown code {
+  padding: var(--eliot-space-hairline) var(--eliot-space-tight);
+  border-radius: var(--eliot-shape-medium);
+  background: var(--eliot-color-group);
+  overflow-wrap: anywhere;
+}
+
+.er-safe-markdown pre {
+  margin: 0;
+  padding: var(--eliot-space-panel);
+  border-radius: var(--eliot-shape-medium);
+  background: var(--eliot-color-group);
+  color: var(--md-sys-color-on-surface);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.er-safe-markdown pre code {
+  padding: 0;
+  border-radius: var(--eliot-shape-none);
+  background: transparent;
+}
+
+/* Unsupported raw text falls back to a plain pre block in the reading font, not as code. */
+.er-safe-markdown .er-safe-markdown__plain {
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-reading-size);
+  line-height: var(--eliot-type-reading-line-height);
+}
+
+/* Latent table presentation: outline-variant dividers, cells wrap rather than scroll. */
+.er-safe-markdown table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+}
+
+.er-safe-markdown th,
+.er-safe-markdown td {
+  padding: var(--eliot-space-block-control) var(--eliot-space-gutter);
+  border-block-end: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
+  text-align: start;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+
+.er-safe-markdown th {
   color: var(--md-sys-color-on-surface-variant);
-  font-size: var(--eliot-type-label-large-size);
-  min-height: var(--eliot-size-touch-target);
-  align-content: center;
+  font-weight: var(--eliot-type-font-weight-medium);
 }
 
-.er-safe-markdown p, .er-safe-markdown__plain { white-space: pre-wrap; }
-.er-safe-markdown > * + * { margin-block-start: var(--eliot-space-panel); }
-.er-safe-markdown pre { overflow-x: auto; padding: var(--eliot-space-panel); border-radius: var(--eliot-shape-medium); background: var(--md-sys-color-surface-container); }
-.er-safe-markdown blockquote { margin-inline: 0; padding-inline-start: var(--eliot-space-panel); border-inline-start: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant); }
+@media (max-width: 48rem) {
+  .er-document-reader__facts {
+    grid-template-columns: minmax(0, 1fr);
+    padding: var(--eliot-space-panel);
+  }
 
+  .er-document-reader__active {
+    padding: var(--eliot-space-panel);
+  }
+}
 
-
-
-.er-document-reader__disclosure summary:focus-visible { outline: var(--eliot-focus-width) solid var(--md-sys-color-primary); outline-offset: var(--eliot-focus-offset); }
-
-.er-safe-markdown > * { margin: 0; }
-.er-safe-markdown h3 { font-size: var(--eliot-type-headline-small-size); line-height: var(--eliot-type-headline-small-line-height); font-weight: var(--eliot-type-font-weight-medium); }
-.er-safe-markdown a { color: var(--md-sys-color-primary); text-underline-offset: var(--eliot-focus-offset); }
-@media (max-width: 48rem) { .er-document-reader__text { padding: var(--eliot-space-panel); } }
+@media (forced-colors: active) {
+  .er-document-reader__facts,
+  .er-document-reader__active,
+  .er-safe-markdown blockquote,
+  .er-safe-markdown pre {
+    border: var(--eliot-divider-width) solid CanvasText;
+  }
+}
