@@ -13,9 +13,10 @@ import {
   retrievalRequestDigest,
   RetrievalQueryError,
 } from "@eliotr/retrieval";
-import type { RetrievalResult, ScopeProfileBinding, StoredRetrievalResult } from "@eliotr/retrieval";
+import type { PendingRetrievalAdmissionV1, RetrievalResult, ScopeProfileBinding, StoredRetrievalResult } from "@eliotr/retrieval";
 import { retrieveWithHeldScope } from "./research-retrieval-composition.js";
 import type { ResearchRetrievalEnvironment } from "./research-retrieval-composition.js";
+import { createD1RetrievalSettlementOwnerPort } from "./research-retrieval-settlement-owner.js";
 
 const RETRIEVAL_QUERY_BUDGET_MS = 30_000;
 
@@ -39,6 +40,33 @@ type RequireCurrentScope = (snapshot: ScopeSnapshot) => Promise<void>;
 type RequireProfileBinding = (snapshot: ScopeSnapshot, profile: ScopeProfileBinding) => Promise<void>;
 type ParseQueryRequest = (raw: unknown) => QueryRequest;
 type QueryIdempotencyKey = (context: AuthenticatedRequestContext) => string;
+
+/** A retry must retain the admitted scope and original logical request. */
+export async function requirePendingResearchQueryBinding(input: {
+  readonly pending: PendingRetrievalAdmissionV1;
+  readonly parsed: QueryRequest;
+  readonly context: AuthenticatedRequestContext;
+  readonly profile: ScopeProfileBinding;
+  readonly requireCurrentScope: RequireCurrentScope;
+  readonly requireProfileBinding: RequireProfileBinding;
+  readonly requireDelegatedScopeCurrent?: RequireCurrentScope;
+}, errors: ResearchQueryErrorBoundary): Promise<void> {
+  const scope = input.pending.scope_snapshot;
+  if (input.pending.credential_generation !== input.context.credential_generation) {
+    errors.fail("RESEARCH_AUTHORITY_STALE", "pending query access generation is displaced", 403);
+  }
+  await input.requireDelegatedScopeCurrent?.(scope);
+  await input.requireCurrentScope(scope).catch((error: unknown) => mapRetrievalError(error, errors));
+  await input.requireProfileBinding(scope, input.profile).catch((error: unknown) => mapRetrievalError(error, errors));
+  if (scopeExpressionIdentity(input.parsed.scope_expression) !== scopeExpressionIdentity(scope.resolved_scope_expression) ||
+      await retrievalRequestDigest({
+        raw_query: input.parsed.query, product: input.parsed.product, literals: [...input.parsed.literals],
+        requested_limit: input.parsed.max_results, scope_digest: scope.digest,
+      }) !== input.pending.request_digest) {
+    errors.fail("RESEARCH_CONFLICT", "idempotency identity is bound to different pending inputs", 409);
+  }
+  if (input.context.request.signal.aborted) errors.fail("RESEARCH_CANCELLED", "research query is cancelled", 409);
+}
 
 function coverageClaim(value: unknown, errors: ResearchQueryErrorBoundary): "NONE" | "SAMPLED" {
   if (value === "NONE" || value === "SAMPLED") return value;
@@ -138,37 +166,44 @@ export function createResearchQueryExecutor(input: {
       credential_generation: context.credential_generation,
     };
     const scopePorts = createD1ScopePorts(input.env.CORE_DB, access);
-    const store = createD1RetrievalResultStore(input.env.CORE_DB, access);
+    const store = createD1RetrievalResultStore(input.env.CORE_DB, access, undefined, createD1RetrievalSettlementOwnerPort());
+    const profilePort = createD1ScopeProfilePort(input.env.CORE_DB);
+    const replay = (stored: StoredRetrievalResult): Promise<ResearchQueryExecutionResult> => readStoredResearchQueryExecutionResult({
+      prior: stored, parsed, context, profile: input.profile, includeCoverage,
+      requireCurrentScope: scope => scopePorts.requireCurrentScope(scope),
+      requireProfileBinding: (scope, binding) => profilePort.requireBinding(scope, binding),
+      ...(delegated === undefined ? {} : { requireDelegatedScopeCurrent: (scope: ScopeSnapshot) => delegated.requireScopeCurrent(scope) }),
+    }, input.errors);
+    const requirePending = (pending: PendingRetrievalAdmissionV1): Promise<void> => requirePendingResearchQueryBinding({
+      pending, parsed, context, profile: input.profile,
+      requireCurrentScope: scope => scopePorts.requireCurrentScope(scope),
+      requireProfileBinding: (scope, binding) => profilePort.requireBinding(scope, binding),
+      ...(delegated === undefined ? {} : { requireDelegatedScopeCurrent: (scope: ScopeSnapshot) => delegated.requireScopeCurrent(scope) }),
+    }, input.errors);
     const prior = await store.load(key).catch((error: unknown) => {
 		if (error instanceof RetrievalQueryError) mapRetrievalError(error, input.errors);
 		input.errors.fail("RESEARCH_SETTLEMENT_UNCERTAIN", "stored query result is unavailable", 503, true);
     });
-    if (prior !== null) {
-      const profilePort = createD1ScopeProfilePort(input.env.CORE_DB);
-      return readStoredResearchQueryExecutionResult({
-        prior,
-        parsed,
-        context,
-        profile: input.profile,
-        includeCoverage,
-        requireCurrentScope: (scope) => scopePorts.requireCurrentScope(scope),
-        requireProfileBinding: (scope, binding) => profilePort.requireBinding(scope, binding),
-        ...(delegated === undefined ? {} : {
-          requireDelegatedScopeCurrent: (scope) => delegated.requireScopeCurrent(scope),
-        }),
-		}, input.errors);
+    if (prior !== null) return replay(prior);
+    const pending = await store.loadPending(key).catch((error: unknown) => mapRetrievalError(error, input.errors));
+    let snapshot: ScopeSnapshot;
+    if (pending !== null) {
+      await requirePending(pending);
+      snapshot = pending.scope_snapshot;
+    } else {
+      const completed = await store.load(key).catch((error: unknown) => mapRetrievalError(error, input.errors));
+      if (completed !== null) return replay(completed);
+      const authority = delegated?.authority ?? createOwnerScopeAuthority(input.env.CORE_DB, context);
+      await authority.requireReadPolicy();
+      const freezer = createD1ScopeService(input.env.CORE_DB, authority, {
+        max_snapshot_members: input.profile.max_sources,
+        ...(delegated === undefined ? {} : { preserve_resolution_errors: true }),
+      });
+      snapshot = await freezer.freeze(parsed.scope_expression, context.credential_generation);
+      await profilePort.recordBinding(snapshot, input.profile).catch((error: unknown) => mapRetrievalError(error, input.errors));
+      await freezer.requireCurrent(snapshot);
+      await authority.grant(snapshot);
     }
-    const authority = delegated?.authority ?? createOwnerScopeAuthority(input.env.CORE_DB, context);
-    await authority.requireReadPolicy();
-    const freezer = createD1ScopeService(input.env.CORE_DB, authority, {
-      max_snapshot_members: input.profile.max_sources,
-      ...(delegated === undefined ? {} : { preserve_resolution_errors: true }),
-    });
-    const snapshot = await freezer.freeze(parsed.scope_expression, context.credential_generation);
-    await createD1ScopeProfilePort(input.env.CORE_DB).recordBinding(snapshot, input.profile)
-		.catch((error: unknown) => mapRetrievalError(error, input.errors));
-    await freezer.requireCurrent(snapshot);
-    await authority.grant(snapshot);
     await delegated?.requireScopeCurrent(snapshot);
     await scopePorts.requireCurrentScope(snapshot);
     const deadlineMs = Date.now() + RETRIEVAL_QUERY_BUDGET_MS;
@@ -177,14 +212,29 @@ export function createResearchQueryExecutor(input: {
       scope_snapshot: snapshot,
       raw_query: parsed.query,
       product: parsed.product,
-      literals: [],
+      literals: [...parsed.literals],
       requested_limit: parsed.max_results,
       deadline_ms: deadlineMs,
       idempotency_key: key,
       signal: context.request.signal,
       profile: input.profile,
-	}).catch((error: unknown) => mapRetrievalError(error, input.errors));
-    await delegated?.requireScopeCurrent(snapshot);
+	}).catch(async (error: unknown) => {
+      if (error instanceof RetrievalQueryError &&
+          (error.code === "RETRIEVAL_RESOLUTION_UNCERTAIN" || error.code === "RETRIEVAL_IDEMPOTENCY_CONFLICT")) {
+        const completed = await store.load(key).catch((readError: unknown) => mapRetrievalError(readError, input.errors));
+        if (completed !== null) {
+          await replay(completed);
+          return completed.result;
+        }
+        const admitted = await store.loadPending(key).catch((readError: unknown) => mapRetrievalError(readError, input.errors));
+        if (admitted !== null) {
+          await requirePending(admitted);
+          input.errors.fail("RESEARCH_SETTLEMENT_UNCERTAIN", "original query invocation is still unsettled", 503, true);
+        }
+      }
+      return mapRetrievalError(error, input.errors);
+    });
+    await delegated?.requireScopeCurrent(result.trace.scope_snapshot);
 	if (context.request.signal.aborted) input.errors.fail("RESEARCH_CANCELLED", "research query is cancelled", 409);
 	return createResearchQueryExecutionResult(result, includeCoverage, input.errors);
   };

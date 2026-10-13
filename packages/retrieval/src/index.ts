@@ -15,3 +15,6 @@ export * from "./trace-read.js";
 export * from "./navigation.js";
 export * from "./lanes.js";
 export * from "./locator/strict-decoder.js";
+export { canonicalRetrievalJson, managedRetrievalInvocationIdsV1, managedRetrievalRefIdV1 } from './query-codec.js';
+export * from './query-budget-settlement.js';
+export * from './query-scope-profile.js';
