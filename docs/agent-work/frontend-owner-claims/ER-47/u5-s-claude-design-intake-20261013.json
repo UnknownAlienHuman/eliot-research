@@ -24,7 +24,11 @@
       "approval_ref": "tests/ui-owner/receipts/u2-x/u2-t.json"
     }
   ],
-  "state": "ACTIVE",
-  "evidence_refs": [],
-  "blocker_refs": []
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "git:10b76020 exact32donorpostimages; rootweb/UITypeScript6/scopedlint/design126/fixturebuildPASS; browser5failures/visualpending"
+  ],
+  "blocker_refs": [],
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "private:claude-design-intake-CodeUnderstandingProof.json; source slice only"
 }

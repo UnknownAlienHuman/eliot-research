@@ -6,8 +6,10 @@
   "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
   "base_sha": "8c034ed0b82b2dc2cd1726c20e06d65311c2d846",
   "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
-  "state": "ACTIVE",
-  "evidence_refs": [],
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "git:af5bc809+26c95a76; causalMO001+misplacedResearchcode repaired; worker35unfilteredtestsPASS; rootowningwebTypeScript6/scopedlintPASS; panelconsumerspending"
+  ],
   "blocker_refs": [],
   "claim_id": "c3-mo-mutation-intake-resume-20261013",
   "checkpoint_id": "C3-MO",
@@ -26,5 +28,7 @@
       "checkpoint_id": "C1.4",
       "commit_sha": "4f7c99546bd7adfcf766bdc1a398a94a8e20fedb"
     }
-  ]
+  ],
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "private:mutation-outcome/.eliotr-state/mutation-outcome-intake-causal-audit-20261013.json; module source only"
 }
