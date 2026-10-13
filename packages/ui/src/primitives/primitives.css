@@ -1,27 +1,86 @@
 /*
- * U1.3 native primitive styles. Every value is a committed semantic token from
- * src/tokens/theme.css; nothing here is a raw color, radius, size or duration.
+ * Material 3 Expressive native primitive styles. Every value is a committed semantic
+ * token from src/tokens/theme.css; nothing here is a raw color, radius, size or duration.
+ *
+ * Native controls keep native semantics. Base looks for select, textarea, text inputs,
+ * checkboxes, radios, disclosures and scrollbars use :where() so they carry zero
+ * specificity: a feature class always wins without !important.
  */
+
+/* ---- Document-level calm: stable scrollbars, thin tracks, smooth type ---- */
+
+:where(html) {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+:where(body) {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  font-synthesis-weight: none;
+}
+
+/* An element that selects a colour scheme also paints that scheme's surface and text, so a
+   dark wrapper never leaves dark-scheme text on a light page. Zero specificity: the shell's
+   own canvas and every feature surface still win. */
+:where([data-theme]) {
+  background-color: var(--eliot-color-pane);
+  color: var(--md-sys-color-on-surface);
+}
+
+:where(*) {
+  scrollbar-width: thin;
+  scrollbar-color: var(--md-sys-color-outline-variant) transparent;
+}
+
+:where(*:hover) {
+  scrollbar-color: var(--md-sys-color-outline) transparent;
+}
+
+.er-symbol {
+  flex-shrink: 0;
+  inline-size: var(--eliot-icon-standard-size);
+  block-size: var(--eliot-icon-standard-size);
+}
 
 /* ---- Button and IconButton ---- */
 
 .er-button {
+  --er-button-shape: var(--eliot-shape-full);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: var(--eliot-space-inline-control);
-  min-height: var(--eliot-size-touch-target);
-  padding-inline: var(--eliot-space-inline-control);
+  gap: var(--eliot-space-block-control);
+  flex-shrink: 0;
+  min-height: var(--eliot-size-control);
   padding-block: var(--eliot-space-block-control);
+  padding-inline: calc(var(--eliot-space-inline-control) + var(--eliot-space-block-control));
   border: none;
-  border-radius: var(--eliot-shape-medium);
+  border-radius: var(--er-button-shape);
   font-family: var(--eliot-type-font-family);
   font-size: var(--eliot-type-label-large-size);
   line-height: var(--eliot-type-label-large-line-height);
   font-weight: var(--eliot-type-font-weight-medium);
   letter-spacing: var(--eliot-type-letter-spacing-label);
+  white-space: nowrap;
+  text-decoration: none;
   cursor: pointer;
   position: relative;
+  isolation: isolate;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  transition:
+    border-radius var(--eliot-motion-spatial) var(--eliot-motion-expressive-easing),
+    box-shadow var(--eliot-motion-effects) var(--eliot-motion-standard-easing),
+    background-color var(--eliot-motion-effects) var(--eliot-motion-standard-easing),
+    color var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
+}
+
+.er-button > .er-symbol {
+  inline-size: var(--eliot-icon-small-size);
+  block-size: var(--eliot-icon-small-size);
+  margin-inline-start: calc(var(--eliot-space-tight) * -1);
 }
 
 .er-button::after {
@@ -33,12 +92,15 @@
   opacity: 0;
   transition: opacity var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
   pointer-events: none;
+  z-index: var(--eliot-z-raised);
 }
 
-.er-button:hover:not(:disabled)::after {
-  opacity: var(--eliot-state-hover-opacity);
-}
+.er-button:hover:not(:disabled)::after { opacity: var(--eliot-state-hover-opacity); }
+.er-button:focus-visible::after { opacity: var(--eliot-state-focus-opacity); }
 .er-button:active:not(:disabled)::after { opacity: var(--eliot-state-pressed-opacity); }
+
+/* Expressive press: the full shape morphs toward a squarer corner and springs back. */
+.er-button:active:not(:disabled) { --er-button-shape: var(--eliot-shape-medium); }
 
 .er-button:focus-visible {
   outline: var(--eliot-focus-width) solid var(--md-sys-color-primary);
@@ -47,7 +109,7 @@
 
 .er-button:disabled {
   cursor: default;
-  opacity: var(--eliot-state-disabled-opacity);
+  box-shadow: none;
 }
 
 .er-button--primary {
@@ -55,40 +117,55 @@
   color: var(--md-sys-color-on-primary);
 }
 
+.er-button--primary:hover:not(:disabled) { box-shadow: var(--eliot-elevation-1); }
+
 .er-button--tonal {
   background-color: var(--md-sys-color-secondary-container);
   color: var(--md-sys-color-on-secondary-container);
 }
 
+.er-button--primary:disabled,
+.er-button--tonal:disabled {
+  background-color: color-mix(in srgb, var(--md-sys-color-on-surface) 12%, transparent);
+  color: color-mix(in srgb, var(--md-sys-color-on-surface) 38%, transparent);
+}
+
 .er-button--text {
   background-color: transparent;
   color: var(--md-sys-color-primary);
-  padding-inline: var(--eliot-space-block-control);
+  padding-inline: var(--eliot-space-inline-control);
 }
 
-/* Filled actions carry Material full shape; text actions stay compact. */
-.er-button--primary,
-.er-button--tonal {
-  border-radius: var(--eliot-shape-full);
+.er-button--text:disabled {
+  color: color-mix(in srgb, var(--md-sys-color-on-surface) 38%, transparent);
 }
+
+.er-button[aria-busy="true"] { cursor: progress; }
 
 /* Keep the system-color token pairs together, including transparent label descendants. */
 @media (forced-colors: active) {
-  .er-button { forced-color-adjust: none; }
+  .er-button { forced-color-adjust: none; border: var(--eliot-divider-width) solid ButtonText; }
 }
 
 .er-icon-button {
+  --er-button-shape: var(--eliot-shape-full);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: var(--eliot-size-touch-target);
-  height: var(--eliot-size-touch-target);
+  flex-shrink: 0;
+  width: var(--eliot-size-control);
+  height: var(--eliot-size-control);
+  padding: 0;
   border: none;
-  border-radius: var(--eliot-shape-full);
+  border-radius: var(--er-button-shape);
   background-color: transparent;
   color: var(--md-sys-color-on-surface-variant);
   cursor: pointer;
   position: relative;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    border-radius var(--eliot-motion-spatial) var(--eliot-motion-expressive-easing),
+    color var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
 }
 
 .er-icon-button::after {
@@ -102,10 +179,11 @@
   pointer-events: none;
 }
 
-.er-icon-button:hover:not(:disabled)::after {
-  opacity: var(--eliot-state-hover-opacity);
-}
+.er-icon-button:hover:not(:disabled)::after { opacity: var(--eliot-state-hover-opacity); }
+.er-icon-button:focus-visible::after { opacity: var(--eliot-state-focus-opacity); }
 .er-icon-button:active:not(:disabled)::after { opacity: var(--eliot-state-pressed-opacity); }
+.er-icon-button:active:not(:disabled) { --er-button-shape: var(--eliot-shape-medium); }
+.er-icon-button:hover:not(:disabled) { color: var(--md-sys-color-on-surface); }
 
 .er-icon-button:focus-visible {
   outline: var(--eliot-focus-width) solid var(--md-sys-color-primary);
@@ -114,7 +192,217 @@
 
 .er-icon-button:disabled {
   cursor: default;
-  opacity: var(--eliot-state-disabled-opacity);
+  color: color-mix(in srgb, var(--md-sys-color-on-surface) 38%, transparent);
+}
+
+/* ---- Native text controls: one filled-tonal Material look, zero specificity ---- */
+
+:where(select,
+  textarea,
+  input:not([type]),
+  input[type="text"],
+  input[type="search"],
+  input[type="url"],
+  input[type="email"],
+  input[type="password"],
+  input[type="number"],
+  input[type="date"],
+  input[type="time"]) {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: var(--eliot-size-touch-target);
+  margin: 0;
+  padding-block: var(--eliot-space-block-control);
+  padding-inline: var(--eliot-space-inline-control);
+  border: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
+  border-radius: var(--eliot-shape-medium);
+  background-color: var(--eliot-color-field);
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-body-large-size);
+  line-height: var(--eliot-type-body-large-line-height);
+  transition:
+    border-color var(--eliot-motion-effects) var(--eliot-motion-standard-easing),
+    background-color var(--eliot-motion-effects) var(--eliot-motion-standard-easing),
+    box-shadow var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
+}
+
+:where(select, textarea, input):where(:hover:not(:disabled):not(:focus)) {
+  border-color: var(--md-sys-color-outline);
+}
+
+:where(select, textarea, input:not([type="checkbox"]):not([type="radio"])):where(:focus-visible) {
+  outline: none;
+  border-color: var(--md-sys-color-primary);
+  box-shadow: inset 0 0 0 var(--eliot-divider-width) var(--md-sys-color-primary);
+}
+
+:where(textarea) {
+  min-height: calc(var(--eliot-size-touch-target) * 2);
+  border-radius: var(--eliot-shape-large);
+  resize: vertical;
+  overflow-wrap: anywhere;
+}
+
+:where(textarea, input)::placeholder {
+  color: var(--md-sys-color-on-surface-variant);
+  opacity: 1;
+}
+
+:where(select, textarea, input):where(:disabled) {
+  cursor: default;
+  color: color-mix(in srgb, var(--md-sys-color-on-surface) 38%, transparent);
+  border-color: color-mix(in srgb, var(--md-sys-color-on-surface) 12%, transparent);
+  background-color: color-mix(in srgb, var(--md-sys-color-on-surface) 4%, transparent);
+}
+
+:where(select, textarea, input):where([aria-invalid="true"]) {
+  border-color: var(--md-sys-color-error);
+}
+
+/* Select: native popup semantics with a CSS-only chevron (CSP forbids data: images). */
+:where(select) {
+  appearance: none;
+  cursor: pointer;
+  padding-inline-end: calc(var(--eliot-space-inline-control) * 2 + var(--eliot-space-block-control));
+  background-image:
+    linear-gradient(45deg, transparent 50%, var(--md-sys-color-on-surface-variant) 50%),
+    linear-gradient(135deg, var(--md-sys-color-on-surface-variant) 50%, transparent 50%);
+  background-position:
+    calc(100% - var(--eliot-space-inline-control) - var(--eliot-space-tight)) 50%,
+    calc(100% - var(--eliot-space-inline-control)) 50%;
+  background-size: var(--eliot-space-tight) var(--eliot-space-tight), var(--eliot-space-tight) var(--eliot-space-tight);
+  background-repeat: no-repeat;
+  text-overflow: ellipsis;
+}
+
+:where(select) :where(option) {
+  background-color: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface);
+}
+
+/* Checkbox: native input, Material geometry, a state-layer halo and a drawn check mark. */
+:where(input[type="checkbox"]) {
+  appearance: none;
+  box-sizing: border-box;
+  position: relative;
+  display: inline-grid;
+  place-content: center;
+  flex-shrink: 0;
+  inline-size: var(--eliot-size-checkbox);
+  block-size: var(--eliot-size-checkbox);
+  min-height: var(--eliot-size-checkbox);
+  margin: var(--eliot-space-hairline);
+  padding: 0;
+  border: var(--eliot-space-hairline) solid var(--md-sys-color-on-surface-variant);
+  border-radius: var(--eliot-space-hairline);
+  background-color: transparent;
+  cursor: pointer;
+  transition:
+    background-color var(--eliot-motion-effects) var(--eliot-motion-standard-easing),
+    border-color var(--eliot-motion-effects) var(--eliot-motion-standard-easing),
+    box-shadow var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
+}
+
+:where(input[type="checkbox"])::after {
+  content: "";
+  inline-size: calc(var(--eliot-size-checkbox) / 3.5);
+  block-size: calc(var(--eliot-size-checkbox) / 1.8);
+  margin-block-start: calc(var(--eliot-space-hairline) * -1);
+  border-inline-end: var(--eliot-space-hairline) solid var(--md-sys-color-on-primary);
+  border-block-end: var(--eliot-space-hairline) solid var(--md-sys-color-on-primary);
+  transform: rotate(45deg) scale(0);
+  transition: transform var(--eliot-motion-effects) var(--eliot-motion-emphasized-easing);
+}
+
+:where(input[type="checkbox"]):where(:checked) {
+  border-color: var(--md-sys-color-primary);
+  background-color: var(--md-sys-color-primary);
+}
+
+:where(input[type="checkbox"]):where(:checked)::after { transform: rotate(45deg) scale(1); }
+
+:where(input[type="checkbox"]):where(:hover:not(:disabled)) {
+  box-shadow: 0 0 0 var(--eliot-space-block-control) color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent);
+}
+
+:where(input[type="checkbox"]):where(:checked:hover:not(:disabled)) {
+  box-shadow: 0 0 0 var(--eliot-space-block-control) color-mix(in srgb, var(--md-sys-color-primary) 10%, transparent);
+}
+
+:where(input[type="checkbox"]):where(:focus-visible) {
+  outline: var(--eliot-focus-width) solid var(--md-sys-color-primary);
+  outline-offset: calc(var(--eliot-focus-offset) + var(--eliot-space-hairline));
+}
+
+:where(input[type="checkbox"]):where(:disabled) {
+  cursor: default;
+  border-color: color-mix(in srgb, var(--md-sys-color-on-surface) 38%, transparent);
+}
+
+:where(input[type="checkbox"]):where(:checked:disabled) {
+  background-color: color-mix(in srgb, var(--md-sys-color-on-surface) 38%, transparent);
+  border-color: transparent;
+}
+
+:where(input[type="radio"]) {
+  accent-color: var(--md-sys-color-primary);
+  inline-size: var(--eliot-size-checkbox);
+  block-size: var(--eliot-size-checkbox);
+  margin: var(--eliot-space-hairline);
+  cursor: pointer;
+}
+
+:where(input[type="file"]) {
+  max-inline-size: 100%;
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-body-medium-size);
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+:where(input[type="file"])::file-selector-button {
+  margin-inline-end: var(--eliot-space-inline-control);
+  min-height: var(--eliot-size-control);
+  padding-inline: var(--eliot-space-inline-control);
+  border: none;
+  border-radius: var(--eliot-shape-full);
+  background-color: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-label-large-size);
+  font-weight: var(--eliot-type-font-weight-medium);
+  cursor: pointer;
+}
+
+/* Disclosures: a rotating chevron instead of the platform triangle. */
+:where(details > summary) {
+  list-style: none;
+  cursor: pointer;
+  border-radius: var(--eliot-shape-small);
+  -webkit-tap-highlight-color: transparent;
+}
+
+:where(details > summary)::-webkit-details-marker { display: none; }
+
+:where(details > summary)::before {
+  content: "";
+  display: inline-block;
+  inline-size: calc(var(--eliot-space-block-control) - var(--eliot-space-hairline));
+  block-size: calc(var(--eliot-space-block-control) - var(--eliot-space-hairline));
+  margin-inline: var(--eliot-space-tight) var(--eliot-space-block-control);
+  border-inline-end: var(--eliot-space-hairline) solid currentcolor;
+  border-block-end: var(--eliot-space-hairline) solid currentcolor;
+  vertical-align: 0.2em;
+  transform: rotate(-45deg);
+  transition: transform var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
+  opacity: 0.8;
+}
+
+:where(details[open] > summary)::before { transform: rotate(45deg); vertical-align: 0.3em; }
+
+:where(details > summary):where(:focus-visible) {
+  outline: var(--eliot-focus-width) solid var(--md-sys-color-primary);
+  outline-offset: var(--eliot-focus-offset);
 }
 
 /* ---- Field ---- */
@@ -122,7 +410,7 @@
 .er-field {
   display: flex;
   flex-direction: column;
-  gap: var(--eliot-space-block-control);
+  gap: var(--eliot-space-tight);
   font-family: var(--eliot-type-font-family);
   text-align: start;
 }
@@ -132,24 +420,15 @@
   line-height: var(--eliot-type-label-large-line-height);
   font-weight: var(--eliot-type-font-weight-medium);
   letter-spacing: var(--eliot-type-letter-spacing-label);
-  color: var(--md-sys-color-on-surface);
+  color: var(--md-sys-color-on-surface-variant);
 }
 
 .er-field__control {
   font-family: var(--eliot-type-font-family);
-  font-size: var(--eliot-type-body-medium-size);
-  line-height: var(--eliot-type-body-medium-line-height);
+  font-size: var(--eliot-type-body-large-size);
+  line-height: var(--eliot-type-body-large-line-height);
   color: var(--md-sys-color-on-surface);
-  background-color: var(--md-sys-color-surface-container-lowest);
-  border: var(--eliot-divider-width) solid var(--md-sys-color-outline);
-  border-radius: var(--eliot-shape-extra-small);
   min-height: var(--eliot-size-touch-target);
-  padding-inline: var(--eliot-space-inline-control);
-}
-
-.er-field__control:focus-visible {
-  outline: var(--eliot-focus-width) solid var(--md-sys-color-primary);
-  outline-offset: var(--eliot-focus-offset);
 }
 
 .er-field__control[aria-invalid="true"] {
@@ -160,35 +439,47 @@
   font-size: var(--eliot-type-body-small-size);
   line-height: var(--eliot-type-body-small-line-height);
   color: var(--md-sys-color-on-surface-variant);
+  padding-inline: var(--eliot-space-inline-control);
 }
 
 .er-field__error {
   font-size: var(--eliot-type-body-small-size);
   line-height: var(--eliot-type-body-small-line-height);
   color: var(--md-sys-color-error);
+  padding-inline: var(--eliot-space-inline-control);
 }
 
-/* A native checkbox stays native: token size, native accent, inherited visible focus. */
+/* A native checkbox stays native: token size, Material check, inherited visible focus. */
 .er-field__control[type="checkbox"] {
-  box-sizing: border-box;
   inline-size: var(--eliot-size-checkbox);
   block-size: var(--eliot-size-checkbox);
   min-height: var(--eliot-size-checkbox);
   padding: 0;
-  border-radius: var(--eliot-shape-extra-small);
-  accent-color: var(--md-sys-color-primary);
 }
 
 /* ---- Status ---- */
 
 .er-status {
   display: inline-flex;
-  align-items: center;
-  gap: var(--eliot-space-inline-control);
+  align-items: flex-start;
+  gap: var(--eliot-space-block-control);
+  min-width: 0;
   font-family: var(--eliot-type-font-family);
   font-size: var(--eliot-type-body-medium-size);
   line-height: var(--eliot-type-body-medium-line-height);
   color: var(--md-sys-color-on-surface-variant);
+  font-variant-numeric: var(--eliot-type-numerals);
+}
+
+.er-status > .er-symbol {
+  inline-size: var(--eliot-icon-small-size);
+  block-size: var(--eliot-icon-small-size);
+  flex-shrink: 0;
+}
+
+.er-status > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .er-status--error {
@@ -200,29 +491,44 @@
 .er-dialog {
   box-sizing: border-box;
   margin: auto;
-  max-block-size: calc(100dvh - 2 * var(--eliot-space-panel));
+  max-block-size: calc(100dvh - 2 * var(--eliot-space-section));
   overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   border: none;
   border-radius: var(--eliot-shape-extra-large);
   background-color: var(--md-sys-color-surface-container-high);
   color: var(--md-sys-color-on-surface);
   font-family: var(--eliot-type-font-family);
-  padding: var(--eliot-space-panel);
+  padding: calc(var(--eliot-space-panel) + var(--eliot-space-block-control));
   inline-size: var(--eliot-layout-reading-max);
   max-inline-size: calc(100% - 2 * var(--eliot-space-panel));
+  box-shadow: var(--eliot-elevation-3);
+}
+
+.er-dialog[open] {
+  animation: er-dialog-enter var(--eliot-motion-spatial) var(--eliot-motion-emphasized-easing);
 }
 
 .er-dialog::backdrop {
-  background-color: var(--md-sys-color-scrim);
-  opacity: var(--eliot-state-focus-opacity);
+  background-color: color-mix(in srgb, var(--md-sys-color-scrim) 32%, transparent);
+}
+
+/* Spatial entry only: the surface is never transparent, so it is visible from the first frame. */
+@keyframes er-dialog-enter {
+  from { transform: translateY(var(--eliot-space-panel)) scale(0.97); }
+  to { transform: none; }
 }
 
 .er-dialog__title {
-  font-size: var(--eliot-type-title-large-size);
-  line-height: var(--eliot-type-title-large-line-height);
-  font-weight: var(--eliot-type-font-weight-medium);
+  margin: 0 0 var(--eliot-space-panel);
+  font-family: var(--eliot-type-font-family-display);
+  font-size: var(--eliot-type-headline-small-size);
+  line-height: var(--eliot-type-headline-small-line-height);
+  font-weight: var(--eliot-type-font-weight-regular);
+  letter-spacing: var(--eliot-type-letter-spacing-headline);
   color: var(--md-sys-color-on-surface);
-  margin-block-end: var(--eliot-space-panel);
+  overflow-wrap: anywhere;
 }
 
 /* Accessibility geometry: keep the persistent text in the accessibility tree without layout. */
@@ -241,7 +547,21 @@
 }
 
 .er-dialog__body {
+  display: grid;
+  gap: var(--eliot-space-panel);
   font-size: var(--eliot-type-body-medium-size);
   line-height: var(--eliot-type-body-medium-line-height);
   color: var(--md-sys-color-on-surface-variant);
+}
+
+.er-dialog__body > .er-button {
+  justify-self: start;
+}
+
+.er-dialog__body > .er-button:last-child {
+  justify-self: end;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .er-dialog[open] { animation: none; }
 }
