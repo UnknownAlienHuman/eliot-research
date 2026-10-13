@@ -27,3 +27,4 @@ export type { WikiProposalListView, WikiProposalReadView, WikiProposalBodyView, 
 export type { ArtifactRevision, VersionedRef, EvidenceHandle } from '@eliotr/contracts';
 export type { RawMarkdownConversionRequest, MarkdownConversionOptions } from '@eliotr/contracts';
 export * from './research/index';
+export * from './mutations/index';
