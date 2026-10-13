@@ -148,6 +148,7 @@ All require C0.3, C1.4 and accepted ER-49 when parallel.
 | C3-RH | `research/history-changes/**` | Run history and authenticated changes/currentness | unrelated change cannot invalidate report |
 | C3-EM | `evidence/report/**` | Report manifest/sections/export inputs | failed required section blocks complete export |
 | C3-EC | `evidence/citations/**` | Citation/evidence reauthorization and excerpt inputs | revoke/generation/digest/revision mismatch rejects bytes |
+| C3-MO | `mutations/**` | Operation/code-aware mutation outcome classification | Lost ACK retains body/key/CAS; authorization loss precedes intent lookup |
 | C3-S | `studio/**` | Wiki and implemented artifact operations | regenerate is not edit; COW remains typed |
 | C3-C | `connections/**` | Session/grant/provider/Google/client diagnostics | health/configuration cannot become Connected |
 
