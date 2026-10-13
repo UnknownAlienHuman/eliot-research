@@ -420,6 +420,27 @@ html, body { background: var(--eliot-color-canvas); }
   .er-shell[data-destination="research"] .er-shell-tools { display: flex; }
 }
 
+/* Research below 80rem: NotebookLM-style tabs above one full pane (Sources | Chat | Tools). */
+.er-research-tabs { display: none; }
+@media (width < 80rem) {
+  .er-shell[data-destination="research"] {
+    grid-template-columns: var(--eliot-layout-rail-size) minmax(0, 1fr);
+    grid-template-rows: var(--eliot-layout-topbar-size) auto minmax(0, 1fr);
+    grid-template-areas: "header header" "nav tabs" "nav pane";
+  }
+  .er-shell[data-destination="research"] .er-research-tabs { display: flex; grid-area: tabs; }
+  .er-shell[data-destination="research"] :is(.er-shell-sources, .er-shell-reading, .er-shell-tools)[data-tab-active] { grid-area: pane; }
+  .er-shell[data-destination="research"] :is(.er-shell-sources, .er-shell-reading, .er-shell-tools)[data-tab-active="false"] { display: none; }
+  .er-shell[data-destination="research"] :is(.er-shell-sources, .er-shell-tools)[data-tab-active="true"] { display: flex; }
+  .er-shell[data-destination="research"] .er-shell-sources:not([data-tab-active]) { display: none; }
+}
+@media (width < 48rem) {
+  .er-shell[data-destination="research"] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "header" "tabs" "pane";
+  }
+}
+
 /* ---- Adaptive layout: rail on medium and expanded windows, bottom bar on compact ---- */
 
 @media (max-width: 80rem) {

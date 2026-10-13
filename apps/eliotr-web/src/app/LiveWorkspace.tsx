@@ -22,8 +22,8 @@ import { ProjectsHome } from "./ProjectsHome";
 import { usePaneAnnouncement } from "./usePaneAnnouncement";
 
 const copy = {
-  en: { tools: "Research tools", toolsLead: "Open a tool for the selected project and sources.", toolIndex: "Search index", toolVersions: "Source versions", toolReports: "Saved reports", toolWiki: "Wiki drafts", toolImport: "Import sources", toolModel: "Model and connections", projects: "Projects", sources: "Sources", research: "Research", studio: "Studio", connections: "Connections", choose: "Choose a project to get started", detail: "Keep sources, questions and their evidence together.", next: "Next page", previous: "Previous page", versions: "Choose a version to read", document: "Source document", close: "Back to sources", untitled: "No project selected", researchPrompt: "Choose the sources for your next question", researchDetail: "The question will keep the exact source scope you choose.", studioEmpty: "Your saved work belongs here", studioDetail: "Reports and artifacts will keep the sources they were created from.", connectionsDetail: "Review owner access and research configuration.", review: "Review connections", selected: (count: number) => count === 1 ? '1 source selected' : `${count} sources selected`, sourceScope: "For your next question", openSources: "Choose sources", version: (index: number) => `Version ${index + 1}`, scopeNote: "Readiness and recorded versions are separate observations." },
-  ru: { tools: "Инструменты исследования", toolsLead: "Инструменты для выбранного проекта и источников.", toolIndex: "Индекс поиска", toolVersions: "Версии источников", toolReports: "Сохранённые отчёты", toolWiki: "Вики-черновики", toolImport: "Импорт источников", toolModel: "Модель и подключения", projects: "Проекты", sources: "Источники", research: "Исследование", studio: "Студия", connections: "Подключения", choose: "Выберите проект, чтобы начать", detail: "Источники, вопросы и доказательства остаются вместе.", next: "Следующая страница", previous: "Предыдущая страница", versions: "Выберите версию для чтения", document: "Документ источника", close: "Вернуться к источникам", untitled: "Проект не выбран", researchPrompt: "Выберите источники для следующего вопроса", researchDetail: "Вопрос сохранит точный набор выбранных источников.", studioEmpty: "Здесь будут сохранённые материалы", studioDetail: "Отчёты и материалы сохраняют связь с исходными источниками.", connectionsDetail: "Проверьте доступ владельца и настройки исследования.", review: "Проверить подключения", selected: (count: number) => `Выбрано источников: ${count}`, sourceScope: "Для следующего вопроса", openSources: "Выбрать источники", version: (index: number) => `Версия ${index + 1}`, scopeNote: "Готовность и записанные версии — отдельные наблюдения." },
+  en: { tabs: "Research panes", tabSources: "Sources", tabChat: "Chat", tabTools: "Tools", tools: "Research tools", toolsLead: "Open a tool for the selected project and sources.", toolIndex: "Search index", toolVersions: "Source versions", toolReports: "Saved reports", toolWiki: "Wiki drafts", toolImport: "Import sources", toolModel: "Model and connections", projects: "Projects", sources: "Sources", research: "Research", studio: "Studio", connections: "Connections", choose: "Choose a project to get started", detail: "Keep sources, questions and their evidence together.", next: "Next page", previous: "Previous page", versions: "Choose a version to read", document: "Source document", close: "Back to sources", untitled: "No project selected", researchPrompt: "Choose the sources for your next question", researchDetail: "The question will keep the exact source scope you choose.", studioEmpty: "Your saved work belongs here", studioDetail: "Reports and artifacts will keep the sources they were created from.", connectionsDetail: "Review owner access and research configuration.", review: "Review connections", selected: (count: number) => count === 1 ? '1 source selected' : `${count} sources selected`, sourceScope: "For your next question", openSources: "Choose sources", version: (index: number) => `Version ${index + 1}`, scopeNote: "Readiness and recorded versions are separate observations." },
+  ru: { tabs: "Панели исследования", tabSources: "Источники", tabChat: "Чат", tabTools: "Инструменты", tools: "Инструменты исследования", toolsLead: "Инструменты для выбранного проекта и источников.", toolIndex: "Индекс поиска", toolVersions: "Версии источников", toolReports: "Сохранённые отчёты", toolWiki: "Вики-черновики", toolImport: "Импорт источников", toolModel: "Модель и подключения", projects: "Проекты", sources: "Источники", research: "Исследование", studio: "Студия", connections: "Подключения", choose: "Выберите проект, чтобы начать", detail: "Источники, вопросы и доказательства остаются вместе.", next: "Следующая страница", previous: "Предыдущая страница", versions: "Выберите версию для чтения", document: "Документ источника", close: "Вернуться к источникам", untitled: "Проект не выбран", researchPrompt: "Выберите источники для следующего вопроса", researchDetail: "Вопрос сохранит точный набор выбранных источников.", studioEmpty: "Здесь будут сохранённые материалы", studioDetail: "Отчёты и материалы сохраняют связь с исходными источниками.", connectionsDetail: "Проверьте доступ владельца и настройки исследования.", review: "Проверить подключения", selected: (count: number) => `Выбрано источников: ${count}`, sourceScope: "Для следующего вопроса", openSources: "Выбрать источники", version: (index: number) => `Версия ${index + 1}`, scopeNote: "Готовность и записанные версии — отдельные наблюдения." },
 } as const;
 
 export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, context }: {
@@ -45,6 +45,12 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
   const [sourceId, setSourceId] = useState<string>();
   const [libraryPages, setLibraryPages] = useState<readonly (string | undefined)[]>([undefined]);
   const [scope, setScope] = useState<readonly NextQuestionSource[]>([]);
+  // Narrow windows show one Research pane at a time behind NotebookLM-style tabs; wide windows show all three.
+  const [researchTab, setResearchTab] = useState<"sources" | "chat" | "tools">("chat");
+  useLayoutEffect(() => {
+    // Arriving in Research always shows the conversation, so its route heading can take focus.
+    if (destination !== "research") setResearchTab("chat");
+  }, [destination]);
   const after = projectPages[projectPages.length - 1];
   const cursor = libraryPages[libraryPages.length - 1];
   const key = protectedQueryKey(context, "sources");
@@ -124,7 +130,13 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
     { id: "model", label: text.toolModel, icon: "settings", accent: "blue", run: () => { if (privacy.isCurrent(context)) void navigate("/connections"); } },
   ];
   return <div className="er-live-workspace">
-    <aside className="er-shell-sources" hidden={destination !== "research"} aria-label={text.sources}>
+    {destination === "research" && <div className="er-research-tabs" role="group" aria-label={text.tabs}>
+      {([["sources", text.tabSources], ["chat", text.tabChat], ["tools", text.tabTools]] as const).map(([tab, label]) =>
+        <button key={tab} type="button" className="er-research-tab" aria-pressed={researchTab === tab} onClick={() => setResearchTab(tab)}>
+          <span>{label}</span>{tab === "sources" && scope.length > 0 ? <span className="er-research-tab__count">{scope.length}</span> : null}
+        </button>)}
+    </div>}
+    <aside className="er-shell-sources" hidden={destination !== "research"} aria-label={text.sources} data-tab-active={researchTab === "sources"}>
       <h2>{text.sources}</h2><p className="er-shell-eyebrow">{selected?.title ?? text.untitled}</p>
       <p>{text.selected(scope.length)}</p>
       {/* Choose the next question's sources beside the conversation, as in NotebookLM; the same guarded toggle as Sources. */}
@@ -142,7 +154,7 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
       <p className="er-shell-note">{text.sourceScope}</p>
       <WorkspaceLink className="er-shell-link" to="/sources">{text.openSources}</WorkspaceLink>
     </aside>
-    <aside className="er-shell-tools" hidden={destination !== "research"} aria-label={text.tools}>
+    <aside className="er-shell-tools" hidden={destination !== "research"} aria-label={text.tools} data-tab-active={researchTab === "tools"}>
       <h2>{text.tools}</h2>
       <p className="er-shell-note">{text.toolsLead}</p>
       <ul className="er-live-tools">{tools.map(tool => <li key={tool.id}>
@@ -151,12 +163,12 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
         </button>
       </li>)}</ul>
     </aside>
-    <main className="er-shell-reading" id="workspace-main">
+    <main className="er-shell-reading" id="workspace-main" data-tab-active={destination !== "research" || researchTab === "chat"}>
       {destination !== "sources" && destination !== "projects" && <p className="er-shell-eyebrow">{selected?.title ?? (destination === "studio" ? text.studioEmpty : destination === "connections" ? text.connectionsDetail : text.choose)}</p>}
       <h1 id="workspace-heading" ref={headingRef} tabIndex={-1}>{text[destination]}</h1>
       {destination === "projects" ? <ProjectsHome locale={locale} state={projects.isPending ? "loading" : projects.isError ? "error" : "useful"}
         projects={projects.data?.projects ?? []} openedProjectId={selected?.project_id}
-        onOpen={id => { if (id !== projectId) chooseProject(id); if (privacy.isCurrent(context)) void navigate("/research"); }}
+        onOpen={id => { if (id !== projectId) chooseProject(id); setResearchTab("chat"); if (privacy.isCurrent(context)) void navigate("/research"); }}
         onRetry={() => { void projects.refetch(); }}
         onPrevious={projectPages.length > 1 ? () => { setProjectId(undefined); setProjectPages(pages => pages.slice(0, -1)); } : undefined}
         onNext={projects.data?.next_project_id ? () => { const next = projects.data?.next_project_id; if (next) { setProjectId(undefined); setProjectPages(pages => [...pages, next]); } } : undefined} />

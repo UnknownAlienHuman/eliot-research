@@ -317,3 +317,51 @@
 .er-live-tool[data-accent="pink"] { --er-tool-container: var(--eliot-accent-pink-container); --er-tool-tone: var(--eliot-accent-pink); }
 .er-live-tool[data-accent="amber"] { --er-tool-container: var(--eliot-accent-amber-container); --er-tool-tone: var(--eliot-accent-amber); }
 @media (forced-colors: active) { .er-live-tool { border: var(--eliot-divider-width) solid ButtonText; } }
+
+/* Research pane tabs: a segmented pill group, as NotebookLM uses on narrow windows. */
+.er-research-tabs {
+  gap: var(--eliot-space-tight);
+  margin-block-end: var(--eliot-space-block-control);
+  padding: var(--eliot-space-tight);
+  border-radius: var(--eliot-shape-full);
+  background: var(--eliot-color-pane);
+}
+.er-research-tab {
+  position: relative;
+  flex: 1 1 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--eliot-space-block-control);
+  min-width: 0;
+  min-block-size: var(--eliot-size-control);
+  padding-inline: var(--eliot-space-gutter);
+  border: none;
+  border-radius: var(--eliot-shape-full);
+  background: transparent;
+  color: var(--md-sys-color-on-surface-variant);
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    background-color var(--eliot-motion-effects) var(--eliot-motion-standard-easing),
+    color var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
+}
+.er-research-tab:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 6%, transparent); color: var(--md-sys-color-on-surface); }
+.er-research-tab[aria-pressed="true"] { background: var(--eliot-color-selected); color: var(--eliot-color-on-selected); }
+.er-research-tab:focus-visible { outline: var(--eliot-focus-width) solid var(--md-sys-color-primary); outline-offset: var(--eliot-focus-offset); }
+.er-research-tab > span:first-child { min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; }
+.er-research-tab__count {
+  padding: 0 var(--eliot-space-block-control);
+  border-radius: var(--eliot-shape-full);
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+  font-size: var(--eliot-type-label-small-size);
+  line-height: var(--eliot-type-label-small-line-height);
+  font-variant-numeric: var(--eliot-type-numerals);
+}
+@media (forced-colors: active) { .er-research-tab[aria-pressed="true"] { outline: var(--eliot-divider-width) solid CanvasText; } }
