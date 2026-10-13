@@ -38,7 +38,12 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
   const memoryKey = [...protectedQueryKey(context, 'research'), 'local-intent'];
   const memory = useQuery<ResearchMemory>({ queryKey: memoryKey, queryFn: skipToken, gcTime: Infinity });
   const options = researchQueryOptions({ ...apis.research, configuration: apis.connections.configuration }, privacy, context,
-    projectId === undefined ? undefined : { id: projectId, isCurrent: isProjectCurrent });
+    projectId === undefined ? undefined : { id: projectId, isCurrent: isProjectCurrent },
+    import.meta.env.VITE_ELIOTR_RECENT_DIAGNOSTIC === 'true' ? {
+      onRecentHistoryRead: event => {
+        if (event.outcome !== 'resolved') console.warn('[eliotr-recent-read]', JSON.stringify(event));
+      },
+    } : undefined);
   const configuration = useQuery(options.configuration());
   const history = useQuery(options.history());
   const saved = memory.data, launch = saved?.intent?.launch ?? saved?.observedLaunch;
