@@ -393,6 +393,11 @@ export function createResearchModelSpendPolicyService(input: ResearchModelSpendP
         scope_snapshot_ref: value.authority.scope_snapshot_ref, workflow_authorization_receipt_ref: value.row.authorization_receipt_ref },
       workflow_operation_id: input.operation_id, stage_index: value.row.stage_index as 8 | 9 | 12 | 14,
       workflow_budget_receipt_ref: value.row.budget_receipt_ref,
+      // A stage 8/9 row entering this path must carry the stage-level W2
+      // request digest; the SQL guard rejects the write without it.
+      ...(value.row.stage_index === 8 || value.row.stage_index === 9
+        ? { workflow_stage_request_sha256: value.row.request_sha256 }
+        : {}),
       stage_request_json: value.row.request_json, intent, quote, authority: value.authority, expected_deployment: value.deployment,
       approval: { ...decision, decision_digest: await modelGatewaySha256(canonicalJson(decision)) },
       max_input_bytes: value.rule.max_input_bytes, max_output_bytes: value.rule.max_output_bytes,
