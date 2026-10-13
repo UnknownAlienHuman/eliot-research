@@ -1,0 +1,57 @@
+{
+  "protocol": "eliotr.research-session-projection-dependency-attestation.v1",
+  "attested_at_utc": "2026-10-13T16:12:44.158Z",
+  "attestation_scope": "read-only post-run dependency identity addendum; accepted Worker/DO/Chrome cases were not rerun",
+  "linked_acceptance_note": "ACCEPTANCE-20261013.md",
+  "linked_qualification": {
+    "run_id": "8b1530a8-c3c5-4104-b2a6-c00d4868228e",
+    "started_at_utc": "2026-10-13T15:29:14.986Z",
+    "finished_at_utc": "2026-10-13T15:29:36.891Z",
+    "original_receipt_path_from_repository_root": ".eliotr-state/research-session-projection-emitted-browser/8b1530a8-c3c5-4104-b2a6-c00d4868228e.json",
+    "original_receipt_sha256": "8d423bd2c12d1ccaa54443bace1371079259803855ee97c3ff1a5a774ade6d26",
+    "original_receipt_bytes_preserved": true,
+    "original_browser_object_playwright_core_version": "OMITTED"
+  },
+  "runner_resolution": {
+    "runner_path_from_repository_root": "tests/integration/browser/research-session-projection-emitted/qualify.mjs",
+    "source_anchors": ["qualify.mjs:9", "qualify.mjs:11", "qualify.mjs:431-436"],
+    "resolution_method": "Node import.meta.resolve('playwright-core', runner file URL), followed by filesystem realpath",
+    "verification_status": "POST_RUN_VERIFIED",
+    "verified_at_utc": "2026-10-13T16:12:44.158Z",
+    "resolved_module_url": "file:///C:/Development/Research/.eliotr-state/resume-20261013/projection/node_modules/.pnpm/playwright-core@1.63.0/node_modules/playwright-core/index.mjs",
+    "resolved_module_physical_path": "C:\\Development\\Research\\.eliotr-state\\resume-20261013\\projection\\node_modules\\.pnpm\\playwright-core@1.63.0\\node_modules\\playwright-core\\index.mjs",
+    "installed_package_json_path": "C:\\Development\\Research\\.eliotr-state\\resume-20261013\\projection\\node_modules\\.pnpm\\playwright-core@1.63.0\\node_modules\\playwright-core\\package.json",
+    "playwright_core_version": "1.63.0",
+    "installed_package_json_sha256": "f061c58427e47e843e26d201f0a57076c734e57c734ecbbd87d4a23b7a20db9b",
+    "in_run_resolved_module_path": "UNKNOWN; the original receipt does not capture it",
+    "in_run_version_field": "OMITTED_FROM_ORIGINAL_RECEIPT"
+  },
+  "frozen_dependency_evidence": {
+    "workspace_root_used_by_runner": "C:\\Development\\Research\\.eliotr-state\\resume-20261013\\projection",
+    "root_package_json": {
+      "path_from_workspace_root": "package.json",
+      "sha256": "6382c25554a22b661dbdb43ebddcf6d855e1c60f34c9f591e305ef86cff575b3",
+      "dev_dependency": "playwright-core",
+      "specifier": "1.63.0"
+    },
+    "root_pnpm_lock": {
+      "path_from_workspace_root": "pnpm-lock.yaml",
+      "sha256": "ec7c22cf8a768cc571c76a9812c55cb98cdb08089ca0ba626ba96026004e5add",
+      "importer_specifier": "1.63.0",
+      "resolved_package": "playwright-core@1.63.0",
+      "integrity": "sha512-rYCsBF/M5HjUch52bbtVONEFjv6Xu8sm8h72dNlR5bzIE1fvC/bxgspzkjSfU+MweEMmPM8KJebG6nnyxo5mCg=="
+    }
+  },
+  "root_install_context": {
+    "source": "root-shared execution context",
+    "date": "2026-10-13",
+    "package_manager": "pnpm 11.23.0",
+    "mode": "offline frozen-lockfile install from existing store",
+    "packages_installed": 694,
+    "occurred_before_qualification": true,
+    "root_reported_no_source_or_lock_changes": true,
+    "exact_install_record_locator_in_this_worktree": "UNKNOWN",
+    "historical_module_path_claim": "NOT_MADE"
+  },
+  "result": "PASS_POST_RUN_DEPENDENCY_IDENTITY; original in-run module path remains UNKNOWN"
+}
