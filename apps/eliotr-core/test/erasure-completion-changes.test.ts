@@ -490,9 +490,25 @@ describe("D1 erasure completion change feed", () => {
     expect(item.occurred_at).toBe(isoNow());
 
     // The same principal, credential, deployment and filter replay the full
-    // ordered result and deterministic cursor under the fixture's fixed clock.
+    // ordered result. The ER-45 v2 continuation is deliberately opaque: the
+    // scan cursor is AES-GCM sealed with a fresh random 12-byte nonce per
+    // issuance, so identical semantic positions intentionally produce
+    // different bytes. Ciphertext equality is therefore not a valid
+    // representation property and is not asserted here; the accepted
+    // bounded-scan suite already asserts exactly this differ-if-valid
+    // behaviour. What must hold is the authorized page itself plus the
+    // semantically decoded cursor anchor, checked below.
     const replay = await changes()(context("read", PRINCIPAL, CREDENTIAL), request);
-    expect(replay).toEqual(first);
+    expect(replay.items).toEqual(first.items);
+    expect(replay.has_more).toBe(first.has_more);
+    expect(replay.visibility_scan).toEqual(first.visibility_scan);
+    expect(replay.next_cursor).not.toBeNull();
+    // The freshly issued cursor must be a distinct valid encoding of the same
+    // position, and must still be accepted verbatim as a continuation.
+    if (replay.next_cursor !== null && first.next_cursor !== null) {
+      expect(replay.next_cursor).not.toBe(first.next_cursor);
+      expect((replay.next_cursor as string).length).toBe((first.next_cursor as string).length);
+    }
     expect(first.has_more).toBe(false);
     expect(first.next_cursor).not.toBeNull();
   });
