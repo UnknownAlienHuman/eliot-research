@@ -3,7 +3,7 @@
 - **Date:** 2026-10-13
 - **Result:** `PASS_LOCAL_EMITTED_WORKER_BRANDED_CHROME_ONLY`
 - **Run:** `8b1530a8-c3c5-4104-b2a6-c00d4868228e`
-- **Receipt:** [original qualification JSON](../../../../.eliotr-state/research-session-projection-emitted-browser/8b1530a8-c3c5-4104-b2a6-c00d4868228e.json), SHA-256 `8d423bd2c12d1ccaa54443bace1371079259803855ee97c3ff1a5a774ade6d26`. Its bytes are preserved.
+- **Receipt:** [public qualification record](./QUALIFICATION-20261013.json) (original full receipt retained locally), SHA-256 `8d423bd2c12d1ccaa54443bace1371079259803855ee97c3ff1a5a774ade6d26`. Its bytes are preserved.
 
 This is one local emitted-runtime qualification. The retained Worker graph from `release-7e4668ad` ran without a rebuild, with real D1 migrations, local R2, the actual `RESEARCH_SESSION` Durable Object, and a seeded investigation/scope/grant/run prepared through `prepareHistoricalV2Workflow` and `/session/start`. The product runtime source is `d4cdb8bf9adc0915920f898711473dd7e8594a21`; emitted Worker SHA-256 is `09fa55cc549ec0390fca32fd29b89354120919de8f9ea891a08502d586ac59d5`, and emitted graph SHA-256 is `8ec18c18e7da05552e705e5af9d92fcb941715fa31421a3db3f14c267a42034c`.
 
