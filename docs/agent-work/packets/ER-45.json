@@ -10,7 +10,12 @@
     ],
     "owned_paths": [
       "apps/eliotr-core/src/research-changes.ts",
-      "apps/eliotr-core/test/research-changes.test.ts"
+      "apps/eliotr-core/test/research-changes.test.ts",
+      "packages/cloudflare-research-runtime/src/research-changes-erasure.ts",
+      "packages/cloudflare-research-runtime/src/research-changes.ts",
+      "apps/eliotr-core/src/erasure-change-authority.ts",
+      "apps/eliotr-core/test/erasure-completion-changes.test.ts",
+      "packages/cloudflare-research-runtime/src/research-changes-erasure.test.ts"
     ],
     "mandatory_negative_case": "Forge or replay a change-feed cursor under another principal, credential, deployment or filter; revoke a scope grant between pages; all cases must fail closed without disclosing the protected change.",
     "document": "ER-45-authenticated-research-changes.md",

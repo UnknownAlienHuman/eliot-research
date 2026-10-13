@@ -13,6 +13,11 @@ authority. The server derives visibility from the authenticated principal and cu
 
 - `apps/eliotr-core/src/research-changes.ts`
 - `apps/eliotr-core/test/research-changes.test.ts`
+- `packages/cloudflare-research-runtime/src/research-changes-erasure.ts`
+- `packages/cloudflare-research-runtime/src/research-changes.ts`
+- `apps/eliotr-core/src/erasure-change-authority.ts`
+- `apps/eliotr-core/test/erasure-completion-changes.test.ts`
+- `packages/cloudflare-research-runtime/src/research-changes-erasure.test.ts`
 
 ## Architecture extracts
 

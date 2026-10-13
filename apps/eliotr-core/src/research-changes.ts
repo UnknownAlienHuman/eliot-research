@@ -5,6 +5,7 @@ import {
   type ResearchChangesServiceOptions,
 } from "@eliotr/cloudflare-research-runtime/research-changes.js";
 import type { Env } from "./env.js";
+import { createErasureChangeAuthorizer } from "./erasure-change-authority.js";
 import { prepareOwnerScopeHistoricalReadAuthorization } from "./wiki-proposal-reauthorization.js";
 
 export {
@@ -26,6 +27,7 @@ export function createResearchChangesService(
     database: env.CORE_DB,
     deployment_generation: env.DEPLOYMENT_GENERATION,
     cursor_key: env.RESEARCH_CHANGES_CURSOR_KEY,
+    authorize_erasure_change: createErasureChangeAuthorizer(env),
     authorize_historical_scope: async (context, scopeRef): Promise<ResearchChangesScopeReadAuthorization> =>
       prepareOwnerScopeHistoricalReadAuthorization(env, context, scopeRef),
   }, options);

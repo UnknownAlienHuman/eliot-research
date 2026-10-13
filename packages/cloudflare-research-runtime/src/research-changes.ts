@@ -15,6 +15,8 @@ import {
   validResearchChangesIdentity,
 } from "./research-changes-cursor.js";
 
+import { authorizeErasureChange, recheckErasureChanges, type ErasureChangeAuthorizer } from "./research-changes-erasure.js";
+
 export { RESEARCH_CHANGE_KINDS } from "./research-changes-cursor.js";
 export const RESEARCH_CHANGES_PROTOCOL = "eliotr.research-changes.v1";
 const MAX_CURSOR_BYTES = 4_096;
@@ -88,6 +90,7 @@ export interface ResearchChangesServiceRuntime {
   readonly database: D1Database;
   readonly deployment_generation: string;
   readonly cursor_key: string | undefined;
+  readonly authorize_erasure_change?: ErasureChangeAuthorizer;
   readonly authorize_historical_scope: (
     context: AuthenticatedRequestContext,
     scope_ref: VersionedRef,
@@ -510,6 +513,7 @@ export function createResearchChangesService(
       const accepted: ChangeRow[] = [];
       const scopeKeys = new Set<string>();
       for (const row of batch) {
+        if (!await authorizeErasureChange(context, decodeRow(row), runtime.authorize_erasure_change)) continue;
         const scopeRef = rowScopeRef(row);
         if (scopeRef === null) {
           accepted.push(row);
@@ -549,6 +553,7 @@ export function createResearchChangesService(
         }
         await requireScopeCurrent(key, authorization);
       }
+      await recheckErasureChanges(context, visibleRows, decodeRow, runtime.authorize_erasure_change);
       return visibleRows.length !== before;
     };
     const targetCount = latestStart ? request.limit : request.limit + 1;
