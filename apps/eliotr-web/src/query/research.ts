@@ -3,6 +3,10 @@ import type { ResearchRunLaunchView } from "@eliotr/owner-api-client";
 import type { BoundWorkspaceApis } from "../app/runtime";
 import type { PrivacyController, SessionContext } from "../app/privacy";
 import { protectedQueryKey, runProtectedRead } from "./client";
+import {
+  readResearchRunHistoryWithDiagnostic,
+  type ResearchHistoryReadDiagnosticObserver,
+} from "./research-history-diagnostic";
 
 /**
  * Research query owns remote run state. It reads only: the already composed runtime APIs are consumed
@@ -15,6 +19,11 @@ export interface ResearchQueryApis {
   readonly runs: BoundWorkspaceApis["research"]["runs"];
   readonly history: BoundWorkspaceApis["research"]["history"];
   readonly configuration: BoundWorkspaceApis["connections"]["configuration"];
+}
+
+export interface ResearchQueryDiagnostics {
+  /** Opt-in observer for the protected Recent history read. */
+  readonly onRecentHistoryRead?: ResearchHistoryReadDiagnosticObserver;
 }
 
 /** Admission pins revision 1; canonical stage checkpoints advance the same investigation. */
@@ -32,6 +41,7 @@ export function researchQueryOptions(
   privacy: PrivacyController,
   context: SessionContext,
   project?: { readonly id: string; readonly isCurrent: () => boolean },
+  diagnostics?: ResearchQueryDiagnostics,
 ) {
   const generation = context.deploymentGeneration;
   const key = protectedQueryKey(context, "research");
@@ -59,8 +69,15 @@ export function researchQueryOptions(
       return queryOptions({
         queryKey: [...key, "history"],
         refetchOnMount: false,
-        queryFn: ({ signal }) => runProtectedRead(privacy, context, signal,
-          readSignal => apis.history.readResearchRunHistory(generation, readSignal)),
+        queryFn: ({ signal }) => readResearchRunHistoryWithDiagnostic({
+          privacy,
+          context,
+          signal,
+          ...(diagnostics?.onRecentHistoryRead === undefined
+            ? {}
+            : { observer: diagnostics.onRecentHistoryRead }),
+          read: readSignal => apis.history.readResearchRunHistory(generation, readSignal),
+        }),
       });
     },
 
