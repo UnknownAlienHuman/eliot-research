@@ -294,21 +294,16 @@ export function createSemLaneExecutor(managed: ManagedSearchPort): RetrievalLane
           Object.assign(error, { code: "RETRIEVAL_AUTHORITY_STALE", retryable: false });
           throw error;
         }
-        try {
-          const result = await managed.searchManaged(request, ["SEM"], expansion, admission);
-          const candidates = result.candidates.map((candidate) => {
-            const { proof_state: _localMarker, ...locator } = candidate as LocatorCandidate & {
-              readonly proof_state?: unknown;
-            };
-            void _localMarker;
-            return locator;
-          });
-          return { ...result, candidates };
-        } catch (error: unknown) {
-          // Preserve typed provider/domain codes and retryability for the caller. The managed
-          // path has no secondary LEX call or fabricated outcome on transport failure.
-          throw error;
-        }
+        // Typed provider/domain errors propagate unchanged; no secondary LEX dispatch is added.
+        const result = await managed.searchManaged(request, ["SEM"], expansion, admission);
+        const candidates = result.candidates.map((candidate) => {
+          const { proof_state: _localMarker, ...locator } = candidate as LocatorCandidate & {
+            readonly proof_state?: unknown;
+          };
+          void _localMarker;
+          return locator;
+        });
+        return { ...result, candidates };
       }
       try {
         const results = await managed.search(request, ["SEM"], expansion);

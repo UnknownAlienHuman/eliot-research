@@ -152,7 +152,9 @@ describe("managed ranking contracts", () => {
 
   it("rejects rank/order drift and fallback without a degraded outcome", () => {
     const rankDrift = outcome();
-    rankDrift.ordered_candidates[0]!.provider_rank = 2;
+    const firstCandidate = rankDrift.ordered_candidates[0];
+    if (firstCandidate === undefined) throw new Error("rank drift fixture has no candidate");
+    firstCandidate.provider_rank = 2;
     expect(ManagedRankingOutcomeSchema.safeParse(rankDrift).success).toBe(false);
 
     const hiddenFallback = { ...outcome(), fallback_used: true };
