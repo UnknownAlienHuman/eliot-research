@@ -2,88 +2,86 @@
   "protocol": "eliotr.ui-token-catalog.v1",
   "checkpoint": "U1.2",
   "source_css": "packages/ui/src/tokens/theme.css",
-  "source_sha256": "420bef555549c79d31fd2d2ef2f5b138a254e13ebeeb8f8445d1bb665258562b",
-  "source_bytes": 17701,
+  "source_sha256": "3040a6247709ab322c223ac41cb8c0333604b72fcc735738f3fabf3117dad5bd",
+  "source_bytes": 25772,
   "design_reference": {
-    "artifact": ".eliotr-state/frontend-reference-20261009/design-mcp.json",
-    "endpoint": "https://design.googleapis.com/mcp",
-    "tool": "generate_color_scheme",
-    "primary_key": "#1a73e8",
-    "color_scheme_variant": "TONAL_SPOT",
-    "contrast_level": 0,
-    "generated_at_utc": "2026-10-09T13:41:15.568Z"
+    "artifact": "packages/ui/src/tokens/theme.css",
+    "basis": "Google Material 3 baseline roles as observed in live NotebookLM (2026-10-13), violet tertiary for expressive moments",
+    "live_reference": "https://notebook.google.com/ computed --mat-sys-* roles, dark scheme",
+    "fonts": "Google Sans (OFL 1.1, Latin+Cyrillic) and Google Sans Code (OFL 1.1), self-hosted under packages/ui/src/fonts",
+    "generated_at_utc": "2026-10-13T17:30:00.000Z"
   },
   "consumed_roles": [
     {
       "pair": "primary/on-primary",
       "semantic_use": "high-emphasis action, focus ring and selection; never status, readiness or confidence",
       "light": {
-        "primary": "#435e91",
+        "primary": "#0b57d0",
         "on-primary": "#ffffff"
       },
       "dark": {
-        "primary": "#adc7ff",
-        "on-primary": "#0f2f60"
+        "primary": "#a8c7fa",
+        "on-primary": "#062e6f"
       }
     },
     {
       "pair": "surface/on-surface",
       "semantic_use": "reading center and page background; report body text",
       "light": {
-        "surface": "#f9f9ff",
-        "on-surface": "#1a1b20"
+        "surface": "#f8fafd",
+        "on-surface": "#1f1f1f"
       },
       "dark": {
-        "surface": "#111318",
-        "on-surface": "#e2e2e9"
+        "surface": "#131314",
+        "on-surface": "#e3e3e3"
       }
     },
     {
       "pair": "surface-container/on-surface-variant",
       "semantic_use": "Eliot scope, counts and state metadata that stay independent of report truth",
       "light": {
-        "surface-container": "#ededf4",
-        "on-surface-variant": "#44474f"
+        "surface-container": "#edf1f7",
+        "on-surface-variant": "#444746"
       },
       "dark": {
-        "surface-container": "#1e1f25",
-        "on-surface-variant": "#c4c6d0"
+        "surface-container": "#1e1f20",
+        "on-surface-variant": "#c4c7c5"
       }
     },
     {
       "pair": "surface-container-high/on-surface",
       "semantic_use": "contextual evidence panel, present only while a citation is selected",
       "light": {
-        "surface-container-high": "#e8e7ee",
-        "on-surface": "#1a1b20"
+        "surface-container-high": "#e6ebf3",
+        "on-surface": "#1f1f1f"
       },
       "dark": {
-        "surface-container-high": "#282a2f",
-        "on-surface": "#e2e2e9"
+        "surface-container-high": "#282a2c",
+        "on-surface": "#e3e3e3"
       }
     },
     {
       "pair": "outline/surface",
       "semantic_use": "essential control outline against surface, minimum3; outline-variant is low-emphasis separation only",
       "light": {
-        "outline": "#74777f",
-        "surface": "#f9f9ff"
+        "outline": "#747775",
+        "surface": "#f8fafd"
       },
       "dark": {
-        "outline": "#8e9099",
-        "surface": "#111318"
+        "outline": "#8e918f",
+        "surface": "#131314"
       }
     },
     {
       "pair": "error/on-error",
       "semantic_use": "failure and refusal; never success or evidence support",
       "light": {
-        "error": "#ba1a1a",
+        "error": "#b3261e",
         "on-error": "#ffffff"
       },
       "dark": {
-        "error": "#ffb4ab",
-        "on-error": "#690005"
+        "error": "#f2b8b5",
+        "on-error": "#601410"
       }
     }
   ],
