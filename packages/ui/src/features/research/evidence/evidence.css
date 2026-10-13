@@ -1,37 +1,40 @@
-/* Semantic tokens only. No raw visual values, no inline styles, no nested scroll. */
+/* Semantic tokens only. No raw visual values, no inline styles, no nested scroll.
+ *
+ * Direction: an inspector panel. One tonal group holds the rail; each citation is a row divided by
+ * a hairline rule. The quoted excerpt is reading text with a primary accent bar on its inline start
+ * edge. Resolution (is this readback exact?) and claim support (does the claim hold?) stay on
+ * separate lines so neither can read as the other's verdict. States are notes: caution uses
+ * tertiary-container, failure uses error-container, and neutral waiting is quiet text.
+ */
 
 .evidence {
   display: grid;
   min-width: 0;
   gap: var(--eliot-space-panel);
-  padding: var(--eliot-space-panel);
-  background: var(--md-sys-color-surface-container-low);
+  padding: var(--eliot-space-panel) var(--eliot-space-group);
+  border-radius: var(--eliot-shape-large-increased);
+  background: var(--eliot-color-group);
   color: var(--md-sys-color-on-surface);
-  border-radius: var(--eliot-shape-medium);
   font-family: var(--eliot-type-font-family);
   font-size: var(--eliot-type-body-medium-size);
   line-height: var(--eliot-type-body-medium-line-height);
 }
 
-.evidence--long .evidence__excerpt-text,
-.evidence--long .evidence__claim-text {
-  font-size: var(--eliot-type-body-large-size);
-  line-height: var(--eliot-type-body-large-line-height);
-  overflow-wrap: anywhere;
-}
-
 .evidence__title {
-  margin: var(--eliot-shape-none);
+  margin: 0;
+  color: inherit;
+  font-family: var(--eliot-type-font-family-display);
   font-size: var(--eliot-type-title-large-size);
   line-height: var(--eliot-type-title-large-line-height);
+  font-weight: var(--eliot-type-font-weight-regular);
+  letter-spacing: var(--eliot-type-letter-spacing-headline);
 }
 
 .evidence__hint,
 .evidence__message,
 .evidence__pending,
-.evidence__failed,
 .evidence__outcome-note {
-  margin: var(--eliot-shape-none);
+  margin: 0;
   color: var(--md-sys-color-on-surface-variant);
   font-size: var(--eliot-type-body-medium-size);
   line-height: var(--eliot-type-body-medium-line-height);
@@ -42,12 +45,22 @@
   max-width: var(--eliot-layout-reading-max);
 }
 
+/* Error root: the whole rail becomes an error-container group. */
+.evidence--error {
+  background: var(--md-sys-color-error-container);
+  color: var(--md-sys-color-on-error-container);
+}
+
+.evidence--error .evidence__message {
+  color: var(--md-sys-color-on-error-container);
+}
+
 .evidence__list {
   display: grid;
   min-width: 0;
-  gap: var(--eliot-space-section);
-  margin: var(--eliot-shape-none);
-  padding: var(--eliot-shape-none);
+  gap: 0;
+  margin: 0;
+  padding: 0;
   list-style: none;
 }
 
@@ -60,69 +73,111 @@
   min-width: 0;
   gap: var(--eliot-space-block-control);
   padding-block: var(--eliot-space-panel);
+}
+
+.evidence__list:not(.evidence__list--skeleton) > .evidence__row + .evidence__row {
   border-block-start: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
 }
 
+/* Loading placeholders are soft bars at a touch-sized minimum; they never animate size. */
 .evidence__row--skeleton {
   min-height: var(--eliot-size-touch-target);
+  padding-block: 0;
+  border-radius: var(--eliot-shape-medium);
+  background: color-mix(in srgb, var(--md-sys-color-on-surface) 6%, transparent);
 }
 
 .evidence__row-head {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   gap: var(--eliot-space-inline-control);
+  min-width: 0;
 }
 
 .evidence__handle {
-  font-size: var(--eliot-type-label-large-size);
-  line-height: var(--eliot-type-label-large-line-height);
   color: var(--md-sys-color-on-surface);
+  font-size: var(--eliot-type-title-small-size);
+  line-height: var(--eliot-type-title-small-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
   overflow-wrap: anywhere;
 }
 
 .evidence__original {
+  color: var(--md-sys-color-on-surface-variant);
+  font-family: var(--eliot-type-font-family-mono);
   font-size: var(--eliot-type-body-small-size);
   line-height: var(--eliot-type-body-small-line-height);
+  overflow-wrap: anywhere;
+}
+
+/* Disclosures: a full touch-sized summary with a quiet label. Technical content is mono. */
+.evidence summary {
+  display: flex;
+  align-items: center;
+  min-height: var(--eliot-size-control);
+  cursor: pointer;
   color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+
+.evidence details {
+  min-width: 0;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-body-small-size);
+  line-height: var(--eliot-type-body-small-line-height);
+}
+
+.evidence details > :not(summary) {
+  display: block;
+  margin: 0;
+  padding-block-end: var(--eliot-space-tight);
+  font-family: var(--eliot-type-font-family-mono);
+  font-size: var(--eliot-type-body-small-size);
+  line-height: var(--eliot-type-body-small-line-height);
+  overflow-wrap: anywhere;
 }
 
 .evidence__outcome {
   display: grid;
-  gap: var(--eliot-space-block-control);
-  margin: var(--eliot-shape-none);
+  gap: var(--eliot-space-tight);
+  margin: 0;
 }
 
 .evidence__status {
+  color: var(--md-sys-color-on-surface);
   font-size: var(--eliot-type-label-large-size);
   line-height: var(--eliot-type-label-large-line-height);
   font-weight: var(--eliot-type-font-weight-medium);
-  color: var(--md-sys-color-on-surface-variant);
 }
 
 .evidence__status--error {
   color: var(--md-sys-color-error);
 }
 
-
 .evidence__claim {
   display: grid;
+  min-width: 0;
   gap: var(--eliot-space-block-control);
 }
 
-.evidence__claim-text,
-.evidence__excerpt-text {
-  margin: var(--eliot-shape-none);
+.evidence__claim-text {
+  margin: 0;
   max-width: var(--eliot-layout-reading-max);
   color: var(--md-sys-color-on-surface);
+  font-size: var(--eliot-type-body-large-size);
+  line-height: var(--eliot-type-body-large-line-height);
   overflow-wrap: anywhere;
 }
 
 .evidence__claim-disposition {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--eliot-space-inline-control);
-  margin: var(--eliot-shape-none);
+  align-items: center;
+  gap: var(--eliot-space-tight) var(--eliot-space-block-control);
+  margin: 0;
 }
 
 .evidence__claim-label {
@@ -131,63 +186,114 @@
   line-height: var(--eliot-type-body-small-line-height);
 }
 
+/* The claim verdict is a short state: a neutral secondary chip, never a success or error colour. */
 .evidence__claim-value {
-  color: var(--md-sys-color-on-surface);
-  font-size: var(--eliot-type-label-large-size);
-  line-height: var(--eliot-type-label-large-line-height);
+  padding: var(--eliot-space-hairline) var(--eliot-space-block-control);
+  border-radius: var(--eliot-shape-full);
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
   font-weight: var(--eliot-type-font-weight-medium);
+  white-space: nowrap;
 }
 
 .evidence__excerpt {
   display: grid;
+  min-width: 0;
   gap: var(--eliot-space-block-control);
-  margin: var(--eliot-shape-none);
+  margin: 0;
 }
 
+/* Quoted excerpt: an inline-start primary accent bar with generous padding. No background, so the
+ * quote never becomes a card inside the group. */
 .evidence__excerpt-quote {
-  margin: var(--eliot-shape-none);
-  padding: var(--eliot-space-panel);
-  border-left: var(--eliot-focus-width) solid var(--md-sys-color-primary);
-  border-radius: var(--eliot-shape-small);
+  margin: 0;
+  padding: var(--eliot-space-panel) var(--eliot-space-group);
+  border-inline-start: var(--eliot-space-tight) solid var(--md-sys-color-primary);
 }
 
+.evidence__excerpt-text {
+  margin: 0;
+  max-width: var(--eliot-type-reading-measure);
+  color: var(--md-sys-color-on-surface);
+  font-size: var(--eliot-type-reading-size);
+  line-height: var(--eliot-type-reading-line-height);
+  overflow-wrap: anywhere;
+}
+
+/* Metadata sits under the quote, aligned with its text rather than its accent bar. */
 .evidence__excerpt-meta {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: var(--eliot-space-inline-control);
+  margin: 0;
+  padding-inline-start: calc(var(--eliot-space-tight) + var(--eliot-space-group));
   color: var(--md-sys-color-on-surface-variant);
   font-size: var(--eliot-type-body-small-size);
   line-height: var(--eliot-type-body-small-line-height);
   overflow-wrap: anywhere;
 }
 
-.evidence__excerpt--absent,
-.evidence__excerpt--stale {
-  margin: var(--eliot-shape-none);
-  padding: var(--eliot-space-panel);
+.evidence__excerpt--absent {
+  margin: 0;
   color: var(--md-sys-color-on-surface-variant);
   font-size: var(--eliot-type-body-medium-size);
   line-height: var(--eliot-type-body-medium-line-height);
 }
 
+/* A stale excerpt is a caution: it must be requested again before use. */
 .evidence__excerpt--stale {
-  color: var(--md-sys-color-on-surface);
+  margin: 0;
+  padding: var(--eliot-space-gutter) var(--eliot-space-panel);
+  border-radius: var(--eliot-shape-medium);
+  background: var(--md-sys-color-tertiary-container);
+  color: var(--md-sys-color-on-tertiary-container);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
 }
 
+/* The action row reserves a touch-sized line so a status or button appearing never shifts rows. */
 .evidence__actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--eliot-space-panel);
+  gap: var(--eliot-space-block-control);
+  min-height: var(--eliot-size-control);
+}
+
+/* A failed excerpt read is an error note, not a neutral line. */
+.evidence__failed {
+  margin: 0;
+  max-width: var(--eliot-layout-reading-max);
+  padding: var(--eliot-space-gutter) var(--eliot-space-panel);
+  border-radius: var(--eliot-shape-medium);
+  background: var(--md-sys-color-error-container);
+  color: var(--md-sys-color-on-error-container);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 48rem) {
   .evidence__row {
-    padding: var(--eliot-space-block-control);
+    padding-block: var(--eliot-space-block-control);
   }
 
   .evidence__claim-disposition {
     flex-direction: column;
+    align-items: flex-start;
     gap: var(--eliot-space-block-control);
   }
 }
+
+@media (forced-colors: active) {
+  .evidence,
+  .evidence__excerpt--stale,
+  .evidence__failed,
+  .evidence__claim-value { border: var(--eliot-divider-width) solid CanvasText; }
+}
+
+/* An action row that no longer holds an action collapses instead of leaving a hole. */
+.evidence__actions:empty { display: none; }
