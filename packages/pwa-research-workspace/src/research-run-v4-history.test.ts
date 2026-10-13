@@ -76,4 +76,20 @@ describe("PWA adapter for shared v4 history", () => {
     expect(view.runs[0]?.status.workflow_instance_id).toBe("run-1");
     expect(view.runs[0]?.status.engine_status).toBe("unknown");
   });
+  it("shares strict v2 outcomes and consequences even through the legacy default decoder", () => {
+    const consequence = { code: "WORKFLOW_BUDGET_STOP", phase: "STAGE", stage: "PLAN", retryable: false };
+    const failure = { code: "WORKFLOW_EFFECT_UNCERTAIN", phase: "RECOVERY", stage: "RECONCILE", retryable: false,
+      protocol: "eliotr.workflow-failure-outcome.v1", dispatch_state: "OUTCOME_UNKNOWN", references_intact: "UNKNOWN",
+      recovery_action: "READBACK", consequence, consequences: [consequence] };
+    const run = { created_at: checkedAt, status: { protocol: "eliotr.research-run-status.v2", workflow_instance_id: "run-2",
+      investigation_ref: { id: "investigation-2", revision: 2 }, execution_state: "ACTIVE", engine_status: "errored",
+      next_stage_index: 3, answer: { availability: "unavailable" }, failure } };
+    const view = decodeResearchRunHistory(history("eliotr.research-runs.v4", {
+      runs: "SOURCE_EXHAUSTED", saved_drafts: "SOURCE_EXHAUSTED",
+    }, [run]));
+    expect(view.runs[0]?.status.failure).toEqual(failure);
+    expect(() => decodeResearchRunHistory(history("eliotr.research-runs.v4", {
+      runs: "SOURCE_EXHAUSTED", saved_drafts: "SOURCE_EXHAUSTED",
+    }, [{ ...run, status: { ...run.status, failure: { ...failure, dispatch_state: undefined } } }]))).toThrow(ApiRequestError);
+  });
 });

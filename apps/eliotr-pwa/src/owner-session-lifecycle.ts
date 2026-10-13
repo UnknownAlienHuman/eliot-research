@@ -26,6 +26,16 @@ export function createOwnerSessionLifecycle(options: OwnerSessionLifecycleOption
       },
     },
     onVerified(session: OwnerSession, deploymentGeneration: string): void {
+      if (verifiedSession && (
+        verifiedSession.principal_ref !== session.principal_ref ||
+        verifiedSession.credential_generation !== session.credential_generation ||
+        verifiedSession.client_class !== session.client_class ||
+        verifiedGeneration !== deploymentGeneration || !isOwnerSessionUnexpired(verifiedSession)
+      )) {
+        verifiedSession = undefined;
+        verifiedGeneration = undefined;
+        options.onCleared();
+      }
       verifiedSession = session;
       verifiedGeneration = deploymentGeneration;
       options.onVerified(session, deploymentGeneration);

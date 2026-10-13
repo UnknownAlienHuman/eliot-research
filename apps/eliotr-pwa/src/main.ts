@@ -149,6 +149,7 @@ function render(health: SystemHealth | null): void {
     },
     onCleared: () => {
       publishOwnerSessionScope(false);
+      researchRun?.clearPrivate("Owner session verification ended. Research state was cleared.");
       namespacePanel?.clearPrivate("Owner session verification ended. Workspace data was cleared.");
     },
     refreshReadPanes: () => { projectPanel?.refresh(); libraryPanel?.refresh(); researchRun?.refreshHistory(); },

@@ -55,6 +55,28 @@ describe("actual PWA owner-session epoch for history", () => {
     await expect(pending).rejects.toMatchObject({ code: "API_SESSION_CLOSED" });
     expect(fetch).toHaveBeenCalledTimes(2);
   });
+  it.each(["principal", "credential", "deployment", "class", "expired"] as const)("clears before publishing a replacement %s authority", reason => {
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    const events: string[] = [];
+    let generationAtRoot = generation;
+    const lifecycle = createOwnerSessionLifecycle({ deploymentGeneration: () => generationAtRoot, healthReady: () => true,
+      onVerified() { events.push("verified"); }, onCleared() {
+        expect(lifecycle.epoch.capture()).toBeUndefined(); events.push("cleared");
+      }, refreshReadPanes() {} });
+    const original = session(); lifecycle.onVerified(original, generation); events.length = 0;
+    const next = { ...original,
+      ...(reason === "principal" ? { principal_ref: "next-owner" } : {}),
+      ...(reason === "credential" ? { credential_generation: "next-credential" } : {}),
+      ...(reason === "class" ? { client_class: "named_api_client" } : {}),
+      ...(reason === "expired" ? { expires_at: new Date(now + 120_000).toISOString() } : {}),
+    };
+    if (reason === "deployment") generationAtRoot = "new-generation";
+    if (reason === "expired") vi.spyOn(Date, "now").mockReturnValue(now + 60_000);
+    lifecycle.onVerified(next, generationAtRoot);
+    expect(events).toEqual(["cleared", "verified"]);
+    expect(lifecycle.epoch.capture()).toBe(next);
+    expect(lifecycle.epoch.isCurrent(original)).toBe(false);
+  });
   it("accepts owner v2 failure outcomes and ordered consequences through the actual PWA caller", async () => {
     const f = fixture(); f.lifecycle.onVerified(session(), generation);
     const first = { code: "WORKFLOW_EFFECT_UNCERTAIN", phase: "RECOVERY", stage: "RECONCILE", retryable: false,
