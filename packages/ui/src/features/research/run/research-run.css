@@ -2,15 +2,13 @@
  * U4-R Research run feature, semantic tokens only.
  *
  * No raw colour, arbitrary radius, spacing or font size. Every value comes from the committed
- * Material 3 role and Eliot foundation tokens in ../../tokens/theme.css. The page stays the single
+ * Material 3 role and Eliot foundation tokens in ../../tokens/theme.css. The pane stays the single
  * scroll owner and no nested scroll area or splitter is introduced.
  *
- * Direction (calm NotebookLM-like research workspace): the composer is the first unit a reviewer
- * reads. Question, scope and action sit inside one rounded container so the primary task is one
- * thing, and the surrounding facts (recorded question, progress, snapshot, failure) stay quiet
- * supporting detail. Facts are separated by the outline-variant divider rhythm only, not by cards
- * around every group. No sticky positioning and no nested scroll: the pane owns the single
- * vertical scroll, exactly as before.
+ * Direction (NotebookLM-like research conversation): the composer is one rounded field surface —
+ * question, scope chip and the filled Ask action live together and light up as one unit on focus.
+ * Once asked, the recorded question reads as the owner's message bubble; progress, cautions and
+ * failures are soft tonal groups that never move the composer or the actions around.
  */
 
 .er-research-run {
@@ -18,194 +16,239 @@
   flex-direction: column;
   gap: var(--eliot-space-panel);
   color: var(--md-sys-color-on-surface);
-  background-color: var(--md-sys-color-surface-container-lowest);
   font-family: var(--eliot-type-font-family);
   font-size: var(--eliot-type-body-medium-size);
   line-height: var(--eliot-type-body-medium-line-height);
 }
 
-/* Compact aligned pane heading: title and lead share one baseline block, not two stacked
- * oversized lines. This keeps Research calm and frees the vertical measure for the composer. */
+.er-research-run__intro { display: grid; gap: var(--eliot-space-tight); }
+
 .er-research-run__heading {
   margin: 0;
   color: var(--md-sys-color-on-surface);
-  font-size: var(--eliot-type-title-medium-size);
-  line-height: var(--eliot-type-title-medium-line-height);
-  font-weight: var(--eliot-type-font-weight-medium);
-  letter-spacing: var(--eliot-type-letter-spacing-label);
+  font-family: var(--eliot-type-font-family-display);
+  font-size: var(--eliot-type-title-large-size);
+  line-height: var(--eliot-type-title-large-line-height);
+  font-weight: var(--eliot-type-font-weight-regular);
+  letter-spacing: var(--eliot-type-letter-spacing-headline);
 }
-.er-research-run__intro { display: grid; gap: var(--eliot-space-block-control); }
 
 .er-research-run__lead {
   margin: 0;
-  color: var(--md-sys-color-on-surface-variant);
-  font-size: var(--eliot-type-body-medium-size);
-  line-height: var(--eliot-type-body-medium-line-height);
   max-width: var(--eliot-type-reading-measure);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-body-large-size);
+  line-height: var(--eliot-type-body-large-line-height);
 }
 
-/* One calm rounded Material composer. Three labelled rows read as a single unit: the question,
- * its scope, and the action. The container is the only card in this feature''s leading group;
- * everything below it drops back to divider rhythm. */
+/* ---- Composer: one field surface, focus lights the whole unit ---- */
+
 .er-research-run__composer {
-  display: flex;
-  flex-direction: column;
-  gap: var(--eliot-space-panel);
-  max-width: var(--eliot-layout-reading-max);
-  padding: var(--eliot-space-panel);
-  border-radius: var(--eliot-shape-large);
-  background-color: var(--md-sys-color-surface-container-low);
+  display: grid;
+  gap: var(--eliot-space-gutter);
+  padding: var(--eliot-space-panel) var(--eliot-space-panel) var(--eliot-space-gutter) var(--eliot-space-group);
+  border-radius: var(--eliot-shape-extra-large);
+  background: var(--eliot-color-field);
+  box-shadow: inset 0 0 0 var(--eliot-divider-width) transparent;
+  transition:
+    box-shadow var(--eliot-motion-effects) var(--eliot-motion-standard-easing),
+    background-color var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
 }
 
-/* Row 1: the question. Native label, three-row textarea and one hint line, so the prompt and its
- * guidance stay attached to the control they describe. */
+.er-research-run__composer:hover { background: var(--eliot-color-field-hover); }
+
+.er-research-run__composer:focus-within {
+  background: var(--eliot-color-field);
+  box-shadow: inset 0 0 0 var(--eliot-focus-width) var(--md-sys-color-primary), var(--eliot-elevation-composer);
+}
+
 .er-research-run__question {
   display: grid;
-  gap: var(--eliot-space-block-control);
+  gap: var(--eliot-space-tight);
+  min-width: 0;
 }
 
 .er-research-run__question label {
-  color: var(--md-sys-color-on-surface);
-  font-size: var(--eliot-type-title-small-size);
-  line-height: var(--eliot-type-title-small-line-height);
+  color: var(--md-sys-color-primary);
+  font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
   font-weight: var(--eliot-type-font-weight-medium);
   letter-spacing: var(--eliot-type-letter-spacing-label);
 }
 
-.er-research-run__question-input {
-  width: 100%;
-  margin: 0;
-  padding: var(--eliot-space-block-control);
-  border: var(--eliot-divider-width) solid var(--md-sys-color-outline);
-  border-radius: var(--eliot-shape-medium);
-  background-color: var(--md-sys-color-surface);
+.er-research-run .er-research-run__question-input {
+  inline-size: 100%;
+  min-height: calc(var(--eliot-type-reading-line-height) * 2);
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   color: var(--md-sys-color-on-surface);
-  font-family: var(--eliot-type-font-family);
   font-size: var(--eliot-type-reading-size);
   line-height: var(--eliot-type-reading-line-height);
-  resize: vertical;
+  resize: none;
+  field-sizing: content;
+  max-block-size: calc(var(--eliot-type-reading-line-height) * 8);
 }
 
-.er-research-run__question-input::placeholder {
-  color: var(--md-sys-color-on-surface-variant);
+.er-research-run .er-research-run__question-input:focus-visible { outline: none; box-shadow: none; }
+
+.er-research-run__composer[data-held="true"] .er-research-run__question-input {
+  min-height: var(--eliot-type-reading-line-height);
 }
 
 .er-research-run__question-hint {
   margin: 0;
   color: var(--md-sys-color-on-surface-variant);
-  font-size: var(--eliot-type-label-medium-size);
-  line-height: var(--eliot-type-label-medium-line-height);
-}
-.er-research-run__composer > .er-research-run__actions { justify-content: flex-end; }
-
-.er-research-run__composer[data-held="true"] {
-  margin-block-start: var(--eliot-space-block-control);
-  gap: var(--eliot-space-block-control);
+  font-size: var(--eliot-type-body-small-size);
+  line-height: var(--eliot-type-body-small-line-height);
 }
 
-.er-research-run__current-controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--eliot-space-panel);
-}
-
-.er-research-run__current-controls > .er-research-run__scope {
-  flex: 1;
-  min-inline-size: 0;
-  border-block-end: none;
-}
-
-.er-research-run__current-controls .er-research-run__actions {
-  margin-inline-start: auto;
-}
-
-/* Row 2: selected scope as a native disclosure. The summary is the aligned heading with its
- * count, and the expanded list is the explicit scope list. A divider separates it from the
- * question without adding another container. */
+/* Scope disclosure: a compact chip-like summary; the list opens beneath it. */
 .er-research-run__scope {
-  display: block;
-  padding-block: var(--eliot-space-panel);
-  border-block: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
+  min-width: 0;
+  border-radius: var(--eliot-shape-large);
 }
 
 .er-research-run__scope > summary {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--eliot-space-block-control) var(--eliot-space-panel);
-  cursor: pointer;
+  align-items: center;
+  gap: var(--eliot-space-tight) var(--eliot-space-block-control);
+  min-height: var(--eliot-size-control);
+  padding-inline: var(--eliot-space-tight) var(--eliot-space-gutter);
+  border-radius: var(--eliot-shape-medium);
 }
+
+.er-research-run__scope > summary:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 6%, transparent); }
 
 .er-research-run__scope-heading {
   margin: 0;
   color: var(--md-sys-color-on-surface);
-  font-size: var(--eliot-type-title-small-size);
-  line-height: var(--eliot-type-title-small-line-height);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
   font-weight: var(--eliot-type-font-weight-medium);
-  letter-spacing: var(--eliot-type-letter-spacing-label);
+}
+
+.er-research-run__scope-count {
+  margin-inline-start: auto;
+  padding: var(--eliot-space-hairline) var(--eliot-space-block-control);
+  border-radius: var(--eliot-shape-full);
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  font-variant-numeric: var(--eliot-type-numerals);
+  white-space: nowrap;
+}
+
+.er-research-run__scope-empty {
+  margin: var(--eliot-space-tight) 0 0;
+  padding-inline: var(--eliot-space-block-control);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
 }
 
 .er-research-run__scope-list {
   display: flex;
-  flex-direction: column;
+  flex-wrap: wrap;
   gap: var(--eliot-space-block-control);
-  margin: var(--eliot-space-panel) 0 0;
-  padding: 0;
+  margin: var(--eliot-space-block-control) 0 var(--eliot-space-tight);
+  padding: 0 var(--eliot-space-block-control);
   list-style: none;
 }
 
 .er-research-run__scope-item {
-  padding-block: var(--eliot-space-block-control);
-  border-block-end: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
+  max-inline-size: 100%;
+  padding: var(--eliot-space-tight) var(--eliot-space-gutter);
+  border-radius: var(--eliot-shape-small);
+  border: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
+  background: var(--eliot-color-pane);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
   overflow-wrap: anywhere;
 }
 
-.er-research-run__scope-empty {
-  margin: var(--eliot-space-panel) 0 0;
-  color: var(--md-sys-color-on-surface-variant);
-}
-
-.er-research-run__scope-count {
-  color: var(--md-sys-color-on-surface-variant);
-  font-size: var(--eliot-type-label-medium-size);
-  line-height: var(--eliot-type-label-medium-line-height);
-}
-
-/* Row 3: the actions, kept inside the same composer so the question and its action read as one
- * unit. Wrap is allowed so a narrow margin never clips a control. */
+/* Actions keep one fixed row at the trailing edge, so state text never pushes them around. */
 .er-research-run__actions {
   display: flex;
   flex-wrap: wrap;
+  justify-content: flex-end;
   align-items: center;
-  gap: var(--eliot-space-inline-control);
+  gap: var(--eliot-space-block-control);
+  min-height: var(--eliot-size-control);
 }
+
+.er-research-run__composer .er-research-run__actions .er-button--primary {
+  min-width: calc(var(--eliot-size-touch-target) * 2);
+}
+
+/* ---- Conversation: the recorded question is the owner's message ---- */
+
+.er-research-run__recorded {
+  display: grid;
+  gap: var(--eliot-space-tight);
+  justify-self: end;
+  align-self: flex-end;
+  max-inline-size: min(100%, 85%);
+  margin: 0;
+  padding: var(--eliot-space-gutter) var(--eliot-space-group);
+  border-radius: var(--eliot-shape-large-increased) var(--eliot-shape-large-increased) var(--eliot-shape-extra-small) var(--eliot-shape-large-increased);
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+}
+
+.er-research-run__recorded-label {
+  font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  opacity: 0.8;
+}
+
+.er-research-run__recorded-value {
+  font-size: var(--eliot-type-body-large-size);
+  line-height: var(--eliot-type-body-large-line-height);
+  overflow-wrap: anywhere;
+}
+
+.er-research-run > .er-status {
+  align-items: center;
+  min-height: var(--eliot-size-control);
+  color: var(--md-sys-color-on-surface);
+  font-size: var(--eliot-type-body-large-size);
+  line-height: var(--eliot-type-body-large-line-height);
+}
+
+.er-research-run > .er-status > .er-symbol { color: var(--md-sys-color-tertiary); }
+.er-research-run > .er-status--error, .er-research-run > .er-status--error > .er-symbol { color: var(--md-sys-color-error); }
+
+.er-research-run__current-controls {
+  display: grid;
+  gap: var(--eliot-space-block-control);
+  padding: var(--eliot-space-tight) var(--eliot-space-block-control) var(--eliot-space-tight) var(--eliot-space-tight);
+  border-radius: var(--eliot-shape-large-increased);
+  background: var(--eliot-color-group);
+}
+
+.er-research-run__current-controls .er-research-run__actions { padding-inline-end: var(--eliot-space-tight); padding-block-end: var(--eliot-space-tight); }
+
+/* ---- Progress, snapshot and failure: soft tonal groups ---- */
 
 .er-research-run__progress,
-.er-research-run__snapshot {
-  display: flex;
-  flex-direction: column;
-  gap: var(--eliot-space-block-control);
-  max-width: var(--eliot-type-reading-measure);
-  padding-block: var(--eliot-space-panel);
-  border-block-start: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
-}
-
-/* Unknown outcome and first-cause failure keep their own surface because they are the two places
- * where a real state must be unmistakable. They stay small: a fractional control, not a panel. */
+.er-research-run__snapshot,
 .er-research-run__unknown,
 .er-research-run__failure {
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: var(--eliot-space-block-control);
-  max-width: var(--eliot-type-reading-measure);
-  padding: var(--eliot-space-panel);
-  border-radius: var(--eliot-shape-medium);
-  background-color: var(--md-sys-color-surface-container-low);
+  padding: var(--eliot-space-panel) var(--eliot-space-group);
+  border-radius: var(--eliot-shape-large-increased);
+  background: var(--eliot-color-group);
 }
 
-/* Sub-headings are aligned as one label role so the set reads consistently. */
 .er-research-run__progress-heading,
 .er-research-run__snapshot-heading,
 .er-research-run__failure-heading,
@@ -215,80 +258,108 @@
   font-size: var(--eliot-type-title-small-size);
   line-height: var(--eliot-type-title-small-line-height);
   font-weight: var(--eliot-type-font-weight-medium);
-  letter-spacing: var(--eliot-type-letter-spacing-label);
 }
+
+.er-research-run__progress-list,
+.er-research-run__details,
+.er-research-run__failure-list {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: var(--eliot-space-tight) var(--eliot-space-panel);
+  margin: 0;
+  font-variant-numeric: var(--eliot-type-numerals);
+}
+
+.er-research-run__progress-list dt,
+.er-research-run__details dt,
+.er-research-run__failure-list dt {
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.er-research-run__progress-list dd,
+.er-research-run__details dd,
+.er-research-run__failure-list dd {
+  margin: 0;
+  color: var(--md-sys-color-on-surface);
+  overflow-wrap: anywhere;
+}
+
+.er-research-run__progress-list dd { font-weight: var(--eliot-type-font-weight-medium); }
+
+.er-research-run__details dd,
+.er-research-run__failure-list dd { font-family: var(--eliot-type-font-family-mono); font-size: var(--eliot-type-body-small-size); }
+
+.er-research-run__progress details > summary,
+.er-research-run__failure details > summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--eliot-size-control-small);
+  padding-inline-end: var(--eliot-space-block-control);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+
+.er-research-run__progress details[open] > summary { margin-block-end: var(--eliot-space-tight); }
+
+.er-research-run__answer,
+.er-research-run__snapshot-none,
+.er-research-run__snapshot-state,
+.er-research-run__unknown-note {
+  margin: 0;
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+/* Boundary cautions read as an informative tertiary note, never as success or failure. */
+.er-research-run__caution {
+  margin: 0;
+  padding: var(--eliot-space-gutter) var(--eliot-space-panel);
+  border-radius: var(--eliot-shape-medium);
+  background: var(--md-sys-color-tertiary-container);
+  color: var(--md-sys-color-on-tertiary-container);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+}
+
+.er-research-run__unknown { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
+.er-research-run__unknown .er-status, .er-research-run__unknown .er-status > .er-symbol { color: inherit; }
+.er-research-run__unknown-note { color: inherit; }
+.er-research-run__unknown > .er-button { justify-self: start; }
+
+.er-research-run__failure { box-shadow: inset 0 0 0 var(--eliot-divider-width) var(--md-sys-color-error); }
+.er-research-run__failure-heading { color: var(--md-sys-color-error); }
 
 .er-research-run__consequence-list {
   display: flex;
-  flex-direction: column;
-  gap: var(--eliot-space-block-control);
+  flex-wrap: wrap;
+  gap: var(--eliot-space-tight);
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-/* Progress details rhythm: a definition list is a pair rhythm, so label and value share one
- * row and repeat on a fixed step. The older single-column grid pushed each pair apart and made
- * a two-field progress read as a stack of unrelated lines. */
-.er-research-run__recorded,
-.er-research-run__progress-list,
-.er-research-run__failure-list {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  gap: var(--eliot-space-block-control) var(--eliot-space-panel);
-  align-items: baseline;
-  margin: 0;
-}
-
-.er-research-run__recorded-label {
-  color: var(--md-sys-color-on-surface-variant);
-  font-size: var(--eliot-type-label-small-size);
-  line-height: var(--eliot-type-label-small-line-height);
-}
-
-.er-research-run__recorded-value,
-.er-research-run__progress-list dd,
-.er-research-run__failure-list dd {
-  margin: 0;
+.er-research-run__consequence-item {
+  padding: var(--eliot-space-hairline) var(--eliot-space-block-control);
+  border-radius: var(--eliot-shape-small);
+  background: var(--eliot-color-pane);
+  font-family: var(--eliot-type-font-family-mono);
+  font-size: var(--eliot-type-body-small-size);
+  line-height: var(--eliot-type-body-small-line-height);
   overflow-wrap: anywhere;
 }
 
-.er-research-run__answer,
-.er-research-run__unknown-note {
-  margin: 0;
-  color: var(--md-sys-color-on-surface-variant);
-  font-size: var(--eliot-type-label-medium-size);
-  line-height: var(--eliot-type-label-medium-line-height);
-}
+/* The held next-question composer closes the conversation like NotebookLM's omnibar. */
+.er-research-run > .er-research-run__composer:last-child { margin-block-start: var(--eliot-space-block-control); }
 
-/* An announcement of active work is the one place a tonal band is justified: it must not be
- * mistaken for ordinary copy. It stays a compact label strip, not a hero callout. */
-.er-research-run__caution {
-  margin: 0;
-  color: var(--md-sys-color-on-secondary-container);
-  background-color: var(--md-sys-color-secondary-container);
-  border-radius: var(--eliot-shape-extra-small);
-  padding-block: var(--eliot-space-inline-control);
-  padding-inline: var(--eliot-space-block-control);
-  font-size: var(--eliot-type-label-medium-size);
-  line-height: var(--eliot-type-label-medium-line-height);
-  max-width: var(--eliot-type-reading-measure);
-}
-
-.er-research-run__snapshot-none {
-  margin: 0;
-  color: var(--md-sys-color-on-surface-variant);
-}
-
-
-@media (prefers-reduced-motion: reduce) {
-  .er-research-run {
-    transition-duration: var(--eliot-motion-effects);
-  }
+@media (max-width: 48rem) {
+  .er-research-run__composer { padding: var(--eliot-space-gutter) var(--eliot-space-gutter) var(--eliot-space-block-control) var(--eliot-space-panel); border-radius: var(--eliot-shape-large-increased); }
+  .er-research-run__recorded { max-inline-size: 100%; }
+  .er-research-run__progress, .er-research-run__snapshot, .er-research-run__unknown, .er-research-run__failure { padding: var(--eliot-space-panel); }
 }
 
 @media (forced-colors: active) {
-  .er-research-run__scope-item {
-    border-block-end-color: currentcolor;
-  }
+  .er-research-run__composer, .er-research-run__recorded, .er-research-run__progress,
+  .er-research-run__snapshot, .er-research-run__unknown, .er-research-run__failure,
+  .er-research-run__caution { border: var(--eliot-divider-width) solid CanvasText; }
 }
