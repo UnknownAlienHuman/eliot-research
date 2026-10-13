@@ -1,13 +1,19 @@
-/* ImportFlow - U3-I styles. Semantic tokens only; no raw visual values. */
+/* ImportFlow - U3-I styles. Semantic tokens only; no raw visual values.
+ *
+ * Direction: the flow lives inside the Dialog surface, so the root draws no background. The flow reads
+ * as a vertical stepper: each review step (captured facts, frozen file list, processing facts) is a soft
+ * tonal group, and the picker is the tonal pill from the base button primitive. Status rows reserve one
+ * control-height line so state text never moves the actions, and the action row ends at the trailing
+ * edge. The shared group role is scoped one step below the dialog surface so groups stay visible in
+ * dark mode. No nested scroll area is introduced.
+ */
 .er-import {
   display: grid;
   min-width: 0;
   gap: var(--eliot-space-panel);
-  padding: var(--eliot-space-panel);
-  border-radius: var(--eliot-shape-large);
-  background: var(--md-sys-color-surface-container-low);
   color: var(--md-sys-color-on-surface);
   font-family: var(--eliot-type-font-family);
+  --eliot-color-group: var(--md-sys-color-surface-container);
 }
 
 .er-import__head {
@@ -18,10 +24,12 @@
 
 .er-import__title {
   margin: 0;
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--eliot-type-font-family-display);
   font-size: var(--eliot-type-title-large-size);
   line-height: var(--eliot-type-title-large-line-height);
-  font-weight: var(--eliot-type-font-weight-medium);
-  letter-spacing: var(--eliot-type-letter-spacing-label);
+  font-weight: var(--eliot-type-font-weight-regular);
+  letter-spacing: var(--eliot-type-letter-spacing-headline);
 }
 
 .er-import__hint {
@@ -34,20 +42,20 @@
 
 .er-import__tabs {
   display: flex;
-  gap: var(--eliot-space-inline-control);
+  gap: var(--eliot-space-block-control);
   flex-wrap: wrap;
 }
 
+/* The current step column: steps stack with panel spacing and carry no background of their own. */
 .er-import__review {
   display: grid;
   min-width: 0;
   gap: var(--eliot-space-panel);
-  padding: var(--eliot-space-panel);
-  border-radius: var(--eliot-shape-medium);
-  background: var(--md-sys-color-surface-container);
 }
 
+/* The picker is the tonal pill from the base button primitive; the native input is laid over it. */
 .er-import__picker {
+  position: relative;
   justify-self: start;
   max-width: 100%;
   min-width: 0;
@@ -74,57 +82,6 @@
   opacity: var(--eliot-state-disabled-opacity);
 }
 
-.er-import__facts {
-  display: grid;
-  gap: var(--eliot-space-panel);
-  margin: 0;
-}
-
-.er-import__fact {
-  display: grid;
-  gap: var(--eliot-space-block-control);
-  min-width: 0;
-}
-
-.er-import__fact dt {
-  color: var(--md-sys-color-on-surface-variant);
-  font-size: var(--eliot-type-label-medium-size);
-  line-height: var(--eliot-type-label-medium-line-height);
-  font-weight: var(--eliot-type-font-weight-medium);
-}
-
-.er-import__fact dd {
-  margin: 0;
-  min-width: 0;
-  font-size: var(--eliot-type-body-medium-size);
-  line-height: var(--eliot-type-body-medium-line-height);
-  overflow-wrap: anywhere;
-}
-
-.er-import__files {
-  display: grid;
-  gap: var(--eliot-space-block-control);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.er-import__file {
-  display: grid;
-  gap: var(--eliot-space-block-control);
-  min-width: 0;
-  font-family: var(--eliot-type-font-family-mono);
-  font-size: var(--eliot-type-label-medium-size);
-  line-height: var(--eliot-type-label-medium-line-height);
-  overflow-wrap: anywhere;
-}
-
-.er-import__actions {
-  display: flex;
-  gap: var(--eliot-space-inline-control);
-  flex-wrap: wrap;
-}
-
 .er-import__note {
   margin: 0;
   max-width: var(--eliot-layout-reading-max);
@@ -133,8 +90,124 @@
   line-height: var(--eliot-type-body-medium-line-height);
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .er-import__review {
-    transition: none;
+/* A review step: one tonal group of label/value facts, each fact a subgrid row. */
+.er-import__facts {
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: var(--eliot-space-tight) var(--eliot-space-panel);
+  min-width: 0;
+  margin: 0;
+  padding: var(--eliot-space-panel) var(--eliot-space-group);
+  border-radius: var(--eliot-shape-large-increased);
+  background: var(--eliot-color-group);
+  font-variant-numeric: var(--eliot-type-numerals);
+}
+
+.er-import__fact {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  min-width: 0;
+}
+
+.er-import__fact dt {
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+
+.er-import__fact dd {
+  margin: 0;
+  min-width: 0;
+  color: var(--md-sys-color-on-surface);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+  overflow-wrap: anywhere;
+}
+
+/* The frozen file list is one tonal step; each file row divides from the next with outline-variant. */
+.er-import__files {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+  margin: 0;
+  padding: var(--eliot-space-tight) var(--eliot-space-group);
+  border-radius: var(--eliot-shape-large-increased);
+  background: var(--eliot-color-group);
+  list-style: none;
+}
+
+.er-import__file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--eliot-space-hairline) var(--eliot-space-panel);
+  min-width: 0;
+  padding-block: var(--eliot-space-block-control);
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--eliot-type-font-family-mono);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+  font-variant-numeric: var(--eliot-type-numerals);
+  overflow-wrap: anywhere;
+}
+
+.er-import__file + .er-import__file {
+  border-block-start: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
+}
+
+.er-import__file > span:first-child {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.er-import__file > span + span {
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+/* The confirmation checkbox row keeps one control-height line. */
+.er-import__review > label:not(.er-import__picker) {
+  display: flex;
+  align-items: center;
+  gap: var(--eliot-space-block-control);
+  min-height: var(--eliot-size-control);
+  color: var(--md-sys-color-on-surface);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+}
+
+/* Status rows reserve a control-height line. Uncertain and interrupted states arrive without a tone. */
+.er-import .er-status {
+  align-items: center;
+  min-height: var(--eliot-size-control);
+  color: var(--md-sys-color-on-surface);
+}
+
+/* Action row: buttons end-align on one line that never collapses below control height. */
+.er-import__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--eliot-space-block-control);
+  min-height: var(--eliot-size-control);
+}
+
+@media (max-width: 48rem) {
+  .er-import__facts {
+    grid-template-columns: minmax(0, 1fr);
+    padding: var(--eliot-space-panel);
+  }
+
+  .er-import__files {
+    padding-inline: var(--eliot-space-panel);
+  }
+}
+
+@media (forced-colors: active) {
+  .er-import__facts,
+  .er-import__files {
+    border: var(--eliot-divider-width) solid CanvasText;
   }
 }
