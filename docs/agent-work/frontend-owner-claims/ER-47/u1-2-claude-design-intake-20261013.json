@@ -1,0 +1,37 @@
+{
+  "protocol": "eliotr.frontend-owner-claim.v1",
+  "claim_id": "u1-2-claude-design-intake-20261013",
+  "checkpoint_id": "U1.2",
+  "packet_id": "ER-47",
+  "manager_identity": "frontend-manager",
+  "manager_context_id": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "leaf_identity": "root-claude-design-integrator",
+  "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
+  "base_sha": "c25ed70066aaf2ad16de40a333ec3c60b1ff0a72",
+  "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
+  "write_paths": [
+    "packages/ui/src/tokens/catalog.json",
+    "packages/ui/src/tokens/fonts/OFL-GoogleSans.txt",
+    "packages/ui/src/tokens/fonts/OFL-GoogleSansCode.txt",
+    "packages/ui/src/tokens/fonts/fonts.css",
+    "packages/ui/src/tokens/fonts/google-sans-code-latin.woff2",
+    "packages/ui/src/tokens/fonts/google-sans-cyrillic-ext.woff2",
+    "packages/ui/src/tokens/fonts/google-sans-cyrillic.woff2",
+    "packages/ui/src/tokens/fonts/google-sans-italic-cyrillic-ext.woff2",
+    "packages/ui/src/tokens/fonts/google-sans-italic-cyrillic.woff2",
+    "packages/ui/src/tokens/fonts/google-sans-italic-latin-ext.woff2",
+    "packages/ui/src/tokens/fonts/google-sans-italic-latin.woff2",
+    "packages/ui/src/tokens/fonts/google-sans-latin-ext.woff2",
+    "packages/ui/src/tokens/fonts/google-sans-latin.woff2",
+    "packages/ui/src/tokens/theme.css"
+  ],
+  "predecessor_refs": [
+    {
+      "checkpoint_id": "U1-R",
+      "commit_sha": "f0418687cb184308c8a61df1e12b662f2aa1976e"
+    }
+  ],
+  "state": "ACTIVE",
+  "evidence_refs": [],
+  "blocker_refs": []
+}

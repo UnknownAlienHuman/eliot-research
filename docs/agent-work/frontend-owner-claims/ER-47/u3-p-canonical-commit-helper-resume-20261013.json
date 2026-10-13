@@ -6,8 +6,10 @@
   "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
   "base_sha": "8c034ed0b82b2dc2cd1726c20e06d65311c2d846",
   "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
-  "state": "ACTIVE",
-  "evidence_refs": [],
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "git:f0395d7f canonicalCommit.ts exact donor hashFC620B56; owning web TypeScript6/scoped lint PASS; consumer integration pending"
+  ],
   "blocker_refs": [],
   "claim_id": "u3-p-canonical-commit-helper-resume-20261013",
   "checkpoint_id": "U3-P",
@@ -25,5 +27,7 @@
       "checkpoint_id": "U2-S",
       "commit_sha": "ff85ee4827366bac620750010f2e648c51d3bea9"
     }
-  ]
+  ],
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "private:canonical-commit-CodeUnderstandingProof.json; helper source only"
 }
