@@ -1,12 +1,19 @@
-/* ErasureFeature — U3-E styles. Semantic tokens only; no raw visual values. */
+/* ErasureFeature - U3-E styles. Semantic tokens only; no raw visual values.
+ *
+ * Direction: a destructive review that stays calm. Explanations are on-surface-variant and the prepared
+ * facts sit in one tonal group. The confirmation area is an error-container tinted block: its lead line
+ * is the error-coloured heading and the action row continues the same tint, so the two read as one
+ * group. Buttons keep their primitive colours. Status rows reserve a control-height line. The root draws
+ * no background because the feature lives inside the Dialog surface; the shared group role is scoped one
+ * step below that surface so groups stay visible in dark mode.
+ */
 .er-erasure {
   display: grid;
-  gap: var(--eliot-space-section);
-  padding: var(--eliot-space-panel);
-  border-radius: var(--eliot-shape-large);
-  background: var(--md-sys-color-surface-container-low);
+  gap: var(--eliot-space-panel);
+  min-width: 0;
   color: var(--md-sys-color-on-surface);
   font-family: var(--eliot-type-font-family);
+  --eliot-color-group: var(--md-sys-color-surface-container);
 }
 
 .er-erasure__head {
@@ -15,18 +22,28 @@
   justify-content: space-between;
   gap: var(--eliot-space-panel);
   flex-wrap: wrap;
+  min-height: var(--eliot-size-control);
 }
 
 .er-erasure__title {
   margin: 0;
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--eliot-type-font-family-display);
   font-size: var(--eliot-type-title-large-size);
   line-height: var(--eliot-type-title-large-line-height);
-  font-weight: var(--eliot-type-font-weight-medium);
-  letter-spacing: var(--eliot-type-letter-spacing-label);
+  font-weight: var(--eliot-type-font-weight-regular);
+  letter-spacing: var(--eliot-type-letter-spacing-headline);
+}
+
+.er-erasure .er-status {
+  align-items: center;
+  min-height: var(--eliot-size-control);
+  color: var(--md-sys-color-on-surface);
 }
 
 .er-erasure__review {
   display: grid;
+  min-width: 0;
   gap: var(--eliot-space-panel);
 }
 
@@ -38,18 +55,39 @@
   line-height: var(--eliot-type-body-large-line-height);
 }
 
+/* Confirmation lead: the error-coloured heading of the confirmation block. It sits directly above the
+ * action row and shares its tint. The negative margin closes the grid gap so the two read as one block. */
+.er-erasure__review > .er-erasure__intro:has(+ .er-erasure__actions) {
+  max-width: none;
+  margin-block-end: calc(var(--eliot-space-panel) * -1);
+  padding: var(--eliot-space-panel) var(--eliot-space-group) 0;
+  border-start-start-radius: var(--eliot-shape-large-increased);
+  border-start-end-radius: var(--eliot-shape-large-increased);
+  background: color-mix(in srgb, var(--md-sys-color-error-container) 60%, transparent);
+  color: var(--md-sys-color-error);
+  font-size: var(--eliot-type-title-small-size);
+  line-height: var(--eliot-type-title-small-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+
+/* The prepared facts: one tonal group, each fact a subgrid row. */
 .er-erasure__facts {
   display: grid;
-  gap: var(--eliot-space-panel);
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: var(--eliot-space-tight) var(--eliot-space-panel);
+  min-width: 0;
   margin: 0;
+  padding: var(--eliot-space-panel) var(--eliot-space-group);
+  border-radius: var(--eliot-shape-large-increased);
+  background: var(--eliot-color-group);
+  font-variant-numeric: var(--eliot-type-numerals);
 }
 
 .er-erasure__fact {
   display: grid;
-  gap: var(--eliot-space-block-control);
-  padding: var(--eliot-space-panel);
-  border-radius: var(--eliot-shape-medium);
-  background: var(--md-sys-color-surface-container-highest);
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  min-width: 0;
 }
 
 .er-erasure__fact dt {
@@ -57,13 +95,15 @@
   font-size: var(--eliot-type-label-large-size);
   line-height: var(--eliot-type-label-large-line-height);
   font-weight: var(--eliot-type-font-weight-medium);
-  letter-spacing: var(--eliot-type-letter-spacing-label);
 }
 
 .er-erasure__fact dd {
   margin: 0;
+  min-width: 0;
+  color: var(--md-sys-color-on-surface);
   font-size: var(--eliot-type-body-large-size);
   line-height: var(--eliot-type-body-large-line-height);
+  overflow-wrap: anywhere;
 }
 
 .er-erasure__locations,
@@ -75,28 +115,46 @@
   list-style: none;
 }
 
-.er-erasure__actions {
-  display: flex;
-  align-items: center;
-  gap: var(--eliot-space-inline-control);
-  flex-wrap: wrap;
+.er-erasure__locations li,
+.er-erasure__blocked li {
+  overflow-wrap: anywhere;
 }
 
+/* The confirmation action row. It continues the tint of the lead line above and carries the group's
+ * bottom corners. Buttons keep their own colours. */
+.er-erasure__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--eliot-space-block-control);
+  min-height: var(--eliot-size-control);
+  padding: var(--eliot-space-block-control) var(--eliot-space-group) var(--eliot-space-panel);
+  border-end-start-radius: var(--eliot-shape-large-increased);
+  border-end-end-radius: var(--eliot-shape-large-increased);
+  background: color-mix(in srgb, var(--md-sys-color-error-container) 60%, transparent);
+}
+
+/* Submitted details: a quiet tonal group in mono for identifiers, with the same subgrid facts. */
 .er-erasure__disclosure {
   display: grid;
-  gap: var(--eliot-space-block-control);
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: var(--eliot-space-tight) var(--eliot-space-panel);
+  min-width: 0;
   margin: 0;
-  padding: var(--eliot-space-panel);
-  border-radius: var(--eliot-shape-medium);
-  background: var(--md-sys-color-surface-container);
+  padding: var(--eliot-space-panel) var(--eliot-space-group);
+  border-radius: var(--eliot-shape-large-increased);
+  background: var(--eliot-color-group);
   color: var(--md-sys-color-on-surface-variant);
   font-size: var(--eliot-type-body-medium-size);
   line-height: var(--eliot-type-body-medium-line-height);
+  font-variant-numeric: var(--eliot-type-numerals);
 }
 
 .er-erasure__disclosure > div {
   display: grid;
-  gap: var(--eliot-space-block-control);
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  min-width: 0;
 }
 
 .er-erasure__disclosure dt {
@@ -105,19 +163,32 @@
 
 .er-erasure__disclosure dd {
   margin: 0;
+  min-width: 0;
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--eliot-type-font-family-mono);
+  overflow-wrap: anywhere;
 }
 
-.er-erasure__degraded,
+/* Degraded (not verified as current) is an informative caution: tertiary, never error. */
+.er-erasure__degraded {
+  display: grid;
+  gap: var(--eliot-space-block-control);
+  justify-items: start;
+  min-width: 0;
+  padding: var(--eliot-space-gutter) var(--eliot-space-panel);
+  border-radius: var(--eliot-shape-medium);
+  background: var(--md-sys-color-tertiary-container);
+  color: var(--md-sys-color-on-tertiary-container);
+}
+
+/* Error: an error-container group with on-error-container text and the same tonal action. */
 .er-erasure__error {
   display: grid;
   gap: var(--eliot-space-panel);
   justify-items: start;
-  padding: var(--eliot-space-panel);
-  border-radius: var(--eliot-shape-medium);
-  background: var(--md-sys-color-surface-container-highest);
-}
-
-.er-erasure__error {
+  min-width: 0;
+  padding: var(--eliot-space-panel) var(--eliot-space-group);
+  border-radius: var(--eliot-shape-large-increased);
   background: var(--md-sys-color-error-container);
   color: var(--md-sys-color-on-error-container);
 }
@@ -127,4 +198,31 @@
   margin: 0;
   font-size: var(--eliot-type-body-medium-size);
   line-height: var(--eliot-type-body-medium-line-height);
+}
+
+@media (max-width: 48rem) {
+  .er-erasure__facts,
+  .er-erasure__disclosure {
+    grid-template-columns: minmax(0, 1fr);
+    padding: var(--eliot-space-panel);
+  }
+
+  .er-erasure__review > .er-erasure__intro:has(+ .er-erasure__actions) {
+    padding-inline: var(--eliot-space-panel);
+  }
+
+  .er-erasure__actions {
+    padding-inline: var(--eliot-space-panel);
+  }
+}
+
+@media (forced-colors: active) {
+  .er-erasure__facts,
+  .er-erasure__disclosure,
+  .er-erasure__degraded,
+  .er-erasure__error,
+  .er-erasure__review > .er-erasure__intro:has(+ .er-erasure__actions),
+  .er-erasure__actions {
+    border: var(--eliot-divider-width) solid CanvasText;
+  }
 }
