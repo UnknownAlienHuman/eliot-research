@@ -13,10 +13,12 @@ import {
   createD1ScopeProfilePort,
   retrievalRequestDigest,
   RetrievalQueryError,
+  RetrievalResultReadUnavailable,
   type RetrievalQueryAccess,
   type ScopeProfileBinding,
   type StoredRetrievalResult,
 } from "@eliotr/retrieval";
+import { createD1RetrievalSettlementOwnerPort } from "./research-retrieval-settlement-owner.js";
 import {
   MAX_WORKFLOW_OUTPUT_BYTES,
   readFreezeProtocolAndScopeCheckpoint,
@@ -216,13 +218,14 @@ export async function readRetrieveBranchesCheckpoint(
   const retrievalIdempotencyKey = `retrieve-branches:${await textDigest(JSON.stringify(persisted.stage_request))}`;
   let storedResult: StoredRetrievalResult | null;
   try {
-    storedResult = await createD1RetrievalResultStore(dependencies.database, dependencies.access)
+    storedResult = await createD1RetrievalResultStore(
+      dependencies.database, dependencies.access, undefined, createD1RetrievalSettlementOwnerPort(),
+    )
       .load(retrievalIdempotencyKey);
   } catch (error) {
     // The read-only retrieval port signals a transient storage read (retryable, no result settled)
     // independently of corrupt or non-strict bytes; root owns the port classification.
-    if (error instanceof RetrievalQueryError && error.code === "RETRIEVAL_RESOLUTION_UNCERTAIN" &&
-        error.retryable) transientAuthorizedReadStorageFailure();
+    if (error instanceof RetrievalResultReadUnavailable) transientAuthorizedReadStorageFailure();
     if (error instanceof RetrievalQueryError &&
         (error.code === "RETRIEVAL_AUTHORITY_STALE" || error.code === "RETRIEVAL_SCOPE_STALE")) {
       fail("WORKFLOW_AUTHORITY_STALE");

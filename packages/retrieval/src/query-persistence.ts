@@ -71,6 +71,16 @@ function failQuery(code: RetrievalQueryErrorCode, message: string, retryable = f
   throw new RetrievalQueryError(code, message, retryable);
 }
 
+/** A failed read-only D1 transport; corrupt bytes and stale authority are separate failures. */
+export class RetrievalResultReadUnavailable extends RetrievalQueryError {
+  public readonly read_only_storage_failure = true;
+
+  public constructor(message: string) {
+    super("RETRIEVAL_RESOLUTION_UNCERTAIN", message, true);
+    this.name = "RetrievalResultReadUnavailable";
+  }
+}
+
 function rethrowTypedQueryError(error: unknown): void {
   if (error instanceof RetrievalQueryError) throw error;
 }
@@ -323,7 +333,7 @@ async function decodeStoredResult(row: StoredResultRow, idempotencyKey: string):
     typeof row.result_json !== "string" ||
     typeof row.result_digest !== "string" || row.state !== "COMPLETE"
   ) {
-    failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query result is unavailable", true);
+    failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query result is unavailable");
   }
   const parsed = decodeCanonicalRetrievalJson(row.result_json);
   const decoded = parsed === undefined ? null : decodeRetrievalPersistenceValue(parsed);
@@ -337,13 +347,13 @@ async function decodeStoredResult(row: StoredResultRow, idempotencyKey: string):
     if (lacksOriginalExpression(resultValue)) {
       failQuery("RETRIEVAL_IDEMPOTENCY_CONFLICT", "stored query cannot prove its original scope expression");
     }
-    failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query result is malformed or not a strict retrieval result", true);
+    failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query result is malformed or not a strict retrieval result");
   }
   if (decoded?.budget_settlement_digest !== undefined) {
     if (decoded.budget_settlement_digest !== await sha256Hex(
       canonicalRetrievalJson(decoded.budget_settlement),
     )) {
-      failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored budget settlement digest is invalid", true);
+      failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored budget settlement digest is invalid");
     }
     const budgetSettlement = await decodeRetrievalBudgetSettlementV1(
       decoded.budget_settlement,
@@ -351,7 +361,7 @@ async function decodeStoredResult(row: StoredResultRow, idempotencyKey: string):
       result,
     );
     if (budgetSettlement === null) {
-      failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored budget settlement is malformed or not bound to its result", true);
+      failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored budget settlement is malformed or not bound to its result");
     }
     return {
       request_digest: row.request_digest,
@@ -509,7 +519,7 @@ export function createD1RetrievalResultStore(
         .first<StoredResultRow>();
     } catch (error: unknown) {
       rethrowTypedQueryError(error);
-      failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query result is unavailable", true);
+      throw new RetrievalResultReadUnavailable("stored query result is unavailable");
     }
   };
   const readPendingRow = async (idempotencyKey: string): Promise<PendingAdmissionRow | null> => {
@@ -549,7 +559,7 @@ export function createD1RetrievalResultStore(
       }>();
     } catch (error: unknown) {
       rethrowTypedQueryError(error);
-      failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query trace is unavailable", true);
+      throw new RetrievalResultReadUnavailable("stored query trace is unavailable");
     }
   };
   const load = async (idempotencyKey: string): Promise<StoredRetrievalResult | null> => {
@@ -570,7 +580,7 @@ export function createD1RetrievalResultStore(
       const publicResult = publicResultFromPersistedEnvelope(envelopeValue);
       if (publicResult === undefined ||
           row.result_digest !== await sha256Hex(canonicalRetrievalResultJson(publicResult))) {
-        failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query result metadata is not bound to its result", true);
+        failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query result metadata is not bound to its result");
       }
     }
     const stored = await decodeStoredResult(row, idempotencyKey);
@@ -582,7 +592,7 @@ export function createD1RetrievalResultStore(
         row.trace_id !== stored.result.trace.trace_ref.id || row.trace_revision !== stored.result.trace.trace_ref.revision ||
         row.trace_id !== stored.result.evidence_pack.trace_ref.id || row.trace_revision !== stored.result.evidence_pack.trace_ref.revision ||
         row.coverage_claim !== stored.result.coverage_claim) {
-      failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query result metadata is not bound to its result", true);
+      failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query result metadata is not bound to its result");
     }
     const traceRow = await readTraceRow(stored.result.trace.trace_ref.id, stored.result.trace.trace_ref.revision);
     const storedTraceValue = traceRow !== null && typeof traceRow.trace_json === "string"
@@ -596,7 +606,7 @@ export function createD1RetrievalResultStore(
         traceRow.scope_snapshot_revision !== stored.result.evidence_pack.scope_snapshot_ref.revision ||
         storedTraceValue === undefined ||
         encodeRetrievalTraceForPersistence(storedTraceValue) !== encodeRetrievalTraceForPersistence(stored.result.trace)) {
-      failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query trace linkage is not bound to its result", true);
+      failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "stored query trace linkage is not bound to its result");
     }
     if (isManagedRetrievalTrace(stored.result.trace)) {
       if (typeof row.operation_id !== "string" || typeof row.result_json !== "string" ||
@@ -762,7 +772,7 @@ export function createD1RetrievalResultStore(
     const resultDigest = await sha256Hex(canonicalRetrievalResultJson(record.result));
     const traceDigest = await sha256Hex(traceJson);
     const operationId = managed
-      ? admission!.retrieval_operation_id
+      ? admission?.retrieval_operation_id ?? failQuery("RETRIEVAL_AUTHORITY_STALE", "managed admission receipt is absent")
       : `q3-${(await sha256Hex(canonicalRetrievalJson({
         principal: access.principal_ref,
         client: access.client_class,
@@ -770,8 +780,9 @@ export function createD1RetrievalResultStore(
         key: record.idempotency_key,
       }))).slice(0, 48)}`;
     if (managed) {
-      const traceId = await managedRetrievalRefIdV1(admission!.scoped_invocation_id, "trace");
-      const packId = await managedRetrievalRefIdV1(admission!.scoped_invocation_id, "pack");
+      if (admission === undefined) failQuery("RETRIEVAL_AUTHORITY_STALE", "managed admission receipt is absent");
+      const traceId = await managedRetrievalRefIdV1(admission.scoped_invocation_id, "trace");
+      const packId = await managedRetrievalRefIdV1(admission.scoped_invocation_id, "pack");
       if (trace.trace_ref.id !== traceId || trace.trace_ref.revision !== 1 ||
           record.result.evidence_pack.pack_ref.id !== packId || record.result.evidence_pack.pack_ref.revision !== 1) {
         failQuery("RETRIEVAL_TRACE_CORRUPT", "managed trace and pack refs are not bound to the stable invocation identity");
@@ -788,22 +799,28 @@ export function createD1RetrievalResultStore(
     let identity: RetrievalTerminalSettlementIdentityV1 | undefined;
     let batchPlan: RetrievalSettlementBatchPlanV1 | undefined;
     if (managed) {
+      if (admission === undefined || managedOutputDigest === undefined || settlementOwner === undefined) {
+        failQuery("RETRIEVAL_AUTHORITY_STALE", "managed terminal settlement context is absent");
+      }
       identity = makeSettlementIdentity({
         access,
-        receipt: admission!,
+        receipt: admission,
         idempotency_key: record.idempotency_key,
         request_digest: record.request_digest,
-        output_digest: managedOutputDigest!,
+        output_digest: managedOutputDigest,
         result_json_sha256: await sha256Hex(resultJson),
         trace_ref: trace.trace_ref,
         trace_json_sha256: traceDigest,
       });
-      batchPlan = settlementOwner!.prepareTerminalSettlement(database, admission!, identity, createdAt);
+      batchPlan = settlementOwner.prepareTerminalSettlement(database, admission, identity, createdAt);
     }
     let traceWrite: RetrievalQueryD1Statement;
     let resultWrite: RetrievalQueryD1Statement;
     if (managed) {
-      const ownerValues = pendingOwnerValues(access, identity!, admission!);
+      if (identity === undefined || admission === undefined) {
+        failQuery("RETRIEVAL_AUTHORITY_STALE", "managed terminal settlement identity is absent");
+      }
+      const ownerValues = pendingOwnerValues(access, identity, admission);
       const ownerPredicate = pendingOwnerPredicate(8);
       traceWrite = database.prepare(
         "INSERT INTO retrieval_query_trace (trace_id,revision,scope_snapshot_id,scope_snapshot_revision,trace_json,trace_digest,created_at) " +

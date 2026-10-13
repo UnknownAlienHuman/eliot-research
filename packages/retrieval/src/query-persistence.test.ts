@@ -1,4 +1,26 @@
 import { describe, expect, it } from "vitest";
+
+describe("typed read-only retrieval storage failure", () => {
+  it("distinguishes a failed result SELECT from integrity refusals", async () => {
+    const database: RetrievalQueryD1 = {
+      prepare() {
+        return {
+          bind() {
+            return {
+              async first<T>(): Promise<T | null> { throw new Error("storage unavailable"); },
+              async all<T>(): Promise<{ results: T[] }> { throw new Error("unexpected all"); },
+              async run() { throw new Error("a read must not write"); },
+            };
+          },
+        };
+      },
+    };
+    const error = await queryError(createD1RetrievalResultStore(database, ACCESS).load("typed-read-failure"));
+    expect(error).toBeInstanceOf(RetrievalResultReadUnavailable);
+    expect((error as RetrievalResultReadUnavailable).read_only_storage_failure).toBe(true);
+    expect(error.retryable).toBe(true);
+  });
+});
 // @ts-expect-error - node:sqlite runtime types ship with Node 22.13+, not @types/node
 import { DatabaseSync } from "node:sqlite";
 import type {
@@ -11,6 +33,7 @@ import type { RetrievalRequest } from "./ports.js";
 import {
   canonicalRetrievalJson,
   createD1RetrievalResultStore,
+  RetrievalResultReadUnavailable,
   createD1ScopeProfilePort,
   createD1RetrievalTracePort,
   createD1ScopePorts,
@@ -63,12 +86,23 @@ function makeD1(database: RawDatabase): RetrievalQueryD1 {
         },
         async run() {
           const statement = database.prepare(sql);
-          if (params.length === 0) statement.run();
-          else statement.run(...spread(params));
-          return { meta: { changes: 0 } };
+          const result = params.length === 0 ? statement.run() : statement.run(...spread(params));
+          return { meta: { changes: Number(result.changes ?? 0) } };
         },
       }),
     }),
+    async batch(statements) {
+      database.exec("BEGIN");
+      try {
+        const results = [];
+        for (const statement of statements) results.push(await statement.run());
+        database.exec("COMMIT");
+        return results;
+      } catch (error) {
+        database.exec("ROLLBACK");
+        throw error;
+      }
+    },
   };
 }
 
@@ -371,7 +405,7 @@ describe("Q3 D1 query persistence over migration 0021", () => {
             return {
               async first<T>() {
                 const row = await bound.first<T>();
-                if (row !== null && sql.startsWith("SELECT request_digest, result_json, result_digest")) {
+                if (row !== null && sql.includes("FROM retrieval_query_result")) {
                   return { ...(row as T & { readonly result_digest: string }), result_digest: "0".repeat(64) } as T;
                 }
                 return row;
@@ -385,7 +419,7 @@ describe("Q3 D1 query persistence over migration 0021", () => {
     };
     const error = await queryError(createD1RetrievalResultStore(tampered, ACCESS).load("digest-drift-1"));
     expect(error.code).toBe("RETRIEVAL_RESOLUTION_UNCERTAIN");
-    expect(error.retryable).toBe(true);
+    expect(error.retryable).toBe(false);
   });
 
   it("replays the same retry without duplicate rows and conflicts on changed input", async () => {
@@ -480,7 +514,11 @@ describe("S08 unprovable historical scope identity", () => {
       seedAuthority(raw, scope, true);
       await createRetrievalQueryService(portsFor(d1, scope)).query({ request: requestFor(scope), idempotency_key: "original" });
       const original = raw.prepare("SELECT * FROM retrieval_query_result").get() as Record<string, string | number | null>;
-      const result = JSON.parse(original.result_json as string) as Record<string, unknown> & {
+      const current = JSON.parse(original.result_json as string) as Record<string, unknown>;
+      // This case models the historical three-field result, before internal budget metadata was added.
+      const result = {
+        evidence_pack: current.evidence_pack, trace: current.trace, coverage_claim: current.coverage_claim,
+      } as Record<string, unknown> & {
         trace: { scope_snapshot: Record<string, unknown> }; evidence_pack: { scope_snapshot_ref: { id: string } };
       };
       delete result.trace.scope_snapshot.resolved_scope_expression;
@@ -496,7 +534,7 @@ describe("S08 unprovable historical scope identity", () => {
       const before = raw.prepare("SELECT * FROM retrieval_query_result ORDER BY operation_id").all();
       const error = await queryError(createD1RetrievalResultStore(d1, ACCESS).load(kind));
       expect(error.code).toBe(kind === "missing-expression" ? "RETRIEVAL_IDEMPOTENCY_CONFLICT" : "RETRIEVAL_RESOLUTION_UNCERTAIN");
-      expect(error.retryable).toBe(kind !== "missing-expression");
+      expect(error.retryable).toBe(false);
       expect(raw.prepare("SELECT * FROM retrieval_query_result ORDER BY operation_id").all()).toEqual(before);
       expect(await createD1RetrievalResultStore(d1, ACCESS).load("original")).not.toBeNull();
     },
