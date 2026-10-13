@@ -1,33 +1,39 @@
-/* StudioFeature - U5-S styles. Committed semantic tokens only; no raw visual values.
+/* StudioFeature - Material 3 Expressive saved-work library. Committed semantic tokens only; no raw visual values.
  *
- * Calm saved-work organization: one quiet list column beside a single reading column. Hierarchy comes
- * from spacing, type scale and tonal surface, never a border or card around every fact. Controls stay
- * compact and aligned; reading copy keeps a deliberate measure. */
+ * NotebookLM-style Studio: a quiet library of saved proposals as tonal tiles beside one reading column.
+ * Each tile carries a leading accent glyph area, a title and a state word. Hover lifts on the field-hover
+ * tone, and selection reads through the selected surface plus an underline, never colour alone. Editing
+ * sits in a single tonal group on base control styles. The pane is the only scroll owner; groups carry
+ * no border, shadow or nested card. */
 
 .er-studio-live {
   display: grid;
-  gap: var(--eliot-space-block-control);
+  gap: var(--eliot-space-panel);
   color: var(--md-sys-color-on-surface);
   font-family: var(--eliot-type-font-family);
   min-inline-size: 0;
 }
 
+/* Heading row reserves a control-height line, so Back appearing never moves the title. */
 .er-studio-live__head {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   gap: var(--eliot-space-inline-control);
   flex-wrap: wrap;
+  min-block-size: var(--eliot-size-control);
   min-inline-size: 0;
 }
 
-/* Pane headings stay compact and aligned with the list they label. */
+/* Feature title: display face at title-large, the same heading voice as the research run. */
 .er-studio-live__title {
   margin: 0;
-  font-size: var(--eliot-type-title-medium-size);
-  line-height: var(--eliot-type-title-medium-line-height);
-  font-weight: var(--eliot-type-font-weight-medium);
-  letter-spacing: var(--eliot-type-letter-spacing-label);
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--eliot-type-font-family-display);
+  font-size: var(--eliot-type-title-large-size);
+  line-height: var(--eliot-type-title-large-line-height);
+  font-weight: var(--eliot-type-font-weight-regular);
+  letter-spacing: var(--eliot-type-letter-spacing-headline);
 }
 
 .er-studio-live__intro {
@@ -68,7 +74,7 @@
   letter-spacing: var(--eliot-type-letter-spacing-label);
 }
 
-/* Separated by a divider and spacing, not by per-row cards. */
+/* Saved proposals are a list of tonal tiles, and a responsive grid of tiles when no reader is open. */
 .er-studio-live__items {
   display: grid;
   gap: var(--eliot-space-block-control);
@@ -76,53 +82,88 @@
   padding: 0;
   list-style: none;
 }
+.er-studio-live:not([data-selected]) .er-studio-live__items {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, var(--eliot-layout-source-width)), 1fr));
+}
+.er-studio-live__items > li {
+  min-inline-size: 0;
+}
+.er-studio-live__more {
+  grid-column: 1 / -1;
+  margin: var(--eliot-space-block-control) 0 0;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
+}
 
+/* Tile: a tonal group with a generous panel/group padding and a large-increased radius. The title and
+ * state word share one grid column beside a leading accent glyph area. */
 .er-studio-live__item {
   display: grid;
-  gap: var(--eliot-space-inline-control);
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--eliot-space-tight) var(--eliot-space-gutter);
+  align-items: center;
   inline-size: 100%;
-  padding: var(--eliot-space-block-control);
-  padding-inline: var(--eliot-space-panel);
+  min-inline-size: 0;
+  padding: var(--eliot-space-panel) var(--eliot-space-group);
   border: 0;
-  border-radius: var(--eliot-shape-extra-small);
-  background: transparent;
+  border-radius: var(--eliot-shape-large-increased);
+  background: var(--eliot-color-group);
   color: inherit;
   font: inherit;
   text-align: start;
   cursor: pointer;
-  min-inline-size: 0;
+  transition: background-color var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
 }
 
 .er-studio-live__item:hover {
-  background: var(--md-sys-color-surface-container-low);
+  background: var(--eliot-color-field-hover);
 }
 
-/* Selection reads through a tonal surface, and the label is carried in text, never color alone. */
+.er-studio-live__item:focus-visible {
+  outline: var(--eliot-focus-width) solid var(--md-sys-color-primary);
+  outline-offset: var(--eliot-focus-offset);
+}
+
+/* Selection reads through the selected surface; the underlined title carries it as text as well. */
 .er-studio-live__item[aria-current="true"] {
-  background: var(--md-sys-color-secondary-container);
-  color: var(--md-sys-color-on-secondary-container);
+  background: var(--eliot-color-selected);
+  color: var(--eliot-color-on-selected);
 }
 
-.er-studio-live__item:hover .er-studio-live__item-title,
 .er-studio-live__item[aria-current="true"] .er-studio-live__item-title {
   text-decoration: underline;
   text-decoration-thickness: var(--eliot-divider-width);
   text-underline-offset: var(--eliot-focus-offset);
 }
 
+/* Leading accent glyph area: a pink container tile with a centred glyph, spanning the title and state rows.
+ * The decorative span is aria-hidden; the state word is the readable text. */
+.er-studio-live__item-dot {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  box-sizing: border-box;
+  inline-size: var(--eliot-size-control);
+  block-size: var(--eliot-size-control);
+  border-radius: var(--eliot-shape-medium);
+  background:
+    radial-gradient(circle, var(--eliot-accent-on-pink-container) 0 45%, transparent 50%) center / var(--eliot-icon-small-size) var(--eliot-icon-small-size) no-repeat,
+    var(--eliot-accent-pink-container);
+}
+
 .er-studio-live__item-title {
-  font-size: var(--eliot-type-body-large-size);
-  line-height: var(--eliot-type-body-large-line-height);
-  font-weight: var(--eliot-type-font-weight-regular);
+  grid-column: 2;
+  grid-row: 1;
+  min-inline-size: 0;
+  font-size: var(--eliot-type-title-medium-size);
+  line-height: var(--eliot-type-title-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
   overflow-wrap: anywhere;
 }
 
-/* Secondary metadata aligns under the title on one compact line. */
+/* The meta line flows into the tile grid so its state word sits under the title, beside the glyph. */
 .er-studio-live__item-meta {
-  display: flex;
-  align-items: baseline;
-  gap: var(--eliot-space-inline-control);
-  flex-wrap: wrap;
+  display: contents;
   color: var(--md-sys-color-on-surface-variant);
   font-size: var(--eliot-type-label-medium-size);
   line-height: var(--eliot-type-label-medium-line-height);
@@ -130,63 +171,57 @@
 }
 
 .er-studio-live__item[aria-current="true"] .er-studio-live__item-meta {
-  color: var(--md-sys-color-on-secondary-container);
+  color: var(--eliot-color-on-selected);
 }
 
-/* The state word is the accessible selection signal; the dot is redundant support. */
-.er-studio-live__item-dot {
-  inline-size: var(--eliot-icon-standard-size);
-  block-size: var(--eliot-icon-standard-size);
-  border-radius: var(--eliot-shape-full);
-  background: currentColor;
-  flex: none;
-}
-
-.er-studio-live__more {
-  margin: var(--eliot-space-block-control) 0 0;
-  color: var(--md-sys-color-on-surface-variant);
-  font-size: var(--eliot-type-label-medium-size);
-  line-height: var(--eliot-type-label-medium-line-height);
-}
-
-/* A genuine empty state: one compact instruction on a quiet surface, not a disabled generator card. */
+/* A genuine empty state: a centred tonal group with an accent glyph tile and a display-face line. */
 .er-studio-live__empty {
   display: grid;
+  justify-items: center;
   gap: var(--eliot-space-block-control);
-  justify-items: start;
-  padding: var(--eliot-space-panel);
-  border-radius: var(--eliot-shape-small);
-  background: var(--md-sys-color-surface-container-low);
+  padding: var(--eliot-space-group) var(--eliot-space-panel);
+  border-radius: var(--eliot-shape-large-increased);
+  background: var(--eliot-color-group);
+  text-align: center;
+}
+
+.er-studio-live__empty::before {
+  content: "";
+  box-sizing: border-box;
+  inline-size: var(--eliot-size-touch-target);
+  block-size: var(--eliot-size-touch-target);
+  border-radius: var(--eliot-shape-large);
+  background:
+    radial-gradient(circle, var(--eliot-accent-on-pink-container) 0 45%, transparent 50%) center / var(--eliot-icon-standard-size) var(--eliot-icon-standard-size) no-repeat,
+    var(--eliot-accent-pink-container);
 }
 
 .er-studio-live__empty-text {
   margin: 0;
   max-width: var(--eliot-type-reading-measure);
-  color: var(--md-sys-color-on-surface-variant);
-  font-size: var(--eliot-type-body-medium-size);
-  line-height: var(--eliot-type-body-medium-line-height);
-}
-
-.er-studio-live__empty-hint {
-  margin: 0;
-  max-width: var(--eliot-type-reading-measure);
-  color: var(--md-sys-color-on-surface-variant);
-  font-size: var(--eliot-type-label-medium-size);
-  line-height: var(--eliot-type-label-medium-line-height);
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--eliot-type-font-family-display);
+  font-size: var(--eliot-type-title-medium-size);
+  line-height: var(--eliot-type-title-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-regular);
+  overflow-wrap: anywhere;
 }
 
 .er-studio-live__detail {
   display: grid;
-  gap: var(--eliot-space-block-control);
+  gap: var(--eliot-space-panel);
   min-inline-size: 0;
 }
 
 /* The reader is the reading surface, so its heading is the largest thing here. */
 .er-studio-live__detail-title {
   margin: 0;
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--eliot-type-font-family-display);
   font-size: var(--eliot-type-title-large-size);
   line-height: var(--eliot-type-title-large-line-height);
-  font-weight: var(--eliot-type-font-weight-medium);
+  font-weight: var(--eliot-type-font-weight-regular);
+  letter-spacing: var(--eliot-type-letter-spacing-headline);
   overflow-wrap: anywhere;
 }
 
@@ -196,45 +231,41 @@
   outline-offset: var(--eliot-focus-offset);
 }
 
-/* One aligned status row, so readiness and publication never float in unrelated places. */
-.er-studio-live__status-row {
-  display: flex;
-  align-items: baseline;
-  gap: var(--eliot-space-inline-control);
-  flex-wrap: wrap;
-  padding-block: var(--eliot-space-block-control);
-}
-
-.er-studio-live__status-item {
-  display: inline-flex;
-  align-items: baseline;
-  gap: var(--eliot-space-inline-control);
-  color: var(--md-sys-color-on-surface-variant);
-  font-size: var(--eliot-type-body-medium-size);
-  line-height: var(--eliot-type-body-medium-line-height);
-}
-
 .er-studio-live__subhead {
   margin: 0;
+  color: var(--md-sys-color-on-surface);
   font-size: var(--eliot-type-title-small-size);
   line-height: var(--eliot-type-title-small-line-height);
   font-weight: var(--eliot-type-font-weight-medium);
 }
 
-/* Grouping through spacing and roles, not a border on every group. */
+/* Freshness, publication and publish-readiness are supporting text states, never a colour-only signal. */
+.er-studio-live__freshness,
+.er-studio-live__publication,
+.er-studio-live__publish-state {
+  margin: 0;
+  max-width: var(--eliot-type-reading-measure);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+  overflow-wrap: anywhere;
+}
+
+/* Label and value facts in one tonal group, one aligned row per fact. */
 .er-studio-live__facts {
   display: grid;
   gap: var(--eliot-space-block-control);
-  margin: 0;
-  padding: var(--eliot-space-block-control) 0 0;
-  border-top: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
+  margin: var(--eliot-space-block-control) 0 0;
+  padding: var(--eliot-space-panel) var(--eliot-space-group);
+  border-radius: var(--eliot-shape-large-increased);
+  background: var(--eliot-color-group);
 }
 
 .er-studio-live__facts > div {
-  display: flex;
-  gap: var(--eliot-space-inline-control);
+  display: grid;
+  grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+  gap: var(--eliot-space-tight) var(--eliot-space-panel);
   align-items: baseline;
-  justify-content: space-between;
 }
 
 .er-studio-live__facts dt {
@@ -245,33 +276,40 @@
 
 .er-studio-live__facts dd {
   margin: 0;
+  color: var(--md-sys-color-on-surface);
   font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
   font-variant-numeric: var(--eliot-type-numerals);
-  text-align: end;
-}
-
-/* Deliberate reading measure for the proposal body. */
-.er-studio-live__body {
-  margin: 0;
-  max-width: var(--eliot-type-reading-measure);
-  font-size: var(--eliot-type-reading-size);
-  line-height: var(--eliot-type-reading-line-height);
+  text-align: start;
   overflow-wrap: anywhere;
 }
 
+/* Deliberate reading measure and white space kept, so the proposal body reads as written. */
+.er-studio-live__body {
+  margin: 0;
+  max-width: var(--eliot-type-reading-measure);
+  color: var(--md-sys-color-on-surface);
+  font-size: var(--eliot-type-reading-size);
+  line-height: var(--eliot-type-reading-line-height);
+  overflow-wrap: anywhere;
+  white-space: pre-line;
+}
+
+/* Native disclosure: one control-height summary row, no list marker, label-large medium. */
 .er-studio-live__disclosure {
-  border-top: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
-  padding-block: var(--eliot-space-block-control);
   min-inline-size: 0;
 }
 
 .er-studio-live__disclosure > summary {
+  display: flex;
+  align-items: center;
+  min-block-size: var(--eliot-size-control);
   cursor: pointer;
-  min-block-size: var(--eliot-size-touch-target);
-  align-content: center;
   color: var(--md-sys-color-on-surface-variant);
   font-size: var(--eliot-type-label-large-size);
   line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
 }
 
 .er-studio-live__disclosure > summary:focus-visible {
@@ -279,11 +317,33 @@
   outline-offset: var(--eliot-focus-offset);
 }
 
+/* Changed sources: one tonal group, each source a small aligned block of its two revisions. */
 .er-studio-live__changes {
   display: grid;
   gap: var(--eliot-space-block-control);
   margin: var(--eliot-space-block-control) 0 0;
-  padding: 0 0 0 var(--eliot-space-inline-control);
+  padding: var(--eliot-space-panel) var(--eliot-space-group);
+  list-style: none;
+  border-radius: var(--eliot-shape-large-increased);
+  background: var(--eliot-color-group);
+}
+
+.er-studio-live__changes li {
+  display: grid;
+  gap: var(--eliot-space-hairline);
+  min-inline-size: 0;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
+  font-variant-numeric: var(--eliot-type-numerals);
+  overflow-wrap: anywhere;
+}
+
+.er-studio-live__changes li > span:first-child {
+  color: var(--md-sys-color-on-surface);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
 }
 
 .er-studio-live__hint {
@@ -294,60 +354,27 @@
   line-height: var(--eliot-type-label-medium-line-height);
 }
 
-.er-studio-live__field {
-  display: grid;
-  gap: var(--eliot-space-block-control);
-  margin-top: var(--eliot-space-block-control);
-  font-size: var(--eliot-type-label-large-size);
-  line-height: var(--eliot-type-label-large-line-height);
-}
-
-.er-studio-live__note {
-  font: inherit;
-  color: inherit;
-  padding: var(--eliot-space-block-control);
-  border: var(--eliot-divider-width) solid var(--md-sys-color-outline);
-  border-radius: var(--eliot-shape-extra-small);
-  background: var(--md-sys-color-surface-container-lowest);
-}
-
-.er-studio-live__note:focus-visible {
-  outline: var(--eliot-focus-width) solid var(--md-sys-color-primary);
-  outline-offset: var(--eliot-focus-offset);
-}
-
-/* Compact aligned action row: primary first, supporting actions follow, all on one baseline. */
+/* Compact aligned action row: a control-height line that keeps its place when buttons appear. */
 .er-studio-live__actions {
   display: flex;
-  gap: var(--eliot-space-inline-control);
   flex-wrap: wrap;
   align-items: center;
+  gap: var(--eliot-space-block-control);
+  min-block-size: var(--eliot-size-control);
   min-inline-size: 0;
 }
 
-/* The phone composition changes instead of squeezing two columns into a narrow pair. */
-@media (width < 48rem) {
-  .er-studio-live[data-selected] .er-studio-live__list {
-    display: none;
-  }
-  .er-studio-live__panes {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .er-studio-live__list {
-    max-height: none;
-  }
-}
-
-@media (forced-colors: active) {
-  .er-studio-live__item[aria-current="true"] { forced-color-adjust: none; }
-}
-
+/* Edit: one tonal group holding a label-over-control form on base control styles. The inputs and textarea
+ * keep the native Material look; only width and reading type are set here. */
 .er-studio-live__edit-section {
   display: grid;
-  grid-template-columns: minmax(0, 1fr);
   gap: var(--eliot-space-panel);
+  box-sizing: border-box;
   min-inline-size: 0;
+  max-inline-size: var(--eliot-layout-reading-max);
+  padding: var(--eliot-space-panel) var(--eliot-space-group);
+  border-radius: var(--eliot-shape-large-increased);
+  background: var(--eliot-color-group);
   overflow-wrap: anywhere;
 }
 
@@ -360,10 +387,14 @@
   overflow-wrap: anywhere;
 }
 
-.er-studio-live__edit-section > .er-studio-live__field {
+.er-studio-live__field {
+  display: grid;
+  gap: var(--eliot-space-tight);
   min-inline-size: 0;
-  margin-block-start: 0;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-large-size);
   line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
 }
 
 .er-studio-live__edit-section .er-studio-live__note {
@@ -373,10 +404,29 @@
   max-inline-size: 100%;
   font-size: var(--eliot-type-body-large-size);
   line-height: var(--eliot-type-body-large-line-height);
+  overflow-wrap: anywhere;
 }
 
-.er-studio-live__edit-section textarea.er-studio-live__note {
-  min-block-size: var(--eliot-space-touch-target);
-  resize: vertical;
-  overflow-wrap: anywhere;
+/* The phone composition changes instead of squeezing two columns into a narrow pair. */
+@media (width < 48rem) {
+  .er-studio-live[data-selected] .er-studio-live__list {
+    display: none;
+  }
+  .er-studio-live__panes {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (forced-colors: active) {
+  .er-studio-live__item[aria-current="true"] { forced-color-adjust: none; }
+
+  .er-studio-live__item,
+  .er-studio-live__item-dot,
+  .er-studio-live__empty,
+  .er-studio-live__empty::before,
+  .er-studio-live__facts,
+  .er-studio-live__changes,
+  .er-studio-live__edit-section {
+    border: var(--eliot-divider-width) solid CanvasText;
+  }
 }
