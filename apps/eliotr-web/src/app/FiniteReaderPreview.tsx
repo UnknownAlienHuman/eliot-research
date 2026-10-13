@@ -1,4 +1,3 @@
-import { waitFor } from 'storybook/test';
 import { useEffect, useLayoutEffect, useState } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, useLocation, useNavigate, type NavigateFunction } from 'react-router';
@@ -249,7 +248,7 @@ export async function playSourceStatusRetry(test: ReaderPlayContext) {
 }
 
 /** Two failed panels still produce one channel; a late retry cannot restore protected messages. */
-export async function playSourceStatusPrivacy(test: ReaderPlayContext) {
+export async function playSourceStatusPrivacy(test: ReaderPlayContext, waitFor: (check: () => void) => Promise<unknown>) {
   const environment = environmentFor(test.canvasElement);
   await test.userEvent.selectOptions(await test.canvas.findByRole('combobox', { name: 'Project', exact: true }), project);
   await test.userEvent.click(await test.canvas.findByRole('button', { name: sourceTitle, exact: true }));

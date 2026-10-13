@@ -8,6 +8,7 @@ import {
   FiniteReaderPreview,
   playSourceStatusRetry,
   playSourceStatusPrivacy,
+  type ReaderPlayContext,
   playStaleLibraryHolder,
   playStaleRevisionHolder,
   playPrivacyLateHistoryReplay,
@@ -370,7 +371,7 @@ export const ReplacedSelectedPageRefused = { render: () => <IntegrationRepairsPr
 
 export const SourcesReadinessAnnouncement = { render: () => <FiniteReaderPreview readFailure="readiness" />, play: playSourceStatusRetry };
 export const SourcesVersionsAnnouncement = { render: () => <FiniteReaderPreview readFailure="revisions" />, play: playSourceStatusRetry };
-export const SourcesAnnouncementPrivacy = { render: () => <FiniteReaderPreview readFailure="both" />, play: playSourceStatusPrivacy };
+export const SourcesAnnouncementPrivacy = { render: () => <FiniteReaderPreview readFailure="both" />, play: (context: ReaderPlayContext) => playSourceStatusPrivacy(context, async check => { await announcementUntil(() => { try { check(); return true; } catch { return false; } }); }) };
 export const StudioOperationAnnouncements = { render: () => <StudioPreview />, play: playStudioAnnouncements };
 export const ResearchOperationAnnouncements = { render: () => <ResearchPreview />, play: playResearchAnnouncements };
 export const ConnectionsOperationAnnouncements = { render: () => <FiniteTruthDisclosurePreview scenario="disclosure" holdDiagnostic />, play: playConnectionAnnouncements };
