@@ -1,3 +1,4 @@
+import { waitFor } from 'storybook/test';
 import { useEffect, useLayoutEffect, useState } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter, useLocation, useNavigate, type NavigateFunction } from 'react-router';
@@ -32,7 +33,7 @@ function createFixture(readFailure?: ReadFailure) {
   const client = createWorkspaceQueryClient(), gate = deferred();
   const timers = { setTimeout: () => 0, clearTimeout() {} };
   const digest = sha256(encode(documentText));
-  let contentCalls = 0, returned = 0, readinessCalls = 0, revisionsCalls = 0;
+  let contentCalls = 0, returned = 0, readinessCalls = 0, revisionsCalls = 0, readinessReturns = 0;
   const readinessGate = deferred(), revisionsGate = deferred();
   const route: { navigate: NavigateFunction | undefined; state: unknown } = { navigate: undefined, state: undefined };
   const json = (data: unknown) => new Response(JSON.stringify({ data, trace_id: 'live-trace-1', deployment_generation: generation }), { headers: { 'content-type': 'application/json' } });
@@ -50,6 +51,7 @@ function createFixture(readFailure?: ReadFailure) {
         if (readinessCalls === 1) throw new TypeError('Synthetic readiness-only read failure');
         await readinessGate.promise;
       }
+      readinessReturns++;
       return json({
       protocol: 'eliotr.library-readiness.v1', source_id: source, source_revision_ref: revision,
       deployment_generation: generation, catalog_generation: '1', observed_at: stamp, quality_state: 'high_fidelity', readiness_basis: 'ACTIVE_VERIFIED',
@@ -104,7 +106,7 @@ function createFixture(readFailure?: ReadFailure) {
     }
   };
   return { client, runtime, privacy, context, documentKey, replaceHolder, gate, route,
-    readFailure, readinessGate, revisionsGate, metrics: () => ({ contentCalls, returned, readinessCalls, revisionsCalls }) };
+    readFailure, readinessGate, revisionsGate, metrics: () => ({ contentCalls, returned, readinessCalls, revisionsCalls, readinessReturns }) };
 }
 type Environment = ReturnType<typeof createFixture>;
 const environments = new WeakMap<HTMLElement, Environment>();
@@ -256,9 +258,15 @@ export async function playSourceStatusPrivacy(test: ReaderPlayContext) {
   const retry = test.canvasElement.querySelector<HTMLButtonElement>('.er-projects-library__panel button.er-button--text'); assert(retry, 'Readiness retry absent');
   await test.userEvent.click(retry);
   await announcementUntil(() => region.textContent?.includes('Reading search readiness.') === true);
-  environment.privacy.close(); environment.readinessGate.release(); environment.revisionsGate.release();
-  await until(() => !region.isConnected && environment.client.getQueryCache().getAll().length === 0, 'privacy removes status and protected cache');
+  environment.privacy.close();
+  await waitFor(() => assert(environment.privacy.getSnapshot().phase !== 'available' && !region.isConnected,
+    'Privacy close must unmount the actual protected announcement'));
+  await waitFor(() => assert(environment.client.getQueryCache().getAll().length === 0,
+    'Protected query removal must finish separately from the React unmount'));
+  environment.readinessGate.release(); environment.revisionsGate.release();
+  await until(() => environment.metrics().readinessReturns === 1, 'closed readiness transport returns late');
   await frame(); await frame();
   assert(test.canvasElement.querySelectorAll('[role="status"], [aria-live], [role="alert"]').length === 0, 'Late read recreated an announcement');
+  assert(environment.client.getQueryCache().getAll().length === 0, 'Late read recreated protected Query state');
   assert(environment.metrics().readinessCalls === 2 && environment.metrics().revisionsCalls === 1 && environment.metrics().contentCalls === 0, 'Privacy retry duplicated or widened reads');
 }
