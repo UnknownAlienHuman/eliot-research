@@ -1,51 +1,45 @@
 /* U3-P Projects Library feature surface. Committed semantic tokens only.
-   Compact Material list-detail: tonal rows instead of cards around every fact, aligned row
-   actions, a deliberate reading measure for prose, and raw identifiers confined to native
-   disclosures rather than primary content. */
+   NotebookLM-style source list: borderless 48px rows with a leading document glyph, a
+   tonal selected state and a trailing chevron; detail facts sit in soft tonal groups;
+   raw identifiers stay inside native disclosures, never in primary content. */
 .er-projects-library {
   display: grid;
-  gap: var(--eliot-space-block-control);
+  gap: var(--eliot-space-panel);
   min-width: 0;
   font-family: var(--eliot-type-font-family);
   color: var(--md-sys-color-on-surface);
 }
-.er-projects-library__toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--eliot-space-panel); margin-block-end: var(--eliot-space-block-control); }
-.er-projects-library__body { margin-block: var(--eliot-space-panel); }
+
+.er-projects-library__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--eliot-space-gutter) var(--eliot-space-panel);
+  min-height: var(--eliot-size-touch-target);
+}
 
 /* Compact project context: label and control share one quiet row, no framed tile. */
 .er-projects-library__project-context {
   display: flex;
   align-items: center;
-  gap: var(--eliot-space-inline-control);
+  gap: var(--eliot-space-gutter);
   min-width: 0;
+  flex: 1 1 auto;
 }
 
 .er-projects-library__project-label {
   color: var(--md-sys-color-on-surface-variant);
-  font-size: var(--eliot-type-label-medium-size);
-  line-height: var(--eliot-type-label-medium-line-height);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
   white-space: nowrap;
 }
 
 .er-projects-library__project-select {
-  box-sizing: border-box;
-  min-width: 0;
-  max-width: var(--eliot-layout-context-width);
-  min-height: var(--eliot-size-touch-target);
-  padding-block: calc(var(--eliot-space-block-control) / 2);
-  padding-inline: var(--eliot-space-inline-control);
-  border: var(--eliot-divider-width) solid var(--md-sys-color-outline);
-  border-radius: var(--eliot-shape-extra-small);
-  background: var(--md-sys-color-surface-container-low);
-  color: var(--md-sys-color-on-surface);
-  font-family: var(--eliot-type-font-family);
-  font-size: var(--eliot-type-body-medium-size);
-  line-height: var(--eliot-type-body-medium-line-height);
-}
-
-.er-projects-library__project-select:focus-visible {
-  outline: var(--eliot-focus-width) solid var(--md-sys-color-primary);
-  outline-offset: var(--eliot-focus-offset);
+  inline-size: min(100%, var(--eliot-layout-context-width));
+  font-size: var(--eliot-type-body-large-size);
+  font-weight: var(--eliot-type-font-weight-medium);
 }
 
 /* Quiet secondary text; the deliberate reading measure applies to prose only. */
@@ -57,6 +51,7 @@
   font-size: var(--eliot-type-body-medium-size);
   line-height: var(--eliot-type-body-medium-line-height);
   font-family: var(--eliot-type-font-family);
+  overflow-wrap: anywhere;
 }
 
 .er-projects-library__note {
@@ -73,8 +68,15 @@
 
 .er-projects-library__body {
   display: grid;
-  gap: var(--eliot-space-block-control);
+  gap: var(--eliot-space-tight);
   min-width: 0;
+  margin-block-start: var(--eliot-space-block-control);
+}
+
+.er-projects-library__body > .er-status {
+  min-height: var(--eliot-size-list-row);
+  align-items: center;
+  padding-inline: var(--eliot-space-gutter);
 }
 
 /* Compact aligned pane headings: title-small, medium weight, one clear level. */
@@ -83,40 +85,51 @@
   margin: 0;
   color: var(--md-sys-color-on-surface);
   font-family: var(--eliot-type-font-family);
-  font-size: var(--eliot-type-title-small-size);
-  line-height: var(--eliot-type-title-small-line-height);
+  font-size: var(--eliot-type-title-medium-size);
+  line-height: var(--eliot-type-title-medium-line-height);
   font-weight: var(--eliot-type-font-weight-medium);
+}
+
+.er-projects-library__subheading {
+  padding-inline: var(--eliot-space-tight);
+  margin-block-end: var(--eliot-space-block-control);
 }
 
 .er-projects-library__sources,
 .er-projects-library__revisions {
   display: grid;
-  gap: var(--eliot-space-block-control);
+  gap: var(--eliot-space-hairline);
   margin: 0;
   padding: 0;
   list-style: none;
   min-width: 0;
 }
 
-/* Source rows: calm tonal surface with a hairline divider, not a card per row. */
+/* Source rows: borderless list items; the whole row reacts, the chevron stays aligned. */
 .er-projects-library__source {
+  position: relative;
   display: grid;
-  gap: calc(var(--eliot-space-block-control) / 2);
-  padding: 0 var(--eliot-space-panel);
-  border-radius: var(--eliot-shape-extra-small);
-  border-block-end: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
+  min-width: 0;
+  border-radius: var(--eliot-shape-medium);
+  transition: background-color var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
 }
 
-.er-projects-library__source:last-child {
-  border-block-end: none;
+.er-projects-library__source:hover {
+  background: color-mix(in srgb, var(--md-sys-color-on-surface) 5%, transparent);
 }
 
-/* Aligned row head: the title takes the measure, the action shares one baseline row. */
+.er-projects-library__source[data-selected="true"] {
+  background: var(--eliot-color-selected);
+  color: var(--eliot-color-on-selected);
+}
+
 .er-projects-library__source-head {
   display: flex;
   align-items: center;
-  gap: var(--eliot-space-inline-control);
+  gap: var(--eliot-space-tight);
   min-width: 0;
+  min-height: var(--eliot-size-list-row);
+  padding-inline-end: var(--eliot-space-tight);
 }
 
 .er-projects-library__source-title {
@@ -126,26 +139,45 @@
   font-size: var(--eliot-type-body-large-size);
   line-height: var(--eliot-type-body-large-line-height);
   font-weight: var(--eliot-type-font-weight-regular);
-  color: var(--md-sys-color-on-surface);
+  color: inherit;
 }
 
-.er-projects-library__source-title button {
+.er-projects-library__source-title .er-button {
+  --er-button-shape: var(--eliot-shape-medium);
+  inline-size: 100%;
+  justify-content: flex-start;
+  gap: var(--eliot-space-gutter);
+  min-height: var(--eliot-size-list-row);
+  padding-inline: var(--eliot-space-gutter);
   white-space: normal;
   text-align: start;
-  padding-inline: 0;
-  min-height: var(--eliot-size-touch-target);
-  color: var(--md-sys-color-on-surface);
-  border-radius: var(--eliot-shape-extra-small);
+  color: inherit;
+  font-size: var(--eliot-type-body-large-size);
+  line-height: var(--eliot-type-body-large-line-height);
+  font-weight: var(--eliot-type-font-weight-regular);
+  letter-spacing: var(--eliot-type-letter-spacing-body);
+  overflow-wrap: anywhere;
 }
 
-.er-projects-library__source[data-selected="true"] {
-  background: var(--md-sys-color-surface-container-low);
+.er-projects-library__source-title .er-button:hover:not(:disabled)::after { opacity: 0; }
+
+.er-projects-library__source-title .er-button > .er-symbol {
+  margin-inline-start: 0;
+  inline-size: var(--eliot-icon-small-size);
+  block-size: var(--eliot-icon-small-size);
+  color: var(--md-sys-color-primary);
+}
+
+.er-projects-library__source[data-selected="true"] .er-projects-library__source-title .er-button > .er-symbol {
+  color: inherit;
 }
 
 /* Selected state reads through the title weight, not only through the row background. */
-.er-projects-library__source[data-selected="true"] .er-projects-library__source-title {
+.er-projects-library__source[data-selected="true"] .er-projects-library__source-title .er-button {
   font-weight: var(--eliot-type-font-weight-medium);
 }
+
+.er-projects-library__source .er-icon-button { color: inherit; opacity: 0.8; }
 
 /* Identifiers live behind a native disclosure; they never occupy primary content. */
 .er-projects-library__facts {
@@ -155,22 +187,23 @@
 }
 
 .er-projects-library__facts summary {
-  min-height: var(--eliot-size-touch-target);
-  align-content: center;
+  display: flex;
+  align-items: center;
+  min-height: var(--eliot-size-control);
   color: var(--md-sys-color-on-surface-variant);
-  cursor: pointer;
-}
-
-.er-projects-library__facts summary:focus-visible {
-  outline: var(--eliot-focus-width) solid var(--md-sys-color-primary);
-  outline-offset: var(--eliot-focus-offset);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
 }
 
 .er-projects-library__facts dl {
   display: grid;
   grid-template-columns: minmax(0, auto) minmax(0, 1fr);
-  gap: var(--eliot-space-block-control);
-  margin: var(--eliot-space-block-control) 0 0;
+  gap: var(--eliot-space-tight) var(--eliot-space-gutter);
+  margin: var(--eliot-space-tight) 0 0;
+  padding: var(--eliot-space-gutter);
+  border-radius: var(--eliot-shape-medium);
+  background: var(--eliot-color-pane);
 }
 
 .er-projects-library__facts dt {
@@ -186,7 +219,7 @@
 
 .er-projects-library__panels {
   display: grid;
-  gap: var(--eliot-space-panel);
+  gap: var(--eliot-space-gutter);
   grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--eliot-layout-context-width)), 1fr));
   align-items: start;
 }
@@ -194,33 +227,36 @@
 /* Calm detail grouping: one tonal block per pane, not a card around every fact. */
 .er-projects-library__panel {
   display: grid;
-  gap: var(--eliot-space-block-control);
-  padding: var(--eliot-space-panel);
-  background: var(--md-sys-color-surface-container-low);
-  border-radius: var(--eliot-shape-small);
+  gap: var(--eliot-space-gutter);
+  min-width: 0;
+  padding: var(--eliot-space-group);
+  background: var(--eliot-color-group);
+  border-radius: var(--eliot-shape-large-increased);
   align-content: start;
 }
 
 .er-projects-library__readiness {
   display: grid;
   grid-template-columns: minmax(0, auto) minmax(0, 1fr);
-  gap: calc(var(--eliot-space-block-control) / 2) var(--eliot-space-block-control);
+  gap: var(--eliot-space-block-control) var(--eliot-space-panel);
   margin: 0;
+  font-variant-numeric: var(--eliot-type-numerals);
 }
 
 .er-projects-library__readiness dt {
   color: var(--md-sys-color-on-surface-variant);
   font-family: var(--eliot-type-font-family);
-  font-size: var(--eliot-type-body-small-size);
-  line-height: var(--eliot-type-body-small-line-height);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
 }
 
 .er-projects-library__readiness dd {
   margin: 0;
   color: var(--md-sys-color-on-surface);
   font-family: var(--eliot-type-font-family);
-  font-size: var(--eliot-type-body-small-size);
-  line-height: var(--eliot-type-body-small-line-height);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
 }
 
 .er-projects-library__readiness dd[data-state="unavailable"] {
@@ -233,10 +269,15 @@
 
 .er-projects-library__revision {
   display: grid;
-  gap: calc(var(--eliot-space-block-control) / 2);
+  gap: var(--eliot-space-tight);
+  padding-block: var(--eliot-space-block-control);
   font-family: var(--eliot-type-font-family);
   font-size: var(--eliot-type-body-small-size);
   line-height: var(--eliot-type-body-small-line-height);
+}
+
+.er-projects-library__revision + .er-projects-library__revision {
+  border-block-start: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
 }
 
 .er-projects-library__revision-ref {
@@ -251,7 +292,8 @@
 
 .er-projects-library__actions {
   display: flex;
-  gap: var(--eliot-space-inline-control);
+  flex-wrap: wrap;
+  gap: var(--eliot-space-block-control);
 }
 
 .er-projects-library__version-head {
@@ -260,20 +302,21 @@
   justify-content: space-between;
   gap: var(--eliot-space-block-control);
   flex-wrap: wrap;
+  min-height: var(--eliot-size-control);
 }
 
 .er-projects-library__version-title {
   margin: 0;
   color: var(--md-sys-color-on-surface);
-  font-size: var(--eliot-type-body-small-size);
-  line-height: var(--eliot-type-body-small-line-height);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+  font-variant-numeric: var(--eliot-type-numerals);
 }
 
-/* Compact: one column, rows keep their aligned head, panels drop extra chrome. */
+/* Compact: one column, rows keep their aligned head, panels keep a soft group. */
 @media (max-width: 48rem) {
   .er-projects-library__panels {
     grid-template-columns: minmax(0, 1fr);
-    gap: var(--eliot-space-block-control);
   }
 
   .er-projects-library__project-context {
@@ -281,18 +324,12 @@
   }
 
   .er-projects-library__project-select {
-    max-width: none;
+    inline-size: 100%;
     flex: 1;
   }
 
-  .er-projects-library__source {
-    padding-inline: 0;
-  }
-
   .er-projects-library__panel {
-    padding-inline: 0;
-    background: none;
-    border-radius: var(--eliot-shape-none);
+    padding: var(--eliot-space-panel);
   }
 }
 
