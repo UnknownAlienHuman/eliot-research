@@ -1,26 +1,28 @@
 /*
- * Connections rows. One calm grouped list on a recessive tonal surface: compact aligned
- * pane heading, one deliberate reading measure, dividers and spacing instead of a card or
- * border around every fact. Semantic tokens only; no raw visual values, no inline styles,
- * no nested scroll, no new icons or palette.
+ * Connections rows. A settings-page list in the manner of an account settings page: one feature title,
+ * one note, then ONE tonal group holding every connection row, separated by a hairline divider and
+ * spacing. Each row is a label and its state text with a trailing action. State is always words; a
+ * failed row is an error-container note and an unverified row is a tertiary-container note. Semantic
+ * tokens only; no raw visual values, no inline styles, no nested scroll, no border around the group.
  */
 
 .connections-feature {
   display: grid;
-  min-width: 0;
   gap: var(--eliot-space-panel);
-  padding: var(--eliot-space-block-control);
-  background: var(--md-sys-color-surface-container-low);
+  min-width: 0;
   color: var(--md-sys-color-on-surface);
-  border-radius: var(--eliot-shape-medium);
+  font-family: var(--eliot-type-font-family);
 }
 
-/* Compact heading: a section label, not a page display title. */
+/* Feature title: display face at title-large, the same heading voice as the research run. */
 .connections-feature__title {
-  margin: var(--eliot-shape-none);
-  font-size: var(--eliot-type-title-medium-size);
-  line-height: var(--eliot-type-title-medium-line-height);
-  font-weight: var(--eliot-type-font-weight-medium);
+  margin: 0;
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--eliot-type-font-family-display);
+  font-size: var(--eliot-type-title-large-size);
+  line-height: var(--eliot-type-title-large-line-height);
+  font-weight: var(--eliot-type-font-weight-regular);
+  letter-spacing: var(--eliot-type-letter-spacing-headline);
 }
 
 .connections-feature__note,
@@ -37,51 +39,52 @@
   max-width: var(--eliot-layout-reading-max);
 }
 
-.connections-feature__detail[data-tone="error"] {
-  color: var(--md-sys-color-error);
-}
-
+/* The one tonal group: every connection row sits inside it, with no border around the group. */
 .connections-feature__rows {
   display: grid;
-  gap: var(--eliot-shape-none);
+  gap: 0;
   min-width: 0;
   max-width: var(--eliot-layout-reading-max);
-  margin: var(--eliot-shape-none);
-  padding: var(--eliot-shape-none);
+  margin: 0;
+  padding: var(--eliot-space-panel) var(--eliot-space-group);
   list-style: none;
+  border-radius: var(--eliot-shape-large-increased);
+  background: var(--eliot-color-group);
 }
 
-/* Compact row: one vertical scroll owner, one divider per gap, no per-fact card. */
+/* A settings row: title and state text, at least one list-row tall so rows never collapse or jump. */
 .connections-feature__row {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
+  gap: var(--eliot-space-tight);
+  align-items: center;
   min-width: 0;
-  gap: var(--eliot-space-block-control);
-  align-items: baseline;
+  min-height: var(--eliot-size-list-row);
   padding-block: var(--eliot-space-block-control);
-  border-block-end: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
 }
 
-/* The list closes on content, not on a trailing rule. */
-.connections-feature__row:last-child {
-  border-block-end: var(--eliot-shape-none);
+/* Hairline divider between rows; no rule above the first row or below the last. */
+.connections-feature__row + .connections-feature__row {
+  border-block-start: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
 }
 
 .connections-feature__label {
   min-width: 0;
-  font-weight: var(--eliot-type-font-weight-medium);
-  font-size: var(--eliot-type-label-large-size);
-  line-height: var(--eliot-type-label-large-line-height);
   color: var(--md-sys-color-on-surface);
+  font-size: var(--eliot-type-body-large-size);
+  line-height: var(--eliot-type-body-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  overflow-wrap: anywhere;
 }
 
-/* Facts and their action sit on one compact line and wrap only when the measure runs out. */
+/* State text and its trailing action share one row that reserves a control-height line. */
 .connections-feature__row-content {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--eliot-space-block-control);
   min-width: 0;
+  min-height: var(--eliot-size-control);
 }
 
 .connections-feature__detail {
@@ -89,41 +92,62 @@
   min-width: 0;
 }
 
-/* Compact desktop: label column sized to its own text, facts fill the measure. */
+/* Error: Material supporting text in the error role, medium weight, always carried by its words.
+ * A settings row stays a row; it is not turned into an alarm banner. */
+.connections-feature__detail[data-tone="error"] {
+  color: var(--md-sys-color-error);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+
+/* Unknown or unverified: tertiary supporting text. ConnectionsFeature.tsx currently emits only neutral
+ * and error tones; a row that should read as unverified needs data-tone="unverified" in the TSX.
+ * The state is stated in words, never in colour alone. */
+.connections-feature__detail[data-tone="unverified"] {
+  color: var(--md-sys-color-tertiary);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+
+/* Settings layout on desktop: label column and state column share fixed proportions, so the state
+ * column lines up across every row. */
 @media (min-width: 48rem) {
   .connections-feature__row {
-    grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
     gap: var(--eliot-space-panel);
   }
 }
 
-/* Compact action row: 8px rhythm, never a stacked wall of giant controls. */
+/* Compact action row: 8px rhythm, a control-height line that keeps its place when buttons appear. */
 .connections-feature__actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--eliot-space-block-control);
+  min-height: var(--eliot-size-control);
   max-width: var(--eliot-layout-reading-max);
 }
 
+/* Diagnostics: one tonal group, opened from the Details action. */
 .connections-feature__diagnostics {
   display: grid;
-  gap: var(--eliot-space-block-control);
-  margin: var(--eliot-shape-none);
+  gap: var(--eliot-space-tight);
+  margin: 0;
+  padding: var(--eliot-space-panel) var(--eliot-space-group);
   max-width: var(--eliot-layout-reading-max);
+  border-radius: var(--eliot-shape-large-increased);
+  background: var(--eliot-color-group);
 }
 
 .connections-feature__diagnostics dt {
   color: var(--md-sys-color-on-surface-variant);
-  font-size: var(--eliot-type-label-small-size);
-  line-height: var(--eliot-type-label-small-line-height);
+  font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
 }
 
 .connections-feature__diagnostics dd {
-  margin: var(--eliot-shape-none);
+  margin: 0;
 }
 
-/* Diagnostic identifiers wrap inside the third level and never widen the reading column. */
+/* Diagnostic identifiers wrap inside the group and never widen the reading column. */
 .connections-feature__diagnostic-value {
   min-width: 0;
   font-family: var(--eliot-type-font-family-mono);
@@ -132,14 +156,14 @@
   overflow-wrap: anywhere;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .connections-feature {
-    transition-duration: var(--eliot-motion-effects);
-  }
-}
-
 @media (forced-colors: active) {
-  .connections-feature__row {
-    border-block-end-color: currentcolor;
+  .connections-feature__rows,
+  .connections-feature__diagnostics {
+    border: var(--eliot-divider-width) solid CanvasText;
   }
+
+  .connections-feature__row + .connections-feature__row {
+    border-block-start-color: CanvasText;
+  }
+
 }
