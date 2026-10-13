@@ -46,9 +46,13 @@ authority. The server derives visibility from the authenticated principal and cu
   owner generations, current policy, purge state and grant, then retain `requireCurrent` checks across
   asynchronous reads. Revocation or purge hides the record; storage uncertainty returns typed 503.
 - Change-feed writes are atomic with their source mutations: migration triggers `0060` (artifact draft),
-  `0061` (workflow `ENGINE_COMPLETED`) and `0062` (Wiki publication visibility) emit immutable rows.
-  Wiki visibility for new rows is canonical from the proposal principal and published revision scope;
-  historical legacy rows are not rewritten.
+  `0061` (workflow `ENGINE_COMPLETED`), `0062` (Wiki publication visibility), and ER13 migration `0135`
+  (guarded erasure completion) emit immutable rows. Wiki visibility for new rows is canonical from the
+  proposal principal and published revision scope; historical legacy rows are not rewritten.
+
+- Before serving a successful page, require the ER13 readiness marker and the exact `0135` trigger in
+  current D1 state. Missing or unreadable schema state returns a retryable typed 503; a generation
+  constant alone does not establish callback readiness.
 
 ## Acceptance
 

@@ -128,3 +128,15 @@ scope and access identity. One historical receipt may be shared by distinct vali
 receipt identity is not globally unique in the binding table. This additive schema does not advance
 runtime readiness or activate public research recovery. Exact atomic persistence, current readback and
 interruption acceptance remain required before the recovery path is accepted.
+
+## ER-45 erasure-completion callback readiness
+
+The private candidate migration `0138_erasure_completion_feed_readiness.sql` proposes to record the installed callback
+capability as `schema_state.erasure_completion_feed_generation = erasure-completion-feed-v1` only when
+`erasure_execution_completion_change_feed` exists on `erasure_execution`. It depends on the existing
+`0135_erasure_completion_change_feed.sql`; it does not rewrite that migration, backfill historical
+cases, or change the event feed. The ER45 service must verify both the readiness marker and exact
+trigger object from current D1 state before serving a successful changes page. Missing or unreadable
+state fails closed with a retryable typed 503.
+
+The 0138 number is free in the pinned publisher inventory but has no coordination-log allocation; publisher intake must confirm it. The migration loader sorts names and migration-ledger verification requires applied names to remain a prefix, so integrate 0138 only after the existing 0136 and 0137 reservations are present in the same source frontier.

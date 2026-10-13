@@ -322,6 +322,7 @@ async function feedCount(erasureId: string): Promise<number> {
   return row?.count ?? 0;
 }
 
+
 function context(key: string, principalRef: string, credentialGeneration: string) {
   return {
     request: new Request("https://research.example/api/v1/research/changes", {
@@ -364,6 +365,11 @@ describe("D1 erasure completion change feed", () => {
     expect(await runtime.CORE_DB.prepare(
       "SELECT name FROM sqlite_master WHERE type='trigger' AND name=?1",
     ).bind("erasure_execution_completion_change_feed").first()).not.toBeNull();
+    expect(await runtime.CORE_DB.prepare(
+      "SELECT value FROM schema_state WHERE key=?1",
+    ).bind("erasure_completion_feed_generation").first()).toEqual({
+      value: "erasure-completion-feed-v1",
+    });
   });
 
   it("records exactly one immutable authorized event and no repeated terminal effect", async () => {
@@ -468,7 +474,9 @@ describe("D1 erasure completion change feed", () => {
     await seedPrerequisites(f, admitted);
     await settle(admitted, "lease-owner-" + f.suffix);
 
-    const items = await readCompletions(PRINCIPAL, CREDENTIAL);
+    const request = { after_cursor: null, limit: 10, kinds: ["ERASURE_COMPLETED"] as const };
+    const first = await changes()(context("read", PRINCIPAL, CREDENTIAL), request);
+    const items = first.items;
     expect(items.map((item) => item.change_ref)).toEqual([
       "erasure-completed:" + admitted.erasure_ref.id + ":1",
     ]);
@@ -481,16 +489,12 @@ describe("D1 erasure completion change feed", () => {
     expect(item.metadata).toEqual({});
     expect(item.occurred_at).toBe(isoNow());
 
-    // The same principal, credential, deployment and filter replay byte for
-    // byte, which is what the durable feed cursor is for.
-    const replay = await changes()(context("read", PRINCIPAL, CREDENTIAL), {
-      after_cursor: null,
-      limit: 10,
-      kinds: ["ERASURE_COMPLETED"],
-    });
-    expect(replay.items).toEqual(items);
-    expect(replay.has_more).toBe(false);
-    expect(replay.next_cursor).not.toBeNull();
+    // The same principal, credential, deployment and filter replay the full
+    // ordered result and deterministic cursor under the fixture's fixed clock.
+    const replay = await changes()(context("read", PRINCIPAL, CREDENTIAL), request);
+    expect(replay).toEqual(first);
+    expect(first.has_more).toBe(false);
+    expect(first.next_cursor).not.toBeNull();
   });
 
 
@@ -575,5 +579,26 @@ describe("D1 erasure completion change feed", () => {
     expect((await readCompletions(PRINCIPAL, CREDENTIAL)).map((item) => item.change_ref)).toEqual([
       "erasure-completed:" + admitted.erasure_ref.id + ":1",
     ]);
+  });
+  it("rolls back terminal case, execution and guard when the deterministic change reference is occupied", async () => {
+    const f = await newFixture();
+    await seedOwnedSource(f);
+    await installPermission(f);
+    const admitted = await admitErasure(f);
+    await seedPrerequisites(f, admitted);
+    await recordResearchChange(runtime.CORE_DB, {
+      change_ref: "erasure-completed:" + admitted.erasure_ref.id + ":1",
+      kind: "SOURCE_UPDATED", subject_ref: admitted.erasure_ref.id, subject_revision: 1,
+      payload_ref: "payload:occupied", payload_sha256: "f".repeat(64), occurred_at: isoNow(),
+    });
+    const snapshot = async () => Promise.all(
+      ["erasure_execution", "erasure_case", "erasure_terminal_guard"].map(async (table) =>
+        (await runtime.CORE_DB.prepare("SELECT * FROM " + table + " WHERE erasure_id=?1")
+          .bind(admitted.erasure_ref.id).all()).results),
+    );
+    const before = await snapshot(), occupied = await feedRows(admitted.erasure_ref.id);
+    await expect(settle(admitted, "lease-owner-" + f.suffix)).rejects.toMatchObject({ code: "ERASURE_SETTLEMENT_UNCERTAIN" });
+    expect(await snapshot()).toEqual(before);
+    expect(await feedRows(admitted.erasure_ref.id)).toEqual(occupied);
   });
 });

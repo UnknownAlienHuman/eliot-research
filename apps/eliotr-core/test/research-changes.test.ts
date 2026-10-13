@@ -170,6 +170,49 @@ describe("durable authenticated research changes", () => {
     })).rejects.toMatchObject({ code: "RESEARCH_CHANGES_CONFLICT" });
   });
 
+  it("fails closed when the ER13 completion-feed readiness marker is absent", async () => {
+    const key = "erasure_completion_feed_generation";
+    const marker = await db.prepare("SELECT value,updated_at FROM schema_state WHERE key=?1")
+      .bind(key).first<{ value: string; updated_at: string }>();
+    if (marker === null) throw new Error("expected the ER13 completion-feed readiness marker");
+    expect(marker.value).toBe("erasure-completion-feed-v1");
+
+    await db.prepare("DELETE FROM schema_state WHERE key=?1").bind(key).run();
+    try {
+      await expect(readChanges({ after_cursor: null, limit: 10, kinds: ["ERASURE_COMPLETED"] }))
+        .rejects.toMatchObject({
+          code: "RESEARCH_CHANGES_SCHEMA_NOT_READY",
+          status: 503,
+          retryable: true,
+        });
+    } finally {
+      await db.prepare("INSERT INTO schema_state(key,value,updated_at) VALUES(?1,?2,?3)")
+        .bind(key, marker.value, marker.updated_at).run();
+    }
+  });
+
+  it("fails closed when the ER13 completion-feed trigger is absent", async () => {
+    const triggerName = "erasure_execution_completion_change_feed";
+    const trigger = await db.prepare(
+      "SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?1 AND tbl_name=?2 LIMIT 1",
+    ).bind(triggerName, "erasure_execution").first<{ sql: string }>();
+    if (trigger === null || typeof trigger.sql !== "string") {
+      throw new Error("expected the ER13 completion-feed trigger");
+    }
+
+    await db.prepare("DROP TRIGGER erasure_execution_completion_change_feed").run();
+    try {
+      await expect(readChanges({ after_cursor: null, limit: 10, kinds: ["ERASURE_COMPLETED"] }))
+        .rejects.toMatchObject({
+          code: "RESEARCH_CHANGES_SCHEMA_NOT_READY",
+          status: 503,
+          retryable: true,
+        });
+    } finally {
+      await db.prepare(trigger.sql).run();
+    }
+  });
+
   it("binds cursors to principal, credential, deployment and normalized filters", async () => {
     const first = await readChanges({
       after_cursor: null,
