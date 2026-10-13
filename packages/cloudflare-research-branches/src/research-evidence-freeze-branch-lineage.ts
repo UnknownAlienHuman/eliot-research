@@ -8,10 +8,9 @@ import { debtFor } from "./research-branch-execution-results.js";
 const ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 
-export interface EvidenceFreezeBranchLineage {
+interface EvidenceFreezeBranchLineageFields {
   readonly checkpoint_ref: VersionedRef;
   readonly identity_digest: string;
-  readonly read_extract_attempt_ref: string;
   readonly read_extract_request_sha256: string;
   readonly branch_analysis_attempt_ref: string;
   readonly branch_analysis_request_sha256: string;
@@ -22,6 +21,11 @@ export interface EvidenceFreezeBranchLineage {
   readonly unresolved_contradiction_refs: readonly string[];
   readonly open_research_debt_refs: readonly VersionedRef[];
 }
+
+export type EvidenceFreezeBranchLineage = EvidenceFreezeBranchLineageFields & (
+  | { readonly read_extract_attempt_ref: string; readonly read_extract_native_receipt_ref?: never }
+  | { readonly read_extract_attempt_ref?: never; readonly read_extract_native_receipt_ref: string }
+);
 
 export interface EvidenceFreezeLineage {
   readonly identity: Readonly<Record<string, unknown>>;
@@ -48,6 +52,23 @@ async function branchLineageMaterial(input: {
   const lineage = input.branch_reconciliation;
   if (lineage === undefined || lineage === null) return null;
   const checkpoint = lineage.checkpoint;
+  const readExtractLineage = lineage.read_extract_lineage;
+  const readExtractAttemptRef = readExtractLineage?.kind === "W2"
+    ? readExtractLineage.attempt_ref
+    : readExtractLineage === undefined ? lineage.read_extract_attempt_ref : undefined;
+  const readExtractNativeReceiptRef = readExtractLineage?.kind === "NATIVE"
+    ? readExtractLineage.receipt_ref
+    : undefined;
+  const validReadExtractLineage = readExtractLineage === undefined
+    ? typeof lineage.read_extract_attempt_ref === "string" && ID.test(lineage.read_extract_attempt_ref)
+    : readExtractLineage.kind === "W2"
+      ? lineage.read_extract_attempt_ref === readExtractLineage.attempt_ref && ID.test(readExtractLineage.attempt_ref) &&
+        readExtractLineage.request_sha256 === lineage.read_extract_request_sha256
+      : lineage.read_extract_attempt_ref === undefined && ID.test(readExtractLineage.receipt_ref) &&
+        readExtractLineage.request_sha256 === lineage.read_extract_request_sha256;
+  const readExtractIdentity = readExtractNativeReceiptRef === undefined
+    ? { read_extract_attempt_ref: readExtractAttemptRef ?? "" }
+    : { read_extract_native_receipt_ref: readExtractNativeReceiptRef };
   const v2 = checkpoint.protocol === "eliotr.research.branch-reconciliation.v2";
   const { checkpoint_ref: _checkpointRef, identity_digest: _identityDigest, ...checkpointMaterial } = checkpoint;
   const digest = await evidenceSha256({
@@ -107,7 +128,7 @@ async function branchLineageMaterial(input: {
       digest !== checkpoint.identity_digest ||
       checkpoint.checkpoint_ref.id !== `eliotr.research.branch-reconciliation${v2 ? "-v2" : ""}-${digest}` ||
       checkpoint.checkpoint_ref.revision !== 1 ||
-      !ID.test(lineage.read_extract_attempt_ref) ||
+      !validReadExtractLineage ||
       !SHA256.test(lineage.read_extract_request_sha256) ||
       !ID.test(lineage.branch_analysis_attempt_ref) ||
       !SHA256.test(lineage.branch_analysis_request_sha256) ||
@@ -128,7 +149,7 @@ async function branchLineageMaterial(input: {
   return Object.freeze({
     checkpoint_ref: { ...checkpoint.checkpoint_ref },
     identity_digest: checkpoint.identity_digest,
-    read_extract_attempt_ref: lineage.read_extract_attempt_ref,
+    ...readExtractIdentity,
     read_extract_request_sha256: lineage.read_extract_request_sha256,
     branch_analysis_attempt_ref: lineage.branch_analysis_attempt_ref,
     branch_analysis_request_sha256: lineage.branch_analysis_request_sha256,

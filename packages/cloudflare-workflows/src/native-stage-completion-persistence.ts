@@ -109,6 +109,16 @@ interface StoredNativeStageCompletionRow {
   readonly attempt_operation_id: string | null;
 }
 
+type NativeStageCompletionTable =
+  | "research_workflow_native_stage_completion"
+  | "research_workflow_authorized_read_stage_completion";
+
+function nativeCompletionTable(stageIndex: number): NativeStageCompletionTable | null {
+  if (stageIndex >= 1 && stageIndex <= 4) return "research_workflow_native_stage_completion";
+  if (stageIndex === 7) return "research_workflow_authorized_read_stage_completion";
+  return null;
+}
+
 /** Private native persistence capability; W2 reservation/receipt readers stay owned by WorkflowCheckpointStore. */
 export class WorkflowNativeStageCompletionPersistence {
   constructor(
@@ -121,7 +131,8 @@ export class WorkflowNativeStageCompletionPersistence {
     stage: StageRequest["stage"],
   ): Promise<CommittedNativeStage | null> {
     const stageIndex = RESEARCH_WORKFLOW_STAGES.indexOf(stage);
-    if (stageIndex < 1 || stageIndex > 4) return null;
+    const table = nativeCompletionTable(stageIndex);
+    if (table === null) return null;
     let row: StoredNativeStageCompletionRow | null;
     try {
       row = await this.db.prepare(`SELECT n.operation_id, n.stage_index, n.request_json, n.request_sha256,
@@ -145,7 +156,7 @@ export class WorkflowNativeStageCompletionPersistence {
           r.scope_snapshot_revision AS run_scope_snapshot_revision,
           r.authorization_receipt_ref AS run_authorization_receipt_ref, r.purge_revision AS run_purge_revision,
           r.handler_generation AS run_handler_generation, a.operation_id AS attempt_operation_id
-        FROM research_workflow_native_stage_completion n
+        FROM ${table} n
         LEFT JOIN investigation_ledger_event e ON e.event_id = n.ledger_event_id
         LEFT JOIN operation_intent i ON i.intent_id = 'wni:' || n.request_sha256 AND i.revision = 1
         LEFT JOIN outbox o ON o.outbox_id = 'wnc-outbox:' || n.request_sha256
@@ -282,6 +293,9 @@ export class WorkflowNativeStageCompletionPersistence {
     readonly output: WorkflowObject;
   }): Promise<WorkflowNativeStageReceipt> {
     const request = parseRequest(input.request);
+    const stageIndex = RESEARCH_WORKFLOW_STAGES.indexOf(request.stage);
+    const table = nativeCompletionTable(stageIndex);
+    if (table === null) fail("WORKFLOW_CONFLICT");
     const requestJson = JSON.stringify(request);
     const requestSha = await textDigest(requestJson);
     const existing = await this.readCommittedNativeStage(request.operation_id, request.stage);
@@ -305,7 +319,6 @@ export class WorkflowNativeStageCompletionPersistence {
       scope_snapshot_revision: run.scope_snapshot_revision, authorization_receipt_ref: run.authorization_receipt_ref,
       purge_revision: run.purge_revision,
     };
-    const stageIndex = RESEARCH_WORKFLOW_STAGES.indexOf(request.stage);
     const receipt = WorkflowNativeStageReceiptSchema.parse({
       protocol: "eliotr.workflow-native-stage.v1", operation_id: request.operation_id, stage: request.stage,
       stage_index: stageIndex, request_sha256: requestSha, receipt_ref: `wnc:${requestSha}`,
@@ -342,7 +355,7 @@ export class WorkflowNativeStageCompletionPersistence {
     try {
       await this.db.batch([
         this.db.prepare(COMMAND_SQL.insertCommand).bind(...command.params),
-        this.db.prepare(`INSERT INTO research_workflow_native_stage_completion
+        this.db.prepare(`INSERT INTO ${table}
           (operation_id, stage_index, stage, request_json, request_sha256, handler_generation,
            effect_policy_generation, effect_class, authority_policy_generation, policy_authority_ref,
            principal_ref, credential_generation, deployment_generation, scope_snapshot_id,

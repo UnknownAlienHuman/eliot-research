@@ -12,6 +12,7 @@ import {
   createD1RetrievalResultStore,
   createD1ScopeProfilePort,
   retrievalRequestDigest,
+  RetrievalQueryError,
   type RetrievalQueryAccess,
   type ScopeProfileBinding,
   type StoredRetrievalResult,
@@ -97,6 +98,20 @@ function sameRef(left: { readonly id: string; readonly revision: number }, right
 function sameScope(left: ScopeSnapshot, right: ScopeSnapshot): boolean {
   return canonicalEvidenceJson(left) === canonicalEvidenceJson(right);
 }
+
+function transientAuthorizedReadStorageFailure(): never {
+  throw new WorkflowCheckpointError("WORKFLOW_STORAGE_UNAVAILABLE", {
+    protocol: "eliotr.workflow-failure-outcome.v1",
+    code: "WORKFLOW_STORAGE_UNAVAILABLE",
+    phase: "STAGE",
+    stage: "READ_AND_EXTRACT",
+    retryable: true,
+    dispatch_state: "NOT_STARTED",
+    references_intact: "INTACT",
+    recovery_action: "NONE",
+  });
+}
+
 
 async function persistedStageZero(
   dependencies: RetrieveBranchesStageDependencies,
@@ -203,7 +218,15 @@ export async function readRetrieveBranchesCheckpoint(
   try {
     storedResult = await createD1RetrievalResultStore(dependencies.database, dependencies.access)
       .load(retrievalIdempotencyKey);
-  } catch {
+  } catch (error) {
+    // The read-only retrieval port signals a transient storage read (retryable, no result settled)
+    // independently of corrupt or non-strict bytes; root owns the port classification.
+    if (error instanceof RetrievalQueryError && error.code === "RETRIEVAL_RESOLUTION_UNCERTAIN" &&
+        error.retryable) transientAuthorizedReadStorageFailure();
+    if (error instanceof RetrievalQueryError &&
+        (error.code === "RETRIEVAL_AUTHORITY_STALE" || error.code === "RETRIEVAL_SCOPE_STALE")) {
+      fail("WORKFLOW_AUTHORITY_STALE");
+    }
     fail("WORKFLOW_OUTPUT_CORRUPT");
   }
   if (storedResult === null || storedResult.idempotency_key !== retrievalIdempotencyKey ||

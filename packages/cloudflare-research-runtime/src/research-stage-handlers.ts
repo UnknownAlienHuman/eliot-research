@@ -341,6 +341,16 @@ export function createResearchStageHandlerFactory(
     configurable: false,
     enumerable: true,
     value: (stage: ResearchWorkflowStage): WorkflowNativeStageHandler | undefined => {
+      if (mode.kind === "server-owned-exploratory" &&
+          mode.generation === SERVER_OWNED_BRANCH_HANDLER_GENERATION && stage === "READ_AND_EXTRACT") {
+        const handler = branchExecution?.read_and_extract_native;
+        if (handler === undefined) return undefined;
+        return async (input) => {
+          if (input.request.handler_generation !== SERVER_OWNED_BRANCH_HANDLER_GENERATION ||
+              input.request.stage !== "READ_AND_EXTRACT") fail("WORKFLOW_AUTHORITY_STALE");
+          return handler(input);
+        };
+      }
       if (mode.kind !== "server-owned-exploratory" || mode.generation === undefined ||
           !NATIVE_DETERMINISTIC_HANDLER_GENERATIONS.has(mode.generation) ||
           !NATIVE_DETERMINISTIC_STAGES.has(stage)) return undefined;

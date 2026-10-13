@@ -11,7 +11,7 @@ import type { InvestigationLedgerStore } from "@eliotr/research";
 import { createD1ScopeProfilePort, type RetrievalQueryAccess, type ScopeProfileBinding } from "@eliotr/retrieval";
 import {
   fail,
-  readCommittedStageLineage,
+  readCommittedWorkflowStageLineage,
   readWorkflowObject,
   WorkflowCheckpointStore,
   type WorkflowObject,
@@ -323,7 +323,7 @@ export async function assembleResearchSemanticServerHandlers(
       });
     };
     const readBranchRoleReadExtract = async (operation_id: string, investigation_id: string) => {
-      const stored = await readCommittedStageLineage(
+      const stored = await readCommittedWorkflowStageLineage(
         new WorkflowCheckpointStore(input.database), operation_id, "READ_AND_EXTRACT");
       const bytes = await readWorkflowObject(input.work_bucket, stored.receipt.output_manifest, true);
       const read = decodeResearchReadExtractCheckpoint(bytes);

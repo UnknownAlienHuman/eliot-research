@@ -26,8 +26,10 @@ import {
   WorkflowCheckpointStore,
   fail,
   readCommittedStageLineage,
+  readCommittedWorkflowStageLineage,
   readWorkflowObject,
   type StageRequest,
+  type WorkflowNativeStageHandler,
   type WorkflowPrincipal,
   type WorkflowStageHandler,
 } from "@eliotr/cloudflare-workflows";
@@ -86,6 +88,7 @@ export const BRANCH_QUERY_HANDLER_GENERATION = "research-handlers.exploratory.v9
 
 export interface ResearchBranchExecutionHandlers {
   readonly read_and_extract: WorkflowStageHandler;
+  readonly read_and_extract_native: WorkflowNativeStageHandler;
   readonly analyze_branches: WorkflowStageHandler;
   readonly counter_search: WorkflowStageHandler;
   readonly recover: (stage: StageRequest["stage"], request: StageRequest, principal: WorkflowPrincipal) => Promise<Uint8Array | null>;
@@ -386,7 +389,7 @@ async function reconciliationCheckpointV2(
 export function createResearchBranchExecutionHandlers(
   dependencies: ResearchBranchExecutionDependencies,
 ): ResearchBranchExecutionHandlers {
-  const read_and_extract: WorkflowStageHandler = async ({ request, principal }) => {
+  const readAndExtractCore = async ({ request, principal }: Pick<Parameters<WorkflowStageHandler>[0], "request" | "principal">): Promise<Uint8Array> => {
     if (request.stage !== "READ_AND_EXTRACT") fail("WORKFLOW_INPUT_INVALID");
     const context = await loadContext(dependencies, request, principal);
     if (request.handler_generation === BRANCH_QUERY_HANDLER_GENERATION) {
@@ -394,6 +397,9 @@ export function createResearchBranchExecutionHandlers(
     }
     return canonicalBytes(await readExtractCheckpoint(context, request, principal));
   };
+  const read_and_extract: WorkflowStageHandler = readAndExtractCore;
+  const read_and_extract_native: WorkflowNativeStageHandler = ({ request, principal }) =>
+    readAndExtractCore({ request, principal });
   const analyze_branches: WorkflowStageHandler = async ({ request, principal, input_bytes, attempt_ref, budget_receipt_ref }) => {
     if (request.stage !== "ANALYZE_BRANCHES") fail("WORKFLOW_INPUT_INVALID");
     const context = await loadContext(dependencies, request, principal);
@@ -426,7 +432,7 @@ export function createResearchBranchExecutionHandlers(
           !sameRef(analysis.planning_manifest_ref, context.planning.manifest_ref) || analysis.planning_manifest_digest !== context.planning.identity_digest) {
         fail("WORKFLOW_OUTPUT_CORRUPT");
       }
-      const storedRead = await readCommittedStageLineage(new WorkflowCheckpointStore(dependencies.database), request.operation_id, "READ_AND_EXTRACT");
+      const storedRead = await readCommittedWorkflowStageLineage(new WorkflowCheckpointStore(dependencies.database), request.operation_id, "READ_AND_EXTRACT");
       const readInputBytes = await readWorkflowObject(dependencies.work_bucket, storedRead.receipt.output_manifest, true);
       const read = decodeResearchReadExtractCheckpointV2(readInputBytes);
       if (!sameRef(read.checkpoint_ref, analysis.read_extract_ref)) fail("WORKFLOW_OUTPUT_CORRUPT");
@@ -439,7 +445,7 @@ export function createResearchBranchExecutionHandlers(
         !sameRef(analysis.planning_manifest_ref, context.planning.manifest_ref) || analysis.planning_manifest_digest !== context.planning.identity_digest) {
       fail("WORKFLOW_OUTPUT_CORRUPT");
     }
-    const storedRead = await readCommittedStageLineage(new WorkflowCheckpointStore(dependencies.database), request.operation_id, "READ_AND_EXTRACT");
+    const storedRead = await readCommittedWorkflowStageLineage(new WorkflowCheckpointStore(dependencies.database), request.operation_id, "READ_AND_EXTRACT");
     const readInputBytes = await readWorkflowObject(dependencies.work_bucket, storedRead.receipt.output_manifest, true);
     const read = decodeResearchReadExtractCheckpoint(readInputBytes);
     if (!sameRef(read.checkpoint_ref, analysis.read_extract_ref)) fail("WORKFLOW_OUTPUT_CORRUPT");
@@ -447,10 +453,10 @@ export function createResearchBranchExecutionHandlers(
       { request, principal, attempt_ref, budget_receipt_ref, input_bytes }, analysis, read, readInputBytes));
   };
   const recover = async (stage: StageRequest["stage"], request: StageRequest, principal: WorkflowPrincipal): Promise<Uint8Array | null> => {
-    if (stage === "READ_AND_EXTRACT") return read_and_extract({ request, principal, input_bytes: new Uint8Array(), attempt_ref: "recovery", budget_receipt_ref: "recovery" });
+    if (stage === "READ_AND_EXTRACT") return read_and_extract_native({ request, principal, input_bytes: new Uint8Array() });
     if (stage === "ANALYZE_BRANCHES" || stage === "COUNTER_SEARCH") {
       const prior = stage === "ANALYZE_BRANCHES" ? "READ_AND_EXTRACT" : "ANALYZE_BRANCHES";
-      const committed = await readCommittedStageLineage(new WorkflowCheckpointStore(dependencies.database), request.operation_id, prior);
+      const committed = await readCommittedWorkflowStageLineage(new WorkflowCheckpointStore(dependencies.database), request.operation_id, prior);
       const bytes = await readWorkflowObject(dependencies.work_bucket, committed.receipt.output_manifest, true);
       return (stage === "ANALYZE_BRANCHES" ? analyze_branches : counter_search)({
         request,
@@ -462,18 +468,38 @@ export function createResearchBranchExecutionHandlers(
     }
     return null;
   };
-  return Object.freeze({ read_and_extract, analyze_branches, counter_search, recover });
+  return Object.freeze({ read_and_extract, read_and_extract_native, analyze_branches, counter_search, recover });
 }
 
-export interface ResearchBranchReconciliationLineage {
+export type ResearchBranchReadExtractLineage =
+  | { readonly kind: "W2"; readonly attempt_ref: string; readonly request_sha256: string }
+  | { readonly kind: "NATIVE"; readonly receipt_ref: string; readonly request_sha256: string };
+
+interface ResearchBranchReconciliationLineageFields {
   readonly checkpoint: ResearchBranchReconciliationCheckpoint | ResearchBranchReconciliationCheckpointV2;
-  readonly read_extract_attempt_ref: string;
   readonly read_extract_request_sha256: string;
   readonly branch_analysis_attempt_ref: string;
   readonly branch_analysis_request_sha256: string;
   readonly stage_attempt_ref: string;
   readonly stage_request_sha256: string;
 }
+
+export type ResearchBranchReconciliationLineage =
+  | (ResearchBranchReconciliationLineageFields & {
+      readonly read_extract_lineage: Extract<ResearchBranchReadExtractLineage, { readonly kind: "W2" }>;
+      /** Historical W2 identity is retained byte-for-byte for downstream readers. */
+      readonly read_extract_attempt_ref: string;
+    })
+  | (ResearchBranchReconciliationLineageFields & {
+      readonly read_extract_lineage: Extract<ResearchBranchReadExtractLineage, { readonly kind: "NATIVE" }>;
+      /** Native lineage has no W2 attempt identity. */
+      readonly read_extract_attempt_ref?: never;
+    })
+  | (ResearchBranchReconciliationLineageFields & {
+      /** Compatibility for existing callers that already carry a real W2 attempt. */
+      readonly read_extract_lineage?: undefined;
+      readonly read_extract_attempt_ref: string;
+    });
 
 interface ResearchBranchReconciliationReadInput {
   readonly database: D1Database;
@@ -493,17 +519,19 @@ export async function readCommittedResearchBranchReconciliationLineage(
   if (receipt === null || receipt.attempt_ref !== committed.attempt_ref ||
       receipt.request_sha256 !== committed.request_sha256 ||
       receipt.investigation_ref.id !== input.investigation_id ||
-      receipt.investigation_ref.revision !== committed.request.investigation_ref.revision) {
+      receipt.investigation_ref.revision !== committed.request.investigation_ref.revision + 1) {
     fail("WORKFLOW_OUTPUT_CORRUPT");
   }
   const [readLineage, analysisLineage] = await Promise.all([
-    readCommittedStageLineage(checkpoints, input.operation_id, "READ_AND_EXTRACT"),
+    readCommittedWorkflowStageLineage(checkpoints, input.operation_id, "READ_AND_EXTRACT"),
     readCommittedStageLineage(checkpoints, input.operation_id, "ANALYZE_BRANCHES"),
   ]);
   if (readLineage.request.investigation_ref.id !== input.investigation_id ||
       analysisLineage.request.investigation_ref.id !== input.investigation_id ||
-      readLineage.request.investigation_ref.revision !== committed.request.investigation_ref.revision ||
-      analysisLineage.request.investigation_ref.revision !== committed.request.investigation_ref.revision) {
+      !sameRef(readLineage.receipt.investigation_ref, analysisLineage.request.investigation_ref) ||
+      !sameRef(analysisLineage.receipt.investigation_ref, committed.request.investigation_ref) ||
+      canonicalEvidenceJson(readLineage.receipt.output_manifest) !== canonicalEvidenceJson(analysisLineage.request.input_manifest) ||
+      canonicalEvidenceJson(analysisLineage.receipt.output_manifest) !== canonicalEvidenceJson(committed.request.input_manifest)) {
     fail("WORKFLOW_OUTPUT_CORRUPT");
   }
   const isV2 = committed.request.handler_generation === BRANCH_QUERY_HANDLER_GENERATION;
@@ -530,9 +558,11 @@ export async function readCommittedResearchBranchReconciliationLineage(
       checkpoint.operation_id !== input.operation_id ||
       read.investigation_ref.id !== input.investigation_id || analysis.investigation_ref.id !== input.investigation_id ||
       checkpoint.investigation_ref.id !== input.investigation_id ||
-      read.investigation_ref.revision !== committed.request.investigation_ref.revision ||
-      analysis.investigation_ref.revision !== committed.request.investigation_ref.revision ||
-      checkpoint.investigation_ref.revision !== committed.request.investigation_ref.revision ||
+      // Branch payloads retain the original read/extract authority snapshot;
+      // W2 receipts above prove the advancing execution head independently.
+      read.investigation_ref.revision !== readLineage.request.investigation_ref.revision ||
+      analysis.investigation_ref.revision !== read.investigation_ref.revision ||
+      checkpoint.investigation_ref.revision !== read.investigation_ref.revision ||
       read.principal_ref !== input.principal_ref || analysis.principal_ref !== input.principal_ref ||
       checkpoint.principal_ref !== input.principal_ref ||
       !sameRef(analysis.read_extract_ref, read.checkpoint_ref) ||
@@ -542,9 +572,29 @@ export async function readCommittedResearchBranchReconciliationLineage(
       canonicalEvidenceJson(analysisResults) !== canonicalEvidenceJson(reconciledAnalysisResults)) {
     fail("WORKFLOW_OUTPUT_CORRUPT");
   }
+  if (readLineage.kind === "W2") {
+    return Object.freeze({
+      checkpoint,
+      read_extract_lineage: {
+        kind: "W2" as const,
+        attempt_ref: readLineage.attempt_ref,
+        request_sha256: readLineage.request_sha256,
+      },
+      read_extract_attempt_ref: readLineage.attempt_ref,
+      read_extract_request_sha256: readLineage.request_sha256,
+      branch_analysis_attempt_ref: analysisLineage.attempt_ref,
+      branch_analysis_request_sha256: analysisLineage.request_sha256,
+      stage_attempt_ref: committed.attempt_ref,
+      stage_request_sha256: committed.request_sha256,
+    });
+  }
   return Object.freeze({
     checkpoint,
-    read_extract_attempt_ref: readLineage.attempt_ref,
+    read_extract_lineage: {
+      kind: "NATIVE" as const,
+      receipt_ref: readLineage.receipt.receipt_ref,
+      request_sha256: readLineage.request_sha256,
+    },
     read_extract_request_sha256: readLineage.request_sha256,
     branch_analysis_attempt_ref: analysisLineage.attempt_ref,
     branch_analysis_request_sha256: analysisLineage.request_sha256,

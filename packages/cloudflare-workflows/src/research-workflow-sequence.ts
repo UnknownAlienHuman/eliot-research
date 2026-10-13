@@ -62,10 +62,14 @@ export async function executeResearchWorkflowSequence(input: {
     if (receipt.investigation_ref.id !== investigationRef.id ||
         receipt.investigation_ref.revision !== investigationRef.revision + 1 ||
         receipt.input_manifest_ref !== inputManifest.object_ref) invalidReceipt();
-    if (completion.kind === "NATIVE" && (index < 1 || index > 4 || completion.receipt.stage_index !== index ||
-        completion.receipt.expected_revision !== investigationRef.revision ||
-        completion.receipt.handler_generation !== params.handler_generation)) {
-      invalidReceipt();
+    if (completion.kind === "NATIVE") {
+      const pureTuple = index >= 1 && index <= 4 && completion.receipt.effect_class === "PURE_COMPUTE";
+      const authorizedReadTuple = index === 7 && stage === "READ_AND_EXTRACT" &&
+        params.handler_generation === "research-handlers.exploratory.v7" &&
+        completion.receipt.effect_class === "AUTHORIZED_READ";
+      if ((!pureTuple && !authorizedReadTuple) || completion.receipt.stage_index !== index ||
+          completion.receipt.expected_revision !== investigationRef.revision ||
+          completion.receipt.handler_generation !== params.handler_generation) invalidReceipt();
     }
     receiptRefs.push(receipt.receipt_ref);
     investigationRef = { ...receipt.investigation_ref };

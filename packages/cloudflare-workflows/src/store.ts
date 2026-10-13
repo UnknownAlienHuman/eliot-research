@@ -294,7 +294,7 @@ export class WorkflowCheckpointStore {
   /** Compile the installed native effect tuple; unmapped and already-started W2 stages stay on W2. */
   async nativeStagePolicy(request: StageRequest, principal: WorkflowPrincipal): Promise<WorkflowNativeStagePolicy | null> {
     const stageIndex = workflowStageIndex(request);
-    if (stageIndex < 1 || stageIndex > 4) return null;
+    if ((stageIndex < 1 || stageIndex > 4) && stageIndex !== 7) return null;
     const committed = await this.readCommittedNativeStage(request.operation_id, request.stage);
     if (committed !== null) {
       if (JSON.stringify(committed.request) !== JSON.stringify(request)) fail("WORKFLOW_CONFLICT");
@@ -341,7 +341,8 @@ export class WorkflowCheckpointStore {
         .bind(request.operation_id).first<RunRow>();
       previous = await this.db.prepare(`SELECT COALESCE(
           (SELECT output_json FROM research_workflow_attempt WHERE operation_id = ?1 AND stage_index = ?2 AND state = 'COMMITTED'),
-          (SELECT output_manifest_json FROM research_workflow_native_stage_completion WHERE operation_id = ?1 AND stage_index = ?2)
+          (SELECT output_manifest_json FROM research_workflow_native_stage_completion WHERE operation_id = ?1 AND stage_index = ?2),
+          (SELECT output_manifest_json FROM research_workflow_authorized_read_stage_completion WHERE operation_id = ?1 AND stage_index = ?2)
         ) AS output_json`).bind(request.operation_id, stageIndex - 1).first<{ output_json: string | null }>();
       attempt = await this.db.prepare("SELECT operation_id FROM research_workflow_attempt WHERE operation_id = ?1 AND stage_index = ?2 LIMIT 1")
         .bind(request.operation_id, stageIndex).first<{ operation_id: string }>();
