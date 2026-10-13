@@ -23,7 +23,7 @@ export function NextQuestionScope({ locale, page, projectSelected, isLoading, is
 }) {
   const id = useId(), text = copy[locale];
   const missingPage = isLoading ? text.loading : isError ? text.error : projectSelected ? text.missing : text.empty;
-  return <details className="er-live-scope" aria-labelledby={id}>
+  return <details className="er-live-scope" aria-labelledby={id} data-project={projectSelected ? 'selected' : 'none'}>
     <summary><h2 id={id}>{text.title}</h2><span>{text.selected(selected.length)}</span></summary>
     <p>{text.detail}</p>
     <p>{locale === 'ru' ? `В этой версии интерфейса можно выбрать до ${selectionLimit} источников для одного вопроса.` : `This interface supports up to ${selectionLimit} sources per question.`}</p>

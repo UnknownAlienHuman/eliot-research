@@ -217,3 +217,68 @@
 .er-shell-reading > .er-field { margin-block-end: var(--eliot-space-panel); }
 /* Studio: saved reports and the drafts library are separate sections with section rhythm. */
 .er-live-history + .er-live-plain-fieldset { margin-block-start: var(--eliot-space-section); }
+
+/* ---- Research as a conversation (live NotebookLM chat) ----
+   The reading pane becomes one column that fills its height; the run feature grows to fill it so
+   the composer dock rests at the foot of the pane and stays sticky inside the pane's single scroll. */
+.er-shell[data-destination="research"] .er-shell-reading {
+  display: flex;
+  flex-direction: column;
+  padding-block-end: 0;
+}
+.er-shell[data-destination="research"] .er-shell-reading > * { inline-size: 100%; flex-shrink: 0; }
+.er-shell[data-destination="research"] .er-shell-reading > h1 {
+  margin-block-end: var(--eliot-space-group);
+  font-size: var(--eliot-type-title-large-size);
+  line-height: var(--eliot-type-title-large-line-height);
+}
+.er-shell[data-destination="research"] .er-shell-reading > .er-live-research { flex: 1 0 auto; display: flex; flex-direction: column; }
+.er-live-research > .er-research-run > .er-live-actions { margin-block: 0; }
+.er-live-research .er-live-history { margin-block: var(--eliot-space-block-control) 0; }
+
+/* Notices: one calm callout each — leading glyph, the words, then their actions on the same row. */
+.er-live-callout {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--eliot-space-block-control) var(--eliot-space-gutter);
+  margin-block-end: var(--eliot-space-gutter);
+  padding: var(--eliot-space-block-control) var(--eliot-space-block-control) var(--eliot-space-block-control) var(--eliot-space-panel);
+  min-block-size: calc(var(--eliot-size-control) + var(--eliot-space-panel));
+  border-radius: var(--eliot-shape-large);
+  background: var(--eliot-color-group);
+  color: var(--md-sys-color-on-surface);
+}
+.er-live-callout > .er-symbol, .er-live-callout .er-status > .er-symbol { inline-size: var(--eliot-icon-small-size); block-size: var(--eliot-icon-small-size); color: var(--md-sys-color-primary); }
+.er-live-callout > span:not(.er-status), .er-live-callout > .er-status { flex: 1 1 16rem; min-inline-size: 0; }
+.er-live-callout .er-status { color: inherit; align-items: center; }
+.er-live-callout > .er-live-actions { margin: 0; min-block-size: 0; }
+.er-live-callout .er-shell-link { color: var(--md-sys-color-primary) !important; }
+.er-live-callout > p { flex-basis: 100%; margin: 0; opacity: 0.9; }
+.er-live-callout--attention { background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
+.er-live-callout--attention .er-status > .er-symbol { color: inherit; }
+.er-live-research .er-live-callout { margin-block-end: 0; }
+
+/* Before a project is chosen the library already asks for one; the empty scope panel would only repeat it. */
+.er-live-scope[data-project="none"] { display: none; }
+
+/* Sources pane on Research: NotebookLM-style rows — document glyph, title, checkbox at the end. */
+.er-live-source-pick { display: grid; gap: var(--eliot-space-hairline); margin: 0; padding: 0; list-style: none; }
+.er-live-source-pick label {
+  display: flex;
+  align-items: center;
+  gap: var(--eliot-space-gutter);
+  min-block-size: var(--eliot-size-list-row);
+  padding-inline: var(--eliot-space-gutter) var(--eliot-space-block-control);
+  border-radius: var(--eliot-shape-medium);
+  cursor: pointer;
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+  transition: background-color var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
+}
+.er-live-source-pick label:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 6%, transparent); }
+.er-live-source-pick label:has(input:checked) { background: color-mix(in srgb, var(--md-sys-color-primary) 10%, transparent); }
+.er-live-source-pick .er-symbol { inline-size: var(--eliot-icon-small-size); block-size: var(--eliot-icon-small-size); color: var(--md-sys-color-primary); }
+.er-live-source-pick span { flex: 1 1 auto; min-inline-size: 0; overflow-wrap: anywhere; }
+.er-live-source-pick input { margin-inline-start: auto; }
+.er-live-source-pick:empty, .er-live-source-context:empty { display: none; }

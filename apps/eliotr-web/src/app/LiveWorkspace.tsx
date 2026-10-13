@@ -110,7 +110,16 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
     <aside className="er-shell-sources" hidden={destination !== "research"} aria-label={text.sources}>
       <h2>{text.sources}</h2><p className="er-shell-eyebrow">{selected?.title ?? text.untitled}</p>
       <p>{text.selected(scope.length)}</p>
-      <ul className="er-live-source-context">{scope.map(source => <li key={source.id}>
+      {/* Choose the next question's sources beside the conversation, as in NotebookLM; the same guarded toggle as Sources. */}
+      {selected && library.data ? <ul className="er-live-source-pick" aria-label={text.sourceScope}>{library.data.sources.map(source => {
+        const checked = scope.some(item => item.id === source.id);
+        return <li key={source.id}><label>
+          <MaterialSymbol name="file" /><span>{source.title}</span>
+          <input type="checkbox" checked={checked} disabled={!checked && scope.length >= selectedSourceLimit}
+            onChange={event => { if (library.data) toggleScope(library.data, source.id, event.target.checked); }} />
+        </label></li>;
+      })}</ul> : null}
+      <ul className="er-live-source-context">{scope.filter(source => !library.data?.sources.some(row => row.id === source.id)).map(source => <li key={source.id}>
         <MaterialSymbol name="file" /><span>{source.label}</span>
       </li>)}</ul>
       <p className="er-shell-note">{text.sourceScope}</p>

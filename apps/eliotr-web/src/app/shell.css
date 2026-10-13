@@ -111,10 +111,8 @@ html, body { background: var(--eliot-color-canvas); }
   background: var(--eliot-brand-gradient);
   color: var(--eliot-on-brand);
   box-shadow: var(--eliot-elevation-1);
-  transition: border-radius var(--eliot-motion-spatial) var(--eliot-motion-expressive-easing);
 }
 .er-shell-brand-mark > .er-symbol { inline-size: var(--eliot-icon-small-size); block-size: var(--eliot-icon-small-size); }
-.er-shell-brand:hover .er-shell-brand-mark { border-radius: var(--eliot-shape-full); }
 .er-shell-brand-name {
   font-family: var(--eliot-type-font-family-display);
   font-size: var(--eliot-type-title-large-size);
