@@ -1,55 +1,440 @@
+/*
+ * Owner workspace frame — Material 3 Expressive canonical web-app layout:
+ * a top app bar, a collapsed navigation rail on medium/expanded windows, a bottom
+ * navigation bar on compact windows, and soft rounded panes (as in live NotebookLM)
+ * that each own exactly one vertical scroll. Every pane reserves its scrollbar gutter
+ * so content never shifts when a scrollbar appears.
+ */
 html, body, #root { margin: 0; min-height: 100%; }
+html, body { background: var(--eliot-color-canvas); }
 [hidden] { display: none !important; }
-#privacy-guard, .er-access { box-sizing: border-box; min-height: 100dvh; display: flex; flex-direction: column; align-items: start; justify-content: center; gap: var(--eliot-space-panel); padding: var(--eliot-space-reading); background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface); font-family: var(--eliot-type-font-family); }
+
+#privacy-guard, .er-access {
+  box-sizing: border-box;
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--eliot-space-panel);
+  padding: var(--eliot-space-reading);
+  background: var(--eliot-color-canvas);
+  color: var(--md-sys-color-on-surface-variant);
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-body-large-size);
+  line-height: var(--eliot-type-body-large-line-height);
+  text-align: center;
+}
+.er-access { color: var(--md-sys-color-on-surface); }
+.er-access > .er-symbol {
+  inline-size: var(--eliot-size-touch-target);
+  block-size: var(--eliot-size-touch-target);
+  padding: var(--eliot-space-block-control);
+  box-sizing: border-box;
+  border-radius: var(--eliot-shape-large);
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+}
 .er-access h1, .er-access p { margin: 0; max-width: var(--eliot-layout-reading-max); }
-.er-access h1 { font-size: var(--eliot-type-headline-medium-size); line-height: var(--eliot-type-headline-medium-line-height); }
-.er-shell { box-sizing: border-box; height: 100dvh; display: grid; grid-template-columns: var(--eliot-layout-rail-size) var(--eliot-layout-source-width) minmax(0, 1fr); grid-template-rows: var(--eliot-layout-topbar-size) minmax(0, 1fr); grid-template-areas: "header header header" "nav sources reading"; gap: var(--eliot-space-block-control); padding: 0 var(--eliot-space-panel) var(--eliot-space-panel) var(--eliot-space-block-control); background: var(--md-sys-color-surface); color: var(--md-sys-color-on-surface); font-family: var(--eliot-type-font-family); font-size: var(--eliot-type-body-medium-size); line-height: var(--eliot-type-body-medium-line-height); }
+.er-access h1 {
+  font-family: var(--eliot-type-font-family-display);
+  font-size: var(--eliot-type-headline-medium-size);
+  line-height: var(--eliot-type-headline-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-regular);
+  letter-spacing: var(--eliot-type-letter-spacing-headline);
+}
+.er-access p { color: var(--md-sys-color-on-surface-variant); }
+.er-access :focus-visible { outline: var(--eliot-focus-width) solid var(--md-sys-color-primary); outline-offset: var(--eliot-focus-offset); }
+
+/* ---- Frame: top app bar, collapsed navigation rail, then panes ---- */
+
+.er-shell {
+  box-sizing: border-box;
+  height: 100dvh;
+  display: grid;
+  grid-template-columns: var(--eliot-layout-rail-size) var(--eliot-layout-source-width) minmax(0, 1fr);
+  grid-template-rows: var(--eliot-layout-topbar-size) minmax(0, 1fr);
+  grid-template-areas: "header header header" "nav sources reading";
+  column-gap: var(--eliot-space-gutter);
+  padding: 0 var(--eliot-space-panel) var(--eliot-space-panel) 0;
+  overflow: hidden;
+  background: var(--eliot-color-canvas);
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
 .er-shell *, .er-shell *::before, .er-shell *::after { box-sizing: border-box; }
-.er-shell h1, .er-shell h2, .er-shell p { margin: 0; }
-.er-shell a { color: inherit; }
+:where(.er-shell) :where(h1, h2, h3, p) { margin: 0; }
+:where(.er-shell) :where(a) { color: inherit; }
 .er-shell :focus-visible, .er-access :focus-visible { outline: var(--eliot-focus-width) solid var(--md-sys-color-primary); outline-offset: var(--eliot-focus-offset); }
-.er-shell-header { grid-area: header; position: relative; z-index: 1; display: flex; align-items: center; gap: var(--eliot-space-panel); min-width: 0; padding-inline: var(--eliot-space-panel) var(--eliot-space-block-control); }
-.er-shell-brand { display: inline-flex; align-items: center; gap: var(--eliot-space-block-control); text-decoration: none; font-size: var(--eliot-type-title-medium-size); line-height: var(--eliot-type-title-medium-line-height); font-weight: var(--eliot-type-font-weight-medium); flex-shrink: 0; }
-.er-shell-brand > .er-symbol { color: var(--md-sys-color-primary); }
-.er-shell-preview { flex: 1; color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-body-small-size); }
-.er-shell-preferences { margin-inline-start: auto; position: relative; z-index: 0; }
-.er-shell-preferences > summary { min-height: var(--eliot-size-touch-target); display: flex; align-items: center; gap: var(--eliot-space-block-control); padding-inline: var(--eliot-space-inline-control); list-style: none; cursor: pointer; border-radius: var(--eliot-shape-full); color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-label-large-size); }
-.er-shell-preferences > summary::-webkit-details-marker { display: none; }
-.er-shell-preferences > summary:hover, .er-shell-preferences[open] > summary { background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface); }
-.er-shell-preferences-panel { position: absolute; inset-block-start: 100%; inset-inline-end: 0; display: grid; gap: var(--eliot-space-panel); inline-size: var(--eliot-layout-source-width); max-inline-size: calc(100vw - var(--eliot-space-reading)); padding: var(--eliot-space-panel); background: var(--md-sys-color-surface-container-highest); border: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant); border-radius: var(--eliot-shape-large); }
-.er-shell-preferences-panel label { display: grid; gap: var(--eliot-space-block-control); font-size: var(--eliot-type-label-large-size); }
-.er-shell-preferences-panel select { min-height: var(--eliot-size-touch-target); width: 100%; min-width: 0; font: inherit; color: inherit; background: var(--md-sys-color-surface-container); border: var(--eliot-divider-width) solid var(--md-sys-color-outline); border-radius: var(--eliot-shape-small); padding-inline: var(--eliot-space-inline-control); }
-.er-shell-nav { grid-area: nav; display: flex; flex-direction: column; gap: var(--eliot-space-block-control); }
-.er-shell-destination { display: flex; flex-direction: column; align-items: center; text-align: center; gap: var(--eliot-space-block-control); min-width: 0; padding-block: var(--eliot-space-block-control); text-decoration: none; font-size: var(--eliot-type-label-small-size); line-height: var(--eliot-type-label-small-line-height); overflow-wrap: normal; }
-.er-shell-destination-icon { display: grid; place-items: center; width: var(--eliot-layout-nav-indicator-width); min-height: var(--eliot-size-touch-target); border-radius: var(--eliot-shape-full); }
+/* Route headings receive programmatic focus for screen readers; they are not controls and draw no ring. */
+.er-shell [tabindex="-1"]:focus { outline: none; }
+/* Text controls show focus through their own Material border, not a second outer ring. */
+.er-shell :is(select, textarea, input:not([type="checkbox"]):not([type="radio"]):not([type="file"])):focus-visible { outline: none; }
+.er-shell[data-destination="sources"], .er-shell[data-destination="studio"], .er-shell[data-destination="connections"] {
+  grid-template-columns: var(--eliot-layout-rail-size) minmax(0, 1fr);
+  grid-template-areas: "header header" "nav reading";
+}
+
+/* ---- Top app bar ---- */
+
+.er-shell-header {
+  grid-area: header;
+  position: relative;
+  z-index: var(--eliot-z-header);
+  display: flex;
+  align-items: center;
+  gap: var(--eliot-space-panel);
+  min-width: 0;
+  padding-inline-start: calc((var(--eliot-layout-rail-size) - var(--eliot-size-control)) / 2);
+}
+.er-shell-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--eliot-space-panel);
+  flex-shrink: 0;
+  min-height: var(--eliot-size-touch-target);
+  padding-inline-end: var(--eliot-space-block-control);
+  border-radius: var(--eliot-shape-full);
+  text-decoration: none;
+  color: var(--md-sys-color-on-surface);
+}
+.er-shell-brand-mark {
+  display: grid;
+  place-items: center;
+  inline-size: var(--eliot-size-control);
+  block-size: var(--eliot-size-control);
+  border-radius: var(--eliot-shape-medium);
+  background: var(--eliot-brand-gradient);
+  color: var(--eliot-on-brand);
+  box-shadow: var(--eliot-elevation-1);
+  transition: border-radius var(--eliot-motion-spatial) var(--eliot-motion-expressive-easing);
+}
+.er-shell-brand-mark > .er-symbol { inline-size: var(--eliot-icon-small-size); block-size: var(--eliot-icon-small-size); }
+.er-shell-brand:hover .er-shell-brand-mark { border-radius: var(--eliot-shape-full); }
+.er-shell-brand-name {
+  font-family: var(--eliot-type-font-family-display);
+  font-size: var(--eliot-type-title-large-size);
+  line-height: var(--eliot-type-title-large-line-height);
+  font-weight: var(--eliot-type-font-weight-regular);
+  letter-spacing: var(--eliot-type-letter-spacing-headline);
+  white-space: nowrap;
+}
+.er-shell-preview {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  padding: var(--eliot-space-tight) var(--eliot-space-gutter);
+  border-radius: var(--eliot-shape-full);
+  background: var(--md-sys-color-tertiary-container);
+  color: var(--md-sys-color-on-tertiary-container);
+  font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* Collapsed navigation rail (M3 Expressive): a 56x32 indicator above a 12sp label; the whole
+   rail width is the target. The indicator grows from its centre when a destination activates. */
+.er-shell-nav {
+  grid-area: nav;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--eliot-space-gutter);
+  min-width: 0;
+  padding-block: var(--eliot-space-tight) var(--eliot-space-panel);
+}
+.er-shell-destination {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--eliot-space-tight);
+  min-width: 0;
+  padding-block: var(--eliot-space-tight) var(--eliot-space-block-control);
+  color: var(--md-sys-color-on-surface-variant);
+  text-decoration: none;
+  font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  letter-spacing: var(--eliot-type-letter-spacing-label);
+  -webkit-tap-highlight-color: transparent;
+  transition: color var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
+}
+.er-shell .er-shell-destination:focus-visible { outline: none; }
+.er-shell-destination-icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  inline-size: var(--eliot-layout-nav-indicator-width);
+  block-size: var(--eliot-layout-nav-indicator-height);
+  border-radius: var(--eliot-shape-full);
+  isolation: isolate;
+}
+.er-shell-destination-icon::before, .er-shell-destination-icon::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+}
+.er-shell-destination-icon::before {
+  background: var(--eliot-color-selected);
+  transform: scaleX(0.4);
+  opacity: 0;
+  transition:
+    transform var(--eliot-motion-spatial) var(--eliot-motion-emphasized-easing),
+    opacity var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
+}
+.er-shell-destination-icon::after {
+  background: currentcolor;
+  opacity: 0;
+  transition: opacity var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
+}
+.er-shell-destination:hover .er-shell-destination-icon::after { opacity: var(--eliot-state-hover-opacity); }
+.er-shell-destination:active .er-shell-destination-icon::after { opacity: var(--eliot-state-pressed-opacity); }
+.er-shell-destination:focus-visible .er-shell-destination-icon { outline: var(--eliot-focus-width) solid var(--md-sys-color-primary); outline-offset: var(--eliot-focus-offset); }
+.er-shell-destination-icon > .er-symbol { inline-size: var(--eliot-icon-standard-size); block-size: var(--eliot-icon-standard-size); }
 .er-shell-destination-label { display: block; max-inline-size: 100%; white-space: nowrap; }
-.er-shell-destination:hover > .er-shell-destination-icon { background: var(--md-sys-color-surface-container-high); }
-.er-shell-destination[aria-current="page"] { font-weight: var(--eliot-type-font-weight-medium); }
-.er-shell-destination[aria-current="page"] > .er-shell-destination-icon { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
-.er-shell-sources { grid-area: sources; min-width: 0; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; align-items: stretch; gap: var(--eliot-space-panel); background: var(--md-sys-color-surface-container); border-radius: var(--eliot-shape-extra-large); padding: var(--eliot-space-panel); }
-.er-shell-sources h2 { font-size: var(--eliot-type-title-medium-size); line-height: var(--eliot-type-title-medium-line-height); font-weight: var(--eliot-type-font-weight-medium); }
+.er-shell-destination[aria-current="page"] { color: var(--md-sys-color-secondary); }
+.er-shell-destination[aria-current="page"] .er-shell-destination-icon { color: var(--eliot-color-on-selected); }
+.er-shell-destination[aria-current="page"] .er-shell-destination-icon::before { transform: none; opacity: 1; }
+
+/* Preferences: an icon pill opening a Material menu surface. */
+.er-shell-preferences { position: relative; flex-shrink: 0; margin-inline-start: auto; z-index: var(--eliot-z-menu); }
+.er-shell-preferences > summary {
+  position: relative;
+  min-height: var(--eliot-size-control);
+  display: flex;
+  align-items: center;
+  gap: var(--eliot-space-block-control);
+  padding-inline: var(--eliot-space-gutter) var(--eliot-space-inline-control);
+  border-radius: var(--eliot-shape-full);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  white-space: nowrap;
+  transition: background-color var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
+}
+.er-shell-preferences > summary::before { display: none; }
+.er-shell-preferences > summary > .er-symbol { inline-size: var(--eliot-icon-small-size); block-size: var(--eliot-icon-small-size); }
+.er-shell-preferences > summary:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); color: var(--md-sys-color-on-surface); }
+.er-shell-preferences[open] > summary { background: var(--eliot-color-selected); color: var(--eliot-color-on-selected); }
+.er-shell-preferences-panel {
+  position: absolute;
+  inset-block-start: calc(100% + var(--eliot-space-block-control));
+  inset-inline-end: 0;
+  display: grid;
+  gap: var(--eliot-space-panel);
+  inline-size: var(--eliot-layout-menu-width);
+  max-inline-size: calc(100vw - var(--eliot-space-reading));
+  padding: var(--eliot-space-group);
+  background: var(--md-sys-color-surface-container-high);
+  border-radius: var(--eliot-shape-large-increased);
+  box-shadow: var(--eliot-elevation-2);
+  transform-origin: top right;
+  animation: er-menu-enter var(--eliot-motion-spatial) var(--eliot-motion-emphasized-easing);
+}
+.er-shell-preferences-title {
+  color: var(--md-sys-color-on-surface);
+  font-size: var(--eliot-type-title-medium-size);
+  line-height: var(--eliot-type-title-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+.er-shell-preferences-panel label {
+  display: grid;
+  gap: var(--eliot-space-tight);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+.er-shell-preferences-panel select { width: 100%; min-width: 0; background-color: var(--eliot-color-pane); }
+@keyframes er-menu-enter {
+  from { transform: scale(0.94) translateY(calc(var(--eliot-space-tight) * -1)); }
+  to { transform: none; }
+}
+
+/* ---- Panes: one vertical scroll owner each, stable gutters, soft extra-large corners ---- */
+
+.er-shell-sources, .er-shell-reading {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  background: var(--eliot-color-pane);
+  border-radius: var(--eliot-shape-extra-large-increased);
+}
+.er-shell-sources {
+  grid-area: sources;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--eliot-space-gutter);
+  padding: var(--eliot-space-group) var(--eliot-space-block-control) var(--eliot-space-panel) var(--eliot-space-group);
+}
+.er-shell-sources h2 {
+  font-size: var(--eliot-type-title-medium-size);
+  line-height: var(--eliot-type-title-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
 .er-shell-sources > p { color: var(--md-sys-color-on-surface-variant); }
-.er-shell-reading { grid-area: reading; min-width: 0; min-height: 0; overflow-y: auto; background: var(--md-sys-color-surface-container-lowest); border-radius: var(--eliot-shape-extra-large); padding: var(--eliot-space-reading); }
-.er-shell[data-destination="sources"], .er-shell[data-destination="studio"], .er-shell[data-destination="connections"] { grid-template-columns: var(--eliot-layout-rail-size) minmax(0, 1fr); grid-template-areas: "header header" "nav reading"; }
-.er-shell-eyebrow, .er-shell-note { color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-body-small-size); }
-.er-shell-reading h1 { inline-size: fit-content; max-inline-size: 100%; margin-block: 0 var(--eliot-space-section); font-size: var(--eliot-type-title-large-size); line-height: var(--eliot-type-title-large-line-height); font-weight: var(--eliot-type-font-weight-medium); overflow-wrap: anywhere; }
-.er-shell-reading > .er-shell-eyebrow { margin-block-end: var(--eliot-space-block-control); }
-.er-shell-lead { max-width: var(--eliot-layout-reading-max); color: var(--md-sys-color-on-surface-variant); }
-.er-shell-empty { display: flex; flex-direction: column; align-items: start; gap: var(--eliot-space-panel); margin-block: var(--eliot-space-section); padding-block: var(--eliot-space-section); max-width: var(--eliot-layout-reading-max); }
-.er-shell-empty h2 { font-size: var(--eliot-type-headline-small-size); line-height: var(--eliot-type-headline-small-line-height); font-weight: var(--eliot-type-font-weight-regular); }
-.er-shell-link { display: inline-flex; align-items: center; min-height: var(--eliot-size-touch-target); gap: var(--eliot-space-block-control); padding-inline: var(--eliot-space-block-control); color: var(--md-sys-color-primary) !important; font-weight: var(--eliot-type-font-weight-medium); text-underline-offset: var(--eliot-space-block-control); }
-.er-shell-skip { position: absolute; transform: translateY(-200%); padding: var(--eliot-space-inline-control); background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); isolation: isolate; }
+.er-shell-reading {
+  grid-area: reading;
+  padding: var(--eliot-space-reading) var(--eliot-space-reading) var(--eliot-space-section);
+}
+.er-shell .er-shell-reading > * { max-inline-size: var(--eliot-layout-wide-max); margin-inline: auto; }
+.er-shell[data-destination="research"] .er-shell-reading > * { max-inline-size: var(--eliot-layout-reading-max); }
+.er-shell-eyebrow, .er-shell-note {
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-body-small-size);
+  line-height: var(--eliot-type-body-small-line-height);
+}
+.er-shell-reading > .er-shell-eyebrow {
+  margin-block-end: var(--eliot-space-tight);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  overflow-wrap: anywhere;
+}
+.er-shell-reading h1 {
+  max-inline-size: var(--eliot-layout-wide-max);
+  margin-block: 0 var(--eliot-space-section);
+  font-family: var(--eliot-type-font-family-display);
+  font-size: var(--eliot-type-headline-medium-size);
+  line-height: var(--eliot-type-headline-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-regular);
+  letter-spacing: var(--eliot-type-letter-spacing-headline);
+  overflow-wrap: anywhere;
+}
+.er-shell-reading h1:focus-visible { outline-offset: var(--eliot-space-tight); border-radius: var(--eliot-shape-extra-small); }
+.er-shell-lead { max-width: var(--eliot-layout-reading-max); color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-body-large-size); line-height: var(--eliot-type-body-large-line-height); }
+.er-shell-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: start;
+  gap: var(--eliot-space-panel);
+  margin-block: var(--eliot-space-section);
+  padding: var(--eliot-space-reading);
+  max-width: var(--eliot-layout-reading-max);
+  border-radius: var(--eliot-shape-extra-large);
+  background: var(--eliot-color-group);
+}
+.er-shell-empty > .er-symbol {
+  inline-size: var(--eliot-size-touch-target);
+  block-size: var(--eliot-size-touch-target);
+  padding: var(--eliot-space-block-control);
+  border-radius: var(--eliot-shape-large);
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+}
+.er-shell-empty h2 {
+  font-family: var(--eliot-type-font-family-display);
+  font-size: var(--eliot-type-headline-small-size);
+  line-height: var(--eliot-type-headline-small-line-height);
+  font-weight: var(--eliot-type-font-weight-regular);
+}
+
+/* Navigational links that read as Material text buttons. */
+.er-shell-link {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  min-height: var(--eliot-size-control);
+  gap: var(--eliot-space-block-control);
+  padding-inline: var(--eliot-space-inline-control);
+  border-radius: var(--eliot-shape-full);
+  color: var(--md-sys-color-primary) !important;
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.er-shell-link::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: currentcolor;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
+}
+.er-shell-link:hover::after { opacity: var(--eliot-state-hover-opacity); }
+.er-shell-link:active::after { opacity: var(--eliot-state-pressed-opacity); }
+.er-shell-sources > .er-shell-link {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container) !important;
+}
+.er-shell-skip {
+  position: fixed;
+  inset-block-start: var(--eliot-space-block-control);
+  inset-inline-start: var(--eliot-space-block-control);
+  z-index: var(--eliot-z-menu);
+  transform: translateY(-200%);
+  padding: var(--eliot-space-block-control) var(--eliot-space-inline-control);
+  border-radius: var(--eliot-shape-full);
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary) !important;
+  font-weight: var(--eliot-type-font-weight-medium);
+  text-decoration: none;
+  isolation: isolate;
+}
 .er-shell-skip:focus { transform: none; }
-@media (max-width: 64rem) { .er-shell { grid-template-columns: var(--eliot-layout-rail-size) minmax(0, 1fr); grid-template-areas: "header header" "nav reading"; } .er-shell-sources { display: none; } }
-@media (max-width: 48rem) {
-  .er-shell, .er-shell[data-destination="sources"], .er-shell[data-destination="studio"], .er-shell[data-destination="connections"] { grid-template-columns: minmax(0, 1fr); grid-template-rows: var(--eliot-layout-topbar-size) minmax(0, 1fr) auto; grid-template-areas: "header" "reading" "nav"; padding: 0 var(--eliot-space-block-control); }
-  .er-shell-header { gap: var(--eliot-space-block-control); padding-inline: var(--eliot-space-block-control); }
-  .er-shell-preview, .er-shell-preferences > summary > span { display: none; }
+
+/* ---- Adaptive layout: rail on medium and expanded windows, bottom bar on compact ---- */
+
+@media (max-width: 80rem) {
+  .er-shell-preview { display: none; }
+}
+@media (max-width: 64rem) {
+  .er-shell { grid-template-columns: var(--eliot-layout-rail-size) minmax(0, 1fr); grid-template-areas: "header header" "nav reading"; }
+  .er-shell-sources { display: none; }
+  .er-shell-preferences > summary > span { display: none; }
   .er-shell-preferences > summary { padding-inline: var(--eliot-space-block-control); }
-  .er-shell-nav { flex-direction: row; justify-content: space-around; gap: 0; padding-block: var(--eliot-space-block-control); }
-  .er-shell-destination { flex: 1 1 auto; min-width: 0; gap: 0; padding-block: 0; }
-  .er-shell-destination-icon { min-height: var(--eliot-size-touch-target); }
-  .er-shell-reading { padding: var(--eliot-space-panel); border-radius: var(--eliot-shape-large); }
-  .er-shell-reading h1 { margin-block-end: var(--eliot-space-panel); }
+}
+@media (max-width: 48rem) {
+  .er-shell, .er-shell[data-destination="sources"], .er-shell[data-destination="studio"], .er-shell[data-destination="connections"] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: var(--eliot-layout-topbar-size) minmax(0, 1fr);
+    grid-template-areas: "header" "reading";
+    padding: 0 var(--eliot-space-block-control) calc(var(--eliot-layout-navbar-size) + env(safe-area-inset-bottom));
+  }
+  .er-shell-header { gap: var(--eliot-space-gutter); padding-inline: var(--eliot-space-tight); }
+  .er-shell-brand-name { font-size: var(--eliot-type-title-medium-size); line-height: var(--eliot-type-title-medium-line-height); }
+  .er-shell-nav {
+    position: fixed;
+    inset-inline: 0;
+    inset-block-end: 0;
+    z-index: var(--eliot-z-header);
+    flex-direction: row;
+    justify-content: space-around;
+    gap: 0;
+    min-height: var(--eliot-layout-navbar-size);
+    padding: var(--eliot-space-block-control) var(--eliot-space-block-control) calc(var(--eliot-space-block-control) + env(safe-area-inset-bottom));
+    background: var(--md-sys-color-surface-container);
+  }
+  .er-shell-destination { flex: 1 1 0; padding-block: 0; }
+  .er-shell-reading { padding: var(--eliot-space-group) var(--eliot-space-panel) var(--eliot-space-section); border-radius: var(--eliot-shape-extra-large); scrollbar-gutter: auto; }
+  .er-shell-reading h1 { margin-block-end: var(--eliot-space-group); font-size: var(--eliot-type-headline-small-size); line-height: var(--eliot-type-headline-small-line-height); }
   #privacy-guard, .er-access { padding: var(--eliot-space-panel); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .er-shell-preferences-panel { animation: none; }
+}
+@media (forced-colors: active) {
+  .er-shell-sources, .er-shell-reading, .er-shell-preferences-panel { border: var(--eliot-divider-width) solid CanvasText; }
+  .er-shell-destination[aria-current="page"] .er-shell-destination-icon { outline: var(--eliot-divider-width) solid CanvasText; }
 }

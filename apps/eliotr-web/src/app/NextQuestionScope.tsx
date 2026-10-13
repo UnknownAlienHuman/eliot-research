@@ -33,7 +33,9 @@ export function NextQuestionScope({ locale, page, projectSelected, isLoading, is
         onChange={event => onToggle(page, source.id, event.target.checked)} />
       <span>{source.title}</span>
     </label></li>)}</ul> : <Status tone={isError && !isLoading ? "error" : "neutral"}>{missingPage}</Status>}
-    <p>{text.selected(selected.length)}</p>
-    {selected.length > 0 && <Button variant="text" onClick={onClear}>{text.clear}</Button>}
+    <div className="er-live-scope-footer">
+      <p>{text.selected(selected.length)}</p>
+      {selected.length > 0 && <Button variant="text" onClick={onClear}>{text.clear}</Button>}
+    </div>
   </details>;
 }

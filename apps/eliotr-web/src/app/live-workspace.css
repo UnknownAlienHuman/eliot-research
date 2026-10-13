@@ -1,51 +1,219 @@
+/* Live workspace composition. Material 3 Expressive roles only; one scroll owner per pane. */
 .er-live-workspace { display: contents; }
-.er-live-source-context { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--eliot-space-block-control); }
-.er-live-source-context li { display: flex; align-items: start; gap: var(--eliot-space-block-control); padding-block: var(--eliot-space-block-control); }
-.er-live-source-context .er-symbol { flex-shrink: 0; color: var(--md-sys-color-on-surface-variant); }
+
+/* Sources pane on Research: the frozen next-question scope as a calm NotebookLM-style list. */
+.er-live-source-context { margin: 0; padding: 0; list-style: none; display: grid; gap: var(--eliot-space-hairline); }
+.er-live-source-context li {
+  display: flex;
+  align-items: center;
+  gap: var(--eliot-space-gutter);
+  min-height: var(--eliot-size-list-row);
+  padding: var(--eliot-space-tight) var(--eliot-space-gutter);
+  border-radius: var(--eliot-shape-medium);
+  color: var(--md-sys-color-on-surface);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+}
+.er-live-source-context li:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 5%, transparent); }
+.er-live-source-context .er-symbol {
+  inline-size: var(--eliot-icon-small-size);
+  block-size: var(--eliot-icon-small-size);
+  color: var(--md-sys-color-primary);
+}
 .er-live-source-context span { min-width: 0; overflow-wrap: anywhere; }
+.er-shell-sources > p:not(.er-shell-eyebrow):not(.er-shell-note) {
+  align-self: flex-start;
+  padding: var(--eliot-space-hairline) var(--eliot-space-block-control);
+  border-radius: var(--eliot-shape-full);
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  font-variant-numeric: var(--eliot-type-numerals);
+}
+.er-shell-sources > .er-shell-eyebrow {
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+  overflow-wrap: anywhere;
+}
+.er-shell-sources > .er-shell-note { margin-block-start: auto; padding-inline: var(--eliot-space-tight); }
+
 .er-live-report-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--eliot-space-section); }
 .er-live-report-body { min-width: 0; max-inline-size: var(--eliot-type-reading-measure); }
 .er-live-report-body > .er-shell-note { margin-block-start: var(--eliot-space-panel); }
 .er-live-report-evidence { min-width: 0; }
-.er-live-report-evidence .evidence { padding: var(--eliot-space-panel); border-radius: var(--eliot-shape-large); }
+.er-live-report-evidence .evidence { padding: var(--eliot-space-group); border-radius: var(--eliot-shape-large-increased); }
 .er-live-report-evidence .evidence__title { font-size: var(--eliot-type-title-medium-size); line-height: var(--eliot-type-title-medium-line-height); }
 @media (min-width: 90rem) {
   .er-live-report-layout { grid-template-columns: minmax(0, 1fr) var(--eliot-layout-context-width); gap: var(--eliot-space-panel); }
 }
-.er-live-pagination { display: flex; flex-wrap: wrap; gap: var(--eliot-space-inline-control); margin-block: var(--eliot-space-panel); }
-.er-live-versions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--eliot-space-inline-control); margin-block: var(--eliot-space-section); padding: var(--eliot-space-panel); border-radius: var(--eliot-shape-large); background: var(--md-sys-color-surface-container-low); }
+
+.er-live-pagination { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--eliot-space-block-control); margin-block: var(--eliot-space-panel); }
+.er-live-pagination:empty { display: none; }
+
+.er-live-versions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--eliot-space-block-control);
+  margin-block: var(--eliot-space-section);
+  padding: var(--eliot-space-group);
+  border-radius: var(--eliot-shape-large-increased);
+  background: var(--eliot-color-group);
+}
 .er-live-versions h2, .er-live-versions p, .er-live-versions [role="status"] { flex-basis: 100%; }
-.er-live-versions h2 { font-size: var(--eliot-type-title-large-size); overflow-wrap: anywhere; }
+.er-live-versions h2 { font-size: var(--eliot-type-title-large-size); line-height: var(--eliot-type-title-large-line-height); font-weight: var(--eliot-type-font-weight-regular); overflow-wrap: anywhere; }
+
 .er-live-erasure { display: grid; gap: var(--eliot-space-block-control); margin-block: var(--eliot-space-panel); }
-.er-live-erasure summary { cursor: pointer; font-size: var(--eliot-type-label-large-size); color: var(--md-sys-color-on-surface-variant); }
+.er-live-erasure summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--eliot-size-control);
+  padding-inline-end: var(--eliot-space-gutter);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
 .er-live-erasure details > button { margin-block-start: var(--eliot-space-block-control); }
+
 .er-live-connection-operation { margin-block: var(--eliot-space-section); }
-.er-live-connection-operation summary { cursor: pointer; color: var(--md-sys-color-on-surface-variant); }
-.er-live-connection-operation form { display: grid; gap: var(--eliot-space-block-control); margin-block: var(--eliot-space-panel); }
-.er-live-import-settings { display: grid; gap: var(--eliot-space-block-control); margin-block: var(--eliot-space-panel); min-width: 0; }
+.er-live-connection-operation summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--eliot-size-control);
+  padding-inline-end: var(--eliot-space-gutter);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-large-size);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+.er-live-connection-operation form { display: grid; gap: var(--eliot-space-gutter); margin-block: var(--eliot-space-panel); max-inline-size: var(--eliot-layout-reading-max); }
+
+.er-live-import-settings { display: grid; gap: var(--eliot-space-gutter); margin-block: var(--eliot-space-panel); min-width: 0; }
 .er-live-import-settings p, .er-live-import-settings h3 { margin: 0; overflow-wrap: anywhere; }
-.er-live-scope { margin-block: var(--eliot-space-block-control); padding: var(--eliot-space-block-control) var(--eliot-space-panel); border-radius: var(--eliot-shape-medium); background: var(--md-sys-color-surface-container-low); }
-.er-live-scope > summary { cursor: pointer; min-block-size: var(--eliot-size-touch-target); align-content: center; }
-.er-live-scope > summary h2 { display: inline; margin-inline-end: var(--eliot-space-inline-control); }
-.er-live-scope > p, .er-live-scope > ul { margin-block-start: var(--eliot-space-block-control); }
+
+/* Next-question scope: a soft group whose footer row is reserved, so "Clear selection"
+   appearing never pushes the source list below it. */
+.er-live-scope {
+  padding: var(--eliot-space-tight) var(--eliot-space-group) var(--eliot-space-tight) var(--eliot-space-gutter);
+  border-radius: var(--eliot-shape-large-increased);
+  background: var(--eliot-color-group);
+}
+.er-live-scope[open] { padding-block-end: var(--eliot-space-gutter); }
+.er-live-scope > summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--eliot-space-tight) var(--eliot-space-gutter);
+  min-block-size: var(--eliot-size-touch-target);
+  border-radius: var(--eliot-shape-medium);
+}
+.er-live-scope > summary h2 { display: inline; }
+.er-live-scope > p { margin-block-start: var(--eliot-space-block-control); padding-inline-start: var(--eliot-space-group); }
+.er-live-scope > ul { margin-block-start: var(--eliot-space-gutter); }
 .er-live-scope h2, .er-live-scope p { margin: 0; overflow-wrap: anywhere; }
 .er-live-scope h2 { font-size: var(--eliot-type-title-small-size); line-height: var(--eliot-type-title-small-line-height); font-weight: var(--eliot-type-font-weight-medium); }
-.er-live-scope > summary > span { color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-label-medium-size); }
-.er-live-scope ul { display: grid; gap: var(--eliot-space-block-control); list-style: none; margin: 0; padding: 0; }
-.er-live-scope label { display: flex; align-items: center; gap: var(--eliot-space-inline-control); min-block-size: var(--eliot-size-touch-target); cursor: pointer; }
+.er-live-scope > summary > span {
+  margin-inline-start: auto;
+  padding: var(--eliot-space-hairline) var(--eliot-space-block-control);
+  border-radius: var(--eliot-shape-full);
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  font-variant-numeric: var(--eliot-type-numerals);
+}
+.er-live-scope > p { color: var(--md-sys-color-on-surface-variant); }
+.er-live-scope ul { display: grid; gap: var(--eliot-space-hairline); list-style: none; margin: 0; padding: 0; }
+.er-live-scope label {
+  display: flex;
+  align-items: center;
+  gap: var(--eliot-space-panel);
+  min-block-size: var(--eliot-size-list-row);
+  padding-inline: var(--eliot-space-gutter);
+  border-radius: var(--eliot-shape-medium);
+  cursor: pointer;
+  font-size: var(--eliot-type-body-large-size);
+  line-height: var(--eliot-type-body-large-line-height);
+  transition: background-color var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
+}
+.er-live-scope label:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 6%, transparent); }
+.er-live-scope label:has(input:checked) { background: color-mix(in srgb, var(--md-sys-color-primary) 10%, transparent); }
 .er-live-scope label span { min-inline-size: 0; overflow-wrap: anywhere; }
-.er-live-scope input { accent-color: var(--md-sys-color-primary); }
-.er-live-scope input:focus-visible { outline: var(--eliot-focus-width) solid var(--md-sys-color-primary); outline-offset: var(--eliot-focus-offset); }
+.er-live-scope-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--eliot-space-block-control);
+  min-block-size: var(--eliot-size-control);
+  margin-block-start: var(--eliot-space-block-control);
+  padding-inline-start: var(--eliot-space-gutter);
+  color: var(--md-sys-color-on-surface-variant);
+  font-variant-numeric: var(--eliot-type-numerals);
+}
+
 .er-live-report-section { margin-block: var(--eliot-space-section); }
 .er-live-report-title { font-size: var(--eliot-type-title-medium-size); line-height: var(--eliot-type-title-medium-line-height); font-weight: var(--eliot-type-font-weight-medium); }
-.er-live-report-outline > summary { cursor: pointer; font-size: var(--eliot-type-title-medium-size); min-block-size: var(--eliot-size-touch-target); }
+.er-live-report-outline > summary { display: flex; align-items: center; font-size: var(--eliot-type-title-medium-size); min-block-size: var(--eliot-size-touch-target); }
 .er-live-report-section h2 { font-size: var(--eliot-type-headline-small-size); line-height: var(--eliot-type-headline-small-line-height); }
-.er-live-actions { display: flex; flex-wrap: wrap; gap: var(--eliot-space-inline-control); margin-block: var(--eliot-space-panel); }
+.er-live-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--eliot-space-block-control); margin-block: var(--eliot-space-panel); min-block-size: var(--eliot-size-control); }
 .er-live-plain-fieldset { border: 0; padding: 0; margin: 0; min-inline-size: 0; }
-.er-live-history { margin-block: var(--eliot-space-section); }
-.er-live-history-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--eliot-space-block-control); }
-.er-live-history h2 { font-size: var(--eliot-type-title-medium-size); line-height: var(--eliot-type-title-medium-line-height); font-weight: var(--eliot-type-font-weight-medium); }
+
+/* Recent research: tonal list rows; the time leads, actions share one trailing row. */
+.er-live-history { margin-block: var(--eliot-space-section) 0; }
+.er-live-history-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--eliot-space-block-control);
+  min-block-size: var(--eliot-size-touch-target);
+  margin-block-end: var(--eliot-space-block-control);
+}
+.er-live-history h2 {
+  font-family: var(--eliot-type-font-family-display);
+  font-size: var(--eliot-type-title-large-size);
+  line-height: var(--eliot-type-title-large-line-height);
+  font-weight: var(--eliot-type-font-weight-regular);
+}
+.er-live-history h2:focus-visible { border-radius: var(--eliot-shape-extra-small); }
 .er-live-report-section > h2 { color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-title-small-size); line-height: var(--eliot-type-title-small-line-height); margin-block-end: var(--eliot-space-panel); }
-.er-live-history ul { list-style: none; display: grid; gap: var(--eliot-space-block-control); padding: 0; }
-.er-live-history li { display: flex; flex-wrap: wrap; align-items: center; gap: var(--eliot-space-inline-control); }
+.er-live-history ul { list-style: none; display: grid; gap: var(--eliot-space-tight); margin: 0; padding: 0; }
+.er-live-history ul + ul:not(:empty) { margin-block-start: var(--eliot-space-tight); }
+.er-live-history li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--eliot-space-tight) var(--eliot-space-block-control);
+  min-block-size: var(--eliot-size-list-row);
+  padding: var(--eliot-space-tight) var(--eliot-space-tight) var(--eliot-space-tight) var(--eliot-space-group);
+  border-radius: var(--eliot-shape-large);
+  background: var(--eliot-color-group);
+  transition: background-color var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
+}
+.er-live-history li:hover { background: var(--eliot-color-field-hover); }
+.er-live-history li > time {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  color: var(--md-sys-color-on-surface);
+  font-size: var(--eliot-type-body-large-size);
+  line-height: var(--eliot-type-body-large-line-height);
+  font-variant-numeric: var(--eliot-type-numerals);
+}
 .er-live-history span { color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
+.er-live-history > p, .er-live-history > .er-status { padding-inline: var(--eliot-space-tight); color: var(--md-sys-color-on-surface-variant); }
+
+@media (max-width: 48rem) {
+  .er-live-history li { justify-content: flex-end; padding: var(--eliot-space-block-control) var(--eliot-space-block-control) var(--eliot-space-block-control) var(--eliot-space-panel); }
+  .er-live-history li > time { flex-basis: 100%; }
+  .er-live-scope { padding-inline: var(--eliot-space-block-control) var(--eliot-space-panel); }
+}
+
+/* Page-level project picker (Connections): a field sized to its content, not the whole column. */
+.er-shell-reading > .er-field > select { inline-size: min(100%, var(--eliot-layout-context-width)); }
+.er-shell-reading > .er-field { margin-block-end: var(--eliot-space-panel); }
+/* Studio: saved reports and the drafts library are separate sections with section rhythm. */
+.er-live-history + .er-live-plain-fieldset { margin-block-start: var(--eliot-space-section); }
