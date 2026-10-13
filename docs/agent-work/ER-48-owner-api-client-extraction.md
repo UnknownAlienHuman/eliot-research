@@ -39,8 +39,9 @@ cancellation, completion or provider-effect authority.
 - `packages/pwa-http-client/**`
 - `packages/pwa-source-workspace/**`
 - `packages/pwa-research-workspace/**`
-- ER-48 owns the legacy browser changes adapters and their tests after their ER-45 delivery; ER-45 retains the canonical server feed and erasure callback. This keeps one browser owner and removes the overlapping packet claim.
 - `docs/agent-work/frontend-owner-claims/ER-48/**`
+
+ER-48 owns the delivered legacy browser changes adapters and their tests; ER-45 retains the canonical server feed and erasure callback. This removes the overlapping packet claim.
 
 One ER-48 manager reserves these paths. Leaves receive disjoint C checkpoints. The manager serializes package-
 local manifests, barrels, shared test utilities and compatibility exports. ER-49 owns static checkpoint
