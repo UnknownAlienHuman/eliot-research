@@ -188,7 +188,3 @@ describe("managed ranking contracts", () => {
     }).success).toBe(true);
   });
 });
-
-
-
-

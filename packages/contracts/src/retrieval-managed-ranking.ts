@@ -184,5 +184,3 @@ export const ManagedRetrievalTraceSchema = RetrievalTraceSchema.extend({
   });
 });
 export type ManagedRetrievalTrace = z.infer<typeof ManagedRetrievalTraceSchema>;
-
-
