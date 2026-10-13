@@ -16,13 +16,19 @@ import {
 } from "./research-changes-cursor.js";
 
 import { authorizeErasureChange, recheckErasureChanges, type ErasureChangeAuthorizer } from "./research-changes-erasure.js";
+import { scanResearchChanges } from "./research-changes-scan.js";
+import { requireResearchChangesCursorAnchor } from "./research-changes-cursor-anchor.js";
+import {
+  createResearchChangesScanCursorCodec,
+  isResearchChangesScanCursor,
+  type ResearchChangesScanPosition,
+} from "./research-changes-scan-cursor.js";
 
 export { RESEARCH_CHANGE_KINDS } from "./research-changes-cursor.js";
-export const RESEARCH_CHANGES_PROTOCOL = "eliotr.research-changes.v1";
+export const RESEARCH_CHANGES_PROTOCOL = "eliotr.research-changes.v2";
 const MAX_CURSOR_BYTES = 4_096;
 const MAX_METADATA_BYTES = 65_536;
 const MAX_LIMIT = 100;
-const RESEARCH_CHANGES_SCAN_BATCH = 100;
 const SAFE_REF = /^[A-Za-z0-9][A-Za-z0-9:._/@%+-]{0,511}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const ISO_MILLISECONDS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
@@ -384,27 +390,36 @@ export function createResearchChangesService(
       ...(options.cursor_ttl_ms === undefined ? {} : { ttl_ms: options.cursor_ttl_ms }),
     });
     await codec.ready();
+    const scanCodec = createResearchChangesScanCursorCodec({
+      key: runtime.cursor_key,
+      authority: {
+        principal_ref: principalRef, client_class: "owner_pwa",
+        credential_generation: credentialGeneration, deployment_generation: deploymentGeneration, kinds: request.kinds,
+      },
+      page_limit: request.limit, now: observedMs,
+      ...(options.cursor_ttl_ms === undefined ? {} : { ttl_ms: options.cursor_ttl_ms }),
+    });
     let after = 0;
     let nextCursor = request.after_cursor;
+    let scanPosition: ResearchChangesScanPosition | null = null;
     if (request.after_cursor !== null) {
-      const position = await codec.verify(request.after_cursor);
-      after = position.sequence;
-      let anchor: { sequence: number; change_ref: string } | null;
-      try {
-        anchor = await runtime.database.prepare(
-          "SELECT sequence,change_ref FROM research_change_feed WHERE sequence=?1 LIMIT 1",
-        ).bind(after).first<{ sequence: number; change_ref: string }>();
-      } catch {
-        fail("RESEARCH_CHANGES_SETTLEMENT_UNCERTAIN", "changes cursor readback is unavailable", 503, true);
-      }
-      if (anchor === null || anchor.sequence !== after || anchor.change_ref !== position.change_ref) {
-        fail("RESEARCH_CHANGES_CURSOR_STALE", "changes cursor anchor no longer exists", 409);
+      if (isResearchChangesScanCursor(request.after_cursor)) {
+        scanPosition = await scanCodec.verify(request.after_cursor);
+        await requireResearchChangesCursorAnchor(runtime.database, scanPosition);
+        if (scanPosition.forward_anchor !== null && scanPosition.forward_anchor.sequence !== scanPosition.sequence) {
+          await requireResearchChangesCursorAnchor(runtime.database, scanPosition.forward_anchor);
+        }
+        after = scanPosition.sequence;
+      } else {
+        const position = await codec.verify(request.after_cursor);
+        await requireResearchChangesCursorAnchor(runtime.database, position);
+        after = position.sequence;
       }
     }
     const kindClause = request.kinds.length === 0
       ? ""
       : ` AND c.kind IN (${request.kinds.map((_, index) => `?${index + 4}`).join(",")})`;
-    const latestStart = request.start_at === "latest";
+    const latestStart = request.start_at === "latest" || scanPosition?.direction === "LATEST";
     const readBatch = async (boundary: number, batchLimit: number): Promise<readonly ChangeRow[]> => {
       const sequenceClause = latestStart ? "c.sequence<?1" : "c.sequence>?1";
       const order = latestStart ? "DESC" : "ASC";
@@ -556,39 +571,30 @@ export function createResearchChangesService(
       await recheckErasureChanges(context, visibleRows, decodeRow, runtime.authorize_erasure_change);
       return visibleRows.length !== before;
     };
-    const targetCount = latestStart ? request.limit : request.limit + 1;
-    let scanBoundary = latestStart ? Number.MAX_SAFE_INTEGER : after;
-    let exhausted = false;
-    const fetchUntilTarget = async (): Promise<void> => {
-      while (!exhausted && visibleRows.length < targetCount) {
-        const batchLimit = Math.min(RESEARCH_CHANGES_SCAN_BATCH, targetCount - visibleRows.length);
-        const batch = await readBatch(scanBoundary, batchLimit);
-        if (batch.length === 0) {
-          exhausted = true;
-          return;
-        }
-        const boundaryRow = batch.at(-1);
-        if (boundaryRow === undefined || !Number.isSafeInteger(boundaryRow.sequence) ||
-            (latestStart ? boundaryRow.sequence >= scanBoundary : boundaryRow.sequence <= scanBoundary)) {
-          fail("RESEARCH_CHANGES_READBACK_CORRUPT", "changes sequence ordering is invalid", 409);
-        }
-        scanBoundary = boundaryRow.sequence;
-        visibleRows.push(...await authorizeBatch(batch));
-      }
-    };
-    await fetchUntilTarget();
-    while (true) {
-      const removed = await recheckVisibleScopes();
-      if (!removed || visibleRows.length >= targetCount || exhausted) break;
-      await fetchUntilTarget();
-    }
-    const orderedRows = latestStart ? [...visibleRows].reverse() : visibleRows;
-    const hasMore = latestStart ? false : orderedRows.length > request.limit;
-    const items = orderedRows.slice(0, request.limit).map(decodeRow);
+    const latestLimit = scanPosition?.remaining_limit ?? request.limit;
+    const scan = await scanResearchChanges({
+      latest: latestStart, limit: latestLimit,
+      after: request.start_at === "latest" ? Number.MAX_SAFE_INTEGER : after,
+      forward_anchor: scanPosition?.forward_anchor ?? null,
+      visible_rows: visibleRows, read_batch: readBatch, authorize_batch: authorizeBatch,
+      recheck_visible: recheckVisibleScopes,
+    });
+    const items = scan.rows.map(decodeRow);
     const last = items.at(-1);
-    if (last !== undefined) {
+    if (!latestStart && scan.visibility_scan.state === "TARGET_REACHED" && last !== undefined) {
+      // Keep the public visible-anchor lineage; raw lookahead is never skipped.
       nextCursor = await codec.sign({ sequence: last.sequence, change_ref: last.change_ref });
+    } else if (latestStart && scan.visibility_scan.state === "BUDGET_STOPPED" &&
+        scan.raw_anchor !== null && scan.forward_anchor !== null) {
+      nextCursor = await scanCodec.sign({ ...scan.raw_anchor, direction: "LATEST",
+        remaining_limit: latestLimit - items.length, forward_anchor: scan.forward_anchor });
+    } else {
+      const anchor = latestStart ? scan.forward_anchor : scan.raw_anchor;
+      if (anchor !== null) {
+        nextCursor = await scanCodec.sign({ ...anchor, direction: "FORWARD", remaining_limit: null, forward_anchor: null });
+      }
     }
-    return { protocol: RESEARCH_CHANGES_PROTOCOL, items, next_cursor: nextCursor, has_more: hasMore };
+    return { protocol: RESEARCH_CHANGES_PROTOCOL, items, next_cursor: nextCursor,
+      has_more: scan.has_more, visibility_scan: scan.visibility_scan };
   };
 }

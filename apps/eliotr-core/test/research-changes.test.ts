@@ -128,7 +128,7 @@ describe("durable authenticated research changes", () => {
       kinds: ["SOURCE_UPDATED", "SOURCE_ADMITTED"],
     });
     expect(first).toMatchObject({
-      protocol: "eliotr.research-changes.v1",
+      protocol: "eliotr.research-changes.v2",
       has_more: true,
     });
     expect(first.items.map((item) => item.change_ref)).toEqual([
@@ -281,6 +281,6 @@ describe("durable authenticated research changes", () => {
     );
     const value = await body<ResearchChangesResult>(response);
     expect(response.status, JSON.stringify(value)).toBe(200);
-    expect(value.data.protocol).toBe("eliotr.research-changes.v1");
+    expect(value.data.protocol).toBe("eliotr.research-changes.v2");
   });
 });

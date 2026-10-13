@@ -310,12 +310,22 @@ export interface ResearchChangeItem {
   readonly metadata: Readonly<Record<string, string | number | boolean | null>>;
 }
 
-export interface ResearchChangesResult {
-  readonly protocol: "eliotr.research-changes.v1";
+export interface ResearchChangesVisibilityScan {
+  readonly direction: "FORWARD" | "LATEST";
+  readonly state: "TARGET_REACHED" | "SOURCE_EXHAUSTED" | "BUDGET_STOPPED";
+}
+
+interface ResearchChangesResultBase {
   readonly items: readonly ResearchChangeItem[];
   readonly next_cursor: string | null;
   readonly has_more: boolean;
 }
+
+/** v1 remains a supported decoding/input fixture; the current service emits v2. */
+export type ResearchChangesResult = ResearchChangesResultBase & (
+  | { readonly protocol: "eliotr.research-changes.v1" }
+  | { readonly protocol: "eliotr.research-changes.v2"; readonly visibility_scan: ResearchChangesVisibilityScan }
+);
 
 export type ResearchArtifactSectionCitationAuditDisposition =
   | "SUPPORTED"

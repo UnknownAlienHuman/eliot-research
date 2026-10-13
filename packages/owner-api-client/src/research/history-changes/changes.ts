@@ -1,12 +1,17 @@
 // C3-RH move of packages/pwa-research-workspace/src/research-changes-api.ts.
 // Helpers stay independent by design: their own bounds, patterns and error codes.
 // Only the transport, error and epoch seams are injected. No new DTO or endpoint.
+//
+// v2 adds the named bounded-read visibility scan next to the four existing v1 fields. Those fields
+// keep their exact semantics: the same page bound, cursor shape and byte limit, the same envelope and
+// epoch fences, the same request body and the same five change kinds.
 import { VersionedRefSchema, type VersionedRef } from "@eliotr/contracts";
 import type { LegacyErrorFactory, LegacyHttpAdapter } from "../../legacy/http.js";
 import type { EpochPort } from "../../transport/client.js";
 
 const CHANGES_PATH = "/api/v1/research/changes";
-const CHANGES_PROTOCOL = "eliotr.research-changes.v1" as const;
+const CHANGES_PROTOCOL_V1 = "eliotr.research-changes.v1" as const;
+const CHANGES_PROTOCOL_V2 = "eliotr.research-changes.v2" as const;
 const MAX_ITEMS = 20;
 const MAX_CURSOR_BYTES = 4_096;
 const MAX_METADATA_BYTES = 65_536;
@@ -16,8 +21,26 @@ const SAFE_TRACE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 const SAFE_CURSOR = /^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/u;
 const ISO_MILLISECONDS = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 const CHANGE_KINDS = ["RESEARCH_COMPLETED", "ARTIFACT_DRAFTED", "WIKI_PUBLISHED", "SOURCE_ADMITTED", "SOURCE_UPDATED"] as const;
+const SCAN_DIRECTIONS = ["FORWARD", "LATEST"] as const;
+const SCAN_STATES = ["TARGET_REACHED", "SOURCE_EXHAUSTED", "BUDGET_STOPPED"] as const;
 
 export type ResearchChangesKind = typeof CHANGE_KINDS[number];
+
+export type ResearchChangesProtocol = typeof CHANGES_PROTOCOL_V1 | typeof CHANGES_PROTOCOL_V2;
+
+/** Traversal direction of the bounded read. Never a count and never a record identity. */
+export type ResearchChangesScanDirection = typeof SCAN_DIRECTIONS[number];
+
+/**
+ * Named completion state of the bounded read. `BUDGET_STOPPED` reports that the candidate budget ran
+ * out before the target or the source end; it never asserts completion or emptiness.
+ */
+export type ResearchChangesScanState = typeof SCAN_STATES[number];
+
+export interface ResearchChangesVisibilityScan {
+  readonly direction: ResearchChangesScanDirection;
+  readonly state: ResearchChangesScanState;
+}
 
 export interface ResearchChangeFeedItem {
   readonly kind: ResearchChangesKind;
@@ -32,6 +55,8 @@ export interface ResearchChangesView {
   readonly next_cursor: string | null;
   readonly has_more: boolean;
   readonly deployment_generation: string;
+  /** Present only for `eliotr.research-changes.v2`; absent for v1. */
+  readonly visibility_scan?: ResearchChangesVisibilityScan;
 }
 
 export interface ReadResearchChangesOptions {
@@ -149,7 +174,9 @@ export function createChangesApi(http: ChangesHttp, errors: ChangesErrors, epoch
     return parsed.data;
   };
 
-  const flatMetadata = (value: unknown): Readonly<Record<string, string | number | boolean | null>> => {
+  const flatMetadata = (
+    value: unknown,
+  ): Readonly<Record<string, string | number | boolean | null>> => {
     if (!isRecord(value)) return invalid("change metadata is not a flat object");
     const keys = Object.keys(value);
     const sorted = [...keys].sort();
@@ -195,6 +222,29 @@ export function createChangesApi(http: ChangesHttp, errors: ChangesErrors, epoch
         !SAFE_CURSOR.test(value)) return inputInvalid("afterCursor is invalid");
     return value;
   };
+
+  const scanDirection = (value: unknown, label: string): ResearchChangesScanDirection => {
+    const text = boundedString(value, label, 32);
+    const direction = SCAN_DIRECTIONS.find((candidate) => candidate === text);
+    if (direction === undefined) return invalid(`${label} is invalid`);
+    return direction;
+  };
+
+  const scanState = (value: unknown, label: string): ResearchChangesScanState => {
+    const text = boundedString(value, label, 32);
+    const state = SCAN_STATES.find((candidate) => candidate === text);
+    if (state === undefined) return invalid(`${label} is invalid`);
+    return state;
+  };
+
+  const visibilityScan = (value: unknown): ResearchChangesVisibilityScan => {
+    const scan = exactRecord(value, ["direction", "state"], [], "changes data.visibility_scan");
+    return {
+      direction: scanDirection(scan.direction, "changes data.visibility_scan.direction"),
+      state: scanState(scan.state, "changes data.visibility_scan.state"),
+    };
+  };
+
   const decodeItem = (value: unknown, index: number): ResearchChangeFeedItem => {
     const item = exactRecord(value, [
       "sequence", "change_ref", "kind", "subject_ref", "subject_revision", "payload_ref",
@@ -244,17 +294,69 @@ export function createChangesApi(http: ChangesHttp, errors: ChangesErrors, epoch
   const decodeResearchChanges = (raw: unknown, expectedDeploymentGeneration: string): ResearchChangesView => {
     const expected = expectedGeneration(expectedDeploymentGeneration);
     const data = decodeEnvelope(raw, expected);
-    const response = exactRecord(data, ["protocol", "items", "next_cursor", "has_more"], [], "changes data");
-    if (response.protocol !== CHANGES_PROTOCOL || !Array.isArray(response.items) ||
-        response.items.length > MAX_ITEMS || typeof response.has_more !== "boolean") {
+    const v2 = data.protocol === CHANGES_PROTOCOL_V2;
+    if (data.protocol !== CHANGES_PROTOCOL_V1 && !v2) return invalid("changes result is invalid");
+    const response = exactRecord(data,
+      v2 ? ["protocol", "items", "next_cursor", "has_more", "visibility_scan"]
+        : ["protocol", "items", "next_cursor", "has_more"], [], "changes data");
+    if (!Array.isArray(response.items) || response.items.length > MAX_ITEMS ||
+        typeof response.has_more !== "boolean") {
       return invalid("changes result is invalid");
     }
-    const items = (response.items as unknown[]).map((item: unknown, index: number) => decodeItem(item, index));
+    const entries = response.items as unknown[];
+    const items = entries.map((entry: unknown, index: number) => decodeItem(entry, index));
+    if (v2) {
+      // decodeItem has already validated each full record and its positive safe sequence.
+      const sequences = entries.map((entry: unknown) => {
+        if (!isRecord(entry)) return invalid("changes item is not an object");
+        return positiveInteger(entry.sequence, "changes item.sequence");
+      });
+      // Only the bounded read promises an ascending unique page, so only v2 enforces it. Each
+      // sequence is already an accepted safe positive integer, so a duplicate or rewind is rejected
+      // instead of being silently reordered into the projected view.
+      for (let index = 1; index < sequences.length; index += 1) {
+        const previous = sequences[index - 1];
+        const current = sequences[index];
+        if (previous === undefined || current === undefined || current <= previous) {
+          return invalid("changes items are not strictly ascending");
+        }
+      }
+    }
     const nextCursor = response.next_cursor === null ? null : cursor(response.next_cursor, "next_cursor");
+    const hasMore = response.has_more as boolean;
+    if (v2) {
+      const scan = visibilityScan(response.visibility_scan);
+      // A page that returns items owes the caller the cursor that resumes them, even when the read
+      // stopped for its budget or reached the end of the source.
+      if (items.length > 0 && nextCursor === null) {
+        return invalid("changes items require a continuation cursor");
+      }
+      if (scan.state === "BUDGET_STOPPED" && (!hasMore || nextCursor === null)) {
+        return invalid("a budget-stopped scan must continue");
+      }
+      if (scan.state === "SOURCE_EXHAUSTED" && hasMore) {
+        return invalid("an exhausted scan must not promise more data");
+      }
+      if (scan.state === "TARGET_REACHED" && scan.direction === "FORWARD" &&
+          (!hasMore || items.length === 0 || nextCursor === null)) {
+        return invalid("a forward target must report visible lookahead");
+      }
+      if (scan.state === "TARGET_REACHED" && scan.direction === "LATEST" &&
+          (hasMore || items.length === 0 || nextCursor === null)) {
+        return invalid("a completed latest window must report a nonempty ordered page");
+      }
+      return {
+        items,
+        next_cursor: nextCursor,
+        has_more: hasMore,
+        deployment_generation: expected,
+        visibility_scan: scan,
+      };
+    }
     return {
       items,
       next_cursor: nextCursor,
-      has_more: response.has_more,
+      has_more: hasMore,
       deployment_generation: expected,
     };
   };
