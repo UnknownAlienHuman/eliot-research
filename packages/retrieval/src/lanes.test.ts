@@ -2,7 +2,13 @@ import { describe, expect, it } from "vitest";
 import type { LocatorCandidate } from "@eliotr/contracts";
 import { compileQueryPlan } from "./planner.js";
 import { createExactLaneExecutor, createSemLaneExecutor, executePlannedLanes } from "./lanes.js";
-import type { ExactSearchPort, ManagedSearchPort, RetrievalRequest } from "./ports.js";
+import type {
+  ExactSearchPort,
+  ManagedSearchExecution,
+  ManagedSearchPort,
+  RetrievalLaneExecutionResult,
+  RetrievalRequest,
+} from "./ports.js";
 
 function request(): RetrievalRequest {
   return {
@@ -70,6 +76,19 @@ async function laneError(
   throw new Error("expected lane execution to fail");
 }
 
+/** A lane returns either a legacy physical candidate list or a managed execution record. */
+async function laneResult(
+  promise: Promise<RetrievalLaneExecutionResult>,
+): Promise<readonly LocatorCandidate[] | ManagedSearchExecution> {
+  return promise;
+}
+
+function isManagedExecution(
+  result: readonly LocatorCandidate[] | ManagedSearchExecution,
+): result is ManagedSearchExecution {
+  return !Array.isArray(result);
+}
+
 describe("EXACT lane executor over the exact-phrase search surface", () => {
   it("serves EXACT through the port and preserves unresolved locators", async () => {
     const input = request();
@@ -82,7 +101,8 @@ describe("EXACT lane executor over the exact-phrase search surface", () => {
       }),
     );
 
-    const results = await executor.execute("EXACT", input);
+    const execution = await laneResult(executor.execute("EXACT", input));
+    const results = isManagedExecution(execution) ? execution.candidates : execution;
 
     expect(observed).toBe(input);
     expect(results).toEqual([unresolved]);
@@ -130,7 +150,8 @@ describe("SEM lane executor over the managed-search surface", () => {
         ];
       }),
     );
-    const results = await executor.execute("SEM", request());
+    const execution = await laneResult(executor.execute("SEM", request()));
+    const results = isManagedExecution(execution) ? execution.candidates : execution;
     // ORIENT plans carry context_expansion 1.
     expect(observed).toEqual({ lanes: ["SEM"], expansion: 1 });
     expect(results).toHaveLength(1);

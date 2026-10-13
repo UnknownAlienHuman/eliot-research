@@ -131,10 +131,9 @@ describe("managed retrieval admission and physical-list rank", () => {
     const callOrder: string[] = [];
     const idempotencyKey = "managed-service-admission";
     let receipt: RetrievalQueryAdmissionReceiptV1 | undefined;
-    let stored: StoredRetrievalResult | null = null;
     let lexicalCalls = 0;
     let providerCalls = 0;
-    let resolvedCandidates: string[] = [];
+    const resolvedCandidates: string[] = [];
 
     const outcome: ManagedSearchOutcomeDraft = {
       protocol: "eliotr.managed-ranking-outcome.v1",
@@ -256,7 +255,6 @@ describe("managed retrieval admission and physical-list rank", () => {
         async settle(record, ownerReceipt) {
           if (ownerReceipt === undefined) throw new Error("managed result settlement requires its owner receipt");
           expect(ownerReceipt).toEqual(receipt);
-          stored = record;
           storedRows.set(record.idempotency_key, record);
           return record;
         },
@@ -286,6 +284,9 @@ describe("managed retrieval admission and physical-list rank", () => {
     expect(result.trace.managed_ranking_outcomes[0]?.ordered_candidates.map((item) => item.provider_rank))
       .toEqual([1, 2]);
     expect(result.trace.managed_ranking_outcomes[0]?.rerank_succeeded).toBe(true);
-    expect(stored?.result).toEqual(result);
+    // Read the settled row back out of the result store rather than holding a closure
+    // reference, whose assignment TypeScript cannot see for control-flow narrowing.
+    const storedRecord = await storedRows.get(idempotencyKey);
+    expect(storedRecord?.result).toEqual(result);
   });
 });
