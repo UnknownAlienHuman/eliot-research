@@ -9,7 +9,7 @@ import type {
   ResearchRunsApiPorts,
 } from "../runs/authority.js";
 import type { LegacyErrorFactory } from "../../legacy/http.js";
-import type { ResearchRunWire } from "../runs/wire.js";
+import { createResearchRunWire, type ResearchRunWire } from "../runs/wire.js";
 import type { EpochPort } from "../../transport/client.js";
 
 const MAX_RUNS = 8;
@@ -63,23 +63,20 @@ export interface RunHistoryDependencies {
 type DraftEntry = { readonly created_at: string; readonly artifact_ref: { readonly id: string; readonly revision: number };
   readonly workflow_instance_id?: string };
 
-export function createRunHistoryApi(
-  ports: ResearchRunsApiPorts & RunHistoryApiPorts,
-  dependencies: RunHistoryDependencies,
-): RunHistoryApi {
-  const { request, errors, epoch } = ports;
-  const { wire, decodeStatus } = dependencies;
+export type ResearchRunHistoryDecoder = (
+  raw: unknown,
+  expectedDeploymentGeneration?: string,
+) => ResearchRunHistoryView;
 
-  const closed = (): never => {
-    throw errors({
-      status: 503,
-      code: "API_SESSION_CLOSED",
-      message: "Response belongs to a closed owner session",
-      traceId: null,
-      retryable: false,
-    });
-  };
-
+/**
+ * Creates the single history decoder used by both the owner-client transport API and legacy adapters.
+ * Supplying the existing wire preserves the shared RR wire instance; decoder-only callers can omit it.
+ */
+export function createRunHistoryDecoder(
+  errors: LegacyErrorFactory,
+  decodeStatus: ResearchRunStatusDecoder,
+  wire: ResearchRunWire = createResearchRunWire(errors),
+): ResearchRunHistoryDecoder {
   const decodeResearchRunHistory = (raw: unknown, expectedDeploymentGeneration?: string): ResearchRunHistoryView => {
     const parsed = wire.envelope(raw);
     wire.checkGeneration(parsed.deployment_generation, expectedDeploymentGeneration);
@@ -156,6 +153,28 @@ export function createRunHistoryApi(
       deployment_generation: parsed.deployment_generation,
     };
   };
+
+  return decodeResearchRunHistory;
+}
+
+export function createRunHistoryApi(
+  ports: ResearchRunsApiPorts & RunHistoryApiPorts,
+  dependencies: RunHistoryDependencies,
+): RunHistoryApi {
+  const { request, errors, epoch } = ports;
+  const { wire, decodeStatus } = dependencies;
+
+  const closed = (): never => {
+    throw errors({
+      status: 503,
+      code: "API_SESSION_CLOSED",
+      message: "Response belongs to a closed owner session",
+      traceId: null,
+      retryable: false,
+    });
+  };
+
+  const decodeResearchRunHistory = createRunHistoryDecoder(errors, decodeStatus, wire);
 
   const readResearchRunHistory = async (
     expectedDeploymentGeneration?: string,

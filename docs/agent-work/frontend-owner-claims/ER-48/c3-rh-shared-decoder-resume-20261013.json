@@ -14,10 +14,20 @@
     "packages/owner-api-client/src/research/history-changes/history-decoder.test.ts"
   ],
   "predecessor_refs": [
-    { "checkpoint_id": "C0.3", "commit_sha": "9029cbf18717365641c079c8180b8a9f7a4001b8" },
-    { "checkpoint_id": "C1.4", "commit_sha": "4f7c99546bd7adfcf766bdc1a398a94a8e20fedb" }
+    {
+      "checkpoint_id": "C0.3",
+      "commit_sha": "9029cbf18717365641c079c8180b8a9f7a4001b8"
+    },
+    {
+      "checkpoint_id": "C1.4",
+      "commit_sha": "4f7c99546bd7adfcf766bdc1a398a94a8e20fedb"
+    }
   ],
-  "state": "ACTIVE",
-  "evidence_refs": [],
-  "blocker_refs": []
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "private:C:/Development/Research/.eliotr-state/resume-20261013/history-decoder-CompletionProof.json new8/TS6/exactlint PASS; legacy/live pending"
+  ],
+  "blocker_refs": [],
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "private:history-decoder-CompletionProof.json"
 }

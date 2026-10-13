@@ -4,7 +4,7 @@ export { createResearchConfigurationApi } from './configuration/readiness';
 export { createResearchRunWire } from './runs/wire';
 export { createResearchFailureDecoder } from './runs/failure';
 export { createResearchRunsApi } from './runs/authority';
-export { createRunHistoryApi } from './history-changes/history';
+export { createRunHistoryApi, createRunHistoryDecoder } from './history-changes/history';
 export { createChangesApi } from './history-changes/changes';
 export { createResearchSessionProjectionAdapter } from './session-projection/adapter';
 export { PROJECTION_METHOD } from './session-projection/session';
@@ -14,7 +14,7 @@ export type { ResearchConfigurationView, ResearchRunReadiness, ResearchConfigura
 export type { ResearchRunRequest, ResearchRunsApi, ResearchRunStatusView, ResearchRunLaunchView, ResearchRunStatusDecoder } from './runs/authority';
 export type { ResearchRunWire } from './runs/wire';
 export type { ResearchRunFailureDecoder, ResearchRunFailureView, ResearchRunFailureContext, ResearchEngineStatus, ResearchRunFailureCode } from './runs/failure';
-export type { RunHistoryApi, RunHistoryApiPorts, RunHistoryDependencies, ResearchRunHistoryView, ResearchRunHistoryEntry, ResearchRunSavedDraft } from './history-changes/history';
+export type { RunHistoryApi, RunHistoryApiPorts, RunHistoryDependencies, ResearchRunHistoryDecoder, ResearchRunHistoryView, ResearchRunHistoryEntry, ResearchRunSavedDraft } from './history-changes/history';
 export type { ChangesApi, ChangesHttp, ChangesErrors, ResearchChangesView, ResearchChangeFeedItem, ResearchChangesKind } from './history-changes/changes';
 export type { ResearchSessionProjectionAdapter, ResearchSessionProjectionPorts, SessionProjectionResult } from './session-projection/adapter';
 export type { ResearchSessionBinding, ResearchSessionPorts, ResearchSessionHostControls, ProjectionCallClient, ResearchSessionClientFactory, ResearchSessionSocket } from './session-projection/session';
