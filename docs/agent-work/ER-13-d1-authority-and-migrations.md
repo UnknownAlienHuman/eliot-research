@@ -140,7 +140,7 @@ trigger object from current D1 state before serving a successful changes page. M
 state fails closed with a retryable typed 503.
 
 On 2026-10-13 the root publisher recorded the allocation in `C:/Development/Research/Agent_sync.md` and
-materialized the exact qualified bytes after the existing `0136_queue_owner_replay.sql` and
+materialized the qualified SQL after the existing `0136_queue_owner_replay.sql` and
 `0137_research_workflow_authorized_read_stage_completion.sql` reservations. The clean publisher has 133
 Core migration names; its original 130 names through 0135 remain the unchanged sorted prefix. The
 protected, untracked 0134 role-binding candidate remains untouched and outside this installation tree.
@@ -149,8 +149,12 @@ This is source allocation only. It does not apply D1 schema, enable a production
 stage execution. The retained SQLite qualification proves the name-prefix and conditional-marker
 cases at its local scope. The six new authorized-read guard-bridge native cases remain unrun, and the
 production compiler/store/handler composition is separately required. The private-only header in the
-exact 0137 reservation records its original handoff status; this allocation adopts those bytes as
+0137 reservation records its original handoff status; this allocation adopts its unchanged SQL as
 source without promoting its runtime evidence.
+
+The repository's `*.sql text eol=lf` rule normalizes only CRLF line endings in the private 0137 and
+0138 inputs. Their original private bytes remain preserved; committed installer hashes describe the
+canonical LF files. The complete LF-normalized source equals the qualified input for each file.
 
 The proposed fresh identity `0139_research_branch_role_workflow_binding.sql` remains conditional and is
 not materialized here. Its stage 8/9 guard requires the exact W2 request digest to be persisted by the
