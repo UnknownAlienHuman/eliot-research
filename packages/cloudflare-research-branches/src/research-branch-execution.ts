@@ -21,7 +21,7 @@ import {
   type ResearchReadExtractCheckpoint,
   type ResearchReadExtractCheckpointV2,
 } from "@eliotr/contracts";
-import { canonicalEvidenceJson, evidenceSha256 } from "@eliotr/cloudflare-evidence";
+import { canonicalEvidenceJson } from "@eliotr/cloudflare-evidence";
 import {
   WorkflowCheckpointStore,
   fail,
@@ -300,11 +300,10 @@ async function reconciliationCheckpoint(
   const debts: ResearchDebt[] = [];
   for (const result of results) if (result.status === "BLOCKED") debts.push(await debtFor(result));
   const counter = results.find((item) => item.role === "COUNTER");
-  const contradictions = counter === undefined ? [] : await Promise.all(counter.evidence_handle_refs.map(async (ref) =>
-    `eliotr.research.contradiction-${await evidenceSha256({
-      domain: "eliotr.research.contradiction.v1",
-      handle_ref: ref,
-    })}`));
+  // A selected counter handle is evidence, not an evaluated relation. Keep V1
+  // checkpoints readable while refusing to mint contradiction refs without a
+  // source-bound relation assessment.
+  const contradictions: string[] = [];
   const value = {
     protocol: "eliotr.research.branch-reconciliation.v1" as const,
     operation_id: analysis.operation_id,

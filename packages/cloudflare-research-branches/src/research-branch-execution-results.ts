@@ -244,6 +244,9 @@ function roleLimitations(role: ResearchBranchRole, selected: readonly ResearchBr
   if (selected.some((item) => item.independence === "UNKNOWN")) {
     limitations.push("At least one selected source family has unknown independence.");
   }
+  if (role === "COUNTER") {
+    limitations.push("Relation assessment is pending; counter evidence alone does not establish a contradiction.");
+  }
   if (role === "CHRONOLOGY") limitations.push("Chronology ordering requires source-bound dates; evidence selection alone does not establish temporal order.");
   if (role === "IMPLEMENTATION") limitations.push("Project/specification evidence does not by itself establish observed runtime behavior.");
   if (role === "LITERATURE") limitations.push("Source-class metadata does not by itself establish primary-source authority or peer review.");

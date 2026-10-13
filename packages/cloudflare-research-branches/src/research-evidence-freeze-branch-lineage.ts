@@ -64,8 +64,12 @@ async function branchLineageMaterial(input: {
   const blockedRoles = blockedResults.map((result) => result.role);
   const contradictionRefs = [...checkpoint.unresolved_contradiction_refs].sort();
   const counter = checkpoint.branch_results.find((result) => result.role === "COUNTER");
-  // V2 has no integrated owner-resolved #214 relation candidates yet; retain the published V1 derivation only.
-  const expectedContradictions = v2 ? [] : counter === undefined ? [] : (await Promise.all(
+  // Keep the historical V1 derivation for old checkpoints; an explicitly pending, unassessed COUNTER result has no contradiction authority.
+  const relationAssessmentPending = counter?.authoritative_disposition === "UNASSESSED" &&
+    counter.limitations.includes(
+      "Relation assessment is pending; counter evidence alone does not establish a contradiction.",
+    );
+  const expectedContradictions = v2 || relationAssessmentPending || counter === undefined ? [] : (await Promise.all(
     counter.evidence_handle_refs.map(async (ref) => `eliotr.research.contradiction-${await evidenceSha256({
       domain: "eliotr.research.contradiction.v1",
       handle_ref: ref,
