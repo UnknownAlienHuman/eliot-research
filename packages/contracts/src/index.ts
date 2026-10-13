@@ -15,6 +15,7 @@ export * from "./normalized-bundle.js";
 export * from "./evidence.js";
 export * from "./coordinate-map.js";
 export * from "./retrieval.js";
+export * from "./retrieval-managed-ranking.js";
 export * from "./research.js";
 export * from "./research-branch-relation-pending.js";
 export * from "./research-session-binding.js";
