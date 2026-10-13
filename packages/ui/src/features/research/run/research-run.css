@@ -3,25 +3,40 @@
  *
  * No raw colour, arbitrary radius, spacing or font size. Every value comes from the committed
  * Material 3 role and Eliot foundation tokens in ../../tokens/theme.css. The pane stays the single
- * scroll owner and no nested scroll area or splitter is introduced.
+ * scroll owner; the composer dock is sticky inside that one scroll, never a nested scroll area.
  *
- * Direction (NotebookLM-like research conversation): the composer is one rounded field surface —
- * question, scope chip and the filled Ask action live together and light up as one unit on focus.
- * Once asked, the recorded question reads as the owner's message bubble; progress, cautions and
- * failures are soft tonal groups that never move the composer or the actions around.
+ * Direction (live NotebookLM chat): a start cover (glyph, large title, lead), then the conversation
+ * (owner's question bubble, run status, results, recent research), and a composer pill docked at
+ * the foot of the pane — question field, scope chip and a filled Ask action — with the hint line
+ * beneath it like NotebookLM's disclaimer. Nothing above the dock moves when state text changes.
  */
 
 .er-research-run {
   display: flex;
   flex-direction: column;
   gap: var(--eliot-space-panel);
+  flex: 1 0 auto;
+  min-width: 0;
   color: var(--md-sys-color-on-surface);
   font-family: var(--eliot-type-font-family);
   font-size: var(--eliot-type-body-medium-size);
   line-height: var(--eliot-type-body-medium-line-height);
 }
 
-.er-research-run__intro { display: grid; gap: var(--eliot-space-tight); }
+/* ---- Start cover ---- */
+
+.er-research-run__intro { display: grid; gap: var(--eliot-space-block-control); justify-items: start; }
+
+.er-research-run__cover-icon {
+  display: grid;
+  place-items: center;
+  inline-size: var(--eliot-size-touch-target);
+  block-size: var(--eliot-size-touch-target);
+  margin-block-end: var(--eliot-space-block-control);
+  border-radius: var(--eliot-shape-large);
+  background: var(--md-sys-color-tertiary-container);
+  color: var(--md-sys-color-on-tertiary-container);
+}
 
 .er-research-run__heading {
   margin: 0;
@@ -33,6 +48,11 @@
   letter-spacing: var(--eliot-type-letter-spacing-headline);
 }
 
+.er-research-run[data-phase="start"] .er-research-run__heading {
+  font-size: var(--eliot-type-headline-large-size);
+  line-height: var(--eliot-type-headline-large-line-height);
+}
+
 .er-research-run__lead {
   margin: 0;
   max-width: var(--eliot-type-reading-measure);
@@ -41,158 +61,11 @@
   line-height: var(--eliot-type-body-large-line-height);
 }
 
-/* ---- Composer: one field surface, focus lights the whole unit ---- */
-
-.er-research-run__composer {
-  display: grid;
-  gap: var(--eliot-space-gutter);
-  padding: var(--eliot-space-panel) var(--eliot-space-panel) var(--eliot-space-gutter) var(--eliot-space-group);
-  border-radius: var(--eliot-shape-extra-large);
-  background: var(--eliot-color-field);
-  box-shadow: inset 0 0 0 var(--eliot-divider-width) transparent;
-  transition:
-    box-shadow var(--eliot-motion-effects) var(--eliot-motion-standard-easing),
-    background-color var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
-}
-
-.er-research-run__composer:hover { background: var(--eliot-color-field-hover); }
-
-.er-research-run__composer:focus-within {
-  background: var(--eliot-color-field);
-  box-shadow: inset 0 0 0 var(--eliot-focus-width) var(--md-sys-color-primary), var(--eliot-elevation-composer);
-}
-
-.er-research-run__question {
-  display: grid;
-  gap: var(--eliot-space-tight);
-  min-width: 0;
-}
-
-.er-research-run__question label {
-  color: var(--md-sys-color-primary);
-  font-size: var(--eliot-type-label-medium-size);
-  line-height: var(--eliot-type-label-medium-line-height);
-  font-weight: var(--eliot-type-font-weight-medium);
-  letter-spacing: var(--eliot-type-letter-spacing-label);
-}
-
-.er-research-run .er-research-run__question-input {
-  inline-size: 100%;
-  min-height: calc(var(--eliot-type-reading-line-height) * 2);
-  padding: 0;
-  border: none;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-  color: var(--md-sys-color-on-surface);
-  font-size: var(--eliot-type-reading-size);
-  line-height: var(--eliot-type-reading-line-height);
-  resize: none;
-  field-sizing: content;
-  max-block-size: calc(var(--eliot-type-reading-line-height) * 8);
-}
-
-.er-research-run .er-research-run__question-input:focus-visible { outline: none; box-shadow: none; }
-
-.er-research-run__composer[data-held="true"] .er-research-run__question-input {
-  min-height: var(--eliot-type-reading-line-height);
-}
-
-.er-research-run__question-hint {
-  margin: 0;
-  color: var(--md-sys-color-on-surface-variant);
-  font-size: var(--eliot-type-body-small-size);
-  line-height: var(--eliot-type-body-small-line-height);
-}
-
-/* Scope disclosure: a compact chip-like summary; the list opens beneath it. */
-.er-research-run__scope {
-  min-width: 0;
-  border-radius: var(--eliot-shape-large);
-}
-
-.er-research-run__scope > summary {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--eliot-space-tight) var(--eliot-space-block-control);
-  min-height: var(--eliot-size-control);
-  padding-inline: var(--eliot-space-tight) var(--eliot-space-gutter);
-  border-radius: var(--eliot-shape-medium);
-}
-
-.er-research-run__scope > summary:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 6%, transparent); }
-
-.er-research-run__scope-heading {
-  margin: 0;
-  color: var(--md-sys-color-on-surface);
-  font-size: var(--eliot-type-label-large-size);
-  line-height: var(--eliot-type-label-large-line-height);
-  font-weight: var(--eliot-type-font-weight-medium);
-}
-
-.er-research-run__scope-count {
-  margin-inline-start: auto;
-  padding: var(--eliot-space-hairline) var(--eliot-space-block-control);
-  border-radius: var(--eliot-shape-full);
-  background: var(--md-sys-color-secondary-container);
-  color: var(--md-sys-color-on-secondary-container);
-  font-size: var(--eliot-type-label-medium-size);
-  line-height: var(--eliot-type-label-medium-line-height);
-  font-weight: var(--eliot-type-font-weight-medium);
-  font-variant-numeric: var(--eliot-type-numerals);
-  white-space: nowrap;
-}
-
-.er-research-run__scope-empty {
-  margin: var(--eliot-space-tight) 0 0;
-  padding-inline: var(--eliot-space-block-control);
-  color: var(--md-sys-color-on-surface-variant);
-  font-size: var(--eliot-type-body-medium-size);
-  line-height: var(--eliot-type-body-medium-line-height);
-}
-
-.er-research-run__scope-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--eliot-space-block-control);
-  margin: var(--eliot-space-block-control) 0 var(--eliot-space-tight);
-  padding: 0 var(--eliot-space-block-control);
-  list-style: none;
-}
-
-.er-research-run__scope-item {
-  max-inline-size: 100%;
-  padding: var(--eliot-space-tight) var(--eliot-space-gutter);
-  border-radius: var(--eliot-shape-small);
-  border: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
-  background: var(--eliot-color-pane);
-  color: var(--md-sys-color-on-surface-variant);
-  font-size: var(--eliot-type-label-large-size);
-  line-height: var(--eliot-type-label-large-line-height);
-  overflow-wrap: anywhere;
-}
-
-/* Actions keep one fixed row at the trailing edge, so state text never pushes them around. */
-.er-research-run__actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  align-items: center;
-  gap: var(--eliot-space-block-control);
-  min-height: var(--eliot-size-control);
-}
-
-.er-research-run__composer .er-research-run__actions .er-button--primary {
-  min-width: calc(var(--eliot-size-touch-target) * 2);
-}
-
-/* ---- Conversation: the recorded question is the owner's message ---- */
+/* ---- Conversation ---- */
 
 .er-research-run__recorded {
   display: grid;
   gap: var(--eliot-space-tight);
-  justify-self: end;
   align-self: flex-end;
   max-inline-size: min(100%, 85%);
   margin: 0;
@@ -226,15 +99,24 @@
 .er-research-run > .er-status > .er-symbol { color: var(--md-sys-color-tertiary); }
 .er-research-run > .er-status--error, .er-research-run > .er-status--error > .er-symbol { color: var(--md-sys-color-error); }
 
+.er-research-run[data-phase="start"] > .er-status {
+  min-height: 0;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+}
+
 .er-research-run__current-controls {
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: var(--eliot-space-block-control);
   padding: var(--eliot-space-tight) var(--eliot-space-block-control) var(--eliot-space-tight) var(--eliot-space-tight);
   border-radius: var(--eliot-shape-large-increased);
   background: var(--eliot-color-group);
 }
 
-.er-research-run__current-controls .er-research-run__actions { padding-inline-end: var(--eliot-space-tight); padding-block-end: var(--eliot-space-tight); }
+.er-research-run__current-controls > .er-research-run__scope { flex: 1 1 auto; }
 
 /* ---- Progress, snapshot and failure: soft tonal groups ---- */
 
@@ -272,17 +154,11 @@
 
 .er-research-run__progress-list dt,
 .er-research-run__details dt,
-.er-research-run__failure-list dt {
-  color: var(--md-sys-color-on-surface-variant);
-}
+.er-research-run__failure-list dt { color: var(--md-sys-color-on-surface-variant); }
 
 .er-research-run__progress-list dd,
 .er-research-run__details dd,
-.er-research-run__failure-list dd {
-  margin: 0;
-  color: var(--md-sys-color-on-surface);
-  overflow-wrap: anywhere;
-}
+.er-research-run__failure-list dd { margin: 0; color: var(--md-sys-color-on-surface); overflow-wrap: anywhere; }
 
 .er-research-run__progress-list dd { font-weight: var(--eliot-type-font-weight-medium); }
 
@@ -306,10 +182,7 @@
 .er-research-run__answer,
 .er-research-run__snapshot-none,
 .er-research-run__snapshot-state,
-.er-research-run__unknown-note {
-  margin: 0;
-  color: var(--md-sys-color-on-surface-variant);
-}
+.er-research-run__unknown-note { margin: 0; color: var(--md-sys-color-on-surface-variant); }
 
 /* Boundary cautions read as an informative tertiary note, never as success or failure. */
 .er-research-run__caution {
@@ -318,8 +191,6 @@
   border-radius: var(--eliot-shape-medium);
   background: var(--md-sys-color-tertiary-container);
   color: var(--md-sys-color-on-tertiary-container);
-  font-size: var(--eliot-type-body-medium-size);
-  line-height: var(--eliot-type-body-medium-line-height);
 }
 
 .er-research-run__unknown { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
@@ -330,14 +201,7 @@
 .er-research-run__failure { box-shadow: inset 0 0 0 var(--eliot-divider-width) var(--md-sys-color-error); }
 .er-research-run__failure-heading { color: var(--md-sys-color-error); }
 
-.er-research-run__consequence-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--eliot-space-tight);
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
+.er-research-run__consequence-list { display: flex; flex-wrap: wrap; gap: var(--eliot-space-tight); margin: 0; padding: 0; list-style: none; }
 
 .er-research-run__consequence-item {
   padding: var(--eliot-space-hairline) var(--eliot-space-block-control);
@@ -349,17 +213,184 @@
   overflow-wrap: anywhere;
 }
 
-/* The held next-question composer closes the conversation like NotebookLM's omnibar. */
-.er-research-run > .er-research-run__composer:last-child { margin-block-start: var(--eliot-space-block-control); }
+/* ---- Composer dock: sticky inside the pane's own scroll, content fades beneath it ---- */
+
+.er-research-run__dock {
+  position: sticky;
+  inset-block-end: 0;
+  z-index: var(--eliot-z-raised);
+  display: grid;
+  gap: var(--eliot-space-tight);
+  margin-block-start: auto;
+  padding-block: var(--eliot-space-section) var(--eliot-space-gutter);
+  background: linear-gradient(to bottom, transparent, var(--eliot-color-pane) var(--eliot-space-section));
+}
+
+.er-research-run__composer {
+  display: grid;
+  gap: var(--eliot-space-block-control);
+  padding: var(--eliot-space-gutter) var(--eliot-space-gutter) var(--eliot-space-gutter) var(--eliot-space-group);
+  border-radius: var(--eliot-shape-extra-large);
+  background: var(--eliot-color-field);
+  box-shadow: inset 0 0 0 var(--eliot-divider-width) transparent, var(--eliot-elevation-composer);
+  transition:
+    box-shadow var(--eliot-motion-effects) var(--eliot-motion-standard-easing),
+    background-color var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
+}
+
+.er-research-run__composer:hover { background: var(--eliot-color-field-hover); }
+
+.er-research-run__composer:focus-within {
+  background: var(--eliot-color-field);
+  box-shadow: inset 0 0 0 var(--eliot-focus-width) var(--md-sys-color-primary), var(--eliot-elevation-composer);
+}
+
+.er-research-run__question { display: grid; min-width: 0; }
+
+/* NotebookLM shows no field label; the label stays the accessible name only. */
+.er-research-run__question label {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.er-research-run .er-research-run__question-input {
+  inline-size: 100%;
+  min-height: var(--eliot-type-reading-line-height);
+  max-block-size: calc(var(--eliot-type-reading-line-height) * 8);
+  padding: var(--eliot-space-tight) 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  color: var(--md-sys-color-on-surface);
+  font-size: var(--eliot-type-body-large-size);
+  line-height: var(--eliot-type-reading-line-height);
+  resize: none;
+  field-sizing: content;
+}
+
+.er-research-run .er-research-run__question-input:focus-visible { outline: none; box-shadow: none; }
+
+.er-research-run__composer-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--eliot-space-block-control);
+}
+
+.er-research-run__composer-bar > .er-research-run__scope { flex: 1 1 auto; }
+
+/* Scope: an assist-chip summary; the frozen labels open beneath it as small chips. */
+.er-research-run__scope { min-width: 0; }
+
+.er-research-run__scope > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--eliot-space-block-control);
+  max-inline-size: 100%;
+  min-height: var(--eliot-size-control);
+  padding-inline: var(--eliot-space-tight) var(--eliot-space-gutter);
+  border-radius: var(--eliot-shape-full);
+}
+
+.er-research-run__scope > summary:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 6%, transparent); }
+
+.er-research-run__scope-heading {
+  margin: 0;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+
+.er-research-run__scope-count {
+  padding: var(--eliot-space-hairline) var(--eliot-space-block-control);
+  border-radius: var(--eliot-shape-full);
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  font-variant-numeric: var(--eliot-type-numerals);
+  white-space: nowrap;
+}
+
+.er-research-run__scope-empty {
+  margin: var(--eliot-space-tight) 0 var(--eliot-space-block-control);
+  padding-inline: var(--eliot-space-gutter);
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.er-research-run__scope-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--eliot-space-tight) var(--eliot-space-block-control);
+  margin: var(--eliot-space-tight) 0 var(--eliot-space-block-control);
+  padding: 0 var(--eliot-space-tight);
+  list-style: none;
+}
+
+.er-research-run__scope-item {
+  max-inline-size: 100%;
+  padding: var(--eliot-space-tight) var(--eliot-space-gutter);
+  border-radius: var(--eliot-shape-small);
+  border: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
+  background: var(--eliot-color-pane);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  overflow-wrap: anywhere;
+}
+
+/* Actions keep one trailing row, so state text never pushes them around. */
+.er-research-run__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: var(--eliot-space-block-control);
+  min-height: var(--eliot-size-control);
+  margin-inline-start: auto;
+}
+
+.er-research-run__hints { display: grid; gap: var(--eliot-space-hairline); padding-inline: var(--eliot-space-group); }
+
+.er-research-run__question-hint {
+  margin: 0;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-body-small-size);
+  line-height: var(--eliot-type-body-small-line-height);
+  text-align: center;
+}
 
 @media (max-width: 48rem) {
-  .er-research-run__composer { padding: var(--eliot-space-gutter) var(--eliot-space-gutter) var(--eliot-space-block-control) var(--eliot-space-panel); border-radius: var(--eliot-shape-large-increased); }
+  .er-research-run[data-phase="start"] .er-research-run__heading { font-size: var(--eliot-type-headline-small-size); line-height: var(--eliot-type-headline-small-line-height); }
+  .er-research-run__composer { padding: var(--eliot-space-block-control) var(--eliot-space-block-control) var(--eliot-space-block-control) var(--eliot-space-panel); border-radius: var(--eliot-shape-large-increased); }
   .er-research-run__recorded { max-inline-size: 100%; }
   .er-research-run__progress, .er-research-run__snapshot, .er-research-run__unknown, .er-research-run__failure { padding: var(--eliot-space-panel); }
+  .er-research-run__hints { padding-inline: var(--eliot-space-block-control); }
 }
 
 @media (forced-colors: active) {
   .er-research-run__composer, .er-research-run__recorded, .er-research-run__progress,
   .er-research-run__snapshot, .er-research-run__unknown, .er-research-run__failure,
   .er-research-run__caution { border: var(--eliot-divider-width) solid CanvasText; }
+  .er-research-run__dock { background: Canvas; }
+}
+
+/* Compact composer: the scope chip shows only its count; its heading stays the accessible name. */
+@media (max-width: 48rem) {
+  .er-research-run__composer-bar { flex-wrap: nowrap; }
+  .er-research-run__composer-bar .er-research-run__scope-heading {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
 }
