@@ -20,7 +20,7 @@ export async function playMaterialPreferences({ canvas, userEvent }: Parameters<
   await userEvent.selectOptions(await canvas.findByRole('combobox', { name: 'Language', exact: true }), 'ru');
   await userEvent.selectOptions(await canvas.findByRole('combobox', { name: 'Оформление', exact: true }), 'dark');
   const navigationLabels = [...shell.querySelectorAll<HTMLElement>('.er-shell-destination-label')];
-  if (navigationLabels.length !== 4) throw new Error('Workspace navigation labels are incomplete');
+  if (navigationLabels.length !== 5) throw new Error('Workspace navigation labels are incomplete');
   for (const label of navigationLabels) {
     const lineHeight = Number.parseFloat(getComputedStyle(label).lineHeight);
     const labelBounds = label.getBoundingClientRect();

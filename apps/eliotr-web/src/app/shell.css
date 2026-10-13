@@ -74,7 +74,7 @@ html, body { background: var(--eliot-color-canvas); }
 .er-shell [tabindex="-1"]:focus { outline: none; }
 /* Text controls show focus through their own Material border, not a second outer ring. */
 .er-shell :is(select, textarea, input:not([type="checkbox"]):not([type="radio"]):not([type="file"])):focus-visible { outline: none; }
-.er-shell[data-destination="sources"], .er-shell[data-destination="studio"], .er-shell[data-destination="connections"] {
+.er-shell[data-destination="projects"], .er-shell[data-destination="sources"], .er-shell[data-destination="studio"], .er-shell[data-destination="connections"] {
   grid-template-columns: var(--eliot-layout-rail-size) minmax(0, 1fr);
   grid-template-areas: "header header" "nav reading";
 }
@@ -391,6 +391,35 @@ html, body { background: var(--eliot-color-canvas); }
 }
 .er-shell-skip:focus { transform: none; }
 
+/* Research tools pane: a third pane on wide windows, like NotebookLM's Studio. */
+.er-shell-tools {
+  grid-area: tools;
+  display: none;
+  flex-direction: column;
+  gap: var(--eliot-space-gutter);
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding: var(--eliot-space-group) var(--eliot-space-block-control) var(--eliot-space-panel) var(--eliot-space-group);
+  background: var(--eliot-color-pane);
+  border-radius: var(--eliot-shape-extra-large-increased);
+}
+.er-shell-tools h2 {
+  font-size: var(--eliot-type-title-medium-size);
+  line-height: var(--eliot-type-title-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+@media (min-width: 80rem) {
+  .er-shell[data-destination="research"] {
+    grid-template-columns: var(--eliot-layout-rail-size) var(--eliot-layout-source-width) minmax(0, 1fr) var(--eliot-layout-source-width);
+    grid-template-areas: "header header header header" "nav sources reading tools";
+  }
+  .er-shell[data-destination="research"] .er-shell-tools { display: flex; }
+}
+
 /* ---- Adaptive layout: rail on medium and expanded windows, bottom bar on compact ---- */
 
 @media (max-width: 80rem) {
@@ -403,7 +432,7 @@ html, body { background: var(--eliot-color-canvas); }
   .er-shell-preferences > summary { padding-inline: var(--eliot-space-block-control); }
 }
 @media (max-width: 48rem) {
-  .er-shell, .er-shell[data-destination="sources"], .er-shell[data-destination="studio"], .er-shell[data-destination="connections"] {
+  .er-shell, .er-shell[data-destination="projects"], .er-shell[data-destination="sources"], .er-shell[data-destination="studio"], .er-shell[data-destination="connections"] {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: var(--eliot-layout-topbar-size) minmax(0, 1fr);
     grid-template-areas: "header" "reading";

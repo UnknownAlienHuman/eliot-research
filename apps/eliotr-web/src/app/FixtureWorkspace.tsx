@@ -7,13 +7,14 @@ import { ResearchFixture } from "../../../../packages/ui/src/patterns/research/f
 import { StudioFixture } from "../../../../packages/ui/src/patterns/studio/fixtures/StudioFixture";
 import { ConnectionsFixture } from "../../../../packages/ui/src/patterns/connections/fixtures/ConnectionsFixture";
 import type { destinations } from "../routes/location";
+import { ProjectsHome } from "./ProjectsHome";
 import "./fixture-workspace.css";
 
 type Destination = typeof destinations[number];
 type Locale = "en" | "ru";
 const copy = {
   en: {
-    project: "Project", knowledge: "Evidence in everyday research", design: "Designing a clear knowledge workspace",
+    projects: "Projects", project: "Project", knowledge: "Evidence in everyday research", design: "Designing a clear knowledge workspace",
     sources: "Sources", research: "Research", studio: "Studio", connections: "Connections",
     nextScope: "For your next question", choose: "Choose sources", original: "The sample report keeps its original source scope.",
     selected: (count: number) => `${count} ${count === 1 ? "source selected" : "sources selected"}`,
@@ -25,7 +26,7 @@ const copy = {
     report: "An explicit source scope keeps a claim connected to the material that informed it. Review the original passage, keep uncertainty visible, and distinguish a saved draft from an accepted report.",
   },
   ru: {
-    project: "Проект", knowledge: "Доказательства в повседневной исследовательской работе", design: "Проектирование понятного рабочего пространства знаний",
+    projects: "Проекты", project: "Проект", knowledge: "Доказательства в повседневной исследовательской работе", design: "Проектирование понятного рабочего пространства знаний",
     sources: "Источники", research: "Исследование", studio: "Студия", connections: "Подключения",
     nextScope: "Для следующего вопроса", choose: "Выбрать источники", original: "Образец отчёта сохраняет первоначальный набор источников.",
     selected: (count: number) => `Выбрано источников: ${count}`,
@@ -90,6 +91,14 @@ function LocalProject({ destination, locale, headingRef, project, projectTitle, 
         </select></label>
       </div>
       <h1 id="workspace-heading" ref={headingRef} tabIndex={-1}>{text[destination]}</h1>
+      <section hidden={destination !== "projects"} aria-label={text.projects}>
+        <ProjectsHome locale={locale} state="useful" openedProjectId={project} onRetry={() => {}}
+          projects={[
+            { project_id: "knowledge", title: text.knowledge, revision: 1, source_ids: ["notes-4", "datasheets", "interviews"], created_at: "2026-10-09T12:00:00.000Z" },
+            { project_id: "design", title: text.design, revision: 1, source_ids: ["notes-4", "guidelines"], created_at: "2026-10-11T09:30:00.000Z" },
+          ]}
+          onOpen={id => { onProject(id === "design" ? "design" : "knowledge"); void navigate("/research"); }} />
+      </section>
       <section hidden={destination !== "sources"} aria-label={text.sources}>
         <SourcesFixture locale={locale} active={destination === "sources"} selection={selection} onSelection={setSelection} dialog={sourceDialog}
           onDialogChange={next => { if (next === null) { void navigate(-1); } else { openContext(next.kind === "add" ? "source-add" : `source-reader:${next.key}`); } }} />
