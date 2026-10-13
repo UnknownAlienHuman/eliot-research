@@ -7,6 +7,8 @@ on:
       - 'apps/eliotr-web/**'
       - 'packages/ui/**'
       - 'packages/owner-api-client/**'
+      - 'packages/pwa-research-workspace/**'
+      - 'apps/eliotr-pwa/src/**'
       - 'packages/contracts/**'
       - 'scripts/check-frontend-owner-checkpoints.mjs'
       - 'scripts/diagnose-frontend-owner-checkpoints.mjs'
@@ -19,6 +21,8 @@ on:
       - 'apps/eliotr-web/**'
       - 'packages/ui/**'
       - 'packages/owner-api-client/**'
+      - 'packages/pwa-research-workspace/**'
+      - 'apps/eliotr-pwa/src/**'
       - 'packages/contracts/**'
       - 'scripts/check-frontend-owner-checkpoints.mjs'
       - 'scripts/diagnose-frontend-owner-checkpoints.mjs'
@@ -93,6 +97,15 @@ jobs:
           packages/owner-api-client/src/research/session-projection/adapter.test.ts
           packages/owner-api-client/src/research/session-projection/projection.test.ts
           packages/owner-api-client/src/research/session-projection/session.test.ts
+          --reporter=verbose
+      - name: Shared history and legacy PWA compatibility
+        run: >-
+          pnpm exec vitest run --config vitest.config.ts
+          packages/owner-api-client/src/research/history-changes/history-decoder.test.ts
+          packages/owner-api-client/src/research/history-changes/history.test.ts
+          packages/owner-api-client/src/research/history-changes/history-visibility.test.ts
+          packages/pwa-research-workspace/src/research-run-v4-history.test.ts
+          apps/eliotr-pwa/src/owner-session-history-epoch.test.ts
           --reporter=verbose
       - name: Install UI browser
         run: pnpm --dir packages/ui exec playwright install --with-deps chromium
