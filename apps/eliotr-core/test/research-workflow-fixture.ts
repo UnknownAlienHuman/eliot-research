@@ -56,8 +56,9 @@ export async function workflowFixture(tag: string, lane: "confirmatory" | "explo
         canonicalEvidenceJson(sourceOwnerGenerations), scopeIdentity.disclosure_closure_digest, scopeDigest, now, expires),
     db.prepare(`INSERT INTO scope_access_grant (snapshot_id, snapshot_revision, principal_ref, client_class,
       credential_generation, policy_authority_ref, allowed_use_json, disclosure_ceiling, authorization_receipt_ref,
-      state, expires_at, created_at) VALUES (?1,1,'workflow-owner','owner_pwa','workflow-credential',
-      'workflow-policy-authority','["research"]','exact','workflow-authorization','ACTIVE',?2,?3)`).bind(scopeId, expires, now),
+      state, expires_at, created_at) VALUES (?1,1,?2,'owner_pwa',?3,
+      'workflow-policy-authority','["research"]','exact','workflow-authorization','ACTIVE',?4,?5)`)
+      .bind(scopeId, principal.principal_ref, principal.credential_generation, expires, now),
   ]);
   const key = `workflow-portfolio-${tag}`;
   await bucket.put(key, bytes, { sha256: hash });
@@ -83,7 +84,7 @@ export async function workflowFixture(tag: string, lane: "confirmatory" | "explo
     investigation_ref: { id: ledgerInput.investigation_id, revision: 1 }, stage: "FREEZE_PROTOCOL_AND_SCOPE",
     idempotency_key: `workflow-idempotency-${tag}`, handler_generation: lane === "exploratory" ? "research-handlers.exploratory.v1" : "controlled-handlers.v1",
     input_manifest: { object_ref: key, sha256: hash, byte_length: bytes.byteLength, residency: {
-      scope_domain_id: scopeId, access_domain_id: "workflow-owner", confidentiality_domain_id: "private",
+      scope_domain_id: scopeId, access_domain_id: principal.principal_ref, confidentiality_domain_id: "private",
       encryption_key_domain_id: "key-1", retention_domain_id: "retention-1", erasure_domain_id: "erasure-1",
       content_digest: { algorithm: "sha256", digest: hash },
     } },

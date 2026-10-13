@@ -4,13 +4,13 @@ import { WorkflowCheckpointStore, type StageRequest, type WorkflowObject, type W
 import { createD1ScopeProfilePort } from "@eliotr/retrieval";
 import type { ScopeSnapshot } from "@eliotr/contracts";
 import { principal as workflowPrincipal, workflowFixture } from "./research-workflow-fixture.js";
-import {
-  fixture as indexedRetrievalFixture,
-  principal as indexedRetrievalPrincipal,
-  profile as indexedRetrievalProfile,
-  runtime as indexedRetrievalRuntime,
-} from "./research-retrieve-fixture.js";
 import { SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_RETRIEVAL_SCOPE_PROFILE } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
+
+export interface HistoricalV2SearchRuntime {
+  readonly search_database: D1Database;
+  readonly search_migrations: { name: string; queries: string[] }[];
+  readonly migrations_applied?: boolean;
+}
 
 export interface HistoricalV2SessionFixture {
   readonly db: D1Database;
@@ -84,10 +84,19 @@ async function registerHistoricalSession(
 }
 
 /** Register the supported legacy v2 generation from a fresh, current GLOBAL_LIBRARY owner fixture. */
-export async function prepareHistoricalV2Workflow(tag: string): Promise<HistoricalV2SessionFixture> {
+export async function prepareHistoricalV2Workflow(
+  tag: string,
+  searchRuntime?: HistoricalV2SearchRuntime,
+): Promise<HistoricalV2SessionFixture> {
   const f = await workflowFixture(tag, "exploratory");
-  await applyD1Migrations(indexedRetrievalRuntime.SEARCH_DB, indexedRetrievalRuntime.SEARCH_MIGRATIONS);
-  const scope = await createD1EvidenceAuthorityPort({ core_database: f.db, search_database: indexedRetrievalRuntime.SEARCH_DB })
+  const selectedSearchRuntime = searchRuntime ?? await (async () => {
+    const indexed = await import("./research-retrieve-fixture.js");
+    return { search_database: indexed.runtime.SEARCH_DB, search_migrations: indexed.runtime.SEARCH_MIGRATIONS };
+  })();
+  if (selectedSearchRuntime.migrations_applied !== true) {
+    await applyD1Migrations(selectedSearchRuntime.search_database, selectedSearchRuntime.search_migrations);
+  }
+  const scope = await createD1EvidenceAuthorityPort({ core_database: f.db, search_database: selectedSearchRuntime.search_database })
     .loadScope({ id: f.request.input_manifest.residency.scope_domain_id, revision: 1 });
   if (scope === null) throw new Error("historical workflow fixture has no current owner scope");
   await createD1ScopeProfilePort(f.db).recordBinding(scope.snapshot, SERVER_RETRIEVAL_SCOPE_PROFILE);
@@ -97,7 +106,8 @@ export async function prepareHistoricalV2Workflow(tag: string): Promise<Historic
 
 /** Register the same historical generation over an actual indexed Q1 source and current owner scope. */
 export async function prepareIndexedHistoricalV2Workflow(tag: string, query: string): Promise<HistoricalV2SessionFixture> {
-  const f = await indexedRetrievalFixture(SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, { query });
-  await createD1ScopeProfilePort(f.db).recordBinding(f.scope, { ...indexedRetrievalProfile, max_results: 1 });
-  return registerHistoricalSession(tag, f.db, indexedRetrievalRuntime.WORK_BUCKET, f.scope, indexedRetrievalPrincipal, f.stage0);
+  const indexed = await import("./research-retrieve-fixture.js");
+  const f = await indexed.fixture(SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, { query });
+  await createD1ScopeProfilePort(f.db).recordBinding(f.scope, { ...indexed.profile, max_results: 1 });
+  return registerHistoricalSession(tag, f.db, indexed.runtime.WORK_BUCKET, f.scope, indexed.principal, f.stage0);
 }
