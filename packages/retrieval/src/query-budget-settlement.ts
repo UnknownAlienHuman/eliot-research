@@ -5,6 +5,7 @@ import {
   decodeRetrievalRequestBudgets,
   hasExactRetrievalKeys as hasExactKeys,
   isRetrievalRecord as isRecord,
+  isManagedRetrievalTrace,
   managedRetrievalRefIdV1,
   retrievalSha256Hex as sha256Hex,
 } from "./query-codec.js";
@@ -120,16 +121,30 @@ export function createRetrievalExecutionIdV1(): string {
     .join("");
 }
 
+const MANAGED_TRACE_REF_PREFIX = "mrt1-";
+const MANAGED_PACK_REF_PREFIX = "mrp1-";
+
 /**
- * A settled ref is either the execution-lease derivation `query-<execution_id>` /
- * `pack-<execution_id>`, or the managed invocation derivation `mrt1-`/`mrp1-` with a
- * 48-hex digest. Byte equality against the bound result is enforced by the companion
- * clauses and the canonical digest checks, so this guard fixes only the shape family.
+ * Derive the managed trace and pack refs a settled result must carry. The
+ * admission-receipt binder recomputes them from a supplied `scoped_invocation_id`; the
+ * readback decoder recomputes them from the managed outcome stored on the durable
+ * result, so no side-channel input or guessed contract is needed.
  */
-function isBudgetSettlementRefShape(refId: string, managedPrefix: "mrt1" | "mrp1"): boolean {
-  return /^mrt1-[a-f0-9]{48}$/u.test(refId) || /^mrp1-[a-f0-9]{48}$/u.test(refId)
-    ? refId.startsWith(managedPrefix + "-")
-    : /^(query|pack)-[a-f0-9]{48}$/u.test(refId);
+async function managedRefIds(result: RetrievalResult): Promise<readonly [string, string] | null> {
+  const outcomes = isManagedRetrievalTrace(result.trace)
+    ? result.trace.managed_ranking_outcomes
+    : undefined;
+  const outcome = outcomes?.[0];
+  if (outcome === undefined) return null;
+  return Promise.all([
+    managedRetrievalRefIdV1(outcome.scoped_invocation_id, "trace"),
+    managedRetrievalRefIdV1(outcome.scoped_invocation_id, "pack"),
+  ]);
+}
+
+/** A ref is in the managed invocation family when it carries the mrt1/mrp1 prefix. */
+function isManagedRef(refId: string, managedPrefix: string): boolean {
+  return refId.startsWith(managedPrefix) && /^[a-f0-9]{48}$/u.test(refId.slice(managedPrefix.length));
 }
 
 /** Bind operation-time usage to the canonical public result and trace. Hashes provide integrity only. */
@@ -209,8 +224,7 @@ export async function decodeRetrievalBudgetSettlementV1(
     : undefined;
   if (usage === null || (hasBudgets && budgets === undefined) ||
       result.trace.budget_receipt_ref !== value.receipt_ref ||
-      !isBudgetSettlementRefShape(result.trace.trace_ref.id, "mrt1") ||
-      !isBudgetSettlementRefShape(result.evidence_pack.pack_ref.id, "mrp1") ||
+      !(await isBoundSettlementRef(result, value.execution_id)) ||
       result.trace.evidence_pack_ref !== result.evidence_pack.pack_ref.id ||
       result.trace.trace_ref.id !== result.evidence_pack.trace_ref.id ||
       result.trace.trace_ref.revision !== result.evidence_pack.trace_ref.revision ||
@@ -236,3 +250,20 @@ export async function decodeRetrievalBudgetSettlementV1(
     ...(budgets === undefined ? {} : { request_budgets: budgets }),
   };
 }
+async function isBoundSettlementRef(result: RetrievalResult, executionId: string): Promise<boolean> {
+  const traceRefId = result.trace.trace_ref.id;
+  const packRefId = result.evidence_pack.pack_ref.id;
+  if (isManagedRef(traceRefId, MANAGED_TRACE_REF_PREFIX) ||
+      isManagedRef(packRefId, MANAGED_PACK_REF_PREFIX)) {
+    const derived = await managedRefIds(result);
+    return derived !== null && derived[0] === traceRefId && derived[1] === packRefId;
+  }
+  return traceRefId === 'query-' + executionId && packRefId === 'pack-' + executionId;
+}
+
+/**
+ * Derive the managed trace and pack refs a settled result must carry. The
+ * admission-receipt binder recomputes them from a supplied scoped_invocation_id; the
+ * readback decoder recomputes them from the managed outcome stored on the durable
+ * result, so no side-channel input or guessed contract is needed.
+ */
