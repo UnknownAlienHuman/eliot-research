@@ -5,8 +5,10 @@
   "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
   "base_sha": "208ab7f7a49744776e8913ca4a8d961d3d45b40a",
   "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
-  "state": "ACTIVE",
-  "evidence_refs": [],
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "private:diagnostic-HANDOFF.json c861c5a9 source/newnegative1/scopedwebTS PASS; rootintegration7617fd1c; liveoptin/cause pending"
+  ],
   "blocker_refs": [],
   "checkpoint_id": "U4-R",
   "claim_id": "u4-r-recent-history-diagnostic-20261013",
@@ -28,5 +30,7 @@
       "commit_sha": "273577c9ae45a1bf94ebcb5be77906c1f15ded92",
       "approval_ref": "tests/ui-owner/receipts/u2-x/u2-r.json"
     }
-  ]
+  ],
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "private:diagnostic-HANDOFF.json"
 }
