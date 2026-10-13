@@ -82,3 +82,18 @@ This metadata publication does not require D1/R2 migration or change normalized-
 ## Research Provider Key schema registration
 
 Registry generation 8 adds the twelve already-exported Research Provider Key configuration and model-use schemas to the existing `research` family at version 1, generation 1. Each receives an `INITIAL` history entry because it has no prior generated schema identity; all generation 7 schema identities and compatibility entries remain unchanged. The generated corpus, index, and canonical-fixture registry are refreshed at registry generation 8. This registration does not change the Zod wire shapes, widen the closed schema-family enum, or require a D1/R2 migration.
+
+## Research session binding metadata
+
+Registry generation 11 adds `ResearchSessionBindingDescriptorSchema` and `ResearchSessionLocatorSchema`
+to the existing `research` family at version 1, generation 1. Both receive `INITIAL` compatibility
+entries. Existing schema identities, schema digests, and compatibility history are preserved; no
+existing wire contract changes and no D1/R2 migration is required.
+
+The descriptor is a strict eight-field metadata response: the current canonical investigation reference
+and original persisted handler and authority tuple. It grants no execution authority. Session and
+operation identifiers must match; revisions must be positive safe integers. These semantic constraints
+remain enforced by Zod. The generated JSON Schema carries the closed structural shape and stable URN;
+it does not encode the identifier equality refinement. The dedicated JSON fixture round-trips through
+the runtime schema and its canonical digest is registered. Extra authority fields and split identifiers
+are rejected by the runtime contract.

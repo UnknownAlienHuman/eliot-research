@@ -1,0 +1,10 @@
+{
+  "protocol": "eliotr.research-session-binding.v1",
+  "session_id": "run-example",
+  "operation_id": "run-example",
+  "investigation_ref": { "id": "investigation-example", "revision": 9 },
+  "handler_generation": "handler-original",
+  "principal_ref": "principal-example",
+  "credential_generation": "credential-example",
+  "deployment_generation": "deployment-example"
+}

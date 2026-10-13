@@ -3336,8 +3336,80 @@
       "schema_id": "urn:eliotr:contracts:research:research-read-extract-checkpoint-v2:v2:g1",
       "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "ResearchSessionBindingDescriptorSchema",
+      "family": "research",
+      "json_schema_sha256": "9ef22e3a5a57ca5dca1bd5cababcfe52f3bf24f48eb6f94558fa9d587949d0eb",
+      "kind": "OBJECT",
+      "note": "Initial read-only research session binding descriptor v1/g1: strict eight-field response, current canonical reference and original run handler/authority. Equality and safe revision refinements remain Zod runtime authority. No existing wire schema or D1/R2 migration changes.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-session-binding-descriptor:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "ResearchSessionLocatorSchema",
+      "family": "research",
+      "json_schema_sha256": "4d8deb530820b6b6b24e1c357cb2fd54f90012553012d6daae2877e8894f4ff6",
+      "kind": "SCALAR",
+      "note": "Initial research session locator v1/g1: bounded 1..128 ASCII operation identifier for the owner-only session binding metadata read. Existing schema identities and digests are preserved.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-session-locator:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "ResearchBranchReconciliationPendingCheckpointSchema",
+      "family": "research",
+      "json_schema_sha256": "0d987988ca8d475c23b251e8d2525f760c0d2191cab0b5e5014b93e2cb29ebd3",
+      "kind": "OBJECT",
+      "note": "Initial publication of explicit exploratory relation-pending checkpoint and assessment state. Existing checkpoint schema identities, generations and strictness remain unchanged.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-branch-reconciliation-pending-checkpoint:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "ResearchRelationAssessmentStateSchema",
+      "family": "research",
+      "json_schema_sha256": "e358d7fdc0cd6b177efe4fc0f5f8feaaeb2e506ec87cc907b7aafd2cadb59172",
+      "kind": "UNION",
+      "note": "Initial publication of explicit exploratory relation-pending checkpoint and assessment state. Existing checkpoint schema identities, generations and strictness remain unchanged.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-relation-assessment-state:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "ResearchRunHistoryVisibilitySchema",
+      "family": "research",
+      "json_schema_sha256": "a3adafadc116fd2e1360e4bf5e0760480e5067224963fcbb69f400152d3e1e32",
+      "kind": "OBJECT",
+      "note": "Initial strict visibility_scan subobject for outer Recent history v4; independent candidate-scan states do not authorize reads or imply run completion. No existing schema or ledger entry changes.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-run-history-visibility:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "ResearchRunHistoryVisibilityStateSchema",
+      "family": "research",
+      "json_schema_sha256": "6f6e3f6257677f1288fbd7a15ad15f208428e8be8da0a11f46c75f69964afd4e",
+      "kind": "ENUM",
+      "note": "Initial strict visibility_scan subobject for outer Recent history v4; independent candidate-scan states do not authorize reads or imply run completion. No existing schema or ledger entry changes.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-run-history-visibility-state:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
     }
   ],
   "protocol": "eliotr.contract-compatibility-registry.v1",
-  "registry_generation": 10
+  "registry_generation": 11
 }

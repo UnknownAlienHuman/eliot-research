@@ -1,0 +1,76 @@
+{
+  "branch_analysis_ref": {
+    "id": "analysis-fixture",
+    "revision": 1
+  },
+  "branch_results": [
+    {
+      "authoritative_disposition": "UNASSESSED",
+      "branch_ref": {
+        "id": "eliotr.research.branch-8ff11439f86f178b767ab8b613606d3ac790ec7334033abcf2a49eb31399e6a5",
+        "revision": 1
+      },
+      "evidence_handle_refs": [
+        {
+          "id": "counter-candidate-passage",
+          "revision": 1
+        }
+      ],
+      "failed_probe_refs": [],
+      "hypothesis_ids": [],
+      "identity_digest": "8ff11439f86f178b767ab8b613606d3ac790ec7334033abcf2a49eb31399e6a5",
+      "limitations": [
+        "Selected counter evidence is a candidate; an opposing relation requires evaluation."
+      ],
+      "observation_refs": [
+        "counter-observation"
+      ],
+      "question_ids": [
+        "question-counter"
+      ],
+      "role": "COUNTER",
+      "status": "CANDIDATE_READY",
+      "unknowns": [
+        "comparable-population-unavailable"
+      ]
+    }
+  ],
+  "checkpoint_ref": {
+    "id": "eliotr.research.branch-reconciliation-pending-6b59db751e10862fea4d68e10ec237bf8a567707869141245fbc965ef518a987",
+    "revision": 1
+  },
+  "counter_search_status": "COMPLETE",
+  "created_at": "2026-10-13T00:00:00.000Z",
+  "identity_digest": "6b59db751e10862fea4d68e10ec237bf8a567707869141245fbc965ef518a987",
+  "inquiry_protocol_ref": {
+    "id": "protocol-fixture",
+    "revision": 1
+  },
+  "investigation_ref": {
+    "id": "investigation-fixture",
+    "revision": 1
+  },
+  "operation_id": "relation-pending-canonical-fixture",
+  "planning_manifest_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "planning_manifest_ref": {
+    "id": "planning-fixture",
+    "revision": 1
+  },
+  "principal_ref": "owner-fixture",
+  "protocol": "eliotr.research.branch-reconciliation-pending.v1",
+  "protocol_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "relation_assessment": {
+    "reason": "RELATION_EVALUATOR_NOT_INTEGRATED",
+    "status": "PENDING"
+  },
+  "required_roles": [
+    "COUNTER"
+  ],
+  "research_debts": [],
+  "scope_snapshot_ref": {
+    "id": "scope-fixture",
+    "revision": 1
+  },
+  "unmet_required_roles": [],
+  "unresolved_contradiction_refs": []
+}

@@ -1,8 +1,8 @@
 {
   "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "protocol": "eliotr.contract-schema-corpus.v1",
-  "registry_generation": 10,
-  "schema_count": 238,
+  "registry_generation": 11,
+  "schema_count": 244,
   "schemas": [
     {
       "export_name": "AllowedReferenceManifestSchema",
@@ -26947,6 +26947,488 @@
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
+      "export_name": "ResearchBranchReconciliationPendingCheckpointSchema",
+      "family": "research",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "const": "eliotr.research.branch-reconciliation-pending.v1",
+            "type": "string"
+          },
+          "__schema1": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "revision": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "revision"
+            ],
+            "type": "object"
+          },
+          "__schema10": {
+            "items": {
+              "$ref": "#/$defs/__schema11"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
+          "__schema11": {
+            "additionalProperties": false,
+            "properties": {
+              "authoritative_disposition": {
+                "$ref": "#/$defs/__schema27"
+              },
+              "branch_ref": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "evidence_handle_refs": {
+                "$ref": "#/$defs/__schema18"
+              },
+              "failed_probe_refs": {
+                "$ref": "#/$defs/__schema25"
+              },
+              "hypothesis_ids": {
+                "$ref": "#/$defs/__schema16"
+              },
+              "identity_digest": {
+                "$ref": "#/$defs/__schema12"
+              },
+              "limitations": {
+                "$ref": "#/$defs/__schema23"
+              },
+              "observation_refs": {
+                "$ref": "#/$defs/__schema19"
+              },
+              "question_ids": {
+                "$ref": "#/$defs/__schema14"
+              },
+              "role": {
+                "$ref": "#/$defs/__schema9"
+              },
+              "status": {
+                "$ref": "#/$defs/__schema13"
+              },
+              "unknowns": {
+                "$ref": "#/$defs/__schema21"
+              }
+            },
+            "required": [
+              "branch_ref",
+              "identity_digest",
+              "role",
+              "status",
+              "question_ids",
+              "hypothesis_ids",
+              "evidence_handle_refs",
+              "observation_refs",
+              "unknowns",
+              "limitations",
+              "failed_probe_refs",
+              "authoritative_disposition"
+            ],
+            "type": "object"
+          },
+          "__schema12": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "__schema13": {
+            "enum": [
+              "CANDIDATE_READY",
+              "BLOCKED"
+            ],
+            "type": "string"
+          },
+          "__schema14": {
+            "items": {
+              "$ref": "#/$defs/__schema15"
+            },
+            "maxItems": 32,
+            "type": "array"
+          },
+          "__schema15": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "__schema16": {
+            "items": {
+              "$ref": "#/$defs/__schema17"
+            },
+            "maxItems": 32,
+            "type": "array"
+          },
+          "__schema17": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "__schema18": {
+            "items": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "maxItems": 512,
+            "type": "array"
+          },
+          "__schema19": {
+            "items": {
+              "$ref": "#/$defs/__schema20"
+            },
+            "maxItems": 512,
+            "type": "array"
+          },
+          "__schema2": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "__schema20": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "__schema21": {
+            "items": {
+              "$ref": "#/$defs/__schema22"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "__schema22": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "type": "string"
+          },
+          "__schema23": {
+            "items": {
+              "$ref": "#/$defs/__schema24"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "__schema24": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "type": "string"
+          },
+          "__schema25": {
+            "items": {
+              "$ref": "#/$defs/__schema26"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "__schema26": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "__schema27": {
+            "const": "UNASSESSED",
+            "type": "string"
+          },
+          "__schema28": {
+            "items": {
+              "$ref": "#/$defs/__schema9"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
+          "__schema29": {
+            "items": {
+              "$ref": "#/$defs/__schema30"
+            },
+            "maxItems": 0,
+            "type": "array"
+          },
+          "__schema3": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "__schema30": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "__schema31": {
+            "items": {
+              "$ref": "#/$defs/__schema32"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
+          "__schema32": {
+            "additionalProperties": false,
+            "properties": {
+              "basis_and_evidence_refs": {
+                "items": {
+                  "$ref": "#/$defs/__schema2"
+                },
+                "type": "array"
+              },
+              "blocked_refs": {
+                "items": {
+                  "$ref": "#/$defs/__schema2"
+                },
+                "type": "array"
+              },
+              "blocking_effect": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "debt_ref": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "expires_at": {
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+                "type": "string"
+              },
+              "kind": {
+                "enum": [
+                  "epistemic",
+                  "verification",
+                  "replication",
+                  "coverage",
+                  "contradiction",
+                  "fidelity",
+                  "provenance",
+                  "authority"
+                ],
+                "type": "string"
+              },
+              "next_probe": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "owner": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "resolution_or_waiver_receipt_ref": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "review_condition": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "OPEN",
+                  "RESOLVED",
+                  "WAIVED",
+                  "SUPERSEDED"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "debt_ref",
+              "kind",
+              "blocked_refs",
+              "basis_and_evidence_refs",
+              "owner",
+              "blocking_effect",
+              "next_probe",
+              "review_condition",
+              "status"
+            ],
+            "type": "object"
+          },
+          "__schema33": {
+            "enum": [
+              "NOT_REQUIRED",
+              "PARTIAL",
+              "COMPLETE"
+            ],
+            "type": "string"
+          },
+          "__schema34": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          },
+          "__schema35": {
+            "oneOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "reason": {
+                    "const": "RELATION_EVALUATOR_NOT_INTEGRATED",
+                    "type": "string"
+                  },
+                  "status": {
+                    "const": "PENDING",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "status",
+                  "reason"
+                ],
+                "type": "object"
+              },
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "status": {
+                    "const": "NOT_REQUIRED",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "status"
+                ],
+                "type": "object"
+              }
+            ]
+          },
+          "__schema4": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "__schema5": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "__schema6": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "__schema7": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "__schema8": {
+            "items": {
+              "$ref": "#/$defs/__schema9"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
+          "__schema9": {
+            "enum": [
+              "SUPPORT",
+              "COUNTER",
+              "ALTERNATIVE",
+              "CHRONOLOGY",
+              "IMPLEMENTATION",
+              "LITERATURE",
+              "SOURCE_AUDIT"
+            ],
+            "type": "string"
+          }
+        },
+        "$id": "urn:eliotr:contracts:research:research-branch-reconciliation-pending-checkpoint:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "branch_analysis_ref": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "branch_results": {
+            "$ref": "#/$defs/__schema10"
+          },
+          "checkpoint_ref": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "counter_search_status": {
+            "$ref": "#/$defs/__schema33"
+          },
+          "created_at": {
+            "$ref": "#/$defs/__schema34"
+          },
+          "identity_digest": {
+            "$ref": "#/$defs/__schema3"
+          },
+          "inquiry_protocol_ref": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "investigation_ref": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "operation_id": {
+            "$ref": "#/$defs/__schema4"
+          },
+          "planning_manifest_digest": {
+            "$ref": "#/$defs/__schema7"
+          },
+          "planning_manifest_ref": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "principal_ref": {
+            "$ref": "#/$defs/__schema5"
+          },
+          "protocol": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "protocol_digest": {
+            "$ref": "#/$defs/__schema6"
+          },
+          "relation_assessment": {
+            "$ref": "#/$defs/__schema35"
+          },
+          "required_roles": {
+            "$ref": "#/$defs/__schema8"
+          },
+          "research_debts": {
+            "$ref": "#/$defs/__schema31"
+          },
+          "scope_snapshot_ref": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "unmet_required_roles": {
+            "$ref": "#/$defs/__schema28"
+          },
+          "unresolved_contradiction_refs": {
+            "$ref": "#/$defs/__schema29"
+          }
+        },
+        "required": [
+          "protocol",
+          "checkpoint_ref",
+          "identity_digest",
+          "operation_id",
+          "investigation_ref",
+          "principal_ref",
+          "scope_snapshot_ref",
+          "inquiry_protocol_ref",
+          "protocol_digest",
+          "planning_manifest_ref",
+          "planning_manifest_digest",
+          "branch_analysis_ref",
+          "required_roles",
+          "branch_results",
+          "unmet_required_roles",
+          "unresolved_contradiction_refs",
+          "research_debts",
+          "counter_search_status",
+          "created_at",
+          "relation_assessment"
+        ],
+        "title": "ResearchBranchReconciliationPendingCheckpoint",
+        "type": "object",
+        "x-eliotr-family": "research",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-branch-reconciliation-pending-checkpoint:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
       "export_name": "ResearchBranchResultSchema",
       "family": "research",
       "json_schema": {
@@ -32819,6 +33301,232 @@
       "schema_id": "urn:eliotr:contracts:research:research-read-extract-checkpoint-v2:v2:g1",
       "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchRelationAssessmentStateSchema",
+      "family": "research",
+      "json_schema": {
+        "$id": "urn:eliotr:contracts:research:research-relation-assessment-state:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "reason": {
+                "const": "RELATION_EVALUATOR_NOT_INTEGRATED",
+                "type": "string"
+              },
+              "status": {
+                "const": "PENDING",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status",
+              "reason"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "status": {
+                "const": "NOT_REQUIRED",
+                "type": "string"
+              }
+            },
+            "required": [
+              "status"
+            ],
+            "type": "object"
+          }
+        ],
+        "title": "ResearchRelationAssessmentState",
+        "x-eliotr-family": "research",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "UNION",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-relation-assessment-state:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ResearchRunHistoryVisibilitySchema",
+      "family": "research",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "enum": [
+              "TARGET_REACHED",
+              "SOURCE_EXHAUSTED",
+              "BUDGET_STOPPED"
+            ],
+            "type": "string"
+          }
+        },
+        "$id": "urn:eliotr:contracts:research:research-run-history-visibility:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "runs": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "saved_drafts": {
+            "$ref": "#/$defs/__schema0"
+          }
+        },
+        "required": [
+          "runs",
+          "saved_drafts"
+        ],
+        "title": "ResearchRunHistoryVisibility",
+        "type": "object",
+        "x-eliotr-family": "research",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-run-history-visibility:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchRunHistoryVisibilityStateSchema",
+      "family": "research",
+      "json_schema": {
+        "$id": "urn:eliotr:contracts:research:research-run-history-visibility-state:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "enum": [
+          "TARGET_REACHED",
+          "SOURCE_EXHAUSTED",
+          "BUDGET_STOPPED"
+        ],
+        "title": "ResearchRunHistoryVisibilityState",
+        "type": "string",
+        "x-eliotr-family": "research",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-run-history-visibility-state:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ResearchSessionBindingDescriptorSchema",
+      "family": "research",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "const": "eliotr.research-session-binding.v1",
+            "type": "string"
+          },
+          "__schema1": {
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$",
+            "type": "string"
+          },
+          "__schema2": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/__schema3"
+              },
+              "revision": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "revision"
+            ],
+            "type": "object"
+          },
+          "__schema3": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "$id": "urn:eliotr:contracts:research:research-session-binding-descriptor:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "credential_generation": {
+            "$ref": "#/$defs/__schema3"
+          },
+          "deployment_generation": {
+            "$ref": "#/$defs/__schema3"
+          },
+          "handler_generation": {
+            "$ref": "#/$defs/__schema3"
+          },
+          "investigation_ref": {
+            "$ref": "#/$defs/__schema2"
+          },
+          "operation_id": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "principal_ref": {
+            "$ref": "#/$defs/__schema3"
+          },
+          "protocol": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "session_id": {
+            "$ref": "#/$defs/__schema1"
+          }
+        },
+        "required": [
+          "protocol",
+          "session_id",
+          "operation_id",
+          "investigation_ref",
+          "handler_generation",
+          "principal_ref",
+          "credential_generation",
+          "deployment_generation"
+        ],
+        "title": "ResearchSessionBindingDescriptor",
+        "type": "object",
+        "x-eliotr-family": "research",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-session-binding-descriptor:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchSessionLocatorSchema",
+      "family": "research",
+      "json_schema": {
+        "$id": "urn:eliotr:contracts:research:research-session-locator:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$",
+        "title": "ResearchSessionLocator",
+        "type": "string",
+        "x-eliotr-family": "research",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "SCALAR",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-session-locator:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
     },
     {
       "export_name": "ResearchWorkflowStageSchema",

@@ -28,6 +28,9 @@ import * as researchBranchFinding from "./research-branch-finding.js";
 import * as researchBranchQuery from "./research-branch-query.js";
 import * as researchProviderKey from "./research-provider-key.js";
 import * as researchProviderKeyModelUse from "./research-provider-key-model-use.js";
+import * as researchBranchRelationPending from "./research-branch-relation-pending.js";
+import * as researchSessionBinding from "./research-session-binding.js";
+import * as researchRunHistoryVisibility from "./research-run-history-visibility.js";
 import * as residency from "./residency.js";
 import * as retrieval from "./retrieval.js";
 import * as scope from "./scope.js";
@@ -46,7 +49,7 @@ import {
   type ContractStructuralStrictness,
 } from "./registry-contracts.js";
 
-export const CONTRACT_SCHEMA_REGISTRY_GENERATION = 10 as const;
+export const CONTRACT_SCHEMA_REGISTRY_GENERATION = 11 as const;
 
 export type ContractJsonPrimitive = string | number | boolean | null;
 export type ContractJsonValue =
@@ -100,6 +103,9 @@ const SCHEMA_MODULES: readonly SchemaModule[] = [
   { family: "research", exports: researchBranchQuery },
   { family: "research", exports: researchProviderKey },
   { family: "research", exports: researchProviderKeyModelUse },
+  { family: "research", exports: researchBranchRelationPending },
+  { family: "research", exports: researchSessionBinding },
+  { family: "research", exports: researchRunHistoryVisibility },
   { family: "residency", exports: residency },
   { family: "retrieval", exports: retrieval },
   { family: "scope", exports: scope },

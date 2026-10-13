@@ -3,7 +3,7 @@ import { IdentifierSchema, Sha256Schema, VersionedRefSchema } from "./common.js"
 import { BranchFindingCandidateSchema } from "./research-branch-finding.js";
 import { BranchQueryPlanSchema, BranchQueryResultSchema, branchQueryResultMatchesPlan, type BranchQueryPlan } from "./research-branch-query.js";
 import { ResearchBranchRoleSchema } from "./research-branch-role.js";
-import { branchDebtsMatchBlockedRoles, sameStrings } from "./research-branch-invariants.js";
+import { branchDebtsMatchBlockedRoles, sameStrings, reconciliationStateIssues } from "./research-branch-invariants.js";
 import { ResearchDebtSchema } from "./research.js";
 
 export { ResearchBranchRoleSchema } from "./research-branch-role.js";
@@ -212,30 +212,7 @@ export const ResearchBranchReconciliationCheckpointSchema = z.object({
   if (value.checkpoint_ref.id !== `eliotr.research.branch-reconciliation-${value.identity_digest}` || value.checkpoint_ref.revision !== 1) {
     context.addIssue({ code: "custom", path: ["checkpoint_ref"], message: "branch reconciliation identity mismatch" });
   }
-  const required = new Set(value.required_roles);
-  const roles = value.branch_results.map((item) => item.role);
-  if (required.size !== value.required_roles.length || duplicate(roles) || roles.some((role) => !required.has(role))) {
-    context.addIssue({ code: "custom", path: ["branch_results"], message: "branch reconciliation roles are inconsistent" });
-  }
-  const blocked = value.branch_results.filter((item) => item.status === "BLOCKED").map((item) => item.role).sort();
-  const unmet = [...value.unmet_required_roles].sort();
-  if (blocked.length !== unmet.length || blocked.some((role, index) => role !== unmet[index])) {
-    context.addIssue({ code: "custom", path: ["unmet_required_roles"], message: "unmet roles are not derived from branch results" });
-  }
-  const debtRefs = value.research_debts.map((item) => refKey(item.debt_ref));
-  if (duplicate(debtRefs) || value.research_debts.some((item) => item.status !== "OPEN")) {
-    context.addIssue({ code: "custom", path: ["research_debts"], message: "branch debts are duplicated or not open" });
-  }
-  if (!required.has("COUNTER") && value.counter_search_status !== "NOT_REQUIRED") {
-    context.addIssue({ code: "custom", path: ["counter_search_status"], message: "counter search ran for an unrequired role" });
-  }
-  if (required.has("COUNTER")) {
-    const counter = value.branch_results.find((item) => item.role === "COUNTER");
-    const expected = counter?.status === "CANDIDATE_READY" ? "COMPLETE" : "PARTIAL";
-    if (counter === undefined || value.counter_search_status !== expected) {
-      context.addIssue({ code: "custom", path: ["counter_search_status"], message: "counter search status does not match its branch result" });
-    }
-  }
+  for (const issue of reconciliationStateIssues(value)) context.addIssue({ code: "custom", ...issue });
 });
 export type ResearchBranchReconciliationCheckpoint = z.infer<typeof ResearchBranchReconciliationCheckpointSchema>;
 

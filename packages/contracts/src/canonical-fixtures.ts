@@ -22,6 +22,31 @@ export const CANONICAL_FIXTURE_REGISTRY =
     registry_generation: CONTRACT_SCHEMA_REGISTRY_GENERATION,
     fixtures: [
       {
+        "fixture_id": "research-run-history-visibility-v4",
+        "protocol": "eliotr.research-runs.v4",
+        "schema_export": "ResearchRunHistoryVisibilitySchema",
+        "fixture_path": "tests/fixtures/contracts/eliotr.research-run-history-visibility.v4.json",
+        "media_type": "application/json",
+        "canonical_body_sha256": "92b4a1d6e1ab8dc6ce9e1673b2ace7d7531a89be4bd1889f88d129a8fdef2a77"
+      },
+      {
+        "fixture_id": "research-branch-reconciliation-pending-v1",
+        "protocol": "eliotr.research.branch-reconciliation-pending.v1",
+        "schema_export": "ResearchBranchReconciliationPendingCheckpointSchema",
+        "fixture_path": "tests/fixtures/contracts/eliotr.research.branch-reconciliation-pending.v1.json",
+        "media_type": "application/json",
+        "canonical_body_sha256": "dcc8fd19399092a95acac1a2b8ba0f0895c792ace9181c31f245f42b8a31a872"
+      },
+      {
+        fixture_id: "research-session-binding-v1",
+        protocol: "eliotr.research-session-binding.v1",
+        schema_export: "ResearchSessionBindingDescriptorSchema",
+        fixture_path: "docs/contracts/fixtures/eliotr.research-session-binding.v1.json",
+        media_type: "application/json",
+        canonical_body_sha256:
+          "d01e543f9a8773859f6e6e937a00bd9b8d1cf7dab33e78a645299aa22f73d18d",
+      },
+      {
         fixture_id: "coordinate-map-v1",
         protocol: COORDINATE_MAP_PROTOCOL,
         schema_export: "CoordinateMapSchema",

@@ -1,3 +1,4 @@
+import { ResearchRunHistoryVisibilitySchema, type ResearchRunHistoryVisibility } from "@eliotr/contracts";
 // C3-RH run history: moved mechanically from packages/pwa-research-workspace/src/research-run-api.ts.
 // Envelope, record, generation and identifier policy come from the accepted shared research-run wire.
 // The nested run status is the injected RR decoder, so history never carries a second copy of it.
@@ -28,7 +29,8 @@ export interface ResearchRunHistoryEntry {
 }
 
 export interface ResearchRunHistoryView {
-  readonly protocol: "eliotr.research-runs.v1" | "eliotr.research-runs.v2" | "eliotr.research-runs.v3";
+  readonly protocol: "eliotr.research-runs.v1" | "eliotr.research-runs.v2" | "eliotr.research-runs.v3" | "eliotr.research-runs.v4";
+  readonly visibility_scan?: ResearchRunHistoryVisibility;
   readonly runs: readonly ResearchRunHistoryEntry[];
   readonly saved_drafts: readonly ResearchRunSavedDraft[];
   readonly configuration_state: "INSTALLED" | "MISSING";
@@ -82,11 +84,19 @@ export function createRunHistoryApi(
     const parsed = wire.envelope(raw);
     wire.checkGeneration(parsed.deployment_generation, expectedDeploymentGeneration);
     const data = wire.record(parsed.data,
-      ["protocol", "runs", "configuration_state", "checked_at"], ["saved_drafts"]);
+      ["protocol", "runs", "configuration_state", "checked_at"], ["saved_drafts", "visibility_scan"]);
     const protocol: ResearchRunHistoryView["protocol"] = data.protocol as ResearchRunHistoryView["protocol"];
     if (protocol !== "eliotr.research-runs.v1" && protocol !== "eliotr.research-runs.v2" &&
-        protocol !== "eliotr.research-runs.v3") {
+        protocol !== "eliotr.research-runs.v3" && protocol !== "eliotr.research-runs.v4") {
       wire.invalid("research run history protocol is invalid");
+    }
+    let visibilityScan: ResearchRunHistoryVisibility | undefined;
+    if (protocol === "eliotr.research-runs.v4") {
+      const result = ResearchRunHistoryVisibilitySchema.safeParse(data.visibility_scan);
+      if (!result.success) wire.invalid("research run visibility scan is invalid");
+      visibilityScan = result.data;
+    } else if (Object.hasOwn(data, "visibility_scan")) {
+      wire.invalid("legacy history must not carry v4 visibility metadata");
     }
     const configurationState: ResearchRunHistoryView["configuration_state"] =
       data.configuration_state as ResearchRunHistoryView["configuration_state"];
@@ -127,12 +137,18 @@ export function createRunHistoryApi(
           ...(workflowInstanceId === undefined ? {} : { workflow_instance_id: workflowInstanceId }) });
       });
     }
-    if ((protocol === "eliotr.research-runs.v2" || protocol === "eliotr.research-runs.v3") &&
+    if ((protocol === "eliotr.research-runs.v2" || protocol === "eliotr.research-runs.v3" || protocol === "eliotr.research-runs.v4") &&
         !Object.hasOwn(data, "saved_drafts")) {
       wire.invalid("research run history is missing saved drafts");
     }
+    if (visibilityScan !== undefined && (
+        (visibilityScan.runs === "TARGET_REACHED") !== (runEntries.length === MAX_RUNS) ||
+        (visibilityScan.saved_drafts === "TARGET_REACHED") !== (savedDrafts.length === MAX_SAVED_DRAFTS))) {
+      wire.invalid("research run visibility state differs from its visible target");
+    }
     return {
       protocol,
+      ...(visibilityScan === undefined ? {} : { visibility_scan: visibilityScan }),
       runs: runEntries,
       saved_drafts: savedDrafts,
       configuration_state: configurationState,

@@ -1821,6 +1821,16 @@
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
+      "export_name": "ResearchBranchReconciliationPendingCheckpointSchema",
+      "family": "research",
+      "json_schema_sha256": "0d987988ca8d475c23b251e8d2525f760c0d2191cab0b5e5014b93e2cb29ebd3",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-branch-reconciliation-pending-checkpoint:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
       "export_name": "ResearchBranchResultSchema",
       "family": "research",
       "json_schema_sha256": "c8458fd03159cf706125fcb9b7e8eae7165b0decd02bb09845ef91e48014f3cc",
@@ -2019,6 +2029,56 @@
       "schema_id": "urn:eliotr:contracts:research:research-read-extract-checkpoint-v2:v2:g1",
       "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchRelationAssessmentStateSchema",
+      "family": "research",
+      "json_schema_sha256": "e358d7fdc0cd6b177efe4fc0f5f8feaaeb2e506ec87cc907b7aafd2cadb59172",
+      "kind": "UNION",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-relation-assessment-state:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ResearchRunHistoryVisibilitySchema",
+      "family": "research",
+      "json_schema_sha256": "a3adafadc116fd2e1360e4bf5e0760480e5067224963fcbb69f400152d3e1e32",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-run-history-visibility:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchRunHistoryVisibilityStateSchema",
+      "family": "research",
+      "json_schema_sha256": "6f6e3f6257677f1288fbd7a15ad15f208428e8be8da0a11f46c75f69964afd4e",
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-run-history-visibility-state:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ResearchSessionBindingDescriptorSchema",
+      "family": "research",
+      "json_schema_sha256": "9ef22e3a5a57ca5dca1bd5cababcfe52f3bf24f48eb6f94558fa9d587949d0eb",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-session-binding-descriptor:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchSessionLocatorSchema",
+      "family": "research",
+      "json_schema_sha256": "4d8deb530820b6b6b24e1c357cb2fd54f90012553012d6daae2877e8894f4ff6",
+      "kind": "SCALAR",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-session-locator:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
     },
     {
       "export_name": "ResearchWorkflowStageSchema",
@@ -2383,6 +2443,6 @@
   ],
   "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "protocol": "eliotr.contract-schema-index.v1",
-  "registry_generation": 10,
-  "schema_count": 238
+  "registry_generation": 11,
+  "schema_count": 244
 }

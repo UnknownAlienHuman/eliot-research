@@ -1,5 +1,5 @@
 import { ArtifactReadNotFoundError, type AuthenticatedRequestContext, type ResearchRunStatus } from "@eliotr/interfaces";
-import { VersionedRefSchema, type VersionedRef } from "@eliotr/contracts";
+import { VersionedRefSchema, type VersionedRef, type ResearchRunHistoryVisibilityState } from "@eliotr/contracts";
 import { CatalogInputError, OrientationError, ScopeServiceError } from "@eliotr/cloudflare-navigation";
 import { ArtifactDraftReadError } from "@eliotr/cloudflare-research";
 import {
@@ -131,59 +131,100 @@ async function readReauthorizedHistoricalArtifact(
   };
 }
 
-/** Recent run locators are re-authorized through the same reader as an opened run. */
+// The v4 read has independent bounds for each collection. Candidate budgets do
+// not replace any authority check or claim a bound on internal reader queries.
+const RECENT_VISIBLE_LIMIT = 8;
+const RECENT_CANDIDATE_BATCH = 8;
+const RECENT_RAW_CANDIDATE_BUDGET = 32;
+const RECENT_CANDIDATE_QUERY_BUDGET = 4;
+type RecentVisibilityScan = ResearchRunHistoryVisibilityState;
+interface VisibleRecentEntry<Entry> {
+  readonly entry: Entry;
+  readonly require_current?: () => Promise<void>;
+}
+
+async function scanVisibleRecent<Row, Entry>(
+  readCandidates: (after: Row | null, limit: number) => Promise<readonly Row[]>,
+  authorize: (row: Row) => Promise<VisibleRecentEntry<Entry> | null>,
+): Promise<{ entries: Entry[]; checks: (() => Promise<void>)[]; state: RecentVisibilityScan }> {
+  const entries: Entry[] = [];
+  const checks: (() => Promise<void>)[] = [];
+  let after: Row | null = null;
+  let scanned = 0;
+  for (let query = 0; query < RECENT_CANDIDATE_QUERY_BUDGET && scanned < RECENT_RAW_CANDIDATE_BUDGET; query += 1) {
+    const limit = Math.min(RECENT_CANDIDATE_BATCH, RECENT_RAW_CANDIDATE_BUDGET - scanned);
+    const rows = await readCandidates(after, limit);
+    if (rows.length > limit) invalidHistory("Recent history candidate batch is oversized");
+    for (const row of rows) {
+      scanned += 1;
+      const visible = await authorize(row);
+      if (visible === null) continue;
+      entries.push(visible.entry);
+      if (visible.require_current !== undefined) checks.push(visible.require_current);
+      if (entries.length === RECENT_VISIBLE_LIMIT) return { entries, checks, state: "TARGET_REACHED" };
+    }
+    if (rows.length < limit) return { entries, checks, state: "SOURCE_EXHAUSTED" };
+    after = rows[rows.length - 1] ?? null;
+  }
+  return { entries, checks, state: "BUDGET_STOPPED" };
+}
+
+/** Recent locators use the same current read authority as an opened run/report. */
 export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context: AuthenticatedRequestContext) {
   ports.authorize_owner_read(context);
-  let rows: { operation_id: string; created_at: string }[];
-  try {
-    const result = await ports.database.prepare(
-      "SELECT r.operation_id, r.created_at FROM research_workflow_run r " +
-      "JOIN research_deployment_compatible c ON c.origin_deployment_generation=r.deployment_generation " +
-      "AND c.active_deployment_generation=?2 WHERE (r.principal_ref=?1 OR EXISTS " +
-      "(SELECT 1 FROM owner_machine_run_origin o WHERE o.operation_id=r.operation_id AND o.reader_principal_ref=?1)) " +
-      "ORDER BY r.created_at DESC, r.operation_id DESC LIMIT 8",
-    ).bind(context.principal_ref, ports.deployment_generation)
-      .all<{ operation_id: string; created_at: string }>();
-    if (!result.success) throw new Error("Research history read failed");
-    rows = result.results;
-  } catch {
-    throw new CatalogInputError("RESEARCH_HISTORY_UNAVAILABLE", "Research history is temporarily unavailable", 503, true);
-  }
-  const runs: { created_at: string; status: ResearchRunStatus }[] = [];
-  const runChecks: (() => Promise<void>)[] = [];
-  for (const row of rows) {
-    if (typeof row.operation_id !== "string" || typeof row.created_at !== "string" ||
-        !Number.isFinite(Date.parse(row.created_at))) {
-      throw new CatalogInputError("RESEARCH_HISTORY_INVALID", "Stored research history is invalid", 503, true);
+  type RunRow = { operation_id: string; created_at: string };
+  type RunEntry = { created_at: string; status: ResearchRunStatus };
+  const runs = await scanVisibleRecent<RunRow, RunEntry>(async (after, limit) => {
+    try {
+      const result = await ports.database.prepare(
+        "SELECT r.operation_id, r.created_at FROM research_workflow_run r " +
+        "JOIN research_deployment_compatible c ON c.origin_deployment_generation=r.deployment_generation " +
+        "AND c.active_deployment_generation=?2 WHERE (r.principal_ref=?1 OR EXISTS " +
+        "(SELECT 1 FROM owner_machine_run_origin o WHERE o.operation_id=r.operation_id AND o.reader_principal_ref=?1)) " +
+        "AND (?3 IS NULL OR r.created_at<?3 OR (r.created_at=?3 AND r.operation_id<?4)) " +
+        "ORDER BY r.created_at DESC,r.operation_id DESC LIMIT ?5",
+      ).bind(context.principal_ref, ports.deployment_generation, after?.created_at ?? null, after?.operation_id ?? null, limit)
+        .all<RunRow>();
+      if (!result.success) throw new Error("Research history read failed");
+      return result.results;
+    } catch {
+      throw new CatalogInputError("RESEARCH_HISTORY_UNAVAILABLE", "Research history is temporarily unavailable", 503, true);
     }
+  }, async (row) => {
+    if (typeof row.operation_id !== "string" || row.operation_id.length < 1 || typeof row.created_at !== "string" ||
+        !Number.isFinite(Date.parse(row.created_at))) invalidHistory("Stored research history is invalid");
     try {
       const status = await ports.run_status(context, row.operation_id);
       const read = await prepareReauthenticatedRunRead(ports.run_read, context, row.operation_id);
-      if (read !== null) runChecks.push(read.requireCurrent);
-      runs.push({ created_at: row.created_at, status });
+      return { entry: { created_at: row.created_at, status },
+        ...(read === null ? {} : { require_current: read.requireCurrent }) };
     } catch (error) {
-      // A revoked, purged, expired or missing run must disappear from this session.
-      if (error instanceof CatalogInputError && [403, 404, 409, 410].includes(error.status)) continue;
+      if (error instanceof CatalogInputError && [403, 404, 409, 410].includes(error.status)) return null;
       throw error;
     }
-  }
-  // Historical report locators contain no document text; every saved draft still uses
-  // the full read reauthorization path before its locator is listed.
-  const drafts = await ports.database.prepare(
-    "SELECT b.artifact_id,b.revision,b.intent_id,b.intent_revision,b.scope_snapshot_id,b.scope_snapshot_revision,b.created_at," +
-    "o.origin_client_class FROM artifact_draft_binding b JOIN owner_artifact_read_origin o " +
-    "ON o.artifact_id=b.artifact_id AND o.artifact_revision=b.revision " +
-    "WHERE o.reader_principal_ref=?1 ORDER BY b.created_at DESC,b.artifact_id DESC LIMIT 8",
-  ).bind(context.principal_ref).all<SavedDraftRow>();
-  if (!drafts.success) throw new CatalogInputError("RESEARCH_HISTORY_UNAVAILABLE", "Saved reports are temporarily unavailable", 503, true);
-  const savedDrafts: { artifact_ref: VersionedRef; created_at: string; workflow_instance_id?: string }[] = [];
-  const draftChecks: (() => Promise<void>)[] = [];
-  for (const row of drafts.results) {
+  });
+
+  type DraftEntry = { artifact_ref: VersionedRef; created_at: string; workflow_instance_id?: string };
+  const drafts = await scanVisibleRecent<SavedDraftRow, DraftEntry>(async (after, limit) => {
+    try {
+      const result = await ports.database.prepare(
+        "SELECT b.artifact_id,b.revision,b.intent_id,b.intent_revision,b.scope_snapshot_id,b.scope_snapshot_revision,b.created_at," +
+        "o.origin_client_class FROM artifact_draft_binding b JOIN owner_artifact_read_origin o " +
+        "ON o.artifact_id=b.artifact_id AND o.artifact_revision=b.revision " +
+        "WHERE o.reader_principal_ref=?1 AND (?2 IS NULL OR b.created_at<?2 OR " +
+        "(b.created_at=?2 AND (b.artifact_id<?3 OR (b.artifact_id=?3 AND b.revision<?4)))) " +
+        "ORDER BY b.created_at DESC,b.artifact_id DESC,b.revision DESC LIMIT ?5",
+      ).bind(context.principal_ref, after?.created_at ?? null, after?.artifact_id ?? null, after?.revision ?? null, limit)
+        .all<SavedDraftRow>();
+      if (!result.success) throw new Error("Saved report history read failed");
+      return result.results;
+    } catch {
+      throw new CatalogInputError("RESEARCH_HISTORY_UNAVAILABLE", "Saved reports are temporarily unavailable", 503, true);
+    }
+  }, async (row) => {
     const ref = VersionedRefSchema.parse({ id: row.artifact_id, revision: row.revision });
     if (typeof row.created_at !== "string" || !Number.isFinite(Date.parse(row.created_at))) invalidHistory("Saved report metadata is invalid");
-    const originalRef = VersionedRefSchema.parse({
-      id: row.scope_snapshot_id, revision: row.scope_snapshot_revision,
-    });
+    const originalRef = VersionedRefSchema.parse({ id: row.scope_snapshot_id, revision: row.scope_snapshot_revision });
     if (!["owner_pwa", "trusted_agent", "named_api_client"].includes(String(row.origin_client_class))) {
       invalidHistory("Saved report author class is invalid");
     }
@@ -192,14 +233,11 @@ export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context
         const read = await ports.prepare_artifact_read(context, ref, "report");
         if (!sameRef(read.original_scope_snapshot_ref, originalRef)) invalidHistory("Saved report origin changed");
         await read.requireCurrent();
-        savedDrafts.push({ artifact_ref: ref, created_at: row.created_at });
-        draftChecks.push(read.requireCurrent);
+        return { entry: { artifact_ref: ref, created_at: row.created_at }, require_current: read.requireCurrent };
       } catch (error) {
-        if (expectedSavedDraftDenial(error)) continue;
+        if (expectedSavedDraftDenial(error)) return null;
         throw error;
       }
-      // Do not expose machine run controls or owner Wiki promotion via a report locator.
-      continue;
     }
     try {
       const read = await ports.prepare_artifact_read(context, ref, "report");
@@ -209,11 +247,8 @@ export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context
       let workflowInstanceId: string | undefined;
       if (operationId !== null) {
         const historical = await readHistoricalResearchCoverage({
-          database: ports.database,
-          work_bucket: ports.work_bucket,
-          operation_id: operationId,
-          owner: { principal_ref: context.principal_ref, client_class: "owner_pwa" },
-          require_current: read.requireCurrent,
+          database: ports.database, work_bucket: ports.work_bucket, operation_id: operationId,
+          owner: { principal_ref: context.principal_ref, client_class: "owner_pwa" }, require_current: read.requireCurrent,
           require_artifact: ({ artifact_ref, original_scope_snapshot_ref }) =>
             readReauthorizedHistoricalArtifact(ports, context, artifact_ref, original_scope_snapshot_ref),
         });
@@ -224,19 +259,21 @@ export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context
           workflowInstanceId = operationId;
         }
       }
-      savedDrafts.push({ artifact_ref: ref, created_at: row.created_at, ...(workflowInstanceId === undefined ? {} : { workflow_instance_id: workflowInstanceId }) });
-      draftChecks.push(read.requireCurrent);
+      return { entry: { artifact_ref: ref, created_at: row.created_at,
+        ...(workflowInstanceId === undefined ? {} : { workflow_instance_id: workflowInstanceId }) }, require_current: read.requireCurrent };
     } catch (error) {
-      if (expectedSavedDraftDenial(error)) continue;
+      if (expectedSavedDraftDenial(error)) return null;
       throw error;
     }
-  }
-  for (const requireCurrent of runChecks) await requireCurrent();
-  for (const requireCurrent of draftChecks) await requireCurrent();
+  });
+  // A changed authority invalidates the whole response; it never silently turns
+  // a previously selected locator into a complete short list.
+  for (const requireCurrent of runs.checks) await requireCurrent();
+  for (const requireCurrent of drafts.checks) await requireCurrent();
   return {
-    protocol: "eliotr.research-runs.v3" as const,
-    runs,
-    saved_drafts: savedDrafts,
+    protocol: "eliotr.research-runs.v4" as const,
+    runs: runs.entries, saved_drafts: drafts.entries,
+    visibility_scan: { runs: runs.state, saved_drafts: drafts.state },
     configuration_state: ports.semantic_configuration_installed() ? "INSTALLED" as const : "MISSING" as const,
     checked_at: new Date().toISOString(),
   };
