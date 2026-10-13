@@ -17,7 +17,10 @@ export const runtime = env as unknown as {
 export const principal: WorkflowPrincipal = {
   principal_ref: "workflow-owner", credential_generation: "workflow-credential", deployment_generation: runtime.DEPLOYMENT_GENERATION,
 };
-export async function workflowFixture(tag: string, lane: "confirmatory" | "exploratory" = "confirmatory") {
+export async function workflowFixture(
+  tag: string, lane: "confirmatory" | "exploratory" = "confirmatory",
+  options: { readonly policy_generation?: string } = {},
+) {
   await reset();
   const db = runtime.CORE_DB;
   const bucket = runtime.WORK_BUCKET;
@@ -46,7 +49,8 @@ export async function workflowFixture(tag: string, lane: "confirmatory" | "explo
     : new TextEncoder().encode("immutable research input — Ж🙂");
   const hash = await digest(bytes);
   await db.batch([
-    db.prepare("INSERT INTO investigation_current_policy VALUES ('workflow-policy','workflow-policy-authority','ACTIVE',?1)").bind(now),
+    db.prepare("INSERT INTO investigation_current_policy VALUES (?1,'workflow-policy-authority','ACTIVE',?2)")
+      .bind(options.policy_generation ?? "workflow-policy", now),
     db.prepare("INSERT INTO investigation_current_deployment(deployment_generation,state,created_at) VALUES (?1,'ACTIVE',?2)").bind(principal.deployment_generation, now),
     db.prepare(`INSERT INTO scope_snapshot (snapshot_id, revision, resolved_scope_expression_json,
       participant_generations_json, member_source_revision_refs_json, source_owner_generations_json,
@@ -66,7 +70,8 @@ export async function workflowFixture(tag: string, lane: "confirmatory" | "explo
     investigation_id: `workflow-investigation-${tag}`, goal: "durable stage over actual local D1/R2",
     scope_snapshot_id: scopeId, scope_snapshot_revision: 1, evidence_grade: "E2", lane,
     lane_registrations: [], obligations: [], hypotheses: [], portfolio_ref: key, debt_refs: [],
-    principal_ref: principal.principal_ref, input_digest: hash, policy_generation: "workflow-policy",
+    principal_ref: principal.principal_ref, input_digest: hash,
+    policy_generation: options.policy_generation ?? "workflow-policy",
     policy_authority_ref: "workflow-policy-authority", deployment_generation: principal.deployment_generation,
     idempotency_key: `ledger-${tag}`, model_profile_ref: "controlled-model-v1", event_id: `ledger-event-${tag}`,
     payload_handle_ref: key, payload_digest: hash, created_at: now,
@@ -74,7 +79,7 @@ export async function workflowFixture(tag: string, lane: "confirmatory" | "explo
   const ledger = createInvestigationLedgerService(
     createD1InvestigationLedgerStore(db as unknown as LedgerD1Database),
     { current: async () => ({ principal_ref: principal.principal_ref, scope_snapshot_id: scopeId, scope_snapshot_revision: 1,
-      policy_generation: "workflow-policy", policy_authority_ref: "workflow-policy-authority",
+      policy_generation: options.policy_generation ?? "workflow-policy", policy_authority_ref: "workflow-policy-authority",
       deployment_generation: principal.deployment_generation, purge_revision: 0, scope_purge_revision: 0 }) },
     { has: async (ref) => (await bucket.head(ref)) !== null, digestFor: async () => hash },
   );

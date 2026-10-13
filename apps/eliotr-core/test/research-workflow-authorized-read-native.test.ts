@@ -29,7 +29,9 @@ function storageUnavailable(): WorkflowCheckpointError {
 }
 
 async function readyForReadAndExtract(tag: string, generation = V7) {
-  const fixture = await workflowFixture(`authorized-read-${tag}`, "exploratory");
+  const fixture = await workflowFixture(`authorized-read-${tag}`, "exploratory", {
+    policy_generation: "research-policy-v1",
+  });
   const executor = fixture.executor;
   let request: StageRequest = { ...fixture.request, handler_generation: generation };
   for (const stage of RESEARCH_WORKFLOW_STAGES.slice(0, 7)) {
