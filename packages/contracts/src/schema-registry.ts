@@ -317,10 +317,10 @@ function buildRegistry(): readonly ContractSchemaDescriptor[] {
       // Generation 2 admits the real empty purge-ledger frontier without changing existing IDs/digests.
       // Coordinate-map anchors narrowed from the broad EvidenceAnchor union to the supported
       // table-cell contract; publish that breaking schema as v2 while retaining protocol v1.
-      // Generation 2 admits the strict protocol-versioned managed retrieval trace inside a
-      // query leg. The wire change is additive: historical legacy trace bytes still parse
-      // through the retained legacy union member, so every schema that embeds a query leg
-      // trace advances one generation at its existing schema version.
+      // Generation 2 admitted strict managed retrieval traces in query legs. Generation 3
+      // binds each managed outcome request digest to its leg's retrieval request digest; the
+      // retrieval service and branch adapter derive both from the same retrieval request.
+      // Historical legacy traces still parse through their retained union member.
       const version = ["ScopeSnapshotSchema", "RetrievalTraceSchema", "InvestigationSchema",
         "InquiryProtocolProfileSchema"].includes(exportName)
         ? { schema_version: 1, schema_generation: 2 }
@@ -330,10 +330,10 @@ function buildRegistry(): readonly ContractSchemaDescriptor[] {
           : exportName === "ResearchEvidenceFreezeV3Schema"
             ? { schema_version: 3, schema_generation: 1 }
             : exportName === "BranchQueryLegResultSchema" || exportName === "BranchQueryResultSchema"
-              ? { schema_version: 1, schema_generation: 2 }
+              ? { schema_version: 1, schema_generation: 3 }
               : ["ResearchReadExtractCheckpointV2Schema", "ResearchBranchResultV2Schema",
                 "ResearchBranchAnalysisCheckpointV2Schema", "ResearchBranchReconciliationCheckpointV2Schema"].includes(exportName)
-                ? { schema_version: 2, schema_generation: 2 }
+                ? { schema_version: 2, schema_generation: 3 }
                 : familyVersion;
       const schemaId = buildContractSchemaId(
         module.family,

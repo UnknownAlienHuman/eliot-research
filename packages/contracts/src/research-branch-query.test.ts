@@ -18,7 +18,7 @@ import { ResolvedEvidenceSchema } from "./evidence.js";
 import { EvidenceFreezeBranchFindingsProvenanceSchema, EvidenceFreezeBranchFindingsSchema, ResearchEvidenceFreezeV3Schema } from "./research-branch-finding.js";
 
 const SHA = "a".repeat(64);
-const PROVIDER_REQUEST_SHA = "3".repeat(64);
+const FOREIGN_REQUEST_SHA = "3".repeat(64);
 const scopeRef = { id: "scope-1", revision: 1 };
 const scopeDigest = SHA;
 const scopeSnapshot = {
@@ -76,11 +76,11 @@ function leg(queryId: string, status: "COMPLETED" | "FAILED") {
   };
 }
 
-function managedOutcome(executedQuery: string) {
+function managedOutcome(executedQuery: string, requestDigest = SHA) {
   return {
     protocol: MANAGED_RANKING_OUTCOME_PROTOCOL,
     provider: "cloudflare_ai_search" as const,
-    request_digest: PROVIDER_REQUEST_SHA,
+    request_digest: requestDigest,
     scoped_invocation_id: "managed-invocation-1",
     provider_execution_identity: {
       available: false as const,
@@ -419,7 +419,7 @@ describe("branch query trace compatibility and binding", () => {
     expect(parsed.trace).not.toHaveProperty("protocol");
   });
 
-  it("retains the complete managed outcome, independent request digests, and candidate omissions", () => {
+  it("retains the managed outcome, bound request digest, and candidate omissions", () => {
     const { plan, query } = parentCheckpointFixture();
     const sourceLeg = query.query_legs[0];
     if (sourceLeg === undefined) throw new Error("query fixture has no leg");
@@ -437,11 +437,31 @@ describe("branch query trace compatibility and binding", () => {
     }
     expect(parsed.trace).toEqual(trace);
     expect(parsed.trace.managed_ranking_outcomes).toEqual(trace.managed_ranking_outcomes);
-    expect(parsed.trace.managed_ranking_outcomes[0]?.request_digest).toBe(PROVIDER_REQUEST_SHA);
-    expect(parsed.trace.managed_ranking_outcomes[0]?.request_digest).not.toBe(parsed.retrieval_request_digest);
+    expect(parsed.trace.managed_ranking_outcomes[0]?.request_digest).toBe(parsed.retrieval_request_digest);
     expect(parsed.retrieval_request_digest).toBe(sourceLeg.retrieval_request_digest);
     expect(parsed.omitted_candidates).toEqual(omissions);
     expect(branchQueryResultMatchesPlan(plan, result)).toBe(true);
+  });
+
+  it("rejects an otherwise matching managed trace with a foreign request digest", () => {
+    const { plan, query } = parentCheckpointFixture();
+    const sourceLeg = query.query_legs[0];
+    if (sourceLeg === undefined) throw new Error("query fixture has no leg");
+    const trace = managedTraceFor(plan);
+    const outcome = trace.managed_ranking_outcomes[0];
+    if (outcome === undefined) throw new Error("managed trace fixture has no outcome");
+    const foreignTrace = ManagedRetrievalTraceSchema.parse({
+      ...trace,
+      managed_ranking_outcomes: [{ ...outcome, request_digest: FOREIGN_REQUEST_SHA }],
+    });
+    expect(foreignTrace.raw_query).toBe(trace.raw_query);
+    expect(foreignTrace.scope_snapshot).toEqual(trace.scope_snapshot);
+    expect(foreignTrace.managed_ranking_outcomes[0]?.scoped_invocation_id)
+      .toBe(trace.managed_ranking_outcomes[0]?.scoped_invocation_id);
+    expect(foreignTrace.managed_ranking_outcomes[0]?.ordered_candidates)
+      .toEqual(trace.managed_ranking_outcomes[0]?.ordered_candidates);
+
+    expect(BranchQueryLegResultSchema.safeParse({ ...sourceLeg, trace: foreignTrace }).success).toBe(false);
   });
 
   it("preserves legacy pairing and rejects managed traces whose query, probes, or product differ", () => {
