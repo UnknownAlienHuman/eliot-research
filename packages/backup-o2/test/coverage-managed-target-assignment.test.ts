@@ -9,12 +9,12 @@ import {
   coreTableSpecsForMigrationNames,
   readCoreColumnInventory,
   TABLE_SPECS,
-} from "./coherent-cut.js";
+} from "../src/coherent-cut.js";
 import {
   CANONICAL_EXPORTED_TABLES,
   classifyDurableTable,
   listDurableTables,
-} from "./coverage.js";
+} from "../src/coverage.js";
 
 // ER-34 O2 / issue #374. Migration 0141 introduces the immutable
 // managed-target assignment event history and 0143 its derived current

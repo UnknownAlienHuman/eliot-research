@@ -36,6 +36,7 @@ const HOST_TOOL_IMPORTS = new Map([
   ["packages/cloudflare-workflows/src/external-agent-result-outbox.test.ts", new Set(["node:fs", "node:sqlite"])],
   ["packages/ui/src/tokens/contrast.test.ts", new Set(["node:fs", "node:crypto"])],
   ["packages/backup-o2/src/coverage-full-chain.test.ts", new Set(["node:fs"])],
+  ["packages/backup-o2/test/coverage-managed-target-assignment.test.ts", new Set(["node:fs"])],
   ["packages/cloudflare-backup/src/backup-epoch-manifest-publisher.test.ts", new Set(["node:fs/promises"])],
   ["packages/cloudflare-backup/src/primary-writer-admission.test.ts", new Set(["node:fs/promises"])],
   ["packages/cloudflare-backup/src/isolated-restore-preflight.test.ts", new Set(["node:fs/promises"])],
