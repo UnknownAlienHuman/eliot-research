@@ -1,12 +1,15 @@
 import type { LocatorCandidate } from "@eliotr/contracts";
 import type { AiSearchInstanceProfile } from "@eliotr/platform-cloudflare";
 import { assertCloudflareAiSearchInstanceProfile } from "./ai-search-profile.js";
+import type { ManagedGenerationPromotionEvidenceV2 } from "./managed-generation-promotion-evidence.js";
 
 export type AiSearchGenerationState =
   | "DECLARED"
   | "SHADOW_BUILDING"
   | "SHADOW_COMPLETE"
   | "ACTIVE"
+  | "INACTIVE_QUALIFIED"
+  | "INACTIVE_UNQUALIFIED"
   | "RETIRED"
   | "BLOCKED";
 
@@ -18,7 +21,9 @@ export type AiSearchGenerationErrorCode =
   | "AI_SEARCH_GENERATION_STATE_INVALID"
   | "AI_SEARCH_SHADOW_PROGRESS_INVALID"
   | "AI_SEARCH_SHADOW_INCOMPLETE"
+  | "AI_SEARCH_PROMOTION_EVIDENCE_REQUIRED"
   | "AI_SEARCH_ACTIVE_HEAD_CONFLICT"
+  | "AI_SEARCH_ROLLBACK_CONFLICT"
   | "AI_SEARCH_GENERATION_MIXED";
 
 export class AiSearchGenerationError extends Error {
@@ -49,9 +54,11 @@ export interface AiSearchGenerationRecord {
   readonly failed_item_count: number;
   readonly mismatch_count: number;
   readonly golden_set_result_ref?: string;
+  readonly promotion_evidence_v2?: ManagedGenerationPromotionEvidenceV2;
   readonly declared_at: string;
   readonly observed_at?: string;
   readonly activated_at?: string;
+  readonly inactive_at?: string;
   readonly retired_at?: string;
 }
 
@@ -61,7 +68,6 @@ export interface AiSearchShadowObservation {
   readonly readback_item_count: number;
   readonly failed_item_count: number;
   readonly mismatch_count: number;
-  readonly golden_set_result_ref?: string;
   readonly observed_at: string;
 }
 
@@ -76,10 +82,28 @@ export interface AiSearchPromotionRequest {
   readonly promoted_at: string;
 }
 
+export interface AiSearchRollbackRequest {
+  readonly expected_active_head_generation: string;
+  readonly target_generation: string;
+  readonly rolled_back_at: string;
+}
+
+export interface AiSearchGenerationArchiveRequest {
+  readonly generation: string;
+}
+
 const AI_SEARCH_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const AI_SEARCH_MODEL_TOKEN = /^[A-Za-z0-9._:@/-]{1,256}$/u;
 const MAX_AI_SEARCH_GENERATIONS = 64;
 const MAX_AI_SEARCH_METADATA_FIELDS = 5;
+const SHADOW_OBSERVATION_KEYS = new Set([
+  "failed_item_count",
+  "generation",
+  "indexed_item_count",
+  "mismatch_count",
+  "observed_at",
+  "readback_item_count",
+]);
 
 function generationFailure(
   code: AiSearchGenerationErrorCode,
@@ -109,14 +133,41 @@ function nonNegativeInteger(value: number, label: string): number {
   return value;
 }
 
-function positiveInteger(value: number, label: string): number {
-  if (!Number.isSafeInteger(value) || value < 1) {
+function exactShadowObservation(
+  raw: unknown,
+): asserts raw is AiSearchShadowObservation {
+  if (
+    typeof raw !== "object" ||
+    raw === null ||
+    Array.isArray(raw) ||
+    Object.getPrototypeOf(raw) !== Object.prototype
+  ) {
     generationFailure(
-      "AI_SEARCH_GENERATION_INVALID",
-      `${label} must be a positive safe integer`,
+      "AI_SEARCH_SHADOW_PROGRESS_INVALID",
+      "shadow observation must be a plain object",
     );
   }
-  return value;
+  const value = raw as Record<string, unknown>;
+  const observed = Object.keys(value);
+  if (
+    observed.length !== SHADOW_OBSERVATION_KEYS.size ||
+    observed.some((key) => !SHADOW_OBSERVATION_KEYS.has(key)) ||
+    Object.getOwnPropertySymbols(value).length > 0
+  ) {
+    generationFailure(
+      "AI_SEARCH_SHADOW_PROGRESS_INVALID",
+      "shadow observation fields are not exact",
+    );
+  }
+  for (const key of observed) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor === undefined || !("value" in descriptor)) {
+      generationFailure(
+        "AI_SEARCH_SHADOW_PROGRESS_INVALID",
+        `shadow observation ${key} cannot be an accessor`,
+      );
+    }
+  }
 }
 
 function validateObservationTimestamp(value: string, label: string): string {
@@ -272,7 +323,7 @@ export function declareAiSearchGeneration(
   }
   boundedIdentifier(declaration.namespace, "namespace");
   normalizedAiSearchProfile(declaration.profile);
-  positiveInteger(declaration.expected_item_count, "expected_item_count");
+  nonNegativeInteger(declaration.expected_item_count, "expected_item_count");
   validateObservationTimestamp(declaration.declared_at, "declared_at");
 
   const matching = existingProfiles.filter(
@@ -303,29 +354,22 @@ export function declareAiSearchGeneration(
   };
 }
 
-function retainedGoldenSetRef(
-  record: AiSearchGenerationRecord,
-  observation: AiSearchShadowObservation,
-): string | undefined {
-  const value = observation.golden_set_result_ref ?? record.golden_set_result_ref;
-  if (value !== undefined) {
-    boundedIdentifier(value, "golden_set_result_ref");
-  }
-  return value;
-}
-
 /**
- * Advances monotonic shadow accounting. A generation is complete only after
- * every expected item is indexed and read back, no failures or mismatches were
- * observed, and a bounded golden-set result is retained.
+ * Caller-supplied counters are non-authoritative progress hints. They cannot
+ * set a golden reference or qualify a generation; only the authority readback
+ * below may produce SHADOW_COMPLETE.
  */
 export function recordAiSearchShadowObservation(
   record: AiSearchGenerationRecord,
   observation: AiSearchShadowObservation,
 ): AiSearchGenerationRecord {
+  exactShadowObservation(observation);
   validateAiSearchGenerationRecord(record);
   if (
     record.state === "ACTIVE" ||
+    record.state === "INACTIVE_QUALIFIED" ||
+    record.state === "INACTIVE_UNQUALIFIED" ||
+    record.state === "SHADOW_COMPLETE" ||
     record.state === "RETIRED" ||
     record.state === "BLOCKED"
   ) {
@@ -380,29 +424,62 @@ export function recordAiSearchShadowObservation(
     );
   }
 
-  const goldenSetRef = retainedGoldenSetRef(record, observation);
-  const blocked = failed > 0 || mismatches > 0;
-  const complete =
-    !blocked &&
-    indexed === record.expected_item_count &&
-    readback === record.expected_item_count &&
-    goldenSetRef !== undefined;
-  const state: AiSearchGenerationState = blocked
-    ? "BLOCKED"
-    : complete
-      ? "SHADOW_COMPLETE"
-      : "SHADOW_BUILDING";
-
   return {
     ...record,
-    state,
+    state: "SHADOW_BUILDING",
     indexed_item_count: indexed,
     readback_item_count: readback,
     failed_item_count: failed,
     mismatch_count: mismatches,
-    ...(goldenSetRef === undefined ? {} : { golden_set_result_ref: goldenSetRef }),
     observed_at: observation.observed_at,
   };
+}
+
+/**
+ * Qualifies a generation only from the current authority port's fully
+ * dereferenced manifest, item-effect, provider-inventory, drain and T2/T3
+ * readbacks. The service is responsible for obtaining and validating it.
+ */
+export function qualifyAiSearchGeneration(
+  record: AiSearchGenerationRecord,
+  evidence: ManagedGenerationPromotionEvidenceV2,
+): AiSearchGenerationRecord {
+  validateAiSearchGenerationRecord(record);
+  if (record.state === "RETIRED") {
+    generationFailure(
+      "AI_SEARCH_GENERATION_STATE_INVALID",
+      "terminal generation cannot be newly qualified",
+    );
+  }
+  if (
+    evidence.target.namespace !== record.namespace ||
+    evidence.target.managed_generation !== record.generation ||
+    evidence.target.managed_instance_id !== record.profile.id ||
+    evidence.manifest.desired_item_count !== record.expected_item_count
+  ) {
+    generationFailure(
+      "AI_SEARCH_PROMOTION_EVIDENCE_REQUIRED",
+      "promotion evidence does not match the declared generation and item denominator",
+    );
+  }
+  const state = record.state === "ACTIVE"
+    ? "ACTIVE"
+    : record.state === "INACTIVE_QUALIFIED"
+      ? "INACTIVE_QUALIFIED"
+      : record.state === "INACTIVE_UNQUALIFIED"
+        ? "INACTIVE_QUALIFIED"
+        : "SHADOW_COMPLETE";
+  return Object.freeze({
+    ...record,
+    state,
+    indexed_item_count: evidence.manifest.desired_item_count,
+    readback_item_count: evidence.item_readback.exact_readback_count,
+    failed_item_count: 0,
+    mismatch_count: 0,
+    golden_set_result_ref: evidence.qualification.t2_result_ref,
+    promotion_evidence_v2: evidence,
+    observed_at: evidence.verified_at,
+  });
 }
 
 function validateAiSearchGenerationRecord(record: AiSearchGenerationRecord): void {
@@ -415,7 +492,7 @@ function validateAiSearchGenerationRecord(record: AiSearchGenerationRecord): voi
       "profile generation does not match record generation",
     );
   }
-  positiveInteger(record.expected_item_count, "expected_item_count");
+  nonNegativeInteger(record.expected_item_count, "expected_item_count");
   nonNegativeInteger(record.indexed_item_count, "indexed_item_count");
   nonNegativeInteger(record.readback_item_count, "readback_item_count");
   nonNegativeInteger(record.failed_item_count, "failed_item_count");
@@ -430,6 +507,9 @@ function validateAiSearchGenerationRecord(record: AiSearchGenerationRecord): voi
   if (record.retired_at !== undefined) {
     validateObservationTimestamp(record.retired_at, "retired_at");
   }
+  if (record.inactive_at !== undefined) {
+    validateObservationTimestamp(record.inactive_at, "inactive_at");
+  }
   if (
     record.indexed_item_count > record.expected_item_count ||
     record.readback_item_count > record.indexed_item_count
@@ -440,7 +520,7 @@ function validateAiSearchGenerationRecord(record: AiSearchGenerationRecord): voi
     );
   }
   if (
-    (record.state === "SHADOW_COMPLETE" || record.state === "ACTIVE") &&
+    (record.state === "SHADOW_COMPLETE" || record.state === "ACTIVE" || record.state === "INACTIVE_QUALIFIED") &&
     (record.indexed_item_count !== record.expected_item_count ||
       record.readback_item_count !== record.expected_item_count ||
       record.failed_item_count !== 0 ||
@@ -450,6 +530,37 @@ function validateAiSearchGenerationRecord(record: AiSearchGenerationRecord): voi
     generationFailure(
       "AI_SEARCH_SHADOW_INCOMPLETE",
       "complete generation lacks retained complete shadow evidence",
+    );
+  }
+  if (
+    record.promotion_evidence_v2 !== undefined &&
+    (record.promotion_evidence_v2.protocol !== "eliotr.managed-generation-promotion-evidence.v2" ||
+      record.promotion_evidence_v2.target.namespace !== record.namespace ||
+      record.promotion_evidence_v2.target.managed_generation !== record.generation ||
+      record.promotion_evidence_v2.target.managed_instance_id !== record.profile.id ||
+      record.promotion_evidence_v2.manifest.desired_item_count !== record.expected_item_count)
+  ) {
+    generationFailure(
+      "AI_SEARCH_PROMOTION_EVIDENCE_REQUIRED",
+      "stored promotion evidence does not match the generation record",
+    );
+  }
+  if (
+    record.state === "INACTIVE_QUALIFIED" &&
+    record.promotion_evidence_v2 === undefined
+  ) {
+    generationFailure(
+      "AI_SEARCH_PROMOTION_EVIDENCE_REQUIRED",
+      "newly qualified generation lacks version 2 authoritative promotion evidence",
+    );
+  }
+  if (
+    record.state === "INACTIVE_UNQUALIFIED" &&
+    record.promotion_evidence_v2 !== undefined
+  ) {
+    generationFailure(
+      "AI_SEARCH_GENERATION_INVALID",
+      "inactive unqualified generation cannot retain promotion evidence as rollback authority",
     );
   }
 }
@@ -507,8 +618,9 @@ export function validateAiSearchGenerationRegistry(
 }
 
 /**
- * Promotes exactly one fully observed shadow generation with active-head CAS.
- * The previous active generation is retired atomically in the returned value.
+ * Promotes exactly one authority-qualified shadow generation with active-head
+ * CAS. A prior head with v2 evidence remains a qualified rollback candidate;
+ * an unevidenced legacy head is retained as history but cannot authorize rollback.
  */
 export function promoteAiSearchGeneration(
   registry: AiSearchGenerationRegistry,
@@ -538,10 +650,10 @@ export function promoteAiSearchGeneration(
   if (target.state === "ACTIVE") {
     return registry;
   }
-  if (target.state !== "SHADOW_COMPLETE") {
+  if (target.state !== "SHADOW_COMPLETE" || target.promotion_evidence_v2 === undefined) {
     generationFailure(
-      "AI_SEARCH_SHADOW_INCOMPLETE",
-      "target generation is not shadow complete",
+      "AI_SEARCH_PROMOTION_EVIDENCE_REQUIRED",
+      "target generation lacks version 2 authoritative promotion evidence",
     );
   }
 
@@ -556,8 +668,10 @@ export function promoteAiSearchGeneration(
     if (record.state === "ACTIVE") {
       return {
         ...record,
-        state: "RETIRED" as const,
-        retired_at: request.promoted_at,
+        state: record.promotion_evidence_v2 === undefined
+          ? "INACTIVE_UNQUALIFIED" as const
+          : "INACTIVE_QUALIFIED" as const,
+        inactive_at: request.promoted_at,
       };
     }
     return record;
@@ -568,6 +682,106 @@ export function promoteAiSearchGeneration(
   };
   validateAiSearchGenerationRegistry(promoted);
   return promoted;
+}
+
+/** Repoints the existing serving head to a currently requalified retained generation. */
+export function rollbackAiSearchGeneration(
+  registry: AiSearchGenerationRegistry,
+  request: AiSearchRollbackRequest,
+): AiSearchGenerationRegistry {
+  validateAiSearchGenerationRegistry(registry);
+  boundedIdentifier(request.expected_active_head_generation, "expected_active_head_generation");
+  boundedIdentifier(request.target_generation, "target_generation");
+  validateObservationTimestamp(request.rolled_back_at, "rolled_back_at");
+  if (
+    registry.active_head_generation !== request.expected_active_head_generation ||
+    request.expected_active_head_generation === request.target_generation
+  ) {
+    generationFailure("AI_SEARCH_ACTIVE_HEAD_CONFLICT", "active head changed before rollback");
+  }
+  const target = registry.generations.find((record) => record.generation === request.target_generation);
+  const current = registry.generations.find((record) => record.generation === request.expected_active_head_generation);
+  if (
+    target === undefined ||
+    target.state !== "INACTIVE_QUALIFIED" ||
+    target.promotion_evidence_v2 === undefined ||
+    current === undefined ||
+    current.state !== "ACTIVE" ||
+    current.promotion_evidence_v2 === undefined
+  ) {
+    generationFailure(
+      "AI_SEARCH_ROLLBACK_CONFLICT",
+      "rollback target and current head must both retain version 2 qualification",
+    );
+  }
+  const generations = registry.generations.map((record) => {
+    if (record.generation === target.generation) {
+      const { inactive_at: priorInactiveAt, ...retained } = record;
+      void priorInactiveAt;
+      return Object.freeze({
+        ...retained,
+        state: "ACTIVE" as const,
+        activated_at: request.rolled_back_at,
+      });
+    }
+    if (record.generation === current.generation) {
+      return Object.freeze({
+        ...record,
+        state: "INACTIVE_QUALIFIED" as const,
+        inactive_at: request.rolled_back_at,
+      });
+    }
+    return record;
+  });
+  const rolledBack = Object.freeze({
+    active_head_generation: target.generation,
+    generations: Object.freeze(generations),
+  });
+  validateAiSearchGenerationRegistry(rolledBack);
+  return rolledBack;
+}
+
+/** Removes one explicitly archived inactive record from the bounded hot registry. */
+export function archiveAiSearchGeneration(
+  registry: AiSearchGenerationRegistry,
+  request: AiSearchGenerationArchiveRequest,
+): AiSearchGenerationRegistry {
+  validateAiSearchGenerationRegistry(registry);
+  boundedIdentifier(request.generation, "generation");
+  if (registry.active_head_generation === request.generation) {
+    generationFailure(
+      "AI_SEARCH_GENERATION_STATE_INVALID",
+      "the active serving generation cannot be archived",
+    );
+  }
+  const record = registry.generations.find(
+    (candidate) => candidate.generation === request.generation,
+  );
+  if (record === undefined) {
+    generationFailure(
+      "AI_SEARCH_GENERATION_NOT_FOUND",
+      "generation to archive was not found",
+    );
+  }
+  if (
+    record.state !== "INACTIVE_QUALIFIED" &&
+    record.state !== "INACTIVE_UNQUALIFIED" &&
+    record.state !== "RETIRED" &&
+    record.state !== "BLOCKED"
+  ) {
+    generationFailure(
+      "AI_SEARCH_GENERATION_STATE_INVALID",
+      "only an inactive finalized generation may be archived",
+    );
+  }
+  const archived: AiSearchGenerationRegistry = Object.freeze({
+    active_head_generation: registry.active_head_generation,
+    generations: Object.freeze(
+      registry.generations.filter((candidate) => candidate.generation !== request.generation),
+    ),
+  });
+  validateAiSearchGenerationRegistry(archived);
+  return archived;
 }
 
 /**

@@ -14,8 +14,8 @@ import {
 } from "./lib/cloudflare-wrangler-oauth.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const COMMANDS = new Set(["status", "declare", "observe", "promote"]);
-const MUTATING_COMMANDS = new Set(["declare", "observe", "promote"]);
+const COMMANDS = new Set(["status", "declare", "qualify", "promote", "rollback", "archive"]);
+const MUTATING_COMMANDS = new Set(["declare", "qualify", "promote", "rollback", "archive"]);
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const COMMON_VALUE_OPTIONS = new Set([
   "account-id",
@@ -28,20 +28,20 @@ const COMMON_VALUE_OPTIONS = new Set([
 ]);
 const COMMAND_VALUE_OPTIONS = Object.freeze({
   status: new Set(),
-  declare: new Set(["declared-at", "expected-item-count"]),
-  observe: new Set([
-    "failed-item-count",
-    "golden-set-result-ref",
-    "indexed-item-count",
-    "mismatch-count",
-    "observed-at",
-    "readback-item-count",
-  ]),
+  declare: new Set(["declared-at"]),
+  qualify: new Set(["confirm-generation"]),
   promote: new Set([
     "confirm-generation",
     "expected-active-head",
     "promoted-at",
   ]),
+  rollback: new Set([
+    "confirm-generation",
+    "expected-active-head",
+    "rolled-back-at",
+    "target-generation",
+  ]),
+  archive: new Set(["confirm-generation", "target-generation"]),
 });
 
 class OperatorInputError extends Error {
@@ -66,9 +66,11 @@ function errorMessage(error) {
 function usage() {
   return `Usage:
   node scripts/manage-ai-search-generation.mjs status [common options]
-  node scripts/manage-ai-search-generation.mjs declare --expected-item-count N --declared-at ISO --confirm-live [common options]
-  node scripts/manage-ai-search-generation.mjs observe --indexed-item-count N --readback-item-count N --failed-item-count N --mismatch-count N --observed-at ISO [--golden-set-result-ref REF] --confirm-live [common options]
+  node scripts/manage-ai-search-generation.mjs declare --declared-at ISO --confirm-live [common options]
+  node scripts/manage-ai-search-generation.mjs qualify --confirm-generation GENERATION --confirm-live [common options]
   node scripts/manage-ai-search-generation.mjs promote --expected-active-head none|GENERATION --promoted-at ISO --confirm-generation GENERATION --confirm-live [common options]
+  node scripts/manage-ai-search-generation.mjs rollback --expected-active-head GENERATION --target-generation GENERATION --rolled-back-at ISO --confirm-generation GENERATION --confirm-live [common options]
+  node scripts/manage-ai-search-generation.mjs archive --target-generation GENERATION --confirm-generation GENERATION --confirm-live [common options]
 
 Common options:
   --account-id ID       Cloudflare account ID; defaults to CLOUDFLARE_ACCOUNT_ID
@@ -81,8 +83,9 @@ Common options:
 
 Authentication defaults to CLOUDFLARE_API_TOKEN from the environment. Set
 ELIOTR_CLOUDFLARE_AUTH_MODE=wrangler-oauth to use the existing Wrangler browser profile.
-Mutating commands require --confirm-live. Promotion additionally requires --confirm-generation
-to equal the desired generation.`;
+Mutating commands require --confirm-live. Promotion and qualification require --confirm-generation
+to equal the desired generation; rollback and archive require it to equal --target-generation.
+Promotion evidence, archive authorization and counts are read from authority ports; they are not CLI inputs.`;
 }
 
 function parseArguments(argv) {
@@ -393,12 +396,18 @@ function requireMutationConfirmation(command, options, generation) {
   if (options["confirm-live"] !== true) {
     inputFailure(`${command} requires --confirm-live`);
   }
-  if (command === "promote") {
+  if (command === "promote" || command === "qualify") {
     if (options["confirm-generation"] !== generation) {
       inputFailure(
-        `promotion requires --confirm-generation ${generation}`,
+        `${command} requires --confirm-generation ${generation}`,
       );
     }
+  }
+  if (command === "rollback" && options["confirm-generation"] !== options["target-generation"]) {
+    inputFailure("rollback requires --confirm-generation to equal --target-generation");
+  }
+  if (command === "archive" && options["confirm-generation"] !== options["target-generation"]) {
+    inputFailure("archive requires --confirm-generation to equal --target-generation");
   }
 }
 
@@ -413,33 +422,13 @@ function operationInput(command, options, desired) {
       return Object.freeze({
         namespace: desired.namespace,
         profile: desired.profile,
-        expected_item_count: positiveIntegerOption(
-          options,
-          "expected-item-count",
-        ),
         declared_at: canonicalTimestamp(
           options["declared-at"],
           "--declared-at",
         ),
       });
-    case "observe": {
-      const golden = options["golden-set-result-ref"];
-      if (golden !== undefined) {
-        boundedIdentifier(golden, "--golden-set-result-ref");
-      }
-      return Object.freeze({
-        generation: desired.generation,
-        indexed_item_count: integerOption(options, "indexed-item-count"),
-        readback_item_count: integerOption(options, "readback-item-count"),
-        failed_item_count: integerOption(options, "failed-item-count"),
-        mismatch_count: integerOption(options, "mismatch-count"),
-        ...(golden === undefined ? {} : { golden_set_result_ref: golden }),
-        observed_at: canonicalTimestamp(
-          options["observed-at"],
-          "--observed-at",
-        ),
-      });
-    }
+    case "qualify":
+      return Object.freeze({ generation: desired.generation });
     case "promote":
       if (options["expected-active-head"] === undefined) {
         inputFailure("--expected-active-head is required");
@@ -453,6 +442,25 @@ function operationInput(command, options, desired) {
           options["promoted-at"],
           "--promoted-at",
         ),
+      });
+    case "rollback":
+      if (options["expected-active-head"] === undefined || options["target-generation"] === undefined) {
+        inputFailure("rollback requires --expected-active-head and --target-generation");
+      }
+      return Object.freeze({
+        expected_active_head_generation: boundedIdentifier(
+          options["expected-active-head"],
+          "--expected-active-head",
+        ),
+        target_generation: boundedIdentifier(options["target-generation"], "--target-generation"),
+        rolled_back_at: canonicalTimestamp(options["rolled-back-at"], "--rolled-back-at"),
+      });
+    case "archive":
+      if (options["target-generation"] === undefined) {
+        inputFailure("archive requires --target-generation");
+      }
+      return Object.freeze({
+        generation: boundedIdentifier(options["target-generation"], "--target-generation"),
       });
     default:
       return null;
@@ -560,7 +568,7 @@ async function main() {
   const input = operationInput(command, options, desired);
   const connection = await resolveConnection(options);
   const cloudflareAi = await loadCloudflareAiModule();
-  requireCompiledPrimaryProfile(cloudflareAi, desired);
+  if (command !== "rollback" && command !== "archive") requireCompiledPrimaryProfile(cloudflareAi, desired);
 
   const database = createCloudflareD1HttpDatabase(connection);
   const service = cloudflareAi.createAiSearchGenerationRegistryService(
@@ -572,17 +580,21 @@ async function main() {
     snapshot = await service.read(desired.namespace);
   } else if (command === "declare") {
     persistenceReceipt = await service.declare(input);
-  } else if (command === "observe") {
-    persistenceReceipt = await service.observe(desired.namespace, input);
-  } else {
+  } else if (command === "qualify") {
+    persistenceReceipt = await service.qualify(desired.namespace, input);
+  } else if (command === "promote") {
     persistenceReceipt = await service.promote(desired.namespace, input);
+  } else if (command === "rollback") {
+    persistenceReceipt = await service.rollback(desired.namespace, input);
+  } else {
+    persistenceReceipt = await service.archive(desired.namespace, input);
   }
 
   const document = Object.freeze({
-    protocol: "eliotr.ai-search-generation-operator-receipt.v1",
+    protocol: "eliotr.ai-search-generation-operator-receipt.v2",
     operation: command.toUpperCase(),
     namespace: desired.namespace,
-    generation: desired.generation,
+    generation: input?.target_generation ?? input?.generation ?? desired.generation,
     desired_state_sha256: createHash("sha256").update(desired.bytes).digest("hex"),
     database_binding: "SEARCH_DB",
     ...(snapshot === undefined ? {} : { registry_snapshot: snapshot }),

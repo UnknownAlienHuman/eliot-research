@@ -6,10 +6,11 @@ import {
   validateAiSearchGenerationRegistry,
 } from "./ai-search-generation.js";
 import { assertCloudflareAiSearchInstanceProfile } from "./ai-search-profile.js";
-import { canonicalProjectionJson, projectionSha256Utf8 } from "./canonical.js";
+import { canonicalProjectionJson, projectionDigest, projectionSha256Utf8 } from "./canonical.js";
 import {
   AI_SEARCH_GENERATION_REGISTRY_MAX_BYTES,
   AI_SEARCH_GENERATION_REGISTRY_SCHEMA,
+  AI_SEARCH_GENERATION_REGISTRY_SCHEMA_V1,
   aiSearchGenerationRegistryFailure,
   type AiSearchGenerationRegistryArtifact,
   type AiSearchGenerationRegistrySnapshot,
@@ -24,11 +25,12 @@ import {
   exactAiSearchRegistryObject,
   isAiSearchRegistryIdentifier,
 } from "./ai-search-registry-validation.js";
+import { validateStoredManagedGenerationPromotionEvidence } from "./managed-generation-promotion-evidence.js";
 const MODEL_TOKEN = /^[A-Za-z0-9._:@/-]{1,256}$/u;
 const ARTIFACT_KEYS = new Set(["namespace", "registry", "revision", "schema"]);
 const SNAPSHOT_KEYS = new Set(["artifact", "artifact_sha256"]);
 const REGISTRY_KEYS = new Set(["active_head_generation", "generations"]);
-const RECORD_KEYS = new Set([
+const RECORD_KEYS_V1 = new Set([
   "activated_at",
   "declared_at",
   "expected_item_count",
@@ -43,6 +45,11 @@ const RECORD_KEYS = new Set([
   "readback_item_count",
   "retired_at",
   "state",
+]);
+const RECORD_KEYS_V2 = new Set([
+  ...RECORD_KEYS_V1,
+  "inactive_at",
+  "promotion_evidence_v2",
 ]);
 const PROFILE_KEYS = new Set([
   "embedding_model",
@@ -62,14 +69,20 @@ const STORE_RECEIPT_KEYS = new Set([
   "namespace",
   "outcome",
   "revision",
+  "transition_sha256",
 ]);
-const STATES = new Set<AiSearchGenerationState>([
+const STATES_V1 = new Set<AiSearchGenerationState>([
   "ACTIVE",
   "BLOCKED",
   "DECLARED",
   "RETIRED",
   "SHADOW_BUILDING",
   "SHADOW_COMPLETE",
+]);
+const STATES_V2 = new Set<AiSearchGenerationState>([
+  ...STATES_V1,
+  "INACTIVE_QUALIFIED",
+  "INACTIVE_UNQUALIFIED",
 ]);
 const MAX_GENERATIONS = 64;
 
@@ -218,16 +231,23 @@ function decodeProfile(raw: unknown, label: string): AiSearchInstanceProfile {
   return profile;
 }
 
-function decodeRecord(raw: unknown, index: number): AiSearchGenerationRecord {
+async function decodeRecord(
+  raw: unknown,
+  index: number,
+  schema: AiSearchGenerationRegistryArtifact["schema"],
+): Promise<AiSearchGenerationRecord> {
   const label = `registry.generations[${index}]`;
-  const value = exactAiSearchRegistryObject(raw, RECORD_KEYS, label, readbackFailure);
+  const legacy = schema === AI_SEARCH_GENERATION_REGISTRY_SCHEMA_V1;
+  const value = exactAiSearchRegistryObject(raw, legacy ? RECORD_KEYS_V1 : RECORD_KEYS_V2, label, readbackFailure);
   if (
     typeof value.state !== "string" ||
-    !STATES.has(value.state as AiSearchGenerationState)
+    !(legacy ? STATES_V1 : STATES_V2).has(value.state as AiSearchGenerationState)
   ) {
     readbackFailure(`${label}.state is invalid`);
   }
   const profile = decodeProfile(value.profile, `${label}.profile`);
+  const namespace = aiSearchRegistryIdentifier(value.namespace, `${label}.namespace`, readbackFailure);
+  const generation = aiSearchRegistryIdentifier(value.generation, `${label}.generation`, readbackFailure);
   const golden = optionalIdentifier(
     value,
     "golden_set_result_ref",
@@ -248,15 +268,45 @@ function decodeRecord(raw: unknown, index: number): AiSearchGenerationRecord {
     "retired_at",
     `${label}.retired_at`,
   );
+  const inactive = optionalIdentifier(value, "inactive_at", `${label}.inactive_at`);
+  const evidence = Object.hasOwn(value, "promotion_evidence_v2")
+    ? await validateStoredManagedGenerationPromotionEvidence(
+      value.promotion_evidence_v2,
+      {
+        namespace,
+        managed_instance_id: profile.id,
+        managed_generation: generation,
+        target_profile_identity_sha256: await projectionDigest({
+          ...profile,
+          index_method: { ...profile.index_method },
+          metadata_fields: [...profile.metadata_fields].sort(),
+        }),
+      },
+    )
+    : undefined;
+  const state = value.state as AiSearchGenerationState;
+  if (legacy && (inactive !== undefined || evidence !== undefined)) {
+    readbackFailure(`${label} v1 record contains v2 lifecycle fields`);
+  }
+  if (
+    !legacy &&
+    (state === "SHADOW_COMPLETE" ||
+      state === "INACTIVE_QUALIFIED") &&
+    evidence === undefined
+  ) {
+    readbackFailure(`${label} v2 qualified state lacks authoritative promotion evidence`);
+  }
+  if (!legacy && state === "INACTIVE_UNQUALIFIED" && evidence !== undefined) {
+    readbackFailure(`${label} inactive-unqualified state cannot authorize rollback`);
+  }
   return Object.freeze({
-    namespace: aiSearchRegistryIdentifier(value.namespace, `${label}.namespace`, readbackFailure),
-    generation: aiSearchRegistryIdentifier(value.generation, `${label}.generation`, readbackFailure),
+    namespace,
+    generation,
     profile,
-    state: value.state as AiSearchGenerationState,
-    expected_item_count: positiveInteger(
-      value.expected_item_count,
-      `${label}.expected_item_count`,
-    ),
+    state,
+    expected_item_count: legacy
+      ? positiveInteger(value.expected_item_count, `${label}.expected_item_count`)
+      : nonNegativeInteger(value.expected_item_count, `${label}.expected_item_count`),
     indexed_item_count: nonNegativeInteger(
       value.indexed_item_count,
       `${label}.indexed_item_count`,
@@ -277,14 +327,17 @@ function decodeRecord(raw: unknown, index: number): AiSearchGenerationRecord {
     declared_at: aiSearchRegistryIdentifier(value.declared_at, `${label}.declared_at`, readbackFailure),
     ...(observed === undefined ? {} : { observed_at: observed }),
     ...(activated === undefined ? {} : { activated_at: activated }),
+    ...(inactive === undefined ? {} : { inactive_at: inactive }),
     ...(retired === undefined ? {} : { retired_at: retired }),
+    ...(evidence === undefined ? {} : { promotion_evidence_v2: evidence }),
   });
 }
 
-function decodeRegistry(
+async function decodeRegistry(
   raw: unknown,
   namespace: string,
-): AiSearchGenerationRegistry {
+  schema: AiSearchGenerationRegistryArtifact["schema"],
+): Promise<AiSearchGenerationRegistry> {
   const value = exactAiSearchRegistryObject(raw, REGISTRY_KEYS, "registry", readbackFailure);
   const generationValues = exactAiSearchRegistryArray(
     value.generations,
@@ -296,7 +349,9 @@ function decodeRegistry(
       `registry.generations must contain at most ${MAX_GENERATIONS} entries`,
     );
   }
-  const generations = generationValues.map(decodeRecord);
+  const generations = await Promise.all(
+    generationValues.map((record, index) => decodeRecord(record, index, schema)),
+  );
   for (const record of generations) {
     if (record.namespace !== namespace) {
       readbackFailure("registry generation belongs to another namespace");
@@ -375,6 +430,7 @@ export function buildAiSearchGenerationRegistryArtifact(
   namespace: string,
   revision: number,
   registry: AiSearchGenerationRegistry,
+  schema: AiSearchGenerationRegistryArtifact["schema"] = AI_SEARCH_GENERATION_REGISTRY_SCHEMA,
 ): AiSearchGenerationRegistryArtifact {
   if (
     !isAiSearchRegistryIdentifier(namespace) ||
@@ -394,7 +450,7 @@ export function buildAiSearchGenerationRegistryArtifact(
     );
   }
   return Object.freeze({
-    schema: AI_SEARCH_GENERATION_REGISTRY_SCHEMA,
+    schema,
     namespace,
     revision,
     registry: normalized,
@@ -404,7 +460,7 @@ export function buildAiSearchGenerationRegistryArtifact(
 export async function aiSearchGenerationRegistryArtifactDigest(
   artifact: AiSearchGenerationRegistryArtifact,
 ): Promise<string> {
-  validateArtifactDigestInput(artifact);
+  await validateArtifactDigestInput(artifact);
   const json = canonicalProjectionJson(artifact);
   if (
     new TextEncoder().encode(json).byteLength >
@@ -418,16 +474,17 @@ export async function aiSearchGenerationRegistryArtifactDigest(
   return projectionSha256Utf8(json);
 }
 
-function validateArtifactDigestInput(
+async function validateArtifactDigestInput(
   raw: unknown,
-): asserts raw is AiSearchGenerationRegistryArtifact {
+): Promise<void> {
   const value = exactAiSearchRegistryObject(
     raw,
     ARTIFACT_KEYS,
     "generation registry artifact",
     inputFailure,
   );
-  if (value.schema !== AI_SEARCH_GENERATION_REGISTRY_SCHEMA) {
+  if (value.schema !== AI_SEARCH_GENERATION_REGISTRY_SCHEMA &&
+      value.schema !== AI_SEARCH_GENERATION_REGISTRY_SCHEMA_V1) {
     inputFailure("generation registry schema is unsupported");
   }
   aiSearchRegistryIdentifier(
@@ -465,7 +522,11 @@ function validateArtifactDigestInput(
   }
   for (let index = 0; index < generations.length; index += 1) {
     try {
-      decodeRecord(generations[index], index);
+      await decodeRecord(
+        generations[index],
+        index,
+        value.schema as AiSearchGenerationRegistryArtifact["schema"],
+      );
     } catch (cause) {
       inputFailure(`generation registry record ${index} is invalid`, cause);
     }
@@ -488,7 +549,8 @@ export async function decodeAiSearchGenerationRegistrySnapshot(
     "generation registry artifact",
     readbackFailure,
   );
-  if (artifactValue.schema !== AI_SEARCH_GENERATION_REGISTRY_SCHEMA) {
+  if (artifactValue.schema !== AI_SEARCH_GENERATION_REGISTRY_SCHEMA &&
+      artifactValue.schema !== AI_SEARCH_GENERATION_REGISTRY_SCHEMA_V1) {
     readbackFailure("generation registry schema is unsupported");
   }
   const namespace = aiSearchRegistryIdentifier(
@@ -507,7 +569,12 @@ export async function decodeAiSearchGenerationRegistrySnapshot(
         artifactValue.revision,
         "generation registry revision",
       ),
-      decodeRegistry(artifactValue.registry, namespace),
+      await decodeRegistry(
+        artifactValue.registry,
+        namespace,
+        artifactValue.schema as AiSearchGenerationRegistryArtifact["schema"],
+      ),
+      artifactValue.schema as AiSearchGenerationRegistryArtifact["schema"],
     );
   } catch (cause) {
     readbackFailure("generation registry artifact is invalid", cause);
@@ -561,6 +628,13 @@ export function decodeAiSearchGenerationRegistryStoreReceipt(
       "generation registry receipt digest",
       readbackFailure,
     ),
+    transition_sha256: value.transition_sha256 === null
+      ? null
+      : aiSearchRegistryDigest(
+        value.transition_sha256,
+        "generation registry transition receipt digest",
+        readbackFailure,
+      ),
   });
 }
 
