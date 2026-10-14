@@ -6,6 +6,7 @@ import {
   ResolvedEvidenceSchema,
   RetrievalTraceSchema,
   ScopeSnapshotSchema,
+  branchQueryResultMatchesPlan,
   type BranchQueryPlan,
   type BranchQueryResult,
   type ResolvedEvidence,
@@ -598,7 +599,7 @@ export async function executeResearchBranchQueryPlanWithPorts(
     query_result_ref: { id: `eliotr.research.branch-query-result-${identityDigest}`, revision: 1 },
     identity_digest: identityDigest,
   });
-  if (!result.success) fail("WORKFLOW_OUTPUT_CORRUPT");
+  if (!result.success || !branchQueryResultMatchesPlan(plan, result.data)) fail("WORKFLOW_OUTPUT_CORRUPT");
   return result.data;
 }
 

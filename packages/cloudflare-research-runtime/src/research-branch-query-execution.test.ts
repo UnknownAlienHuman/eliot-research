@@ -433,7 +433,12 @@ describe("held-scope branch query execution adapter", () => {
 
     const result = await executeResearchBranchQueryPlanWithPorts(input, input.dependencies, ports);
 
-    expect(observedBudgets).toEqual([plan.budgets]);
+    expect(observedBudgets).toEqual([{
+      candidate_limit: plan.budgets.candidate_limit,
+      scan_limit: plan.budgets.scan_limit,
+      evidence_limit: plan.budgets.evidence_limit,
+      max_evidence_bytes: plan.budgets.max_evidence_bytes,
+    }]);
     expect(result.query_legs).toHaveLength(1);
     const managedTrace = ManagedRetrievalTraceSchema.parse(result.query_legs[0]?.trace);
     expect(managedTrace.managed_ranking_outcomes).toHaveLength(1);
