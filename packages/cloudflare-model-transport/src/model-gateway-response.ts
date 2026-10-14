@@ -4,6 +4,10 @@ import {
   type RouteFingerprint,
 } from "@eliotr/platform-cloudflare";
 import {
+  RuntimeLimitError,
+  readResponseBodyWithinBytes,
+} from "@eliotr/platform-cloudflare";
+import {
   ModelGatewayExecutionError,
   modelGatewayExecutionFailure,
   type DecodedModelGatewayResponse,
@@ -95,24 +99,19 @@ export async function readBoundedBody(
   maximumBytes: number,
   requireNonEmpty: boolean,
 ): Promise<Uint8Array> {
-  const rawLength = response.headers.get("content-length");
-  if (rawLength !== null) {
-    if (!/^(0|[1-9][0-9]*)$/u.test(rawLength)) {
-      modelGatewayExecutionFailure(
-        "MODEL_GATEWAY_RESPONSE_INVALID",
-        "AI Gateway content-length is invalid",
-        { safe_response_reason: "BODY_SHAPE_INVALID" },
-      );
-    }
-    const declaredLength = Number(rawLength);
-    if (!Number.isSafeInteger(declaredLength) || declaredLength > maximumBytes) {
-      modelGatewayExecutionFailure(
-        "MODEL_GATEWAY_RESPONSE_INVALID",
-        "AI Gateway response exceeds its byte budget",
-        { safe_response_reason: "BODY_TOO_LARGE" },
-      );
-    }
+  let bytes: Uint8Array;
+  try {
+    bytes = await readResponseBodyWithinBytes(response, {
+      label: "ai-gateway.response",
+      max_bytes: maximumBytes,
+      max_chunks: 4096,
+    });
+  } catch (error) {
+    return gatewayBodyFailure(error);
   }
+  // The shared reader returns an empty buffer for a null body and for a body
+  // that yielded nothing. The private loop reported them differently, so the
+  // body is inspected before reading and the assembled emptiness afterwards.
   if (response.body === null) {
     if (requireNonEmpty) {
       modelGatewayExecutionFailure(
@@ -121,48 +120,64 @@ export async function readBoundedBody(
         { safe_response_reason: "BODY_SHAPE_INVALID" },
       );
     }
-    return new Uint8Array();
+    return bytes;
   }
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let length = 0;
-  try {
-    while (true) {
-      const next = await reader.read();
-      if (next.done) break;
-      length += next.value.byteLength;
-      if (length > maximumBytes) {
-        await reader.cancel("response byte budget exceeded");
+  if (requireNonEmpty && bytes.byteLength < 1) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_RESPONSE_INVALID",
+      "AI Gateway response body is empty",
+      { safe_response_reason: "BODY_SHAPE_INVALID" },
+    );
+  }
+  return bytes;
+}
+
+/**
+ * Map the shared bounded reader onto Gateway effect classification.
+ *
+ * The byte and chunk-count ceilings keep their size reason. An invalid
+ * Content-Length header and a non-byte chunk each keep the decoder's own
+ * message rather than sharing one. Any other read failure is classified as a
+ * generic read exception carrying the original cause, so a raw stream
+ * rejection stays inside the Gateway effect surface instead of escaping it.
+ */
+function gatewayBodyFailure(error: unknown): never {
+  if (error instanceof RuntimeLimitError) {
+    switch (error.code) {
+      case "LIMIT_EXCEEDED":
+      case "STREAM_CHUNK_LIMIT_EXCEEDED":
         modelGatewayExecutionFailure(
           "MODEL_GATEWAY_RESPONSE_INVALID",
           "AI Gateway response exceeds its byte budget",
           { safe_response_reason: "BODY_TOO_LARGE" },
         );
-      }
-      chunks.push(next.value);
+        break;
+      case "INVALID_CONTENT_LENGTH":
+        modelGatewayExecutionFailure(
+          "MODEL_GATEWAY_RESPONSE_INVALID",
+          "AI Gateway content-length is invalid",
+          { safe_response_reason: "BODY_SHAPE_INVALID" },
+        );
+        break;
+      case "STREAM_CHUNK_INVALID":
+        modelGatewayExecutionFailure(
+          "MODEL_GATEWAY_RESPONSE_INVALID",
+          "AI Gateway response body could not be read",
+          { cause: error, safe_response_reason: "BODY_SHAPE_INVALID" },
+        );
+        break;
     }
-  } catch (cause) {
-    if (cause instanceof ModelGatewayExecutionError) throw cause;
-    modelGatewayExecutionFailure(
-      "MODEL_GATEWAY_RESPONSE_INVALID",
-      "AI Gateway response body could not be read",
-      { cause, safe_response_reason: "BODY_SHAPE_INVALID" },
-    );
   }
-  if (requireNonEmpty && length < 1) {
-    modelGatewayExecutionFailure(
-      "MODEL_GATEWAY_RESPONSE_INVALID",
-      "AI Gateway response body is empty",
-        { safe_response_reason: "BODY_SHAPE_INVALID" },
-    );
-  }
-  const output = new Uint8Array(length);
-  let offset = 0;
-  for (const chunk of chunks) {
-    output.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return output;
+  // The private loop passed an already-ModelGatewayExecutionError cause through
+  // unchanged and mapped every other read failure to the generic read
+  // exception. Keep both halves so a stream rejection cannot escape the
+  // Gateway effect surface.
+  if (error instanceof ModelGatewayExecutionError) throw error;
+  modelGatewayExecutionFailure(
+    "MODEL_GATEWAY_RESPONSE_INVALID",
+    "AI Gateway response body could not be read",
+    { cause: error, safe_response_reason: "BODY_SHAPE_INVALID" },
+  );
 }
 
 interface JsonState {
