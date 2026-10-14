@@ -18,7 +18,12 @@ export function createRuntimeDeadline(
     controller.abort();
   };
   const onAbort = (): void => stop("ABORTED");
-  signal?.addEventListener("abort", onAbort, { once: true });
+  // A listener installed after cancellation never receives the past abort event,
+  // so a parent that is already aborted must stop this deadline synchronously.
+  // A caller's entry-time check cannot cover a cancellation that landed while an
+  // earlier preflight step was still awaiting.
+  if (signal?.aborted === true) stop("ABORTED");
+  else signal?.addEventListener("abort", onAbort, { once: true });
   const timer = setTimeout(() => stop("TIMEOUT"), timeoutMs);
 
   return {

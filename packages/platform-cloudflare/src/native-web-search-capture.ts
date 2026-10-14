@@ -374,23 +374,40 @@ export function createNativeWebSearchMarkdownCaptureAdapter(dependencies: {
       deadline.dispose();
       return safeFailure(selection, code, "NOT_STARTED", "FAILED", attempt, attempt.locator_index);
     }
+    // The deadline's rejection may win before the deferred dispatch rejection.
+    // Track actual entry so that either rejection still preserves known no-effect.
+    let dispatchStarted = false;
     let response: Response;
     try {
-      const dispatch = Promise.resolve().then(() => browser.quickAction("markdown", {
-        url: attempt.request_url,
-        allowRequestPattern: [exactRequestPattern(attempt.request_url)],
-        allowResourceTypes: ["document"],
-        setJavaScriptEnabled: false,
-        cacheTTL: 0,
-        gotoOptions: { timeout: selection.browser_markdown.timeout_ms, waitUntil: "domcontentloaded" },
-        actionTimeout: selection.browser_markdown.timeout_ms,
-      }));
+      // Rechecking inside the deferred step keeps the check adjacent to the call
+      // it protects: an abort that arrives while the preflight awaited is now
+      // observed before quickAction runs, not after its response is discarded.
+      const dispatch = Promise.resolve().then(() => {
+        if (deadline.signal.aborted) throw new DeadlineFailure(deadline.failureCode() ?? "ABORTED");
+        dispatchStarted = true;
+        return browser.quickAction("markdown", {
+          url: attempt.request_url,
+          allowRequestPattern: [exactRequestPattern(attempt.request_url)],
+          allowResourceTypes: ["document"],
+          setJavaScriptEnabled: false,
+          cacheTTL: 0,
+          gotoOptions: { timeout: selection.browser_markdown.timeout_ms, waitUntil: "domcontentloaded" },
+          actionTimeout: selection.browser_markdown.timeout_ms,
+        });
+      });
       const lateAware = dispatch.then((value) => {
         if (deadline.signal.aborted) cancelQuietly(value.body);
         return value;
       });
       response = await waitForDeadline(lateAware, deadline);
     } catch (error) {
+      // Once aborted, the queued dispatch cannot enter quickAction. Do not infer
+      // uncertainty from which of the two rejected promises reaches this catch first.
+      if (!dispatchStarted && deadline.signal.aborted) {
+        const code = deadline.failureCode() ?? "ABORTED";
+        deadline.dispose();
+        return safeFailure(selection, code, "NOT_STARTED", "FAILED", attempt, attempt.locator_index);
+      }
       const code = error instanceof DeadlineFailure ? error.code : "DISPATCH_OUTCOME_UNKNOWN";
       deadline.dispose();
       const read = await readExisting(attempt, input.discovery, key);
