@@ -282,8 +282,9 @@ async function playInboxStudioSelectionRegression({ canvas, userEvent }: {
     throw new Error("Opening the second same-title proposal did not use exact GET-only selection");
   }
 
-  const inboxLinks = await canvas.findAllByRole("link", { name: "Inbox", exact: true });
-  const inboxLink = inboxLinks.find(link => link.getAttribute("href") === "/inbox");
+  const inboxLinks = await canvas.findAllByRole("link", { name: /Inbox/u });
+  const inboxLink = inboxLinks.find(link => link.getAttribute("href") === "/inbox" &&
+    link.closest('nav[aria-label="Your research, in context"]') !== null && link.getClientRects().length > 0);
   if (!inboxLink) throw new Error("Inbox navigation link is missing");
   await userEvent.click(inboxLink);
   const firstOpenButtons = await canvas.findAllByRole("button", { name: "Open in Studio", exact: true });
