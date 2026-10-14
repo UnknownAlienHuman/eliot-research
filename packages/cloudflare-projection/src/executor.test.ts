@@ -21,7 +21,10 @@ import type {
   ManagedProjectCopyMapReceipt,
   ManagedProjectCopyTargetReceipt,
   ProjectionAuthorityPort,
+  ProjectionExecutorDependencies,
   ProjectionExecutionProfile,
+  ManagedTargetSelectionV2,
+  ProjectionServingTargetDeltaPort,
   ProjectionSearchReceipt,
   ProjectionSettlement,
   ProjectionSourceContext,
@@ -143,10 +146,10 @@ function fixture(input: {
     readTerminal: vi.fn(async (_context, _generation, _profile) => input.prior ?? null),
     begin: vi.fn(async () => { events.push("begin"); }),
     recordMaterialized: vi.fn(async () => { events.push("record-materialized"); }),
-    settle: vi.fn(async (_context, _generation, _profile, value) => {
+    settle: vi.fn(async (_context, generation, _profile, value) => {
       events.push("settle");
       settlement = value;
-      return terminal(value.outcome);
+      return { ...terminal(value.outcome), projection_generation: generation };
     }),
   };
   const workReceipt = {
@@ -336,6 +339,61 @@ function fixture(input: {
   return { dependencies, events, get settlement() { return settlement; } };
 }
 
+function rootSelectedSelections(): readonly ManagedTargetSelectionV2[] {
+  const base = {
+    protocol: "eliotr.managed-target-selection.v2" as const,
+    domain: "MANAGED_SEARCH_PRODUCT" as const,
+    decision_version: 2 as const,
+    selection_mode: "STABLE_PHYSICAL_PROFILE_V2" as const,
+    product_alias: "primary" as const,
+    registry_revision: 2,
+    registry_artifact_sha256: B,
+  };
+  const physical = {
+    namespace: "ai-search-primary",
+    managed_instance_id: profile.managed_instance_id,
+    target_profile_identity_sha256: "c".repeat(64),
+  };
+  return [
+    {
+      ...base,
+      purpose: "ACTIVE",
+      target: { ...physical, managed_generation: "g1" },
+    },
+    {
+      ...base,
+      purpose: "SHADOW",
+      target: { ...physical, managed_generation: "g2" },
+    },
+  ];
+}
+
+function withServingTargetPorts(
+  f: ReturnType<typeof fixture>,
+  apply?: (input: Parameters<ProjectionServingTargetDeltaPort["apply"]>[0]) => Promise<ManagedProjectionReceipt>,
+) {
+  const selections = rootSelectedSelections();
+  const applyMock = vi.fn<ProjectionServingTargetDeltaPort["apply"]>(async (input) => {
+      f.events.push(`delta-${input.profile.managed_generation_active ? "ACTIVE" : "SHADOW"}`);
+      if (apply !== undefined) return apply(input);
+      return {
+        state: "READY",
+        receipt_ref: `managed-${input.profile.managed_generation}`,
+        readback_digest: A,
+        item_count: input.copy_plan.items.length,
+        instance_id: input.profile.managed_instance_id,
+        managed_generation: input.profile.managed_generation,
+        reason_codes: [],
+      };
+    });
+  const servingTargetDelta: ProjectionServingTargetDeltaPort = { apply: applyMock };
+  const dependencies: ProjectionExecutorDependencies = {
+    ...f.dependencies,
+    serving_target_delta: servingTargetDelta,
+  };
+  return { dependencies, servingTargetDelta, applyMock, selections };
+}
+
 describe("projection execution coordinator", () => {
   it("materializes, activates D1 Search, verifies managed indexing, then settles success", async () => {
     const f = fixture();
@@ -381,6 +439,155 @@ describe("projection execution coordinator", () => {
     expect(f.dependencies.search.activate.mock.calls[0]?.[2].items[0]?.project_membership_ids)
       .toEqual([]);
     expect(f.dependencies.work.materializeProjectCopyMapPages).toHaveBeenCalledTimes(1);
+  });
+
+  it("applies one canonical source to the Root-selected ACTIVE and SHADOW", async () => {
+    const f = fixture({ project_membership_ids: ["project:project-a:generation:1"] });
+    const selected = withServingTargetPorts(f);
+
+    const result = await createProjectionExecutionHandler(selected.dependencies).execute(message, selected.selections);
+
+    expect(result.receipt_ref).toContain("receipt-succeeded");
+    expect(selected.applyMock).toHaveBeenCalledTimes(2);
+    const activeCall = selected.applyMock.mock.calls[0]?.[0];
+    const shadowCall = selected.applyMock.mock.calls[1]?.[0];
+    expect(activeCall?.canonical_source.canonical_source_ref).toBe(shadowCall?.canonical_source.canonical_source_ref);
+    expect(activeCall?.copy_plan.items[0]?.canonical_body_ref).toBe(shadowCall?.copy_plan.items[0]?.canonical_body_ref);
+    expect(activeCall?.copy_plan.items[0]?.provider_key).not.toBe(shadowCall?.copy_plan.items[0]?.provider_key);
+    expect(activeCall?.copy_plan.target.managed_generation).toBe("g1");
+    expect(shadowCall?.copy_plan.target.managed_generation).toBe("g2");
+    expect(f.dependencies.content.read).toHaveBeenCalledTimes(1);
+    expect(f.dependencies.work.materialize).toHaveBeenCalledTimes(1);
+    expect(f.dependencies.work.materializeProjectCopyMapPages).toHaveBeenCalledTimes(2);
+    expect(f.dependencies.search.activate).toHaveBeenCalledTimes(1);
+    expect(f.dependencies.authority.recordMaterialized).toHaveBeenCalledTimes(2);
+    expect(f.dependencies.authority.settle).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects the complete target effect set before Core, Work, Search, or provider writes", async () => {
+    const f = fixture({ project_membership_ids: ["not-a-canonical-membership"] });
+    const selected = withServingTargetPorts(f);
+
+    await expect(createProjectionExecutionHandler(selected.dependencies).execute(message, selected.selections)).rejects.toThrow();
+
+    expect(f.dependencies.authority.begin).not.toHaveBeenCalled();
+    expect(f.dependencies.work.materialize).not.toHaveBeenCalled();
+    expect(f.dependencies.work.materializeProjectCopyMapPages).not.toHaveBeenCalled();
+    expect(f.dependencies.search.activate).not.toHaveBeenCalled();
+    expect(selected.applyMock).not.toHaveBeenCalled();
+  });
+
+  it("continues the ACTIVE write when the SHADOW fails and leaves the delivery unsettled", async () => {
+    const f = fixture({ project_membership_ids: ["project:project-a:generation:1"] });
+    const selected = withServingTargetPorts(f, async (input) => {
+      if (!input.profile.managed_generation_active) throw new Error("shadow delta failed");
+      return {
+        state: "READY",
+        receipt_ref: "managed-active-g1",
+        readback_digest: A,
+        item_count: input.copy_plan.items.length,
+        instance_id: input.profile.managed_instance_id,
+        managed_generation: input.profile.managed_generation,
+        reason_codes: [],
+      };
+    });
+
+    const settleMock = vi.spyOn(f.dependencies.authority, "settle");
+    await expect(createProjectionExecutionHandler(selected.dependencies).execute(message, selected.selections))
+      .rejects.toMatchObject({ code: "DELIVERY_SETTLEMENT_UNCERTAIN" });
+
+    expect(selected.applyMock).toHaveBeenCalledTimes(2);
+    expect(settleMock).toHaveBeenCalledTimes(1);
+    expect(settleMock.mock.calls[0]?.[2].managed_generation).toBe("g1");
+    expect(f.dependencies.leases.fail).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the ACTIVE partial terminal visible when the SHADOW succeeds", async () => {
+    const f = fixture({ project_membership_ids: ["project:project-a:generation:1"] });
+    const selected = withServingTargetPorts(f, async (input) => input.profile.managed_generation_active
+      ? {
+          state: "DEGRADED",
+          item_count: 0,
+          instance_id: input.profile.managed_instance_id,
+          managed_generation: input.profile.managed_generation,
+          reason_codes: ["MANAGED_INDEX_READBACK_FAILED"],
+        }
+      : {
+          state: "READY",
+          receipt_ref: "managed-shadow-g2",
+          readback_digest: A,
+          item_count: input.copy_plan.items.length,
+          instance_id: input.profile.managed_instance_id,
+          managed_generation: input.profile.managed_generation,
+          reason_codes: [],
+        });
+    const settleMock = vi.spyOn(f.dependencies.authority, "settle");
+
+    const result = await createProjectionExecutionHandler(selected.dependencies).execute(message, selected.selections);
+
+    expect(result.receipt_ref).toContain("receipt-partial");
+    expect(settleMock.mock.calls.map((call) => [call[2].managed_generation, call[3].outcome])).toEqual([
+      ["g1", "PARTIAL"],
+      ["g2", "SUCCEEDED"],
+    ]);
+  });
+
+  it("reconciles a duplicate Queue delivery from both target terminal receipts without repeating provider effects", async () => {
+    const f = fixture({ project_membership_ids: ["project:project-a:generation:1"] });
+    const selected = withServingTargetPorts(f);
+    const terminalByGeneration = new Map<string, ProjectionTerminalReceipt>();
+    vi.spyOn(f.dependencies.authority, "readTerminal").mockImplementation(async (_context, generation) =>
+      terminalByGeneration.get(generation) ?? null);
+    const settleMock = vi.spyOn(f.dependencies.authority, "settle").mockImplementation(async (_context, generation, _profile, value) => {
+      const stored = {
+        ...terminal(value.outcome),
+        receipt_ref: `terminal:${generation}`,
+        projection_generation: generation,
+      };
+      terminalByGeneration.set(generation, stored);
+      return stored;
+    });
+    const handler = createProjectionExecutionHandler(selected.dependencies);
+
+    const first = await handler.execute(message, selected.selections);
+    const replay = await handler.execute(message, selected.selections);
+
+    expect(first.receipt_ref).toBe(replay.receipt_ref);
+    expect(selected.applyMock).toHaveBeenCalledTimes(2);
+    expect(settleMock).toHaveBeenCalledTimes(2);
+    expect(f.dependencies.content.read).toHaveBeenCalledTimes(1);
+    expect(f.dependencies.work.materialize).toHaveBeenCalledTimes(1);
+    expect(f.dependencies.search.activate).toHaveBeenCalledTimes(1);
+  });
+
+  it("reconciles a lost ACTIVE settlement acknowledgement before moving to the SHADOW", async () => {
+    const f = fixture({ project_membership_ids: ["project:project-a:generation:1"] });
+    const selected = withServingTargetPorts(f);
+    const terminalByGeneration = new Map<string, ProjectionTerminalReceipt>();
+    vi.spyOn(f.dependencies.authority, "readTerminal").mockImplementation(async (_context, generation) =>
+      terminalByGeneration.get(generation) ?? null);
+    let loseActiveAck = true;
+    const settleMock = vi.spyOn(f.dependencies.authority, "settle").mockImplementation(async (_context, generation, targetProfile, value) => {
+      const stored = {
+        ...terminal(value.outcome),
+        receipt_ref: `terminal:${generation}`,
+        projection_generation: generation,
+      };
+      terminalByGeneration.set(generation, stored);
+      if (targetProfile.managed_generation === "g1" && loseActiveAck) {
+        loseActiveAck = false;
+        throw new Error("ACTIVE terminal write acknowledgement was lost");
+      }
+      return stored;
+    });
+
+    const result = await createProjectionExecutionHandler(selected.dependencies).execute(message, selected.selections);
+
+    expect(result.receipt_ref).toContain("terminal:");
+    expect(selected.applyMock).toHaveBeenCalledTimes(2);
+    expect(settleMock).toHaveBeenCalledTimes(2);
+    expect(f.dependencies.authority.readTerminal).toHaveBeenCalledTimes(3);
+    expect(f.dependencies.leases.complete).toHaveBeenCalledTimes(2);
   });
 
   it("settles a durable partial result when managed indexing cannot be read back", async () => {

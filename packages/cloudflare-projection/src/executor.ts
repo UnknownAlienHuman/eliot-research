@@ -2,17 +2,12 @@ import {
   DeliveryRuntimeError,
   type ExecutionFence,
 } from "@eliotr/platform-cloudflare";
-import { projectNormalizedMarkdown, StructuralProjectionError } from "@eliotr/retrieval";
-import type { ProjectionItem } from "@eliotr/contracts";
+import { projectNormalizedMarkdown } from "@eliotr/retrieval";
 import {
-  assertProjectionIdentifier,
-  assertProjectionSha256,
-  canonicalProjectionJson,
   profileIsValid,
   projectionGeneration,
   projectionFail,
   stableProjectionId,
-  utf8ProjectionLength,
 } from "./canonical.js";
 import {
   bindProjectCopyMapIndex,
@@ -23,253 +18,30 @@ import {
   preflightManagedProjectCopies,
 } from "./core-managed-item-intent.js";
 import type {
-  CanonicalProjectionResourceBounds,
-  CanonicalSourceProjectionReceipt,
-  ManagedProjectCopyMapSetReceipt,
-  ManagedProjectCopyPlan,
-  ManagedProjectionReceipt,
   ProjectionExecutionHandler,
   ProjectionExecutorDependencies,
-  ProjectionSearchReceipt,
   ProjectionSettlement,
   ProjectionSourceContext,
   ProjectionTerminalReceipt,
   ProjectionWorkReceipt,
 } from "./types.js";
+import {
+  deliveryFailureAfterReadbackFailure,
+  failLeaseQuietly,
+  managedSettlement,
+  mapDeliveryFailure,
+  verifyCanonicalSourceReceipt,
+  verifyProjectCopyMapSet,
+  verifySearchSet,
+  verifyWorkSet,
+} from "./active-delta.js";
+import { executeRootSelectedProjectionDeltas } from "./active-delta-executor.js";
 
 const DEFAULT_WORKER_ID = "eliotr-projection-executor";
 const DEFAULT_LEASE_MS = 5 * 60_000;
 
-function verifyCanonicalSourceReceipt(
-  canonical: CanonicalSourceProjectionReceipt,
-  context: ProjectionSourceContext,
-  generation: string,
-  projectorProfileSha256: string,
-  resourceBounds: CanonicalProjectionResourceBounds,
-  projection: { readonly items: readonly ProjectionItem[]; readonly item_set_digest: string },
-): void {
-  if (
-    canonical.protocol !== "eliotr.canonical-source-projection.v1" ||
-    canonical.source_revision_ref !== context.source_revision.source_revision_ref ||
-    canonical.complete_residency_key_sha256 !== context.source_revision.object_residency_key_digest ||
-    canonical.projector_profile_sha256 !== projectorProfileSha256 ||
-    canonical.canonical_projection_generation !== generation ||
-    canonical.canonical_section_count !== projection.items.length ||
-    canonical.canonical_section_set_sha256 !== projection.item_set_digest ||
-    canonical.sections.length !== projection.items.length ||
-    canonicalProjectionJson(canonical.resource_bounds) !== canonicalProjectionJson(resourceBounds)
-  ) {
-    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "canonical Work receipt differs from the exact source projection");
-  }
-  for (const [index, item] of projection.items.entries()) {
-    const section = canonical.sections[index];
-    if (
-      section === undefined ||
-      section.canonical_item_key !== item.item_key ||
-      section.canonical_section_id !== item.canonical_section_id ||
-      section.content_sha256 !== item.content_sha256
-    ) {
-      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "canonical Work sections differ from projector output");
-    }
-  }
-  assertProjectionIdentifier(canonical.canonical_source_ref, "canonical source Work ref");
-  assertProjectionSha256(canonical.canonical_source_sha256, "canonical source Work digest");
-}
-
-function verifyProjectCopyMapSet(
-  mapSet: ManagedProjectCopyMapSetReceipt,
-  canonical: CanonicalSourceProjectionReceipt,
-  plan: ManagedProjectCopyPlan,
-): void {
-  if (
-    mapSet.protocol !== "eliotr.managed-project-copy-map-set.v1" ||
-    mapSet.source_revision_ref !== canonical.source_revision_ref ||
-    mapSet.complete_residency_key_sha256 !== canonical.complete_residency_key_sha256 ||
-    mapSet.canonical_projection_generation !== canonical.canonical_projection_generation ||
-    mapSet.canonical_source_ref !== canonical.canonical_source_ref ||
-    mapSet.canonical_source_sha256 !== canonical.canonical_source_sha256 ||
-    mapSet.target.managed_instance_id !== plan.target.managed_instance_id ||
-    mapSet.target.managed_generation !== plan.target.managed_generation ||
-    mapSet.target.metadata_generation_digest !== plan.target.metadata_generation_digest ||
-    mapSet.provider_copy_count !== plan.provider_copy_count ||
-    mapSet.provider_copy_set_sha256 !== plan.provider_copy_set_sha256 ||
-    mapSet.provider_item_count !== plan.provider_item_count ||
-    mapSet.provider_item_set_sha256 !== plan.provider_item_set_sha256
-  ) {
-    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "project-copy Work receipt differs from the complete provider plan");
-  }
-}
-
-function verifyWorkSet(
-  receipt: ProjectionWorkReceipt,
-  projection: {
-    readonly items: readonly ProjectionItem[];
-    readonly item_set_digest: string;
-  },
-): void {
-  const expectedKeys = new Map(projection.items.map((item) => [item.item_key, item]));
-  if (
-    expectedKeys.size !== projection.items.length ||
-    receipt.item_count !== projection.items.length ||
-    receipt.item_set_digest !== projection.item_set_digest ||
-    !Array.isArray(receipt.item_receipts) ||
-    receipt.item_receipts.length !== projection.items.length
-  ) {
-    projectionFail(
-      "PROJECTION_AUTHORITY_CONFLICT",
-      "Work receipt count or desired-set digest differs from the projected generation",
-    );
-  }
-
-  const observedKeys = new Set<string>();
-  for (const itemReceipt of receipt.item_receipts) {
-    const expected = expectedKeys.get(itemReceipt.item_key);
-    if (
-      expected === undefined ||
-      observedKeys.has(itemReceipt.item_key) ||
-      itemReceipt.readback_sha256 !== expected.content_sha256 ||
-      itemReceipt.size_bytes !== utf8ProjectionLength(expected.section_text)
-    ) {
-      projectionFail(
-        "PROJECTION_AUTHORITY_CONFLICT",
-        "Work item readback differs from the projected desired set",
-      );
-    }
-    observedKeys.add(itemReceipt.item_key);
-  }
-  if (observedKeys.size !== expectedKeys.size) {
-    projectionFail(
-      "PROJECTION_AUTHORITY_CONFLICT",
-      "Work receipt is missing a projected desired item",
-    );
-  }
-}
-
-function verifySearchSet(
-  receipt: ProjectionSearchReceipt,
-  projection: {
-    readonly items: readonly ProjectionItem[];
-    readonly item_set_digest: string;
-  },
-  generation: string,
-): void {
-  if (
-    receipt.item_count !== projection.items.length ||
-    receipt.item_set_digest !== projection.item_set_digest ||
-    receipt.projection_generation !== generation
-  ) {
-    projectionFail(
-      "PROJECTION_AUTHORITY_CONFLICT",
-      "D1 Search receipt differs from the projected desired generation",
-    );
-  }
-  assertProjectionIdentifier(receipt.receipt_ref, "D1 Search receipt_ref");
-  assertProjectionSha256(receipt.readback_digest, "D1 Search readback_digest");
-}
-
 function deliveryFailure(error: unknown): never {
   return mapDeliveryFailure(error);
-}
-
-class DeliveryReconciliationError extends DeliveryRuntimeError {
-  public readonly primary_error: unknown;
-  public readonly reconciliation_error: unknown;
-
-  public constructor(
-    code: DeliveryRuntimeError["code"],
-    message: string,
-    retryable: boolean,
-    primaryError: unknown,
-    reconciliationError: unknown,
-  ) {
-    super(code, message, retryable, primaryError);
-    this.name = "DeliveryRuntimeError";
-    this.primary_error = primaryError;
-    this.reconciliation_error = reconciliationError;
-  }
-}
-
-function mapDeliveryFailure(
-  error: unknown,
-  reconciliation?: { readonly error: unknown },
-): never {
-  if (error instanceof DeliveryRuntimeError && reconciliation === undefined) throw error;
-  let code: DeliveryRuntimeError["code"] = "DELIVERY_SETTLEMENT_UNCERTAIN";
-  let retryable = true;
-  let message = error instanceof Error ? error.message : "projection execution failed";
-  if (error instanceof DeliveryRuntimeError) {
-    code = error.code;
-    retryable = error.retryable;
-    message = error.message;
-  } else if (error instanceof StructuralProjectionError) {
-    code = "DELIVERY_INPUT_INVALID";
-    retryable = false;
-    message = error.message;
-  } else {
-    let nonRetryable = false;
-    try {
-      if (
-        (typeof error === "object" && error !== null) ||
-        typeof error === "function"
-      ) {
-        nonRetryable = (error as { readonly retryable?: unknown }).retryable === false;
-      }
-    } catch {
-      // A malformed thrown value must not replace the failure being mapped.
-    }
-    if (nonRetryable) {
-      code = "DELIVERY_INPUT_INVALID";
-      retryable = false;
-      message = error instanceof Error ? error.message : "projection input or authority is invalid";
-    }
-  }
-  if (reconciliation !== undefined) {
-    throw new DeliveryReconciliationError(
-      code,
-      message,
-      retryable,
-      error,
-      reconciliation.error,
-    );
-  }
-  throw new DeliveryRuntimeError(code, message, retryable, error);
-}
-
-function deliveryFailureAfterReadbackFailure(
-  error: unknown,
-  readbackError: unknown,
-): never {
-  return mapDeliveryFailure(error, { error: readbackError });
-}
-
-async function failLeaseQuietly(
-  dependencies: ProjectionExecutorDependencies,
-  fence: ExecutionFence,
-  now: number,
-): Promise<void> {
-  try {
-    await dependencies.leases.fail(fence, "PROJECTION_EXECUTION_FAILED", now);
-  } catch {
-    // Preserve the original failure. The generation fence prevents stale settlement.
-  }
-}
-
-function managedSettlement(
-  managed: ManagedProjectionReceipt,
-  reasons: readonly string[],
-): ProjectionSettlement {
-  if (managed.state === "READY") {
-    return {
-      outcome: "SUCCEEDED",
-      reason_codes: [...new Set(reasons)].sort(),
-      managed,
-    };
-  }
-  return {
-    outcome: "PARTIAL",
-    reason_codes: [...new Set([...reasons, ...managed.reason_codes])].sort(),
-    managed,
-  };
 }
 
 async function settleSharded(
@@ -297,8 +69,28 @@ export function createProjectionExecutionHandler(
   }
 
   return {
-    async execute(message) {
+    async execute(message, rootSelectedSelections) {
       const context = await dependencies.authority.load(message);
+      if (rootSelectedSelections !== undefined) {
+        if (dependencies.serving_target_delta === undefined) {
+          projectionFail("PROJECTION_INPUT_INVALID", "Root-selected target execution requires the ACTIVE-delta port");
+        }
+        try {
+          return await executeRootSelectedProjectionDeltas(
+            dependencies,
+            context,
+            rootSelectedSelections,
+            now,
+            workerId,
+            leaseMs,
+          );
+        } catch (error) {
+          deliveryFailure(error);
+        }
+      }
+      if (dependencies.serving_target_delta !== undefined) {
+        projectionFail("PROJECTION_INPUT_INVALID", "ACTIVE-delta execution requires Root-selected profiles from the same Queue delivery");
+      }
       const generation = await projectionGeneration(context, dependencies.profile);
       const prior = await dependencies.authority.readTerminal(context, generation, dependencies.profile);
       if (prior !== null) return { receipt_ref: prior.receipt_ref };

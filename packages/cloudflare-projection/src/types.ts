@@ -722,12 +722,29 @@ export interface ManagedProjectionPort {
   ): Promise<ManagedProjectionReceipt>;
 }
 
+/** Explicit per-target delta operation. ACTIVE writes must be authorized by the selector. */
+export interface ProjectionServingTargetDeltaPort {
+  apply(input: {
+    readonly selection: ManagedTargetSelectionV2;
+    /** Resolved target profile; ACTIVE retains managed_generation_active=true. */
+    readonly profile: ProjectionExecutionProfile;
+    readonly context: ProjectionSourceContext;
+    readonly execution_generation: string;
+    readonly canonical_projection_generation: string;
+    readonly canonical_source: CanonicalSourceProjectionReceipt;
+    readonly projection: MarkdownProjectionResult;
+    readonly copy_plan: ManagedProjectCopyPlan;
+    readonly fence: ExecutionFence;
+  }): Promise<ManagedProjectionReceipt>;
+}
+
 export interface ProjectionExecutorDependencies {
   readonly authority: ProjectionAuthorityPort;
   readonly content: ProjectionContentPort;
   readonly work: ProjectionWorkPort;
   readonly search: ProjectionSearchPort;
   readonly managed: ManagedProjectionPort;
+  readonly serving_target_delta?: ProjectionServingTargetDeltaPort;
   readonly leases: ExecutionLeaseStore;
   readonly profile: ProjectionExecutionProfile;
   readonly now?: () => number;
@@ -736,5 +753,9 @@ export interface ProjectionExecutorDependencies {
 }
 
 export interface ProjectionExecutionHandler {
-  execute(message: DeliveryMessage): Promise<{ readonly receipt_ref: string }>;
+  /** Root's existing Queue composer supplies exact V2 selections only while its target writer gate is held. */
+  execute(
+    message: DeliveryMessage,
+    rootSelectedSelections?: readonly ManagedTargetSelectionV2[],
+  ): Promise<{ readonly receipt_ref: string }>;
 }
