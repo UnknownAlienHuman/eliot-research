@@ -1,6 +1,6 @@
-import { IdentifierSchema, RetrievalTraceSchema, Sha256Schema, VersionedRefSchema } from "@eliotr/contracts";
-import type { RetrievalTrace, VersionedRef } from "@eliotr/contracts";
-import { decodeCanonicalRetrievalJson, decodeEvidencePack } from "./query-codec.js";
+import { IdentifierSchema, Sha256Schema, VersionedRefSchema } from "@eliotr/contracts";
+import type { ManagedRetrievalTrace, RetrievalTrace, VersionedRef } from "@eliotr/contracts";
+import { decodeCanonicalRetrievalJson, decodeEvidencePack, decodeRetrievalTrace } from "./query-codec.js";
 import type { EvidencePack } from "./service.js";
 
 export interface RetrieveBranchesCheckpoint {
@@ -14,7 +14,8 @@ export interface RetrieveBranchesCheckpoint {
   readonly denominator_digest: string;
   readonly retrieval_request_digest: string;
   readonly evidence_pack: EvidencePack;
-  readonly trace: RetrievalTrace;
+  /** The outer checkpoint stays v1; trace bytes use their strict legacy or managed version. */
+  readonly trace: RetrievalTrace | ManagedRetrievalTrace;
   readonly coverage_claim: "NONE" | "SAMPLED" | "COMPLETE_SCOPE";
 }
 
@@ -41,7 +42,7 @@ export function decodeRetrieveBranchesCheckpoint(bytes: Uint8Array): RetrieveBra
       !VersionedRefSchema.safeParse(raw.investigation_ref).success || !IdentifierSchema.safeParse(raw.principal_ref).success ||
       !VersionedRefSchema.safeParse(raw.scope_snapshot_ref).success || !Sha256Schema.safeParse(raw.protocol_digest).success ||
       !Sha256Schema.safeParse(raw.denominator_digest).success || !Sha256Schema.safeParse(raw.retrieval_request_digest).success ||
-      decodeEvidencePack(raw.evidence_pack) === null || !RetrievalTraceSchema.safeParse(raw.trace).success ||
+      decodeEvidencePack(raw.evidence_pack) === null || decodeRetrievalTrace(raw.trace) === null ||
       (raw.coverage_claim !== "NONE" && raw.coverage_claim !== "SAMPLED" && raw.coverage_claim !== "COMPLETE_SCOPE")) return null;
   return raw as unknown as RetrieveBranchesCheckpoint;
 }

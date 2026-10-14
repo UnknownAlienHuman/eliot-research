@@ -1,6 +1,7 @@
-// IMPLEMENTED_NOT_LIVE: ER-24 research.trace serves persisted retrieval query-* traces over D1 with owner-bound readback; RETRIEVAL slice enablement remains separate.
-import { RetrievalTraceSchema, type RetrievalTrace, type VersionedRef } from "@eliotr/contracts";
+// IMPLEMENTED_NOT_LIVE: ER-24 research.trace serves persisted retrieval query-* and managed mrt1-* traces over D1 with owner-bound readback; RETRIEVAL slice enablement remains separate.
+import type { ManagedRetrievalTrace, RetrievalTrace, VersionedRef } from "@eliotr/contracts";
 import { canonicalRetrievalJson, createD1ScopePorts, type RetrievalQueryD1 } from "./query-persistence.js";
+import { decodeRetrievalTrace, managedRetrievalRefIdV1 } from "./query-codec.js";
 import { RetrievalQueryError } from "./service.js";
 
 export interface RetrievalTraceReadAccess {
@@ -10,19 +11,20 @@ export interface RetrievalTraceReadAccess {
 }
 
 export type RetrievalTraceReadResult =
-  | { readonly status: "ok"; readonly trace: RetrievalTrace & { readonly coverage_claim: "NONE" | "SAMPLED" } }
+  | { readonly status: "ok"; readonly trace: (RetrievalTrace | ManagedRetrievalTrace) & { readonly coverage_claim: "NONE" | "SAMPLED" } }
   | { readonly status: "invalid" }
   | { readonly status: "missing" }
   | { readonly status: "stale" }
   | { readonly status: "uncertain" };
 
 const QUERY_TRACE_ID_RE = /^query-[0-9a-f]{48}$/u;
+const MANAGED_TRACE_ID_RE = /^mrt1-[0-9a-f]{48}$/u;
 
 /**
  * Read-only retrieval trace reader over migration 0021 tables.
  * SELECTs only: no grants, writes, or trace-of-trace. Missing and
  * foreign-owned traces both report missing so existence never leaks.
- * Response projects the persisted trace (lanes, skips, scope) plus the
+ * Response projects the persisted legacy or explicitly managed trace plus the
  * owned result row coverage claim; every byte comes from those rows.
  */
 export async function readRetrievalTrace(
@@ -31,7 +33,8 @@ export async function readRetrievalTrace(
   ref: VersionedRef,
 ): Promise<RetrievalTraceReadResult> {
   if (access.client_class !== "owner_pwa") return { status: "missing" };
-  if (ref.revision !== 1 || typeof ref.id !== "string" || !QUERY_TRACE_ID_RE.test(ref.id)) return { status: "invalid" };
+  if (ref.revision !== 1 || typeof ref.id !== "string" ||
+      (!QUERY_TRACE_ID_RE.test(ref.id) && !MANAGED_TRACE_ID_RE.test(ref.id))) return { status: "invalid" };
   let traceRow: { readonly trace_json: unknown; readonly scope_snapshot_id: unknown; readonly scope_snapshot_revision: unknown } | null;
   try {
     traceRow = await database.prepare(
@@ -54,19 +57,31 @@ export async function readRetrievalTrace(
   if (owned.state !== "COMPLETE") return { status: "stale" };
   if (owned.coverage_claim !== "NONE" && owned.coverage_claim !== "SAMPLED") return { status: "stale" };
   if (typeof traceRow.trace_json !== "string") return { status: "stale" };
-  let parsed: RetrievalTrace;
+  let parsed: RetrievalTrace | ManagedRetrievalTrace;
   try {
-    parsed = RetrievalTraceSchema.parse(JSON.parse(traceRow.trace_json));
+    const decoded = decodeRetrievalTrace(JSON.parse(traceRow.trace_json));
+    if (decoded === null) return { status: "stale" };
+    parsed = decoded;
   } catch {
     return { status: "stale" };
   }
+  const isManaged = "managed_ranking_outcomes" in parsed;
   if (
     parsed.trace_ref.id !== ref.id || parsed.trace_ref.revision !== ref.revision ||
     parsed.scope_snapshot.snapshot_id !== traceRow.scope_snapshot_id ||
     parsed.scope_snapshot.revision !== traceRow.scope_snapshot_revision ||
-    canonicalRetrievalJson(parsed) !== traceRow.trace_json
+    canonicalRetrievalJson(parsed) !== traceRow.trace_json ||
+    isManaged !== MANAGED_TRACE_ID_RE.test(ref.id)
   ) {
     return { status: "stale" };
+  }
+  if ("managed_ranking_outcomes" in parsed) {
+    const scopedInvocationId = parsed.managed_ranking_outcomes[0]?.scoped_invocation_id;
+    if (scopedInvocationId === undefined || parsed.managed_ranking_outcomes.some((outcome) =>
+      outcome.scoped_invocation_id !== scopedInvocationId) ||
+        await managedRetrievalRefIdV1(scopedInvocationId, "trace") !== ref.id) {
+      return { status: "stale" };
+    }
   }
   try {
     await createD1ScopePorts(database, {

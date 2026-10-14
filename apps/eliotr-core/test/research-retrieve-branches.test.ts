@@ -1,17 +1,143 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { canonicalEvidenceJson } from "@eliotr/cloudflare-evidence";
+import {
+  MANAGED_RANKING_OUTCOME_PROTOCOL,
+  MANAGED_RETRIEVAL_TRACE_PROTOCOL,
+  ManagedRankingOutcomeSchema,
+  ManagedRetrievalTraceSchema,
+  RetrievalLaneSchema,
+  ScopeSnapshotSchema,
+  type RetrievalLane,
+  type RetrievalTrace,
+} from "@eliotr/contracts";
 import { readFreezeProtocolAndScopeCheckpoint } from "../../../packages/cloudflare-research/src/research-protocol-freeze.js";
 import { digest, readWorkflowObject, INSTALLED_INQUIRY_PROTOCOL_REFS } from "@eliotr/cloudflare-research";
-import { readRetrieveBranchesCheckpoint } from "@eliotr/cloudflare-research-runtime/research-retrieve-branches.js";
+import { readRetrieveBranchesCheckpoint, serializeRetrieveBranchesCheckpoint } from "@eliotr/cloudflare-research-runtime/research-retrieve-branches.js";
 import { AI_SEARCH_PRIMARY_NAMESPACE, AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
   createAiSearchGenerationRegistryService, createD1AiSearchGenerationRegistryStore } from "@eliotr/cloudflare-ai";
-import { createD1ScopeProfilePort } from "@eliotr/retrieval";
+import { createD1ScopeProfilePort, decodeRetrieveBranchesCheckpoint, managedRetrievalRefIdV1 } from "@eliotr/retrieval";
 import type { AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
 import { createResearchStageHandlerFactory, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION,
   SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import { runtime, access, principal, profile, fixture, prepareRetrieveStage, rowCounts } from "./research-retrieve-fixture.js";
 
 describe("RETRIEVE_BRANCHES over the persisted protocol scope", () => {
+
+  it("round-trips managed and historical traces through the Stage-5 producer codec", async () => {
+    const scopeSnapshot = ScopeSnapshotSchema.parse({
+      snapshot_id: "managed-checkpoint-scope",
+      revision: 1,
+      resolved_scope_expression: { kind: "PROJECT", project_id: "project-1" },
+      participant_generations: {},
+      member_source_revision_refs: ["source-revision-1"],
+      source_owner_generations: { "source-revision-1": "owner-generation-1" },
+      policy_authority_ref: "policy-authority-1",
+      disclosure_closure_digest: "a".repeat(64),
+      purge_ledger_revision: 0,
+      digest: "b".repeat(64),
+      created_at: "2026-10-14T00:00:00.000Z",
+      expires_at: "2026-10-15T00:00:00.000Z",
+    });
+    const candidatesByLane = Object.fromEntries(
+      RetrievalLaneSchema.options.map((lane) => [lane, 0]),
+    ) as Record<RetrievalLane, number>;
+    const traceFields = (traceId: string, packId: string): RetrievalTrace => ({
+      trace_ref: { id: traceId, revision: 1 },
+      raw_query: "managed checkpoint query",
+      scope_snapshot: scopeSnapshot,
+      query_product: "RESEARCH",
+      lanes_used: ["SEM"],
+      lanes_skipped: [],
+      exact_probes: [],
+      index_generations: ["managed-index-generation-1"],
+      context_expansion: 0,
+      candidates_by_lane: candidatesByLane,
+      expansion_refs: [],
+      represented_source_refs: [],
+      omitted_sources: [],
+      stale_or_degraded_channels: [],
+      budget_receipt_ref: "budget-checkpoint-1",
+      evidence_pack_ref: packId,
+    });
+    const invocationId = "managed-checkpoint-invocation-1";
+    const managedTraceId = await managedRetrievalRefIdV1(invocationId, "trace");
+    const managedPackId = await managedRetrievalRefIdV1(invocationId, "pack");
+    const managedOutcome = ManagedRankingOutcomeSchema.parse({
+      protocol: MANAGED_RANKING_OUTCOME_PROTOCOL,
+      provider: "cloudflare_ai_search",
+      request_digest: "c".repeat(64),
+      scoped_invocation_id: invocationId,
+      provider_execution_identity: {
+        available: false,
+        provider_execution_id: null,
+        reason: "BINDING_RESPONSE_HAS_NO_EXECUTION_ID",
+      },
+      output_digest: "d".repeat(64),
+      provider_authority: {
+        namespace: "research",
+        instance_id: "managed-search-1",
+        registry_revision: 1,
+        registry_artifact_sha256: "e".repeat(64),
+      },
+      authority_generations: {
+        policy_generation: null,
+        execution_generation: null,
+        index_generation: "managed-index-generation-1",
+        query_compiler_generation: null,
+      },
+      executed_query: "managed checkpoint query",
+      contributing_signals: [{ signal: "VECTOR", basis: "EXECUTED_QUERY" }],
+      list_semantics: "ONE_PHYSICAL_MANAGED_LIST",
+      scope_absence_proven: false,
+      rerank_requested: false,
+      rerank_attempted: false,
+      rerank_succeeded: false,
+      rerank_provider: null,
+      rerank_model: null,
+      fallback_used: false,
+      failure_class: null,
+      processing_state: "NO_HIT",
+      ordered_candidates: [],
+    });
+    const managedTrace = ManagedRetrievalTraceSchema.parse({
+      ...traceFields(managedTraceId, managedPackId),
+      protocol: MANAGED_RETRIEVAL_TRACE_PROTOCOL,
+      managed_ranking_outcomes: [managedOutcome],
+    });
+    const checkpoint = (trace: RetrievalTrace | typeof managedTrace, packId: string) => ({
+      protocol: "eliotr.research.retrieve-branches.v1" as const,
+      workflow_stage: "RETRIEVE_BRANCHES" as const,
+      operation_id: "managed-checkpoint-operation",
+      investigation_ref: { id: "managed-checkpoint-investigation", revision: 1 },
+      principal_ref: "managed-checkpoint-owner",
+      scope_snapshot_ref: { id: scopeSnapshot.snapshot_id, revision: scopeSnapshot.revision },
+      protocol_digest: "f".repeat(64),
+      denominator_digest: "1".repeat(64),
+      retrieval_request_digest: "2".repeat(64),
+      evidence_pack: {
+        pack_ref: { id: packId, revision: 1 },
+        scope_snapshot_ref: { id: scopeSnapshot.snapshot_id, revision: scopeSnapshot.revision },
+        resolved_evidence: [],
+        omitted_candidates: [],
+        trace_ref: trace.trace_ref,
+        total_utf8_bytes: 0,
+      },
+      trace,
+      coverage_claim: "SAMPLED" as const,
+    });
+
+    const managedCheckpoint = checkpoint(managedTrace, managedPackId);
+    const managedBytes = serializeRetrieveBranchesCheckpoint(managedCheckpoint);
+    expect(decodeRetrieveBranchesCheckpoint(managedBytes)).toEqual(managedCheckpoint);
+    expect(JSON.parse(new TextDecoder().decode(managedBytes)).trace.managed_ranking_outcomes)
+      .toEqual([managedOutcome]);
+
+    const legacyTraceId = `query-${"8".repeat(48)}`;
+    const legacyPackId = `pack-${"9".repeat(48)}`;
+    const legacyCheckpoint = checkpoint(traceFields(legacyTraceId, legacyPackId), legacyPackId);
+    const legacyBytes = serializeRetrieveBranchesCheckpoint(legacyCheckpoint);
+    expect(decodeRetrieveBranchesCheckpoint(legacyBytes)).toEqual(legacyCheckpoint);
+  });
 
   describe.each([
     { path: "environment", generation: SERVER_OWNED_PROTOCOL_HANDLER_GENERATION, sem: true },
