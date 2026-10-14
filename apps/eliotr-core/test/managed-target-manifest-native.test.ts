@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { reset } from "cloudflare:test";
-import { projectNormalizedMarkdown } from "@eliotr/retrieval";
 import { canonicalNormalizedBundleKey } from "@eliotr/platform-cloudflare";
 import {
   createD1ManagedTargetAssignmentPort,
@@ -109,21 +108,6 @@ function composer() {
     projection_profile: PROJECTION_EXECUTION_PROFILE,
     copy_layout: "PROJECT_COPY_V1",
     now: () => Date.parse(CORE_NOW),
-    projector: {
-      project({ target, profile, copy, document }) {
-        return projectNormalizedMarkdown({
-          source_revision: document.source_revision,
-          title: document.source_title,
-          source_class: document.source_class,
-          markdown: document.markdown,
-          instruction_taint: document.instruction_taint,
-          project_membership_ids: [copy.project_membership_id],
-          projection_generation: target.managed_generation,
-          target_item_utf8_bytes: profile.projection_profile.target_item_utf8_bytes,
-          max_item_utf8_bytes: profile.projection_profile.maximum_item_utf8_bytes,
-        });
-      },
-    },
   });
 }
 

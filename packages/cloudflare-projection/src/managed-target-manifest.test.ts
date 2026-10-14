@@ -1,6 +1,5 @@
-import type { SourceRevision } from "@eliotr/contracts";
+import type { ProjectionItem, SourceRevision } from "@eliotr/contracts";
 import type { AiSearchInstanceProfile, EvidenceObjectStore, ImmutableObjectReceipt } from "@eliotr/platform-cloudflare";
-import { projectNormalizedMarkdown } from "@eliotr/retrieval";
 import { describe, expect, it } from "vitest";
 import {
   projectionDigest,
@@ -13,7 +12,6 @@ import {
   MANAGED_TARGET_MANIFEST_COPY_LAYOUT,
   type ManagedTargetManifestDocument,
   type ManagedTargetManifestDocumentPort,
-  type ManagedTargetManifestDocumentProjector,
   type ManagedTargetManifestInput,
   type ManagedTargetManifestProfile,
   type ManagedTargetManifestShadowAuthorityPort,
@@ -96,25 +94,6 @@ async function authority(sourceId: string): Promise<ManagedTargetManifestDocumen
     markdown: DOCUMENT_MARKDOWN,
   };
 }
-
-const projection: ManagedTargetManifestDocumentProjector["project"] = async ({ copy: projectCopy, document, profile, target }) => {
-  const projectionGeneration = `projection-${(await projectionDigest({
-    source_revision_ref: projectCopy.source_revision_ref,
-    project_membership_id: projectCopy.project_membership_id,
-    target_generation: target.managed_generation,
-  })).slice(0, 48)}`;
-  return projectNormalizedMarkdown({
-    source_revision: document.source_revision,
-    title: document.source_title,
-    source_class: document.source_class,
-    markdown: document.markdown,
-    instruction_taint: document.instruction_taint,
-    project_membership_ids: [projectCopy.project_membership_id],
-    projection_generation: projectionGeneration,
-    target_item_utf8_bytes: profile.projection_profile.target_item_utf8_bytes,
-    max_item_utf8_bytes: profile.projection_profile.maximum_item_utf8_bytes,
-  });
-};
 
 class MemoryImmutableStore {
   public readonly objects = new Map<string, string>();
@@ -228,7 +207,6 @@ async function setup(rows: readonly ManagedRequiredProjectRevisionCopy[], option
     required_set: setPort,
     shadow_authority: shadow,
     documents: documentPort,
-    projector: { project: projection },
     work_store: store.store,
   };
   return {
@@ -239,7 +217,7 @@ async function setup(rows: readonly ManagedRequiredProjectRevisionCopy[], option
 }
 
 describe("managed target-wide desired-item manifest", () => {
-  it("counts project copies directly from Core authority, including a source with no projection job", async () => {
+  it("counts required copies directly from Core authority, including a source with no projection job", async () => {
     const projectCopies = [copy("project-a"), copy("project-b")];
     const state = await setup(projectCopies);
     const result = await buildManagedTargetManifest(state.input);
@@ -247,6 +225,28 @@ describe("managed target-wide desired-item manifest", () => {
     expect(result.desired_item_count).toBe(2);
     expect(result.manifest_ref).toContain("managed-target-manifests/");
     expect(state.store.objects.has(result.manifest_ref)).toBe(true);
+  });
+
+  it("binds same-source section keys to both assigned project memberships", async () => {
+    const state = await setup([copy("project-a"), copy("project-b")]);
+    const result = await buildManagedTargetManifest(state.input);
+    const copyManifests = [...state.store.objects.entries()]
+      .filter(([key]) => key.includes("/copies/"))
+      .map(([, json]) => JSON.parse(json) as {
+        readonly required_copy: ManagedRequiredProjectRevisionCopy;
+        readonly items: readonly { readonly item: ProjectionItem }[];
+      });
+    expect(copyManifests).toHaveLength(2);
+    expect(copyManifests.map((manifest) => manifest.required_copy.project_id)).toEqual(["project-a", "project-b"]);
+    const left = copyManifests[0]?.items.map(({ item }) => item);
+    const right = copyManifests[1]?.items.map(({ item }) => item);
+    expect(left).toBeDefined();
+    expect(right).toBeDefined();
+    expect(left?.map((item) => [item.canonical_section_id, item.content_sha256]))
+      .toEqual(right?.map((item) => [item.canonical_section_id, item.content_sha256]));
+    expect(new Set([...(left ?? []), ...(right ?? [])].map((item) => item.item_key)).size)
+      .toBe((left?.length ?? 0) + (right?.length ?? 0));
+    expect(result.desired_item_count).toBe((left?.length ?? 0) + (right?.length ?? 0));
   });
 
   it("raises when an enumerated required copy has no normalized bytes", async () => {
@@ -309,26 +309,23 @@ describe("managed target-wide desired-item manifest", () => {
     expect(secondReceipt.eligibility_digest).not.toBe(firstReceipt.eligibility_digest);
   });
 
-  it("projects and stages one required copy at a time in enumerator order", async () => {
+  it("reads and projects one required copy at a time in enumerator order", async () => {
     const rows = [copy("project-a", "source-a"), copy("project-b", "source-b")];
     const state = await setup(rows);
     let inFlight = 0;
     let maxInFlight = 0;
     const order: string[] = [];
-    const orderedInput: ManagedTargetManifestInput = {
-      ...state.input,
-      projector: {
-      async project(input) {
+    const readDocument = state.input.documents.readDocument.bind(state.input.documents);
+    state.input.documents.readDocument = async (input) => {
         inFlight += 1;
         maxInFlight = Math.max(maxInFlight, inFlight);
         order.push(input.copy.project_id);
         await Promise.resolve();
+        const result = await readDocument(input);
         inFlight -= 1;
-        return projection(input);
-      },
-      },
+        return result;
     };
-    const result = await buildManagedTargetManifest(orderedInput);
+    const result = await buildManagedTargetManifest(state.input);
     expect(result.project_revision_copy_count).toBe(2);
     expect(order).toEqual(["project-a", "project-b"]);
     expect(maxInFlight).toBe(1);
@@ -363,5 +360,37 @@ describe("managed target-wide desired-item manifest", () => {
     await expect(buildManagedTargetManifest(mismatch.input)).rejects.toMatchObject({
       code: "MANAGED_TARGET_MANIFEST_EXPECTED_COUNT_MISMATCH",
     });
+  });
+
+  it("rejects legacy copy layout and wrong target projection generation before enumerating", async () => {
+    const state = await setup([copy("project-a")]);
+    let reads = 0;
+    const unenumerated: ManagedRequiredSetPort = {
+      async readFence() {
+        reads += 1;
+        return { authority_revision: 9, assigned_project_count: 1, stale_assignment_count: 0, profile_mismatch_count: 0 };
+      },
+      async readPage() { throw new Error("invalid profile must be rejected before Core enumeration"); },
+    };
+    const legacy = {
+      ...state.input,
+      required_set: unenumerated,
+      profile: { ...state.input.profile, copy_layout: "LEGACY_DEFAULT" },
+    } as unknown as ManagedTargetManifestInput;
+    await expect(buildManagedTargetManifest(legacy)).rejects.toMatchObject({
+      code: "MANAGED_TARGET_MANIFEST_PROFILE_MISMATCH",
+    });
+    const wrongGeneration = {
+      ...state.input,
+      required_set: unenumerated,
+      profile: {
+        ...state.input.profile,
+        projection_profile: { ...state.input.profile.projection_profile, managed_generation: "wrong-generation" },
+      },
+    };
+    await expect(buildManagedTargetManifest(wrongGeneration)).rejects.toMatchObject({
+      code: "MANAGED_TARGET_MANIFEST_PROFILE_MISMATCH",
+    });
+    expect(reads).toBe(0);
   });
 });

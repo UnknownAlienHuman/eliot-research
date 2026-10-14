@@ -23,7 +23,6 @@ import {
   MANAGED_TARGET_MANIFEST_COPY_LAYOUT,
   ManagedTargetManifestError,
   type ManagedTargetManifestDocument,
-  type ManagedTargetManifestDocumentProjector,
   type ManagedTargetManifestProfile,
   type ManagedTargetManifestReceipt,
   type ManagedTargetManifestShadowAuthorityPort,
@@ -42,7 +41,6 @@ export interface ManagedTargetManifestCompositionDependencies {
   readonly projection_profile: ProjectionExecutionProfile;
   /** Required opt-in; no legacy/default item-key layout is accepted here. */
   readonly copy_layout: typeof MANAGED_TARGET_MANIFEST_COPY_LAYOUT;
-  readonly projector: ManagedTargetManifestDocumentProjector;
   readonly now?: () => number;
 }
 
@@ -370,7 +368,6 @@ export function createManagedTargetManifestComposer(
         required_set: requiredSet,
         shadow_authority: shadowAuthority,
         documents,
-        projector: dependencies.projector,
         work_store: workStore,
       });
     },

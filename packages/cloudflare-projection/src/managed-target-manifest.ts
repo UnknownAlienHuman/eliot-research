@@ -1,6 +1,5 @@
 import type { ProjectionItem, SourceRevision } from "@eliotr/contracts";
 import type { AiSearchInstanceProfile, EvidenceObjectStore } from "@eliotr/platform-cloudflare";
-import type { MarkdownProjectionResult } from "@eliotr/retrieval";
 import {
   assertProjectionIdentifier,
   assertProjectionSha256,
@@ -13,6 +12,10 @@ import {
 } from "./canonical.js";
 import type { ManagedTargetIdentity } from "./managed-target-assignment.js";
 import {
+  MANAGED_REQUIRED_ITEM_COPY_LAYOUT,
+  projectManagedRequiredItemCopy,
+} from "./projection/managed-required-items.js";
+import {
   enumerateManagedRequiredSet,
   type ManagedRequiredProjectRevisionCopy,
   type ManagedRequiredSetPort,
@@ -20,7 +23,7 @@ import {
 import type { ProjectionExecutionProfile } from "./types.js";
 
 export const MANAGED_TARGET_MANIFEST_PROTOCOL = "eliotr.managed-target-desired-items.v1" as const;
-export const MANAGED_TARGET_MANIFEST_COPY_LAYOUT = "PROJECT_COPY_V1" as const;
+export const MANAGED_TARGET_MANIFEST_COPY_LAYOUT = MANAGED_REQUIRED_ITEM_COPY_LAYOUT;
 
 const MAX_TREE_FANOUT = 256;
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -85,20 +88,6 @@ export interface ManagedTargetManifestDocumentPort {
   }): Promise<ManagedTargetManifestSourceAuthority>;
 }
 
-/**
- * Adapter seam for the bounded single-document managed-required-items port.
- * Implementations must call the repository structural projector, pass exactly
- * one enumerated membership, and honor the explicit PROJECT_COPY_V1 layout.
- */
-export interface ManagedTargetManifestDocumentProjector {
-  project(input: {
-    readonly target: ManagedTargetIdentity;
-    readonly profile: ManagedTargetManifestProfile;
-    readonly copy: ManagedRequiredProjectRevisionCopy;
-    readonly document: ManagedTargetManifestDocument;
-  }): Promise<MarkdownProjectionResult>;
-}
-
 export interface ManagedTargetManifestInput {
   readonly target: ManagedTargetIdentity;
   readonly profile: ManagedTargetManifestProfile;
@@ -106,7 +95,6 @@ export interface ManagedTargetManifestInput {
   readonly required_set: ManagedRequiredSetPort;
   readonly shadow_authority: ManagedTargetManifestShadowAuthorityPort;
   readonly documents: ManagedTargetManifestDocumentPort;
-  readonly projector: ManagedTargetManifestDocumentProjector;
   readonly work_store: EvidenceObjectStore;
 }
 
@@ -302,74 +290,6 @@ async function sourceAuthorityFingerprint(
   });
 }
 
-async function validateProjection(
-  copy: ManagedRequiredProjectRevisionCopy,
-  document: ManagedTargetManifestDocument,
-  projection: MarkdownProjectionResult,
-): Promise<void> {
-  const markdownBytes = utf8ProjectionBytes(document.markdown);
-  const markdownDigest = await projectionSha256Utf8(document.markdown);
-  if (
-    markdownDigest !== document.source_revision.content_sha256 ||
-    projection.markdown_sha256 !== markdownDigest ||
-    !Array.isArray(projection.items) ||
-    !Array.isArray(projection.spans) ||
-    projection.items.length < 1 ||
-    projection.items.length !== projection.spans.length
-  ) {
-    fail("MANAGED_TARGET_MANIFEST_PROJECTION_INVALID", "structural projection is incomplete or differs from canonical normalized bytes");
-  }
-  assertProjectionSha256(projection.item_set_digest, "document item-set digest");
-  const seen = new Set<string>();
-  let previousEnd = 0;
-  const setRows: Array<Record<string, unknown>> = [];
-  for (let index = 0; index < projection.items.length; index += 1) {
-    const item = projection.items[index];
-    const span = projection.spans[index];
-    if (item === undefined || span === undefined) {
-      fail("MANAGED_TARGET_MANIFEST_PROJECTION_INVALID", "structural projector omitted an item or byte span");
-    }
-    assertProjectionIdentifier(item.item_key, "desired item key");
-    assertProjectionIdentifier(item.canonical_section_id, "canonical section id");
-    assertProjectionSha256(item.content_sha256, "desired item content digest");
-    if (
-      seen.has(item.item_key) ||
-      item.source_revision_ref !== copy.source_revision_ref ||
-      item.project_membership_ids.length !== 1 ||
-      item.project_membership_ids[0] !== copy.project_membership_id ||
-      item.canonical_section_id !== span.canonical_section_id ||
-      item.item_key !== span.item_key ||
-      item.normalized_offset_map_ref !== `normalized-bytes:${span.normalized_start_byte}:${span.normalized_end_byte}` ||
-      !Number.isSafeInteger(span.normalized_start_byte) ||
-      !Number.isSafeInteger(span.normalized_end_byte) ||
-      span.normalized_start_byte < previousEnd ||
-      span.normalized_end_byte <= span.normalized_start_byte ||
-      span.normalized_end_byte > markdownBytes.byteLength
-    ) {
-      fail("MANAGED_TARGET_MANIFEST_PROJECTION_INVALID", "projected item identity, copy, or canonical byte span is invalid");
-    }
-    const sectionBytes = markdownBytes.slice(span.normalized_start_byte, span.normalized_end_byte);
-    let sectionText: string;
-    try { sectionText = new TextDecoder("utf-8", { fatal: true }).decode(sectionBytes); }
-    catch (cause) { fail("MANAGED_TARGET_MANIFEST_PROJECTION_INVALID", "projected span is not a UTF-8 boundary", cause); }
-    if (sectionText !== item.section_text || await projectionSha256Utf8(sectionText) !== item.content_sha256) {
-      fail("MANAGED_TARGET_MANIFEST_PROJECTION_INVALID", "projected section bytes or digest differ from normalized R2 content");
-    }
-    seen.add(item.item_key);
-    previousEnd = span.normalized_end_byte;
-    setRows.push({
-      item_key: item.item_key,
-      canonical_section_id: item.canonical_section_id,
-      content_sha256: item.content_sha256,
-      start: span.normalized_start_byte,
-      end: span.normalized_end_byte,
-    });
-  }
-  if (await projectionSha256Utf8(canonicalProjectionJson(setRows)) !== projection.item_set_digest) {
-    fail("MANAGED_TARGET_MANIFEST_PROJECTION_INVALID", "document item-set digest differs from its exact keys, sections, bytes, and spans");
-  }
-}
-
 interface ManifestObjectRef {
   readonly kind: "COPY" | "INDEX";
   readonly key: string;
@@ -559,17 +479,38 @@ export async function buildManagedTargetManifest(
       sourceFenceDigest = await projectionSha256Utf8(`${sourceFenceDigest}\n${sourceDigest}`);
       if (
         document.markdown.length === 0 ||
-        new TextEncoder().encode(document.markdown).byteLength > input.profile.projection_profile.maximum_markdown_bytes
+        utf8ProjectionBytes(document.markdown).byteLength > input.profile.projection_profile.maximum_markdown_bytes
       ) {
         fail("MANAGED_TARGET_MANIFEST_SOURCE_INVALID", "normalized source exceeds the supplied immutable projection profile bound");
       }
-      const projection = await input.projector.project({
-        target: input.target,
-        profile: input.profile,
-        copy,
-        document,
+      const projection = await projectManagedRequiredItemCopy({
+        markdown_projection_input: {
+          source_revision: document.source_revision,
+          title: document.source_title,
+          source_class: document.source_class,
+          markdown: document.markdown,
+          instruction_taint: document.instruction_taint,
+          project_membership_ids: [copy.project_membership_id],
+          project_copy_layout: MANAGED_REQUIRED_ITEM_COPY_LAYOUT,
+          project_copy_membership_id: copy.project_membership_id,
+          projection_generation: input.target.managed_generation,
+          target_item_utf8_bytes: input.profile.projection_profile.target_item_utf8_bytes,
+          max_item_utf8_bytes: input.profile.projection_profile.maximum_item_utf8_bytes,
+        },
+        required_copy: copy,
+        profile: input.profile.projection_profile,
+        copy_layout: MANAGED_REQUIRED_ITEM_COPY_LAYOUT,
       });
-      await validateProjection(copy, document, projection);
+      if (
+        projection.items.length === 0 ||
+        projection.items.length !== projection.spans.length ||
+        projection.items.some((item) =>
+          item.projection_generation !== input.target.managed_generation ||
+          item.project_membership_ids.length !== 1 ||
+          item.project_membership_ids[0] !== copy.project_membership_id)
+      ) {
+        fail("MANAGED_TARGET_MANIFEST_PROJECTION_INVALID", "canonical required-item helper returned a wrong-generation or foreign project copy");
+      }
       const firstItem = projection.items[0];
       const projectionGeneration = firstItem?.projection_generation;
       if (projectionGeneration === undefined || !IDENTIFIER.test(projectionGeneration) ||
