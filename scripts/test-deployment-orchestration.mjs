@@ -10,6 +10,15 @@ import { parseDeploymentJsonc } from "./lib/deployment-jsonc.mjs";
 import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS,
   RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS, semanticConfigurationTransport } from "./lib/research-runtime-config.mjs";
 // Deployment checks exercise launch order and do not model billing admission.
+// Resume the config-drift negative and later groups without repeating earlier checks:
+//   node scripts/test-deployment-orchestration.mjs --from-config-drift
+//   node scripts/test-deployment-orchestration.mjs --from-check="exact check name"
+const requestedFromCheck = process.argv.slice(2).find((arg) => arg.startsWith("--from-check="));
+const fromCheck = requestedFromCheck === undefined
+  ? process.argv.slice(2).includes("--from-config-drift")
+    ? "generated config drift blocks dry-run and Worker upload" : null
+  : requestedFromCheck.slice("--from-check=".length);
+assert.notEqual(fromCheck, "", "--from-check requires an exact check name");
 
 async function removeFixture(directory, temporaryRoot, prefix) {
   const absolute = resolve(directory);
@@ -94,6 +103,7 @@ const config = { name: "eliotr-core", minify: true, preview_urls: false, compati
     { binding: "SEARCH_DB", database_name: "eliotr-search", database_id: "22222222-2222-4222-8222-222222222222", migrations_dir: "../../infra/d1/search/migrations" },
   ] };
 const bytes = Buffer.from(JSON.stringify(config));
+const driftedBytes = Buffer.concat([bytes, Buffer.from("\n")]);
 const generatedConfigPath = resolve(repositoryRoot, "apps/eliotr-core/wrangler.deploy.jsonc");
 const buildInputManifest = Object.freeze({ protocol: "eliotr.deployment-build-inputs.v1",
   root: repositoryRoot, sha256: "a".repeat(64) });
@@ -126,7 +136,12 @@ function harness(overrides = {}) {
   const options = { confirmLive: true, verifyCode: async () => { events.push("verify-code"); }, environment, now: () => now, log: () => {},
     captureBuildInputs: async () => { events.push("capture-build-inputs"); return buildInputManifest; },
     checkBuildInputs: async () => { events.push("check-build-inputs"); return true; },
-    pinGeneratedConfig: async () => generatedConfigPin,
+    pinGeneratedConfig: async () => {
+      events.push("pin-generated-config");
+      return overrides.configDriftStage === "during-pin"
+        ? { ...generatedConfigPin, sha256: sha256(driftedBytes), byte_length: driftedBytes.byteLength }
+        : generatedConfigPin;
+    },
     readAssetManifest: async () => assetManifest,
     readBackendFingerprint: () => "d".repeat(64),
     createSchemaManifest: async () => schemaManifestResultFixture,
@@ -165,7 +180,8 @@ function harness(overrides = {}) {
     read: async (path, encoding) => {
       if (resolve(path) !== generatedConfigPath) return readFile(path, encoding);
       reads += 1;
-      const generatedBytes = overrides.driftAt === reads ? Buffer.from("{}") : bytes;
+      events.push(`generated-config-read-${reads}`);
+      const generatedBytes = overrides.configDriftStage === "before-dry-run" && reads === 2 ? driftedBytes : bytes;
       return encoding === undefined ? generatedBytes : generatedBytes.toString(encoding);
     },
     save: async (receipt) => { calls.push("save"); receipts.push(receipt); },
@@ -196,7 +212,12 @@ function harness(overrides = {}) {
   return { calls, receipts, options, events };
 }
 let cases = 0;
-const check = async (name, action) => { await action(); cases += 1; console.log(`Deployment ordering: ${name}: PASS`); };
+let runRemainingChecks = fromCheck === null;
+const check = async (name, action) => {
+  if (name === fromCheck) runRemainingChecks = true;
+  if (!runRemainingChecks) return;
+  await action(); cases += 1; console.log(`Deployment ordering: ${name}: PASS`);
+};
 const deployCommand = `pnpm exec wrangler deploy ${workerEntrypoint} --no-bundle --config wrangler.deploy.jsonc`;
 const generatedDryRun = "pnpm exec wrangler deploy --dry-run --minify --config wrangler.deploy.jsonc --outdir ";
 const coreMigration = "pnpm exec wrangler d1 migrations apply CORE_DB --remote --config wrangler.deploy.jsonc";
@@ -252,11 +273,19 @@ await check("generated config dry-run fails before remote D1 mutation", async ()
   assert.equal(test.receipts.length, 0);
 });
 await check("generated config drift blocks dry-run and Worker upload", async () => {
-  for (const driftAt of [2, 3]) {
-    const test = harness({ driftAt });
-    await assert.rejects(deployCloudflare(test.options));
+  for (const [stage, expectedError, expectedReads] of [
+    ["during-pin", /Generated deployment config changed before artifact preparation/u,
+      ["generated-config-read-1", "pin-generated-config"]],
+    ["before-dry-run", /Generated deployment config changed during release/u,
+      ["generated-config-read-1", "pin-generated-config", "generated-config-read-2"]],
+  ]) {
+    const test = harness({ configDriftStage: stage });
+    await assert.rejects(deployCloudflare(test.options), expectedError, stage);
+    assert.deepEqual(test.events.filter((event) => event.startsWith("generated-config-read-") ||
+      event === "pin-generated-config"), expectedReads, stage);
     assert.ok(!test.calls.includes(deployCommand));
     assert.ok(!test.calls.some((call) => call.startsWith(generatedDryRun)));
+    assert.ok(!test.calls.includes(coreMigration));
     assert.equal(test.receipts.length, 0);
   }
 });
@@ -288,7 +317,7 @@ await check("confirmed disabled reaches every read-only provisioner without chan
   const test = harness({ failCommand: "node scripts/provision-cloudflare-access.mjs --verify-existing", options: {
     purpose: "MAINTENANCE", environment: { ...environment, ELIOTR_MAINTENANCE_PRESERVE_GOOGLE_TRANSPORT: "disabled" },
     readCapabilityProfile: async () => candidate, readReleaseBlockers: async () => [],
-    captureBudget: () => ({ status: 0, stdout: "Source budgets: PASS\n", stderr: "", error: null }),
+    captureBudget: () => ({ status: 0, stdout: "Source maintainability: ADVISORY (17 observations)\n", stderr: "", error: null }),
     readActiveWorker: async () => ({ deployment_id: "active-deployment", version_id: "active-version", generation: "git-test",
       google_external_transport: "disabled", federation_principal_ref: null, federation_cursor_key_bound: false,
       ai_search_bound: false }),
@@ -308,13 +337,13 @@ await check("confirmed disabled reaches every read-only provisioner without chan
   assert.ok(!test.calls.includes(deployCommand));
   assert.equal(config.vars.GOOGLE_EXTERNAL_TRANSPORT, "gemini-mcp");
 });
-await check("maintenance records launch blockers and budget findings", async () => {
+await check("maintenance records launch blockers and advisory source findings", async () => {
   const logs = [];
   const events = [];
   const test = harness({ events, options: { confirmLive: false, environment: {}, purpose: "MAINTENANCE",
     readReleaseBlockers: async () => { events.push("read-full-release-blockers"); return ["known launch blocker"]; },
     readCapabilityProfile: async () => { events.push("read-candidate-capability-profile"); return { protocol: "eliotr.capabilities.v1" }; },
-    captureBudget: () => { events.push("capture-source-budget"); return { status: 1, stdout: "Source budgets: FAIL (17 violations)\n", stderr: "", error: null }; },
+    captureBudget: () => { events.push("capture-source-budget"); return { status: 0, stdout: "Source maintainability: ADVISORY (17 observations)\n", stderr: "", error: null }; },
     log: (message) => logs.push(message) } });
   assert.equal(await deployCloudflare(test.options), null);
   assert.deepEqual(test.calls, ["pnpm --filter @eliotr/core typecheck",
@@ -322,7 +351,7 @@ await check("maintenance records launch blockers and budget findings", async () 
     "pnpm boundaries:check", "pnpm boundaries:negative", "pnpm --filter @eliotr/core cf:types",
     "pnpm budgets:emitted"]);
   assert.ok(logs.some((message) => message.includes("known launch blocker")));
-  assert.ok(logs.some((message) => message.includes("Source budgets: FAIL (17 violations)")));
+  assert.ok(logs.some((message) => message.includes("Source maintainability: ADVISORY (17 observations)")));
   assert.ok(!test.calls.includes("pnpm check"));
   assert.ok(!test.calls.some((call) => call.startsWith("GET ") || call.startsWith("POST ")));
   assert.equal(test.events[0], "capture-build-inputs");
@@ -338,17 +367,23 @@ await check("maintenance compile, lint, boundary and artifact gates still block"
   for (const command of commands) {
     const test = harness({ failCommand: command, options: { confirmLive: false, environment: {}, purpose: "MAINTENANCE",
       readReleaseBlockers: async () => [], readCapabilityProfile: async () => ({ protocol: "eliotr.capabilities.v1" }),
-      captureBudget: () => ({ status: 0, stdout: "Source budgets: PASS\n", stderr: "", error: null }) } });
+      captureBudget: () => ({ status: 0, stdout: "Source maintainability: ADVISORY (17 observations)\n", stderr: "", error: null }) } });
     await assert.rejects(deployCloudflare(test.options), /injected command failure/u);
     assert.ok(!test.calls.some((call) => call.startsWith("GET ") || call.startsWith("POST ")));
   }
 });
 await check("unclassifiable maintenance budget result fails before local gates", async () => {
-  const test = harness({ options: { confirmLive: false, environment: {}, purpose: "MAINTENANCE",
-    readReleaseBlockers: async () => [], readCapabilityProfile: async () => ({ protocol: "eliotr.capabilities.v1" }),
-    captureBudget: () => ({ status: 2, stdout: "unknown output", stderr: "", error: null }) } });
-  await assert.rejects(deployCloudflare(test.options), /budget result could not be classified/u);
-  assert.deepEqual(test.calls, []);
+  for (const diagnostic of [
+    { status: 2, stdout: "unknown output", stderr: "", error: null },
+    { status: 0, stdout: "Source budgets: PASS\n", stderr: "", error: null },
+    { status: 1, stdout: "Source budgets: FAIL (17 violations)\n", stderr: "", error: null },
+  ]) {
+    const test = harness({ options: { confirmLive: false, environment: {}, purpose: "MAINTENANCE",
+      readReleaseBlockers: async () => [], readCapabilityProfile: async () => ({ protocol: "eliotr.capabilities.v1" }),
+      captureBudget: () => diagnostic } });
+    await assert.rejects(deployCloudflare(test.options), /budget result could not be classified/u);
+    assert.deepEqual(test.calls, []);
+  }
 });
 await check("Access verify-existing refusal stops before Worker upload", async () => {
   const test = harness({ failCommand: "node scripts/provision-cloudflare-access.mjs --verify-existing" });
@@ -357,6 +392,7 @@ await check("Access verify-existing refusal stops before Worker upload", async (
   assert.ok(!test.calls.some((call) => call.includes("d1 migrations apply")));
   assert.equal(test.receipts.length, 0);
 });
+assert.ok(runRemainingChecks, "the selected starting check must execute");
 console.log(`Deployment orchestration: ${cases} groups passed; live Cloudflare NOT_EXECUTED`);
 } finally {
   await removeFixture(temporaryDirectory, temporaryRoot, prefix);
