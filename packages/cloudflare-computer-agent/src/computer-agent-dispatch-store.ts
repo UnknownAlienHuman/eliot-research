@@ -8,6 +8,7 @@ import {
   type ComputerAgentConnection,
   type ComputerAgentDispatch,
   type ComputerAgentDispatchAcceptance,
+  type ComputerAgentDispatchList,
   type ComputerAgentDispatchOffer,
   type ComputerAgentDispatchStatus,
   type ComputerAgentQualificationStatus,
@@ -50,6 +51,7 @@ import {
   type DispatchRow,
 } from "./computer-agent-dispatch-record.js";
 import { readComputerAgentDispatchStatus } from "./computer-agent-dispatch-status.js";
+import { readComputerAgentDispatchPage } from "./computer-agent-dispatch-list.js";
 import type { ComputerAgentRuntime } from "./runtime.js";
 
 const SCHEMA_GENERATION = "computer-agent-dispatch-v1";
@@ -379,6 +381,33 @@ export function createComputerAgentDispatchService(runtime: ComputerAgentRuntime
     return result;
   }
 
+  async function list(context: AuthenticatedRequestContext, projectIdValue: string,
+    afterDispatchIdValue?: string): Promise<ComputerAgentDispatchList> {
+    await requireSchema(db);
+    const identity = owner(context, now);
+    const projectId = identifier(projectIdValue, "project_id");
+    const afterDispatchId = afterDispatchIdValue === undefined
+      ? undefined
+      : identifier(afterDispatchIdValue, "after_dispatch_id");
+    const routes = createProjectComputerAgentRouteService({ database: db, now });
+    await routes.get(context, projectId, TASK_KIND).catch(mapDependency);
+    const page = await readComputerAgentDispatchPage({
+      database: db,
+      project_id: projectId,
+      owner_principal_ref: identity.principal_ref,
+      ...(afterDispatchId === undefined ? {} : { after_dispatch_id: afterDispatchId }),
+      now: instant(now),
+    });
+    await routes.get(context, projectId, TASK_KIND).catch(mapDependency);
+    const currentIdentity = owner(context, now);
+    if (currentIdentity.principal_ref !== identity.principal_ref ||
+        currentIdentity.credential_generation !== identity.credential_generation) {
+      fail("COMPUTER_AGENT_DISPATCH_OWNER_REQUIRED", 403,
+        "Owner session changed during dispatch listing");
+    }
+    return page;
+  }
+
   async function serviceGrant(context: AuthenticatedRequestContext, dispatch: ComputerAgentDispatch) {
     if (context.request.headers.get("X-Eliotr-Client-Grant") !== dispatch.client_grant_id) {
       fail("COMPUTER_AGENT_DISPATCH_DENIED", 403,
@@ -586,5 +615,5 @@ export function createComputerAgentDispatchService(runtime: ComputerAgentRuntime
     return settled;
   }
 
-  return { create, status, pull, accept };
+  return { create, status, list, pull, accept };
 }

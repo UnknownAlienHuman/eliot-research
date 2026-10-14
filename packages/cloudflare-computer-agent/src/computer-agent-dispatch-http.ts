@@ -28,6 +28,16 @@ function requireOwnerMutationOrigin(request: Request, url: URL,
   requireJson(request, support);
 }
 
+function afterDispatchId(url: URL, support: ComputerAgentDispatchHttpSupport): string | undefined {
+  const keys = Array.from(url.searchParams.keys());
+  const values = url.searchParams.getAll("after_dispatch_id");
+  if (keys.some((key) => key !== "after_dispatch_id") || values.length > 1) {
+    throw support.http_error("COMPUTER_AGENT_DISPATCH_INPUT_INVALID", 400,
+      "Dispatch listing accepts only one after_dispatch_id cursor");
+  }
+  return values[0];
+}
+
 function map(error: unknown, support: ComputerAgentDispatchHttpSupport): never {
   if (error instanceof ComputerAgentDispatchError) {
     throw support.http_error(error.code, error.status,
@@ -66,6 +76,16 @@ export async function handleComputerAgentDispatchHttp(
   const service = dispatchService();
   const url = new URL(request.url);
   try {
+    if (operation === "research.computer-agent-dispatches.list") {
+      if (request.method !== "GET") throw support.http_error(
+        "COMPUTER_AGENT_DISPATCH_INPUT_INVALID", 405,
+        "Dispatch listing requires GET");
+      return support.api_result(request, await service.list(
+        context,
+        params.project_id ?? "",
+        afterDispatchId(url, support),
+      ));
+    }
     support.require_no_query(url);
     if (operation === "research.computer-agent-dispatches.status") {
       return support.api_result(request, await service.status(
