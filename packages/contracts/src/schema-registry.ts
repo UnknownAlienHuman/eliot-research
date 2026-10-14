@@ -317,16 +317,24 @@ function buildRegistry(): readonly ContractSchemaDescriptor[] {
       // Generation 2 admits the real empty purge-ledger frontier without changing existing IDs/digests.
       // Coordinate-map anchors narrowed from the broad EvidenceAnchor union to the supported
       // table-cell contract; publish that breaking schema as v2 while retaining protocol v1.
-      const version = ["ScopeSnapshotSchema", "RetrievalTraceSchema", "InvestigationSchema"].includes(exportName)
+      // Generation 2 admits the strict protocol-versioned managed retrieval trace inside a
+      // query leg. The wire change is additive: historical legacy trace bytes still parse
+      // through the retained legacy union member, so every schema that embeds a query leg
+      // trace advances one generation at its existing schema version.
+      const version = ["ScopeSnapshotSchema", "RetrievalTraceSchema", "InvestigationSchema",
+        "InquiryProtocolProfileSchema"].includes(exportName)
         ? { schema_version: 1, schema_generation: 2 }
-        : exportName === "InquiryProtocolProfileSchema"
-          ? { schema_version: 1, schema_generation: 2 }
-          : ["CoordinateMapEntrySchema", "CoordinateMapSchema", "CitationResolutionReceiptSchema", "CitationResolutionReceiptV2Schema",
-            "ResearchReadExtractCheckpointV2Schema", "ResearchBranchResultV2Schema", "ResearchBranchAnalysisCheckpointV2Schema", "ResearchBranchReconciliationCheckpointV2Schema"].includes(exportName)
-            ? { schema_version: 2, schema_generation: 1 }
-            : exportName === "ResearchEvidenceFreezeV3Schema"
-              ? { schema_version: 3, schema_generation: 1 }
-              : familyVersion;
+        : ["CoordinateMapEntrySchema", "CoordinateMapSchema", "CitationResolutionReceiptSchema",
+          "CitationResolutionReceiptV2Schema"].includes(exportName)
+          ? { schema_version: 2, schema_generation: 1 }
+          : exportName === "ResearchEvidenceFreezeV3Schema"
+            ? { schema_version: 3, schema_generation: 1 }
+            : exportName === "BranchQueryLegResultSchema" || exportName === "BranchQueryResultSchema"
+              ? { schema_version: 1, schema_generation: 2 }
+              : ["ResearchReadExtractCheckpointV2Schema", "ResearchBranchResultV2Schema",
+                "ResearchBranchAnalysisCheckpointV2Schema", "ResearchBranchReconciliationCheckpointV2Schema"].includes(exportName)
+                ? { schema_version: 2, schema_generation: 2 }
+                : familyVersion;
       const schemaId = buildContractSchemaId(
         module.family,
         exportName,

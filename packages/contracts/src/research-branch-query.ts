@@ -2,10 +2,33 @@ import { z } from "zod";
 import { IdentifierSchema, Sha256Schema, VersionedRefSchema } from "./common.js";
 import { ResolvedEvidenceSchema } from "./evidence.js";
 import { RetrievalTraceSchema } from "./retrieval.js";
+import { MANAGED_RETRIEVAL_TRACE_PROTOCOL, ManagedRetrievalTraceSchema } from "./retrieval-managed-ranking.js";
 import { ResearchBranchRoleSchema } from "./research-branch-role.js";
 
 const MAX_QUERY_LEGS = 4;
 const MAX_QUERY_CHARS = 2_048;
+
+/**
+ * A query leg trace is selected by its own protocol field rather than by shape.
+ *
+ * Historical legs carry the strict legacy RetrievalTraceSchema; a leg produced by the
+ * managed semantic provider carries strict ManagedRetrievalTraceSchema with its ranking
+ * outcomes. Both branches are strict and the protocol literal is the discriminator, so a
+ * wrongly-versioned or half-written trace is rejected instead of silently coerced, and
+ * managed ranking provenance is retained rather than dropped. Historical leg bytes
+ * continue to parse through the legacy member unchanged.
+ */
+const BRANCH_QUERY_LEG_TRACE_SCHEMA = z.union([RetrievalTraceSchema, ManagedRetrievalTraceSchema]).superRefine((value, context) => {
+  if ("protocol" in value && value.protocol === MANAGED_RETRIEVAL_TRACE_PROTOCOL &&
+      value.managed_ranking_outcomes.length !== 1) {
+    context.addIssue({
+      code: "custom",
+      path: ["managed_ranking_outcomes"],
+      message: "a branch query leg must retain its single admitted managed outcome",
+    });
+  }
+});
+export type BranchQueryLegTrace = z.infer<typeof BRANCH_QUERY_LEG_TRACE_SCHEMA>;
 
 function duplicate(values: readonly string[]): boolean {
   return new Set(values).size !== values.length;
@@ -126,6 +149,17 @@ const BranchQueryResolvedHandleSchema = z.object({
   excerpt_byte_length: z.number().int().nonnegative().max(8 * 1024 * 1024),
 }).strict();
 
+/** Binds the supported trace-reference revision and exact scope identity to the query leg. */
+function branchQueryLegTraceIsBound(
+  leg: Pick<BranchQueryLegResult, "scope_snapshot_ref" | "scope_snapshot_digest">,
+  trace: BranchQueryLegTrace,
+): boolean {
+  return trace.trace_ref.revision === 1 &&
+    trace.scope_snapshot.snapshot_id === leg.scope_snapshot_ref.id &&
+    trace.scope_snapshot.revision === leg.scope_snapshot_ref.revision &&
+    trace.scope_snapshot.digest === leg.scope_snapshot_digest;
+}
+
 /** A transport cancellation escapes the stage; it cannot be reported as a completed query leg. */
 export function branchQueryLegOutcomeIsConsistent(value: {
   readonly status: "COMPLETED" | "FAILED";
@@ -157,7 +191,7 @@ export const BranchQueryLegResultSchema = z.object({
   retrieval_request_digest: Sha256Schema,
   scope_snapshot_ref: VersionedRefSchema,
   scope_snapshot_digest: Sha256Schema,
-  trace: RetrievalTraceSchema.optional(),
+  trace: BRANCH_QUERY_LEG_TRACE_SCHEMA.optional(),
   failure_code: IdentifierSchema.optional(),
   resolved_handle_refs: z.array(BranchQueryResolvedHandleSchema).max(64),
   omitted_candidates: z.array(z.object({ candidate_id: IdentifierSchema, reason_code: IdentifierSchema }).strict()).max(512),
@@ -168,10 +202,7 @@ export const BranchQueryLegResultSchema = z.object({
       !branchQueryLegOutcomeIsConsistent(value)) {
     context.addIssue({ code: "custom", path: ["status"], message: "query leg completion/failure fields are inconsistent" });
   }
-  if (value.trace !== undefined && (value.trace.trace_ref.revision !== 1 ||
-      value.trace.scope_snapshot.snapshot_id !== value.scope_snapshot_ref.id ||
-      value.trace.scope_snapshot.revision !== value.scope_snapshot_ref.revision ||
-      value.trace.scope_snapshot.digest !== value.scope_snapshot_digest)) {
+  if (value.trace !== undefined && !branchQueryLegTraceIsBound(value, value.trace)) {
     context.addIssue({ code: "custom", path: ["trace"], message: "query trace is not bound to the held scope" });
   }
   if (duplicate(value.resolved_handle_refs.map((item) => `${item.handle_ref.id}:${item.handle_ref.revision}`))) {
@@ -262,10 +293,22 @@ export type BranchQueryResult = z.infer<typeof BranchQueryResultSchema>;
 
 /** Exact pairing for checkpoints: a stopped plan may retain only an ordered prefix of its legs. */
 export function branchQueryResultMatchesPlan(plan: BranchQueryPlan, result: BranchQueryResult): boolean {
+  const traceBindingsMatchPlan = result.query_legs.every((leg, index) => {
+    const planned = plan.query_legs[index];
+    if (planned === undefined) return false;
+    if (leg.trace === undefined) return leg.status === "FAILED";
+    // Legacy traces predate this plan-to-trace binding; keep their historical reader behavior.
+    if (!("protocol" in leg.trace)) return true;
+    return leg.trace.raw_query === planned.query &&
+      leg.trace.query_product === plan.retrieval_product &&
+      leg.trace.exact_probes.length === planned.literal_probes.length &&
+      leg.trace.exact_probes.every((probe, probeIndex) => probe === planned.literal_probes[probeIndex]);
+  });
   return plan.role === result.role && plan.query_plan_ref.id === result.query_plan_ref.id &&
     plan.query_plan_ref.revision === result.query_plan_ref.revision && plan.identity_digest === result.query_plan_digest &&
     plan.scope_snapshot_ref.id === result.scope_snapshot_ref.id &&
     plan.scope_snapshot_ref.revision === result.scope_snapshot_ref.revision && plan.scope_snapshot_digest === result.scope_snapshot_digest &&
+    traceBindingsMatchPlan &&
     branchQueryLegsMatchPlan(plan, result.query_legs, result.stop_reason, result.resolved_evidence.length > 0);
 }
 
