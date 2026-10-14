@@ -1,5 +1,6 @@
 /// <reference types="node" />
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import type { SourceRevision } from "@eliotr/contracts";
@@ -239,10 +240,16 @@ function createSchema(database: DatabaseSync): void {
       managed_item_protocol TEXT,
       managed_target_instance_id TEXT,
       managed_target_generation TEXT,
+      managed_target_metadata_generation_digest TEXT,
       item_count INTEGER,
       item_set_digest TEXT,
       work_manifest_ref TEXT,
       work_manifest_sha256 TEXT,
+      canonical_projection_generation TEXT,
+      canonical_item_count INTEGER,
+      canonical_item_set_digest TEXT,
+      provider_copy_count INTEGER,
+      provider_copy_set_digest TEXT,
       d1_search_receipt_ref TEXT,
       d1_search_readback_digest TEXT,
       semantic_instance_id TEXT,
@@ -321,8 +328,8 @@ function seedDatabase(
     "INSERT INTO projection_generation(source_revision_ref,projection_generation,job_id," +
     "source_owner_generation,content_sha256,object_residency_key_digest,projector_profile," +
     "state,reason_codes_json,managed_item_protocol,managed_target_instance_id," +
-    "managed_target_generation,created_at,updated_at) " +
-    "VALUES (?,?,?,?,?,?,?,'PREPARING','[]',?,?,?,'2026-10-09T12:00:00.000Z'," +
+    "managed_target_generation,managed_target_metadata_generation_digest,created_at,updated_at) " +
+    "VALUES (?,?,?,?,?,?,?,'PREPARING','[]',?,?,?,?, '2026-10-09T12:00:00.000Z'," +
     "'2026-10-09T12:00:00.000Z')",
   ).run(
     sourceRevision.source_revision_ref,
@@ -335,6 +342,9 @@ function seedDatabase(
     protocolVersion,
     profile.managed_instance_id,
     profile.managed_generation,
+    createHash("sha256")
+      .update(`eliotr.project-copy-generation.v1\0${profile.managed_generation}`, "utf8")
+      .digest("hex"),
   );
   database.prepare(
     "INSERT INTO operation_attempt(attempt_id,state,checkpoint_ref,ended_at) " +

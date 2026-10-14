@@ -10,6 +10,7 @@ import {
   projectionGeneration,
   stableProjectionId,
 } from "./canonical.js";
+import { canonicalSourceProjectionIdentity } from "./core-managed-item-intent.js";
 import type {
   ProjectionExecutionProfile,
   ProjectionSourceContext,
@@ -126,5 +127,23 @@ describe("projection generation identity", () => {
       managed_instance_id: "managed-instance-2",
       managed_generation: "generation-2",
     })).toBe(legacy);
+  });
+
+  it("shares canonical source identity across project memberships and provider targets", async () => {
+    const sourceIdentity = await canonicalSourceProjectionIdentity(context, profile);
+    const membershipB: ProjectionSourceContext = {
+      ...context,
+      project_membership_ids: ["project:project-b:generation:2"],
+    };
+    const targetB: ProjectionExecutionProfile = {
+      ...profile,
+      managed_instance_id: "managed-instance-b",
+      managed_generation: "generation-b",
+    };
+    const sourceIdentityB = await canonicalSourceProjectionIdentity(membershipB, targetB);
+
+    expect(sourceIdentityB).toEqual(sourceIdentity);
+    expect(sourceIdentity.generation).not.toBe(await projectionGeneration(context, profile));
+    expect(sourceIdentity.profile_sha256).toMatch(/^[a-f0-9]{64}$/u);
   });
 });

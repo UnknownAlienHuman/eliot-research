@@ -26,6 +26,7 @@ import {
   MANAGED_ITEM_PROTOCOL_VERSION,
   readManagedItemReceipts,
 } from "./core-managed-item-receipts.js";
+import { managedProjectGenerationMetadataValue } from "./managed-project-path.js";
 
 export function validateProjectionWorkReceipt(receipt: ProjectionWorkReceipt): void {
   assertProjectionIdentifier(receipt.manifest_ref, "work manifest_ref");
@@ -38,6 +39,53 @@ export function validateProjectionWorkReceipt(receipt: ProjectionWorkReceipt): v
       "work receipt item count differs from item receipts",
     );
   }
+  const canonical = receipt.canonical_source;
+  const copies = receipt.project_copy_map_set;
+  if (
+    canonical === undefined || copies === undefined ||
+    receipt.canonical_projection_generation !== canonical.canonical_projection_generation ||
+    receipt.metadata_generation_digest !== copies.target.metadata_generation_digest ||
+    canonical.canonical_section_count !== receipt.item_count ||
+    canonical.canonical_section_set_sha256 !== receipt.item_set_digest ||
+    copies.canonical_projection_generation !== canonical.canonical_projection_generation ||
+    copies.source_revision_ref !== canonical.source_revision_ref ||
+    copies.complete_residency_key_sha256 !== canonical.complete_residency_key_sha256 ||
+    copies.canonical_source_ref !== canonical.canonical_source_ref ||
+    copies.canonical_source_sha256 !== canonical.canonical_source_sha256 ||
+    copies.provider_copy_count < 0 || copies.provider_copy_count > 256 ||
+    copies.provider_item_count < 0 ||
+    copies.pages.reduce((total, page) => total + page.provider_copy_count, 0) !== copies.provider_copy_count ||
+    copies.pages.reduce((total, page) => total + page.provider_item_count, 0) !== copies.provider_item_count ||
+    canonical.resource_bounds.protocol !== "eliotr.canonical-source-resource-bounds.v1" ||
+    canonical.resource_bounds.input_utf8_bytes > canonical.resource_bounds.maximum_input_utf8_bytes ||
+    canonical.resource_bounds.section_count !== receipt.item_count ||
+    canonical.resource_bounds.maximum_section_count < receipt.item_count ||
+    canonical.resource_bounds.largest_section_utf8_bytes > canonical.resource_bounds.maximum_section_utf8_bytes ||
+    copies.provider_copy_count > canonical.resource_bounds.maximum_provider_copy_count ||
+    copies.provider_item_count > canonical.resource_bounds.maximum_provider_item_count ||
+    canonical.resource_bounds.cpu_time_budget_ms !== 30_000 ||
+    canonical.resource_bounds.maximum_subrequest_bound !== 10_000 ||
+    canonical.resource_bounds.canonical_body_put_count !== receipt.item_count ||
+    canonical.resource_bounds.canonical_manifest_put_count !== 1 ||
+    canonical.resource_bounds.canonical_r2_subrequest_bound > canonical.resource_bounds.maximum_subrequest_bound ||
+    copies.resource_bounds.protocol !== "eliotr.project-copy-resource-bounds.v1" ||
+    copies.resource_bounds.provider_copy_count !== copies.provider_copy_count ||
+    copies.resource_bounds.provider_item_count !== copies.provider_item_count ||
+    copies.resource_bounds.copy_map_page_count !== copies.page_count ||
+    copies.resource_bounds.copy_map_r2_put_count !== copies.page_count ||
+    copies.resource_bounds.copy_map_r2_subrequest_bound !== 2 * copies.page_count ||
+    copies.resource_bounds.copy_map_r2_subrequest_bound > copies.resource_bounds.maximum_subrequest_bound ||
+    copies.resource_bounds.cpu_time_budget_ms !== 30_000 ||
+    copies.resource_bounds.maximum_subrequest_bound !== 10_000
+  ) {
+    projectionFail("PROJECTION_INPUT_INVALID", "canonical or project-copy Work receipt is incomplete");
+  }
+  assertProjectionIdentifier(canonical.canonical_source_ref, "canonical source Work ref");
+  assertProjectionSha256(canonical.canonical_source_sha256, "canonical source Work digest");
+  assertProjectionSha256(canonical.projector_profile_sha256, "canonical projector profile digest");
+  assertProjectionSha256(copies.provider_copy_set_sha256, "project-copy set digest");
+  assertProjectionSha256(copies.provider_item_set_sha256, "project-copy item digest");
+  assertProjectionSha256(receipt.metadata_generation_digest, "target metadata generation digest");
   const seen = new Set<string>();
   for (const item of receipt.item_receipts) {
     const key = assertProjectionIdentifier(item.item_key, "work item_key");
@@ -50,6 +98,14 @@ export function validateProjectionWorkReceipt(receipt: ProjectionWorkReceipt): v
     assertProjectionInteger(item.size_bytes, "work item size_bytes", 1, 256 * 1024);
     assertProjectionIdentifier(item.etag, "work item etag");
   }
+}
+
+function managedEffectItemCount(work: ProjectionWorkReceipt): number {
+  const copies = work.project_copy_map_set;
+  if (copies === undefined) {
+    projectionFail("PROJECTION_INPUT_INVALID", "managed settlement is missing the project-copy receipt");
+  }
+  return copies.provider_copy_count === 0 ? work.item_count : copies.provider_item_count;
 }
 
 function validateSettlement(
@@ -78,7 +134,7 @@ function validateSettlement(
       settlement.managed.instance_id !== profile.managed_instance_id ||
       settlement.managed.managed_generation !== profile.managed_generation ||
       (settlement.work !== undefined &&
-        settlement.managed.item_count !== settlement.work.item_count)
+        settlement.managed.item_count !== managedEffectItemCount(settlement.work))
     ) {
       projectionFail("PROJECTION_INPUT_INVALID", "managed receipt differs from profile or Work");
     }
@@ -231,7 +287,8 @@ async function assertManagedItemTargetPin(
 ): Promise<void> {
   const row = await input.database.prepare(
     "SELECT job_id, managed_item_protocol, managed_target_instance_id, " +
-    "managed_target_generation FROM projection_generation WHERE source_revision_ref = ?1 " +
+    "managed_target_generation, managed_target_metadata_generation_digest " +
+    "FROM projection_generation WHERE source_revision_ref = ?1 " +
     "AND projection_generation = ?2 LIMIT 1",
   ).bind(
     input.context.source_revision.source_revision_ref,
@@ -241,13 +298,18 @@ async function assertManagedItemTargetPin(
     readonly managed_item_protocol: unknown;
     readonly managed_target_instance_id: unknown;
     readonly managed_target_generation: unknown;
+    readonly managed_target_metadata_generation_digest: unknown;
   }>();
   if (
     row === null ||
     row.job_id !== input.context.job_id ||
     row.managed_item_protocol !== MANAGED_ITEM_PROTOCOL_VERSION ||
     row.managed_target_instance_id !== input.profile.managed_instance_id ||
-    row.managed_target_generation !== input.profile.managed_generation
+    row.managed_target_generation !== input.profile.managed_generation ||
+    row.managed_target_metadata_generation_digest !==
+      await managedProjectGenerationMetadataValue(input.profile.managed_generation) ||
+    (input.settlement.work !== undefined &&
+      row.managed_target_metadata_generation_digest !== input.settlement.work.metadata_generation_digest)
   ) {
     projectionFail(
       "PROJECTION_AUTHORITY_CONFLICT",
@@ -270,7 +332,7 @@ export async function settleProjection(
   if (input.settlement.managed?.state === "READY") {
     if (
       input.settlement.work === undefined ||
-      input.settlement.managed.item_count !== input.settlement.work.item_count
+      input.settlement.managed.item_count !== managedEffectItemCount(input.settlement.work)
     ) {
       projectionFail(
         "PROJECTION_AUTHORITY_CONFLICT",
@@ -282,7 +344,10 @@ export async function settleProjection(
       input.context,
       input.projection_generation,
       input.settlement.managed.item_count,
-      input.settlement.work.item_set_digest,
+      input.settlement.work.project_copy_map_set?.provider_copy_count === 0
+        ? input.settlement.work.item_set_digest
+        : input.settlement.work.project_copy_map_set?.provider_item_set_sha256 ??
+          input.settlement.work.item_set_digest,
       input.settlement.managed.readback_digest,
     );
   }
@@ -327,6 +392,9 @@ export async function settleProjection(
   ] as const;
 
   const mutationNowMs = await assertCurrentExecutionFence(input);
+  const metadataGenerationDigest = await managedProjectGenerationMetadataValue(
+    input.profile.managed_generation,
+  );
   await input.database.batch([
     input.database.prepare(
       "UPDATE projection_generation SET state=?3,d1_search_receipt_ref=?4," +
@@ -336,6 +404,7 @@ export async function settleProjection(
       "AND state IN ('PREPARING','MATERIALIZED','D1_READY') " +
       "AND job_id=?18 AND managed_item_protocol=?12 " +
       "AND managed_target_instance_id=?13 AND managed_target_generation=?14 " +
+      "AND managed_target_metadata_generation_digest=?20 " +
       "AND EXISTS (SELECT 1 FROM operation_execution_lease l " +
       "WHERE l.operation_id=?15 AND l.operation_kind='PROJECTION_EXECUTE' " +
       "AND l.lease_owner=?16 AND l.lease_generation=?17 AND l.state='LEASED' " +
@@ -364,6 +433,7 @@ export async function settleProjection(
       input.execution_fence.lease_generation,
       input.context.job_id,
       mutationNowMs,
+      metadataGenerationDigest,
     ),
     ...readiness.map(([channel, value]) => input.database.prepare(
       "INSERT INTO source_readiness(source_revision_ref,channel,state,generation," +
@@ -428,8 +498,12 @@ export async function settleProjection(
       "AND g.object_residency_key_digest=?9 AND g.projector_profile=?10 " +
       "AND g.managed_item_protocol=?28 " +
       "AND g.managed_target_instance_id=?29 AND g.managed_target_generation=?30 " +
+      "AND g.managed_target_metadata_generation_digest=?39 " +
       "AND g.item_count IS ?35 AND g.item_set_digest IS ?36 " +
-      "AND g.work_manifest_ref IS ?37 AND g.work_manifest_sha256 IS ?38) " +
+      "AND g.work_manifest_ref IS ?37 AND g.work_manifest_sha256 IS ?38 " +
+      "AND g.canonical_projection_generation IS ?40 " +
+      "AND g.canonical_item_count IS ?41 AND g.canonical_item_set_digest IS ?42 " +
+      "AND g.provider_copy_count IS ?43 AND g.provider_copy_set_digest IS ?44) " +
       "AND EXISTS (SELECT 1 FROM job j WHERE j.job_id=?3 AND j.state=?6 " +
       "AND j.terminal_receipt_ref=?11) " +
       "AND EXISTS (SELECT 1 FROM operation_execution_lease l " +
@@ -487,6 +561,12 @@ export async function settleProjection(
       input.settlement.work?.item_set_digest ?? null,
       input.settlement.work?.manifest_ref ?? null,
       input.settlement.work?.manifest_sha256 ?? null,
+      metadataGenerationDigest,
+      input.settlement.work?.canonical_projection_generation ?? null,
+      input.settlement.work?.item_count ?? null,
+      input.settlement.work?.item_set_digest ?? null,
+      input.settlement.work?.project_copy_map_set?.provider_copy_count ?? null,
+      input.settlement.work?.project_copy_map_set?.provider_copy_set_sha256 ?? null,
     ),
   ]);
 

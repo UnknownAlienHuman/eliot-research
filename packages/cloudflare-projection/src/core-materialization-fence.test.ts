@@ -10,9 +10,12 @@ import {
 } from "@eliotr/platform-cloudflare";
 import {
   createD1ProjectionAuthority,
+  projectionDigest,
   projectionExecutionOperationId,
 } from "./index.js";
+import { managedProjectGenerationMetadataValue } from "./managed-project-path.js";
 import type {
+  CanonicalProjectionResourceBounds,
   ProjectionExecutionProfile,
   ProjectionSourceContext,
   ProjectionWorkReceipt,
@@ -25,6 +28,26 @@ const D = "d".repeat(64);
 const generationId = "projection-generation-1";
 const protocolVersion = "eliotr.managed-item-effects.v1";
 const leaseDurationMs = 30_000;
+const emptySetDigest = await projectionDigest([]);
+const resourceBounds: CanonicalProjectionResourceBounds = {
+  protocol: "eliotr.canonical-source-resource-bounds.v1",
+  input_utf8_bytes: 1,
+  maximum_input_utf8_bytes: 4 * 1024 * 1024,
+  section_count: 1,
+  maximum_section_count: 64,
+  largest_section_utf8_bytes: 1,
+  maximum_section_utf8_bytes: 4096,
+  canonical_body_put_count: 1,
+  canonical_manifest_put_count: 1,
+  maximum_provider_copy_count: 256,
+  maximum_provider_item_count: 256,
+  maximum_copy_map_page_count: 256,
+  cpu_time_budget_ms: 30_000,
+  source_content_r2_get_bound: 1,
+  canonical_r2_subrequest_bound: 5,
+  maximum_subrequest_bound: 10_000,
+};
+const canonicalGeneration = "canonical-source-generation-fence";
 
 const message: DeliveryMessage = {
   protocol: "eliotr.delivery.message.v1",
@@ -79,6 +102,7 @@ const profile: ProjectionExecutionProfile = {
   managed_poll_interval_ms: 100,
   managed_timeout_ms: 1_000,
 };
+const targetMetadataDigest = await managedProjectGenerationMetadataValue(profile.managed_generation);
 
 const receipt: ProjectionWorkReceipt = {
   manifest_ref: "work-manifest-new",
@@ -92,6 +116,59 @@ const receipt: ProjectionWorkReceipt = {
     size_bytes: 1,
     etag: "etag-new",
   }],
+  canonical_projection_generation: canonicalGeneration,
+  metadata_generation_digest: targetMetadataDigest,
+  canonical_source: {
+    protocol: "eliotr.canonical-source-projection.v1",
+    source_revision_ref: sourceRevision.source_revision_ref,
+    complete_residency_key_sha256: sourceRevision.object_residency_key_digest,
+    projector_profile_sha256: D,
+    canonical_projection_generation: canonicalGeneration,
+    canonical_source_ref: "work-manifest-new",
+    canonical_source_sha256: C,
+    canonical_section_count: 1,
+    canonical_section_set_sha256: D,
+    resource_bounds: resourceBounds,
+    sections: [{
+      canonical_item_key: "item-new",
+      canonical_section_id: "section-new",
+      content_sha256: A,
+      normalized_start_byte: 0,
+      normalized_end_byte: 1,
+      canonical_body_ref: "work/items/item-new.md",
+      canonical_body_sha256: A,
+    }],
+  },
+  project_copy_map_set: {
+    protocol: "eliotr.managed-project-copy-map-set.v1",
+    source_revision_ref: sourceRevision.source_revision_ref,
+    complete_residency_key_sha256: sourceRevision.object_residency_key_digest,
+    canonical_projection_generation: canonicalGeneration,
+    canonical_source_ref: "work-manifest-new",
+    canonical_source_sha256: C,
+    target: {
+      managed_instance_id: profile.managed_instance_id,
+      managed_generation: profile.managed_generation,
+      metadata_generation_digest: targetMetadataDigest,
+    },
+    page_count: 0,
+    page_set_sha256: emptySetDigest,
+    provider_copy_count: 0,
+    provider_copy_set_sha256: emptySetDigest,
+    provider_item_count: 0,
+    provider_item_set_sha256: emptySetDigest,
+    resource_bounds: {
+      protocol: "eliotr.project-copy-resource-bounds.v1",
+      provider_copy_count: 0,
+      provider_item_count: 0,
+      copy_map_page_count: 0,
+      copy_map_r2_put_count: 0,
+      copy_map_r2_subrequest_bound: 0,
+      cpu_time_budget_ms: 30_000,
+      maximum_subrequest_bound: 10_000,
+    },
+    pages: [],
+  },
 };
 
 interface MaterializationRow extends Record<string, unknown> {
@@ -224,16 +301,23 @@ function seedDatabase(fence: ExecutionFence, durationMs = leaseDurationMs): Data
       managed_item_protocol TEXT,
       managed_target_instance_id TEXT,
       managed_target_generation TEXT,
+      managed_target_metadata_generation_digest TEXT,
       item_count INTEGER,
       item_set_digest TEXT,
       work_manifest_ref TEXT,
       work_manifest_sha256 TEXT,
+      canonical_projection_generation TEXT,
+      canonical_item_count INTEGER,
+      canonical_item_set_digest TEXT,
+      provider_copy_count INTEGER,
+      provider_copy_set_digest TEXT,
       d1_search_receipt_ref TEXT,
       d1_search_readback_digest TEXT,
       semantic_instance_id TEXT,
       semantic_generation TEXT,
       semantic_receipt_ref TEXT,
       semantic_readback_digest TEXT,
+      created_at TEXT,
       updated_at TEXT,
       PRIMARY KEY (source_revision_ref, projection_generation)
     );
@@ -249,8 +333,9 @@ function seedDatabase(fence: ExecutionFence, durationMs = leaseDurationMs): Data
     "(source_revision_ref, projection_generation, job_id, source_owner_generation, " +
     "content_sha256, object_residency_key_digest, projector_profile, state, reason_codes_json, " +
     "managed_item_protocol, managed_target_instance_id, managed_target_generation, " +
-    "item_count, item_set_digest, work_manifest_ref, work_manifest_sha256) " +
-    "VALUES (?, ?, ?, ?, ?, ?, ?, 'PREPARING', '[]', ?, ?, ?, NULL, NULL, NULL, NULL)",
+    "managed_target_metadata_generation_digest, created_at, updated_at) " +
+    "VALUES (?, ?, ?, ?, ?, ?, ?, 'PREPARING', '[]', ?, ?, ?, ?, " +
+    "'2026-10-09T12:00:00.000Z', '2026-10-09T12:00:00.000Z')",
   ).run(
     sourceRevision.source_revision_ref,
     generationId,
@@ -262,6 +347,7 @@ function seedDatabase(fence: ExecutionFence, durationMs = leaseDurationMs): Data
     protocolVersion,
     profile.managed_instance_id,
     profile.managed_generation,
+    targetMetadataDigest,
   );
   return database;
 }
