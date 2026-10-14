@@ -8,6 +8,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { runInNewContext } from "node:vm";
 import { digestAccountId, evaluateUsageSnapshot } from "./lib/cloudflare-usage-envelope.mjs";
 import { dailyWindowFor, monthlyWindowFor } from "./lib/cloudflare-usage-collection.mjs";
+import { parseDeploymentJsonc } from "./lib/deployment-jsonc.mjs";
+import { readConfiguredTransport } from "./check-launch-code.mjs";
 import {
   nodeOptionsHasLoaderToken,
   scrubTokenEnv,
@@ -76,6 +78,7 @@ const generatedConfigPath = resolve(repositoryRoot, "apps/eliotr-core/wrangler.d
 const isolatedStateDirectory = await mkdtemp(join(tmpdir(), "eliotr-provisioner-state-"));
 const canonicalConfigPath = resolve(repositoryRoot, "apps/eliotr-core/wrangler.jsonc");
 const canonicalConfigBefore = await readFile(canonicalConfigPath, "utf8");
+const canonicalConfig = parseDeploymentJsonc(canonicalConfigBefore, "apps/eliotr-core/wrangler.jsonc");
 const aiSearchDesired = JSON.parse(await readFile(
   resolve(repositoryRoot, "infra/ai-search/instances.json"),
   "utf8",
@@ -720,7 +723,7 @@ try {
 
   const foundationDesired = JSON.parse(await readFile(resolve(repositoryRoot, "infra/cloudflare/resources.json"), "utf8"));
   const gatewaysDesired = JSON.parse(await readFile(resolve(repositoryRoot, "infra/cloudflare/ai-gateways.json"), "utf8"));
-  const verifyEnv = { ELIOTR_CLOUDFLARE_AUTH_MODE: "api-token", ELIOTR_GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp",
+  const verifyEnv = { ELIOTR_CLOUDFLARE_AUTH_MODE: "api-token", ELIOTR_GOOGLE_EXTERNAL_TRANSPORT: readConfiguredTransport(canonicalConfig),
     ELIOTR_MCP_ACCESS_AUTH_PROFILE: "managed-oauth", ELIOTR_MCP_ACCESS_TEAM_DOMAIN: commonEnv.ELIOTR_ACCESS_TEAM_DOMAIN,
     ELIOTR_MCP_ACCESS_AUDIENCE: "mock-mcp-audience" };
   const accessScript = "scripts/provision-cloudflare-access.mjs";
@@ -761,7 +764,6 @@ try {
     expectPass(await run(script, ["--verify-existing"], verifyEnv), `${script} existing resources`);
     assertGetOnly(script);
   }
-  const canonicalConfig = JSON.parse(canonicalConfigBefore);
   assert.deepEqual(JSON.parse(await readFile(generatedConfigPath, "utf8")).ai_search_namespaces,
     canonicalConfig.ai_search_namespaces, "default Core verify-existing must retain canonical AI Search bindings");
   assert.equal(await readFile(canonicalConfigPath, "utf8"), canonicalConfigBefore);

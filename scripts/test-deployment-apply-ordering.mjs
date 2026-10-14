@@ -169,7 +169,7 @@ function runtimeConfigVariables(runtimeEnvironment) {
   return variables;
 }
 const runtimeConfigVars = runtimeConfigVariables(environment);
-// This valid fixture keeps the 18 unresolved billing counters UNKNOWN. A
+// This valid fixture keeps all 21 non-inventory counters UNKNOWN. A
 // deployment must not read or promote them into an exact admission receipt.
 const unknownUsageSnapshot = JSON.parse(admittedSnapshotJson());
 for (const key of Object.keys(unknownUsageSnapshot.metrics)) {
@@ -243,6 +243,10 @@ const alternateVersionId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const versionId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const migrationPlan = await readDeploymentMigrationPlan(config, { root: repositoryRoot });
 const generatedConfigPath = resolve(repositoryRoot, "apps/eliotr-core/wrangler.deploy.jsonc");
+async function readConfigFixture(path, encoding, generatedBytes) {
+  if (resolve(path) !== generatedConfigPath) return readFile(path, encoding);
+  return encoding === undefined ? generatedBytes : generatedBytes.toString(encoding);
+}
 const workerEntrypoint = resolve(repositoryRoot, "apps/eliotr-core/src/index.ts");
 const buildInputManifest = Object.freeze({ protocol: "eliotr.deployment-build-inputs.v1",
   root: repositoryRoot, sha256: "a".repeat(64) });
@@ -352,9 +356,8 @@ function harness(overrides = {}) {
     },
     archive: async () => { calls.push("archive"); },
     read: async (path, encoding) => {
-      if (resolve(path) !== generatedConfigPath) return readFile(path, encoding);
-      reads += 1;
-      return overrides.driftAt === reads ? Buffer.from("{}") : candidateBytes;
+      if (resolve(path) === generatedConfigPath) reads += 1;
+      return readConfigFixture(path, encoding, overrides.driftAt === reads ? Buffer.from("{}") : candidateBytes);
     },
     save: async (receipt) => { calls.push("save"); receipts.push(receipt); },
     readReleaseBlockers: async () => { buildEvents.push("read-full-release-blockers"); return ["fixture full-release blocker"]; },
@@ -971,7 +974,7 @@ await check("semantic configuration transport drift stops before Worker upload",
   const changed = structuredClone(config);
   const key = "ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_0";
   changed.vars[key] = `${changed.vars[key]}x`;
-  const test = harness({ options: { read: async () => Buffer.from(JSON.stringify(changed)) } });
+  const test = harness({ options: { read: (path, encoding) => readConfigFixture(path, encoding, Buffer.from(JSON.stringify(changed))) } });
   await assert.rejects(deployCloudflare(test.options), /Generated deployment semantic configuration drift \(ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON_0\)/u);
   assert.ok(!test.calls.some((call) => call.includes("wrangler d1 migrations apply")));
   assert.ok(!test.calls.includes(deployCommand));
@@ -1002,7 +1005,7 @@ await check("missing or default migration directories stop before Worker upload"
     const changed = structuredClone(config);
     if (migrations_dir === undefined) delete changed.d1_databases[0].migrations_dir;
     else changed.d1_databases[0].migrations_dir = migrations_dir;
-    const test = harness({ options: { read: async () => Buffer.from(JSON.stringify(changed)) } });
+    const test = harness({ options: { read: (path, encoding) => readConfigFixture(path, encoding, Buffer.from(JSON.stringify(changed))) } });
     await assert.rejects(deployCloudflare(test.options), /migration plan or ledger/u);
     assert.equal(generatedDryRunIndex(test.calls), -1);
     assert.ok(!test.calls.some((call) => call.includes("wrangler d1 migrations apply")));
@@ -1017,7 +1020,7 @@ await check("maintenance deploy records blockers and budget findings without cla
   const test = harness({ options: { purpose: "MAINTENANCE", log: (message) => logs.push(message) } });
   const receipt = await deployCloudflare(test.options);
   const snapshot = JSON.parse(process.env.ELIOTR_TEST_SPAWN_SNAPSHOT_JSON);
-  assert.equal(Object.values(snapshot.metrics).filter((value) => value === "unknown").length, 18);
+  assert.equal(Object.values(snapshot.metrics).filter((value) => value === "unknown").length, 21);
   assert.equal(snapshot.metrics.ai_search_instances, 5);
   assert.equal(test.calls.filter((call) => call.endsWith("--verify-existing")).length, 3);
   assert.deepEqual(test.calls.filter((call) => call.endsWith("--verify-existing")), [
