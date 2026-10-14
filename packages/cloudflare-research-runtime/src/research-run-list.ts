@@ -3,8 +3,7 @@ import { VersionedRefSchema, type VersionedRef, type ResearchRunHistoryVisibilit
 import { CatalogInputError, OrientationError, ScopeServiceError } from "@eliotr/cloudflare-navigation";
 import { ArtifactDraftReadError } from "@eliotr/cloudflare-research";
 import {
-  readHistoricalResearchCoverage,
-  type HistoricalResearchArtifactBinding,
+  readHistoricalResearchArtifactLocator,
 } from "@eliotr/cloudflare-research-stages";
 import { prepareReauthenticatedRunRead } from "./research-run-read-authorization.js";
 import type { ResearchRunReadEnvironment, ReopenedResearchRunDraft } from "./research-run-read-authorization.js";
@@ -110,26 +109,6 @@ async function readHistoricalWorkflowId(
   return row.admission_operation_id;
 }
 
-async function readReauthorizedHistoricalArtifact(
-  ports: ResearchRunListPorts,
-  context: AuthenticatedRequestContext,
-  artifactRef: VersionedRef,
-  originalScopeRef: VersionedRef,
-): Promise<HistoricalResearchArtifactBinding> {
-  const reopened = await ports.reopen_owner_artifact_draft(context, artifactRef);
-  if (!sameRef(reopened.artifact_ref, artifactRef) ||
-      !sameRef(reopened.original_scope_snapshot_ref, originalScopeRef) ||
-      !("sections" in reopened.artifact) || reopened.artifact.status !== "DRAFT") {
-    throw new ArtifactDraftReadError("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "Saved report artifact binding is inconsistent");
-  }
-  return {
-    artifact_ref: reopened.artifact_ref,
-    original_scope_snapshot_ref: reopened.original_scope_snapshot_ref,
-    status: "DRAFT",
-    evidence_freeze_ref: reopened.artifact.evidence_freeze_ref,
-    dependency_manifest_ref: reopened.artifact.dependency_manifest_ref,
-  };
-}
 
 // The v4 read has independent bounds for each collection. Candidate budgets do
 // not replace any authority check or claim a bound on internal reader queries.
@@ -246,14 +225,13 @@ export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context
       const operationId = await readHistoricalWorkflowId(ports, row, context.principal_ref, originalRef);
       let workflowInstanceId: string | undefined;
       if (operationId !== null) {
-        const historical = await readHistoricalResearchCoverage({
+        const historical = await readHistoricalResearchArtifactLocator({
           database: ports.database, work_bucket: ports.work_bucket, operation_id: operationId,
           owner: { principal_ref: context.principal_ref, client_class: "owner_pwa" }, require_current: read.requireCurrent,
-          require_artifact: ({ artifact_ref, original_scope_snapshot_ref }) =>
-            readReauthorizedHistoricalArtifact(ports, context, artifact_ref, original_scope_snapshot_ref),
+          artifact_ref: ref, original_scope_snapshot_ref: originalRef,
         });
         if (historical !== null) {
-          if (!sameRef(historical.artifact_ref, ref) || historical.provenance.operation_id !== operationId) {
+          if (!sameRef(historical.artifact_ref, ref) || historical.operation_id !== operationId) {
             invalidHistory("Saved report workflow artifact binding is inconsistent");
           }
           workflowInstanceId = operationId;

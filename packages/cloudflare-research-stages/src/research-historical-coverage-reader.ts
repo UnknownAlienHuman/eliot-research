@@ -56,6 +56,12 @@ export interface HistoricalResearchCoverageReaderInput {
   }) => Promise<HistoricalResearchArtifactBinding>;
 }
 
+/** The caller has already authorized this exact artifact; this reads its run locator. */
+export interface HistoricalResearchArtifactLocatorInput extends Omit<HistoricalResearchCoverageReaderInput, "require_artifact"> {
+  readonly artifact_ref: VersionedRef;
+  readonly original_scope_snapshot_ref: VersionedRef;
+}
+
 /** Recorded authorship is a lookup constraint, not an authenticated reader. */
 export interface ProjectClientHistoricalCoverageReaderInput extends Omit<HistoricalResearchCoverageReaderInput, "owner"> {
   readonly reader: EvidenceAccessContext;
@@ -127,6 +133,81 @@ function text(value: unknown, _label: string): string {
 function positive(value: unknown): number {
   if (!Number.isSafeInteger(value) || (value as number) < 1) corrupt();
   return value as number;
+}
+
+async function readCompletedHistoricalRun(database: D1Database, operationId: string, originalPrincipal: string) {
+  let row: StoredRunRow | null;
+  try {
+    row = await database.prepare(
+      "SELECT operation_id, investigation_id, initial_revision, current_revision, principal_ref, " +
+      "credential_generation, deployment_generation, scope_snapshot_id, scope_snapshot_revision, " +
+      "next_stage_index, state, handler_generation FROM research_workflow_run " +
+      "WHERE operation_id=?1 AND principal_ref=?2 LIMIT 1",
+    ).bind(operationId, originalPrincipal).first<StoredRunRow>();
+  } catch { unavailable(); }
+  if (row === null) return null;
+  const result = {
+    operationId: text(row.operation_id, "operation_id"), investigationId: text(row.investigation_id, "investigation_id"),
+    principalRef: text(row.principal_ref, "principal_ref"), credentialGeneration: text(row.credential_generation, "credential_generation"),
+    deploymentGeneration: text(row.deployment_generation, "deployment_generation"),
+    scope: VersionedRefSchema.parse({ id: text(row.scope_snapshot_id, "scope_snapshot_id"), revision: positive(row.scope_snapshot_revision) }),
+    initialRevision: positive(row.initial_revision), currentRevision: positive(row.current_revision),
+    nextStageIndex: Number(row.next_stage_index), handlerGeneration: text(row.handler_generation, "handler_generation"),
+  };
+  if (result.operationId !== operationId || result.principalRef !== originalPrincipal ||
+      row.state !== "ENGINE_COMPLETED" || result.nextStageIndex !== RESEARCH_WORKFLOW_STAGES.length ||
+      result.currentRevision !== result.initialRevision + result.nextStageIndex) return null;
+  return result;
+}
+
+async function requireStoredArtifactManifest(database: D1Database, artifactRef: VersionedRef,
+  originalPrincipal: string, scope: VersionedRef, materialized: ResearchMaterializeResultPayload): Promise<void> {
+  let artifactManifest: StoredArtifactManifestRow | null;
+  try {
+    artifactManifest = await database.prepare(
+      "SELECT artifact_id, revision, principal_ref, scope_snapshot_id, scope_snapshot_revision, " +
+      "manifest_r2_key, manifest_sha256, manifest_size_bytes FROM artifact_draft_binding " +
+      "WHERE artifact_id=?1 AND revision=?2 AND principal_ref=?3 AND scope_snapshot_id=?4 " +
+      "AND scope_snapshot_revision=?5 LIMIT 1",
+    ).bind(artifactRef.id, artifactRef.revision, originalPrincipal, scope.id, scope.revision).first<StoredArtifactManifestRow>();
+  } catch { unavailable(); }
+  if (artifactManifest === null || artifactManifest.artifact_id !== artifactRef.id || artifactManifest.revision !== artifactRef.revision ||
+      artifactManifest.principal_ref !== originalPrincipal || artifactManifest.scope_snapshot_id !== scope.id ||
+      artifactManifest.scope_snapshot_revision !== scope.revision || artifactManifest.manifest_r2_key !== materialized.draft.manifest.key ||
+      artifactManifest.manifest_sha256 !== materialized.draft.manifest.sha256 ||
+      artifactManifest.manifest_size_bytes !== materialized.draft.manifest.size_bytes) corrupt();
+}
+
+/** Exact MATERIALIZE association only. Opening a run/report retains full coverage validation. */
+export async function readHistoricalResearchArtifactLocator(input: HistoricalResearchArtifactLocatorInput): Promise<{
+  readonly operation_id: string; readonly artifact_ref: VersionedRef;
+} | null> {
+  if (input === null || typeof input !== "object" || input.owner?.client_class !== "owner_pwa" ||
+      typeof input.owner.principal_ref !== "string" || !IDENTIFIER.test(input.owner.principal_ref) ||
+      typeof input.operation_id !== "string" || !IDENTIFIER.test(input.operation_id) ||
+      typeof input.require_current !== "function") fail("WORKFLOW_INPUT_INVALID");
+  const artifactRef = VersionedRefSchema.parse(input.artifact_ref), originalScope = VersionedRefSchema.parse(input.original_scope_snapshot_ref);
+  await input.require_current();
+  const completed = await readCompletedHistoricalRun(input.database, input.operation_id, input.owner.principal_ref);
+  if (completed === null) return null;
+  const { operationId, investigationId, principalRef, scope, handlerGeneration, currentRevision } = completed;
+  if (!sameRef(scope, originalScope)) corrupt();
+  const checkpoints = new WorkflowCheckpointStore(input.database);
+  const lineage = await readCommittedStageLineage(checkpoints, operationId, MATERIALIZE_STAGE);
+  const run = { operation_id: operationId, investigation_id: investigationId, handler_generation: handlerGeneration, scope, principal_ref: principalRef };
+  requireStageLineage(lineage, MATERIALIZE_STAGE, run, "ENGINE_COMPLETED");
+  const coverage = await readCommittedStageLineage(checkpoints, operationId, COVERAGE_STAGE);
+  requireStageLineage(coverage, COVERAGE_STAGE, run, "CHECKPOINTED");
+  if (!sameJson(lineage.request.input_manifest, coverage.receipt.output_manifest) ||
+      coverage.receipt.investigation_ref.revision !== lineage.request.investigation_ref.revision) corrupt();
+  if (lineage.receipt.investigation_ref.revision !== currentRevision || lineage.request.investigation_ref.revision + 1 !== currentRevision) corrupt();
+  const materialized = decodeResearchMaterializeResult(await readWorkflowObject(input.work_bucket, lineage.receipt.output_manifest, true));
+  if (materialized.operation_id !== operationId || materialized.stage !== MATERIALIZE_STAGE ||
+      materialized.stage_attempt_ref !== lineage.attempt_ref || materialized.stage_request_sha256 !== lineage.request_sha256 ||
+      !sameRef(materialized.draft.artifact_ref, artifactRef)) corrupt();
+  await requireStoredArtifactManifest(input.database, artifactRef, principalRef, scope, materialized);
+  await input.require_current();
+  return Object.freeze({ operation_id: operationId, artifact_ref: Object.freeze({ ...artifactRef }) });
 }
 
 function sameRef(left: VersionedRef, right: VersionedRef): boolean {
@@ -255,32 +336,10 @@ async function readHistoricalCoverage(
   }
 
   await input.require_current();
-  let row: StoredRunRow | null;
-  try {
-    row = await input.database.prepare(
-      "SELECT operation_id, investigation_id, initial_revision, current_revision, principal_ref, " +
-      "credential_generation, deployment_generation, scope_snapshot_id, scope_snapshot_revision, " +
-      "next_stage_index, state, handler_generation FROM research_workflow_run " +
-      "WHERE operation_id=?1 AND principal_ref=?2 LIMIT 1",
-    ).bind(input.operation_id, originalPrincipal).first<StoredRunRow>();
-  } catch {
-    unavailable();
-  }
-  if (row === null) return null;
-
-  const operationId = text(row.operation_id, "operation_id");
-  const investigationId = text(row.investigation_id, "investigation_id");
-  const principalRef = text(row.principal_ref, "principal_ref");
-  const credentialGeneration = text(row.credential_generation, "credential_generation");
-  const deploymentGeneration = text(row.deployment_generation, "deployment_generation");
-  const scope = VersionedRefSchema.parse({ id: text(row.scope_snapshot_id, "scope_snapshot_id"), revision: positive(row.scope_snapshot_revision) });
-  const initialRevision = positive(row.initial_revision);
-  const currentRevision = positive(row.current_revision);
-  const nextStageIndex = Number(row.next_stage_index);
-  const handlerGeneration = text(row.handler_generation, "handler_generation");
-  if (operationId !== input.operation_id || principalRef !== originalPrincipal ||
-      row.state !== "ENGINE_COMPLETED" || nextStageIndex !== RESEARCH_WORKFLOW_STAGES.length ||
-      currentRevision !== initialRevision + nextStageIndex) return null;
+  const completed = await readCompletedHistoricalRun(input.database, input.operation_id, originalPrincipal);
+  if (completed === null) return null;
+  const { operationId, investigationId, principalRef, credentialGeneration, deploymentGeneration,
+    scope, currentRevision, handlerGeneration } = completed;
 
   const run = { operation_id: operationId, investigation_id: investigationId, handler_generation: handlerGeneration, scope, principal_ref: principalRef } as const;
   const checkpoints = new WorkflowCheckpointStore(input.database);
@@ -334,24 +393,7 @@ async function readHistoricalCoverage(
   const artifactBinding = parseArtifactBinding(artifact, artifactRef, scope);
   if (!sameRef(coverage.freeze_ref, artifactBinding.evidence_freeze_ref) ||
       refKey(coverage.manifest_ref) !== artifactBinding.dependency_manifest_ref) corrupt();
-  let artifactManifest: StoredArtifactManifestRow | null;
-  try {
-    artifactManifest = await input.database.prepare(
-      "SELECT artifact_id, revision, principal_ref, scope_snapshot_id, scope_snapshot_revision, " +
-      "manifest_r2_key, manifest_sha256, manifest_size_bytes FROM artifact_draft_binding " +
-      "WHERE artifact_id=?1 AND revision=?2 AND principal_ref=?3 AND scope_snapshot_id=?4 " +
-      "AND scope_snapshot_revision=?5 LIMIT 1",
-    ).bind(artifactRef.id, artifactRef.revision, originalPrincipal, scope.id, scope.revision).first<StoredArtifactManifestRow>();
-  } catch {
-    unavailable();
-  }
-  if (artifactManifest === null ||
-      artifactManifest.artifact_id !== artifactRef.id || artifactManifest.revision !== artifactRef.revision ||
-      artifactManifest.principal_ref !== originalPrincipal ||
-      artifactManifest.scope_snapshot_id !== scope.id || artifactManifest.scope_snapshot_revision !== scope.revision ||
-      artifactManifest.manifest_r2_key !== materialized.draft.manifest.key ||
-      artifactManifest.manifest_sha256 !== materialized.draft.manifest.sha256 ||
-      artifactManifest.manifest_size_bytes !== materialized.draft.manifest.size_bytes) corrupt();
+  await requireStoredArtifactManifest(input.database, artifactRef, originalPrincipal, scope, materialized);
   await input.require_current();
   return Object.freeze({
     protocol: "eliotr.research.historical-coverage.v1" as const,
