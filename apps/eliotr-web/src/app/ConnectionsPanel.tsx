@@ -6,6 +6,7 @@ import type { PrivacyController, SessionContext } from "./privacy";
 import type { BoundWorkspaceApis } from "./runtime";
 import { connectionsQueryOptions } from "../query/connections";
 import { protectedQueryKey } from "../query/client";
+import { ComputerAgentConnectionsPanel } from "./ComputerAgentConnectionsPanel";
 import { usePaneAnnouncement } from "./usePaneAnnouncement";
 
 const copy = {
@@ -90,5 +91,6 @@ export function ConnectionsPanel({ locale, apis, privacy, context, projects, pro
         <Button variant="tonal" type="submit">{text.read}</Button>
       </form>
     </details>}
+    <ComputerAgentConnectionsPanel locale={locale} apis={apis} privacy={privacy} context={context} />
   </>;
 }
