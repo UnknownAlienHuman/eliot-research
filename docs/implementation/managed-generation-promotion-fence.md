@@ -19,7 +19,24 @@ new shadow target or complete promotion.
 
 ## Complete required-set authority
 
-Status: **IMPLEMENTATION_PENDING**. A selected retrieval snapshot is insufficient promotion evidence.
+Status: **PARTIAL_SOURCE_IMPLEMENTED**, October 14. A selected retrieval snapshot is insufficient promotion evidence.
+
+Published assignment/enumerator source: `d30e9dde`, corrected by `c672fb20`
+and `cf518f72`, integrated in `bf4d8f9a`. Additive Core migration 0141 records
+explicit owner/operator project-to-target ASSIGN/RETIRE events with project
+owner/generation, immutable target profile identity, append/CAS guards and the
+existing authority epoch. `managed-required-set.ts` enumerates eligible current
+project/revision copies independently of jobs, effects and caller scope. Missing
+jobs therefore remain required work. AI Search target namespace and canonical
+source namespaces are distinct; unsuccessful D1 pages raise even when empty.
+
+The owning package compiler, scoped lint, command/SQLite enumeration tests and
+migration depth checks passed. The migration has not been applied remotely and
+the Core assignment authorizer is not wired. This receipt counts project/revision
+copies, not desired items. The shared desired-item builder/promoter, structural
+project-specific item layout, writer drain, real T2/T3 and expected-head promotion
+remain pending. Neither the source publication nor provider presence establishes
+an ACTIVE generation.
 
 PR #244 requires builder and promoter to share the complete required set, including manifest/count/hash/ACL sanity and writer drain/readback. ER-16 requires every expected item to be read back before `SHADOW_COMPLETE`; architecture sections 6.4.1-6.4.2 include indexed project-membership copies in the item denominator.
 
