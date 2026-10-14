@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ResolvedEvidence, ScopeSnapshot } from "@eliotr/contracts";
 import {
-  AI_SEARCH_PRIMARY_GENERATION,
   AI_SEARCH_PRIMARY_INSTANCE_ID,
   AI_SEARCH_PRIMARY_NAMESPACE,
   AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
@@ -9,7 +8,8 @@ import {
   buildAiSearchGenerationRegistryArtifact,
   declareAiSearchGeneration,
 } from "@eliotr/cloudflare-ai";
-import type { AiSearchInstanceLike, EvidenceObjectStore } from "@eliotr/platform-cloudflare";
+import { decodeAiSearchSearchResult, type AiSearchInstanceLike, type EvidenceObjectStore } from "@eliotr/platform-cloudflare";
+import type { RetrievalRequest } from "@eliotr/retrieval";
 import type { AiSearchFunctionalProbeError } from "./index.js";
 import {
   createAiSearchFunctionalProbe,
@@ -84,25 +84,6 @@ const SCOPE: ScopeSnapshot = {
   digest: "b".repeat(64), created_at: new Date(NOW).toISOString(), expires_at: new Date(NOW + 60_000).toISOString(),
 };
 
-const HANDLE = {
-  handle_ref: { id: "handle-example", revision: 1 }, source_namespace_id: "namespace-example",
-  source_owner_generation: "owner-generation-1", source_revision_ref: REVISION,
-  scope_snapshot_ref: { id: SCOPE.snapshot_id, revision: SCOPE.revision },
-  anchor: { kind: "normalized_byte_range" as const, start: 0, end: 16 }, excerpt_sha256: "c".repeat(64),
-  excerpt_byte_length: 16, object_residency_key_digest: "d".repeat(64), source_assurance_ceiling: "CAPTURED" as const,
-  materializer_assurance_ceiling: "CAPTURED" as const, terminal_state: "LIVE" as const, created_at: new Date(NOW).toISOString(),
-};
-
-const SEARCH_RESULT = {
-  search_query: QUERY,
-  chunks: [{ id: "chunk-example", type: "text", score: 0.9, text: "private index preview",
-    item: { key: "item-example.md", metadata: {
-      canonical_section_id: "section-example", content_sha256: "e".repeat(64), instruction_taint: "CLEARED",
-      projection_generation: AI_SEARCH_PRIMARY_GENERATION, source_revision_ref: REVISION,
-    } },
-  }],
-};
-
 async function registrySnapshot() {
   const record = declareAiSearchGeneration([], {
     namespace: AI_SEARCH_PRIMARY_NAMESPACE, profile: AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
@@ -122,8 +103,11 @@ function input(overrides: Partial<AiSearchFunctionalProbeInput> = {}): AiSearchF
   };
 }
 
-async function fixture(search = vi.fn(async () => SEARCH_RESULT), clock = { value: NOW }) {
+async function fixture() {
+  const search = vi.fn(async () => ({}));
+  const clock = { value: NOW };
   const store = objectStore(), registry = await registrySnapshot();
+  const readRegistry = vi.fn(async () => registry);
   const instance: AiSearchInstanceLike = { search, items: {
     async createOrUpdate() { throw new Error("unused"); }, async uploadAndPoll() { throw new Error("unused"); },
     async delete() { throw new Error("unused"); }, async get() { throw new Error("unused"); },
@@ -131,54 +115,25 @@ async function fixture(search = vi.fn(async () => SEARCH_RESULT), clock = { valu
   const get = vi.fn((id: string) => { if (id !== AI_SEARCH_PRIMARY_INSTANCE_ID) throw new Error("wrong instance"); return instance; });
   const dependencies: AiSearchFunctionalProbeDependencies = {
     ai_search: { get, list: async () => ({}), create: async () => instance, update: async () => instance, search: async () => ({}) },
-    registry: { read: async () => registry }, work_object_store: store.port,
+    registry: { read: readRegistry }, work_object_store: store.port,
     require_current_scope: vi.fn(async () => undefined),
-    resolve_candidate: vi.fn(async () => ({ handle: HANDLE, exact_excerpt: "do not persist exact source body" } as ResolvedEvidence)),
+    resolve_candidate: vi.fn(async () => ({} as ResolvedEvidence)),
     now: () => clock.value,
   };
-  return { service: createAiSearchFunctionalProbe(dependencies), store, dependencies, search, clock };
+  return { service: createAiSearchFunctionalProbe(dependencies), store, dependencies, search, clock, readRegistry };
 }
 
 describe("AI Search functional shadow probe", () => {
-  it("claims once, resolves a live exact handle, and replays only the immutable terminal receipt", async () => {
+  it("fails closed before claim or provider I/O when Core project-copy scope is unavailable", async () => {
     const f = await fixture();
-    const result = await f.service.probe(input());
-    expect(result).toMatchObject({ outcome: "SUCCEEDED", qualification: "NONE", evidence_handle: HANDLE });
-    expect(result.functional_ref).toMatch(/^functional-probe:/u);
-    expect(result.functional_ref).not.toContain("golden");
-    expect(f.search).toHaveBeenCalledTimes(1);
-    expect(f.search).toHaveBeenCalledWith({ query: QUERY, ai_search_options: { retrieval: {
-      filters: { source_revision_ref: { $in: [REVISION] }, projection_generation: AI_SEARCH_PRIMARY_GENERATION },
-      retrieval_type: "vector", match_threshold: 0, max_num_results: 1, context_expansion: 0, boost_by: [], metadata_only: false,
-    } } });
-    expect(f.dependencies.ai_search.get).toHaveBeenCalledWith(AI_SEARCH_PRIMARY_INSTANCE_ID);
-    expect(f.dependencies.resolve_candidate).toHaveBeenCalledTimes(1);
-    f.clock.value += 1;
-    const replay = await f.service.probe(input());
-    expect(replay).toEqual(result);
-    expect(f.search).toHaveBeenCalledTimes(1);
-    const stored = [...f.store.objects.values()].map((item) => new TextDecoder().decode(item.bytes)).join("\n");
-    expect(stored).not.toContain(QUERY);
-    expect(stored).not.toContain("private index preview");
-    expect(stored).not.toContain("do not persist exact source body");
-    expect(stored).not.toContain("golden_set_result_ref");
-  });
-
-  it("returns UNKNOWN for a concurrent duplicate with a durable START but no terminal receipt", async () => {
-    let releaseSearch!: (value: typeof SEARCH_RESULT) => void, announceStarted!: () => void;
-    const started = new Promise<void>((resolve) => { announceStarted = resolve; });
-    const pending = new Promise<typeof SEARCH_RESULT>((resolve) => { releaseSearch = resolve; });
-    const search = vi.fn(() => { announceStarted(); return pending; });
-    const f = await fixture(search);
-    const first = f.service.probe(input());
-    await started;
-    const duplicate = await f.service.probe(input());
-    expect(duplicate.outcome).toBe("UNKNOWN");
-    expect(duplicate.reason_code).toBe("AI_SEARCH_FUNCTIONAL_PROBE_START_ALREADY_CLAIMED");
-    expect(f.search).toHaveBeenCalledTimes(1);
-    releaseSearch(SEARCH_RESULT);
-    expect((await first).outcome).toBe("SUCCEEDED");
-    expect(f.search).toHaveBeenCalledTimes(1);
+    await expect(f.service.probe(input())).rejects.toMatchObject({
+      code: "AI_SEARCH_FUNCTIONAL_PROBE_AUTHORITY_UNAVAILABLE",
+    });
+    expect(f.dependencies.require_current_scope).toHaveBeenCalledTimes(1);
+    expect(f.readRegistry).toHaveBeenCalledTimes(1);
+    expect(f.store.objects.size).toBe(0);
+    expect(f.dependencies.ai_search.get).not.toHaveBeenCalled();
+    expect(f.search).not.toHaveBeenCalled();
   });
 
   it("rejects an unrepresentable scope before writing a claim or calling Search", async () => {
@@ -201,5 +156,34 @@ describe("AI Search functional shadow probe", () => {
     } satisfies Partial<AiSearchFunctionalProbeError>);
     expect(f.store.objects.size).toBe(0);
     expect(f.search).not.toHaveBeenCalled();
+  });
+
+  it("accepts a flat provider key only when the decoder receives its exact historical generation", () => {
+    const historicalGeneration = "legacy-flat-generation";
+    const request: RetrievalRequest = {
+      raw_query: QUERY, product: "FAST_SEARCH", scope_snapshot: SCOPE, literals: [],
+      requested_limit: 1, deadline_ms: NOW + 8_000,
+    };
+    const rawResult = {
+      search_query: QUERY,
+      chunks: [{ id: "legacy-chunk", type: "text", score: 0.9, text: "preview",
+        item: { key: "legacy-item.md", metadata: {
+          canonical_section_id: "section-example", content_sha256: "e".repeat(64), instruction_taint: "CLEARED",
+          projection_generation: historicalGeneration, source_revision_ref: REVISION,
+        } },
+      }],
+    };
+    const options = {
+      project_copy_layout: "LEGACY_FLAT" as const,
+      requested_lanes: ["SEM"] as const,
+      max_results: 1,
+      max_preview_bytes: 4096,
+    };
+    expect(() => decodeAiSearchSearchResult(request, rawResult, {
+      ...options, expected_index_generation: "current-generation", historical_generation: historicalGeneration,
+    })).toThrow(/exact historical generation/u);
+    expect(decodeAiSearchSearchResult(request, rawResult, {
+      ...options, expected_index_generation: historicalGeneration, historical_generation: historicalGeneration,
+    })).toHaveLength(1);
   });
 });

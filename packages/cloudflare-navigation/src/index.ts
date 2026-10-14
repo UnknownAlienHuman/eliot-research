@@ -12,6 +12,18 @@ export type {
 } from "./orientation-materialization.js";
 export { createOwnerScopeAuthority, splitExhaustiveSourceRefs } from "./orientation-authority.js";
 export type { OwnerScopeAuthority } from "./orientation-authority.js";
+export {
+  createD1ProjectCopyScopeResolver,
+  ProjectCopyScopeError,
+  resolveProjectCopyScope,
+} from "./project-copy-scope.js";
+export type {
+  CreateD1ProjectCopyScopeResolverInput,
+  ProjectCopyMembershipFact,
+  ProjectCopyRequiredSetFacts,
+  ProjectCopyScopeErrorCode,
+  ResolveProjectCopyScopeInput,
+} from "./project-copy-scope.js";
 export * from "./owner-historical-scope.js";
 export * from "./owner-scope-profile.js";
 export * from "./exhaustive-workflow-binding.js";

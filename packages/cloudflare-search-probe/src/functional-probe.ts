@@ -5,11 +5,15 @@ import {
   AI_SEARCH_PRIMARY_NAMESPACE,
   AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
   assertImmutableAiSearchProfile,
+  createAiSearchScopeFilter,
   decodeAiSearchGenerationRegistrySnapshot,
+  managedProjectFolderPrefix,
+  managedProjectGenerationMetadataValue,
+  type AiSearchProjectCopyScope,
+  type AiSearchScopeFilter,
   type AiSearchGenerationRegistryService,
   type AiSearchGenerationRegistrySnapshot,
 } from "@eliotr/cloudflare-ai";
-import { createAiSearchScopeFilter, type AiSearchScopeFilter } from "@eliotr/cloudflare-ai";
 import { decodeAiSearchSearchResult, type AiSearchInstanceLike, type AiSearchNamespaceLike, type EvidenceObjectStore } from "@eliotr/platform-cloudflare";
 import type { EvidenceAccessContext } from "@eliotr/cloudflare-evidence";
 import type { RetrievalRequest } from "@eliotr/retrieval";
@@ -37,6 +41,38 @@ const MAX_PREVIEW_BYTES = 4096;
 const MAX_QUERY_DURATION_MS = 10_000;
 const PREBILLING_CUTOFF_MS = Date.parse("2026-10-31T00:00:00.000Z");
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
+const SHA256 = /^[a-f0-9]{64}$/u;
+const PROJECT_FOLDER = /^projection\/[A-Za-z0-9_-]{43}\/$/u;
+const PROJECT_COPY_SCOPE_SCHEMA = z.object({
+  layout: z.literal("PROJECT_COPY_V1"),
+  scope_snapshot_id: z.string().regex(IDENTIFIER),
+  scope_snapshot_revision: z.number().int().positive().refine(Number.isSafeInteger),
+  scope_snapshot_digest: z.string().regex(SHA256),
+  target: z.object({
+    namespace: z.string().regex(IDENTIFIER),
+    managed_instance_id: z.string().regex(IDENTIFIER),
+    managed_generation: z.string().regex(IDENTIFIER),
+    target_profile_identity_sha256: z.string().regex(SHA256),
+  }).strict(),
+  generation_metadata_value: z.string().regex(SHA256),
+  representative_policy: z.literal("ONE_CANONICAL_COPY_PER_SOURCE_REVISION"),
+  copies: z.array(z.object({
+    source_revision_ref: z.string().regex(IDENTIFIER),
+    source_owner_generation: z.string().regex(IDENTIFIER),
+    project_id: z.string().regex(IDENTIFIER),
+    project_membership_id: z.string().regex(IDENTIFIER),
+    membership_generation: z.number().int().positive().refine(Number.isSafeInteger),
+    folder_prefix: z.string().regex(PROJECT_FOLDER),
+  }).strict()).length(1),
+}).strict();
+
+const PROJECT_COPY_TARGET = Object.freeze({
+  namespace: AI_SEARCH_PRIMARY_NAMESPACE,
+  managed_instance_id: AI_SEARCH_PRIMARY_INSTANCE_ID,
+  managed_generation: AI_SEARCH_PRIMARY_GENERATION,
+  profile: AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
+});
+
 export interface AiSearchFunctionalProbeInput {
   readonly access: EvidenceAccessContext; readonly project_id: string; readonly source_id: string;
   readonly source_revision_ref: string; readonly scope_snapshot: ScopeSnapshot; readonly query: string; readonly idempotency_key: string;
@@ -51,6 +87,18 @@ export interface AiSearchFunctionalProbeDependencies {
   readonly work_object_store: Pick<EvidenceObjectStore, "putImmutable" | "open">;
   /** Existing D1 owner-scope currentness adapter. */
   readonly require_current_scope: (access: EvidenceAccessContext, scope: ScopeSnapshot) => Promise<void>;
+  /**
+   * Fresh, read-only Core project-copy resolver. It must bind the returned target-profile digest to
+   * this immutable profile, recheck the frozen scope and current membership head on every invocation,
+   * and return the existing PROJECT_COPY_V1 scope; it must not infer membership facts from ScopeSnapshot.
+   */
+  readonly resolve_project_copy_scope?: (input: Readonly<{
+    access: EvidenceAccessContext;
+    scope_snapshot: ScopeSnapshot;
+    project_id: string;
+    source_revision_ref: string;
+    target: typeof PROJECT_COPY_TARGET;
+  }>) => Promise<AiSearchProjectCopyScope>;
   /** Existing D1/R2 evidence resolver; it must return exact live evidence or throw. */
   readonly resolve_candidate: (access: EvidenceAccessContext, scope: ScopeSnapshot, candidate: LocatorCandidate) => Promise<ResolvedEvidence>;
   readonly now?: () => number;
@@ -67,8 +115,13 @@ export class AiSearchFunctionalProbeError extends Error {
   }
 }
 
-interface ValidatedInput extends Omit<AiSearchFunctionalProbeInput, "query"> {
-  readonly query: string; readonly query_sha256: string; readonly filters: AiSearchScopeFilter;
+interface ValidatedBaseInput extends Omit<AiSearchFunctionalProbeInput, "query"> {
+  readonly query: string; readonly query_sha256: string;
+}
+interface ValidatedInput extends ValidatedBaseInput {
+  readonly filters: AiSearchScopeFilter;
+  readonly project_copy_scope: AiSearchProjectCopyScope;
+  readonly project_copy_scope_sha256: string;
 }
 interface RegistryPin { readonly snapshot: AiSearchGenerationRegistrySnapshot; readonly revision: number; readonly artifact_sha256: string; }
 
@@ -91,7 +144,7 @@ function exactOwnerScope(expression: ScopeSnapshot["resolved_scope_expression"],
     selected[0].source_ids[0] === sourceId;
 }
 
-function validateInput(input: AiSearchFunctionalProbeInput, nowMs: number): ValidatedInput {
+function validateInput(input: AiSearchFunctionalProbeInput, nowMs: number): ValidatedBaseInput {
   const access = z.object({ principal_ref: z.string().regex(IDENTIFIER),
     client_class: z.enum(["owner_pwa", "named_api_client", "trusted_agent", "federation_client"]),
     credential_generation: z.string().regex(IDENTIFIER) }).strict().safeParse(input.access);
@@ -110,6 +163,9 @@ function validateInput(input: AiSearchFunctionalProbeInput, nowMs: number): Vali
       scope.data.member_source_revision_refs[0] !== input.source_revision_ref) {
     fail("AI_SEARCH_FUNCTIONAL_PROBE_SCOPE_MISMATCH", "scope must be exactly the current project and one selected source revision");
   }
+  if (utf8Size(input.source_revision_ref) > 64) {
+    fail("AI_SEARCH_FUNCTIONAL_PROBE_INPUT_INVALID", "source revision cannot fit the exact AI Search metadata filter");
+  }
   if (typeof input.query !== "string" || input.query.trim().length === 0 || utf8Size(input.query) > MAX_QUERY_BYTES) {
     fail("AI_SEARCH_FUNCTIONAL_PROBE_INPUT_INVALID", "query must contain 1 to 4096 UTF-8 bytes");
   }
@@ -124,14 +180,7 @@ function validateInput(input: AiSearchFunctionalProbeInput, nowMs: number): Vali
   if (nowMs >= PREBILLING_CUTOFF_MS) {
     fail("AI_SEARCH_FUNCTIONAL_PROBE_PREBILLING_CLOSED", "the unreviewed prebilling functional query window has closed");
   }
-  let filters: AiSearchScopeFilter;
-  try {
-    filters = createAiSearchScopeFilter(scope.data.member_source_revision_refs, AI_SEARCH_PRIMARY_GENERATION);
-  } catch (cause) {
-    fail("AI_SEARCH_FUNCTIONAL_PROBE_INPUT_INVALID", "frozen scope cannot fit an exact AI Search filter", cause);
-  }
   return Object.freeze({
-    filters,
     access: access.data,
     project_id: input.project_id,
     source_id: input.source_id,
@@ -140,6 +189,102 @@ function validateInput(input: AiSearchFunctionalProbeInput, nowMs: number): Vali
     query: input.query,
     query_sha256: "",
     idempotency_key: input.idempotency_key, deadline_ms: input.deadline_ms, signal: input.signal,
+  });
+}
+
+async function resolveFunctionalProjectCopyScope(
+  dependencies: AiSearchFunctionalProbeDependencies,
+  input: ValidatedBaseInput,
+): Promise<AiSearchProjectCopyScope> {
+  const resolver = dependencies.resolve_project_copy_scope;
+  if (typeof resolver !== "function") {
+    fail("AI_SEARCH_FUNCTIONAL_PROBE_AUTHORITY_UNAVAILABLE", "current Core project-copy scope is not connected to the functional probe");
+  }
+
+  let raw: unknown;
+  try {
+    raw = await resolver({
+      access: input.access,
+      scope_snapshot: input.scope_snapshot,
+      project_id: input.project_id,
+      source_revision_ref: input.source_revision_ref,
+      target: PROJECT_COPY_TARGET,
+    });
+  } catch (cause) {
+    fail("AI_SEARCH_FUNCTIONAL_PROBE_AUTHORITY_UNAVAILABLE", "current Core project-copy scope could not be read", cause);
+  }
+
+  const parsed = PROJECT_COPY_SCOPE_SCHEMA.safeParse(raw);
+  if (!parsed.success) {
+    fail("AI_SEARCH_FUNCTIONAL_PROBE_AUTHORITY_UNAVAILABLE", "Core project-copy scope is malformed", parsed.error);
+  }
+  const scope = parsed.data;
+  if (scope.scope_snapshot_id !== input.scope_snapshot.snapshot_id ||
+      scope.scope_snapshot_revision !== input.scope_snapshot.revision ||
+      scope.scope_snapshot_digest !== input.scope_snapshot.digest ||
+      scope.target.namespace !== AI_SEARCH_PRIMARY_NAMESPACE ||
+      scope.target.managed_instance_id !== AI_SEARCH_PRIMARY_INSTANCE_ID ||
+      scope.target.managed_generation !== AI_SEARCH_PRIMARY_GENERATION) {
+    fail("AI_SEARCH_FUNCTIONAL_PROBE_AUTHORITY_UNAVAILABLE", "Core project-copy scope differs from the frozen request or probe target");
+  }
+
+  const copy = scope.copies[0];
+  if (copy === undefined || copy.source_revision_ref !== input.source_revision_ref ||
+      copy.source_owner_generation !== input.scope_snapshot.source_owner_generations[input.source_revision_ref] ||
+      copy.project_id !== input.project_id ||
+      copy.project_membership_id !== `project:${copy.project_id}:generation:${copy.membership_generation}`) {
+    fail("AI_SEARCH_FUNCTIONAL_PROBE_AUTHORITY_UNAVAILABLE", "Core project-copy scope does not select this frozen source and project");
+  }
+
+  try {
+    const [expectedGenerationMetadata, expectedFolder] = await Promise.all([
+      managedProjectGenerationMetadataValue(AI_SEARCH_PRIMARY_GENERATION),
+      managedProjectFolderPrefix({
+        instance_id: AI_SEARCH_PRIMARY_INSTANCE_ID,
+        projection_generation: AI_SEARCH_PRIMARY_GENERATION,
+        source_revision_ref: copy.source_revision_ref,
+        project_id: copy.project_id,
+        project_membership_id: copy.project_membership_id,
+        membership_generation: copy.membership_generation,
+      }),
+    ]);
+    if (scope.generation_metadata_value !== expectedGenerationMetadata || copy.folder_prefix !== expectedFolder ||
+        utf8Size(copy.folder_prefix) !== 55) {
+      fail("AI_SEARCH_FUNCTIONAL_PROBE_AUTHORITY_UNAVAILABLE", "Core project-copy folder or generation identity is not canonical");
+    }
+  } catch (cause) {
+    if (cause instanceof AiSearchFunctionalProbeError) throw cause;
+    fail("AI_SEARCH_FUNCTIONAL_PROBE_AUTHORITY_UNAVAILABLE", "Core project-copy scope cannot form one exact provider filter", cause);
+  }
+
+  const copies = Object.freeze(scope.copies.map((value) => Object.freeze({ ...value })));
+  return Object.freeze({
+    ...scope,
+    target: Object.freeze({ ...scope.target }),
+    copies,
+  });
+}
+
+async function validateProjectCopyScopeForSearch(
+  dependencies: AiSearchFunctionalProbeDependencies,
+  input: ValidatedBaseInput,
+): Promise<Pick<ValidatedInput, "filters" | "project_copy_scope" | "project_copy_scope_sha256">> {
+  const projectCopyScope = await resolveFunctionalProjectCopyScope(dependencies, input);
+  let filters: AiSearchScopeFilter;
+  try {
+    filters = createAiSearchScopeFilter(
+      input.scope_snapshot.member_source_revision_refs,
+      projectCopyScope.generation_metadata_value,
+      projectCopyScope.copies,
+    );
+  } catch (cause) {
+    fail("AI_SEARCH_FUNCTIONAL_PROBE_AUTHORITY_UNAVAILABLE", "Core project-copy scope cannot form one exact provider filter", cause);
+  }
+  const projectCopyScopeSha = await probeSha256(new TextEncoder().encode(canonicalProbeJson(projectCopyScope)));
+  return Object.freeze({
+    filters,
+    project_copy_scope: projectCopyScope,
+    project_copy_scope_sha256: projectCopyScopeSha,
   });
 }
 
@@ -198,9 +343,15 @@ async function requirePinnedAuthority(
   input: ValidatedInput,
   pin: RegistryPin,
 ): Promise<void> {
-  await dependencies.require_current_scope(input.access, input.scope_snapshot);
   const current = await readRegistryPin(dependencies.registry);
   if (!sameRegistryPin(current, pin)) throw new Error("AI_SEARCH_FUNCTIONAL_PROBE_REGISTRY_CHANGED");
+  const currentCopyScope = await resolveFunctionalProjectCopyScope(dependencies, input);
+  if (canonicalProbeJson(currentCopyScope) !== canonicalProbeJson(input.project_copy_scope)) {
+    throw new AiSearchFunctionalProbeError(
+      "AI_SEARCH_FUNCTIONAL_PROBE_AUTHORITY_UNAVAILABLE",
+      "current Core project membership or target differs from the resolved provider scope",
+    );
+  }
 }
 
 function requestDigestPayload(input: ValidatedInput, pin: RegistryPin): Readonly<Record<string, unknown>> {
@@ -218,6 +369,8 @@ function requestDigestPayload(input: ValidatedInput, pin: RegistryPin): Readonly
     idempotency_key_sha256: "",
     namespace: AI_SEARCH_PRIMARY_NAMESPACE,
     generation: AI_SEARCH_PRIMARY_GENERATION,
+    project_copy_layout: input.project_copy_scope.layout,
+    project_copy_scope_sha256: input.project_copy_scope_sha256,
     registry_revision: pin.revision,
     registry_artifact_sha256: pin.artifact_sha256,
   });
@@ -334,16 +487,17 @@ export function createAiSearchFunctionalProbe(
   return Object.freeze({
     async probe(rawInput: AiSearchFunctionalProbeInput): Promise<AiSearchFunctionalProbeResponse> {
       const input = validateInput(rawInput, now());
-      const querySha = await probeSha256(new TextEncoder().encode(input.query));
-      const validated: ValidatedInput = Object.freeze({ ...input, query_sha256: querySha });
       let initialPin: RegistryPin;
       try {
-        await dependencies.require_current_scope(validated.access, validated.scope_snapshot);
+        await dependencies.require_current_scope(input.access, input.scope_snapshot);
         initialPin = await readRegistryPin(dependencies.registry);
       } catch (error) {
         if (error instanceof AiSearchFunctionalProbeError) throw error;
         fail("AI_SEARCH_FUNCTIONAL_PROBE_AUTHORITY_UNAVAILABLE", "owner scope or shadow registry could not be verified", error);
       }
+      const projectCopyContext = await validateProjectCopyScopeForSearch(dependencies, input);
+      const querySha = await probeSha256(new TextEncoder().encode(input.query));
+      const validated: ValidatedInput = Object.freeze({ ...input, ...projectCopyContext, query_sha256: querySha });
       checkRequestBudget(validated, now);
       const idemSha = await probeSha256(new TextEncoder().encode(validated.idempotency_key));
       const claimIdentity = await probeSha256(new TextEncoder().encode(canonicalProbeJson({
@@ -438,6 +592,10 @@ export function createAiSearchFunctionalProbe(
         await requirePinnedAuthority(dependencies, validated, initialPin);
         const candidates = decodeAiSearchSearchResult(request, rawResult, {
           expected_index_generation: AI_SEARCH_PRIMARY_GENERATION,
+          // The current g2 probe is folder-scoped; legacy flat keys are not a fallback here.
+          project_copy_layout: "PROJECT_COPY_V1",
+          expected_generation_metadata_value: validated.project_copy_scope.generation_metadata_value,
+          expected_project_copies: validated.project_copy_scope.copies,
           requested_lanes: ["SEM"],
           max_results: 1,
           max_preview_bytes: MAX_PREVIEW_BYTES,
@@ -447,7 +605,12 @@ export function createAiSearchFunctionalProbe(
           reasonCode = "AI_SEARCH_FUNCTIONAL_PROBE_NO_MATCH";
         } else {
           const candidate = candidates[0];
-          if (candidate === undefined || candidate.source_revision_ref !== validated.source_revision_ref || candidate.lane !== "SEM") {
+          const expectedCopy = validated.project_copy_scope.copies[0];
+          if (candidate === undefined || expectedCopy === undefined ||
+              candidate.source_revision_ref !== validated.source_revision_ref || candidate.lane !== "SEM" ||
+              candidate.metadata.provider_project_id !== expectedCopy.project_id ||
+              candidate.metadata.provider_project_membership_id !== expectedCopy.project_membership_id ||
+              candidate.metadata.provider_project_folder !== expectedCopy.folder_prefix) {
             throw new Error("AI_SEARCH_FUNCTIONAL_PROBE_CANDIDATE_SCOPE_MISMATCH");
           }
           const { proof_state: _proofState, ...locator } = candidate as LocatorCandidate & { readonly proof_state?: unknown };

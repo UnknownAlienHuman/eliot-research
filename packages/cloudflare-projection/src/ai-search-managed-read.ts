@@ -6,6 +6,9 @@ import {
   type RetrievalQueryAdmissionReceiptV1,
 } from "@eliotr/retrieval";
 import { createAiSearchScopeFilter, type AiSearchScopeFilter } from "./ai-search-scope-filter.js";
+import type { AiSearchProjectCopyScope } from "./ai-search-scope-filter.js";
+import { managedProjectFolderPrefix, managedProjectGenerationMetadataValue } from "./managed-project-path.js";
+import { projectionDigest } from "./canonical.js";
 import { AI_SEARCH_RERANKING_MODEL } from "./ai-search-profile.js";
 import { decodeAiSearchGenerationRegistrySnapshot } from "./ai-search-generation-registry-codec.js";
 import type { AiSearchGenerationRegistryService } from "./ai-search-generation-registry-contract.js";
@@ -25,7 +28,7 @@ export type AiSearchManagedReadErrorCode =
   | "AI_SEARCH_MANAGED_CAPABILITY_UNAVAILABLE"
   | "AI_SEARCH_MANAGED_REGISTRY_READ_FAILED" | "AI_SEARCH_MANAGED_REGISTRY_INVALID"
   | "AI_SEARCH_MANAGED_REGISTRY_CHANGED" | "AI_SEARCH_MANAGED_PROVIDER_CALL_FAILED"
-  | "AI_SEARCH_MANAGED_PROVIDER_RESPONSE_INVALID";
+  | "AI_SEARCH_MANAGED_PROVIDER_RESPONSE_INVALID" | "AI_SEARCH_MANAGED_PROJECT_SCOPE_INVALID";
 
 export class AiSearchManagedReadError extends Error {
   public readonly ambiguous_effect = "NONE" as const;
@@ -35,6 +38,7 @@ export class AiSearchManagedReadError extends Error {
 }
 export interface AiSearchManagedSearchAuthority {
   readonly namespace: string; readonly instance_id: string; readonly index_generation: string;
+  readonly target_profile_identity_sha256: string; readonly generation_metadata_value: string;
   readonly registry_revision: number; readonly registry_artifact_sha256: string; readonly active: boolean;
   readonly index_method: IndexMethod; readonly max_results: number; readonly max_preview_bytes: number;
   readonly match_threshold: number; readonly reranking?: boolean;
@@ -92,12 +96,20 @@ export interface AiSearchManagedSearchPort {
   ) => Promise<AiSearchManagedSearchExecution>;
 }
 
+export type AiSearchManagedProjectCopyScopeResolver = (
+  request: ManagedRequest,
+  authority: AiSearchManagedSearchAuthority,
+) => Promise<AiSearchProjectCopyScope>;
+
 const MAX_RESULTS = 50, MAX_PREVIEW_BYTES = 64 * 1024;
 const MAX_PROVIDER_QUERY_CHARS = 100_000;
 const MANAGED_RANKING_OUTCOME_PROTOCOL: ManagedRankingOutcome["protocol"] = "eliotr.managed-ranking-outcome.v1";
 const EMPTY_MANAGED_CANDIDATES: ManagedCandidates = Object.freeze([]);
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u, INSTANCE_ID = /^[a-z0-9_]+(?:-[a-z0-9_]+)*$/u, SHA256 = /^[a-f0-9]{64}$/u;
-const AUTHORITY_KEYS = new Set(["active", "fusion_method", "index_generation", "index_method", "instance_id", "keyword_match_mode", "match_threshold", "max_preview_bytes", "max_results", "namespace", "registry_artifact_sha256", "registry_revision", "reranking"]);
+const AUTHORITY_KEYS = new Set(["active", "fusion_method", "generation_metadata_value", "index_generation", "index_method", "instance_id", "keyword_match_mode", "match_threshold", "max_preview_bytes", "max_results", "namespace", "registry_artifact_sha256", "registry_revision", "reranking", "target_profile_identity_sha256"]);
+const PROJECT_COPY_SCOPE_KEYS = new Set(["copies", "generation_metadata_value", "layout", "representative_policy", "scope_snapshot_digest", "scope_snapshot_id", "scope_snapshot_revision", "target"]);
+const PROJECT_COPY_TARGET_KEYS = new Set(["managed_generation", "managed_instance_id", "namespace", "target_profile_identity_sha256"]);
+const PROJECT_COPY_FACT_KEYS = new Set(["folder_prefix", "membership_generation", "project_id", "project_membership_id", "source_owner_generation", "source_revision_ref"]);
 const POLICY_KEYS = new Set(["expected_namespace", "match_threshold", "max_preview_bytes"]), INDEX_KEYS = new Set(["keyword", "vector"]);
 const RETRIEVAL_BUDGET_KEYS = new Set(["candidate_limit", "evidence_limit", "max_evidence_bytes", "scan_limit"]);
 
@@ -130,6 +142,10 @@ function authority(input: AiSearchManagedSearchAuthority): AiSearchManagedSearch
   const value = object(input, "AI Search managed authority", AUTHORITY_KEYS), namespace = identifier(value.namespace, "authority.namespace");
   if (typeof value.instance_id !== "string" || value.instance_id.length > 64 || !INSTANCE_ID.test(value.instance_id)) failure("AI_SEARCH_MANAGED_INPUT_INVALID", "authority.instance_id is not canonical");
   const generation = identifier(value.index_generation, "authority.index_generation");
+  const generationMetadata = value.generation_metadata_value;
+  if (typeof generationMetadata !== "string" || !SHA256.test(generationMetadata)) failure("AI_SEARCH_MANAGED_INPUT_INVALID", "authority.generation_metadata_value must be a full lowercase SHA-256 digest");
+  const targetProfileIdentity = value.target_profile_identity_sha256;
+  if (typeof targetProfileIdentity !== "string" || !SHA256.test(targetProfileIdentity)) failure("AI_SEARCH_MANAGED_INPUT_INVALID", "authority.target_profile_identity_sha256 must be a full lowercase SHA-256 digest");
   const revision = integer(value.registry_revision, "authority.registry_revision", 1, Number.MAX_SAFE_INTEGER);
   if (typeof value.registry_artifact_sha256 !== "string" || !SHA256.test(value.registry_artifact_sha256)) failure("AI_SEARCH_MANAGED_INPUT_INVALID", "authority.registry_artifact_sha256 must be lowercase SHA-256");
   if (typeof value.active !== "boolean") failure("AI_SEARCH_MANAGED_INPUT_INVALID", "authority.active must be boolean");
@@ -141,7 +157,9 @@ function authority(input: AiSearchManagedSearchAuthority): AiSearchManagedSearch
   if (value.fusion_method !== undefined && value.fusion_method !== "rrf" && value.fusion_method !== "max") failure("AI_SEARCH_MANAGED_INPUT_INVALID", "authority.fusion_method is unsupported");
   if (value.keyword_match_mode !== undefined && value.keyword_match_mode !== "and" && value.keyword_match_mode !== "or") failure("AI_SEARCH_MANAGED_INPUT_INVALID", "authority.keyword_match_mode is unsupported");
   return Object.freeze({
-    namespace, instance_id: value.instance_id, index_generation: generation, registry_revision: revision,
+    namespace, instance_id: value.instance_id, index_generation: generation,
+    target_profile_identity_sha256: targetProfileIdentity, generation_metadata_value: generationMetadata,
+    registry_revision: revision,
     registry_artifact_sha256: value.registry_artifact_sha256, active: value.active,
     index_method: Object.freeze({ vector: method.vector, keyword: method.keyword }), max_results: maxResults,
     max_preview_bytes: maxPreview, match_threshold: value.match_threshold,
@@ -166,6 +184,79 @@ function requestQuery(request: ManagedRequest): string {
     seen.add(bounded);
   });
   return request.raw_query;
+}
+
+async function authorizedProjectCopyScope(
+  raw: AiSearchProjectCopyScope,
+  request: ManagedRequest,
+  active: AiSearchManagedSearchAuthority,
+): Promise<AiSearchProjectCopyScope> {
+  const value = object(raw, "Core project-copy scope", PROJECT_COPY_SCOPE_KEYS);
+  if (value.layout !== "PROJECT_COPY_V1" ||
+      value.scope_snapshot_id !== request.scope_snapshot.snapshot_id ||
+      value.scope_snapshot_revision !== request.scope_snapshot.revision ||
+      value.scope_snapshot_digest !== request.scope_snapshot.digest ||
+      value.generation_metadata_value !== active.generation_metadata_value ||
+      value.representative_policy !== "ONE_CANONICAL_COPY_PER_SOURCE_REVISION") {
+    failure("AI_SEARCH_MANAGED_INPUT_INVALID", "Core project-copy scope differs from the frozen request or active generation");
+  }
+  const target = object(value.target, "Core project-copy target", PROJECT_COPY_TARGET_KEYS);
+  if (target.namespace !== active.namespace || target.managed_instance_id !== active.instance_id ||
+      target.managed_generation !== active.index_generation ||
+      target.target_profile_identity_sha256 !== active.target_profile_identity_sha256) {
+    failure("AI_SEARCH_MANAGED_INPUT_INVALID", "Core project-copy scope targets another managed generation");
+  }
+  const expectedGenerationMetadata = await managedProjectGenerationMetadataValue(active.index_generation);
+  if (expectedGenerationMetadata !== active.generation_metadata_value) {
+    failure("AI_SEARCH_MANAGED_REGISTRY_INVALID", "managed generation metadata digest does not match its full identity");
+  }
+  if (!Array.isArray(value.copies) || value.copies.length !== request.scope_snapshot.member_source_revision_refs.length) {
+    failure("AI_SEARCH_MANAGED_INPUT_INVALID", "Core project-copy scope must select one copy per frozen source revision");
+  }
+  const rawCopies = value.copies as unknown[];
+  const sourceRefs = [...request.scope_snapshot.member_source_revision_refs].sort();
+  const observedRefs: string[] = [];
+  const copies: AiSearchProjectCopyScope["copies"][number][] = [];
+  for (const rawCopy of rawCopies) {
+    const copy = object(rawCopy, "Core project-copy membership", PROJECT_COPY_FACT_KEYS);
+    const sourceRevision = identifier(copy.source_revision_ref, "project copy source_revision_ref");
+    const sourceOwnerGeneration = identifier(copy.source_owner_generation, "project copy source_owner_generation");
+    if (request.scope_snapshot.source_owner_generations[sourceRevision] !== sourceOwnerGeneration) {
+      failure("AI_SEARCH_MANAGED_INPUT_INVALID", "Core project-copy source owner generation differs from the frozen ScopeSnapshot");
+    }
+    const projectId = identifier(copy.project_id, "project copy project_id");
+    const membershipId = identifier(copy.project_membership_id, "project copy project_membership_id");
+    const membershipGeneration = integer(copy.membership_generation, "project copy membership_generation", 1, Number.MAX_SAFE_INTEGER);
+    if (membershipId !== `project:${projectId}:generation:${membershipGeneration}`) {
+      failure("AI_SEARCH_MANAGED_INPUT_INVALID", "Core project-copy membership identity is inconsistent");
+    }
+    const folderPrefix = await managedProjectFolderPrefix({
+      instance_id: active.instance_id,
+      projection_generation: active.index_generation,
+      source_revision_ref: sourceRevision,
+      project_id: projectId,
+      project_membership_id: membershipId,
+      membership_generation: membershipGeneration,
+    });
+    if (copy.folder_prefix !== folderPrefix) {
+      failure("AI_SEARCH_MANAGED_INPUT_INVALID", "Core project folder hash does not match its frozen source and membership facts");
+    }
+    copies.push(Object.freeze({
+      source_revision_ref: sourceRevision,
+      source_owner_generation: sourceOwnerGeneration,
+      project_id: projectId,
+      project_membership_id: membershipId,
+      membership_generation: membershipGeneration,
+      folder_prefix: folderPrefix,
+    }));
+    observedRefs.push(sourceRevision);
+  }
+  observedRefs.sort();
+  if (sourceRefs.some((ref, index) => ref !== observedRefs[index]) ||
+      new Set(observedRefs).size !== observedRefs.length) {
+    failure("AI_SEARCH_MANAGED_INPUT_INVALID", "Core project-copy scope does not exactly cover the frozen source revisions");
+  }
+  return Object.freeze({ ...raw, copies: Object.freeze(copies) });
 }
 function requestCandidateLimit(request: ManagedRequest): number | undefined {
   if (request.budgets === undefined) return undefined;
@@ -196,7 +287,7 @@ function expansion(value: ManagedExpansion): 0 | 1 | 2 | 3 {
   return value;
 }
 function routingFingerprint(value: AiSearchManagedSearchAuthority): string {
-  return JSON.stringify([value.namespace, value.instance_id, value.index_generation, value.index_method, value.max_results, value.max_preview_bytes, value.match_threshold, value.reranking, value.fusion_method ?? null, value.keyword_match_mode ?? null]);
+  return JSON.stringify([value.namespace, value.instance_id, value.index_generation, value.target_profile_identity_sha256, value.generation_metadata_value, value.index_method, value.max_results, value.max_preview_bytes, value.match_threshold, value.reranking, value.fusion_method ?? null, value.keyword_match_mode ?? null]);
 }
 function namespaceBinding(namespace: AiSearchNamespaceLike): void {
   if (typeof namespace !== "object" || namespace === null || typeof namespace.get !== "function") failure("AI_SEARCH_MANAGED_INPUT_INVALID", "AI Search namespace binding is invalid");
@@ -316,8 +407,25 @@ export async function resolveAiSearchManagedSearchAuthority(rawSnapshot: unknown
   if (generation === null) failure("AI_SEARCH_MANAGED_NOT_PROMOTED", "AI Search registry has no promoted generation");
   const record = snapshot.artifact.registry.generations.find((candidate) => candidate.generation === generation);
   if (record === undefined || record.state !== "ACTIVE") failure("AI_SEARCH_MANAGED_REGISTRY_INVALID", "AI Search active head does not resolve to an ACTIVE record");
+  const profile = Object.freeze({
+    ...record.profile,
+    index_method: Object.freeze({ ...record.profile.index_method }),
+    metadata_fields: Object.freeze([...record.profile.metadata_fields].sort()),
+  });
+  let targetProfileIdentity: string;
+  let generationMetadataValue: string;
+  try {
+    [targetProfileIdentity, generationMetadataValue] = await Promise.all([
+      projectionDigest(profile),
+      managedProjectGenerationMetadataValue(record.generation),
+    ]);
+  } catch (cause) {
+    failure("AI_SEARCH_MANAGED_REGISTRY_INVALID", "active AI Search profile identity could not be derived", false, cause);
+  }
   return authority({
     namespace: snapshot.artifact.namespace, instance_id: record.profile.id, index_generation: record.generation,
+    target_profile_identity_sha256: targetProfileIdentity,
+    generation_metadata_value: generationMetadataValue,
     registry_revision: snapshot.artifact.revision, registry_artifact_sha256: snapshot.artifact_sha256, active: true,
     index_method: record.profile.index_method, max_results: record.profile.max_num_results,
     max_preview_bytes: rules.max_preview_bytes, match_threshold: rules.match_threshold,
@@ -326,15 +434,17 @@ export async function resolveAiSearchManagedSearchAuthority(rawSnapshot: unknown
     ...(record.profile.keyword_match_mode === undefined ? {} : { keyword_match_mode: record.profile.keyword_match_mode }),
   });
 }
-export function compileAiSearchManagedSearchRequest(
+async function compileAiSearchManagedSearchRequestWithScope(
   request: ManagedRequest,
   lanes: ManagedLanes,
   contextExpansion: ManagedExpansion,
   inputAuthority: AiSearchManagedSearchAuthority,
+  inputProjectCopyScope: AiSearchProjectCopyScope,
   executionContext?: ManagedSearchExecutionContextV1,
-): AiSearchManagedSearchRequest {
+): Promise<{ readonly request: AiSearchManagedSearchRequest; readonly project_copy_scope: AiSearchProjectCopyScope }> {
   const active = authority(inputAuthority);
   if (!active.active) failure("AI_SEARCH_MANAGED_NOT_PROMOTED", "managed generation is not promoted");
+  const projectCopyScope = await authorizedProjectCopyScope(inputProjectCopyScope, request, active);
   let plan: ReturnType<typeof compileQueryPlan>;
   try { plan = compileQueryPlan(request); }
   catch (cause) { failure("AI_SEARCH_MANAGED_INPUT_INVALID", "retrieval request has no supported query plan", false, cause); }
@@ -354,10 +464,14 @@ export function compileAiSearchManagedSearchRequest(
   if (type !== "vector" && active.keyword_match_mode === undefined) failure("AI_SEARCH_MANAGED_INPUT_INVALID", "keyword active profile omits keyword_match_mode");
   let filters: AiSearchScopeFilter;
   try {
-    filters = createAiSearchScopeFilter(request.scope_snapshot.member_source_revision_refs, active.index_generation);
+    filters = createAiSearchScopeFilter(
+      request.scope_snapshot.member_source_revision_refs,
+      active.generation_metadata_value,
+      projectCopyScope.copies,
+    );
   } catch (cause) {
     failure("AI_SEARCH_MANAGED_INPUT_INVALID",
-      "frozen scope cannot fit an exact single-query AI Search filter; split the request explicitly", false, cause);
+      "frozen source, generation, and project scope cannot fit one exact AI Search filter", false, cause);
   }
   const retrieval = Object.freeze({
     filters,
@@ -368,7 +482,7 @@ export function compileAiSearchManagedSearchRequest(
     ...(type === "vector" ? {} : { keyword_match_mode: active.keyword_match_mode }),
     boost_by: Object.freeze([]) as readonly never[], metadata_only: false as const,
   });
-  return Object.freeze({
+  const compiled = Object.freeze({
     query,
     ai_search_options: Object.freeze({
       query_rewrite: Object.freeze({ enabled: false as const }),
@@ -380,16 +494,39 @@ export function compileAiSearchManagedSearchRequest(
       }),
     }),
   });
+  return Object.freeze({ request: compiled, project_copy_scope: projectCopyScope });
 }
-export function createAiSearchManagedSearchPort(namespace: AiSearchNamespaceLike, inputAuthority: AiSearchManagedSearchAuthority): AiSearchManagedSearchPort {
+
+export async function compileAiSearchManagedSearchRequest(
+  request: ManagedRequest,
+  lanes: ManagedLanes,
+  contextExpansion: ManagedExpansion,
+  inputAuthority: AiSearchManagedSearchAuthority,
+  inputProjectCopyScope: AiSearchProjectCopyScope,
+  executionContext?: ManagedSearchExecutionContextV1,
+): Promise<AiSearchManagedSearchRequest> {
+  return (await compileAiSearchManagedSearchRequestWithScope(
+    request, lanes, contextExpansion, inputAuthority, inputProjectCopyScope, executionContext,
+  )).request;
+}
+export function createAiSearchManagedSearchPort(
+  namespace: AiSearchNamespaceLike,
+  inputAuthority: AiSearchManagedSearchAuthority,
+  resolveProjectCopyScope: AiSearchManagedProjectCopyScopeResolver,
+): AiSearchManagedSearchPort {
   namespaceBinding(namespace); const active = authority(inputAuthority);
+  if (typeof resolveProjectCopyScope !== "function") failure("AI_SEARCH_MANAGED_INPUT_INVALID", "Core project-copy scope resolver is required");
+  const readProjectCopyScope = async (request: ManagedRequest): Promise<AiSearchProjectCopyScope> => {
+    return resolveProjectCopyScope(request, active);
+  };
   const preflightSearchManaged = async (
     request: ManagedRequest,
     lanes: ManagedLanes,
     contextExpansion: ManagedExpansion,
     context?: ManagedSearchExecutionContextV1,
   ): Promise<void> => {
-    compileAiSearchManagedSearchRequest(request, lanes, contextExpansion, active, context);
+    const projectCopyScope = await readProjectCopyScope(request);
+    await compileAiSearchManagedSearchRequestWithScope(request, lanes, contextExpansion, active, projectCopyScope, context);
   };
   const searchManaged = async (
     request: ManagedRequest,
@@ -399,7 +536,11 @@ export function createAiSearchManagedSearchPort(namespace: AiSearchNamespaceLike
     context?: ManagedSearchExecutionContextV1,
   ): Promise<AiSearchManagedSearchExecution> => {
     void admission;
-    const compiled = compileAiSearchManagedSearchRequest(request, lanes, contextExpansion, active, context);
+    const projectCopyScope = await readProjectCopyScope(request);
+    const compiledResult = await compileAiSearchManagedSearchRequestWithScope(
+      request, lanes, contextExpansion, active, projectCopyScope, context,
+    );
+    const compiled = compiledResult.request;
     const rerankRequested = compileQueryPlan(request).rerank;
     if (compiled.ai_search_options.retrieval.max_num_results === 0 ||
         request.scope_snapshot.member_source_revision_refs.length === 0) {
@@ -425,6 +566,9 @@ export function createAiSearchManagedSearchPort(namespace: AiSearchNamespaceLike
         : request;
       const decodedCandidates = decodeAiSearchSearchResult(decodeRequest, raw, {
         expected_index_generation: active.index_generation, requested_lanes: lanes,
+        project_copy_layout: compiledResult.project_copy_scope.layout,
+        expected_generation_metadata_value: compiledResult.project_copy_scope.generation_metadata_value,
+        expected_project_copies: compiledResult.project_copy_scope.copies,
         max_results: providerCandidateLimit,
         max_preview_bytes: active.max_preview_bytes,
       });
@@ -473,7 +617,12 @@ async function readAuthority(registry: Pick<AiSearchGenerationRegistryService, "
   if (snapshot === null) failure("AI_SEARCH_MANAGED_NOT_PROMOTED", "AI Search registry does not exist");
   return resolveAiSearchManagedSearchAuthority(snapshot, rules);
 }
-export function createRegistryBackedAiSearchManagedSearchPort(registry: Pick<AiSearchGenerationRegistryService, "read">, namespace: AiSearchNamespaceLike, inputPolicy: AiSearchManagedSearchPolicy): AiSearchManagedSearchPort {
+export function createRegistryBackedAiSearchManagedSearchPort(
+  registry: Pick<AiSearchGenerationRegistryService, "read">,
+  namespace: AiSearchNamespaceLike,
+  inputPolicy: AiSearchManagedSearchPolicy,
+  resolveProjectCopyScope: AiSearchManagedProjectCopyScopeResolver,
+): AiSearchManagedSearchPort {
   if (typeof registry !== "object" || registry === null || typeof registry.read !== "function") failure("AI_SEARCH_MANAGED_INPUT_INVALID", "AI Search registry service is invalid");
   namespaceBinding(namespace); const rules = policy(inputPolicy);
   const preflightSearchManaged = async (
@@ -483,7 +632,7 @@ export function createRegistryBackedAiSearchManagedSearchPort(registry: Pick<AiS
     context?: ManagedSearchExecutionContextV1,
   ): Promise<void> => {
     const before = await readAuthority(registry, rules);
-    await createAiSearchManagedSearchPort(namespace, before)
+    await createAiSearchManagedSearchPort(namespace, before, resolveProjectCopyScope)
       .preflightSearchManaged(request, lanes, contextExpansion, context);
   };
   const searchManaged = async (
@@ -494,7 +643,7 @@ export function createRegistryBackedAiSearchManagedSearchPort(registry: Pick<AiS
     context?: ManagedSearchExecutionContextV1,
   ): Promise<AiSearchManagedSearchExecution> => {
     const before = await readAuthority(registry, rules);
-    const execution = await createAiSearchManagedSearchPort(namespace, before)
+    const execution = await createAiSearchManagedSearchPort(namespace, before, resolveProjectCopyScope)
       .searchManaged(request, lanes, contextExpansion, admission, context);
     const after = await readAuthority(registry, rules);
     if (routingFingerprint(before) !== routingFingerprint(after)) failure("AI_SEARCH_MANAGED_REGISTRY_CHANGED", "AI Search active generation changed during retrieval", true);
@@ -508,6 +657,16 @@ export function createRegistryBackedAiSearchManagedSearchPort(registry: Pick<AiS
     searchManaged,
   });
 }
-export function createD1BackedAiSearchManagedSearchPort(database: D1Database, namespace: AiSearchNamespaceLike, rules: AiSearchManagedSearchPolicy): AiSearchManagedSearchPort {
-  return createRegistryBackedAiSearchManagedSearchPort(createAiSearchGenerationRegistryService(createD1AiSearchGenerationRegistryStore(database)), namespace, rules);
+export function createD1BackedAiSearchManagedSearchPort(
+  database: D1Database,
+  namespace: AiSearchNamespaceLike,
+  rules: AiSearchManagedSearchPolicy,
+  resolveProjectCopyScope: AiSearchManagedProjectCopyScopeResolver,
+): AiSearchManagedSearchPort {
+  return createRegistryBackedAiSearchManagedSearchPort(
+    createAiSearchGenerationRegistryService(createD1AiSearchGenerationRegistryStore(database)),
+    namespace,
+    rules,
+    resolveProjectCopyScope,
+  );
 }

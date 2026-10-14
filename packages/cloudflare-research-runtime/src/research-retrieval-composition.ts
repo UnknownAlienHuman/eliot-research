@@ -38,6 +38,7 @@ import {
 import type { LocatorCandidate, ResolvedEvidence, RetrievalLane, ScopeSnapshot } from "@eliotr/contracts";
 import type { RetrievalRequest, RetrievalResult } from "@eliotr/retrieval";
 import type { AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
+import { createD1ProjectCopyScopeResolver } from "@eliotr/cloudflare-navigation";
 import { createExactPhraseVerifier } from "./research-exact-search.js";
 import { createD1RetrievalQueryAdmissionPort } from "./research-retrieval-admission.js";
 import { createD1RetrievalSettlementOwnerPort } from "./research-retrieval-settlement-owner.js";
@@ -165,10 +166,16 @@ async function createHeldScopeRetrievalQuery(
   const exact = createExactLaneExecutor(exactPort);
   const lexPort = createD1SearchLexPort({ search_database: env.SEARCH_DB, core_database: env.CORE_DB });
   const lex = createLexLaneExecutor(lexPort);
+  const projectCopyScopeResolver = createD1ProjectCopyScopeResolver({
+    database: env.CORE_DB,
+    access,
+    require_current_scope: scopePorts.requireCurrentScope,
+  });
   const sem = env.AI_SEARCH === undefined ? null : createSemLaneExecutor(createD1BackedAiSearchManagedSearchPort(
     env.SEARCH_DB,
     env.AI_SEARCH,
     { expected_namespace: AI_SEARCH_PRIMARY_NAMESPACE, max_preview_bytes: 4096, match_threshold: 0 },
+    projectCopyScopeResolver,
   ));
   const lanes = {
     executorFor(lane: RetrievalLane) {
