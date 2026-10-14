@@ -48,6 +48,7 @@ function copy(projectId: string, sourceId = "source-a"): ManagedRequiredProjectR
     project_id: projectId,
     project_generation: 1,
     project_owner_principal_ref: `owner-${projectId}`,
+    project_owner_deployment_generation: "deployment-1",
     namespace: "eliot",
     managed_instance_id: AI_SEARCH_PRIMARY_PROJECTION_PROFILE.id,
     managed_generation: AI_SEARCH_PRIMARY_PROJECTION_PROFILE.generation,
@@ -80,6 +81,7 @@ function copy(projectId: string, sourceId = "source-a"): ManagedRequiredProjectR
     project_owner_read_policy_disclosure_ceiling: "private",
     project_owner_read_policy_expires_at: OWNER_EXPIRY,
     membership_generation: 1,
+    membership_role: "selected",
     membership_valid_from: "2026-01-01T00:00:00.000Z",
     membership_valid_to: null,
   };
@@ -175,13 +177,13 @@ async function setup(rows: readonly ManagedRequiredProjectRevisionCopy[], option
   let currentRows = normalizeRows(options.currentRows?.() ?? rows);
   const setPort: ManagedRequiredSetPort = {
     async readFence() { return {
-      authority_revision: 9,
+      assignment_heads_sha256: SHA_A,
       assigned_project_count: new Set(currentRows.map((row) => row.project_id)).size,
       stale_assignment_count: 0,
       profile_mismatch_count: 0,
     }; },
     async readPage() {
-      return { authority_revision: 9, rows: normalizeRows(currentRows), next_cursor: null };
+      return { rows: normalizeRows(currentRows), next_cursor: null };
     },
   };
   const documentPort: ManagedTargetManifestDocumentPort = {
@@ -280,7 +282,7 @@ describe("managed target-wide desired-item manifest", () => {
     let pages = 0;
     const driftPort: ManagedRequiredSetPort = {
       async readFence() { return {
-        authority_revision: 9,
+        assignment_heads_sha256: SHA_A,
         assigned_project_count: 2,
         stale_assignment_count: 0,
         profile_mismatch_count: 0,
@@ -288,13 +290,13 @@ describe("managed target-wide desired-item manifest", () => {
       async readPage() {
         pages += 1;
         if (pages === 1) current = [...mutate(current)];
-        return { authority_revision: 9, rows: pages === 1
+        return { rows: pages % 2 === 1
           ? bindCurrentProfile([copy("project-a"), copy("project-b")])
           : current, next_cursor: null };
       },
     };
     await expect(buildManagedTargetManifest({ ...state.input, required_set: driftPort })).rejects.toMatchObject({
-      code: "MANAGED_TARGET_MANIFEST_SOURCE_FENCE_CHANGED",
+      code: "MANAGED_REQUIRED_SET_FENCE_CHANGED",
     });
     expect([...state.store.objects.keys()].some((key) => key.includes("/roots/"))).toBe(false);
   });
@@ -307,6 +309,35 @@ describe("managed target-wide desired-item manifest", () => {
     const secondReceipt = await buildManagedTargetManifest(second.input);
     expect(secondReceipt.desired_item_set_digest).toBe(firstReceipt.desired_item_set_digest);
     expect(secondReceipt.eligibility_digest).not.toBe(firstReceipt.eligibility_digest);
+  });
+
+  it("keeps desired items and target currentness stable through a title-only project revision", async () => {
+    const original = copy("project-a");
+    const state = await setup([original]);
+    const readDocument = state.input.documents.readDocument;
+    state.input.documents.readDocument = async (input) => {
+      state.setCurrentRows([{ ...original, project_generation: 99 }]);
+      return readDocument(input);
+    };
+    const first = await buildManagedTargetManifest(state.input);
+    const secondState = await setup([{ ...original, project_generation: 99 }]);
+    const second = await buildManagedTargetManifest(secondState.input);
+    expect(second.desired_item_set_digest).toBe(first.desired_item_set_digest);
+    expect(second.target_fence).toEqual(first.target_fence);
+  });
+
+  it("rejects a target assignment change during staging before publishing a root", async () => {
+    const state = await setup([copy("project-a")]);
+    const readFence = state.input.required_set.readFence;
+    let fenceReads = 0;
+    state.input.required_set.readFence = async (target, asOf) => ({
+      ...await readFence(target, asOf),
+      assignment_heads_sha256: ++fenceReads === 1 ? SHA_A : SHA_B,
+    });
+    await expect(buildManagedTargetManifest(state.input)).rejects.toMatchObject({
+      code: "MANAGED_REQUIRED_SET_FENCE_CHANGED",
+    });
+    expect([...state.store.objects.keys()].some((key) => key.includes("/roots/"))).toBe(false);
   });
 
   it("reads and projects one required copy at a time in enumerator order", async () => {
@@ -368,7 +399,7 @@ describe("managed target-wide desired-item manifest", () => {
     const unenumerated: ManagedRequiredSetPort = {
       async readFence() {
         reads += 1;
-        return { authority_revision: 9, assigned_project_count: 1, stale_assignment_count: 0, profile_mismatch_count: 0 };
+        return { assignment_heads_sha256: SHA_A, assigned_project_count: 1, stale_assignment_count: 0, profile_mismatch_count: 0 };
       },
       async readPage() { throw new Error("invalid profile must be rejected before Core enumeration"); },
     };

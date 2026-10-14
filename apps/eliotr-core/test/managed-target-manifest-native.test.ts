@@ -135,7 +135,7 @@ describe("managed target manifest Core/R2 composition", () => {
 
     const receipt = await composer().assemble(fixture.target);
     expect(receipt).toMatchObject({
-      protocol: "eliotr.managed-target-desired-items.v1",
+      protocol: "eliotr.managed-target-desired-items.v2",
       project_revision_copy_count: 1,
       desired_item_count: 1,
       copy_layout: "PROJECT_COPY_V1",
