@@ -252,9 +252,9 @@ export function createProjectCreationController(
   /** The one commit path: an acknowledgement plus a canonical row that matches it exactly. */
   function commit(page: ProjectListView): ProjectCreationState {
     const acknowledged = receipt?.project;
-    if (acknowledged === undefined) return replace({ phase: "unconfirmed", readback: page, project: undefined });
+    if (acknowledged === undefined) return replace({ phase: "unconfirmed", receipt, readback: page, project: undefined });
     const matched = canonicalMatch(acknowledged, page);
-    if (matched === undefined) return replace({ phase: "unconfirmed", readback: page, project: undefined });
+    if (matched === undefined) return replace({ phase: "unconfirmed", receipt, readback: page, project: undefined });
     project = matched;
     readback = page;
     invalid = undefined;

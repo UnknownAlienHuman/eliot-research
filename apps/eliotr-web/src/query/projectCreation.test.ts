@@ -160,6 +160,21 @@ async function fixture(): Promise<Fixture> {
 }
 
 describe("New Project mutation controller", () => {
+  it("retains an acknowledgement across a foreign readback for a later matching reconciliation", async () => {
+    const test = await fixture();
+    test.reply(createdWire(createdRow), listWire([earlierRow]));
+    test.controller.setTitle(title);
+    test.controller.setSourceIds(sourceIds);
+    test.controller.setKey("intent-reconcile");
+    const pending = await test.controller.submit(signal());
+    expect(pending.phase).toBe("unconfirmed");
+    expect(pending.receipt?.project?.project_id).toBe("project-new");
+    test.reply(createdWire(createdRow), listWire([earlierRow, createdRow]));
+    expect((await test.controller.readStatus(signal())).phase).toBe("confirmed");
+    expect(test.committed).toHaveLength(1);
+    expect(test.bodies()).toHaveLength(1);
+    test.dispose();
+  });
   it("allows a subscribed UI to read state without emitting another notification", async () => {
     const test = await fixture();
     const observed: string[] = [];
