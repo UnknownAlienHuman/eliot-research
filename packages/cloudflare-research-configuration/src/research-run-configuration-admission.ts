@@ -10,6 +10,8 @@ export interface ResearchRunConfigurationAdmissionInputV1 {
   readonly scope_expression: QueryRequest["scope_expression"];
   readonly new_run: boolean;
   readonly configuration_required?: number;
+  /** Explicit owner-selected configuration project from the additive v3 run transport. */
+  readonly selected_project_id?: string;
 }
 
 export interface ResearchRunConfigurationAdmissionDependenciesV1<ResolvedConfiguration> {
@@ -49,11 +51,12 @@ export async function resolveResearchRunConfigurationAdmission<ResolvedConfigura
   dependencies: ResearchRunConfigurationAdmissionDependenciesV1<ResolvedConfiguration>,
 ): Promise<ResolvedConfiguration> {
   if (input.new_run) {
+    const selectedProjectId = input.selected_project_id === undefined
+      ? uniqueProjectScopeId(input.scope_expression, dependencies.require_single_owned_project)
+      : input.selected_project_id;
     return dependencies.capture({
       ...input.actor,
-      select_project_configuration: () => dependencies.select_current_project_configuration(
-        uniqueProjectScopeId(input.scope_expression, dependencies.require_single_owned_project),
-      ),
+      select_project_configuration: () => dependencies.select_current_project_configuration(selectedProjectId),
     });
   }
   if (input.configuration_required === 0) return dependencies.read(input.actor);

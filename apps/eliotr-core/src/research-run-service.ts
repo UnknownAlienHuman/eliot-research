@@ -49,10 +49,41 @@ function checkQuery(value: unknown): string { if (!isResearchQuestionText(value)
 function checkScope(value: unknown, maximumSelectedSources = 64): QueryRequest["scope_expression"] { const parsed = ScopeExpressionSchema.safeParse(value); if (!parsed.success) fail("RESEARCH_INPUT_INVALID", "scope_expression is invalid"); const m = inspectScopeExpression(parsed.data); if (m.depth > 8 || m.atom_count > 16 || m.selected_source_count > maximumSelectedSources) fail("RESEARCH_INPUT_LIMIT", "scope_expression exceeds its bounds", 413); return parsed.data; }
 const BASE_REQUEST_KEYS = ["query", "product", "scope_expression", "literals", "evidence_grade", "budget_ref", "max_results"] as const;
 const RUN_V2_REQUEST_KEYS = [...BASE_REQUEST_KEYS, "request_version", "inquiry_protocol_ref"] as const;
+const RUN_V3_REQUEST_KEYS = [...BASE_REQUEST_KEYS, "request_version", "configuration_project_id"] as const;
+/** Strictly additive version tag; v1 and v2 never carry configuration_project_id. */
+export const RESEARCH_RUN_REQUEST_V3 = "eliotr.research-run-request.v3" as const;
 function exactKeys(record: Record<string, unknown>, expected: readonly string[] = BASE_REQUEST_KEYS): void {
   if (Object.keys(record).length !== expected.length || expected.some((key) => !Object.hasOwn(record, key))) {
     fail("RESEARCH_INPUT_INVALID", "request has unknown or missing fields");
   }
+}
+
+/**
+ * Owner research.run transport selection envelope for v3. The transmitted
+ * configuration_project_id exists only on this typed envelope: it never joins
+ * the canonical QueryRequest, so query bytes, the provider manifest and the
+ * R2 input payload stay byte-identical to v1/v2 and never leak an unknown wire
+ * field into a provider request.
+ */
+export interface ResearchRunTransportSelection {
+  readonly request_version: typeof RESEARCH_RUN_REQUEST_V3;
+  readonly configuration_project_id: string;
+}
+
+/** Validates the v3 key set and returns the exact selector bound to this body. */
+function parseResearchRunTransportSelection(raw: Record<string, unknown>): ResearchRunTransportSelection | null {
+  // Only a body that carries the selector enters this path at all; a v1 or v2
+  // body without it returns null and keeps its own version handling untouched.
+  if (!Object.hasOwn(raw, "configuration_project_id")) return null;
+  if (raw.request_version !== RESEARCH_RUN_REQUEST_V3) {
+    fail("RESEARCH_PROFILE_UNSUPPORTED", "research.run request version is unsupported", 422);
+  }
+  exactKeys(raw, RUN_V3_REQUEST_KEYS);
+  if (Object.hasOwn(raw, "inquiry_protocol_ref")) {
+    fail("RESEARCH_INPUT_INVALID", "request mixes the v3 configuration selector with the v2 inquiry protocol");
+  }
+  return Object.freeze({ request_version: RESEARCH_RUN_REQUEST_V3,
+    configuration_project_id: checkId(raw.configuration_project_id, "configuration_project_id") });
 }
 function checkLiteralsMax(record: Record<string, unknown>): number { if (!Array.isArray(record.literals) || record.literals.length !== 0) fail("RESEARCH_INPUT_INVALID", "literals must be empty"); if (!Number.isSafeInteger(record.max_results) || (record.max_results as number) < 1 || (record.max_results as number) > 16) fail("RESEARCH_INPUT_INVALID", "max_results is invalid"); return record.max_results as number; }
 export const FAST_SEARCH_PROFILE = "retrieval-fast-v1";
@@ -60,15 +91,12 @@ export function parseResearchQueryRequest(raw: unknown): QueryRequest { if (type
 export function parseResearchRunRequest(raw: unknown): QueryRequest {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) fail("RESEARCH_INPUT_INVALID", "run request must be an object");
   const r = raw as Record<string, unknown>;
+  // This parser owns v1 and v2 only. The v3 selector reaches the service through
+  // parseResearchRunTransportRequest, so a selector here is always an unknown key.
+  if (Object.hasOwn(r, "configuration_project_id")) fail("RESEARCH_INPUT_INVALID", "request has unknown or missing fields");
   const explicitV2 = Object.hasOwn(r, "request_version") || Object.hasOwn(r, "inquiry_protocol_ref");
   exactKeys(r, explicitV2 ? RUN_V2_REQUEST_KEYS : BASE_REQUEST_KEYS);
-  if (r.product !== "RESEARCH") fail("RESEARCH_PROFILE_UNSUPPORTED", "research.run requires product RESEARCH", 422);
-  if (r.evidence_grade !== "E0" && r.evidence_grade !== "E1" && r.evidence_grade !== "E2") fail("RESEARCH_PROFILE_UNSUPPORTED", "research.run supports grades E0-E2", 422);
-  if (r.budget_ref !== RUN_BUDGET) fail("RESEARCH_PROFILE_UNSUPPORTED", "research.run requires the bounded research budget profile", 422);
-  const base = {
-    query: checkQuery(r.query), product: "RESEARCH" as const, scope_expression: checkScope(r.scope_expression, OWNER_RESEARCH_MAX_SELECTED_SOURCES), literals: [] as const,
-    evidence_grade: r.evidence_grade as QueryRequest["evidence_grade"], budget_ref: RUN_BUDGET, max_results: checkLiteralsMax(r),
-  };
+  const base = parseResearchRunRequestBody(r);
   if (!explicitV2) return base;
   if (r.request_version !== RESEARCH_RUN_REQUEST_V2) fail("RESEARCH_PROFILE_UNSUPPORTED", "research.run request version is unsupported", 422);
   const parsedRef = VersionedRefSchema.safeParse(r.inquiry_protocol_ref);
@@ -84,7 +112,63 @@ export function parseResearchRunRequest(raw: unknown): QueryRequest {
   }
   return { ...base, request_version: RESEARCH_RUN_REQUEST_V2, inquiry_protocol_ref: parsedRef.data };
 }
+
+/**
+ * Shared canonical body parse for v1, v2 and v3. The v3 transport entry calls
+ * this after its own exact key-set validation, so every version produces the
+ * same seven canonical keys and the selector never reaches it.
+ */
+function parseResearchRunRequestBody(r: Record<string, unknown>): QueryRequest {
+  if (r.product !== "RESEARCH") fail("RESEARCH_PROFILE_UNSUPPORTED", "research.run requires product RESEARCH", 422);
+  if (r.evidence_grade !== "E0" && r.evidence_grade !== "E1" && r.evidence_grade !== "E2") fail("RESEARCH_PROFILE_UNSUPPORTED", "research.run supports grades E0-E2", 422);
+  if (r.budget_ref !== RUN_BUDGET) fail("RESEARCH_PROFILE_UNSUPPORTED", "research.run requires the bounded research budget profile", 422);
+  return {
+    query: checkQuery(r.query), product: "RESEARCH" as const, scope_expression: checkScope(r.scope_expression, OWNER_RESEARCH_MAX_SELECTED_SOURCES), literals: [] as const,
+    evidence_grade: r.evidence_grade as QueryRequest["evidence_grade"], budget_ref: RUN_BUDGET, max_results: checkLiteralsMax(r),
+  };
+}
+
+/** Strictly additive v3 owner transport: the validated canonical request plus its exact selection. */
+export interface ParsedResearchRunTransportRequest {
+  readonly request: QueryRequest;
+  readonly selection: ResearchRunTransportSelection | null;
+}
+
+/**
+ * Owner research.run v3 admission entry. The canonical request this returns is
+ * the exact v1 request: the selector is validated and removed first and never
+ * joins the canonical object, so no persisted payload or provider manifest
+ * observes it. v1 and v2 bodies pass through unchanged with no selection.
+ */
+export function parseResearchRunTransportRequest(raw: unknown): ParsedResearchRunTransportRequest {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) fail("RESEARCH_INPUT_INVALID", "run request must be an object");
+  const r = raw as Record<string, unknown>;
+  const selection = parseResearchRunTransportSelection(r);
+  if (selection === null) return { request: parseResearchRunRequest(raw), selection: null };
+  // The exact v3 key set is validated, so only the seven shared keys are handed
+  // to the canonical parse and the version tags cannot be re-read as v2.
+  return { request: parseResearchRunRequestBody({ query: r.query, product: r.product,
+    scope_expression: r.scope_expression, literals: r.literals, evidence_grade: r.evidence_grade,
+    budget_ref: r.budget_ref, max_results: r.max_results }), selection };
+}
 function idempotencyKey(context: AuthenticatedRequestContext): string { const key = context.request.headers.get("idempotency-key"); if (typeof key !== "string" || key.length < 1 || key.length > 256 || /[\u0000-\u0020\u007f]/u.test(key)) fail("RESEARCH_INPUT_INVALID", "idempotency-key header is required"); return key; }
+
+/**
+ * Identity digest for one owner run. The canonical request bytes are hashed
+ * first, then a validated v3 selection is bound on top. The canonical request
+ * never carries configuration_project_id, so without this second binding a
+ * repeated idempotency key with a different selector would derive the same
+ * operation_id and silently replay the originally captured configuration.
+ * v1 and v2 carry no selection and keep their exact existing digest.
+ */
+export async function researchRunIdentityDigest(
+  request: QueryRequest,
+  selection: ResearchRunTransportSelection | null,
+): Promise<string> {
+  const requestDigest = await shaHex(JSON.stringify(request));
+  if (selection === null) return requestDigest;
+  return shaHex(`${requestDigest}|${selection.request_version}|${selection.configuration_project_id}`);
+}
 // IMPLEMENTED_NOT_LIVE: ER-24 research.query retrieval composition over injected RetrievalQueryPorts with frozen 64-source scope-profile versioning; RETRIEVAL slice enablement remains separate.
 export const RETRIEVAL_SCOPE_PROFILE_VERSION = SERVER_RETRIEVAL_SCOPE_PROFILE.version;
 export const RETRIEVAL_SCOPE_MAX_SOURCES = SERVER_RETRIEVAL_SCOPE_PROFILE.max_sources;
@@ -155,7 +239,8 @@ export async function readResearchRunStatus(env: Env, context: AuthenticatedRequ
 export function createResearchRunService(env: Env): { run(context: AuthenticatedRequestContext, request: QueryRequest): Promise<{ investigation_ref: VersionedRef; workflow_instance_id: string }>; runStatus(context: AuthenticatedRequestContext, workflowInstanceId: string): Promise<ResearchRunStatus> } {
   return {
     async run(context, raw) {
-      const request = parseResearchRunRequest(raw);
+      const parsed = parseResearchRunTransportRequest(raw);
+      const request = parsed.request;
       const installedProtocol = request.inquiry_protocol_ref === undefined ? null : installedInquiryProtocolDefinition(request.inquiry_protocol_ref);
       if (context.client_class !== "owner_pwa" && installedProtocol !== null && installedProtocol.lane !== "exploratory") {
         fail("RESEARCH_PRODUCT_UNSUPPORTED", "Machine Research currently supports the exploratory protocol lane", 400);
@@ -163,7 +248,7 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       const inputGeneration = await env.CORE_DB.prepare("SELECT value FROM schema_state WHERE key='research_question_generation'").first<string>("value");
       if (inputGeneration !== "research-question-v2-utf8-envelopes") fail("RESEARCH_INPUT_SCHEMA_MISMATCH", "Research input requires Core migration 0069", 503);
       const key = idempotencyKey(context);
-      const requestDigest = await shaHex(JSON.stringify(request));
+      const requestDigest = await researchRunIdentityDigest(request, parsed.selection);
       const base = await shaHex(`${context.principal_ref}|${key}|${requestDigest}`);
       const hex = base.slice(0, 48);
       const investigation_id = checkId(`research-${hex}`, "investigation_id");
@@ -208,6 +293,7 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
         principal_ref: context.principal_ref, deployment_generation: admittedDeploymentGeneration });
       const admissionConfiguration = await resolveResearchRunAdmissionConfiguration(env, {
         actor: runConfigurationActor, context, scope_expression: request.scope_expression, new_run: pre === null,
+        ...(parsed.selection === null ? {} : { selected_project_id: parsed.selection.configuration_project_id }),
         ...(priorWorkflow === null ? {} : { configuration_required: priorWorkflow.configuration_required }),
         require_current_scope: async () => {
           const scopePorts = createD1ScopePorts(db, { principal_ref: context.principal_ref,
