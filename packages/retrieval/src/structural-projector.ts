@@ -16,6 +16,58 @@ const MAX_LINES = 131_072;
 const MAX_CONTEXT_BYTES = 4 * 1024;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 
+/**
+ * Explicit versioned layout of projected item copies.
+ *
+ * LEGACY_DEFAULT keeps the historical identity rule: one item key hashes the
+ * canonical section ID and the projection generation only, so every indexed
+ * project membership of one source revision yields one identical key. It stays
+ * the default so absent callers preserve the exact published key and content
+ * bytes and so existing readers keep resolving them.
+ *
+ * PROJECT_COPY_V1 additionally binds one explicit indexed project membership
+ * to the item key, which is what architecture section 6.4.1 requires for
+ * per-membership copies. Only the key changes there: section text, byte spans,
+ * the section digest and the content digest stay byte-identical to the legacy
+ * copy of that section. A future immutable shadow generation profile is the
+ * only caller authority that may select it, and it never rewrites an active
+ * or primary profile.
+ */
+export type MarkdownProjectCopyLayout = "LEGACY_DEFAULT" | "PROJECT_COPY_V1";
+
+const PROJECT_COPY_LAYOUTS: ReadonlySet<MarkdownProjectCopyLayout> = new Set([
+  "LEGACY_DEFAULT",
+  "PROJECT_COPY_V1",
+]);
+
+interface ResolvedProjectCopyLayout {
+  readonly layout: MarkdownProjectCopyLayout;
+  /** Indexed membership this copy belongs to; null only for LEGACY_DEFAULT. */
+  readonly project_membership_id: string | null;
+}
+
+function resolveProjectCopyLayout(input: MarkdownProjectionInput): ResolvedProjectCopyLayout {
+  const requested = input.project_copy_layout ?? "LEGACY_DEFAULT";
+  if (!PROJECT_COPY_LAYOUTS.has(requested)) {
+    fail("PROJECTION_INPUT_INVALID", "project copy layout is not a published layout");
+  }
+  if (requested === "LEGACY_DEFAULT") {
+    if (input.project_copy_membership_id !== undefined) {
+      fail("PROJECTION_INPUT_INVALID", "legacy layout takes no explicit project membership");
+    }
+    return Object.freeze({ layout: requested, project_membership_id: null });
+  }
+  const membership = input.project_copy_membership_id;
+  if (membership === undefined) {
+    fail("PROJECTION_INPUT_INVALID", "project copy v1 requires an indexed membership");
+  }
+  assertIdentifier(membership, "explicit project membership ID");
+  if (!input.project_membership_ids.includes(membership)) {
+    fail("PROJECTION_INPUT_INVALID", "explicit project membership is outside the recorded memberships");
+  }
+  return Object.freeze({ layout: requested, project_membership_id: membership });
+}
+
 export interface ProjectionSpan {
   readonly item_key: string;
   readonly canonical_section_id: string;
@@ -37,6 +89,20 @@ export interface MarkdownProjectionInput {
   readonly markdown: string;
   readonly instruction_taint: ProjectionItem["instruction_taint"];
   readonly project_membership_ids: readonly string[];
+  /**
+   * Selects the explicit item-copy layout. A future immutable shadow
+   * generation profile is the only caller authority that may choose
+   * PROJECT_COPY_V1; it must never rewrite an active or primary profile.
+   * Omitting this field keeps the LEGACY_DEFAULT key and content bytes.
+   */
+  readonly project_copy_layout?: MarkdownProjectCopyLayout;
+  /**
+   * Indexed project-membership identity required by PROJECT_COPY_V1. It names
+   * the single membership this copy belongs to, so N indexed memberships of one
+   * source revision contribute N copies with N distinct item keys. The legacy
+   * membership list stays as recorded provenance and keeps its array shape.
+   */
+  readonly project_copy_membership_id?: string;
   readonly projection_generation: string;
   readonly target_item_utf8_bytes?: number;
   readonly max_item_utf8_bytes?: number;
@@ -410,6 +476,40 @@ function contextHeader(title: string, headingPath: readonly string[]): string {
   return result;
 }
 
+interface ItemKeyInput {
+  readonly canonicalSectionId: string;
+  readonly projectionGeneration: string;
+  readonly projectMembershipId: string | null;
+  readonly sha256: (value: string) => Promise<string>;
+}
+
+/**
+ * Computes one item key under the selected copy layout.
+ *
+ * LEGACY_DEFAULT reproduces the published key exactly: it hashes only the
+ * canonical section ID and the projection generation. PROJECT_COPY_V1 adds
+ * the explicit indexed project membership to that digest, so a copy key
+ * differs between memberships while the section and content digests of the
+ * copy do not change.
+ */
+async function projectCopyItemKey(
+  copyLayout: ResolvedProjectCopyLayout,
+  input: ItemKeyInput,
+): Promise<string> {
+  const identity = copyLayout.project_membership_id === null
+    ? {
+        canonical_section_id: input.canonicalSectionId,
+        projection_generation: input.projectionGeneration,
+      }
+    : {
+        canonical_section_id: input.canonicalSectionId,
+        projection_generation: input.projectionGeneration,
+        project_membership_id: input.projectMembershipId,
+      };
+  const itemDigest = await input.sha256(canonicalJson(identity));
+  return `projection-${itemDigest.slice(0, 48)}`;
+}
+
 export async function projectNormalizedMarkdown(
   rawInput: MarkdownProjectionInput,
 ): Promise<MarkdownProjectionResult> {
@@ -418,6 +518,7 @@ export async function projectNormalizedMarkdown(
   catch (cause) { fail("PROJECTION_INPUT_INVALID", `source revision failed strict validation: ${String(cause)}`); }
   assertIdentifier(rawInput.projection_generation, "projection_generation");
   assertIdentifier(rawInput.source_class, "source_class");
+  const copyLayout = resolveProjectCopyLayout(rawInput);
   if (typeof rawInput.markdown !== "string" || rawInput.markdown.length === 0) {
     fail("PROJECTION_DOCUMENT_EMPTY", "normalized Markdown is empty");
   }
@@ -459,11 +560,12 @@ export async function projectNormalizedMarkdown(
       heading_path: chunk.heading_path,
     }));
     const canonicalSectionId = `section-${sectionDigest.slice(0, 48)}`;
-    const itemDigest = await sha256(canonicalJson({
-      canonical_section_id: canonicalSectionId,
-      projection_generation: rawInput.projection_generation,
-    }));
-    const itemKey = `projection-${itemDigest.slice(0, 48)}`;
+    const itemKey = await projectCopyItemKey(copyLayout, {
+      canonicalSectionId,
+      projectionGeneration: rawInput.projection_generation,
+      projectMembershipId: copyLayout.project_membership_id,
+      sha256,
+    });
     const item = ProjectionItemSchema.parse({
       item_key: itemKey,
       canonical_section_id: canonicalSectionId,

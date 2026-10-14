@@ -13,6 +13,14 @@ export * from "./core-authority.js";
 export * from "./core-settlement.js";
 export * from "./projection-delivery-handler.js";
 export {
+  MANAGED_REQUIRED_ITEM_COPY_LAYOUT,
+  projectManagedRequiredItemCopy,
+} from "./projection/managed-required-items.js";
+export type {
+  ManagedRequiredItemCopyInput,
+  ManagedRequiredItemMarkdownProjectionInput,
+} from "./projection/managed-required-items.js";
+export {
   createD1ManagedTargetAssignmentPort,
   MANAGED_TARGET_ASSIGNMENT_PROTOCOL,
   ManagedTargetAssignmentError,

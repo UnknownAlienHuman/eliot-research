@@ -1,6 +1,10 @@
 import type { SourceRevision } from "@eliotr/contracts";
 import { describe, expect, it } from "vitest";
-import { extractNormalizedMarkdownStructure, projectNormalizedMarkdown } from "./structural-projector.js";
+import {
+  extractNormalizedMarkdownStructure,
+  projectNormalizedMarkdown,
+  type MarkdownProjectCopyLayout,
+} from "./structural-projector.js";
 
 const A = "a".repeat(64);
 
@@ -63,6 +67,133 @@ describe("deterministic structural projector", () => {
       );
       expect(new TextDecoder().decode(bytes)).toBe(item.section_text);
     }
+  });
+
+  it("preserves the legacy item key and content bytes for an absent copy layout", async () => {
+    const markdown = "# Legacyا\n\nAlpha.";
+    const base = {
+      source_revision: sourceRevision(),
+      title: "Legacy",
+      source_class: "document",
+      markdown,
+      instruction_taint: "DATA_ONLY" as const,
+      project_membership_ids: ["membership-a", "membership-b"],
+      projection_generation: "projection-g1",
+    };
+    const explicit = await projectNormalizedMarkdown({
+      ...base,
+      project_copy_layout: "LEGACY_DEFAULT",
+    });
+    const absent = await projectNormalizedMarkdown(base);
+    expect(explicit.items.map((item) => item.item_key)).toEqual(
+      absent.items.map((item) => item.item_key),
+    );
+    expect(explicit.item_set_digest).toBe(absent.item_set_digest);
+    expect(explicit.markdown_sha256).toBe(absent.markdown_sha256);
+  });
+
+  it("changes only the item key for one explicit membership copy", async () => {
+    const markdown = "# Shared section\n\nSame normalized bytes.";
+    const membership = "membership-a";
+    const base = {
+      source_revision: sourceRevision(),
+      title: "Shared",
+      source_class: "document",
+      markdown,
+      instruction_taint: "DATA_ONLY" as const,
+      project_membership_ids: [membership],
+      projection_generation: "projection-g1",
+    };
+    const legacy = await projectNormalizedMarkdown(base);
+    const copy = await projectNormalizedMarkdown({
+      ...base,
+      project_copy_layout: "PROJECT_COPY_V1",
+      project_copy_membership_id: membership,
+    });
+
+    expect(copy.items.map(({ item_key: _itemKey, ...item }) => item)).toEqual(
+      legacy.items.map(({ item_key: _itemKey, ...item }) => item),
+    );
+    expect(copy.spans.map(({ item_key: _itemKey, ...span }) => span)).toEqual(
+      legacy.spans.map(({ item_key: _itemKey, ...span }) => span),
+    );
+    expect(copy.items.map((item) => item.item_key)).not.toEqual(
+      legacy.items.map((item) => item.item_key),
+    );
+  });
+
+  it("derives one distinct copy per indexed membership while content bytes stay shared", async () => {
+    const markdown = "# Sharedا\n\nSame bytes.";
+    const first = await projectNormalizedMarkdown({
+        source_revision: sourceRevision(),
+        title: "Shared",
+        source_class: "document",
+        markdown,
+        instruction_taint: "DATA_ONLY",
+        project_membership_ids: ["membership-a", "membership-b"],
+        project_copy_layout: "PROJECT_COPY_V1",
+        project_copy_membership_id: "membership-a",
+        projection_generation: "projection-g1",
+      });
+    const second = await projectNormalizedMarkdown({
+      source_revision: sourceRevision(),
+      title: "Shared",
+      source_class: "document",
+      markdown,
+      instruction_taint: "DATA_ONLY",
+      project_membership_ids: ["membership-a", "membership-b"],
+      project_copy_layout: "PROJECT_COPY_V1",
+      project_copy_membership_id: "membership-b",
+      projection_generation: "projection-g1",
+    });
+    expect(first.items).toHaveLength(1);
+    expect(first.items[0]?.item_key).not.toBe(second.items[0]?.item_key);
+    expect(first.items[0]?.item_key).toMatch(/^projection-[a-f0-9]{48}$/u);
+    expect(first.items[0]?.canonical_section_id).toBe(second.items[0]?.canonical_section_id);
+    expect(first.items[0]?.content_sha256).toBe(second.items[0]?.content_sha256);
+    expect(first.items[0]?.section_text).toBe(second.items[0]?.section_text);
+    expect(first.spans[0]?.normalized_start_byte).toBe(second.spans[0]?.normalized_start_byte);
+    expect(first.spans[0]?.normalized_end_byte).toBe(second.spans[0]?.normalized_end_byte);
+    expect(first.item_set_digest).not.toBe(second.item_set_digest);
+    expect(first.items[0]?.project_membership_ids).toEqual(["membership-a", "membership-b"]);
+  });
+
+  it("rejects an unindexed, missing, or malformed explicit membership", async () => {
+    const base = {
+      source_revision: sourceRevision(),
+      title: "Guarded",
+      source_class: "document",
+      markdown: "# Guarded\n\nBody.",
+      instruction_taint: "DATA_ONLY" as const,
+      project_membership_ids: ["membership-a"],
+      projection_generation: "projection-g1",
+    };
+    const memberships: readonly (string | undefined)[] = [
+      undefined,
+      "membership-z",
+      "bad membership!",
+    ];
+    for (const membership of memberships) {
+      const input = membership === undefined
+        ? { ...base, project_copy_layout: "PROJECT_COPY_V1" as const }
+        : {
+            ...base,
+            project_copy_layout: "PROJECT_COPY_V1" as const,
+            project_copy_membership_id: membership,
+          };
+      await expect(projectNormalizedMarkdown(input)).rejects.toMatchObject({
+        code: "PROJECTION_INPUT_INVALID",
+      });
+    }
+    await expect(projectNormalizedMarkdown({
+      ...base,
+      project_copy_layout: "NOT_A_PUBLISHED_LAYOUT" as MarkdownProjectCopyLayout,
+    })).rejects.toMatchObject({ code: "PROJECTION_INPUT_INVALID" });
+    await expect(projectNormalizedMarkdown({
+      ...base,
+      project_copy_layout: "LEGACY_DEFAULT",
+      project_copy_membership_id: "membership-a",
+    })).rejects.toMatchObject({ code: "PROJECTION_INPUT_INVALID" });
   });
 
   it("splits a single oversized Unicode line without breaking code points", async () => {
