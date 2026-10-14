@@ -99,7 +99,11 @@ async function readRows(input: {
         "WHERE project_id=?1 AND dispatch_id>?2 ORDER BY dispatch_id ASC LIMIT 21")
         .bind(input.project_id, input.after_dispatch_id);
     const result = await statement.all<DispatchRow>();
-    const rows = result.results ?? [];
+    if (result.success !== true || !Array.isArray(result.results)) {
+      fail("COMPUTER_AGENT_DISPATCH_STORAGE_UNAVAILABLE", 503,
+        "Dispatch listing did not return a complete successful page", true);
+    }
+    const rows = result.results;
     if (rows.length > QUERY_LIMIT) fail("COMPUTER_AGENT_DISPATCH_STORAGE_CORRUPT", 500,
       "Dispatch page exceeded its read bound");
     return rows;
