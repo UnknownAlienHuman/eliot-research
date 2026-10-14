@@ -160,6 +160,17 @@ async function fixture(): Promise<Fixture> {
 }
 
 describe("New Project mutation controller", () => {
+  it("allows a subscribed UI to read state without emitting another notification", async () => {
+    const test = await fixture();
+    const observed: string[] = [];
+    const unsubscribe = test.controller.subscribe(() => { observed.push(test.controller.getState().title); });
+    test.controller.setTitle(title);
+    expect(observed).toEqual([title]);
+    expect(test.controller.getState().title).toBe(title);
+    expect(observed).toHaveLength(1);
+    unsubscribe();
+    test.dispose();
+  });
   it("creates with the frozen title, source ids and key, then confirms the canonical row once", async () => {
     const test = await fixture();
     test.controller.setTitle(title);

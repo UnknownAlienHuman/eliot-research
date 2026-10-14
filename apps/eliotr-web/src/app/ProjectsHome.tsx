@@ -9,6 +9,7 @@ const copy = {
     empty: "No projects are available yet. Projects appear here once sources are organised into them.",
     open: "Opened", previous: "Previous page", next: "More projects",
     sources: (count: number) => count === 1 ? "1 source" : `${count} sources`,
+    create: "New project",
   },
   ru: {
     lead: "Откройте проект, чтобы исследовать его источники, читать сохранённые отчёты и пользоваться инструментами.",
@@ -20,12 +21,13 @@ const copy = {
       const word = tail === 1 && hundred !== 11 ? "источник" : tail >= 2 && tail <= 4 && (hundred < 12 || hundred > 14) ? "источника" : "источников";
       return `${count} ${word}`;
     },
+    create: "Новый проект",
   },
 } as const;
 const accents = ["blue", "violet", "pink", "green", "amber"] as const;
 
 /** NotebookLM-style home: one card per project; opening a card hands its id to the workspace owner. */
-export function ProjectsHome({ locale, state, projects, openedProjectId, onOpen, onRetry, onPrevious, onNext }: {
+export function ProjectsHome({ locale, state, projects, openedProjectId, onOpen, onRetry, onPrevious, onNext, onCreate }: {
   readonly locale: "en" | "ru";
   readonly state: "loading" | "error" | "useful";
   readonly projects: readonly ProjectSummary[];
@@ -34,6 +36,8 @@ export function ProjectsHome({ locale, state, projects, openedProjectId, onOpen,
   readonly onRetry: () => void;
   readonly onPrevious?: (() => void) | undefined;
   readonly onNext?: (() => void) | undefined;
+  /** The explicit owner gesture that opens the New Project action surface. */
+  readonly onCreate?: (() => void) | undefined;
 }) {
   const text = copy[locale];
   const created = (iso: string) => {
@@ -45,6 +49,7 @@ export function ProjectsHome({ locale, state, projects, openedProjectId, onOpen,
     <div className="er-projects-home__heading-row">
       <h2 id="projects-home-heading">{text.heading}</h2>
       {state === "useful" && projects.length > 0 ? <span className="er-projects-home__count">{projects.length}</span> : null}
+      {onCreate ? <Button variant="tonal" onClick={onCreate}>{text.create}</Button> : null}
     </div>
     {state === "loading" ? <Status>{text.loading}</Status> : null}
     {state === "error" ? <div className="er-projects-home__problem"><Status tone="error">{text.error}</Status><Button variant="tonal" onClick={onRetry}>{text.retry}</Button></div> : null}

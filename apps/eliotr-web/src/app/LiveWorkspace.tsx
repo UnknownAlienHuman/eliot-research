@@ -19,6 +19,7 @@ import { OWNER_RESEARCH_MAX_SELECTED_SOURCES as selectedSourceLimit } from '@eli
 import { ResearchPanel } from "./ResearchPanel";
 import { StudioPanel } from "./StudioPanel";
 import { ProjectsHome } from "./ProjectsHome";
+import { NewProjectPanel } from "./NewProjectPanel";
 import { usePaneAnnouncement } from "./usePaneAnnouncement";
 
 const copy = {
@@ -45,6 +46,11 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
   const [sourceId, setSourceId] = useState<string>();
   const [libraryPages, setLibraryPages] = useState<readonly (string | undefined)[]>([undefined]);
   const [scope, setScope] = useState<readonly NextQuestionSource[]>([]);
+  // One explicit New Project action. Its controller is created by the panel for the live session,
+  // holds the frozen request identity and reports back here, which refreshes the projects read this
+  // workspace already owns. This workspace dispatches nothing, reads nothing back and commits nothing
+  // on its own, and no identity is minted outside the panel.
+  const [newProjectOpen, setNewProjectOpen] = useState(false);
   // Narrow windows show one Research pane at a time behind NotebookLM-style tabs; wide windows show all three.
   const [researchTab, setResearchTab] = useState<"sources" | "chat" | "tools">("chat");
   useLayoutEffect(() => {
@@ -171,7 +177,8 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
         onOpen={id => { if (id !== projectId) chooseProject(id); setResearchTab("chat"); if (privacy.isCurrent(context)) void navigate("/research"); }}
         onRetry={() => { void projects.refetch(); }}
         onPrevious={projectPages.length > 1 ? () => { setProjectId(undefined); setProjectPages(pages => pages.slice(0, -1)); } : undefined}
-        onNext={projects.data?.next_project_id ? () => { const next = projects.data?.next_project_id; if (next) { setProjectId(undefined); setProjectPages(pages => [...pages, next]); } } : undefined} />
+        onNext={projects.data?.next_project_id ? () => { const next = projects.data?.next_project_id; if (next) { setProjectId(undefined); setProjectPages(pages => [...pages, next]); } } : undefined}
+        onCreate={() => { if (privacy.isCurrent(context)) setNewProjectOpen(true); }} />
       : destination === "sources" ? <>
         <ActiveSources key={selected?.project_id ?? "no-project"} locale={locale} apis={apis} privacy={privacy} context={context}
           projectId={selected?.project_id} projects={projects} after={after} onProject={chooseProject} projectSelectRef={restoreProjectSelectFocus}
@@ -189,6 +196,10 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
         : destination === "research" ? <ResearchPanel locale={locale} apis={apis} privacy={privacy} context={context} scope={scope} scopeCurrent={scopeCurrent}
           isScopeCurrent={isScopeCurrent} projectId={selected?.project_id} isProjectCurrent={isProjectCurrent} />
         : <StudioPanel locale={locale} apis={apis} privacy={privacy} context={context} />}
+      <NewProjectPanel open={newProjectOpen} locale={locale} apis={apis} privacy={privacy} context={context} scope={scope}
+        onClose={() => { setNewProjectOpen(false); }}
+        currentPage={() => projects.data}
+        onProjectCommitted={() => { if (privacy.isCurrent(context)) { setNewProjectOpen(false); void projects.refetch(); } }} />
     </main>
   </div>;
 }
