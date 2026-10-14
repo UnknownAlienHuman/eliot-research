@@ -421,6 +421,7 @@ function operationInput(command, options, desired) {
     case "declare":
       return Object.freeze({
         namespace: desired.namespace,
+        generation: desired.generation,
         profile: desired.profile,
         declared_at: canonicalTimestamp(
           options["declared-at"],

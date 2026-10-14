@@ -181,8 +181,7 @@ CREATE TABLE ai_search_generation_instance_history (
       AND profile_sha256 NOT GLOB '*[^0-9a-f]*'
     )
   ),
-  PRIMARY KEY(namespace, instance_id),
-  UNIQUE(namespace, generation),
+  PRIMARY KEY(namespace, generation),
   FOREIGN KEY(namespace) REFERENCES ai_search_generation_registry(namespace)
 ) STRICT;
 
@@ -203,6 +202,30 @@ SELECT
   NULL
 FROM ai_search_generation_registry AS registry,
   json_each(registry.artifact_json, '$.registry.generations') AS generation;
+
+CREATE TRIGGER ai_search_generation_instance_history_profile_immutable
+BEFORE INSERT ON ai_search_generation_instance_history
+WHEN EXISTS (
+  SELECT 1
+  FROM ai_search_generation_instance_history AS prior
+  WHERE prior.namespace = NEW.namespace
+    AND prior.instance_id = NEW.instance_id
+    AND (
+      (
+        prior.profile_sha256 IS NOT NULL
+        AND NEW.profile_sha256 IS NOT NULL
+        AND prior.profile_sha256 != NEW.profile_sha256
+      )
+      OR (
+        (prior.profile_sha256 IS NULL OR NEW.profile_sha256 IS NULL)
+        AND json_remove(prior.profile_json, '$.generation') !=
+            json_remove(NEW.profile_json, '$.generation')
+      )
+    )
+)
+BEGIN
+  SELECT RAISE(ABORT, 'AI Search physical instance profile is immutable');
+END;
 
 CREATE TRIGGER ai_search_generation_instance_history_no_update
 BEFORE UPDATE ON ai_search_generation_instance_history
