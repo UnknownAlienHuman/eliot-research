@@ -161,8 +161,19 @@ function semanticApi(env: Env): SemanticApi {
     ),
     publishWiki: (context, request) => publishWikiProposal(env, context, request),
     ...wikiReader,
-    trace: (context, ref) => ref.id.startsWith("query-") ? readRetrievalTrace(env.CORE_DB, context, ref).then((r) => {
-      if (r.status === "ok") return r.trace; throw new OrientationError(r.status === "invalid" ? "ORIENTATION_TRACE_INVALID" : r.status === "missing" ? "ORIENTATION_TRACE_NOT_FOUND" : r.status === "stale" ? "ORIENTATION_TRACE_CORRUPT" : "ORIENTATION_RESERVATION_UNCERTAIN", r.status === "invalid" ? 400 : r.status === "missing" ? 404 : r.status === "stale" ? 409 : 503, r.status === "uncertain"); }) : orientation.trace(context, ref),
+    trace: (context, ref) => {
+      if (!ref.id.startsWith("query-") && !ref.id.startsWith("mrt1-")) return orientation.trace(context, ref);
+      return readRetrievalTrace(env.CORE_DB, context, ref).then((result) => {
+        if (result.status === "ok") return result.trace;
+        throw new OrientationError(
+          result.status === "invalid" ? "ORIENTATION_TRACE_INVALID" :
+            result.status === "missing" ? "ORIENTATION_TRACE_NOT_FOUND" :
+              result.status === "stale" ? "ORIENTATION_TRACE_CORRUPT" : "ORIENTATION_RESERVATION_UNCERTAIN",
+          result.status === "invalid" ? 400 : result.status === "missing" ? 404 : result.status === "stale" ? 409 : 503,
+          result.status === "uncertain",
+        );
+      });
+    },
     changes: (context, request) => researchChanges(context, request),
   };
 }

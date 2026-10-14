@@ -66,52 +66,62 @@ function outputRefs(identity: SettlementIdentity): string {
   ]);
 }
 
-function terminalReceiptPredicate(args: BoundSql, identity: SettlementIdentity, createdAt?: string): string {
-  const p = args.value;
-  return "EXISTS (SELECT 1 FROM operation_receipt r WHERE r.receipt_id=" + p(receiptId(identity)) +
-    " AND r.revision=1 AND r.intent_id=" + p(identity.intent_ref.id) + " AND r.intent_revision=1" +
-    " AND r.attempt_id=" + p(identity.attempt_ref) + " AND r.outcome='SUCCEEDED'" +
-    " AND r.output_refs_json=" + p(outputRefs(identity)) +
-    " AND r.readback_receipt_refs_json='[]' AND r.reconciliation_required=0 AND r.reason_codes_json='[]'" +
-    (createdAt === undefined ? " AND r.created_at=a.ended_at" : " AND r.created_at=" + p(createdAt)) + ")";
+interface ParticipantPredicateSql {
+  readonly with_clause: string;
+  readonly expression: string;
 }
 
-/** All participants refer to the same completed result and direct trace body. */
+/**
+ * Keep the exact terminal authority checks in separate CTE predicates. D1's
+ * depth-100 compiler rejects one deeply nested expression when the same owner,
+ * scope, trace, and receipt chain is inlined into every terminal write.
+ */
 function participantPredicate(args: BoundSql, identity: SettlementIdentity, input: {
   readonly receipt?: AdmissionReceipt;
   readonly attempt_state: "STARTED" | "SUCCEEDED";
   readonly lease_state: "LEASED" | "COMPLETED";
   readonly terminal_created_at?: string;
   readonly require_terminal?: boolean;
-}): string {
+}): ParticipantPredicateSql {
   const p = args.value;
-  const owner = input.receipt === undefined ? "" : " AND l.lease_owner=" + p(input.receipt.fence.lease_owner);
-  return "EXISTS (SELECT 1 FROM retrieval_query_result q" +
-    " JOIN scope_snapshot s ON s.snapshot_id=q.scope_snapshot_id AND s.revision=q.scope_snapshot_revision" +
-    " JOIN retrieval_query_trace t ON t.trace_id=q.trace_id AND t.revision=q.trace_revision" +
-    " JOIN operation_intent i ON i.intent_id=q.operation_id AND i.revision=1" +
-    " JOIN operation_attempt a ON a.intent_id=i.intent_id AND a.intent_revision=1 AND a.attempt_number=1" +
-    " JOIN operation_execution_lease l ON l.operation_id=" + p(identity.execution_id) +
-    " WHERE q.operation_id=" + p(identity.retrieval_operation_id) + " AND q.state='COMPLETE'" +
-    " AND q.principal_ref=" + p(identity.access.principal_ref) + " AND q.client_class=" + p(identity.access.client_class) +
-    " AND q.credential_generation=" + p(identity.access.credential_generation) +
-    " AND q.idempotency_key=" + p(identity.idempotency_key) + " AND q.request_digest=" + p(identity.request_digest) +
-    " AND q.scope_snapshot_id=" + p(identity.scope_snapshot_ref.id) +
-    " AND q.scope_snapshot_revision=" + p(identity.scope_snapshot_ref.revision) +
+  const ctes: string[] = [];
+  ctes.push(
+    "participant_scope AS (SELECT s.snapshot_id,s.revision,s.snapshot_digest,s.policy_authority_ref " +
+    "FROM scope_snapshot s WHERE s.snapshot_id=" + p(identity.scope_snapshot_ref.id) +
+    " AND s.revision=" + p(identity.scope_snapshot_ref.revision) +
     " AND s.snapshot_digest=" + p(identity.scope_digest) +
     " AND s.invalidated_at IS NULL AND julianday(s.expires_at)>julianday('now')" +
-    " AND EXISTS (SELECT 1 FROM scope_access_grant_effective g WHERE g.snapshot_id=s.snapshot_id" +
-    " AND g.snapshot_revision=s.revision AND g.principal_ref=q.principal_ref AND g.client_class=q.client_class" +
-    " AND g.credential_generation=q.credential_generation AND g.state='ACTIVE'" +
-    " AND g.policy_authority_ref=s.policy_authority_ref AND julianday(g.expires_at)>julianday('now'))" +
     " AND s.purge_ledger_revision=COALESCE((SELECT MAX(ledger_revision) FROM purge_ledger),0)" +
+    " AND EXISTS (SELECT 1 FROM scope_access_grant_effective g WHERE g.snapshot_id=s.snapshot_id" +
+    " AND g.snapshot_revision=s.revision AND g.principal_ref=" + p(identity.access.principal_ref) +
+    " AND g.client_class=" + p(identity.access.client_class) +
+    " AND g.credential_generation=" + p(identity.access.credential_generation) +
+    " AND g.state='ACTIVE' AND g.policy_authority_ref=s.policy_authority_ref" +
+    " AND julianday(g.expires_at)>julianday('now'))" +
     " AND NOT EXISTS (SELECT 1 FROM json_each(s.member_source_revision_refs_json) member WHERE NOT EXISTS (" +
     "SELECT 1 FROM source_revision sr JOIN source src ON src.source_id=sr.source_id" +
     " JOIN source_namespace_ownership o ON o.source_namespace_id=src.source_namespace_id AND o.status='ACTIVE'" +
     " JOIN json_each(s.source_owner_generations_json) gen ON gen.key=member.value" +
     " WHERE sr.source_revision_ref=member.value AND sr.purge_state='LIVE'" +
-    " AND sr.source_owner_generation=o.source_owner_generation AND gen.value=sr.source_owner_generation))" +
-    " AND t.trace_id=" + p(identity.trace_ref.id) + " AND t.revision=" + p(identity.trace_ref.revision) +
+    " AND sr.source_owner_generation=o.source_owner_generation AND gen.value=sr.source_owner_generation)))",
+  );
+  ctes.push(
+    "participant_result AS (SELECT q.operation_id,q.principal_ref,q.client_class,q.credential_generation," +
+    "q.idempotency_key,q.request_digest,q.scope_snapshot_id,q.scope_snapshot_revision,q.result_json,q.trace_id,q.trace_revision " +
+    "FROM retrieval_query_result q JOIN participant_scope s ON s.snapshot_id=q.scope_snapshot_id AND s.revision=q.scope_snapshot_revision " +
+    "WHERE q.operation_id=" + p(identity.retrieval_operation_id) + " AND q.state='COMPLETE'" +
+    " AND q.principal_ref=" + p(identity.access.principal_ref) +
+    " AND q.client_class=" + p(identity.access.client_class) +
+    " AND q.credential_generation=" + p(identity.access.credential_generation) +
+    " AND q.idempotency_key=" + p(identity.idempotency_key) +
+    " AND q.request_digest=" + p(identity.request_digest) +
+    " AND q.scope_snapshot_id=" + p(identity.scope_snapshot_ref.id) +
+    " AND q.scope_snapshot_revision=" + p(identity.scope_snapshot_ref.revision) + ")",
+  );
+  ctes.push(
+    "participant_trace AS (SELECT t.trace_id,t.revision FROM participant_result q " +
+    "JOIN retrieval_query_trace t ON t.trace_id=q.trace_id AND t.revision=q.trace_revision " +
+    "WHERE t.trace_id=" + p(identity.trace_ref.id) + " AND t.revision=" + p(identity.trace_ref.revision) +
     " AND t.scope_snapshot_id=q.scope_snapshot_id AND t.scope_snapshot_revision=q.scope_snapshot_revision" +
     " AND t.trace_digest=" + p(identity.trace_json_sha256) +
     " AND json_extract(q.result_json,'$.protocol')='eliotr.retrieval-result.managed.v1'" +
@@ -121,14 +131,47 @@ function participantPredicate(args: BoundSql, identity: SettlementIdentity, inpu
     " AND NOT EXISTS (SELECT 1 FROM json_each(t.trace_json,'$.managed_ranking_outcomes') o" +
     " WHERE json_extract(o.value,'$.request_digest') IS NOT " + p(identity.request_digest) +
     " OR json_extract(o.value,'$.scoped_invocation_id') IS NOT " + p(identity.scoped_invocation_id) +
-    " OR json_extract(o.value,'$.output_digest') IS NOT " + p(identity.output_digest) + ")" +
-    " AND i.operation_kind='QUERY' AND i.principal_ref=q.principal_ref AND i.idempotency_key=q.operation_id" +
+    " OR json_extract(o.value,'$.output_digest') IS NOT " + p(identity.output_digest) + "))",
+  );
+  const needsTerminal = input.require_terminal === true || input.terminal_created_at !== undefined;
+  if (needsTerminal) {
+    const createdAt = input.terminal_created_at === undefined
+      ? "terminal_attempt.ended_at"
+      : p(input.terminal_created_at);
+    ctes.push(
+      "participant_terminal_receipt AS (SELECT r.intent_id,r.intent_revision,r.attempt_id " +
+      "FROM operation_receipt r JOIN operation_attempt terminal_attempt ON terminal_attempt.attempt_id=r.attempt_id " +
+      "WHERE r.receipt_id=" + p(receiptId(identity)) + " AND r.revision=1" +
+      " AND r.intent_id=" + p(identity.intent_ref.id) + " AND r.intent_revision=1" +
+      " AND r.attempt_id=" + p(identity.attempt_ref) + " AND r.outcome='SUCCEEDED'" +
+      " AND r.output_refs_json=" + p(outputRefs(identity)) +
+      " AND r.readback_receipt_refs_json='[]' AND r.reconciliation_required=0 AND r.reason_codes_json='[]'" +
+      " AND r.created_at=" + createdAt + ")",
+    );
+  }
+  const owner = input.receipt === undefined ? "" : " AND l.lease_owner=" + p(input.receipt.fence.lease_owner);
+  const leaseState = input.lease_state === "LEASED"
+    ? " AND l.lease_until>" + D1_EXECUTION_LEASE_NOW_SQL
+    : " AND l.terminal_receipt_ref=" + p(`receipt:${receiptId(identity)}:1`) +
+      " AND a.checkpoint_ref=" + p(resultRef(identity));
+  const terminalJoin = needsTerminal
+    ? " JOIN participant_terminal_receipt r ON r.intent_id=i.intent_id" +
+      " AND r.intent_revision=i.revision AND r.attempt_id=a.attempt_id"
+    : "";
+  ctes.push(
+    "participant_owner AS (SELECT 1 FROM participant_result q" +
+    " JOIN participant_scope s ON s.snapshot_id=q.scope_snapshot_id AND s.revision=q.scope_snapshot_revision" +
+    " JOIN participant_trace t ON t.trace_id=q.trace_id AND t.revision=q.trace_revision" +
+    " JOIN operation_intent i ON i.intent_id=q.operation_id AND i.revision=1" +
+    " JOIN operation_attempt a ON a.intent_id=i.intent_id AND a.intent_revision=i.revision AND a.attempt_number=1" +
+    " JOIN operation_execution_lease l ON l.operation_id=" + p(identity.execution_id) + terminalJoin +
+    " WHERE i.operation_kind='QUERY' AND i.principal_ref=q.principal_ref AND i.idempotency_key=q.operation_id" +
     " AND i.payload_ref=" + p(resultRef(identity)) + " AND i.policy_decision_ref=s.policy_authority_ref" +
     " AND a.attempt_id=" + p(identity.attempt_ref) + " AND a.state=" + p(input.attempt_state) +
-    " AND l.operation_kind='QUERY' AND l.attempt=1 AND l.lease_generation=1 AND l.state=" + p(input.lease_state) + owner +
-    (input.lease_state === "LEASED" ? " AND l.lease_until>" + D1_EXECUTION_LEASE_NOW_SQL :
-      " AND l.terminal_receipt_ref=" + p(`receipt:${receiptId(identity)}:1`) + " AND a.checkpoint_ref=" + p(resultRef(identity))) +
-    (input.require_terminal === true ? " AND " + terminalReceiptPredicate(args, identity, input.terminal_created_at) : "") + ")";
+    " AND l.operation_kind='QUERY' AND l.attempt=1 AND l.lease_generation=1" +
+    " AND l.state=" + p(input.lease_state) + owner + leaseState + ")",
+  );
+  return { with_clause: `WITH ${ctes.join(",")} `, expression: "EXISTS (SELECT 1 FROM participant_owner)" };
 }
 
 interface CompletedRow {
@@ -145,17 +188,17 @@ async function sha256(text: string): Promise<string> {
 async function readCompleted(database: RetrievalQueryD1, identity: SettlementIdentity, receipt?: AdmissionReceipt): Promise<SettlementState> {
   requireIdentity(identity, receipt);
   const args = boundSql();
-  const predicate = participantPredicate(args, identity, {
+  const guard = participantPredicate(args, identity, {
     ...(receipt === undefined ? {} : { receipt }), attempt_state: "SUCCEEDED", lease_state: "COMPLETED", require_terminal: true,
   });
   const operation = args.value(identity.retrieval_operation_id);
   const terminalId = args.value(receiptId(identity));
   try {
     const row = await statement(database,
-      "SELECT q.result_json,t.trace_json,r.created_at AS receipt_created_at FROM retrieval_query_result q" +
+      guard.with_clause + "SELECT q.result_json,t.trace_json,r.created_at AS receipt_created_at FROM retrieval_query_result q" +
       " JOIN retrieval_query_trace t ON t.trace_id=q.trace_id AND t.revision=q.trace_revision" +
       " JOIN operation_receipt r ON r.receipt_id=" + terminalId + " AND r.revision=1" +
-      " WHERE q.operation_id=" + operation + " AND " + predicate,
+      " WHERE q.operation_id=" + operation + " AND " + guard.expression,
       args).first<CompletedRow>();
     if (row === null) return "NOT_COMMITTED";
     if (typeof row.result_json !== "string" || typeof row.trace_json !== "string" ||
@@ -182,10 +225,10 @@ export function createD1RetrievalSettlementOwnerPort(): RetrievalSettlementOwner
         .map(value => receiptArgs.value(value));
       const receiptGuard = participantPredicate(receiptArgs, identity, { receipt, attempt_state: "STARTED", lease_state: "LEASED" });
       const receiptWrite = statement(database,
-        "INSERT INTO operation_receipt (receipt_id,revision,intent_id,intent_revision,attempt_id,outcome,output_refs_json," +
+        receiptGuard.with_clause + "INSERT INTO operation_receipt (receipt_id,revision,intent_id,intent_revision,attempt_id,outcome,output_refs_json," +
         "readback_receipt_refs_json,reconciliation_required,reason_codes_json,created_at) SELECT " +
         `${receiptValues[0]},1,${receiptValues[1]},1,${receiptValues[2]},'SUCCEEDED',${receiptValues[3]},'[]',0,'[]',${receiptValues[4]}` +
-        " WHERE " + receiptGuard + " ON CONFLICT DO NOTHING", receiptArgs);
+        " WHERE " + receiptGuard.expression + " ON CONFLICT DO NOTHING", receiptArgs);
       const attemptArgs = boundSql();
       const checkpoint = attemptArgs.value(resultRef(identity)), endedAt = attemptArgs.value(settledAt);
       const attemptId = attemptArgs.value(identity.attempt_ref);
@@ -193,17 +236,17 @@ export function createD1RetrievalSettlementOwnerPort(): RetrievalSettlementOwner
         receipt, attempt_state: "STARTED", lease_state: "LEASED", require_terminal: true, terminal_created_at: settledAt,
       });
       const attemptWrite = statement(database,
-        "UPDATE operation_attempt SET state='SUCCEEDED',checkpoint_ref=" + checkpoint + ",ended_at=" + endedAt +
-        ",error_code=NULL WHERE attempt_id=" + attemptId + " AND " + attemptGuard, attemptArgs);
+        attemptGuard.with_clause + "UPDATE operation_attempt SET state='SUCCEEDED',checkpoint_ref=" + checkpoint + ",ended_at=" + endedAt +
+        ",error_code=NULL WHERE attempt_id=" + attemptId + " AND " + attemptGuard.expression, attemptArgs);
       const leaseArgs = boundSql();
       const terminalRef = leaseArgs.value(`receipt:${receiptId(identity)}:1`), executionId = leaseArgs.value(identity.execution_id);
       const leaseGuard = participantPredicate(leaseArgs, identity, {
         receipt, attempt_state: "SUCCEEDED", lease_state: "LEASED", require_terminal: true, terminal_created_at: settledAt,
       });
       const leaseWrite = statement(database,
-        "UPDATE operation_execution_lease SET state='COMPLETED',terminal_receipt_ref=" + terminalRef +
+        leaseGuard.with_clause + "UPDATE operation_execution_lease SET state='COMPLETED',terminal_receipt_ref=" + terminalRef +
         ",last_error_code=NULL,updated_at=" + D1_EXECUTION_LEASE_NOW_SQL + " WHERE operation_id=" + executionId +
-        " AND " + leaseGuard, leaseArgs);
+        " AND " + leaseGuard.expression, leaseArgs);
       const assertArgs = boundSql();
       const resultId = assertArgs.value(identity.retrieval_operation_id);
       const completed = participantPredicate(assertArgs, identity, {
@@ -212,7 +255,8 @@ export function createD1RetrievalSettlementOwnerPort(): RetrievalSettlementOwner
       // A valid terminal chain changes nothing. A partial chain attempts an illegal
       // canonical completion and existing/additive result guards abort the whole batch.
       const assertTerminal = statement(database,
-        "UPDATE retrieval_query_result SET state='COMPLETE' WHERE operation_id=" + resultId + " AND NOT " + completed,
+        completed.with_clause + "UPDATE retrieval_query_result SET state='COMPLETE' WHERE operation_id=" + resultId +
+          " AND NOT " + completed.expression,
         assertArgs);
       return { terminal_writes: [receiptWrite, attemptWrite, leaseWrite], assert_terminal: assertTerminal };
     },

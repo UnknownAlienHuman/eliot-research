@@ -1,7 +1,15 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { ORIENTATION_PROFILE } from "@eliotr/cloudflare-navigation";
+import {
+  MANAGED_RANKING_OUTCOME_PROTOCOL,
+  MANAGED_RETRIEVAL_TRACE_PROTOCOL,
+  ManagedRankingOutcomeSchema,
+  ManagedRetrievalTraceSchema,
+  type RetrievalTrace,
+} from "@eliotr/contracts";
 import type { AuthenticatedRequestContext, QueryRequest } from "@eliotr/interfaces";
+import { canonicalRetrievalJson, managedRetrievalRefIdV1 } from "@eliotr/retrieval";
 import { createResearchQueryService } from "../src/research-session.js";
 import { handleHttp } from "../src/http.js";
 import type { Env } from "../src/env.js";
@@ -100,13 +108,79 @@ function traceVerifier(who: string) {
   };
 }
 
-async function getTrace(id: string, who?: string): Promise<Response> {
+async function getTrace(id: string, who?: string, coreDatabase: D1Database = db): Promise<Response> {
   return handleHttp(
     new Request(`https://research.example/api/v1/research/trace/${id}`),
-    runtime,
+    { ...runtime, CORE_DB: coreDatabase } as Env,
     {} as ExecutionContext,
     who === undefined ? { accessVerifier: traceVerifier("rt-trace-owner") } : { accessVerifier: traceVerifier(who) },
   );
+}
+
+function managedTraceReadDatabase(input: {
+  readonly owner: string;
+  readonly trace_id: string;
+  readonly trace_json: string;
+  readonly scope_snapshot_id: string;
+  readonly scope_snapshot_revision: number;
+  readonly scope_digest: string;
+  readonly scope_expires_at: string;
+}) {
+  const authority = {
+    grant_state: "ACTIVE",
+    purge_ledger_revision: 0,
+    purge_frontier: 0,
+    trace_json: input.trace_json,
+  };
+  const database = {
+    prepare(query: string) {
+      const first = async <T>(parameters: readonly unknown[]): Promise<T | null> => {
+        if (query.includes("FROM retrieval_query_trace WHERE")) {
+          return parameters[0] === input.trace_id && parameters[1] === 1
+            ? {
+              trace_json: authority.trace_json,
+              scope_snapshot_id: input.scope_snapshot_id,
+              scope_snapshot_revision: input.scope_snapshot_revision,
+            } as T
+            : null;
+        }
+        if (query.includes("FROM retrieval_query_result WHERE")) {
+          return parameters[0] === input.trace_id && parameters[1] === 1 &&
+              parameters[2] === input.owner && parameters[3] === "owner_pwa" && parameters[4] === CREDENTIAL
+            ? { coverage_claim: "SAMPLED", state: "COMPLETE" } as T
+            : null;
+        }
+        if (query.includes("FROM scope_snapshot s LEFT JOIN scope_access_grant_effective")) {
+          return parameters[0] === input.scope_snapshot_id && parameters[1] === input.scope_snapshot_revision &&
+              parameters[2] === input.owner && parameters[3] === "owner_pwa" && parameters[4] === CREDENTIAL
+            ? {
+              snapshot_digest: input.scope_digest,
+              invalidated_at: null,
+              expires_at: input.scope_expires_at,
+              purge_ledger_revision: authority.purge_ledger_revision,
+              policy_authority_ref: "managed-trace-policy-1",
+              grant_state: authority.grant_state,
+              grant_expires_at: input.scope_expires_at,
+              grant_policy_ref: "managed-trace-policy-1",
+              purge_frontier: authority.purge_frontier,
+              stale_members: 0,
+            } as T
+            : null;
+        }
+        const statement = db.prepare(query);
+        return parameters.length === 0
+          ? statement.first<T>()
+          : statement.bind(...parameters).first<T>();
+      };
+      return {
+        first: <T>() => first<T>([]),
+        bind: (...parameters: unknown[]) => ({
+          first: <T>() => first<T>(parameters),
+        }),
+      };
+    },
+  } as unknown as D1Database;
+  return { database, authority };
 }
 
 describe("research.trace retrieval read route over real D1", () => {
@@ -223,5 +297,95 @@ describe("research.trace retrieval read route over real D1", () => {
       trace: await tableCount("retrieval_query_trace"),
       orient: await orientCount("orientation_request"),
     }).toEqual(before);
+  });
+
+  it("dispatches a strictly decoded managed mrt1 trace through owner and current-scope checks", async () => {
+    await setupOrientationDatabase();
+    const owner = "rt-managed-trace-owner";
+    const world = await worldWithPolicy(owner);
+    const service = createResearchQueryService({ CORE_DB: db, SEARCH_DB: searchDb, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET });
+    const legacy = await service.query(queryContext(owner, "rt-managed-trace-seed"), retrievalQuery(world, "Pinned"));
+    const storedTrace = await db.prepare(
+      "SELECT trace_json FROM retrieval_query_trace WHERE trace_id = ?1 AND revision = ?2 LIMIT 1",
+    ).bind(legacy.trace_ref.id, legacy.trace_ref.revision).first<{ readonly trace_json: string }>();
+    if (storedTrace === null) throw new Error("managed trace seed row is missing");
+    const legacyTrace = JSON.parse(storedTrace.trace_json) as RetrievalTrace;
+    const invocationId = "managed-trace-read-invocation";
+    const traceId = await managedRetrievalRefIdV1(invocationId, "trace");
+    const packId = await managedRetrievalRefIdV1(invocationId, "pack");
+    const outcome = ManagedRankingOutcomeSchema.parse({
+      protocol: MANAGED_RANKING_OUTCOME_PROTOCOL,
+      provider: "cloudflare_ai_search",
+      request_digest: "a".repeat(64),
+      scoped_invocation_id: invocationId,
+      provider_execution_identity: {
+        available: false,
+        provider_execution_id: null,
+        reason: "BINDING_RESPONSE_HAS_NO_EXECUTION_ID",
+      },
+      output_digest: "b".repeat(64),
+      provider_authority: {
+        namespace: "research",
+        instance_id: "managed-trace-search",
+        registry_revision: 1,
+        registry_artifact_sha256: "c".repeat(64),
+      },
+      authority_generations: {
+        policy_generation: null,
+        execution_generation: null,
+        index_generation: "managed-trace-index",
+        query_compiler_generation: null,
+      },
+      executed_query: "Pinned",
+      contributing_signals: [{ signal: "VECTOR", basis: "EXECUTED_QUERY" }],
+      list_semantics: "ONE_PHYSICAL_MANAGED_LIST",
+      scope_absence_proven: false,
+      rerank_requested: false,
+      rerank_attempted: false,
+      rerank_succeeded: false,
+      rerank_provider: null,
+      rerank_model: null,
+      fallback_used: false,
+      failure_class: null,
+      processing_state: "NO_HIT",
+      ordered_candidates: [],
+    });
+    const trace = ManagedRetrievalTraceSchema.parse({
+      ...legacyTrace,
+      trace_ref: { id: traceId, revision: 1 },
+      evidence_pack_ref: packId,
+      index_generations: [...legacyTrace.index_generations, "managed-trace-index"],
+      protocol: MANAGED_RETRIEVAL_TRACE_PROTOCOL,
+      managed_ranking_outcomes: [outcome],
+    });
+    const readState = managedTraceReadDatabase({
+      owner,
+      trace_id: traceId,
+      trace_json: canonicalRetrievalJson(trace),
+      scope_snapshot_id: trace.scope_snapshot.snapshot_id,
+      scope_snapshot_revision: trace.scope_snapshot.revision,
+      scope_digest: trace.scope_snapshot.digest,
+      scope_expires_at: trace.scope_snapshot.expires_at,
+    });
+
+    const response = await getTrace(traceId, owner, readState.database);
+    expect(response.status, await response.clone().text()).toBe(200);
+    const payload = await response.json() as { data: {
+      readonly trace_ref: { readonly id: string; readonly revision: number };
+      readonly managed_ranking_outcomes: readonly unknown[];
+    } };
+    expect(payload.data.trace_ref).toEqual({ id: traceId, revision: 1 });
+    expect(payload.data.managed_ranking_outcomes).toEqual([outcome]);
+    expect(await getTrace(traceId, "rt-managed-trace-stranger", readState.database).then((item) => item.status)).toBe(404);
+    expect(await getTrace("mrt1-short", owner, readState.database).then((item) => item.status)).toBe(400);
+
+    readState.authority.grant_state = "REVOKED";
+    expect(await getTrace(traceId, owner, readState.database).then((item) => item.status)).toBe(409);
+    readState.authority.grant_state = "ACTIVE";
+    readState.authority.purge_ledger_revision = 1;
+    expect(await getTrace(traceId, owner, readState.database).then((item) => item.status)).toBe(409);
+    readState.authority.purge_ledger_revision = 0;
+    readState.authority.trace_json = JSON.stringify({ ...trace, unexpected_load_bearing_field: true });
+    expect(await getTrace(traceId, owner, readState.database).then((item) => item.status)).toBe(409);
   });
 });

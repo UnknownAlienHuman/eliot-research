@@ -252,10 +252,12 @@ export async function readRetrieveBranchesCheckpoint(
   return { stage_request: persisted.stage_request, receipt: persisted.receipt, checkpoint, protocol_scope: protocolScope };
 }
 
-function canonicalOutput(value: RetrieveBranchesCheckpoint): Uint8Array {
+/** Serialize and strict-round-trip a Stage-5 checkpoint before Workflow persistence. */
+export function serializeRetrieveBranchesCheckpoint(value: RetrieveBranchesCheckpoint): Uint8Array {
   const text = canonicalRetrievalJson(value);
   const bytes = new TextEncoder().encode(text);
   if (bytes.byteLength > MAX_WORKFLOW_OUTPUT_BYTES) fail("WORKFLOW_INPUT_INVALID");
+  if (decodeRetrieveBranchesCheckpoint(bytes) === null) fail("WORKFLOW_OUTPUT_CORRUPT");
   return bytes;
 }
 
@@ -310,7 +312,7 @@ export function createRetrieveBranchesStageHandler(
       requested_limit: retrievalInput.requested_limit,
       scope_digest: held.scope_snapshot.digest,
     });
-    return canonicalOutput({
+    return serializeRetrieveBranchesCheckpoint({
       protocol: RETRIEVE_BRANCHES_PROTOCOL,
       workflow_stage: request.stage,
       operation_id: request.operation_id,
