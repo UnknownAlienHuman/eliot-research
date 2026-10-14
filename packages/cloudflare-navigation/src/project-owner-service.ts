@@ -161,6 +161,7 @@ export function createProjectOwnerCapability(options: ProjectOwnerCapabilityOpti
       project_id: projectId,
       title: input.title,
       revision: 1,
+      membership_generation: 1,
       created_at: clock.iso,
       principal_ref: owner.principal_ref,
       deployment_generation: deploymentGeneration,
@@ -239,6 +240,12 @@ export function createProjectOwnerCapability(options: ProjectOwnerCapabilityOpti
     if (before.revision !== input.expected_revision) fail("PROJECT_REVISION_CONFLICT", 409, "project revision is stale");
     const clock = nowValue(now);
     const activeMemberships = await readActiveMembershipIds(options.database, projectId);
+    const membershipChanged = activeMemberships.length !== input.source_ids.length ||
+      activeMemberships.some((sourceId, index) => sourceId !== input.source_ids[index]);
+    const nextMembershipGeneration = before.membership_generation + (membershipChanged ? 1 : 0);
+    if (!Number.isSafeInteger(nextMembershipGeneration)) {
+      fail("PROJECT_INPUT_INVALID", 400, "project membership revision is too large");
+    }
     if (attachment !== undefined && (input.title !== before.title ||
         activeMemberships.some((id) => !input.source_ids.includes(id)))) {
       fail("PROJECT_SOURCE_DENIED", 403, "Project attachment cannot rename the project or remove a member");
@@ -250,7 +257,10 @@ export function createProjectOwnerCapability(options: ProjectOwnerCapabilityOpti
     }
     const nextRevision = input.expected_revision + 1;
     if (!Number.isSafeInteger(nextRevision)) fail("PROJECT_INPUT_INVALID", 400, "project revision is too large");
-    const responseBase: ProjectBase = { ...before, title: input.title, revision: nextRevision, deployment_generation: deploymentGeneration };
+    const responseBase: ProjectBase = {
+      ...before, title: input.title, revision: nextRevision,
+      membership_generation: nextMembershipGeneration, deployment_generation: deploymentGeneration,
+    };
     const responseJson = createReceiptJson(responseBase, input.source_ids);
     const responseSha = await sha256Utf8(responseJson);
     const sourceJson = JSON.stringify(input.source_ids);
@@ -261,19 +271,23 @@ export function createProjectOwnerCapability(options: ProjectOwnerCapabilityOpti
     // Attachment may add membership, not silently reset a pre-existing membership role.
     const memberRole = attachment === undefined ? "'member'"
       : "COALESCE((SELECT prior.role FROM project_source_membership prior WHERE prior.project_id=?1 " +
-        "AND prior.source_id=e.source_id AND prior.valid_to=?4 AND prior.membership_generation=?5-1 " +
+        "AND prior.source_id=e.source_id AND prior.valid_to=?4 " +
         "ORDER BY prior.valid_from DESC LIMIT 1),'member')";
+    const membershipGenerationParameter = "?" + String(9 + attachmentArgs.length);
+    const previousMembershipGenerationParameter = "?" + String(10 + attachmentArgs.length);
     try {
       const results = await options.database.batch([
         options.database.prepare(
-          `${cte} UPDATE project SET title=?5,generation=?6 WHERE project_id=?1 AND generation=?7 ` +
+          `${cte} UPDATE project SET title=?5,generation=?6,membership_generation=${membershipGenerationParameter} ` +
+          `WHERE project_id=?1 AND generation=?7 AND membership_generation=${previousMembershipGenerationParameter} ` +
           "AND EXISTS (SELECT 1 FROM project_owner po WHERE po.project_id=?1 AND po.principal_ref=?3) " +
           "AND NOT EXISTS (SELECT 1 FROM project_source_membership old WHERE old.project_id=?1 AND old.valid_to IS NULL " +
           "AND julianday(old.valid_from)>=julianday(?4)) " +
           "AND " + options.source_authority.currentMembershipsReadableGuard() + " " +
           "AND (SELECT COUNT(*) FROM requested)=?8 AND (SELECT COUNT(*) FROM eligible)=?8" +
           (attachment === undefined ? "" : attachment.cas_sql),
-        ).bind(projectId, sourceJson, owner.principal_ref, clock.iso, input.title, nextRevision, input.expected_revision, input.source_ids.length, ...attachmentArgs),
+        ).bind(projectId, sourceJson, owner.principal_ref, clock.iso, input.title, nextRevision, input.expected_revision,
+          input.source_ids.length, ...attachmentArgs, nextMembershipGeneration, before.membership_generation),
         options.database.prepare(
           "INSERT INTO project_mutation_guard(principal_ref,idempotency_key,operation,project_id,expected_revision,next_revision,created_at" + grantColumns + ") " +
           "VALUES (?1,?2,'UPDATE',?3,?4,?5,?6" + (attachment === undefined ? "" : ",?7,?8,?9") + ")",
@@ -286,15 +300,16 @@ export function createProjectOwnerCapability(options: ProjectOwnerCapabilityOpti
         options.database.prepare(
           "UPDATE project_source_membership SET valid_to=?2 WHERE project_id=?1 AND valid_to IS NULL " +
           "AND EXISTS (SELECT 1 FROM project_mutation_guard g WHERE g.project_id=?1 AND g.principal_ref=?6 AND g.idempotency_key=?5) " +
-          "AND EXISTS (SELECT 1 FROM project WHERE project_id=?1 AND generation=?3) " +
+          "AND EXISTS (SELECT 1 FROM project WHERE project_id=?1 AND generation=?3 AND membership_generation>?7) " +
           "AND EXISTS (SELECT 1 FROM project_owner WHERE project_id=?1 AND principal_ref=?4)",
-        ).bind(projectId, clock.iso, nextRevision, owner.principal_ref, key, actor),
+        ).bind(projectId, clock.iso, nextRevision, owner.principal_ref, key, actor, before.membership_generation),
         options.database.prepare(
           `${cte} INSERT INTO project_source_membership(project_id,source_id,role,valid_from,valid_to,membership_generation) ` +
-          `SELECT ?1,e.source_id,${memberRole},?4,NULL,?5 FROM eligible e JOIN project p ON p.project_id=?1 AND p.generation=?5 ` +
+          `SELECT ?1,e.source_id,${memberRole},?4,NULL,p.membership_generation FROM eligible e ` +
+          "JOIN project p ON p.project_id=?1 AND p.generation=?5 AND p.membership_generation>?8 " +
           "JOIN project_mutation_guard g ON g.project_id=p.project_id AND g.principal_ref=?7 AND g.idempotency_key=?6 " +
           "JOIN project_owner po ON po.project_id=p.project_id AND po.principal_ref=?3",
-        ).bind(projectId, sourceJson, owner.principal_ref, clock.iso, nextRevision, key, actor),
+        ).bind(projectId, sourceJson, owner.principal_ref, clock.iso, nextRevision, key, actor, before.membership_generation),
         options.database.prepare(
           "INSERT INTO project_mutation_receipt(principal_ref,idempotency_key,operation,project_id,request_sha256,response_json,response_sha256,project_revision,deployment_generation,created_at" + grantColumns + ") " +
           "SELECT ?1,?2,'UPDATE',?3,?4,?5,?6,?7,?8,?9" + (attachment === undefined ? "" : ",?11,?12,?13") +
@@ -306,7 +321,9 @@ export function createProjectOwnerCapability(options: ProjectOwnerCapabilityOpti
           "DELETE FROM project_mutation_guard WHERE principal_ref=?1 AND idempotency_key=?2 AND project_id=?3",
         ).bind(actor, key, projectId),
       ]);
-      exactBatchResults(results, [1, 1, 1, null, input.source_ids.length, 1, 1]);
+      exactBatchResults(results, [
+        1, 1, 1, membershipChanged ? null : 0, membershipChanged ? input.source_ids.length : 0, 1, 1,
+      ]);
     } catch (cause) {
       const raced = checkExisting(await receipt(), "UPDATE", projectId, requestSha);
       if (raced !== null) return disclose(raced);
