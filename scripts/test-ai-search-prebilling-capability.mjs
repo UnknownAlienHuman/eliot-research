@@ -145,7 +145,7 @@ check("trusted clock requires fresh server Date evidence, bounded skew, and preb
     observations: [{ serverDateMs: AI_SEARCH_PREBILLING_CUTOFF_MS, observedLocalMs: AI_SEARCH_PREBILLING_CUTOFF_MS }] }), /expired/u);
 });
 
-check("plan binds the exact namespace and five empty manifest bodies to a fresh full inventory", () => {
+check("plan binds the exact namespace and the runtime-required manifest bodies to a fresh full inventory", () => {
   const manifest = manifestFixture();
   const source = JSON.stringify(manifest);
   const plan = planAiSearchPrebillingMetadataPosts({
@@ -154,8 +154,12 @@ check("plan binds the exact namespace and five empty manifest bodies to a fresh 
     manifestSource: source,
     ...inventory(),
   });
-  assert.equal(plan.posts.length, 6);
-  assert.deepEqual(plan.posts.map(({ method }) => method), Array(6).fill("POST"));
+  // Namespace create plus exactly the runtime-selected profile. The manifest
+  // advertises five generations; only private-prose-g2 has an assembled
+  // producer, consumer, query rule and named runtime instance, so the other
+  // four are deferred design records and never authorized here.
+  assert.equal(plan.posts.length, 2);
+  assert.deepEqual(plan.posts.map(({ method }) => method), ["POST", "POST"]);
   assert.equal(plan.posts[0].path, `/accounts/${ACCOUNT}/ai-search/namespaces`);
   assert.deepEqual(plan.posts[0].body, {
     name: "eliotr",
@@ -163,11 +167,17 @@ check("plan binds the exact namespace and five empty manifest bodies to a fresh 
   });
   assert.equal(plan.posts.slice(1).every((post) => post.path === `/accounts/${ACCOUNT}/ai-search/namespaces/eliotr/instances`), true);
   assert.equal(plan.posts.slice(1).every((post) => !Object.hasOwn(post.body, "source") && !Object.hasOwn(post.body, "items")), true);
+  assert.deepEqual(plan.posts.slice(1).map((post) => post.body.id), ["private-prose-g2"]);
+  assert.deepEqual(plan.required_topology.required, ["private-prose-g2"]);
+  assert.deepEqual(plan.required_topology.deferred,
+    ["private-literal-g2", "wiki-g2", "artifact-g2", "web-capture-g2"]);
+  assert.deepEqual(plan.deferred_absent, ["private-literal-g2", "wiki-g2", "artifact-g2", "web-capture-g2"]);
+  assert.deepEqual(plan.deferred_present, []);
   assert.equal(plan.manifestDigest.length, 64);
   assert.equal(plan.inventoryDigest.length, 64);
 });
 
-check("checked-in manifest matches the approved fixed metadata identity set", () => {
+check("checked-in manifest matches the approved required metadata identity set", () => {
   const source = readFileSync(fileURLToPath(new URL("../infra/ai-search/instances.json", import.meta.url)), "utf8");
   const manifest = JSON.parse(source);
   const plan = planAiSearchPrebillingMetadataPosts({
@@ -176,7 +186,8 @@ check("checked-in manifest matches the approved fixed metadata identity set", ()
     manifestSource: source,
     ...inventory(),
   });
-  assert.equal(plan.posts.length, 6);
+  assert.equal(plan.posts.length, 2);
+  assert.deepEqual(plan.posts.slice(1).map((post) => post.body.id), ["private-prose-g2"]);
   assert.equal(plan.manifestDigest.length, 64);
 });
 
@@ -191,7 +202,7 @@ check("one-use allowance denies route, body, account, method drift and replay", 
   const remaining = new Set(plan.posts.map((post) => post.key));
   const candidate = { method: first.method, path: first.path, body: first.body, accountId: ACCOUNT };
   assert.equal(consumeBoundPrebillingAllowance(remaining, ACCOUNT, candidate), true);
-  assert.equal(remaining.size, 5);
+  assert.equal(remaining.size, 1);
   assert.throws(() => consumeBoundPrebillingAllowance(remaining, ACCOUNT, candidate), /remaining exact/u);
   assert.throws(() => consumeBoundPrebillingAllowance(new Set(plan.posts.map((post) => post.key)), ACCOUNT, {
     ...candidate, path: `${first.path}/source`,
@@ -222,8 +233,14 @@ check("existing resources reduce allowances and incomplete or conflicting invent
     manifestSource: JSON.stringify(manifest),
     ...existing,
   });
-  assert.equal(plan.posts.length, 3);
-  assert.ok(plan.posts.every((post) => post.path.endsWith("/eliotr/instances")));
+  // Both already-created instances include the runtime-required profile, so no
+  // write is authorized at all. Presence of the dormant literal profile is
+  // recorded but never becomes a de-duplicate or delete target.
+  assert.equal(plan.posts.length, 0);
+  assert.deepEqual(plan.required_topology.required, ["private-prose-g2"]);
+  assert.ok(plan.required_topology.required.every((id) => existing.instancesByNamespace.get("eliotr").some((row) => row.id === id)));
+  assert.deepEqual(plan.deferred_present, ["private-literal-g2"]);
+  assert.deepEqual(plan.deferred_absent, ["wiki-g2", "artifact-g2", "web-capture-g2"]);
   assert.throws(() => planAiSearchPrebillingMetadataPosts({
     accountId: ACCOUNT,
     manifest,
@@ -240,6 +257,19 @@ check("existing resources reduce allowances and incomplete or conflicting invent
     namespaceRows: crowdedNamespaces,
     instancesByNamespace: crowdedInstances,
   }), /namespace metadata limit/u);
+});
+
+check("metadata topology does not assert the account's Free or Paid quota", () => {
+  const manifest = manifestFixture();
+  const namespaceRows = [{ name: manifest.namespace }];
+  const existing = Array.from({ length: 101 }, (_, index) => ({ id: `retained-${index}` }));
+  const plan = planAiSearchPrebillingMetadataPosts({
+    accountId: ACCOUNT, manifest, manifestSource: JSON.stringify(manifest), namespaceRows,
+    instancesByNamespace: new Map([[manifest.namespace, existing]]),
+  });
+  assert.equal(plan.posts.length, 1);
+  assert.equal(plan.posts[0].body.id, "private-prose-g2");
+  assert.equal(plan.required_topology.required.length, 1);
 });
 
 check("source ingestion fields, malformed manifests, and forged capabilities cannot authorize", async () => {
@@ -260,12 +290,50 @@ check("source ingestion fields, malformed manifests, and forged capabilities can
     manifestSource: JSON.stringify(importedManifest),
     ...inventory(),
   }), /empty of source/u);
+  // A manifest that drops only the runtime-selected instance must be denied:
+  // the required topology is the eligibility boundary, not the row count.
+  const withoutRequired = structuredClone(manifest);
+  withoutRequired.instances = withoutRequired.instances.filter((spec) => spec.id !== "private-prose-g2");
   assert.throws(() => planAiSearchPrebillingMetadataPosts({
     accountId: ACCOUNT,
-    manifest: { ...manifest, instances: manifest.instances.slice(0, 4) },
+    manifest: withoutRequired,
+    manifestSource: JSON.stringify(withoutRequired),
+    ...inventory(),
+  }), /runtime-selected instance/u);
+  // A manifest that drops only a deferred profile stays eligible: the four
+  // dormant profiles are design records, not a fixed five-provider quota.
+  const withoutDeferred = structuredClone(manifest);
+  withoutDeferred.instances = withoutDeferred.instances.filter((spec) => spec.id === "private-prose-g2");
+  const deferredPlan = planAiSearchPrebillingMetadataPosts({
+    accountId: ACCOUNT,
+    manifest: withoutDeferred,
+    manifestSource: JSON.stringify(withoutDeferred),
+    ...inventory(),
+  });
+  assert.equal(deferredPlan.posts.length, 2);
+  assert.deepEqual(deferredPlan.posts.slice(1).map((post) => post.body.id), ["private-prose-g2"]);
+  assert.deepEqual(deferredPlan.required_topology.deferred, []);
+  // Dropping exactly one deferred profile (web-capture-g2) keeps the manifest
+  // eligible: the requirement is the runtime-selected topology, never "five".
+  const withoutOneDeferred = structuredClone(manifest);
+  withoutOneDeferred.instances = withoutOneDeferred.instances.filter((spec) => spec.id !== "web-capture-g2");
+  const fourProfilePlan = planAiSearchPrebillingMetadataPosts({
+    accountId: ACCOUNT,
+    manifest: withoutOneDeferred,
+    manifestSource: JSON.stringify(withoutOneDeferred),
+    ...inventory(),
+  });
+  assert.equal(fourProfilePlan.posts.length, 2);
+  assert.deepEqual(fourProfilePlan.posts.slice(1).map((post) => post.body.id), ["private-prose-g2"]);
+  assert.deepEqual(fourProfilePlan.required_topology.deferred,
+    ["private-literal-g2", "wiki-g2", "artifact-g2"]);
+  // An empty instance list is always ineligible.
+  assert.throws(() => planAiSearchPrebillingMetadataPosts({
+    accountId: ACCOUNT,
+    manifest: { ...manifest, instances: [] },
     manifestSource: JSON.stringify(manifest),
     ...inventory(),
-  }), /fixed five-instance/u);
+  }), /at least one instance/u);
 
   const forged = Object.freeze({ protocol: "eliotr.ai-search-prebilling-metadata-capability.v1" });
   assert.equal(issueAiSearchPrebillingMetadataCapability.length, 0);
