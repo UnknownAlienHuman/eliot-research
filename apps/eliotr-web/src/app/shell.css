@@ -199,7 +199,7 @@ html, body { background: var(--eliot-color-canvas); }
 .er-shell-destination:active .er-shell-destination-icon::after { opacity: var(--eliot-state-pressed-opacity); }
 .er-shell-destination:focus-visible .er-shell-destination-icon { outline: var(--eliot-focus-width) solid var(--md-sys-color-primary); outline-offset: var(--eliot-focus-offset); }
 .er-shell-destination-icon > .er-symbol { inline-size: var(--eliot-icon-standard-size); block-size: var(--eliot-icon-standard-size); }
-.er-shell-destination-label { display: block; max-inline-size: 100%; white-space: nowrap; }
+.er-shell-destination-label { display: block; min-inline-size: 0; max-inline-size: 100%; white-space: nowrap; }
 .er-shell-destination[aria-current="page"] { color: var(--md-sys-color-secondary); }
 .er-shell-destination[aria-current="page"] .er-shell-destination-icon { color: var(--eliot-color-on-selected); }
 .er-shell-destination[aria-current="page"] .er-shell-destination-icon::before { transform: none; opacity: 1; }
@@ -473,7 +473,13 @@ html, body { background: var(--eliot-color-canvas); }
     padding: var(--eliot-space-block-control) var(--eliot-space-block-control) calc(var(--eliot-space-block-control) + env(safe-area-inset-bottom));
     background: var(--md-sys-color-surface-container);
   }
-  .er-shell-destination { flex: 1 1 0; padding-block: 0; }
+  /* A compact bottom bar is fixed to the window, so a rail-sized cell would clip any long
+   * destination label. Let each destination take only the room its own label needs and adopt the
+   * compact label scale; labels stay nowrap and are still read in full. */
+  .er-shell-destination { flex: 0 1 auto; padding-block: 0; }
+  .er-shell-destination-label { font-size: var(--eliot-type-label-small-size); line-height: var(--eliot-type-label-small-line-height); }
+  .er-shell-destination-icon > .er-symbol { inline-size: var(--eliot-icon-small-size); block-size: var(--eliot-icon-small-size); }
+  .er-shell-destination-icon { inline-size: var(--eliot-size-control-small); block-size: var(--eliot-size-control-small); }
   .er-shell-reading { padding: var(--eliot-space-group) var(--eliot-space-panel) var(--eliot-space-section); border-radius: var(--eliot-shape-extra-large); scrollbar-gutter: auto; }
   .er-shell-reading h1 { margin-block-end: var(--eliot-space-group); font-size: var(--eliot-type-headline-small-size); line-height: var(--eliot-type-headline-small-line-height); }
   #privacy-guard, .er-access { padding: var(--eliot-space-panel); }
