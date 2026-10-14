@@ -14,6 +14,7 @@
 // unchanged. Run with:
 //   node scripts/test-deployment-apply-ordering.mjs
 //   node scripts/test-deployment-apply-ordering.mjs --only-application-schema-negative
+//   node scripts/test-deployment-apply-ordering.mjs --only-migration-directories-negative
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -33,6 +34,7 @@ import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS,
 
 const directExecution = process.argv[1] !== undefined && pathToFileURL(resolve(process.argv[1])).href === import.meta.url;
 const onlyApplicationSchemaNegative = process.argv.slice(2).includes("--only-application-schema-negative");
+const onlyMigrationDirectoriesNegative = process.argv.slice(2).includes("--only-migration-directories-negative");
 if (directExecution && process.env.ELIOTR_TEST_GATE_REDIRECTED !== "1") {
   const shimHref = new URL("./test-usage-gate-shim.mjs", import.meta.url).href;
   const childEnv = { ...process.env, ELIOTR_TEST_GATE_REDIRECTED: "1" };
@@ -484,7 +486,10 @@ function harness(overrides = {}) {
     buildEvents: () => [...buildEvents] };
 }
 let cases = 0;
-const check = async (name, action) => { await action(); cases += 1; console.log(`Deployment apply ordering: ${name}: PASS`); };
+const check = async (name, action) => {
+  if (onlyMigrationDirectoriesNegative && name !== "missing or default migration directories stop before Worker upload") return;
+  await action(); cases += 1; console.log(`Deployment apply ordering: ${name}: PASS`);
+};
 const deployCommand = `pnpm exec wrangler deploy ${workerEntrypoint} --no-bundle --config wrangler.deploy.jsonc`;
 const deploymentSecretName = "ELIOTR_MODEL_PROVIDER_CONTROL_TOKEN";
 const deploymentSecretValue = "fixture-control-token-value";
@@ -1005,8 +1010,9 @@ await check("missing or default migration directories stop before Worker upload"
     const changed = structuredClone(config);
     if (migrations_dir === undefined) delete changed.d1_databases[0].migrations_dir;
     else changed.d1_databases[0].migrations_dir = migrations_dir;
-    const test = harness({ options: { read: (path, encoding) => readConfigFixture(path, encoding, Buffer.from(JSON.stringify(changed))) } });
+    const test = harness({ candidateConfig: changed });
     await assert.rejects(deployCloudflare(test.options), /migration plan or ledger/u);
+    assert.equal(test.generatedConfigPins(), 1, "the malformed generated config must pass its own byte pin before migration validation");
     assert.equal(generatedDryRunIndex(test.calls), -1);
     assert.ok(!test.calls.some((call) => call.includes("wrangler d1 migrations apply")));
     assert.ok(!test.calls.includes(deployCommand));
