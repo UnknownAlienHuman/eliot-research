@@ -160,9 +160,20 @@ describe("S04 project mutations on actual Workers D1", () => {
     expect(await snapshot()).toEqual(created);
 
     clock += 1000;
-    const input = { idempotency_key: "update", expected_revision: 1, title: "Project updated", source_ids: ["s04-c", "s04-a"] };
+    const originalMemberships = await memberships(id);
+    const titleInput = { idempotency_key: "title-only", expected_revision: 1, title: "Project renamed", source_ids: ["s04-a", "s04-b"] };
+    const titleOnly = await owner.update(context("title-only"), id, titleInput);
+    expect(titleOnly).toMatchObject({ revision: 2, title: "Project renamed", source_ids: ["s04-a", "s04-b"] });
+    expect(await memberships(id)).toEqual(originalMemberships);
+    expect(JSON.parse((await receipt("title-only")).response_json)).toEqual(titleOnly);
+    const afterTitleOnly = await snapshot();
+    await expect(service().update(context("title-only"), id, titleInput)).resolves.toEqual(titleOnly);
+    expect(await snapshot()).toEqual(afterTitleOnly);
+
+    clock += 1000;
+    const input = { idempotency_key: "update", expected_revision: 2, title: "Project updated", source_ids: ["s04-c", "s04-a"] };
     const updated = await owner.update(context("update"), id, input);
-    expect(updated).toMatchObject({ project_ref: { id, revision: 2 }, title: input.title, source_ids: ["s04-a", "s04-c"] });
+    expect(updated).toMatchObject({ project_ref: { id, revision: 3 }, title: input.title, source_ids: ["s04-a", "s04-c"] });
     await expect(owner.read(context("read"), id)).resolves.toEqual(updated);
     expect(JSON.parse((await receipt("update")).response_json)).toEqual(updated);
     const rows = await memberships(id);
@@ -177,13 +188,64 @@ describe("S04 project mutations on actual Workers D1", () => {
     expect(await snapshot()).toEqual(committed);
 
     clock += 1000;
-    await expect(owner.update(context("remove"), id, { idempotency_key: "remove", expected_revision: 2, title: "Empty project", source_ids: [] }))
-      .resolves.toMatchObject({ revision: 3, source_ids: [] });
+    await expect(owner.update(context("remove"), id, { idempotency_key: "remove", expected_revision: 3, title: "Empty project", source_ids: [] }))
+      .resolves.toMatchObject({ revision: 4, source_ids: [] });
+    await expect(db.prepare("SELECT generation,membership_generation FROM project WHERE project_id=?1")
+      .bind(id).first()).resolves.toEqual({ generation: 4, membership_generation: 3 });
     expect((await memberships(id)).every(({ valid_to }) => valid_to !== null)).toBe(true);
     expect(await db.prepare("SELECT count(*) AS n FROM project_mutation_guard").first<number>("n")).toBe(0);
     // Projects do not currently emit an outbox event; do not invent one in a test.
     expect(await db.prepare("SELECT count(*) AS n FROM outbox").first<number>("n")).toBe(0);
   });
+
+  it("keeps a 256-member title-only edit O(1) and preserves membership identity", async () => {
+    const sourceIds = Array.from({ length: 256 }, (_, index) => "s04-256-" + String(index).padStart(3, "0"));
+    for (const id of sourceIds) await source(id);
+    const owner = service();
+    const created = await owner.create(context("title-256-create"), {
+      idempotency_key: "title-256-create", title: "256 members", source_ids: sourceIds,
+    });
+    const projectId = created.project_ref.id;
+    const membershipRows = await memberships(projectId);
+    expect(membershipRows).toHaveLength(256);
+    const beforeEpoch = await db.prepare("SELECT generation AS n FROM orientation_authority_epoch WHERE singleton=1")
+      .first<number>("n");
+    const beforeSnapshots = await db.prepare(
+      "SELECT snapshot_id,revision,invalidated_at,invalidation_reason FROM scope_snapshot ORDER BY snapshot_id,revision",
+    ).all();
+    const beforeClientScopes = await db.prepare(
+      "SELECT snapshot_id,snapshot_revision,principal_ref,client_class,credential_generation,state,project_client_grant_id " +
+      "FROM scope_access_grant WHERE project_client_grant_id IS NOT NULL " +
+      "ORDER BY snapshot_id,snapshot_revision,principal_ref,client_class,credential_generation",
+    ).all();
+    if (beforeEpoch === null) throw new Error("D1 epoch counter is unavailable");
+    clock += 1000;
+
+    const updated = await owner.update(context("title-256"), projectId, {
+      idempotency_key: "title-256", expected_revision: 1, title: "Renamed 256 members", source_ids: sourceIds,
+    });
+
+    const afterEpoch = await db.prepare("SELECT generation AS n FROM orientation_authority_epoch WHERE singleton=1")
+      .first<number>("n");
+    const afterSnapshots = await db.prepare(
+      "SELECT snapshot_id,revision,invalidated_at,invalidation_reason FROM scope_snapshot ORDER BY snapshot_id,revision",
+    ).all();
+    const afterClientScopes = await db.prepare(
+      "SELECT snapshot_id,snapshot_revision,principal_ref,client_class,credential_generation,state,project_client_grant_id " +
+      "FROM scope_access_grant WHERE project_client_grant_id IS NOT NULL " +
+      "ORDER BY snapshot_id,snapshot_revision,principal_ref,client_class,credential_generation",
+    ).all();
+    if (afterEpoch === null) throw new Error("D1 epoch counter is unavailable");
+    expect(updated).toMatchObject({ revision: 2, title: "Renamed 256 members", source_ids: sourceIds });
+    expect(afterEpoch).toBe(beforeEpoch + 1);
+    expect(afterSnapshots.results).toEqual(beforeSnapshots.results);
+    expect(afterClientScopes.results).toEqual(beforeClientScopes.results);
+    // The owner batch asserts zero close/insert rows for this same-set update.
+    expect(await memberships(projectId)).toEqual(membershipRows);
+    await expect(db.prepare("SELECT generation,membership_generation FROM project WHERE project_id=?1")
+      .bind(projectId).first()).resolves.toEqual({ generation: 2, membership_generation: 1 });
+    expect(JSON.parse((await receipt("title-256")).response_json)).toEqual(updated);
+  }, 60_000);
 
   it("rejects a stale preflight and a foreign owner without changing durable state", async () => {
     await source("s04-a");
