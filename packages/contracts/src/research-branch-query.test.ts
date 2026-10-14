@@ -1,12 +1,24 @@
 import { describe, expect, it } from "vitest";
 import { RetrievalLaneSchema } from "./retrieval.js";
-import { BranchQueryPlanSchema, BranchQueryResultSchema, BranchQueryLegResultSchema, branchQueryResultMatchesPlan } from "./research-branch-query.js";
+import {
+  MANAGED_RANKING_OUTCOME_PROTOCOL,
+  MANAGED_RETRIEVAL_TRACE_PROTOCOL,
+  ManagedRetrievalTraceSchema,
+} from "./retrieval-managed-ranking.js";
+import {
+  BranchQueryLegResultSchema,
+  BranchQueryPlanSchema,
+  BranchQueryResultSchema,
+  branchQueryResultMatchesPlan,
+  type BranchQueryPlan,
+} from "./research-branch-query.js";
 import { ResearchBranchResultV2Schema, ResearchReadExtractCheckpointV2Schema,
   ResearchBranchAnalysisCheckpointV2Schema, ResearchBranchReconciliationCheckpointV2Schema } from "./research-branch.js";
 import { ResolvedEvidenceSchema } from "./evidence.js";
 import { EvidenceFreezeBranchFindingsProvenanceSchema, EvidenceFreezeBranchFindingsSchema, ResearchEvidenceFreezeV3Schema } from "./research-branch-finding.js";
 
 const SHA = "a".repeat(64);
+const PROVIDER_REQUEST_SHA = "3".repeat(64);
 const scopeRef = { id: "scope-1", revision: 1 };
 const scopeDigest = SHA;
 const scopeSnapshot = {
@@ -24,6 +36,26 @@ const scopeSnapshot = {
   expires_at: "2027-01-01T00:00:00.000Z",
 };
 
+function legacyTrace(queryId: string, rawQuery = "bound branch query") {
+  return {
+    trace_ref: { id: `trace-${queryId}`, revision: 1 },
+    raw_query: rawQuery,
+    scope_snapshot: scopeSnapshot,
+    query_product: "RESEARCH" as const,
+    lanes_used: ["LEX" as const],
+    lanes_skipped: [],
+    exact_probes: [],
+    index_generations: [],
+    context_expansion: 0,
+    candidates_by_lane: Object.fromEntries(RetrievalLaneSchema.options.map((lane) => [lane, 0])),
+    expansion_refs: [],
+    represented_source_refs: [],
+    omitted_sources: [],
+    stale_or_degraded_channels: [],
+    budget_receipt_ref: "budget-1",
+  };
+}
+
 function leg(queryId: string, status: "COMPLETED" | "FAILED") {
   return {
     status,
@@ -33,23 +65,7 @@ function leg(queryId: string, status: "COMPLETED" | "FAILED") {
     scope_snapshot_ref: scopeRef,
     scope_snapshot_digest: scopeDigest,
     ...(status === "COMPLETED" ? {
-      trace: {
-        trace_ref: { id: `trace-${queryId}`, revision: 1 },
-        raw_query: "bound branch query",
-        scope_snapshot: scopeSnapshot,
-        query_product: "RESEARCH" as const,
-        lanes_used: ["LEX" as const],
-        lanes_skipped: [],
-        exact_probes: [],
-        index_generations: [],
-        context_expansion: 0,
-        candidates_by_lane: Object.fromEntries(RetrievalLaneSchema.options.map((lane) => [lane, 0])),
-        expansion_refs: [],
-        represented_source_refs: [],
-        omitted_sources: [],
-        stale_or_degraded_channels: [],
-        budget_receipt_ref: "budget-1",
-      },
+      trace: legacyTrace(queryId),
       stop_reason: "NO_HITS" as const,
     } : {
       failure_code: "RETRIEVAL_FAILED",
@@ -57,6 +73,46 @@ function leg(queryId: string, status: "COMPLETED" | "FAILED") {
     }),
     resolved_handle_refs: [],
     omitted_candidates: [],
+  };
+}
+
+function managedOutcome(executedQuery: string) {
+  return {
+    protocol: MANAGED_RANKING_OUTCOME_PROTOCOL,
+    provider: "cloudflare_ai_search" as const,
+    request_digest: PROVIDER_REQUEST_SHA,
+    scoped_invocation_id: "managed-invocation-1",
+    provider_execution_identity: {
+      available: false as const,
+      provider_execution_id: null,
+      reason: "BINDING_RESPONSE_HAS_NO_EXECUTION_ID" as const,
+    },
+    output_digest: "4".repeat(64),
+    provider_authority: {
+      namespace: "research",
+      instance_id: "managed-search-1",
+      registry_revision: 1,
+      registry_artifact_sha256: "5".repeat(64),
+    },
+    authority_generations: {
+      policy_generation: null,
+      execution_generation: null,
+      index_generation: "index-generation-1",
+      query_compiler_generation: null,
+    },
+    executed_query: executedQuery,
+    contributing_signals: [{ signal: "VECTOR" as const, basis: "EXECUTED_QUERY" as const }],
+    list_semantics: "ONE_PHYSICAL_MANAGED_LIST" as const,
+    scope_absence_proven: false as const,
+    rerank_requested: false,
+    rerank_attempted: false,
+    rerank_succeeded: false,
+    rerank_provider: null,
+    rerank_model: null,
+    fallback_used: false,
+    failure_class: null,
+    processing_state: "NO_HIT" as const,
+    ordered_candidates: [],
   };
 }
 
@@ -339,6 +395,107 @@ function parentCheckpointFixture() {
   });
   return { plan, query, analysis, reconciliation };
 }
+
+function managedTraceFor(plan: BranchQueryPlan) {
+  const planned = plan.query_legs[0];
+  if (planned === undefined) throw new Error("managed trace fixture requires a planned query");
+  return ManagedRetrievalTraceSchema.parse({
+    ...legacyTrace(planned.query_id, planned.query),
+    raw_query: planned.query,
+    query_product: plan.retrieval_product,
+    exact_probes: [...planned.literal_probes],
+    index_generations: ["index-generation-1"],
+    protocol: MANAGED_RETRIEVAL_TRACE_PROTOCOL,
+    managed_ranking_outcomes: [managedOutcome(planned.query)],
+  });
+}
+
+describe("branch query trace compatibility and binding", () => {
+  it("keeps the historical legacy trace readable without changing its fields", () => {
+    const legacy = leg("query-SUPPORT", "COMPLETED");
+    const parsed = BranchQueryLegResultSchema.parse(legacy);
+
+    expect(parsed.trace).toEqual(legacyTrace("query-SUPPORT"));
+    expect(parsed.trace).not.toHaveProperty("protocol");
+  });
+
+  it("retains the complete managed outcome, independent request digests, and candidate omissions", () => {
+    const { plan, query } = parentCheckpointFixture();
+    const sourceLeg = query.query_legs[0];
+    if (sourceLeg === undefined) throw new Error("query fixture has no leg");
+    const trace = managedTraceFor(plan);
+    const omissions = [{ candidate_id: "candidate-omitted", reason_code: "NOT_ADMITTED" }];
+    const result = BranchQueryResultSchema.parse({
+      ...query,
+      query_legs: [{ ...sourceLeg, trace, omitted_candidates: omissions }],
+      omitted_candidate_refs: omissions.map((item) => item.candidate_id),
+    });
+    const parsed = result.query_legs[0];
+
+    if (parsed?.trace === undefined || !("protocol" in parsed.trace)) {
+      throw new Error("managed trace fixture lost its managed protocol");
+    }
+    expect(parsed.trace).toEqual(trace);
+    expect(parsed.trace.managed_ranking_outcomes).toEqual(trace.managed_ranking_outcomes);
+    expect(parsed.trace.managed_ranking_outcomes[0]?.request_digest).toBe(PROVIDER_REQUEST_SHA);
+    expect(parsed.trace.managed_ranking_outcomes[0]?.request_digest).not.toBe(parsed.retrieval_request_digest);
+    expect(parsed.retrieval_request_digest).toBe(sourceLeg.retrieval_request_digest);
+    expect(parsed.omitted_candidates).toEqual(omissions);
+    expect(branchQueryResultMatchesPlan(plan, result)).toBe(true);
+  });
+
+  it("preserves legacy pairing and rejects managed traces whose query, probes, or product differ", () => {
+    const { plan, query } = parentCheckpointFixture();
+    const sourceLeg = query.query_legs[0];
+    if (sourceLeg?.trace === undefined) throw new Error("query fixture has no completed trace");
+    const managedTrace = managedTraceFor(plan);
+
+    expect(branchQueryResultMatchesPlan(plan, query)).toBe(true);
+    expect(branchQueryResultMatchesPlan(plan, {
+      ...query,
+      query_legs: [{ ...sourceLeg, trace: { ...sourceLeg.trace, raw_query: "foreign query" } }],
+    })).toBe(true);
+    expect(branchQueryResultMatchesPlan(plan, {
+      ...query,
+      query_legs: [{ ...sourceLeg, trace: { ...managedTrace, raw_query: "foreign query" } }],
+    })).toBe(false);
+    expect(branchQueryResultMatchesPlan(plan, {
+      ...query,
+      query_legs: [{ ...sourceLeg, trace: { ...managedTrace, exact_probes: ["foreign-probe"] } }],
+    })).toBe(false);
+    expect(branchQueryResultMatchesPlan(plan, {
+      ...query,
+      query_legs: [{ ...sourceLeg, trace: { ...managedTrace, query_product: "LOCATE" } }],
+    })).toBe(false);
+  });
+
+  it("rejects foreign scope bindings, unsupported trace refs, corrupt versions, and invalid managed outcome counts", () => {
+    const { plan, query } = parentCheckpointFixture();
+    const sourceLeg = query.query_legs[0];
+    if (sourceLeg === undefined) throw new Error("query fixture has no leg");
+    const planned = plan.query_legs[0];
+    if (planned === undefined) throw new Error("query fixture has no planned leg");
+    const trace = managedTraceFor(plan);
+
+    expect(BranchQueryLegResultSchema.safeParse({
+      ...sourceLeg,
+      trace: { ...trace, scope_snapshot: { ...trace.scope_snapshot, snapshot_id: "scope-foreign" } },
+    }).success).toBe(false);
+    expect(BranchQueryLegResultSchema.safeParse({
+      ...sourceLeg,
+      trace: { ...trace, trace_ref: { ...trace.trace_ref, revision: 2 } },
+    }).success).toBe(false);
+    expect(BranchQueryLegResultSchema.safeParse({
+      ...sourceLeg,
+      trace: { ...trace, protocol: "eliotr.retrieval-trace.managed.v2" },
+    }).success).toBe(false);
+    expect(ManagedRetrievalTraceSchema.safeParse({ ...trace, managed_ranking_outcomes: [] }).success).toBe(false);
+    expect(BranchQueryLegResultSchema.safeParse({
+      ...sourceLeg,
+      trace: { ...trace, managed_ranking_outcomes: [managedOutcome(planned.query), managedOutcome(planned.query)] },
+    }).success).toBe(false);
+  });
+});
 
 describe("branch parent and outcome integrity", () => {
   it("stops on the first evidence leg and enforces plan evidence budgets", () => {
