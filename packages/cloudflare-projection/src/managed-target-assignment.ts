@@ -250,7 +250,12 @@ interface ManagedTargetAssignmentD1Row {
 export function createD1ManagedTargetAssignmentPort(
   database: D1Database,
   authorize: ManagedTargetAssignmentAuthorizer,
+  /** Trusted Access expiry from Core; omitted to preserve existing port callers. */
+  authorizationExpiresAt?: string,
 ): ManagedTargetAssignmentPort {
+  const trustedAuthorizationExpiry = authorizationExpiresAt === undefined
+    ? undefined
+    : timestamp(authorizationExpiresAt);
   return Object.freeze({
     async append(input: ManagedTargetAssignmentCommand): Promise<ManagedTargetAssignmentEvent> {
       const command = parseManagedTargetAssignmentCommand(input);
@@ -268,19 +273,25 @@ export function createD1ManagedTargetAssignmentPort(
       const previous = command.event_kind === "RETIRE"
         ? command.previous_assignment_revision
         : null;
+      const insertPrefix =
+        "INSERT INTO managed_target_assignment_event(" +
+        "project_id,event_revision,expected_event_revision,event_kind,project_generation," +
+        "project_owner_principal_ref,target_namespace,managed_instance_id,managed_generation," +
+        "target_profile_identity_sha256,previous_assignment_revision,actor_kind,actor_principal_ref," +
+        "authorization_receipt_ref,created_at) ";
+      const insertValues = trustedAuthorizationExpiry === undefined
+        ? "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+        : "SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,? " +
+          "WHERE julianday(?)>julianday('now') ";
+      const insertReturning =
+        "RETURNING project_id,event_revision,expected_event_revision,event_kind,project_generation," +
+        "project_owner_principal_ref,target_namespace,managed_instance_id,managed_generation," +
+        "target_profile_identity_sha256,previous_assignment_revision,actor_kind,actor_principal_ref," +
+        "authorization_receipt_ref,created_at";
       let row: ManagedTargetAssignmentD1Row | null;
       try {
-        row = await database.prepare(
-          "INSERT INTO managed_target_assignment_event(" +
-          "project_id,event_revision,expected_event_revision,event_kind,project_generation," +
-          "project_owner_principal_ref,target_namespace,managed_instance_id,managed_generation," +
-          "target_profile_identity_sha256,previous_assignment_revision,actor_kind,actor_principal_ref," +
-          "authorization_receipt_ref,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) " +
-          "RETURNING project_id,event_revision,expected_event_revision,event_kind,project_generation," +
-          "project_owner_principal_ref,target_namespace,managed_instance_id,managed_generation," +
-          "target_profile_identity_sha256,previous_assignment_revision,actor_kind,actor_principal_ref," +
-          "authorization_receipt_ref,created_at",
-        ).bind(
+        const statement = database.prepare(insertPrefix + insertValues + insertReturning);
+        const values = [
           command.project_id,
           command.expected_event_revision + 1,
           command.expected_event_revision,
@@ -296,6 +307,10 @@ export function createD1ManagedTargetAssignmentPort(
           command.actor.principal_ref,
           command.actor.authorization_receipt_ref,
           command.created_at,
+        ] as const;
+        row = await (trustedAuthorizationExpiry === undefined
+          ? statement.bind(...values)
+          : statement.bind(...values, trustedAuthorizationExpiry)
         ).first<ManagedTargetAssignmentD1Row>();
       } catch (cause) {
         const message = cause instanceof Error ? cause.message : String(cause);
@@ -316,6 +331,12 @@ export function createD1ManagedTargetAssignmentPort(
         );
       }
 
+      if (row === null && trustedAuthorizationExpiry !== undefined) {
+        throw new ManagedTargetAssignmentError(
+          "MANAGED_TARGET_ASSIGNMENT_AUTHORIZATION_DENIED",
+          "verified owner Access expired before the atomic assignment append",
+        );
+      }
       if (row === null || !matchesCommand(row, command, target, previous)) {
         throw new ManagedTargetAssignmentError(
           "MANAGED_TARGET_ASSIGNMENT_OUTCOME_UNKNOWN",
