@@ -11,11 +11,48 @@ import { createResearchRunWire, type ResearchRunWire } from "./wire";
 import { createResearchFailureDecoder, type ResearchRunFailureDecoder, type ResearchEngineStatus, type ResearchRunFailureView } from "./failure";
 import { isResearchQuestionText, RESEARCH_REQUEST_MAX_BYTES, OWNER_RESEARCH_MAX_SELECTED_SOURCES } from "@eliotr/contracts";
 import { ScopeExpressionSchema } from "@eliotr/contracts";
+import type { ScopeExpression } from "@eliotr/contracts";
 
 const MAX_RESULTS = 16;
 const MAX_WORKFLOW_STAGE_INDEX = 18;
 const SAFE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/u;
 const RUN_PATH = "/api/v1/research/run";
+
+/** Strictly additive owner transport version tag; v1 and v2 never carry a selector. */
+export const RESEARCH_RUN_REQUEST_V3 = "eliotr.research-run-request.v3" as const;
+
+/**
+ * Owner v3 transport selection. The named owned configuration project is caller-supplied
+ * transport metadata on this request type only: it is never a public QueryRequest field, never
+ * a persisted R2 payload member, never a provider manifest member, and never derived from the
+ * caller's ScopeExpression. A missing selector is rejected before dispatch instead of being
+ * filled in by choosing a project automatically.
+ */
+export interface ResearchRunConfigurationSelection {
+  readonly request_version: typeof RESEARCH_RUN_REQUEST_V3;
+  readonly configuration_project_id: string;
+}
+
+/**
+ * One explicit v3 run admission request. The scope is the caller's own validated
+ * ScopeExpression, transmitted byte for byte; the selection is the caller's own named owned
+ * configuration project. Neither is derived from the other.
+ */
+export interface ResearchRunV3Request {
+  readonly query: string;
+  readonly scope_expression: ScopeExpression;
+  readonly selection: ResearchRunConfigurationSelection;
+  readonly max_results?: number;
+}
+
+/** Counts every selected source across a whole scope tree, wherever the caller placed them. */
+function countSelectedSources(scope: ScopeExpression): number {
+  if (scope.kind === "SELECTED_SOURCES") return scope.source_ids.length;
+  if (scope.kind === "UNION" || scope.kind === "INTERSECT" || scope.kind === "EXCEPT") {
+    return countSelectedSources(scope.left) + countSelectedSources(scope.right);
+  }
+  return 0;
+}
 
 export interface ResearchRunLaunchView {
   readonly investigation_ref: { readonly id: string; readonly revision: number };
@@ -54,15 +91,46 @@ export interface ResearchRunsApiPorts {
 }
 
 export interface ResearchRunsApi {
+  /**
+   * Builds one research.run body. The legacy four-argument form keeps its single project/source
+   * intersection unchanged. The v3 form carries an explicit caller-owned configuration selection
+   * alongside a caller-owned ScopeExpression and never infers or re-mints that selection.
+   */
   researchRunBody(query: string, sourceIds: readonly string[], maxResults?: number, projectId?: string): string;
+  /**
+   * Owner v3 transport entry. The caller supplies the exact validated ScopeExpression it means to
+   * run - including any bounded multi-project UNION or INTERSECT the four-argument legacy form
+   * cannot express - plus its explicit configuration selection. This method never derives a scope
+   * from a project id and never derives a selection from the scope.
+   */
+  researchRunBodyV3(request: ResearchRunV3Request): string;
   decodeResearchRunLaunch(raw: unknown, expectedDeploymentGeneration?: string): ResearchRunLaunchView;
   decodeResearchRunStatus: ResearchRunStatusDecoder;
   startResearchRun(body: string, idempotencyKey: string, expectedDeploymentGeneration?: string, signal?: AbortSignal): Promise<ResearchRunLaunchView>;
   readResearchRunStatus(workflowInstanceId: string, expectedDeploymentGeneration?: string, signal?: AbortSignal): Promise<ResearchRunStatusView>;
 }
 
+
+
 export function createResearchRunsApi(ports: ResearchRunsApiPorts): ResearchRunsApi {
   const { request, errors, epoch } = ports;
+  /**
+   * Explicit v3 selector validation against this caller's injected fences. Rejects a missing or
+   * wrong version tag, an unknown extra key and an invalid or empty project identifier before any
+   * body is built, and never derives, retries or downgrades the selection itself.
+   */
+  const parseSelection = (selection: ResearchRunConfigurationSelection): ResearchRunConfigurationSelection => {
+    if (typeof selection !== "object" || selection === null || Array.isArray(selection)) invalid("configuration selection is invalid");
+    const raw: Record<string, unknown> = { ...selection };
+    const allowed = ["request_version", "configuration_project_id"];
+    if (!Object.hasOwn(raw, "request_version") || !Object.hasOwn(raw, "configuration_project_id") ||
+        Object.keys(raw).some((key) => !allowed.includes(key))) invalid("configuration selection is invalid");
+    if (raw.request_version !== RESEARCH_RUN_REQUEST_V3) invalid("configuration selection version is unsupported");
+    const configurationProjectId = identifier(raw.configuration_project_id, "configuration_project_id");
+    if (!SAFE_IDENTIFIER.test(configurationProjectId)) invalid("configuration_project_id is invalid");
+    return Object.freeze({ request_version: RESEARCH_RUN_REQUEST_V3, configuration_project_id: configurationProjectId });
+  };
+
   const wire: ResearchRunWire = createResearchRunWire(errors);
   const failures: ResearchRunFailureDecoder = createResearchFailureDecoder(errors);
   const invalid: ResearchRunWire["invalid"] = wire.invalid;
@@ -151,8 +219,51 @@ export function createResearchRunsApi(ports: ResearchRunsApiPorts): ResearchRuns
     return body;
   };
 
+  /**
+   * Owner v3 body for one explicit caller request. The caller's own ScopeExpression is
+   * re-validated against the shared strict schema and the same existing bounds, then transmitted
+   * byte for byte; the selector is validated first and never derived from that scope. A missing
+   * selector is rejected here: this method never autoselects a project, never retries as v2 and
+   * never downgrades to a legacy body.
+   */
+  const researchRunBodyV3 = (request: ResearchRunV3Request): string => {
+    if (typeof request !== "object" || request === null) invalid("v3 request is invalid");
+    // A mixed v2 or unknown field is rejected here, before anything is transmitted. The strict
+    // v3 key set is query, scope_expression, selection, max_results and nothing else.
+    const requestKeys = ["query", "scope_expression", "selection", "max_results"];
+    const rawRequest: Record<string, unknown> = { ...request };
+    if (!Object.hasOwn(rawRequest, "query") || !Object.hasOwn(rawRequest, "scope_expression") ||
+        !Object.hasOwn(rawRequest, "selection") || Object.keys(rawRequest).some((key) => !requestKeys.includes(key))) {
+      invalid("v3 request is invalid");
+    }
+    const transportSelection = parseSelection(request.selection);
+    if (!isResearchQuestionText(request.query)) {
+      throw errors({ code: "RESEARCH_INPUT_INVALID", status: 400, message: "query is invalid", traceId: null, retryable: false });
+    }
+    const maxResults = request.max_results === undefined ? MAX_RESULTS : request.max_results;
+    if (!Number.isSafeInteger(maxResults) || maxResults < 1 || maxResults > MAX_RESULTS) invalid("max_results is invalid");
+    const parsedScope = ScopeExpressionSchema.safeParse(request.scope_expression);
+    if (!parsedScope.success) invalid("source scope is invalid");
+    if (countSelectedSources(parsedScope.data) > OWNER_RESEARCH_MAX_SELECTED_SOURCES) invalid("source scope is invalid");
+    const body = JSON.stringify({ query: request.query, product: "RESEARCH", scope_expression: parsedScope.data,
+      literals: [], evidence_grade: "E0", budget_ref: "research-budget-v1", max_results: maxResults,
+      request_version: transportSelection.request_version,
+      configuration_project_id: transportSelection.configuration_project_id });
+    if (new TextEncoder().encode(body).byteLength > RESEARCH_REQUEST_MAX_BYTES) {
+      throw errors({
+        code: "RESEARCH_INPUT_LIMIT",
+        status: 413,
+        message: `Research HTTP request exceeds ${RESEARCH_REQUEST_MAX_BYTES} UTF-8 bytes`,
+        traceId: null,
+        retryable: false,
+      });
+    }
+    return body;
+  };
+
   return {
     researchRunBody,
+    researchRunBodyV3,
     decodeResearchRunLaunch,
     decodeResearchRunStatus,
     startResearchRun(body, idempotencyKey, expectedDeploymentGeneration, signal) {
