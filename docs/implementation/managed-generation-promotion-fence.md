@@ -33,9 +33,16 @@ source namespaces are distinct; unsuccessful D1 pages raise even when empty.
 The owning package compiler, scoped lint, command/SQLite enumeration tests and
 migration depth checks passed. Guarded remote application of migration 0141
 passed on October 14: Core has 136 migrations through 0141; Search retains four.
-The verified maintenance release `c465ec4d` is installed. It did not create any
+The verified maintenance release `453523e4` is installed. It did not create any
 project assignment or promote an AI Search generation. The Core assignment
-authorizer is not wired. The enumeration receipt counts project/revision
+authorizer is wired through three owner-only read, assign and retire routes.
+The six-file source closure at `f313f342` preserves current owner, exact-head
+CAS and atomic Access-expiry fencing; current owners can retire an older
+project-generation assignment without being stranded by a normal project
+update. Core/interfaces compilation, the native assignment cases and scoped
+lint passed. The installed release's asset, schema and authenticated HTTP
+readbacks passed. No assignment or promotion was executed by those checks.
+The enumeration receipt counts project/revision
 copies, not desired items. The shared desired-item builder/promoter, structural
 project-specific item layout, writer drain, real T2/T3 and expected-head promotion
 remain pending. Neither the source publication nor provider presence establishes
