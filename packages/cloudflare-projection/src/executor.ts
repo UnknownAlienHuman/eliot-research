@@ -12,7 +12,6 @@ import {
   projectionFail,
   stableProjectionId,
   utf8ProjectionLength,
-  type ProjectionRuntimeError,
 } from "./canonical.js";
 import type {
   ManagedProjectionReceipt,
@@ -21,6 +20,7 @@ import type {
   ProjectionSearchReceipt,
   ProjectionSettlement,
   ProjectionSourceContext,
+  ProjectionTerminalReceipt,
   ProjectionWorkReceipt,
 } from "./types.js";
 
@@ -95,30 +95,78 @@ function verifySearchSet(
 }
 
 function deliveryFailure(error: unknown): never {
-  if (error instanceof DeliveryRuntimeError) throw error;
-  if (error instanceof StructuralProjectionError) {
-    throw new DeliveryRuntimeError(
-      "DELIVERY_INPUT_INVALID",
-      error.message,
-      false,
+  return mapDeliveryFailure(error);
+}
+
+class DeliveryReconciliationError extends DeliveryRuntimeError {
+  public readonly primary_error: unknown;
+  public readonly reconciliation_error: unknown;
+
+  public constructor(
+    code: DeliveryRuntimeError["code"],
+    message: string,
+    retryable: boolean,
+    primaryError: unknown,
+    reconciliationError: unknown,
+  ) {
+    super(code, message, retryable, primaryError);
+    this.name = "DeliveryRuntimeError";
+    this.primary_error = primaryError;
+    this.reconciliation_error = reconciliationError;
+  }
+}
+
+function mapDeliveryFailure(
+  error: unknown,
+  reconciliation?: { readonly error: unknown },
+): never {
+  if (error instanceof DeliveryRuntimeError && reconciliation === undefined) throw error;
+  let code: DeliveryRuntimeError["code"] = "DELIVERY_SETTLEMENT_UNCERTAIN";
+  let retryable = true;
+  let message = error instanceof Error ? error.message : "projection execution failed";
+  if (error instanceof DeliveryRuntimeError) {
+    code = error.code;
+    retryable = error.retryable;
+    message = error.message;
+  } else if (error instanceof StructuralProjectionError) {
+    code = "DELIVERY_INPUT_INVALID";
+    retryable = false;
+    message = error.message;
+  } else {
+    let nonRetryable = false;
+    try {
+      if (
+        (typeof error === "object" && error !== null) ||
+        typeof error === "function"
+      ) {
+        nonRetryable = (error as { readonly retryable?: unknown }).retryable === false;
+      }
+    } catch {
+      // A malformed thrown value must not replace the failure being mapped.
+    }
+    if (nonRetryable) {
+      code = "DELIVERY_INPUT_INVALID";
+      retryable = false;
+      message = error instanceof Error ? error.message : "projection input or authority is invalid";
+    }
+  }
+  if (reconciliation !== undefined) {
+    throw new DeliveryReconciliationError(
+      code,
+      message,
+      retryable,
       error,
+      reconciliation.error,
     );
   }
-  const candidate = error as Partial<ProjectionRuntimeError>;
-  if (candidate.retryable === false) {
-    throw new DeliveryRuntimeError(
-      "DELIVERY_INPUT_INVALID",
-      error instanceof Error ? error.message : "projection input or authority is invalid",
-      false,
-      error,
-    );
-  }
-  throw new DeliveryRuntimeError(
-    "DELIVERY_SETTLEMENT_UNCERTAIN",
-    error instanceof Error ? error.message : "projection execution failed",
-    true,
-    error,
-  );
+  throw new DeliveryRuntimeError(code, message, retryable, error);
+}
+
+function deliveryFailureAfterReadbackFailure(
+  error: unknown,
+  readbackError: unknown,
+): never {
+  return mapDeliveryFailure(error, { error: readbackError });
 }
 
 async function failLeaseQuietly(
@@ -273,7 +321,16 @@ export function createProjectionExecutionHandler(
         catch { /* exact terminal readback outranks coordination state */ }
         return { receipt_ref: terminal.receipt_ref };
       } catch (error) {
-        const reconciled = await dependencies.authority.readTerminal(context, generation, dependencies.profile);
+        let reconciled: ProjectionTerminalReceipt | null;
+        try {
+          reconciled = await dependencies.authority.readTerminal(
+            context,
+            generation,
+            dependencies.profile,
+          );
+        } catch (readbackError) {
+          deliveryFailureAfterReadbackFailure(error, readbackError);
+        }
         if (reconciled !== null) {
           try { await dependencies.leases.complete(fence, reconciled.receipt_ref, now()); }
           catch { /* exact terminal readback is sufficient */ }

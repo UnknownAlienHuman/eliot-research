@@ -8,6 +8,7 @@ import type {
   ExecutionLease,
   ExecutionLeaseStore,
 } from "@eliotr/platform-cloudflare";
+import { DeliveryRuntimeError } from "@eliotr/platform-cloudflare";
 import { describe, expect, it, vi } from "vitest";
 import { createProjectionExecutionHandler } from "./executor.js";
 import type {
@@ -298,5 +299,74 @@ describe("projection execution coordinator", () => {
     expect(result).toEqual({ receipt_ref: prior.receipt_ref });
     expect(f.events).toEqual(["load"]);
     expect(f.dependencies.leases.acquire).not.toHaveBeenCalled();
+  });
+
+  it("keeps the primary failure and failed terminal readback separate without failing the lease", async () => {
+    const f = fixture();
+    const primary = new Error("managed provider outcome is uncertain");
+    const readback = new Error("terminal receipt store is unavailable");
+    vi.spyOn(f.dependencies.content, "read").mockRejectedValue(primary);
+    const readTerminal = vi.spyOn(f.dependencies.authority, "readTerminal");
+    readTerminal.mockResolvedValueOnce(null);
+    readTerminal.mockRejectedValueOnce(readback);
+
+    let observed: unknown;
+    try {
+      await createProjectionExecutionHandler(f.dependencies).execute(message);
+    } catch (error) {
+      observed = error;
+    }
+
+    expect(observed).toBeInstanceOf(DeliveryRuntimeError);
+    expect(observed).toMatchObject({ code: "DELIVERY_SETTLEMENT_UNCERTAIN" });
+    expect((observed as Error & { readonly primary_error: unknown }).primary_error).toBe(primary);
+    expect((observed as Error & { readonly reconciliation_error: unknown }).reconciliation_error)
+      .toBe(readback);
+    expect((observed as Error & { readonly cause: unknown }).cause).toBe(primary);
+    expect(f.dependencies.leases.fail).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["null primary and undefined readback", null, undefined],
+    ["undefined primary and null readback", undefined, null],
+  ])("maps %s without throwing a secondary type error", async (_label, primary, readback) => {
+    const f = fixture();
+    vi.spyOn(f.dependencies.content, "read").mockRejectedValue(primary);
+    const terminalRead = vi.spyOn(f.dependencies.authority, "readTerminal");
+    terminalRead.mockResolvedValueOnce(null);
+    terminalRead.mockRejectedValueOnce(readback);
+
+    let observed: unknown;
+    try {
+      await createProjectionExecutionHandler(f.dependencies).execute(message);
+    } catch (error) {
+      observed = error;
+    }
+
+    expect(observed).toBeInstanceOf(DeliveryRuntimeError);
+    expect(observed).toMatchObject({ code: "DELIVERY_SETTLEMENT_UNCERTAIN" });
+    expect((observed as Error & { readonly primary_error: unknown }).primary_error).toBe(primary);
+    expect(Object.hasOwn(observed as object, "reconciliation_error")).toBe(true);
+    expect((observed as Error & { readonly reconciliation_error: unknown }).reconciliation_error)
+      .toBe(readback);
+    expect(f.dependencies.leases.fail).not.toHaveBeenCalled();
+  });
+
+  it("returns the exact terminal receipt found after a processing failure", async () => {
+    const f = fixture();
+    const prior = terminal("PARTIAL");
+    vi.spyOn(f.dependencies.content, "read").mockRejectedValue(new Error("processing failed"));
+    const terminalRead = vi.spyOn(f.dependencies.authority, "readTerminal");
+    terminalRead.mockResolvedValueOnce(null);
+    terminalRead.mockResolvedValueOnce(prior);
+
+    await expect(createProjectionExecutionHandler(f.dependencies).execute(message))
+      .resolves.toEqual({ receipt_ref: prior.receipt_ref });
+    expect(f.dependencies.leases.complete).toHaveBeenCalledWith(
+      expect.objectContaining({ operation_id: "projection-execute-1" }),
+      prior.receipt_ref,
+      1_000,
+    );
+    expect(f.dependencies.leases.fail).not.toHaveBeenCalled();
   });
 });

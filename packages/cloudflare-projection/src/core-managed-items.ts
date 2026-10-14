@@ -34,6 +34,86 @@ interface ExecutionLeaseRow {
   readonly state: unknown;
 }
 
+function dispatchAuthorityPredicate(start: number): string {
+  const p = (offset: number) => `?${start + offset}`;
+  return "EXISTS (SELECT 1 FROM outbox o " +
+    "JOIN operation_intent i ON i.intent_id = o.intent_id AND i.revision = o.intent_revision " +
+    "JOIN job j ON j.intent_id = i.intent_id AND j.intent_revision = i.revision " +
+    "JOIN source_revision sr ON sr.source_revision_ref = i.payload_ref " +
+    "JOIN source s ON s.source_id = sr.source_id " +
+    "JOIN source_namespace_ownership own ON own.source_namespace_id = s.source_namespace_id " +
+    "AND own.owner_system_id = s.source_owner_system_id " +
+    "AND own.source_owner_generation = sr.source_owner_generation " +
+    "JOIN source_admission_decision decision ON decision.decision_receipt_ref = i.policy_decision_ref " +
+    "AND decision.source_revision_ref = sr.source_revision_ref " +
+    "AND decision.source_owner_generation = sr.source_owner_generation " +
+    "JOIN projection_generation g ON g.source_revision_ref = sr.source_revision_ref " +
+    `AND g.projection_generation = ${p(8)} AND g.job_id = j.job_id ` +
+    `WHERE o.outbox_id = ${p(0)} AND o.topic = ${p(1)} ` +
+    `AND o.payload_ref = ${p(2)} AND o.payload_sha256 = ${p(3)} ` +
+    `AND i.idempotency_key = ${p(4)} AND i.intent_id = ${p(5)} ` +
+    `AND i.revision = ${p(6)} AND i.operation_kind = 'PROJECTION' ` +
+    `AND j.job_id = ${p(7)} AND j.state = 'RUNNING' ` +
+    `AND sr.source_revision_ref = ${p(9)} AND sr.source_id = ${p(10)} ` +
+    `AND sr.source_owner_generation = ${p(13)} AND sr.content_sha256 = ${p(14)} ` +
+    `AND sr.object_residency_key_digest = ${p(15)} AND sr.purge_state = 'LIVE' ` +
+    `AND s.source_namespace_id = ${p(11)} AND s.source_owner_system_id = ${p(12)} ` +
+    `AND s.source_owner_generation = ${p(13)} AND s.ownership_mode = ${p(16)} ` +
+    "AND own.status = 'ACTIVE' " +
+    `AND decision.source_namespace_id = ${p(11)} ` +
+    `AND decision.owner_system_id = ${p(12)} ` +
+    `AND decision.object_residency_key_digest = ${p(15)} ` +
+    "AND decision.decision = 'ADMITTED' " +
+    "AND g.state = 'MATERIALIZED' " +
+    "AND (SELECT COUNT(*) FROM job sibling WHERE sibling.intent_id = i.intent_id " +
+    "AND sibling.intent_revision = i.revision) = 1 " +
+    "AND NOT EXISTS (SELECT 1 FROM projection_terminal_guard terminal " +
+    "WHERE terminal.source_revision_ref = sr.source_revision_ref " +
+    "AND terminal.projection_generation = g.projection_generation))";
+}
+
+function dispatchAuthorityBindings(
+  context: ProjectionSourceContext,
+  projectionGeneration: string,
+): readonly (string | number)[] {
+  return [
+    context.message.outbox_id,
+    context.message.topic,
+    context.message.payload_ref,
+    context.message.payload_sha256,
+    context.message.idempotency_key,
+    context.intent_ref.id,
+    context.intent_ref.revision,
+    context.job_id,
+    projectionGeneration,
+    context.source_revision.source_revision_ref,
+    context.source_revision.source_id,
+    context.source_revision.source_namespace_id,
+    context.source_revision.source_owner_system_id,
+    context.source_revision.source_owner_generation,
+    context.source_revision.content_sha256,
+    context.source_revision.object_residency_key_digest,
+    context.source_revision.ownership_mode,
+  ];
+}
+
+async function assertCurrentManagedDispatchAuthority(
+  database: D1Database,
+  context: ProjectionSourceContext,
+  projectionGeneration: string,
+): Promise<void> {
+  const row = await database.prepare(
+    `SELECT 1 AS current_authority WHERE ${dispatchAuthorityPredicate(1)}`,
+  ).bind(...dispatchAuthorityBindings(context, projectionGeneration))
+    .first<{ readonly current_authority: unknown }>();
+  if (row === null) {
+    projectionFail(
+      "PROJECTION_AUTHORITY_CONFLICT",
+      "pinned source or projection generation is no longer dispatchable",
+    );
+  }
+}
+
 function readClock(clock: () => number): number {
   const value = clock();
   if (!Number.isSafeInteger(value) || value < 0) {
@@ -110,7 +190,13 @@ async function loadEffectRow(
   context: ProjectionSourceContext,
   projectionGeneration: string,
   itemKey: string,
+  expectedManifestItemCount?: number,
 ): Promise<ManagedItemEffectRow | null> {
+  const completeManifestPredicate = expectedManifestItemCount === undefined
+    ? ""
+    : "AND (SELECT COUNT(*) FROM projection_managed_item_effect complete " +
+      "WHERE complete.source_revision_ref = ?1 AND complete.projection_generation = ?2 " +
+      "AND complete.job_id = ?3) = ?5 ";
   return database.prepare(
     "SELECT source_revision_ref, projection_generation, job_id, item_key, desired_index, " +
     "normalized_start_byte, normalized_end_byte, " +
@@ -119,12 +205,14 @@ async function loadEffectRow(
     "section_content_sha256, document_sha256, document_size_bytes, metadata_json, state, " +
     "provider_item_id, readback_receipt_json, readback_sha256 " +
     "FROM projection_managed_item_effect WHERE source_revision_ref = ?1 " +
-    "AND projection_generation = ?2 AND job_id = ?3 AND item_key = ?4 LIMIT 1",
+    "AND projection_generation = ?2 AND job_id = ?3 AND item_key = ?4 " +
+    completeManifestPredicate + "LIMIT 1",
   ).bind(
     context.source_revision.source_revision_ref,
     projectionGeneration,
     context.job_id,
     itemKey,
+    ...(expectedManifestItemCount === undefined ? [] : [expectedManifestItemCount]),
   ).first<ManagedItemEffectRow>();
 }
 
@@ -160,19 +248,87 @@ export async function prepareManagedItemEffects(
   if (
     generation === null ||
     generation.job_id !== context.job_id ||
-    generation.state !== "MATERIALIZED" ||
-    generation.item_count !== items.length
+    generation.state !== "MATERIALIZED"
   ) {
     projectionFail(
       "PROJECTION_AUTHORITY_CONFLICT",
       "managed item intents require the exact materialized projection generation",
     );
   }
+  const manifestItemCount = assertProjectionInteger(
+    generation.item_count,
+    "managed materialized item count",
+    1,
+    profile.maximum_synchronous_items,
+  );
   const expectedItemSetDigest = assertProjectionSha256(
     generation.item_set_digest,
     "managed materialized item set digest",
   );
-  const actualItemSetDigest = await projectionDigest(items.map((item, index) => {
+  let singleItemManifestDigest: string | undefined;
+  if (items.length === 1) {
+    const item = items[0];
+    if (item === undefined) {
+      projectionFail(
+        "PROJECTION_INPUT_INVALID",
+        "managed item refresh is missing its exact intent",
+      );
+    }
+    if (item.desired_index >= manifestItemCount) {
+      projectionFail(
+        "PROJECTION_AUTHORITY_CONFLICT",
+        "managed item refresh is outside the prepared manifest",
+      );
+    }
+    assertManagedItemIntent(context, projectionGeneration, profile, item, item.desired_index);
+    if (manifestItemCount === 1) {
+      singleItemManifestDigest = await projectionDigest([{
+        item_key: item.item_key,
+        canonical_section_id: item.metadata.canonical_section_id,
+        content_sha256: item.section_content_sha256,
+        start: item.normalized_start_byte,
+        end: item.normalized_end_byte,
+      }]);
+      if (singleItemManifestDigest !== expectedItemSetDigest) {
+        projectionFail(
+          "PROJECTION_AUTHORITY_CONFLICT",
+          "managed item intent differs from the exact durable projection manifest item set",
+        );
+      }
+    }
+    const row = await loadEffectRow(
+      database,
+      context,
+      projectionGeneration,
+      item.item_key,
+      manifestItemCount,
+    );
+    if (items.length !== manifestItemCount || (row !== null && row.state !== "INTENT")) {
+      if (row === null) {
+        projectionFail(
+          "PROJECTION_SETTLEMENT_UNCERTAIN",
+          "managed item refresh has no durable intent from the complete manifest",
+          true,
+        );
+      }
+      if (row.state === "INTENT") {
+        projectionFail(
+          "PROJECTION_AUTHORITY_CONFLICT",
+          "managed item refresh requires a durable state transition after manifest preparation",
+        );
+      }
+      const effect = decodeEffectRow(row, context, projectionGeneration, profile, operationId, item);
+      await assertCallerFence(database, operationId, callerFence, readClock(clock));
+      return Object.freeze([effect]);
+    }
+  }
+  if (items.length !== manifestItemCount) {
+    projectionFail(
+      "PROJECTION_AUTHORITY_CONFLICT",
+      "managed item refresh must name one item from the prepared manifest",
+    );
+  }
+  const actualItemSetDigest = singleItemManifestDigest ?? await projectionDigest(items.map((item, index) => {
     assertManagedItemIntent(context, projectionGeneration, profile, item, index);
     return {
       item_key: item.item_key,
@@ -270,7 +426,8 @@ export async function beginManagedItemDispatch(
     "AND execution_operation_id = ?7 AND EXISTS (SELECT 1 FROM operation_execution_lease l " +
     "WHERE l.operation_id = ?7 AND l.operation_kind = 'PROJECTION_EXECUTE' " +
     "AND l.lease_owner = ?9 AND l.lease_generation = ?5 AND l.state = 'LEASED' " +
-    "AND l.lease_until > ?8 AND l.lease_until > " + D1_EXECUTION_LEASE_NOW_SQL + ")",
+    "AND l.lease_until > ?8 AND l.lease_until > " + D1_EXECUTION_LEASE_NOW_SQL + ") " +
+    `AND ${dispatchAuthorityPredicate(10)}`,
   ).bind(
     context.source_revision.source_revision_ref,
     projectionGeneration,
@@ -281,6 +438,7 @@ export async function beginManagedItemDispatch(
     operationId,
     nowMs,
     callerFence.lease_owner,
+    ...dispatchAuthorityBindings(context, projectionGeneration),
   ).run();
   if (result.meta.changes === 1) {
     await assertCallerFence(database, operationId, callerFence, readClock(clock));
@@ -293,6 +451,7 @@ export async function beginManagedItemDispatch(
   }
   assertLineage(row, context, projectionGeneration, operationId);
   if (row.state === "INTENT") {
+    await assertCurrentManagedDispatchAuthority(database, context, projectionGeneration);
     projectionFail(
       "PROJECTION_SETTLEMENT_UNCERTAIN",
       "managed item dispatch was not fenced by the current execution lease",

@@ -15,9 +15,11 @@ import {
   recordManagedItemReceipt,
 } from "./core-managed-items.js";
 import {
+  MANAGED_ITEM_PROTOCOL_VERSION,
   readManagedItemGenerationProof,
   readManagedItemReceipts,
 } from "./core-managed-item-receipts.js";
+import { createD1ProjectionAuthority } from "./core-authority.js";
 import type {
   ProjectionExecutionProfile,
   ProjectionSourceContext,
@@ -122,6 +124,113 @@ function databaseForManifest(
   } as unknown as D1Database;
 }
 
+function countedManagedItemDatabase(
+  itemCount: number,
+  digest: string,
+  fence: ExecutionFence,
+): {
+  readonly database: D1Database;
+  readonly writes: string[];
+  readonly itemReads: string[];
+  readonly callCount: () => number;
+  readonly dispatch: (itemKey: string) => void;
+} {
+  let calls = 0;
+  const writes: string[] = [];
+  const itemReads: string[] = [];
+  const rows = new Map<string, Record<string, unknown>>();
+  const database = {
+    prepare(sql: string) {
+      return {
+        bind(...values: unknown[]) {
+          return {
+            async first() {
+              calls += 1;
+              if (sql.includes("FROM operation_execution_lease")) {
+                return {
+                  operation_id: fence.operation_id,
+                  operation_kind: "PROJECTION_EXECUTE",
+                  lease_owner: fence.lease_owner,
+                  lease_generation: fence.lease_generation,
+                  lease_until: 10_000,
+                  state: "LEASED",
+                };
+              }
+              if (sql.includes("FROM projection_generation")) {
+                return {
+                  job_id: context.job_id,
+                  state: "MATERIALIZED",
+                  item_count: itemCount,
+                  item_set_digest: digest,
+                  managed_item_protocol: MANAGED_ITEM_PROTOCOL_VERSION,
+                  managed_target_instance_id: profile.managed_instance_id,
+                  managed_target_generation: profile.managed_generation,
+                };
+              }
+              if (sql.includes("FROM projection_managed_item_effect")) {
+                const itemKey = String(values[3]);
+                itemReads.push(itemKey);
+                if (values.length > 4 && rows.size !== values[4]) return null;
+                return rows.get(itemKey) ?? null;
+              }
+              throw new Error(`unexpected D1 read: ${sql}`);
+            },
+            async run() {
+              calls += 1;
+              writes.push(sql);
+              if (sql.includes("INSERT INTO projection_managed_item_effect")) {
+                const itemKey = String(values[3]);
+                rows.set(itemKey, {
+                  source_revision_ref: values[0],
+                  projection_generation: values[1],
+                  job_id: values[2],
+                  item_key: itemKey,
+                  desired_index: values[4],
+                  normalized_start_byte: values[5],
+                  normalized_end_byte: values[6],
+                  intent_id: values[7],
+                  intent_revision: values[8],
+                  attempt_id: values[9],
+                  execution_operation_id: values[10],
+                  dispatch_lease_generation: null,
+                  managed_instance_id: values[11],
+                  managed_generation: values[12],
+                  provider_source: "builtin",
+                  provider_key: values[13],
+                  section_content_sha256: values[14],
+                  document_sha256: values[15],
+                  document_size_bytes: values[16],
+                  metadata_json: values[17],
+                  state: "INTENT",
+                  provider_item_id: null,
+                  readback_receipt_json: null,
+                  readback_sha256: null,
+                });
+              }
+              return { meta: { changes: 1 } };
+            },
+          };
+        },
+      };
+    },
+  } as unknown as D1Database;
+  return {
+    database,
+    writes,
+    itemReads,
+    callCount: () => calls,
+    dispatch(itemKey) {
+      const row = rows.get(itemKey);
+      if (row === undefined) throw new Error(`missing test managed effect ${itemKey}`);
+      rows.set(itemKey, {
+        ...row,
+        state: "DISPATCHED",
+        dispatch_lease_generation: fence.lease_generation,
+      });
+    },
+  };
+}
+
 async function makeFence(
   lease_generation = 1,
   lease_owner = "worker-1",
@@ -208,6 +317,100 @@ describe("prepareManagedItemEffects", () => {
       fence,
     )).rejects.toMatchObject({ code: "PROJECTION_AUTHORITY_CONFLICT" });
     expect(writes).toEqual([]);
+  });
+
+  it("prepares a 64-item manifest once and refreshes each exact item with linear D1 calls", async () => {
+    const intents = Array.from({ length: 64 }, (_, desired_index) => ({
+      ...intent,
+      desired_index,
+      item_key: `item-${desired_index}`,
+      provider_key: `item-${desired_index}.md`,
+      normalized_start_byte: desired_index,
+      normalized_end_byte: desired_index + 1,
+      metadata: {
+        ...intent.metadata,
+        canonical_section_id: `section-${desired_index}`,
+      },
+    }));
+    const digest = await projectionDigest(intents.map((item) => ({
+      item_key: item.item_key,
+      canonical_section_id: item.metadata.canonical_section_id,
+      content_sha256: item.section_content_sha256,
+      start: item.normalized_start_byte,
+      end: item.normalized_end_byte,
+    })));
+    const fence = await makeFence();
+    const counted = countedManagedItemDatabase(intents.length, digest, fence);
+    const authority = createD1ProjectionAuthority({
+      database: counted.database,
+      now: () => 1_000,
+    });
+
+    const prepared = await authority.prepareManagedItems(
+      context,
+      "projection-generation-1",
+      profile,
+      intents,
+      fence,
+    );
+    expect(prepared).toHaveLength(64);
+    const manifestCalls = 4 * 64 + 4;
+    expect(counted.callCount()).toBe(manifestCalls);
+
+    for (const item of intents) {
+      counted.dispatch(item.item_key);
+      const refreshed = await authority.prepareManagedItems(
+        context,
+        "projection-generation-1",
+        profile,
+        [item],
+        fence,
+      );
+      expect(refreshed).toHaveLength(1);
+      expect(refreshed[0]?.item_key).toBe(item.item_key);
+    }
+
+    expect(counted.callCount()).toBe(manifestCalls + 5 * 64);
+    expect(counted.writes).toHaveLength(64);
+    expect(counted.itemReads.slice(64)).toEqual(intents.map((item) => item.item_key));
+  });
+
+  it("uses the one-item manifest as an exact refresh only after its durable dispatch transition", async () => {
+    const digest = await projectionDigest([{
+      item_key: intent.item_key,
+      canonical_section_id: intent.metadata.canonical_section_id,
+      content_sha256: intent.section_content_sha256,
+      start: intent.normalized_start_byte,
+      end: intent.normalized_end_byte,
+    }]);
+    const fence = await makeFence();
+    const counted = countedManagedItemDatabase(1, digest, fence);
+    const authority = createD1ProjectionAuthority({
+      database: counted.database,
+      now: () => 1_000,
+    });
+    const prepared = await authority.prepareManagedItems(
+      context,
+      "projection-generation-1",
+      profile,
+      [intent],
+      fence,
+    );
+    expect(prepared[0]?.state).toBe("INTENT");
+    expect(counted.writes).toHaveLength(1);
+
+    counted.dispatch(intent.item_key);
+    const refreshed = await authority.prepareManagedItems(
+      context,
+      "projection-generation-1",
+      profile,
+      [intent],
+      fence,
+    );
+
+    expect(refreshed).toMatchObject([{ item_key: intent.item_key, state: "DISPATCHED" }]);
+    expect(counted.writes).toHaveLength(1);
+    expect(counted.callCount()).toBe(14);
   });
 });
 
@@ -437,6 +640,9 @@ describe("readManagedItemReceipts", () => {
       item_set_digest: requiredSetDigest,
       semantic_instance_id: profile.managed_instance_id,
       semantic_generation: profile.managed_generation,
+      managed_item_protocol: MANAGED_ITEM_PROTOCOL_VERSION,
+      managed_target_instance_id: profile.managed_instance_id,
+      managed_target_generation: profile.managed_generation,
       semantic_receipt_ref: terminalState === "COMPLETED" ? managedReceiptRef : null,
       semantic_readback_digest: terminalState === "COMPLETED" ? readbackDigest : null,
     };

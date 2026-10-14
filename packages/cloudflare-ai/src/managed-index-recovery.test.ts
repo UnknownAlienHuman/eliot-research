@@ -6,6 +6,7 @@ import {
   createMemoryManagedItemAuthority,
   downloaded,
   item,
+  managedDocument,
   profile,
   TEST_EXECUTION_FENCE,
 } from "./managed-index.test-support.js";
@@ -23,11 +24,20 @@ interface StoredItem {
 function createProvider(lostAckKey: string) {
   const stored = new Map<string, StoredItem>();
   const visible = new Set<string>();
+  const infoFailures = new Map<string, { readonly cause: unknown }>();
+  const downloadFailures = new Map<string, { readonly cause: unknown }>();
+  const downloadBodyFailures = new Map<string, { readonly cause: unknown }>();
+  const downloadedContent = new Map<string, string>();
   let lostAck = false;
   let completeListMetadata = true;
   const info = vi.fn(async (id: string) => {
     const row = [...stored.values()].find((candidate) => candidate.id === id);
     if (row === undefined) throw new Error("unknown provider item ID");
+    const failure = infoFailures.get(id);
+    if (failure !== undefined) {
+      infoFailures.delete(id);
+      throw failure.cause;
+    }
     return {
       id: row.id,
       key: row.key,
@@ -40,7 +50,23 @@ function createProvider(lostAckKey: string) {
   const download = vi.fn(async (id: string) => {
     const row = [...stored.values()].find((candidate) => candidate.id === id);
     if (row === undefined) throw new Error("unknown provider item ID");
-    return downloaded(row.key, row.content);
+    const failure = downloadFailures.get(id);
+    if (failure !== undefined) {
+      downloadFailures.delete(id);
+      throw failure.cause;
+    }
+    const bodyFailure = downloadBodyFailures.get(id);
+    if (bodyFailure !== undefined) {
+      downloadBodyFailures.delete(id);
+      return {
+        filename: row.key,
+        size: new TextEncoder().encode(row.content).byteLength,
+        body: new ReadableStream<Uint8Array>({
+          start(controller) { controller.error(bodyFailure.cause); },
+        }),
+      };
+    }
+    return downloaded(row.key, downloadedContent.get(row.key) ?? row.content);
   });
   const uploadAndPoll = vi.fn(async (
     key: string,
@@ -124,6 +150,10 @@ function createProvider(lostAckKey: string) {
     download,
     reveal(key: string) { visible.add(key); },
     setCompleteListMetadata(value: boolean) { completeListMetadata = value; },
+    failNextInfo(id: string, cause: unknown) { infoFailures.set(id, { cause }); },
+    failNextDownload(id: string, cause: unknown) { downloadFailures.set(id, { cause }); },
+    failNextDownloadBodyRead(id: string, cause: unknown) { downloadBodyFailures.set(id, { cause }); },
+    setDownloadedContent(key: string, content: string) { downloadedContent.set(key, content); },
   };
 }
 
@@ -155,7 +185,11 @@ describe("managed AI Search per-item recovery", () => {
       isCurrentTarget: async () => true,
     });
     await expect(restarted.index(context, "projection-g1", [item], TEST_EXECUTION_FENCE))
-      .resolves.toMatchObject({ state: "READY", item_count: 1 });
+      .resolves.toMatchObject({
+        state: "DEGRADED",
+        item_count: 1,
+        reason_codes: ["MANAGED_GENERATION_NOT_PROMOTED"],
+      });
 
     expect(provider.uploadAndPoll).toHaveBeenCalledOnce();
     expect(provider.list).toHaveBeenNthCalledWith(1, {
@@ -168,6 +202,189 @@ describe("managed AI Search per-item recovery", () => {
       .toMatchObject({ state: "READBACK_VERIFIED", provider_item_id: `provider-${item.item_key}` });
     expect(provider.info).toHaveBeenCalledOnce();
     expect(provider.download).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    ["info", new Error("provider info read timed out")],
+    ["download", new Error("provider download read timed out")],
+    ["body", new Error("provider download body stream reset")],
+    ["info", undefined],
+    ["download", null],
+  ] as const)("recovers a temporary %s readback failure without changing item keys", async (readbackCall, cause) => {
+    const secondItem = {
+      ...item,
+      item_key: "projection-item-recovery-2",
+      canonical_section_id: "section-recovery-2",
+    };
+    const desired = [item, secondItem];
+    const firstKey = `${item.item_key}.md`;
+    const secondKey = `${secondItem.item_key}.md`;
+    const firstProviderId = `provider-${item.item_key}`;
+    const provider = createProvider("");
+    if (readbackCall === "info") provider.failNextInfo(firstProviderId, cause);
+    else if (readbackCall === "download") provider.failNextDownload(firstProviderId, cause);
+    else provider.failNextDownloadBodyRead(firstProviderId, cause);
+    const authority = createMemoryManagedItemAuthority();
+    const firstRun = createManagedProjectionPort({
+      profile,
+      namespace: provider.namespace,
+      authority,
+      isCurrentTarget: async () => true,
+    });
+
+    let initialError: unknown;
+    try {
+      await firstRun.index(context, "projection-g1", desired, TEST_EXECUTION_FENCE);
+    } catch (error) {
+      initialError = error;
+    }
+    expect(initialError).toBeInstanceOf(ManagedItemRecoveryBlockedError);
+    expect(initialError).toHaveProperty("cause", cause);
+    expect(initialError).toMatchObject({ retryable: true, reason_code: "MANAGED_ITEM_RECOVERY_BLOCKED" });
+    expect(authority.readManagedItemEffect(context, "projection-g1", item.item_key)).toMatchObject({
+      state: "DISPATCHED",
+      provider_item_id: firstProviderId,
+      intent: { provider_key: firstKey },
+      receipt: null,
+    });
+    expect(authority.readManagedItemEffect(context, "projection-g1", secondItem.item_key)).toMatchObject({
+      state: "INTENT",
+      provider_item_id: null,
+      intent: { provider_key: secondKey },
+    });
+    expect(provider.uploadAndPoll.mock.calls.map(([key]) => key)).toEqual([firstKey]);
+
+    const restarted = createManagedProjectionPort({
+      profile,
+      namespace: provider.namespace,
+      authority,
+      isCurrentTarget: async () => true,
+    });
+    await expect(restarted.index(context, "projection-g1", desired, TEST_EXECUTION_FENCE))
+      .resolves.toMatchObject({
+        state: "DEGRADED",
+        item_count: 2,
+        shadow_receipt_ref: expect.any(String),
+        reason_codes: ["MANAGED_GENERATION_NOT_PROMOTED"],
+      });
+
+    expect(provider.uploadAndPoll.mock.calls.map(([key]) => key)).toEqual([firstKey, secondKey]);
+    expect(authority.readManagedItemEffect(context, "projection-g1", item.item_key))
+      .toMatchObject({ state: "READBACK_VERIFIED", provider_item_id: firstProviderId });
+    expect(authority.readManagedItemEffect(context, "projection-g1", secondItem.item_key))
+      .toMatchObject({ state: "READBACK_VERIFIED", provider_item_id: `provider-${secondItem.item_key}` });
+  });
+
+  it("preserves an earlier verified receipt while a later item's readback is temporarily unavailable", async () => {
+    const secondItem = {
+      ...item,
+      item_key: "projection-item-recovery-2",
+      canonical_section_id: "section-recovery-2",
+    };
+    const desired = [item, secondItem];
+    const firstKey = `${item.item_key}.md`;
+    const secondKey = `${secondItem.item_key}.md`;
+    const provider = createProvider("");
+    const readbackCause = new Error("second item download is temporarily unavailable");
+    provider.failNextDownload(`provider-${secondItem.item_key}`, readbackCause);
+    const authority = createMemoryManagedItemAuthority();
+    const firstRun = createManagedProjectionPort({
+      profile,
+      namespace: provider.namespace,
+      authority,
+      isCurrentTarget: async () => true,
+    });
+
+    let initialError: unknown;
+    try {
+      await firstRun.index(context, "projection-g1", desired, TEST_EXECUTION_FENCE);
+    } catch (error) {
+      initialError = error;
+    }
+    expect(initialError).toBeInstanceOf(ManagedItemRecoveryBlockedError);
+    expect(initialError).toHaveProperty("cause", readbackCause);
+    const verifiedReceipt = authority.readManagedItemEffect(context, "projection-g1", item.item_key)?.receipt;
+    expect(verifiedReceipt).not.toBeNull();
+    expect(authority.readManagedItemEffect(context, "projection-g1", item.item_key))
+      .toMatchObject({ state: "READBACK_VERIFIED", receipt: verifiedReceipt });
+    expect(authority.readManagedItemEffect(context, "projection-g1", secondItem.item_key)).toMatchObject({
+      state: "DISPATCHED",
+      provider_item_id: `provider-${secondItem.item_key}`,
+      intent: { provider_key: secondKey },
+      receipt: null,
+    });
+
+    const restarted = createManagedProjectionPort({
+      profile,
+      namespace: provider.namespace,
+      authority,
+      isCurrentTarget: async () => true,
+    });
+    await expect(restarted.index(context, "projection-g1", desired, TEST_EXECUTION_FENCE))
+      .resolves.toMatchObject({
+        state: "DEGRADED",
+        reason_codes: ["MANAGED_GENERATION_NOT_PROMOTED"],
+      });
+    expect(authority.readManagedItemEffect(context, "projection-g1", item.item_key))
+      .toMatchObject({ state: "READBACK_VERIFIED", receipt: verifiedReceipt });
+    expect(authority.readManagedItemEffect(context, "projection-g1", secondItem.item_key))
+      .toMatchObject({ state: "READBACK_VERIFIED" });
+    expect(provider.uploadAndPoll.mock.calls.map(([key]) => key)).toEqual([firstKey, secondKey]);
+  });
+
+  it("refuses a newly claimed provider dispatch when the managed target is revoked", async () => {
+    const provider = createProvider("");
+    const authority = createMemoryManagedItemAuthority();
+    let currentnessReads = 0;
+    const port = createManagedProjectionPort({
+      profile,
+      namespace: provider.namespace,
+      authority,
+      isCurrentTarget: async () => {
+        currentnessReads += 1;
+        return currentnessReads < 3;
+      },
+    });
+
+    await expect(port.index(context, "projection-g1", [item], TEST_EXECUTION_FENCE))
+      .resolves.toMatchObject({
+        state: "DEGRADED",
+        reason_codes: ["MANAGED_GENERATION_STALE"],
+      });
+    expect(currentnessReads).toBe(3);
+    expect(provider.uploadAndPoll).not.toHaveBeenCalled();
+    expect(provider.info).not.toHaveBeenCalled();
+    expect(provider.download).not.toHaveBeenCalled();
+    expect(authority.readManagedItemEffect(context, "projection-g1", item.item_key))
+      .toMatchObject({ state: "UNKNOWN", provider_item_id: null, receipt: null });
+  });
+
+  it("keeps wrong downloaded content as a permanent readback mismatch", async () => {
+    const key = `${item.item_key}.md`;
+    const provider = createProvider("");
+    provider.setDownloadedContent(key, managedDocument.replace("Exact", "Other"));
+    const authority = createMemoryManagedItemAuthority();
+    const port = createManagedProjectionPort({
+      profile,
+      namespace: provider.namespace,
+      authority,
+      isCurrentTarget: async () => true,
+    });
+
+    await expect(port.index(context, "projection-g1", [item], TEST_EXECUTION_FENCE))
+      .resolves.toEqual({
+        state: "DEGRADED",
+        item_count: 1,
+        instance_id: profile.managed_instance_id,
+        managed_generation: profile.managed_generation,
+        reason_codes: ["MANAGED_INDEX_READBACK_FAILED"],
+      });
+    expect(authority.readManagedItemEffect(context, "projection-g1", item.item_key)).toMatchObject({
+      state: "DISPATCHED",
+      provider_item_id: `provider-${item.item_key}`,
+      receipt: null,
+    });
+    expect(provider.uploadAndPoll).toHaveBeenCalledOnce();
   });
 
   it("blocks recovery without complete exact-list metadata and resumes without another upload", async () => {
@@ -202,7 +419,11 @@ describe("managed AI Search per-item recovery", () => {
       isCurrentTarget: async () => true,
     });
     await expect(restarted.index(context, "projection-g1", [item], TEST_EXECUTION_FENCE))
-      .resolves.toMatchObject({ state: "READY", item_count: 1 });
+      .resolves.toMatchObject({
+        state: "DEGRADED",
+        item_count: 1,
+        reason_codes: ["MANAGED_GENERATION_NOT_PROMOTED"],
+      });
     expect(provider.uploadAndPoll).toHaveBeenCalledOnce();
     expect(provider.info).toHaveBeenCalledOnce();
     expect(provider.download).toHaveBeenCalledOnce();
@@ -241,7 +462,11 @@ describe("managed AI Search per-item recovery", () => {
       isCurrentTarget: async () => true,
     });
     await expect(restarted.index(context, "projection-g1", desired, TEST_EXECUTION_FENCE))
-      .resolves.toMatchObject({ state: "READY", item_count: 2 });
+      .resolves.toMatchObject({
+        state: "DEGRADED",
+        item_count: 2,
+        reason_codes: ["MANAGED_GENERATION_NOT_PROMOTED"],
+      });
 
     expect(provider.uploadAndPoll).toHaveBeenCalledTimes(2);
     expect(authority.readManagedItemEffect(context, "projection-g1", item.item_key))
