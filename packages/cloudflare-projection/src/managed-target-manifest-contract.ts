@@ -11,6 +11,8 @@ export type ManagedTargetManifestShadowState =
   | "SHADOW_BUILDING"
   | "SHADOW_COMPLETE"
   | "ACTIVE"
+  | "INACTIVE_QUALIFIED"
+  | "INACTIVE_UNQUALIFIED"
   | "RETIRED"
   | "BLOCKED";
 
