@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { reset } from "cloudflare:test";
-import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
+import type { AuthenticatedRequestContext, ProjectOwnerListResult } from "@eliotr/interfaces";
 import { sha256Utf8 } from "@eliotr/platform-cloudflare";
 import { createProjectOwnerService } from "@eliotr/cloudflare-navigation";
+import { createProjectsApi, type ProjectsHttp } from "../../../packages/owner-api-client/src/sources/projects-library/projects.js";
+import { createSessionEpoch } from "../../../packages/owner-api-client/src/transport/session/epoch.js";
 import { db, insert, observeDatabase, principal, runtime, seedSource, setupOrientationDatabase } from "./orientation-fixture.js";
 
 let clock: number;
@@ -66,6 +68,84 @@ describe("S04 project mutations on actual Workers D1", () => {
     expect(await db.prepare(expression(100)).first<number>("n")).toBe(100);
     await expect(db.prepare(expression(101)).first()).rejects.toThrow(/Expression tree is too large|Expression tree too large/iu);
     expect(await db.prepare("SELECT 1 AS n").first<number>("n")).toBe(1);
+  });
+
+  it("pages 257 empty owned projects through actual D1 service and shared owner client without gaps", async () => {
+    const createdAt = new Date(clock).toISOString();
+    const projectIds = Array.from({ length: 257 }, (_, index) => `project-${String(index).padStart(3, "0")}`);
+    const insertEmptyProject = async (projectId: string, owner = principal) => {
+      await insert("project", {
+        project_id: projectId,
+        title: `Empty ${projectId}`,
+        default_disclosure: "private",
+        retention_policy_ref: `retention-${projectId}`,
+        default_source_policy_ref: `source-policy-${projectId}`,
+        default_model_profile_ref: `model-profile-${projectId}`,
+        default_depth_profile_ref: `depth-profile-${projectId}`,
+        generation: 1,
+        created_at: createdAt,
+      });
+      await insert("project_owner", {
+        project_id: projectId,
+        principal_ref: owner,
+        deployment_generation: runtime.DEPLOYMENT_GENERATION,
+        created_at: createdAt,
+        updated_at: createdAt,
+      });
+    };
+    for (const projectId of projectIds) await insertEmptyProject(projectId);
+    await insertEmptyProject("project-999-foreign", "foreign-owner");
+
+    const owner = service();
+    const requests: string[] = [];
+    const producedPages: ProjectOwnerListResult[] = [];
+    const http: ProjectsHttp = {
+      async requestApi(path) {
+        requests.push(path);
+        const request = new Request(new URL(path, "https://research.example"), { method: "GET" });
+        const page = await owner.list({
+          request,
+          principal_ref: principal,
+          client_class: "owner_pwa",
+          credential_generation: "credential-v1",
+          trace_id: `project-list-${requests.length}`,
+        });
+        producedPages.push(page);
+        return {
+          data: page,
+          trace_id: `project-list-${requests.length}`,
+          deployment_generation: runtime.DEPLOYMENT_GENERATION,
+        };
+      },
+      async requestApiWithStatuses() { throw new Error("unexpected project mutation request"); },
+    };
+    const client = createProjectsApi(http, (details) => new Error(`${details.code}:${details.status}`), createSessionEpoch());
+
+    const firstPage = await client.readProjects(runtime.DEPLOYMENT_GENERATION);
+    expect(firstPage.projects).toHaveLength(256);
+    expect(firstPage.next_project_id).toBe(projectIds[255]);
+    const secondPage = await client.readProjects(runtime.DEPLOYMENT_GENERATION, firstPage.next_project_id);
+    expect(secondPage.projects).toHaveLength(1);
+    expect(secondPage.next_project_id).toBeUndefined();
+
+    expect(producedPages.map((page) => page.projects.length)).toEqual([256, 1]);
+    expect(producedPages[0]?.next_project_id).toBe(projectIds[255]);
+    expect(producedPages[0]?.projects.at(-1)?.project_ref.id).toBe(projectIds[255]);
+    expect(producedPages[1]?.next_project_id).toBeUndefined();
+    for (const page of producedPages) {
+      expect(page.projects.every((project) => project.owner_principal_ref === principal)).toBe(true);
+      expect(page.projects.every((project) => project.deployment_generation === runtime.DEPLOYMENT_GENERATION)).toBe(true);
+    }
+
+    const actualIds = [...firstPage.projects, ...secondPage.projects].map((project) => project.project_id);
+    expect(actualIds).toEqual(projectIds);
+    expect(new Set(actualIds).size).toBe(257);
+    expect(firstPage.deployment_generation).toBe(runtime.DEPLOYMENT_GENERATION);
+    expect(secondPage.deployment_generation).toBe(runtime.DEPLOYMENT_GENERATION);
+    expect(requests).toEqual([
+      "/api/v1/research/projects",
+      `/api/v1/research/projects?after_project_id=${projectIds[255]}`,
+    ]);
   });
 
   it("creates, replaces and removes memberships with immutable exact receipts and replay", async () => {
