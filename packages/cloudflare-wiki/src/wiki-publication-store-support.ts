@@ -12,6 +12,7 @@ import {
   type WikiProposalRecord,
 } from "@eliotr/research";
 import type { WikiOwnerPublicationGuardWitness } from "./wiki-owner-publication-guard.js";
+import { readStreamWithinBytes, RuntimeLimitError } from "@eliotr/platform-cloudflare";
 
 export const MAX_BODY_BYTES = 8 * 1024 * 1024;
 export const MAX_EVIDENCE_MAP_BYTES = 1024 * 1024;
@@ -193,6 +194,36 @@ export async function dependencyDigest(page: WikiPageRevision): Promise<string> 
   return textDigest(JSON.stringify(refs));
 }
 
+/**
+ * Bounded readback of one R2 object body. The platform reader owns the single
+ * accumulation loop, so this helper owns only the Wiki effect map for a bound
+ * failure. A byte-envelope overrun, a chunk-count overrun and a non-byte chunk
+ * each mean the delivered bytes cannot match the object R2 already declared,
+ * which is an incomplete publication rather than an uncertain settlement. A
+ * A stream read failure stays uncertain so a caller may retry. Existing Wiki
+ * publication failures keep their original code and retryability.
+ */
+async function readWikiObjectBody(body: ReadableStream<Uint8Array>, maximumBytes: number): Promise<Uint8Array> {
+  try {
+    return await readStreamWithinBytes(body, {
+      label: "Wiki R2 object body",
+      max_bytes: maximumBytes,
+      max_chunks: MAX_STREAM_CHUNKS,
+    });
+  } catch (cause) {
+    if (cause instanceof WikiPublicationError) throw cause;
+    if (cause instanceof RuntimeLimitError) {
+      const boundFailure = cause.code === "LIMIT_EXCEEDED"
+        || cause.code === "STREAM_CHUNK_LIMIT_EXCEEDED"
+        || cause.code === "STREAM_CHUNK_INVALID";
+      if (boundFailure) {
+        fail("WIKI_PUBLICATION_INCOMPLETE", "required Wiki object does not match its declared bytes");
+      }
+    }
+    fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki R2 stream is unavailable", true, cause);
+  }
+}
+
 export async function readObject(bucket: R2Bucket, key: string, maximumBytes: number): Promise<{ bytes: Uint8Array; sha256: string }> {
   validRef(key, "R2 object reference");
   let object: R2ObjectBody | null;
@@ -203,32 +234,10 @@ export async function readObject(bucket: R2Bucket, key: string, maximumBytes: nu
     object.body.cancel().catch(() => undefined);
     fail("WIKI_PUBLICATION_INCOMPLETE", "required Wiki object exceeds its byte bound");
   }
-  const reader = object.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let length = 0;
-  let count = 0;
-  try {
-    for (;;) {
-      const part = await reader.read();
-      if (part.done) break;
-      count += 1;
-      length += part.value.byteLength;
-      if (count > MAX_STREAM_CHUNKS || !Number.isSafeInteger(length) || length > maximumBytes || length > object.size) {
-        await reader.cancel().catch(() => undefined);
-        fail("WIKI_PUBLICATION_INCOMPLETE", "required Wiki object stream exceeds its bounds");
-      }
-      chunks.push(part.value.slice());
-    }
-  } catch (cause) {
-    if (cause instanceof WikiPublicationError) throw cause;
-    fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki R2 stream is unavailable", true, cause);
-  } finally {
-    reader.releaseLock();
-  }
-  if (length !== object.size) fail("WIKI_IMMUTABLE_READBACK_MISMATCH", "Wiki R2 object size changed during readback");
-  const bytes = new Uint8Array(length);
-  let offset = 0;
-  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  // The declared object size is the tighter bound: an object can never legitimately
+  // deliver more bytes than R2 already declared for it.
+  const bytes = await readWikiObjectBody(object.body, Math.min(maximumBytes, object.size));
+  if (bytes.byteLength !== object.size) fail("WIKI_IMMUTABLE_READBACK_MISMATCH", "Wiki R2 object size changed during readback");
   return { bytes, sha256: await sha256(bytes) };
 }
 

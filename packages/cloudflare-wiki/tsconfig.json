@@ -19,6 +19,7 @@
     { "path": "../cloudflare-research-stages" },
     { "path": "../contracts" },
     { "path": "../interfaces" },
+    { "path": "../platform-cloudflare" },
     { "path": "../research" },
     { "path": "../retrieval" }
   ]
