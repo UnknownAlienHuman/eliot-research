@@ -4,7 +4,10 @@ import {
   type RouteFingerprint,
 } from "@eliotr/platform-cloudflare";
 import {
-  ModelGatewayExecutionError,
+  RuntimeLimitError,
+  readResponseBodyWithinBytes,
+} from "@eliotr/platform-cloudflare";
+import {
   modelGatewayExecutionFailure,
   type DecodedModelGatewayResponse,
 } from "./model-gateway-execution-contract.js";
@@ -95,74 +98,59 @@ export async function readBoundedBody(
   maximumBytes: number,
   requireNonEmpty: boolean,
 ): Promise<Uint8Array> {
-  const rawLength = response.headers.get("content-length");
-  if (rawLength !== null) {
-    if (!/^(0|[1-9][0-9]*)$/u.test(rawLength)) {
-      modelGatewayExecutionFailure(
-        "MODEL_GATEWAY_RESPONSE_INVALID",
-        "AI Gateway content-length is invalid",
-        { safe_response_reason: "BODY_SHAPE_INVALID" },
-      );
-    }
-    const declaredLength = Number(rawLength);
-    if (!Number.isSafeInteger(declaredLength) || declaredLength > maximumBytes) {
-      modelGatewayExecutionFailure(
-        "MODEL_GATEWAY_RESPONSE_INVALID",
-        "AI Gateway response exceeds its byte budget",
-        { safe_response_reason: "BODY_TOO_LARGE" },
-      );
-    }
-  }
-  if (response.body === null) {
-    if (requireNonEmpty) {
-      modelGatewayExecutionFailure(
-        "MODEL_GATEWAY_RESPONSE_INVALID",
-        "AI Gateway response body is missing",
-        { safe_response_reason: "BODY_SHAPE_INVALID" },
-      );
-    }
-    return new Uint8Array();
-  }
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let length = 0;
+  let bytes: Uint8Array;
   try {
-    while (true) {
-      const next = await reader.read();
-      if (next.done) break;
-      length += next.value.byteLength;
-      if (length > maximumBytes) {
-        await reader.cancel("response byte budget exceeded");
+    bytes = await readResponseBodyWithinBytes(response, {
+      label: "ai-gateway.response",
+      max_bytes: maximumBytes,
+      max_chunks: 4096,
+    });
+  } catch (error) {
+    return gatewayBodyFailure(error);
+  }
+  if (requireNonEmpty && bytes.byteLength < 1) {
+    modelGatewayExecutionFailure(
+      "MODEL_GATEWAY_RESPONSE_INVALID",
+      "AI Gateway response body is empty",
+      { safe_response_reason: "BODY_SHAPE_INVALID" },
+    );
+  }
+  return bytes;
+}
+
+/**
+ * Map the shared bounded reader onto Gateway effect classification.
+ *
+ * The rewritten loop keeps the declared shape reason for an invalid
+ * Content-Length header and for a non-byte chunk, while the byte and
+ * chunk-count ceilings surface as the size reason. A failure the reader
+ * cannot classify keeps the generic read-exception branch, so a clean
+ * interruption is never relabelled as a size or shape failure.
+ */
+function gatewayBodyFailure(error: unknown): never {
+  if (error instanceof RuntimeLimitError) {
+    switch (error.code) {
+      case "LIMIT_EXCEEDED":
+      case "STREAM_CHUNK_LIMIT_EXCEEDED":
         modelGatewayExecutionFailure(
           "MODEL_GATEWAY_RESPONSE_INVALID",
           "AI Gateway response exceeds its byte budget",
           { safe_response_reason: "BODY_TOO_LARGE" },
         );
-      }
-      chunks.push(next.value);
+        break;
+      case "INVALID_CONTENT_LENGTH":
+      case "STREAM_CHUNK_INVALID":
+        modelGatewayExecutionFailure(
+          "MODEL_GATEWAY_RESPONSE_INVALID",
+          "AI Gateway response body could not be read",
+          { cause: error, safe_response_reason: "BODY_SHAPE_INVALID" },
+        );
+        break;
     }
-  } catch (cause) {
-    if (cause instanceof ModelGatewayExecutionError) throw cause;
-    modelGatewayExecutionFailure(
-      "MODEL_GATEWAY_RESPONSE_INVALID",
-      "AI Gateway response body could not be read",
-      { cause, safe_response_reason: "BODY_SHAPE_INVALID" },
-    );
   }
-  if (requireNonEmpty && length < 1) {
-    modelGatewayExecutionFailure(
-      "MODEL_GATEWAY_RESPONSE_INVALID",
-      "AI Gateway response body is empty",
-        { safe_response_reason: "BODY_SHAPE_INVALID" },
-    );
-  }
-  const output = new Uint8Array(length);
-  let offset = 0;
-  for (const chunk of chunks) {
-    output.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return output;
+  // Effect classification gives no owner for an unclassified read failure, and
+  // the shared reader records the first cause, so surface it unchanged.
+  throw error;
 }
 
 interface JsonState {

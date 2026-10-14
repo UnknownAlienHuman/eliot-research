@@ -1,6 +1,9 @@
 import type { ModelRouteDeployment, RouteFingerprint } from "@eliotr/platform-cloudflare";
 import {
-  ModelGatewayExecutionError,
+  RuntimeLimitError,
+  readResponseBodyWithinBytes,
+} from "@eliotr/platform-cloudflare";
+import {
   modelGatewayExecutionFailure,
   type DecodedModelGatewayResponse,
   type ModelGatewaySafeResponseReason,
@@ -309,30 +312,42 @@ function assertResponseHeaders(response: Response, policy: ModelGatewayTransport
 
 async function readResponseBody(response: Response, maximumBytes: number): Promise<Uint8Array> {
   if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1 || maximumBytes > 256 * 1024) invalid("reserved output byte budget is invalid");
-  const rawLength = response.headers.get("content-length");
-  if (rawLength !== null && (!/^(0|[1-9][0-9]*)$/u.test(rawLength) || !Number.isSafeInteger(Number(rawLength)))) invalid("provider content-length is invalid");
-  if (rawLength !== null && Number(rawLength) > maximumBytes) invalid("provider response exceeds its byte budget", "BODY_TOO_LARGE");
-  if (response.body === null) invalid("provider response body is missing");
-  const reader = response.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let length = 0;
+  let bytes: Uint8Array;
   try {
-    for (;;) {
-      const next = await reader.read();
-      if (next.done) break;
-      length += next.value.byteLength;
-      if (length > maximumBytes) { await reader.cancel("response byte budget exceeded"); invalid("provider response exceeds its byte budget", "BODY_TOO_LARGE"); }
-      chunks.push(next.value);
-    }
-  } catch (cause) {
-    if (cause instanceof ModelGatewayExecutionError) throw cause;
-    modelGatewayExecutionFailure("MODEL_GATEWAY_RESPONSE_INVALID", "provider response body could not be read", { cause, safe_response_reason: "BODY_SHAPE_INVALID" });
+    bytes = await readResponseBodyWithinBytes(response, {
+      label: "provider.response",
+      max_bytes: maximumBytes,
+      max_chunks: 4096,
+    });
+  } catch (error) {
+    return providerResponseBodyFailure(error);
   }
-  if (length === 0) invalid("provider response body is empty");
-  const bytes = new Uint8Array(length);
-  let offset = 0;
-  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  if (bytes.byteLength === 0) invalid("provider response body is empty");
   return bytes;
+}
+
+/**
+ * Map the shared bounded reader onto provider effect classification.
+ *
+ * The byte and chunk-count ceilings keep the declared size reason, an invalid
+ * header or non-byte chunk keeps the declared shape reason, and a missing
+ * body keeps its own message. An unclassified read failure is rethrown so the
+ * caller keeps deciding between the generic read exception and its own cause.
+ */
+function providerResponseBodyFailure(error: unknown): never {
+  if (error instanceof RuntimeLimitError) {
+    switch (error.code) {
+      case "LIMIT_EXCEEDED":
+      case "STREAM_CHUNK_LIMIT_EXCEEDED":
+        invalid("provider response exceeds its byte budget", "BODY_TOO_LARGE");
+        break;
+      case "INVALID_CONTENT_LENGTH":
+      case "STREAM_CHUNK_INVALID":
+        invalid("provider content-length is invalid");
+        break;
+    }
+  }
+  throw error;
 }
 
 export async function decodeModelGatewayProviderNativeResponse(
