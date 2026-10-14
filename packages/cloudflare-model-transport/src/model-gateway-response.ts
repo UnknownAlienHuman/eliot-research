@@ -8,6 +8,7 @@ import {
   readResponseBodyWithinBytes,
 } from "@eliotr/platform-cloudflare";
 import {
+  ModelGatewayExecutionError,
   modelGatewayExecutionFailure,
   type DecodedModelGatewayResponse,
 } from "./model-gateway-execution-contract.js";
@@ -108,6 +109,19 @@ export async function readBoundedBody(
   } catch (error) {
     return gatewayBodyFailure(error);
   }
+  // The shared reader returns an empty buffer for a null body and for a body
+  // that yielded nothing. The private loop reported them differently, so the
+  // body is inspected before reading and the assembled emptiness afterwards.
+  if (response.body === null) {
+    if (requireNonEmpty) {
+      modelGatewayExecutionFailure(
+        "MODEL_GATEWAY_RESPONSE_INVALID",
+        "AI Gateway response body is missing",
+        { safe_response_reason: "BODY_SHAPE_INVALID" },
+      );
+    }
+    return bytes;
+  }
   if (requireNonEmpty && bytes.byteLength < 1) {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_RESPONSE_INVALID",
@@ -121,11 +135,11 @@ export async function readBoundedBody(
 /**
  * Map the shared bounded reader onto Gateway effect classification.
  *
- * The rewritten loop keeps the declared shape reason for an invalid
- * Content-Length header and for a non-byte chunk, while the byte and
- * chunk-count ceilings surface as the size reason. A failure the reader
- * cannot classify keeps the generic read-exception branch, so a clean
- * interruption is never relabelled as a size or shape failure.
+ * The byte and chunk-count ceilings keep their size reason. An invalid
+ * Content-Length header and a non-byte chunk each keep the decoder's own
+ * message rather than sharing one. Any other read failure is classified as a
+ * generic read exception carrying the original cause, so a raw stream
+ * rejection stays inside the Gateway effect surface instead of escaping it.
  */
 function gatewayBodyFailure(error: unknown): never {
   if (error instanceof RuntimeLimitError) {
@@ -139,6 +153,12 @@ function gatewayBodyFailure(error: unknown): never {
         );
         break;
       case "INVALID_CONTENT_LENGTH":
+        modelGatewayExecutionFailure(
+          "MODEL_GATEWAY_RESPONSE_INVALID",
+          "AI Gateway content-length is invalid",
+          { safe_response_reason: "BODY_SHAPE_INVALID" },
+        );
+        break;
       case "STREAM_CHUNK_INVALID":
         modelGatewayExecutionFailure(
           "MODEL_GATEWAY_RESPONSE_INVALID",
@@ -148,9 +168,16 @@ function gatewayBodyFailure(error: unknown): never {
         break;
     }
   }
-  // Effect classification gives no owner for an unclassified read failure, and
-  // the shared reader records the first cause, so surface it unchanged.
-  throw error;
+  // The private loop passed an already-ModelGatewayExecutionError cause through
+  // unchanged and mapped every other read failure to the generic read
+  // exception. Keep both halves so a stream rejection cannot escape the
+  // Gateway effect surface.
+  if (error instanceof ModelGatewayExecutionError) throw error;
+  modelGatewayExecutionFailure(
+    "MODEL_GATEWAY_RESPONSE_INVALID",
+    "AI Gateway response body could not be read",
+    { cause: error, safe_response_reason: "BODY_SHAPE_INVALID" },
+  );
 }
 
 interface JsonState {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ModelCallInput } from "./model-gateway-execution-contract.js";
+import { ModelGatewayExecutionError } from "./model-gateway-execution-contract.js";
 import {
   canonicalModelGatewayJson,
   modelGatewayDynamicRouteTarget,
@@ -669,6 +670,7 @@ describe("model gateway bounded body reader", () => {
     }), configurable: true });
     const failure = await bodyError(response, 2);
     expect(failure?.safe_response_reason).toBe("BODY_TOO_LARGE");
+    expect(failure?.message).toBe("AI Gateway response exceeds its byte budget");
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(cancelCalls).toBe(1);
   });
@@ -684,6 +686,7 @@ describe("model gateway bounded body reader", () => {
     });
     const failure = await bodyError(response, 4096);
     expect(failure?.safe_response_reason).toBe("BODY_SHAPE_INVALID");
+    expect(failure?.message).toBe("AI Gateway content-length is invalid");
   });
 
   it("rejects an infinite empty-chunk flood on the shared chunk ceiling", async () => {
@@ -745,6 +748,19 @@ describe("model gateway bounded body reader", () => {
     const empty = await bodyError(present, 4096);
     expect(empty?.safe_response_reason).toBe("BODY_SHAPE_INVALID");
     expect(empty?.message).toBe("AI Gateway response body is empty");
+    // A malformed Content-Length is still a header failure, so the header
+    // preflight keeps precedence over the null-body distinction restored above.
+    const missingWithBadHeader = new Response(null, {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
+        "content-length": "-1",
+        ...FINGERPRINT_HEADERS,
+      },
+    });
+    Object.defineProperty(missingWithBadHeader, "body", { value: null, configurable: true });
+    const headerWins = await bodyError(missingWithBadHeader, 4096);
+    expect(headerWins?.message).toBe("AI Gateway content-length is invalid");
     const absent = new Response(null, {
       status: 200,
       headers: { "content-type": "application/json", ...FINGERPRINT_HEADERS },
@@ -752,7 +768,7 @@ describe("model gateway bounded body reader", () => {
     Object.defineProperty(absent, "body", { value: null, configurable: true });
     const missing = await bodyError(absent, 4096);
     expect(missing?.safe_response_reason).toBe("BODY_SHAPE_INVALID");
-    expect(missing?.message).toBe("AI Gateway response body is empty");
+    expect(missing?.message).toBe("AI Gateway response body is missing");
   });
 
   it("keeps the native reader's byte-budget reason and its empty-body message", async () => {
@@ -804,5 +820,161 @@ describe("model gateway bounded body reader", () => {
     expect(decoded.assistant_content).toBe("{\"answer\":\"ok\"}");
     expect(decoded.log_id).toBe("bounded-body-log");
     expect(decoded.usage).toEqual({ input_tokens: 2, output_tokens: 3, total_tokens: 5 });
+  });
+});
+
+describe("model gateway bounded body reader contract regressions", () => {
+  const HEADERS = {
+    "cf-aig-provider": "workers-ai",
+    "cf-aig-model": LEGACY_POLICY.model,
+    "cf-aig-log-id": "regression-log",
+  };
+
+  const NATIVE_HEADERS = {
+    "cf-aig-provider": OPENROUTER_POLICY.provider,
+    "cf-aig-model": OPENROUTER_POLICY.model,
+    "cf-aig-log-id": "regression-log",
+  };
+
+  // Resolve the settled value of a promise as unknown, so a rejected result
+  // keeps its own error type instead of unioning with the success type.
+  type SettledFailure = {
+    readonly name?: string;
+    readonly code?: string;
+    readonly safe_response_reason?: string;
+    readonly message?: string;
+    readonly cause?: unknown;
+  };
+
+  function settleFailure<T>(value: Promise<T>): Promise<SettledFailure> {
+    return value.then(
+      () => ({}),
+      (error: unknown) => error as SettledFailure,
+    );
+  }
+
+  function gatewayFailure(body: ReadableStream<Uint8Array> | null, maximumBytes = 4096) {
+    const response = new Response(null, {
+      status: 200,
+      headers: { "content-type": "application/json", ...HEADERS },
+    });
+    Object.defineProperty(response, "body", { value: body, configurable: true });
+    return settleFailure(readBoundedBody(response, maximumBytes, true));
+  }
+
+  async function providerFailure(
+    body: ReadableStream<Uint8Array> | null,
+    maximumBytes: number,
+  ) {
+    const { deployment } = await fixture(OPENROUTER_POLICY);
+    const response = new Response(null, {
+      status: 200,
+      headers: { "content-type": "application/json", ...NATIVE_HEADERS },
+    });
+    Object.defineProperty(response, "body", { value: body, configurable: true });
+    return settleFailure(decodeModelGatewayProviderNativeResponse(
+      response,
+      deployment,
+      maximumBytes,
+      OPENROUTER_POLICY,
+    ));
+  }
+
+  // A raw ReadableStream rejection is not a RuntimeLimitError. The private loop
+  // classified it as a Gateway read exception, so the consumer kept its domain
+  // error class. A bare rethrow would escape that effect surface.
+  it("classifies a generic stream read rejection as a Gateway domain failure with its original cause", async () => {
+    const boom = new TypeError("stream boom");
+    const failing = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(boom);
+      },
+    });
+    const failure = await gatewayFailure(failing);
+    expect(failure?.name).toBe("ModelGatewayExecutionError");
+    expect(failure?.code).toBe("MODEL_GATEWAY_RESPONSE_INVALID");
+    expect(failure?.safe_response_reason).toBe("BODY_SHAPE_INVALID");
+    expect(failure?.message).toBe("AI Gateway response body could not be read");
+    expect(failure?.cause).toBe(boom);
+  });
+
+  // An already-ModelGatewayExecutionError cause passed through unchanged under
+  // the private loop. The shared reader must not relabel it.
+  it("passes an existing ModelGatewayExecutionError through unchanged", async () => {
+    const domainError = new ModelGatewayExecutionError(
+      "MODEL_GATEWAY_POLICY_REJECTED",
+      "policy rejected by upstream",
+      { safe_response_reason: "BODY_JSON_INVALID" },
+    );
+    const failing = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(domainError);
+      },
+    });
+    const failure = await gatewayFailure(failing);
+    expect(failure).toBe(domainError);
+  });
+
+  it("distinguishes a null body from a zero-length body", async () => {
+    const absent = await gatewayFailure(null);
+    expect(absent?.message).toBe("AI Gateway response body is missing");
+    const present = await gatewayFailure(new ReadableStream<Uint8Array>({
+      start(controller) { controller.close(); },
+    }));
+    expect(present?.message).toBe("AI Gateway response body is empty");
+  });
+
+  it("keeps the header preflight ahead of the null-body distinction", async () => {
+    const response = new Response(null, {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
+        "content-length": "not-a-number",
+        ...HEADERS,
+      },
+    });
+    Object.defineProperty(response, "body", { value: null, configurable: true });
+    const failure = await settleFailure(readBoundedBody(response, 4096, true));
+    expect(failure?.message).toBe("AI Gateway content-length is invalid");
+  });
+
+  it("keeps the provider path from reporting a stream chunk as a content-length failure", async () => {
+    const response = new Response(null, {
+      status: 200,
+      headers: {
+        "content-type": "application/json",
+        "cf-aig-provider": OPENROUTER_POLICY.provider,
+        "cf-aig-model": OPENROUTER_POLICY.model,
+        "cf-aig-log-id": "regression-log",
+      },
+    });
+    Object.defineProperty(response, "body", { value: new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue("not bytes" as unknown as Uint8Array);
+        controller.close();
+      },
+    }), configurable: true });
+    const failure = await providerFailure(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue("not bytes" as unknown as Uint8Array);
+        controller.close();
+      },
+    }), 4096);
+    expect(failure?.message).toBe("provider response body could not be read");
+    expect((failure?.cause as { code?: string } | undefined)?.code).toBe("STREAM_CHUNK_INVALID");
+  });
+
+  it("classifies a generic provider stream rejection as a domain failure", async () => {
+    const boom = new RangeError("provider stream boom");
+    const failure = await providerFailure(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(boom);
+      },
+    }), 4096);
+    expect(failure?.name).toBe("ModelGatewayExecutionError");
+    expect(failure?.code).toBe("MODEL_GATEWAY_RESPONSE_INVALID");
+    expect(failure?.safe_response_reason).toBe("BODY_SHAPE_INVALID");
+    expect(failure?.message).toBe("provider response body could not be read");
+    expect(failure?.cause).toBe(boom);
   });
 });
