@@ -96,7 +96,6 @@ function createRegressionEnvironment(): ComputerAgentRegressionEnvironment {
   let authorizationLossCount = 0;
   let requestsAtAuthorizationLoss = -1;
   let canonicalCommitSentinelKey: readonly unknown[] | undefined;
-  let privacy!: PrivacyController;
 
   const fetchFixture: typeof fetch = async (input, init) => {
     const url = new URL(String(input), "https://fixture.invalid");
@@ -149,7 +148,7 @@ function createRegressionEnvironment(): ComputerAgentRegressionEnvironment {
       const body = String(init?.body ?? "");
       const headers = new Headers(init?.headers);
       const key = headers.get("idempotency-key") ?? "";
-      if (selectedId !== connectionId || headers.get("content-type") !== "application/json" ||
+      if ((selectedId !== connectionId && selectedId !== foreignConnectionId) || headers.get("content-type") !== "application/json" ||
           headers.get("x-eliotr-csrf") !== "1" || key.length === 0) {
         throw new Error("Strict SDK PUT lost its logical ID, JSON, CSRF, or idempotency binding");
       }
@@ -268,7 +267,7 @@ function createRegressionEnvironment(): ComputerAgentRegressionEnvironment {
       privacy.close();
     },
   });
-  privacy = createPrivacyController({
+  const privacy = createPrivacyController({
     timers,
     now: () => Date.parse(stamp),
     mask() { runtime.close(); },

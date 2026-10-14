@@ -2,7 +2,7 @@ import { useCallback, useLayoutEffect, useRef, useState, type Ref, type RefObjec
 import { skipToken, useQueries, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router";
 import { WorkspaceLink } from "../routes/WorkspaceLink";
-import { AgentWorkPane, Button, Dialog, DocumentReader, IconButton, MaterialSymbol, OperationAnnouncement, ProjectsLibraryFeature, type AgentSummary, type ResearchToolId } from "@eliotr/ui";
+import { AgentWorkPane, Button, Dialog, DocumentReader, IconButton, MaterialSymbol, OperationAnnouncement, ProjectsLibraryFeature, type AgentSummary, type AgentTaskState, type AgentTaskSummary, type ResearchToolId } from "@eliotr/ui";
 import type { LibraryPage, ProjectListView, SourceRevisionPage } from "@eliotr/owner-api-client";
 import type { PrivacyController, SessionContext } from "./privacy";
 import type { BoundWorkspaceApis } from "./runtime";
@@ -10,6 +10,7 @@ import { sourcesQueryOptions } from "../query/sources";
 import { documentQueryOptions } from "../query/documents";
 import { protectedQueryKey } from "../query/client";
 import { computerAgentQueryOptions } from "../query/computerAgents";
+import { computerAgentDispatchQueryOptions } from "../query/computerAgentDispatches";
 import type { destinations } from "../routes/location";
 import "./live-workspace.css";
 import { ErasurePanel } from "./ErasurePanel";
@@ -79,6 +80,22 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
   });
   const projects = useQuery(options.projects(after));
   const selected = projects.data?.projects.find(project => project.project_id === projectId);
+  const [taskCursor, setTaskCursor] = useState<{ readonly projectId: string; readonly after: string }>();
+  const taskAfter = taskCursor?.projectId === selected?.project_id ? taskCursor?.after : undefined;
+  const taskOptions = selected && projects.data ? computerAgentDispatchQueryOptions(apis, privacy, context,
+    projects.data, selected.project_id, () => client.getQueryData<ProjectListView>([...key, "projects", after ?? null]), taskAfter) : undefined;
+  const taskDispatches = useQuery(taskOptions ? { ...taskOptions, enabled: destination === "research" && privacy.isCurrent(context) }
+    : { queryKey: [...protectedQueryKey(context, "computer-agent-dispatches"), "unselected"], queryFn: skipToken });
+  const tasksReadable = selected !== undefined && taskDispatches.isSuccess && privacy.isCurrent(context) &&
+    taskDispatches.data.items.every(item => item.project_id === selected.project_id);
+  const taskStates: Record<NonNullable<typeof taskDispatches.data>["items"][number]["state"], AgentTaskState> = {
+    PENDING: "waiting", ACCEPTED: "accepted", ABANDONED: "abandoned", DECLINED: "declined", EXPIRED: "expired", STALE: "stale",
+  };
+  const tasks: readonly AgentTaskSummary[] = tasksReadable ? taskDispatches.data.items.map(item => ({
+    id: item.dispatch_id, title: item.question_preview + (item.question_truncated ? "…" : ""),
+    agent: agents.find(agent => agent.id === item.connection_id)?.name ?? (locale === "ru" ? "Агент" : "Agent"),
+    state: taskStates[item.state],
+  })) : [];
   const library = useQuery(selected && projects.data ? options.library(projects.data, selected.project_id, cursor)
     : { queryKey: [...key, "library-unselected"], queryFn: skipToken });
   // Keep selected pages observed in protected memory across pagination.
@@ -179,7 +196,13 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
       <div className="er-live-pane-head"><h2>{text.tools}</h2>
         <IconButton className="er-live-pane-fold" icon="chevron" label={folded.tools ? text.expandTools : text.collapseTools} title={folded.tools ? text.expandTools : text.collapseTools}
           aria-expanded={!folded.tools} onClick={() => setFolded(old => ({ ...old, tools: !old.tools }))} /></div>
-      <AgentWorkPane locale={locale} agents={agents} agentsUnavailable={!agentsReadable} tools={liveTools} tasks={[]} onTool={runTool}
+      <AgentWorkPane locale={locale} agents={agents} agentsUnavailable={!agentsReadable} tools={liveTools}
+        tasks={tasks} tasksUnavailable={!tasksReadable} onTool={runTool}
+        onMoreTasks={tasksReadable && selected && taskDispatches.data.next_after_dispatch_id ? () => {
+          if (privacy.isCurrent(context) && isProjectCurrent()) setTaskCursor({ projectId: selected.project_id,
+            after: taskDispatches.data.next_after_dispatch_id ?? "" });
+        } : undefined}
+        onFirstTasks={tasksReadable && taskAfter ? () => { if (privacy.isCurrent(context)) setTaskCursor(undefined); } : undefined}
         onMoreAgents={agentsReadable && agentConnections.data.next_connection_id ? () => {
           if (privacy.isCurrent(context)) setAgentAfter(agentConnections.data.next_connection_id);
         } : undefined}

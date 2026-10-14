@@ -11,6 +11,8 @@ const config: StorybookConfig = {
     "../../../apps/eliotr-web/src/app/Shell.stories.tsx",
     "../../../apps/eliotr-web/src/app/ImportErasureRegression.stories.tsx",
     "../../../apps/eliotr-web/src/app/StudioPublishReadbackRegression.stories.tsx",
+    "../../../apps/eliotr-web/src/app/InboxStudioSelectionRegression.stories.tsx",
+    "../../../apps/eliotr-web/src/app/ComputerAgentConnectionsPanelRegression.stories.tsx",
     "../../../apps/eliotr-web/src/app/NewProject.stories.tsx",
   ],
   addons: ["@storybook/addon-a11y", "@storybook/addon-vitest"],

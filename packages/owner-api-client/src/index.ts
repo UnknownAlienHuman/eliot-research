@@ -13,6 +13,8 @@ export type { OwnerSession } from './connections/session';
 export { createClientGrantApi } from './connections/grant';
 export type { ClientGrantMutation } from './connections/grant';
 export { createComputerAgentConnectionApi } from './connections/computer-agent';
+export { createComputerAgentDispatchReadApi } from './connections/computer-agent-dispatch';
+export type { ComputerAgentDispatchReadPage } from './connections/computer-agent-dispatch';
 export type { ComputerAgentConnectionMutationIntent } from './connections/computer-agent';
 export type { ComputerAgentConnection, ComputerAgentConnectionList } from '@eliotr/contracts';
 export { createProviderKeyApi } from './connections/provider';
