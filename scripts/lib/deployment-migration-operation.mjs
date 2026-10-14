@@ -309,6 +309,13 @@ function parseTimestampValue(statement, state) {
 }
 
 function parseSchemaStateInsert(statement) {
+  // This one conditional readiness marker certifies an installed trigger. Keep its
+  // complete predicate, target and value exact; arbitrary INSERT ... SELECT stays refused.
+  const readinessMarker = tokens("INSERT INTO schema_state(key,value,updated_at) SELECT 'erasure_completion_feed_generation', 'erasure-completion-feed-v1', strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE EXISTS (SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='erasure_execution_completion_change_feed' AND tbl_name='erasure_execution')");
+  if (statement.length === readinessMarker.length && statement.every((token, index) =>
+    token.type === readinessMarker[index].type && token.value === readinessMarker[index].value)) {
+    return { key: "erasure_completion_feed_generation", value: "erasure-completion-feed-v1" };
+  }
   const state = { index: 0 };
   if (!consumeWord(statement, state, "INSERT") || !consumeWord(statement, state, "INTO") ||
       !consumeIdentifier(statement, state, "schema_state") || !consumeSymbol(statement, state, "(") ||
