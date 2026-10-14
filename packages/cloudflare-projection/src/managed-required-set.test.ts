@@ -18,13 +18,15 @@ import {
 } from "./managed-target-assignment.js";
 
 const TARGET: ManagedTargetIdentity = Object.freeze({
-  namespace: "namespace-1",
-  managed_instance_id: "instance-1",
-  managed_generation: "generation-1",
+  namespace: "eliotr",
+  managed_instance_id: "private-prose-g2",
+  managed_generation: "g2-qwen3-2026-09-03",
   target_profile_identity_sha256: "a".repeat(64),
 });
 const AS_OF = "2026-10-14T12:00:00.000Z";
 const CREATED_AT = "2026-10-14T11:00:00.000Z";
+const SOURCE_NAMESPACE = "canonical-source-ns-1";
+const SOURCE_CLASS = "unknown-eligible-source-class";
 const SOURCE_ID = "source-1";
 const SOURCE_REVISION = "revision-1";
 const OWNER_GENERATION = "owner-generation-1";
@@ -93,21 +95,21 @@ function seedCanonicalEligibleSource(): void {
     "INSERT INTO source_namespace_ownership(source_namespace_id,ownership_record_revision,owner_system_id," +
     "owner_incarnation_ref,source_owner_generation,source_admission_policy_revision,status,created_at) " +
     "VALUES (?,?,?,?,?,1,'ACTIVE',?)",
-  ).run(TARGET.namespace, 1, "owner-system-1", "incarnation-1", OWNER_GENERATION, CREATED_AT);
+  ).run(SOURCE_NAMESPACE, 1, "owner-system-1", "incarnation-1", OWNER_GENERATION, CREATED_AT);
   database.prepare(
     "INSERT INTO source_admission_policy(source_namespace_id,revision,authorized_principal_refs_json," +
     "allowed_ownership_modes_json,source_class,assurance_ceiling,instruction_taint,allowed_effects," +
     "allowed_use_json,disclosure_ceiling,license_policy_ref,default_storage_policy," +
     "default_residency_profile_id,default_retention_policy_id,minimum_quality_state,created_at) " +
-    "VALUES (?,1,'[\"owner-principal-1\"]','[\"immutable_import\"]','document','QUALIFIED'," +
+    "VALUES (?,1,'[\"owner-principal-1\"]','[\"immutable_import\"]',?,'QUALIFIED'," +
     "'DATA_ONLY','READ_ONLY','[\"research\"]','private','license-1','storage-1','residency-1'," +
     "'retention-1','standard',?)",
-  ).run(TARGET.namespace, CREATED_AT);
+  ).run(SOURCE_NAMESPACE, SOURCE_CLASS, CREATED_AT);
   database.prepare(
     "INSERT INTO scope_read_policy(source_namespace_id,principal_ref,client_class,policy_ref,generation," +
     "allowed_use_json,disclosure_ceiling,state,expires_at,created_at) VALUES (?,?,'owner_pwa','owner-read-1',1,?," +
     "'private','ACTIVE','2026-10-15T00:00:00.000Z',?)",
-  ).run(TARGET.namespace, "owner-principal-1", '["research"]', CREATED_AT);
+  ).run(SOURCE_NAMESPACE, "owner-principal-1", '["research"]', CREATED_AT);
   database.prepare(
     "INSERT INTO bundle_ingest_operation(operation_id,principal_ref,origin_authentication_receipt_ref," +
     "idempotency_key,input_fingerprint,manifest_sha256,manifest_json,file_hashes_json,total_bytes," +
@@ -122,7 +124,7 @@ function seedCanonicalEligibleSource(): void {
     DB_DIGEST,
     '{"protocol":"eliotr.normalized.v1"}',
     '{"content.md":"' + DB_DIGEST + '"}',
-    TARGET.namespace,
+    SOURCE_NAMESPACE,
     "owner-system-1",
     OWNER_GENERATION,
     SOURCE_REVISION,
@@ -144,12 +146,12 @@ function seedCanonicalEligibleSource(): void {
   ).run(
     DECISION_REF,
     "ingest-1",
-    TARGET.namespace,
+    SOURCE_NAMESPACE,
     "owner-system-1",
     OWNER_GENERATION,
     SOURCE_REVISION,
     "credential-1",
-    "document",
+    SOURCE_CLASS,
     "QUALIFIED",
     "DATA_ONLY",
     "READ_ONLY",
@@ -169,7 +171,7 @@ function seedCanonicalEligibleSource(): void {
     "license_policy_ref,default_retention_policy_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
   ).run(
     SOURCE_ID,
-    TARGET.namespace,
+    SOURCE_NAMESPACE,
     "owner-system-1",
     OWNER_GENERATION,
     "immutable_import",
@@ -177,7 +179,7 @@ function seedCanonicalEligibleSource(): void {
     "Source fixture",
     "storage-1",
     "residency-1",
-    "document",
+    SOURCE_CLASS,
     "license-1",
     "retention-1",
     CREATED_AT,
@@ -309,7 +311,7 @@ function requiredSetPort(): ManagedRequiredSetPort {
         "JOIN project_source_membership m ON m.project_id=p.project_id AND m.membership_generation=p.generation " +
         "AND m.valid_from<=?5 " +
         "AND (m.valid_to IS NULL OR ?6<m.valid_to) " +
-        "JOIN source s ON s.source_id=m.source_id AND s.source_namespace_id=a.target_namespace " +
+        "JOIN source s ON s.source_id=m.source_id " +
         "JOIN source_revision sr ON sr.source_revision_ref=s.head_rev AND sr.source_id=s.source_id " +
         "AND sr.source_owner_generation=s.source_owner_generation AND sr.purge_state='LIVE' " +
         "JOIN source_namespace_ownership own ON own.source_namespace_id=s.source_namespace_id " +
@@ -441,6 +443,8 @@ describe("canonical managed required-set enumeration", () => {
       "project:project-2:generation:1",
     ]);
     expect(copies.every((copy) => copy.source_revision_ref === SOURCE_REVISION)).toBe(true);
+    expect(copies.every((copy) => copy.namespace === "eliotr" && copy.source_namespace_id === SOURCE_NAMESPACE)).toBe(true);
+    expect(copies.every((copy) => copy.source_class === SOURCE_CLASS)).toBe(true);
     expect(receipt.required_set_digest).toMatch(/^[a-f0-9]{64}$/u);
   });
 
@@ -502,7 +506,7 @@ describe("canonical managed required-set enumeration", () => {
       on_copy(copy) {
         if (copy.project_id === "project-1") {
           database.prepare("UPDATE source_namespace_ownership SET status='FENCED' WHERE source_namespace_id=?")
-            .run(TARGET.namespace);
+            .run(SOURCE_NAMESPACE);
         }
       },
     })).rejects.toMatchObject({

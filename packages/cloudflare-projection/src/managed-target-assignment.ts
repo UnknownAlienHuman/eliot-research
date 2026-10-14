@@ -3,6 +3,7 @@ const SHA256 = /^[a-f0-9]{64}$/u;
 const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/u;
 
 export interface ManagedTargetIdentity {
+  /** AI Search generation-registry namespace; distinct from every source namespace. */
   readonly namespace: string;
   readonly managed_instance_id: string;
   readonly managed_generation: string;

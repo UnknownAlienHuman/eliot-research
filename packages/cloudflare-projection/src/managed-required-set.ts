@@ -23,6 +23,7 @@ export interface ManagedRequiredProjectRevisionCopy {
   readonly project_id: string;
   readonly project_generation: number;
   readonly project_owner_principal_ref: string;
+  /** AI Search target namespace, not the source namespace below. */
   readonly namespace: string;
   readonly managed_instance_id: string;
   readonly managed_generation: string;
@@ -265,7 +266,6 @@ function validateCopy(
     copy.managed_instance_id !== target.managed_instance_id ||
     copy.managed_generation !== target.managed_generation ||
     copy.target_profile_identity_sha256 !== target.target_profile_identity_sha256 ||
-    copy.source_namespace_id !== target.namespace ||
     copy.source_head_revision_ref !== copy.source_revision_ref ||
     copy.source_owner_status !== "ACTIVE" ||
     copy.purge_state !== "LIVE" ||
@@ -502,7 +502,7 @@ export function createD1ManagedRequiredSetPort(
           "JOIN project_source_membership m ON m.project_id=p.project_id " +
           "AND m.membership_generation=p.generation AND m.valid_from<=?5 " +
           "AND (m.valid_to IS NULL OR ?6<m.valid_to) " +
-          "JOIN source s ON s.source_id=m.source_id AND s.source_namespace_id=a.target_namespace " +
+          "JOIN source s ON s.source_id=m.source_id " +
           "JOIN source_revision sr ON sr.source_revision_ref=s.head_rev AND sr.source_id=s.source_id " +
           "AND sr.source_owner_generation=s.source_owner_generation AND sr.purge_state='LIVE' " +
           "JOIN source_namespace_ownership own ON own.source_namespace_id=s.source_namespace_id " +
