@@ -155,7 +155,11 @@ describe("managed AI Search per-item recovery", () => {
       isCurrentTarget: async () => true,
     });
     await expect(restarted.index(context, "projection-g1", [item], TEST_EXECUTION_FENCE))
-      .resolves.toMatchObject({ state: "READY", item_count: 1 });
+      .resolves.toMatchObject({
+        state: "DEGRADED",
+        item_count: 1,
+        reason_codes: ["MANAGED_GENERATION_NOT_PROMOTED"],
+      });
 
     expect(provider.uploadAndPoll).toHaveBeenCalledOnce();
     expect(provider.list).toHaveBeenNthCalledWith(1, {
@@ -202,7 +206,11 @@ describe("managed AI Search per-item recovery", () => {
       isCurrentTarget: async () => true,
     });
     await expect(restarted.index(context, "projection-g1", [item], TEST_EXECUTION_FENCE))
-      .resolves.toMatchObject({ state: "READY", item_count: 1 });
+      .resolves.toMatchObject({
+        state: "DEGRADED",
+        item_count: 1,
+        reason_codes: ["MANAGED_GENERATION_NOT_PROMOTED"],
+      });
     expect(provider.uploadAndPoll).toHaveBeenCalledOnce();
     expect(provider.info).toHaveBeenCalledOnce();
     expect(provider.download).toHaveBeenCalledOnce();
@@ -241,7 +249,11 @@ describe("managed AI Search per-item recovery", () => {
       isCurrentTarget: async () => true,
     });
     await expect(restarted.index(context, "projection-g1", desired, TEST_EXECUTION_FENCE))
-      .resolves.toMatchObject({ state: "READY", item_count: 2 });
+      .resolves.toMatchObject({
+        state: "DEGRADED",
+        item_count: 2,
+        reason_codes: ["MANAGED_GENERATION_NOT_PROMOTED"],
+      });
 
     expect(provider.uploadAndPoll).toHaveBeenCalledTimes(2);
     expect(authority.readManagedItemEffect(context, "projection-g1", item.item_key))

@@ -190,7 +190,13 @@ async function loadEffectRow(
   context: ProjectionSourceContext,
   projectionGeneration: string,
   itemKey: string,
+  expectedManifestItemCount?: number,
 ): Promise<ManagedItemEffectRow | null> {
+  const completeManifestPredicate = expectedManifestItemCount === undefined
+    ? ""
+    : "AND (SELECT COUNT(*) FROM projection_managed_item_effect complete " +
+      "WHERE complete.source_revision_ref = ?1 AND complete.projection_generation = ?2 " +
+      "AND complete.job_id = ?3) = ?5 ";
   return database.prepare(
     "SELECT source_revision_ref, projection_generation, job_id, item_key, desired_index, " +
     "normalized_start_byte, normalized_end_byte, " +
@@ -199,12 +205,14 @@ async function loadEffectRow(
     "section_content_sha256, document_sha256, document_size_bytes, metadata_json, state, " +
     "provider_item_id, readback_receipt_json, readback_sha256 " +
     "FROM projection_managed_item_effect WHERE source_revision_ref = ?1 " +
-    "AND projection_generation = ?2 AND job_id = ?3 AND item_key = ?4 LIMIT 1",
+    "AND projection_generation = ?2 AND job_id = ?3 AND item_key = ?4 " +
+    completeManifestPredicate + "LIMIT 1",
   ).bind(
     context.source_revision.source_revision_ref,
     projectionGeneration,
     context.job_id,
     itemKey,
+    ...(expectedManifestItemCount === undefined ? [] : [expectedManifestItemCount]),
   ).first<ManagedItemEffectRow>();
 }
 
@@ -257,36 +265,70 @@ export async function prepareManagedItemEffects(
     generation.item_set_digest,
     "managed materialized item set digest",
   );
-  if (items.length !== manifestItemCount) {
-    if (items.length !== 1 || manifestItemCount === 1) {
+  let singleItemManifestDigest: string | undefined;
+  if (items.length === 1) {
+    const item = items[0];
+    if (item === undefined) {
       projectionFail(
-        "PROJECTION_AUTHORITY_CONFLICT",
-        "managed item refresh must name one item from the prepared manifest",
+        "PROJECTION_INPUT_INVALID",
+        "managed item refresh is missing its exact intent",
       );
     }
-    // The complete manifest was validated on the initial call; refresh only
-    // this item's durable row after its state changes.
-    const item = items[0];
-    if (item === undefined || item.desired_index >= manifestItemCount) {
+    if (item.desired_index >= manifestItemCount) {
       projectionFail(
         "PROJECTION_AUTHORITY_CONFLICT",
         "managed item refresh is outside the prepared manifest",
       );
     }
     assertManagedItemIntent(context, projectionGeneration, profile, item, item.desired_index);
-    const row = await loadEffectRow(database, context, projectionGeneration, item.item_key);
-    if (row === null) {
-      projectionFail(
-        "PROJECTION_SETTLEMENT_UNCERTAIN",
-        "managed item refresh has no durable intent from the complete manifest",
-        true,
-      );
+    if (manifestItemCount === 1) {
+      singleItemManifestDigest = await projectionDigest([{
+        item_key: item.item_key,
+        canonical_section_id: item.metadata.canonical_section_id,
+        content_sha256: item.section_content_sha256,
+        start: item.normalized_start_byte,
+        end: item.normalized_end_byte,
+      }]);
+      if (singleItemManifestDigest !== expectedItemSetDigest) {
+        projectionFail(
+          "PROJECTION_AUTHORITY_CONFLICT",
+          "managed item intent differs from the exact durable projection manifest item set",
+        );
+      }
     }
-    const effect = decodeEffectRow(row, context, projectionGeneration, profile, operationId, item);
-    await assertCallerFence(database, operationId, callerFence, readClock(clock));
-    return Object.freeze([effect]);
+    const row = await loadEffectRow(
+      database,
+      context,
+      projectionGeneration,
+      item.item_key,
+      manifestItemCount,
+    );
+    if (items.length !== manifestItemCount || (row !== null && row.state !== "INTENT")) {
+      if (row === null) {
+        projectionFail(
+          "PROJECTION_SETTLEMENT_UNCERTAIN",
+          "managed item refresh has no durable intent from the complete manifest",
+          true,
+        );
+      }
+      if (row.state === "INTENT") {
+        projectionFail(
+          "PROJECTION_AUTHORITY_CONFLICT",
+          "managed item refresh requires a durable state transition after manifest preparation",
+        );
+      }
+      const effect = decodeEffectRow(row, context, projectionGeneration, profile, operationId, item);
+      await assertCallerFence(database, operationId, callerFence, readClock(clock));
+      return Object.freeze([effect]);
+    }
   }
-  const actualItemSetDigest = await projectionDigest(items.map((item, index) => {
+  if (items.length !== manifestItemCount) {
+    projectionFail(
+      "PROJECTION_AUTHORITY_CONFLICT",
+      "managed item refresh must name one item from the prepared manifest",
+    );
+  }
+  const actualItemSetDigest = singleItemManifestDigest ?? await projectionDigest(items.map((item, index) => {
     assertManagedItemIntent(context, projectionGeneration, profile, item, index);
     return {
       item_key: item.item_key,

@@ -286,7 +286,8 @@ export const profile: ProjectionExecutionProfile = {
   projector_profile: "structural-markdown-v1",
   managed_instance_id: "private-prose-g1",
   managed_generation: "g1",
-  managed_generation_active: true,
+  // New item writes run against a shadow generation; promotion is a separate authority.
+  managed_generation_active: false,
   maximum_markdown_bytes: 4 * 1024 * 1024,
   maximum_synchronous_items: 64,
   target_item_utf8_bytes: 1024,

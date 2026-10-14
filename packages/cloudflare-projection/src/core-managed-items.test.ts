@@ -15,9 +15,11 @@ import {
   recordManagedItemReceipt,
 } from "./core-managed-items.js";
 import {
+  MANAGED_ITEM_PROTOCOL_VERSION,
   readManagedItemGenerationProof,
   readManagedItemReceipts,
 } from "./core-managed-item-receipts.js";
+import { createD1ProjectionAuthority } from "./core-authority.js";
 import type {
   ProjectionExecutionProfile,
   ProjectionSourceContext,
@@ -131,6 +133,7 @@ function countedManagedItemDatabase(
   readonly writes: string[];
   readonly itemReads: string[];
   readonly callCount: () => number;
+  readonly dispatch: (itemKey: string) => void;
 } {
   let calls = 0;
   const writes: string[] = [];
@@ -159,11 +162,15 @@ function countedManagedItemDatabase(
                   state: "MATERIALIZED",
                   item_count: itemCount,
                   item_set_digest: digest,
+                  managed_item_protocol: MANAGED_ITEM_PROTOCOL_VERSION,
+                  managed_target_instance_id: profile.managed_instance_id,
+                  managed_target_generation: profile.managed_generation,
                 };
               }
               if (sql.includes("FROM projection_managed_item_effect")) {
                 const itemKey = String(values[3]);
                 itemReads.push(itemKey);
+                if (values.length > 4 && rows.size !== values[4]) return null;
                 return rows.get(itemKey) ?? null;
               }
               throw new Error(`unexpected D1 read: ${sql}`);
@@ -207,7 +214,21 @@ function countedManagedItemDatabase(
       };
     },
   } as unknown as D1Database;
-  return { database, writes, itemReads, callCount: () => calls };
+  return {
+    database,
+    writes,
+    itemReads,
+    callCount: () => calls,
+    dispatch(itemKey) {
+      const row = rows.get(itemKey);
+      if (row === undefined) throw new Error(`missing test managed effect ${itemKey}`);
+      rows.set(itemKey, {
+        ...row,
+        state: "DISPATCHED",
+        dispatch_lease_generation: fence.lease_generation,
+      });
+    },
+  };
 }
 
 async function makeFence(
@@ -320,10 +341,12 @@ describe("prepareManagedItemEffects", () => {
     })));
     const fence = await makeFence();
     const counted = countedManagedItemDatabase(intents.length, digest, fence);
+    const authority = createD1ProjectionAuthority({
+      database: counted.database,
+      now: () => 1_000,
+    });
 
-    const prepared = await prepareManagedItemEffects(
-      counted.database,
-      () => 1_000,
+    const prepared = await authority.prepareManagedItems(
       context,
       "projection-generation-1",
       profile,
@@ -331,13 +354,12 @@ describe("prepareManagedItemEffects", () => {
       fence,
     );
     expect(prepared).toHaveLength(64);
-    const manifestCalls = 4 * 64 + 3;
+    const manifestCalls = 4 * 64 + 4;
     expect(counted.callCount()).toBe(manifestCalls);
 
     for (const item of intents) {
-      const refreshed = await prepareManagedItemEffects(
-        counted.database,
-        () => 1_000,
+      counted.dispatch(item.item_key);
+      const refreshed = await authority.prepareManagedItems(
         context,
         "projection-generation-1",
         profile,
@@ -348,9 +370,47 @@ describe("prepareManagedItemEffects", () => {
       expect(refreshed[0]?.item_key).toBe(item.item_key);
     }
 
-    expect(counted.callCount()).toBe(manifestCalls + 4 * 64);
+    expect(counted.callCount()).toBe(manifestCalls + 5 * 64);
     expect(counted.writes).toHaveLength(64);
     expect(counted.itemReads.slice(64)).toEqual(intents.map((item) => item.item_key));
+  });
+
+  it("uses the one-item manifest as an exact refresh only after its durable dispatch transition", async () => {
+    const digest = await projectionDigest([{
+      item_key: intent.item_key,
+      canonical_section_id: intent.metadata.canonical_section_id,
+      content_sha256: intent.section_content_sha256,
+      start: intent.normalized_start_byte,
+      end: intent.normalized_end_byte,
+    }]);
+    const fence = await makeFence();
+    const counted = countedManagedItemDatabase(1, digest, fence);
+    const authority = createD1ProjectionAuthority({
+      database: counted.database,
+      now: () => 1_000,
+    });
+    const prepared = await authority.prepareManagedItems(
+      context,
+      "projection-generation-1",
+      profile,
+      [intent],
+      fence,
+    );
+    expect(prepared[0]?.state).toBe("INTENT");
+    expect(counted.writes).toHaveLength(1);
+
+    counted.dispatch(intent.item_key);
+    const refreshed = await authority.prepareManagedItems(
+      context,
+      "projection-generation-1",
+      profile,
+      [intent],
+      fence,
+    );
+
+    expect(refreshed).toMatchObject([{ item_key: intent.item_key, state: "DISPATCHED" }]);
+    expect(counted.writes).toHaveLength(1);
+    expect(counted.callCount()).toBe(14);
   });
 });
 
@@ -580,6 +640,9 @@ describe("readManagedItemReceipts", () => {
       item_set_digest: requiredSetDigest,
       semantic_instance_id: profile.managed_instance_id,
       semantic_generation: profile.managed_generation,
+      managed_item_protocol: MANAGED_ITEM_PROTOCOL_VERSION,
+      managed_target_instance_id: profile.managed_instance_id,
+      managed_target_generation: profile.managed_generation,
       semantic_receipt_ref: terminalState === "COMPLETED" ? managedReceiptRef : null,
       semantic_readback_digest: terminalState === "COMPLETED" ? readbackDigest : null,
     };

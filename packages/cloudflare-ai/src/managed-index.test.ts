@@ -42,8 +42,26 @@ describe("managed AI Search projection adapter", () => {
         metadata,
       };
     });
+    const authority = createMemoryManagedItemAuthority();
+    const prepareSizes: number[] = [];
+    const originalPrepare = authority.prepareManagedItems.bind(authority);
+    vi.spyOn(authority, "prepareManagedItems").mockImplementation(async (...args) => {
+      const intents = args[3];
+      if (prepareSizes.length > 0) {
+        const current = intents[0];
+        if (
+          intents.length !== 1 ||
+          current === undefined ||
+          authority.readManagedItemEffect(args[0], args[1], current.item_key)?.state === "INTENT"
+        ) {
+          throw new Error("scalar refresh must follow this item's durable state transition");
+        }
+      }
+      prepareSizes.push(intents.length);
+      return originalPrepare(...args);
+    });
     const port = createManagedProjectionTestPort({
-      authority: createMemoryManagedItemAuthority(),
+      authority,
       profile,
       namespace: {
         get() {
@@ -63,13 +81,15 @@ describe("managed AI Search projection adapter", () => {
     });
     const result = await port.index(context, "projection-g1", [item], TEST_EXECUTION_FENCE);
     expect(result).toMatchObject({
-      state: "READY",
+      state: "DEGRADED",
       item_count: 1,
       instance_id: "private-prose-g1",
       managed_generation: "g1",
+      reason_codes: ["MANAGED_GENERATION_NOT_PROMOTED"],
     });
     expect(uploadAndPoll).toHaveBeenCalledOnce();
     expect(info).toHaveBeenCalledOnce();
+    expect(prepareSizes).toEqual([1, 1]);
     expect(key).toBe("projection-item-1.md");
     expect(metadata).toEqual({
       canonical_section_id: "section-1",
@@ -79,6 +99,95 @@ describe("managed AI Search projection adapter", () => {
       source_revision_ref: "revision-1",
     });
     expect(Object.keys(metadata)).toHaveLength(5);
+  });
+
+  it("prepares 64 intents once and refreshes only each transitioned item", async () => {
+    let activeKey = "";
+    let activeContent = "";
+    let activeResult: {
+      readonly id: string;
+      readonly key: string;
+      readonly status: "completed";
+      readonly chunks_count: number;
+      readonly file_size: number;
+      readonly metadata: Readonly<Record<string, string>>;
+    } | undefined;
+    const authority = createMemoryManagedItemAuthority();
+    const prepareSizes: number[] = [];
+    const originalPrepare = authority.prepareManagedItems.bind(authority);
+    vi.spyOn(authority, "prepareManagedItems").mockImplementation(async (...args) => {
+      const intents = args[3];
+      if (prepareSizes.length > 0) {
+        const current = intents[0];
+        if (
+          intents.length !== 1 ||
+          current === undefined ||
+          authority.readManagedItemEffect(args[0], args[1], current.item_key)?.state === "INTENT"
+        ) {
+          throw new Error("scalar refresh must follow this item's durable state transition");
+        }
+      }
+      prepareSizes.push(intents.length);
+      return originalPrepare(...args);
+    });
+    const items = Array.from({ length: 64 }, (_, index) => ({
+      ...item,
+      item_key: `projection-item-${index + 1}`,
+      canonical_section_id: `section-${index + 1}`,
+      normalized_offset_map_ref: `normalized-bytes:${index * 19}:${(index + 1) * 19}`,
+    }));
+    const port = createManagedProjectionTestPort({
+      authority,
+      profile,
+      namespace: {
+        get() {
+          return {
+            items: {
+              async uploadAndPoll(key, content, options) {
+                if (typeof content !== "string") {
+                  throw new Error("test managed document must use the text upload form");
+                }
+                activeKey = key;
+                activeContent = content;
+                activeResult = {
+                  id: `provider-${key}`,
+                  key,
+                  status: "completed",
+                  chunks_count: 1,
+                  file_size: new TextEncoder().encode(content).byteLength,
+                  metadata: options?.metadata ?? {},
+                };
+                return activeResult;
+              },
+              get() {
+                return {
+                  async info() {
+                    if (activeResult === undefined) throw new Error("missing upload receipt");
+                    return activeResult;
+                  },
+                  async download() { return downloaded(activeKey, activeContent); },
+                };
+              },
+            },
+          };
+        },
+      },
+    });
+
+    const result = await port.index(context, "projection-g1", items, TEST_EXECUTION_FENCE);
+
+    expect(result).toMatchObject({
+      state: "DEGRADED",
+      item_count: 64,
+      reason_codes: ["MANAGED_GENERATION_NOT_PROMOTED"],
+    });
+    expect(prepareSizes).toHaveLength(65);
+    expect(prepareSizes[0]).toBe(64);
+    expect(prepareSizes.slice(1)).toEqual(Array.from({ length: 64 }, () => 1));
+    expect(items.every((projectionItem) =>
+      authority.readManagedItemEffect(context, "projection-g1", projectionItem.item_key)?.state ===
+        "READBACK_VERIFIED"
+    )).toBe(true);
   });
 
   it("accepts documented built-in metadata while keeping Eliot fields exact", async () => {
@@ -132,8 +241,9 @@ describe("managed AI Search projection adapter", () => {
     });
 
     await expect(port.index(context, "projection-g1", [item], TEST_EXECUTION_FENCE)).resolves.toMatchObject({
-      state: "READY",
+      state: "DEGRADED",
       item_count: 1,
+      reason_codes: ["MANAGED_GENERATION_NOT_PROMOTED"],
     });
   });
 
@@ -211,7 +321,8 @@ describe("managed AI Search projection adapter", () => {
     const tooLongKeyItem = { ...item, item_key: "a".repeat(126) };
 
     await expect(port.index(context, "projection-g1", [maxKeyItem], TEST_EXECUTION_FENCE)).resolves.toMatchObject({
-      state: "READY",
+      state: "DEGRADED",
+      reason_codes: ["MANAGED_GENERATION_NOT_PROMOTED"],
     });
     expect(key).toHaveLength(128);
     await expect(port.index(context, "projection-g1", [tooLongKeyItem], TEST_EXECUTION_FENCE)).resolves.toMatchObject({

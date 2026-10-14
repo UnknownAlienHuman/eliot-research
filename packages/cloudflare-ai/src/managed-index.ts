@@ -347,7 +347,7 @@ async function indexManagedItem(
   instance: ProjectionAiSearchInstance,
   item: PreparedManagedItem,
   effect: ManagedItemEffect,
-  intents: readonly ManagedItemIntent[],
+  intent: ManagedItemIntent,
   readCurrentTarget: CurrentManagedTargetReader,
 ): Promise<ManagedItemReceipt> {
   if (effect.state !== "INTENT") {
@@ -375,11 +375,12 @@ async function indexManagedItem(
     fence,
   );
   if (!dispatchAllowed) {
+    // The exact item already left INTENT under another fenced attempt.
     const refreshed = await authority.prepareManagedItems(
       context,
       projectionGeneration,
       profile,
-      intents,
+      [intent],
       fence,
     );
     return recoverManagedItem(
@@ -419,11 +420,12 @@ async function indexManagedItem(
     ) throw error;
     // The durable DISPATCHED state forbids a second upload; recovery is read-only.
   }
+  // Dispatch/unknown state changed only for this item; keep the full manifest out of the refresh.
   const refreshed = await authority.prepareManagedItems(
     context,
     projectionGeneration,
     profile,
-    intents,
+    [intent],
     fence,
   );
   return recoverManagedItem(
@@ -486,7 +488,8 @@ export function createManagedProjectionPort(
         for (let index = 0; index < prepared.length; index += 1) {
           const item = prepared[index];
           const effect = effects[index];
-          if (item === undefined || effect === undefined) {
+          const intent = intents[index];
+          if (item === undefined || effect === undefined || intent === undefined) {
             projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed item progress is incomplete");
           }
           receipts.push(await indexManagedItem(
@@ -498,7 +501,7 @@ export function createManagedProjectionPort(
             instance,
             item,
             effect,
-            intents,
+            intent,
             dependencies.isCurrentTarget,
           ));
         }
