@@ -263,18 +263,15 @@ describe("native Web Search Browser Run raw capture adapter", () => {
   it("does not dispatch Browser Run when cancellation lands after the deadline exists but before it runs", async () => {
     const caller = new AbortController();
     const quickAction = vi.fn(async () => browserResponse());
-    // The owner read is a thenable that aborts and only then resolves with null,
-    // so the cancellation lands in the microtask window after the deadline is
-    // created and before the deferred quickAction step executes.
-    const port = {
-      captureRawFile: vi.fn(),
-      readRawFileByIdempotency: vi.fn(() => ({
-        then: (resolve: (value: null) => unknown) => {
-          caller.abort();
-          resolve(null);
-        },
-      })),
-    } as unknown as NativeWebSearchRawCaptureOwnerPort;
+    // Register a cancellation microtask when the real parent deadline listener is
+    // installed. The deadline exists before that task runs; quickAction is queued
+    // after it, so the abort promise can win before the dispatch promise rejects.
+    const subscribe = caller.signal.addEventListener.bind(caller.signal);
+    vi.spyOn(caller.signal, "addEventListener").mockImplementation((type, listener, options) => {
+      subscribe(type, listener, options);
+      if (type === "abort") queueMicrotask(() => caller.abort());
+    });
+    const port = owner({ readRawFileByIdempotency: vi.fn(async () => null) });
     const adapter = createNativeWebSearchMarkdownCaptureAdapter({
       browser: browser(quickAction as never), owner: port, selection: selection(),
     });

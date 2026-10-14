@@ -140,20 +140,6 @@ class DeadlineFailure extends Error {
   }
 }
 
-/**
- * Cancellation observed at the dispatch boundary itself. The dispatch is deferred
- * by one microtask, so an abort that lands after deadline creation still reaches
- * this point with a live deadline. It is kept distinct from DeadlineFailure
- * because nothing was dispatched: no readback reconciliation may run and the
- * dispatch state must stay NOT_STARTED.
- */
-class PreDispatchAbort extends Error {
-  public constructor(public readonly code: DeadlineFailureCode) {
-    super(code);
-    this.name = "PreDispatchAbort";
-  }
-}
-
 function waitForDeadline<T>(promise: Promise<T>, deadline: Deadline): Promise<T> {
   return waitForRuntimeDeadline(promise, deadline, (code) => new DeadlineFailure(code));
 }
@@ -388,21 +374,17 @@ export function createNativeWebSearchMarkdownCaptureAdapter(dependencies: {
       deadline.dispose();
       return safeFailure(selection, code, "NOT_STARTED", "FAILED", attempt, attempt.locator_index);
     }
-    // The dispatch below is deferred by one microtask and quickAction has no
-    // idempotency key, so this is the last point where a cancellation can still
-    // stop the remote effect instead of merely detaching its response.
-    const dispatchAbort = (): PreDispatchAbort | undefined => {
-      if (!deadline.signal.aborted) return undefined;
-      return new PreDispatchAbort(deadline.failureCode() ?? "ABORTED");
-    };
+    // The deadline's rejection may win before the deferred dispatch rejection.
+    // Track actual entry so that either rejection still preserves known no-effect.
+    let dispatchStarted = false;
     let response: Response;
     try {
       // Rechecking inside the deferred step keeps the check adjacent to the call
       // it protects: an abort that arrives while the preflight awaited is now
       // observed before quickAction runs, not after its response is discarded.
       const dispatch = Promise.resolve().then(() => {
-        const aborted = dispatchAbort();
-        if (aborted !== undefined) throw aborted;
+        if (deadline.signal.aborted) throw new DeadlineFailure(deadline.failureCode() ?? "ABORTED");
+        dispatchStarted = true;
         return browser.quickAction("markdown", {
           url: attempt.request_url,
           allowRequestPattern: [exactRequestPattern(attempt.request_url)],
@@ -419,11 +401,12 @@ export function createNativeWebSearchMarkdownCaptureAdapter(dependencies: {
       });
       response = await waitForDeadline(lateAware, deadline);
     } catch (error) {
-      // PreDispatchAbort proves quickAction was never entered, so no dispatch
-      // readback is warranted and the result must stay NOT_STARTED / no paid effect.
-      if (error instanceof PreDispatchAbort) {
+      // Once aborted, the queued dispatch cannot enter quickAction. Do not infer
+      // uncertainty from which of the two rejected promises reaches this catch first.
+      if (!dispatchStarted && deadline.signal.aborted) {
+        const code = deadline.failureCode() ?? "ABORTED";
         deadline.dispose();
-        return safeFailure(selection, error.code, "NOT_STARTED", "FAILED", attempt, attempt.locator_index);
+        return safeFailure(selection, code, "NOT_STARTED", "FAILED", attempt, attempt.locator_index);
       }
       const code = error instanceof DeadlineFailure ? error.code : "DISPATCH_OUTCOME_UNKNOWN";
       deadline.dispose();
