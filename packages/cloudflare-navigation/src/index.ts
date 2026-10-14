@@ -16,6 +16,7 @@ export {
   createD1ProjectCopyScopeResolver,
   ProjectCopyScopeError,
   resolveProjectCopyScope,
+  resolveD1ProjectCopyScope,
 } from "./project-copy-scope.js";
 export type {
   CreateD1ProjectCopyScopeResolverInput,

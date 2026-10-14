@@ -67,11 +67,21 @@ function requiredSet(
   copies: readonly ProjectCopyMembershipFact[],
 ): ProjectCopyRequiredSetFacts {
   return {
-    protocol: "eliotr.managed-required-project-revisions.v1",
+    protocol: "eliotr.managed-required-project-revisions.v2",
     target,
     as_of: scope.created_at,
-    authority_revision_before: 17,
-    authority_revision_after: 17,
+    target_fence: {
+      protocol: "eliotr.managed-required-set-target-fence.v1",
+      digest: "f".repeat(64),
+      assignment_heads_sha256: "a".repeat(64),
+      required_set_sha256: "d".repeat(64),
+      page_provenance_sha256: "c".repeat(64),
+      assigned_project_count: Math.max(1, new Set(copies.map(copy => copy.project_id)).size),
+      project_revision_copy_count: copies.length,
+      page_count: 1,
+    },
+    assigned_project_count: Math.max(1, new Set(copies.map(copy => copy.project_id)).size),
+    page_count: 1,
     project_revision_copy_count: copies.length,
     required_set_digest: "d".repeat(64),
     copies,
@@ -298,5 +308,22 @@ describe("Core-backed project-copy scope", () => {
       copies: [membership("revision-shared", "project-a", 7)],
       currentness: async () => { throw new Error("project membership head changed"); },
     })).rejects.toThrow("project membership head changed");
+  });
+
+  it.each(["legacy", "different denominator"])("rejects %s required-set receipts", async (kind) => {
+    const expression: ScopeExpression = { kind: "PROJECT", project_id: "project-a" };
+    const scope = snapshot(expression, ["revision-shared"]);
+    const facts = requiredSet(scope, [membership("revision-shared", "project-a", 7)]);
+    const invalidFacts = kind === "legacy"
+      ? { ...facts, protocol: "eliotr.managed-required-project-revisions.v1" }
+      : { ...facts, target_fence: { ...facts.target_fence, required_set_sha256: "e".repeat(64) } };
+    await expect(resolveProjectCopyScope({
+      scope_snapshot: scope,
+      observed_at: FIXED_AT,
+      target,
+      require_current_scope: async () => undefined,
+      resolve_atom: atomResolver({ [scopeExpressionIdentity(expression)]: ["revision-shared"] }),
+      load_required_set: async () => invalidFacts as ProjectCopyRequiredSetFacts,
+    })).rejects.toMatchObject({ code: "PROJECT_COPY_SCOPE_REQUIRED_SET_INVALID" });
   });
 });

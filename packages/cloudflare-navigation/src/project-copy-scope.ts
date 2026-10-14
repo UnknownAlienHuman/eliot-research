@@ -16,6 +16,7 @@ import {
   type AiSearchManagedProjectCopyScopeResolver,
   type AiSearchProjectCopyScope,
   type ManagedTargetIdentity,
+  type ManagedRequiredSetReceipt,
 } from "@eliotr/cloudflare-projection";
 import type { EvidenceAccessContext } from "@eliotr/cloudflare-evidence";
 import { createOwnerScopeAuthority } from "./orientation-authority.js";
@@ -33,14 +34,7 @@ export interface ProjectCopyMembershipFact {
   readonly membership_generation: number;
 }
 
-export interface ProjectCopyRequiredSetFacts {
-  readonly protocol: "eliotr.managed-required-project-revisions.v1";
-  readonly target: ManagedTargetIdentity;
-  readonly as_of: string;
-  readonly authority_revision_before: number;
-  readonly authority_revision_after: number;
-  readonly project_revision_copy_count: number;
-  readonly required_set_digest: string;
+export interface ProjectCopyRequiredSetFacts extends ManagedRequiredSetReceipt {
   /** Bounded projection of the existing #356 read model, already Core-fenced. */
   readonly copies: readonly ProjectCopyMembershipFact[];
 }
@@ -248,9 +242,14 @@ export async function resolveProjectCopyScope(
   }
 
   const required = await input.load_required_set(input.target, input.observed_at, resolvedRefs);
-  if (required.protocol !== "eliotr.managed-required-project-revisions.v1" ||
+  if (required.protocol !== "eliotr.managed-required-project-revisions.v2" ||
       required.as_of !== input.observed_at ||
-      required.authority_revision_before !== required.authority_revision_after ||
+      required.target_fence?.protocol !== "eliotr.managed-required-set-target-fence.v1" ||
+      !/^[a-f0-9]{64}$/u.test(required.target_fence.digest) ||
+      required.target_fence.required_set_sha256 !== required.required_set_digest ||
+      required.target_fence.project_revision_copy_count !== required.project_revision_copy_count ||
+      required.target_fence.assigned_project_count !== required.assigned_project_count ||
+      required.target_fence.page_count !== required.page_count ||
       required.target.namespace !== input.target.namespace ||
       required.target.managed_instance_id !== input.target.managed_instance_id ||
       required.target.managed_generation !== input.target.managed_generation ||
@@ -353,8 +352,8 @@ export interface CreateD1ProjectCopyScopeResolverInput {
 export function createD1ProjectCopyScopeResolver(
   input: CreateD1ProjectCopyScopeResolverInput,
 ): AiSearchManagedProjectCopyScopeResolver {
-  const requiredSetPort = createD1ManagedRequiredSetPort(input.database);
-  return async (request, active) => resolveProjectCopyScope({
+  return async (request, active) => resolveD1ProjectCopyScope({
+    ...input,
     scope_snapshot: request.scope_snapshot,
     observed_at: new Date().toISOString(),
     target: {
@@ -363,6 +362,18 @@ export function createD1ProjectCopyScopeResolver(
       managed_generation: active.index_generation,
       target_profile_identity_sha256: active.target_profile_identity_sha256,
     },
+  });
+}
+
+/** Shared Core composition for a frozen snapshot; callers never fabricate a retrieval request. */
+export async function resolveD1ProjectCopyScope(
+  input: CreateD1ProjectCopyScopeResolverInput & Pick<ResolveProjectCopyScopeInput, "scope_snapshot" | "observed_at" | "target">,
+): Promise<AiSearchProjectCopyScope> {
+  const requiredSetPort = createD1ManagedRequiredSetPort(input.database);
+  return resolveProjectCopyScope({
+    scope_snapshot: input.scope_snapshot,
+    observed_at: input.observed_at,
+    target: input.target,
     require_current_scope: input.require_current_scope,
     resolve_atom: createOwnerScopeAuthority(input.database, input.access).exhaustiveResolveAtom,
     load_required_set: async (target, asOf, sourceRevisionRefs) => {

@@ -5,7 +5,8 @@ import {
   createR2EvidenceContentPort,
   type EvidenceAccessContext,
 } from "@eliotr/cloudflare-evidence";
-import { createD1ScopeService, createOwnerScopeAuthority } from "@eliotr/cloudflare-navigation";
+import { createD1ScopeService, createOwnerScopeAuthority, resolveD1ProjectCopyScope } from "@eliotr/cloudflare-navigation";
+import { projectionDigest } from "@eliotr/cloudflare-projection";
 import { IdentifierSchema, type ScopeExpression } from "@eliotr/contracts";
 import { createR2EvidenceObjectStore } from "@eliotr/platform-cloudflare";
 import { createD1ScopePorts } from "@eliotr/retrieval";
@@ -153,6 +154,27 @@ export async function handleAiSearchFunctionalProbeHttp(input: {
     require_current_scope: async (probeAccess, scope) => {
       if (!sameAccess(probeAccess, access)) throw new Error("functional probe owner context changed");
       await scopePorts.requireCurrentScope(scope);
+    },
+    resolve_project_copy_scope: async (resolved) => {
+      if (!sameAccess(resolved.access, access)) throw new Error("functional probe project-copy context changed");
+      const profile = Object.freeze({
+        ...resolved.target.profile,
+        index_method: Object.freeze({ ...resolved.target.profile.index_method }),
+        metadata_fields: Object.freeze([...resolved.target.profile.metadata_fields].sort()),
+      });
+      return resolveD1ProjectCopyScope({
+        database: input.env.CORE_DB,
+        access,
+        scope_snapshot: resolved.scope_snapshot,
+        observed_at: new Date().toISOString(),
+        target: {
+          namespace: resolved.target.namespace,
+          managed_instance_id: resolved.target.managed_instance_id,
+          managed_generation: resolved.target.managed_generation,
+          target_profile_identity_sha256: await projectionDigest(profile),
+        },
+        require_current_scope: (scope) => scopePorts.requireCurrentScope(scope),
+      });
     },
     resolve_candidate: async (probeAccess, scope, candidate) => {
       if (!sameAccess(probeAccess, access)) throw new Error("functional probe evidence context changed");
