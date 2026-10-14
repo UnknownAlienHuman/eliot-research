@@ -22,6 +22,7 @@ import {
   createResearchMaterializeRecovery,
   createResearchBranchExecutionHandlers,
   readWorkflowObject,
+  BRANCH_QUERY_HANDLER_GENERATION,
   type ResearchBranchExecutionDependencies,
 } from "@eliotr/cloudflare-research";
 import {
@@ -67,6 +68,8 @@ export const SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION = "research-handler
 export const SERVER_OWNED_PROTOCOL_HANDLER_GENERATION = SEMANTIC_PROTOCOL_HANDLER_GENERATION;
 /** Branch-aware generation selected for owner explicit-protocol runs. */
 export const SERVER_OWNED_BRANCH_HANDLER_GENERATION = BRANCH_EXECUTION_HANDLER_GENERATION;
+/** Forward role-query generation; only selected immutable profiles may enter it. */
+export const SERVER_OWNED_BRANCH_QUERY_HANDLER_GENERATION = BRANCH_QUERY_HANDLER_GENERATION;
 /** Provider-neutral computer-agent analysis for delegated explicit-protocol runs. */
 export const SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION = EXTERNAL_AGENT_BRANCH_HANDLER_GENERATION;
 /** New native sibling prepare/wait/settle graph; persisted v8 keeps manual recovery. */
@@ -75,13 +78,15 @@ export type SemanticResearchHandlerGeneration =
   typeof SERVER_OWNED_FREEZE_HANDLER_GENERATION | typeof SERVER_OWNED_SEMANTIC_HANDLER_GENERATION |
   typeof SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION | typeof SERVER_OWNED_PROTOCOL_HANDLER_GENERATION |
   typeof SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION |
-  typeof SERVER_OWNED_BRANCH_HANDLER_GENERATION | typeof SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION;
+  typeof SERVER_OWNED_BRANCH_HANDLER_GENERATION | typeof SERVER_OWNED_BRANCH_QUERY_HANDLER_GENERATION |
+  typeof SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION;
 export function isSemanticResearchHandlerGeneration(generation: unknown): generation is SemanticResearchHandlerGeneration {
   return generation === SERVER_OWNED_FREEZE_HANDLER_GENERATION ||
     generation === SERVER_OWNED_SEMANTIC_HANDLER_GENERATION ||
     generation === SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION ||
     generation === SERVER_OWNED_PROTOCOL_HANDLER_GENERATION ||
     generation === SERVER_OWNED_BRANCH_HANDLER_GENERATION ||
+    generation === SERVER_OWNED_BRANCH_QUERY_HANDLER_GENERATION ||
     generation === SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION ||
     generation === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION;
 }
@@ -164,6 +169,7 @@ const NATIVE_DETERMINISTIC_HANDLER_GENERATIONS = new Set([
   "research-handlers.exploratory.v3", "research-handlers.exploratory.v4",
   "research-handlers.exploratory.v5", "research-handlers.exploratory.v6",
   "research-handlers.exploratory.v7", "research-handlers.exploratory.v8",
+  SERVER_OWNED_BRANCH_QUERY_HANDLER_GENERATION,
 ]);
 const NATIVE_DETERMINISTIC_STAGES = new Set<ResearchWorkflowStage>([
   "ORIENT", "INTERPRET", "COMPILE_OBLIGATIONS", "PLAN",
@@ -171,13 +177,14 @@ const NATIVE_DETERMINISTIC_STAGES = new Set<ResearchWorkflowStage>([
 
 function branchGeneration(generation: unknown): boolean {
   return generation === SERVER_OWNED_BRANCH_HANDLER_GENERATION ||
+    generation === SERVER_OWNED_BRANCH_QUERY_HANDLER_GENERATION ||
     generation === SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION ||
     generation === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION;
 }
 
 /**
  * Whether the handler generation executes READ_AND_EXTRACT/ANALYZE_BRANCHES/
- * COUNTER_SEARCH through the shared branch executor (v7/v8), so a committed
+ * COUNTER_SEARCH through the shared branch executor (v7-v9), so a committed
  * COUNTER_SEARCH is a branch reconciliation checkpoint. Older generations
  * commit a legacy COUNTER_SEARCH that carries no branch observations.
  */
@@ -189,6 +196,12 @@ export function isBranchExecutionHandlerGeneration(generation: unknown): boolean
 export function createResearchStageHandlerFactory(
   mode: ResearchStageHandlerFactoryMode,
 ): ResearchStageHandlerFactory {
+  if (mode.kind === "server-owned-exploratory" &&
+      mode.generation === SERVER_OWNED_BRANCH_QUERY_HANDLER_GENERATION &&
+      (mode.branch_execution?.execute_query_plan === undefined ||
+       mode.branch_execution.query_plan_budgets === undefined)) {
+    fail("WORKFLOW_CONFIGURATION_MISSING");
+  }
   const protocolScopeHandler: WorkflowStageHandler | undefined = mode.kind === "server-owned-exploratory"
     ? createFreezeProtocolAndScopeStageHandler({ navigation: mode.navigation, ledger: mode.ledger })
     : undefined;
@@ -299,7 +312,8 @@ export function createResearchStageHandlerFactory(
       return async () => fail("WORKFLOW_AUTHORITY_STALE");
     }
     if (stage === "ANALYZE_BRANCHES" && mode.kind === "server-owned-exploratory" &&
-        mode.generation === SERVER_OWNED_BRANCH_HANDLER_GENERATION) {
+        (mode.generation === SERVER_OWNED_BRANCH_HANDLER_GENERATION ||
+         mode.generation === SERVER_OWNED_BRANCH_QUERY_HANDLER_GENERATION)) {
       return branchExecution?.analyze_branches ?? (async () => fail("WORKFLOW_AUTHORITY_STALE"));
     }
     if (stage === "COUNTER_SEARCH" && mode.kind === "server-owned-exploratory" && branchGeneration(mode.generation)) {

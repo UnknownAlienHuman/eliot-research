@@ -54,6 +54,7 @@ import { readRetrieveBranchesCheckpoint } from "./research-retrieve-branches.js"
 import { createResearchBranchRoleServerPromptInput } from "./research-branch-role-server-prompt.js";
 import {
   SERVER_OWNED_BRANCH_HANDLER_GENERATION,
+  SERVER_OWNED_BRANCH_QUERY_HANDLER_GENERATION,
   SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION,
   SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION,
   type ResearchStageHandlerFactory,
@@ -61,13 +62,17 @@ import {
 } from "./research-stage-handlers.js";
 import type { ResearchSemanticRolesModelDependencies } from "./research-semantic-composition-contract.js";
 import type { createResearchSemanticNativeModelRuntime } from "./research-semantic-native-model-runtime.js";
-import type { ResolvedResearchRunConfiguration } from "@eliotr/cloudflare-research-configuration/research-run-configuration.js";
+import type {
+  ResearchBranchQueryBudgetSelection,
+  ResolvedResearchRunConfiguration,
+} from "@eliotr/cloudflare-research-configuration/research-run-configuration.js";
 import { createResearchSemanticWorkflowHandlerFactory } from "./research-semantic-composition.js";
 import type { createResearchNativeAcquisitionStageRoute } from "./research-native-acquisition.js";
 
 type NativeModelRuntime = ReturnType<typeof createResearchSemanticNativeModelRuntime>;
 type CapturedResearchRunConfiguration = Pick<ResolvedResearchRunConfiguration,
-  "mode" | "configuration_ref" | "configuration_sha256" | "project_owner_ref" | "project_id" | "model_selections">;
+  "mode" | "configuration_ref" | "configuration_sha256" | "project_owner_ref" | "project_id" |
+  "project_configuration_ref" | "project_configuration_sha256" | "model_selections">;
 type ResearchSemanticRunModelConfiguration = Omit<CapturedResearchRunConfiguration,
   "mode" | "configuration_ref" | "configuration_sha256"> & Readonly<{
     mode: Exclude<CapturedResearchRunConfiguration["mode"], "legacy-installed">;
@@ -89,6 +94,7 @@ export interface ResearchSemanticServerRuntimeInput {
   readonly initial_manifest: WorkflowObject;
   readonly handler_generation: SemanticResearchHandlerGeneration;
   readonly run_configuration?: ResearchSemanticRunModelConfiguration;
+  readonly branch_query_budget_selection?: ResearchBranchQueryBudgetSelection;
   readonly native_acquisition_selection?: ResearchNativeAcquisitionSelection;
   readonly native_acquisition_runtime?: Omit<Parameters<typeof createResearchNativeAcquisitionStageRoute>[0], "selection">;
   readonly native_model_runtime: NativeModelRuntime;
@@ -126,6 +132,19 @@ function installed(value: string | undefined): string {
 export async function assembleResearchSemanticServerHandlers(
   input: ResearchSemanticServerRuntimeInput,
 ): Promise<ResearchStageHandlerFactory> {
+  const branchQueryBudgetSelection = input.branch_query_budget_selection;
+  if (input.handler_generation === SERVER_OWNED_BRANCH_QUERY_HANDLER_GENERATION) {
+    const selected = branchQueryBudgetSelection?.selected_configuration;
+    const run = input.run_configuration;
+    if (selected === undefined || run === undefined || input.ai_search === undefined) configurationMissing();
+    if (selected.owner_ref !== input.principal.principal_ref ||
+        selected.owner_ref !== run.project_owner_ref ||
+        selected.project_id !== run.project_id ||
+        selected.configuration_ref !== run.project_configuration_ref ||
+        selected.configuration_sha256 !== run.project_configuration_sha256) {
+      fail("WORKFLOW_AUTHORITY_STALE");
+    }
+  }
   const { navigation, principal } = input;
   const { policy, config } = input;
   if (policy.principal_ref !== principal.principal_ref || policy.credential_generation !== principal.credential_generation ||
@@ -381,6 +400,9 @@ export async function assembleResearchSemanticServerHandlers(
     navigation, ledger: input.ledger, operation_id: input.operation_id, investigation_id: input.investigation_id,
     principal, retrieval_profile: retrievalProfile,
     ...(input.run_configuration === undefined ? {} : { run_configuration: input.run_configuration }),
+    ...(branchQueryBudgetSelection === undefined ? {} : {
+      branch_query_budget_selection: branchQueryBudgetSelection,
+    }),
     ...(input.native_acquisition_selection === undefined ? {} : {
       native_acquisition_selection: input.native_acquisition_selection,
     }),

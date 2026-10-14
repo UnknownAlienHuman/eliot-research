@@ -14,6 +14,7 @@ import {
 import type { ReferenceManifestStore } from "@eliotr/policy";
 import type { RetrievalQueryAccess } from "@eliotr/retrieval";
 import type { ResearchBranchRole } from "@eliotr/contracts";
+import { fail } from "@eliotr/cloudflare-workflows";
 import {
   createD1ModelGatewayDeploymentRegistry,
   createD1ResearchModelPricingQuotePort,
@@ -48,10 +49,12 @@ import { createResearchClaimAuditPromptDependencies } from "./research-claim-aud
 import { createResearchSynthesisPromptDependencies } from "./research-synthesis-prompt.js";
 import { createResearchBranchRolePromptDependencies } from "./research-branch-role-prompt.js";
 import type { RetrieveBranchesStageDependencies } from "./research-retrieve-branches.js";
+import { createResearchBranchQueryExecutionAdapter } from "./research-branch-query-execution.js";
 import { createResearchNativeAcquisitionStageRoute } from "./research-native-acquisition.js";
 import {
   createResearchStageHandlerFactory,
   SERVER_OWNED_BRANCH_HANDLER_GENERATION,
+  SERVER_OWNED_BRANCH_QUERY_HANDLER_GENERATION,
   SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION,
   SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION,
   SERVER_OWNED_FREEZE_HANDLER_GENERATION,
@@ -222,6 +225,7 @@ export function createResearchSemanticComposition(
   const predecessorReader = createEvidenceFreezePredecessorReader(input.navigation, readers, {
     requires_branch_reconciliation: (generation) =>
       generation === SERVER_OWNED_BRANCH_HANDLER_GENERATION ||
+      generation === SERVER_OWNED_BRANCH_QUERY_HANDLER_GENERATION ||
       generation === SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION ||
       generation === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION,
   });
@@ -353,6 +357,21 @@ export function createResearchSemanticComposition(
 export function createResearchSemanticWorkflowHandlerFactory(
   input: ResearchSemanticWorkflowDependencies,
 ): ResearchStageHandlerFactory {
+  const branchQueryBudgetSelection = input.branch_query_budget_selection;
+  if (input.handler_generation === SERVER_OWNED_BRANCH_QUERY_HANDLER_GENERATION) {
+    const selected = branchQueryBudgetSelection?.selected_configuration;
+    const run = input.run_configuration;
+    if (selected === undefined || run === undefined || input.ai_search === undefined) {
+      fail("WORKFLOW_CONFIGURATION_MISSING");
+    }
+    if (selected.owner_ref !== input.principal.principal_ref ||
+        selected.owner_ref !== run.project_owner_ref ||
+        selected.project_id !== run.project_id ||
+        selected.configuration_ref !== run.project_configuration_ref ||
+        selected.configuration_sha256 !== run.project_configuration_sha256) {
+      fail("WORKFLOW_AUTHORITY_STALE");
+    }
+  }
   const semantic = createResearchSemanticComposition(input);
   const roles = input.model.roles;
   if (roles !== undefined && input.run_configuration !== undefined && input.run_configuration.mode !== "legacy-installed" &&
@@ -398,6 +417,20 @@ export function createResearchSemanticWorkflowHandlerFactory(
       ...input.native_acquisition_runtime,
       selection: { ...acquisitionSelection.profile, source_mode: acquisitionSelection.source_mode },
     });
+  const executeQueryPlan = input.handler_generation === SERVER_OWNED_BRANCH_QUERY_HANDLER_GENERATION &&
+      branchQueryBudgetSelection !== undefined
+    ? createResearchBranchQueryExecutionAdapter({
+      env: {
+        CORE_DB: input.database,
+        SEARCH_DB: input.search_database,
+        EVIDENCE_BUCKET: input.evidence_bucket,
+        ...(input.ai_search === undefined ? {} : { AI_SEARCH: input.ai_search }),
+      },
+      access: snapshotAccess(input.navigation),
+      navigation: input.navigation,
+      profile: input.retrieval_profile,
+    })
+    : undefined;
   return createResearchStageHandlerFactory({
     kind: "server-owned-exploratory",
     generation: input.handler_generation ?? SERVER_OWNED_FREEZE_HANDLER_GENERATION,
@@ -407,6 +440,11 @@ export function createResearchSemanticWorkflowHandlerFactory(
       database: input.database,
       work_bucket: input.work_bucket,
       read_stage_five: semantic.readers.read_stage_five,
+      ...(input.handler_generation === SERVER_OWNED_BRANCH_QUERY_HANDLER_GENERATION &&
+          branchQueryBudgetSelection !== undefined ? {
+        query_plan_budgets: branchQueryBudgetSelection.budgets,
+      } : {}),
+      ...(executeQueryPlan === undefined ? {} : { execute_query_plan: executeQueryPlan }),
       ...(roleModel === undefined ? {} : { role_model: roleModel }),
     },
     ...(acquisitionRoute === undefined ? {} : {

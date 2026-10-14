@@ -27,6 +27,7 @@ import {
   type ResearchProjectModelConfigurationBundle,
   type ResearchProjectModelSelection,
 } from "@eliotr/cloudflare-research";
+import { BranchQueryPlanSchema, IdentifierSchema } from "@eliotr/contracts";
 import { selectResearchOwnerPrompt } from "@eliotr/cloudflare-research-stages";
 import { parseResearchSemanticConfiguration } from "./research-semantic-configuration-schema.js";
 import {
@@ -36,8 +37,17 @@ import {
   RESEARCH_OWNER_REPORT_ADMISSION_TEMPLATE_V2_PROTOCOL,
 } from "./research-owner-report-policy.js";
 import { RESEARCH_OWNER_MODEL_PROFILE } from "./research-owner-profile.js";
+import { z } from "zod";
 
 const REASONING_EFFORT = new Set(["low", "medium", "high", "max"]);
+const BRANCH_QUERY_BUDGET_PROFILE_PROTOCOL = "eliotr.research.branch-query-budget-profile.v1" as const;
+const BRANCH_QUERY_BUDGET_PROFILE_SCHEMA = z.object({
+  protocol: z.literal(BRANCH_QUERY_BUDGET_PROFILE_PROTOCOL),
+  profile_id: IdentifierSchema,
+  profile_generation: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  budgets: BranchQueryPlanSchema.shape.budgets,
+}).strict();
+type BranchQueryBudgetProfile = z.infer<typeof BRANCH_QUERY_BUDGET_PROFILE_SCHEMA>;
 
 export class ResearchProjectModelConfigurationAuthorityError extends Error {
   public constructor(
@@ -235,6 +245,7 @@ async function validateOwnerPromptBinding(
 export interface ConfigurationValidation {
   readonly bundle: ResearchProjectModelConfigurationBundle;
   readonly semantic: ReturnType<typeof parseResearchSemanticConfiguration>;
+  readonly branch_query_budget_profile?: BranchQueryBudgetProfile;
   readonly profile: ModelProfileDefinition | OwnerModelProfileTemplateV2;
   readonly spend: ResearchOwnerSpendPolicyTemplate;
   readonly report: ReturnType<typeof decodeReport>;
@@ -263,6 +274,22 @@ export function createResearchProjectModelConfigurationValidator(options: {
     const storeDecoded = await decodeResearchProjectModelConfigurationBundle(raw);
     const bundle = storeDecoded.bundle;
     const vars = bundle.vars;
+    const branchQueryBudgetProfile = vars.ELIOTR_RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON === undefined
+      ? undefined
+      : (() => {
+        let decoded: unknown;
+        try { decoded = JSON.parse(vars.ELIOTR_RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON) as unknown; }
+        catch (cause) {
+          fail("RESEARCH_PROJECT_MODEL_CONFIGURATION_INPUT_INVALID", 400,
+            "branch query budget profile is invalid", cause);
+        }
+        const parsed = BRANCH_QUERY_BUDGET_PROFILE_SCHEMA.safeParse(decoded);
+        if (!parsed.success || canonicalJson(decoded) !== vars.ELIOTR_RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON) {
+          fail("RESEARCH_PROJECT_MODEL_CONFIGURATION_INPUT_INVALID", 400,
+            "branch query budget profile is invalid");
+        }
+        return parsed.data;
+      })();
     let semantic: ReturnType<typeof parseResearchSemanticConfiguration>;
     try { semantic = parseResearchSemanticConfiguration(vars.ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON); }
     catch (cause) { fail("RESEARCH_PROJECT_MODEL_CONFIGURATION_INPUT_INVALID", 400, "semantic configuration is invalid", cause); }
@@ -451,7 +478,15 @@ export function createResearchProjectModelConfigurationValidator(options: {
     // `project` is intentionally not put in the JSON: identical approved
     // runtime bytes can be imported into another explicitly owned project.
     void project;
-    return { bundle, semantic, profile, spend, report, version };
+    return {
+      bundle,
+      semantic,
+      ...(branchQueryBudgetProfile === undefined ? {} : { branch_query_budget_profile: branchQueryBudgetProfile }),
+      profile,
+      spend,
+      report,
+      version,
+    };
   }
 
   return validateConfiguration;

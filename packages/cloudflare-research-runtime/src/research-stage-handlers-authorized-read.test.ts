@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type * as ResearchPackage from "@eliotr/cloudflare-research";
+import { createResearchBranchExecutionHandlers } from "@eliotr/cloudflare-research";
 import type { StageRequest, WorkflowPrincipal } from "@eliotr/cloudflare-workflows";
 import {
   createResearchStageHandlerFactory,
+  SERVER_OWNED_BRANCH_QUERY_HANDLER_GENERATION,
   type ResearchStageHandlerFactoryMode,
 } from "./research-stage-handlers.js";
 
@@ -33,6 +35,25 @@ function mode(generation: string): ResearchStageHandlerFactoryMode {
     navigation: {} as never,
     ledger: {} as never,
     branch_execution: {} as never,
+  } as unknown as ResearchStageHandlerFactoryMode;
+}
+
+function queryBudgetedMode(): ResearchStageHandlerFactoryMode {
+  return {
+    kind: "server-owned-exploratory",
+    generation: SERVER_OWNED_BRANCH_QUERY_HANDLER_GENERATION,
+    navigation: {} as never,
+    ledger: {} as never,
+    branch_execution: {
+      query_plan_budgets: {
+        candidate_limit: 9,
+        scan_limit: 23,
+        evidence_limit: 2,
+        max_evidence_bytes: 2048,
+        max_query_legs: 3,
+      },
+      execute_query_plan: async () => { throw new Error("adapter should not execute during handler construction"); },
+    },
   } as unknown as ResearchStageHandlerFactoryMode;
 }
 
@@ -69,8 +90,21 @@ describe("READ_AND_EXTRACT native handler selection", () => {
     expect(branchHandlers.w2Read).not.toHaveBeenCalled();
   });
 
-  it("does not offer the native adapter to the v9 role-query generation", () => {
-    const factory = createResearchStageHandlerFactory(mode("research-handlers.exploratory.v9"));
+  it("requires captured query budgets and the managed adapter for V9, with no V7 native fallback", () => {
+    expect(() => createResearchStageHandlerFactory(mode(SERVER_OWNED_BRANCH_QUERY_HANDLER_GENERATION))).toThrow();
+
+    const factory = createResearchStageHandlerFactory(queryBudgetedMode());
     expect(factory.native("READ_AND_EXTRACT")).toBeUndefined();
+    expect(createResearchBranchExecutionHandlers).toHaveBeenCalledWith(expect.objectContaining({
+      query_plan_budgets: {
+        candidate_limit: 9,
+        scan_limit: 23,
+        evidence_limit: 2,
+        max_evidence_bytes: 2048,
+        max_query_legs: 3,
+      },
+      execute_query_plan: expect.any(Function),
+    }));
+    expect(branchHandlers.nativeRead).not.toHaveBeenCalled();
   });
 });

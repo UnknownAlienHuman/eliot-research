@@ -4,11 +4,15 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { canonicalModelGatewayJson, modelGatewaySha256 } from "@eliotr/cloudflare-ai";
+import { canonicalJson } from "@eliotr/platform-cloudflare";
 import {
   createD1ResearchProjectModelConfigurationStore,
   RESEARCH_PROJECT_MODEL_CONFIGURATION_PROTOCOL,
 } from "./research-project-configuration-store.js";
-import { RESEARCH_NATIVE_ACQUISITION_SELECTION_PROTOCOL } from "./research-project-configuration-codec.js";
+import {
+  RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_PROTOCOL,
+  RESEARCH_NATIVE_ACQUISITION_SELECTION_PROTOCOL,
+} from "./research-project-configuration-codec.js";
 
 const MIGRATION = readFileSync(resolve(__dirname, "../../../infra/d1/core/migrations/0106_research_project_model_configuration.sql"), "utf8");
 
@@ -214,6 +218,64 @@ describe("research project model configuration store and 0106 migration", () => 
     expect(rereadRevision?.configuration_json).toBe(nativeReadback.revision.configuration_json);
     expect(rereadRevision?.configuration.vars.ELIOTR_RESEARCH_NATIVE_ACQUISITION_SELECTION_JSON)
       .toBe(nativeSelectionJson);
+
+    const budgetProfileJson = canonicalJson({
+      protocol: RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_PROTOCOL,
+      profile_id: "branch-budget-project-1",
+      profile_generation: 4,
+      budgets: {
+        candidate_limit: 9,
+        scan_limit: 23,
+        evidence_limit: 2,
+        max_evidence_bytes: 2048,
+        max_query_legs: 3,
+      },
+    });
+    const withBudgetProfile = {
+      ...legacy,
+      vars: { ...legacy.vars, ELIOTR_RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON: budgetProfileJson },
+    };
+    await store.saveAndSelect({ owner_id: "owner-1", project_id: "project-1",
+      expected_project_generation: 1, expected_revision: 2, configuration: withBudgetProfile });
+    const budgetReadback = await store.readSelected("owner-1", "project-1");
+    if (budgetReadback === null) throw new Error("budget-profile project configuration was not selected");
+    expect(budgetReadback.revision.configuration.vars.ELIOTR_RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON)
+      .toBe(budgetProfileJson);
+
+    const withBothSelections = {
+      ...withBudgetProfile,
+      vars: {
+        ...withBudgetProfile.vars,
+        ELIOTR_RESEARCH_NATIVE_ACQUISITION_SELECTION_JSON: nativeSelectionJson,
+      },
+    };
+    await store.saveAndSelect({ owner_id: "owner-1", project_id: "project-1",
+      expected_project_generation: 1, expected_revision: 3, configuration: withBothSelections });
+    const bothReadback = await store.readSelected("owner-1", "project-1");
+    if (bothReadback === null) throw new Error("combined optional selections were not selected");
+    expect(bothReadback.revision.configuration.vars.ELIOTR_RESEARCH_NATIVE_ACQUISITION_SELECTION_JSON)
+      .toBe(nativeSelectionJson);
+    expect(bothReadback.revision.configuration.vars.ELIOTR_RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON)
+      .toBe(budgetProfileJson);
+
+    const malformedProfile = canonicalJson({
+      protocol: RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_PROTOCOL,
+      profile_id: "branch-budget-project-1",
+      profile_generation: 4,
+      budgets: {
+        candidate_limit: 9,
+        scan_limit: 23,
+        evidence_limit: 2,
+        max_evidence_bytes: 2048,
+        max_query_legs: 3,
+      },
+      fallback: "not-an-accepted-field",
+    });
+    await expect(store.saveAndSelect({ owner_id: "owner-1", project_id: "project-1",
+      expected_project_generation: 1, expected_revision: 4,
+      configuration: { ...legacy, vars: { ...legacy.vars,
+        ELIOTR_RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON: malformedProfile } } }))
+      .rejects.toMatchObject({ code: "RESEARCH_PROJECT_MODEL_CONFIGURATION_INPUT_INVALID", status: 400 });
     db.close();
   });
 

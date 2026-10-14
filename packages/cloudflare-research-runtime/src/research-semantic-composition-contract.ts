@@ -41,6 +41,8 @@ import type {
 } from "@eliotr/cloudflare-research-stages";
 import type { ResearchBranchRolePromptDependenciesInput } from "./research-branch-role-prompt.js";
 import type { SemanticResearchHandlerGeneration } from "./research-stage-handlers.js";
+import type { ResearchBranchQueryBudgetSelection } from
+  "@eliotr/cloudflare-research-configuration/research-run-configuration.js";
 import type { AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
 import type { createResearchNativeAcquisitionStageRoute } from "./research-native-acquisition.js";
 
@@ -169,6 +171,8 @@ export interface ResearchSemanticCompositionDependencies {
     readonly configuration_sha256: string;
     readonly project_owner_ref?: string | null;
     readonly project_id?: string | null;
+    readonly project_configuration_ref?: string | null;
+    readonly project_configuration_sha256?: string | null;
     readonly model_selections?: readonly ({
       readonly candidate_kind?: "provider-native-v1";
       readonly stage: string;
@@ -256,6 +260,8 @@ export interface ResearchSemanticComposition {
 export interface ResearchSemanticWorkflowDependencies extends ResearchSemanticCompositionDependencies {
   /** Explicitly pinned by the stored run; omitted only by legacy v3 fixtures. */
   readonly handler_generation?: SemanticResearchHandlerGeneration;
+  /** Complete owner-selected budget provenance from the immutable run snapshot. */
+  readonly branch_query_budget_selection?: ResearchBranchQueryBudgetSelection;
   /** Exact immutable run selection; omitted only when that run has no acquisition selection. */
   readonly native_acquisition_selection?: ResearchNativeAcquisitionSelection;
   /** Native transports and owner capability; never selected by a request or model. */

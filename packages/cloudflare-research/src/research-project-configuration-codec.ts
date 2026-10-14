@@ -4,8 +4,10 @@ import {
   validateModelGatewayTransportPolicy,
   type ModelGatewayTransportPolicyV1,
 } from "@eliotr/cloudflare-ai";
+import { BranchQueryPlanSchema, IdentifierSchema } from "@eliotr/contracts";
 import { canonicalJson, RUNTIME_LIMITS } from "@eliotr/platform-cloudflare";
 import { WorkflowCheckpointError } from "@eliotr/cloudflare-workflows";
+import { z } from "zod";
 
 export const RESEARCH_PROJECT_MODEL_CONFIGURATION_PROTOCOL =
   "eliotr.research-project-model-configuration.v1" as const;
@@ -28,6 +30,9 @@ const RUNTIME_VAR_KEYS = [
   "ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF",
 ] as const;
 const NATIVE_ACQUISITION_SELECTION_VAR = "ELIOTR_RESEARCH_NATIVE_ACQUISITION_SELECTION_JSON" as const;
+const BRANCH_QUERY_BUDGET_PROFILE_VAR = "ELIOTR_RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON" as const;
+export const RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_PROTOCOL =
+  "eliotr.research.branch-query-budget-profile.v1" as const;
 const BUNDLE_KEYS = new Set(["protocol", "semantic_revision", "model_selections", "vars"]);
 const SEMANTIC_REVISION_KEYS = new Set(["revision_ref", "config_sha256"]);
 const MODEL_SELECTION_REQUIRED_KEYS = new Set([
@@ -36,7 +41,20 @@ const MODEL_SELECTION_REQUIRED_KEYS = new Set([
 ]);
 const MODEL_SELECTION_NATIVE_KEYS = new Set([...MODEL_SELECTION_REQUIRED_KEYS, "candidate_kind"]);
 const LEGACY_VAR_KEYS = new Set<string>(RUNTIME_VAR_KEYS);
-const VAR_KEYS = new Set<string>([...RUNTIME_VAR_KEYS, NATIVE_ACQUISITION_SELECTION_VAR]);
+const VAR_KEYS = new Set<string>([
+  ...RUNTIME_VAR_KEYS,
+  NATIVE_ACQUISITION_SELECTION_VAR,
+  BRANCH_QUERY_BUDGET_PROFILE_VAR,
+]);
+
+const BranchQueryBudgetProfileSchema = z.object({
+  protocol: z.literal(RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_PROTOCOL),
+  profile_id: IdentifierSchema,
+  profile_generation: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  budgets: BranchQueryPlanSchema.shape.budgets,
+}).strict();
+
+export type ResearchBranchQueryBudgetProfile = z.infer<typeof BranchQueryBudgetProfileSchema>;
 
 export const RESEARCH_NATIVE_ACQUISITION_SELECTION_PROTOCOL =
   "eliotr.research-native-acquisition-selection.v1" as const;
@@ -203,6 +221,7 @@ export interface ResearchProjectModelRuntimeVars {
   readonly ELIOTR_RESEARCH_REPORT_CONFIG_JSON: string;
   readonly ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF: string;
   readonly ELIOTR_RESEARCH_NATIVE_ACQUISITION_SELECTION_JSON?: string;
+  readonly ELIOTR_RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON?: string;
 }
 
 export interface ResearchProjectModelSelection {
@@ -371,9 +390,11 @@ function canonicalJsonText(value: unknown, label: string, maxBytes: number): str
 function runtimeVars(value: unknown): ResearchProjectModelRuntimeVars {
   const record = plainObject(value, "configuration.vars");
   const hasNativeSelection = Object.prototype.hasOwnProperty.call(record, NATIVE_ACQUISITION_SELECTION_VAR);
-  exactKeys(record, hasNativeSelection ? VAR_KEYS : LEGACY_VAR_KEYS, "configuration.vars");
+  const hasBranchQueryBudgetProfile = Object.prototype.hasOwnProperty.call(record, BRANCH_QUERY_BUDGET_PROFILE_VAR);
+  exactKeys(record, hasNativeSelection || hasBranchQueryBudgetProfile ? VAR_KEYS : LEGACY_VAR_KEYS, "configuration.vars");
   const result = {} as Record<(typeof RUNTIME_VAR_KEYS)[number], string> & {
     ELIOTR_RESEARCH_NATIVE_ACQUISITION_SELECTION_JSON?: string;
+    ELIOTR_RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON?: string;
   };
   for (const key of RUNTIME_VAR_KEYS) {
     const raw = record[key];
@@ -399,7 +420,40 @@ function runtimeVars(value: unknown): ResearchProjectModelRuntimeVars {
     }
     result[NATIVE_ACQUISITION_SELECTION_VAR] = raw;
   }
+  if (hasBranchQueryBudgetProfile) {
+    const raw = record[BRANCH_QUERY_BUDGET_PROFILE_VAR];
+    if (typeof raw !== "string") failure("RESEARCH_PROJECT_MODEL_CONFIGURATION_INPUT_INVALID",
+      `configuration.vars.${BRANCH_QUERY_BUDGET_PROFILE_VAR} is invalid or oversized`);
+    parseResearchBranchQueryBudgetProfileJson(raw);
+    result[BRANCH_QUERY_BUDGET_PROFILE_VAR] = raw;
+  }
   return Object.freeze(result);
+}
+
+function parseResearchBranchQueryBudgetProfileJson(value: string): ResearchBranchQueryBudgetProfile {
+  if (typeof value !== "string" || value.length === 0 || utf8Length(value) > 65_536 ||
+      /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value)) {
+    failure("RESEARCH_PROJECT_MODEL_CONFIGURATION_INPUT_INVALID",
+      `configuration.vars.${BRANCH_QUERY_BUDGET_PROFILE_VAR} is invalid or oversized`);
+  }
+  let decoded: unknown;
+  try { decoded = JSON.parse(value) as unknown; }
+  catch (cause) {
+    failure("RESEARCH_PROJECT_MODEL_CONFIGURATION_INPUT_INVALID",
+      `configuration.vars.${BRANCH_QUERY_BUDGET_PROFILE_VAR} is invalid`, 400, false, cause);
+  }
+  let canonical: string;
+  try { canonical = canonicalJson(decoded); }
+  catch (cause) {
+    failure("RESEARCH_PROJECT_MODEL_CONFIGURATION_INPUT_INVALID",
+      `configuration.vars.${BRANCH_QUERY_BUDGET_PROFILE_VAR} is invalid`, 400, false, cause);
+  }
+  const parsed = BranchQueryBudgetProfileSchema.safeParse(decoded);
+  if (canonical !== value || !parsed.success) {
+    failure("RESEARCH_PROJECT_MODEL_CONFIGURATION_INPUT_INVALID",
+      `configuration.vars.${BRANCH_QUERY_BUDGET_PROFILE_VAR} is invalid`);
+  }
+  return parsed.data;
 }
 
 function routeSelection(value: unknown): ResearchProjectModelSelection {
