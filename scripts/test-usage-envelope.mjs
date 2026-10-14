@@ -12,6 +12,7 @@ import {
   accountRef,
   digestAccountId,
   evaluateUsageSnapshot,
+  getCanonicalMetric,
 } from "./lib/cloudflare-usage-envelope.mjs";
 import {
   blankAccountSnapshot,
@@ -51,7 +52,10 @@ function baseMetrics() {
     do_storage_bytes: 100 * 1024 * 1024,
     workers_ai_neurons_per_day: 100,
     ai_search_instances: 5,
-    ai_search_queries_month: 1_000,
+    ingestion_tokens_month: 10_000,
+    storage_gb_month: 1.25,
+    semantic_vector_hybrid_queries_month: 300,
+    full_text_queries_month: 400,
     vectorize_queried_dims_month: 1_000_000,
     vectorize_stored_dims_month: 100_000,
   };
@@ -136,11 +140,15 @@ await check("over blocks, at-limit admits, near-limit advises", async () => {
   assert.equal(near.near[0].metric, "workers_requests");
 });
 
-await check("ai search instance exactness", async () => {
-  assert.equal(evaluateUsageSnapshot(fixtureSnapshot({ ai_search_instances: 6 }), { expectedAccountDigest: DIGEST, now: NOW }).decision, "BLOCKED");
-  const under = evaluateUsageSnapshot(fixtureSnapshot({ ai_search_instances: 4 }), { expectedAccountDigest: DIGEST, now: NOW });
-  assert.equal(under.decision, "ADMITTED");
-  assert.ok(under.advisory.length > 0);
+await check("AI Search inventory is not a monthly billing quota", async () => {
+  const inventoryMetric = getCanonicalMetric("ai_search_instances");
+  assert.equal(inventoryMetric.window, "point");
+  assert.equal(inventoryMetric.quota, undefined);
+  assert.equal(inventoryMetric.envelope, undefined);
+  const observed = evaluateUsageSnapshot(fixtureSnapshot({ ai_search_instances: 6 }), { expectedAccountDigest: DIGEST, now: NOW });
+  assert.equal(observed.decision, "ADMITTED");
+  assert.deepEqual(observed.over, []);
+  assert.equal(observed.advisory.some((item) => item.includes("ai_search_instances")), false);
 });
 
 // Forged-receipt validation moved to test-usage-envelope-receipt.mjs (FIX7W2 split-only).

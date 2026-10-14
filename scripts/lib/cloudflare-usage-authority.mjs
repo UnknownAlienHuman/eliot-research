@@ -146,8 +146,8 @@ export function inventoryBrandClass(provider) {
 // Account-wide coverage spans Workers, D1, R2, Queues, SQLite Durable
 // Objects, Workers AI, AI Search, Vectorize, and Access without inventing
 // counters: Workers AI neurons, Queue billable ops, R2 Class A/B, AI Search
-// aggregate queries, and Vectorize queried dims stay unknown unless verified
-// billing usage or a demonstrably complete account-bound ledger proves them.
+// monthly included usage, and Vectorize queried dims stay unknown unless a
+// verified account-bound billing source or complete ledger proves them.
 export const METRIC_SOURCE_REGISTRY = (() => {
   const registry = {
   workers_requests: { sources: ["workers-requests-diagnostic"], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.ANALYTICS_NONBILLING, limitation: "Workers adaptive analytics requests are diagnostic, not verified monthly billing usage" },
@@ -166,7 +166,10 @@ export const METRIC_SOURCE_REGISTRY = (() => {
   do_storage_bytes: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "Durable Objects storedBytes maximum is a stock statistic, not exact monthly storage usage" },
   workers_ai_neurons_per_day: { sources: [], window: "daily", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no documented OAuth-compatible exact account-wide daily neuron source is qualified" },
   ai_search_instances: { sources: ["ai-search-inventory-list"], window: "point", authoritative: true, provenance: METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY, limitation: "" },
-  ai_search_queries_month: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "AI Search instance stats expose indexing status, not account-wide monthly search-query usage" },
+  ingestion_tokens_month: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "AI Search GA included tokens do not expose actual account usage; no exact monthly OAuth source or reviewed billing triple is qualified" },
+  storage_gb_month: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "AI Search instance inventory is point-in-time stock, not GB-month usage; no exact monthly OAuth source or reviewed billing triple is qualified" },
+  semantic_vector_hybrid_queries_month: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "AI Search instance stats do not expose account-wide semantic/vector/hybrid query usage; no reviewed billing triple is qualified" },
+  full_text_queries_month: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "AI Search instance stats do not expose account-wide full-text query usage; no reviewed billing triple is qualified" },
   vectorize_queried_dims_month: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "Vectorize index info has no monthly queried-dimension usage; Wrangler has no documented Vectorize-specific scope" },
   vectorize_stored_dims_month: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "per-index dimensions and vectorCount are current stock, not account-wide monthly stored-dimension usage" },
   };

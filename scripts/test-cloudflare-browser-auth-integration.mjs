@@ -271,8 +271,12 @@ function admittedUsageFixture() {
   for (const key of REQUIRED_METRIC_KEYS) metrics[key] = 100;
   metrics.ai_search_instances = 5;
   metrics.r2_storage_gb_month = 1;
+  metrics.ingestion_tokens_month = 100;
+  metrics.storage_gb_month = 1;
+  metrics.semantic_vector_hybrid_queries_month = 100;
+  metrics.full_text_queries_month = 100;
   return JSON.stringify({
-    protocol: "eliotr.cloudflare-usage-snapshot.v1",
+    protocol: "eliotr.cloudflare-usage-snapshot.v2",
     account_id_digest: digestAccountId(ACCOUNT),
     account_ref: "cloudflare-account:browse…ount",
     collected_at: new Date(now - 60_000).toISOString(),

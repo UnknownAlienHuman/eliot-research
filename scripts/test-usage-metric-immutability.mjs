@@ -1,6 +1,6 @@
 // FIX12 metric-authority immutability: deterministic, mocked, no live calls.
 // Repro (pre-fix, preserved exact outputs) in a fresh process:
-//   REQUIRED_METRIC_KEYS.length = 19
+//   REQUIRED_METRIC_KEYS.length = 22
 //   after mutation: REQUIRED_METRIC_KEYS.length = 0
 //   preflight decision = ADMITTED capability=minted metricsKeys=0
 //   ledger-only allowed:true proof:LEDGER_INVENTORY reason:WITHIN_ENVELOPE_SHARE
@@ -71,10 +71,10 @@ const coreChild = [
   `console.log(out.join("\\n"));`,
 ].join("\n");
 const coreOut = runChild("core", coreChild);
-assert.match(coreOut, /len=19/u);
-assert.match(coreOut, /beforeThrow=true len=19/u);
-assert.match(coreOut, /decision=SEALED cap=false metrics=19/u);
-assert.match(coreOut, /afterThrow=true len=19/u);
+assert.match(coreOut, /len=22/u);
+assert.match(coreOut, /beforeThrow=true len=22/u);
+assert.match(coreOut, /decision=SEALED cap=false metrics=22/u);
+assert.match(coreOut, /afterThrow=true len=22/u);
 assert.match(coreOut, /heavy=false:NONE:MISSING_ADMISSION_CAPABILITY/u);
 assert.match(coreOut, /empty=BLOCKED/u);
 assert.match(coreOut, /metricsFrozen=true keysFrozen=true/u);
@@ -113,7 +113,7 @@ const analogousOut = runChild("analogous", analogousChild);
 for (const label of ["metrics-length", "metrics-push", "metrics-entry", "keys-push", "bykey-set", "bykey-delete", "bykey-clear", "registry-entry", "registry-sources", "registry-add", "billable-push", "triples-add", "sealed-push", "plan-mutate", "docs-push", "docs-entry", "contour-mutate", "transport-push"]) {
   assert.match(analogousOut, new RegExp(`${label}=THREW`, "u"), label);
 }
-assert.match(analogousOut, /bykey-size=19 metrics=19 keys=19/u);
+assert.match(analogousOut, /bykey-size=22 metrics=22 keys=22/u);
 check("analogous authority mutations all throw, sizes intact");
 
 // In-process: trust/evidence boundaries reject vacuous sets without mutation.
@@ -146,9 +146,9 @@ check("trust and evidence boundaries reject vacuous sets");
 // frozen empty (no live-observed FinOps FOCUS triple reviewed; live
 // NOT_EXECUTED), so no raw-transport fixture can produce branded billing
 // numerics without caller-supplied metricMap/endpoint/fetch (test-only,
-// unbranded) or adding unreviewed triples (forgery); (2) 18/19 metrics carry
-// registry unavailable (no stable counter transport; inventory cannot
-// authorize them); (3) mocking global fetch is the lowest raw boundary but
+// unbranded) or adding unreviewed triples (forgery); (2) all 21 non-inventory
+// metrics lack authoritative billing evidence; the point inventory count
+// cannot fill one; (3) mocking global fetch is the lowest raw boundary but
 // still cannot mint reviewed authority. Any ADMITTED fixture would be
 // caller-composed and must not mint. OS-socket mock unavailable.
 {
@@ -197,7 +197,7 @@ check("default-live path seals without live aggregate; live mint NOT_EXECUTED BL
   ].join("\n");
   const forgeryOut = runChild("forgery", forgeryChild);
   assert.match(forgeryOut, /facade-map=false/u);
-  assert.match(forgeryOut, /size=19 keys=19/u);
+  assert.match(forgeryOut, /size=22 keys=22/u);
   assert.match(forgeryOut, /setThrew=true/u);
   assert.match(forgeryOut, /overwriteThrew=true/u);
   assert.match(forgeryOut, /defineThrew=true/u);
@@ -242,13 +242,18 @@ check("import-order variation still denies forged metric");
 {
   const a1Child = [
     `const origGet = Map.prototype.get;`,
-    `Map.prototype.get = function (k) { if (k === "evil_proto") return { key: "evil_proto", envelope: 8000000, window: "monthly" }; return origGet.call(this, k); };`,
+    `Map.prototype.get = function (k) { if (k === "evil_proto") return { key: "evil_proto", envelope: 8000000, window: "monthly" }; if (k === "workers_requests") return { key: "workers_requests", quota: 999999999, envelope: 999999999, window: "monthly" }; return origGet.call(this, k); };`,
     `const { admitOperation, createBudgetLedger } = await import("./scripts/lib/cloudflare-budget-admission.mjs");`,
     `const { getCanonicalMetric, hasCanonicalMetric } = await import("./scripts/lib/cloudflare-usage-envelope.mjs");`,
     `const r = admitOperation(createBudgetLedger(), { metricKey: "evil_proto", quantity: 1, now: ${NOW} });`,
     `console.log("a1=" + r.allowed + ":" + r.reason);`,
     `console.log("a1get=" + String(getCanonicalMetric("evil_proto")));`,
     `console.log("a1has=" + hasCanonicalMetric("evil_proto"));`,
+    `const workers = getCanonicalMetric("workers_requests");`,
+    `console.log("a1workers=" + workers.quota + ":" + workers.envelope);`,
+    `const atPolicy = admitOperation(createBudgetLedger(), { metricKey: "workers_requests", quantity: 7600000, now: ${NOW} });`,
+    `const abovePolicy = admitOperation(createBudgetLedger(), { metricKey: "workers_requests", quantity: 7600001, now: ${NOW} });`,
+    `console.log("a1policy=" + atPolicy.allowed + ":" + atPolicy.reason + ":" + abovePolicy.allowed + ":" + abovePolicy.reason);`,
     `const real = admitOperation(createBudgetLedger(), { metricKey: "workers_requests", quantity: 1, now: ${NOW} });`,
     `console.log("a1real=" + real.allowed + ":" + real.reason);`,
   ].join("\n");
@@ -256,9 +261,11 @@ check("import-order variation still denies forged metric");
   assert.match(a1Out, /a1=false:UNKNOWN_METRIC_NO_HEADROOM_PROOF/u);
   assert.match(a1Out, /a1get=null/u);
   assert.match(a1Out, /a1has=false/u);
+  assert.match(a1Out, /a1workers=10000000:8000000/u);
+  assert.match(a1Out, /a1policy=true:WITHIN_ENVELOPE_SHARE:false:OVER_ENVELOPE_SHARE/u);
   assert.match(a1Out, /a1real=true:WITHIN_ENVELOPE_SHARE/u);
 }
-check("before-import Map.get poisoning no longer forges metric");
+check("before-import Map.get poisoning cannot forge a metric or alter its quota boundary");
 
 // FIX14: combined before-import prototype poisoning (Map/Set/Object/Array)
 // leaves authorization exact: forged denied, real admitted, no coercion.
@@ -284,7 +291,7 @@ check("before-import Map.get poisoning no longer forges metric");
   assert.match(combinedOut, /evil=false/u);
   assert.match(combinedOut, /evilGet=null/u);
   assert.match(combinedOut, /evilHas=false/u);
-  assert.match(combinedOut, /keys=19/u);
+  assert.match(combinedOut, /keys=22/u);
   assert.match(combinedOut, /real=true/u);
 }
 check("combined before-import prototype poisoning stays exact");
@@ -312,14 +319,14 @@ check("combined before-import prototype poisoning stays exact");
 }
 check("after-import prototype poisoning stays exact");
 
-// FIX14 Luna A2 (post-fix, preserved vectors): 18-alias Object.prototype
+// FIX14 Luna A2 (post-fix, preserved vectors): 21-alias Object.prototype
 // pollution plus deterministic raw HTTP no longer admits. Pre-fix exact
 // output was ADMITTED capability=true unknown=[]. Post-fix the same fresh
-// process seals with 18 billing unknowns and no capability.
+// process seals with 21 billing unknowns and no capability.
 {
   const a2Child = [
     `const ACCOUNT = "${ACCOUNT}"; const NOW = ${NOW};`,
-    `const KEYS = ["workers_requests","workers_cpu_ms","d1_storage_bytes","d1_rows_read","d1_rows_written","r2_storage_gb_month","r2_class_a_ops","r2_class_b_ops","queue_ops","do_requests","do_gb_seconds","do_sql_reads","do_sql_writes","do_storage_bytes","workers_ai_neurons_per_day","ai_search_queries_month","vectorize_queried_dims_month","vectorize_stored_dims_month"];`,
+    `const KEYS = ["workers_requests","workers_cpu_ms","d1_storage_bytes","d1_rows_read","d1_rows_written","r2_storage_gb_month","r2_class_a_ops","r2_class_b_ops","queue_ops","do_requests","do_gb_seconds","do_sql_reads","do_sql_writes","do_storage_bytes","workers_ai_neurons_per_day","ingestion_tokens_month","storage_gb_month","semantic_vector_hybrid_queries_month","full_text_queries_month","vectorize_queried_dims_month","vectorize_stored_dims_month"];`,
     `for (let i = 0; i < KEYS.length; i += 1) { Object.prototype["FAKEID" + i + ":FAKENAME" + i + ":FAKEUNIT" + i] = KEYS[i]; }`,
     `const rows = KEYS.map((_, i) => ({ BillingAccountId: ACCOUNT, x_BillableMetricId: "FAKEID" + i, x_BillableMetricName: "FAKENAME" + i, ConsumedUnit: "FAKEUNIT" + i, ConsumedQuantity: 1, ChargePeriodStart: "2026-09-01T00:00:00.000Z", ChargePeriodEnd: "2026-09-06T00:00:00.000Z" }));`,
     `globalThis.fetch = async (url) => { const u = String(url); if (u.includes("/billable/usage")) return { status: 200, json: async () => ({ success: true, result: rows }) }; if (u.includes("/ai-search/instances")) return { status: 200, json: async () => ({ success: true, result: [{id:"a2-1"},{id:"a2-2"},{id:"a2-3"},{id:"a2-4"},{id:"a2-5"}], result_info: { page: 1, per_page: 100, count: 5, total_count: 5, total_pages: 1 } }) }; if (u.includes("/r2/buckets")) return { status: 200, json: async () => ({ success: true, result: { buckets: [] } }) }; return { status: 200, json: async () => ({ success: true, result: [] }) }; };`,
@@ -332,9 +339,9 @@ check("after-import prototype poisoning stays exact");
   ].join("\n");
   const a2Out = runChild("a2-proto-pollution", a2Child);
   assert.match(a2Out, /ownKeys=0/u);
-  assert.match(a2Out, /a2=SEALED cap=false unknown=18/u);
+  assert.match(a2Out, /a2=SEALED cap=false unknown=21/u);
 }
-check("18-alias prototype pollution no longer admits billing");
+check("21-alias prototype pollution no longer admits billing");
 
 // FIX14: facade/descriptor/boundary immunity — clone, spread, Proxy,
 // serialization, raw prototype calls, prototype swaps, mutated facades.
@@ -366,5 +373,87 @@ check("18-alias prototype pollution no longer admits billing");
   assert.match(boundaryOut, /triplesOwn=0/u);
 }
 check("facade clone/spread/Proxy/serialization/descriptor boundaries immune");
+
+// FIX14: poison mutable collection and array intrinsics before import. The
+// classifier, capability registries, canonical keys, and evidence scans must
+// keep exact own-key/identity decisions under this hostile import boundary.
+{
+  const poisonChild = [
+    `const ACCOUNT = "${ACCOUNT}"; const NOW = ${NOW};`,
+    `Array.prototype.filter = function () { return []; };`,
+    `Array.prototype.sort = function () { return []; };`,
+    `Array.prototype.includes = function () { return true; };`,
+    `Array.prototype[Symbol.iterator] = function () { return { next() { return { done: true }; } }; };`,
+    `Map.prototype.get = function (key) { if (key === "evil_proto") return { key, envelope: 999999999, window: "monthly" }; return null; };`,
+    `Map.prototype.has = function () { return true; };`,
+    `Set.prototype.has = function () { return true; };`,
+    `WeakSet.prototype.has = function () { return true; };`,
+    `WeakMap.prototype.get = function () { return "inventory-ai-search"; };`,
+    `const E = await import("./scripts/lib/cloudflare-usage-envelope.mjs");`,
+    `const T = await import("./scripts/lib/cloudflare-usage-transport-class.mjs");`,
+    `const I = await import("./scripts/lib/cloudflare-usage-authority.mjs");`,
+    `const B = await import("./scripts/lib/cloudflare-usage-billable.mjs");`,
+    `const A = await import("./scripts/lib/cloudflare-usage-admission.mjs");`,
+    `const R = await import("./scripts/lib/cloudflare-usage-receipt-evidence.mjs");`,
+    `const keys = E.listCanonicalRequiredKeys();`,
+    `const metrics = Object.create(null);`,
+    `for (let i = 0; i < keys.length; i += 1) metrics[keys[i]] = 0;`,
+    `const collectedAt = new Date(NOW).toISOString();`,
+    `const monthly = { kind: "monthly", start: "2026-10-01T00:00:00.000Z", end: "2026-11-01T00:00:00.000Z" };`,
+    `const daily = { kind: "daily", start: "2026-10-14T00:00:00.000Z", end: "2026-10-15T00:00:00.000Z" };`,
+    `const point = { kind: "point", at: collectedAt };`,
+    `const windows = { monthly, daily, point };`,
+    `const digest = E.digestAccountId(ACCOUNT);`,
+    `const snapshot = { protocol: E.USAGE_SNAPSHOT_PROTOCOL, account_id_digest: digest, collected_at: collectedAt, window: monthly, daily_window: daily, source: "intrinsic-poison-fixture", readback: {}, metrics };`,
+    `const missingSnapshot = Object.create(null);`,
+    `for (let i = 0; i < keys.length; i += 1) if (keys[i] !== "full_text_queries_month") missingSnapshot[keys[i]] = 0;`,
+    `const missingEvaluation = E.evaluateUsageSnapshot({ ...snapshot, metrics: missingSnapshot }, { expectedAccountDigest: digest, now: NOW });`,
+    `let exactMissing = false; for (let i = 0; i < missingEvaluation.reasons.length; i += 1) if (missingEvaluation.reasons[i].indexOf("full_text_queries_month") >= 0) exactMissing = true;`,
+    `const evidence = [];`,
+    `for (let i = 0; i < keys.length; i += 1) {`,
+    `  const key = keys[i]; if (key === "full_text_queries_month") continue;`,
+    `  const pointMetric = E.canonicalWindowOf(key) === "point";`,
+    `  const dailyMetric = E.canonicalWindowOf(key) === "daily";`,
+    `  const bound = pointMetric ? { start: collectedAt, end: collectedAt } : dailyMetric ? daily : monthly;`,
+    `  const inventory = key === "ai_search_instances";`,
+    `  evidence[evidence.length] = { metric: key, unit: E.canonicalUnitOf(key), value: 0, provider_group: inventory ? "fixture-inventory" : "fixture-billing", provider_kind_class: inventory ? "inventory-ai-search" : "billing-usage-v2", provenance: inventory ? "authoritative_inventory" : "authoritative_billing", window_start: bound.start, window_end: bound.end, coverage_full: true, account_id_digest: digest };`,
+    `}`,
+    `const receipt = { protocol: E.USAGE_ADMISSION_PROTOCOL, generation: E.USAGE_ENVELOPE_GENERATION, decision: "ADMITTED", sealed: false, account_id_digest: digest, account_ref: E.accountRef(ACCOUNT), collected_at: collectedAt, windows, source: "intrinsic-poison-fixture", metrics, metric_evidence: evidence, snapshot_digest: "", over_envelope: [], unknown_metrics: [], near_limit: [], advisory: [], reasons: [], created_at: collectedAt };`,
+    `receipt.snapshot_digest = E.computeSnapshotDigest({ accountIdDigest: digest, source: receipt.source, generation: receipt.generation, windows, metrics, evidence });`,
+    `const inspected = E.validateAdmissionReceipt(receipt, { expectedAccountDigest: digest, now: NOW });`,
+    `let evidenceMissing = false; for (let i = 0; i < inspected.reasons.length; i += 1) if (inspected.reasons[i].indexOf("missing metrics: full_text_queries_month") >= 0) evidenceMissing = true;`,
+    `const optionKeys = T.callerSuppliedTransportKeys({ fetchImpl: null });`,
+    `const marked = {}; T.markTestTransport(marked); const fake = {};`,
+    `const out = { canonical: R.canonicalJson({ z: 1, a: 2 }), exactMissing, evidenceMissing, transportKeys: optionKeys, markedTest: T.isTestTransportProvider(marked), fakeTest: T.isTestTransportProvider(fake), fakeInventory: I.inventoryBrandClass(fake), fakeBilling: B.isUsageVBillingProvider(fake), fakeCapability: A.isUsageAdmissionCapability(fake), fakeCanonical: E.getCanonicalMetric("evil_proto") };`,
+    `console.log(JSON.stringify(out));`,
+  ].join("\n");
+  const poisonOut = runChild("before-import-intrinsic-poisoning", poisonChild);
+  assert.match(poisonOut, /"canonical":"\{\\"a\\":2,\\"z\\":1\}"/u);
+  assert.match(poisonOut, /"exactMissing":true/u);
+  assert.match(poisonOut, /"evidenceMissing":true/u);
+  assert.match(poisonOut, /"transportKeys":\["fetchImpl"\]/u);
+  assert.match(poisonOut, /"markedTest":true/u);
+  assert.match(poisonOut, /"fakeTest":false/u);
+  assert.match(poisonOut, /"fakeInventory":null/u);
+  assert.match(poisonOut, /"fakeBilling":false/u);
+  assert.match(poisonOut, /"fakeCapability":false/u);
+  assert.match(poisonOut, /"fakeCanonical":null/u);
+}
+check("before-import Map/Set/WeakMap/WeakSet and Array poisoning leaves authority/evidence exact");
+
+// Exact comparative root vector: a poisoned WeakSet.has returning false must
+// not erase a real test-transport identity recorded before the query.
+{
+  const weakSetFalseChild = [
+    `WeakSet.prototype.has = function () { return false; };`,
+    `const T = await import("./scripts/lib/cloudflare-usage-transport-class.mjs");`,
+    `const genuine = {}; T.markTestTransport(genuine); const forged = {};`,
+    `console.log(JSON.stringify({ genuine: T.isTestTransportProvider(genuine), forged: T.isTestTransportProvider(forged) }));`,
+  ].join("\n");
+  const weakSetFalseOut = runChild("before-import-weakset-has-false", weakSetFalseChild);
+  assert.match(weakSetFalseOut, /"genuine":true/u);
+  assert.match(weakSetFalseOut, /"forged":false/u);
+}
+check("before-import WeakSet.has=false preserves genuine test-transport identity");
 
 console.log(`Usage metric immutability: ${cases} groups passed; live Cloudflare NOT_EXECUTED`);

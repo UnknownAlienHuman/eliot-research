@@ -12,6 +12,7 @@ import {
   CLOCK_SKEW_MS,
   UNKNOWN,
   UNKNOWN_REASONS,
+  USAGE_SNAPSHOT_PROTOCOL,
   accountRef,
   digestAccountId,
   listCanonicalMetrics,
@@ -143,7 +144,7 @@ export function blankAccountSnapshot({ expectedAccountId, now = Date.now(), sour
   const metrics = {};
   for (let i = 0; i < required.length; i += 1) metrics[required[i]] = UNKNOWN;
   return {
-    protocol: "eliotr.cloudflare-usage-snapshot.v1",
+    protocol: USAGE_SNAPSHOT_PROTOCOL,
     account_id_digest: digestAccountId(expectedAccountId),
     account_ref: accountRef(expectedAccountId),
     collected_at: new Date(now).toISOString(),
@@ -514,7 +515,7 @@ export async function collectAccountUsage(options = {}) {
     if (metrics[key] === UNKNOWN && trust[key].gap === null && limitation !== "") trust[key].gap = limitation;
   }
   return {
-    protocol: "eliotr.cloudflare-usage-snapshot.v1",
+    protocol: USAGE_SNAPSHOT_PROTOCOL,
     account_id_digest: digestAccountId(expectedAccountId),
     account_ref: accountRef(expectedAccountId),
     collected_at: new Date(now).toISOString(),

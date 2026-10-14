@@ -102,10 +102,10 @@ export function isSealedAllowlistedOperation(operation) {
   return false;
 }
 
-// quota is the included Cloudflare plan quota (100%); envelope is the local
-// 80% admission boundary. window selects the fencing discipline; `exact`
-// marks point-in-time counts (AI Search instance inventory) rather than
-// cumulative counters. Storage bytes are decimal-GB derived (see above).
+// quota is the documented included-usage pool (100%); envelope is the local
+// 80% admission boundary. AI Search instance inventory is a point observation
+// with no billing quota. Its plan ceiling and desired topology are checked by
+// provisioning readback. Storage bytes are decimal-GB derived (see above).
 export const USAGE_METRICS = [
   { key: "workers_requests", quota: 10_000_000, envelope: 8_000_000, window: "monthly", plan: "Workers Paid" },
   { key: "workers_cpu_ms", quota: 30_000_000, envelope: 24_000_000, window: "monthly", plan: "Workers Paid" },
@@ -122,8 +122,11 @@ export const USAGE_METRICS = [
   { key: "do_sql_writes", quota: 50_000_000, envelope: 40_000_000, window: "monthly", plan: "Durable Objects SQLite paid inclusion" },
   { key: "do_storage_bytes", quota: 5 * DECIMAL_BYTES_PER_GB, envelope: 4 * DECIMAL_BYTES_PER_GB, window: "monthly", plan: "Durable Objects paid inclusion (decimal GB)" },
   { key: "workers_ai_neurons_per_day", quota: 10_000, envelope: 8_000, window: "daily", plan: "Workers AI paid inclusion" },
-  { key: "ai_search_instances", quota: 5, envelope: 5, window: "point", exact: true, plan: "AI Search (exactly 5)" },
-  { key: "ai_search_queries_month", quota: 25_000, envelope: 20_000, window: "monthly", plan: "AI Search" },
+  { key: "ai_search_instances", window: "point", exact: true, unit: "instances", plan: "AI Search inventory; provider ceiling and topology are separate" },
+  { key: "ingestion_tokens_month", quota: 5_000_000, envelope: 4_000_000, window: "monthly", unit: "tokens", plan: "AI Search included monthly usage (all account plans)" },
+  { key: "storage_gb_month", quota: 10, envelope: 8, window: "monthly", unit: "GB-month", plan: "AI Search included monthly usage (all account plans)" },
+  { key: "semantic_vector_hybrid_queries_month", quota: 1_000, envelope: 800, window: "monthly", unit: "queries", plan: "AI Search included monthly usage (all account plans)" },
+  { key: "full_text_queries_month", quota: 1_000, envelope: 800, window: "monthly", unit: "queries", plan: "AI Search included monthly usage (all account plans)" },
   { key: "vectorize_queried_dims_month", quota: 50_000_000, envelope: 40_000_000, window: "monthly", plan: "Vectorize" },
   { key: "vectorize_stored_dims_month", quota: 10_000_000, envelope: 8_000_000, window: "monthly", plan: "Vectorize" },
 ];
@@ -193,4 +196,8 @@ export function listCanonicalMetrics() {
 export function canonicalWindowOf(k) {
   const metric = getCanonicalMetric(k);
   return metric !== null ? metric.window : "monthly";
+}
+export function canonicalUnitOf(k) {
+  const metric = getCanonicalMetric(k);
+  return metric !== null ? metric.unit ?? null : null;
 }

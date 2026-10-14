@@ -20,6 +20,9 @@ import {
   releaseLease,
 } from "./lib/cloudflare-budget-admission.mjs";
 import {
+  USAGE_ADMISSION_PROTOCOL,
+  USAGE_ENVELOPE_GENERATION,
+  USAGE_SNAPSHOT_PROTOCOL,
   REQUIRED_METRIC_KEYS,
   buildAdmissionReceipt,
   digestAccountId,
@@ -44,7 +47,7 @@ async function check(name, action) {
 
 function admittedReceipt(now, metrics) {
   const snapshot = {
-    protocol: "eliotr.cloudflare-usage-snapshot.v1",
+    protocol: USAGE_SNAPSHOT_PROTOCOL,
     account_id_digest: DIGEST,
     account_ref: "cloudflare-account:cccccc…cccc",
     collected_at: new Date(now - 60_000).toISOString(),
@@ -59,7 +62,10 @@ function admittedReceipt(now, metrics) {
       queue_ops: 100, do_requests: 100, do_gb_seconds: 100,
       do_sql_reads: 100, do_sql_writes: 100, do_storage_bytes: 100,
       workers_ai_neurons_per_day: 100, ai_search_instances: 5,
-      ai_search_queries_month: 100,
+      ingestion_tokens_month: 100,
+      storage_gb_month: 1,
+      semantic_vector_hybrid_queries_month: 100,
+      full_text_queries_month: 100,
       vectorize_queried_dims_month: 100, vectorize_stored_dims_month: 100,
       ...metrics,
     },
@@ -265,14 +271,18 @@ await check("evidenceless shells and tampered receipts never enable heavy work",
   // Hand-forged shell: valid generation, sealed:false, empty unknowns, but
   // no metric evidence and no snapshot digest.
   const shell = {
-    protocol: "eliotr.cloudflare-usage-admission-receipt.v1",
-    generation: "usage-envelope-2026-09-06",
+    protocol: USAGE_ADMISSION_PROTOCOL,
+    generation: USAGE_ENVELOPE_GENERATION,
     decision: "ADMITTED",
     sealed: false,
     account_id_digest: DIGEST,
     account_ref: "cloudflare-account:cccccc…cccc",
     collected_at: new Date(DAY_ONE - 60_000).toISOString(),
-    windows: { monthly: monthlyWindowFor(DAY_ONE), daily: dailyWindowFor(DAY_ONE) },
+    windows: {
+      monthly: monthlyWindowFor(DAY_ONE),
+      daily: dailyWindowFor(DAY_ONE),
+      point: { kind: "point", at: new Date(DAY_ONE - 60_000).toISOString() },
+    },
     source: "test-fixture",
     over_envelope: [],
     unknown_metrics: [],
@@ -311,7 +321,7 @@ await check("full-cloth forged aggregate never authorizes heavy work", async () 
   const metrics = {};
   for (const key of REQUIRED_METRIC_KEYS) metrics[key] = 0;
   const forgedSnapshot = {
-    protocol: "eliotr.cloudflare-usage-snapshot.v1",
+    protocol: USAGE_SNAPSHOT_PROTOCOL,
     account_id_digest: DIGEST,
     account_ref: "cloudflare-account:cccccc…cccc",
     collected_at: new Date(DAY_ONE - 60_000).toISOString(),

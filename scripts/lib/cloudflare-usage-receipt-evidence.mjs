@@ -71,6 +71,10 @@ export function computeSnapshotDigest({ accountIdDigest, source, generation, win
 
 function evidenceWindow(snapshot, metricWindow) {
   if (metricWindow === "daily") return snapshot.daily_window ?? null;
+  if (metricWindow === "point") {
+    const at = snapshot.collected_at ?? null;
+    return at === null ? null : { start: at, end: at };
+  }
   return snapshot.window ?? null;
 }
 
@@ -90,6 +94,7 @@ export function buildMetricEvidence(snapshot, contract) {
       const firstSource = Array.isArray(trust.sources) && typeof trust.sources[0] === "string" ? trust.sources[0] : "unrecorded";
       out[out.length] = {
         metric,
+        unit: contract.unitOf(metric),
         value: value ?? "unknown",
         provider_group: firstSource,
         provider_kind_class: trust.brand,
@@ -102,6 +107,7 @@ export function buildMetricEvidence(snapshot, contract) {
     } else {
       out[out.length] = {
         metric,
+        unit: contract.unitOf(metric),
         value: value ?? "unknown",
         provider_group: contract.snapshotProvenance,
         provider_kind_class: contract.snapshotKindClass,
@@ -161,7 +167,11 @@ export function validateMetricEvidence(receipt, contract, { now = Date.now(), st
     accountIdDigest: receipt.account_id_digest,
     source: receipt.source ?? "missing",
     generation: receipt.generation ?? "missing",
-    windows: { monthly: receipt.windows?.monthly ?? null, daily: receipt.windows?.daily ?? null },
+    windows: {
+      monthly: receipt.windows?.monthly ?? null,
+      daily: receipt.windows?.daily ?? null,
+      point: receipt.windows?.point ?? null,
+    },
     metrics,
     evidence,
   });
@@ -242,9 +252,21 @@ export function validateMetricEvidence(receipt, contract, { now = Date.now(), st
     if (entry.account_id_digest !== receipt.account_id_digest) {
       deny(`admission receipt evidence for ${key} binds a different account; refusing forged receipt`);
     }
-    const expectedWindow = contract.windowKindOf(key) === "daily" ? receipt.windows?.daily : receipt.windows?.monthly;
+    if (entry.unit !== contract.unitOf(key)) {
+      deny(`admission receipt evidence for ${key} carries a different unit; refusing forged receipt`);
+    }
+    const windowKind = contract.windowKindOf(key);
+    const expectedWindow = windowKind === "point"
+      ? { start: receipt.windows?.point?.at ?? null, end: receipt.windows?.point?.at ?? null }
+      : windowKind === "daily" ? receipt.windows?.daily : receipt.windows?.monthly;
     if (entry.window_start !== expectedWindow?.start || entry.window_end !== expectedWindow?.end) {
       deny(`admission receipt evidence for ${key} binds a different window; refusing forged receipt`);
+    }
+    if (windowKind === "point" && entry.provider_kind_class === contract.billingKindClass) {
+      deny(`point-in-time metric ${key} cannot carry monthly billing evidence`);
+    }
+    if (windowKind !== "point" && inventoryClassPairs(entry.provider_kind_class, contract)) {
+      deny(`monthly metric ${key} cannot carry point-inventory evidence`);
     }
     if (typeof entry.provider_group !== "string" || entry.provider_group === "" || entry.provider_group === "unrecorded") {
       deny(`admission receipt evidence for ${key} names no provider; refusing forged receipt`);

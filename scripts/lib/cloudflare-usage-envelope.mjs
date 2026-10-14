@@ -33,16 +33,15 @@ import {
 import {
   METRIC_PROVENANCE,
   canonicalWindowOf,
+  canonicalUnitOf,
   hasCanonicalMetric,
   listCanonicalMetrics,
   listCanonicalRequiredKeys,
 } from "./cloudflare-usage-canonical.mjs";
 
 // Canonical taxonomy + metric authority live in
-// ./cloudflare-usage-canonical.mjs (capability split for the 600-line
-// budget); re-exported here so existing import paths keep working. The
-// re-exported facades are non-authoritative views; authority reads only the
-// private null-prototype table in that module.
+// ./cloudflare-usage-canonical.mjs; compatibility exports remain views while
+// decisions use its private null-prototype canonical table.
 export {
   DECIMAL_BYTES_PER_GB,
   DECIMAL_BYTES_PER_KB,
@@ -64,13 +63,16 @@ export {
   listCanonicalRequiredKeys,
   listCanonicalMetrics,
   canonicalWindowOf,
+  canonicalUnitOf,
 } from "./cloudflare-usage-canonical.mjs";
 
 export { computeSnapshotDigest };
 
-export const USAGE_SNAPSHOT_PROTOCOL = "eliotr.cloudflare-usage-snapshot.v1";
-export const USAGE_ADMISSION_PROTOCOL = "eliotr.cloudflare-usage-admission-receipt.v1";
-export const USAGE_ENVELOPE_GENERATION = "usage-envelope-2026-09-06";
+export const LEGACY_USAGE_SNAPSHOT_PROTOCOL = "eliotr.cloudflare-usage-snapshot.v1";
+export const LEGACY_USAGE_ADMISSION_PROTOCOL = "eliotr.cloudflare-usage-admission-receipt.v1";
+export const USAGE_SNAPSHOT_PROTOCOL = "eliotr.cloudflare-usage-snapshot.v2";
+export const USAGE_ADMISSION_PROTOCOL = "eliotr.cloudflare-usage-admission-receipt.v2";
+export const USAGE_ENVELOPE_GENERATION = "usage-envelope-2026-10-14-ai-search-ga-v2";
 export const ENVELOPE_RATIO = 0.8;
 export const NEAR_LIMIT_RATIO = 0.9;
 export const SAFETY_MARGIN_RATIO = 0.05;
@@ -108,7 +110,7 @@ export const DOC_SOURCES = Object.freeze([
   { url: "https://developers.cloudflare.com/queues/pricing/", covers: "queue_ops 64KB chunk", retrieved: "2026-09-06" },
   { url: "https://developers.cloudflare.com/durable-objects/pricing/", covers: "do_requests, do_gb_seconds, do_sql, do_storage", retrieved: "2026-09-06" },
   { url: "https://developers.cloudflare.com/workers-ai/pricing/", covers: "workers_ai_neurons_per_day", retrieved: "2026-09-06" },
-  { url: "https://developers.cloudflare.com/ai-search/limits-pricing/", covers: "ai_search_instances, ai_search_queries_month", retrieved: "2026-09-06" },
+  { url: "https://developers.cloudflare.com/ai-search/platform/limits-pricing/", covers: "AI Search GA included ingestion_tokens_month, storage_gb_month, semantic_vector_hybrid_queries_month, full_text_queries_month; plan-specific instance and namespace limits", retrieved: "2026-10-14" },
   { url: "https://developers.cloudflare.com/vectorize/pricing/", covers: "vectorize_queried_dims, vectorize_stored_dims", retrieved: "2026-09-06" },
 ]);
 for (let i = 0; i < DOC_SOURCES.length; i += 1) Object.freeze(DOC_SOURCES[i]);
@@ -120,6 +122,7 @@ for (let i = 0; i < DOC_SOURCES.length; i += 1) Object.freeze(DOC_SOURCES[i]);
 const RECEIPT_EVIDENCE_CONTRACT = {
   requiredKeys: Object.freeze(listCanonicalRequiredKeys()),
   windowKindOf: (key) => canonicalWindowOf(key),
+  unitOf: (key) => canonicalUnitOf(key),
   billingProvenance: METRIC_PROVENANCE.AUTHORITATIVE_BILLING,
   inventoryProvenance: METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY,
   billingKindClass: "billing-usage-v2",
@@ -139,14 +142,13 @@ const RECEIPT_EVIDENCE_CONTRACT = {
 export function isLiveEvidenceFamily(receipt) {
   const evidence = receipt?.metric_evidence;
   if (!Array.isArray(evidence) || evidence.length === 0) return false;
-  const canonicalKeys = listCanonicalRequiredKeys();
-  if (canonicalKeys.length === 0) return false;
-  if (evidence.length !== canonicalKeys.length) return false;
+  const required = listCanonicalRequiredKeys();
+  if (required.length === 0 || evidence.length !== required.length) return false;
+  const inventoryKinds = RECEIPT_EVIDENCE_CONTRACT.inventoryKindClasses;
   for (let i = 0; i < evidence.length; i += 1) {
     const kindClass = evidence[i]?.provider_kind_class;
     if (kindClass === RECEIPT_EVIDENCE_CONTRACT.billingKindClass) continue;
     let inventoryMatch = false;
-    const inventoryKinds = RECEIPT_EVIDENCE_CONTRACT.inventoryKindClasses;
     for (let j = 0; j < inventoryKinds.length; j += 1) {
       if (kindClass === inventoryKinds[j]) { inventoryMatch = true; break; }
     }
@@ -232,6 +234,9 @@ export function evaluateUsageSnapshot(snapshot, options = {}) {
   if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) {
     return blocked(["snapshot must be an object"]);
   }
+  if (snapshot.protocol === LEGACY_USAGE_SNAPSHOT_PROTOCOL) {
+    return blocked(["legacy v1 snapshot is historical; its generic AI Search query metric has no v2 destination"]);
+  }
   if (snapshot.protocol !== USAGE_SNAPSHOT_PROTOCOL) {
     return blocked([`snapshot protocol must be ${USAGE_SNAPSHOT_PROTOCOL}`]);
   }
@@ -242,21 +247,16 @@ export function evaluateUsageSnapshot(snapshot, options = {}) {
     return blocked(["snapshot.metrics must be an object keyed by required metric"]);
   }
   const metricKeys = Object.keys(snapshot.metrics);
-  // Private canonical copy (never the public export): exact-set check with
-  // explicit === scans only (no Array.prototype filter/includes, no Map/Set,
-  // no caller-object authority). Object.keys is own-enumerable only, so
-  // inherited prototype pollution never creates keys.
   const canonicalKeys = listCanonicalRequiredKeys();
   const canonicalMetrics = listCanonicalMetrics();
   if (canonicalKeys.length === 0) return blocked(["authority metric set is empty; refusing vacuous admission"]);
   const missing = [];
   for (let i = 0; i < canonicalKeys.length; i += 1) {
-    const key = canonicalKeys[i];
     let found = false;
     for (let j = 0; j < metricKeys.length; j += 1) {
-      if (metricKeys[j] === key) { found = true; break; }
+      if (canonicalKeys[i] === metricKeys[j]) { found = true; break; }
     }
-    if (!found) missing[missing.length] = key;
+    if (!found) missing[missing.length] = canonicalKeys[i];
   }
   const unexpected = [];
   for (let i = 0; i < metricKeys.length; i += 1) {
@@ -265,12 +265,12 @@ export function evaluateUsageSnapshot(snapshot, options = {}) {
   if (missing.length > 0) {
     let list = "";
     for (let i = 0; i < missing.length; i += 1) list += (i > 0 ? ", " : "") + missing[i];
-    return blocked([`snapshot is missing required metrics: ${list}`]);
+    return blocked(["snapshot is missing required metrics: " + list]);
   }
   if (unexpected.length > 0) {
     let list = "";
     for (let i = 0; i < unexpected.length; i += 1) list += (i > 0 ? ", " : "") + unexpected[i];
-    return blocked([`snapshot carries unknown metric keys: ${list}`]);
+    return blocked(["snapshot carries unknown metric keys: " + list]);
   }
   if (metricKeys.length !== canonicalKeys.length) return blocked(["snapshot metric set is not exactly the required set"]);
   for (let i = 0; i < canonicalKeys.length; i += 1) {
@@ -310,13 +310,13 @@ export function evaluateUsageSnapshot(snapshot, options = {}) {
       unknown[unknown.length] = metric.key;
       continue;
     }
-    if (metric.exact) {
-      if (value > metric.envelope) {
-        over[over.length] = { metric: metric.key, value, envelope: metric.envelope };
-      } else if (value < metric.envelope) {
-        advisory[advisory.length] = `${metric.key} reports ${value}, below the required ${metric.envelope}; usage headroom exists but inventory is incomplete`;
-      }
+    if (metric.window === "point") {
+      // Inventory is a point observation, not a monthly included-usage pool.
+      // Plan ceilings and desired topology are checked by provisioning readback.
       continue;
+    }
+    if (!Number.isFinite(metric.envelope)) {
+      return blocked(["monthly metric " + metric.key + " has no canonical envelope"]);
     }
     if (value > metric.envelope) {
       over[over.length] = { metric: metric.key, value, envelope: metric.envelope };
@@ -401,6 +401,7 @@ export function buildAdmissionReceipt({ evaluation, snapshot, now = Date.now(), 
   const windows = {
     monthly: snapshot.window ?? null,
     daily: snapshot.daily_window ?? null,
+    point: { kind: "point", at: snapshot.collected_at ?? null },
   };
   const source = snapshot.source ?? "unknown";
   const metricEvidence = buildMetricEvidence(snapshot, RECEIPT_EVIDENCE_CONTRACT);
@@ -468,6 +469,30 @@ export function validateAdmissionReceipt(receipt, options = {}) {
   const reasons = [];
   if (!receipt || typeof receipt !== "object" || Array.isArray(receipt)) {
     return { ok: false, decision: "BLOCKED", reasons: ["admission receipt must be an object"] };
+  }
+  if (receipt.protocol === LEGACY_USAGE_ADMISSION_PROTOCOL) {
+    let legacyMetrics = null;
+    if (receipt.metrics && typeof receipt.metrics === "object" && !Array.isArray(receipt.metrics)) {
+      legacyMetrics = Object.create(null);
+      const keys = Object.keys(receipt.metrics);
+      for (let i = 0; i < keys.length; i += 1) legacyMetrics[keys[i]] = receipt.metrics[keys[i]];
+    }
+    const reasons = [
+      "legacy v1 receipt is historical and cannot authorize v2 taxonomy metrics",
+      "ai_search_queries_month has no semantic, full-text, ingestion-token, or storage destination",
+    ];
+    if (receipt.account_id_digest !== expectedAccountDigest) {
+      reasons[reasons.length] = "historical receipt binds a different account digest";
+    }
+    return {
+      ok: false,
+      decision: "SEALED",
+      historical: true,
+      protocol: receipt.protocol,
+      generation: receipt.generation ?? null,
+      legacy_metrics: legacyMetrics,
+      reasons,
+    };
   }
   if (receipt.protocol !== USAGE_ADMISSION_PROTOCOL) {
     reasons[reasons.length] = `admission receipt protocol must be ${USAGE_ADMISSION_PROTOCOL}`;
@@ -549,6 +574,11 @@ export function validateAdmissionReceipt(receipt, options = {}) {
       }
     } else {
       reasons[reasons.length] = "admission receipt windows.daily binding is missing; refusing forged receipt";
+    }
+    const point = receipt.windows?.point;
+    if (!point || point.kind !== "point" || typeof point.at !== "string" ||
+      point.at !== receipt.collected_at || !Number.isFinite(Date.parse(point.at))) {
+      reasons[reasons.length] = "admission receipt point-in-time inventory binding is missing or mismatched";
     }
   }
   return { ok: reasons.length === 0, decision: receipt.decision ?? "BLOCKED", reasons };

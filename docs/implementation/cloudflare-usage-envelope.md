@@ -19,7 +19,10 @@ the smaller local admission boundary first and fails closed.
 | Queues operations, 64,000-byte chunks + ~100 B overhead (retries + DLQ included) | 1,000,000 / mo | 800,000 / mo |
 | Durable Objects req / GB-s / SQL reads / SQL writes / storage (decimal GB) | 1M / 400K / 25B / 50M / 5 GB | 800K / 320K / 20B / 40M / 4 GB |
 | Workers AI neurons (daily UTC midnight reset) | 10,000 / day | 8,000 / day |
-| AI Search instances / queries | exactly 5 / 25,000 / mo | exactly 5 / 20,000 / mo |
+| AI Search ingestion tokens (all plans) | 5,000,000 / mo | 4,000,000 / mo |
+| AI Search storage (all plans) | 10 GB-month / mo | 8 GB-month / mo |
+| AI Search semantic/vector/hybrid queries (all plans) | 1,000 / mo | 800 / mo |
+| AI Search full-text queries (all plans) | 1,000 / mo | 800 / mo |
 | Vectorize queried dims / stored dims | 50M / 10M per mo | 40M / 8M per mo |
 | Access | one owner-only hostname app, 24 h session | contour (see below) |
 
@@ -32,8 +35,33 @@ Monthly windows approximate subscription-renewal months as UTC calendar
 months; daily windows reset at UTC midnight. Wrong-window or reset-crossing
 snapshots fail closed (SEALED/BLOCKED, never admitted).
 
-Official sources (retrieved 2026-09-06; validated against Wrangler 4.127.1;
-tests mock only observed response/pagination fields):
+AI Search monthly included usage is shared across Workers Free and Paid. It
+is not an inference about this account's observed usage or Workers plan. The
+separate point-in-time instance inventory has no quota in this table. Current
+provider limits are 100 instances per Free account or 5,000 per Paid account,
+100 namespaces per account on either plan, and 100,000 files per Free
+instance versus 1,000,000 vector or 500,000 hybrid files per Paid instance.
+The topology/provisioner gate must read the actual account plan and selected
+manifest before claiming provider headroom; an unknown plan stays SEALED.
+
+Cloudflare AI Search billing begins 2026-11-01. Its 2026-10-01 GA pricing
+page says AI Search embeddings and reranking are included in AI Search usage;
+do not count them again as Workers AI or AI Gateway usage. Generation, query
+rewriting, and external provider calls remain billed through their respective
+services. The four new monthly account counters have no reviewed billing
+identity or qualified account-wide usage source in this repository, so they
+remain unknown and keep admission SEALED before and after the billing cutoff.
+No price, billable alias, or usage value is inferred from the included pools.
+
+Snapshots use `eliotr.cloudflare-usage-snapshot.v2`; admission receipts use
+`eliotr.cloudflare-usage-admission-receipt.v2`. The v1 generic
+`ai_search_queries_month` field is exposed only as historical receipt data and
+always validates as SEALED. It is never mapped to either query pool or to
+ingestion/storage.
+
+Official sources: existing product snapshots below were retrieved
+2026-09-06; AI Search limits/pricing was rechecked 2026-10-14 on the page
+updated 2026-10-01. Tests mock only observed response/pagination fields:
 
 - https://developers.cloudflare.com/workers/pricing/ (workers req/CPU)
 - https://developers.cloudflare.com/workers/platform/limits/ (workers limits)
@@ -42,7 +70,7 @@ tests mock only observed response/pagination fields):
 - https://developers.cloudflare.com/queues/pricing/ (Queues 64 KB chunks)
 - https://developers.cloudflare.com/durable-objects/pricing/ (DO/SQLite)
 - https://developers.cloudflare.com/workers-ai/pricing/ (AI neurons/day)
-- https://developers.cloudflare.com/ai-search/limits-pricing/ (AI Search 5/queries)
+- https://developers.cloudflare.com/ai-search/platform/limits-pricing/ (GA included usage, plan-specific instance and file limits; billing begins 2026-11-01)
 - https://developers.cloudflare.com/vectorize/pricing/ (Vectorize dims)
 
 A value at or above 90% of its envelope is a near-limit advisory; anything
@@ -219,21 +247,17 @@ case: `result: []` with `result_info` exactly carrying `page: 1`, `per_page: 100
 completed logical page for this response; other zero-page combinations,
 contradictory counts, or nonempty results remain typed malformed.
 
-The live registry (`buildLiveProviderRegistry`) wires all four inventory
-collectors plus the Usage v2 billing provider: D1, R2, and Queue collectors
-return `authoritative_inventory` metadata for their complete resource lists
-(`covers: []`, so they cannot fabricate usage counters), while AI Search
-alone covers `ai_search_instances`; the billing endpoint carries
-account-bound `from`/`to` derived from the intended interval (month start
-through start-of-today, never a future month end, never over 31 days) with
-the reviewed triple mapping. Called with defaults (accountId only) every
-product runs on the default live transport and stays branded, so live
-production keeps working; any caller-supplied `fetchImpl`/`apiBase`/
-`billableMetricMap` override selects the explicit test wiring instead, whose
-products are functional but unbranded test-only. A registry-level billing failure (no
-entitlement etc.) gaps the declared billing covers, leaving those metrics
-unknown rather than dropping the provider silently; billing never covers
-`ai_search_instances`, so an outage cannot clobber the inventory count.
+The default live registry wires inventory and diagnostic collectors; it does
+not currently add the Usage v2 billable provider. D1, R2, and Queue inventory
+collectors return `authoritative_inventory` metadata for their complete
+resource lists (`covers: []`, so they cannot fabricate usage counters), while
+AI Search alone covers the point observation `ai_search_instances`. The four
+AI Search monthly metrics are required canonical keys but remain unavailable:
+the reviewed billing-triple map is empty, and no account-wide usage source is
+qualified. The standalone Usage v2 provider still requires exact
+account-bound `from`/`to`, complete per-metric periods, and an explicitly
+reviewed ID/name/unit mapping. Unknown usage remains unknown; neither
+inventory nor documentation supplies a zero or monthly total.
 
 The OAuth preflight constructs this default registry when `providers` is
 omitted. An explicit provider list is a test seam and cannot mint the
@@ -278,10 +302,10 @@ non-secret; the caller must never invoke the billable binding when blocked.
 3. `scripts/provision-cloudflare-core.mjs`: foundation D1/R2/Queues plus the
    generated deploy config. Fails without Access authority; rechecks the live
    Access binding read-only before the first foundation mutation.
-4. `scripts/provision-ai-search.mjs`: the exactly 5 required instances
-   (`private-prose-g2`, `private-literal-g2`, `wiki-g2`, `artifact-g2`,
-   `web-capture-g2`); temporary cap 20,000 queries/mo until the envelope
-   admits more.
+4. `scripts/provision-ai-search.mjs`: checks the current topology manifest
+   and account-plan-specific provider ceiling. Instance inventory is not a
+   monthly usage quota; desired, deferred, and rollback resources remain
+   governed by the separate topology/readback contract.
 5. `scripts/provision-ai-gateways.mjs`.
 6. `scripts/deploy-cloudflare.mjs`: local gates, cross-product `--check-only`
    for every provisioner, apply, additive D1 migrations, exactly one Worker
@@ -297,8 +321,8 @@ Worker: no publicly usable `workers.dev` outside Access is ever produced
 
 Worker `eliotr-core`; D1 `eliotr-core`, `eliotr-search`; R2 `eliotr-evidence`,
 `eliotr-work`; Queues `eliotr-jobs`, `eliotr-dlq`; AI Gateways
-`eliotr-reasoning`, `eliotr-retrieval`; the five AI Search instance IDs
-above. Provisioners address resources by exact name and never delete;
+`eliotr-reasoning`, `eliotr-retrieval`; AI Search instances selected by the
+current topology manifest. Provisioners address resources by exact name and never delete;
 Gotham or otherwise unrelated inventory is counted by the envelope but never
 mutated or included in generated config.
 

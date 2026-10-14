@@ -220,6 +220,10 @@ await check("authorized inventory admits only its contracted count", async () =>
     bearer: BEARER, expectedAccountId: ACCOUNT, now: NOW, whoamiOutput: WHOAMI, providers: [inventory],
   });
   assert.equal(snapshot.metrics.ai_search_instances, 5);
+  assert.equal(snapshot.metrics.ingestion_tokens_month, "unknown");
+  assert.equal(snapshot.metrics.storage_gb_month, "unknown");
+  assert.equal(snapshot.metrics.semantic_vector_hybrid_queries_month, "unknown");
+  assert.equal(snapshot.metrics.full_text_queries_month, "unknown");
   assert.equal(snapshot.readback.metric_trust.ai_search_instances.provenance, METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY);
   assert.equal(snapshot.readback.metric_trust.ai_search_instances.state, "test-only");
   assert.equal(snapshot.readback.metric_trust.ai_search_instances.testOnly, true);

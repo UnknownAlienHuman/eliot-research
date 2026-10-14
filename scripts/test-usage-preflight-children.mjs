@@ -65,7 +65,10 @@ function baseMetrics() {
     do_storage_bytes: 100 * 1024 * 1024,
     workers_ai_neurons_per_day: 100,
     ai_search_instances: 5,
-    ai_search_queries_month: 1_000,
+    ingestion_tokens_month: 10_000,
+    storage_gb_month: 1.25,
+    semantic_vector_hybrid_queries_month: 300,
+    full_text_queries_month: 400,
     vectorize_queried_dims_month: 1_000_000,
     vectorize_stored_dims_month: 100_000,
   };
