@@ -216,11 +216,12 @@ function heldScope(scope: ScopeSnapshot): HeldResearchScope {
 function managedOutcome(input: {
   readonly query: string;
   readonly withEvidence: boolean;
+  readonly requestDigest: string;
 }): Record<string, unknown> {
   return {
     protocol: MANAGED_RANKING_OUTCOME_PROTOCOL,
     provider: "cloudflare_ai_search",
-    request_digest: "3".repeat(64),
+    request_digest: input.requestDigest,
     scoped_invocation_id: "pending-invocation",
     provider_execution_identity: {
       available: false,
@@ -280,6 +281,7 @@ async function retrievalExecution(input: {
   readonly legacyTrace?: boolean;
   readonly corruptPackRef?: boolean;
   readonly driftBudgets?: boolean;
+  readonly foreignOutcomeDigest?: string;
 }): Promise<RetrievalQueryExecutionV1> {
   const { retrievalInput, scope, access } = input;
   const executionIds = await managedRetrievalInvocationIdsV1(
@@ -289,6 +291,16 @@ async function retrievalExecution(input: {
   );
   const traceRef = await managedRetrievalRefIdV1(executionIds.scoped_invocation_id, "trace");
   const packRef = await managedRetrievalRefIdV1(executionIds.scoped_invocation_id, "pack");
+  const budgets = retrievalInput.budgets;
+  if (budgets === undefined) throw new Error("adapter omitted explicit query budgets");
+  const requestDigest = await retrievalRequestDigest({
+    raw_query: retrievalInput.raw_query,
+    product: retrievalInput.product,
+    literals: retrievalInput.literals,
+    requested_limit: retrievalInput.requested_limit,
+    scope_digest: scope.digest,
+    budgets,
+  });
   const evidence = input.withEvidence === true ? await resolvedEvidence(scope) : undefined;
   const resultTraceBase = {
     trace_ref: { id: input.corruptPackRef === true ? "mrt1-" + "9".repeat(48) : traceRef, revision: 1 },
@@ -331,7 +343,11 @@ async function retrievalExecution(input: {
       ...resultTraceBase,
       protocol: MANAGED_RETRIEVAL_TRACE_PROTOCOL,
       managed_ranking_outcomes: [{
-        ...managedOutcome({ query: retrievalInput.raw_query, withEvidence: evidence !== undefined }),
+        ...managedOutcome({
+          query: retrievalInput.raw_query,
+          withEvidence: evidence !== undefined,
+          requestDigest: input.foreignOutcomeDigest ?? requestDigest,
+        }),
         scoped_invocation_id: executionIds.scoped_invocation_id,
       }],
     });
@@ -348,16 +364,6 @@ async function retrievalExecution(input: {
     trace,
     coverage_claim: resolved.length === 0 ? "NONE" : "SAMPLED",
   };
-  const budgets = retrievalInput.budgets;
-  if (budgets === undefined) throw new Error("adapter omitted explicit query budgets");
-  const requestDigest = await retrievalRequestDigest({
-    raw_query: retrievalInput.raw_query,
-    product: retrievalInput.product,
-    literals: retrievalInput.literals,
-    requested_limit: retrievalInput.requested_limit,
-    scope_digest: scope.digest,
-    budgets,
-  });
   const expectedBudgets: RetrievalRequestBudgets = input.driftBudgets === true
     ? { ...budgets, candidate_limit: budgets.candidate_limit + 1 }
     : { ...budgets };
@@ -442,10 +448,31 @@ describe("held-scope branch query execution adapter", () => {
     expect(result.query_legs).toHaveLength(1);
     const managedTrace = ManagedRetrievalTraceSchema.parse(result.query_legs[0]?.trace);
     expect(managedTrace.managed_ranking_outcomes).toHaveLength(1);
+    expect(managedTrace.managed_ranking_outcomes[0]?.request_digest)
+      .toBe(result.query_legs[0]?.retrieval_request_digest);
     expect(managedTrace.trace_ref.id).toMatch(/^mrt1-[a-f0-9]{48}$/u);
     expect(result.resolved_evidence).toHaveLength(1);
     expect(result.resolved_evidence[0]?.handle.handle_ref.id).toBe("evidence-handle-1");
     expect(result.stop_reason).toBe("FIRST_ADMISSIBLE_EVIDENCE");
+  });
+
+  it("rejects a managed outcome bound to a foreign request digest at the adapter boundary", async () => {
+    const scope = scopeFixture();
+    const plan = await planFixture({ scope });
+    const input = testInput(scope, plan);
+    const ports = portsFor({
+      scope,
+      access: input.access,
+      retrieve: (_env, retrievalInput) => retrievalExecution({
+        scope,
+        access: input.access,
+        retrievalInput,
+        foreignOutcomeDigest: "8".repeat(64),
+      }),
+    });
+
+    await expect(executeResearchBranchQueryPlanWithPorts(input, input.dependencies, ports))
+      .rejects.toMatchObject({ code: "WORKFLOW_OUTPUT_CORRUPT" });
   });
 
   it("runs deterministic no-proposal legs to a no-hit result without inventing evidence", async () => {

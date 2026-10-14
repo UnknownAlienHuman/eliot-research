@@ -501,6 +501,7 @@ export async function executeResearchBranchQueryPlanWithPorts(
         outcome === undefined ||
         managedTrace.protocol !== MANAGED_RETRIEVAL_TRACE_PROTOCOL ||
         outcome.scoped_invocation_id !== invocation.scoped_invocation_id ||
+        outcome.request_digest !== expectedDigest ||
         settlement.execution_id !== invocation.execution_id ||
         settlement.receipt_ref !== `budget-${invocation.execution_id}` ||
         traceRef.id !== expectedTraceRef ||
