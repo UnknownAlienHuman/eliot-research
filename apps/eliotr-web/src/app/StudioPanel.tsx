@@ -96,22 +96,16 @@ export function StudioPanel({ apis, privacy, context, locale }: {
         write(old => old.intent?.key === intent.key ? { ...old, intent: { ...intent, phase: 'rejected' } } : old);
         return;
       }
-      // The publication is canonical, so record the receipt and the proposal it belongs to before
-      // reading it back. The identity stays until the readback matches it.
+      // A canonical publication receipt closes the mutation intent. Keep the receipt tied to its
+      // exact proposal while the follow-up read confirms or reports lag; the receipt itself keeps
+      // this proposal from exposing another publish action.
       write(old => {
         if (old.intent?.key !== intent.key) return old;
-        return { ...old, intent: { ...intent, phase: 'unknown' }, published: result, publishedProposalRef: intent.base.proposal_ref };
+        const { intent: _intent, ...rest } = old;
+        return { ...rest, published: result, publishedProposalRef: intent.base.proposal_ref };
       });
       try {
-        const fresh = await client.fetchQuery(options.proposal(intent.base.proposal_ref));
-        if (fresh.state === 'PUBLISHED' && sameRef(fresh.proposal_ref, intent.base.proposal_ref) &&
-            sameRef(fresh.page.page_ref, intent.base.page.page_ref)) {
-          write(old => {
-            if (old.intent?.key !== intent.key) return old;
-            const { intent: _intent, ...rest } = old;
-            return rest;
-          });
-        }
+        await client.fetchQuery(options.proposal(intent.base.proposal_ref));
       } catch {
         // The protected proposal query owns this read failure and its read-only retry. It must never
         // be reclassified as a mutation failure, because the publication already succeeded and

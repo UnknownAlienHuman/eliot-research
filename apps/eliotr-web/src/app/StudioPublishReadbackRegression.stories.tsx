@@ -436,7 +436,9 @@ async function playStudioPublishReadbackRegression({ canvas, userEvent }: {
   }
   environment.assertReadbackRetry();
 
-  await userEvent.click(await canvas.findByRole('button', { name: new RegExp(staleTitle) }));
+  const staleChoice = await canvas.findByRole('button', { name: new RegExp(staleTitle) });
+  if (staleChoice.matches(':disabled')) throw new Error('Confirmed publication readback left proposal selection blocked');
+  await userEvent.click(staleChoice);
   await canvas.findByText(staleBody, { selector: '.er-studio-live__body' });
   await userEvent.click(await canvas.findByRole('button', { name: 'Publish page', exact: true }));
   await userEvent.click(await canvas.findByRole('button', { name: 'Confirm publication', exact: true }));
