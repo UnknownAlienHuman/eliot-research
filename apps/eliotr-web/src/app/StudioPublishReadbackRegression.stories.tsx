@@ -393,7 +393,7 @@ async function playStudioPublishReadbackRegression({ canvas, userEvent }: {
 }) {
   let firstChoice: HTMLElement;
   try {
-    firstChoice = await canvas.findByRole('button', { name: readbackTitle, exact: false });
+    firstChoice = await canvas.findByRole('button', { name: new RegExp(readbackTitle) });
   } catch (error) {
     const root = document.querySelector<HTMLElement>('[data-studio-publish-readback-regression]');
     const environment = root ? studioEnvironments.get(root) : undefined;
@@ -405,6 +405,8 @@ async function playStudioPublishReadbackRegression({ canvas, userEvent }: {
       ? { current: environment.privacy.isCurrent(snapshot.context), bound: environment.runtime.read(snapshot.context) !== undefined }
       : { phase: snapshot?.phase };
     throw new Error('Studio fixture did not load its proposal: ' + JSON.stringify({ failedQueries, binding,
+      queryStates: environment?.client.getQueryCache().getAll().map(query => ({ key: query.queryKey, status: query.state.status, fetchStatus: query.state.fetchStatus })),
+      rendered: root?.querySelector('.er-studio-live')?.textContent,
       requests: environment?.requestEventsSince(0) }), { cause: error });
   }
   const root = firstChoice.closest<HTMLElement>('[data-studio-publish-readback-regression]');
@@ -434,7 +436,7 @@ async function playStudioPublishReadbackRegression({ canvas, userEvent }: {
   }
   environment.assertReadbackRetry();
 
-  await userEvent.click(await canvas.findByRole('button', { name: staleTitle, exact: false }));
+  await userEvent.click(await canvas.findByRole('button', { name: new RegExp(staleTitle) }));
   await canvas.findByText(staleBody, { selector: '.er-studio-live__body' });
   await userEvent.click(await canvas.findByRole('button', { name: 'Publish page', exact: true }));
   await userEvent.click(await canvas.findByRole('button', { name: 'Confirm publication', exact: true }));
@@ -456,7 +458,7 @@ async function playStudioPublishReadbackRegression({ canvas, userEvent }: {
   }
   environment.assertStaleSuccess();
 
-  await userEvent.click(await canvas.findByRole('button', { name: decoderTitle, exact: false }));
+  await userEvent.click(await canvas.findByRole('button', { name: new RegExp(decoderTitle) }));
   await canvas.findByText(decoderBody, { selector: '.er-studio-live__body' });
   await userEvent.click(await canvas.findByRole('button', { name: 'Publish page', exact: true }));
   await userEvent.click(await canvas.findByRole('button', { name: 'Confirm publication', exact: true }));
