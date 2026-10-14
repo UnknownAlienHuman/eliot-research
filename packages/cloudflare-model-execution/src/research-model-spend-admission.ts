@@ -540,6 +540,7 @@ export function createD1ResearchModelSpendAdmissionPort(database: D1Database, op
       }
       return Object.freeze({ authorization_ref: record.authorization_ref, decision_digest: record.decision_digest, operation_id: record.operation_id, principal_ref: record.principal_ref, stage_attempt_ref: record.stage_attempt_ref, stage_request_sha256: record.stage_request_sha256, reservation_id: record.reservation_id, quote_ref: record.quote_ref, route_ref: record.route_ref, scope_snapshot_ref: record.scope_snapshot_ref, workflow_authorization_receipt_ref: record.workflow_authorization_receipt_ref, policy_generation: record.policy_generation, currentness_digest: record.currentness_digest, expires_at: record.expires_at, expected_deployment: record.expected_deployment,
         ...(before.model_selection === undefined ? {} : { model_selection: before.model_selection,
+          ...(before.native_authority_binding === undefined ? {} : { native_authority_binding: before.native_authority_binding }),
           run_configuration_mode: before.run_configuration_mode }) });
     },
     async readPreparation(rawInput: ResearchSynthesisSpendAdmissionReadRequest): Promise<ResearchSynthesisSpendAdmissionRecord | null> {
