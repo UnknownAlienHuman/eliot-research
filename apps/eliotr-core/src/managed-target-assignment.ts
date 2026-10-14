@@ -291,17 +291,18 @@ export function createManagedTargetAssignmentService(
     });
   }
 
-  function assertCurrentProjectEvent(
+  function assertAssignableProjectEvent(
     event: ManagedTargetAssignmentEvent | null,
     current: CurrentAssignmentHead,
   ): void {
     if (event !== null && (
-      event.project_generation !== current.project_generation ||
-      event.project_owner_principal_ref !== current.project_owner_principal_ref
+      event.project_owner_principal_ref !== current.project_owner_principal_ref ||
+      event.project_generation > current.project_generation ||
+      (event.project_generation < current.project_generation && event.event_kind !== "RETIRE")
     )) {
       throw new ManagedTargetAssignmentError(
         "MANAGED_TARGET_ASSIGNMENT_PROJECT_AUTHORITY_STALE",
-        "The assignment head belongs to a prior project owner or generation",
+        "The assignment head is foreign, future-generation, or an unretired prior-generation assignment",
       );
     }
   }
@@ -450,7 +451,7 @@ export function createManagedTargetAssignmentService(
       configuredTarget,
     );
     const head = current.head_event;
-    assertCurrentProjectEvent(head, current);
+    assertAssignableProjectEvent(head, current);
     const headRevision = head?.event_revision ?? 0;
     if (head !== null && matchesIntent(head, command)) return head;
     if (headRevision !== expectedEventRevision) {
