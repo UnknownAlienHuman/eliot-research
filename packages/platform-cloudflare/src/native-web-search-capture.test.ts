@@ -271,7 +271,7 @@ describe("native Web Search Browser Run raw capture adapter", () => {
       subscribe(type, listener, options);
       if (type === "abort") queueMicrotask(() => caller.abort());
     });
-    const port = owner({ readRawFileByIdempotency: vi.fn(async () => null) });
+    const port = { ...owner(), readRawFileByIdempotency: vi.fn(async () => null) };
     const adapter = createNativeWebSearchMarkdownCaptureAdapter({
       browser: browser(quickAction as never), owner: port, selection: selection(),
     });
