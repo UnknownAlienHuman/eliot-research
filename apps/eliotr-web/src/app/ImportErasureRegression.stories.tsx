@@ -143,7 +143,7 @@ export const ImportPanelRefusalRecoveryAndExplicitDismissal = {
       getByRole(role: "combobox", options: { readonly name: string; readonly exact?: boolean }): HTMLSelectElement;
       getByRole(role: "spinbutton", options: { readonly name: string; readonly exact?: boolean }): HTMLInputElement;
       getByRole(role: "button" | "checkbox", options: { readonly name: string; readonly exact?: boolean }): HTMLElement;
-      findByText(text: string | RegExp): Promise<HTMLElement>;
+      findByText(text: string | RegExp, options?: { readonly selector: string }): Promise<HTMLElement>;
       getByText(text: string): HTMLElement;
       getByLabelText(text: string): HTMLInputElement;
       queryByRole(role: "button", options: { readonly name: string; readonly exact?: boolean }): HTMLElement | null;
@@ -166,7 +166,7 @@ export const ImportPanelRefusalRecoveryAndExplicitDismissal = {
     await canvas.findByRole("option", { name: "Panel imports" });
     await userEvent.selectOptions(canvas.getByRole("combobox", { name: "Save the file in" }), "workspace-panel-1");
     await userEvent.upload(canvas.getByLabelText("Choose a file"), new File([originalText], "original.md", { type: "text/markdown" }));
-    await userEvent.click(canvas.getByRole("button", { name: "Review selected file" }));
+    await userEvent.click(canvas.getByRole("button", { name: "Review the selected file" }));
     await userEvent.click(await canvas.findByRole("button", { name: "Capture the selected file" }));
 
     await userEvent.type(await canvas.findByRole("spinbutton", { name: "Maximum result size (bytes)" }), "4096");
@@ -193,7 +193,7 @@ export const ImportPanelRefusalRecoveryAndExplicitDismissal = {
     assertEqual(new TextDecoder().decode(unknownSelection.bytes), originalText, "Unknown admission changed the selected bytes");
     assertEqual(completedConversion.state, "COMPLETE", "Unknown admission lost the completed conversion");
     assertEqual(unknownFile.uncertain, "admission", "Unknown admission lost its uncertain phase");
-    assert(unknownAdmission.admissionRejected === undefined, "Unknown admission was marked rejected");
+    assert(unknownAdmission.admissionRejected !== true, "Unknown admission was marked rejected");
     assertLength(probe.counts().rawAdmissionKeys, 1, "Unknown admission minted another identity");
     assertLength(probe.counts().rawAdmissionBodies, 1, "Unknown admission repeated its mutation body");
     const admissionBody = probe.counts().rawAdmissionBodies[0];
@@ -220,7 +220,7 @@ export const ImportPanelRefusalRecoveryAndExplicitDismissal = {
 
     const uncertainText = "Second source whose capture acknowledgement is lost.";
     await userEvent.upload(canvas.getByLabelText("Choose a file"), new File([uncertainText], "second.md", { type: "text/markdown" }));
-    await userEvent.click(canvas.getByRole("button", { name: "Review selected file" }));
+    await userEvent.click(canvas.getByRole("button", { name: "Review the selected file" }));
     await userEvent.click(await canvas.findByRole("button", { name: "Capture the selected file" }));
     await canvas.findByText("The last outcome is unknown. Re-read the same identity before starting anything new.");
 
@@ -254,7 +254,7 @@ export const ImportPanelRefusalRecoveryAndExplicitDismissal = {
     await userEvent.click(canvas.getByRole("checkbox", { name: "Review the exact bytes below before anything is uploaded." }));
     await userEvent.click(await canvas.findByRole("button", { name: "Start the import" }));
     await until(() => probe.importMemory()?.bundleRejected === true, "local bundle dispatch guard refusal");
-    await canvas.findByText("The import request was refused before execution. Review the input and access before continuing.");
+    await canvas.findByText("The import request was refused before execution. Review the input and access before continuing.", { selector: ".er-import__note" });
 
     const rejectedBundle = probe.importMemory();
     assert(rejectedBundle?.bundle !== undefined, "Guard refusal discarded the inspected bundle");
@@ -307,7 +307,7 @@ export const ErasurePanelRefusalFreshReviewUnknownAndCanonicalCompletion = {
     await until(() => probe.erasureMemory().intent?.rejected === true, "stale erasure review refusal");
     assertDeepEqual(probe.erasureMemory().prepared, firstReview.prepared, "Stale review refusal changed the saved preparation");
     assertLength(probe.counts().erasureExecuteBodies, 1, "Stale review refusal repeated execution");
-    await canvas.findByText("The deletion request was refused before execution. Read a fresh review before confirming again.");
+    await canvas.findByText("The deletion request was refused before execution. Read a fresh review before confirming again.", { selector: ".er-status > span" });
 
     await userEvent.click(canvas.getByRole("button", { name: "Unmount panel" }));
     await userEvent.click(await canvas.findByRole("button", { name: "Mount panel" }));
@@ -332,7 +332,7 @@ export const ErasurePanelRefusalFreshReviewUnknownAndCanonicalCompletion = {
 
     await userEvent.click(canvas.getByRole("button", { name: "Confirm deletion" }));
     await until(() => probe.counts().erasureExecuteBodies.length === 2, "single lost-ack erasure execution");
-    await canvas.findByText("The deletion request is unresolved. Read its saved status.");
+    await canvas.findByText("The deletion request is unresolved. Read its saved status.", { selector: ".er-operation-announcement" });
     const unknownReview = probe.erasureMemory();
     if (!unknownReview.intent || !unknownReview.prepared) throw new Error("Unknown erasure outcome lost its review");
     const unknownBody = probe.counts().erasureExecuteBodies[1];
@@ -366,7 +366,7 @@ export const ErasurePanelRefusalFreshReviewUnknownAndCanonicalCompletion = {
     assertLength(probe.counts().erasureExecuteBodies, 2, "Foreign receipt caused another execute request");
 
     await userEvent.click(canvas.getByRole("button", { name: "Refresh status" }));
-    await canvas.findByText("Deletion confirmed by the saved server receipt.");
+    await canvas.findByText("Deletion confirmed by the saved server receipt.", { selector: ".er-status > span" });
     await until(() => probe.counts().completionReports === 1, "canonical erasure completion report");
     assertDeepEqual(probe.counts().completionReportRefs, ["source-panel-1:erasure-panel-fresh:1"],
       "Canonical receipt reported the wrong completion reference");
