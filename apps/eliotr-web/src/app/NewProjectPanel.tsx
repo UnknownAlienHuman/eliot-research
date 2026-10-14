@@ -67,7 +67,10 @@ export function NewProjectPanel(props: NewProjectPanelProps) {
   const scopeReady = ids.length > 0 && ids.length === scope.length && ids.length <= PROJECT_MAX_SOURCE_IDS;
   const announcement = usePaneAnnouncement(text.phases[state.phase]);
   return <Dialog open={open} title={text.dialog} onClose={() => { if (!busy) onClose(); }}>
-    <OperationAnnouncement>{announcement}</OperationAnnouncement>
+    {/* A closed dialog owns no live region: the pane it sat in must expose exactly one operation channel, so a
+        retained dialog may not keep a second region mounted. The announcement is ephemeral presentation state and
+        the controller's identity and unconfirmed state survive the close unchanged. */}
+    {open && <OperationAnnouncement>{announcement}</OperationAnnouncement>}
     <p>{text.lead}</p>
     <form className="er-live-import-settings" onSubmit={event => {
       event.preventDefault();
