@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { LOGIN_INSTRUCTION, loadWranglerOAuthCredential, resolveAuthMode,
   scrubTokenEnv, verifyWranglerOAuthAccount, WRANGLER_OAUTH_MODE } from "./lib/cloudflare-wrangler-oauth.mjs";
 import { isUsageAdmissionCapability, runUsagePreflight } from "./lib/cloudflare-usage-admission.mjs";
+import { classifyAiSearchRequiredTopology } from "./lib/cloudflare-ai-search-required-topology.mjs";
 import { assertAiSearchPrebillingManifest, consumeAiSearchPrebillingMetadataPost,
   issueAiSearchPrebillingMetadataCapability } from "./lib/cloudflare-ai-search-prebilling-capability.mjs";
 
@@ -95,6 +96,16 @@ const manifestSource = await readFile(
   "utf8",
 );
 const desired = JSON.parse(manifestSource);
+// Required topology, not a provider quota. Cloudflare's current published
+// limits allow far more instances than the manifest declares (100 per account
+// on Workers Free, 5,000 on Workers Paid; official limits-pricing page, last
+// updated Oct 1, 2026). Admission here is the assembled runtime's selected
+// instance set: a profile with no producer, no query consumer and no named
+// runtime instance is deferred design state and never blocks a release.
+const requiredTopology = classifyAiSearchRequiredTopology(desired);
+const requiredSpecs = desired.instances.filter((spec) =>
+  requiredTopology.required.includes(spec.id));
+const deferredIds = requiredTopology.deferred;
 let prebillingCapability = null;
 const prebillingGetPaths = new Set();
 if (prebillingMetadata) {
@@ -482,7 +493,7 @@ const namespaceCollectionPath =
   `/accounts/${enc(accountId)}/ai-search/namespaces`;
 if (prebillingMetadata) {
   prebillingGetPaths.add(namespacePath);
-  for (const spec of desired.instances) {
+  for (const spec of requiredSpecs) {
     prebillingGetPaths.add(`${namespacePath}/instances/${enc(spec.id)}`);
   }
 }
@@ -500,10 +511,12 @@ if (namespace === null && checkOnly) {
         namespace: desired.namespace,
         namespace_disposition: "CREATE",
         generation: desired.generation,
-        instances: desired.instances.map((spec) => ({
+        required_topology: requiredTopology,
+        instances: requiredSpecs.map((spec) => ({
           id: spec.id,
           disposition: "CREATE",
         })),
+        deferred: deferredIds,
       },
       null,
       2,
@@ -547,7 +560,7 @@ if (namespace === null) {
 }
 
 const receipts = [];
-for (const spec of desired.instances) {
+for (const spec of requiredSpecs) {
   const path = `${namespacePath}/instances/${enc(spec.id)}`;
   const existing = await request("GET", path, undefined, true);
   if (existing !== null) {
@@ -557,7 +570,8 @@ for (const spec of desired.instances) {
     continue;
   }
   if (verifyExisting) {
-    throw new Error(`--verify-existing found missing resource: AI Search instance ${spec.id}`);
+    throw new Error(`--verify-existing found missing resource: AI Search instance ${spec.id}` +
+      ` (runtime-required topology; deferred profiles ${deferredIds.join(", ")} are not gated)`);
   }
   if (checkOnly) {
     receipts.push({ id: spec.id, disposition: "CREATE" });
@@ -602,6 +616,8 @@ console.log(
       generation: desired.generation,
       embedding_generation: desired.embedding_generation,
       instances: receipts,
+      required_topology: requiredTopology,
+      deferred: deferredIds,
       activation_state: "SHADOW_PENDING_T2_T3_AND_ITEM_COUNT_READBACK",
     },
     null,

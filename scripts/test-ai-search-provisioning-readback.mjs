@@ -11,8 +11,12 @@ const desired = JSON.parse(
 );
 const accountId = "mock-account-ai-search-readback";
 const first = desired.instances[0];
+// Required topology: only the runtime-selected instance gates check-only and
+// verify-existing. private-literal-g2 and the other three profiles are deferred
+// design records with no assembled producer/consumer, so their drift and their
+// absence must never block the assembled product.
 const literal = desired.instances.find((instance) => instance.id === "private-literal-g2");
-assert(literal, "private literal AI Search fixture must exist");
+assert(literal, "private literal AI Search fixture must exist as a deferred profile");
 let mode = "compatible";
 let mutations = 0;
 
@@ -98,6 +102,15 @@ function providerReadback(spec = first) {
   if (spec.id === literal.id && mode === "literal-reranking-enabled-empty-model") {
     readback.reranking = true;
   }
+  if (spec.id === first.id && mode === "prose-embedding-model-drift") {
+    readback.embedding_model = "@cf/unknown/alternate-embedding";
+  }
+  if (spec.id === first.id && mode === "prose-reranking-model-drift") {
+    readback.reranking_model = "@cf/baai/bge-m3";
+  }
+  if (spec.id === first.id && mode === "prose-index-method-drift") {
+    readback.index_method = { vector: true, keyword: false };
+  }
   if (mode === "instance-namespace-drift") readback.namespace = "foreign-namespace";
   if (mode === "chunk-drift") readback.chunk = false;
   return readback;
@@ -140,9 +153,10 @@ const server = createServer((req, res) => {
   const instancePrefix = `${namespacePath}/instances/`;
   if (method === "GET" && url.pathname.startsWith(instancePrefix)) {
     const id = decodeURIComponent(url.pathname.slice(instancePrefix.length));
-    if (id === first.id || id === literal.id) {
-      const spec = id === first.id ? first : literal;
-      response(res, 200, { success: true, result: providerReadback(spec) });
+    if (id === first.id) {
+      response(res, 200, { success: true, result: providerReadback(first) });
+    } else if (id === literal.id && mode !== "deferred-instances-absent") {
+      response(res, 200, { success: true, result: providerReadback(literal) });
     } else {
       response(res, 404, {
         success: false,
@@ -215,27 +229,20 @@ try {
   );
   assert.equal(mutations, 0, "compatible check-only path mutated provider state");
 
-  mode = "literal-embedding-model-drift";
-  expectDrift(await runProvisioner(), "embedding_model");
-  assert.equal(mutations, 0, "alternate disabled-vector embedding model path mutated provider state");
+  // Deferred profiles are read-only design records: their drift and their
+  // absence are reported, never fatal, and never gating for the assembled
+  // product. The primary immutable-field proof below stays exact.
+  for (const deferredDrift of ["literal-embedding-model-drift",
+    "literal-fusion-default-drift", "literal-reranking-model-drift",
+    "literal-vector-enabled-default-model", "literal-reranking-enabled-empty-model"]) {
+    mode = deferredDrift;
+    expectPass(await runProvisioner(), "deferred profile drift is not gating: " + deferredDrift);
+    assert.equal(mutations, 0, "deferred profile drift " + deferredDrift + " mutated provider state");
+  }
 
-  mode = "literal-fusion-default-drift";
-  expectDrift(await runProvisioner(), "fusion_method");
-  assert.equal(mutations, 0, "alternate literal fusion method path mutated provider state");
-
-  mode = "literal-reranking-model-drift";
-  expectDrift(await runProvisioner(), "reranking_model");
-  assert.equal(mutations, 0, "configured disabled-reranking model path mutated provider state");
-
-  mode = "literal-vector-enabled-default-model";
-  const enabledVectorDefault = expectDrift(await runProvisioner(), "index_method");
-  assert.match(`${enabledVectorDefault.stdout}\n${enabledVectorDefault.stderr}`, /"field": "embedding_model"/u);
-  assert.equal(mutations, 0, "embedding default with vector search enabled mutated provider state");
-
-  mode = "literal-reranking-enabled-empty-model";
-  const enabledRerankingEmpty = expectDrift(await runProvisioner(), "reranking");
-  assert.match(`${enabledRerankingEmpty.stdout}\n${enabledRerankingEmpty.stderr}`, /"field": "reranking_model"/u);
-  assert.equal(mutations, 0, "empty model with reranking enabled mutated provider state");
+  mode = "deferred-instances-absent";
+  expectPass(await runProvisioner(), "absent deferred profiles do not block check-only");
+  assert.equal(mutations, 0, "absent deferred profiles mutated provider state");
 
   mode = "prose-explicit-default-lookalikes";
   const explicitProseDrift = expectDrift(await runProvisioner(), "embedding_model");

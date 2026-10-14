@@ -11,6 +11,7 @@ import {
   verifyWranglerOAuthAccount,
   WRANGLER_OAUTH_MODE,
 } from "./cloudflare-wrangler-oauth.mjs";
+import { classifyAiSearchRequiredTopology } from "./cloudflare-ai-search-required-topology.mjs";
 
 export const AI_SEARCH_PREBILLING_CUTOFF_MS = Date.parse("2026-10-31T00:00:00.000Z");
 
@@ -28,7 +29,12 @@ const MANAGED_INSTANCE_IDS = Object.freeze([
 const PAGE_SIZE = 100;
 const PAGE_LIMIT = 50;
 const NAMESPACE_LIMIT = 100;
-const INSTANCE_LIMIT = 100;
+// Bound complete inventory decoding by the documented global maximum (Paid).
+// This is not this account's quota or proof of headroom: Free is 100, Paid is
+// 5,000, and the actual account tier is not inferred from desired topology.
+// Metadata-only capability stays limited to exact source-free required POSTs;
+// heavy operations still require the separate authoritative usage admission.
+const INSTANCE_INVENTORY_BOUND = PAGE_SIZE * PAGE_LIMIT;
 const FORBIDDEN_CREATE_FIELDS = new Set([
   "source", "sources", "items", "item", "itemcount", "r2bucket", "r2bucketname",
   "sourceurl", "importurl", "crawlurl", "sitemapurl", "documentsurl", "documenturl",
@@ -102,8 +108,8 @@ function hasForbiddenSourceField(value) {
 function validateManifest(manifest) {
   if (!isObject(manifest) || manifest.protocol !== "eliotr.ai-search-generation.v1" ||
       manifest.namespace !== "eliotr" || manifest.generation !== MANIFEST_GENERATION ||
-      !Array.isArray(manifest.instances) || manifest.instances.length !== 5) {
-    fail("only the fixed five-instance eliotr manifest is eligible");
+      !Array.isArray(manifest.instances) || manifest.instances.length === 0) {
+    fail("only the eliotr generation manifest with at least one instance is eligible");
   }
   const ids = new Set();
   for (const spec of manifest.instances) {
@@ -115,7 +121,19 @@ function validateManifest(manifest) {
     ids.add(spec.id);
   }
   if (MANAGED_INSTANCE_IDS.some((id) => !ids.has(id))) {
-    fail("manifest instance identities differ from the approved metadata set");
+    // Only the runtime-required topology is an eligible metadata target. A
+    // deferred profile may stay in the manifest as design intent, but this
+    // capability never authorizes a metadata POST for it, and every
+    // runtime-selected profile must still be advertised exactly.
+    const topology = classifyAiSearchRequiredTopology(manifest);
+    if (topology.required.some((id) => !ids.has(id))) {
+      fail("manifest is missing a runtime-required instance for the approved metadata set");
+    }
+    for (const id of topology.required) {
+      if (MANAGED_INSTANCE_IDS.some((managed) => managed === id) === false) {
+        fail("manifest advertises a runtime-required instance outside the approved metadata set: " + id);
+      }
+    }
   }
 }
 
@@ -269,7 +287,7 @@ export function planAiSearchPrebillingMetadataPosts({ accountId, manifest, manif
   // return an id field.
   validateRows(namespaceRows, ["name"], "namespace");
   if (namespaceRows.length > NAMESPACE_LIMIT || instancesByNamespace.size !== namespaceRows.length) {
-    fail("complete account inventory exceeds the free metadata limit or is partial");
+    fail("complete namespace inventory exceeds the documented bound or is partial");
   }
   let totalInstances = 0;
   for (const namespace of namespaceRows) {
@@ -280,17 +298,26 @@ export function planAiSearchPrebillingMetadataPosts({ accountId, manifest, manif
   for (const name of instancesByNamespace.keys()) {
     if (!namespaceRows.some((namespace) => namespace.name === name)) fail("instance inventory contains an unknown namespace");
   }
-  if (totalInstances > INSTANCE_LIMIT) fail("complete account inventory exceeds the free instance limit");
+  if (totalInstances > INSTANCE_INVENTORY_BOUND) fail("complete instance inventory exceeds the bounded decoder");
 
   const enc = encodeURIComponent;
   const namespacePath = `/accounts/${enc(accountId)}/ai-search/namespaces/${enc(manifest.namespace)}`;
   const namespaceCollectionPath = `/accounts/${enc(accountId)}/ai-search/namespaces`;
   const existingNamespace = namespaceRows.find((row) => row.name === manifest.namespace);
   const existingIds = new Set((existingNamespace ? instancesByNamespace.get(manifest.namespace) : []).map((row) => row.id));
-  const missingSpecs = manifest.instances.filter((spec) => !existingIds.has(spec.id));
+  // Only the runtime-required topology may be created by this capability.
+  // A deferred profile has no producer, consumer, query rule or named runtime
+  // instance, so a metadata POST for it is out of scope even though the
+  // manifest still records it as design intent.
+  const requiredTopology = classifyAiSearchRequiredTopology(manifest);
+  const requiredIds = new Set(requiredTopology.required);
+  const missingSpecs = manifest.instances.filter((spec) => requiredIds.has(spec.id) && !existingIds.has(spec.id));
   if (!existingNamespace && namespaceRows.length + 1 > NAMESPACE_LIMIT) fail("namespace metadata limit would be exceeded");
-  if (totalInstances + missingSpecs.length > INSTANCE_LIMIT) fail("instance metadata limit would be exceeded");
 
+  const deferredPresent = manifest.instances
+    .filter((spec) => requiredIds.has(spec.id) === false && existingIds.has(spec.id))
+    .map((spec) => spec.id);
+  const deferredAbsent = requiredTopology.deferred.filter((id) => existingIds.has(id) === false);
   const posts = [];
   if (!existingNamespace) {
     const body = { name: manifest.namespace, description: NAMESPACE_DESCRIPTION };
@@ -308,6 +335,9 @@ export function planAiSearchPrebillingMetadataPosts({ accountId, manifest, manif
     manifestDigest: sha256(sourceBytes(manifestSource)),
     accountId,
     posts,
+    required_topology: requiredTopology,
+    deferred_present: deferredPresent,
+    deferred_absent: deferredAbsent,
     inventoryDigest: sha256(canonicalJson({
       namespaces: namespaceRows.map(({ name }) => ({ name })).sort((a, b) => a.name.localeCompare(b.name)),
       instances: [...instancesByNamespace.entries()].map(([name, rows]) => ({
