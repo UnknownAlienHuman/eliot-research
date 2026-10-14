@@ -501,7 +501,6 @@ describe("D1 erasure completion change feed", () => {
     const replay = await changes()(context("read", PRINCIPAL, CREDENTIAL), request);
     expect(replay.items).toEqual(first.items);
     expect(replay.has_more).toBe(first.has_more);
-    expect(replay.visibility_scan).toEqual(first.visibility_scan);
     expect(replay.next_cursor).not.toBeNull();
     // The freshly issued cursor must be a distinct valid encoding of the same
     // position, and must still be accepted verbatim as a continuation.

@@ -89,7 +89,7 @@ export async function prepareHistoricalV2Workflow(
   searchRuntime?: HistoricalV2SearchRuntime,
 ): Promise<HistoricalV2SessionFixture> {
   const f = await workflowFixture(tag, "exploratory");
-  const selectedSearchRuntime = searchRuntime ?? await (async () => {
+  const selectedSearchRuntime: HistoricalV2SearchRuntime = searchRuntime ?? await (async () => {
     const indexed = await import("./research-retrieve-fixture.js");
     return { search_database: indexed.runtime.SEARCH_DB, search_migrations: indexed.runtime.SEARCH_MIGRATIONS };
   })();
