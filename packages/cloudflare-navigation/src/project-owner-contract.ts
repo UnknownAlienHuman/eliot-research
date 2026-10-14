@@ -102,6 +102,7 @@ export interface ProjectBaseRow {
   readonly project_id: unknown;
   readonly title: unknown;
   readonly generation: unknown;
+  readonly membership_generation: unknown;
   readonly created_at: unknown;
   readonly principal_ref: unknown;
   readonly deployment_generation: unknown;
@@ -111,6 +112,7 @@ export interface ProjectBase {
   readonly project_id: string;
   readonly title: string;
   readonly revision: number;
+  readonly membership_generation: number;
   readonly created_at: string;
   readonly principal_ref: string;
   readonly deployment_generation: string;
