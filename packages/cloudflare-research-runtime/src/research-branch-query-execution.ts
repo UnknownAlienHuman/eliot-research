@@ -35,9 +35,15 @@ import {
   type HeldScopeRetrievalInput,
   type ResearchRetrievalEnvironment,
 } from "./research-retrieval-composition.js";
+import {
+  assertBranchQueryBudgetSettlement,
+  aggregateBranchQueryBudgetExhaustion,
+  branchQueryBudgetSettlementEvidence,
+} from "./research-branch-query-budget-settlement.js";
 
 const BRANCH_QUERY_RETRIEVAL_DEADLINE_MS = 30_000;
 const RESULT_DOMAIN = "eliotr.research.branch-query-result.v1";
+type BranchQueryBudgetExhaustion = NonNullable<BranchQueryResult["budget_exhaustion"]>;
 const PLAN_DOMAIN = "eliotr.research.branch-query-plan.v1";
 const LEG_DOMAIN = "eliotr.research.branch-query-leg.v1";
 const QUESTION_DOMAIN = "eliotr.research.branch-query-question.v1";
@@ -296,26 +302,6 @@ function requestBudgets(value: BranchQueryPlan["budgets"]): RetrievalRequestBudg
   });
 }
 
-function assertSettlement(input: {
-  readonly execution: RetrievalQueryExecutionV1;
-  readonly expectedBudgets: RetrievalRequestBudgets;
-  readonly expectedDigest: string;
-}): NonNullable<RetrievalQueryExecutionV1["budget_settlement"]> {
-  const receipt = input.execution.budget_settlement;
-  if (receipt === undefined || receipt.request_digest !== input.expectedDigest ||
-      canonicalEvidenceJson(receipt.request_budgets) !== canonicalEvidenceJson(input.expectedBudgets) ||
-      !Number.isSafeInteger(receipt.usage.candidateUnitsUsed) || receipt.usage.candidateUnitsUsed < 0 ||
-      receipt.usage.candidateUnitsUsed > input.expectedBudgets.candidate_limit ||
-      !Number.isSafeInteger(receipt.usage.exactResolverScanUnitsUsed) || receipt.usage.exactResolverScanUnitsUsed < 0 ||
-      receipt.usage.exactResolverScanUnitsUsed > input.expectedBudgets.scan_limit ||
-      !Number.isSafeInteger(receipt.usage.evidenceItemsUsed) || receipt.usage.evidenceItemsUsed < 0 ||
-      receipt.usage.evidenceItemsUsed > input.expectedBudgets.evidence_limit ||
-      !Number.isSafeInteger(receipt.usage.evidenceBytesUsed) || receipt.usage.evidenceBytesUsed < 0) {
-    fail("WORKFLOW_OUTPUT_CORRUPT");
-  }
-  return receipt;
-}
-
 function decrementBudgets(
   available: RetrievalRequestBudgets,
   used: NonNullable<RetrievalQueryExecutionV1["budget_settlement"]>["usage"],
@@ -425,17 +411,15 @@ export async function executeResearchBranchQueryPlanWithPorts(
   const deadlineMs = Date.now() + BRANCH_QUERY_RETRIEVAL_DEADLINE_MS;
   const signal = principal.signal ?? new AbortController().signal;
   let remaining = requestBudgets(plan.budgets);
-  let budgetExhausted = false;
+  let budgetExhaustion: BranchQueryBudgetExhaustion | undefined;
   let firstEvidenceStop = false;
   const queryLegs: BranchQueryResult["query_legs"] = [];
+  const budgetSettlements: BranchQueryBudgetExhaustion["settlements"][number][] = [];
   const evidenceByHandle = new Map<string, ResolvedEvidence>();
 
   for (const leg of plan.query_legs) {
     if (cancellationRequested(principal.signal)) fail("WORKFLOW_CANCELLED");
-    if (!hasRemainingBudget(remaining)) {
-      budgetExhausted = true;
-      break;
-    }
+    if (!hasRemainingBudget(remaining)) fail("WORKFLOW_OUTPUT_CORRUPT");
     const before = await readCurrentHeldScope({
       dependencies: frozenDependencies,
       ports: frozenPorts,
@@ -489,7 +473,7 @@ export async function executeResearchBranchQueryPlanWithPorts(
         after.navigation_identity !== initialAuthority.navigation_identity) fail("WORKFLOW_AUTHORITY_STALE");
     if (cancellationRequested(principal.signal)) fail("WORKFLOW_CANCELLED");
 
-    const settlement = assertSettlement({ execution, expectedBudgets: legBudgets, expectedDigest });
+    const settlement = assertBranchQueryBudgetSettlement({ execution, expectedBudgets: legBudgets, expectedDigest });
     const managedTrace = requireManagedTrace(execution.result.trace);
     const pack = execution.result.evidence_pack;
     const packScopeRef = requireRef(pack.scope_snapshot_ref);
@@ -540,6 +524,12 @@ export async function executeResearchBranchQueryPlanWithPorts(
       candidate_id: item.candidate_id,
       reason_code: item.reason_code,
     }));
+    budgetSettlements.push(branchQueryBudgetSettlementEvidence({
+      query_id: leg.query_id,
+      retrieval_request_digest: expectedDigest,
+      request_budgets: legBudgets,
+      settlement,
+    }));
     const legStop = legStopReason({ evidence: legEvidence, omissions });
     queryLegs.push({
       status: "COMPLETED",
@@ -560,10 +550,13 @@ export async function executeResearchBranchQueryPlanWithPorts(
       firstEvidenceStop = true;
       break;
     }
-    if (!hasRemainingBudget(remaining) && queryLegs.length < plan.query_legs.length) {
-      budgetExhausted = true;
-      break;
-    }
+    budgetExhaustion = aggregateBranchQueryBudgetExhaustion({
+      plan,
+      executed_leg_count: queryLegs.length,
+      remaining,
+      settlements: budgetSettlements,
+    });
+    if (budgetExhaustion !== undefined) break;
   }
 
   if (queryLegs.length === 0) fail("WORKFLOW_OUTPUT_CORRUPT");
@@ -573,9 +566,13 @@ export async function executeResearchBranchQueryPlanWithPorts(
     fail("WORKFLOW_OUTPUT_CORRUPT");
   }
   const omittedCandidateRefs = [...new Set(queryLegs.flatMap((leg) => leg.omitted_candidates.map((item) => item.candidate_id)))].sort();
+  const finalLeg = queryLegs[queryLegs.length - 1];
+  const finalLegBudgetStop = finalLeg !== undefined &&
+    (finalLeg.stop_reason === "CANDIDATE_BUDGET" || finalLeg.stop_reason === "SCAN_BUDGET" ||
+      finalLeg.stop_reason === "EVIDENCE_BUDGET");
   const stopReason: BranchQueryResult["stop_reason"] = firstEvidenceStop
     ? "FIRST_ADMISSIBLE_EVIDENCE"
-    : budgetExhausted
+    : budgetExhaustion !== undefined || finalLegBudgetStop
       ? "BUDGET_EXHAUSTED"
       : resolvedEvidence.length === 0
         ? "NO_HITS"
@@ -588,6 +585,7 @@ export async function executeResearchBranchQueryPlanWithPorts(
     scope_snapshot_ref: plan.scope_snapshot_ref,
     scope_snapshot_digest: plan.scope_snapshot_digest,
     query_legs: queryLegs,
+    ...(budgetExhaustion === undefined ? {} : { budget_exhaustion: budgetExhaustion }),
     resolved_evidence: resolvedEvidence,
     omitted_candidate_refs: omittedCandidateRefs,
     total_utf8_bytes: totalBytes,

@@ -6,6 +6,7 @@ import {
   ResearchBranchResultSchema,
   ResearchReadExtractCheckpointSchema,
   ResearchReadExtractCheckpointV2Schema,
+  type BranchQueryResult,
   type ResearchBranchAnalysisCheckpoint,
   type ResearchBranchAnalysisCheckpointV2,
   type ResearchBranchReconciliationCheckpoint,
@@ -61,6 +62,20 @@ export async function withIdentity<T extends Record<string, unknown>>(
 ): Promise<T & { readonly checkpoint_ref: VersionedRef; readonly identity_digest: string }> {
   const digest = await evidenceSha256({ domain, value });
   return { ...value, checkpoint_ref: { id: `${idPrefix}${digest}`, revision: 1 }, identity_digest: digest };
+}
+
+/** Verify server-owned query-result identity before a checkpoint or downstream consumer uses it. */
+export async function assertBranchQueryResultIdentity(result: BranchQueryResult): Promise<BranchQueryResult> {
+  const { query_result_ref: resultRef, identity_digest: identityDigest, ...material } = result;
+  const computedDigest = await evidenceSha256({
+    domain: "eliotr.research.branch-query-result.v1",
+    value: material,
+  });
+  if (computedDigest !== identityDigest ||
+      resultRef.id !== `eliotr.research.branch-query-result-${computedDigest}` || resultRef.revision !== 1) {
+    fail("WORKFLOW_OUTPUT_CORRUPT");
+  }
+  return result;
 }
 
 export async function branchResult(input: Omit<ResearchBranchResult, "branch_ref" | "identity_digest">): Promise<ResearchBranchResult> {

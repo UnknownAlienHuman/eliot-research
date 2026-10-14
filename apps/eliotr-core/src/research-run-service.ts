@@ -51,19 +51,38 @@ export function selectResearchRunHandlerGeneration(input: {
   readonly prior_handler_generation: string | null;
   readonly explicit_protocol: boolean;
   readonly delegated: boolean;
+  readonly request_max_results: number;
   readonly branch_query_budget_selection?: ResearchBranchQueryBudgetSelection;
   readonly managed_primary_available: boolean;
 }): string {
-  if (input.lane !== "exploratory") return HANDLER_GEN;
   if (input.prior_handler_generation !== null) {
     if (input.prior_handler_generation === SERVER_OWNED_BRANCH_QUERY_HANDLER_GENERATION &&
         (input.branch_query_budget_selection === undefined || !input.managed_primary_available)) {
       fail("RESEARCH_AUTHORITY_STALE", "the stored V9 handler requires its captured budget profile and managed primary", 409);
     }
+    if (input.prior_handler_generation === SERVER_OWNED_BRANCH_QUERY_HANDLER_GENERATION &&
+        input.branch_query_budget_selection !== undefined &&
+        input.branch_query_budget_selection.budgets.evidence_limit > input.request_max_results) {
+      fail("RESEARCH_CONFLICT", "the captured branch evidence limit exceeds this run's max_results", 409);
+    }
     return input.prior_handler_generation;
   }
+  if (input.branch_query_budget_selection !== undefined &&
+      (input.lane !== "exploratory" || !input.explicit_protocol)) {
+    fail("RESEARCH_CONFLICT", "the selected branch budget profile requires a new explicit exploratory protocol run", 409);
+  }
+  if (input.branch_query_budget_selection !== undefined &&
+      input.branch_query_budget_selection.budgets.evidence_limit > input.request_max_results) {
+    fail("RESEARCH_CONFLICT", "the selected branch evidence limit exceeds this run's max_results", 409);
+  }
+  if (input.lane !== "exploratory") return HANDLER_GEN;
   if (!input.explicit_protocol) return SERVER_OWNED_SEMANTIC_HANDLER_GENERATION;
-  if (input.delegated) return SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION;
+  if (input.delegated) {
+    if (input.branch_query_budget_selection !== undefined) {
+      fail("RESEARCH_CONFLICT", "delegated runs cannot consume the selected branch budget profile", 409);
+    }
+    return SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION;
+  }
   if (input.branch_query_budget_selection !== undefined) {
     if (!input.managed_primary_available) {
       fail("RESEARCH_AGENT_NOT_CONFIGURED", "the selected branch budget profile requires managed primary retrieval", 503);
@@ -311,10 +330,6 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       if (currentPolicy?.state === "RETIRED") fail("RESEARCH_AUTHORITY_STALE", "scope policy authority is retired", 409);
       const newPolicyGeneration = pre?.head.policy_generation ?? currentPolicy?.policy_generation ?? await scopedPolicyGeneration(snapshotRow.policy_authority_ref);
       const now = new Date().toISOString();
-      if (currentPolicy === null) {
-        await db.prepare("INSERT OR IGNORE INTO investigation_current_policy (policy_generation, policy_authority_ref, state, created_at) VALUES (?1,?2,'ACTIVE',?3)").bind(newPolicyGeneration, snapshotRow.policy_authority_ref, now).run().catch(mapLedger);
-      }
-      await db.prepare("INSERT OR IGNORE INTO investigation_current_deployment (deployment_generation, state, created_at) VALUES (?1,'ACTIVE',?2)").bind(env.DEPLOYMENT_GENERATION, now).run().catch(mapLedger);
       const evidenceAuthority = createD1EvidenceAuthorityPort({ core_database: db, search_database: env.SEARCH_DB });
       const scopeAuthority = await evidenceAuthority.loadScope(scopeRef);
       if (scopeAuthority === null) fail("RESEARCH_AUTHORITY_STALE", "scope snapshot is unavailable", 409);
@@ -331,6 +346,32 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
           await delegated?.requireScopeCurrent(scopeAuthority.snapshot);
         },
       });
+      const lane = pre === null ? installedProtocol?.lane ?? "exploratory" :
+        pre.head.lane === "confirmatory" || pre.head.lane === "exploratory" || pre.head.lane === "mixed_with_declared_split" ? pre.head.lane : null;
+      if (lane === null) fail("RESEARCH_CONFLICT", "idempotency identity has an unsupported investigation lane", 409);
+      if (pre !== null && lane === "exploratory" && priorWorkflow?.handler_generation === HANDLER_GEN) {
+        fail("RESEARCH_CONFLICT", "exploratory workflow uses a confirmatory handler generation", 409);
+      }
+      if (pre !== null && lane === "confirmatory" && priorWorkflow?.handler_generation !== HANDLER_GEN) {
+        fail("RESEARCH_CONFLICT", "confirmatory workflow uses a server-owned handler generation", 409);
+      }
+      // Resolve profile/generation compatibility before writing the run payload or
+      // binding an external route. The captured selection must have a consumer.
+      const handlerGeneration = selectResearchRunHandlerGeneration({
+        lane,
+        prior_handler_generation: priorWorkflow?.handler_generation ?? null,
+        explicit_protocol: request.inquiry_protocol_ref !== undefined,
+        delegated: delegated !== undefined,
+        request_max_results: request.max_results,
+        ...(admissionConfiguration.branch_query_budget_selection === undefined ? {} : {
+          branch_query_budget_selection: admissionConfiguration.branch_query_budget_selection,
+        }),
+        managed_primary_available: env.AI_SEARCH !== undefined,
+      });
+      if (currentPolicy === null) {
+        await db.prepare("INSERT OR IGNORE INTO investigation_current_policy (policy_generation, policy_authority_ref, state, created_at) VALUES (?1,?2,'ACTIVE',?3)").bind(newPolicyGeneration, snapshotRow.policy_authority_ref, now).run().catch(mapLedger);
+      }
+      await db.prepare("INSERT OR IGNORE INTO investigation_current_deployment (deployment_generation, state, created_at) VALUES (?1,'ACTIVE',?2)").bind(env.DEPLOYMENT_GENERATION, now).run().catch(mapLedger);
       const planningSources = installedProtocol === null
         ? []
         : await loadResearchPlanningSources(
@@ -362,27 +403,6 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       const principal: WorkflowPrincipal = { principal_ref: context.principal_ref, credential_generation: context.credential_generation, deployment_generation: admittedDeploymentGeneration };
       const installedObligations = installedProtocol === null ? [] : compileInquiryLedgerObligations(installedProtocol);
       const policyGeneration = pre?.head.policy_generation === POLICY_GEN ? POLICY_GEN : newPolicyGeneration;
-      const lane = pre === null ? installedProtocol?.lane ?? "exploratory" :
-        pre.head.lane === "confirmatory" || pre.head.lane === "exploratory" || pre.head.lane === "mixed_with_declared_split" ? pre.head.lane : null;
-      if (lane === null) fail("RESEARCH_CONFLICT", "idempotency identity has an unsupported investigation lane", 409);
-      if (pre !== null && lane === "exploratory" && priorWorkflow?.handler_generation === HANDLER_GEN) {
-        fail("RESEARCH_CONFLICT", "exploratory workflow uses a confirmatory handler generation", 409);
-      }
-      if (pre !== null && lane === "confirmatory" && priorWorkflow?.handler_generation !== HANDLER_GEN) {
-        fail("RESEARCH_CONFLICT", "confirmatory workflow uses a server-owned handler generation", 409);
-      }
-      // Admission captured/read back the immutable run snapshot above. New V9
-      // classification uses that tuple; retries preserve the stored generation.
-      const handlerGeneration = selectResearchRunHandlerGeneration({
-        lane,
-        prior_handler_generation: priorWorkflow?.handler_generation ?? null,
-        explicit_protocol: request.inquiry_protocol_ref !== undefined,
-        delegated: delegated !== undefined,
-        ...(admissionConfiguration.branch_query_budget_selection === undefined ? {} : {
-          branch_query_budget_selection: admissionConfiguration.branch_query_budget_selection,
-        }),
-        managed_primary_available: env.AI_SEARCH !== undefined,
-      });
       const externalGeneration = handlerGeneration === SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION ||
         handlerGeneration === SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION;
       if (externalGeneration &&

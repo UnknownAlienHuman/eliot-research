@@ -34,6 +34,7 @@ const newExplicitOwnerBranch = {
   prior_handler_generation: null,
   explicit_protocol: true,
   delegated: false,
+  request_max_results: 16,
   managed_primary_available: true,
 };
 
@@ -56,6 +57,25 @@ describe("new-run branch handler generation admission", () => {
       managed_primary_available: false,
       branch_query_budget_selection: selectedBudgetProfile,
     })).toThrow(expect.objectContaining({ code: "RESEARCH_AGENT_NOT_CONFIGURED" }));
+  });
+
+  it.each([17, 64])("rejects evidence limit %i above the admitted max_results before run effects", (evidenceLimit) => {
+    const branchSelection: ResearchBranchQueryBudgetSelection = {
+      ...selectedBudgetProfile,
+      budgets: { ...selectedBudgetProfile.budgets, evidence_limit: evidenceLimit },
+    };
+    expect(() => selectResearchRunHandlerGeneration({
+      ...newExplicitOwnerBranch,
+      branch_query_budget_selection: branchSelection,
+    })).toThrow(expect.objectContaining({ code: "RESEARCH_CONFLICT", status: 409 }));
+  });
+
+  it("rejects a newly captured branch budget profile for delegated execution", () => {
+    expect(() => selectResearchRunHandlerGeneration({
+      ...newExplicitOwnerBranch,
+      delegated: true,
+      branch_query_budget_selection: selectedBudgetProfile,
+    })).toThrow(expect.objectContaining({ code: "RESEARCH_CONFLICT", status: 409 }));
   });
 
   it("reuses a persisted generation during replay instead of reclassifying the request", () => {
