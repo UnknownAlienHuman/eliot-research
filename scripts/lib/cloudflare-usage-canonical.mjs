@@ -2,18 +2,11 @@
 // cloudflare-usage-envelope.mjs to keep every source file below the 600-line
 // budget; split by capability, not by line count).
 //
-// This module owns the decimal unit basis, the metric provenance taxonomy,
-// the plan quota table (USAGE_METRICS), and the module-private canonical
-// authority. FIX14: authorization lookup uses NO Map/Set and NO ambient
-// mutable prototype. The canonical table is a private null-prototype exact
-// record (no inheritance, no prototype chain), and every lookup is an
-// explicit strict-=== scan over the private required-key list that never
-// consults caller objects and never coerces keys (typeof string gate first,
-// so Proxy/object/symbol keys with throwing toString/valueOf never coerce).
-// Capturing Map/Set/Object.prototype intrinsics would still be unsafe under
-// a before-import poisoning, so none are used here at all. Public facades
-// (USAGE_METRICS, REQUIRED_METRIC_KEYS, METRIC_BY_KEY) are frozen
-// non-authoritative views; authority reads only the private table.
+// This module owns the decimal unit basis, metric provenance taxonomy,
+// included-usage envelopes, and private canonical metric map. Trust is
+// established by the production collector, strict response/account/window
+// validation, and process isolation. Public exports are read-only views;
+// decisions use the private Map.
 
 export const DECIMAL_BYTES_PER_GB = 1_000_000_000;
 export const DECIMAL_BYTES_PER_KB = 1_000;
@@ -102,10 +95,10 @@ export function isSealedAllowlistedOperation(operation) {
   return false;
 }
 
-// quota is the included Cloudflare plan quota (100%); envelope is the local
-// 80% admission boundary. window selects the fencing discipline; `exact`
-// marks point-in-time counts (AI Search instance inventory) rather than
-// cumulative counters. Storage bytes are decimal-GB derived (see above).
+// quota is a documented monthly included-usage pool (100%); envelope is the
+// existing local 80% admission boundary. AI Search instance inventory is a
+// point observation only. Its plan ceiling and desired topology are checked
+// by provisioning readback, so it deliberately has no quota or envelope.
 export const USAGE_METRICS = [
   { key: "workers_requests", quota: 10_000_000, envelope: 8_000_000, window: "monthly", plan: "Workers Paid" },
   { key: "workers_cpu_ms", quota: 30_000_000, envelope: 24_000_000, window: "monthly", plan: "Workers Paid" },
@@ -122,8 +115,11 @@ export const USAGE_METRICS = [
   { key: "do_sql_writes", quota: 50_000_000, envelope: 40_000_000, window: "monthly", plan: "Durable Objects SQLite paid inclusion" },
   { key: "do_storage_bytes", quota: 5 * DECIMAL_BYTES_PER_GB, envelope: 4 * DECIMAL_BYTES_PER_GB, window: "monthly", plan: "Durable Objects paid inclusion (decimal GB)" },
   { key: "workers_ai_neurons_per_day", quota: 10_000, envelope: 8_000, window: "daily", plan: "Workers AI paid inclusion" },
-  { key: "ai_search_instances", quota: 5, envelope: 5, window: "point", exact: true, plan: "AI Search (exactly 5)" },
-  { key: "ai_search_queries_month", quota: 25_000, envelope: 20_000, window: "monthly", plan: "AI Search" },
+  { key: "ai_search_instances", window: "point", exact: true, unit: "instances", plan: "AI Search inventory; provider ceiling and topology are checked separately" },
+  { key: "ingestion_tokens_month", quota: 5_000_000, envelope: 4_000_000, window: "monthly", unit: "tokens", plan: "AI Search included monthly usage (all account plans)" },
+  { key: "storage_gb_month", quota: 10, envelope: 8, window: "monthly", unit: "GB-month", plan: "AI Search included monthly usage (all account plans)" },
+  { key: "semantic_vector_hybrid_queries_month", quota: 1_000, envelope: 800, window: "monthly", unit: "queries", plan: "AI Search included monthly usage (all account plans)" },
+  { key: "full_text_queries_month", quota: 1_000, envelope: 800, window: "monthly", unit: "queries", plan: "AI Search included monthly usage (all account plans)" },
   { key: "vectorize_queried_dims_month", quota: 50_000_000, envelope: 40_000_000, window: "monthly", plan: "Vectorize" },
   { key: "vectorize_stored_dims_month", quota: 10_000_000, envelope: 8_000_000, window: "monthly", plan: "Vectorize" },
 ];
@@ -136,61 +132,40 @@ export const REQUIRED_METRIC_KEYS = Object.freeze((() => {
 for (let i = 0; i < USAGE_METRICS.length; i += 1) Object.freeze(USAGE_METRICS[i]);
 Object.freeze(USAGE_METRICS);
 
-// Module-private canonical authority (never exported): independent frozen
-// copies, so mutating an export cannot change decisions.
-const CANONICAL_METRICS = Object.freeze((() => {
-  const copies = [];
-  for (let i = 0; i < USAGE_METRICS.length; i += 1) {
-    copies[copies.length] = Object.freeze({ ...USAGE_METRICS[i] });
-  }
-  return copies;
-})());
-const CANONICAL_REQUIRED_KEYS = Object.freeze((() => {
-  const keys = [];
-  for (let i = 0; i < CANONICAL_METRICS.length; i += 1) keys[keys.length] = CANONICAL_METRICS[i].key;
-  return keys;
-})());
-const CANONICAL_TABLE = (() => {
-  const table = Object.create(null);
-  for (let i = 0; i < CANONICAL_METRICS.length; i += 1) {
-    const m = CANONICAL_METRICS[i];
-    table[m.key] = m;
-  }
-  return Object.freeze(table);
-})();
-function readOnlyAuthorityError() { throw new Error("METRIC_BY_KEY is read-only authority state"); }
-// Legacy export: immutable non-Map facade, ignored by authority. Not a Map,
-// so Map.prototype.*.call throws; frozen so overwrite/defineProperty throws.
-export const METRIC_BY_KEY = Object.freeze({ has(k) { return hasCanonicalMetric(k); }, get(k) { return getCanonicalMetric(k); }, get size() { return CANONICAL_REQUIRED_KEYS.length; }, set: readOnlyAuthorityError, delete: readOnlyAuthorityError, clear: readOnlyAuthorityError });
+// Private authority is a real Map. Entries are independent frozen copies;
+// callers cannot change policy by editing exported metric views.
+const CANONICAL_METRICS = new Map(
+  USAGE_METRICS.map((metric) => [metric.key, Object.freeze({ ...metric })]),
+);
+const CANONICAL_REQUIRED_KEYS = Object.freeze([...CANONICAL_METRICS.keys()]);
+function readOnlyAuthorityError() { throw new Error("METRIC_BY_KEY is a read-only compatibility view"); }
+// Compatibility view only. Authority never reads this facade.
+export const METRIC_BY_KEY = Object.freeze({
+  has(k) { return hasCanonicalMetric(k); },
+  get(k) { return getCanonicalMetric(k); },
+  get size() { return CANONICAL_METRICS.size; },
+  set: readOnlyAuthorityError,
+  delete: readOnlyAuthorityError,
+  clear: readOnlyAuthorityError,
+});
 export function hasCanonicalMetric(k) {
-  if (typeof k !== "string" || k === "") return false;
-  for (let i = 0; i < CANONICAL_REQUIRED_KEYS.length; i += 1) {
-    if (CANONICAL_REQUIRED_KEYS[i] === k) return true;
-  }
-  return false;
+  return typeof k === "string" && k !== "" && CANONICAL_METRICS.has(k);
 }
 export function getCanonicalMetric(k) {
   if (typeof k !== "string" || k === "") return null;
-  for (let i = 0; i < CANONICAL_REQUIRED_KEYS.length; i += 1) {
-    if (CANONICAL_REQUIRED_KEYS[i] === k) return CANONICAL_TABLE[k];
-  }
-  return null;
+  return CANONICAL_METRICS.get(k) ?? null;
 }
 export function listCanonicalRequiredKeys() {
-  const out = [];
-  for (let i = 0; i < CANONICAL_REQUIRED_KEYS.length; i += 1) {
-    out[out.length] = CANONICAL_REQUIRED_KEYS[i];
-  }
-  return out;
+  return [...CANONICAL_REQUIRED_KEYS];
 }
 export function listCanonicalMetrics() {
-  const out = [];
-  for (let i = 0; i < CANONICAL_METRICS.length; i += 1) {
-    out[out.length] = CANONICAL_METRICS[i];
-  }
-  return out;
+  return [...CANONICAL_METRICS.values()];
 }
 export function canonicalWindowOf(k) {
   const metric = getCanonicalMetric(k);
   return metric !== null ? metric.window : "monthly";
+}
+export function canonicalUnitOf(k) {
+  const metric = getCanonicalMetric(k);
+  return metric !== null ? metric.unit ?? null : null;
 }

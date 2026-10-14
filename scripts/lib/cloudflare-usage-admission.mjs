@@ -46,24 +46,15 @@ import {
   UsageCollectionError,
 } from "./cloudflare-usage-providers.mjs";
 
-// Module-PRIVATE production capability registry: capability object identity.
-// Never exported; populated only by mintLiveCapability below on the fresh
-// live success path. No registrar, token, symbol, secret, HMAC key, source
-// whitelist, or filesystem location exists, so nothing a caller supplies —
-// options, env, files, strings — can join this set.
-// FIX14: private identity array with explicit === scans (no WeakSet, whose
-// prototype is mutable ambient behavior a before-import poisoning could
-// forge to admit any object).
-const PRODUCTION_CAPABILITIES = [];
+// Module-private identity capability. Only the fresh verified live path below
+// can add an object. Process isolation is the trust boundary.
+const PRODUCTION_CAPABILITIES = new WeakSet();
 
 // Read-only predicate: the sole production-authority query. True only for
 // the exact object identity minted below in this process.
 export function isUsageAdmissionCapability(capability) {
   if (capability === null || (typeof capability !== "object" && typeof capability !== "function")) return false;
-  for (let i = 0; i < PRODUCTION_CAPABILITIES.length; i += 1) {
-    if (PRODUCTION_CAPABILITIES[i] === capability) return true;
-  }
-  return false;
+  return PRODUCTION_CAPABILITIES.has(capability);
 }
 
 // Read-only issuer predicate (pure, mints nothing): the structural half of
@@ -79,41 +70,20 @@ export function isLiveAdmissibleForCapability(snapshot, evaluation) {
   if (snapshot?.readback?.whoami_verified !== true) return false;
   const trust = snapshot?.readback?.metric_trust;
   if (!trust || typeof trust !== "object" || Array.isArray(trust)) return false;
-  // Snapshot-then-validate over a local canonical copy: no vacuous every()
-  // or zero-length set may admit. Exact coverage is required independently
-  // here, even though collection and the envelope enforce it too.
-  // FIX14: explicit === scans only (no Array.prototype.every, no Set, no
-  // for..of iterator); trust ownership is verified exactly in both
-  // directions (every required key own-present, no extra own keys), so an
-  // inherited Object.prototype entry can never satisfy a missing key.
-  const required = listCanonicalRequiredKeys();
-  if (required.length === 0) return false;
-  for (let i = 0; i < required.length; i += 1) {
-    if (typeof required[i] !== "string" || required[i] === "") return false;
-  }
-  for (let i = 0; i < required.length; i += 1) {
-    for (let j = i + 1; j < required.length; j += 1) {
-      if (required[i] === required[j]) return false;
-    }
-  }
+  // Exact own-key coverage is checked independently of collection and
+  // envelope validation; an empty required set never admits vacuously.
+  const required = new Set(listCanonicalRequiredKeys());
+  if (required.size === 0) return false;
   const trustKeys = Object.keys(trust);
-  if (trustKeys.length !== required.length) return false;
-  for (let i = 0; i < required.length; i += 1) {
-    let found = false;
-    for (let j = 0; j < trustKeys.length; j += 1) {
-      if (trustKeys[j] === required[i]) { found = true; break; }
-    }
-    if (!found) return false;
+  if (trustKeys.length !== required.size) return false;
+  for (const key of required) {
+    if (!Object.hasOwn(trust, key)) return false;
   }
-  for (let i = 0; i < trustKeys.length; i += 1) {
-    let known = false;
-    for (let j = 0; j < required.length; j += 1) {
-      if (trustKeys[i] === required[j]) { known = true; break; }
-    }
-    if (!known) return false;
+  for (const key of trustKeys) {
+    if (!required.has(key)) return false;
   }
-  for (let i = 0; i < required.length; i += 1) {
-    const entry = trust[required[i]];
+  for (const key of required) {
+    const entry = trust[key];
     if (!entry || typeof entry !== "object") return false;
     if (entry.state !== "trusted-partial") return false;
     if (typeof entry.brand !== "string" || entry.brand === "") return false;
@@ -127,7 +97,7 @@ export function isLiveAdmissibleForCapability(snapshot, evaluation) {
 // there is nothing to copy, recompute, or assert structurally.
 function mintLiveCapability() {
   const capability = Object.freeze({});
-  PRODUCTION_CAPABILITIES[PRODUCTION_CAPABILITIES.length] = capability;
+  PRODUCTION_CAPABILITIES.add(capability);
   return capability;
 }
 

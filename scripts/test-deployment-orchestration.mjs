@@ -50,11 +50,14 @@ function admittedSnapshotJson(accountId = "test-account", at = now) {
     queue_ops: 100, do_requests: 100, do_gb_seconds: 100,
     do_sql_reads: 100, do_sql_writes: 100, do_storage_bytes: 100,
     workers_ai_neurons_per_day: 100, ai_search_instances: 5,
-    ai_search_queries_month: 100,
+    ingestion_tokens_month: 100,
+    storage_gb_month: 1,
+    semantic_vector_hybrid_queries_month: 100,
+    full_text_queries_month: 100,
     vectorize_queried_dims_month: 100, vectorize_stored_dims_month: 100,
   };
   return JSON.stringify({
-    protocol: "eliotr.cloudflare-usage-snapshot.v1",
+    protocol: "eliotr.cloudflare-usage-snapshot.v2",
     account_id_digest: digestAccountId(accountId),
     account_ref: "cloudflare-account:test-a…ount",
     collected_at: new Date(at - 60_000).toISOString(),

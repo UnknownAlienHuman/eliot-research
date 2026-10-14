@@ -13,6 +13,8 @@
 import assert from "node:assert/strict";
 import {
   USAGE_ADMISSION_PROTOCOL,
+  USAGE_ENVELOPE_GENERATION,
+  USAGE_SNAPSHOT_PROTOCOL,
   accountRef,
   buildAdmissionReceipt,
   computeSnapshotDigest,
@@ -55,7 +57,10 @@ function baseMetrics() {
     do_storage_bytes: 100 * 1024 * 1024,
     workers_ai_neurons_per_day: 100,
     ai_search_instances: 5,
-    ai_search_queries_month: 1_000,
+    ingestion_tokens_month: 10_000,
+    storage_gb_month: 1.25,
+    semantic_vector_hybrid_queries_month: 300,
+    full_text_queries_month: 400,
     vectorize_queried_dims_month: 1_000_000,
     vectorize_stored_dims_month: 100_000,
   };
@@ -63,7 +68,7 @@ function baseMetrics() {
 
 function evidenceSnapshot(overrides = {}, collectedAt = new Date(NOW - 5 * 60 * 1000).toISOString()) {
   return {
-    protocol: "eliotr.cloudflare-usage-snapshot.v1",
+    protocol: USAGE_SNAPSHOT_PROTOCOL,
     account_id_digest: DIGEST,
     account_ref: accountRef(ACCOUNT),
     collected_at: collectedAt,
@@ -89,13 +94,16 @@ function honestAdmittedReceipt() {
 // cloudflare-usage-envelope.mjs).
 function liveFamilyReceipt() {
   const receipt = honestAdmittedReceipt();
-  receipt.metric_evidence = receipt.metric_evidence.map((entry) => ({
-    ...entry,
-    provider_group: "billable-usage",
-    provider_kind_class: "billing-usage-v2",
-    provenance: "authoritative_billing",
-    coverage_full: true,
-  }));
+  receipt.metric_evidence = receipt.metric_evidence.map((entry) => {
+    const inventory = entry.metric === "ai_search_instances";
+    return {
+      ...entry,
+      provider_group: inventory ? "ai-search-inventory-list" : "billable-usage",
+      provider_kind_class: inventory ? "inventory-ai-search" : "billing-usage-v2",
+      provenance: inventory ? "authoritative_inventory" : "authoritative_billing",
+      coverage_full: true,
+    };
+  });
   return rebindDigest(receipt);
 }
 
@@ -114,13 +122,17 @@ function rebindDigest(receipt) {
 await check("evidenceless admitted shells never validate", async () => {
   const shell = {
     protocol: USAGE_ADMISSION_PROTOCOL,
-    generation: "usage-envelope-2026-09-06",
+    generation: USAGE_ENVELOPE_GENERATION,
     decision: "ADMITTED",
     sealed: false,
     account_id_digest: DIGEST,
     account_ref: accountRef(ACCOUNT),
     collected_at: new Date(NOW - 60_000).toISOString(),
-    windows: { monthly: monthlyWindowFor(NOW), daily: dailyWindowFor(NOW) },
+    windows: {
+      monthly: monthlyWindowFor(NOW),
+      daily: dailyWindowFor(NOW),
+      point: { kind: "point", at: new Date(NOW - 60_000).toISOString() },
+    },
     source: "test-fixture",
     over_envelope: [],
     unknown_metrics: [],
@@ -230,8 +242,13 @@ await check("stale, future, or out-of-window receipts never validate as admitted
   const oldWindow = honestAdmittedReceipt();
   const priorMonthly = { kind: "monthly", start: "2026-08-01T00:00:00.000Z", end: "2026-09-01T00:00:00.000Z" };
   const priorDaily = { kind: "daily", start: "2026-08-06T00:00:00.000Z", end: "2026-08-07T00:00:00.000Z" };
-  oldWindow.windows = { monthly: priorMonthly, daily: priorDaily };
+  oldWindow.windows = {
+    monthly: priorMonthly,
+    daily: priorDaily,
+    point: oldWindow.windows.point,
+  };
   oldWindow.metric_evidence = oldWindow.metric_evidence.map((entry) => {
+    if (entry.metric === "ai_search_instances") return entry;
     const dailyEntry = entry.window_start === dailyWindowFor(NOW).start;
     return {
       ...entry,

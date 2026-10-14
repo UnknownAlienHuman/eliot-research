@@ -45,12 +45,9 @@ import {
 
 export { isTestTransportProvider };
 
-// Module-PRIVATE inventory brand registry: parallel identity/brand arrays.
-// Never exported; populated only by the branded factories below.
-// FIX14: explicit === identity scans (no WeakMap, whose prototype is mutable
-// ambient behavior a before-import poisoning could forge).
-const INVENTORY_BRANDED = [];
-const INVENTORY_BRAND_OF = [];
+// Module-private identity capability. Process isolation is the trust boundary;
+// the WeakMap only prevents ordinary callers from asserting a provider brand.
+const INVENTORY_BRANDS = new WeakMap();
 
 export const INVENTORY_BRAND_PAGINATED = "inventory-paginated";
 export const INVENTORY_BRAND_CURSOR = "inventory-cursor";
@@ -58,16 +55,12 @@ export const INVENTORY_BRAND_AI_SEARCH = "inventory-ai-search";
 
 function brandOf(provider) {
   if (provider === null || (typeof provider !== "object" && typeof provider !== "function")) return null;
-  for (let i = 0; i < INVENTORY_BRANDED.length; i += 1) {
-    if (INVENTORY_BRANDED[i] === provider) return INVENTORY_BRAND_OF[i];
-  }
-  return null;
+  return INVENTORY_BRANDS.get(provider) ?? null;
 }
 
 function brandInventoryProvider(product, brand) {
   Object.freeze(product.covers);
-  INVENTORY_BRANDED[INVENTORY_BRANDED.length] = product;
-  INVENTORY_BRAND_OF[INVENTORY_BRAND_OF.length] = brand;
+  INVENTORY_BRANDS.set(product, brand);
   return Object.freeze(product);
 }
 
@@ -145,9 +138,9 @@ export function inventoryBrandClass(provider) {
 // ledger_estimate | unavailable (see cloudflare-usage-envelope.mjs).
 // Account-wide coverage spans Workers, D1, R2, Queues, SQLite Durable
 // Objects, Workers AI, AI Search, Vectorize, and Access without inventing
-// counters: Workers AI neurons, Queue billable ops, R2 Class A/B, AI Search
-// aggregate queries, and Vectorize queried dims stay unknown unless verified
-// billing usage or a demonstrably complete account-bound ledger proves them.
+// counters. AI Search GA included usage is documented, but account-wide
+// monthly usage remains unavailable until an exact source and billing
+// identity are reviewed.
 export const METRIC_SOURCE_REGISTRY = (() => {
   const registry = {
   workers_requests: { sources: ["workers-requests-diagnostic"], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.ANALYTICS_NONBILLING, limitation: "Workers adaptive analytics requests are diagnostic, not verified monthly billing usage" },
@@ -166,7 +159,10 @@ export const METRIC_SOURCE_REGISTRY = (() => {
   do_storage_bytes: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "Durable Objects storedBytes maximum is a stock statistic, not exact monthly storage usage" },
   workers_ai_neurons_per_day: { sources: [], window: "daily", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "no documented OAuth-compatible exact account-wide daily neuron source is qualified" },
   ai_search_instances: { sources: ["ai-search-inventory-list"], window: "point", authoritative: true, provenance: METRIC_PROVENANCE.AUTHORITATIVE_INVENTORY, limitation: "" },
-  ai_search_queries_month: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "AI Search instance stats expose indexing status, not account-wide monthly search-query usage" },
+  ingestion_tokens_month: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "AI Search GA included tokens do not expose actual account usage; no exact monthly OAuth source or reviewed billing triple is qualified" },
+  storage_gb_month: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "AI Search instance inventory is point-in-time stock, not GB-month usage; no exact monthly OAuth source or reviewed billing triple is qualified" },
+  semantic_vector_hybrid_queries_month: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "AI Search instance stats expose indexing status, not account-wide semantic/vector/hybrid query usage; no reviewed billing triple is qualified" },
+  full_text_queries_month: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "AI Search instance stats expose indexing status, not account-wide full-text query usage; no reviewed billing triple is qualified" },
   vectorize_queried_dims_month: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "Vectorize index info has no monthly queried-dimension usage; Wrangler has no documented Vectorize-specific scope" },
   vectorize_stored_dims_month: { sources: [], window: "monthly", authoritative: false, provenance: METRIC_PROVENANCE.UNAVAILABLE, limitation: "per-index dimensions and vectorCount are current stock, not account-wide monthly stored-dimension usage" },
   };
@@ -178,39 +174,22 @@ export const METRIC_SOURCE_REGISTRY = (() => {
   return Object.freeze(registry);
 })();
 
-// Module-private canonical registry: independent frozen copy in a
-// null-prototype table, so export mutation cannot change decisions even if a
-// freeze were bypassed, and inherited Object.prototype keys are impossible.
-// FIX14: getters use explicit === scans and never consult caller objects;
-// non-string keys (Proxy/object/symbol with coercion traps) are rejected
-// without coercion.
-const CANONICAL_REGISTRY_TABLE = (() => {
-  const table = Object.create(null);
-  const keys = Object.keys(METRIC_SOURCE_REGISTRY);
-  for (let i = 0; i < keys.length; i += 1) {
-    const k = keys[i];
-    const v = METRIC_SOURCE_REGISTRY[k];
-    const sources = [];
-    for (let j = 0; j < v.sources.length; j += 1) sources[sources.length] = v.sources[j];
-    table[k] = Object.freeze({ window: v.window, authoritative: v.authoritative, provenance: v.provenance, limitation: v.limitation, sources: Object.freeze(sources) });
-  }
-  return Object.freeze(table);
-})();
-const CANONICAL_REGISTRY_KEYS = Object.freeze(Object.keys(CANONICAL_REGISTRY_TABLE));
+// A private Map is the authority; this copy is independent of the public,
+// frozen documentation view.
+const CANONICAL_REGISTRY = new Map(
+  Object.entries(METRIC_SOURCE_REGISTRY).map(([key, value]) => [
+    key,
+    Object.freeze({ ...value, sources: Object.freeze([...value.sources]) }),
+  ]),
+);
 function canonicalRegistryHas(k) {
-  if (typeof k !== "string" || k === "") return false;
-  for (let i = 0; i < CANONICAL_REGISTRY_KEYS.length; i += 1) {
-    if (CANONICAL_REGISTRY_KEYS[i] === k) return true;
-  }
-  return false;
+  return typeof k === "string" && k !== "" && CANONICAL_REGISTRY.has(k);
 }
 export function getRegistryEntry(k) {
-  if (!canonicalRegistryHas(k)) return null;
-  return CANONICAL_REGISTRY_TABLE[k];
+  return CANONICAL_REGISTRY.get(k) ?? null;
 }
 export function getRegistryLimitation(k) {
-  if (!canonicalRegistryHas(k)) return "unregistered";
-  const limitation = CANONICAL_REGISTRY_TABLE[k].limitation;
+  const limitation = CANONICAL_REGISTRY.get(k)?.limitation;
   return typeof limitation === "string" ? limitation : "unregistered";
 }
 export function assertLiveRegistryCoversAll(registry = null) {
@@ -219,42 +198,25 @@ export function assertLiveRegistryCoversAll(registry = null) {
     throw new UsageCollectionError("REGISTRY_INCOMPLETE", "authority metric set is empty; refusing vacuous admission");
   }
   if (registry === null || registry === undefined) {
-    for (let i = 0; i < required.length; i += 1) {
-      if (!canonicalRegistryHas(required[i])) {
-        throw new UsageCollectionError("REGISTRY_INCOMPLETE", `live registry lacks required metrics: ${required[i]}`);
-      }
+    const missing = required.filter((key) => !canonicalRegistryHas(key));
+    if (missing.length > 0) {
+      throw new UsageCollectionError("REGISTRY_INCOMPLETE", "live registry lacks required metrics: " + missing.join(", "));
     }
-    if (CANONICAL_REGISTRY_KEYS.length !== required.length) {
+    if (CANONICAL_REGISTRY.size !== required.length) {
       throw new UsageCollectionError("REGISTRY_INCOMPLETE", "live registry metric set is not exactly the required set");
     }
     return true;
   }
   const registryKeys = Object.keys(registry);
-  const missing = [];
-  for (let i = 0; i < required.length; i += 1) {
-    let found = false;
-    for (let j = 0; j < registryKeys.length; j += 1) {
-      if (registryKeys[j] === required[i]) { found = true; break; }
-    }
-    if (!found || registry[required[i]] === undefined || registry[required[i]] === null) missing[missing.length] = required[i];
-  }
+  const requiredSet = new Set(required);
+  const keySet = new Set(registryKeys);
+  const missing = required.filter((key) => !keySet.has(key) || registry[key] === undefined || registry[key] === null);
   if (missing.length > 0) {
-    let list = "";
-    for (let i = 0; i < missing.length; i += 1) list += (i > 0 ? ", " : "") + missing[i];
-    throw new UsageCollectionError("REGISTRY_INCOMPLETE", `live registry lacks required metrics: ${list}`);
+    throw new UsageCollectionError("REGISTRY_INCOMPLETE", "live registry lacks required metrics: " + missing.join(", "));
   }
-  const extra = [];
-  for (let i = 0; i < registryKeys.length; i += 1) {
-    let known = false;
-    for (let j = 0; j < required.length; j += 1) {
-      if (registryKeys[i] === required[j]) { known = true; break; }
-    }
-    if (!known) extra[extra.length] = registryKeys[i];
-  }
+  const extra = registryKeys.filter((key) => !requiredSet.has(key));
   if (extra.length > 0) {
-    let list = "";
-    for (let i = 0; i < extra.length; i += 1) list += (i > 0 ? ", " : "") + extra[i];
-    throw new UsageCollectionError("REGISTRY_INCOMPLETE", `live registry carries unknown metrics: ${list}`);
+    throw new UsageCollectionError("REGISTRY_INCOMPLETE", "live registry carries unknown metrics: " + extra.join(", "));
   }
   if (registryKeys.length !== required.length) {
     throw new UsageCollectionError("REGISTRY_INCOMPLETE", "live registry metric set is not exactly the required set");

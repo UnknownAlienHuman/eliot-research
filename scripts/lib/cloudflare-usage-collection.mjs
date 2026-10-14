@@ -12,6 +12,7 @@ import {
   CLOCK_SKEW_MS,
   UNKNOWN,
   UNKNOWN_REASONS,
+  USAGE_SNAPSHOT_PROTOCOL,
   accountRef,
   digestAccountId,
   listCanonicalMetrics,
@@ -102,9 +103,8 @@ export function dailyWindowFor(nowMs) {
   return { kind: "daily", start: start.toISOString(), end: end.toISOString() };
 }
 
-// Local canonical snapshot: module-private authority via read-only API at
-// call time, then validated non-empty and exact independently (keys vs metric
-// objects, never an export). Exports are never read here.
+// Local canonical snapshot: the private Map is exposed through copied key and
+// metric arrays, then validated non-empty and exact independently.
 function canonicalRequiredSnapshot() {
   const snapshotted = listCanonicalRequiredKeys();
   const metrics = listCanonicalMetrics();
@@ -113,22 +113,15 @@ function canonicalRequiredSnapshot() {
   if (snapshotted.length === 0 || fromMetrics.length === 0) {
     collectionFail("REGISTRY_INCOMPLETE", "authority metric set is empty; refusing vacuous collection");
   }
-  if (snapshotted.length !== fromMetrics.length) {
+  const snapshottedSet = new Set(snapshotted);
+  const metricSet = new Set(fromMetrics);
+  if (snapshottedSet.size !== snapshotted.length ||
+    metricSet.size !== fromMetrics.length ||
+    snapshottedSet.size !== metricSet.size) {
     collectionFail("REGISTRY_INCOMPLETE", "authority metric set does not exactly cover the canonical metrics");
   }
-  for (let i = 0; i < fromMetrics.length; i += 1) {
-    let found = false;
-    for (let j = 0; j < snapshotted.length; j += 1) {
-      if (snapshotted[j] === fromMetrics[i]) { found = true; break; }
-    }
-    if (!found) collectionFail("REGISTRY_INCOMPLETE", "authority metric set does not exactly cover the canonical metrics");
-  }
-  for (let i = 0; i < snapshotted.length; i += 1) {
-    for (let j = i + 1; j < snapshotted.length; j += 1) {
-      if (snapshotted[i] === snapshotted[j]) {
-        collectionFail("REGISTRY_INCOMPLETE", "authority metric set carries duplicates; refusing vacuous collection");
-      }
-    }
+  if (fromMetrics.some((key) => !snapshottedSet.has(key))) {
+    collectionFail("REGISTRY_INCOMPLETE", "authority metric set does not exactly cover the canonical metrics");
   }
   return snapshotted;
 }
@@ -143,7 +136,7 @@ export function blankAccountSnapshot({ expectedAccountId, now = Date.now(), sour
   const metrics = {};
   for (let i = 0; i < required.length; i += 1) metrics[required[i]] = UNKNOWN;
   return {
-    protocol: "eliotr.cloudflare-usage-snapshot.v1",
+    protocol: USAGE_SNAPSHOT_PROTOCOL,
     account_id_digest: digestAccountId(expectedAccountId),
     account_ref: accountRef(expectedAccountId),
     collected_at: new Date(now).toISOString(),
@@ -180,12 +173,9 @@ export async function collectAccountUsage(options = {}) {
   const gaps = {};
   const trust = {};
   const required = canonicalRequiredSnapshot();
+  const requiredSet = new Set(required);
   const requiredHas = (key) => {
-    if (typeof key !== "string") return false;
-    for (let i = 0; i < required.length; i += 1) {
-      if (required[i] === key) return true;
-    }
-    return false;
+    return typeof key === "string" && requiredSet.has(key);
   };
   for (let i = 0; i < required.length; i += 1) {
     const key = required[i];
@@ -209,15 +199,9 @@ export async function collectAccountUsage(options = {}) {
     const parsed = typeof value === "string" ? Date.parse(value) : NaN;
     return Number.isFinite(parsed) ? parsed : null;
   };
-  // FIX14: own-key numeric scan (no Object.values/Array.prototype.some).
-  const hasNumericValue = (values) => {
-    if (!values || typeof values !== "object") return false;
-    const keys = Object.keys(values);
-    for (let i = 0; i < keys.length; i += 1) {
-      if (typeof values[keys[i]] === "number") return true;
-    }
-    return false;
-  };
+  const hasNumericValue = (values) =>
+    values !== null && typeof values === "object" &&
+    Object.values(values).some((value) => typeof value === "number");
   // Provenance authorization: a numeric enters the snapshot only through an
   // authorized channel. Analytics samples stay diagnostic metadata; ledger
   // estimates have no complete account-bound ledger contract in this repo;
@@ -234,24 +218,18 @@ export async function collectAccountUsage(options = {}) {
     isUsageVBillingProvider(provider) || isInventoryProvider(provider);
   // The same provider object twice must not double-count: the first result
   // stands and the duplicate is ignored fail-closed.
-  // FIX14: identity array with explicit === (no Set, whose prototype is
-  // mutable ambient behavior).
-  const seenProviders = [];
+  const seenProviders = new Set();
   const providerList = Array.isArray(providers) ? providers : [];
   for (let pi = 0; pi < providerList.length; pi += 1) {
     const provider = providerList[pi];
     const group = provider?.group ?? "unnamed-provider";
     const declaredCovers = Array.isArray(provider?.covers) ? provider.covers : null;
-    let duplicate = false;
-    for (let i = 0; i < seenProviders.length; i += 1) {
-      if (seenProviders[i] === provider) { duplicate = true; break; }
-    }
-    if (duplicate) {
+    if (seenProviders.has(provider)) {
       providerErrors[providerErrors.length] = `${group} duplicate provider instance ignored; keeping first result`;
       providerResults[providerResults.length] = { group, ok: false, keys: [], duplicate: true };
       continue;
     }
-    seenProviders[seenProviders.length] = provider;
+    seenProviders.add(provider);
     try {
       // Bearer crosses only this memory call; providers must not persist it.
       const reported = await provider.collect({ accountId: expectedAccountId, bearer, now, signal });
@@ -514,7 +492,7 @@ export async function collectAccountUsage(options = {}) {
     if (metrics[key] === UNKNOWN && trust[key].gap === null && limitation !== "") trust[key].gap = limitation;
   }
   return {
-    protocol: "eliotr.cloudflare-usage-snapshot.v1",
+    protocol: USAGE_SNAPSHOT_PROTOCOL,
     account_id_digest: digestAccountId(expectedAccountId),
     account_ref: accountRef(expectedAccountId),
     collected_at: new Date(now).toISOString(),

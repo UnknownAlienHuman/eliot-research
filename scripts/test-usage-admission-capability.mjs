@@ -22,6 +22,7 @@ import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   REQUIRED_METRIC_KEYS,
+  USAGE_SNAPSHOT_PROTOCOL,
   buildAdmissionReceipt,
   computeSnapshotDigest,
   digestAccountId,
@@ -66,14 +67,17 @@ function baseMetrics() {
     queue_ops: 10_000, do_requests: 10_000, do_gb_seconds: 1_000,
     do_sql_reads: 1_000_000, do_sql_writes: 100_000, do_storage_bytes: 100 * 1024 * 1024,
     workers_ai_neurons_per_day: 100, ai_search_instances: 5,
-    ai_search_queries_month: 1_000,
+    ingestion_tokens_month: 10_000,
+    storage_gb_month: 1.25,
+    semantic_vector_hybrid_queries_month: 300,
+    full_text_queries_month: 400,
     vectorize_queried_dims_month: 1_000_000, vectorize_stored_dims_month: 100_000,
   };
 }
 
 function fixtureSnapshot(overrides = {}) {
   return {
-    protocol: "eliotr.cloudflare-usage-snapshot.v1",
+    protocol: USAGE_SNAPSHOT_PROTOCOL,
     account_id_digest: DIGEST,
     collected_at: new Date(NOW - 300_000).toISOString(),
     window: monthlyWindowFor(NOW),
@@ -91,13 +95,16 @@ function fabricatedLiveFamilyReceipt(source = USAGE_SOURCE_LIVE) {
   const evaluation = evaluateUsageSnapshot(snapshot, { expectedAccountDigest: DIGEST, now: NOW });
   assert.equal(evaluation.decision, "ADMITTED");
   const receipt = buildAdmissionReceipt({ evaluation, snapshot, now: NOW, expectedAccountId: ACCOUNT });
-  receipt.metric_evidence = receipt.metric_evidence.map((entry) => ({
-    ...entry,
-    provider_group: "billable-usage",
-    provider_kind_class: "billing-usage-v2",
-    provenance: "authoritative_billing",
-    coverage_full: true,
-  }));
+  receipt.metric_evidence = receipt.metric_evidence.map((entry) => {
+    const inventory = entry.metric === "ai_search_instances";
+    return {
+      ...entry,
+      provider_group: inventory ? "ai-search-inventory-list" : "billable-usage",
+      provider_kind_class: inventory ? "inventory-ai-search" : "billing-usage-v2",
+      provenance: inventory ? "authoritative_inventory" : "authoritative_billing",
+      coverage_full: true,
+    };
+  });
   receipt.snapshot_digest = computeSnapshotDigest({
     accountIdDigest: receipt.account_id_digest,
     source: receipt.source,
