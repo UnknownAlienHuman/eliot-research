@@ -160,4 +160,3 @@ describe('research run v3 selector transport', () => {
     await expect(api.startResearchRun(rejected.message, 'op-1').catch(() => 'rejected')).resolves.toBe('rejected');
   });
 });
-
