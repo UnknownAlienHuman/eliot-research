@@ -5,7 +5,6 @@ import { fileURLToPath } from "node:url";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import {
-  assertCoreTableMigrationPresence,
   assertExportColumnCoverage,
   coreTableSpecsForMigrationNames,
   readCoreColumnInventory,
@@ -19,13 +18,11 @@ import {
 
 // ER-34 O2 / issue #374. Migration 0141 introduces the immutable
 // managed-target assignment event history and 0143 its derived current
-// read model. The event history is the canonical assignment authority
-// source and is exported as portable provenance; the current head is
-// rebuild-required and is derived from that history by the 0143
-// projection, never trusted from stale portable bytes.
-
-const ASSIGNMENT_EVENT_INTRODUCTION = "0141_managed_target_assignment.sql";
-const ASSIGNMENT_CURRENT_INTRODUCTION = "0143_managed_target_assignment_current.sql";
+// read model. Policy option 1: the event history is installation-local
+// authority (NOT_A_BACKUP) whose required audit/lost-ACK provenance never
+// transfers as portable bytes; the derived current head is REBUILD_REQUIRED,
+// stays empty after restore, and is regenerated only from fresh events the
+// re-admitted owner appends under current authorization.
 
 const migrationDirectory = resolve(dirname(fileURLToPath(import.meta.url)), "../../../infra/d1/core/migrations");
 
@@ -104,88 +101,63 @@ describe("ER-34 O2 managed-target assignment table classification (issue #374)",
     const tables = await listDurableTables(d1);
     expect(tables).toContain("managed_target_assignment_event");
     expect(tables).toContain("managed_target_assignment_current");
-    // Both 0141/0143 tables carry explicit reviewed dispositions, so
-    // neither fails the exhaustive durable-table coverage gate that
-    // every portable epoch runs before any table inventory read. The
-    // full-chain gate itself stays blocked by seven pre-existing
-    // unclassified tables from migrations 0120-0137, which are
-    // separate baseline gaps outside this issue's narrow scope.
 
-    expect(classifyDurableTable("managed_target_assignment_event")).toBe("CANONICAL_EXPORTED");
-    expect(CANONICAL_EXPORTED_TABLES.has("managed_target_assignment_event")).toBe(true);
-    expect(TABLE_SPECS.some((spec) => spec.table === "managed_target_assignment_event")).toBe(true);
+    // The event history is installation-local authority, never portable
+    // provenance: importing event rows would either recreate the current
+    // head through the 0143 AFTER INSERT projection when an owner exists
+    // or fail the 0141 append guards when the re-admitted owner does not,
+    // so the rows must not transfer at all.
+    expect(classifyDurableTable("managed_target_assignment_event")).toBe("NOT_A_BACKUP");
+    expect(CANONICAL_EXPORTED_TABLES.has("managed_target_assignment_event")).toBe(false);
+    expect(TABLE_SPECS.some((spec) => spec.table === "managed_target_assignment_event")).toBe(false);
 
     // The derived current head is rebuild-only: it is never a canonical
-    // export and never carries a portable column spec.
+    // export and never carries a portable column spec. It stays empty
+    // after restore until the re-admitted owner appends fresh events.
     expect(classifyDurableTable("managed_target_assignment_current")).toBe("REBUILD_REQUIRED");
     expect(CANONICAL_EXPORTED_TABLES.has("managed_target_assignment_current")).toBe(false);
     expect(TABLE_SPECS.some((spec) => spec.table === "managed_target_assignment_current")).toBe(false);
 
     // The owner authority the event history anchors to stays re-admission
-    // only, so restored assignment history cannot bypass owner reauthorization.
+    // only, so assignment history cannot be revived without the live owner.
     expect(classifyDurableTable("project_owner")).toBe("NOT_A_BACKUP");
   });
 
-  it("exports the immutable assignment event history with exact coherent-cut column coverage", async () => {
+  it("exports no canonical column coverage for either assignment table", async () => {
     const database = migratedCore();
     const d1 = d1Database(database);
     const specs = coreTableSpecsForMigrationNames(canonicalMigrationNames());
-    const spec = specs.find((entry) => entry.table === "managed_target_assignment_event");
-    expect(spec).toBeDefined();
-    expect(spec?.manifest).toBe("projects");
-    expect(spec?.order_by).toBe("project_id, event_revision");
-    expect(spec?.required).toBe(true);
+    // Neither table may silently join a canonical export spec, even
+    // with the complete migration ledger applied.
+    expect(specs.some((spec) => spec.table === "managed_target_assignment_event")).toBe(false);
+    expect(specs.some((spec) => spec.table === "managed_target_assignment_current")).toBe(false);
 
-    // Coherent-shape negative: the spec must cover every real 0141 column
-    // with its exact affinity and nullability, failing closed on drift.
+    // Coherent-shape negative: the real 0141 columns carry no export
+    // coverage, so any attempt to include the installation-local event
+    // history in a portable export fails closed instead of exporting it.
     const inventory = await readCoreColumnInventory(d1, ["managed_target_assignment_event"]);
-    assertExportColumnCoverage(inventory, specs);
-    expect(inventory[0]?.columns.map((column) => `${column.name}:${column.affinity}:${column.notnull ? 1 : 0}`)).toEqual([
-      "project_id:TEXT:1",
-      "event_revision:INTEGER:1",
-      "expected_event_revision:INTEGER:1",
-      "event_kind:TEXT:1",
-      "project_generation:INTEGER:1",
-      "project_owner_principal_ref:TEXT:1",
-      "target_namespace:TEXT:0",
-      "managed_instance_id:TEXT:0",
-      "managed_generation:TEXT:0",
-      "target_profile_identity_sha256:TEXT:0",
-      "previous_assignment_revision:INTEGER:0",
-      "actor_kind:TEXT:1",
-      "actor_principal_ref:TEXT:1",
-      "authorization_receipt_ref:TEXT:1",
-      "created_at:TEXT:1",
+    expect(inventory[0]?.columns.map((column) => column.name)).toEqual([
+      "project_id",
+      "event_revision",
+      "expected_event_revision",
+      "event_kind",
+      "project_generation",
+      "project_owner_principal_ref",
+      "target_namespace",
+      "managed_instance_id",
+      "managed_generation",
+      "target_profile_identity_sha256",
+      "previous_assignment_revision",
+      "actor_kind",
+      "actor_principal_ref",
+      "authorization_receipt_ref",
+      "created_at",
     ]);
-  });
-
-  it("binds the assignment event export to migration 0141 and enforces the dependent 0143 chain", async () => {
-    const names = canonicalMigrationNames();
-    expect(coreTableSpecsForMigrationNames(names).some((spec) => spec.table === "managed_target_assignment_event")).toBe(true);
-
-    // A hand-picked pre-0141 ledger subset must not claim the table.
-    const preAssignment = names.filter((name) => name < ASSIGNMENT_EVENT_INTRODUCTION);
-    expect(coreTableSpecsForMigrationNames(preAssignment).some((spec) => spec.table === "managed_target_assignment_event")).toBe(false);
-
-    // The 0143 derived read model cannot appear in a ledger without its
-    // 0141 authority predecessor: the complete chain is required.
-    expect(() => coreTableSpecsForMigrationNames([...preAssignment, ASSIGNMENT_CURRENT_INTRODUCTION]))
-      .toThrowError(expect.objectContaining({ code: "BACKUP_COVERAGE_GAP" }));
-
-    // Table presence must agree with the introducing migration in both
-    // directions: the complete live table inventory against the
-    // complete migration ledger. A partial inventory would disagree
-    // with every other introduced table and fail closed.
-    const database = migratedCore();
-    const liveTables = await listDurableTables(d1Database(database));
-    expect(() => assertCoreTableMigrationPresence(liveTables, names)).not.toThrow();
-    expect(() => assertCoreTableMigrationPresence(["managed_target_assignment_event"], []))
-      .toThrowError(expect.objectContaining({ code: "BACKUP_COVERAGE_GAP" }));
-    expect(() => assertCoreTableMigrationPresence([], [ASSIGNMENT_EVENT_INTRODUCTION]))
+    expect(() => assertExportColumnCoverage(inventory, specs))
       .toThrowError(expect.objectContaining({ code: "BACKUP_COVERAGE_GAP" }));
   });
 
-  it("derives the current assignment head from the canonical event history", () => {
+  it("derives the current assignment head from the installation-local event history", () => {
     const database = migratedCore();
     const projectId = "assignment-coverage-project";
     const principal = "assignment-coverage-owner";
@@ -215,7 +187,8 @@ describe("ER-34 O2 managed-target assignment table classification (issue #374)",
     expect(database.prepare("SELECT project_id,event_revision,event_kind FROM managed_target_assignment_current WHERE project_id=?1")
       .get(projectId)).toEqual({ project_id: projectId, event_revision: 2, event_kind: "RETIRE" });
 
-    // The immutable audit and lost-ACK provenance is retained, never rewritten.
+    // The immutable audit and lost-ACK provenance is retained locally,
+    // never rewritten.
     expect(() => database.prepare("UPDATE managed_target_assignment_event SET event_kind='RETIRE' WHERE project_id=?1 AND event_revision=1").run(projectId))
       .toThrow(/MANAGED_TARGET_ASSIGNMENT_IMMUTABLE/);
     expect(() => database.prepare("DELETE FROM managed_target_assignment_event WHERE project_id=?1").run(projectId))
@@ -223,7 +196,7 @@ describe("ER-34 O2 managed-target assignment table classification (issue #374)",
     expect(database.prepare("SELECT COUNT(*) AS n FROM managed_target_assignment_event WHERE project_id=?1").get(projectId)).toEqual({ n: 2 });
   });
 
-  it("refuses an assignment append without the current owner row and still fails closed on unknown future tables", async () => {
+  it("refuses an assignment append without the current owner row and still fails closed on unknown future tables", () => {
     const database = migratedCore();
     const orphanProject = "assignment-orphan-project";
     database.prepare(`INSERT INTO project(
@@ -247,4 +220,3 @@ describe("ER-34 O2 managed-target assignment table classification (issue #374)",
       .toThrowError(expect.objectContaining({ code: "BACKUP_COVERAGE_GAP" }));
   });
 });
-
