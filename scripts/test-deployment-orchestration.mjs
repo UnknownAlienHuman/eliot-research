@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { deployCloudflare } from "./deploy-cloudflare.mjs";
-import { readCompositionCapabilityProfile } from "./check-launch-code.mjs";
+import { readCompositionCapabilityProfile, readConfiguredTransport } from "./check-launch-code.mjs";
+import { parseDeploymentJsonc } from "./lib/deployment-jsonc.mjs";
 import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS,
   RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS, semanticConfigurationTransport } from "./lib/research-runtime-config.mjs";
 // Deployment checks exercise launch order and do not model billing admission.
@@ -70,13 +71,16 @@ function admittedSnapshotJson(accountId = "test-account", at = now) {
 }
 */
 const repositoryRoot = resolve(fileURLToPath(new URL("../", import.meta.url)));
+const canonicalConfig = parseDeploymentJsonc(await readFile(resolve(repositoryRoot,
+  "apps/eliotr-core/wrangler.jsonc"), "utf8"), "apps/eliotr-core/wrangler.jsonc");
+const canonicalGoogleTransport = readConfiguredTransport(canonicalConfig);
 const environment = await loadResearchRuntimeEnvironment({ CLOUDFLARE_ACCOUNT_ID: "test-account", CLOUDFLARE_API_TOKEN: "secret-token",
   ELIOTR_ENVIRONMENT: "staging", ELIOTR_DEPLOYMENT_GENERATION: "git-test", ELIOTR_CUSTOM_DOMAIN: "1",
   ELIOTR_ACCESS_HOSTNAME: "research.example.com", ELIOTR_OWNER_EMAILS: "owner@example.com",
   ELIOTR_STAGING_TARGET_JSON: JSON.stringify({ protocol: "eliotr.staging-target.v1", isolation: "dedicated-account",
     account_id: "test-account", protected_account_ids: ["production-test-account"], access_hostname: "research.example.com" }),
   ELIOTR_ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com", ELIOTR_ACCESS_AUDIENCE: "test-aud",
-  ELIOTR_ACCESS_SERVICE_PRINCIPALS: "", ELIOTR_ACCESS_SMOKE_COOKIE: "secret-cookie", ELIOTR_GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp",
+  ELIOTR_ACCESS_SERVICE_PRINCIPALS: "", ELIOTR_ACCESS_SMOKE_COOKIE: "secret-cookie", ELIOTR_GOOGLE_EXTERNAL_TRANSPORT: canonicalGoogleTransport,
   ELIOTR_RESEARCH_CONFIG_FILE: runtimeConfigPath }, repositoryRoot);
 const runtimeConfigVars = Object.fromEntries(RESEARCH_RUNTIME_CONFIGURATION_KEYS
   .filter((key) => !RESEARCH_RUNTIME_SEMANTIC_TRANSPORT_KEYS.includes(key) && typeof environment[key] === "string")
@@ -84,12 +88,13 @@ const runtimeConfigVars = Object.fromEntries(RESEARCH_RUNTIME_CONFIGURATION_KEYS
 const config = { name: "eliotr-core", minify: true, preview_urls: false, compatibility_date: "2026-08-28",
   vars: { ...runtimeConfigVars, ...semanticConfigurationTransport(environment).vars,
     DEPLOYMENT_GENERATION: "git-test", ENVIRONMENT: "staging", ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com",
-    ACCESS_AUDIENCE: "test-aud", ACCESS_SERVICE_PRINCIPALS: "", GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp" },
+    ACCESS_AUDIENCE: "test-aud", ACCESS_SERVICE_PRINCIPALS: "", GOOGLE_EXTERNAL_TRANSPORT: canonicalGoogleTransport },
   d1_databases: [
     { binding: "CORE_DB", database_name: "eliotr-core", database_id: "11111111-1111-4111-8111-111111111111", migrations_dir: "../../infra/d1/core/migrations" },
     { binding: "SEARCH_DB", database_name: "eliotr-search", database_id: "22222222-2222-4222-8222-222222222222", migrations_dir: "../../infra/d1/search/migrations" },
   ] };
 const bytes = Buffer.from(JSON.stringify(config));
+const generatedConfigPath = resolve(repositoryRoot, "apps/eliotr-core/wrangler.deploy.jsonc");
 const buildInputManifest = Object.freeze({ protocol: "eliotr.deployment-build-inputs.v1",
   root: repositoryRoot, sha256: "a".repeat(64) });
 const workerEntrypoint = resolve(repositoryRoot, ".eliotr-state/deployment-worker-12345678-1234-4234-8234-123456789abc/index.js");
@@ -157,7 +162,12 @@ function harness(overrides = {}) {
       }
     },
     archive: async () => { calls.push("archive"); },
-    read: async () => { reads += 1; return overrides.driftAt === reads ? Buffer.from("{}") : bytes; },
+    read: async (path, encoding) => {
+      if (resolve(path) !== generatedConfigPath) return readFile(path, encoding);
+      reads += 1;
+      const generatedBytes = overrides.driftAt === reads ? Buffer.from("{}") : bytes;
+      return encoding === undefined ? generatedBytes : generatedBytes.toString(encoding);
+    },
     save: async (receipt) => { calls.push("save"); receipts.push(receipt); },
     readActiveWorker: async () => ({ deployment_id: "active-deployment", version_id: "active-version", generation: "git-test" }),
     fetchImpl: async (url, init = {}) => {
