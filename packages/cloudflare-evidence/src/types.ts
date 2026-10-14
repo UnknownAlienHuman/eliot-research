@@ -154,7 +154,11 @@ export interface EvidenceAuthorityPort {
     access: EvidenceAccessContext,
   ): Promise<ScopeAuthorization>;
   loadSource(sourceRevisionRef: string): Promise<EvidenceSourceAuthority | null>;
-  resolveCandidate(candidate: LocatorCandidate): Promise<CandidateAnchorAuthority>;
+  resolveCandidate(
+    candidate: LocatorCandidate,
+    source?: EvidenceSourceAuthority,
+    scope?: ScopeAuthority,
+  ): Promise<CandidateAnchorAuthority>;
   loadHandle(ref: VersionedRef): Promise<EvidenceHandle | null>;
   persistResolution(input: PersistEvidenceResolutionInput): Promise<{
     readonly handle: EvidenceHandle;

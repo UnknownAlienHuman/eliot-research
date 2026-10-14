@@ -25,6 +25,11 @@ import {
   type ScopeAuthority,
   type ScopeAuthorization,
 } from "./types.js";
+import {
+  resolveManagedCopyLocator,
+  sameManagedCopyLocator,
+  type ManagedCopyCanonicalLocator,
+} from "./managed-copy-locator.js";
 
 interface GrantRow {
   readonly authorization_receipt_ref: unknown;
@@ -344,13 +349,29 @@ async function decodeSourceAuthority(row: SourceRow, nowMs: number): Promise<Evi
   return authority;
 }
 
-export async function resolveCandidateAuthority(
-  database: D1Database,
-  rawCandidate: LocatorCandidate,
-): Promise<CandidateAnchorAuthority> {
-  let candidate: LocatorCandidate;
-  try { candidate = LocatorCandidateSchema.parse(rawCandidate); }
+function parseLocatorCandidate(rawCandidate: LocatorCandidate): LocatorCandidate {
+  try { return LocatorCandidateSchema.parse(rawCandidate); }
   catch (cause) { fail("EVIDENCE_INPUT_INVALID", "locator candidate failed strict decoding", { cause }); }
+}
+
+async function resolveCandidateAuthorityFromSearch(
+  database: D1Database,
+  candidate: LocatorCandidate,
+  canonicalCopy?: ManagedCopyCanonicalLocator,
+): Promise<CandidateAnchorAuthority> {
+  const projectionGeneration = canonicalCopy?.canonical_projection_generation ?? candidate.index_generation;
+  const copyPredicate = canonicalCopy === undefined
+    ? ""
+    : "AND p.item_key = ?4 AND p.content_sha256 = ?5 ";
+  const bindings = canonicalCopy === undefined
+    ? [candidate.source_revision_ref, candidate.canonical_section_id, projectionGeneration]
+    : [
+      candidate.source_revision_ref,
+      candidate.canonical_section_id,
+      projectionGeneration,
+      canonicalCopy.canonical_item_key,
+      canonicalCopy.content_sha256,
+    ];
   const result = await database.prepare(
     "SELECT p.item_key, p.source_revision_ref, p.canonical_section_id, p.content_sha256, " +
     "p.normalized_offset_map_ref, p.projection_generation, s.normalized_start_byte, " +
@@ -364,12 +385,8 @@ export async function resolveCandidateAuthority(
     "JOIN projection_activation_guard a ON a.source_revision_ref = p.source_revision_ref " +
     "AND a.projection_generation = p.projection_generation " +
     "WHERE p.source_revision_ref = ?1 AND p.canonical_section_id = ?2 " +
-    "AND p.projection_generation = ?3 AND p.active = 1 LIMIT 2",
-  ).bind(
-    candidate.source_revision_ref,
-    candidate.canonical_section_id,
-    candidate.index_generation,
-  ).all<CandidateRow>();
+    "AND p.projection_generation = ?3 AND p.active = 1 " + copyPredicate + "LIMIT 2",
+  ).bind(...bindings).all<CandidateRow>();
   const rows = result.results ?? [];
   if (rows.length !== 1) {
     fail("EVIDENCE_LOCATOR_NOT_RESOLVABLE", "locator does not resolve to one active projection span");
@@ -380,14 +397,24 @@ export async function resolveCandidateAuthority(
   }
   const itemKey = assertEvidenceIdentifier(row.item_key, "projection item key");
   const metadataItemKey = candidate.metadata.item_key;
-  if (metadataItemKey !== undefined && metadataItemKey !== itemKey) {
+  if (canonicalCopy !== undefined && (
+      itemKey !== canonicalCopy.canonical_item_key ||
+      row.projection_generation !== canonicalCopy.canonical_projection_generation ||
+      row.canonical_section_id !== canonicalCopy.canonical_section_id ||
+      row.content_sha256 !== canonicalCopy.content_sha256 ||
+      row.normalized_start_byte !== canonicalCopy.normalized_start_byte ||
+      row.normalized_end_byte !== canonicalCopy.normalized_end_byte
+    )) {
+    fail("EVIDENCE_LOCATOR_NOT_RESOLVABLE", "canonical D1 row differs from the current Core copy map");
+  }
+  if (canonicalCopy === undefined && metadataItemKey !== undefined && metadataItemKey !== itemKey) {
     fail("EVIDENCE_LOCATOR_NOT_RESOLVABLE", "locator metadata item key conflicts with D1 Search authority");
   }
   const sourceRevision = assertEvidenceIdentifier(row.source_revision_ref, "projection source revision");
   if (
     sourceRevision !== candidate.source_revision_ref ||
     row.canonical_section_id !== candidate.canonical_section_id ||
-    row.projection_generation !== candidate.index_generation ||
+    row.projection_generation !== projectionGeneration ||
     row.precision_kind !== "normalized_bytes"
   ) {
     fail("EVIDENCE_LOCATOR_NOT_RESOLVABLE", "locator conflicts with active projection authority");
@@ -408,6 +435,46 @@ export async function resolveCandidateAuthority(
       "projection generation",
     ),
   };
+}
+
+export async function resolveCandidateAuthority(
+  database: D1Database,
+  rawCandidate: LocatorCandidate,
+): Promise<CandidateAnchorAuthority> {
+  return resolveCandidateAuthorityFromSearch(database, parseLocatorCandidate(rawCandidate));
+}
+
+export async function resolveManagedCopyCandidateAuthority(
+  coreDatabase: D1Database,
+  searchDatabase: D1Database,
+  rawCandidate: LocatorCandidate,
+  source: EvidenceSourceAuthority,
+  scope: ScopeAuthority,
+  now: () => number,
+): Promise<CandidateAnchorAuthority> {
+  const candidate = parseLocatorCandidate(rawCandidate);
+  const before = await resolveManagedCopyLocator(
+    coreDatabase,
+    candidate,
+    source,
+    scope,
+    now(),
+  );
+  const resolved = await resolveCandidateAuthorityFromSearch(searchDatabase, candidate, before);
+  const after = await resolveManagedCopyLocator(
+    coreDatabase,
+    candidate,
+    source,
+    scope,
+    now(),
+  );
+  if (!sameManagedCopyLocator(before, after)) {
+    fail(
+      "EVIDENCE_LOCATOR_NOT_RESOLVABLE",
+      "Core project-copy mapping changed while resolving its canonical D1 row",
+    );
+  }
+  return resolved;
 }
 
 export async function loadEvidenceHandle(
