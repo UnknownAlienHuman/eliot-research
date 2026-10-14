@@ -31,7 +31,7 @@ export interface TaskScope {
   readonly label: string;
 }
 
-export type AgentTaskState = "waiting" | "working" | "decision" | "done" | "declined" | "expired";
+export type AgentTaskState = "waiting" | "accepted" | "working" | "decision" | "done" | "declined" | "expired" | "abandoned" | "stale";
 export interface AgentTaskSummary {
   readonly id: string;
   readonly title: string;
@@ -85,10 +85,12 @@ export const AGENT_WORK_COPY = {
     agents: "Agents", tools: "Tools", tasks: "Tasks", manageAgents: "Manage agents", noTasks: "Tasks you hand over appear here.", noAgents: "No agent connections are configured in this workspace yet.", agentsUnavailable: "Agent connections have not been read here yet.",
     presence: { ready: "Ready", busy: "Working", offline: "Offline", unknown: "Presence not checked", disabled: "Disabled" } satisfies Record<AgentPresence, string>,
     moreAgents: "More connections", firstAgents: "First connections",
+    tasksUnavailable: "Tasks have not been read for this project.", moreTasks: "More tasks", firstTasks: "First tasks",
     transport: { mcp: "MCP", local: "Local", inbox: "Web inbox" } satisfies Record<AgentTransport, string>,
     taskState: (state: AgentTaskState, progress?: { readonly done: number; readonly total: number }) => ({
       waiting: "Waiting for the agent", working: progress ? `Working · ${progress.done} of ${progress.total}` : "Working",
       decision: "Needs your decision", done: "Done", declined: "Declined by the agent", expired: "Expired",
+      accepted: "Accepted by the agent; run status not checked", abandoned: "Withdrawn", stale: "Task is no longer current",
     })[state],
     tool: {
       search: { label: "Search sources", hint: "Passages that answer a question" },
@@ -123,10 +125,12 @@ export const AGENT_WORK_COPY = {
     agents: "Агенты", tools: "Инструменты", tasks: "Поручения", manageAgents: "Управление агентами", noTasks: "Здесь появятся ваши поручения.", noAgents: "В рабочем пространстве пока не настроены подключения агентов.", agentsUnavailable: "Подключения агентов здесь ещё не прочитаны.",
     presence: { ready: "Готов", busy: "Работает", offline: "Не в сети", unknown: "Связь не проверена", disabled: "Отключено" } satisfies Record<AgentPresence, string>,
     moreAgents: "Ещё подключения", firstAgents: "Первые подключения",
+    tasksUnavailable: "Поручения для этого проекта ещё не прочитаны.", moreTasks: "Ещё поручения", firstTasks: "Первые поручения",
     transport: { mcp: "MCP", local: "Локально", inbox: "Веб-инбокс" } satisfies Record<AgentTransport, string>,
     taskState: (state: AgentTaskState, progress?: { readonly done: number; readonly total: number }) => ({
       waiting: "Ждёт агента", working: progress ? `Работает · ${progress.done} из ${progress.total}` : "Работает",
       decision: "Нужно ваше решение", done: "Готово", declined: "Агент отказался", expired: "Срок истёк",
+      accepted: "Агент принял; статус исследования не прочитан", abandoned: "Отозвано", stale: "Поручение больше не актуально",
     })[state],
     tool: {
       search: { label: "Поиск по источникам", hint: "Фрагменты, отвечающие на вопрос" },

@@ -74,6 +74,32 @@ export const ControlPaneRussianDark: Story = {
   render: () => <div data-theme="dark" className="eliot-token-story">{pane("ru")}</div>,
 };
 
+export const UnreadTasks: Story = {
+  render: () => <div className="er-agent-story-pane"><AgentWorkPane locale="en" agents={[]}
+    tools={[]} tasks={[{ id: "private-stale", title: "Private stale task", agent: "Agent", state: "done" }]}
+    tasksUnavailable onTool={fn()} onMoreTasks={fn()} /></div>,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByText("Tasks have not been read for this project.")).toBeVisible();
+    await expect(canvas.queryByText("Private stale task")).not.toBeInTheDocument();
+    await expect(canvas.queryByRole("button", { name: "More tasks" })).not.toBeInTheDocument();
+  },
+};
+
+export const AcceptedDispatchIsNotCompletion: Story = {
+  render: () => <div className="er-agent-story-pane"><AgentWorkPane locale="en" agents={[]}
+    tools={[]} tasks={[{ id: "accepted", title: "Accepted research request", agent: "Agent", state: "accepted" }]}
+    onTool={fn()} onMoreTasks={fn()} onFirstTasks={fn()} /></div>,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByText("Agent · Accepted by the agent; run status not checked")).toBeVisible();
+    await expect(canvas.queryByText("Done", { exact: true })).not.toBeInTheDocument();
+    await expect(canvas.queryByRole("progressbar")).not.toBeInTheDocument();
+    await expect(canvas.getByRole("button", { name: "More tasks" })).toBeVisible();
+    await expect(canvas.getByRole("button", { name: "First tasks" })).toBeVisible();
+  },
+};
+
 const sent = fn();
 export const HandOverAClaimCheck: Story = {
   render: () => <HandoffSheet locale="en" open agents={AGENTS} tools={TOOLS} scope={SCOPE} initialTool="verify" onSend={sent} onClose={fn()} />,

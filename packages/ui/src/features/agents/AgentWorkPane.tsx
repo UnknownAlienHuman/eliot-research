@@ -14,18 +14,21 @@ export interface AgentWorkPaneProps {
   /** Only tools the system offers for this project; anything else is a chat request. */
   readonly tools: readonly ResearchToolId[];
   readonly tasks: readonly AgentTaskSummary[];
+  readonly tasksUnavailable?: boolean | undefined;
   readonly onTool: (tool: ResearchToolId) => void;
   readonly onTask?: ((taskId: string) => void) | undefined;
   readonly onManageAgents?: (() => void) | undefined;
   readonly onMoreAgents?: (() => void) | undefined;
   readonly onFirstAgents?: (() => void) | undefined;
+  readonly onMoreTasks?: (() => void) | undefined;
+  readonly onFirstTasks?: (() => void) | undefined;
 }
 
 /**
  * The right pane of a project, as NotebookLM's Studio: who is connected, the system's tools and the
  * tasks handed over. Presentation only — the owner of the workspace decides what each callback does.
  */
-export function AgentWorkPane({ locale, agents, agentsUnavailable = false, tools, tasks, onTool, onTask, onManageAgents, onMoreAgents, onFirstAgents }: AgentWorkPaneProps) {
+export function AgentWorkPane({ locale, agents, agentsUnavailable = false, tools, tasks, tasksUnavailable = false, onTool, onTask, onManageAgents, onMoreAgents, onFirstAgents, onMoreTasks, onFirstTasks }: AgentWorkPaneProps) {
   const text = AGENT_WORK_COPY[locale];
   const id = useId();
   return <div className="er-agent-work">
@@ -63,7 +66,7 @@ export function AgentWorkPane({ locale, agents, agentsUnavailable = false, tools
 
     <section className="er-agent-work__section" aria-labelledby={`${id}-tasks`}>
       <h3 id={`${id}-tasks`}>{text.tasks}</h3>
-      {tasks.length === 0 ? <p className="er-agent-work__empty">{text.noTasks}</p> : <ul className="er-agent-work__tasks">
+      {tasksUnavailable || tasks.length === 0 ? <p className="er-agent-work__empty">{tasksUnavailable ? text.tasksUnavailable : text.noTasks}</p> : <ul className="er-agent-work__tasks">
         {tasks.map(task => {
           const state = text.taskState(task.state, task.progress);
           const body = <>
@@ -79,6 +82,10 @@ export function AgentWorkPane({ locale, agents, agentsUnavailable = false, tools
           </li>;
         })}
       </ul>}
+      {!tasksUnavailable && (onMoreTasks || onFirstTasks) ? <div className="er-agent-work__head">
+        {onFirstTasks ? <button type="button" className="er-agent-work__link" onClick={onFirstTasks}>{text.firstTasks}</button> : null}
+        {onMoreTasks ? <button type="button" className="er-agent-work__link" onClick={onMoreTasks}>{text.moreTasks}</button> : null}
+      </div> : null}
     </section>
   </div>;
 }
