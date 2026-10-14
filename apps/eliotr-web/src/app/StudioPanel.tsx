@@ -1,5 +1,6 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { skipToken, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useLocation } from 'react-router';
 import { Button, OperationAnnouncement, Status, StudioFeature, STUDIO_COPY } from '@eliotr/ui';
 import type { VersionedRef, WikiProposalReadView, WikiProposalFromRunView, WikiPublicationView } from '@eliotr/owner-api-client';
 import { classifyMutationOutcome } from '@eliotr/owner-api-client';
@@ -11,6 +12,7 @@ import { studioQueryOptions } from '../query/studio';
 import { researchQueryOptions } from '../query/research';
 import { ReportPanel } from './ReportPanel';
 import { usePaneAnnouncement } from './usePaneAnnouncement';
+import { hasInboxStudioSelectionState, matchesInboxStudioReadback, resolveInboxStudioSelection } from './inboxStudioSelection';
 
 type StudioIntent = ({ readonly kind: 'edit'; readonly base: WikiProposalReadView; readonly title: string; readonly body: string; readonly note: string }
   | { readonly kind: 'publish'; readonly base: WikiProposalReadView; readonly expectedHead: number })
@@ -35,13 +37,18 @@ const savedReportsCopy = {
   ru: { reading: 'Читаются сохранённые отчёты.', failed: 'Не удалось прочитать сохранённые отчёты. Повторите чтение.',
     refresh: 'Обновить сохранённые отчёты', empty: 'Сохранённых отчётов пока нет.' },
 } as const;
+const inboxSelectionCopy = {
+  en: 'The Inbox proposal could not be verified. Reopen it from the Inbox.',
+  ru: 'Не удалось проверить предложение из входящих. Откройте его снова из входящих.',
+} as const;
 
 /** Read, copy-on-write edit and publication use only the accepted owner client. */
 export function StudioPanel({ apis, privacy, context, locale }: {
   readonly apis: BoundWorkspaceApis; readonly privacy: PrivacyController; readonly context: SessionContext; readonly locale: 'en' | 'ru';
 }) {
   const client = useQueryClient(), text = copy[locale], reportText = savedReportsCopy[locale], readbackText = publicationReadbackCopy[locale];
-  const memoryKey = [...protectedQueryKey(context, 'studio'), 'local-intent'];
+  const location = useLocation();
+  const memoryKey = useMemo(() => [...protectedQueryKey(context, 'studio'), 'local-intent'], [context]);
   const memory = useQuery<StudioMemory>({ queryKey: memoryKey, queryFn: skipToken, gcTime: Infinity });
   let proposalKey: (string | number)[] = [];
   const options = studioQueryOptions(apis.studio, privacy, context, () => client.getQueryData<WikiProposalReadView>(proposalKey));
@@ -53,7 +60,9 @@ export function StudioPanel({ apis, privacy, context, locale }: {
   const body = useQuery(view ? options.body(view) : { queryKey: [...protectedQueryKey(context, 'studio'), 'body-unselected'], queryFn: skipToken });
   const research = researchQueryOptions({ ...apis.research, configuration: apis.connections.configuration }, privacy, context);
   const history = useQuery(research.history());
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(false), [inboxSelectionFailed, setInboxSelectionFailed] = useState(false);
+  const [inboxSelectionPending, setInboxSelectionPending] = useState(false), [handledInboxLocation, setHandledInboxLocation] = useState<string | undefined>();
+  const inFlightInboxLocation = useRef<{ readonly key: string; readonly token: symbol } | undefined>(undefined);
   const running = useRef(false), mounted = useRef(true), controller = useRef<AbortController | undefined>(undefined);
   const read = () => client.getQueryData<StudioMemory>(memoryKey) ?? {};
   const write = (update: (old: StudioMemory) => StudioMemory) => {
@@ -170,7 +179,8 @@ export function StudioPanel({ apis, privacy, context, locale }: {
       await execute(intent, signal);
     });
   };
-  const saved = memory.data, blocked = busy || saved?.intent !== undefined;
+  const routeSelectionActive = hasInboxStudioSelectionState(location.state) && handledInboxLocation !== location.key;
+  const saved = memory.data, blocked = busy || inboxSelectionPending || routeSelectionActive || saved?.intent !== undefined;
   // Confirmed publication, unconfirmed readback. The receipt itself is trusted; what is unknown is
   // whether the published page reads back as PUBLISHED for this exact proposal and page reference.
   const publicationReadbackFailed = publicationReceiptForSelected !== undefined && (
@@ -199,6 +209,85 @@ export function StudioPanel({ apis, privacy, context, locale }: {
   const reportsHeading = useRef<HTMLHeadingElement>(null), returningFromReport = useRef(false);
   const libraryHeading = useRef<HTMLHeadingElement>(null), readerHeading = useRef<HTMLHeadingElement>(null);
   const pendingProposalFocus = useRef<{ readonly context: SessionContext; readonly target: VersionedRef | 'library' } | undefined>(undefined);
+  useEffect(() => {
+    if (!hasInboxStudioSelectionState(location.state)) {
+      if (handledInboxLocation !== undefined) setHandledInboxLocation(undefined);
+      setInboxSelectionPending(false);
+      setInboxSelectionFailed(false);
+      return;
+    }
+    const routeKey = location.key;
+    if (handledInboxLocation === routeKey || inFlightInboxLocation.current?.key === routeKey) return;
+    if (!privacy.isCurrent(context) || proposals.isError || !proposals.data) {
+      setInboxSelectionPending(false);
+      return;
+    }
+
+    const proposalQueries = studioQueryOptions(apis.studio, privacy, context, () => undefined);
+    const proposalListQuery = proposalQueries.proposals();
+    const proposalSnapshot = proposals.data;
+    if (client.getQueryData(proposalListQuery.queryKey) !== proposalSnapshot) return;
+    const existingIntent = client.getQueryData<StudioMemory>(memoryKey)?.intent;
+    const selection = resolveInboxStudioSelection(location.state, context, proposalSnapshot, existingIntent);
+    if (!selection) {
+      setHandledInboxLocation(routeKey);
+      setInboxSelectionPending(false);
+      if (!existingIntent && privacy.isCurrent(context)) setInboxSelectionFailed(true);
+      return;
+    }
+
+    setInboxSelectionFailed(false);
+    setInboxSelectionPending(true);
+    const token = Symbol('inbox-studio-selection');
+    inFlightInboxLocation.current = { key: routeKey, token };
+    let active = true;
+    void client.fetchQuery(proposalQueries.proposal(selection.proposalRef)).then(proposal => {
+      if (!active || !privacy.isCurrent(context)) return;
+      if (client.getQueryData<StudioMemory>(memoryKey)?.intent) {
+        setInboxSelectionPending(false);
+        setHandledInboxLocation(routeKey);
+        return;
+      }
+      if (client.getQueryData(proposalListQuery.queryKey) !== proposalSnapshot ||
+        !matchesInboxStudioReadback(selection, context, proposal)) {
+        setInboxSelectionFailed(true);
+        setInboxSelectionPending(false);
+        setHandledInboxLocation(routeKey);
+        return;
+      }
+
+      let applied = false;
+      client.setQueryData<StudioMemory>(memoryKey, old => {
+        if (!privacy.isCurrent(context) || old?.intent) return old;
+        const { artifact: _artifact, ...rest } = old ?? {};
+        applied = true;
+        return { ...rest, selected: proposal.proposal_ref };
+      });
+      if (applied) {
+        pendingProposalFocus.current = { context, target: proposal.proposal_ref };
+        setInboxSelectionFailed(false);
+      } else if (privacy.isCurrent(context) && !client.getQueryData<StudioMemory>(memoryKey)?.intent) {
+        setInboxSelectionFailed(true);
+      }
+      setInboxSelectionPending(false);
+      setHandledInboxLocation(routeKey);
+    }).catch(() => {
+      if (active && privacy.isCurrent(context) && !client.getQueryData<StudioMemory>(memoryKey)?.intent) {
+        setInboxSelectionFailed(true);
+      }
+      if (active) setInboxSelectionPending(false);
+    }).finally(() => {
+      if (inFlightInboxLocation.current?.token === token) inFlightInboxLocation.current = undefined;
+      if (active) {
+        setInboxSelectionPending(false);
+        if (privacy.isCurrent(context)) setHandledInboxLocation(routeKey);
+      }
+    });
+    return () => {
+      active = false;
+      if (inFlightInboxLocation.current?.token === token) inFlightInboxLocation.current = undefined;
+    };
+  }, [apis.studio, client, context, handledInboxLocation, location.key, location.state, memory.data?.intent, memoryKey, privacy, proposals.data, proposals.isError]);
   useLayoutEffect(() => {
     if (!saved?.artifact && returningFromReport.current) {
       returningFromReport.current = false;
@@ -233,7 +322,7 @@ export function StudioPanel({ apis, privacy, context, locale }: {
     items: proposals.data.items.map(proposal => view && sameRef(proposal.proposal_ref, view.proposal_ref)
       ? { ...proposal, state: view.state } : proposal),
   } : undefined;
-  const announcement = usePaneAnnouncement(busy ? text.working
+  const announcement = usePaneAnnouncement(inboxSelectionPending ? text.reading : busy ? text.working
     : saved?.intent?.phase === 'unknown' ? text.unknown
     : saved?.intent?.phase === 'rejected' ? refusedText
     : publicationReadbackFailed ? readbackText.failed
@@ -243,11 +332,12 @@ export function StudioPanel({ apis, privacy, context, locale }: {
     : selected.isFetching || body.isFetching || proposals.isFetching || history.isPending || history.isFetching ? text.reading
     : view?.state === 'PUBLISHED' || publicationForSelected ? text.published
     : view && saved?.edited && sameRef(view.proposal_ref, saved.edited.proposal_ref) ? text.edited : proposals.data ? text.loaded : '');
-  if (saved?.artifact) return <ReportPanel key={`${saved.artifact.id}:${saved.artifact.revision}`} locale={locale} apis={apis} privacy={privacy} context={context} artifactRef={saved.artifact}
+  if (saved?.artifact && !routeSelectionActive && !inboxSelectionFailed) return <ReportPanel key={`${saved.artifact.id}:${saved.artifact.revision}`} locale={locale} apis={apis} privacy={privacy} context={context} artifactRef={saved.artifact}
     onOpenDraft={artifact => write(old => ({ ...old, artifact }))}
     onClose={() => { if (privacy.isCurrent(context)) { returningFromReport.current = true; write(old => { const { artifact: _artifact, ...rest } = old; return rest; }); } }} />;
   return <>
     <OperationAnnouncement>{announcement}</OperationAnnouncement>
+    {inboxSelectionFailed ? <Status tone="error">{inboxSelectionCopy[locale]}</Status> : null}
     <div className="er-live-actions"><Button variant="text" disabled={proposals.isFetching || busy} onClick={() => { void proposals.refetch(); void history.refetch(); }}>{text.read}</Button></div>
     {saved?.intent?.phase === 'unknown' && <div><Status>{text.unknown}</Status><Button variant="tonal" disabled={busy} onClick={reconcile}>{text.recover}</Button></div>}
     {saved?.intent?.phase === 'rejected' && <div><Status tone="error">{refusedText}</Status><Button variant="text" disabled={busy} onClick={reviewRefusal}>{text.review}</Button></div>}
