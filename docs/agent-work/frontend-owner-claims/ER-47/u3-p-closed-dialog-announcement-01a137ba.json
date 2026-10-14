@@ -25,8 +25,13 @@
       "commit_sha": "ff85ee4827366bac620750010f2e648c51d3bea9"
     }
   ],
-  "state": "ACTIVE",
-  "evidence_refs": [],
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "private:codex://threads/01a137ba-e79e-7731-b561-6d7e76f702ff#owner-confirmed-NewProject-claim-closed"
+  ],
   "blocker_refs": [],
-  "supersedes_claim_id": "u3-p-project-wiring-continue-01a137ba"
+  "supersedes_claim_id": "u3-p-project-wiring-continue-01a137ba",
+  "handoff_reason": "SUPERSEDED",
+  "handoff_receipt_ref": "private:codex://threads/01a137ba-e79e-7731-b561-6d7e76f702ff#owner-confirmed-NewProject-claim-closed",
+  "takeover_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json"
 }

@@ -1,0 +1,34 @@
+{
+  "protocol": "eliotr.frontend-owner-claim.v1",
+  "claim_id": "u3-p-project-bootstrap-ack-recovery-20261014",
+  "checkpoint_id": "U3-P",
+  "packet_id": "ER-47",
+  "manager_identity": "frontend-manager",
+  "manager_context_id": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "leaf_identity": "frontend-manager-project-bootstrap349",
+  "owner_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json",
+  "base_sha": "453523e4db31b7bccf6ae6f66218fe477dcfc361",
+  "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
+  "write_paths": [
+    "apps/eliotr-web/src/query/projectCreation.ts",
+    "apps/eliotr-web/src/query/projectCreation.test.ts",
+    "apps/eliotr-web/src/app/NewProjectPanel.tsx",
+    "apps/eliotr-web/src/app/NewProjectPreview.tsx",
+    "apps/eliotr-web/src/app/NewProject.stories.tsx"
+  ],
+  "predecessor_refs": [
+    {
+      "checkpoint_id": "C2-P",
+      "commit_sha": "3e40e1b8956c140196d658cbfb337cafd8cc1c8c",
+      "approval_ref": "tests/ui-owner/receipts/u1-d/client-source-catalog.json"
+    },
+    {
+      "checkpoint_id": "U2-S",
+      "commit_sha": "453523e4db31b7bccf6ae6f66218fe477dcfc361"
+    }
+  ],
+  "state": "ACTIVE",
+  "evidence_refs": [],
+  "blocker_refs": [],
+  "supersedes_claim_id": "u3-p-closed-dialog-announcement-01a137ba"
+}
