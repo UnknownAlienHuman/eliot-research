@@ -12,3 +12,33 @@ export * from "./ai-search.js";
 export * from "./core-authority.js";
 export * from "./core-settlement.js";
 export * from "./projection-delivery-handler.js";
+export {
+  createD1ManagedTargetAssignmentPort,
+  MANAGED_TARGET_ASSIGNMENT_PROTOCOL,
+  ManagedTargetAssignmentError,
+  parseManagedTargetAssignmentCommand,
+} from "./managed-target-assignment.js";
+export type {
+  AssignManagedTargetCommand,
+  ManagedTargetAssignmentActor,
+  ManagedTargetAssignmentAuthorizer,
+  ManagedTargetAssignmentCommand,
+  ManagedTargetAssignmentEvent,
+  ManagedTargetAssignmentPort,
+  ManagedTargetIdentity,
+  RetireManagedTargetCommand,
+} from "./managed-target-assignment.js";
+export {
+  createD1ManagedRequiredSetPort,
+  enumerateManagedRequiredSet,
+  ManagedRequiredSetError,
+} from "./managed-required-set.js";
+export type {
+  EnumerateManagedRequiredSetInput,
+  ManagedRequiredProjectRevisionCopy,
+  ManagedRequiredSetCursor,
+  ManagedRequiredSetFence,
+  ManagedRequiredSetPage,
+  ManagedRequiredSetPort,
+  ManagedRequiredSetReceipt,
+} from "./managed-required-set.js";
