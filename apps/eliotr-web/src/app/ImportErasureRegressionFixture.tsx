@@ -80,26 +80,17 @@ interface MutableEvidence {
   readonly completionReportRefs: string[];
 }
 
-export interface PanelRegressionCounts {
-  readonly rawCapturePostKeys: readonly string[];
-  readonly rawCaptureReadKeys: readonly string[];
-  readonly rawCaptureNames: readonly string[];
-  readonly rawConversionKeys: readonly string[];
-  readonly rawAdmissionKeys: readonly string[];
-  readonly rawAdmissionBodies: readonly string[];
-  readonly rawAdmissionStatusPaths: readonly string[];
-  readonly bundlePrepareKeys: readonly string[];
-  readonly bundlePartPaths: readonly string[];
-  readonly bundleCompletePaths: readonly string[];
-  readonly bundleCommitCount: number;
-  readonly erasurePrepareKeys: readonly string[];
-  readonly erasureExecuteBodies: readonly string[];
-  readonly erasureStatusPaths: readonly string[];
-  readonly mintedKeys: readonly string[];
-  readonly erasureStatusReads: number;
-  readonly completionReports: number;
-  readonly completionReportRefs: readonly string[];
-}
+/**
+ * What a story may assert on. It is derived from the recorder above, so a request that starts
+ * leaving different evidence behind cannot be asserted unless this type changes with it. Every
+ * list is already copied when the snapshot is taken, so an assertion recorded before a later step
+ * compares against what had actually been sent by then and never against a list that kept growing.
+ */
+export type PanelRegressionCounts = {
+  readonly [Key in keyof MutableEvidence]: MutableEvidence[Key] extends readonly string[]
+    ? readonly string[]
+    : MutableEvidence[Key];
+};
 
 export interface PanelRegressionProbe {
   counts(): PanelRegressionCounts;
@@ -497,26 +488,13 @@ async function buildEnvironment(): Promise<PanelEnvironment> {
 
   const probe: PanelRegressionProbe = {
     counts() {
-      return {
-        rawCapturePostKeys: [...evidence.rawCapturePostKeys],
-        rawCaptureReadKeys: [...evidence.rawCaptureReadKeys],
-        rawCaptureNames: [...evidence.rawCaptureNames],
-        rawConversionKeys: [...evidence.rawConversionKeys],
-        rawAdmissionKeys: [...evidence.rawAdmissionKeys],
-        rawAdmissionBodies: [...evidence.rawAdmissionBodies],
-        rawAdmissionStatusPaths: [...evidence.rawAdmissionStatusPaths],
-        bundlePrepareKeys: [...evidence.bundlePrepareKeys],
-        bundlePartPaths: [...evidence.bundlePartPaths],
-        bundleCompletePaths: [...evidence.bundleCompletePaths],
-        bundleCommitCount: evidence.bundleCommitCount,
-        erasurePrepareKeys: [...evidence.erasurePrepareKeys],
-        erasureExecuteBodies: [...evidence.erasureExecuteBodies],
-        erasureStatusPaths: [...evidence.erasureStatusPaths],
-        mintedKeys: [...evidence.mintedKeys],
-        erasureStatusReads: evidence.erasureStatusReads,
-        completionReports: evidence.completionReports,
-        completionReportRefs: [...evidence.completionReportRefs],
-      };
+      // Each list is copied so a snapshot can never alias the live recorder, and the copy walks the
+      // same keys the counts type names, so neither can silently drop a recorded identity.
+      const counts = {} as Record<string, unknown>;
+      for (const [key, value] of Object.entries(evidence)) {
+        counts[key] = Array.isArray(value) ? [...value] : value;
+      }
+      return counts as PanelRegressionCounts;
     },
     importMemory() {
       return client.getQueryData<ImportMemoryProbe>([
