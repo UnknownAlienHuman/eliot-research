@@ -405,4 +405,3 @@ describe("research model spend workflow stage binding", () => {
     expect(await errorCode(service.admissions.admit(withDigest))).toBe("MODEL_ATTEMPT_INPUT_INVALID");
   });
 });
-
