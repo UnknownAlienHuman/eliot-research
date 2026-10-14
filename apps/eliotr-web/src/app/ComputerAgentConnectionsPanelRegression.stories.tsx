@@ -1,0 +1,424 @@
+import { useEffect, useState } from "react";
+import { QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router";
+import type { ComputerAgentConnection } from "@eliotr/owner-api-client";
+import { clearWorkspaceQueries, createWorkspaceQueryClient } from "../query/client";
+import { createPrivacyController, type PrivacyController, type SessionContext } from "./privacy";
+import { Shell } from "./Shell";
+import { createWorkspaceRuntime, type BoundWorkspaceApis } from "./runtime";
+
+const stamp = "2026-10-14T12:00:00.000Z";
+const generation = "computer-agent-connections-regression";
+const connectionId = "agent.private.01";
+const privateName = "Private Research Agent";
+const privateIssuer = "https://owner.cloudflareaccess.com";
+const privateSubject = "private-research-agent.access";
+const traceId = "computer-agent-connections-regression-trace";
+
+type QualificationMode = "expired-ready" | "changed-transport" | "authorization-loss";
+interface RequestEvent { readonly method: string; readonly path: string }
+interface MutationAttempt { readonly method: string; readonly path: string; readonly body: string; readonly key: string }
+interface ComputerAgentRegressionEnvironment {
+  readonly client: ReturnType<typeof createWorkspaceQueryClient>;
+  readonly privacy: PrivacyController;
+  readonly runtime: ReturnType<typeof createWorkspaceRuntime>;
+  requestCount(): number;
+  requestsSince(index: number): readonly RequestEvent[];
+  mutationAttempts(): readonly MutationAttempt[];
+  mintedKeyCount(): number;
+  qualificationReadCount(): number;
+  effectCount(): number;
+  readbackFailureCount(): number;
+  setQualificationMode(mode: QualificationMode): void;
+  authorizationLossRequestCount(): number;
+  assertPreparedOnly(): void;
+  assertUnknownReadback(): void;
+  assertSameActionRetry(): void;
+  assertReceiptReadbackFailure(): void;
+  assertConfirmedReadback(): void;
+  assertNoRequestAfterAuthorizationLoss(): void;
+}
+
+const environments = new WeakMap<HTMLElement, ComputerAgentRegressionEnvironment>();
+
+function json(data: unknown): Response {
+  return new Response(JSON.stringify({ data, trace_id: traceId, deployment_generation: generation }), {
+    headers: { "content-type": "application/json" },
+  });
+}
+
+function problem(status: number, code: string, retryable = false): Response {
+  return new Response(JSON.stringify({
+    type: status === 401 ? "urn:eliotr:problem:access-denied" : "urn:eliotr:problem:service-unavailable",
+    title: code,
+    status,
+    code,
+    trace_id: traceId,
+    retryable,
+  }), { status, headers: { "content-type": "application/json" } });
+}
+
+function assert(condition: boolean, message: string): asserts condition {
+  if (!condition) throw new Error(message);
+}
+
+function createRegressionEnvironment(): ComputerAgentRegressionEnvironment {
+  const client = createWorkspaceQueryClient();
+  const timers = { setTimeout: () => 0, clearTimeout() {} };
+  const requestEvents: RequestEvent[] = [];
+  const attempts: MutationAttempt[] = [];
+  let connection: ComputerAgentConnection | undefined;
+  let mintedKeyCount = 0;
+  let qualificationReads = 0;
+  let effectCount = 0;
+  let listReads = 0;
+  let readbackFailureCount = 0;
+  let failNextListReadback = false;
+  let qualificationMode: QualificationMode = "expired-ready";
+  let authorizationLossCount = 0;
+  let requestsAtAuthorizationLoss = -1;
+  let privacy!: PrivacyController;
+
+  const fetchFixture: typeof fetch = async (input, init) => {
+    const url = new URL(String(input), "https://fixture.invalid");
+    const method = (init?.method ?? "GET").toUpperCase();
+    requestEvents.push({ method, path: url.pathname });
+
+    if (url.pathname === "/api/v1/system/health" && method === "GET") return json({
+      ready: true,
+      deployment_generation: generation,
+      core_schema_generation: "schema-computer-agent-regression",
+      search_schema_generation: "schema-computer-agent-regression",
+      blocking_reason_codes: [],
+      checked_at: stamp,
+    });
+    if (url.pathname === "/api/v1/system/session" && method === "GET") return json({
+      protocol: "eliotr.owner-session.v1",
+      principal_ref: "owner-regression",
+      credential_generation: "credential-regression",
+      client_class: "owner_pwa",
+      expires_at: "2027-01-01T00:00:00.000Z",
+    });
+    if (url.pathname === "/api/v1/research/projects" && method === "GET") return json({
+      protocol: "eliotr.project-owner-list.v1",
+      projects: [],
+    });
+    if (url.pathname === "/api/v1/system/mcp-diagnostics" && method === "GET") {
+      return problem(404, "MCP_DIAGNOSTIC_CHALLENGE_NOT_FOUND");
+    }
+
+    if (url.pathname === "/api/v1/system/computer-agents" && method === "GET") {
+      listReads++;
+      if (failNextListReadback) {
+        failNextListReadback = false;
+        readbackFailureCount++;
+        return problem(503, "COMPUTER_AGENT_CONNECTION_READBACK_UNAVAILABLE", true);
+      }
+      return json({
+        protocol: "eliotr.computer-agent-connections.v1",
+        connections: connection === undefined ? [] : [connection],
+      });
+    }
+
+    const connectionMatch = /^\/api\/v1\/system\/computer-agents\/([^/]+)$/u.exec(url.pathname);
+    if (connectionMatch && method === "PUT") {
+      const selectedId = decodeURIComponent(connectionMatch[1] ?? "");
+      const body = String(init?.body ?? "");
+      const headers = new Headers(init?.headers);
+      const key = headers.get("idempotency-key") ?? "";
+      if (selectedId !== connectionId || headers.get("content-type") !== "application/json" ||
+          headers.get("x-eliotr-csrf") !== "1" || key.length === 0) {
+        throw new Error("Strict SDK PUT lost its logical ID, JSON, CSRF, or idempotency binding");
+      }
+      attempts.push({ method, path: url.pathname, body, key });
+      const request = JSON.parse(body) as {
+        readonly expected_revision: number;
+        readonly display_name: string;
+        readonly contour: ComputerAgentConnection["contour"];
+        readonly actor: ComputerAgentConnection["actor"];
+        readonly transport_capabilities: ComputerAgentConnection["transport_capabilities"];
+        readonly computer_capabilities: ComputerAgentConnection["computer_capabilities"];
+        readonly task_kinds: ComputerAgentConnection["task_kinds"];
+        readonly owner_principal_ref?: unknown;
+      };
+      if (request.expected_revision !== 0 || request.owner_principal_ref !== undefined ||
+          request.transport_capabilities.length !== 1 || request.transport_capabilities[0] !== "MCP_WRITE" ||
+          request.computer_capabilities.length !== 1 || request.computer_capabilities[0] !== "CLOUD_BROWSER" ||
+          request.task_kinds.length !== 1 || request.task_kinds[0] !== "RESEARCH_BRANCH_ANALYSIS") {
+        throw new Error("Reviewed PUT silently widened owner authority or changed the create revision");
+      }
+      if (attempts.length === 1) {
+        connection = {
+          protocol: "eliotr.computer-agent-connection.v1",
+          connection_id: connectionId,
+          revision: 1,
+          owner_principal_ref: "owner-regression",
+          state: "ENABLED",
+          display_name: request.display_name,
+          contour: request.contour,
+          actor: request.actor,
+          transport_capabilities: [...request.transport_capabilities],
+          computer_capabilities: [...request.computer_capabilities],
+          task_kinds: [...request.task_kinds],
+          created_at: stamp,
+          updated_at: stamp,
+        };
+        effectCount++;
+        throw new TypeError("Controlled lost mutation acknowledgement");
+      }
+      const first = attempts[0];
+      if (attempts.length !== 2 || first?.body !== body || first.key !== key || effectCount !== 1 || connection === undefined) {
+        throw new Error("Same-action reconciliation minted or dispatched a different mutation");
+      }
+      failNextListReadback = true;
+      return json(connection);
+    }
+
+    const qualificationMatch = /^\/api\/v1\/system\/computer-agents\/([^/]+)\/qualifications\/([^/]+)$/u.exec(url.pathname);
+    if (qualificationMatch && method === "GET") {
+      qualificationReads++;
+      if (!connection) throw new Error("Qualification was read before the canonical connection existed");
+      if (qualificationMode === "authorization-loss") return problem(401, "ACCESS_SESSION_REQUIRED");
+      const requestedTransport = qualificationMatch[2] ?? "";
+      const returnedTransport = qualificationMode === "changed-transport" ? "WEB_INBOX" : requestedTransport;
+      return json({
+        protocol: "eliotr.computer-agent-qualification-status.v1",
+        status: "READY",
+        connection_id: connection.connection_id,
+        connection_revision: connection.revision,
+        transport: returnedTransport,
+        challenge_id: "qualification-challenge-regression",
+        issued_at: "2026-10-10T12:00:00.000Z",
+        expires_at: "2026-10-15T12:00:00.000Z",
+        deployment_generation: generation,
+        observation_ref: "qualification-observation-regression",
+        observed_at: "2026-10-10T12:00:00.000Z",
+        ready_until: qualificationMode === "expired-ready"
+          ? "2026-10-11T12:00:00.000Z"
+          : "2026-10-15T12:00:00.000Z",
+        verified_credential_generation: "credential-regression",
+      });
+    }
+
+    throw new Error(`Unexpected raw fixture request: ${method} ${url.pathname}`);
+  };
+
+  const runtime = createWorkspaceRuntime({
+    fetch: fetchFixture,
+    baseUrl: "https://fixture.invalid",
+    timers,
+    now: () => Date.parse(stamp),
+    async sha256(bytes) {
+      return [...new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(bytes).buffer))]
+        .map(value => value.toString(16).padStart(2, "0")).join("");
+    },
+    mint() {
+      mintedKeyCount++;
+      return `connection-regression-intent-${mintedKeyCount}`;
+    },
+    isCurrent: context => privacy.isCurrent(context),
+    onAuthorizationLoss() {
+      authorizationLossCount++;
+      requestsAtAuthorizationLoss = requestEvents.length;
+      privacy.close();
+    },
+  });
+  privacy = createPrivacyController({
+    timers,
+    now: () => Date.parse(stamp),
+    mask() { runtime.close(); },
+    reveal() {},
+    cancelReads() { void client.cancelQueries(undefined, { revert: false, silent: true }); },
+    clearProtected() { clearWorkspaceQueries(client); },
+    verify: signal => runtime.verify(signal),
+  });
+
+  return {
+    client,
+    privacy,
+    runtime,
+    requestCount: () => requestEvents.length,
+    requestsSince(index) { return requestEvents.slice(index); },
+    mutationAttempts: () => attempts,
+    mintedKeyCount: () => mintedKeyCount,
+    qualificationReadCount: () => qualificationReads,
+    effectCount: () => effectCount,
+    readbackFailureCount: () => readbackFailureCount,
+    setQualificationMode(mode) { qualificationMode = mode; },
+    authorizationLossRequestCount: () => requestsAtAuthorizationLoss,
+    assertPreparedOnly() {
+      assert(mintedKeyCount === 1 && attempts.length === 0 && effectCount === 0,
+        "Review must mint one frozen identity but must not dispatch the mutation");
+    },
+    assertUnknownReadback() {
+      assert(mintedKeyCount === 1 && attempts.length === 1 && effectCount === 1 && listReads >= 2,
+        "Lost acknowledgement must retain one intent while protected readback observes the committed row");
+    },
+    assertSameActionRetry() {
+      const first = attempts[0];
+      const second = attempts[1];
+      assert(mintedKeyCount === 1 && attempts.length === 2 && effectCount === 1 &&
+        first !== undefined && second !== undefined && first.key === second.key && first.body === second.body,
+      "Manual reconciliation must reuse the original key/body without a second server effect");
+    },
+    assertReceiptReadbackFailure() {
+      assert(readbackFailureCount === 1 && attempts.length === 2 && mintedKeyCount === 1 && effectCount === 1,
+        "Canonical receipt followed by readback 503 must not dispatch or mint another mutation");
+    },
+    assertConfirmedReadback() {
+      assert(connection !== undefined && attempts.length === 2 && mintedKeyCount === 1 &&
+        effectCount === 1 && readbackFailureCount === 1 && listReads >= 4,
+      "Final confirmation must come from protected list readback after the controlled 503");
+    },
+    assertNoRequestAfterAuthorizationLoss() {
+      assert(authorizationLossCount === 1 && requestsAtAuthorizationLoss >= 0 &&
+        requestEvents.length === requestsAtAuthorizationLoss,
+      "No owner request may start after the strict client reports session authority loss");
+    },
+  };
+}
+
+function ComputerAgentConnectionsPanelRegressionPreview() {
+  const [environment] = useState(createRegressionEnvironment);
+  const [bound, setBound] = useState<{ readonly context: SessionContext; readonly apis: BoundWorkspaceApis }>();
+
+  useEffect(() => {
+    const unsubscribe = environment.privacy.subscribe(() => {
+      const snapshot = environment.privacy.getSnapshot();
+      if (snapshot.phase === "available") {
+        environment.runtime.bind(snapshot.context);
+        const apis = environment.runtime.read(snapshot.context);
+        if (apis) setBound({ context: snapshot.context, apis });
+      }
+    });
+    void environment.privacy.refresh();
+    return () => {
+      unsubscribe();
+      environment.privacy.dispose();
+      environment.runtime.dispose();
+      environment.client.clear();
+    };
+  }, [environment]);
+
+  return <div data-computer-agent-connections-regression="" ref={node => {
+    if (node) environments.set(node, environment);
+  }}>
+    <QueryClientProvider client={environment.client}>
+      {bound
+        ? <MemoryRouter initialEntries={["/connections"]}>
+          <Shell privacy={environment.privacy} runtime={environment.runtime} fixture={false} />
+        </MemoryRouter>
+        : <p role="status">Verifying owner session.</p>}
+    </QueryClientProvider>
+  </div>;
+}
+
+async function playComputerAgentConnectionsPanelRegression({ canvas, canvasElement, userEvent }: {
+  readonly canvas: {
+    findByRole(role: string, options: { readonly name: string | RegExp; readonly exact?: boolean }): Promise<HTMLElement>;
+    getByRole(role: string, options: { readonly name: string | RegExp; readonly exact?: boolean }): HTMLElement;
+    findByText(text: string | RegExp): Promise<HTMLElement>;
+    queryByText(text: string | RegExp): HTMLElement | null;
+    queryByRole(role: string, options: { readonly name: string | RegExp; readonly exact?: boolean }): HTMLElement | null;
+  };
+  readonly canvasElement: HTMLElement;
+  readonly userEvent: {
+    click(element: HTMLElement): Promise<void>;
+    type(element: HTMLElement, text: string): Promise<void>;
+    selectOptions(element: HTMLElement, value: string): Promise<void>;
+  };
+}) {
+  const storyRoot = canvasElement.querySelector<HTMLElement>("[data-computer-agent-connections-regression]");
+  if (!storyRoot) throw new Error("Computer-agent regression story root is missing");
+  const environment = environments.get(storyRoot);
+  if (!environment) throw new Error("Composed runtime/strict API fixture is missing");
+
+  await canvas.findByRole("heading", { name: "Computer-agent connections" });
+  await userEvent.type(canvas.getByRole("textbox", { name: "Logical connection ID" }), connectionId);
+  await userEvent.type(canvas.getByRole("textbox", { name: "Display name" }), privateName);
+  await userEvent.selectOptions(canvas.getByRole("combobox", { name: "Provider contour" }), "OTHER");
+  await userEvent.type(canvas.getByRole("textbox", { name: "Service actor issuer" }), privateIssuer);
+  await userEvent.type(canvas.getByRole("textbox", { name: "Service actor subject" }), privateSubject);
+  await userEvent.click(canvas.getByRole("checkbox", { name: "Write through MCP" }));
+  await userEvent.click(canvas.getByRole("checkbox", { name: "Cloud browser" }));
+  await userEvent.click(canvas.getByRole("checkbox", { name: "Research branch analysis" }));
+  await userEvent.click(canvas.getByRole("checkbox", { name: "I understand that saving will create or enable this connection." }));
+  await userEvent.click(canvas.getByRole("button", { name: "Review and prepare save" }));
+  await canvas.findByRole("heading", { name: "Review this exact change" });
+  environment.assertPreparedOnly();
+
+  await userEvent.click(canvas.getByRole("button", { name: "Confirm and save enabled configuration" }));
+  await canvas.findByText(/protected readback matches the requested result, but a canonical receipt is still required/i);
+  environment.assertUnknownReadback();
+  await userEvent.click(canvas.getByRole("button", { name: "Retry the same reviewed action" }));
+  await canvas.findByText(/server returned a receipt for revision 1/i);
+  environment.assertSameActionRetry();
+  environment.assertReceiptReadbackFailure();
+  if (canvas.queryByRole("button", { name: "Retry the same reviewed action", exact: true })) {
+    throw new Error("Receipt/readback lag exposed a mutation retry");
+  }
+
+  const beforeReadback = environment.requestCount();
+  await userEvent.click(canvas.getByRole("button", { name: "Read the protected configuration again" }));
+  await canvas.findByText(/confirmed by receipt and protected readback at revision 1/i);
+  const reconciliationEvents = environment.requestsSince(beforeReadback);
+  if (reconciliationEvents.length !== 1 || reconciliationEvents[0]?.method !== "GET" ||
+      reconciliationEvents[0]?.path !== "/api/v1/system/computer-agents") {
+    throw new Error("Receipt reconciliation must issue only one explicit protected GET");
+  }
+  environment.assertConfirmedReadback();
+
+  await userEvent.selectOptions(canvas.getByRole("combobox", { name: "Transport qualification" }), "MCP_WRITE");
+  await userEvent.click(canvas.getByRole("button", { name: "Read qualification" }));
+  await canvas.findByText(/server did not provide a current qualification for this transport and owner session/i);
+  if (canvas.queryByText(/^Online$/i) || canvas.queryByText(/^Connected$/i) ||
+      canvas.queryByText(/server qualification is current/i)) {
+    throw new Error("Expired READY qualification was presented as current or online");
+  }
+
+  environment.setQualificationMode("changed-transport");
+  await userEvent.click(canvas.getByRole("button", { name: "Read qualification" }));
+  await canvas.findByText(/qualification could not be read for this connection revision and transport/i);
+  if (canvas.queryByText(/^Online$/i) || canvas.queryByText(/^Connected$/i) ||
+      canvas.queryByText(/server qualification is current/i)) {
+    throw new Error("A qualification response for another transport was presented as current or online");
+  }
+
+  environment.setQualificationMode("authorization-loss");
+  await userEvent.click(canvas.getByRole("button", { name: "Read qualification" }));
+  for (let frame = 0; frame < 120 && environment.privacy.getSnapshot().phase === "available"; frame++) {
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+  }
+  if (environment.privacy.getSnapshot().phase === "available") {
+    throw new Error("ACCESS_SESSION_REQUIRED did not close the composed owner session");
+  }
+  await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+  const privateValues = [privateName, privateIssuer, privateSubject, "Cloud browser"];
+  const visibleText = storyRoot.textContent ?? "";
+  const inputValues = [...storyRoot.querySelectorAll<HTMLInputElement>("input")].map(input => input.value);
+  const codeValues = [...storyRoot.querySelectorAll<HTMLElement>("code")].map(node => node.textContent ?? "");
+  if (privateValues.some(value => visibleText.includes(value) || inputValues.includes(value) || codeValues.some(code => code.includes(value)))) {
+    throw new Error("Authority loss left a private connection name, actor, or capability visible");
+  }
+  const protectedData = environment.client.getQueryCache().getAll().filter(query =>
+    query.queryKey.includes("computer-agents") || query.queryKey.includes("computer-agent-readback") ||
+    query.queryKey.includes("computer-agent-qualification"));
+  if (protectedData.some(query => query.state.data !== undefined)) {
+    throw new Error("Authority loss left computer-agent state in the protected query cache");
+  }
+  environment.assertNoRequestAfterAuthorizationLoss();
+  const root = storyRoot.closest<HTMLElement>(".er-shell") ?? storyRoot;
+  root.setAttribute("data-play-ready", "ready");
+}
+
+export default {
+  title: "Workspace/Computer-agent connections regression",
+  component: ComputerAgentConnectionsPanelRegressionPreview,
+  parameters: { layout: "fullscreen" },
+};
+
+export const ComputerAgentConnectionsPanelRegression = {
+  name: "Computer Agent Connections Panel Regression",
+  render: () => <ComputerAgentConnectionsPanelRegressionPreview />,
+  play: playComputerAgentConnectionsPanelRegression,
+};
