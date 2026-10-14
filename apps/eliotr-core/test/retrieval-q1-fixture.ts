@@ -427,9 +427,9 @@ export function createQ1Consumer(world: Q1Namespace): Q1Consumer {
     }),
     search: createD1ProjectionSearchPort(world.searchDb),
     managed: {
-      index: async (_context, _generation, items) => ({
+      index: async (_context, _executionGeneration, _canonicalGeneration, copyPlan) => ({
         state: "DEGRADED" as const,
-        item_count: items.length,
+        item_count: copyPlan.items.length,
         instance_id: PROJECTION_EXECUTION_PROFILE.managed_instance_id,
         managed_generation: PROJECTION_EXECUTION_PROFILE.managed_generation,
         reason_codes: ["MANAGED_INDEX_READBACK_FAILED"],

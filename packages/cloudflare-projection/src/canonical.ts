@@ -154,13 +154,13 @@ export async function projectionGeneration(
   const projectMembershipIds = [...new Set(context.project_membership_ids)].sort();
   return stableProjectionId(
     "projection",
-    "managed-items.v2",
-    context.source_revision.source_revision_ref,
-    context.source_revision.content_sha256,
-    context.source_revision.object_residency_key_digest,
+    "managed-items.v3",
     profile.projector_profile,
     profile.managed_instance_id,
     profile.managed_generation,
+    context.source_revision.source_revision_ref,
+    context.source_revision.content_sha256,
+    context.source_revision.object_residency_key_digest,
     canonicalProjectionJson({
       source_title: context.source_title,
       source_class: context.source_class,

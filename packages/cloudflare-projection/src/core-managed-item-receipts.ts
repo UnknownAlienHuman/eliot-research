@@ -14,6 +14,7 @@ import type {
   ProjectionManagedItemGenerationTarget,
   ProjectionSourceContext,
 } from "./types.js";
+import { managedProjectGenerationMetadataValue, parseManagedProjectMembershipId } from "./managed-project-path.js";
 
 export const MANAGED_ITEM_PROTOCOL_VERSION = "eliotr.managed-item-effects.v1";
 
@@ -30,6 +31,12 @@ interface ManagedItemGenerationRow {
   readonly state: unknown;
   readonly item_count: unknown;
   readonly item_set_digest: unknown;
+  readonly canonical_projection_generation: unknown;
+  readonly canonical_item_count: unknown;
+  readonly canonical_item_set_digest: unknown;
+  readonly provider_copy_count: unknown;
+  readonly provider_copy_set_digest: unknown;
+  readonly managed_target_metadata_generation_digest: unknown;
   readonly managed_item_protocol: unknown;
   readonly managed_target_instance_id: unknown;
   readonly managed_target_generation: unknown;
@@ -45,6 +52,13 @@ interface ManagedItemJobRow {
 }
 
 interface ManagedItemExecutionRow {
+  readonly item_key: unknown;
+  readonly canonical_projection_generation: unknown;
+  readonly desired_index: unknown;
+  readonly normalized_start_byte: unknown;
+  readonly normalized_end_byte: unknown;
+  readonly metadata_json: unknown;
+  readonly section_content_sha256: unknown;
   readonly execution_operation_id: unknown;
   readonly dispatch_lease_generation: unknown;
   readonly managed_instance_id: unknown;
@@ -128,7 +142,9 @@ export async function readManagedItemReceipts(
   }
   const rows = await database.prepare(
     "SELECT item_key, desired_index, normalized_start_byte, normalized_end_byte, " +
-    "metadata_json, section_content_sha256, managed_generation, state, provider_item_id, " +
+    "canonical_projection_generation, canonical_item_key, project_id, project_membership_id, " +
+    "membership_generation, copy_layout, metadata_generation_digest, canonical_body_ref, " +
+    "canonical_body_sha256, metadata_json, section_content_sha256, managed_generation, state, provider_item_id, " +
     "provider_key, document_sha256, document_size_bytes, readback_receipt_json, readback_sha256 " +
     "FROM projection_managed_item_effect WHERE source_revision_ref = ?1 " +
     "AND projection_generation = ?2 AND job_id = ?3 ORDER BY desired_index ASC",
@@ -141,6 +157,15 @@ export async function readManagedItemReceipts(
     readonly desired_index: unknown;
     readonly normalized_start_byte: unknown;
     readonly normalized_end_byte: unknown;
+    readonly canonical_projection_generation: unknown;
+    readonly canonical_item_key: unknown;
+    readonly project_id: unknown;
+    readonly project_membership_id: unknown;
+    readonly membership_generation: unknown;
+    readonly copy_layout: unknown;
+    readonly metadata_generation_digest: unknown;
+    readonly canonical_body_ref: unknown;
+    readonly canonical_body_sha256: unknown;
     readonly metadata_json: unknown;
     readonly section_content_sha256: unknown;
     readonly managed_generation: unknown;
@@ -194,7 +219,11 @@ export async function readManagedItemReceipts(
       typeof metadata.canonical_section_id !== "string" ||
       typeof metadata.content_sha256 !== "string" ||
       metadata.instruction_taint !== context.instruction_taint ||
-      metadata.projection_generation !== row.managed_generation ||
+      metadata.projection_generation !== (
+        row.copy_layout === "PROJECT_COPY_V1"
+          ? row.metadata_generation_digest
+          : row.managed_generation
+      ) ||
       metadata.source_revision_ref !== context.source_revision.source_revision_ref ||
       metadata.content_sha256 !== row.section_content_sha256
     ) {
@@ -212,7 +241,55 @@ export async function readManagedItemReceipts(
       1,
       Number.MAX_SAFE_INTEGER,
     );
-    if (end <= start || row.provider_key !== `${String(row.item_key)}.md`) {
+    const flatLayout = row.copy_layout === null;
+    let copyIdentityValid = false;
+    if (flatLayout) {
+      copyIdentityValid =
+        row.canonical_projection_generation === null &&
+        row.canonical_item_key === null &&
+        row.project_id === null &&
+        row.project_membership_id === null &&
+        row.membership_generation === null &&
+        row.metadata_generation_digest === null &&
+        row.canonical_body_ref === null &&
+        row.canonical_body_sha256 === null &&
+        row.provider_key === `${String(row.item_key)}.md`;
+    } else if (row.copy_layout === "PROJECT_COPY_V1") {
+      const membershipId = assertProjectionIdentifier(row.project_membership_id, "managed membership ID");
+      const membership = parseManagedProjectMembershipId(membershipId);
+      const projectId = assertProjectionIdentifier(row.project_id, "managed project ID");
+      const membershipGeneration = assertProjectionInteger(
+        row.membership_generation,
+        "managed membership generation",
+        1,
+        Number.MAX_SAFE_INTEGER,
+      );
+      const targetDigest = assertProjectionSha256(
+        row.metadata_generation_digest,
+        "managed metadata generation digest",
+      );
+      const canonicalGeneration = assertProjectionIdentifier(
+        row.canonical_projection_generation,
+        "managed canonical projection generation",
+      );
+      const canonicalItemKey = assertProjectionIdentifier(row.canonical_item_key, "managed canonical item key");
+      const bodyRef = assertProjectionIdentifier(row.canonical_body_ref, "managed canonical body ref");
+      const bodyDigest = assertProjectionSha256(row.canonical_body_sha256, "managed canonical body digest");
+      const providerKey = assertProjectionIdentifier(row.provider_key, "managed provider key");
+      const managedGeneration = assertProjectionIdentifier(row.managed_generation, "managed raw generation");
+      copyIdentityValid =
+        membership.project_id === projectId &&
+        membership.membership_generation === membershipGeneration &&
+        canonicalGeneration.length > 0 &&
+        canonicalItemKey.length > 0 &&
+        bodyRef.length > 0 &&
+        bodyDigest === row.section_content_sha256 &&
+        providerKey.startsWith("projection/") &&
+        providerKey.endsWith(`${String(row.item_key)}.md`) &&
+        providerKey.length <= 128 &&
+        targetDigest === await managedProjectGenerationMetadataValue(managedGeneration);
+    }
+    if (end <= start || !copyIdentityValid) {
       projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed item span or provider key is invalid");
     }
     requiredSet.push({
@@ -279,7 +356,10 @@ export async function readManagedItemGenerationProof(
   const generation = await database.prepare(
     "SELECT source_owner_generation, content_sha256, object_residency_key_digest, " +
     "job_id, state, item_count, item_set_digest, managed_item_protocol, " +
-    "managed_target_instance_id, managed_target_generation, semantic_instance_id, " +
+    "managed_target_instance_id, managed_target_generation, " +
+    "managed_target_metadata_generation_digest, canonical_projection_generation, " +
+    "canonical_item_count, canonical_item_set_digest, provider_copy_count, " +
+    "provider_copy_set_digest, semantic_instance_id, " +
     "semantic_generation, semantic_receipt_ref, semantic_readback_digest " +
     "FROM projection_generation WHERE source_revision_ref = ?1 " +
     "AND projection_generation = ?2 LIMIT 1",
@@ -295,6 +375,8 @@ export async function readManagedItemGenerationProof(
     generation.managed_item_protocol !== MANAGED_ITEM_PROTOCOL_VERSION ||
     generation.managed_target_instance_id !== managedInstanceId ||
     generation.managed_target_generation !== managedGeneration ||
+    generation.managed_target_metadata_generation_digest !==
+      await managedProjectGenerationMetadataValue(managedGeneration) ||
     generation.semantic_instance_id !== managedInstanceId ||
     generation.semantic_generation !== managedGeneration
   ) {
@@ -303,16 +385,44 @@ export async function readManagedItemGenerationProof(
       "managed item proof is not bound to the exact terminal source and target generation",
     );
   }
-  const itemCount = assertProjectionInteger(
+  const canonicalItemCount = assertProjectionInteger(
     generation.item_count,
-    "managed proof item count",
+    "managed proof canonical item count",
+    1,
+    128,
+  );
+  const canonicalItemSetDigest = assertProjectionSha256(
+    generation.item_set_digest,
+    "managed proof canonical item-set digest",
+  );
+  const storedCanonicalCount = assertProjectionInteger(
+    generation.canonical_item_count,
+    "managed proof canonical receipt count",
     1,
     1024,
   );
-  const itemSetDigest = assertProjectionSha256(
-    generation.item_set_digest,
-    "managed proof item-set digest",
+  const storedCanonicalDigest = assertProjectionSha256(
+    generation.canonical_item_set_digest,
+    "managed proof canonical receipt digest",
   );
+  const canonicalProjectionGeneration = assertProjectionIdentifier(
+    generation.canonical_projection_generation,
+    "managed proof canonical projection generation",
+  );
+  const providerCopyCount = assertProjectionInteger(
+    generation.provider_copy_count,
+    "managed proof provider copy count",
+    0,
+    256,
+  );
+  const providerCopySetDigest = assertProjectionSha256(
+    generation.provider_copy_set_digest,
+    "managed proof provider copy set digest",
+  );
+  if (storedCanonicalCount !== canonicalItemCount || storedCanonicalDigest !== canonicalItemSetDigest) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed proof canonical receipt differs from Work authority");
+  }
+  const itemCount = canonicalItemCount * (providerCopyCount === 0 ? 1 : providerCopyCount);
   const persistedReadbackDigest = generation.semantic_readback_digest === null
     ? null
     : assertProjectionSha256(
@@ -354,8 +464,10 @@ export async function readManagedItemGenerationProof(
 
   const operationId = await projectionExecutionOperationId(context, projectionGeneration);
   const effectRows = await database.prepare(
-    "SELECT execution_operation_id, dispatch_lease_generation, managed_instance_id, " +
-    "managed_generation, state " +
+    "SELECT item_key, canonical_projection_generation, desired_index, normalized_start_byte, " +
+    "normalized_end_byte, metadata_json, " +
+    "section_content_sha256, execution_operation_id, dispatch_lease_generation, " +
+    "managed_instance_id, managed_generation, state " +
     "FROM projection_managed_item_effect WHERE source_revision_ref = ?1 " +
     "AND projection_generation = ?2 AND job_id = ?3 ORDER BY desired_index ASC",
   ).bind(
@@ -369,6 +481,41 @@ export async function readManagedItemGenerationProof(
       "PROJECTION_AUTHORITY_CONFLICT",
       "managed item proof does not contain the exact durable writer set",
     );
+  }
+  const effectRequiredSet = effects.map((effect, index) => {
+    if (
+      effect.desired_index !== index ||
+      typeof effect.metadata_json !== "string" ||
+      effect.canonical_projection_generation !== (
+        providerCopyCount === 0 ? null : canonicalProjectionGeneration
+      )
+    ) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed proof effect ordering or metadata is incomplete");
+    }
+    let value: unknown;
+    try {
+      value = JSON.parse(effect.metadata_json);
+    } catch (cause) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed proof effect metadata is malformed", false, cause);
+    }
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed proof effect metadata is not an object");
+    }
+    const metadata = value as Record<string, unknown>;
+    return {
+      item_key: assertProjectionIdentifier(effect.item_key, "managed proof effect item key"),
+      canonical_section_id: assertProjectionIdentifier(
+        metadata.canonical_section_id,
+        "managed proof effect canonical section ID",
+      ),
+      content_sha256: assertProjectionSha256(effect.section_content_sha256, "managed proof effect content digest"),
+      start: assertProjectionInteger(effect.normalized_start_byte, "managed proof effect start", 0, Number.MAX_SAFE_INTEGER),
+      end: assertProjectionInteger(effect.normalized_end_byte, "managed proof effect end", 1, Number.MAX_SAFE_INTEGER),
+    };
+  });
+  const itemSetDigest = await projectionDigest(effectRequiredSet);
+  if (providerCopyCount === 0 && itemSetDigest !== canonicalItemSetDigest) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "flat managed effect set differs from canonical Work receipt");
   }
   const dispatchLeaseGenerations = effects.map((effect) => {
     if (
@@ -455,6 +602,10 @@ export async function readManagedItemGenerationProof(
     managed_instance_id: managedInstanceId,
     managed_generation: managedGeneration,
     managed_receipt_ref: computedManagedReceiptRef,
+    canonical_item_count: canonicalItemCount,
+    canonical_item_set_digest: canonicalItemSetDigest,
+    provider_copy_count: providerCopyCount,
+    provider_copy_set_digest: providerCopySetDigest,
     item_count: itemCount,
     item_set_digest: itemSetDigest,
     readback_digest: computedReadbackDigest,

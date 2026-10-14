@@ -5,8 +5,10 @@ import type {
 import { D1_EXECUTION_LEASE_NOW_SQL } from "@eliotr/platform-cloudflare";
 import {
   assertProjectionIdentifier,
+  assertProjectionSha256,
   projectionFail,
 } from "./canonical.js";
+import { managedProjectGenerationMetadataValue } from "./managed-project-path.js";
 import { loadProjectionSourceContext } from "./core-load.js";
 import {
   settleProjection,
@@ -56,6 +58,9 @@ export function createD1ProjectionAuthority(
     },
 
     async begin(context, projectionGeneration, profile, fence) {
+      const metadataGenerationDigest = await managedProjectGenerationMetadataValue(
+        profile.managed_generation,
+      );
       await assertCurrentProjectionExecutionFence(
         database,
         clock,
@@ -65,7 +70,7 @@ export function createD1ProjectionAuthority(
       );
       const existing = await generationRow(database, context, projectionGeneration);
       if (existing !== null) {
-        validateGenerationIdentity(existing, context, profile);
+        await validateGenerationIdentity(existing, context, profile);
         if (existing.state === "COMPLETED" || existing.state === "PARTIAL") {
           await assertCurrentProjectionExecutionFence(
             database,
@@ -98,12 +103,13 @@ export function createD1ProjectionAuthority(
           "source_revision_ref, projection_generation, job_id, source_owner_generation, " +
           "content_sha256, object_residency_key_digest, projector_profile, state, " +
           "reason_codes_json, managed_item_protocol, managed_target_instance_id, " +
-          "managed_target_generation, created_at, updated_at) " +
-          "SELECT ?1,?2,?3,?4,?5,?6,?7,'PREPARING','[]',?8,?9,?10,?11,?11 " +
+          "managed_target_generation, managed_target_metadata_generation_digest, " +
+          "created_at, updated_at) " +
+          "SELECT ?1,?2,?3,?4,?5,?6,?7,'PREPARING','[]',?8,?9,?10,?11,?12,?12 " +
           "WHERE EXISTS (SELECT 1 FROM operation_execution_lease l " +
-          "WHERE l.operation_id=?12 AND l.operation_kind='PROJECTION_EXECUTE' " +
-          "AND l.lease_owner=?13 AND l.lease_generation=?14 AND l.state='LEASED' " +
-          `AND l.lease_until>?15 AND l.lease_until>${D1_EXECUTION_LEASE_NOW_SQL}) ` +
+          "WHERE l.operation_id=?13 AND l.operation_kind='PROJECTION_EXECUTE' " +
+          "AND l.lease_owner=?14 AND l.lease_generation=?15 AND l.state='LEASED' " +
+          `AND l.lease_until>?16 AND l.lease_until>${D1_EXECUTION_LEASE_NOW_SQL}) ` +
           "AND EXISTS (SELECT 1 FROM job j WHERE j.job_id=?3 " +
           "AND j.state IN ('ACCEPTED','RUNNING'))",
         ).bind(
@@ -117,6 +123,7 @@ export function createD1ProjectionAuthority(
           MANAGED_ITEM_PROTOCOL_VERSION,
           profile.managed_instance_id,
           profile.managed_generation,
+          metadataGenerationDigest,
           now,
           mutationFence.operation_id,
           mutationFence.lease_owner,
@@ -155,11 +162,10 @@ export function createD1ProjectionAuthority(
           true,
         );
       }
-      validateGenerationIdentity(readback, context, profile);
+      await validateGenerationIdentity(readback, context, profile);
     },
 
     async recordMaterialized(context, projectionGeneration, receipt, fence) {
-      validateProjectionWorkReceipt(receipt);
       await assertCurrentProjectionExecutionFence(
         database,
         clock,
@@ -167,6 +173,7 @@ export function createD1ProjectionAuthority(
         projectionGeneration,
         fence,
       );
+      validateProjectionWorkReceipt(receipt);
       const existing = await generationRow(database, context, projectionGeneration);
       if (existing === null) {
         projectionFail("PROJECTION_AUTHORITY_CONFLICT", "projection generation is missing before materialization");
@@ -185,21 +192,72 @@ export function createD1ProjectionAuthority(
       if (
         existing.managed_item_protocol !== MANAGED_ITEM_PROTOCOL_VERSION ||
         typeof existing.managed_target_instance_id !== "string" ||
-        typeof existing.managed_target_generation !== "string"
+        typeof existing.managed_target_generation !== "string" ||
+        typeof existing.managed_target_metadata_generation_digest !== "string"
       ) {
         projectionFail(
           "PROJECTION_AUTHORITY_CONFLICT",
           "materialized projection generation is missing its managed-item protocol target pin",
         );
       }
+      const canonical = receipt.canonical_source;
+      const copyMapSet = receipt.project_copy_map_set;
+      const canonicalGeneration = assertProjectionIdentifier(
+        receipt.canonical_projection_generation,
+        "materialized canonical projection generation",
+      );
+      const metadataGenerationDigest = assertProjectionSha256(
+        receipt.metadata_generation_digest,
+        "materialized target metadata generation digest",
+      );
+      const providerCopyCount = copyMapSet?.provider_copy_count;
+      const providerCopySetDigest = copyMapSet?.provider_copy_set_sha256;
+      if (
+        canonical === undefined ||
+        copyMapSet === undefined ||
+        canonical.canonical_projection_generation !== canonicalGeneration ||
+        canonical.source_revision_ref !== context.source_revision.source_revision_ref ||
+        canonical.complete_residency_key_sha256 !== context.source_revision.object_residency_key_digest ||
+        canonical.canonical_section_count !== receipt.item_count ||
+        canonical.canonical_section_set_sha256 !== receipt.item_set_digest ||
+        copyMapSet.source_revision_ref !== canonical.source_revision_ref ||
+        copyMapSet.complete_residency_key_sha256 !== canonical.complete_residency_key_sha256 ||
+        copyMapSet.canonical_projection_generation !== canonicalGeneration ||
+        copyMapSet.canonical_source_ref !== canonical.canonical_source_ref ||
+        copyMapSet.canonical_source_sha256 !== canonical.canonical_source_sha256 ||
+        copyMapSet.target.managed_instance_id !== existing.managed_target_instance_id ||
+        copyMapSet.target.managed_generation !== existing.managed_target_generation ||
+        copyMapSet.target.metadata_generation_digest !== existing.managed_target_metadata_generation_digest ||
+        metadataGenerationDigest !== existing.managed_target_metadata_generation_digest ||
+        typeof providerCopyCount !== "number" ||
+        !Number.isSafeInteger(providerCopyCount) ||
+        providerCopyCount < 0 || providerCopyCount > 256 ||
+        typeof providerCopySetDigest !== "string"
+      ) {
+        projectionFail(
+          "PROJECTION_AUTHORITY_CONFLICT",
+          "canonical source or project-copy receipt differs from the immutable source and target pins",
+        );
+      }
+      assertProjectionSha256(providerCopySetDigest, "project-copy set digest");
       const manifestEmpty = existing.item_count === null &&
         existing.item_set_digest === null &&
         existing.work_manifest_ref === null &&
-        existing.work_manifest_sha256 === null;
+        existing.work_manifest_sha256 === null &&
+        existing.canonical_projection_generation === null &&
+        existing.canonical_item_count === null &&
+        existing.canonical_item_set_digest === null &&
+        existing.provider_copy_count === null &&
+        existing.provider_copy_set_digest === null;
       const manifestMatches = existing.item_count === receipt.item_count &&
         existing.item_set_digest === receipt.item_set_digest &&
         existing.work_manifest_ref === receipt.manifest_ref &&
-        existing.work_manifest_sha256 === receipt.manifest_sha256;
+        existing.work_manifest_sha256 === receipt.manifest_sha256 &&
+        existing.canonical_projection_generation === canonicalGeneration &&
+        existing.canonical_item_count === receipt.item_count &&
+        existing.canonical_item_set_digest === receipt.item_set_digest &&
+        existing.provider_copy_count === providerCopyCount &&
+        existing.provider_copy_set_digest === providerCopySetDigest;
       if (
         (existing.state !== "PREPARING" && existing.state !== "MATERIALIZED") ||
         (!manifestEmpty && !manifestMatches)
@@ -232,19 +290,29 @@ export function createD1ProjectionAuthority(
       await database.prepare(
         "UPDATE projection_generation SET state = 'MATERIALIZED', item_count = ?3, " +
         "item_set_digest = ?4, work_manifest_ref = ?5, work_manifest_sha256 = ?6, " +
-        "updated_at = ?7 WHERE source_revision_ref = ?1 AND projection_generation = ?2 " +
-        "AND state IN ('PREPARING','MATERIALIZED') AND job_id=?8 " +
-        "AND source_owner_generation=?9 AND content_sha256=?10 " +
-        "AND object_residency_key_digest=?11 AND projector_profile=?12 " +
-        "AND managed_item_protocol=?13 AND managed_target_instance_id=?14 " +
-        "AND managed_target_generation=?15 AND (" +
+        "canonical_projection_generation=?7, canonical_item_count=?8, " +
+        "canonical_item_set_digest=?9, provider_copy_count=?10, " +
+        "provider_copy_set_digest=?11, updated_at = ?12 " +
+        "WHERE source_revision_ref = ?1 AND projection_generation = ?2 " +
+        "AND state IN ('PREPARING','MATERIALIZED') AND job_id=?13 " +
+        "AND source_owner_generation=?14 AND content_sha256=?15 " +
+        "AND object_residency_key_digest=?16 AND projector_profile=?17 " +
+        "AND managed_item_protocol=?18 AND managed_target_instance_id=?19 " +
+        "AND managed_target_generation=?20 " +
+        "AND managed_target_metadata_generation_digest=?21 AND (" +
         "(item_count IS NULL AND item_set_digest IS NULL AND work_manifest_ref IS NULL " +
-        "AND work_manifest_sha256 IS NULL) OR (item_count=?3 AND item_set_digest=?4 " +
-        "AND work_manifest_ref=?5 AND work_manifest_sha256=?6)) " +
+        "AND work_manifest_sha256 IS NULL AND canonical_projection_generation IS NULL " +
+        "AND canonical_item_count IS NULL AND canonical_item_set_digest IS NULL " +
+        "AND provider_copy_count IS NULL AND provider_copy_set_digest IS NULL) " +
+        "OR (item_count=?3 AND item_set_digest=?4 " +
+        "AND work_manifest_ref=?5 AND work_manifest_sha256=?6 " +
+        "AND canonical_projection_generation=?7 AND canonical_item_count=?8 " +
+        "AND canonical_item_set_digest=?9 AND provider_copy_count=?10 " +
+        "AND provider_copy_set_digest=?11)) " +
         "AND EXISTS (SELECT 1 FROM operation_execution_lease l " +
-        "WHERE l.operation_id=?16 AND l.operation_kind='PROJECTION_EXECUTE' " +
-        "AND l.lease_owner=?17 AND l.lease_generation=?18 AND l.state='LEASED' " +
-        `AND l.lease_until>?19 AND l.lease_until>${D1_EXECUTION_LEASE_NOW_SQL})`,
+        "WHERE l.operation_id=?22 AND l.operation_kind='PROJECTION_EXECUTE' " +
+        "AND l.lease_owner=?23 AND l.lease_generation=?24 AND l.state='LEASED' " +
+        `AND l.lease_until>?25 AND l.lease_until>${D1_EXECUTION_LEASE_NOW_SQL})`,
       ).bind(
         context.source_revision.source_revision_ref,
         projectionGeneration,
@@ -252,6 +320,11 @@ export function createD1ProjectionAuthority(
         receipt.item_set_digest,
         receipt.manifest_ref,
         receipt.manifest_sha256,
+        canonicalGeneration,
+        receipt.item_count,
+        receipt.item_set_digest,
+        providerCopyCount,
+        providerCopySetDigest,
         now,
         context.job_id,
         context.source_revision.source_owner_generation,
@@ -261,6 +334,7 @@ export function createD1ProjectionAuthority(
         MANAGED_ITEM_PROTOCOL_VERSION,
         targetInstanceId,
         targetGeneration,
+        metadataGenerationDigest,
         mutationFence.operation_id,
         mutationFence.lease_owner,
         mutationFence.lease_generation,
@@ -284,11 +358,17 @@ export function createD1ProjectionAuthority(
         readback.managed_item_protocol !== MANAGED_ITEM_PROTOCOL_VERSION ||
         readback.managed_target_instance_id !== targetInstanceId ||
         readback.managed_target_generation !== targetGeneration ||
+        readback.managed_target_metadata_generation_digest !== metadataGenerationDigest ||
         readback.state !== "MATERIALIZED" ||
         readback.item_count !== receipt.item_count ||
         readback.item_set_digest !== receipt.item_set_digest ||
         readback.work_manifest_ref !== receipt.manifest_ref ||
-        readback.work_manifest_sha256 !== receipt.manifest_sha256
+        readback.work_manifest_sha256 !== receipt.manifest_sha256 ||
+        readback.canonical_projection_generation !== canonicalGeneration ||
+        readback.canonical_item_count !== receipt.item_count ||
+        readback.canonical_item_set_digest !== receipt.item_set_digest ||
+        readback.provider_copy_count !== providerCopyCount ||
+        readback.provider_copy_set_digest !== providerCopySetDigest
       ) {
         projectionFail(
           "PROJECTION_SETTLEMENT_UNCERTAIN",
@@ -298,7 +378,7 @@ export function createD1ProjectionAuthority(
       }
     },
 
-    async prepareManagedItems(context, projectionGeneration, profile, items, fence) {
+    async prepareManagedItems(context, projectionGeneration, profile, items, fence, copyPlan) {
       await assertManagedItemGenerationProtocol(
         database,
         context,
@@ -313,6 +393,7 @@ export function createD1ProjectionAuthority(
         profile,
         items,
         fence,
+        copyPlan,
       );
     },
 
