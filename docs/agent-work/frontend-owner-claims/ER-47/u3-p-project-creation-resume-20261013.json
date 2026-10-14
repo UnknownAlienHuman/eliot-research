@@ -24,7 +24,11 @@
       "commit_sha": "ff85ee4827366bac620750010f2e648c51d3bea9"
     }
   ],
-  "state": "ACTIVE",
-  "evidence_refs": [],
-  "blocker_refs": []
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "apps/eliotr-web/src/query/projectCreation.test.ts"
+  ],
+  "blocker_refs": [],
+  "handoff_reason": "COMPLETED",
+  "handoff_receipt_ref": "private:C:/Development/Research/.eliotr-state/continue-01a137ba/source-handoffs.json#project-controller"
 }
