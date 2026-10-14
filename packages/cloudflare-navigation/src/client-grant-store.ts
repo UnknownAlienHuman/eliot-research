@@ -31,6 +31,7 @@ export async function grantRead<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 export interface ClientGrantProjectFence {
+  /** Retained for legacy v1 delegated-origin comparisons; v2 authority uses membership/deployment fields. */
   readonly project_generation: number;
   readonly membership_generation: number;
   readonly deployment_generation: string;
