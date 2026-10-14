@@ -391,8 +391,9 @@ export const ComputerAgentDispatchStatusSchema = z.object({
 });
 export type ComputerAgentDispatchStatus = z.infer<typeof ComputerAgentDispatchStatusSchema>;
 
+export const COMPUTER_AGENT_DISPATCH_QUESTION_PREVIEW_BYTES = 1024;
 export const ComputerAgentDispatchSummarySchema = z.object({
-  protocol: z.literal("eliotr.computer-agent-dispatch-summary.v1"),
+  protocol: z.literal("eliotr.computer-agent-dispatch-summary.v2"),
   dispatch_id: id,
   project_id: id,
   connection_id: id,
@@ -400,12 +401,21 @@ export const ComputerAgentDispatchSummarySchema = z.object({
   state: ComputerAgentDispatchStateSchema,
   created_at: IsoDateTimeSchema,
   expires_at: IsoDateTimeSchema,
-  question,
+  question_preview: z.string().min(1).refine((value) => new TextEncoder().encode(value).byteLength <=
+    COMPUTER_AGENT_DISPATCH_QUESTION_PREVIEW_BYTES, "Dispatch question preview exceeds its UTF-8 envelope"),
+  question_utf8_bytes: z.number().int().min(1).max(RESEARCH_REQUEST_MAX_BYTES),
+  question_truncated: z.boolean(),
   accepted_workflow: z.object({
     workflow_instance_id: id,
     investigation_ref: VersionedRefSchema,
   }).strict().nullable(),
 }).strict().superRefine((value, context) => {
+  const previewBytes = new TextEncoder().encode(value.question_preview).byteLength;
+  if (previewBytes > value.question_utf8_bytes ||
+      value.question_truncated !== (previewBytes < value.question_utf8_bytes)) {
+    context.addIssue({ code: "custom", path: ["question_preview"],
+      message: "Dispatch preview and original byte count must agree about truncation" });
+  }
   if ((value.state === "ACCEPTED") !== (value.accepted_workflow !== null)) {
     context.addIssue({ code: "custom", path: ["accepted_workflow"],
       message: "Only an ACCEPTED dispatch may expose its workflow locator" });
@@ -414,7 +424,7 @@ export const ComputerAgentDispatchSummarySchema = z.object({
 export type ComputerAgentDispatchSummary = z.infer<typeof ComputerAgentDispatchSummarySchema>;
 
 export const ComputerAgentDispatchListSchema = z.object({
-  protocol: z.literal("eliotr.computer-agent-dispatch-list.v1"),
+  protocol: z.literal("eliotr.computer-agent-dispatch-list.v2"),
   items: z.array(ComputerAgentDispatchSummarySchema).max(20),
   next_after_dispatch_id: id.nullable(),
 }).strict().superRefine((value, context) => {

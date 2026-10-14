@@ -1,4 +1,5 @@
 import {
+  COMPUTER_AGENT_DISPATCH_QUESTION_PREVIEW_BYTES,
   ComputerAgentDispatchListSchema,
   ComputerAgentDispatchSummarySchema,
   type ComputerAgentDispatch,
@@ -49,10 +50,20 @@ function requireTerminalBindings(status: ComputerAgentDispatchStatus): void {
   }
 }
 
+/** Display preview only; the original canonical request remains unchanged. */
+export function previewComputerAgentDispatchQuestion(question: string) {
+  const bytes = new TextEncoder().encode(question);
+  // Streaming decode omits an incomplete final codepoint rather than replacing it.
+  const preview = new TextDecoder("utf-8", { fatal: true }).decode(
+    bytes.subarray(0, COMPUTER_AGENT_DISPATCH_QUESTION_PREVIEW_BYTES), { stream: true });
+  return { question_preview: preview, question_utf8_bytes: bytes.byteLength,
+    question_truncated: new TextEncoder().encode(preview).byteLength < bytes.byteLength };
+}
+
 function summarize(dispatch: ComputerAgentDispatch, status: ComputerAgentDispatchStatus) {
   requireTerminalBindings(status);
   return ComputerAgentDispatchSummarySchema.parse({
-    protocol: "eliotr.computer-agent-dispatch-summary.v1",
+    protocol: "eliotr.computer-agent-dispatch-summary.v2",
     dispatch_id: dispatch.dispatch_id,
     project_id: dispatch.project_id,
     connection_id: dispatch.connection_id,
@@ -60,7 +71,7 @@ function summarize(dispatch: ComputerAgentDispatch, status: ComputerAgentDispatc
     state: status.state,
     created_at: dispatch.created_at,
     expires_at: dispatch.expires_at,
-    question: dispatch.run_request.query,
+    ...previewComputerAgentDispatchQuestion(dispatch.run_request.query),
     accepted_workflow: status.acceptance === null ? null : {
       workflow_instance_id: status.acceptance.workflow_instance_id,
       investigation_ref: status.acceptance.investigation_ref,
@@ -154,7 +165,7 @@ export async function readComputerAgentDispatchPage(input: {
     return summarize(dispatch, status);
   });
   return ComputerAgentDispatchListSchema.parse({
-    protocol: "eliotr.computer-agent-dispatch-list.v1",
+    protocol: "eliotr.computer-agent-dispatch-list.v2",
     items,
     next_after_dispatch_id: rows.length > COMPUTER_AGENT_DISPATCH_PAGE_SIZE
       ? items.at(-1)?.dispatch_id ?? null

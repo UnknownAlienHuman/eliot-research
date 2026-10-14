@@ -241,7 +241,9 @@ describe("native owner computer-agent dispatch listing", () => {
       connection_id: CONNECTION_ID,
       connection_revision: 1,
       state: "PENDING",
-      question: runRequest.query,
+      question_preview: runRequest.query,
+      question_utf8_bytes: new TextEncoder().encode(runRequest.query).byteLength,
+      question_truncated: false,
       accepted_workflow: null,
     });
     expect(firstPage.items[0]).not.toHaveProperty("run_request");
