@@ -281,7 +281,7 @@ async function retrievalExecution(input: {
   readonly legacyTrace?: boolean;
   readonly corruptPackRef?: boolean;
   readonly driftBudgets?: boolean;
-  readonly foreignOutcomeDigest?: string;
+  readonly foreignOutcomeBudgets?: RetrievalRequestBudgets;
 }): Promise<RetrievalQueryExecutionV1> {
   const { retrievalInput, scope, access } = input;
   const executionIds = await managedRetrievalInvocationIdsV1(
@@ -300,6 +300,17 @@ async function retrievalExecution(input: {
     requested_limit: retrievalInput.requested_limit,
     scope_digest: scope.digest,
     budgets,
+  });
+  const outcomeBudgets = input.foreignOutcomeBudgets ?? budgets;
+  const outcomeRequestDigest = await retrievalRequestDigest({
+    raw_query: retrievalInput.raw_query,
+    product: retrievalInput.product,
+    literals: retrievalInput.literals,
+    requested_limit: input.foreignOutcomeBudgets === undefined
+      ? retrievalInput.requested_limit
+      : outcomeBudgets.evidence_limit,
+    scope_digest: scope.digest,
+    budgets: outcomeBudgets,
   });
   const evidence = input.withEvidence === true ? await resolvedEvidence(scope) : undefined;
   const resultTraceBase = {
@@ -346,7 +357,7 @@ async function retrievalExecution(input: {
         ...managedOutcome({
           query: retrievalInput.raw_query,
           withEvidence: evidence !== undefined,
-          requestDigest: input.foreignOutcomeDigest ?? requestDigest,
+          requestDigest: outcomeRequestDigest,
         }),
         scoped_invocation_id: executionIds.scoped_invocation_id,
       }],
@@ -438,6 +449,21 @@ describe("held-scope branch query execution adapter", () => {
     });
 
     const result = await executeResearchBranchQueryPlanWithPorts(input, input.dependencies, ports);
+    const plannedLeg = plan.query_legs[0];
+    if (plannedLeg === undefined) throw new Error("positive digest fixture requires one planned leg");
+    const expectedDigest = await retrievalRequestDigest({
+      raw_query: plannedLeg.query,
+      product: plan.retrieval_product,
+      literals: plannedLeg.literal_probes,
+      requested_limit: plan.budgets.evidence_limit,
+      scope_digest: scope.digest,
+      budgets: {
+        candidate_limit: plan.budgets.candidate_limit,
+        scan_limit: plan.budgets.scan_limit,
+        evidence_limit: plan.budgets.evidence_limit,
+        max_evidence_bytes: plan.budgets.max_evidence_bytes,
+      },
+    });
 
     expect(observedBudgets).toEqual([{
       candidate_limit: plan.budgets.candidate_limit,
@@ -449,26 +475,54 @@ describe("held-scope branch query execution adapter", () => {
     const managedTrace = ManagedRetrievalTraceSchema.parse(result.query_legs[0]?.trace);
     expect(managedTrace.managed_ranking_outcomes).toHaveLength(1);
     expect(managedTrace.managed_ranking_outcomes[0]?.request_digest)
-      .toBe(result.query_legs[0]?.retrieval_request_digest);
+      .toBe(expectedDigest);
+    expect(result.query_legs[0]?.retrieval_request_digest).toBe(expectedDigest);
     expect(managedTrace.trace_ref.id).toMatch(/^mrt1-[a-f0-9]{48}$/u);
     expect(result.resolved_evidence).toHaveLength(1);
     expect(result.resolved_evidence[0]?.handle.handle_ref.id).toBe("evidence-handle-1");
     expect(result.stop_reason).toBe("FIRST_ADMISSIBLE_EVIDENCE");
   });
 
-  it("rejects a managed outcome bound to a foreign request digest at the adapter boundary", async () => {
+  it("rejects a managed trace transplanted from a foreign retrieval request", async () => {
     const scope = scopeFixture();
     const plan = await planFixture({ scope });
     const input = testInput(scope, plan);
     const ports = portsFor({
       scope,
       access: input.access,
-      retrieve: (_env, retrievalInput) => retrievalExecution({
-        scope,
-        access: input.access,
-        retrievalInput,
-        foreignOutcomeDigest: "8".repeat(64),
-      }),
+      retrieve: async (_env, retrievalInput) => {
+        const requestBudgets = retrievalInput.budgets;
+        if (requestBudgets === undefined || requestBudgets.evidence_limit < 2) {
+          throw new Error("transplanted trace fixture requires a reducible evidence budget");
+        }
+        const foreignOutcomeBudgets = {
+          ...requestBudgets,
+          evidence_limit: requestBudgets.evidence_limit - 1,
+        };
+        const requestDigest = await retrievalRequestDigest({
+          raw_query: retrievalInput.raw_query,
+          product: retrievalInput.product,
+          literals: retrievalInput.literals,
+          requested_limit: retrievalInput.requested_limit,
+          scope_digest: scope.digest,
+          budgets: requestBudgets,
+        });
+        const foreignRequestDigest = await retrievalRequestDigest({
+          raw_query: retrievalInput.raw_query,
+          product: retrievalInput.product,
+          literals: retrievalInput.literals,
+          requested_limit: foreignOutcomeBudgets.evidence_limit,
+          scope_digest: scope.digest,
+          budgets: foreignOutcomeBudgets,
+        });
+        expect(foreignRequestDigest).not.toBe(requestDigest);
+        return retrievalExecution({
+          scope,
+          access: input.access,
+          retrievalInput,
+          foreignOutcomeBudgets,
+        });
+      },
     });
 
     await expect(executeResearchBranchQueryPlanWithPorts(input, input.dependencies, ports))
