@@ -174,7 +174,7 @@ function createReadPolicyAuthority(db: D1Database, context: EvidenceAccessContex
           "AND julianday(t.valid_from)<=julianday(?2) AND (t.valid_to IS NULL OR julianday(t.valid_to)>julianday(?2)))");
         binds.push(atom.tag); break;
       case "PROJECT":
-        project = await db.prepare("SELECT p.project_id, p.generation, p.default_disclosure, p.default_source_policy_ref, " +
+        project = await db.prepare("SELECT p.project_id, p.membership_generation AS generation, p.default_disclosure, p.default_source_policy_ref, " +
           "p.retention_policy_ref FROM project p WHERE p.project_id=?1 AND EXISTS " +
           "(SELECT 1 FROM project_owner po WHERE po.project_id=p.project_id AND po.principal_ref=?2)")
           .bind(atom.project_id, policyPrincipal).first();

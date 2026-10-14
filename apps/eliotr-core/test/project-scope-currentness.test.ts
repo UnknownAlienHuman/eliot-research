@@ -1,0 +1,253 @@
+import { beforeEach, describe, expect, it } from "vitest";
+import { createD1NavigationStore } from "@eliotr/cloudflare-evidence";
+import { createD1ScopeService, createOwnerScopeAuthority } from "@eliotr/cloudflare-navigation";
+import type { ScopeExpression, ScopeSnapshot } from "@eliotr/contracts";
+import { access, artifacts, clearDatabase, db, grant, NOW, seedSource, source, TIME } from "./navigation-fixture.js";
+
+const PROJECT_A = "project-a";
+const PROJECT_B = "project-b";
+const A = "a".repeat(64);
+const B = "b".repeat(64);
+const CANONICAL_COLUMNS = [
+  "snapshot_id", "revision", "resolved_scope_expression_json", "participant_generations_json",
+  "member_source_revision_refs_json", "source_owner_generations_json", "policy_authority_ref",
+  "disclosure_closure_digest", "purge_ledger_revision", "client_fence_ref", "snapshot_digest",
+  "created_at", "expires_at",
+] as const;
+
+function scopeHarness() {
+  let now = NOW;
+  const scopes = createD1ScopeService(db, createOwnerScopeAuthority(db, access, () => now), { now: () => now });
+  return { scopes, now: () => now, advanceTo(value: number) { now = value; } };
+}
+
+async function seedProject(projectId: string, memberRefs: readonly string[] = []): Promise<void> {
+  await db.prepare("INSERT INTO project (project_id,title,default_disclosure,retention_policy_ref,default_source_policy_ref," +
+    "default_model_profile_ref,default_depth_profile_ref,generation,created_at) VALUES (?1,?2,'private','retention-default'," +
+    "'source-policy-default','model-default','depth-default',1,?3)").bind(projectId, projectId, TIME).run();
+  await db.prepare("INSERT INTO project_owner (project_id,principal_ref,deployment_generation,created_at,updated_at) " +
+    "VALUES (?1,?2,'deployment-1',?3,?3)").bind(projectId, access.principal_ref, TIME).run();
+  for (const ref of memberRefs) {
+    await db.prepare("INSERT INTO project_source_membership " +
+      "(project_id,source_id,role,valid_from,valid_to,membership_generation) VALUES (?1,?2,'member',?3,NULL,1)")
+      .bind(projectId, source(ref).source_id, TIME).run();
+  }
+}
+
+async function used(snapshot: ScopeSnapshot, suffix: string, at = TIME): Promise<string> {
+  const operationId = `scope375-${suffix}`;
+  await db.prepare("INSERT INTO orientation_request (operation_id,principal_ref,client_class,credential_generation," +
+    "idempotency_key,request_digest,state,snapshot_id,snapshot_revision,result_json,result_digest,created_at,expires_at) " +
+    "VALUES (?1,?2,?3,?4,?5,?6,'COMPLETE',?7,?8,'{\"ok\":true}',?9,?10,?11)")
+    .bind(operationId, access.principal_ref, access.client_class, access.credential_generation,
+      `idem-${operationId}`, A, snapshot.snapshot_id, snapshot.revision, B, at, snapshot.expires_at).run();
+  return operationId;
+}
+
+async function stored(snapshot: ScopeSnapshot): Promise<Record<string, unknown>> {
+  const row = await db.prepare("SELECT * FROM scope_snapshot WHERE snapshot_id=?1 AND revision=?2")
+    .bind(snapshot.snapshot_id, snapshot.revision).first<Record<string, unknown>>();
+  if (!row) throw new Error("scope snapshot row is missing");
+  return row;
+}
+
+function canonicalBytes(row: Record<string, unknown>): string {
+  return JSON.stringify(CANONICAL_COLUMNS.map((column) => [column, row[column]]));
+}
+
+async function singleProjectScope(ref: string) {
+  await seedSource(source(ref));
+  await seedProject(PROJECT_A, [ref]);
+  const harness = scopeHarness();
+  const snapshot = await harness.scopes.freeze({ kind: "PROJECT", project_id: PROJECT_A }, access.credential_generation);
+  const operationId = await used(snapshot, ref);
+  return { ...harness, snapshot, operationId };
+}
+
+beforeEach(clearDatabase);
+
+describe("project-scoped ScopeSnapshot invalidation in Core D1", () => {
+  it("keeps title edits current, then invalidates only used A expressions after A membership changes", async () => {
+    for (const ref of ["revision-a1", "revision-a2", "revision-b1"]) await seedSource(source(ref));
+    await seedProject(PROJECT_A, ["revision-a1"]);
+    await seedProject(PROJECT_B, ["revision-b1"]);
+    await db.prepare("INSERT INTO source_tag (source_id,tag,valid_from,valid_to) VALUES (?1,'tag-a',?2,NULL)")
+      .bind(source("revision-a1").source_id, TIME).run();
+
+    const harness = scopeHarness();
+    const projectA: ScopeExpression = { kind: "PROJECT", project_id: PROJECT_A };
+    const projectB: ScopeExpression = { kind: "PROJECT", project_id: PROJECT_B };
+    const selectedA: ScopeExpression = { kind: "SELECTED_SOURCES", source_ids: [source("revision-a1").source_id] };
+    const selectedB: ScopeExpression = { kind: "SELECTED_SOURCES", source_ids: [source("revision-b1").source_id] };
+    const expressions: Record<string, ScopeExpression> = {
+      projectA,
+      projectB,
+      unionA: { kind: "UNION", left: projectA, right: selectedB },
+      intersectA: { kind: "INTERSECT", left: projectA, right: selectedA },
+      exceptA: { kind: "EXCEPT", left: projectA, right: selectedA },
+      global: { kind: "GLOBAL_LIBRARY" },
+      selected: selectedA,
+      tagged: { kind: "TAG", tag: "tag-a" },
+      unusedA: { kind: "UNION", left: projectA, right: { kind: "TAG", tag: "tag-a" } },
+      unusedB: { kind: "UNION", left: projectB, right: { kind: "TAG", tag: "tag-a" } },
+    };
+    const snapshots: Record<string, ScopeSnapshot> = {};
+    for (const [name, expression] of Object.entries(expressions)) {
+      snapshots[name] = await harness.scopes.freeze(expression, access.credential_generation);
+    }
+    const operations = new Map<string, string>();
+    for (const name of ["projectA", "projectB", "unionA", "intersectA", "exceptA", "global", "selected", "tagged"]) {
+      operations.set(name, await used(snapshots[name], name));
+    }
+
+    await grant(snapshots.projectA);
+    await grant(snapshots.projectB);
+    const { card: cardA } = await artifacts(snapshots.projectA, "revision-a1");
+    const { card: cardB } = await artifacts(snapshots.projectB, "revision-b1");
+    const storeA = createD1NavigationStore({ database: db, scope_snapshot: snapshots.projectA, access,
+      now: harness.now, require_current: (scope) => harness.scopes.requireCurrent(scope) });
+    const storeB = createD1NavigationStore({ database: db, scope_snapshot: snapshots.projectB, access,
+      now: harness.now, require_current: (scope) => harness.scopes.requireCurrent(scope) });
+    await storeA.putArtifact("SOURCE_CARD", cardA);
+    await storeB.putArtifact("SOURCE_CARD", cardB);
+
+    const projectABeforeTitle = await stored(snapshots.projectA);
+    const projectBBeforeTitle = await stored(snapshots.projectB);
+    const titleAt = new Date(NOW + 1).toISOString();
+    await db.batch([
+      db.prepare("UPDATE project SET title='Project A renamed',generation=2 WHERE project_id=?1").bind(PROJECT_A),
+      db.prepare("UPDATE project_owner SET updated_at=?2 WHERE project_id=?1").bind(PROJECT_A, titleAt),
+    ]);
+    await expect(harness.scopes.requireCurrent(snapshots.projectA)).resolves.toEqual(snapshots.projectA);
+    await expect(harness.scopes.requireCurrent(snapshots.projectB)).resolves.toEqual(snapshots.projectB);
+    expect(canonicalBytes(await stored(snapshots.projectA))).toBe(canonicalBytes(projectABeforeTitle));
+    expect(canonicalBytes(await stored(snapshots.projectB))).toBe(canonicalBytes(projectBBeforeTitle));
+    expect((await stored(snapshots.projectA)).invalidated_at).toBeNull();
+
+    const canonicalBeforeMembership = await stored(snapshots.projectA);
+    const changedAt = new Date(NOW + 1_000).toISOString();
+    harness.advanceTo(NOW + 1_000);
+    await db.batch([
+      db.prepare("UPDATE project SET generation=3,membership_generation=2 WHERE project_id=?1").bind(PROJECT_A),
+      db.prepare("UPDATE project_source_membership SET valid_to=?2 WHERE project_id=?1 AND valid_to IS NULL")
+        .bind(PROJECT_A, changedAt),
+      db.prepare("INSERT INTO project_source_membership " +
+        "(project_id,source_id,role,valid_from,valid_to,membership_generation) VALUES (?1,?2,'member',?3,NULL,2)")
+        .bind(PROJECT_A, source("revision-a1").source_id, changedAt),
+      db.prepare("INSERT INTO project_source_membership " +
+        "(project_id,source_id,role,valid_from,valid_to,membership_generation) VALUES (?1,?2,'member',?3,NULL,2)")
+        .bind(PROJECT_A, source("revision-a2").source_id, changedAt),
+    ]);
+
+    await expect(harness.scopes.requireCurrent(snapshots.projectA)).rejects.toMatchObject({ code: "SCOPE_SNAPSHOT_STALE" });
+    await expect(harness.scopes.requireCurrent(snapshots.unionA)).rejects.toMatchObject({ code: "SCOPE_SNAPSHOT_STALE" });
+    await expect(harness.scopes.requireCurrent(snapshots.intersectA)).rejects.toMatchObject({ code: "SCOPE_SNAPSHOT_STALE" });
+    await expect(harness.scopes.requireCurrent(snapshots.exceptA)).rejects.toMatchObject({ code: "SCOPE_SNAPSHOT_STALE" });
+    await expect(harness.scopes.requireCurrent(snapshots.unusedA)).rejects.toMatchObject({ code: "SCOPE_SNAPSHOT_STALE" });
+    await expect(harness.scopes.requireCurrent(snapshots.projectB)).resolves.toEqual(snapshots.projectB);
+    await expect(harness.scopes.requireCurrent(snapshots.unusedB)).resolves.toEqual(snapshots.unusedB);
+    await expect(harness.scopes.requireCurrent(snapshots.global)).resolves.toEqual(snapshots.global);
+    await expect(harness.scopes.requireCurrent(snapshots.selected)).resolves.toEqual(snapshots.selected);
+    await expect(harness.scopes.requireCurrent(snapshots.tagged)).resolves.toEqual(snapshots.tagged);
+
+    const projectAAfterMembership = await stored(snapshots.projectA);
+    const projectBAfterMembership = await stored(snapshots.projectB);
+    expect(projectAAfterMembership.invalidated_at).not.toBeNull();
+    expect(projectAAfterMembership.invalidation_reason).toBe("SCOPE_INPUT_CHANGED");
+    expect(projectBAfterMembership.invalidated_at).toBeNull();
+    expect(canonicalBytes(projectAAfterMembership)).toBe(canonicalBytes(canonicalBeforeMembership));
+    expect(canonicalBytes(projectBAfterMembership)).toBe(canonicalBytes(projectBBeforeTitle));
+    expect((await stored(snapshots.unusedA)).invalidated_at).toBeNull();
+    expect((await stored(snapshots.global)).invalidated_at).toBeNull();
+    expect((await stored(snapshots.selected)).invalidated_at).toBeNull();
+    expect((await stored(snapshots.tagged)).invalidated_at).toBeNull();
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM navigation_artifact WHERE scope_snapshot_id=?1")
+      .bind(snapshots.projectA.snapshot_id).first("n")).toBe(0);
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM navigation_artifact WHERE scope_snapshot_id=?1")
+      .bind(snapshots.projectB.snapshot_id).first("n")).toBe(1);
+
+    const requestA = await db.prepare("SELECT state,result_json FROM orientation_request WHERE operation_id=?1")
+      .bind(operations.get("projectA")).first<{ state: string; result_json: string | null }>();
+    const requestB = await db.prepare("SELECT state,result_json FROM orientation_request WHERE operation_id=?1")
+      .bind(operations.get("projectB")).first<{ state: string; result_json: string | null }>();
+    expect(requestA).toEqual({ state: "INVALIDATED", result_json: null });
+    expect(requestB?.state).toBe("COMPLETE");
+    expect(requestB?.result_json).not.toBeNull();
+
+    const policyScope = await harness.scopes.freeze(projectA, access.credential_generation);
+    const policyOperation = await used(policyScope, "policy-a", changedAt);
+    const policyCanonicalBefore = canonicalBytes(await stored(policyScope));
+    await db.prepare("UPDATE project SET generation=4,default_source_policy_ref='source-policy-a2' WHERE project_id=?1")
+      .bind(PROJECT_A).run();
+    await expect(harness.scopes.requireCurrent(policyScope)).rejects.toMatchObject({ code: "SCOPE_SNAPSHOT_STALE" });
+    await expect(harness.scopes.requireCurrent(snapshots.projectB)).resolves.toEqual(snapshots.projectB);
+    const policyScopeRow = await stored(policyScope);
+    expect(policyScopeRow.invalidation_reason).toBe("SCOPE_INPUT_CHANGED");
+    expect(canonicalBytes(policyScopeRow)).toBe(policyCanonicalBefore);
+    expect((await db.prepare("SELECT state FROM orientation_request WHERE operation_id=?1")
+      .bind(policyOperation).first<{ state: string }>())?.state).toBe("INVALIDATED");
+    await expect(storeB.getSourceCards(["revision-b1"])).resolves.toEqual([cardB]);
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM navigation_artifact WHERE scope_snapshot_id=?1")
+      .bind(snapshots.projectA.snapshot_id).first("n")).toBe(0);
+    expect(await db.prepare("SELECT COUNT(*) AS n FROM navigation_artifact WHERE scope_snapshot_id=?1")
+      .bind(snapshots.projectB.snapshot_id).first("n")).toBe(1);
+
+    console.warn("SCOPE375_CANONICAL_BYTES", JSON.stringify({
+      snapshot_ref: { id: snapshots.projectA.snapshot_id, revision: snapshots.projectA.revision },
+      before_membership: canonicalBytes(canonicalBeforeMembership), after_membership: canonicalBytes(projectAAfterMembership),
+      before_policy: policyCanonicalBefore, after_policy: canonicalBytes(policyScopeRow),
+    }));
+  });
+
+  it("scopes the membership DELETE trigger and keeps PROJECT B current", async () => {
+    await seedSource(source("revision-a1"));
+    await seedSource(source("revision-b1"));
+    await seedProject(PROJECT_A, ["revision-a1"]);
+    await seedProject(PROJECT_B, ["revision-b1"]);
+    const scopes = scopeHarness().scopes;
+    const a = await scopes.freeze({ kind: "PROJECT", project_id: PROJECT_A }, access.credential_generation);
+    const b = await scopes.freeze({ kind: "PROJECT", project_id: PROJECT_B }, access.credential_generation);
+    await used(a, "delete-a");
+    await used(b, "delete-b");
+    await db.prepare("DELETE FROM project_source_membership WHERE project_id=?1 AND source_id=?2 AND valid_to IS NULL")
+      .bind(PROJECT_A, source("revision-a1").source_id).run();
+    expect((await stored(a)).invalidation_reason).toBe("SCOPE_INPUT_CHANGED");
+    expect((await stored(b)).invalidated_at).toBeNull();
+    await expect(scopes.requireCurrent(a)).rejects.toMatchObject({ code: "SCOPE_SNAPSHOT_STALE" });
+    await expect(scopes.requireCurrent(b)).resolves.toEqual(b);
+  });
+
+  it("retains source-owner-generation denial", async () => {
+    const { scopes, snapshot } = await singleProjectScope("revision-owner");
+    await db.prepare("UPDATE source_namespace_ownership SET source_owner_generation='owner-generation-2' " +
+      "WHERE source_namespace_id='namespace-revision-owner'").run();
+    await expect(scopes.requireCurrent(snapshot)).rejects.toMatchObject({ code: "SCOPE_SNAPSHOT_STALE" });
+  });
+
+  it("retains source-head currentness denial", async () => {
+    const { scopes, snapshot } = await singleProjectScope("revision-head");
+    await db.prepare("UPDATE source SET head_rev='unadmitted-head' WHERE source_id=?1")
+      .bind(source("revision-head").source_id).run();
+    await expect(scopes.requireCurrent(snapshot)).rejects.toMatchObject({ code: "SCOPE_SNAPSHOT_STALE" });
+  });
+
+  it("retains namespace fencing denial", async () => {
+    const { scopes, snapshot } = await singleProjectScope("revision-namespace");
+    await db.prepare("UPDATE source_namespace_ownership SET status='FENCED' " +
+      "WHERE source_namespace_id='namespace-revision-namespace'").run();
+    await expect(scopes.requireCurrent(snapshot)).rejects.toMatchObject({ code: "SCOPE_SNAPSHOT_STALE" });
+  });
+
+  it("retains purge denial", async () => {
+    const { scopes, snapshot } = await singleProjectScope("revision-purge");
+    await db.prepare("UPDATE source_revision SET purge_state='PURGE_REQUESTED' WHERE source_revision_ref='revision-purge'").run();
+    await expect(scopes.requireCurrent(snapshot)).rejects.toMatchObject({ code: "SCOPE_SNAPSHOT_STALE" });
+  });
+
+  it("retains read-policy revocation denial", async () => {
+    const { scopes, snapshot } = await singleProjectScope("revision-policy");
+    await db.prepare("UPDATE scope_read_policy SET state='REVOKED' WHERE source_namespace_id='namespace-revision-policy' " +
+      "AND principal_ref=?1 AND client_class=?2").bind(access.principal_ref, access.client_class).run();
+    await expect(scopes.requireCurrent(snapshot)).rejects.toMatchObject({ code: "SCOPE_SNAPSHOT_STALE" });
+  });
+});
