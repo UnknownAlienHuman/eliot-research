@@ -22,8 +22,9 @@ export interface NewProjectPanelProps {
 const copy = {
   en: {
     dialog: "Create a project", close: "Back to projects", title: "Project title", create: "Create project",
-    lead: "Name your project. It will keep the sources selected for your next question.", sources: "Selected sources",
-    empty: "Choose sources in Sources before creating this project.", invalid: "Review the project title and selected sources.",
+    lead: "Name your project. Selected sources stay with it; you can add sources later.", sources: "Selected sources",
+    empty: "No sources selected. You can add sources to this project later.", recover: "Recover original request",
+    invalid: "Review the project title and selected sources.",
     readback: "Check project status",
     phases: { idle: "", dispatching: "Creating the project.", reading: "Checking the project.",
       unconfirmed: "The outcome is unconfirmed. Check its status before creating another project.",
@@ -32,8 +33,9 @@ const copy = {
   },
   ru: {
     dialog: "Создать проект", close: "Вернуться к проектам", title: "Название проекта", create: "Создать проект",
-    lead: "Назовите проект. Он сохранит источники, выбранные для следующего вопроса.", sources: "Выбранные источники",
-    empty: "Перед созданием проекта выберите источники в разделе «Источники».", invalid: "Проверьте название проекта и выбранные источники.",
+    lead: "Назовите проект. Выбранные источники останутся в проекте; новые можно добавить позже.", sources: "Выбранные источники",
+    empty: "Источники не выбраны. Их можно добавить в проект позже.", recover: "Восстановить исходный запрос",
+    invalid: "Проверьте название проекта и выбранные источники.",
     readback: "Проверить состояние проекта",
     phases: { idle: "", dispatching: "Создаём проект.", reading: "Проверяем проект.",
       unconfirmed: "Исход не подтверждён. Проверьте его перед созданием другого проекта.",
@@ -64,7 +66,8 @@ export function NewProjectPanel(props: NewProjectPanelProps) {
   const busy = state.phase === "dispatching" || state.phase === "reading";
   const editable = state.phase === "idle" || state.phase === "refused";
   const ids = [...new Set(scope.map(source => source.id))].sort();
-  const scopeReady = ids.length > 0 && ids.length === scope.length && ids.length <= PROJECT_MAX_SOURCE_IDS;
+  const scopeReady = ids.length === scope.length && ids.length <= PROJECT_MAX_SOURCE_IDS;
+  const scopeEmpty = ids.length === 0;
   const announcement = usePaneAnnouncement(text.phases[state.phase]);
   return <Dialog open={open} title={text.dialog} onClose={() => { if (!busy) onClose(); }}>
     {/* A closed dialog owns no live region: the pane it sat in must expose exactly one operation channel, so a
@@ -85,14 +88,18 @@ export function NewProjectPanel(props: NewProjectPanelProps) {
       <ul className="er-live-source-pick">{scope.map(source => <li key={source.id}>
         <MaterialSymbol name="file" /><span>{source.label}</span>
       </li>)}</ul>
-      {!scopeReady && <Status>{text.empty}</Status>}
+      {scopeEmpty && <Status>{text.empty}</Status>}
       {state.invalid !== undefined && <Status tone="error">{text.invalid}</Status>}
       <Button type="submit" variant="primary" loading={busy}
         disabled={!editable || !scopeReady || !state.title.trim() || !privacy.isCurrent(context)}>{text.create}</Button>
     </form>
     {state.phase === "unconfirmed" && <div className="er-live-actions">
       <Status>{text.phases.unconfirmed}</Status>
-      <Button variant="tonal" onClick={() => { void controller.readStatus(new AbortController().signal); }}>{text.readback}</Button>
+      <Button variant="tonal" onClick={() => {
+        const signal = new AbortController().signal;
+        if (state.receipt?.project === undefined) void controller.recoverOriginalIntent(signal);
+        else void controller.readStatus(signal);
+      }}>{state.receipt?.project === undefined ? text.recover : text.readback}</Button>
     </div>}
     {state.phase === "confirmed" && <Status>{text.phases.confirmed}</Status>}
     <Button variant="text" disabled={busy} onClick={onClose}>{text.close}</Button>

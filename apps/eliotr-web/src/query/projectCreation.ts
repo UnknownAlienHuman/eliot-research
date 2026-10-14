@@ -8,9 +8,9 @@
  * non-empty first page.
  *
  * The frozen operation identity (title, source ids, idempotency key) is retained across a lost
- * acknowledgement and across any refusal the shared classifier cannot bound, so the owner can
- * reconcile the same request. The controller never mints a replacement identity and never replays
- * one; a further submission always requires an explicitly minted new key.
+ * acknowledgement and across any refusal the shared classifier cannot bound. Recovery is an
+ * explicit owner action that resends this exact request and key to the existing create receipt
+ * path. No retry or replacement identity is minted automatically.
  *
  * The shared ER-335 classifier is the only outcome authority. `project.create` is not registered
  * in its `OPERATION_REJECTIONS` map and no pre-effect throw site for that operation is proven
@@ -39,6 +39,7 @@ export const PROJECT_MAX_SOURCE_IDS = 256;
 const SAFE_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 
 const CREATE_OPERATION = "project.create";
+const MAX_PROJECT_READBACK_PAGES = 32;
 
 /**
  * The one refusal this controller treats as proven pre-effect on its own authority.
@@ -100,6 +101,8 @@ export interface ProjectCreationController {
   readonly setKey: (value: string) => ProjectCreationState;
   readonly mintKey: () => ProjectCreationState;
   readonly submit: (signal: AbortSignal) => Promise<ProjectCreationState>;
+  /** Explicitly recovers a lost create acknowledgement with the frozen request and original key. */
+  readonly recoverOriginalIntent: (signal: AbortSignal) => Promise<ProjectCreationState>;
   readonly readStatus: (signal: AbortSignal) => Promise<ProjectCreationState>;
   readonly confirmReadback: (projects: ProjectListView) => ProjectCreationState;
   readonly dismiss: () => ProjectCreationState;
@@ -166,13 +169,14 @@ export function createProjectCreationController(
   let receipt: ProjectMutationView | undefined;
   let project: ProjectSummary | undefined;
   let readback: ProjectListView | undefined;
-  let notified = false;
+  let creationIntent: ProjectCreationIntent | undefined;
+  let notifiedIntentKey: string | undefined;
   const listeners = new Set<() => void>();
 
   function snapshot(): ProjectCreationState {
     return Object.freeze({
       phase, title, sourceIds, key, invalid, outcome, receipt, project, readback,
-      editable: phase === "idle" || phase === "refused" || phase === "confirmed",
+      editable: phase === "idle" || phase === "refused",
     });
   }
 
@@ -241,26 +245,54 @@ export function createProjectCreationController(
     }
   }
 
-  async function readbackPage(signal: AbortSignal, held: ProjectListView | undefined): Promise<ProjectListView> {
-    return runProtectedRead(privacy, context, signal, readSignal =>
-      projects.readProjects(generation, undefined, readSignal).then(page => {
-        assertReadback(page, held);
-        return page;
-      }));
+  async function readbackPages(
+    signal: AbortSignal,
+    held: ProjectListView | undefined,
+    targetProjectId: string,
+  ): Promise<ProjectListView> {
+    let afterProjectId: string | undefined;
+    const visitedCursors = new Set<string>();
+    for (let pageNumber = 0; pageNumber < MAX_PROJECT_READBACK_PAGES; pageNumber += 1) {
+      const cursor = afterProjectId;
+      const page = await runProtectedRead(privacy, context, signal, readSignal =>
+        projects.readProjects(generation, cursor, readSignal).then(value => {
+          assertReadback(value, held);
+          return value;
+        }));
+      if (cursor !== undefined && page.projects.some(row => row.project_id <= cursor)) {
+        throw new Error("The projects readback cursor moved backward");
+      }
+      if (page.projects.some(row => row.project_id === targetProjectId)) return page;
+
+      const next = page.next_project_id;
+      if (next === undefined) return page;
+      const last = page.projects[page.projects.length - 1];
+      if (last === undefined || next < last.project_id ||
+          (cursor !== undefined && next <= cursor) || visitedCursors.has(next)) {
+        throw new Error("The projects readback cursor did not advance");
+      }
+      if (targetProjectId <= next) throw new Error("The projects readback cursor passed the acknowledged project");
+      visitedCursors.add(next);
+      afterProjectId = next;
+    }
+    throw new Error("The projects readback exceeded its page limit");
   }
 
   /** The one commit path: an acknowledgement plus a canonical row that matches it exactly. */
   function commit(page: ProjectListView): ProjectCreationState {
     const acknowledged = receipt?.project;
-    if (acknowledged === undefined) return replace({ phase: "unconfirmed", receipt, readback: page, project: undefined });
+    const intent = creationIntent;
+    if (acknowledged === undefined || intent === undefined || intent.key !== key) {
+      return replace({ phase: "unconfirmed", receipt, readback: page, project: undefined });
+    }
     const matched = canonicalMatch(acknowledged, page);
     if (matched === undefined) return replace({ phase: "unconfirmed", receipt, readback: page, project: undefined });
     project = matched;
     readback = page;
     invalid = undefined;
     phase = "confirmed";
-    if (!notified) {
-      notified = true;
+    if (notifiedIntentKey !== intent.key) {
+      notifiedIntentKey = intent.key;
       options.onProjectCommitted?.(matched, page);
     }
     return publish();
@@ -301,21 +333,21 @@ export function createProjectCreationController(
     },
 
     setTitle(value: string) {
-      if (phase === "dispatching" || phase === "reading") return publish();
+      if (phase !== "idle" && phase !== "refused") return publish();
       title = value;
       invalid = undefined;
       return publish();
     },
 
     setSourceIds(value: readonly string[]) {
-      if (phase === "dispatching" || phase === "reading") return publish();
+      if (phase !== "idle" && phase !== "refused") return publish();
       sourceIds = [...value];
       invalid = undefined;
       return publish();
     },
 
     setKey(value: string) {
-      if (phase === "dispatching" || phase === "reading") return publish();
+      if (phase !== "idle" && phase !== "refused") return publish();
       key = value;
       invalid = undefined;
       return publish();
@@ -323,7 +355,7 @@ export function createProjectCreationController(
 
     /** Mint only on an explicit new owner intent. Never called by a retry or a reconciliation. */
     mintKey() {
-      if (phase === "dispatching" || phase === "reading") return publish();
+      if (phase !== "idle" && phase !== "refused") return publish();
       key = apis.mintIntent();
       invalid = undefined;
       return publish();
@@ -333,16 +365,18 @@ export function createProjectCreationController(
       if (!isCurrentSession()) {
         return replace({ phase: "authorization-lost", receipt: undefined, readback: undefined, project: undefined });
       }
-      // A phase that is already in flight is never re-entered, so no second request is written.
-      if (phase === "dispatching" || phase === "reading" || phase === "unconfirmed") return publish();
+      // Create dispatch is single-shot; only the explicit recovery method may resend uncertainty.
+      if (phase === "dispatching" || phase === "reading" || phase === "unconfirmed" || phase === "confirmed") return publish();
       const operationKey = key;
-      const problem = operationKey === undefined ? "idempotency key is invalid" : intentProblem(operationKey);
+      if (operationKey === undefined) return invalidInput("idempotency key is invalid");
+      const problem = intentProblem(operationKey);
       if (problem !== undefined) return invalidInput(problem);
-      // The identity is frozen here. A lost acknowledgement or an unresolved refusal keeps exactly
-      // this title, key and source set, so the same request can be reconciled, never replayed.
+      // The identity is frozen here. Any uncertain outcome keeps this exact title, key and source set;
+      // only the explicit recovery action may resend it through the existing create receipt path.
       const intent: ProjectCreationIntent = Object.freeze({
-        title, sourceIds: [...sourceIds], key: operationKey,
-      }) as { readonly title: string; readonly sourceIds: readonly string[]; readonly key: string };
+        title, sourceIds: Object.freeze([...sourceIds]), key: operationKey,
+      });
+      creationIntent = intent;
       phase = "dispatching";
       invalid = undefined;
       publish();
@@ -359,7 +393,42 @@ export function createProjectCreationController(
       phase = "reading";
       publish();
       try {
-        return commit(await readbackPage(signal, options.currentPage?.()));
+        const projectId = acknowledged.project?.project_id;
+        if (projectId === undefined) throw new Error("The create acknowledgement has no project identity");
+        return commit(await readbackPages(signal, options.currentPage?.(), projectId));
+      } catch (error) {
+        return unconfirmed(error, acknowledged);
+      }
+    },
+
+    /** Replays only the frozen operation identity, and only after the owner explicitly asks. */
+    async recoverOriginalIntent(signal: AbortSignal): Promise<ProjectCreationState> {
+      if (!isCurrentSession()) {
+        return replace({ phase: "authorization-lost", receipt, readback: undefined, project: undefined });
+      }
+      const intent = creationIntent;
+      if (phase !== "unconfirmed" || intent === undefined || intent.key !== key ||
+          intent.title !== title || intent.sourceIds.length !== sourceIds.length ||
+          intent.sourceIds.some((sourceId, index) => sourceId !== sourceIds[index])) return publish();
+
+      phase = "dispatching";
+      publish();
+      let acknowledged: ProjectMutationView;
+      try {
+        acknowledged = await projects.createProject(intent.title, intent.sourceIds, intent.key, generation, signal);
+      } catch (error) {
+        return unconfirmed(error, receipt);
+      }
+      if (!isCurrentSession()) {
+        return replace({ phase: "authorization-lost", receipt: acknowledged, readback: undefined, project: undefined });
+      }
+      receipt = acknowledged;
+      phase = "reading";
+      publish();
+      try {
+        const projectId = acknowledged.project?.project_id;
+        if (projectId === undefined) throw new Error("The create receipt has no project identity");
+        return commit(await readbackPages(signal, options.currentPage?.(), projectId));
       } catch (error) {
         return unconfirmed(error, acknowledged);
       }
@@ -371,10 +440,12 @@ export function createProjectCreationController(
         return replace({ phase: "authorization-lost", readback: undefined, project: undefined });
       }
       if (phase === "dispatching" || phase === "reading") return publish();
+      const projectId = receipt?.project?.project_id;
+      if (projectId === undefined || creationIntent === undefined) return publish();
       phase = "reading";
       publish();
       try {
-        return commit(await readbackPage(signal, options.currentPage?.()));
+        return commit(await readbackPages(signal, options.currentPage?.(), projectId));
       } catch (error) {
         return unconfirmed(error, receipt);
       }
@@ -396,6 +467,7 @@ export function createProjectCreationController(
       title = "";
       sourceIds = [];
       key = undefined;
+      creationIntent = undefined;
       return replace({ phase: "idle", receipt: undefined, readback: undefined, project: undefined });
     },
 
