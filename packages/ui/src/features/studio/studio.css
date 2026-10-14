@@ -415,6 +415,15 @@
   .er-studio-live__panes {
     grid-template-columns: minmax(0, 1fr);
   }
+  /* One control row per compact pane: each control may shrink and wrap its label inside its own
+   * box, so the shared tonal-button styling never pushes the document past the viewport. */
+  .er-studio-live__actions > .er-button {
+    flex-shrink: 1;
+    min-inline-size: 0;
+    max-inline-size: 100%;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
 }
 
 @media (forced-colors: active) {
