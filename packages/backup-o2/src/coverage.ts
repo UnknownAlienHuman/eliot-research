@@ -175,6 +175,12 @@ const REBUILD_REQUIRED_TABLES: ReadonlySet<string> = new Set([
   "research_change_feed",
   "evidence_handle_identity",
   "health_snapshot",
+  // Derived hot read model over the installation-local managed-target
+  // assignment event history, maintained by the 0143 AFTER INSERT
+  // projection and its one-time backfill. It is never exported and never
+  // trusted from stale portable bytes: after restore it stays empty until
+  // the re-admitted owner appends fresh events, which regenerate it.
+  "managed_target_assignment_current",
 ]);
 
 const TRANSIENT_EXCLUDED_TABLES: ReadonlySet<string> = new Set([
@@ -257,6 +263,16 @@ const NOT_A_BACKUP_TABLES: ReadonlySet<string> = new Set([
   "erasure_admission_policy",
   "retrieval_scope_profile",
   "project_owner",
+  // Immutable managed-target assignment, audit and replay history is
+  // installation-local authority, never portable provenance: the 0143
+  // AFTER INSERT projection would recreate the current head from imported
+  // events whenever an owner exists, and the 0141 append guards reject the
+  // import whenever the re-admitted owner does not, so event rows cannot
+  // transfer as historical provenance either way. Required audit/lost-ACK
+  // history stays nonportable and installation-local; the restore policy is
+  // re-admit, where the live owner re-creates assignment history locally
+  // under current authorization after the project owner is re-admitted.
+  "managed_target_assignment_event",
   // The current selected project model configuration is owner-controlled
   // authority. Restore the immutable revision history, then require the live
   // owner to select it again under current admission and route qualification.
