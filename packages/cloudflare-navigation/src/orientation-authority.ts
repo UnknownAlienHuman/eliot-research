@@ -26,6 +26,13 @@ interface SourceRow {
   normalized_artifact_ref: string; captured_at: string; parser_profile_generation: string | null;
   quality_state: string; purge_state: string; title: string; kind: string; source_class: string;
 }
+interface ProjectMembershipHeadRow {
+  readonly project_id: string;
+  readonly membership_generation: number;
+  readonly default_disclosure: string;
+  readonly default_source_policy_ref: string;
+  readonly retention_policy_ref: string;
+}
 export interface OrientationSource {
   readonly revision: SourceRevision;
   readonly authority: EvidenceSourceAuthority;
@@ -69,6 +76,15 @@ export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAcces
   now: () => number = Date.now): OwnerScopeAuthority {
   if (context.client_class !== "owner_pwa") orientationFail("ORIENTATION_OWNER_REQUIRED", 403);
   return createReadPolicyAuthority(db, context, context.principal_ref, now);
+}
+
+async function projectMembershipGeneration(db: D1Database, projectId: string): Promise<number> {
+  const row = await db.prepare("SELECT membership_generation FROM project WHERE project_id=?1")
+    .bind(projectId).first<{ membership_generation: number }>();
+  if (!row || !Number.isSafeInteger(row.membership_generation) || row.membership_generation < 1) {
+    grantFail("CLIENT_SCOPE_AUTHORITY_UNAVAILABLE", 503, "Project membership head is unavailable", true);
+  }
+  return row.membership_generation;
 }
 
 /** The policy subject is separate from the authenticated actor. Not exported as an impersonation factory. */
@@ -163,7 +179,7 @@ function createReadPolicyAuthority(db: D1Database, context: EvidenceAccessContex
     const filters: string[] = ["r.source_revision_ref=s.head_rev", "r.purge_state='LIVE'",
       "s.source_namespace_id IN (SELECT value FROM json_each(?1))"];
     const binds: Bind[] = [JSON.stringify([...currentPolicies.keys()]), observedAt];
-    let project: unknown = null;
+    let project: ProjectMembershipHeadRow | null = null;
     switch (atom.kind) {
       case "GLOBAL_LIBRARY": break;
       case "SELECTED_SOURCES":
@@ -174,14 +190,19 @@ function createReadPolicyAuthority(db: D1Database, context: EvidenceAccessContex
           "AND julianday(t.valid_from)<=julianday(?2) AND (t.valid_to IS NULL OR julianday(t.valid_to)>julianday(?2)))");
         binds.push(atom.tag); break;
       case "PROJECT":
-        project = await db.prepare("SELECT p.project_id, p.generation, p.default_disclosure, p.default_source_policy_ref, " +
+        project = await db.prepare("SELECT p.project_id, p.membership_generation, p.default_disclosure, p.default_source_policy_ref, " +
           "p.retention_policy_ref FROM project p WHERE p.project_id=?1 AND EXISTS " +
           "(SELECT 1 FROM project_owner po WHERE po.project_id=p.project_id AND po.principal_ref=?2)")
-          .bind(atom.project_id, policyPrincipal).first();
+          .bind(atom.project_id, policyPrincipal).first<ProjectMembershipHeadRow>();
         if (!project) orientationFail("ORIENTATION_PROJECT_UNAVAILABLE", 404);
+        if (!Number.isSafeInteger(project.membership_generation) || project.membership_generation < 1) {
+          orientationFail("ORIENTATION_PROJECT_UNAVAILABLE", 404);
+        }
         filters.push("EXISTS (SELECT 1 FROM project_source_membership m WHERE m.source_id=s.source_id AND m.project_id=?3 " +
+          "AND m.membership_generation=?4 AND EXISTS (SELECT 1 FROM project p " +
+          "WHERE p.project_id=m.project_id AND p.membership_generation=?4) " +
           "AND julianday(m.valid_from)<=julianday(?2) AND (m.valid_to IS NULL OR julianday(m.valid_to)>julianday(?2)))");
-        binds.push(atom.project_id); break;
+        binds.push(atom.project_id, project.membership_generation); break;
     }
     // ?2 is intentionally present for every atom: all membership predicates share one observation instant.
     filters.push("julianday(?2) IS NOT NULL");
@@ -193,7 +214,16 @@ function createReadPolicyAuthority(db: D1Database, context: EvidenceAccessContex
     const loaded = await decode(rows, currentPolicies);
     const members = loaded.map((source) => ({ source_revision_ref: source.revision.source_revision_ref,
       source_owner_generation: source.revision.source_owner_generation, policy_closure_ref: source.policy_closure_ref }));
-    return { atom_generation_ref: `atom-${await evidenceSha256({ atom, project, members, policies: [...currentPolicies.values()] })}`, members };
+    const projectMembershipIdentity = project === null ? null : {
+      project_id: project.project_id,
+      membership_generation: project.membership_generation,
+      default_disclosure: project.default_disclosure,
+      default_source_policy_ref: project.default_source_policy_ref,
+      retention_policy_ref: project.retention_policy_ref,
+    };
+    return { atom_generation_ref: `atom-${await evidenceSha256({
+      atom, project: projectMembershipIdentity, members, policies: [...currentPolicies.values()],
+    })}`, members };
   }
   async function resolveAtom(atom: DeterministicScopeAtom, observedAt: string) {
     return resolveAtomWithLimit(atom, observedAt, ORIENTATION_MAX_SOURCES);
@@ -329,20 +359,32 @@ export async function createProjectClientScopeAuthority(db: D1Database, context:
   const lease = await authorizeProjectClientGrant(db, context, { operation: execution ? "run" : "query",
     ...(projects[0] === undefined ? {} : { project_id: projects[0] }) }, now);
   const projectId = lease.grant.project_id;
+  const membershipGeneration = await projectMembershipGeneration(db, projectId);
   const refs = await readClientProjectMembers(db, projectId, now());
+  if (await projectMembershipGeneration(db, projectId) !== membershipGeneration) {
+    grantFail("CLIENT_SCOPE_MEMBERSHIP_CHANGED", 409, "Project membership changed during scope resolution", true);
+  }
   const members = new Set(refs);
   const identity = scopeExpressionIdentity(expression);
   const shared = createReadPolicyAuthority(db, context, lease.grant.grantor_principal_ref, now);
+  // Source-scope identity binds the membership head. The lease separately fences grant authority.
   const delegation = { grant_id: lease.grant.grant_id, revision: lease.grant.revision,
-    project_id: projectId, project_generation: lease.project_generation, operation: execution ? "run" : "query",
+    project_id: projectId,
+    project_membership_generation: membershipGeneration, operation: execution ? "run" : "query",
     ...(execution ? { operation_id: execution.operation_id } : {}) };
   const delegationDigest = await evidenceSha256(lease.grant);
   async function requireProject() {
     const epoch = await grantEpoch(db);
     await lease.requireGrantCurrent();
+    if (await projectMembershipGeneration(db, projectId) !== membershipGeneration) {
+      grantFail("CLIENT_SCOPE_MEMBERSHIP_CHANGED", 409, "Project membership head changed; repeat with a new request", true);
+    }
     const current = await readClientProjectMembers(db, projectId, now());
     if (current.length !== members.size || current.some((ref) => !members.has(ref))) {
       grantFail("CLIENT_SCOPE_MEMBERSHIP_CHANGED", 409, "Delegated project membership changed; repeat with a new request", true);
+    }
+    if (await projectMembershipGeneration(db, projectId) !== membershipGeneration) {
+      grantFail("CLIENT_SCOPE_MEMBERSHIP_CHANGED", 409, "Project membership head changed during read", true);
     }
     if (await grantEpoch(db) !== epoch) grantFail("CLIENT_SCOPE_AUTHORITY_CHANGED", 409, "Project authority changed during read", true);
   }
@@ -398,10 +440,11 @@ export async function createProjectClientScopeAuthority(db: D1Database, context:
     else await issueClientQueryScopeGrant(input);
   }
   async function requireScopeCurrent(snapshot: ScopeSnapshot) {
-    await lease.requireGrantCurrent();
+    await requireProject();
     await current(snapshot);
     await requireClientScopeProvenance(db, context, snapshot, lease,
       execution ? { operation: "run", operation_id: execution.operation_id } : undefined);
+    await requireProject();
   }
   await lease.requireCurrent();
   return { authority, requireScopeCurrent, lease, policy_principal_ref: lease.grant.grantor_principal_ref };
@@ -420,6 +463,7 @@ function projectHistoricalSources(
     for (const batch of splitExhaustiveSourceRefs(refs)) {
       const rows = await db.prepare("SELECT sr.source_revision_ref FROM source_revision sr " +
         "JOIN project_source_membership m ON m.source_id=sr.source_id AND m.project_id=?1 " +
+        "JOIN project p ON p.project_id=m.project_id AND p.membership_generation=m.membership_generation " +
         "WHERE sr.source_revision_ref IN (SELECT value FROM json_each(?2)) " +
         "AND julianday(m.valid_from)<=julianday(?3) AND (m.valid_to IS NULL OR julianday(m.valid_to)>julianday(?3)) " +
         "ORDER BY sr.source_revision_ref LIMIT ?4")

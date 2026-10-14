@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
+import { decodeAiSearchSearchResult, type AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
 import type { RetrievalRequest } from "@eliotr/retrieval";
 import {
   AiSearchManagedReadError,
@@ -9,8 +9,15 @@ import {
   type AiSearchManagedSearchRequest,
 } from "./ai-search-managed-read.js";
 import { AI_SEARCH_RERANKING_MODEL } from "./ai-search-profile.js";
+import { createManagedProjectProviderKey } from "./managed-project-path.js";
+import type { AiSearchProjectCopyScope } from "./ai-search-scope-filter.js";
 
 const FIXED_AT = "2026-09-08T00:00:00.000Z";
+
+function required<T>(value: T | undefined, label: string): T {
+  if (value === undefined) throw new Error(`${label} is missing from the fixture`);
+  return value;
+}
 
 function retrievalRequest(overrides: Partial<RetrievalRequest> = {}): RetrievalRequest {
   return {
@@ -53,6 +60,8 @@ function authority(
     namespace: "eliot",
     instance_id: "eliot-hybrid",
     index_generation: "index-1",
+    target_profile_identity_sha256: "f".repeat(64),
+    generation_metadata_value: "45d49371cb1a3d67e889021c98adb7fbb5cc051af29851cee3692dd1ef0299b4",
     registry_revision: 1,
     registry_artifact_sha256: "a".repeat(64),
     active: true,
@@ -67,11 +76,63 @@ function authority(
   };
 }
 
+async function projectCopyScopeFor(
+  request: RetrievalRequest,
+  active: AiSearchManagedSearchAuthority,
+  projectId = "project-1",
+): Promise<AiSearchProjectCopyScope> {
+  const copies = await Promise.all(request.scope_snapshot.member_source_revision_refs.map(async (sourceRevision) => {
+    const membershipGeneration = 1;
+    const key = await createManagedProjectProviderKey({
+      instance_id: active.instance_id,
+      projection_generation: active.index_generation,
+      source_revision_ref: sourceRevision,
+      project_id: projectId,
+      project_membership_id: `project:${projectId}:generation:${membershipGeneration}`,
+      membership_generation: membershipGeneration,
+      item_key: `projection-${"a".repeat(48)}`,
+    });
+    return {
+      source_revision_ref: sourceRevision,
+      source_owner_generation: request.scope_snapshot.source_owner_generations[sourceRevision] ?? "owner-1",
+      project_id: projectId,
+      project_membership_id: key.project_membership_id,
+      membership_generation: membershipGeneration,
+      folder_prefix: key.folder_prefix,
+    };
+  }));
+  return {
+    layout: "PROJECT_COPY_V1",
+    scope_snapshot_id: request.scope_snapshot.snapshot_id,
+    scope_snapshot_revision: request.scope_snapshot.revision,
+    scope_snapshot_digest: request.scope_snapshot.digest,
+    target: {
+      namespace: active.namespace,
+      managed_instance_id: active.instance_id,
+      managed_generation: active.index_generation,
+      target_profile_identity_sha256: active.target_profile_identity_sha256,
+    },
+    generation_metadata_value: active.generation_metadata_value,
+    representative_policy: "ONE_CANONICAL_COPY_PER_SOURCE_REVISION",
+    copies,
+  };
+}
+
+function projectCopyScopeResolver(
+  projectId = "project-1",
+) {
+  return (request: RetrievalRequest, active: AiSearchManagedSearchAuthority) =>
+    projectCopyScopeFor(request, active, projectId);
+}
+
 function providerChunk(
   id: string,
   section: string,
   score: number,
   rerankingScore: number,
+  providerItemKey: string,
+  sourceRevision = "revision-1",
+  generationMetadataValue = "45d49371cb1a3d67e889021c98adb7fbb5cc051af29851cee3692dd1ef0299b4",
 ) {
   return {
     id,
@@ -79,13 +140,13 @@ function providerChunk(
     score,
     text: "provider preview " + id,
     item: {
-      key: id + ".md",
+      key: providerItemKey,
       metadata: {
         canonical_section_id: section,
         content_sha256: "d".repeat(64),
         instruction_taint: "DATA_ONLY",
-        projection_generation: "index-1",
-        source_revision_ref: "revision-1",
+        projection_generation: generationMetadataValue,
+        source_revision_ref: sourceRevision,
       },
     },
     scoring_details: {
@@ -99,13 +160,21 @@ function providerChunk(
   };
 }
 
+function providerKey(folderPrefix: string, ordinal: number): string {
+  return `${folderPrefix}projection-${ordinal.toString(16).padStart(48, "0")}.md`;
+}
+
 describe("managed AI Search query reader", () => {
-  it("requests one hybrid list with an independent provider cap and plan-gated reranking", () => {
-    const compiled = compileAiSearchManagedSearchRequest(
-      retrievalRequest(),
+  it("requests one hybrid list with an independent provider cap and plan-gated reranking", async () => {
+    const request = retrievalRequest();
+    const active = authority();
+    const projectScope = await projectCopyScopeFor(request, active);
+    const compiled = await compileAiSearchManagedSearchRequest(
+      request,
       ["SEM"],
       1,
-      authority(),
+      active,
+      projectScope,
     );
     expect(compiled.ai_search_options.retrieval.retrieval_type).toBe("hybrid");
     expect(compiled.ai_search_options.retrieval.fusion_method).toBe("rrf");
@@ -118,30 +187,35 @@ describe("managed AI Search query reader", () => {
       model: AI_SEARCH_RERANKING_MODEL,
     });
 
-    const directPlan = compileAiSearchManagedSearchRequest(
+    const directPlan = await compileAiSearchManagedSearchRequest(
       retrievalRequest({ product: "FAST_SEARCH" }),
       ["SEM"],
       0,
       authority(),
+      await projectCopyScopeFor(retrievalRequest({ product: "FAST_SEARCH" }), authority()),
     );
     expect(directPlan.ai_search_options.reranking).toEqual({ enabled: false });
 
-    const disabledProfile = compileAiSearchManagedSearchRequest(
+    const disabledProfile = await compileAiSearchManagedSearchRequest(
       retrievalRequest(),
       ["SEM"],
       1,
       authority({ reranking: false }),
+      await projectCopyScopeFor(retrievalRequest(), authority({ reranking: false })),
     );
     expect(disabledProfile.ai_search_options.reranking).toEqual({ enabled: false });
   });
 
   it("preserves provider order and scores as one managed physical list", async () => {
+    const request = retrievalRequest();
+    const active = authority();
+    const projectScope = await projectCopyScopeFor(request, active);
     const instanceSearch = vi.fn(async (_input: unknown) => ({
       query_kind: "text",
       search_query: "needle",
       chunks: [
-        providerChunk("chunk-1", "section-1", 0.9, 0.91),
-        providerChunk("chunk-2", "section-2", 0.8, 0.81),
+        providerChunk("chunk-1", "section-1", 0.9, 0.91, providerKey(required(projectScope.copies[0], "project copy").folder_prefix, 1)),
+        providerChunk("chunk-2", "section-2", 0.8, 0.81, providerKey(required(projectScope.copies[0], "project copy").folder_prefix, 2)),
       ],
     }));
     const get = vi.fn(() => ({
@@ -154,9 +228,9 @@ describe("managed AI Search query reader", () => {
       },
     }));
     const namespace = { get } as unknown as AiSearchNamespaceLike;
-    const port = createAiSearchManagedSearchPort(namespace, authority());
+    const port = createAiSearchManagedSearchPort(namespace, active, projectCopyScopeResolver());
 
-    const candidates = await port.search(retrievalRequest(), ["SEM"], 1);
+    const candidates = await port.search(request, ["SEM"], 1);
     const submitted = instanceSearch.mock.calls[0]?.[0] as AiSearchManagedSearchRequest;
 
     expect(instanceSearch).toHaveBeenCalledTimes(1);
@@ -181,11 +255,141 @@ describe("managed AI Search query reader", () => {
     });
   });
 
+  it("filters fifty cross-project duplicates before top-K and rejects a B folder returned to A", async () => {
+    const base = retrievalRequest();
+    const request = retrievalRequest({
+      requested_limit: 2,
+      budgets: retrievalBudgets(2),
+      scope_snapshot: {
+        ...base.scope_snapshot,
+        member_source_revision_refs: ["revision-1", "revision-2"],
+        source_owner_generations: {
+          "revision-1": "owner-1",
+          "revision-2": "owner-2",
+        },
+      },
+    });
+    const active = authority();
+    const projectScope = await projectCopyScopeFor(request, active, "project-a");
+    const aByRevision = new Map(projectScope.copies.map((copy) => [copy.source_revision_ref, copy]));
+    const bDuplicates = await Promise.all(Array.from({ length: 50 }, async (_, index) => {
+      const projectId = `project-b${index.toString().padStart(2, "0")}`;
+      const key = await createManagedProjectProviderKey({
+        instance_id: active.instance_id,
+        projection_generation: active.index_generation,
+        source_revision_ref: "revision-1",
+        project_id: projectId,
+        project_membership_id: `project:${projectId}:generation:1`,
+        membership_generation: 1,
+        item_key: `projection-${index.toString(16).padStart(48, "0")}`,
+      });
+      return providerChunk(`b-${index}`, "shared-section", 0.99, 0.99, key.provider_key);
+    }));
+    const aFirst = aByRevision.get("revision-1");
+    const aSecond = aByRevision.get("revision-2");
+    expect(aFirst).toBeDefined();
+    expect(aSecond).toBeDefined();
+    const documents = [
+      ...bDuplicates,
+      providerChunk("a-shared", "shared-section", 0.8, 0.8, providerKey(required(aFirst, "A revision-1 copy").folder_prefix, 100), "revision-1"),
+      providerChunk("a-unique", "unique-section", 0.7, 0.7, providerKey(required(aSecond, "A revision-2 copy").folder_prefix, 101), "revision-2"),
+    ];
+    const search = vi.fn(async (input: AiSearchManagedSearchRequest) => {
+      const folders = input.ai_search_options.retrieval.filters.folder.$in;
+      const chunks = documents.filter((document) => {
+        const key = document.item.key;
+        return folders.includes(key.slice(0, key.lastIndexOf("/") + 1));
+      }).slice(0, input.ai_search_options.retrieval.max_num_results);
+      return { query_kind: "text", search_query: "needle", chunks };
+    });
+    const port = createAiSearchManagedSearchPort(
+      { get: vi.fn(() => ({ search })) } as unknown as AiSearchNamespaceLike,
+      active,
+      projectCopyScopeResolver("project-a"),
+    );
+
+    const results = await port.search(request, ["SEM"], 0);
+    const submitted = search.mock.calls[0]?.[0] as AiSearchManagedSearchRequest;
+    expect(submitted.ai_search_options.retrieval.max_num_results).toBe(2);
+    expect(submitted.ai_search_options.retrieval.filters.folder.$in)
+      .toEqual(projectScope.copies.map((copy) => copy.folder_prefix).sort());
+    expect(results.map((candidate) => candidate.metadata.provider_project_id)).toEqual(["project-a", "project-a"]);
+    expect(results.map((candidate) => candidate.canonical_section_id)).toEqual(["shared-section", "unique-section"]);
+
+    const bFolder = bDuplicates[0]?.item.key.slice(0, bDuplicates[0].item.key.lastIndexOf("/") + 1);
+    expect(bFolder).toBeDefined();
+    const malicious = createAiSearchManagedSearchPort(
+      { get: vi.fn(() => ({ search: vi.fn(async () => ({
+        query_kind: "text",
+        search_query: "needle",
+        chunks: [bDuplicates[0]],
+      })) })) } as unknown as AiSearchNamespaceLike,
+      active,
+      projectCopyScopeResolver("project-a"),
+    );
+    await expect(malicious.search(request, ["SEM"], 0)).rejects.toMatchObject({
+      code: "AI_SEARCH_MANAGED_PROVIDER_RESPONSE_INVALID",
+    });
+  });
+
+  it("accepts flat keys only with an exact historical-generation fence and enforces the 128-byte key bound", () => {
+    const request = retrievalRequest();
+    const historical = {
+      query_kind: "text",
+      search_query: "needle",
+      chunks: [{
+        id: "historical-chunk",
+        type: "text",
+        score: 0.8,
+        text: "legacy preview",
+        item: {
+          key: "legacy-flat-item.md",
+          metadata: {
+            canonical_section_id: "legacy-section",
+            content_sha256: "d".repeat(64),
+            instruction_taint: "DATA_ONLY",
+            projection_generation: "historical-generation",
+            source_revision_ref: "revision-1",
+          },
+        },
+        scoring_details: { vector_score: 0.8 },
+      }],
+    };
+    const legacyOptions = {
+      expected_index_generation: "historical-generation",
+      historical_generation: "historical-generation",
+      project_copy_layout: "LEGACY_FLAT" as const,
+      requested_lanes: ["SEM"] as const,
+      max_results: 1,
+      max_preview_bytes: 1024,
+    };
+    const historicalChunk = required(historical.chunks[0], "historical chunk");
+    expect(decodeAiSearchSearchResult(request, historical, legacyOptions)[0]?.metadata.item_key)
+      .toBe("legacy-flat-item");
+    expect(() => decodeAiSearchSearchResult(request, historical, {
+      ...legacyOptions,
+      historical_generation: "another-generation",
+    })).toThrow(/historical generation/u);
+    expect(() => decodeAiSearchSearchResult(request, {
+      ...historical,
+      chunks: [{
+        ...historicalChunk,
+        item: { ...historicalChunk.item, key: `${"k".repeat(126)}.md` },
+      }],
+    }, {
+      ...legacyOptions,
+      historical_generation: "historical-generation",
+    })).toThrow(/128/u);
+  });
+
   it("honors the remaining candidate_limit before provider I/O and skips zero or invalid caps", async () => {
+    const projectScope = await projectCopyScopeFor(retrievalRequest(), authority());
+    const projectCopy = required(projectScope.copies[0], "project copy");
     const limitedSearch = vi.fn(async (_input: unknown) => ({
       query_kind: "text",
       search_query: "needle",
-      chunks: [providerChunk("chunk-1", "section-1", 0.9, 0.91)],
+      chunks: [providerChunk("chunk-1", "section-1", 0.9, 0.91,
+        providerKey(projectCopy.folder_prefix, 1))],
     }));
     const limitedGet = vi.fn(() => ({
       search: limitedSearch,
@@ -199,6 +403,7 @@ describe("managed AI Search query reader", () => {
     const limitedPort = createAiSearchManagedSearchPort(
       { get: limitedGet } as unknown as AiSearchNamespaceLike,
       authority(),
+      projectCopyScopeResolver(),
     );
     const limitedCandidates = await limitedPort.search(
       retrievalRequest({ budgets: retrievalBudgets(1) }),
@@ -223,6 +428,7 @@ describe("managed AI Search query reader", () => {
     const noBudgetPort = createAiSearchManagedSearchPort(
       { get: noBudgetGet } as unknown as AiSearchNamespaceLike,
       authority(),
+      projectCopyScopeResolver(),
     );
     expect(await noBudgetPort.search(
       retrievalRequest({ budgets: retrievalBudgets(0) }),
@@ -260,20 +466,21 @@ describe("managed AI Search query reader", () => {
         source_owner_generations: {},
       },
     });
-    const port = createAiSearchManagedSearchPort(namespace, authority());
+    const port = createAiSearchManagedSearchPort(namespace, authority(), projectCopyScopeResolver());
     expect(await port.search(empty, ["SEM"], 0)).toEqual([]);
     expect(get).not.toHaveBeenCalled();
     expect(search).not.toHaveBeenCalled();
 
     let capabilityError: unknown;
     try {
-      compileAiSearchManagedSearchRequest(
+      await compileAiSearchManagedSearchRequest(
         retrievalRequest(),
         ["SEM"],
         0,
         authority({
           index_method: { vector: false, keyword: true },
         }),
+        await projectCopyScopeFor(retrievalRequest(), authority({ index_method: { vector: false, keyword: true } })),
       );
     } catch (error) {
       capabilityError = error;

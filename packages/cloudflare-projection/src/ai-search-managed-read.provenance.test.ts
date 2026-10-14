@@ -22,6 +22,7 @@ import {
 } from "./ai-search-managed-read.js";
 
 const FIXED_AT = "2026-09-08T00:00:00.000Z";
+const TEST_FOLDER = "projection/GaJPhNRRiyxnlWrPSaWFT32qWH6MVY8AKGqshLRE_os/";
 
 function retrievalRequest(overrides: Partial<RetrievalRequest> = {}): RetrievalRequest {
   return {
@@ -55,6 +56,8 @@ function authority(
     namespace: "eliot",
     instance_id: "eliot-hybrid",
     index_generation: "index-1",
+    target_profile_identity_sha256: "f".repeat(64),
+    generation_metadata_value: "45d49371cb1a3d67e889021c98adb7fbb5cc051af29851cee3692dd1ef0299b4",
     registry_revision: 7,
     registry_artifact_sha256: "a".repeat(64),
     active: true,
@@ -80,16 +83,41 @@ function providerChunk(
     score,
     text: `provider preview ${id}`,
     item: {
-      key: `${id}.md`,
+      key: `${TEST_FOLDER}projection-${"a".repeat(48)}.md`,
       metadata: {
         canonical_section_id: `section-${id}`,
         content_sha256: "d".repeat(64),
         instruction_taint: "DATA_ONLY",
-        projection_generation: "index-1",
+        projection_generation: "45d49371cb1a3d67e889021c98adb7fbb5cc051af29851cee3692dd1ef0299b4",
         source_revision_ref: "revision-1",
       },
     },
     ...(Object.keys(scoringDetails).length === 0 ? {} : { scoring_details: scoringDetails }),
+  };
+}
+
+function projectCopyScope(request: RetrievalRequest, active: AiSearchManagedSearchAuthority) {
+  return {
+    layout: "PROJECT_COPY_V1" as const,
+    scope_snapshot_id: request.scope_snapshot.snapshot_id,
+    scope_snapshot_revision: request.scope_snapshot.revision,
+    scope_snapshot_digest: request.scope_snapshot.digest,
+    target: {
+      namespace: active.namespace,
+      managed_instance_id: active.instance_id,
+      managed_generation: active.index_generation,
+      target_profile_identity_sha256: active.target_profile_identity_sha256,
+    },
+    generation_metadata_value: active.generation_metadata_value,
+    representative_policy: "ONE_CANONICAL_COPY_PER_SOURCE_REVISION" as const,
+    copies: request.scope_snapshot.member_source_revision_refs.map((source_revision_ref) => ({
+      source_revision_ref,
+      source_owner_generation: request.scope_snapshot.source_owner_generations[source_revision_ref] ?? "owner-1",
+      project_id: "project-1",
+      project_membership_id: "project:project-1:generation:1",
+      membership_generation: 1,
+      folder_prefix: TEST_FOLDER,
+    })),
   };
 }
 
@@ -102,6 +130,7 @@ function portFor(
   const port = createAiSearchManagedSearchPort(
     { get } as unknown as AiSearchNamespaceLike,
     active,
+    async (request, current) => projectCopyScope(request, current),
   );
   return { port, get, search };
 }
@@ -212,16 +241,6 @@ function managedCompositionHarness(
     get lexicalCalls() { return lexicalCalls; },
     get storedRecord() { return storedRecord; },
   };
-}
-
-function deferred<T>() {
-  let resolve!: (value: T | PromiseLike<T>) => void;
-  let reject!: (reason?: unknown) => void;
-  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
-    resolve = resolvePromise;
-    reject = rejectPromise;
-  });
-  return { promise, resolve, reject };
 }
 
 function executedOutcome(execution: AiSearchManagedSearchExecution): AiSearchManagedExecutionOutcome {
@@ -461,6 +480,7 @@ describe("managed AI Search provenance result", () => {
     const failurePort = createAiSearchManagedSearchPort(
       { get: vi.fn(() => ({ search: failureSearch })) } as unknown as AiSearchNamespaceLike,
       authority(),
+      async (request, current) => projectCopyScope(request, current),
     );
 
     await expect(failurePort.searchManaged(retrievalRequest(), ["SEM"], 1)).rejects.toMatchObject({
@@ -518,10 +538,9 @@ describe("managed retrieval public composition", () => {
     expect(harness.provider.search).not.toHaveBeenCalled();
   });
 
-  it("stops local waiting on cancellation and ignores a late managed result", async () => {
-    const lateProvider = deferred<unknown>();
+  it("stops local waiting on cancellation before provider dispatch", async () => {
     const request = retrievalRequest({ product: "ORIENT", deadline_ms: Date.now() + 30_000 });
-    const harness = managedCompositionHarness(request, lateProvider.promise, (calls) => {
+    const harness = managedCompositionHarness(request, providerResponse, (calls) => {
       if (calls.includes("provider")) throw new RetrievalQueryError("RETRIEVAL_CANCELLED", "query is cancelled");
     });
 
@@ -534,19 +553,13 @@ describe("managed retrieval public composition", () => {
       execution_id: "8".repeat(48),
     });
     expect(harness.lexicalCalls).toBe(0);
-    expect(harness.provider.search).toHaveBeenCalledTimes(1);
+    expect(harness.provider.search).not.toHaveBeenCalled();
     expect(harness.storedRecord).toBeNull();
-
-    lateProvider.resolve(providerResponse);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(harness.storedRecord).toBeNull();
-    expect(harness.provider.search).toHaveBeenCalledTimes(1);
   });
 
-  it("stops local waiting on deadline budget and observes a late provider rejection", async () => {
-    const lateProvider = deferred<unknown>();
+  it("stops on the deadline budget before provider dispatch", async () => {
     const request = retrievalRequest({ product: "ORIENT", deadline_ms: Date.now() + 30_000 });
-    const harness = managedCompositionHarness(request, lateProvider.promise, (calls) => {
+    const harness = managedCompositionHarness(request, providerResponse, (calls) => {
       if (calls.includes("provider")) throw new RetrievalQueryError("RETRIEVAL_BUDGET_STOP", "query budget is exhausted");
     });
 
@@ -555,12 +568,7 @@ describe("managed retrieval public composition", () => {
 
     expect(harness.admissionCalls).toBe(1);
     expect(harness.lexicalCalls).toBe(0);
-    expect(harness.provider.search).toHaveBeenCalledTimes(1);
+    expect(harness.provider.search).not.toHaveBeenCalled();
     expect(harness.storedRecord).toBeNull();
-
-    lateProvider.reject(new Error("late provider failure"));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(harness.storedRecord).toBeNull();
-    expect(harness.provider.search).toHaveBeenCalledTimes(1);
   });
 });
