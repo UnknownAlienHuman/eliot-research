@@ -78,6 +78,27 @@ const noop = () => {};
 
 
 /**
+ * The presentation root this standalone story actually renders.
+ *
+ * Storybook hands the play function `canvasElement` as the story root, and that root is the PARENT of this
+ * file's `.eliot-token-story` decorator, not a descendant of it. `canvasElement.closest('.eliot-token-story')`
+ * therefore walked upward from the root and always returned null, so the terminal marker was never published and
+ * the visual harness timed out waiting for a frame this story never declared ready.
+ *
+ * The lookup accepts the presentation root itself or the one rendered inside the canvas, and throws when neither
+ * exists. A missing presentation then fails inside the play function instead of being skipped, and the readiness
+ * signal is never published on `#storybook-root` or any other wrapper Storybook owns, because a wrapper must not
+ * satisfy the terminal gate for a frame it does not render.
+ */
+function presentationRoot(canvasElement: HTMLElement): HTMLElement {
+  const root = canvasElement.matches('.eliot-token-story')
+    ? canvasElement
+    : canvasElement.querySelector<HTMLElement>('.eliot-token-story');
+  if (!root) throw new globalThis.Error('Terminal visual readiness requires the rendered token-story presentation root');
+  return root;
+}
+
+/**
  * A state story that hides data omits the key entirely, because `exactOptionalPropertyTypes`
  * rejects an explicit undefined for an optional prop. Only the named keys are removed.
  */
@@ -154,10 +175,10 @@ export const ListFailureWithSelected: Story = {
     await expect(canvas.getByText(STUDIO_COPY.en.error, { exact: true })).toBeVisible();
     await expect(canvas.getByRole('heading', { name: PAGE.title })).toBeVisible();
     // Terminal visual readiness: the list failure is showing and the independently verified selected proposal is
-    // still visible. The marker is published after these assertions, so a failing play never looks ready. It lands on
-    // the `.eliot-token-story` decorator root, which is the presentation this standalone feature actually owns;
-    // there is no workspace Shell here and none is faked.
-    canvasElement.closest('.eliot-token-story')?.setAttribute('data-play-ready', 'ready');
+    // still visible. The marker is published after these assertions, so a failing play never looks ready, and it
+    // lands on the `.eliot-token-story` decorator root, which is the presentation this standalone feature actually
+    // owns; there is no workspace Shell here and none is faked.
+    presentationRoot(canvasElement).setAttribute('data-play-ready', 'ready');
   },
 };
 
@@ -175,7 +196,7 @@ export const BodyLoading: Story = {
     await expect(canvas.queryByRole('button', { name: STUDIO_COPY.en.publish })).not.toBeInTheDocument();
     // Terminal visual readiness: the body read is in flight, the proposal is still visible, and no publication
     // control exists yet. Same standalone decorator root as the list-failure story; no Shell is invented.
-    canvasElement.closest('.eliot-token-story')?.setAttribute('data-play-ready', 'ready');
+    presentationRoot(canvasElement).setAttribute('data-play-ready', 'ready');
   },
 };
 
