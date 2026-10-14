@@ -8,11 +8,22 @@ import { nextOrientationBoundary } from "./orientation-currentness.js";
 import type { OrientationSource } from "./orientation-authority.js";
 
 const GENERATION = "project-client-scope-v1";
+const PROVENANCE_GENERATION = "project-client-scope-provenance-v2";
+const PROVENANCE_VERSION = 2;
 export async function requireClientScopeSchema(db: D1Database): Promise<void> {
   const row = await grantRead(() => db.prepare("SELECT value FROM schema_state WHERE key='project_client_scope_generation'")
     .first<{ value: string }>());
   if (row?.value !== GENERATION) {
     grantFail("CLIENT_SCOPE_NOT_READY", 503, "Delegated query scopes require migration 0073", true);
+  }
+}
+
+async function requireClientScopeProvenanceSchema(db: D1Database): Promise<void> {
+  const row = await grantRead(() => db.prepare(
+    "SELECT value FROM schema_state WHERE key='project_client_scope_provenance_generation'",
+  ).first<{ value: string }>());
+  if (row?.value !== PROVENANCE_GENERATION) {
+    grantFail("CLIENT_SCOPE_NOT_READY", 503, "Versioned delegated scope provenance requires migration 0146", true);
   }
 }
 
@@ -30,7 +41,21 @@ const provenance = (lease: ClientGrantLease, origin?: ClientScopeOrigin) => ({
   project_client_grant_id: lease.grant.grant_id,
   project_client_grant_revision: lease.grant.revision,
   project_client_operation: origin?.operation ?? "query",
+  project_client_provenance_version: PROVENANCE_VERSION,
+  project_client_membership_generation: lease.membership_generation,
+  project_client_owner_deployment_generation: lease.deployment_generation,
+  ...(origin === undefined ? {} : origin.operation === "run"
+    ? { project_client_run_operation_id: origin.operation_id }
+    : { project_client_artifact_id: origin.artifact_ref.id,
+      project_client_artifact_revision: origin.artifact_ref.revision }),
+});
+
+const legacyProvenance = (lease: ClientGrantLease, origin?: ClientScopeOrigin) => ({
+  project_client_grant_id: lease.grant.grant_id,
+  project_client_grant_revision: lease.grant.revision,
+  project_client_operation: origin?.operation ?? "query",
   project_client_project_generation: lease.project_generation,
+  project_client_provenance_version: 1,
   ...(origin === undefined ? {} : origin.operation === "run"
     ? { project_client_run_operation_id: origin.operation_id }
     : { project_client_artifact_id: origin.artifact_ref.id,
@@ -40,14 +65,25 @@ const provenance = (lease: ClientGrantLease, origin?: ClientScopeOrigin) => ({
 /** Scope authority is an exact derivative of one delegation revision, not today's replacement grant. */
 export async function requireClientScopeProvenance(db: D1Database, access: EvidenceAccessContext,
   scope: ScopeSnapshot, lease: ClientGrantLease, origin?: ClientScopeOrigin): Promise<void> {
+  await requireClientScopeProvenanceSchema(db);
   const row = await grantRead(() => db.prepare("SELECT project_client_grant_id,project_client_grant_revision," +
-    "project_client_operation,project_client_project_generation" + (origin === undefined ? "" :
+    "project_client_operation,project_client_project_generation,project_client_provenance_version," +
+    "project_client_membership_generation,project_client_owner_deployment_generation" + (origin === undefined ? "" :
       (origin.operation === "run" ? ",project_client_run_operation_id" : ",project_client_artifact_id,project_client_artifact_revision")) + " FROM scope_access_grant_effective " +
     "WHERE snapshot_id=?1 AND snapshot_revision=?2 AND principal_ref=?3 AND client_class=?4 AND credential_generation=?5 " +
     "AND state='ACTIVE' AND policy_authority_ref=?6 AND julianday(expires_at)>julianday('now')")
     .bind(scope.snapshot_id, scope.revision, access.principal_ref, access.client_class,
-      access.credential_generation, scope.policy_authority_ref).first());
-  if (row === null || canonicalEvidenceJson(row) !== canonicalEvidenceJson(provenance(lease, origin))) {
+      access.credential_generation, scope.policy_authority_ref).first<Record<string, unknown>>());
+  const version = row?.project_client_provenance_version;
+  const expected = version === 1 ? legacyProvenance(lease, origin)
+    : version === PROVENANCE_VERSION ? provenance(lease, origin) : null;
+  const comparable = row === null ? null : version === PROVENANCE_VERSION
+    ? Object.fromEntries(Object.entries(row).filter(([key]) => key !== "project_client_project_generation"))
+    : version === 1
+      ? Object.fromEntries(Object.entries(row).filter(([key]) =>
+        key !== "project_client_membership_generation" && key !== "project_client_owner_deployment_generation"))
+      : row;
+  if (row === null || expected === null || canonicalEvidenceJson(comparable) !== canonicalEvidenceJson(expected)) {
     grantFail("CLIENT_SCOPE_AUTHORITY_STALE", 403, "The frozen scope is not authorized by this delegation revision");
   }
   await lease.requireGrantCurrent();
@@ -87,6 +123,7 @@ export async function requireClientArtifactScopeSchema(db: D1Database): Promise<
   if (ready?.value !== "project-client-artifact-scope-v2") {
     grantFail("CLIENT_ARTIFACT_NOT_READY", 503, "Delegated historical report reads require migration 0078", true);
   }
+  await requireClientScopeProvenanceSchema(db);
 }
 
 async function issueClientScopeGrant(input: ClientScopeGrantInput, scopeOrigin?: ClientScopeOrigin): Promise<void> {
@@ -94,10 +131,11 @@ async function issueClientScopeGrant(input: ClientScopeGrantInput, scopeOrigin?:
   const runOrigin = scopeOrigin?.operation === "run" ? scopeOrigin : undefined;
   const extraColumns = artifactOrigin ? ",project_client_artifact_id,project_client_artifact_revision"
     : runOrigin ? ",project_client_run_operation_id" : "";
-  const extraValues = artifactOrigin ? ",?18,?19" : runOrigin ? ",?18" : "";
+  const extraValues = artifactOrigin ? ",?21,?22" : runOrigin ? ",?21" : "";
   const extraArgs = artifactOrigin ? [artifactOrigin.artifact_ref.id, artifactOrigin.artifact_ref.revision]
     : runOrigin ? [runOrigin.operation_id] : [];
   const { database: db, context, snapshot, lease, now } = input;
+  await requireClientScopeProvenanceSchema(db);
   const started = grantNow(now);
   let writeEpoch = await grantEpoch(db);
   await lease.requireGrantCurrent();
@@ -157,7 +195,8 @@ async function issueClientScopeGrant(input: ClientScopeGrantInput, scopeOrigin?:
   };
   const readSettled = () => grantRead(() => db.prepare("SELECT policy_authority_ref,allowed_use_json,disclosure_ceiling," +
     "authorization_receipt_ref,state,expires_at,project_client_grant_id,project_client_grant_revision," +
-    "project_client_operation,project_client_project_generation" + extraColumns + " FROM scope_access_grant " +
+    "project_client_operation,project_client_provenance_version,project_client_membership_generation," +
+    "project_client_owner_deployment_generation" + extraColumns + " FROM scope_access_grant " +
     "WHERE snapshot_id=?1 AND snapshot_revision=?2 AND principal_ref=?3 AND client_class=?4 AND credential_generation=?5")
     .bind(snapshot.snapshot_id, snapshot.revision, access.principal_ref, access.client_class, access.credential_generation).first());
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -171,16 +210,23 @@ async function issueClientScopeGrant(input: ClientScopeGrantInput, scopeOrigin?:
       const write = await db.prepare("INSERT INTO scope_access_grant (snapshot_id,snapshot_revision,principal_ref,client_class," +
         "credential_generation,policy_authority_ref,allowed_use_json,disclosure_ceiling,authorization_receipt_ref,state," +
         "expires_at,created_at,project_client_grant_id,project_client_grant_revision,project_client_operation," +
-        "project_client_project_generation,project_client_authority_epoch" + extraColumns + ") " +
-        "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,'ACTIVE',?10,?11,?12,?13,?17,?14,?15" +
-        extraValues + " FROM scope_snapshot s " +
-        "WHERE s.snapshot_id=?1 AND s.revision=?2 AND s.snapshot_digest=?16 AND s.invalidated_at IS NULL " +
+        "project_client_project_generation,project_client_provenance_version,project_client_membership_generation," +
+        "project_client_owner_deployment_generation,project_client_authority_epoch" + extraColumns + ") " +
+        "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,'ACTIVE',?10,?11,?12,?13,?16,p.generation,2,?17,?18,?14" +
+        extraValues + " FROM scope_snapshot s JOIN project p ON p.project_id=?19 " +
+        "WHERE s.snapshot_id=?1 AND s.revision=?2 AND s.snapshot_digest=?15 AND s.invalidated_at IS NULL " +
+        "AND p.membership_generation=?17 " +
+        "AND EXISTS (SELECT 1 FROM project_owner po WHERE po.project_id=p.project_id AND po.principal_ref=?20 " +
+        "AND po.deployment_generation=?18) " +
+        "AND EXISTS (SELECT 1 FROM project_client_grant_current d WHERE d.grant_id=?12 AND d.revision=?13 " +
+        "AND d.project_id=p.project_id AND d.grantor_principal_ref=?20 AND d.state='ACTIVE') " +
         "AND julianday(?10)>julianday('now') " +
-        "AND (SELECT generation FROM orientation_authority_epoch WHERE singleton=1)=?15 ON CONFLICT DO NOTHING")
+        "AND (SELECT generation FROM orientation_authority_epoch WHERE singleton=1)=?14 ON CONFLICT DO NOTHING")
         .bind(snapshot.snapshot_id, snapshot.revision, access.principal_ref, access.client_class, access.credential_generation,
           snapshot.policy_authority_ref, expected.allowed_use_json, expected.disclosure_ceiling, receipt, expected.expires_at,
           new Date(started).toISOString(), origin.project_client_grant_id, origin.project_client_grant_revision,
-          origin.project_client_project_generation, writeEpoch, snapshot.digest, origin.project_client_operation,
+          writeEpoch, snapshot.digest, origin.project_client_operation, lease.membership_generation,
+          lease.deployment_generation, lease.grant.project_id, lease.grant.grantor_principal_ref,
           ...extraArgs).run();
       confirmedNoop = write.success && write.meta.changes === 0;
     } catch {
