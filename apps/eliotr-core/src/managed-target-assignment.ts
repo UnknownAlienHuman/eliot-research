@@ -297,12 +297,11 @@ export function createManagedTargetAssignmentService(
   ): void {
     if (event !== null && (
       event.project_owner_principal_ref !== current.project_owner_principal_ref ||
-      event.project_generation > current.project_generation ||
-      (event.project_generation < current.project_generation && event.event_kind !== "RETIRE")
+      event.project_generation > current.project_generation
     )) {
       throw new ManagedTargetAssignmentError(
         "MANAGED_TARGET_ASSIGNMENT_PROJECT_AUTHORITY_STALE",
-        "The assignment head is foreign, future-generation, or an unretired prior-generation assignment",
+        "The assignment head is foreign or from a future project generation",
       );
     }
   }
@@ -411,8 +410,10 @@ export function createManagedTargetAssignmentService(
     const current = await readCurrent();
     const configuredTarget = await readConfiguredManagedTargetIdentity();
     const head = current.head_event;
+    // event_revision owns assignment identity; project_generation records only
+    // the metadata revision current when that immutable event was appended.
     const active = head?.event_kind === "ASSIGN" &&
-      head.project_generation === current.project_generation &&
+      head.project_generation <= current.project_generation &&
       head.project_owner_principal_ref === current.project_owner_principal_ref
       ? Object.freeze({ event_revision: head.event_revision, target: head.target })
       : null;

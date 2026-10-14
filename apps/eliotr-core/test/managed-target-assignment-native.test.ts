@@ -7,9 +7,11 @@ import type { ApplicationLifecycle, AuthenticatedRequestContext } from "@eliotr/
 import { handleHttp } from "../src/http.js";
 import {
   db,
+  insert,
   observeDatabase,
   principal,
   runtime,
+  seedSource,
   setupOrientationDatabase,
 } from "./orientation-fixture.js";
 
@@ -43,6 +45,28 @@ async function createProject(): Promise<string> {
     source_ids: [],
   });
   return result.project_ref.id;
+}
+
+async function seedAssignableSource(sourceId: string): Promise<void> {
+  await seedSource(sourceId);
+  await insert("source_admission_policy", {
+    source_namespace_id: `ns-${sourceId}`,
+    revision: 1,
+    authorized_principal_refs_json: JSON.stringify([principal]),
+    allowed_ownership_modes_json: '["immutable_import"]',
+    source_class: "document",
+    assurance_ceiling: "QUALIFIED",
+    instruction_taint: "DATA_ONLY",
+    allowed_effects: "READ_ONLY",
+    allowed_use_json: '["research"]',
+    disclosure_ceiling: "private",
+    license_policy_ref: "license-1",
+    default_storage_policy: "NORMALIZED_CLOUD_ONLY",
+    default_residency_profile_id: "residency-1",
+    default_retention_policy_id: "retention-1",
+    minimum_quality_state: "standard",
+    created_at: new Date().toISOString(),
+  });
 }
 
 function verifier(
@@ -201,7 +225,7 @@ describe("Core managed target assignment on native D1", () => {
     });
   });
 
-  it("retires a stale-generation head under the current owner before reassigning", async () => {
+  it("keeps the active assignment across a same-owner metadata revision", async () => {
     const projectId = await createProject();
     const target = await configuredTarget(projectId);
     const assigned = await call(request(projectId, "PUT", assignmentBody(target, 0)));
@@ -225,7 +249,7 @@ describe("Core managed target assignment on native D1", () => {
       project_generation: 2,
       event_head_revision: 1,
       head_event: assignedEvent,
-      current_assignment: null,
+      current_assignment: { event_revision: 1, target },
     });
 
     const wrongRevision = await call(request(projectId, "POST", {
@@ -271,6 +295,38 @@ describe("Core managed target assignment on native D1", () => {
       target,
     });
     expect(await eventCount(projectId)).toBe(3);
+  });
+
+  it("keeps the same assignment active when the current membership set changes", async () => {
+    const sourceId = "assignment-membership-change";
+    await seedAssignableSource(sourceId);
+    const projectId = await createProject();
+    const target = await configuredTarget(projectId);
+    const assigned = await call(request(projectId, "PUT", assignmentBody(target, 0)));
+    expect(assigned.status).toBe(200);
+
+    const updated = await createProjectOwnerService({
+      database: db,
+      deployment_generation: runtime.DEPLOYMENT_GENERATION,
+    }).update(ownerContext(), projectId, {
+      idempotency_key: "assignment-membership-change",
+      expected_revision: 1,
+      title: "Managed target assignment test",
+      source_ids: [sourceId],
+    });
+
+    expect(updated).toMatchObject({ revision: 2, source_ids: [sourceId] });
+    await expect(db.prepare("SELECT generation,membership_generation FROM project WHERE project_id=?1")
+      .bind(projectId).first()).resolves.toEqual({ generation: 2, membership_generation: 2 });
+    await expect(db.prepare("SELECT membership_generation,valid_to FROM project_source_membership WHERE project_id=?1")
+      .bind(projectId).first()).resolves.toEqual({ membership_generation: 2, valid_to: null });
+    const readback = await call(request(projectId, "GET"));
+    expect((await json(readback)).data).toMatchObject({
+      project_generation: 2,
+      event_head_revision: 1,
+      current_assignment: { event_revision: 1, target },
+    });
+    expect(await eventCount(projectId)).toBe(1);
   });
 
   it("reassigns after retirement when the same owner advances the project generation", async () => {
