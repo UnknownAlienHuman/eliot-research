@@ -32,6 +32,10 @@ interface ProjectMembershipHeadRow {
   readonly default_disclosure: string;
   readonly default_source_policy_ref: string;
   readonly retention_policy_ref: string;
+  readonly default_model_profile_ref: string;
+  readonly default_depth_profile_ref: string;
+  readonly owner_principal_ref: string;
+  readonly owner_deployment_generation: string;
 }
 export interface OrientationSource {
   readonly revision: SourceRevision;
@@ -191,18 +195,18 @@ function createReadPolicyAuthority(db: D1Database, context: EvidenceAccessContex
         binds.push(atom.tag); break;
       case "PROJECT":
         project = await db.prepare("SELECT p.project_id, p.membership_generation, p.default_disclosure, p.default_source_policy_ref, " +
-          "p.retention_policy_ref FROM project p WHERE p.project_id=?1 AND EXISTS " +
-          "(SELECT 1 FROM project_owner po WHERE po.project_id=p.project_id AND po.principal_ref=?2)")
+          "p.retention_policy_ref, p.default_model_profile_ref, p.default_depth_profile_ref, " +
+          "po.principal_ref AS owner_principal_ref, po.deployment_generation AS owner_deployment_generation " +
+          "FROM project p JOIN project_owner po ON po.project_id=p.project_id AND po.principal_ref=?2 " +
+          "WHERE p.project_id=?1")
           .bind(atom.project_id, policyPrincipal).first<ProjectMembershipHeadRow>();
         if (!project) orientationFail("ORIENTATION_PROJECT_UNAVAILABLE", 404);
         if (!Number.isSafeInteger(project.membership_generation) || project.membership_generation < 1) {
           orientationFail("ORIENTATION_PROJECT_UNAVAILABLE", 404);
         }
         filters.push("EXISTS (SELECT 1 FROM project_source_membership m WHERE m.source_id=s.source_id AND m.project_id=?3 " +
-          "AND m.membership_generation=?4 AND EXISTS (SELECT 1 FROM project p " +
-          "WHERE p.project_id=m.project_id AND p.membership_generation=?4) " +
           "AND julianday(m.valid_from)<=julianday(?2) AND (m.valid_to IS NULL OR julianday(m.valid_to)>julianday(?2)))");
-        binds.push(atom.project_id, project.membership_generation); break;
+        binds.push(atom.project_id); break;
     }
     // ?2 is intentionally present for every atom: all membership predicates share one observation instant.
     filters.push("julianday(?2) IS NOT NULL");
@@ -220,6 +224,10 @@ function createReadPolicyAuthority(db: D1Database, context: EvidenceAccessContex
       default_disclosure: project.default_disclosure,
       default_source_policy_ref: project.default_source_policy_ref,
       retention_policy_ref: project.retention_policy_ref,
+      default_model_profile_ref: project.default_model_profile_ref,
+      default_depth_profile_ref: project.default_depth_profile_ref,
+      owner_principal_ref: project.owner_principal_ref,
+      owner_deployment_generation: project.owner_deployment_generation,
     };
     return { atom_generation_ref: `atom-${await evidenceSha256({
       atom, project: projectMembershipIdentity, members, policies: [...currentPolicies.values()],
@@ -540,7 +548,7 @@ async function loadProjectHistoricalSources(
   for (const batch of splitExhaustiveSourceRefs(refs)) {
     const rows = await db.prepare("SELECT sr.source_revision_ref FROM source_revision sr " +
       "JOIN project_source_membership m ON m.source_id=sr.source_id AND m.project_id=?1 " +
-      "JOIN project p ON p.project_id=m.project_id AND p.membership_generation=m.membership_generation " +
+      "JOIN project p ON p.project_id=m.project_id " +
       "WHERE sr.source_revision_ref IN (SELECT value FROM json_each(?2)) " +
       "AND julianday(m.valid_from)<=julianday(?3) AND (m.valid_to IS NULL OR julianday(m.valid_to)>julianday(?3)) " +
       "ORDER BY sr.source_revision_ref LIMIT ?4")
@@ -593,10 +601,13 @@ export async function createProjectClientArtifactAuthority(
   const readOrigin = () => db.prepare("SELECT origin_client_class FROM project_client_artifact_read_origin " +
     "WHERE artifact_id=?1 AND artifact_revision=?2 AND principal_ref=?3 " +
     "AND scope_snapshot_id=?4 AND scope_snapshot_revision=?5 AND client_grant_id=?6 " +
-    "AND client_grant_revision=?7 AND project_generation=?8 " +
-    "AND (origin_client_class='owner_pwa' OR origin_client_class=?9) LIMIT 1")
+    "AND client_grant_revision=?7 AND ((project_client_provenance_version=1 AND project_generation=?8) OR " +
+    "(project_client_provenance_version=2 AND project_client_membership_generation=?9 " +
+    "AND project_client_owner_deployment_generation=?10)) " +
+    "AND (origin_client_class='owner_pwa' OR origin_client_class=?11) LIMIT 1")
     .bind(origin.artifact_ref.id, origin.artifact_ref.revision, originalPrincipal, original.snapshot_id,
-      original.revision, lease.grant.grant_id, lease.grant.revision, lease.project_generation, context.client_class)
+      original.revision, lease.grant.grant_id, lease.grant.revision, lease.project_generation,
+      lease.membership_generation, lease.deployment_generation, context.client_class)
     .first<{ origin_client_class: EvidenceAccessContext["client_class"] }>();
   const recorded = await readOrigin();
   if (!recorded || !["owner_pwa", "trusted_agent", "named_api_client"].includes(recorded.origin_client_class)) {
@@ -661,7 +672,9 @@ export async function createProjectClientArtifactAuthority(
     await sources(request.member_source_revision_refs);
     const closure = await shared.exhaustiveResolveAuthorityClosure(request);
     const policy = `client-report-${await evidenceSha256({ original: closure.policy_authority_ref,
-      scope: original.digest, artifact: origin, grant: lease.grant, project_generation: lease.project_generation })}`;
+      scope: original.digest, artifact: origin, grant: lease.grant,
+      project_membership_generation: lease.membership_generation,
+      project_owner_deployment_generation: lease.deployment_generation })}`;
     await requireOrigin();
     await lease.requireCurrent(async () => {
       await requireOrigin();
@@ -735,11 +748,14 @@ export async function createProjectClientRunReadAuthority(
       "AND deployment_generation=?5 AND handler_generation=?6 AND scope_snapshot_id=?7 " +
       "AND scope_snapshot_revision=?8 AND policy_authority_ref=?9 AND authorization_receipt_ref=?10 " +
       "AND client_grant_id=?11 AND client_grant_revision=?12 AND origin_client_class=?13 " +
-      "AND project_generation=?14 LIMIT 1")
+       "AND ((project_client_provenance_version=1 AND project_generation=?14) OR " +
+       "(project_client_provenance_version=2 AND project_client_membership_generation=?15 " +
+       "AND project_client_owner_deployment_generation=?16)) LIMIT 1")
       .bind(operationId, binding.investigation_id, binding.principal_ref, binding.credential_generation,
         binding.deployment_generation, binding.handler_generation, ref.id, ref.revision,
         binding.policy_authority_ref, binding.authorization_receipt_ref, lease.grant.grant_id,
-        lease.grant.revision, binding.origin_client_class, lease.project_generation).first();
+        lease.grant.revision, binding.origin_client_class, lease.project_generation,
+        lease.membership_generation, lease.deployment_generation).first();
     if (row === null) grantFail("CLIENT_RUN_DENIED", 403, "Original run authority was revoked or changed");
     await lease.requireGrantCurrent();
   };
