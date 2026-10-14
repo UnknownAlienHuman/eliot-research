@@ -15,7 +15,7 @@ export type ResearchToolId =
   | "versions" | "changes" | "import" | "erase" | "document" | "wiki";
 
 export type AgentTransport = "mcp" | "local" | "inbox";
-export type AgentPresence = "ready" | "busy" | "offline";
+export type AgentPresence = "ready" | "busy" | "offline" | "unknown" | "disabled";
 
 export interface AgentSummary {
   readonly id: string;
@@ -83,7 +83,8 @@ type ToolCopy = Record<ResearchToolId | "request", { readonly label: string; rea
 export const AGENT_WORK_COPY = {
   en: {
     agents: "Agents", tools: "Tools", tasks: "Tasks", manageAgents: "Manage agents", noTasks: "Tasks you hand over appear here.", noAgents: "No agents are connected to this workspace yet.", agentsUnavailable: "Agent connections have not been read here yet.",
-    presence: { ready: "Ready", busy: "Working", offline: "Offline" } satisfies Record<AgentPresence, string>,
+    presence: { ready: "Ready", busy: "Working", offline: "Offline", unknown: "Presence not checked", disabled: "Disabled" } satisfies Record<AgentPresence, string>,
+    moreAgents: "More connections", firstAgents: "First connections",
     transport: { mcp: "MCP", local: "Local", inbox: "Web inbox" } satisfies Record<AgentTransport, string>,
     taskState: (state: AgentTaskState, progress?: { readonly done: number; readonly total: number }) => ({
       waiting: "Waiting for the agent", working: progress ? `Working · ${progress.done} of ${progress.total}` : "Working",
@@ -120,7 +121,8 @@ export const AGENT_WORK_COPY = {
   },
   ru: {
     agents: "Агенты", tools: "Инструменты", tasks: "Поручения", manageAgents: "Управление агентами", noTasks: "Здесь появятся ваши поручения.", noAgents: "К рабочему пространству пока не подключены агенты.", agentsUnavailable: "Подключения агентов здесь ещё не прочитаны.",
-    presence: { ready: "Готов", busy: "Работает", offline: "Не в сети" } satisfies Record<AgentPresence, string>,
+    presence: { ready: "Готов", busy: "Работает", offline: "Не в сети", unknown: "Связь не проверена", disabled: "Отключено" } satisfies Record<AgentPresence, string>,
+    moreAgents: "Ещё подключения", firstAgents: "Первые подключения",
     transport: { mcp: "MCP", local: "Локально", inbox: "Веб-инбокс" } satisfies Record<AgentTransport, string>,
     taskState: (state: AgentTaskState, progress?: { readonly done: number; readonly total: number }) => ({
       waiting: "Ждёт агента", working: progress ? `Работает · ${progress.done} из ${progress.total}` : "Работает",

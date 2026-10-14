@@ -2,13 +2,14 @@ import { useCallback, useLayoutEffect, useRef, useState, type Ref, type RefObjec
 import { skipToken, useQueries, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router";
 import { WorkspaceLink } from "../routes/WorkspaceLink";
-import { AgentWorkPane, Button, Dialog, DocumentReader, IconButton, MaterialSymbol, OperationAnnouncement, ProjectsLibraryFeature, type ResearchToolId } from "@eliotr/ui";
+import { AgentWorkPane, Button, Dialog, DocumentReader, IconButton, MaterialSymbol, OperationAnnouncement, ProjectsLibraryFeature, type AgentSummary, type ResearchToolId } from "@eliotr/ui";
 import type { LibraryPage, ProjectListView, SourceRevisionPage } from "@eliotr/owner-api-client";
 import type { PrivacyController, SessionContext } from "./privacy";
 import type { BoundWorkspaceApis } from "./runtime";
 import { sourcesQueryOptions } from "../query/sources";
 import { documentQueryOptions } from "../query/documents";
 import { protectedQueryKey } from "../query/client";
+import { computerAgentQueryOptions } from "../query/computerAgents";
 import type { destinations } from "../routes/location";
 import "./live-workspace.css";
 import { ErasurePanel } from "./ErasurePanel";
@@ -35,6 +36,15 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
 }) {
   const client = useQueryClient();
   const navigate = useNavigate();
+  const [agentAfter, setAgentAfter] = useState<string>();
+  const agentConnections = useQuery({ ...computerAgentQueryOptions(apis, privacy, context, agentAfter),
+    enabled: destination === "research" && privacy.isCurrent(context) });
+  const agentsReadable = agentConnections.isSuccess && privacy.isCurrent(context);
+  const agents: readonly AgentSummary[] = agentsReadable ? agentConnections.data.connections.map(connection => ({
+    id: connection.connection_id, name: connection.display_name,
+    transport: connection.transport_capabilities.some(transport => transport === "MCP_READ" || transport === "MCP_WRITE") ? "mcp" : "inbox",
+    presence: connection.state === "DISABLED" ? "disabled" : "unknown",
+  })) : [];
   const [projectPages, setProjectPages] = useState<readonly (string | undefined)[]>([undefined]);
   const [projectId, setProjectId] = useState<string>();
   const projectSelectFocus = useRef<{
@@ -169,7 +179,11 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
       <div className="er-live-pane-head"><h2>{text.tools}</h2>
         <IconButton className="er-live-pane-fold" icon="chevron" label={folded.tools ? text.expandTools : text.collapseTools} title={folded.tools ? text.expandTools : text.collapseTools}
           aria-expanded={!folded.tools} onClick={() => setFolded(old => ({ ...old, tools: !old.tools }))} /></div>
-      <AgentWorkPane locale={locale} agents={[]} agentsUnavailable tools={liveTools} tasks={[]} onTool={runTool}
+      <AgentWorkPane locale={locale} agents={agents} agentsUnavailable={!agentsReadable} tools={liveTools} tasks={[]} onTool={runTool}
+        onMoreAgents={agentsReadable && agentConnections.data.next_connection_id ? () => {
+          if (privacy.isCurrent(context)) setAgentAfter(agentConnections.data.next_connection_id);
+        } : undefined}
+        onFirstAgents={agentAfter ? () => { if (privacy.isCurrent(context)) setAgentAfter(undefined); } : undefined}
         onManageAgents={() => { if (privacy.isCurrent(context)) void navigate("/connections"); }} />
     </aside>
     <main className="er-shell-reading" id="workspace-main" data-tab-active={destination !== "research" || researchTab === "chat"}>

@@ -50,6 +50,26 @@ export const ControlPane: Story = {
   },
 };
 
+export const ConfiguredPresenceUnknown: Story = {
+  render: () => <div className="er-agent-story-pane"><AgentWorkPane locale="en"
+    agents={[{ id: "configured", name: "Configured agent", transport: "mcp", presence: "unknown" },
+      { id: "disabled", name: "Disabled agent", transport: "inbox", presence: "disabled" },
+      { id: "observed", name: "Observed ready fixture", transport: "mcp", presence: "ready" }]}
+    tools={["versions"]} tasks={[]} onTool={fn()} onMoreAgents={fn()} onManageAgents={fn()} /></div>,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByText("Presence not checked")).toBeVisible();
+    await expect(canvas.getByText("Disabled", { exact: true })).toBeVisible();
+    await expect(canvas.queryByText("Ready", { exact: true })).not.toBeInTheDocument();
+    await expect(canvas.getByRole("button", { name: "More connections" })).toBeVisible();
+    const dot = canvasElement.querySelector<HTMLElement>('[data-presence="unknown"] .er-agent-chip__dot');
+    if (dot === null) throw new Error("Unknown connection needs its status marker");
+    const ready = canvasElement.querySelector<HTMLElement>('[data-presence="ready"] .er-agent-chip__dot');
+    if (ready === null) throw new Error("Ready fixture needs its comparison marker");
+    if (getComputedStyle(dot).backgroundColor === getComputedStyle(ready).backgroundColor) throw new Error("Unverified presence looked ready");
+  },
+};
+
 export const ControlPaneRussianDark: Story = {
   render: () => <div data-theme="dark" className="eliot-token-story">{pane("ru")}</div>,
 };

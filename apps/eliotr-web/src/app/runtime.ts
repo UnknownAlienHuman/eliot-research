@@ -3,6 +3,7 @@ import {
   createHealthApi, createOwnerSessionApi, createProjectsApi, createLibraryApi,
   createReadinessApi, createRevisionApi, createReaderApi, createErasureOperations,
   createClientGrantApi, createProviderKeyApi, createProviderModelUseApi, createGoogleOAuthApi,
+  createComputerAgentConnectionApi,
   createMcpDiagnosticApi, createResearchModelConfigurationApi, createResearchConfigurationApi,
   createNamespacesApi, createRawFileApi, createBundleInputApi, createBundleWireApi, createBundleImportApi,
   createResearchRunWire, createResearchRunsApi, createRunHistoryApi, createResearchSessionProjectionAdapter,
@@ -60,6 +61,7 @@ export interface BoundWorkspaceApis {
     readonly artifact: ReturnType<typeof createArtifactApi>;
   };
   readonly connections: {
+    readonly computerAgents: ReturnType<typeof createComputerAgentConnectionApi>;
     readonly grants: ReturnType<typeof createClientGrantApi>;
     readonly providers: ReturnType<typeof createProviderKeyApi>;
     readonly modelUse: ReturnType<typeof createProviderModelUseApi>;
@@ -127,6 +129,7 @@ function createBoundApis(ports: WorkspaceRuntimePorts, epoch: ReturnType<typeof 
       artifact: createArtifactApi({ http, errors: errorFactory, epoch, collaborators }),
     },
     connections: {
+      computerAgents: createComputerAgentConnectionApi(http, errorFactory, epoch, { mint: ports.mint }),
       grants: createClientGrantApi(http, errorFactory, epoch, { now: ports.now }, { mint: ports.mint }),
       providers: createProviderKeyApi(http, errorFactory, epoch),
       modelUse: createProviderModelUseApi(http, errorFactory, epoch, models),

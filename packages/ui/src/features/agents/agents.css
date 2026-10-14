@@ -42,6 +42,8 @@
   line-height: var(--eliot-type-label-large-line-height);
 }
 .er-agent-chip__dot { flex-shrink: 0; inline-size: var(--eliot-space-block-control); block-size: var(--eliot-space-block-control); border-radius: var(--eliot-shape-full); background: var(--eliot-accent-green); }
+.er-agent-chip[data-presence="unknown"] .er-agent-chip__dot,
+.er-agent-chip[data-presence="disabled"] .er-agent-chip__dot { background: var(--md-sys-color-outline); }
 .er-agent-chip[data-presence="busy"] .er-agent-chip__dot { background: var(--md-sys-color-primary); animation: er-agent-pulse calc(var(--eliot-motion-spatial) * 4) var(--eliot-motion-standard-easing) infinite alternate; }
 .er-agent-chip[data-presence="offline"] { color: var(--md-sys-color-on-surface-variant); }
 .er-agent-chip[data-presence="offline"] .er-agent-chip__dot { background: transparent; box-shadow: inset 0 0 0 var(--eliot-divider-width) var(--md-sys-color-outline); }

@@ -17,13 +17,15 @@ export interface AgentWorkPaneProps {
   readonly onTool: (tool: ResearchToolId) => void;
   readonly onTask?: ((taskId: string) => void) | undefined;
   readonly onManageAgents?: (() => void) | undefined;
+  readonly onMoreAgents?: (() => void) | undefined;
+  readonly onFirstAgents?: (() => void) | undefined;
 }
 
 /**
  * The right pane of a project, as NotebookLM's Studio: who is connected, the system's tools and the
  * tasks handed over. Presentation only — the owner of the workspace decides what each callback does.
  */
-export function AgentWorkPane({ locale, agents, agentsUnavailable = false, tools, tasks, onTool, onTask, onManageAgents }: AgentWorkPaneProps) {
+export function AgentWorkPane({ locale, agents, agentsUnavailable = false, tools, tasks, onTool, onTask, onManageAgents, onMoreAgents, onFirstAgents }: AgentWorkPaneProps) {
   const text = AGENT_WORK_COPY[locale];
   const id = useId();
   return <div className="er-agent-work">
@@ -37,8 +39,12 @@ export function AgentWorkPane({ locale, agents, agentsUnavailable = false, tools
         title={`${agent.name} · ${text.transport[agent.transport]} · ${text.presence[agent.presence]}`}>
         <span className="er-agent-chip__dot" aria-hidden="true" />
         <span className="er-agent-chip__name">{agent.name}</span>
-        <span className="er-agent-chip__meta">{agent.presence === "offline" ? text.presence.offline : text.transport[agent.transport]}</span>
+        <span className="er-agent-chip__meta">{agent.presence === "offline" || agent.presence === "unknown" || agent.presence === "disabled" ? text.presence[agent.presence] : text.transport[agent.transport]}</span>
       </li>)}</ul>
+      {onMoreAgents || onFirstAgents ? <div className="er-agent-work__head">
+        {onFirstAgents ? <button type="button" className="er-agent-work__link" onClick={onFirstAgents}>{text.firstAgents}</button> : null}
+        {onMoreAgents ? <button type="button" className="er-agent-work__link" onClick={onMoreAgents}>{text.moreAgents}</button> : null}
+      </div> : null}
     </section>
 
     <section className="er-agent-work__section" aria-labelledby={`${id}-tools`}>
