@@ -34,7 +34,10 @@
       "commit_sha": "06e7a3b09978a95311d03fd3aec4706ce3a68d22"
     }
   ],
-  "state": "ACTIVE",
+  "state": "HANDED_OFF",
   "evidence_refs": [],
-  "blocker_refs": []
+  "blocker_refs": [],
+  "handoff_reason": "SUPERSEDED",
+  "handoff_receipt_ref": "private:C:/Development/Research/.eliotr-state/continue-01a137ba/visual-intake-CodeUnderstandingProof.json",
+  "takeover_authorization_ref": "tests/ui-owner/receipts/owner-authorization.json"
 }
