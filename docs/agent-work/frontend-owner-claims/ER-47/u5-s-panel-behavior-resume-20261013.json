@@ -25,7 +25,12 @@
       "approval_ref": "tests/ui-owner/receipts/u2-x/u2-t.json"
     }
   ],
-  "state": "ACTIVE",
-  "evidence_refs": [],
-  "blocker_refs": []
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "Owner resumed full project; previous coordinator is interrupted. Source and prior evidence retained; no acceptance promotion."
+  ],
+  "blocker_refs": [],
+  "handoff_reason": "SUPERSEDED",
+  "handoff_receipt_ref": "private:continue-20261014-01a13b3b/UI-CLAIM-TAKEOVER.json",
+  "takeover_authorization_ref": "user:01a13b3b-dcbf-7370-891b-93824e8f7f7d:resume-full-project-20261014"
 }

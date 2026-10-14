@@ -27,8 +27,13 @@
       "commit_sha": "453523e4db31b7bccf6ae6f66218fe477dcfc361"
     }
   ],
-  "state": "ACTIVE",
-  "evidence_refs": [],
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "Owner resumed full project; previous coordinator is interrupted. Source and prior evidence retained; no acceptance promotion."
+  ],
   "blocker_refs": [],
-  "supersedes_claim_id": "u3-p-closed-dialog-announcement-01a137ba"
+  "supersedes_claim_id": "u3-p-closed-dialog-announcement-01a137ba",
+  "handoff_reason": "SUPERSEDED",
+  "handoff_receipt_ref": "private:continue-20261014-01a13b3b/UI-CLAIM-TAKEOVER.json",
+  "takeover_authorization_ref": "user:01a13b3b-dcbf-7370-891b-93824e8f7f7d:resume-full-project-20261014"
 }

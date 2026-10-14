@@ -1,0 +1,33 @@
+{
+  "protocol": "eliotr.frontend-owner-claim.v1",
+  "claim_id": "u4-r-claude-agent-intake-01a13b3b",
+  "checkpoint_id": "U4-R",
+  "packet_id": "ER-47",
+  "manager_identity": "frontend-manager",
+  "manager_context_id": "01a120c9-2637-7952-b6c9-be07b395b4fd",
+  "leaf_identity": "root-claude-agent-intake-01a13b3b",
+  "owner_authorization_ref": "user:01a13b3b-dcbf-7370-891b-93824e8f7f7d:resume-full-project-20261014",
+  "base_sha": "abad6150eeb6ea1ba120baaa5fe712e16d8e570c",
+  "history_base_sha": "c37e56e0ebdfc7f6d294879008a4036d1b95b985",
+  "write_paths": [
+    "packages/ui/src/features/research/run/ResearchRunFeature.tsx",
+    "packages/ui/src/features/research/run/research-run.css",
+    "apps/eliotr-web/src/app/ResearchPanel.tsx"
+  ],
+  "predecessor_refs": [
+    {
+      "checkpoint_id": "C3-R",
+      "commit_sha": "32163c05d9f7ae5cb1874119e2769262c028dec4",
+      "approval_ref": "tests/ui-owner/receipts/u1-d/client-research-composition.json"
+    },
+    {
+      "checkpoint_id": "U2-R",
+      "commit_sha": "273577c9ae45a1bf94ebcb5be77906c1f15ded92",
+      "approval_ref": "tests/ui-owner/receipts/u2-x/u2-r.json"
+    }
+  ],
+  "state": "ACTIVE",
+  "evidence_refs": [],
+  "blocker_refs": [],
+  "supersedes_claim_id": "u4-r-claude-iteration2-20261013"
+}
