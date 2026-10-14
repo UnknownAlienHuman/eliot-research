@@ -5,7 +5,8 @@ import { canonicalJson, sha256Utf8 } from "@eliotr/platform-cloudflare";
 import { createOwnerScopeAuthority } from "./orientation-authority.js";
 import { readClientProjectMembers, requireClientGrantNamespaces } from "./client-grant-authority.js";
 import { CLIENT_GRANT_MAX_BYTES, findClientGrant, grantEpoch, grantFail, grantId, grantNow, readClientGrant,
-  readClientGrantPage, readGrantReplay, readClientGrantSpend, type ClientGrantSpendBinding, requireGrantOwner } from "./client-grant-store.js";
+  readClientGrantPage, readGrantReplay, readClientGrantSpend, readClientGrantProjectFence,
+  type ClientGrantSpendBinding, requireGrantOwner } from "./client-grant-store.js";
 
 export interface ClientGrantServiceOptions {
   readonly database: D1Database;
@@ -34,10 +35,20 @@ export function createProjectClientGrantService(options: ClientGrantServiceOptio
     const principal = owner(context); const projectId = grantId(project);
     if (after !== "") grantId(after);
     const epoch = await grantEpoch(db);
-    await requireGrantOwner(db, projectId, principal);
+    const initialFence = await readClientGrantProjectFence(db, projectId, principal);
     const grants = await readClientGrantPage(db, projectId, after);
-    await requireGrantOwner(db, projectId, owner(context));
-    if (await grantEpoch(db) !== epoch) grantFail("CLIENT_GRANT_AUTHORITY_CHANGED", 409, "Project changed during grant listing", true);
+    const currentFence = await readClientGrantProjectFence(db, projectId, owner(context));
+    if (currentFence.deployment_generation !== initialFence.deployment_generation) {
+      grantFail("CLIENT_GRANT_AUTHORITY_CHANGED", 409, "Project owner deployment changed during grant listing", true);
+    }
+    if (await grantEpoch(db) !== epoch) {
+      const currentGrants = await readClientGrantPage(db, projectId, after);
+      const confirmedFence = await readClientGrantProjectFence(db, projectId, owner(context));
+      if (confirmedFence.deployment_generation !== initialFence.deployment_generation ||
+          canonicalJson(currentGrants) !== canonicalJson(grants)) {
+        grantFail("CLIENT_GRANT_AUTHORITY_CHANGED", 409, "Grant page authority changed during listing", true);
+      }
+    }
     owner(context);
     return { protocol: "eliotr.project-client-grants.v1", grants: grants.slice(0, 20),
       ...(grants.length > 20 ? { next_grant_id: grants[19]?.grant_id ?? "" } : {}) };
@@ -45,6 +56,7 @@ export function createProjectClientGrantService(options: ClientGrantServiceOptio
   async function mutate(context: AuthenticatedRequestContext, project: string, rawGrant: string,
     rawInput: unknown, operation: "PUT" | "DELETE"): Promise<ProjectClientGrant> {
     const principal = owner(context); const projectId = grantId(project); const grantIdValue = grantId(rawGrant);
+    const ownerAccess = canonicalJson(context.access ?? null);
     const key = grantId(context.request.headers.get("Idempotency-Key"));
     const parsed = operation === "PUT" ? ProjectClientGrantPutSchema.safeParse(rawInput) : ProjectClientGrantRevokeSchema.safeParse(rawInput);
     if (!parsed.success) grantFail("CLIENT_GRANT_INPUT_INVALID", 400, "Grant mutation contains unknown or invalid fields");
@@ -63,7 +75,7 @@ export function createProjectClientGrantService(options: ClientGrantServiceOptio
     const replay = await readGrantReplay(db, principal, key, requestDigest);
     if (replay) { await requireGrantOwner(db, projectId, owner(context)); owner(context); return replay; }
     const epoch = await grantEpoch(db);
-    const generation = await requireGrantOwner(db, projectId, principal);
+    const projectFence = await readClientGrantProjectFence(db, projectId, principal);
     const previous = await readClientGrant(db, grantIdValue);
     const expected = parsed.data.expected_revision;
     if (previous && (previous.project_id !== projectId || previous.grantor_principal_ref !== principal)) {
@@ -76,13 +88,17 @@ export function createProjectClientGrantService(options: ClientGrantServiceOptio
     let authorityDeadline = context.access ? Date.parse(context.access.expires_at) : instant + 30_000;
     let result: ProjectClientGrant;
     let sponsorship: ClientGrantSpendBinding | null = null;
+    let sameActor: ProjectClientGrant | null = null;
+    let memberRefs: readonly string[] | undefined;
+    let sourceClosure: string | undefined;
+    let sourceAuthority: ReturnType<typeof createOwnerScopeAuthority> | undefined;
     if (operation === "PUT") {
       const input = ProjectClientGrantPutSchema.parse(normalized);
       if (!issuers.has(input.grantee.issuer)) grantFail("CLIENT_GRANT_ISSUER_DENIED", 403, "Grantee issuer is not a configured Access issuer");
       if (previous && canonicalJson(input.grantee) !== canonicalJson(previous.grantee)) {
         grantFail("CLIENT_GRANT_IDENTITY_CONFLICT", 409, "A grant cannot be reassigned to another identity");
       }
-      const sameActor = await findClientGrant(db, projectId, input.grantee);
+      sameActor = await findClientGrant(db, projectId, input.grantee);
       if (sameActor && sameActor.grant_id !== grantIdValue) grantFail("CLIENT_GRANT_IDENTITY_CONFLICT", 409,
         "Use the existing logical grant for this project and client");
       if (Date.parse(input.expires_at) <= instant) grantFail("CLIENT_GRANT_INPUT_INVALID", 400, "Grant expiry must be in the future");
@@ -111,8 +127,10 @@ export function createProjectClientGrantService(options: ClientGrantServiceOptio
       if (!imports && input.ingest_namespace_ids.length !== 0) grantFail("CLIENT_GRANT_INPUT_INVALID", 400, "Namespace ceilings require an import or attachment operation");
       await requireClientGrantNamespaces(db, principal, input.ingest_namespace_ids);
       const refs = await readClientProjectMembers(db, projectId, instant);
-      const sourceAuthority = createOwnerScopeAuthority(db, context, now);
+      memberRefs = refs;
+      sourceAuthority = createOwnerScopeAuthority(db, context, now);
       const sources = await sourceAuthority.exhaustiveSources(refs);
+      sourceClosure = canonicalJson(sources);
       authorityDeadline = Math.min(authorityDeadline, Date.parse(input.expires_at),
         ...sources.flatMap((source) => [Date.parse(source.policy.expires_at),
           source.authority.admission_expires_at === undefined ? Infinity : Date.parse(source.authority.admission_expires_at)]));
@@ -135,43 +153,108 @@ export function createProjectClientGrantService(options: ClientGrantServiceOptio
     }
     const record = canonicalJson(result); const digest = await sha256Utf8(record);
     if (new TextEncoder().encode(record).byteLength > CLIENT_GRANT_MAX_BYTES) grantFail("CLIENT_GRANT_INPUT_TOO_LARGE", 413, "Grant exceeds its byte envelope");
-    owner(context);
-    if (!Number.isFinite(authorityDeadline) || grantNow(now) >= authorityDeadline) {
-      grantFail("CLIENT_GRANT_AUTHORITY_CHANGED", 409, "Authority expired before grant mutation", true);
-    }
-    try {
-      await db.prepare("INSERT INTO project_client_grant (grant_id,revision,project_id,grantor_principal_ref," +
-        "grantee_issuer,grantee_method,grantee_subject,state,expires_at,idempotency_key,request_sha256,record_json,record_sha256," +
-        "spend_policy_protocol,spend_policy_sha256,spend_deployment_generation,spend_expires_at) " +
-        "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?17,?18,?19,?20 FROM project p JOIN project_owner o ON o.project_id=p.project_id " +
-        "WHERE p.project_id=?3 AND o.principal_ref=?4 AND p.generation=?14 " +
-        "AND (SELECT generation FROM orientation_authority_epoch WHERE singleton=1)=?15 " +
-        "AND julianday(?16)>julianday('now')")
-        .bind(result.grant_id, result.revision, projectId, principal, result.grantee.issuer,
-          result.grantee.authentication_method, result.grantee.subject, result.state, result.expires_at,
-          key, requestDigest, record, digest, generation, epoch, new Date(authorityDeadline).toISOString(),
-          sponsorship?.policy_protocol ?? null, sponsorship?.policy_sha256 ?? null,
-          sponsorship?.deployment_generation ?? null, sponsorship?.expires_at ?? null).run();
-    } catch { /* Lost ACK and CAS conflicts are reconciled by exact immutable receipt readback below. */ }
-    const settled = await readGrantReplay(db, principal, key, requestDigest);
-    if (settled !== null) {
-      await requireGrantOwner(db, projectId, owner(context));
-      if (canonicalJson(settled) !== record) grantFail("CLIENT_GRANT_STORAGE_CORRUPT", 503, "Grant receipt differs from its intended revision");
-      if (canonicalJson(await readClientGrantSpend(db, settled)) !== canonicalJson(sponsorship)) {
-        grantFail("CLIENT_GRANT_STORAGE_CORRUPT", 503, "Sponsorship receipt differs from its intended approval");
+    const revalidateMutation = async () => {
+      if (canonicalJson(context.access ?? null) !== ownerAccess) {
+        grantFail("CLIENT_GRANT_OWNER_REQUIRED", 403, "Owner session changed during grant mutation");
       }
       owner(context);
-      return settled;
+      const currentFence = await readClientGrantProjectFence(db, projectId, principal);
+      if (currentFence.membership_generation !== projectFence.membership_generation ||
+          currentFence.deployment_generation !== projectFence.deployment_generation) {
+        grantFail("CLIENT_GRANT_AUTHORITY_CHANGED", 409, "Project owner or membership authority changed", true);
+      }
+      const currentGrant = await readClientGrant(db, grantIdValue);
+      if (canonicalJson(currentGrant) !== canonicalJson(previous)) {
+        grantFail("CLIENT_GRANT_REVISION_CONFLICT", 409, "Grant revision changed before commit");
+      }
+      if (operation === "PUT") {
+        const put = ProjectClientGrantPutSchema.parse(normalized);
+        const currentActor = await findClientGrant(db, projectId, put.grantee);
+        if (currentActor && currentActor.grant_id !== grantIdValue) {
+          grantFail("CLIENT_GRANT_IDENTITY_CONFLICT", 409, "Another logical grant already exists for this client");
+        }
+        if (canonicalJson(currentActor) !== canonicalJson(sameActor)) {
+          grantFail("CLIENT_GRANT_REVISION_CONFLICT", 409, "Client grant head changed before commit");
+        }
+        await requireClientGrantNamespaces(db, principal, put.ingest_namespace_ids);
+        const refs = await readClientProjectMembers(db, projectId, grantNow(now));
+        if (!sourceAuthority || memberRefs === undefined || sourceClosure === undefined ||
+            canonicalJson(refs) !== canonicalJson(memberRefs)) {
+          grantFail("CLIENT_GRANT_AUTHORITY_CHANGED", 409, "Project membership changed before grant commit", true);
+        }
+        const sources = await sourceAuthority.exhaustiveSources(refs);
+        if (canonicalJson(sources) !== sourceClosure) {
+          grantFail("CLIENT_GRANT_AUTHORITY_CHANGED", 409, "Project read or admission authority changed before grant commit", true);
+        }
+      }
+      owner(context);
+      if (!Number.isFinite(authorityDeadline) || grantNow(now) >= authorityDeadline || context.request.signal.aborted) {
+        grantFail("CLIENT_GRANT_AUTHORITY_CHANGED", 409, "Authority expired or request was cancelled before grant mutation", true);
+      }
+    };
+
+    let writeEpoch = epoch;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      let confirmedNoop = false;
+      let ambiguousWrite = false;
+      try {
+        const write = await db.prepare("INSERT INTO project_client_grant (grant_id,revision,project_id,grantor_principal_ref," +
+          "grantee_issuer,grantee_method,grantee_subject,state,expires_at,idempotency_key,request_sha256,record_json,record_sha256," +
+          "spend_policy_protocol,spend_policy_sha256,spend_deployment_generation,spend_expires_at) " +
+          "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?17,?18,?19,?20 FROM project p " +
+          "JOIN project_owner o ON o.project_id=p.project_id " +
+          "WHERE p.project_id=?3 AND o.principal_ref=?4 AND p.membership_generation=?14 " +
+          "AND o.deployment_generation=?21 " +
+          "AND (SELECT generation FROM orientation_authority_epoch WHERE singleton=1)=?15 " +
+          "AND julianday(?16)>julianday('now')")
+          .bind(result.grant_id, result.revision, projectId, principal, result.grantee.issuer,
+            result.grantee.authentication_method, result.grantee.subject, result.state, result.expires_at,
+            key, requestDigest, record, digest, projectFence.membership_generation, writeEpoch,
+            new Date(authorityDeadline).toISOString(), sponsorship?.policy_protocol ?? null,
+            sponsorship?.policy_sha256 ?? null, sponsorship?.deployment_generation ?? null,
+            sponsorship?.expires_at ?? null, projectFence.deployment_generation).run();
+        confirmedNoop = write.success && write.meta.changes === 0;
+      } catch {
+        // A rejected or lost write acknowledgement is settled by readback and is never retried here.
+        ambiguousWrite = true;
+      }
+      const settled = await readGrantReplay(db, principal, key, requestDigest);
+      if (settled !== null) {
+        await requireGrantOwner(db, projectId, owner(context));
+        if (canonicalJson(settled) !== record) grantFail("CLIENT_GRANT_STORAGE_CORRUPT", 503, "Grant receipt differs from its intended revision");
+        if (canonicalJson(await readClientGrantSpend(db, settled)) !== canonicalJson(sponsorship)) {
+          grantFail("CLIENT_GRANT_STORAGE_CORRUPT", 503, "Sponsorship receipt differs from its intended approval");
+        }
+        owner(context);
+        return settled;
+      }
+      const current = await readClientGrant(db, grantIdValue);
+      const actorGrant = operation === "PUT" ? await findClientGrant(db, projectId, result.grantee) : null;
+      if (actorGrant && actorGrant.grant_id !== grantIdValue) {
+        grantFail("CLIENT_GRANT_IDENTITY_CONFLICT", 409, "Another logical grant already exists for this client");
+      }
+      const currentEpoch = await grantEpoch(db);
+      if (currentEpoch !== writeEpoch) {
+        await revalidateMutation();
+        if (confirmedNoop && !ambiguousWrite && attempt === 0) {
+          writeEpoch = await grantEpoch(db);
+          continue;
+        }
+        grantFail("CLIENT_GRANT_SETTLEMENT_UNCERTAIN", 503,
+          "No exact commit receipt after bounded authority revalidation; reconcile using the same idempotency key", true);
+      }
+      if ((current?.revision ?? 0) !== expected) {
+        grantFail("CLIENT_GRANT_REVISION_CONFLICT", 409, "Grant revision changed before commit");
+      }
+      if (confirmedNoop && !ambiguousWrite) {
+        await revalidateMutation();
+        grantFail("CLIENT_GRANT_REVISION_CONFLICT", 409, "Grant commit lost its exact project or revision CAS");
+      }
+      grantFail("CLIENT_GRANT_SETTLEMENT_UNCERTAIN", 503,
+        "No exact commit receipt; reconcile using the same idempotency key", true);
     }
-    const current = await readClientGrant(db, grantIdValue);
-    const actorGrant = await findClientGrant(db, projectId, result.grantee);
-    if (actorGrant && actorGrant.grant_id !== grantIdValue) {
-      grantFail("CLIENT_GRANT_IDENTITY_CONFLICT", 409, "Another logical grant already exists for this client");
-    }
-    if ((current?.revision ?? 0) !== expected || await grantEpoch(db) !== epoch) {
-      grantFail("CLIENT_GRANT_REVISION_CONFLICT", 409, "Grant or upstream authority changed before commit");
-    }
-    grantFail("CLIENT_GRANT_SETTLEMENT_UNCERTAIN", 503, "No exact commit receipt; reconcile using the same idempotency key", true);
+    grantFail("CLIENT_GRANT_SETTLEMENT_UNCERTAIN", 503,
+      "No exact commit receipt after bounded authority revalidation; reconcile using the same idempotency key", true);
   }
   return { list,
     put: (context: AuthenticatedRequestContext, project: string, grant: string, input: unknown) => mutate(context, project, grant, input, "PUT"),
