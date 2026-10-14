@@ -2,7 +2,9 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { reset } from "cloudflare:test";
 import type { AccessVerifier } from "@eliotr/cloudflare-access";
 import { createProjectOwnerService } from "@eliotr/cloudflare-navigation";
-import { MANAGED_TARGET_ASSIGNMENT_PROTOCOL, type ManagedTargetIdentity } from "@eliotr/cloudflare-projection";
+import { AI_SEARCH_PRIMARY_PROJECTION_PROFILE, MANAGED_TARGET_ASSIGNMENT_PROTOCOL,
+  aiSearchPhysicalProfileDigest, createD1ManagedTargetAssignmentPort, projectionDigest,
+  type ManagedTargetIdentity } from "@eliotr/cloudflare-projection";
 import type { ApplicationLifecycle, AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { handleHttp } from "../src/http.js";
 import {
@@ -159,6 +161,42 @@ async function eventCount(projectId: string): Promise<number> {
 }
 
 describe("Core managed target assignment on native D1", () => {
+  it("produces the physical profile digest used by the generation registry", async () => {
+    const target = await configuredTarget(await createProject());
+    expect(target.target_profile_identity_sha256).toBe(
+      await aiSearchPhysicalProfileDigest(AI_SEARCH_PRIMARY_PROJECTION_PROFILE));
+    const legacyProfile = { ...AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
+      index_method: { ...AI_SEARCH_PRIMARY_PROJECTION_PROFILE.index_method },
+      metadata_fields: [...AI_SEARCH_PRIMARY_PROJECTION_PROFILE.metadata_fields].sort() };
+    expect(target.target_profile_identity_sha256).not.toBe(await projectionDigest(legacyProfile));
+  });
+
+  it("preserves exact legacy assignment replay but refuses a new legacy append", async () => {
+    const projectId = await createProject();
+    const target = await configuredTarget(projectId);
+    const legacyTarget = { ...target, target_profile_identity_sha256: await projectionDigest({
+      ...AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
+      index_method: { ...AI_SEARCH_PRIMARY_PROJECTION_PROFILE.index_method },
+      metadata_fields: [...AI_SEARCH_PRIMARY_PROJECTION_PROFILE.metadata_fields].sort(),
+    }) };
+    const port = createD1ManagedTargetAssignmentPort(db, async () => undefined);
+    const original = await port.append({ event_kind: "ASSIGN", project_id: projectId,
+      project_generation: 1, project_owner_principal_ref: principal, expected_event_revision: 0,
+      actor: { kind: "OWNER", principal_ref: principal, authorization_receipt_ref: "legacy-test-receipt" },
+      created_at: new Date().toISOString(), target: legacyTarget });
+    const before = (await json(await call(request(projectId, "GET")))).data as JsonObject;
+    expect(before.head_event).toEqual(original);
+    expect(before.current_assignment).toEqual({ event_revision: 1, target: legacyTarget });
+    const replay = await call(request(projectId, "PUT", assignmentBody(legacyTarget, 0)));
+    expect(replay.status).toBe(200);
+    expect(((await json(replay)).data as JsonObject).event).toEqual(original);
+    expect(await eventCount(projectId)).toBe(1);
+    const otherProject = await createProject();
+    const refused = await call(request(otherProject, "PUT", assignmentBody(legacyTarget, 0)));
+    expect(refused.status).toBe(409);
+    expect(await eventCount(otherProject)).toBe(0);
+  });
+
   it("assigns only for the authenticated owner and returns the exact head for recovery", async () => {
     const projectId = await createProject();
     const target = await configuredTarget(projectId);

@@ -13,6 +13,8 @@ import {
   AI_SEARCH_PRIMARY_NAMESPACE,
   AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
   assertImmutableAiSearchProfile,
+  aiSearchPhysicalProfileDigest,
+  matchAiSearchProfileIdentity,
   projectionDigest,
 } from "@eliotr/cloudflare-projection";
 import type { Env } from "./env.js";
@@ -133,14 +135,13 @@ export async function readConfiguredManagedTargetIdentity(): Promise<ManagedTarg
     fail("MANAGED_TARGET_ASSIGNMENT_PROFILE_UNAVAILABLE", 503,
       "The configured immutable managed target profile is unavailable", true);
   }
-  if (profile.id !== AI_SEARCH_PRIMARY_INSTANCE_ID ||
-      profile.generation !== AI_SEARCH_PRIMARY_GENERATION) {
+  if (profile.id !== AI_SEARCH_PRIMARY_INSTANCE_ID) {
     fail("MANAGED_TARGET_ASSIGNMENT_PROFILE_UNAVAILABLE", 503,
       "The configured managed target identity differs from its immutable profile", true);
   }
   let profileIdentity: string;
   try {
-    profileIdentity = await projectionDigest(profile);
+    profileIdentity = await aiSearchPhysicalProfileDigest(profile);
   } catch {
     fail("MANAGED_TARGET_ASSIGNMENT_PROFILE_UNAVAILABLE", 503,
       "The configured immutable managed target profile could not be identified", true);
@@ -440,6 +441,20 @@ export function createManagedTargetAssignmentService(
     }
     const current = await readCurrent();
     const configuredTarget = await readConfiguredManagedTargetIdentity();
+    const head = current.head_event;
+    assertAssignableProjectEvent(head, current);
+    // Historical hashes retain their exact event bytes. Only an already committed intent may
+    // replay this identity; every new append is required to use the physical-profile digest.
+    if (!sameTarget(target, configuredTarget) && head?.event_kind === "ASSIGN" &&
+        target.namespace === configuredTarget.namespace &&
+        target.managed_instance_id === configuredTarget.managed_instance_id &&
+        target.managed_generation === AI_SEARCH_PRIMARY_PROJECTION_PROFILE.generation &&
+        await matchAiSearchProfileIdentity(AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
+          target.target_profile_identity_sha256) === "LEGACY_GENERATION_V1") {
+      const replayCommand = commandFor(current, "ASSIGN", expectedEventRevision,
+        await ownerAccessReceiptReference(access), target);
+      if (matchesIntent(head, replayCommand)) return head;
+    }
     if (!sameTarget(target, configuredTarget)) {
       fail("MANAGED_TARGET_ASSIGNMENT_PROFILE_MISMATCH", 409,
         "Target identity does not match the server-owned immutable profile");
@@ -451,8 +466,6 @@ export function createManagedTargetAssignmentService(
       await ownerAccessReceiptReference(access),
       configuredTarget,
     );
-    const head = current.head_event;
-    assertAssignableProjectEvent(head, current);
     const headRevision = head?.event_revision ?? 0;
     if (head !== null && matchesIntent(head, command)) return head;
     if (headRevision !== expectedEventRevision) {
