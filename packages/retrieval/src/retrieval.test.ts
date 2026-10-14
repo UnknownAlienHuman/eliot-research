@@ -324,6 +324,24 @@ describe("Q3 query orchestration", () => {
     expect(result.evidence_pack.resolved_evidence).toHaveLength(1);
   });
 
+  it("uses the existing lexical lane when planned SEM has no installed executor", async () => {
+    const harness = q3Harness({
+      candidates: { LEX: [q3Candidate({ candidate_id: "c-lex", lane: "LEX" })] },
+      unavailableLanes: ["SEM"],
+    });
+
+    const result = await createRetrievalQueryService(harness.ports)
+      .query({ request: q3Request(), idempotency_key: "q3-sem-absent" });
+
+    expect(harness.calls).toContain("lane:LEX");
+    expect(harness.calls).not.toContain("lane:SEM");
+    expect(result.trace.lanes_used).toContain("LEX");
+    expect(result.trace.lanes_skipped).toContainEqual({ lane: "SEM", reason: "LANE_UNAVAILABLE" });
+    expect(result.trace.stale_or_degraded_channels).toContain("LANE_UNAVAILABLE_SEM");
+    expect(result.evidence_pack.resolved_evidence).toHaveLength(1);
+    expect(result.coverage_claim).toBe("SAMPLED");
+  });
+
   it("never converts an AI Search no-hit into an absence claim", async () => {
     const harness = q3Harness({
       candidates: { IDENT: [], LEX: [], SEM: [] },

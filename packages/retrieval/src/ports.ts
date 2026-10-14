@@ -187,23 +187,39 @@ export type ManagedSearchExecution =
       outcome: ManagedSearchOutcomeDraft;
     }>;
 
+/** Server-owned per-call cap kept separate from the caller-visible legacy budget envelope. */
+export interface ManagedSearchExecutionContextV1 {
+  readonly provider_candidate_limit?: number;
+}
+
 export interface ManagedSearchPort {
   /** Legacy adapter surface retained for existing non-managed callers. */
   search(request: RetrievalRequest, lanes: readonly ("SEM" | "LEX" | "LITERAL")[], contextExpansion: 0 | 1 | 2 | 3): Promise<readonly LocatorCandidate[]>;
+  /** Pure request/profile validation before durable admission; it must not dispatch the provider. */
+  preflightSearchManaged?(
+    request: RetrievalRequest,
+    lanes: readonly ("SEM" | "LEX" | "LITERAL")[],
+    contextExpansion: 0 | 1 | 2 | 3,
+    context?: ManagedSearchExecutionContextV1,
+  ): Promise<void>;
   /** One invocation returns its provider-ordered array and outcome together. */
   searchManaged?(
     request: RetrievalRequest,
     lanes: readonly ("SEM" | "LEX" | "LITERAL")[],
     contextExpansion: 0 | 1 | 2 | 3,
     admission?: RetrievalQueryAdmissionReceiptV1,
+    context?: ManagedSearchExecutionContextV1,
   ): Promise<ManagedSearchExecution>;
 }
 
-export interface RetrievalLaneExecutionContextV1 {
+export interface RetrievalLaneExecutionContextV1 extends ManagedSearchExecutionContextV1 {
   readonly admission?: RetrievalQueryAdmissionReceiptV1;
-  readonly provider_candidate_limit?: number;
   /** Called after query compilation and immediately before a managed provider method call. */
   readonly beforeManagedCall?: () => Promise<RetrievalQueryAdmissionReceiptV1 | undefined>;
+  /** Memoized local preflight shared with the lane-selection decision. */
+  readonly preflightManagedCall?: () => Promise<void>;
+  /** Bound local waiting while the provider promise remains observed for late completion. */
+  readonly waitForManagedCall?: <T>(pending: Promise<T>) => Promise<T>;
 }
 
 export type RetrievalLaneExecutionResult = readonly LocatorCandidate[] | ManagedSearchExecution;
@@ -233,6 +249,11 @@ export interface RetrievalTracePort {
 export interface RetrievalLaneExecutor {
   /** True only when SEM can return the provider's single-call ordered list and outcome together. */
   readonly managed_outcome_capable?: boolean;
+  /** Validate the installed managed adapter and request without consuming provider admission. */
+  preflightManagedCall?(
+    request: RetrievalRequest,
+    context?: ManagedSearchExecutionContextV1,
+  ): Promise<void>;
   execute(
     lane: RetrievalLane,
     request: RetrievalRequest,

@@ -142,10 +142,12 @@ export function createRetrievalCandidateBudgetV1(
             ? Math.min(remaining, bounds.provider_candidate_limit)
             : remaining;
           if (laneLimit === 0) return [];
-          const effectiveRequest: RetrievalRequest = {
-            ...request,
-            budgets: effectiveBudgets(request, bounds, laneLimit),
-          };
+          const effectiveRequest: RetrievalRequest = request.budgets === undefined
+            ? request
+            : {
+                ...request,
+                budgets: effectiveBudgets(request, bounds, laneLimit),
+              };
           const effectiveContext: RetrievalLaneExecutionContextV1 | undefined = executedLane !== "SEM"
             ? context
             : context === undefined

@@ -218,6 +218,19 @@ export function createExactLaneExecutor(
   };
 }
 
+function semanticExpansion(request: RetrievalRequest): 0 | 1 | 2 | 3 {
+  try {
+    return compileQueryPlan(request).context_expansion;
+  } catch (error: unknown) {
+    const invalid = new Error(
+      error instanceof Error ? error.message : "unsupported query product for SEM lane",
+    );
+    invalid.name = "SEARCH_INPUT_INVALID";
+    (invalid as unknown as { code: string }).code = "SEARCH_INPUT_INVALID";
+    throw invalid;
+  }
+}
+
 // IMPLEMENTED_NOT_LIVE: ER-04 SEM lane executor over the managed-search surface with pinned-generation translation and honest degradation; live AI Search readback/promotion receipts remain separate.
 /**
  * Q1 governed SEM executor over the managed-search surface.
@@ -248,8 +261,23 @@ export function createExactLaneExecutor(
  * the evidence authority re-validates every field that remains.
  */
 export function createSemLaneExecutor(managed: ManagedSearchPort): RetrievalLaneExecutor {
+  const preflightManagedCall = async (
+    request: RetrievalRequest,
+    context?: RetrievalLaneExecutionContextV1,
+  ): Promise<void> => {
+    if (managed.preflightSearchManaged === undefined) return;
+    await managed.preflightSearchManaged(
+      request,
+      ["SEM"],
+      semanticExpansion(request),
+      context?.provider_candidate_limit === undefined
+        ? undefined
+        : { provider_candidate_limit: context.provider_candidate_limit },
+    );
+  };
   return {
     managed_outcome_capable: managed.searchManaged !== undefined,
+    preflightManagedCall,
     async execute(
       lane: RetrievalLane,
       request: RetrievalRequest,
@@ -261,17 +289,7 @@ export function createSemLaneExecutor(managed: ManagedSearchPort): RetrievalLane
         (error as unknown as { code: string }).code = "SEARCH_INPUT_INVALID";
         throw error;
       }
-      let expansion: 0 | 1 | 2 | 3;
-      try {
-        expansion = compileQueryPlan(request).context_expansion;
-      } catch (error: unknown) {
-        const invalid = new Error(
-          error instanceof Error ? error.message : "unsupported query product for SEM lane",
-        );
-        invalid.name = "SEARCH_INPUT_INVALID";
-        (invalid as unknown as { code: string }).code = "SEARCH_INPUT_INVALID";
-        throw invalid;
-      }
+      const expansion = semanticExpansion(request);
       if (context?.beforeManagedCall !== undefined || context?.admission !== undefined) {
         if (managed.searchManaged === undefined) {
           const error = new Error("durable managed execution requires the single-call outcome adapter");
@@ -288,6 +306,11 @@ export function createSemLaneExecutor(managed: ManagedSearchPort): RetrievalLane
             outcome: null,
           };
         }
+        if (context.preflightManagedCall !== undefined) {
+          await context.preflightManagedCall();
+        } else {
+          await preflightManagedCall(request, context);
+        }
         const admission = context.admission ?? await context.beforeManagedCall?.();
         if (admission === undefined) {
           const error = new Error("managed provider dispatch has no durable admission receipt");
@@ -295,7 +318,13 @@ export function createSemLaneExecutor(managed: ManagedSearchPort): RetrievalLane
           throw error;
         }
         // Typed provider/domain errors propagate unchanged; no secondary LEX dispatch is added.
-        const result = await managed.searchManaged(request, ["SEM"], expansion, admission);
+        const managedContext = context.provider_candidate_limit === undefined
+          ? undefined
+          : { provider_candidate_limit: context.provider_candidate_limit };
+        const pending = managed.searchManaged(request, ["SEM"], expansion, admission, managedContext);
+        const result = await (context.waitForManagedCall === undefined
+          ? pending
+          : context.waitForManagedCall(pending));
         const candidates = result.candidates.map((candidate) => {
           const { proof_state: _localMarker, ...locator } = candidate as LocatorCandidate & {
             readonly proof_state?: unknown;
