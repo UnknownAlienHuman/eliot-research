@@ -76,3 +76,53 @@ describe('bounded response consumers', () => {
     for (const tag of ['W/"a"', 'a', '"a","b"', '""', '"a"b"']) expect(isStrongValidator(tag)).toBe(false);
   });
 });
+
+/**
+ * A producer may reuse or alias one buffer across reads, so every chunk this reader
+ * admits is snapshotted before the next read can mutate bytes it already accepted.
+ */
+describe('admitted chunk snapshots', () => {
+  /** Chunks A then B: one reused Uint8Array, mutated on the read that follows its admission. */
+  const reusingProducer = () => {
+    const shared = new Uint8Array(1);
+    let step = 0;
+    return new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (step === 2) { controller.close(); return; }
+        shared[0] = 65 + step++;
+        controller.enqueue(shared);
+      },
+    });
+  };
+  /** Chunks C then D: a real Buffer, which is a Uint8Array subclass that also reuses its allocation. */
+  const bufferSubclassProducer = () => {
+    const shared = (globalThis as { Buffer?: { allocUnsafe(length: number): Uint8Array } }).Buffer?.allocUnsafe(1);
+    if (!shared) throw new Error('Buffer is unavailable for the reused-buffer subclass case');
+    let step = 0;
+    return new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (step === 2) { controller.close(); return; }
+        shared[0] = 67 + step++;
+        controller.enqueue(shared);
+      },
+    });
+  };
+  const decode = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+  const exactPolicy = { requestedStart: 0, requestedEnd: 1, expectedTotal: 2, expectedETag: '"revision-a"', expectedContentType: 'text/plain' };
+
+  it('snapshots a reused Uint8Array before the next read mutates it', async () => {
+    expect(decode(await readBoundedBody(response(reusingProducer()), 8))).toBe('AB');
+  });
+  it('snapshots a reused Buffer-subclass chunk before the next read mutates it', async () => {
+    expect(decode(await readBoundedBody(response(bufferSubclassProducer()), 8))).toBe('CD');
+  });
+  it('an exact-range consumer keeps snapshots after representation and length guards pass', async () => {
+    const partial = response(reusingProducer(), 206, { 'content-type': 'text/plain', 'content-range': 'bytes 0-1/2', etag: '"revision-a"' });
+    expect(decode((await readObjectRange(partial, exactPolicy)).bytes)).toBe('AB');
+  });
+  it('rejects a non-byte chunk with a bounded client error and releases the reader', async () => {
+    const hostile = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue('text' as unknown as Uint8Array); controller.close(); } });
+    await expect(readBoundedBody(response(hostile), 8)).rejects.toMatchObject({ code: 'API_RESPONSE_SCHEMA_MISMATCH' });
+    expect(hostile.locked).toBe(false);
+  });
+});

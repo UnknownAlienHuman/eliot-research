@@ -78,9 +78,13 @@ export async function readBoundedBody(response: Response, maximumBytes: number, 
       const next = await (cancelled ? Promise.race([pending, cancelled]) : pending);
       if (signal?.aborted) throw aborted(signal);
       if (next.done) break;
-      size += next.value.byteLength;
+      const chunk = next.value;
+      if (!(chunk instanceof Uint8Array)) throw failure('API_RESPONSE_SCHEMA_MISMATCH', 'Response body produced a non-byte chunk');
+      size += chunk.byteLength;
       if (chunks.length >= MAX_CHUNKS || size > maximumBytes) throw failure('API_RESPONSE_TOO_LARGE', 'Response exceeds its byte or chunk budget');
-      chunks.push(next.value);
+      // A producer may reuse or alias one buffer across reads, so each admitted chunk is
+      // copied before the next read can mutate bytes this reader already accepted.
+      chunks.push(new Uint8Array(chunk));
     }
     const bytes = new Uint8Array(size);
     let offset = 0;
