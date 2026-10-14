@@ -20,6 +20,9 @@ import { createHash } from "node:crypto";
 
 // Canonical JSON: sorted keys, recursive, no whitespace. Both builder and
 // validator use it, so any field mutation breaks the digest.
+// FIX14: manual insertion sort and index-assembled parts (no
+// Array.prototype.map/sort/join, whose prototypes are mutable ambient
+// behavior). Sort poisoning can only fail the digest closed, never admit.
 export function canonicalJson(value) {
   if (value === null || value === undefined) return "null";
   if (typeof value === "number" || typeof value === "boolean") return JSON.stringify(value);
@@ -33,7 +36,16 @@ export function canonicalJson(value) {
     return `${out}]`;
   }
   if (typeof value === "object") {
-    const keys = Object.keys(value).sort();
+    const keys = Object.keys(value);
+    for (let i = 1; i < keys.length; i += 1) {
+      const current = keys[i];
+      let j = i - 1;
+      while (j >= 0 && keys[j] > current) {
+        keys[j + 1] = keys[j];
+        j -= 1;
+      }
+      keys[j + 1] = current;
+    }
     let out = "{";
     for (let i = 0; i < keys.length; i += 1) {
       if (i > 0) out += ",";
@@ -112,11 +124,17 @@ export function buildMetricEvidence(snapshot, contract) {
 
 function isLiveClass(kindClass, contract) {
   if (kindClass === contract.billingKindClass) return true;
-  return contract.inventoryKindClasses.includes(kindClass);
+  for (let i = 0; i < contract.inventoryKindClasses.length; i += 1) {
+    if (kindClass === contract.inventoryKindClasses[i]) return true;
+  }
+  return false;
 }
 
 function inventoryClassPairs(kindClass, contract) {
-  return contract.inventoryKindClasses.includes(kindClass);
+  for (let i = 0; i < contract.inventoryKindClasses.length; i += 1) {
+    if (kindClass === contract.inventoryKindClasses[i]) return true;
+  }
+  return false;
 }
 
 // Validate evidence coherence. Always (every decision): presence, shape,
@@ -161,9 +179,79 @@ export function validateMetricEvidence(receipt, contract, { now = Date.now(), st
     deny("admission receipt snapshot digest mismatch; refusing tampered receipt");
     return reasons;
   }
-  for (const entry of evidence) {
-    if (!entry || typeof entry !== "object" || typeof entry.metric !== "string") continue;
-    const key = entry.metric;
+  if (!strict) return reasons;
+  // FIX14: null-prototype seen table with explicit === scans (no Map, no
+  // Array.prototype filter/includes, no for..of iterator).
+  const seenTable = Object.create(null);
+  const seenKeys = [];
+  for (let i = 0; i < evidence.length; i += 1) {
+    const entry = evidence[i];
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      deny("admission receipt evidence entry must be an object; refusing forged receipt");
+      continue;
+    }
+    const metric = entry.metric;
+    if (typeof metric !== "string" || metric === "") {
+      deny("admission receipt evidence entry must be an object; refusing forged receipt");
+      continue;
+    }
+    let duplicate = false;
+    for (let j = 0; j < seenKeys.length; j += 1) {
+      if (seenKeys[j] === metric) { duplicate = true; break; }
+    }
+    if (duplicate) {
+      deny(`admission receipt carries duplicated evidence for ${metric}; refusing forged receipt`);
+      continue;
+    }
+    seenKeys[seenKeys.length] = metric;
+    seenTable[metric] = entry;
+  }
+  const requiredHas = (key) => {
+    for (let i = 0; i < contract.requiredKeys.length; i += 1) {
+      if (contract.requiredKeys[i] === key) return true;
+    }
+    return false;
+  };
+  const missing = [];
+  for (let i = 0; i < contract.requiredKeys.length; i += 1) {
+    const key = contract.requiredKeys[i];
+    let found = false;
+    for (let j = 0; j < seenKeys.length; j += 1) {
+      if (seenKeys[j] === key) { found = true; break; }
+    }
+    if (!found) missing[missing.length] = key;
+  }
+  if (missing.length > 0) {
+    let list = "";
+    for (let i = 0; i < missing.length; i += 1) list += (i > 0 ? ", " : "") + missing[i];
+    deny(`admission receipt evidence is missing metrics: ${list}; refusing forged receipt`);
+  }
+  const unexpected = [];
+  for (let i = 0; i < seenKeys.length; i += 1) {
+    if (!requiredHas(seenKeys[i])) unexpected[unexpected.length] = seenKeys[i];
+  }
+  if (unexpected.length > 0) {
+    let list = "";
+    for (let i = 0; i < unexpected.length; i += 1) list += (i > 0 ? ", " : "") + unexpected[i];
+    deny(`admission receipt evidence carries unknown metrics: ${list}; refusing forged receipt`);
+  }
+  let liveCount = 0;
+  let snapshotCount = 0;
+  for (let i = 0; i < contract.requiredKeys.length; i += 1) {
+    const key = contract.requiredKeys[i];
+    let found = false;
+    for (let j = 0; j < seenKeys.length; j += 1) {
+      if (seenKeys[j] === key) { found = true; break; }
+    }
+    if (!found) continue;
+    const entry = seenTable[key];
+    if (!entry) continue;
+    if (!Object.is(metrics[key], entry.value) && !(Number.isNaN(metrics[key]) && Number.isNaN(entry.value))) {
+      deny(`admission receipt evidence conflicts with metrics for ${key}; refusing forged receipt`);
+    }
+    if (entry.account_id_digest !== receipt.account_id_digest) {
+      deny(`admission receipt evidence for ${key} binds a different account; refusing forged receipt`);
+    }
     if (entry.unit !== contract.unitOf(key)) {
       deny(`admission receipt evidence for ${key} carries a different unit; refusing forged receipt`);
     }
@@ -174,51 +262,11 @@ export function validateMetricEvidence(receipt, contract, { now = Date.now(), st
     if (entry.window_start !== expectedWindow?.start || entry.window_end !== expectedWindow?.end) {
       deny(`admission receipt evidence for ${key} binds a different window; refusing forged receipt`);
     }
-  }
-  if (!strict) return reasons;
-  const seen = new Map();
-  for (const entry of evidence) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-      deny("admission receipt evidence entry must be an object; refusing forged receipt");
-      continue;
-    }
-    const metric = entry.metric;
-    if (typeof metric !== "string" || metric === "") {
-      deny("admission receipt evidence entry must be an object; refusing forged receipt");
-      continue;
-    }
-    if (seen.has(metric)) {
-      deny(`admission receipt carries duplicated evidence for ${metric}; refusing forged receipt`);
-      continue;
-    }
-    seen.set(metric, entry);
-  }
-  const requiredSet = new Set(contract.requiredKeys);
-  const missing = contract.requiredKeys.filter((key) => !seen.has(key));
-  if (missing.length > 0) {
-    deny(`admission receipt evidence is missing metrics: ${missing.join(", ")}; refusing forged receipt`);
-  }
-  const unexpected = [...seen.keys()].filter((key) => !requiredSet.has(key));
-  if (unexpected.length > 0) {
-    deny(`admission receipt evidence carries unknown metrics: ${unexpected.join(", ")}; refusing forged receipt`);
-  }
-  let liveCount = 0;
-  let snapshotCount = 0;
-  for (const key of contract.requiredKeys) {
-    const entry = seen.get(key);
-    if (!entry) continue;
-    const windowKind = contract.windowKindOf(key);
     if (windowKind === "point" && entry.provider_kind_class === contract.billingKindClass) {
       deny(`point-in-time metric ${key} cannot carry monthly billing evidence`);
     }
     if (windowKind !== "point" && inventoryClassPairs(entry.provider_kind_class, contract)) {
       deny(`monthly metric ${key} cannot carry point-inventory evidence`);
-    }
-    if (!Object.is(metrics[key], entry.value) && !(Number.isNaN(metrics[key]) && Number.isNaN(entry.value))) {
-      deny(`admission receipt evidence conflicts with metrics for ${key}; refusing forged receipt`);
-    }
-    if (entry.account_id_digest !== receipt.account_id_digest) {
-      deny(`admission receipt evidence for ${key} binds a different account; refusing forged receipt`);
     }
     if (typeof entry.provider_group !== "string" || entry.provider_group === "" || entry.provider_group === "unrecorded") {
       deny(`admission receipt evidence for ${key} names no provider; refusing forged receipt`);

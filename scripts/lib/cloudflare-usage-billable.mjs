@@ -36,10 +36,19 @@ import { classifyCloudflareUsageHttpStatus } from "./cloudflare-usage-source-dec
 import { createD1StorageObservationProvider } from "./cloudflare-usage-source-collection.mjs";
 import { createCloudflareUsageAnalyticsProviders } from "./cloudflare-usage-source-analytics.mjs";
 
-// Module-private identity capability for the default live billing provider.
-// Process isolation is the trust boundary; the WeakSet prevents ordinary
-// callers from asserting a provider brand on a plain object.
-const BILLING_BRANDED = new WeakSet();
+// Module-PRIVATE billing brand registry: the non-caller-assertable
+// construction capability for AUTHORITATIVE_BILLING. Populated ONLY inside
+// createBillableUsageProvider below AND only when the product runs on the
+// internal default live transport (default billing endpoint, default global
+// fetch, default frozen-empty REVIEWED_BILLABLE_TRIPLES map, unpinned
+// window); any caller-supplied endpoint/fetchImpl/metricMap/expectedWindow/
+// apiBase key yields an unbranded test-only product instead. No registrar is
+// exported, so a forged plain object with kind "billing-usage" can never
+// products are frozen so post-construction collect-replacement cannot hijack identity.
+// FIX14: the brand set is a private identity array with explicit === scans —
+// no WeakSet (whose prototype is mutable ambient behavior a before-import
+// poisoning could forge to admit any object).
+const BILLING_BRANDED = [];
 
 export const BILLING_BRAND_CLASS = "billing-usage-v2";
 
@@ -48,7 +57,10 @@ export const BILLING_BRAND_CLASS = "billing-usage-v2";
 // the sole test-only query and never confers authority.
 export function isUsageVBillingProvider(provider) {
   if (provider === null || (typeof provider !== "object" && typeof provider !== "function")) return false;
-  return BILLING_BRANDED.has(provider);
+  for (let i = 0; i < BILLING_BRANDED.length; i += 1) {
+    if (BILLING_BRANDED[i] === provider) return true;
+  }
+  return false;
 }
 
 export { isTestTransportProvider };
@@ -62,17 +74,28 @@ export function billingBrandClass(provider) {
 // FOCUS v1.3 row shape is observed live and reviewed. Until then the live
 // registry carries an empty map and every live row fails closed as unknown
 // (live Cloudflare billing remains NOT_EXECUTED).
-// The private Map is the billing authority; the empty public export is a
-// compatibility view only. There is no fallback or inferred alias.
+// FIX14: billing-alias authority is a private null-prototype/own-key table,
+// never the frozen public export below (which stays a non-authoritative
+// empty view for compatibility). All triple resolution goes through
+// resolveReviewedTriple / lookupTripleOwn below with explicit === scans:
+// inherited Object.prototype keys are impossible, no mutable export is
+// consulted, and there is no fallback alias. The public export is frozen so
+// direct assignment throws, and authority never reads it.
 export const REVIEWED_BILLABLE_TRIPLES = Object.freeze({});
-const PRIVATE_REVIEWED_TRIPLES = new Map();
+const PRIVATE_REVIEWED_TRIPLES = Object.freeze(Object.create(null));
 
-// Caller-supplied maps are copied for test-only providers. Production lookup
-// uses only the private, reviewed Map, which is empty until a real billing
-// identity is observed and reviewed.
+// Own-key triple resolution on a private null-prototype table (live path) or
+// on an own-enumerated copy of a caller-supplied map (test path). Never uses
+// `map[triple]` inheritance, Map/Set, or Array.prototype helpers: every
+// comparison is an explicit === over own keys, and non-string triples
+// (Proxy/object/symbol with coercion traps) are rejected without coercion.
 function ownTripleLookup(table, triple) {
   if (typeof triple !== "string" || triple === "") return undefined;
-  return table.get(triple);
+  const keys = Object.keys(table);
+  for (let i = 0; i < keys.length; i += 1) {
+    if (keys[i] === triple) return table[keys[i]];
+  }
+  return undefined;
 }
 
 function resolveLiveTriple(triple) {
@@ -80,10 +103,14 @@ function resolveLiveTriple(triple) {
 }
 
 function snapshotCallerMap(callerMap) {
-  const table = new Map();
+  const table = Object.create(null);
   if (!callerMap || typeof callerMap !== "object") return table;
-  for (const [key, metric] of Object.entries(callerMap)) {
-    if (key !== "" && typeof metric === "string" && hasCanonicalMetric(metric)) table.set(key, metric);
+  const keys = Object.keys(callerMap);
+  for (let i = 0; i < keys.length; i += 1) {
+    const k = keys[i];
+    if (typeof k !== "string" || k === "") continue;
+    const v = callerMap[k];
+    if (typeof v === "string" && v !== "" && hasCanonicalMetric(v)) table[k] = v;
   }
   return table;
 }
@@ -96,14 +123,27 @@ function snapshotCallerMap(callerMap) {
 // (never an exported list) so export mutation cannot change coverage;
 // the snapshot length is enforced where the registry is built.
 const CANONICAL_BILLABLE_COVERS = (() => {
-  return listCanonicalRequiredKeys().filter((key) => key !== "ai_search_instances");
+  const required = listCanonicalRequiredKeys();
+  const covers = [];
+  for (let i = 0; i < required.length; i += 1) {
+    if (required[i] !== "ai_search_instances") covers[covers.length] = required[i];
+  }
+  return covers;
 })();
 if (CANONICAL_BILLABLE_COVERS.length === 0) throw new Error("billing live covers must be non-empty");
-export const BILLABLE_LIVE_COVERS = Object.freeze([...CANONICAL_BILLABLE_COVERS]);
+export const BILLABLE_LIVE_COVERS = Object.freeze((() => {
+  const out = [];
+  for (let i = 0; i < CANONICAL_BILLABLE_COVERS.length; i += 1) out[out.length] = CANONICAL_BILLABLE_COVERS[i];
+  return out;
+})());
 
 function scopedIncludes(scopedArrayOrNull, metric) {
   if (scopedArrayOrNull === null || scopedArrayOrNull === undefined) return true;
-  return typeof metric === "string" && scopedArrayOrNull.includes(metric);
+  if (typeof metric !== "string") return false;
+  for (let i = 0; i < scopedArrayOrNull.length; i += 1) {
+    if (scopedArrayOrNull[i] === metric) return true;
+  }
+  return false;
 }
 
 // Billing usage provider: GET /accounts/{account_id}/billable/usage
@@ -169,8 +209,11 @@ export function createBillableUsageProvider(options = {}) {
   const liveEndpoint = liveTransport ? defaultBillingEndpoint(LIVE_API_BASE) : endpoint;
   if (typeof liveEndpoint !== "function") throw new UsageCollectionError("COLLECTION_INVALID", "billable provider endpoint is required");
   const liveFetch = liveTransport ? globalThis.fetch : fetchImpl;
-  // Live resolution uses only the private reviewed Map. Injected mapping
-  // remains confined to the explicitly test-only transport path.
+  // FIX14: no liveMap inheritance. Live path resolves ONLY through the
+  // private null-prototype reviewed table (own-key === scan, so prototype
+  // pollution can never alias an unreviewed triple). Test path snapshots the
+  // caller-supplied map's OWN entries into a null-prototype table at collect
+  // time (polluted prototypes never enumerate via Object.keys).
   const liveWindow = liveTransport ? null : expectedWindow;
   const coversCopy = [];
   if (Array.isArray(covers)) {
@@ -257,9 +300,14 @@ export function createBillableUsageProvider(options = {}) {
         throw new ProviderFailure("MALFORMED", `${group} missing usage rows`, { httpStatus });
       }
       const scopedList = Array.isArray(covers) && covers.length > 0 ? coversCopy : null;
-      const sumsTable = new Map();
-      const intervalsTable = new Map();
-      const seenDigests = new Set();
+      // FIX14: per-collect sums/intervals/seen use null-prototype records and
+      // plain arrays with explicit === scans — no Map/Set (whose prototypes
+      // are mutable ambient authority) and no Array.prototype helpers.
+      const sumsTable = Object.create(null);
+      const sumsKeys = [];
+      const intervalsTable = Object.create(null);
+      const intervalsKeys = [];
+      const seenDigests = [];
       const callerTable = liveTransport ? null : snapshotCallerMap(metricMap);
       const resolveTriple = (triple) => liveTransport ? resolveLiveTriple(triple) : ownTripleLookup(callerTable, triple);
       const rows = body?.result;
@@ -307,21 +355,27 @@ export function createBillableUsageProvider(options = {}) {
         }
         // Reviewed ID+name+unit triple binding only: no bare-metric, no
         // display-name-only, and no ID+unit fallback; an unknown triple fails
-        // closed instead of skipping usage.
+        // closed instead of skipping usage. FIX14: own-key resolution only —
+        // inherited Object.prototype aliases are impossible.
         const mapped = resolveTriple(`${metricId}:${metricName}:${unit}`);
         if (mapped === undefined) {
           throw new ProviderFailure("MALFORMED", `${group} unknown billing metric/name/unit triple`, { httpStatus });
         }
         if (!hasCanonicalMetric(mapped) || !scopedIncludes(scopedList, mapped)) continue;
         const rowDigest = JSON.stringify(row);
-        if (seenDigests.has(rowDigest)) {
+        let duplicate = false;
+        for (let i = 0; i < seenDigests.length; i += 1) {
+          if (seenDigests[i] === rowDigest) { duplicate = true; break; }
+        }
+        if (duplicate) {
           throw new ProviderFailure("MALFORMED", `${group} duplicate usage row is ambiguous`, { httpStatus });
         }
-        seenDigests.add(rowDigest);
-        let known = intervalsTable.get(mapped);
+        seenDigests[seenDigests.length] = rowDigest;
+        let known = intervalsTable[mapped];
         if (!Array.isArray(known)) {
           known = [];
-          intervalsTable.set(mapped, known);
+          intervalsTable[mapped] = known;
+          intervalsKeys[intervalsKeys.length] = mapped;
         }
         for (let i = 0; i < known.length; i += 1) {
           const prior = known[i];
@@ -331,13 +385,14 @@ export function createBillableUsageProvider(options = {}) {
           }
         }
         known[known.length] = { start: rowStartMs, end: rowEndMs };
-        if (!sumsTable.has(mapped)) {
-          sumsTable.set(mapped, quantity);
+        if (sumsTable[mapped] === undefined) {
+          sumsTable[mapped] = quantity;
+          sumsKeys[sumsKeys.length] = mapped;
         } else {
-          sumsTable.set(mapped, sumsTable.get(mapped) + quantity);
+          sumsTable[mapped] = sumsTable[mapped] + quantity;
         }
       }
-      if (intervalsTable.size === 0) {
+      if (intervalsKeys.length === 0) {
         throw new ProviderFailure("WINDOW_MISMATCH", `${group} empty usage result proves no complete window`, { httpStatus });
       }
       // Completeness per mapped metric: every admitted metric must
@@ -347,8 +402,22 @@ export function createBillableUsageProvider(options = {}) {
       // absent (unknown downstream, never zero). A per-metric gap fails the
       // whole provider closed rather than admitting the complete metrics
       // alongside the gapped one under a single fullAccount:true receipt.
-      for (const [metric, intervals] of intervalsTable) {
-        const sorted = [...intervals].sort((left, right) => left.start - right.start || left.end - right.end);
+      // FIX14: manual insertion sort (no Array.prototype.sort, which is
+      // mutable ambient behavior that could admit gapped intervals).
+      for (let mi = 0; mi < intervalsKeys.length; mi += 1) {
+        const metric = intervalsKeys[mi];
+        const intervals = intervalsTable[metric];
+        const sorted = [];
+        for (let i = 0; i < intervals.length; i += 1) sorted[sorted.length] = intervals[i];
+        for (let i = 1; i < sorted.length; i += 1) {
+          const current = sorted[i];
+          let j = i - 1;
+          while (j >= 0 && (sorted[j].start > current.start || (sorted[j].start === current.start && sorted[j].end > current.end))) {
+            sorted[j + 1] = sorted[j];
+            j -= 1;
+          }
+          sorted[j + 1] = current;
+        }
         let cursor = queryFromMs;
         for (let i = 0; i < sorted.length; i += 1) {
           const interval = sorted[i];
@@ -364,12 +433,20 @@ export function createBillableUsageProvider(options = {}) {
       // the gapped one under a single fullAccount:true receipt. Metrics NOT
       // in covers stay absent (unknown downstream, never zero).
       if (scopedList !== null) {
-        const callerMetrics = new Set(liveTransport ? [] : callerTable.values());
+        const callerKeys = liveTransport ? [] : Object.keys(callerTable);
         for (let i = 0; i < scopedList.length; i += 1) {
           const metric = scopedList[i];
-          const isMapped = callerMetrics.has(metric);
+          let isMapped = false;
+          for (let j = 0; j < callerKeys.length; j += 1) {
+            if (callerTable[callerKeys[j]] === metric) { isMapped = true; break; }
+          }
+          if (liveTransport) isMapped = false;
           if (isMapped) {
-            if (!intervalsTable.has(metric)) {
+            let hasRows = false;
+            for (let j = 0; j < intervalsKeys.length; j += 1) {
+              if (intervalsKeys[j] === metric) { hasRows = true; break; }
+            }
+            if (!hasRows) {
               throw new ProviderFailure("WINDOW_MISMATCH", `${group} ${metric} declared cover has no usage rows`, { httpStatus });
             }
           }
@@ -377,7 +454,10 @@ export function createBillableUsageProvider(options = {}) {
       }
       const windowStart = new Date(queryFromMs).toISOString();
       const windowEnd = new Date(queryToMs).toISOString();
-      const values = Object.fromEntries(sumsTable);
+      const values = {};
+      for (let i = 0; i < sumsKeys.length; i += 1) {
+        values[sumsKeys[i]] = sumsTable[sumsKeys[i]];
+      }
       return {
         values,
         coverage: { accountId, fullAccount: true, windowStart, windowEnd },
@@ -392,7 +472,7 @@ export function createBillableUsageProvider(options = {}) {
   // branded, so mocked transports can never produce authoritative evidence.
   Object.freeze(product.covers);
   if (liveTransport) {
-    BILLING_BRANDED.add(product);
+    BILLING_BRANDED[BILLING_BRANDED.length] = product;
   } else {
     markTestTransport(product);
   }

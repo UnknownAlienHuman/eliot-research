@@ -41,7 +41,7 @@ import {
 
 // Canonical taxonomy + metric authority live in
 // ./cloudflare-usage-canonical.mjs; compatibility exports remain views while
-// decisions use that module's private Map.
+// decisions use its private null-prototype canonical table.
 export {
   DECIMAL_BYTES_PER_GB,
   DECIMAL_BYTES_PER_KB,
@@ -142,12 +142,19 @@ const RECEIPT_EVIDENCE_CONTRACT = {
 export function isLiveEvidenceFamily(receipt) {
   const evidence = receipt?.metric_evidence;
   if (!Array.isArray(evidence) || evidence.length === 0) return false;
-  const required = new Set(listCanonicalRequiredKeys());
-  if (required.size === 0 || evidence.length !== required.size) return false;
-  const inventoryKinds = new Set(RECEIPT_EVIDENCE_CONTRACT.inventoryKindClasses);
-  return evidence.every((entry) =>
-    entry?.provider_kind_class === RECEIPT_EVIDENCE_CONTRACT.billingKindClass ||
-    inventoryKinds.has(entry?.provider_kind_class));
+  const required = listCanonicalRequiredKeys();
+  if (required.length === 0 || evidence.length !== required.length) return false;
+  const inventoryKinds = RECEIPT_EVIDENCE_CONTRACT.inventoryKindClasses;
+  for (let i = 0; i < evidence.length; i += 1) {
+    const kindClass = evidence[i]?.provider_kind_class;
+    if (kindClass === RECEIPT_EVIDENCE_CONTRACT.billingKindClass) continue;
+    let inventoryMatch = false;
+    for (let j = 0; j < inventoryKinds.length; j += 1) {
+      if (kindClass === inventoryKinds[j]) { inventoryMatch = true; break; }
+    }
+    if (!inventoryMatch) return false;
+  }
+  return true;
 }
 
 // Access contour (one owner-only hostname application, 24h session) is not a
@@ -243,14 +250,27 @@ export function evaluateUsageSnapshot(snapshot, options = {}) {
   const canonicalKeys = listCanonicalRequiredKeys();
   const canonicalMetrics = listCanonicalMetrics();
   if (canonicalKeys.length === 0) return blocked(["authority metric set is empty; refusing vacuous admission"]);
-  const actualSet = new Set(metricKeys);
-  const missing = canonicalKeys.filter((key) => !actualSet.has(key));
-  const unexpected = metricKeys.filter((key) => !hasCanonicalMetric(key));
+  const missing = [];
+  for (let i = 0; i < canonicalKeys.length; i += 1) {
+    let found = false;
+    for (let j = 0; j < metricKeys.length; j += 1) {
+      if (canonicalKeys[i] === metricKeys[j]) { found = true; break; }
+    }
+    if (!found) missing[missing.length] = canonicalKeys[i];
+  }
+  const unexpected = [];
+  for (let i = 0; i < metricKeys.length; i += 1) {
+    if (!hasCanonicalMetric(metricKeys[i])) unexpected[unexpected.length] = metricKeys[i];
+  }
   if (missing.length > 0) {
-    return blocked(["snapshot is missing required metrics: " + missing.join(", ")]);
+    let list = "";
+    for (let i = 0; i < missing.length; i += 1) list += (i > 0 ? ", " : "") + missing[i];
+    return blocked(["snapshot is missing required metrics: " + list]);
   }
   if (unexpected.length > 0) {
-    return blocked(["snapshot carries unknown metric keys: " + unexpected.join(", ")]);
+    let list = "";
+    for (let i = 0; i < unexpected.length; i += 1) list += (i > 0 ? ", " : "") + unexpected[i];
+    return blocked(["snapshot carries unknown metric keys: " + list]);
   }
   if (metricKeys.length !== canonicalKeys.length) return blocked(["snapshot metric set is not exactly the required set"]);
   for (let i = 0; i < canonicalKeys.length; i += 1) {
@@ -451,15 +471,18 @@ export function validateAdmissionReceipt(receipt, options = {}) {
     return { ok: false, decision: "BLOCKED", reasons: ["admission receipt must be an object"] };
   }
   if (receipt.protocol === LEGACY_USAGE_ADMISSION_PROTOCOL) {
-    const legacyMetrics = receipt.metrics && typeof receipt.metrics === "object" && !Array.isArray(receipt.metrics)
-      ? { ...receipt.metrics }
-      : null;
+    let legacyMetrics = null;
+    if (receipt.metrics && typeof receipt.metrics === "object" && !Array.isArray(receipt.metrics)) {
+      legacyMetrics = Object.create(null);
+      const keys = Object.keys(receipt.metrics);
+      for (let i = 0; i < keys.length; i += 1) legacyMetrics[keys[i]] = receipt.metrics[keys[i]];
+    }
     const reasons = [
       "legacy v1 receipt is historical and cannot authorize v2 taxonomy metrics",
       "ai_search_queries_month has no semantic, full-text, ingestion-token, or storage destination",
     ];
     if (receipt.account_id_digest !== expectedAccountDigest) {
-      reasons.push("historical receipt binds a different account digest");
+      reasons[reasons.length] = "historical receipt binds a different account digest";
     }
     return {
       ok: false,
