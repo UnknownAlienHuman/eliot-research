@@ -6,7 +6,7 @@ import {
   type EvidenceAccessContext,
 } from "@eliotr/cloudflare-evidence";
 import { createD1ScopeService, createOwnerScopeAuthority, resolveD1ProjectCopyScope } from "@eliotr/cloudflare-navigation";
-import { projectionDigest } from "@eliotr/cloudflare-projection";
+import { aiSearchPhysicalProfileDigest } from "@eliotr/cloudflare-projection";
 import { IdentifierSchema, type ScopeExpression } from "@eliotr/contracts";
 import { createR2EvidenceObjectStore } from "@eliotr/platform-cloudflare";
 import { createD1ScopePorts } from "@eliotr/retrieval";
@@ -171,7 +171,7 @@ export async function handleAiSearchFunctionalProbeHttp(input: {
           namespace: resolved.target.namespace,
           managed_instance_id: resolved.target.managed_instance_id,
           managed_generation: resolved.target.managed_generation,
-          target_profile_identity_sha256: await projectionDigest(profile),
+          target_profile_identity_sha256: await aiSearchPhysicalProfileDigest(profile),
         },
         require_current_scope: (scope) => scopePorts.requireCurrentScope(scope),
       });
