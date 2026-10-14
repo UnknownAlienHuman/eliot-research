@@ -242,13 +242,18 @@ check("import-order variation still denies forged metric");
 {
   const a1Child = [
     `const origGet = Map.prototype.get;`,
-    `Map.prototype.get = function (k) { if (k === "evil_proto") return { key: "evil_proto", envelope: 8000000, window: "monthly" }; return origGet.call(this, k); };`,
+    `Map.prototype.get = function (k) { if (k === "evil_proto") return { key: "evil_proto", envelope: 8000000, window: "monthly" }; if (k === "workers_requests") return { key: "workers_requests", quota: 999999999, envelope: 999999999, window: "monthly" }; return origGet.call(this, k); };`,
     `const { admitOperation, createBudgetLedger } = await import("./scripts/lib/cloudflare-budget-admission.mjs");`,
     `const { getCanonicalMetric, hasCanonicalMetric } = await import("./scripts/lib/cloudflare-usage-envelope.mjs");`,
     `const r = admitOperation(createBudgetLedger(), { metricKey: "evil_proto", quantity: 1, now: ${NOW} });`,
     `console.log("a1=" + r.allowed + ":" + r.reason);`,
     `console.log("a1get=" + String(getCanonicalMetric("evil_proto")));`,
     `console.log("a1has=" + hasCanonicalMetric("evil_proto"));`,
+    `const workers = getCanonicalMetric("workers_requests");`,
+    `console.log("a1workers=" + workers.quota + ":" + workers.envelope);`,
+    `const atPolicy = admitOperation(createBudgetLedger(), { metricKey: "workers_requests", quantity: 7600000, now: ${NOW} });`,
+    `const abovePolicy = admitOperation(createBudgetLedger(), { metricKey: "workers_requests", quantity: 7600001, now: ${NOW} });`,
+    `console.log("a1policy=" + atPolicy.allowed + ":" + atPolicy.reason + ":" + abovePolicy.allowed + ":" + abovePolicy.reason);`,
     `const real = admitOperation(createBudgetLedger(), { metricKey: "workers_requests", quantity: 1, now: ${NOW} });`,
     `console.log("a1real=" + real.allowed + ":" + real.reason);`,
   ].join("\n");
@@ -256,9 +261,11 @@ check("import-order variation still denies forged metric");
   assert.match(a1Out, /a1=false:UNKNOWN_METRIC_NO_HEADROOM_PROOF/u);
   assert.match(a1Out, /a1get=null/u);
   assert.match(a1Out, /a1has=false/u);
+  assert.match(a1Out, /a1workers=10000000:8000000/u);
+  assert.match(a1Out, /a1policy=true:WITHIN_ENVELOPE_SHARE:false:OVER_ENVELOPE_SHARE/u);
   assert.match(a1Out, /a1real=true:WITHIN_ENVELOPE_SHARE/u);
 }
-check("before-import Map.get poisoning no longer forges metric");
+check("before-import Map.get poisoning cannot forge a metric or alter its quota boundary");
 
 // FIX14: combined before-import prototype poisoning (Map/Set/Object/Array)
 // leaves authorization exact: forged denied, real admitted, no coercion.
@@ -415,17 +422,16 @@ check("facade clone/spread/Proxy/serialization/descriptor boundaries immune");
     `receipt.snapshot_digest = E.computeSnapshotDigest({ accountIdDigest: digest, source: receipt.source, generation: receipt.generation, windows, metrics, evidence });`,
     `const inspected = E.validateAdmissionReceipt(receipt, { expectedAccountDigest: digest, now: NOW });`,
     `let evidenceMissing = false; for (let i = 0; i < inspected.reasons.length; i += 1) if (inspected.reasons[i].indexOf("missing metrics: full_text_queries_month") >= 0) evidenceMissing = true;`,
-    `const optionKeys = T.callerSuppliedTransportKeys({ endpoint: null });`,
-    `let endpointObserved = false; for (let i = 0; i < optionKeys.length; i += 1) if (optionKeys[i] === "endpoint") endpointObserved = true;`,
+    `const optionKeys = T.callerSuppliedTransportKeys({ fetchImpl: null });`,
     `const marked = {}; T.markTestTransport(marked); const fake = {};`,
-    `const out = { canonical: R.canonicalJson({ z: 1, a: 2 }), exactMissing, evidenceMissing, endpointObserved, markedTest: T.isTestTransportProvider(marked), fakeTest: T.isTestTransportProvider(fake), fakeInventory: I.inventoryBrandClass(fake), fakeBilling: B.isUsageVBillingProvider(fake), fakeCapability: A.isUsageAdmissionCapability(fake), fakeCanonical: E.getCanonicalMetric("evil_proto") };`,
+    `const out = { canonical: R.canonicalJson({ z: 1, a: 2 }), exactMissing, evidenceMissing, transportKeys: optionKeys, markedTest: T.isTestTransportProvider(marked), fakeTest: T.isTestTransportProvider(fake), fakeInventory: I.inventoryBrandClass(fake), fakeBilling: B.isUsageVBillingProvider(fake), fakeCapability: A.isUsageAdmissionCapability(fake), fakeCanonical: E.getCanonicalMetric("evil_proto") };`,
     `console.log(JSON.stringify(out));`,
   ].join("\n");
   const poisonOut = runChild("before-import-intrinsic-poisoning", poisonChild);
   assert.match(poisonOut, /"canonical":"\{\\"a\\":2,\\"z\\":1\}"/u);
   assert.match(poisonOut, /"exactMissing":true/u);
   assert.match(poisonOut, /"evidenceMissing":true/u);
-  assert.match(poisonOut, /"endpointObserved":true/u);
+  assert.match(poisonOut, /"transportKeys":\["fetchImpl"\]/u);
   assert.match(poisonOut, /"markedTest":true/u);
   assert.match(poisonOut, /"fakeTest":false/u);
   assert.match(poisonOut, /"fakeInventory":null/u);
@@ -434,5 +440,20 @@ check("facade clone/spread/Proxy/serialization/descriptor boundaries immune");
   assert.match(poisonOut, /"fakeCanonical":null/u);
 }
 check("before-import Map/Set/WeakMap/WeakSet and Array poisoning leaves authority/evidence exact");
+
+// Exact comparative root vector: a poisoned WeakSet.has returning false must
+// not erase a real test-transport identity recorded before the query.
+{
+  const weakSetFalseChild = [
+    `WeakSet.prototype.has = function () { return false; };`,
+    `const T = await import("./scripts/lib/cloudflare-usage-transport-class.mjs");`,
+    `const genuine = {}; T.markTestTransport(genuine); const forged = {};`,
+    `console.log(JSON.stringify({ genuine: T.isTestTransportProvider(genuine), forged: T.isTestTransportProvider(forged) }));`,
+  ].join("\n");
+  const weakSetFalseOut = runChild("before-import-weakset-has-false", weakSetFalseChild);
+  assert.match(weakSetFalseOut, /"genuine":true/u);
+  assert.match(weakSetFalseOut, /"forged":false/u);
+}
+check("before-import WeakSet.has=false preserves genuine test-transport identity");
 
 console.log(`Usage metric immutability: ${cases} groups passed; live Cloudflare NOT_EXECUTED`);
