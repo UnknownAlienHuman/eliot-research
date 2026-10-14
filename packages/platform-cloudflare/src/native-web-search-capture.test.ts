@@ -8,6 +8,7 @@ import {
   type NativeWebSearchRawCaptureReceipt,
 } from "./native-web-search-capture.js";
 import type { NativeWebSearchDiscovered } from "./native-web-search.js";
+import { createRuntimeDeadline } from "./runtime-async.js";
 
 const sourceUrl = "https://example.org/research";
 const markdown = "# Captured page\n\nPage bytes only.\n";
@@ -214,5 +215,78 @@ describe("native Web Search Browser Run raw capture adapter", () => {
       .resolves.toMatchObject({ disposition: "FAILED", code: "INPUT_INVALID", browser_dispatch_state: "NOT_STARTED" });
     expect(quickAction).not.toHaveBeenCalled();
     expect(raw.captureRawFile).not.toHaveBeenCalled();
+  });
+
+  it("stops a deadline already cancelled before creation with ABORTED instead of a later timeout", () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    const deadline = createRuntimeDeadline(controller.signal, 50);
+
+    expect(deadline.signal.aborted).toBe(true);
+    expect(deadline.failureCode()).toBe("ABORTED");
+    deadline.dispose();
+  });
+
+  it("does not dispatch Browser Run when cancellation lands inside the existing-capture read", async () => {
+    const caller = new AbortController();
+    const quickAction = vi.fn(async () => browserResponse());
+    // The owner readback cancels the caller mid-await and then reports that no
+    // existing capture is present, which is the real preflight gap: the entry
+    // check has already passed and the deadline does not exist yet.
+    let reads = 0;
+    const port = {
+      captureRawFile: vi.fn(),
+      readRawFileByIdempotency: vi.fn(async () => {
+        reads += 1;
+        caller.abort();
+        return null;
+      }),
+    } as unknown as NativeWebSearchRawCaptureOwnerPort;
+    const adapter = createNativeWebSearchMarkdownCaptureAdapter({
+      browser: browser(quickAction as never), owner: port, selection: selection(),
+    });
+
+    const result = await adapter.capture(input({ signal: caller.signal }));
+
+    expect(result).toMatchObject({
+      disposition: "FAILED",
+      code: "ABORTED",
+      browser_dispatch_state: "NOT_STARTED",
+      paid_effect: "NONE",
+      attempt_ref: "attempt-1",
+    });
+    expect(reads).toBe(1);
+    expect(quickAction).toHaveBeenCalledTimes(0);
+  });
+
+  it("does not dispatch Browser Run when cancellation lands after the deadline exists but before it runs", async () => {
+    const caller = new AbortController();
+    const quickAction = vi.fn(async () => browserResponse());
+    // The owner read is a thenable that aborts and only then resolves with null,
+    // so the cancellation lands in the microtask window after the deadline is
+    // created and before the deferred quickAction step executes.
+    const port = {
+      captureRawFile: vi.fn(),
+      readRawFileByIdempotency: vi.fn(() => ({
+        then: (resolve: (value: null) => unknown) => {
+          caller.abort();
+          resolve(null);
+        },
+      })),
+    } as unknown as NativeWebSearchRawCaptureOwnerPort;
+    const adapter = createNativeWebSearchMarkdownCaptureAdapter({
+      browser: browser(quickAction as never), owner: port, selection: selection(),
+    });
+
+    const result = await adapter.capture(input({ signal: caller.signal }));
+
+    expect(result).toMatchObject({
+      disposition: "FAILED",
+      code: "ABORTED",
+      browser_dispatch_state: "NOT_STARTED",
+      paid_effect: "NONE",
+    });
+    expect(quickAction).toHaveBeenCalledTimes(0);
   });
 });
