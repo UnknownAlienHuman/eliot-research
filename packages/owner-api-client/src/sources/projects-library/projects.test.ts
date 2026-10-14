@@ -73,10 +73,50 @@ describe('createProjectsApi decode boundaries', () => {
     expect(() => api.decodeProjectList(envelope, GEN)).toThrow('PROJECT_RESPONSE_INVALID:502');
   });
 
+  it('decodes the producer exclusive cursor across 257 projects without omission or duplication', async () => {
+    const producerRows = Array.from({ length: 257 }, (_, index) => projectRow(`project-${String(index).padStart(3, '0')}`));
+    const producerPage = (afterProjectId?: string) => {
+      // Pair the server contract: read 256 + 1, return 256, and continue strictly after the last returned ID.
+      const fetched = producerRows
+        .filter((row) => afterProjectId === undefined || row.project_ref.id > afterProjectId)
+        .slice(0, 257);
+      const projects = fetched.slice(0, 256);
+      const hasMore = fetched.length === 257;
+      return listEnvelope(projects, hasMore ? projects.at(-1)?.project_ref.id : undefined);
+    };
+    const { http, calls } = recorder((path) => {
+      const afterProjectId = new URL(path, 'https://owner.invalid').searchParams.get('after_project_id') ?? undefined;
+      return producerPage(afterProjectId);
+    });
+    const api = createProjectsApi(http, failing, createSessionEpoch());
+
+    const firstPage = await api.readProjects(GEN);
+    expect(firstPage.projects).toHaveLength(256);
+    expect(firstPage.next_project_id).toBe('project-255');
+    const secondPage = await api.readProjects(GEN, firstPage.next_project_id);
+    expect(secondPage.projects).toHaveLength(1);
+    expect(secondPage.next_project_id).toBeUndefined();
+
+    const actualIds = [...firstPage.projects, ...secondPage.projects].map((project) => project.project_id);
+    expect(actualIds).toEqual(producerRows.map((row) => row.project_ref.id));
+    expect(new Set(actualIds).size).toBe(257);
+    expect(calls.map((call) => call.path)).toEqual([
+      '/api/v1/research/projects',
+      '/api/v1/research/projects?after_project_id=project-255',
+    ]);
+  });
+
   it('rejects a continuation cursor that is not after the last project', () => {
     const { http } = recorder(() => ({}));
     const api = createProjectsApi(http, failing, createSessionEpoch());
     const envelope = listEnvelope([projectRow('p1')], 'p0');
+    expect(() => api.decodeProjectList(envelope, GEN)).toThrow('PROJECT_RESPONSE_INVALID:502');
+  });
+
+  it('rejects a continuation cursor that skips past the last project', () => {
+    const { http } = recorder(() => ({}));
+    const api = createProjectsApi(http, failing, createSessionEpoch());
+    const envelope = listEnvelope([projectRow('p1')], 'p2');
     expect(() => api.decodeProjectList(envelope, GEN)).toThrow('PROJECT_RESPONSE_INVALID:502');
   });
 

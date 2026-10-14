@@ -201,8 +201,8 @@ export function createProjectsApi(
     const nextProjectId = data.next_project_id === undefined ? undefined : identifier(data.next_project_id, 'next_project_id');
     if (nextProjectId !== undefined && projects.length === 0) invalid('project list has a continuation without projects');
     const lastProject = projects[projects.length - 1];
-    if (nextProjectId !== undefined && lastProject !== undefined && nextProjectId <= lastProject.project_id) {
-      invalid('project list continuation is not after the current page');
+    if (nextProjectId !== undefined && lastProject !== undefined && nextProjectId !== lastProject.project_id) {
+      invalid('project list continuation does not identify the last project');
     }
     return {
       protocol: PROJECT_LIST_PROTOCOL,
