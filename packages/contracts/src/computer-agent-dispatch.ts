@@ -390,3 +390,44 @@ export const ComputerAgentDispatchStatusSchema = z.object({
   }
 });
 export type ComputerAgentDispatchStatus = z.infer<typeof ComputerAgentDispatchStatusSchema>;
+
+export const ComputerAgentDispatchSummarySchema = z.object({
+  protocol: z.literal("eliotr.computer-agent-dispatch-summary.v1"),
+  dispatch_id: id,
+  project_id: id,
+  connection_id: id,
+  connection_revision: revision,
+  state: ComputerAgentDispatchStateSchema,
+  created_at: IsoDateTimeSchema,
+  expires_at: IsoDateTimeSchema,
+  question,
+  accepted_workflow: z.object({
+    workflow_instance_id: id,
+    investigation_ref: VersionedRefSchema,
+  }).strict().nullable(),
+}).strict().superRefine((value, context) => {
+  if ((value.state === "ACCEPTED") !== (value.accepted_workflow !== null)) {
+    context.addIssue({ code: "custom", path: ["accepted_workflow"],
+      message: "Only an ACCEPTED dispatch may expose its workflow locator" });
+  }
+});
+export type ComputerAgentDispatchSummary = z.infer<typeof ComputerAgentDispatchSummarySchema>;
+
+export const ComputerAgentDispatchListSchema = z.object({
+  protocol: z.literal("eliotr.computer-agent-dispatch-list.v1"),
+  items: z.array(ComputerAgentDispatchSummarySchema).max(20),
+  next_after_dispatch_id: id.nullable(),
+}).strict().superRefine((value, context) => {
+  const ids = value.items.map((item) => item.dispatch_id);
+  if (ids.some((idValue, index) => index > 0 && idValue <= (ids[index - 1] ?? ""))) {
+    context.addIssue({ code: "custom", path: ["items"],
+      message: "Dispatch list items must be ordered by ascending dispatch ID" });
+  }
+  const last = ids.at(-1) ?? null;
+  if (value.next_after_dispatch_id !== null &&
+      (value.items.length !== 20 || value.next_after_dispatch_id !== last)) {
+    context.addIssue({ code: "custom", path: ["next_after_dispatch_id"],
+      message: "A next cursor must identify the final item of a full page" });
+  }
+});
+export type ComputerAgentDispatchList = z.infer<typeof ComputerAgentDispatchListSchema>;

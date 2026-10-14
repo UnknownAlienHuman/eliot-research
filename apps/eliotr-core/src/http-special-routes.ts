@@ -151,6 +151,7 @@ export async function dispatchHttpSpecialRoute(input: {
     case "research.computer-agent-dispatches.create-preferred":
     case "research.computer-agent-dispatches.abandon":
     case "research.computer-agent-dispatches.reassign":
+    case "research.computer-agent-dispatches.list":
     case "research.computer-agent-dispatches.status":
     case "research.computer-agent-dispatches.pull":
     case "research.computer-agent-dispatches.accept":
