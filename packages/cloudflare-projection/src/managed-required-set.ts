@@ -21,8 +21,10 @@ export interface ManagedRequiredSetCursor {
 export interface ManagedRequiredProjectRevisionCopy {
   readonly assignment_revision: number;
   readonly project_id: string;
-  readonly project_generation: number;
+  /** Legacy metadata revision; excluded from current target identity and digest. */
+  readonly project_generation?: number;
   readonly project_owner_principal_ref: string;
+  readonly project_owner_deployment_generation?: string;
   /** AI Search target namespace, not the source namespace below. */
   readonly namespace: string;
   readonly managed_instance_id: string;
@@ -55,22 +57,21 @@ export interface ManagedRequiredProjectRevisionCopy {
   readonly project_owner_read_policy_state: "ACTIVE";
   readonly project_owner_read_policy_disclosure_ceiling: string;
   readonly project_owner_read_policy_expires_at: string;
+  readonly membership_role?: string;
   readonly membership_generation: number;
   readonly membership_valid_from: string;
   readonly membership_valid_to: string | null;
 }
 
 export interface ManagedRequiredSetFence {
-  /** Core orientation_authority_epoch generation, extended by migration 0141 assignment appends. */
-  readonly authority_revision: number;
-  /** Derived from current ASSIGN events for this exact target, never from profile configuration. */
+  /** Digest of this target's current assignment heads and current owner authority. */
+  readonly assignment_heads_sha256: string;
   readonly assigned_project_count: number;
   readonly stale_assignment_count: number;
   readonly profile_mismatch_count: number;
 }
 
 export interface ManagedRequiredSetPage {
-  readonly authority_revision: number;
   readonly rows: readonly ManagedRequiredProjectRevisionCopy[];
   /** Cursor for the last returned row when more rows may exist; null ends the scan. */
   readonly next_cursor: ManagedRequiredSetCursor | null;
@@ -87,24 +88,34 @@ export interface ManagedRequiredSetPort {
    * LIVE purge state, active owner generation, matching source admission policy,
    * latest unexpired ADMITTED decision, and active owner read policy. It must not
    * join projection jobs/effects or a caller ScopeSnapshot to decide membership.
+   * The bounded target pages are read once more after enumeration to verify the
+   * actual authority digest; a global orientation epoch never fences a page.
    */
   readPage(input: {
     readonly target: ManagedTargetIdentity;
     readonly as_of: string;
-    readonly expected_authority_revision: number;
     readonly after: ManagedRequiredSetCursor | null;
     readonly limit: number;
   }): Promise<ManagedRequiredSetPage>;
 }
 
 export interface ManagedRequiredSetReceipt {
-  readonly protocol: "eliotr.managed-required-project-revisions.v1";
+  readonly protocol: "eliotr.managed-required-project-revisions.v2";
   readonly target: ManagedTargetIdentity;
   readonly as_of: string;
-  readonly authority_revision_before: number;
-  readonly authority_revision_after: number;
+  readonly target_fence: {
+    readonly protocol: "eliotr.managed-required-set-target-fence.v1";
+    readonly digest: string;
+    readonly assignment_heads_sha256: string;
+    readonly required_set_sha256: string;
+    readonly page_provenance_sha256: string;
+    readonly assigned_project_count: number;
+    readonly project_revision_copy_count: number;
+    readonly page_count: number;
+  };
   readonly assigned_project_count: number;
   readonly project_revision_copy_count: number;
+  readonly page_count: number;
   /** Digest of the ordered project/revision copies; it is not an item or section count. */
   readonly required_set_digest: string;
 }
@@ -178,7 +189,9 @@ function validateFence(
   fence: ManagedRequiredSetFence,
   target: ManagedTargetIdentity,
 ): void {
-  assertInteger(fence.authority_revision, "authority revision", 0);
+  if (typeof fence.assignment_heads_sha256 !== "string" || !SHA256.test(fence.assignment_heads_sha256)) {
+    fail("MANAGED_REQUIRED_SET_AUTHORITY_UNAVAILABLE", "target assignment-head digest is invalid");
+  }
   assertInteger(fence.assigned_project_count, "assigned project count", 0);
   assertInteger(fence.stale_assignment_count, "stale assignment count", 0);
   assertInteger(fence.profile_mismatch_count, "profile mismatch count", 0);
@@ -196,6 +209,12 @@ function validateFence(
 
 function compareString(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function canonicalCurrentCopy(copy: ManagedRequiredProjectRevisionCopy): string {
+  const current = { ...copy };
+  delete current.project_generation;
+  return canonicalProjectionJson(current);
 }
 
 function compareCopy(
@@ -235,6 +254,7 @@ function validateCopy(
   for (const [value, label] of [
     [copy.project_id, "project id"],
     [copy.project_owner_principal_ref, "project owner principal"],
+    [copy.project_owner_deployment_generation, "project owner deployment generation"],
     [copy.source_id, "source id"],
     [copy.source_revision_ref, "source revision ref"],
     [copy.source_head_revision_ref, "source head revision ref"],
@@ -249,10 +269,10 @@ function validateCopy(
     [copy.admission_disclosure_ceiling, "admission disclosure ceiling"],
     [copy.project_owner_read_policy_ref, "owner read policy ref"],
     [copy.project_owner_read_policy_disclosure_ceiling, "owner read disclosure ceiling"],
+    [copy.membership_role, "membership role"],
   ] as const) assertIdentifier(value, label);
 
   assertInteger(copy.assignment_revision, "assignment revision", 1);
-  assertInteger(copy.project_generation, "project generation", 1);
   assertInteger(copy.source_ownership_record_revision, "ownership record revision", 1);
   assertInteger(copy.source_admission_policy_revision, "admission policy revision", 1);
   assertInteger(copy.project_owner_read_policy_generation, "owner read policy generation", 1);
@@ -317,26 +337,33 @@ export interface EnumerateManagedRequiredSetInput {
   readonly on_copy: (copy: ManagedRequiredProjectRevisionCopy) => void | Promise<void>;
 }
 
-/**
- * Streams the target's canonical project/revision copies and returns a digest
- * only after a stable pre/post Core authority fence. It never expands sections
- * into item keys and never reads jobs, effects, ScopeSnapshots, or configured counts.
- */
-export async function enumerateManagedRequiredSet(
-  port: ManagedRequiredSetPort,
-  input: EnumerateManagedRequiredSetInput,
-): Promise<ManagedRequiredSetReceipt> {
-  validateTarget(input.target);
-  assertTimestamp(input.as_of, "as_of");
-  const before = await port.readFence(input.target, input.as_of);
-  validateFence(before, input.target);
+interface ManagedRequiredSetScan {
+  readonly digest: string;
+  readonly page_provenance_digest: string;
+  readonly count: number;
+  readonly pages: number;
+}
 
+async function scanRequiredSet(
+  port: ManagedRequiredSetPort,
+  target: ManagedTargetIdentity,
+  asOf: string,
+  assignmentHeadsDigest: string,
+  assignedProjectCount: number,
+  onCopy?: (copy: ManagedRequiredProjectRevisionCopy) => void | Promise<void>,
+): Promise<ManagedRequiredSetScan> {
   let digest = await projectionSha256Utf8(canonicalProjectionJson({
-    protocol: "eliotr.managed-required-project-revisions.v1",
-    target: input.target,
-    as_of: input.as_of,
-    authority_revision: before.authority_revision,
-    assigned_project_count: before.assigned_project_count,
+    protocol: "eliotr.managed-required-project-revisions.v2",
+    target,
+    as_of: asOf,
+    assignment_heads_sha256: assignmentHeadsDigest,
+    assigned_project_count: assignedProjectCount,
+  }));
+  let pageProvenanceDigest = await projectionSha256Utf8(canonicalProjectionJson({
+    protocol: "eliotr.managed-required-set-page-provenance.v1",
+    target,
+    as_of: asOf,
+    assignment_heads_sha256: assignmentHeadsDigest,
   }));
   let count = 0;
   let pages = 0;
@@ -347,24 +374,21 @@ export async function enumerateManagedRequiredSet(
     if (pages >= MAX_PAGES) {
       fail("MANAGED_REQUIRED_SET_BOUNDS_EXCEEDED", "required-set page bound was exceeded");
     }
-    const page = await port.readPage({
-      target: input.target,
-      as_of: input.as_of,
-      expected_authority_revision: before.authority_revision,
-      after,
-      limit: PAGE_SIZE,
-    });
+    const pageIndex = pages;
+    const pageAfter = after;
+    const page = await port.readPage({ target, as_of: asOf, after, limit: PAGE_SIZE });
     pages += 1;
-    if (
-      page.authority_revision !== before.authority_revision ||
-      !Array.isArray(page.rows) ||
-      page.rows.length > PAGE_SIZE
-    ) {
-      fail("MANAGED_REQUIRED_SET_FENCE_CHANGED", "required-set page did not match its pre-scan authority fence");
+    if (!Array.isArray(page.rows) || page.rows.length > PAGE_SIZE) {
+      fail("MANAGED_REQUIRED_SET_PAGE_INVALID", "required-set page exceeded its fixed bound");
     }
+    let pageDigest = await projectionSha256Utf8(canonicalProjectionJson({
+      protocol: "eliotr.managed-required-set-page.v1",
+      page_index: pageIndex,
+      after: pageAfter,
+    }));
 
     for (const copy of page.rows) {
-      validateCopy(copy, input.target, input.as_of);
+      validateCopy(copy, target, asOf);
       if (previous !== null) {
         const order = compareCopy(previous, copy);
         if (previous.project_id === copy.project_id && previous.source_id === copy.source_id) {
@@ -377,49 +401,138 @@ export async function enumerateManagedRequiredSet(
       if (count >= MAX_PROJECT_REVISION_COPIES) {
         fail("MANAGED_REQUIRED_SET_BOUNDS_EXCEEDED", "required-set cumulative row bound was exceeded");
       }
-      digest = await projectionSha256Utf8(`${digest}\n${canonicalProjectionJson(copy)}`);
+      const canonicalCopy = canonicalCurrentCopy(copy);
+      digest = await projectionSha256Utf8(`${digest}\n${canonicalCopy}`);
+      pageDigest = await projectionSha256Utf8(`${pageDigest}\n${canonicalCopy}`);
       count += 1;
       previous = copy;
-      await input.on_copy(copy);
+      await onCopy?.(copy);
     }
 
-    if (page.next_cursor === null) break;
-    if (page.rows.length === 0 || previous === null || compareCursor(page.next_cursor, cursorFor(previous)) !== 0) {
+    if (
+      page.next_cursor !== null &&
+      (page.rows.length === 0 || previous === null || compareCursor(page.next_cursor, cursorFor(previous)) !== 0)
+    ) {
       fail("MANAGED_REQUIRED_SET_PAGE_INVALID", "required-set cursor does not identify the last returned row");
     }
+    pageProvenanceDigest = await projectionSha256Utf8(`${pageProvenanceDigest}\n${canonicalProjectionJson({
+      page_index: pageIndex,
+      after: pageAfter,
+      next_cursor: page.next_cursor,
+      row_count: page.rows.length,
+      page_sha256: pageDigest,
+    })}`);
+    if (page.next_cursor === null) break;
     after = page.next_cursor;
   }
 
+  return Object.freeze({
+    digest,
+    page_provenance_digest: pageProvenanceDigest,
+    count,
+    pages,
+  });
+}
+
+/**
+ * Streams the target's current assignment heads and canonical project/revision
+ * copies. It verifies the bounded current-source pages once after enumeration,
+ * then returns a target-specific receipt. It never consults the global
+ * orientation cache epoch, expands sections into item keys, or reads jobs,
+ * effects, ScopeSnapshots, or configured counts.
+ */
+export async function enumerateManagedRequiredSet(
+  port: ManagedRequiredSetPort,
+  input: EnumerateManagedRequiredSetInput,
+): Promise<ManagedRequiredSetReceipt> {
+  validateTarget(input.target);
+  assertTimestamp(input.as_of, "as_of");
+  const before = await port.readFence(input.target, input.as_of);
+  validateFence(before, input.target);
+  const observed = await scanRequiredSet(
+    port,
+    input.target,
+    input.as_of,
+    before.assignment_heads_sha256,
+    before.assigned_project_count,
+    input.on_copy,
+  );
+  const verified = await scanRequiredSet(
+    port,
+    input.target,
+    input.as_of,
+    before.assignment_heads_sha256,
+    before.assigned_project_count,
+  );
   const afterFence = await port.readFence(input.target, input.as_of);
   validateFence(afterFence, input.target);
   if (
-    before.authority_revision !== afterFence.authority_revision ||
+    before.assignment_heads_sha256 !== afterFence.assignment_heads_sha256 ||
     before.assigned_project_count !== afterFence.assigned_project_count ||
     before.stale_assignment_count !== afterFence.stale_assignment_count ||
-    before.profile_mismatch_count !== afterFence.profile_mismatch_count
+    before.profile_mismatch_count !== afterFence.profile_mismatch_count ||
+    observed.digest !== verified.digest ||
+    observed.page_provenance_digest !== verified.page_provenance_digest ||
+    observed.count !== verified.count ||
+    observed.pages !== verified.pages
   ) {
-    fail("MANAGED_REQUIRED_SET_FENCE_CHANGED", "Core authority changed during required-set enumeration");
+    fail("MANAGED_REQUIRED_SET_FENCE_CHANGED", "target assignment or current source authority changed during required-set enumeration");
   }
 
-  return Object.freeze({
-    protocol: "eliotr.managed-required-project-revisions.v1",
+  const targetFenceDigest = await projectionSha256Utf8(canonicalProjectionJson({
+    protocol: "eliotr.managed-required-set-target-fence.v1",
     target: input.target,
     as_of: input.as_of,
-    authority_revision_before: before.authority_revision,
-    authority_revision_after: afterFence.authority_revision,
+    assignment_heads_sha256: before.assignment_heads_sha256,
+    required_set_sha256: observed.digest,
+    page_provenance_sha256: observed.page_provenance_digest,
     assigned_project_count: before.assigned_project_count,
-    project_revision_copy_count: count,
-    required_set_digest: digest,
+    project_revision_copy_count: observed.count,
+    page_count: observed.pages,
+  }));
+
+  return Object.freeze({
+    protocol: "eliotr.managed-required-project-revisions.v2",
+    target: input.target,
+    as_of: input.as_of,
+    target_fence: Object.freeze({
+      protocol: "eliotr.managed-required-set-target-fence.v1",
+      digest: targetFenceDigest,
+      assignment_heads_sha256: before.assignment_heads_sha256,
+      required_set_sha256: observed.digest,
+      page_provenance_sha256: observed.page_provenance_digest,
+      assigned_project_count: before.assigned_project_count,
+      project_revision_copy_count: observed.count,
+      page_count: observed.pages,
+    }),
+    assigned_project_count: before.assigned_project_count,
+    project_revision_copy_count: observed.count,
+    page_count: observed.pages,
+    required_set_digest: observed.digest,
   });
 }
 
 const CURRENT_TARGET_ASSIGNMENTS_SQL =
-  "WITH latest AS (SELECT project_id,MAX(event_revision) AS event_revision " +
-  "FROM managed_target_assignment_event GROUP BY project_id), assignments AS (" +
-  "SELECT e.* FROM managed_target_assignment_event e JOIN latest l " +
-  "ON l.project_id=e.project_id AND l.event_revision=e.event_revision " +
-  "WHERE e.event_kind='ASSIGN' AND e.target_namespace=?1 " +
-  "AND e.managed_instance_id=?2 AND e.managed_generation=?3) ";
+  "WITH assignments AS (" +
+  "SELECT e.* FROM managed_target_assignment_current h " +
+  "JOIN managed_target_assignment_event e " +
+  "ON e.project_id=h.project_id AND e.event_revision=h.event_revision " +
+  "WHERE h.event_kind='ASSIGN' AND h.target_namespace=?1 " +
+  "AND h.managed_instance_id=?2 AND h.managed_generation=?3) ";
+
+interface CurrentAssignmentFenceRow {
+  readonly assignment_revision: unknown;
+  readonly project_id: unknown;
+  readonly project_membership_generation: unknown;
+  readonly project_owner_principal_ref: unknown;
+  readonly namespace: unknown;
+  readonly managed_instance_id: unknown;
+  readonly managed_generation: unknown;
+  readonly target_profile_identity_sha256: unknown;
+  readonly project_exists: unknown;
+  readonly current_project_owner_principal_ref: unknown;
+  readonly project_owner_deployment_generation: unknown;
+}
 
 /** Production Core D1 adapter for the typed required-set port. */
 export function createD1ManagedRequiredSetPort(
@@ -427,58 +540,120 @@ export function createD1ManagedRequiredSetPort(
 ): ManagedRequiredSetPort {
   return Object.freeze({
     async readFence(target: ManagedTargetIdentity, _asOf: string): Promise<ManagedRequiredSetFence> {
-      try {
-        const row = await coreDatabase.prepare(
-          CURRENT_TARGET_ASSIGNMENTS_SQL +
-          "SELECT (SELECT generation FROM orientation_authority_epoch WHERE singleton=1) AS authority_revision," +
-          "COUNT(a.project_id) AS assigned_project_count," +
-          "COALESCE(SUM(CASE WHEN p.project_id IS NULL OR p.generation<>a.project_generation " +
-          "OR o.principal_ref<>a.project_owner_principal_ref THEN 1 ELSE 0 END),0) AS stale_assignment_count," +
-          "COALESCE(SUM(CASE WHEN a.target_profile_identity_sha256<>?4 THEN 1 ELSE 0 END),0) AS profile_mismatch_count " +
-          "FROM assignments a LEFT JOIN project p ON p.project_id=a.project_id " +
-          "LEFT JOIN project_owner o ON o.project_id=a.project_id",
-        ).bind(
-          target.namespace,
-          target.managed_instance_id,
-          target.managed_generation,
-          target.target_profile_identity_sha256,
-        ).first<ManagedRequiredSetFence>();
-        if (row === null) {
-          fail("MANAGED_REQUIRED_SET_AUTHORITY_UNAVAILABLE", "Core returned no required-set authority fence");
+      let digest = await projectionSha256Utf8(canonicalProjectionJson({
+        protocol: "eliotr.managed-target-assignment-heads.v1",
+        target,
+      }));
+      let assignedProjectCount = 0;
+      let staleAssignmentCount = 0;
+      let profileMismatchCount = 0;
+      let pages = 0;
+      let afterProjectId: string | null = null;
+
+      while (true) {
+        if (pages >= MAX_PAGES) {
+          fail("MANAGED_REQUIRED_SET_BOUNDS_EXCEEDED", "target assignment-head page bound was exceeded");
         }
-        return Object.freeze(row);
-      } catch (cause) {
-        if (cause instanceof ManagedRequiredSetError) throw cause;
-        fail("MANAGED_REQUIRED_SET_AUTHORITY_UNAVAILABLE", "Core required-set authority fence is unavailable");
+        let result: D1Result<CurrentAssignmentFenceRow>;
+        try {
+          result = await coreDatabase.prepare(
+            CURRENT_TARGET_ASSIGNMENTS_SQL +
+            "SELECT a.event_revision AS assignment_revision,a.project_id," +
+            "p.membership_generation AS project_membership_generation," +
+            "a.project_owner_principal_ref,a.target_namespace AS namespace,a.managed_instance_id," +
+            "a.managed_generation,a.target_profile_identity_sha256," +
+            "(p.project_id IS NOT NULL) AS project_exists," +
+            "po.principal_ref AS current_project_owner_principal_ref," +
+            "po.deployment_generation AS project_owner_deployment_generation " +
+            "FROM assignments a LEFT JOIN project p ON p.project_id=a.project_id " +
+            "LEFT JOIN project_owner po ON po.project_id=a.project_id " +
+            "WHERE (?4 IS NULL OR a.project_id>?4) " +
+            "ORDER BY a.project_id LIMIT ?5",
+          ).bind(
+            target.namespace,
+            target.managed_instance_id,
+            target.managed_generation,
+            afterProjectId,
+            PAGE_SIZE,
+          ).all<CurrentAssignmentFenceRow>();
+        } catch (cause) {
+          if (cause instanceof ManagedRequiredSetError) throw cause;
+          fail("MANAGED_REQUIRED_SET_AUTHORITY_UNAVAILABLE", "Core target assignment heads are unavailable");
+        }
+        if (!result.success) {
+          fail("MANAGED_REQUIRED_SET_READ_FAILED", "Core did not successfully complete the target assignment-head read");
+        }
+        const rows = result.results;
+        if (!Array.isArray(rows) || rows.length > PAGE_SIZE) {
+          fail("MANAGED_REQUIRED_SET_PAGE_INVALID", "Core returned an invalid target assignment-head page");
+        }
+        pages += 1;
+        for (const row of rows) {
+          assertIdentifier(row.project_id, "assignment project id");
+          assertIdentifier(row.project_owner_principal_ref, "assignment project owner principal");
+          assertIdentifier(row.namespace, "assignment target namespace");
+          assertIdentifier(row.managed_instance_id, "assignment target instance id");
+          assertIdentifier(row.managed_generation, "assignment target generation");
+          assertInteger(row.assignment_revision, "assignment revision", 1);
+          if (typeof row.target_profile_identity_sha256 !== "string" || !SHA256.test(row.target_profile_identity_sha256)) {
+            fail("MANAGED_REQUIRED_SET_PAGE_INVALID", "assignment head has an invalid target profile digest");
+          }
+          const projectExists = row.project_exists === 1 || row.project_exists === true;
+          if (projectExists) assertInteger(row.project_membership_generation, "project membership generation", 1);
+          else if (row.project_membership_generation !== null) {
+            fail("MANAGED_REQUIRED_SET_PAGE_INVALID", "missing project has a membership generation");
+          }
+          const currentOwner = row.current_project_owner_principal_ref;
+          const ownerGeneration = row.project_owner_deployment_generation;
+          if (!projectExists || currentOwner !== row.project_owner_principal_ref || typeof ownerGeneration !== "string") {
+            staleAssignmentCount += 1;
+          }
+          if (row.target_profile_identity_sha256 !== target.target_profile_identity_sha256) {
+            profileMismatchCount += 1;
+          }
+          digest = await projectionSha256Utf8(`${digest}\n${canonicalProjectionJson({
+            assignment_revision: row.assignment_revision,
+            project_id: row.project_id,
+            project_membership_generation: row.project_membership_generation,
+            project_exists: projectExists,
+            project_owner_principal_ref: row.project_owner_principal_ref,
+            current_project_owner_principal_ref: currentOwner,
+            project_owner_deployment_generation: ownerGeneration,
+            namespace: row.namespace,
+            managed_instance_id: row.managed_instance_id,
+            managed_generation: row.managed_generation,
+            target_profile_identity_sha256: row.target_profile_identity_sha256,
+          })}`);
+          assignedProjectCount += 1;
+        }
+        const last = rows.at(-1);
+        if (rows.length < PAGE_SIZE) break;
+        if (last === undefined || typeof last.project_id !== "string" || last.project_id <= (afterProjectId ?? "")) {
+          fail("MANAGED_REQUIRED_SET_PAGE_INVALID", "target assignment-head cursor is not strictly increasing");
+        }
+        afterProjectId = last.project_id;
       }
+
+      return Object.freeze({
+        assignment_heads_sha256: digest,
+        assigned_project_count: assignedProjectCount,
+        stale_assignment_count: staleAssignmentCount,
+        profile_mismatch_count: profileMismatchCount,
+      });
     },
 
     async readPage(input: Parameters<ManagedRequiredSetPort["readPage"]>[0]): Promise<ManagedRequiredSetPage> {
       if (input.limit !== PAGE_SIZE) {
         fail("MANAGED_REQUIRED_SET_PAGE_INVALID", "required-set D1 page size must use the fixed bound");
       }
-      let authority: { readonly generation: number } | null;
-      try {
-        authority = await coreDatabase.prepare(
-          "SELECT generation FROM orientation_authority_epoch WHERE singleton=1",
-        ).bind().first<{ readonly generation: number }>();
-      } catch {
-        fail("MANAGED_REQUIRED_SET_AUTHORITY_UNAVAILABLE", "Core required-set page fence is unavailable");
-      }
-      if (authority === null) {
-        fail("MANAGED_REQUIRED_SET_AUTHORITY_UNAVAILABLE", "Core returned no required-set page fence");
-      }
-      if (authority.generation !== input.expected_authority_revision) {
-        return Object.freeze({ authority_revision: authority.generation, rows: [], next_cursor: null });
-      }
-
       const after = input.after;
       let result: D1Result<ManagedRequiredProjectRevisionCopy>;
       try {
         result = await coreDatabase.prepare(
           CURRENT_TARGET_ASSIGNMENTS_SQL +
-          "SELECT a.event_revision AS assignment_revision,p.project_id,p.generation AS project_generation," +
-          "a.project_owner_principal_ref,a.target_namespace AS namespace,a.managed_instance_id," +
+          "SELECT a.event_revision AS assignment_revision,p.project_id," +
+          "a.project_owner_principal_ref,po.deployment_generation AS project_owner_deployment_generation," +
+          "a.target_namespace AS namespace,a.managed_instance_id," +
           "a.managed_generation,a.target_profile_identity_sha256," +
           "'project:'||p.project_id||':generation:'||m.membership_generation AS project_membership_id," +
           "s.source_id,sr.source_revision_ref,s.head_rev AS source_head_revision_ref," +
@@ -495,13 +670,14 @@ export function createD1ManagedRequiredSetPort(
           "rp.state AS project_owner_read_policy_state," +
           "rp.disclosure_ceiling AS project_owner_read_policy_disclosure_ceiling," +
           "rp.expires_at AS project_owner_read_policy_expires_at," +
-          "m.membership_generation,m.valid_from AS membership_valid_from,m.valid_to AS membership_valid_to " +
+          "m.role AS membership_role,m.membership_generation," +
+          "m.valid_from AS membership_valid_from,m.valid_to AS membership_valid_to " +
           "FROM assignments a " +
-          "JOIN project p ON p.project_id=a.project_id AND p.generation=a.project_generation " +
+          "JOIN project p ON p.project_id=a.project_id " +
           "JOIN project_owner po ON po.project_id=p.project_id " +
           "AND po.principal_ref=a.project_owner_principal_ref " +
           "JOIN project_source_membership m ON m.project_id=p.project_id " +
-          "AND m.membership_generation=p.generation AND m.valid_from<=?5 " +
+          "AND m.membership_generation=p.membership_generation AND m.valid_from<=?5 " +
           "AND (m.valid_to IS NULL OR ?6<m.valid_to) " +
           "JOIN source s ON s.source_id=m.source_id " +
           "JOIN source_revision sr ON sr.source_revision_ref=s.head_rev AND sr.source_id=s.source_id " +
@@ -568,7 +744,6 @@ export function createD1ManagedRequiredSetPort(
       }
       const last = rows.at(-1);
       return Object.freeze({
-        authority_revision: authority.generation,
         rows,
         next_cursor: rows.length === input.limit && last !== undefined
           ? Object.freeze({
