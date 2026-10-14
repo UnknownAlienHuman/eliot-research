@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import { Button, DecisionInbox, OperationAnnouncement, Status, type DecisionItem, type DecisionRisk } from "@eliotr/ui";
 import type { WikiProposalListView } from "@eliotr/owner-api-client";
@@ -6,6 +6,7 @@ import type { BoundWorkspaceApis } from "./runtime";
 import type { PrivacyController, SessionContext } from "./privacy";
 import { studioQueryOptions } from "../query/studio";
 import { usePaneAnnouncement } from "./usePaneAnnouncement";
+import { createInboxStudioSelection, inboxProposalItemId } from "./inboxStudioSelection";
 
 const copy = {
   en: {
@@ -34,21 +35,24 @@ export function InboxPanel({ locale, apis, privacy, context }: {
 }) {
   const text = copy[locale];
   const navigate = useNavigate();
-  const proposals = useQuery(studioQueryOptions(apis.studio, privacy, context, () => undefined).proposals());
+  const client = useQueryClient();
+  const proposalsQuery = studioQueryOptions(apis.studio, privacy, context, () => undefined).proposals();
+  const proposals = useQuery(proposalsQuery);
   const announcement = usePaneAnnouncement(proposals.isFetching ? text.loading : proposals.isError ? text.error : proposals.data ? text.loaded : "");
   const date = (iso: string) => {
     const value = new Date(iso);
     return Number.isFinite(value.getTime()) ? new Intl.DateTimeFormat(locale === "ru" ? "ru-RU" : "en-GB", { day: "numeric", month: "short", year: "numeric" }).format(value) : "";
   };
+  const proposalByItemId = new Map<string, WikiProposalListView["items"][number]>();
   const items: readonly DecisionItem[] = (proposals.isError ? [] : proposals.data?.items ?? [])
     .filter(item => item.state === "PROPOSED")
-    .map(item => ({
-      id: `${item.proposal_ref.id}:${item.proposal_ref.revision}`,
-      kind: "wiki",
-      risk: RISK[item.risk_class],
-      title: item.title,
-      detail: [text.wiki, date(item.created_at)].filter(Boolean).join(" · "),
-    }));
+    .flatMap((item, index) => {
+      const id = inboxProposalItemId(index);
+      if (!id || proposalByItemId.has(id)) return [];
+      proposalByItemId.set(id, item);
+      return [{ id, kind: "wiki" as const, risk: RISK[item.risk_class], title: item.title,
+        detail: [text.wiki, date(item.created_at)].filter(Boolean).join(" · ") }];
+    });
   return <>
     <OperationAnnouncement>{announcement}</OperationAnnouncement>
     <p className="er-shell-lead">{text.lead}</p>
@@ -56,7 +60,13 @@ export function InboxPanel({ locale, apis, privacy, context }: {
     {proposals.isError ? <div className="er-live-callout"><Status tone="error">{text.error}</Status>
       <Button variant="tonal" disabled={proposals.isFetching} onClick={() => { void proposals.refetch(); }}>{text.retry}</Button></div> : null}
     {proposals.isSuccess ? <DecisionInbox locale={locale} items={items} openLabel={text.open}
-      onOpen={() => { if (privacy.isCurrent(context)) void navigate("/studio"); }} /> : null}
+      onOpen={itemId => {
+        const proposal = proposalByItemId.get(itemId), snapshot = proposals.data;
+        if (!proposal || !snapshot || proposal.state !== "PROPOSED" || !privacy.isCurrent(context) ||
+          client.getQueryData(proposalsQuery.queryKey) !== snapshot || !snapshot.items.includes(proposal)) return;
+        const selection = createInboxStudioSelection(proposal, context);
+        if (selection) void navigate("/studio", { state: selection, preventScrollReset: true });
+      }} /> : null}
   </>;
 }
 
