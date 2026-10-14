@@ -149,15 +149,21 @@ const BranchQueryResolvedHandleSchema = z.object({
   excerpt_byte_length: z.number().int().nonnegative().max(8 * 1024 * 1024),
 }).strict();
 
-/** Binds the supported trace-reference revision and exact scope identity to the query leg. */
+/** Binds the trace reference, exact scope identity, and managed request digest to the leg. */
 function branchQueryLegTraceIsBound(
-  leg: Pick<BranchQueryLegResult, "scope_snapshot_ref" | "scope_snapshot_digest">,
+  leg: Pick<BranchQueryLegResult, "retrieval_request_digest" | "scope_snapshot_ref" | "scope_snapshot_digest">,
   trace: BranchQueryLegTrace,
 ): boolean {
-  return trace.trace_ref.revision === 1 &&
-    trace.scope_snapshot.snapshot_id === leg.scope_snapshot_ref.id &&
-    trace.scope_snapshot.revision === leg.scope_snapshot_ref.revision &&
-    trace.scope_snapshot.digest === leg.scope_snapshot_digest;
+  if (trace.trace_ref.revision !== 1 ||
+      trace.scope_snapshot.snapshot_id !== leg.scope_snapshot_ref.id ||
+      trace.scope_snapshot.revision !== leg.scope_snapshot_ref.revision ||
+      trace.scope_snapshot.digest !== leg.scope_snapshot_digest) {
+    return false;
+  }
+  // Legacy traces predate managed outcome digests and retain their historical reader.
+  if (!("protocol" in trace)) return true;
+  const outcome = trace.managed_ranking_outcomes[0];
+  return outcome !== undefined && outcome.request_digest === leg.retrieval_request_digest;
 }
 
 /** A transport cancellation escapes the stage; it cannot be reported as a completed query leg. */
