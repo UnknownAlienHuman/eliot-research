@@ -28,11 +28,13 @@ const copy = {
 } as const;
 
 /** One explicit intent owns admission. Polling, navigation and history never allocate a run. */
-export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurrent, isScopeCurrent, projectId, isProjectCurrent }: {
+export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurrent, isScopeCurrent, projectId, isProjectCurrent, cover }: {
   readonly apis: BoundWorkspaceApis; readonly privacy: PrivacyController; readonly context: SessionContext;
   readonly locale: 'en' | 'ru'; readonly scope: readonly NextQuestionSource[]; readonly scopeCurrent: boolean;
   readonly isScopeCurrent: () => boolean;
   readonly projectId: string | undefined; readonly isProjectCurrent: () => boolean;
+  /** Presentation only: the open project's title and source count for the start cover. */
+  readonly cover?: { readonly title: string; readonly meta?: string } | undefined;
 }) {
   const client = useQueryClient(), text = copy[locale];
   const memoryKey = [...protectedQueryKey(context, 'research'), 'local-intent'];
@@ -166,7 +168,9 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     onClose={() => { if (privacy.isCurrent(context)) { returningFromReport.current = true; write(old => { const { artifact: _artifact, ...rest } = old; return rest; }); } }} />;
   return <>
     <OperationAnnouncement>{announcement}</OperationAnnouncement>
-    {!scopeCurrent && !saved?.intent && <p className="er-live-callout"><MaterialSymbol name="folder" /><span>{projectId === undefined ? text.noProject : scope.length === 0 ? text.scopeEmpty : text.scopeStale}</span> {projectId === undefined
+    {/* An empty selection needs no notice: the Sources pane's checkboxes and the composer's source
+        count already say it. A missing project or a stale selection still does. */}
+    {!scopeCurrent && !saved?.intent && (projectId === undefined || scope.length > 0) && <p className="er-live-callout"><MaterialSymbol name="folder" /><span>{projectId === undefined ? text.noProject : text.scopeStale}</span> {projectId === undefined
       ? <WorkspaceLink className="er-shell-link" to="/projects">{text.projects}</WorkspaceLink>
       : <WorkspaceLink className="er-shell-link" to="/sources">{text.scope}</WorkspaceLink>}</p>}
     {configuration.isError || !configuration.data || configuration.data.run_readiness === 'blocked' ? <div className="er-live-callout">
@@ -174,6 +178,7 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     </div> : null}
     {inputError && <Status tone="error">{text.input}</Status>}
     <div ref={composer} className="er-live-research"><ResearchRunFeature key={saved?.intent?.key ?? 'next-question'} locale={locale} state={state}
+      {...(cover ? { cover } : {})}
       scope={saved?.intent?.scope ?? scope} busy={busy}
       questionHeld={saved?.intent !== undefined || saved?.observedLaunch !== undefined}
       draftQuestion={nextQuestionDraft} onDraftQuestionChange={value => {

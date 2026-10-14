@@ -74,7 +74,7 @@ html, body { background: var(--eliot-color-canvas); }
 .er-shell [tabindex="-1"]:focus { outline: none; }
 /* Text controls show focus through their own Material border, not a second outer ring. */
 .er-shell :is(select, textarea, input:not([type="checkbox"]):not([type="radio"]):not([type="file"])):focus-visible { outline: none; }
-.er-shell[data-destination="projects"], .er-shell[data-destination="sources"], .er-shell[data-destination="studio"], .er-shell[data-destination="connections"] {
+.er-shell[data-destination="projects"], .er-shell[data-destination="sources"], .er-shell[data-destination="studio"], .er-shell[data-destination="connections"], .er-shell[data-destination="inbox"] {
   grid-template-columns: var(--eliot-layout-rail-size) minmax(0, 1fr);
   grid-template-areas: "header header" "nav reading";
 }
@@ -204,6 +204,45 @@ html, body { background: var(--eliot-color-canvas); }
 .er-shell-destination[aria-current="page"] .er-shell-destination-icon { color: var(--eliot-color-on-selected); }
 .er-shell-destination[aria-current="page"] .er-shell-destination-icon::before { transform: none; opacity: 1; }
 
+/* Compact top-bar settings action: Connections leaves the bottom bar on phones and sits here,
+   like NotebookLM's top-right settings. Hidden wherever the rail already carries it. */
+.er-shell-header-destination {
+  display: none;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  inline-size: var(--eliot-size-control);
+  block-size: var(--eliot-size-control);
+  border-radius: var(--eliot-shape-full);
+  color: var(--md-sys-color-on-surface-variant);
+  transition: background-color var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
+}
+.er-shell-header-destination:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); color: var(--md-sys-color-on-surface); }
+.er-shell-header-destination:focus-visible { outline: var(--eliot-focus-width) solid var(--md-sys-color-primary); outline-offset: var(--eliot-focus-offset); }
+.er-shell-header-destination[aria-current="page"] { background: var(--eliot-color-selected); color: var(--eliot-color-on-selected); }
+.er-shell-header-destination > .er-symbol { inline-size: var(--eliot-icon-standard-size); block-size: var(--eliot-icon-standard-size); }
+.er-shell-header-destination { position: relative; }
+/* M3 large badge: an error-role count on the Inbox icon, in the rail and in the compact top bar. */
+.er-shell-badge {
+  position: absolute;
+  inset-block-start: var(--eliot-space-hairline);
+  inset-inline-end: var(--eliot-space-tight);
+  display: grid;
+  place-items: center;
+  min-inline-size: var(--eliot-space-panel);
+  block-size: var(--eliot-space-panel);
+  padding-inline: var(--eliot-space-tight);
+  border-radius: var(--eliot-shape-full);
+  background: var(--md-sys-color-error);
+  color: var(--md-sys-color-on-error);
+  font-size: var(--eliot-type-label-small-size);
+  line-height: var(--eliot-type-label-small-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  font-variant-numeric: var(--eliot-type-numerals);
+  pointer-events: none;
+}
+.er-shell-destination-icon > .er-shell-badge { inset-block-start: calc(var(--eliot-space-tight) * -1); inset-inline-end: var(--eliot-space-tight); }
+
 /* Preferences: an icon pill opening a Material menu surface. */
 .er-shell-preferences { position: relative; flex-shrink: 0; margin-inline-start: auto; z-index: var(--eliot-z-menu); }
 .er-shell-preferences > summary {
@@ -291,6 +330,8 @@ html, body { background: var(--eliot-color-canvas); }
   padding: var(--eliot-space-reading) var(--eliot-space-reading) var(--eliot-space-section);
 }
 .er-shell .er-shell-reading > * { max-inline-size: var(--eliot-layout-wide-max); margin-inline: auto; }
+/* A page-level status is inline-flex by default; as a block it shares the centred column's left edge. */
+.er-shell .er-shell-reading > .er-status { display: flex; }
 .er-shell[data-destination="research"] .er-shell-reading > * { max-inline-size: var(--eliot-layout-reading-max); }
 .er-shell-eyebrow, .er-shell-note {
   color: var(--md-sys-color-on-surface-variant);
@@ -375,6 +416,11 @@ html, body { background: var(--eliot-color-canvas); }
   background: var(--md-sys-color-secondary-container);
   color: var(--md-sys-color-on-secondary-container) !important;
 }
+.er-shell-link > .er-symbol {
+  inline-size: var(--eliot-icon-small-size);
+  block-size: var(--eliot-icon-small-size);
+  margin-inline-start: calc(var(--eliot-space-tight) * -1);
+}
 .er-shell-skip {
   position: fixed;
   inset-block-start: var(--eliot-space-block-control);
@@ -413,10 +459,16 @@ html, body { background: var(--eliot-color-canvas); }
   font-weight: var(--eliot-type-font-weight-medium);
 }
 @media (min-width: 80rem) {
+  /* Side panes fold to a slim strip and back; the tracks glide with emphasized spatial motion. */
   .er-shell[data-destination="research"] {
-    grid-template-columns: var(--eliot-layout-rail-size) var(--eliot-layout-source-width) minmax(0, 1fr) var(--eliot-layout-source-width);
+    --er-sources-track: var(--eliot-layout-source-width);
+    --er-tools-track: var(--eliot-layout-source-width);
+    grid-template-columns: var(--eliot-layout-rail-size) var(--er-sources-track) minmax(0, 1fr) var(--er-tools-track);
     grid-template-areas: "header header header header" "nav sources reading tools";
+    transition: grid-template-columns var(--eliot-motion-spatial) var(--eliot-motion-emphasized-easing);
   }
+  .er-shell[data-destination="research"]:has(.er-shell-sources[data-folded="true"]) { --er-sources-track: var(--eliot-layout-rail-size); }
+  .er-shell[data-destination="research"]:has(.er-shell-tools[data-folded="true"]) { --er-tools-track: var(--eliot-layout-rail-size); }
   .er-shell[data-destination="research"] .er-shell-tools { display: flex; }
 }
 
@@ -433,6 +485,14 @@ html, body { background: var(--eliot-color-canvas); }
   .er-shell[data-destination="research"] :is(.er-shell-sources, .er-shell-reading, .er-shell-tools)[data-tab-active="false"] { display: none; }
   .er-shell[data-destination="research"] :is(.er-shell-sources, .er-shell-tools)[data-tab-active="true"] { display: flex; }
   .er-shell[data-destination="research"] .er-shell-sources:not([data-tab-active]) { display: none; }
+  .er-shell[data-destination="research"] :is(.er-shell-sources, .er-shell-reading, .er-shell-tools)[data-tab-active="true"] {
+    transition: transform var(--eliot-motion-spatial) var(--eliot-motion-emphasized-easing);
+  }
+  @starting-style {
+    .er-shell[data-destination="research"] :is(.er-shell-sources, .er-shell-reading, .er-shell-tools)[data-tab-active="true"] {
+      transform: translateY(var(--eliot-space-block-control));
+    }
+  }
 }
 @media (width < 48rem) {
   .er-shell[data-destination="research"] {
@@ -453,7 +513,7 @@ html, body { background: var(--eliot-color-canvas); }
   .er-shell-preferences > summary { padding-inline: var(--eliot-space-block-control); }
 }
 @media (max-width: 48rem) {
-  .er-shell, .er-shell[data-destination="projects"], .er-shell[data-destination="sources"], .er-shell[data-destination="studio"], .er-shell[data-destination="connections"] {
+  .er-shell, .er-shell[data-destination="projects"], .er-shell[data-destination="sources"], .er-shell[data-destination="studio"], .er-shell[data-destination="connections"], .er-shell[data-destination="inbox"] {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: var(--eliot-layout-topbar-size) minmax(0, 1fr);
     grid-template-areas: "header" "reading";
@@ -473,13 +533,13 @@ html, body { background: var(--eliot-color-canvas); }
     padding: var(--eliot-space-block-control) var(--eliot-space-block-control) calc(var(--eliot-space-block-control) + env(safe-area-inset-bottom));
     background: var(--md-sys-color-surface-container);
   }
-  /* A compact bottom bar is fixed to the window, so a rail-sized cell would clip any long
-   * destination label. Let each destination take only the room its own label needs and adopt the
-   * compact label scale; labels stay nowrap and are still read in full. */
-  .er-shell-destination { flex: 0 1 auto; padding-block: 0; }
-  .er-shell-destination-label { font-size: var(--eliot-type-label-small-size); line-height: var(--eliot-type-label-small-line-height); }
-  .er-shell-destination-icon > .er-symbol { inline-size: var(--eliot-icon-small-size); block-size: var(--eliot-icon-small-size); }
-  .er-shell-destination-icon { inline-size: var(--eliot-size-control-small); block-size: var(--eliot-size-control-small); }
+  /* Four primary destinations share the bar equally at full Material size; a long label (Russian
+     "Исследование") widens its own column instead of wrapping, overflowing or truncating.
+     Connections moves to the top app bar as a settings action, as in NotebookLM. */
+  .er-shell-destination { flex: 1 1 0; min-inline-size: max-content; padding-block: 0; }
+  .er-shell-destination:is([data-destination="connections"], [data-destination="inbox"]) { display: none; }
+  .er-shell-header-destination { display: inline-flex; margin-inline-start: auto; }
+  .er-shell-header-destination + .er-shell-preferences { margin-inline-start: 0; }
   .er-shell-reading { padding: var(--eliot-space-group) var(--eliot-space-panel) var(--eliot-space-section); border-radius: var(--eliot-shape-extra-large); scrollbar-gutter: auto; }
   .er-shell-reading h1 { margin-block-end: var(--eliot-space-group); font-size: var(--eliot-type-headline-small-size); line-height: var(--eliot-type-headline-small-line-height); }
   #privacy-guard, .er-access { padding: var(--eliot-space-panel); }

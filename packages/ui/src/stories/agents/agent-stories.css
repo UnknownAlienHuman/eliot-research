@@ -1,0 +1,3 @@
+/* Story frames only: a side-pane width and a reading width, from layout tokens. */
+.er-agent-story-pane { display: grid; gap: var(--eliot-space-section); max-inline-size: var(--eliot-layout-source-width); }
+.er-agent-story-wide { max-inline-size: var(--eliot-layout-reading-max); }

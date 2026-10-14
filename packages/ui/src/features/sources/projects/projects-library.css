@@ -73,10 +73,13 @@
   margin-block-start: var(--eliot-space-block-control);
 }
 
+/* "Choose a project" / "No sources yet": one calm tonal row, not a stray line of text. */
 .er-projects-library__body > .er-status {
-  min-height: var(--eliot-size-list-row);
+  min-height: calc(var(--eliot-size-list-row) + var(--eliot-space-panel));
   align-items: center;
-  padding-inline: var(--eliot-space-gutter);
+  padding-inline: var(--eliot-space-group);
+  border-radius: var(--eliot-shape-large);
+  background: var(--eliot-color-group);
 }
 
 /* Compact aligned pane headings: title-small, medium weight, one clear level. */
@@ -90,8 +93,8 @@
   font-weight: var(--eliot-type-font-weight-medium);
 }
 
+/* Flush with the page title and the project label: one left edge for the whole page. */
 .er-projects-library__subheading {
-  padding-inline: var(--eliot-space-tight);
   margin-block-end: var(--eliot-space-block-control);
 }
 

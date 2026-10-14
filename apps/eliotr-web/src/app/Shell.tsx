@@ -6,15 +6,16 @@ import type { MaterialSymbolName } from "@eliotr/ui";
 import { destinations, workspacePath, decodeWorkspaceLocation } from "../routes/location";
 import type { PrivacyController } from "./privacy";
 import { LiveWorkspace } from "./LiveWorkspace";
+import { InboxCount } from "./InboxPanel";
 import "./shell.css";
 import type { WorkspaceRuntime } from "./runtime";
 import type { FixtureWorkspace } from "./FixtureWorkspace";
 
 const copy = {
-  en: { projects: "Projects", projectsBody: "Open a project to work with its sources, research and saved reports.", sources: "Sources", research: "Research", studio: "Studio", connections: "Connections", skip: "Skip to workspace", preview: "Design preview · synthetic workspace", scope: "Your research, in context", subtitle: "Keep the question, its sources and the evidence together.", sourceBody: "Add and review sources before choosing the scope of your next question.", researchBody: "Choose sources to begin. Every report will keep its original source scope.", studioBody: "Return to saved reports and supported artifacts here.", connectionsBody: "Owner access, provider configuration and research readiness are separate facts.", unknown: "Verification is unavailable", unavailable: "Your workspace needs a fresh access check before research can continue.", retry: "Check access again", review: "Review connections", language: "Language", theme: "Appearance", light: "Light", dark: "Dark", list: "No sources selected", note: "U1 shell preview. No source, report or provider request is made." },
-  ru: { projects: "Проекты", projectsBody: "Откройте проект, чтобы работать с его источниками, исследованиями и сохранёнными отчётами.", sources: "Источники", research: "Исследование", studio: "Студия", connections: "Подключения", skip: "Перейти к рабочей области", preview: "Макет интерфейса · учебное пространство", scope: "Исследование с сохранением контекста", subtitle: "Вопрос, источники и доказательства остаются рядом.", sourceBody: "Добавьте и проверьте источники, затем выберите область следующего вопроса.", researchBody: "Выберите источники для начала. Каждый отчёт сохраняет первоначальную область исследования.", studioBody: "Здесь можно вернуться к сохранённым отчётам и поддерживаемым материалам.", connectionsBody: "Доступ владельца, настройки провайдера и готовность исследования — отдельные факты.", unknown: "Проверка доступа недоступна", unavailable: "Чтобы продолжить исследование, необходима новая проверка доступа к рабочему пространству.", retry: "Проверить доступ снова", review: "Проверить подключения", language: "Язык", theme: "Оформление", light: "Светлое", dark: "Тёмное", list: "Источники не выбраны", note: "Предварительная оболочка. Запросы к источникам, отчётам и провайдерам не выполняются." },
+  en: { inbox: "Inbox", inboxBody: "Decisions your agents are waiting for.", projects: "Projects", projectsBody: "Open a project to work with its sources, research and saved reports.", sources: "Sources", research: "Research", studio: "Studio", connections: "Agents", skip: "Skip to workspace", preview: "Design preview · synthetic workspace", scope: "Your research, in context", subtitle: "Keep the question, its sources and the evidence together.", sourceBody: "Add and review sources before choosing the scope of your next question.", researchBody: "Choose sources to begin. Every report will keep its original source scope.", studioBody: "Return to saved reports and supported artifacts here.", connectionsBody: "Owner access, provider configuration and research readiness are separate facts.", unknown: "Verification is unavailable", unavailable: "Your workspace needs a fresh access check before research can continue.", retry: "Check access again", review: "Review connections", language: "Language", theme: "Appearance", light: "Light", dark: "Dark", list: "No sources selected", note: "U1 shell preview. No source, report or provider request is made." },
+  ru: { inbox: "Входящие", inboxBody: "Решения, которых ждут ваши агенты.", projects: "Проекты", projectsBody: "Откройте проект, чтобы работать с его источниками, исследованиями и сохранёнными отчётами.", sources: "Источники", research: "Исследование", studio: "Студия", connections: "Агенты", skip: "Перейти к рабочей области", preview: "Макет интерфейса · учебное пространство", scope: "Исследование с сохранением контекста", subtitle: "Вопрос, источники и доказательства остаются рядом.", sourceBody: "Добавьте и проверьте источники, затем выберите область следующего вопроса.", researchBody: "Выберите источники для начала. Каждый отчёт сохраняет первоначальную область исследования.", studioBody: "Здесь можно вернуться к сохранённым отчётам и поддерживаемым материалам.", connectionsBody: "Доступ владельца, настройки провайдера и готовность исследования — отдельные факты.", unknown: "Проверка доступа недоступна", unavailable: "Чтобы продолжить исследование, необходима новая проверка доступа к рабочему пространству.", retry: "Проверить доступ снова", review: "Проверить подключения", language: "Язык", theme: "Оформление", light: "Светлое", dark: "Тёмное", list: "Источники не выбраны", note: "Предварительная оболочка. Запросы к источникам, отчётам и провайдерам не выполняются." },
 } as const;
-const icons: Record<typeof destinations[number], MaterialSymbolName> = { projects: "home", sources: "folder", research: "research", studio: "bookmarks", connections: "settings" };
+const icons: Record<typeof destinations[number], MaterialSymbolName> = { projects: "home", inbox: "inbox", sources: "folder", research: "research", studio: "bookmarks", connections: "agent" };
 
 export function Shell({ privacy, fixture, fixtureOutlet: FixtureOutlet, runtime }: {
   readonly privacy: PrivacyController;
@@ -46,7 +47,7 @@ export function Shell({ privacy, fixture, fixtureOutlet: FixtureOutlet, runtime 
       <Button onClick={() => { void privacy.refresh(); }}>{text.retry}</Button>
     </main>
   );
-  const body = { projects: text.projectsBody, sources: text.sourceBody, research: text.researchBody, studio: text.studioBody, connections: text.connectionsBody }[destination];
+  const body = { projects: text.projectsBody, inbox: text.inboxBody, sources: text.sourceBody, research: text.researchBody, studio: text.studioBody, connections: text.connectionsBody }[destination];
   const apis = runtime?.read(snapshot.context);
   return (
     <div key={snapshot.context.cacheEpoch} className="er-shell" lang={locale} data-theme={theme} data-destination={destination}>
@@ -57,6 +58,13 @@ export function Shell({ privacy, fixture, fixtureOutlet: FixtureOutlet, runtime 
           <span className="er-shell-brand-name">Eliot Research</span>
         </WorkspaceLink>
         {fixture && <p className="er-shell-preview">{text.preview}</p>}
+        {/* Compact windows keep four primary destinations in the bottom bar; Inbox and Agents live here. */}
+        <WorkspaceLink className="er-shell-header-destination" to={workspacePath("inbox")} aria-label={text.inbox} title={text.inbox}>
+          <MaterialSymbol name={icons.inbox} />{apis ? <InboxCount apis={apis} privacy={privacy} context={snapshot.context} /> : null}
+        </WorkspaceLink>
+        <WorkspaceLink className="er-shell-header-destination" to={workspacePath("connections")} aria-label={text.connections} title={text.connections}>
+          <MaterialSymbol name={icons.connections} />
+        </WorkspaceLink>
         <details ref={preferences} className="er-shell-preferences" onKeyDown={event => {
           if (event.key === "Escape" && preferences.current?.open) {
             event.stopPropagation(); preferences.current.open = false;
@@ -74,8 +82,8 @@ export function Shell({ privacy, fixture, fixtureOutlet: FixtureOutlet, runtime 
         </details>
       </header>
       <nav className="er-shell-nav" aria-label={text.scope}>
-        {destinations.map(item => <WorkspaceLink key={item} to={workspacePath(item)} className="er-shell-destination">
-          <span className="er-shell-destination-icon"><MaterialSymbol name={icons[item]} /></span>
+        {destinations.map(item => <WorkspaceLink key={item} to={workspacePath(item)} className="er-shell-destination" data-destination={item}>
+          <span className="er-shell-destination-icon"><MaterialSymbol name={icons[item]} />{item === "inbox" && apis ? <InboxCount apis={apis} privacy={privacy} context={snapshot.context} /> : null}</span>
           <span className="er-shell-destination-label">{text[item]}</span>
         </WorkspaceLink>)}
       </nav>

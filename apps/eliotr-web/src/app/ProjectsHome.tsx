@@ -4,7 +4,6 @@ import "./projects-home.css";
 
 const copy = {
   en: {
-    lead: "Open a project to research its sources, read saved reports and use research tools.",
     heading: "Your projects", loading: "Reading projects.", error: "Projects could not be read.", retry: "Try again",
     empty: "No projects are available yet. Projects appear here once sources are organised into them.",
     open: "Opened", previous: "Previous page", next: "More projects",
@@ -12,7 +11,6 @@ const copy = {
     create: "New project",
   },
   ru: {
-    lead: "Откройте проект, чтобы исследовать его источники, читать сохранённые отчёты и пользоваться инструментами.",
     heading: "Ваши проекты", loading: "Читаются проекты.", error: "Не удалось прочитать проекты.", retry: "Повторить",
     empty: "Пока нет доступных проектов. Они появятся здесь, когда источники будут распределены по проектам.",
     open: "Открыт", previous: "Предыдущая страница", next: "Ещё проекты",
@@ -45,11 +43,10 @@ export function ProjectsHome({ locale, state, projects, openedProjectId, onOpen,
     return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat(locale === "ru" ? "ru-RU" : "en-GB", { day: "numeric", month: "short", year: "numeric" }).format(date) : "";
   };
   return <section className="er-projects-home" aria-labelledby="projects-home-heading">
-    <p className="er-projects-home__lead">{text.lead}</p>
     <div className="er-projects-home__heading-row">
       <h2 id="projects-home-heading">{text.heading}</h2>
       {state === "useful" && projects.length > 0 ? <span className="er-projects-home__count">{projects.length}</span> : null}
-      {onCreate ? <Button variant="tonal" onClick={onCreate}>{text.create}</Button> : null}
+      {onCreate ? <Button variant="primary" icon="add" onClick={onCreate}>{text.create}</Button> : null}
     </div>
     {state === "loading" ? <Status>{text.loading}</Status> : null}
     {state === "error" ? <div className="er-projects-home__problem"><Status tone="error">{text.error}</Status><Button variant="tonal" onClick={onRetry}>{text.retry}</Button></div> : null}

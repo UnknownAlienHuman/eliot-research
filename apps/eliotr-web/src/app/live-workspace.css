@@ -32,13 +32,16 @@
   font-weight: var(--eliot-type-font-weight-medium);
   font-variant-numeric: var(--eliot-type-numerals);
 }
+/* The open project under the pane title: one quiet line, the full name on hover. */
 .er-shell-sources > .er-shell-eyebrow {
+  margin-block-start: calc(var(--eliot-space-gutter) * -1 + var(--eliot-space-hairline));
   color: var(--md-sys-color-on-surface-variant);
   font-size: var(--eliot-type-body-medium-size);
   line-height: var(--eliot-type-body-medium-line-height);
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.er-shell-sources > .er-shell-note { margin-block-start: auto; padding-inline: var(--eliot-space-tight); }
 
 .er-live-report-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--eliot-space-section); }
 .er-live-report-body { min-width: 0; max-inline-size: var(--eliot-type-reading-measure); }
@@ -224,13 +227,18 @@
 .er-shell[data-destination="research"] .er-shell-reading {
   display: flex;
   flex-direction: column;
-  padding-block-end: 0;
+  padding-block: var(--eliot-space-group) 0;
 }
 .er-shell[data-destination="research"] .er-shell-reading > * { inline-size: 100%; flex-shrink: 0; }
+/* Three panes, one header style: "Sources", "Research" and "Research tools" share size, weight and
+   baseline, as NotebookLM sets Sources, Chat and Studio; the Research title starts its reading column. */
 .er-shell[data-destination="research"] .er-shell-reading > h1 {
-  margin-block-end: var(--eliot-space-group);
-  font-size: var(--eliot-type-title-large-size);
-  line-height: var(--eliot-type-title-large-line-height);
+  margin-block-end: var(--eliot-space-section);
+  font-family: var(--eliot-type-font-family);
+  font-size: var(--eliot-type-title-medium-size);
+  line-height: var(--eliot-type-title-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  letter-spacing: normal;
 }
 .er-shell[data-destination="research"] .er-shell-reading > .er-live-research { flex: 1 0 auto; display: flex; flex-direction: column; }
 .er-live-research > .er-research-run > .er-live-actions { margin-block: 0; }
@@ -263,7 +271,8 @@
 .er-live-scope[data-project="none"] { display: none; }
 
 /* Sources pane on Research: NotebookLM-style rows — document glyph, title, checkbox at the end. */
-.er-live-source-pick { display: grid; gap: var(--eliot-space-hairline); margin: 0; padding: 0; list-style: none; }
+.er-live-source-pick { display: grid; gap: var(--eliot-space-hairline); min-inline-size: 0; margin: 0; padding: 0; list-style: none; }
+.er-live-source-pick > li { min-inline-size: 0; }
 .er-live-source-pick label {
   display: flex;
   align-items: center;
@@ -279,44 +288,13 @@
 .er-live-source-pick label:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 6%, transparent); }
 .er-live-source-pick label:has(input:checked) { background: color-mix(in srgb, var(--md-sys-color-primary) 10%, transparent); }
 .er-live-source-pick .er-symbol { inline-size: var(--eliot-icon-small-size); block-size: var(--eliot-icon-small-size); color: var(--md-sys-color-primary); }
-.er-live-source-pick span { flex: 1 1 auto; min-inline-size: 0; overflow-wrap: anywhere; }
+/* One line per source with an ellipsis, as NotebookLM lists them; the full title shows on hover. */
+.er-live-source-pick span { flex: 1 1 auto; min-inline-size: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .er-live-source-pick input { margin-inline-start: auto; }
 .er-live-source-pick:empty, .er-live-source-context:empty { display: none; }
 
-/* Research tools: NotebookLM Studio-style tiles — an accent-tinted surface and a coloured glyph. */
-.er-live-tools { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--eliot-space-block-control); margin: 0; padding: 0; list-style: none; }
-.er-live-tools > li { display: grid; min-width: 0; }
-.er-live-tool {
-  --er-tool-container: var(--eliot-accent-blue-container);
-  --er-tool-tone: var(--eliot-accent-blue);
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: var(--eliot-space-block-control);
-  min-block-size: var(--eliot-size-touch-target);
-  padding: var(--eliot-space-tight) var(--eliot-space-gutter) var(--eliot-space-tight) var(--eliot-space-block-control);
-  border: none;
-  border-radius: var(--eliot-shape-large-increased);
-  background: color-mix(in srgb, var(--er-tool-container) 45%, var(--eliot-color-group));
-  color: var(--md-sys-color-on-surface);
-  font-family: var(--eliot-type-font-family);
-  font-size: var(--eliot-type-label-large-size);
-  line-height: var(--eliot-type-label-large-line-height);
-  font-weight: var(--eliot-type-font-weight-medium);
-  text-align: start;
-  cursor: pointer;
-  transition: background-color var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
-}
-.er-live-tool:hover { background: color-mix(in srgb, var(--er-tool-container) 75%, var(--eliot-color-group)); }
-.er-live-tool:focus-visible { outline: var(--eliot-focus-width) solid var(--md-sys-color-primary); outline-offset: var(--eliot-focus-offset); }
-.er-live-tool > span:last-child { min-inline-size: 0; overflow-wrap: break-word; hyphens: auto; }
-.er-live-tool__glyph { display: grid; place-items: center; flex-shrink: 0; inline-size: var(--eliot-size-control-small); block-size: var(--eliot-size-control-small); color: var(--er-tool-tone); }
-.er-live-tool__glyph > .er-symbol { inline-size: var(--eliot-icon-small-size); block-size: var(--eliot-icon-small-size); }
-.er-live-tool[data-accent="green"] { --er-tool-container: var(--eliot-accent-green-container); --er-tool-tone: var(--eliot-accent-green); }
-.er-live-tool[data-accent="violet"] { --er-tool-container: var(--eliot-accent-violet-container); --er-tool-tone: var(--eliot-accent-violet); }
-.er-live-tool[data-accent="pink"] { --er-tool-container: var(--eliot-accent-pink-container); --er-tool-tone: var(--eliot-accent-pink); }
-.er-live-tool[data-accent="amber"] { --er-tool-container: var(--eliot-accent-amber-container); --er-tool-tone: var(--eliot-accent-amber); }
-@media (forced-colors: active) { .er-live-tool { border: var(--eliot-divider-width) solid ButtonText; } }
+/* Agents and tools pane: the shared AgentWorkPane feature carries its own layout and container. */
+
 
 /* Research pane tabs: a segmented pill group, as NotebookLM uses on narrow windows. */
 .er-research-tabs {
@@ -365,3 +343,60 @@
   font-variant-numeric: var(--eliot-type-numerals);
 }
 @media (forced-colors: active) { .er-research-tab[aria-pressed="true"] { outline: var(--eliot-divider-width) solid CanvasText; } }
+
+/* ---- Pane headers and folding (wide windows) ----
+   Title and a fold control share one control-height row. Below 80rem the panes are tabs, so the
+   control is absent there. Folded, a pane keeps only what it can say with an icon. */
+.er-live-pane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--eliot-space-block-control);
+  min-block-size: var(--eliot-size-control);
+  margin-block: calc(var(--eliot-space-block-control) * -1);
+}
+.er-live-pane-head > h2 { min-inline-size: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.er-live-pane-fold { display: none; }
+.er-live-pane-fold > .er-symbol { transition: transform var(--eliot-motion-spatial) var(--eliot-motion-emphasized-easing); }
+.er-shell-sources .er-live-pane-fold > .er-symbol,
+.er-shell-tools[data-folded="true"] .er-live-pane-fold > .er-symbol { transform: rotate(180deg); }
+.er-shell-sources[data-folded="true"] .er-live-pane-fold > .er-symbol { transform: none; }
+@media (min-width: 80rem) {
+  .er-live-pane-fold { display: inline-flex; }
+  :is(.er-shell-sources, .er-shell-tools)[data-folded="true"] {
+    align-items: center;
+    padding-inline: var(--eliot-space-block-control);
+    scrollbar-gutter: auto;
+  }
+  :is(.er-shell-sources, .er-shell-tools)[data-folded="true"] .er-live-pane-head { justify-content: center; }
+  :is(.er-shell-sources, .er-shell-tools)[data-folded="true"] .er-live-pane-head > h2 { display: none; }
+  .er-shell-sources[data-folded="true"] > :not(.er-live-pane-head):not(.er-shell-link) { display: none; }
+  .er-shell-sources[data-folded="true"] > .er-shell-link {
+    align-self: center;
+    justify-content: center;
+    inline-size: var(--eliot-size-control);
+    padding: 0;
+  }
+  .er-shell-sources[data-folded="true"] > .er-shell-link > .er-symbol { margin: 0; }
+  :is(.er-shell-sources > .er-shell-link > span, .er-agent-tool__text):where([data-folded="true"] *) {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  /* Folded, the pane keeps only the tool glyphs; agents and tasks return when it opens. */
+  .er-shell-tools[data-folded="true"] .er-agent-work__section:not(:has(.er-agent-work__tools)),
+  .er-shell-tools[data-folded="true"] .er-agent-work h3 { display: none; }
+  .er-shell-tools[data-folded="true"] .er-agent-work__tools { grid-template-columns: minmax(0, 1fr); justify-items: center; }
+  .er-shell-tools[data-folded="true"] .er-agent-tool {
+    justify-content: center;
+    inline-size: var(--eliot-size-touch-target);
+    padding: 0;
+    border-radius: var(--eliot-shape-large);
+  }
+}
+
+/* Inbox: the lead and the decisions keep section rhythm. */
+.er-shell[data-destination="inbox"] .er-shell-lead { margin-block-end: var(--eliot-space-section); }

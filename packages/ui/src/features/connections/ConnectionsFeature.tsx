@@ -229,7 +229,7 @@ const TEXT: Record<"en" | "ru", {
   unknown: string;
 }> = {
   en: {
-    title: "Connections",
+    title: "Access and services",
     note: "Review your access and the services available for research.",
     idle: "Not checked yet",
     loading: "Checking",
@@ -237,7 +237,7 @@ const TEXT: Record<"en" | "ru", {
     unknown: "Unknown",
   },
   ru: {
-    title: "Подключения",
+    title: "Доступ и сервисы",
     note: "Проверьте доступ и сервисы, доступные для исследования.",
     idle: "Ещё не проверено",
     loading: "Выполняется проверка",

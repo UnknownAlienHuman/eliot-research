@@ -248,7 +248,7 @@ export function StudioPanel({ apis, privacy, context, locale }: {
     onClose={() => { if (privacy.isCurrent(context)) { returningFromReport.current = true; write(old => { const { artifact: _artifact, ...rest } = old; return rest; }); } }} />;
   return <>
     <OperationAnnouncement>{announcement}</OperationAnnouncement>
-    <div className="er-live-actions"><Button variant="tonal" disabled={proposals.isFetching || busy} onClick={() => { void proposals.refetch(); void history.refetch(); }}>{text.read}</Button></div>
+    <div className="er-live-actions"><Button variant="text" disabled={proposals.isFetching || busy} onClick={() => { void proposals.refetch(); void history.refetch(); }}>{text.read}</Button></div>
     {saved?.intent?.phase === 'unknown' && <div><Status>{text.unknown}</Status><Button variant="tonal" disabled={busy} onClick={reconcile}>{text.recover}</Button></div>}
     {saved?.intent?.phase === 'rejected' && <div><Status tone="error">{refusedText}</Status><Button variant="text" disabled={busy} onClick={reviewRefusal}>{text.review}</Button></div>}
     {(view?.state === 'PUBLISHED' || publicationForSelected) && <Status>{text.published}</Status>}

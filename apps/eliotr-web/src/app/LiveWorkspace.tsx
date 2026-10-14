@@ -2,7 +2,7 @@ import { useCallback, useLayoutEffect, useRef, useState, type Ref, type RefObjec
 import { skipToken, useQueries, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router";
 import { WorkspaceLink } from "../routes/WorkspaceLink";
-import { Button, Dialog, DocumentReader, MaterialSymbol, OperationAnnouncement, ProjectsLibraryFeature } from "@eliotr/ui";
+import { AgentWorkPane, Button, Dialog, DocumentReader, IconButton, MaterialSymbol, OperationAnnouncement, ProjectsLibraryFeature, type ResearchToolId } from "@eliotr/ui";
 import type { LibraryPage, ProjectListView, SourceRevisionPage } from "@eliotr/owner-api-client";
 import type { PrivacyController, SessionContext } from "./privacy";
 import type { BoundWorkspaceApis } from "./runtime";
@@ -20,11 +20,12 @@ import { ResearchPanel } from "./ResearchPanel";
 import { StudioPanel } from "./StudioPanel";
 import { ProjectsHome } from "./ProjectsHome";
 import { NewProjectPanel } from "./NewProjectPanel";
+import { InboxPanel } from "./InboxPanel";
 import { usePaneAnnouncement } from "./usePaneAnnouncement";
 
 const copy = {
-  en: { tabs: "Research panes", tabSources: "Sources", tabChat: "Chat", tabTools: "Tools", tools: "Research tools", toolsLead: "Open a tool for the selected project and sources.", toolIndex: "Search index", toolVersions: "Source versions", toolReports: "Saved reports", toolWiki: "Wiki drafts", toolImport: "Import sources", toolModel: "Model and connections", projects: "Projects", sources: "Sources", research: "Research", studio: "Studio", connections: "Connections", choose: "Choose a project to get started", detail: "Keep sources, questions and their evidence together.", next: "Next page", previous: "Previous page", versions: "Choose a version to read", document: "Source document", close: "Back to sources", untitled: "No project selected", researchPrompt: "Choose the sources for your next question", researchDetail: "The question will keep the exact source scope you choose.", studioEmpty: "Your saved work belongs here", studioDetail: "Reports and artifacts will keep the sources they were created from.", connectionsDetail: "Review owner access and research configuration.", review: "Review connections", selected: (count: number) => count === 1 ? '1 source selected' : `${count} sources selected`, sourceScope: "For your next question", openSources: "Choose sources", version: (index: number) => `Version ${index + 1}`, scopeNote: "Readiness and recorded versions are separate observations." },
-  ru: { tabs: "Панели исследования", tabSources: "Источники", tabChat: "Чат", tabTools: "Инструменты", tools: "Инструменты исследования", toolsLead: "Инструменты для выбранного проекта и источников.", toolIndex: "Индекс поиска", toolVersions: "Версии источников", toolReports: "Сохранённые отчёты", toolWiki: "Вики-черновики", toolImport: "Импорт источников", toolModel: "Модель и подключения", projects: "Проекты", sources: "Источники", research: "Исследование", studio: "Студия", connections: "Подключения", choose: "Выберите проект, чтобы начать", detail: "Источники, вопросы и доказательства остаются вместе.", next: "Следующая страница", previous: "Предыдущая страница", versions: "Выберите версию для чтения", document: "Документ источника", close: "Вернуться к источникам", untitled: "Проект не выбран", researchPrompt: "Выберите источники для следующего вопроса", researchDetail: "Вопрос сохранит точный набор выбранных источников.", studioEmpty: "Здесь будут сохранённые материалы", studioDetail: "Отчёты и материалы сохраняют связь с исходными источниками.", connectionsDetail: "Проверьте доступ владельца и настройки исследования.", review: "Проверить подключения", selected: (count: number) => `Выбрано источников: ${count}`, sourceScope: "Для следующего вопроса", openSources: "Выбрать источники", version: (index: number) => `Версия ${index + 1}`, scopeNote: "Готовность и записанные версии — отдельные наблюдения." },
+  en: { tabs: "Research panes", tabSources: "Sources", tabChat: "Chat", tabTools: "Agents", tools: "Agents and tools", toolsLead: "Open a tool for the selected project and sources.", toolIndex: "Search index", toolVersions: "Source versions", toolReports: "Saved reports", toolWiki: "Wiki drafts", toolImport: "Import sources", toolModel: "Model and connections", toolIndexHint: "How sources are indexed for search", toolVersionsHint: "Saved versions of a source", toolReportsHint: "Reports saved from earlier research", toolWikiHint: "Review and publish Wiki drafts", toolImportHint: "Add documents to this project", toolModelHint: "Choose the model and check access", collapseSources: "Collapse sources", expandSources: "Expand sources", collapseTools: "Collapse research tools", expandTools: "Expand research tools", projects: "Projects", inbox: "Inbox", sources: "Sources", research: "Research", studio: "Studio", connections: "Agents and models", choose: "Choose a project to get started", detail: "Keep sources, questions and their evidence together.", next: "Next page", previous: "Previous page", versions: "Choose a version to read", document: "Source document", close: "Back to sources", untitled: "No project selected", researchPrompt: "Choose the sources for your next question", researchDetail: "The question will keep the exact source scope you choose.", studioEmpty: "Your saved work belongs here", studioDetail: "Reports and artifacts will keep the sources they were created from.", connectionsDetail: "Review owner access and research configuration.", review: "Review connections", selected: (count: number) => count === 1 ? '1 source selected' : `${count} sources selected`, sourceScope: "For your next question", openSources: "All sources", sourceCount: (count: number) => count === 1 ? "1 source" : `${count} sources`, version: (index: number) => `Version ${index + 1}`, scopeNote: "Readiness and recorded versions are separate observations." },
+  ru: { tabs: "Панели исследования", tabSources: "Источники", tabChat: "Чат", tabTools: "Агенты", tools: "Агенты и инструменты", toolsLead: "Инструменты для выбранного проекта и источников.", toolIndex: "Индекс поиска", toolVersions: "Версии источников", toolReports: "Сохранённые отчёты", toolWiki: "Вики-черновики", toolImport: "Импорт источников", toolModel: "Модель и подключения", toolIndexHint: "Готовность источников к поиску", toolVersionsHint: "Сохранённые версии источника", toolReportsHint: "Отчёты прошлых исследований", toolWikiHint: "Проверка и публикация черновиков вики", toolImportHint: "Добавить документы в проект", toolModelHint: "Выбор модели и проверка доступа", collapseSources: "Свернуть источники", expandSources: "Развернуть источники", collapseTools: "Свернуть инструменты", expandTools: "Развернуть инструменты", projects: "Проекты", inbox: "Входящие", sources: "Источники", research: "Исследование", studio: "Студия", connections: "Агенты и модели", choose: "Выберите проект, чтобы начать", detail: "Источники, вопросы и доказательства остаются вместе.", next: "Следующая страница", previous: "Предыдущая страница", versions: "Выберите версию для чтения", document: "Документ источника", close: "Вернуться к источникам", untitled: "Проект не выбран", researchPrompt: "Выберите источники для следующего вопроса", researchDetail: "Вопрос сохранит точный набор выбранных источников.", studioEmpty: "Здесь будут сохранённые материалы", studioDetail: "Отчёты и материалы сохраняют связь с исходными источниками.", connectionsDetail: "Проверьте доступ владельца и настройки исследования.", review: "Проверить подключения", selected: (count: number) => `Выбрано источников: ${count}`, sourceScope: "Для следующего вопроса", openSources: "Все источники", sourceCount: (count: number) => { const tail = count % 10, hundred = count % 100; return `${count} ${tail === 1 && hundred !== 11 ? "источник" : tail >= 2 && tail <= 4 && (hundred < 12 || hundred > 14) ? "источника" : "источников"}`; }, version: (index: number) => `Версия ${index + 1}`, scopeNote: "Готовность и записанные версии — отдельные наблюдения." },
 } as const;
 
 export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, context }: {
@@ -53,6 +54,8 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
   const [newProjectOpen, setNewProjectOpen] = useState(false);
   // Narrow windows show one Research pane at a time behind NotebookLM-style tabs; wide windows show all three.
   const [researchTab, setResearchTab] = useState<"sources" | "chat" | "tools">("chat");
+  // Wide windows let either side pane fold to a slim strip, as NotebookLM does; presentation only.
+  const [folded, setFolded] = useState<{ readonly sources: boolean; readonly tools: boolean }>({ sources: false, tools: false });
   useLayoutEffect(() => {
     // Arriving in Research always shows the conversation, so its route heading can take focus.
     if (destination !== "research") setResearchTab("chat");
@@ -127,14 +130,14 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
     if (first && library.data && client.getQueryData([...key, "library", projectId, cursor ?? null]) === library.data && privacy.isCurrent(context)) setSourceId(first.id);
     if (privacy.isCurrent(context)) void navigate("/sources");
   };
-  const tools: readonly { readonly id: string; readonly label: string; readonly icon: "search" | "evidence" | "bookmarks" | "spark" | "add" | "settings"; readonly accent: string; readonly run: () => void }[] = [
-    { id: "index", label: text.toolIndex, icon: "search", accent: "blue", run: openSourceTool },
-    { id: "versions", label: text.toolVersions, icon: "evidence", accent: "green", run: openSourceTool },
-    { id: "reports", label: text.toolReports, icon: "bookmarks", accent: "pink", run: () => { if (privacy.isCurrent(context)) void navigate("/studio"); } },
-    { id: "wiki", label: text.toolWiki, icon: "spark", accent: "violet", run: () => { if (privacy.isCurrent(context)) void navigate("/studio"); } },
-    { id: "import", label: text.toolImport, icon: "add", accent: "amber", run: () => { if (privacy.isCurrent(context)) void navigate("/sources"); } },
-    { id: "model", label: text.toolModel, icon: "settings", accent: "blue", run: () => { if (privacy.isCurrent(context)) void navigate("/connections"); } },
-  ];
+  // Tools the owner can open in this workspace today, each the system's own operation. Agent
+  // dispatch, task reads and the remaining tools (search, all mentions, claim check, overview,
+  // changes) join when their owner APIs exist; until then nothing here pretends to run them.
+  const liveTools: readonly ResearchToolId[] = ["versions", "import", "erase", "wiki"];
+  const runTool = (tool: ResearchToolId) => {
+    if (tool === "versions" || tool === "erase") openSourceTool();
+    else if (privacy.isCurrent(context)) void navigate(tool === "wiki" ? "/studio" : "/sources");
+  };
   return <div className="er-live-workspace">
     {destination === "research" && <div className="er-research-tabs" role="group" aria-label={text.tabs}>
       {([["sources", text.tabSources], ["chat", text.tabChat], ["tools", text.tabTools]] as const).map(([tab, label]) =>
@@ -142,14 +145,18 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
           <span>{label}</span>{tab === "sources" && scope.length > 0 ? <span className="er-research-tab__count">{scope.length}</span> : null}
         </button>)}
     </div>}
-    <aside className="er-shell-sources" hidden={destination !== "research"} aria-label={text.sources} data-tab-active={researchTab === "sources"}>
-      <h2>{text.sources}</h2><p className="er-shell-eyebrow">{selected?.title ?? text.untitled}</p>
+    <aside className="er-shell-sources" hidden={destination !== "research"} aria-label={text.sources} data-tab-active={researchTab === "sources"} data-folded={folded.sources}>
+      <div className="er-live-pane-head"><h2>{text.sources}</h2>
+        <IconButton className="er-live-pane-fold" icon="chevron" label={folded.sources ? text.expandSources : text.collapseSources} title={folded.sources ? text.expandSources : text.collapseSources}
+          aria-expanded={!folded.sources} onClick={() => setFolded(old => ({ ...old, sources: !old.sources }))} /></div>
+      <p className="er-shell-eyebrow" title={selected?.title}>{selected?.title ?? text.untitled}</p>
+      <WorkspaceLink className="er-shell-link" to="/sources" title={text.openSources}><MaterialSymbol name="folder" /><span>{text.openSources}</span></WorkspaceLink>
       <p>{text.selected(scope.length)}</p>
       {/* Choose the next question's sources beside the conversation, as in NotebookLM; the same guarded toggle as Sources. */}
       {selected && library.data ? <ul className="er-live-source-pick" aria-label={text.sourceScope}>{library.data.sources.map(source => {
         const checked = scope.some(item => item.id === source.id);
         return <li key={source.id}><label>
-          <MaterialSymbol name="file" /><span>{source.title}</span>
+          <MaterialSymbol name="file" /><span title={source.title}>{source.title}</span>
           <input type="checkbox" checked={checked} disabled={!checked && scope.length >= selectedSourceLimit}
             onChange={event => { if (library.data) toggleScope(library.data, source.id, event.target.checked); }} />
         </label></li>;
@@ -157,20 +164,15 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
       <ul className="er-live-source-context">{scope.filter(source => !library.data?.sources.some(row => row.id === source.id)).map(source => <li key={source.id}>
         <MaterialSymbol name="file" /><span>{source.label}</span>
       </li>)}</ul>
-      <p className="er-shell-note">{text.sourceScope}</p>
-      <WorkspaceLink className="er-shell-link" to="/sources">{text.openSources}</WorkspaceLink>
     </aside>
-    <aside className="er-shell-tools" hidden={destination !== "research"} aria-label={text.tools} data-tab-active={researchTab === "tools"}>
-      <h2>{text.tools}</h2>
-      <p className="er-shell-note">{text.toolsLead}</p>
-      <ul className="er-live-tools">{tools.map(tool => <li key={tool.id}>
-        <button type="button" className="er-live-tool" data-accent={tool.accent} onClick={tool.run}>
-          <span className="er-live-tool__glyph"><MaterialSymbol name={tool.icon} /></span><span>{tool.label}</span>
-        </button>
-      </li>)}</ul>
+    <aside className="er-shell-tools" hidden={destination !== "research"} aria-label={text.tools} data-tab-active={researchTab === "tools"} data-folded={folded.tools}>
+      <div className="er-live-pane-head"><h2>{text.tools}</h2>
+        <IconButton className="er-live-pane-fold" icon="chevron" label={folded.tools ? text.expandTools : text.collapseTools} title={folded.tools ? text.expandTools : text.collapseTools}
+          aria-expanded={!folded.tools} onClick={() => setFolded(old => ({ ...old, tools: !old.tools }))} /></div>
+      <AgentWorkPane locale={locale} agents={[]} agentsUnavailable tools={liveTools} tasks={[]} onTool={runTool}
+        onManageAgents={() => { if (privacy.isCurrent(context)) void navigate("/connections"); }} />
     </aside>
     <main className="er-shell-reading" id="workspace-main" data-tab-active={destination !== "research" || researchTab === "chat"}>
-      {destination !== "sources" && destination !== "projects" && <p className="er-shell-eyebrow">{selected?.title ?? (destination === "studio" ? text.studioEmpty : destination === "connections" ? text.connectionsDetail : text.choose)}</p>}
       <h1 id="workspace-heading" ref={headingRef} tabIndex={-1}>{text[destination]}</h1>
       {destination === "projects" ? <ProjectsHome locale={locale} state={projects.isPending ? "loading" : projects.isError ? "error" : "useful"}
         projects={projects.data?.projects ?? []} openedProjectId={selected?.project_id}
@@ -194,7 +196,9 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
         onPrevious={projectPages.length > 1 ? () => { setProjectId(undefined); setProjectPages(pages => pages.slice(0, -1)); } : undefined}
         onNext={projects.data?.next_project_id ? () => { const next = projects.data?.next_project_id; if (next) { setProjectId(undefined); setProjectPages(pages => [...pages, next]); } } : undefined} />
         : destination === "research" ? <ResearchPanel locale={locale} apis={apis} privacy={privacy} context={context} scope={scope} scopeCurrent={scopeCurrent}
-          isScopeCurrent={isScopeCurrent} projectId={selected?.project_id} isProjectCurrent={isProjectCurrent} />
+          isScopeCurrent={isScopeCurrent} projectId={selected?.project_id} isProjectCurrent={isProjectCurrent}
+          cover={selected ? { title: selected.title, meta: text.sourceCount(selected.source_ids.length) } : undefined} />
+        : destination === "inbox" ? <InboxPanel locale={locale} apis={apis} privacy={privacy} context={context} />
         : <StudioPanel locale={locale} apis={apis} privacy={privacy} context={context} />}
       <NewProjectPanel open={newProjectOpen} locale={locale} apis={apis} privacy={privacy} context={context} scope={scope}
         onClose={() => { setNewProjectOpen(false); }}

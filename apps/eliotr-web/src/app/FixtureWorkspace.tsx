@@ -1,7 +1,7 @@
 import { useLayoutEffect, useState, type RefObject } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { WorkspaceLink } from "../routes/WorkspaceLink";
-import { Button, Dialog } from "@eliotr/ui";
+import { Button, DecisionInbox, Dialog, type DecisionItem } from "@eliotr/ui";
 import { SourcesFixture } from "../../../../packages/ui/src/patterns/sources/fixtures/SourcesFixture";
 import { ResearchFixture } from "../../../../packages/ui/src/patterns/research/fixtures/ResearchFixture";
 import { StudioFixture } from "../../../../packages/ui/src/patterns/studio/fixtures/StudioFixture";
@@ -15,7 +15,7 @@ type Locale = "en" | "ru";
 const copy = {
   en: {
     projects: "Projects", project: "Project", knowledge: "Evidence in everyday research", design: "Designing a clear knowledge workspace",
-    sources: "Sources", research: "Research", studio: "Studio", connections: "Connections",
+    inbox: "Inbox", sources: "Sources", research: "Research", studio: "Studio", connections: "Agents and models",
     nextScope: "For your next question", choose: "Choose sources", original: "The sample report keeps its original source scope.",
     selected: (count: number) => `${count} ${count === 1 ? "source selected" : "sources selected"}`,
     frozen: (count: number) => `Original sample report: ${count} ${count === 1 ? "source" : "sources"}`,
@@ -23,11 +23,15 @@ const copy = {
     context: "Synthetic passage · original sample revision. Native page coordinates are unavailable.",
     citationState: "Sample excerpt · current verification unknown", back: "Back to report", sourceContext: "View sample source context",
     sample: "All actions in this preview use local sample data.",
+    decisions: [
+      { id: "sample-delete", kind: "delete", risk: "D3", title: "Delete the duplicate draft notes", from: "Sample agent", detail: "Two versions, cited nowhere." },
+      { id: "sample-wiki", kind: "wiki", risk: "D2", title: "Wiki page: evidence and its scope", from: "Sample agent", detail: "Analytical summary of three sources." },
+    ] satisfies readonly DecisionItem[],
     report: "An explicit source scope keeps a claim connected to the material that informed it. Review the original passage, keep uncertainty visible, and distinguish a saved draft from an accepted report.",
   },
   ru: {
     projects: "Проекты", project: "Проект", knowledge: "Доказательства в повседневной исследовательской работе", design: "Проектирование понятного рабочего пространства знаний",
-    sources: "Источники", research: "Исследование", studio: "Студия", connections: "Подключения",
+    inbox: "Входящие", sources: "Источники", research: "Исследование", studio: "Студия", connections: "Агенты и модели",
     nextScope: "Для следующего вопроса", choose: "Выбрать источники", original: "Образец отчёта сохраняет первоначальный набор источников.",
     selected: (count: number) => `Выбрано источников: ${count}`,
     frozen: (count: number) => `Первоначальный набор образца отчёта: ${count}`,
@@ -35,6 +39,10 @@ const copy = {
     context: "Учебный фрагмент · исходная версия образца. Координаты страниц оригинала недоступны.",
     citationState: "Учебный фрагмент · текущая проверка неизвестна", back: "Вернуться к отчёту", sourceContext: "Открыть учебный контекст источника",
     sample: "Все действия в этом макете используют локальные учебные данные.",
+    decisions: [
+      { id: "sample-delete", kind: "delete", risk: "D3", title: "Удалить дубликат черновых заметок", from: "Учебный агент", detail: "Две версии, нигде не цитируются." },
+      { id: "sample-wiki", kind: "wiki", risk: "D2", title: "Страница вики: доказательства и их охват", from: "Учебный агент", detail: "Аналитическая сводка по трём источникам." },
+    ] satisfies readonly DecisionItem[],
     report: "Явный набор источников сохраняет связь утверждения с материалами, на которых оно основано. Проверяйте первоначальный фрагмент, показывайте неопределённость и отличайте сохранённый черновик от принятого отчёта.",
   },
 } as const;
@@ -61,6 +69,7 @@ function LocalProject({ destination, locale, headingRef, project, projectTitle, 
   const text = copy[locale];
   const [selection, setSelection] = useState<readonly string[]>(["notes-4", "datasheets"]);
   const [reportScope] = useState<readonly string[]>(["notes-4", "datasheets"]);
+  const [decided, setDecided] = useState<readonly string[]>([]);
   const location = useLocation();
   const navigate = useNavigate();
   const state: unknown = location.state;
@@ -98,6 +107,10 @@ function LocalProject({ destination, locale, headingRef, project, projectTitle, 
             { project_id: "design", title: text.design, revision: 1, source_ids: ["notes-4", "guidelines"], created_at: "2026-10-11T09:30:00.000Z" },
           ]}
           onOpen={id => { onProject(id === "design" ? "design" : "knowledge"); void navigate("/research"); }} />
+      </section>
+      <section hidden={destination !== "inbox"} aria-label={text.inbox}>
+        <DecisionInbox locale={locale} items={text.decisions.filter(item => !decided.includes(item.id))}
+          onDecide={id => setDecided(old => [...old, id])} />
       </section>
       <section hidden={destination !== "sources"} aria-label={text.sources}>
         <SourcesFixture locale={locale} active={destination === "sources"} selection={selection} onSelection={setSelection} dialog={sourceDialog}

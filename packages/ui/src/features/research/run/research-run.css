@@ -51,6 +51,17 @@
 .er-research-run[data-phase="start"] .er-research-run__heading {
   font-size: var(--eliot-type-headline-large-size);
   line-height: var(--eliot-type-headline-large-line-height);
+  overflow-wrap: anywhere;
+}
+
+/* "3 sources" under the project title, as NotebookLM sets a notebook's source count. */
+.er-research-run__meta {
+  margin: 0;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  font-variant-numeric: var(--eliot-type-numerals);
 }
 
 .er-research-run__lead {

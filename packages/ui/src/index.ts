@@ -16,3 +16,11 @@ export { ReportFeature, REPORT_COPY } from "./features/research/report/ReportFea
 export { EvidenceFeature } from "./features/research/evidence/EvidenceFeature";
 export { StudioFeature, STUDIO_COPY } from "./features/studio/StudioFeature";
 export { SafeMarkdown } from "./features/sources/document/SafeMarkdown";
+export { AgentWorkPane } from "./features/agents/AgentWorkPane";
+export type { AgentWorkPaneProps } from "./features/agents/AgentWorkPane";
+export { HandoffSheet } from "./features/agents/HandoffSheet";
+export type { HandoffSheetProps } from "./features/agents/HandoffSheet";
+export { DecisionInbox } from "./features/agents/DecisionInbox";
+export type { DecisionInboxProps } from "./features/agents/DecisionInbox";
+export { AGENT_WORK_COPY } from "./features/agents/agent-work-model";
+export type { AgentSummary, AgentTaskSummary, AgentTaskState, DecisionItem, DecisionRisk, HandoffRequest, ResearchToolId, TaskScope } from "./features/agents/agent-work-model";

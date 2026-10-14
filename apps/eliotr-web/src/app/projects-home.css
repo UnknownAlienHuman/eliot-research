@@ -1,12 +1,9 @@
 /* Projects home, modelled on the live NotebookLM notebook grid. Semantic tokens only. */
 .er-projects-home { display: grid; gap: var(--eliot-space-panel); min-width: 0; }
-.er-projects-home__lead {
-  max-inline-size: var(--eliot-type-reading-measure);
-  color: var(--md-sys-color-on-surface-variant);
-  font-size: var(--eliot-type-body-large-size);
-  line-height: var(--eliot-type-body-large-line-height);
-}
-.er-projects-home__heading-row { display: flex; align-items: center; gap: var(--eliot-space-gutter); margin-block-start: var(--eliot-space-panel); }
+/* Section title and its count on the left, the New project action on the right, as NotebookLM sets
+   "Recent notebooks" against "New notebook". */
+.er-projects-home__heading-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--eliot-space-gutter); min-block-size: var(--eliot-size-touch-target); }
+.er-projects-home__heading-row > .er-button { margin-inline-start: auto; }
 .er-projects-home__heading-row h2 {
   font-family: var(--eliot-type-font-family-display);
   font-size: var(--eliot-type-title-large-size);
@@ -54,8 +51,10 @@
   cursor: pointer;
   transition:
     background-color var(--eliot-motion-effects) var(--eliot-motion-standard-easing),
-    box-shadow var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
+    box-shadow var(--eliot-motion-effects) var(--eliot-motion-standard-easing),
+    border-radius var(--eliot-motion-spatial) var(--eliot-motion-expressive-easing);
 }
+.er-projects-home__card:active { border-radius: var(--eliot-shape-large); }
 .er-projects-home__card:hover { background: var(--eliot-color-field-hover); box-shadow: var(--eliot-elevation-1); }
 .er-projects-home__card:focus-visible { outline: var(--eliot-focus-width) solid var(--md-sys-color-primary); outline-offset: var(--eliot-focus-offset); }
 .er-projects-home__card[aria-current="true"] { box-shadow: inset 0 0 0 var(--eliot-focus-width) var(--md-sys-color-primary); }

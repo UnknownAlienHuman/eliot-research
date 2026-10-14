@@ -99,6 +99,10 @@
     appearance: base-select;
   }
 
+  /* A base-select lays its value out as a flex row that would stretch to the top of the field;
+     centre it so the value shares the field's optical middle with any label beside it. */
+  :where(select) { align-items: center; }
+
   :where(select)::picker-icon { display: none; }
 
   :where(select)::picker(select) {

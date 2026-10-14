@@ -323,7 +323,7 @@ function commonFacts(root: HTMLElement) {
 
 /** Missing U5 case #4 only: empty configuration and independent capability facts through Shell. */
 export async function playCapabilityConnectionTruth({ canvas, userEvent }: PlayContext) {
-  const root = fixtureRoot(await canvas.findByRole('heading', { name: 'Connections', exact: true, level: 1 }), 'capability');
+  const root = fixtureRoot(await canvas.findByRole('heading', { name: 'Agents and models', exact: true, level: 1 }), 'capability');
   await chooseProject(root, userEvent);
   await waitForState(root, () => {
     commonFacts(root);
@@ -350,7 +350,7 @@ export async function playCapabilityConnectionTruth({ canvas, userEvent }: PlayC
 
 /** Missing U5 case #5 only: strict rejection and bounded disclosure; no publication/revision effect. */
 export async function playBoundedRootDisclosure({ canvas, userEvent }: PlayContext) {
-  const root = fixtureRoot(await canvas.findByRole('heading', { name: 'Connections', exact: true, level: 1 }), 'disclosure');
+  const root = fixtureRoot(await canvas.findByRole('heading', { name: 'Agents and models', exact: true, level: 1 }), 'disclosure');
   await chooseProject(root, userEvent);
   await waitForState(root, () => {
     commonFacts(root);
@@ -422,7 +422,7 @@ export async function playBoundedRootDisclosure({ canvas, userEvent }: PlayConte
 
 /** Actual Connections query operation: one retained channel, no mutation and no credential copy. */
 export async function playConnectionAnnouncements({ canvas, userEvent }: PlayContext) {
-  const root = fixtureRoot(await canvas.findByRole('heading', { name: 'Connections', exact: true, level: 1 }), 'disclosure');
+  const root = fixtureRoot(await canvas.findByRole('heading', { name: 'Agents and models', exact: true, level: 1 }), 'disclosure');
   await chooseProject(root, userEvent);
   const region = paneAnnouncement(root);
   const failure = 'Some status checks failed. Review the affected rows.';

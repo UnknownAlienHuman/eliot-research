@@ -77,6 +77,11 @@ export interface ResearchRunFeatureProps {
    * and before the composer, so the composer always closes the conversation. Presentation only.
    */
   readonly conversation?: ReactNode;
+  /**
+   * The open project, shown as the start cover's title (NotebookLM opens a notebook on its own
+   * title and source count). Presentation only; without it the cover keeps its generic prompt.
+   */
+  readonly cover?: { readonly title: string; readonly meta?: string };
 }
 
 const ENGINE_LABEL: Record<'en' | 'ru', Record<ResearchRunStatusView['engine_status'], string>> = {
@@ -186,8 +191,8 @@ const COPY: Record<'en' | 'ru', {
     lead: 'Ask a question with the sources you choose.',
     questionLabel: 'Research question',
     nextQuestionLabel: 'Next question draft (unsent)',
-    questionPlaceholder: 'What does my selected scope support?',
-    questionHint: 'The question is frozen when you ask it.',
+    questionPlaceholder: 'Ask a question about the selected sources',
+    questionHint: 'Your question keeps the sources selected when you ask it.',
     nextQuestionHint: 'Draft your next question. This unsaved draft does not change the viewed run.',
     heldQuestionHint: 'This draft is unsent and is not queued. Wait for the current action and explicitly release the current run before asking it.',
     currentQuestionLabel: 'Current run question',
@@ -231,8 +236,8 @@ const COPY: Record<'en' | 'ru', {
     lead: 'Задайте вопрос по выбранным источникам.',
     questionLabel: 'Вопрос исследования',
     nextQuestionLabel: 'Черновик следующего вопроса (не отправлен)',
-    questionPlaceholder: 'Что подтверждает выбранная область?',
-    questionHint: 'Вопрос фиксируется в момент отправки.',
+    questionPlaceholder: 'Задайте вопрос по выбранным источникам',
+    questionHint: 'Вопрос сохранит источники, выбранные на момент отправки.',
     nextQuestionHint: 'Подготовьте следующий вопрос. Этот несохранённый черновик не меняет просматриваемый запуск.',
     heldQuestionHint: 'Черновик не отправлен и не поставлен в очередь. Дождитесь завершения текущего действия и явно освободите текущий запуск перед отправкой.',
     currentQuestionLabel: 'Вопрос текущего запуска',
@@ -309,6 +314,7 @@ export function ResearchRunFeature({
   onReadStatus,
   onRecover,
   conversation,
+  cover,
 }: ResearchRunFeatureProps) {
   const [localDraft, setLocalDraft] = useState<string>('');
   const [recorded, setRecorded] = useState<string | null>(question ?? null);
@@ -404,7 +410,8 @@ export function ResearchRunFeature({
 
   return (
     <section className="er-research-run" aria-labelledby={headingId} data-phase={hasQuestion ? 'conversation' : 'start'}>
-      <header className="er-research-run__intro">{!hasQuestion ? <span className="er-research-run__cover-icon"><MaterialSymbol name="spark" /></span> : null}<h2 className="er-research-run__heading" id={headingId}>{hasQuestion ? (locale === 'ru' ? 'Ваше исследование' : 'Your research') : (locale === 'ru' ? 'Спросите свои источники' : 'Ask your sources')}</h2>
+      <header className="er-research-run__intro">{!hasQuestion ? <span className="er-research-run__cover-icon"><MaterialSymbol name="spark" /></span> : null}<h2 className="er-research-run__heading" id={headingId}>{hasQuestion ? (locale === 'ru' ? 'Ваше исследование' : 'Your research') : cover?.title ?? (locale === 'ru' ? 'Спросите свои источники' : 'Ask your sources')}</h2>
+      {!hasQuestion && cover?.meta ? <p className="er-research-run__meta">{cover.meta}</p> : null}
       {!hasQuestion ? <p className="er-research-run__lead">{copy.lead}</p> : null}</header>
 
       {recordedQuestion === null ? null : (
@@ -414,7 +421,8 @@ export function ResearchRunFeature({
         </p>
       )}
 
-      <Status tone={state === 'error' ? 'error' : 'neutral'}>{notice}</Status>
+      {/* The start cover already invites the first question; the empty notice would only repeat it. */}
+      {state === 'empty' && !hasQuestion ? null : <Status tone={state === 'error' ? 'error' : 'neutral'}>{notice}</Status>}
 
       {hasQuestion ? <div className="er-research-run__current-controls">{scopeDisclosure}{runActions}</div> : null}
 

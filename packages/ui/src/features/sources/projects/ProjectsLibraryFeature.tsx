@@ -340,7 +340,6 @@ export function ProjectsLibraryFeature(props: ProjectsLibraryFeatureProps) {
           </Button>
         </div>
       ) : null}
-      <p className="er-projects-library__note">{copy.scope}</p>
     </section>
   );
 }
