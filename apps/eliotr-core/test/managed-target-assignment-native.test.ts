@@ -173,6 +173,32 @@ describe("Core managed target assignment on native D1", () => {
       head_event: event,
       current_assignment: { event_revision: 1, target },
     });
+
+    const retired = await call(request(projectId, "POST", {
+      protocol: MANAGED_TARGET_ASSIGNMENT_PROTOCOL,
+      expected_event_revision: 1,
+    }));
+    const retiredData = (await json(retired)).data as JsonObject;
+    const retiredEvent = retiredData.event as JsonObject;
+    expect(retired.status).toBe(200);
+    expect(retiredEvent).toMatchObject({
+      event_kind: "RETIRE",
+      expected_event_revision: 1,
+      event_revision: 2,
+      previous_assignment_revision: 1,
+      project_id: projectId,
+      project_generation: 1,
+      project_owner_principal_ref: principal,
+    });
+    expect(retiredEvent).not.toHaveProperty("target");
+    expect(await eventCount(projectId)).toBe(2);
+
+    const retiredReadback = await call(request(projectId, "GET"));
+    expect((await json(retiredReadback)).data).toMatchObject({
+      event_head_revision: 2,
+      head_event: retiredEvent,
+      current_assignment: null,
+    });
   });
 
   it("denies foreign and expired owners and rejects cross-origin writes", async () => {
