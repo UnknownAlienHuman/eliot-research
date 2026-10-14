@@ -5,6 +5,7 @@ import {
   createD1ExecutionLeaseStore,
   type ExecutionFence,
 } from "@eliotr/platform-cloudflare";
+import type { DeliveryMessage } from "@eliotr/platform-cloudflare";
 import { projectionExecutionOperationId } from "./canonical.js";
 import { beginManagedItemDispatch } from "./core-managed-items.js";
 import type { ProjectionSourceContext } from "./types.js";
@@ -65,8 +66,183 @@ function databaseWithClock(clock: MutableClock): DatabaseSync {
       updated_at TEXT NOT NULL,
       PRIMARY KEY (source_revision_ref, projection_generation, item_key)
     );
+    CREATE TABLE outbox (
+      outbox_id TEXT PRIMARY KEY,
+      intent_id TEXT NOT NULL,
+      intent_revision INTEGER NOT NULL,
+      topic TEXT NOT NULL,
+      payload_ref TEXT NOT NULL,
+      payload_sha256 TEXT NOT NULL
+    );
+    CREATE TABLE operation_intent (
+      intent_id TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      operation_kind TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL,
+      payload_ref TEXT NOT NULL,
+      policy_decision_ref TEXT NOT NULL,
+      PRIMARY KEY (intent_id, revision)
+    );
+    CREATE TABLE job (
+      job_id TEXT PRIMARY KEY,
+      intent_id TEXT NOT NULL,
+      intent_revision INTEGER NOT NULL,
+      state TEXT NOT NULL
+    );
+    CREATE TABLE source (
+      source_id TEXT PRIMARY KEY,
+      source_namespace_id TEXT NOT NULL,
+      source_owner_system_id TEXT NOT NULL,
+      source_owner_generation TEXT NOT NULL,
+      ownership_mode TEXT NOT NULL,
+      head_rev TEXT
+    );
+    CREATE TABLE source_revision (
+      source_revision_ref TEXT PRIMARY KEY,
+      source_id TEXT NOT NULL,
+      source_owner_generation TEXT NOT NULL,
+      content_sha256 TEXT NOT NULL,
+      object_residency_key_digest TEXT NOT NULL,
+      purge_state TEXT NOT NULL
+    );
+    CREATE TABLE source_namespace_ownership (
+      source_namespace_id TEXT NOT NULL,
+      owner_system_id TEXT NOT NULL,
+      source_owner_generation TEXT NOT NULL,
+      status TEXT NOT NULL
+    );
+    CREATE TABLE source_admission_decision (
+      decision_receipt_ref TEXT PRIMARY KEY,
+      source_namespace_id TEXT NOT NULL,
+      owner_system_id TEXT NOT NULL,
+      source_owner_generation TEXT NOT NULL,
+      source_revision_ref TEXT NOT NULL,
+      object_residency_key_digest TEXT NOT NULL,
+      decision TEXT NOT NULL
+    );
+    CREATE TABLE projection_generation (
+      source_revision_ref TEXT NOT NULL,
+      projection_generation TEXT NOT NULL,
+      job_id TEXT NOT NULL,
+      state TEXT NOT NULL,
+      PRIMARY KEY (source_revision_ref, projection_generation)
+    );
+    CREATE TABLE projection_terminal_guard (
+      source_revision_ref TEXT NOT NULL,
+      projection_generation TEXT NOT NULL,
+      job_id TEXT NOT NULL,
+      PRIMARY KEY (source_revision_ref, projection_generation)
+    );
   `);
   return database;
+}
+
+function dispatchContext(): ProjectionSourceContext {
+  const contentSha256 = "a".repeat(64);
+  const residencyDigest = "b".repeat(64);
+  const message: DeliveryMessage = {
+    protocol: "eliotr.delivery.message.v1",
+    message_id: "outbox-clock:1",
+    topic: "source.revision.admitted",
+    payload_ref: "revision-clock",
+    payload_sha256: contentSha256,
+    idempotency_key: "idempotency-clock",
+    outbox_id: "outbox-clock",
+    outbox_attempt: 1,
+    created_at_ms: 5_000,
+  };
+  return {
+    message,
+    intent_ref: { id: "intent-clock", revision: 1 },
+    job_id: "job-clock",
+    job_state: "RUNNING",
+    acceptance_attempt_id: "attempt-clock",
+    instruction_taint: "DATA_ONLY",
+    source_title: "Document",
+    source_class: "document",
+    project_membership_ids: [],
+    source_revision: {
+      source_revision_ref: "revision-clock",
+      source_id: "source-clock",
+      source_namespace_id: "namespace-clock",
+      source_owner_system_id: "owner-system-clock",
+      source_owner_generation: "owner-generation-clock",
+      ownership_mode: "immutable_import",
+      content_sha256: contentSha256,
+      object_residency_key_digest: residencyDigest,
+      normalized_artifact_ref: "normalized/manifest.json",
+      captured_at: "2026-08-31T12:00:00.000Z",
+      parser_profile_generation: "parser-clock",
+      quality_state: "standard",
+      purge_state: "LIVE",
+    },
+  };
+}
+
+function seedDispatchAuthority(
+  database: DatabaseSync,
+  context: ProjectionSourceContext,
+  projectionGeneration: string,
+): void {
+  const revision = context.source_revision;
+  database.prepare(
+    "INSERT INTO source VALUES (?1,?2,?3,?4,?5,'revision-newer')",
+  ).run(
+    revision.source_id,
+    revision.source_namespace_id,
+    revision.source_owner_system_id,
+    revision.source_owner_generation,
+    revision.ownership_mode,
+  );
+  database.prepare(
+    "INSERT INTO source_revision VALUES (?1,?2,?3,?4,?5,'LIVE')",
+  ).run(
+    revision.source_revision_ref,
+    revision.source_id,
+    revision.source_owner_generation,
+    revision.content_sha256,
+    revision.object_residency_key_digest,
+  );
+  database.prepare(
+    "INSERT INTO source_namespace_ownership VALUES (?1,?2,?3,'ACTIVE')",
+  ).run(
+    revision.source_namespace_id,
+    revision.source_owner_system_id,
+    revision.source_owner_generation,
+  );
+  database.prepare(
+    "INSERT INTO source_admission_decision VALUES ('decision-clock',?1,?2,?3,?4,?5,'ADMITTED')",
+  ).run(
+    revision.source_namespace_id,
+    revision.source_owner_system_id,
+    revision.source_owner_generation,
+    revision.source_revision_ref,
+    revision.object_residency_key_digest,
+  );
+  database.prepare(
+    "INSERT INTO operation_intent VALUES (?1,?2,'PROJECTION',?3,?4,'decision-clock')",
+  ).run(
+    context.intent_ref.id,
+    context.intent_ref.revision,
+    context.message.idempotency_key,
+    context.message.payload_ref,
+  );
+  database.prepare(
+    "INSERT INTO outbox VALUES (?1,?2,?3,?4,?5,?6)",
+  ).run(
+    context.message.outbox_id,
+    context.intent_ref.id,
+    context.intent_ref.revision,
+    context.message.topic,
+    context.message.payload_ref,
+    context.message.payload_sha256,
+  );
+  database.prepare(
+    "INSERT INTO job VALUES (?1,?2,?3,'RUNNING')",
+  ).run(context.job_id, context.intent_ref.id, context.intent_ref.revision);
+  database.prepare(
+    "INSERT INTO projection_generation VALUES (?1,?2,?3,'MATERIALIZED')",
+  ).run(revision.source_revision_ref, projectionGeneration, context.job_id);
 }
 
 function d1Adapter(
@@ -150,14 +326,9 @@ describe("D1 execution lease clock", () => {
   it("rejects an effect write whose D1-clock fence expires after the caller precheck", async () => {
     const clock = { now_ms: 5_500 };
     const sqlite = databaseWithClock(clock);
-    const context = {
-      intent_ref: { id: "intent-clock", revision: 1 },
-      job_id: "job-clock",
-      acceptance_attempt_id: "attempt-clock",
-      instruction_taint: "DATA_ONLY",
-      source_revision: { source_revision_ref: "revision-clock" },
-    } as ProjectionSourceContext;
+    const context = dispatchContext();
     const projectionGeneration = "generation-clock";
+    seedDispatchAuthority(sqlite, context, projectionGeneration);
     const fence: ExecutionFence = {
       operation_id: await projectionExecutionOperationId(context, projectionGeneration),
       lease_owner: "worker-clock",
@@ -202,6 +373,95 @@ describe("D1 execution lease clock", () => {
       expect(sqlite.prepare(
         "SELECT state, dispatch_lease_generation FROM projection_managed_item_effect WHERE item_key='item-clock'",
       ).get()).toEqual({ state: "INTENT", dispatch_lease_generation: null });
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("refuses a new item dispatch when pinned Core source authority changes after load", async () => {
+    const clock = { now_ms: 5_500 };
+    const sqlite = databaseWithClock(clock);
+    const context = dispatchContext();
+    const projectionGeneration = "generation-clock";
+    const fence: ExecutionFence = {
+      operation_id: await projectionExecutionOperationId(context, projectionGeneration),
+      lease_owner: "worker-clock",
+      lease_generation: 1,
+    };
+    seedDispatchAuthority(sqlite, context, projectionGeneration);
+    sqlite.prepare(
+      "INSERT INTO operation_execution_lease (operation_id,operation_kind,lease_owner,lease_generation," +
+      "lease_until,attempt,state,created_at,updated_at) VALUES (?1,'PROJECTION_EXECUTE',?2,1,6000,1,'LEASED',5000,5000)",
+    ).run(fence.operation_id, fence.lease_owner);
+    sqlite.prepare(
+      "INSERT INTO projection_managed_item_effect (source_revision_ref,projection_generation,job_id,item_key," +
+      "desired_index,normalized_start_byte,normalized_end_byte,intent_id,intent_revision,attempt_id," +
+      "execution_operation_id,dispatch_lease_generation,managed_instance_id,managed_generation,provider_source," +
+      "provider_key,section_content_sha256,document_sha256,document_size_bytes,metadata_json,state,created_at,updated_at) " +
+      "VALUES ('revision-clock','generation-clock','job-clock','item-clock',0,0,1,'intent-clock',1,'attempt-clock'," +
+      "?1,NULL,'instance-clock','managed-clock','builtin','item-clock.md',?2,?3,1,'{}','INTENT'," +
+      "'1970-01-01T00:00:05.000Z','1970-01-01T00:00:05.000Z')",
+    ).run(fence.operation_id, "a".repeat(64), "b".repeat(64));
+
+    // The executor loaded the pinned LIVE revision above; quarantine arrives before item dispatch.
+    sqlite.prepare(
+      "UPDATE source_revision SET purge_state='PURGE_REQUESTED' WHERE source_revision_ref='revision-clock'",
+    ).run();
+    const adapter = d1Adapter(sqlite);
+    try {
+      await expect(beginManagedItemDispatch(
+        adapter.database,
+        () => 5_500,
+        context,
+        projectionGeneration,
+        "item-clock",
+        fence,
+      )).rejects.toMatchObject({ code: "PROJECTION_AUTHORITY_CONFLICT" });
+      expect(sqlite.prepare(
+        "SELECT state, dispatch_lease_generation FROM projection_managed_item_effect WHERE item_key='item-clock'",
+      ).get()).toEqual({ state: "INTENT", dispatch_lease_generation: null });
+    } finally {
+      sqlite.close();
+    }
+  });
+
+  it("allows the authorized pinned revision when only the source head advances", async () => {
+    const clock = { now_ms: 5_500 };
+    const sqlite = databaseWithClock(clock);
+    const context = dispatchContext();
+    const projectionGeneration = "generation-clock";
+    const fence: ExecutionFence = {
+      operation_id: await projectionExecutionOperationId(context, projectionGeneration),
+      lease_owner: "worker-clock",
+      lease_generation: 1,
+    };
+    seedDispatchAuthority(sqlite, context, projectionGeneration);
+    sqlite.prepare(
+      "INSERT INTO operation_execution_lease (operation_id,operation_kind,lease_owner,lease_generation," +
+      "lease_until,attempt,state,created_at,updated_at) VALUES (?1,'PROJECTION_EXECUTE',?2,1,6000,1,'LEASED',5000,5000)",
+    ).run(fence.operation_id, fence.lease_owner);
+    sqlite.prepare(
+      "INSERT INTO projection_managed_item_effect (source_revision_ref,projection_generation,job_id,item_key," +
+      "desired_index,normalized_start_byte,normalized_end_byte,intent_id,intent_revision,attempt_id," +
+      "execution_operation_id,dispatch_lease_generation,managed_instance_id,managed_generation,provider_source," +
+      "provider_key,section_content_sha256,document_sha256,document_size_bytes,metadata_json,state,created_at,updated_at) " +
+      "VALUES ('revision-clock','generation-clock','job-clock','item-clock',0,0,1,'intent-clock',1,'attempt-clock'," +
+      "?1,NULL,'instance-clock','managed-clock','builtin','item-clock.md',?2,?3,1,'{}','INTENT'," +
+      "'1970-01-01T00:00:05.000Z','1970-01-01T00:00:05.000Z')",
+    ).run(fence.operation_id, "a".repeat(64), "b".repeat(64));
+    const adapter = d1Adapter(sqlite);
+    try {
+      await expect(beginManagedItemDispatch(
+        adapter.database,
+        () => 5_500,
+        context,
+        projectionGeneration,
+        "item-clock",
+        fence,
+      )).resolves.toBe(true);
+      expect(sqlite.prepare(
+        "SELECT state, dispatch_lease_generation FROM projection_managed_item_effect WHERE item_key='item-clock'",
+      ).get()).toEqual({ state: "DISPATCHED", dispatch_lease_generation: 1 });
     } finally {
       sqlite.close();
     }
