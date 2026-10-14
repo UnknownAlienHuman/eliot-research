@@ -1,3 +1,8 @@
+/** Publish this journey's declared terminal readiness on the Shell that renders the observed presentation. */
+function markVisualReady(shell: HTMLElement | null | undefined): void {
+  if (!shell) throw new Error('Terminal visual readiness requires the rendered workspace Shell');
+  shell.setAttribute('data-play-ready', 'ready');
+}
 import { useEffect, useState } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
@@ -231,6 +236,8 @@ export const playResearchJourney = async ({ canvas, userEvent }: {
   await userEvent.click(await canvas.findByRole('button', { name: 'Open cited excerpt 1' }));
   await canvas.findByText(excerpt);
   if (canvas.queryByText('Supported')) throw new Error('Verified citation was promoted to semantic claim support');
+  // Terminal visual readiness: the excerpt reached the actual citation surface with no promotion to support.
+  markVisualReady(document.querySelector<HTMLElement>('.er-shell'));
 };
 
 /** One preexisting terminal history row, no local intent; only explicit Ask admits new work. */
@@ -298,4 +305,6 @@ export async function playResearchAnnouncements({ canvas, userEvent }: Parameter
   await announcementUntil(() => unchangedChannel(root, region, 'The launch outcome is unknown. The original question and request identity are preserved.'));
   await userEvent.click(await canvas.findByRole('button', { name: 'Reconcile this question' }));
   await announcementUntil(() => unchangedChannel(root, region, 'The engine finished. Review its result.'));
+  // Terminal visual readiness: the engine-finished announcement settled on the retained channel.
+  markVisualReady(document.querySelector<HTMLElement>('.er-shell'));
 }

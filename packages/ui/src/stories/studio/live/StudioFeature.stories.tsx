@@ -153,6 +153,11 @@ export const ListFailureWithSelected: Story = {
     const canvas = within(canvasElement);
     await expect(canvas.getByText(STUDIO_COPY.en.error, { exact: true })).toBeVisible();
     await expect(canvas.getByRole('heading', { name: PAGE.title })).toBeVisible();
+    // Terminal visual readiness: the list failure is showing and the independently verified selected proposal is
+    // still visible. The marker is published after these assertions, so a failing play never looks ready. It lands on
+    // the `.eliot-token-story` decorator root, which is the presentation this standalone feature actually owns;
+    // there is no workspace Shell here and none is faked.
+    canvasElement.closest('.eliot-token-story')?.setAttribute('data-play-ready', 'ready');
   },
 };
 
@@ -168,6 +173,9 @@ export const BodyLoading: Story = {
     await expect(canvas.getByText('Reading proposal text.', { exact: true })).toBeVisible();
     await expect(canvas.queryByText(STUDIO_COPY.en.body_unavailable, { exact: true })).not.toBeInTheDocument();
     await expect(canvas.queryByRole('button', { name: STUDIO_COPY.en.publish })).not.toBeInTheDocument();
+    // Terminal visual readiness: the body read is in flight, the proposal is still visible, and no publication
+    // control exists yet. Same standalone decorator root as the list-failure story; no Shell is invented.
+    canvasElement.closest('.eliot-token-story')?.setAttribute('data-play-ready', 'ready');
   },
 };
 

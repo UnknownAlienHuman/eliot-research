@@ -1,3 +1,8 @@
+/** Publish this journey's declared terminal readiness on the Shell that renders the observed presentation. */
+function markVisualReady(shell: HTMLElement | null | undefined): void {
+  if (!shell) throw new Error('Terminal visual readiness requires the rendered workspace Shell');
+  shell.setAttribute('data-play-ready', 'ready');
+}
 import type { playResearchJourney } from './ResearchPreview';
 
 /** Preferences change presentation only; route navigation keeps their state and restores route focus. */
@@ -37,6 +42,9 @@ export async function playMaterialPreferences({ canvas, userEvent }: Parameters<
   const heading = await canvas.findByRole('heading', { name: 'Студия', exact: true });
   if (preferences.open || document.activeElement !== heading) throw new Error('Navigation must close preferences and focus the new destination');
   if (shell.lang !== 'ru' || shell.dataset.theme !== 'dark') throw new Error('Navigation discarded presentation preferences');
+  // Terminal visual readiness: preferences applied, dark theme retained, Studio focused. This is the terminal
+  // assertion, so the readiness marker is published after it and only if it holds.
+  markVisualReady(shell);
 }
 
 /** Actual workspace/client/query path with synthetic HTTP; checks explicit scope and report focus. */
@@ -68,4 +76,6 @@ export async function playMaterialReading({ canvas, userEvent }: Parameters<type
   await userEvent.click(await canvas.findByRole('button', { name: 'Close report', exact: true }));
   const reports = await canvas.findByRole('heading', { name: 'Saved reports', exact: true });
   if (document.activeElement !== reports) throw new Error('Studio report close did not return to its library');
+  // Terminal visual readiness: the report was opened and closed, with focus returning to the library.
+  markVisualReady(document.querySelector<HTMLElement>('.er-shell'));
 }

@@ -1,3 +1,8 @@
+/** Publish this journey's declared terminal readiness on the Shell that renders the observed presentation. */
+function markVisualReady(shell: HTMLElement | null | undefined): void {
+  if (!shell) throw new Error('Terminal visual readiness requires the rendered workspace Shell');
+  shell.setAttribute('data-play-ready', 'ready');
+}
 import { useEffect, useState } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
@@ -432,4 +437,6 @@ export async function playConnectionAnnouncements({ canvas, userEvent }: PlayCon
   await announcementUntil(() => unchangedChannel(root, region, failure));
   assert(audit.providers === before.providers && audit.grants === before.grants && audit.models === before.models && audit.readiness === before.readiness, 'Diagnostics refreshed unrelated queries');
   noRawMaterial(root); readOnlyAudit(root);
+  // Terminal visual readiness: the diagnostics read settled and every audit still observes reads only.
+  markVisualReady(root.querySelector<HTMLElement>('.er-shell'));
 }

@@ -1,3 +1,8 @@
+/** Publish this journey's declared terminal readiness on the Shell that renders the observed presentation. */
+function markVisualReady(shell: HTMLElement | null | undefined): void {
+  if (!shell) throw new Error('Terminal visual readiness requires the rendered workspace Shell');
+  shell.setAttribute('data-play-ready', 'ready');
+}
 import { useEffect, useState } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
@@ -134,6 +139,8 @@ export const playStudioJourney = async ({ canvas, userEvent }: {
   await userEvent.click(await canvas.findByRole('button', { name: 'Check the same action' }));
   await canvas.findByText('Published', { selector: 'dd' });
   if (canvas.queryByRole('button', { name: 'Publish page' }) || canvas.queryByRole('button', { name: 'Confirm publication' })) throw new Error('Canonical published readback exposed another publication');
+  // Terminal visual readiness: publication confirmed, readback canonical, no further publication control.
+  markVisualReady(document.querySelector<HTMLElement>('.er-shell'));
 };
 
 /** Wiki success cannot hide a report-read failure; retry performs only the requested read. */
@@ -200,4 +207,6 @@ export async function playStudioAnnouncements(test: Parameters<typeof playStudio
   environment.privacy.close();
   await announcementUntil(() => !region.isConnected && environment.client.getQueryCache().getAll().every(query => query.state.data === undefined), () => JSON.stringify({ connected: region.isConnected, phase: environment.privacy.getSnapshot().phase, cache: environment.client.getQueryCache().getAll().map(query => ({ key: query.queryKey, hasData: query.state.data !== undefined })) }));
   if (root.querySelector('[aria-live], [role="status"], [role="alert"]')) throw new Error('Privacy retained the Studio operation region');
+  // Terminal visual readiness: privacy closed the live region and released the protected query cache.
+  markVisualReady(root.querySelector<HTMLElement>('.er-shell'));
 }

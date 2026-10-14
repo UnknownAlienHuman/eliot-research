@@ -1,3 +1,9 @@
+/** Publish this journey's declared terminal readiness on the Shell that renders the observed presentation. */
+function markVisualReady(shell: HTMLElement | null | undefined): void {
+  if (!shell) throw new Error('Terminal visual readiness requires the rendered workspace Shell');
+  shell.setAttribute('data-play-ready', 'ready');
+}
+
 import { paneAnnouncement, announcementUntil, unchangedChannel } from './announcementAssertions';
 import { playMaterialPreferences, playMaterialReading } from './MaterialReviewPreview';
 import { IntegrationRepairsPreview, playIntegrationRepairs, playReplacedSelection } from './IntegrationRepairsPreview';
@@ -204,6 +210,9 @@ export const LiveSourcesJourney = {
     await userEvent.click(canvas.getByRole("button", { name: "Back to sources" }));
     if (canvas.queryByRole("dialog")) throw new Error("Back did not close the source document");
     if (read !== document.activeElement) throw new Error("Back did not restore the reader opener");
+    // Terminal visual readiness: the reader opened, its verified text reached the dialog, and Back restored the
+    // opener. The marker is published only after these terminal assertions, so a failing journey never looks ready.
+    markVisualReady(read.closest<HTMLElement>(".er-shell"));
   },
 };
 

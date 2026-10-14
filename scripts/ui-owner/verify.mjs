@@ -16,6 +16,17 @@ const ROOT = resolve(import.meta.dirname, "../..");
 const uiRequire = createRequire(resolve(ROOT, "packages/ui/package.json"));
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
+import {
+  CANONICAL_STATES,
+  TERMINAL_READY_MARKERS,
+  DETERMINISM_FIELDS,
+  requireDistinctSameShaBaseline,
+  requireTerminalReadyMarker,
+  requireCanonicalStates,
+  compareDeterministicObservations
+} from "./visual-determinism.mjs";
+export * from "./visual-determinism.mjs";
+
 /** A UI target must be plain HTTP on loopback, with no credentials, query or hash. */
 export function requireLocalBaseUrl(input) {
   if (typeof input !== "string" || input.trim() === "") {
@@ -78,7 +89,7 @@ export function rejectBaselineAcceptance(options) {
 /** Only known switches are allowed; a misspelled safety flag cannot be ignored. */
 export function parseOptions(args) {
   const options = {};
-  const allowed = new Set(["base-url", "scenario", "story", "output", "baseline", "browser", "browser-version"]);
+  const allowed = new Set(["base-url", "scenario", "story", "output", "baseline", "browser", "browser-version", "run-attempt"]);
   for (let index = 0; index < args.length; index += 2) {
     const name = args[index];
     if (name?.includes("accept") || name?.includes("update-snapshot")) throw new Error("Baseline auto-acceptance is forbidden");
@@ -195,10 +206,21 @@ async function runBrowser(command, options) {
   const inputs = await sourceInputs();
   const results = [];
   const expectedBrowser = requireBrowserVersion(options);
+  const runAttempt = Number.isInteger(Number(options["run-attempt"])) && Number(options["run-attempt"]) > 0 ? Number(options["run-attempt"]) : 1;
   try {
     if (browser.version() !== expectedBrowser) throw new Error(`Browser version drift: ${browser.version()} expected ${expectedBrowser}`);
     for (const width of [1440, 1024, 768, 390, 320]) {
       for (const story of stories) {
+        const declaredMarker = TERMINAL_READY_MARKERS.get(story);
+        const canonical = CANONICAL_STATES.get(story);
+        // A declared terminal composition and its declared readiness travel together. A story that declares one
+        // without the other, or declares a marker the source never emits, is a harness/source defect and must fail
+        // closed rather than falling back to the pre-journey root marker or a clock.
+        if ((canonical === undefined) !== (declaredMarker === undefined)) {
+          throw new Error(`Declared canonical state and terminal marker disagree for ${story}`);
+        }
+        const readyMarker = declaredMarker === undefined ? null : requireTerminalReadyMarker(declaredMarker);
+        const canonicalStates = canonical === undefined ? null : requireCanonicalStates(story, canonical);
         const context = await browser.newContext({ viewport: { width, height: width < 768 ? 844 : 900 }, deviceScaleFactor: 1, reducedMotion: "reduce", colorScheme: story.includes("dark") ? "dark" : "light" });
         const page = await context.newPage();
         const errors = [], network = [];
@@ -210,14 +232,82 @@ async function runBrowser(command, options) {
         await page.goto(new URL(`/iframe.html?id=${encodeURIComponent(story)}&viewMode=story`, base).href);
         await page.locator("#storybook-root > *").first().waitFor();
         await page.evaluate(() => document.fonts.ready);
+        // Declared readiness only: the story's own play function publishes its terminal marker after its terminal
+        // assertions settle, and the harness waits for that marker before observing theme, locale, layout or pixels.
+        // A missing, late, or wrong-root marker is a failure. No clock, frame allowance or network-idle check is
+        // substituted for declared readiness, because those are not evidence that the journey finished.
+        let readiness = "NO_PLAY_DECLARED";
+        if (readyMarker !== null) {
+          readyMarker.split(" ").length === 1 || (() => { throw new Error("Ready marker must be a single attribute"); })();
+          await page.waitForSelector(`[${readyMarker}="ready"]`, { state: "attached", timeout: 30000 });
+          readiness = await page.evaluate(marker => {
+            const owner = document.querySelector(`.er-shell[${marker}="ready"]`) ?? document.querySelector(`[${marker}="ready"]`);
+            if (!owner) return "MISSING";
+            // The marker must sit on the element that carries the observed presentation, so a story wrapper or an
+            // unrelated ancestor cannot satisfy readiness for a frame it does not own. A workspace journey renders a
+            // Shell with `lang` and `data-theme`; a standalone feature story renders its own root, which carries its
+            // declared locale on the section it owns and deliberately no theme. Neither may fake the other's seed.
+            const presentation = owner.closest(".er-shell");
+            if (presentation !== null) {
+              if (owner !== presentation) return "MARKER_FOREIGN_ROOT";
+              return presentation.getAttribute("lang") && presentation.getAttribute("data-theme") ? "MARKER_TERMINAL" : "MARKER_INCOMPLETE";
+            }
+            const standalone = owner.closest("[lang]");
+            if (standalone === null) return "MARKER_INCOMPLETE";
+            // The marker must be the standalone root itself, not a wrapper Storybook inserted above it.
+            return owner.matches(".eliot-token-story") ? "MARKER_TERMINAL" : "MARKER_FOREIGN_ROOT";
+          }, readyMarker);
+          if (readiness !== "MARKER_TERMINAL") throw new Error(`Declared readiness did not settle for ${story} at ${width}: ${readiness}`);
+        }
         await page.addScriptTag({ path: uiRequire.resolve("axe-core/axe.min.js") });
         const violations = await page.evaluate(async () => (await axe.run(document.getElementById("storybook-root"))).violations.map(item => ({ id: item.id, impact: item.impact, targets: item.nodes.map(node => node.target) })));
         const overflow = await page.evaluate(() => document.documentElement.scrollWidth > innerWidth);
-        const theme = await page.evaluate(() => document.querySelector("[data-theme]")?.getAttribute("data-theme"));
-        const layout = { overflow, theme, ...await page.evaluate(observeShellLayout) };
-        // Capture the initial canonical composition; journey screenshots are separate evidence.
+        // Reset and assert the declared seed identity: theme, locale and route must come from the story's own
+        // declaration, so an asynchronous change in one story cannot leak into another observation.
+        const seed = await page.evaluate(() => {
+          const shell = document.querySelector(".er-shell");
+          // A standalone feature story renders no Shell, so its presentation root is the element that owns the
+          // render. The locale is read from wherever the story actually declares it, never from an invented Shell.
+          const standalone = shell === null ? document.querySelector(".eliot-token-story [lang]") : null;
+          const root = document.getElementById("storybook-root");
+          return {
+            theme: shell?.getAttribute("data-theme") ?? null,
+            locale: (shell ?? standalone)?.getAttribute("lang") ?? null,
+            destination: shell?.getAttribute("data-destination") ?? null,
+            rootChildren: root ? root.childElementCount : 0,
+            rootFirstRole: root?.firstElementChild ? (root.firstElementChild.getAttribute("role") ?? root.firstElementChild.tagName.toLowerCase()) : null,
+          };
+        });
+        if (seed.rootFirstRole === null) throw new Error(`Content seed missing for ${story} at ${width}`);
+        // The observed presentation must be the one the story declares. An earlier `theme` assertion compared
+        // against a substring of the story id, which the journeys that intentionally end dark could never
+        // satisfy. The declared canonical state is the authority for what the terminal frame must show.
+        if (canonicalStates !== null) {
+          const declaredTheme = canonicalStates.theme, declaredDestination = canonicalStates.destination;
+          const declaredLocale = canonicalStates.locale;
+          const locales = Array.isArray(declaredLocale) ? declaredLocale : [declaredLocale];
+          // `unknown` is declared only where the presentation root carries no such seed, so that field is skipped.
+          // Skipping is explicit and local: the locale and the terminal marker are still mandatory, and a theme
+          // the story does declare is still asserted.
+          if (declaredTheme !== "unknown" && seed.theme !== declaredTheme) {
+            throw new Error(`Canonical theme seed mismatch for ${story} at ${width}: observed ${seed.theme}, declared ${declaredTheme}`);
+          }
+          if (!locales.includes(seed.locale)) {
+            throw new Error(`Canonical locale seed mismatch for ${story} at ${width}: observed ${seed.locale}, declared ${locales.join("/")}`);
+          }
+          if (declaredDestination !== "unknown" && seed.destination !== declaredDestination) {
+            throw new Error(`Canonical destination seed mismatch for ${story} at ${width}: observed ${seed.destination}, declared ${declaredDestination}`);
+          }
+        }
+        const layout = { overflow, theme: seed.theme, ...await page.evaluate(observeShellLayout) };
+        // A standalone feature story carries no `data-theme`, so its layout observation reports no theme. Record
+        // the declared `unknown` rather than a null that reads like an unread observation.
+        if (layout.theme === null && canonicalStates?.theme === "unknown") layout.theme = "unknown";
+        if ((layout.locale ?? null) !== null && layout.locale !== seed.locale) throw new Error(`Locale observation disagreed with the seed for ${story} at ${width}`);
+        // Capture the declared canonical composition, which is the terminal one for a declared journey.
         const screenshot = `${width}-${story}.png`;
         await page.screenshot({ path: resolve(output, screenshot), animations: "disabled" });
+        const screenshot_sha256 = sha256(await readFile(resolve(output, screenshot)));
         let focus = "NOT_APPLICABLE";
         if (story.startsWith("direction-workspace--") && !story.endsWith("loading")) {
           const citation = page.getByRole("button", { name: /^(?:Open citation 1|Открыть цитату 1)$/u });
@@ -230,26 +320,60 @@ async function runBrowser(command, options) {
           await page.waitForFunction(() => document.activeElement?.id === "direction-sources");
           focus = "PASS citation-open/Escape/return/source-context";
         }
-        results.push({ width, story, ...layout, focus, violations, errors, network, screenshot, screenshot_sha256: sha256(await readFile(resolve(output, screenshot))) });
+        // `state` carries the declared canonical presentation the frame shows, and the same key is declared in
+        // DETERMINISM_FIELDS, so the determinism comparison cannot silently skip a changed presentation.
+        results.push({ width, story, state: canonicalStates === null ? "undeclared" : canonicalStates.state, run_attempt: runAttempt,
+          // A seed the declared state marks `unknown` is recorded as `unknown`, never as a null observation, so a
+          // receipt cannot imply the harness read a theme or destination the presentation root does not carry.
+          locale: seed.locale, ...layout, focus, violations, errors,
+          destination: seed.destination ?? (canonicalStates?.destination === "unknown" ? "unknown" : null),
+          network, screenshot, screenshot_sha256, canonical_state: canonicalStates === null ? null : canonicalStates,
+          declared_theme: canonicalStates === null ? null : canonicalStates.theme,
+          declared_locale: canonicalStates === null ? null : canonicalStates.locale,
+          declared_destination: canonicalStates === null ? null : canonicalStates.destination,
+          marked_terminal: canonicalStates !== null });
         await context.close();
       }
     }
     const after = await sourceInputs();
-    const receipt = { protocol: "eliotr.ui-browser-review.v1", command, scenario, source_commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim(), inputs, inputs_stable: JSON.stringify(inputs) === JSON.stringify(after), browser: browser.version(), expected_browser: expectedBrowser, playwright: "1.63.0", storybook: "10.6.1", os: [os.platform(), os.release()], results, baseline: "PENDING_NAMED_REVIEW", csp: "Storybook development only; isolated native CSP receipt separate", pending: ["native screenreader", "actual native200percent zoom", "full product CSP and performance", "native/staging/live/release"] };
+    const receipt = { protocol: "eliotr.ui-browser-review.v2", command, scenario, source_commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim(), run_attempt: runAttempt, run_attempts_required: 2, inputs, inputs_stable: JSON.stringify(inputs) === JSON.stringify(after), browser: browser.version(), expected_browser: expectedBrowser, playwright: "1.63.0", storybook: "10.6.1", os: [os.platform(), os.release()], determinism: { protocol: "eliotr.ui-determinism.v1", fields: DETERMINISM_FIELDS, tolerance: "NONE", auto_accept: "FORBIDDEN" }, results, baseline: "PENDING_NAMED_REVIEW", csp: "Storybook development only; isolated native CSP receipt separate", pending: ["native screenreader", "actual native200percent zoom", "full product CSP and performance", "native/staging/live/release", "second-run same-SHA determinism comparison"] };
     if (options.baseline) {
       const baseline = JSON.parse(await readFile(resolve(ROOT, options.baseline), "utf8"));
       if (baseline.browser !== receipt.browser || baseline.scenario !== scenario) throw new Error("Baseline environment/scenario mismatch");
-      const changes = results.filter(row => baseline.results.find(previous => previous.width === row.width && previous.story === row.story)?.screenshot_sha256 !== row.screenshot_sha256);
-      receipt.baseline = changes.length ? "CHANGED_REVIEW_REQUIRED" : "MATCH";
-      receipt.changed_baselines = changes.map(row => ({ width: row.width, story: row.story }));
+      const sameSource = baseline.source_commit === receipt.source_commit;
+      // Same SHA is a determinism claim about two runs of one build, so the two receipts must be genuinely
+      // different capture attempts. A self-baseline compares a run against itself and proves nothing; two
+      // attempts that share an id are the same attempt reported twice. Both fail closed here, before any
+      // observation is compared.
+      if (sameSource) {
+      // The exported guard is the single implementation the CLI and its regressions both exercise.
+      receipt.determinism.attempt_binding = requireDistinctSameShaBaseline(baseline, receipt, runAttempt);
+      }
+      // Same SHA: two runs of one build are a determinism claim, so every compared row must declare every
+      // determinism field and a missing field fails closed rather than reading as two equal undefined values.
+      // Older SHA: a reviewed baseline against an earlier accepted source is an ordinary regression review, so
+      // only declared fields are compared and a difference is what that review is for.
+      const comparison = compareDeterministicObservations(baseline.results, results, { requireFields: sameSource });
+      const changes = comparison.changed;
+      receipt.baseline = comparison.deterministic ? "MATCH" : "CHANGED_REVIEW_REQUIRED";
+      receipt.changed_baselines = changes;
+      receipt.determinism.comparison = comparison;
+      receipt.determinism.mode = sameSource ? "SAME_SHA_TWO_RUNS" : "REVIEWED_BASELINE_OTHER_SHA";
+      receipt.determinism.require_fields = sameSource;
+      receipt.determinism.baseline_source_commit = baseline.source_commit;
+      receipt.determinism.input_manifest_compared = sameSource
+        ? "both run_attempt ids are distinct, both inputs_stable are true, and both source-input manifests are equal"
+        : "declared observation fields compared; source-input manifest not compared across declared sources";
+      receipt.determinism.input_manifest_equality = sameSource
+        ? { checked: true, baseline_entries: baseline.inputs.length, current_entries: receipt.inputs.length, equal: JSON.stringify(baseline.inputs) === JSON.stringify(receipt.inputs) }
+        : { checked: false, reason: "reviewed baseline against another declared source; observation fields decide" };
     } else if (command === "visual") throw new Error("Visual comparison requires an explicitly reviewed --baseline receipt");
     await writeFile(resolve(output, "review.json"), JSON.stringify(receipt, null, 2) + "\n");
     const failed = results.filter(row => row.overflow || row.violations.length || row.errors.length || row.network.length || hasScrollOwnerFailure(row));
     if (failed.length || !receipt.inputs_stable || receipt.baseline === "CHANGED_REVIEW_REQUIRED") throw new Error(`UI review failed: ${failed.length} cases; receipt ${relative(ROOT, output)}/review.json`);
-    return { cases: results.length, receipt: relative(ROOT, output).replaceAll("\\", "/") + "/review.json", baseline: receipt.baseline };
+    return { cases: results.length, run_attempt: runAttempt, receipt: relative(ROOT, output).replaceAll("\\", "/") + "/review.json", baseline: receipt.baseline };
   } finally { await browser.close(); }
 }
-
 /** Qualify real native Escape/remount behavior in an isolated production bundle with HTTP CSP. */
 async function runCsp(options) {
   const output = resolve(ROOT, ".eliotr-state/ui-owner/native-csp");
