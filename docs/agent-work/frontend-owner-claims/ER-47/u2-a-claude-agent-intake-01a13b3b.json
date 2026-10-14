@@ -25,7 +25,12 @@
       "approval_ref": "tests/ui-owner/receipts/u1-d/native-foundation.json"
     }
   ],
-  "state": "ACTIVE",
-  "evidence_refs": [],
-  "blocker_refs": []
+  "state": "HANDED_OFF",
+  "evidence_refs": [
+    "Prior reference named native foundation rather than the accepted U1-D direction. Corrected by a new prospective claim before the source commit; no historical claim fields edited."
+  ],
+  "blocker_refs": [],
+  "handoff_reason": "SUPERSEDED",
+  "handoff_receipt_ref": "private:continue-20261014-01a13b3b/UI-DIRECTION-REF-CORRECTION.json",
+  "takeover_authorization_ref": "user:01a13b3b-dcbf-7370-891b-93824e8f7f7d:resume-full-project-20261014"
 }
