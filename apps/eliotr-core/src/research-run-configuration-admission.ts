@@ -70,6 +70,9 @@ function requireSingleOwnedProject(): never {
 
 function projectSelectionPort(input: ResearchRunConfigurationAdmissionInput, env: Env) {
   return async (projectId: string): Promise<SelectedResearchProjectConfiguration | null> => {
+    // The explicit v3 selector and the scope-derived v1/v2 project both re-enter
+    // this port, so principal, credential generation, the named project and the
+    // current-scope fence stay identical for every admitted configuration.
     const service = createResearchProjectModelConfigurationServiceFromEnv(env, async (actor, authorizedProjectId) => {
       if (actor.principal_ref !== input.context.principal_ref ||
           actor.credential_generation !== input.context.credential_generation || authorizedProjectId !== projectId) {
@@ -100,6 +103,7 @@ export async function resolveResearchRunAdmissionConfiguration(
     scope_expression: input.scope_expression,
     new_run: input.new_run,
     ...(input.configuration_required === undefined ? {} : { configuration_required: input.configuration_required }),
+    ...(input.selected_project_id === undefined ? {} : { selected_project_id: input.selected_project_id }),
   };
   const ports: ResearchRunConfigurationAdmissionDependenciesV1<ResolvedResearchRunConfiguration> = {
     capture: (capture: CaptureResearchRunConfigurationInput) => dependencies.capture(env, capture),
