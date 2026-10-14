@@ -64,7 +64,7 @@ export function InboxPanel({ locale, apis, privacy, context }: {
         const proposal = proposalByItemId.get(itemId), snapshot = proposals.data;
         if (!proposal || !snapshot || proposal.state !== "PROPOSED" || !privacy.isCurrent(context) ||
           client.getQueryData(proposalsQuery.queryKey) !== snapshot || !snapshot.items.includes(proposal)) return;
-        const selection = createInboxStudioSelection(itemId, proposal, context);
+        const selection = createInboxStudioSelection(proposal, context);
         if (selection) void navigate("/studio", { state: selection, preventScrollReset: true });
       }} /> : null}
   </>;

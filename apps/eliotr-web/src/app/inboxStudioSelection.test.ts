@@ -28,28 +28,27 @@ function proposalList(items: readonly WikiProposalListView["items"][number][]): 
   return { protocol: "eliotr.wiki-proposals.v1", items, has_more: false, deployment_generation: context.deploymentGeneration };
 }
 
-function request(itemId: string, value: WikiProposalListView["items"][number], owner = context): InboxStudioSelection {
-  const selection = createInboxStudioSelection(itemId, value, owner);
+function request(value: WikiProposalListView["items"][number], owner = context): InboxStudioSelection {
+  const selection = createInboxStudioSelection(value, owner);
   if (!selection) throw new Error("Test proposal must create a valid Inbox selection");
   return selection;
 }
 
 describe("Inbox to Studio proposal selection", () => {
-  it("resolves the clicked UI id to the exact proposal ref without encoding the ref in the id", () => {
-    const selected = proposal("wiki:opaque:42", "Selected draft");
-    const other = proposal("wiki:opaque", "Other draft");
-    const itemId = inboxProposalItemId(0);
-    const routeState = request(itemId, selected);
+  it("selects the exact ref when different proposals share a title and the list order changes", () => {
+    const first = proposal("wiki:opaque:first", "Shared title");
+    const second = proposal("wiki:opaque:second", "Shared title");
+    const routeState = request(second);
 
-    expect(itemId).toBe("wiki-proposal-0");
-    expect(itemId).not.toContain(selected.proposal_ref.id);
-    expect(resolveInboxStudioSelection(routeState, context, proposalList([selected, other]))?.proposalRef)
-      .toEqual(selected.proposal_ref);
+    expect(inboxProposalItemId(0)).not.toContain(first.proposal_ref.id);
+    expect(inboxProposalItemId(1)).not.toContain(second.proposal_ref.id);
+    expect(resolveInboxStudioSelection(routeState, context, proposalList([second, first]))?.proposalRef)
+      .toEqual(second.proposal_ref);
   });
 
   it("rejects route state from another owner or cache session", () => {
     const selected = proposal("proposal-a", "Draft A");
-    const routeState = request(inboxProposalItemId(0), selected);
+    const routeState = request(selected);
     const rows = proposalList([selected]);
 
     expect(resolveInboxStudioSelection(routeState, { ...context, principal: "owner-b" }, rows)).toBeUndefined();
@@ -58,39 +57,34 @@ describe("Inbox to Studio proposal selection", () => {
 
   it("leaves pending and unknown Studio intents untouched by refusing route selection", () => {
     const selected = proposal("proposal-a", "Draft A");
-    const routeState = request(inboxProposalItemId(0), selected);
+    const routeState = request(selected);
     const rows = proposalList([selected]);
 
     expect(resolveInboxStudioSelection(routeState, context, rows, { phase: "pending" })).toBeUndefined();
     expect(resolveInboxStudioSelection(routeState, context, rows, { phase: "unknown" })).toBeUndefined();
   });
 
-  it("rejects an item id, proposal ref or title that no longer identifies the same row", () => {
+  it("rejects mismatched title/ref and obsolete presentation cursor fields", () => {
     const selected = proposal("proposal-a", "Draft A");
     const other = proposal("proposal-b", "Draft B");
-    const routeState = request(inboxProposalItemId(0), selected);
+    const routeState = request(selected);
     const rows = proposalList([selected, other]);
 
-    expect(resolveInboxStudioSelection({ ...routeState, itemId: inboxProposalItemId(1) }, context, rows)).toBeUndefined();
     expect(resolveInboxStudioSelection({ ...routeState, proposalRef: other.proposal_ref }, context, rows)).toBeUndefined();
     expect(resolveInboxStudioSelection({ ...routeState, title: other.title }, context, rows)).toBeUndefined();
+    expect(resolveInboxStudioSelection({ ...routeState, itemId: inboxProposalItemId(1) }, context, rows)).toBeUndefined();
   });
 
-  it("rejects duplicate proposal refs and colliding Inbox titles", () => {
+  it("rejects duplicate proposal refs even when their titles differ", () => {
     const selected = proposal("proposal-a", "Draft A");
     const duplicateRef = { ...selected, title: "Conflicting title" };
-    const duplicateTitle = proposal("proposal-b", "Draft A");
 
-    expect(resolveInboxStudioSelection(request(inboxProposalItemId(0), selected), context,
-      proposalList([selected, duplicateRef]))).toBeUndefined();
-    expect(resolveInboxStudioSelection(request(inboxProposalItemId(0), selected), context,
-      proposalList([selected, duplicateTitle]))).toBeUndefined();
+    expect(resolveInboxStudioSelection(request(selected), context, proposalList([selected, duplicateRef]))).toBeUndefined();
   });
 
   it("requires strict readback to preserve the requested ref, title, state and deployment", () => {
     const selected = proposal("proposal-a", "Draft A");
-    const selection = resolveInboxStudioSelection(request(inboxProposalItemId(0), selected), context,
-      proposalList([selected]));
+    const selection = resolveInboxStudioSelection(request(selected), context, proposalList([selected]));
     if (!selection) throw new Error("Test proposal must resolve from its current Inbox row");
     const readback = {
       proposal_ref: selected.proposal_ref, page: { title: selected.title }, state: "PROPOSED",
