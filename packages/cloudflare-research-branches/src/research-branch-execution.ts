@@ -34,7 +34,7 @@ import {
   type WorkflowStageHandler,
 } from "@eliotr/cloudflare-workflows";
 import {
-  canonicalBytes,
+  canonicalBytes, assertBranchQueryResultIdentity,
   decodeResearchBranchAnalysisCheckpoint,
   decodeResearchBranchAnalysisCheckpointV2,
   decodeResearchBranchReconciliationCheckpoint,
@@ -141,7 +141,7 @@ async function readExtractCheckpointV2(
       required: true,
       budgets: queryPlanBudgets,
     });
-    const result = BranchQueryResultSchema.parse(await executeQueryPlan({ request, principal, plan }));
+    const result = await assertBranchQueryResultIdentity(BranchQueryResultSchema.parse(await executeQueryPlan({ request, principal, plan })));
     if (!branchQueryResultMatchesPlan(plan, result) ||
         !sameRef(result.scope_snapshot_ref, context.protocol.scope_snapshot_ref) ||
         result.scope_snapshot_digest !== dependencies.navigation.scope.digest) {

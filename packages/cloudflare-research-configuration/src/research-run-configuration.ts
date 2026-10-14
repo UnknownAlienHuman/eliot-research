@@ -18,8 +18,22 @@ import { parseResearchRunModelSelections as parseModelSelections,
 import { parseResearchNativeAcquisitionSelection,
   parseResearchNativeAcquisitionSelectionJson,
   type ResearchNativeAcquisitionSelection } from "./research-native-acquisition-selection.js";
+import {
+  captureResearchBranchQueryBudgetSelection,
+  parseResearchBranchQueryBudgetSelection,
+  branchQueryBudgetSelectionMatchesRun,
+  RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON_KEY,
+  type ResearchBranchQueryBudgetSelection,
+  type SelectedResearchProjectConfigurationProvenance,
+} from "./research-branch-query-budget-selection.js";
+
+export {
+  RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON_KEY,
+  RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_PROTOCOL,
+} from "./research-branch-query-budget-selection.js";
 
 export type { ResearchRunModelSelection } from "./research-run-model-selection-codec.js";
+export type { ResearchBranchQueryBudgetSelection } from "./research-branch-query-budget-selection.js";
 
 export type ResearchRunConfigurationModeWithLegacy = "legacy-installed" | ResearchRunConfigurationMode;
 
@@ -44,6 +58,7 @@ export interface ResolvedResearchRunConfiguration<RuntimeEnvironment = unknown> 
   readonly project_owner_ref: string | null;
   readonly project_id: string | null;
   readonly native_acquisition_selection?: ResearchNativeAcquisitionSelection;
+  readonly branch_query_budget_selection?: ResearchBranchQueryBudgetSelection;
 }
 
 export interface CaptureResearchRunConfigurationInput extends ResearchRunConfigurationAssociation {
@@ -62,6 +77,7 @@ export interface ResearchRunConfigurationRuntimeSnapshot {
   readonly spend_policy: { readonly config_json: string; readonly provenance_ref: string };
   readonly report: { readonly config_json: string; readonly provenance_ref: string };
   readonly native_acquisition_selection?: ResearchNativeAcquisitionSelection;
+  readonly branch_query_budget_selection?: ResearchBranchQueryBudgetSelection;
 }
 
 /** Core supplies runtime-bound environment, semantic-source and auth/error adapters explicitly. */
@@ -99,6 +115,7 @@ interface SnapshotEnvelope {
   readonly spend_policy: { readonly config_json: string; readonly provenance_ref: string };
   readonly report: { readonly config_json: string; readonly provenance_ref: string };
   readonly native_acquisition_selection?: ResearchNativeAcquisitionSelection;
+  readonly branch_query_budget_selection?: ResearchBranchQueryBudgetSelection;
 }
 
 interface WorkflowConfigurationBindingRow {
@@ -116,6 +133,10 @@ const SHA256_RE = /^[a-f0-9]{64}$/u;
 const ROOT_KEYS_LEGACY = new Set(["protocol", "mode", "association", "project_configuration", "model_selections",
   "semantic", "model_profile", "spend_policy", "report"]);
 const ROOT_KEYS_WITH_ACQUISITION = new Set([...ROOT_KEYS_LEGACY, "native_acquisition_selection"]);
+const ROOT_KEYS_WITH_BUDGET_SELECTION = new Set([...ROOT_KEYS_LEGACY, "branch_query_budget_selection"]);
+const ROOT_KEYS_WITH_ACQUISITION_AND_BUDGET_SELECTION = new Set([
+  ...ROOT_KEYS_LEGACY, "native_acquisition_selection", "branch_query_budget_selection",
+]);
 const PROJECT_CONFIGURATION_KEYS = new Set(["protocol", "semantic_revision", "model_selections", "vars"]);
 const PROJECT_RUNTIME_KEYS_LEGACY = new Set([
   "ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON",
@@ -128,6 +149,14 @@ const PROJECT_RUNTIME_KEYS_LEGACY = new Set([
 ]);
 const NATIVE_ACQUISITION_SELECTION_VAR = "ELIOTR_RESEARCH_NATIVE_ACQUISITION_SELECTION_JSON";
 const PROJECT_RUNTIME_KEYS_WITH_ACQUISITION = new Set([...PROJECT_RUNTIME_KEYS_LEGACY, NATIVE_ACQUISITION_SELECTION_VAR]);
+const PROJECT_RUNTIME_KEYS_WITH_BUDGET_PROFILE = new Set([
+  ...PROJECT_RUNTIME_KEYS_LEGACY, RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON_KEY,
+]);
+const PROJECT_RUNTIME_KEYS_WITH_ACQUISITION_AND_BUDGET_PROFILE = new Set([
+  ...PROJECT_RUNTIME_KEYS_LEGACY,
+  NATIVE_ACQUISITION_SELECTION_VAR,
+  RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON_KEY,
+]);
 function checkpoint(code: ConstructorParameters<typeof WorkflowCheckpointError>[0]): never {
   throw new WorkflowCheckpointError(code);
 }
@@ -178,7 +207,15 @@ async function parseSnapshotRecord(record: ResearchRunConfigurationRecord): Prom
   catch { checkpoint("WORKFLOW_CONFIGURATION_INVALID"); }
   const root = object(parsed, "run configuration");
   const hasNativeAcquisition = Object.prototype.hasOwnProperty.call(root, "native_acquisition_selection");
-  exactKeys(root, hasNativeAcquisition ? ROOT_KEYS_WITH_ACQUISITION : ROOT_KEYS_LEGACY);
+  const hasBranchQueryBudgetSelection = Object.prototype.hasOwnProperty.call(root, "branch_query_budget_selection");
+  const rootKeys = hasNativeAcquisition && hasBranchQueryBudgetSelection
+    ? ROOT_KEYS_WITH_ACQUISITION_AND_BUDGET_SELECTION
+    : hasNativeAcquisition
+      ? ROOT_KEYS_WITH_ACQUISITION
+      : hasBranchQueryBudgetSelection
+        ? ROOT_KEYS_WITH_BUDGET_SELECTION
+        : ROOT_KEYS_LEGACY;
+  exactKeys(root, rootKeys);
   if (root.protocol !== RESEARCH_RUN_CONFIGURATION_PROTOCOL || root.mode !== record.mode ||
       canonicalJson(root) !== record.configuration_json) checkpoint("WORKFLOW_CONFIGURATION_INVALID");
   const bound = object(root.association, "association");
@@ -225,6 +262,25 @@ async function parseSnapshotRecord(record: ResearchRunConfigurationRecord): Prom
   exactKeys(report, new Set(["config_json", "provenance_ref"]));
   const nativeAcquisitionSelection = hasNativeAcquisition
     ? parseResearchNativeAcquisitionSelection(root.native_acquisition_selection) : undefined;
+  const branchQueryBudgetSelection = hasBranchQueryBudgetSelection
+    ? parseResearchBranchQueryBudgetSelection(root.branch_query_budget_selection) : undefined;
+  if (branchQueryBudgetSelection !== undefined) {
+    const selectedConfiguration: SelectedResearchProjectConfigurationProvenance | null =
+      projectConfiguration?.owner_ref === undefined || projectConfiguration.project_id === undefined
+        ? null
+        : {
+          owner_ref: projectConfiguration.owner_ref,
+          project_id: projectConfiguration.project_id,
+          configuration_ref: projectConfiguration.configuration_ref,
+          configuration_sha256: projectConfiguration.configuration_sha256,
+          selection_revision: projectConfiguration.selection_revision,
+        };
+    if (!branchQueryBudgetSelectionMatchesRun({
+      selection: branchQueryBudgetSelection,
+      owner_ref: record.principal_ref,
+      project_configuration: selectedConfiguration,
+    })) checkpoint("WORKFLOW_CONFIGURATION_INVALID");
+  }
   let spend: unknown;
   try { spend = JSON.parse(requiredJson(spendPolicy.config_json, "spend policy")) as unknown; }
   catch (error) { if (error instanceof WorkflowCheckpointError) throw error; checkpoint("WORKFLOW_CONFIGURATION_INVALID"); }
@@ -250,6 +306,7 @@ async function parseSnapshotRecord(record: ResearchRunConfigurationRecord): Prom
     report: Object.freeze({ config_json: requiredJson(report.config_json, "report configuration"),
       provenance_ref: provenance(report.provenance_ref) }),
     ...(nativeAcquisitionSelection === undefined ? {} : { native_acquisition_selection: nativeAcquisitionSelection }),
+    ...(branchQueryBudgetSelection === undefined ? {} : { branch_query_budget_selection: branchQueryBudgetSelection }),
   });
 }
 
@@ -269,6 +326,9 @@ async function resolved<RuntimeEnvironment>(environment: RuntimeEnvironment,
     project_id: snapshot.project_configuration?.project_id ?? null,
     ...(snapshot.native_acquisition_selection === undefined ? {} : {
       native_acquisition_selection: snapshot.native_acquisition_selection,
+    }),
+    ...(snapshot.branch_query_budget_selection === undefined ? {} : {
+      branch_query_budget_selection: snapshot.branch_query_budget_selection,
     }) });
 }
 
@@ -357,10 +417,11 @@ async function semanticSource(database: D1Database, source: ResearchSemanticConf
     config_sha256: resolvedSemantic.config_sha256 });
 }
 
-function selectedProjectSources(project: SelectedResearchProjectConfiguration): {
+function selectedProjectSources(project: SelectedResearchProjectConfiguration, expectedOwnerRef: string): {
   readonly envelope: Record<string, unknown>;
   readonly vars: Record<string, unknown>;
   readonly native_acquisition_selection?: ResearchNativeAcquisitionSelection;
+  readonly branch_query_budget_selection?: ResearchBranchQueryBudgetSelection;
 } {
   if (typeof project.configuration_json !== "string" || project.configuration_json.length === 0 ||
       typeof project.configuration_ref !== "string" || !ID_RE.test(project.configuration_ref) ||
@@ -374,12 +435,39 @@ function selectedProjectSources(project: SelectedResearchProjectConfiguration): 
   if (envelope.protocol !== "eliotr.research-project-model-configuration.v1") checkpoint("WORKFLOW_CONFIGURATION_INVALID");
   const vars = object(envelope.vars, "project runtime variables");
   const hasNativeAcquisition = Object.prototype.hasOwnProperty.call(vars, NATIVE_ACQUISITION_SELECTION_VAR);
-  exactKeys(vars, hasNativeAcquisition ? PROJECT_RUNTIME_KEYS_WITH_ACQUISITION : PROJECT_RUNTIME_KEYS_LEGACY);
+  const hasBranchQueryBudgetProfile = Object.prototype.hasOwnProperty.call(
+    vars, RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON_KEY,
+  );
+  const runtimeKeys = hasNativeAcquisition && hasBranchQueryBudgetProfile
+    ? PROJECT_RUNTIME_KEYS_WITH_ACQUISITION_AND_BUDGET_PROFILE
+    : hasNativeAcquisition
+      ? PROJECT_RUNTIME_KEYS_WITH_ACQUISITION
+      : hasBranchQueryBudgetProfile
+        ? PROJECT_RUNTIME_KEYS_WITH_BUDGET_PROFILE
+        : PROJECT_RUNTIME_KEYS_LEGACY;
+  exactKeys(vars, runtimeKeys);
   for (const key of PROJECT_RUNTIME_KEYS_LEGACY) sourceString(vars[key], key);
   const nativeAcquisitionSelection = hasNativeAcquisition
     ? parseResearchNativeAcquisitionSelectionJson(vars[NATIVE_ACQUISITION_SELECTION_VAR]) : undefined;
+  let branchQueryBudgetSelection: ResearchBranchQueryBudgetSelection | undefined;
+  if (hasBranchQueryBudgetProfile) {
+    branchQueryBudgetSelection = captureResearchBranchQueryBudgetSelection({
+      profile_json: sourceString(vars[RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON_KEY],
+        RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON_KEY),
+      selected_configuration: {
+        owner_ref: project.owner_ref,
+        project_id: project.project_id,
+        configuration_ref: project.configuration_ref,
+        configuration_sha256: project.configuration_sha256,
+        selection_revision: project.selection_revision,
+      },
+      expected_owner_ref: expectedOwnerRef,
+    });
+  }
   return { envelope, vars, ...(nativeAcquisitionSelection === undefined ? {} : {
     native_acquisition_selection: nativeAcquisitionSelection,
+  }), ...(branchQueryBudgetSelection === undefined ? {} : {
+    branch_query_budget_selection: branchQueryBudgetSelection,
   }) };
 }
 
@@ -403,13 +491,15 @@ async function composeSnapshot<RuntimeEnvironment>(
   let envelope: Record<string, unknown> | undefined;
   let vars: Record<string, unknown> | undefined;
   let nativeAcquisitionSelection: ResearchNativeAcquisitionSelection | undefined;
+  let branchQueryBudgetSelection: ResearchBranchQueryBudgetSelection | undefined;
   let projectConfiguration: SnapshotEnvelope["project_configuration"] = null;
   if (selectedProject !== undefined) {
-    const source = selectedProjectSources(selectedProject);
     await projectConfigurationDigest(selectedProject);
+    const source = selectedProjectSources(selectedProject, actor.principal_ref);
     envelope = source.envelope;
     vars = source.vars;
     nativeAcquisitionSelection = source.native_acquisition_selection;
+    branchQueryBudgetSelection = source.branch_query_budget_selection;
     projectConfiguration = Object.freeze({ configuration_ref: selectedProject.configuration_ref,
       configuration_sha256: selectedProject.configuration_sha256, selection_revision: selectedProject.selection_revision,
       ...(selectedProject.owner_ref === undefined ? {} : { owner_ref: identifier(selectedProject.owner_ref) }),
@@ -474,6 +564,8 @@ async function composeSnapshot<RuntimeEnvironment>(
     report: Object.freeze({ config_json: reportJson, provenance_ref: reportProvenance }),
     ...(nativeAcquisitionSelection === undefined ? {} : {
       native_acquisition_selection: nativeAcquisitionSelection,
+    }), ...(branchQueryBudgetSelection === undefined ? {} : {
+      branch_query_budget_selection: branchQueryBudgetSelection,
     }) });
   return Object.freeze({ mode, configuration_json: canonicalJson(snapshot) });
 }

@@ -4,23 +4,22 @@ import { ResolvedEvidenceSchema } from "./evidence.js";
 import { RetrievalTraceSchema } from "./retrieval.js";
 import { MANAGED_RETRIEVAL_TRACE_PROTOCOL, ManagedRetrievalTraceSchema } from "./retrieval-managed-ranking.js";
 import { ResearchBranchRoleSchema } from "./research-branch-role.js";
+import {
+  BranchQueryBudgetExhaustionReceiptSchema,
+  MAX_BRANCH_QUERY_LEGS,
+  branchQueryHasMaterialBudgetStop,
+  branchQueryBudgetExhaustionMatchesPlan,
+  branchQueryBudgetExhaustionStructureMatchesResult,
+  branchQueryBudgetStopReasonIsValid,
+  type BranchQueryBudgetExhaustionReceipt,
+} from "./research-branch-query-budget.js";
 
-const MAX_QUERY_LEGS = 4;
+const MAX_QUERY_LEGS = MAX_BRANCH_QUERY_LEGS;
 const MAX_QUERY_CHARS = 2_048;
 
-/**
- * A query leg trace is selected by its own protocol field rather than by shape.
- *
- * Historical legs carry the strict legacy RetrievalTraceSchema; a leg produced by the
- * managed semantic provider carries strict ManagedRetrievalTraceSchema with its ranking
- * outcomes. Both branches are strict and the protocol literal is the discriminator, so a
- * wrongly-versioned or half-written trace is rejected instead of silently coerced, and
- * managed ranking provenance is retained rather than dropped. Historical leg bytes
- * continue to parse through the legacy member unchanged.
- */
+/** Historical traces stay parseable; V9 pairing rejects them because they lack a request digest. */
 const BRANCH_QUERY_LEG_TRACE_SCHEMA = z.union([RetrievalTraceSchema, ManagedRetrievalTraceSchema]).superRefine((value, context) => {
-  if ("protocol" in value && value.protocol === MANAGED_RETRIEVAL_TRACE_PROTOCOL &&
-      value.managed_ranking_outcomes.length !== 1) {
+  if ("protocol" in value && value.protocol === MANAGED_RETRIEVAL_TRACE_PROTOCOL && value.managed_ranking_outcomes.length !== 1) {
     context.addIssue({
       code: "custom",
       path: ["managed_ranking_outcomes"],
@@ -160,10 +159,10 @@ function branchQueryLegTraceIsBound(
       trace.scope_snapshot.digest !== leg.scope_snapshot_digest) {
     return false;
   }
-  // Legacy traces predate managed outcome digests and retain their historical reader.
   if (!("protocol" in trace)) return true;
   const outcome = trace.managed_ranking_outcomes[0];
-  return outcome !== undefined && outcome.request_digest === leg.retrieval_request_digest;
+  return trace.protocol === MANAGED_RETRIEVAL_TRACE_PROTOCOL && outcome !== undefined &&
+    outcome.request_digest === leg.retrieval_request_digest;
 }
 
 /** A transport cancellation escapes the stage; it cannot be reported as a completed query leg. */
@@ -178,16 +177,28 @@ export function branchQueryLegOutcomeIsConsistent(value: {
 }
 
 function branchQueryStopMatchesOutcome(
-  legs: readonly Pick<BranchQueryLegResult, "status" | "resolved_handle_refs">[],
+  legs: readonly (Pick<BranchQueryLegResult, "status" | "resolved_handle_refs"> &
+    Partial<Pick<BranchQueryLegResult, "stop_reason" | "omitted_candidates">>)[],
   stop: "PLAN_COMPLETED" | "FIRST_ADMISSIBLE_EVIDENCE" | "NO_HITS" | "BUDGET_EXHAUSTED" | "ALL_LEGS_FAILED",
   hasEvidence: boolean,
+  budgetExhaustion?: BranchQueryBudgetExhaustionReceipt,
 ): boolean {
   if (stop === "ALL_LEGS_FAILED") return !hasEvidence && legs.length > 0 && legs.every((leg) => leg.status === "FAILED");
   if (stop === "NO_HITS") return !hasEvidence && legs.some((leg) => leg.status === "COMPLETED");
   if (stop === "FIRST_ADMISSIBLE_EVIDENCE") return hasEvidence &&
     legs.findIndex((leg) => leg.resolved_handle_refs.length > 0) === legs.length - 1 &&
     legs[legs.length - 1]?.status === "COMPLETED";
-  return true;
+  if (stop === "BUDGET_EXHAUSTED") {
+    const finalLeg = legs[legs.length - 1];
+    return legs.length > 0 && !legs.every((leg) => leg.status === "FAILED") &&
+      (budgetExhaustion !== undefined || (finalLeg?.stop_reason !== undefined &&
+        finalLeg.omitted_candidates !== undefined && branchQueryHasMaterialBudgetStop({
+          status: finalLeg.status,
+          stop_reason: finalLeg.stop_reason,
+          omitted_candidates: finalLeg.omitted_candidates,
+        })));
+  }
+  return !legs.every((leg) => leg.status === "FAILED");
 }
 
 export const BranchQueryLegResultSchema = z.object({
@@ -211,6 +222,9 @@ export const BranchQueryLegResultSchema = z.object({
   if (value.trace !== undefined && !branchQueryLegTraceIsBound(value, value.trace)) {
     context.addIssue({ code: "custom", path: ["trace"], message: "query trace is not bound to the held scope" });
   }
+  if (!branchQueryBudgetStopReasonIsValid(value)) {
+    context.addIssue({ code: "custom", path: ["stop_reason"], message: "query budget stop lacks a matching omission" });
+  }
   if (duplicate(value.resolved_handle_refs.map((item) => `${item.handle_ref.id}:${item.handle_ref.revision}`))) {
     context.addIssue({ code: "custom", path: ["resolved_handle_refs"], message: "query leg contains duplicate handles" });
   }
@@ -232,6 +246,7 @@ const BranchQueryResultFields = {
   scope_snapshot_ref: VersionedRefSchema,
   scope_snapshot_digest: Sha256Schema,
   query_legs: z.array(BranchQueryLegResultSchema).min(1).max(MAX_QUERY_LEGS),
+  budget_exhaustion: BranchQueryBudgetExhaustionReceiptSchema.optional(),
   resolved_evidence: z.array(ResolvedEvidenceSchema).max(64),
   omitted_candidate_refs: z.array(IdentifierSchema).max(2_048),
   total_utf8_bytes: z.number().int().nonnegative().max(64 * 1024),
@@ -279,7 +294,10 @@ function validateBranchQueryResult(
       value.omitted_candidate_refs.some((ref) => !omitted.has(ref))) {
     context.addIssue({ code: "custom", path: ["omitted_candidate_refs"], message: "query omissions differ from executed legs" });
   }
-  if (!branchQueryStopMatchesOutcome(value.query_legs, value.stop_reason, value.resolved_evidence.length > 0)) {
+  if (!branchQueryBudgetExhaustionStructureMatchesResult(value)) {
+    context.addIssue({ code: "custom", path: ["budget_exhaustion"], message: "aggregate budget receipt is not bound to this result" });
+  }
+  if (!branchQueryStopMatchesOutcome(value.query_legs, value.stop_reason, value.resolved_evidence.length > 0, value.budget_exhaustion)) {
     context.addIssue({ code: "custom", path: ["stop_reason"], message: "query stop reason contradicts leg outcomes or evidence" });
   }
   const failed = value.query_legs.filter((leg) => leg.status === "FAILED").length;
@@ -303,8 +321,7 @@ export function branchQueryResultMatchesPlan(plan: BranchQueryPlan, result: Bran
     const planned = plan.query_legs[index];
     if (planned === undefined) return false;
     if (leg.trace === undefined) return leg.status === "FAILED";
-    // Legacy traces predate this plan-to-trace binding; keep their historical reader behavior.
-    if (!("protocol" in leg.trace)) return true;
+    if (!("protocol" in leg.trace)) return false;
     return leg.trace.raw_query === planned.query &&
       leg.trace.query_product === plan.retrieval_product &&
       leg.trace.exact_probes.length === planned.literal_probes.length &&
@@ -315,7 +332,8 @@ export function branchQueryResultMatchesPlan(plan: BranchQueryPlan, result: Bran
     plan.scope_snapshot_ref.id === result.scope_snapshot_ref.id &&
     plan.scope_snapshot_ref.revision === result.scope_snapshot_ref.revision && plan.scope_snapshot_digest === result.scope_snapshot_digest &&
     traceBindingsMatchPlan &&
-    branchQueryLegsMatchPlan(plan, result.query_legs, result.stop_reason, result.resolved_evidence.length > 0);
+    branchQueryLegsMatchPlan(plan, result.query_legs, result.stop_reason, result.resolved_evidence.length > 0) &&
+    branchQueryBudgetExhaustionMatchesPlan(plan, result);
 }
 
 export function branchQueryLegsMatchPlan(
@@ -334,7 +352,7 @@ export function branchQueryLegsMatchPlan(
   return legs.length > 0 && legs.length <= plan.query_legs.length && (!fullPlanStop || legs.length === plan.query_legs.length) &&
     consistentHandles && handles.size <= plan.budgets.evidence_limit &&
     [...handles.values()].reduce((bytes, item) => bytes + item.excerpt_byte_length, 0) <= plan.budgets.max_evidence_bytes &&
-    branchQueryStopMatchesOutcome(legs, stop, hasEvidence) &&
+    (stop === "BUDGET_EXHAUSTED" || branchQueryStopMatchesOutcome(legs, stop, hasEvidence)) &&
     (stop !== "FIRST_ADMISSIBLE_EVIDENCE" || plan.stop_rule === "FIRST_ADMISSIBLE_EVIDENCE") &&
     legs.every((leg, index) => {
       const planned = plan.query_legs[index];

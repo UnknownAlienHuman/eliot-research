@@ -56,7 +56,7 @@ function legacyTrace(queryId: string, rawQuery = "bound branch query") {
   };
 }
 
-function leg(queryId: string, status: "COMPLETED" | "FAILED") {
+function leg(queryId: string, status: "COMPLETED" | "FAILED", trace: unknown = legacyTrace(queryId)) {
   return {
     status,
     query_id: queryId,
@@ -65,7 +65,7 @@ function leg(queryId: string, status: "COMPLETED" | "FAILED") {
     scope_snapshot_ref: scopeRef,
     scope_snapshot_digest: scopeDigest,
     ...(status === "COMPLETED" ? {
-      trace: legacyTrace(queryId),
+      trace,
       stop_reason: "NO_HITS" as const,
     } : {
       failure_code: "RETRIEVAL_FAILED",
@@ -154,7 +154,7 @@ describe("BranchQueryResult failure disposition", () => {
       query_legs: [leg("query-1", "FAILED"), leg("query-2", "FAILED")],
       failure_disposition: "ALL_FAILED",
       stop_reason: "BUDGET_EXHAUSTED",
-    }).success).toBe(true);
+    }).success).toBe(false);
   });
 });
 
@@ -165,7 +165,7 @@ describe("branch plan and scope pairing", () => {
       protocol: "eliotr.research.branch-query-result.v1",
       query_result_ref: { id: `eliotr.research.branch-query-result-${SHA}`, revision: 1 }, identity_digest: SHA,
       query_plan_ref: plan.query_plan_ref, query_plan_digest: plan.identity_digest, role: plan.role,
-      scope_snapshot_ref: scopeRef, scope_snapshot_digest: SHA, query_legs: [leg("query-SUPPORT", "COMPLETED")],
+      scope_snapshot_ref: scopeRef, scope_snapshot_digest: SHA, query_legs: [leg("query-SUPPORT", "COMPLETED", managedTraceFor(plan))],
       resolved_evidence: [], omitted_candidate_refs: [], total_utf8_bytes: 0, stop_reason: "NO_HITS", failure_disposition: "NONE",
     });
     const read = {
@@ -363,7 +363,7 @@ function parentCheckpointFixture() {
     protocol: "eliotr.research.branch-query-result.v1", identity_digest: SHA,
     query_result_ref: { id: `eliotr.research.branch-query-result-${SHA}`, revision: 1 },
     query_plan_ref: plan.query_plan_ref, query_plan_digest: plan.identity_digest, role: plan.role,
-    scope_snapshot_ref: scopeRef, scope_snapshot_digest: SHA, query_legs: [leg("query-SUPPORT", "COMPLETED")],
+    scope_snapshot_ref: scopeRef, scope_snapshot_digest: SHA, query_legs: [leg("query-SUPPORT", "COMPLETED", managedTraceFor(plan))],
     resolved_evidence: [], omitted_candidate_refs: [], total_utf8_bytes: 0, stop_reason: "NO_HITS", failure_disposition: "NONE",
   });
   const branch = ResearchBranchResultV2Schema.parse({
@@ -464,7 +464,7 @@ describe("branch query trace compatibility and binding", () => {
     expect(BranchQueryLegResultSchema.safeParse({ ...sourceLeg, trace: foreignTrace }).success).toBe(false);
   });
 
-  it("preserves legacy pairing and rejects managed traces whose query, probes, or product differ", () => {
+  it("rejects legacy pairing and managed traces whose query, probes, or product differ", () => {
     const { plan, query } = parentCheckpointFixture();
     const sourceLeg = query.query_legs[0];
     if (sourceLeg?.trace === undefined) throw new Error("query fixture has no completed trace");
@@ -473,8 +473,8 @@ describe("branch query trace compatibility and binding", () => {
     expect(branchQueryResultMatchesPlan(plan, query)).toBe(true);
     expect(branchQueryResultMatchesPlan(plan, {
       ...query,
-      query_legs: [{ ...sourceLeg, trace: { ...sourceLeg.trace, raw_query: "foreign query" } }],
-    })).toBe(true);
+      query_legs: [{ ...sourceLeg, trace: legacyTrace("query-SUPPORT", "SUPPORT") as unknown as NonNullable<typeof sourceLeg.trace> }],
+    })).toBe(false);
     expect(branchQueryResultMatchesPlan(plan, {
       ...query,
       query_legs: [{ ...sourceLeg, trace: { ...managedTrace, raw_query: "foreign query" } }],
@@ -524,7 +524,7 @@ describe("branch parent and outcome integrity", () => {
       budgets: { ...plan.budgets, max_query_legs: 2 },
       query_legs: [...plan.query_legs, { query_id: "query-second", query_sha256: SHA, query: "second", literal_probes: [] }],
     });
-    const firstEvidence = { ...leg("query-SUPPORT", "COMPLETED"), stop_reason: "LEG_COMPLETED", resolved_handle_refs: [queriedHandle] };
+    const firstEvidence = { ...leg("query-SUPPORT", "COMPLETED", managedTraceFor(plan)), stop_reason: "LEG_COMPLETED", resolved_handle_refs: [queriedHandle] };
     const stopped = BranchQueryResultSchema.parse({ ...query, query_legs: [firstEvidence],
       resolved_evidence: [evidence()], total_utf8_bytes: 4, stop_reason: "FIRST_ADMISSIBLE_EVIDENCE",
     });
@@ -551,7 +551,7 @@ describe("branch parent and outcome integrity", () => {
     const branch = analysis.branch_results[0];
     if (finding === undefined || branch === undefined) throw new Error("fixture branch or finding missing");
     const queryWithEvidence = { ...query,
-      query_legs: [{ ...leg("query-SUPPORT", "COMPLETED"), stop_reason: "LEG_COMPLETED", resolved_handle_refs: [queriedHandle] }],
+      query_legs: [{ ...leg("query-SUPPORT", "COMPLETED", managedTraceFor(plan)), stop_reason: "LEG_COMPLETED", resolved_handle_refs: [queriedHandle] }],
       resolved_evidence: [evidence()], total_utf8_bytes: 4, stop_reason: "PLAN_COMPLETED",
     };
     const ready = { ...branch, status: "CANDIDATE_READY", question_ids: plan.question_refs.map((ref) => ref.id),
@@ -675,7 +675,7 @@ describe("branch parent and outcome integrity", () => {
     const { plan, query } = parentCheckpointFixture();
     const resolved = evidence();
     const queryWithEvidence = BranchQueryResultSchema.parse({ ...query,
-      query_legs: [{ ...leg("query-SUPPORT", "COMPLETED"), stop_reason: "LEG_COMPLETED", resolved_handle_refs: [queriedHandle] }],
+      query_legs: [{ ...leg("query-SUPPORT", "COMPLETED", managedTraceFor(plan)), stop_reason: "LEG_COMPLETED", resolved_handle_refs: [queriedHandle] }],
       resolved_evidence: [resolved], total_utf8_bytes: 4, stop_reason: "PLAN_COMPLETED",
     });
     const read = ResearchReadExtractCheckpointV2Schema.parse({

@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { ModelGatewayTransportPolicyV1 } from "@eliotr/cloudflare-ai";
-import { createResearchSemanticComposition, type ResearchSemanticCompositionDependencies } from "./research-semantic-composition.js";
+import type { ResearchBranchQueryBudgetSelection } from
+  "@eliotr/cloudflare-research-configuration/research-run-configuration.js";
+import {
+  createResearchSemanticComposition,
+  createResearchSemanticWorkflowHandlerFactory,
+  type ResearchSemanticCompositionDependencies,
+  type ResearchSemanticWorkflowDependencies,
+} from "./research-semantic-composition.js";
+import { SERVER_OWNED_BRANCH_QUERY_HANDLER_GENERATION } from "./research-stage-handlers.js";
 
 // Construction-port fixture only: no canonical state, provider or native runtime acceptance.
 const POLICY: ModelGatewayTransportPolicyV1 = {
@@ -9,6 +17,25 @@ const POLICY: ModelGatewayTransportPolicyV1 = {
   capabilities: { max_output_tokens_field: "max_output_tokens", reasoning_efforts: ["high"] },
 };
 const PARAMETERS = { prompt: "Use the supplied evidence.", max_tokens: 64 };
+const branchBudgetSelection: ResearchBranchQueryBudgetSelection = {
+  protocol: "eliotr.research.branch-query-budget-selection.v1",
+  profile_id: "branch-profile-test",
+  profile_generation: 2,
+  budgets: {
+    candidate_limit: 9,
+    scan_limit: 23,
+    evidence_limit: 2,
+    max_evidence_bytes: 2048,
+    max_query_legs: 3,
+  },
+  selected_configuration: {
+    owner_ref: "principal-test",
+    project_id: "project-test",
+    configuration_ref: `rpmc-${"a".repeat(64)}`,
+    configuration_sha256: "a".repeat(64),
+    selection_revision: 7,
+  },
+};
 
 function input(mode: "installed" | "override", selected: boolean): ResearchSemanticCompositionDependencies {
   const unavailable = () => { throw new Error("construction must not perform effects"); };
@@ -77,6 +104,56 @@ describe("semantic selected transport handoff", () => {
       expect(graph.synthesis.model.prompt.build_manifest_input).toBe(source.model.synthesis.prompt.build_manifest_input);
       expect(graph.audit_claims.prompt.resolve_trusted_parameters).toBe(source.model.audit.prompt.resolve_trusted_parameters);
     }
+  });
+
+  function v9WorkflowInput(): ResearchSemanticWorkflowDependencies {
+    const base = input("installed", true);
+    return {
+      ...base,
+      ai_search: {} as never,
+      retrieval_profile: { version: "scope-profile-test", max_sources: 8, max_results: 4 },
+      handler_generation: SERVER_OWNED_BRANCH_QUERY_HANDLER_GENERATION,
+      run_configuration: {
+        mode: "snapshot-v2",
+        configuration_ref: "run-configuration-1",
+        configuration_sha256: "b".repeat(64),
+        project_owner_ref: "principal-test",
+        project_id: "project-test",
+        project_configuration_ref: branchBudgetSelection.selected_configuration.configuration_ref,
+        project_configuration_sha256: branchBudgetSelection.selected_configuration.configuration_sha256,
+        model_selections: [],
+      },
+      branch_query_budget_selection: branchBudgetSelection,
+      report: {} as never,
+    } as unknown as ResearchSemanticWorkflowDependencies;
+  }
+
+  it("installs the owner budget tuple and held-scope adapter on the V9 branch execution path", () => {
+    const factory = createResearchSemanticWorkflowHandlerFactory(v9WorkflowInput());
+    expect(factory("READ_AND_EXTRACT")).toBeTypeOf("function");
+    expect(factory.native("READ_AND_EXTRACT")).toBeUndefined();
+  });
+
+  it("refuses V9 composition without captured owner provenance or managed primary", () => {
+    const selected = v9WorkflowInput();
+    const { branch_query_budget_selection: _capturedSelection, ...withoutSelection } = selected;
+    void _capturedSelection;
+    expect(() => createResearchSemanticWorkflowHandlerFactory(withoutSelection))
+      .toThrow("WORKFLOW_CONFIGURATION_MISSING");
+    expect(() => createResearchSemanticWorkflowHandlerFactory({
+      ...selected,
+      ai_search: undefined,
+    })).toThrow("WORKFLOW_CONFIGURATION_MISSING");
+    expect(() => createResearchSemanticWorkflowHandlerFactory({
+      ...selected,
+      branch_query_budget_selection: {
+        ...branchBudgetSelection,
+        selected_configuration: {
+          ...branchBudgetSelection.selected_configuration,
+          owner_ref: "foreign-owner",
+        },
+      },
+    })).toThrow("WORKFLOW_AUTHORITY_STALE");
   });
 
   it.each(["installed", "override"] as const)("preserves absent selected policy for legacy %s callers", (mode) => {

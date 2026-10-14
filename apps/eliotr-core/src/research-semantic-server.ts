@@ -1,4 +1,7 @@
-import { isSemanticResearchHandlerGeneration } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
+import {
+  isSemanticResearchHandlerGeneration,
+  SERVER_OWNED_BRANCH_QUERY_HANDLER_GENERATION,
+} from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import { validateModelGatewayToken } from "@eliotr/cloudflare-ai";
 import { IdentifierSchema } from "@eliotr/contracts";
 import { canonicalJson } from "@eliotr/platform-cloudflare";
@@ -123,7 +126,10 @@ async function assembleResearchSemanticServerHandlers(input: ResearchSemanticSer
     ? undefined
     : Object.freeze({ mode: runConfiguration.mode, configuration_ref: runConfiguration.configuration_ref,
       configuration_sha256: runConfiguration.configuration_sha256, project_owner_ref: runConfiguration.project_owner_ref,
-      project_id: runConfiguration.project_id, model_selections: runConfiguration.model_selections });
+      project_id: runConfiguration.project_id,
+      project_configuration_ref: runConfiguration.project_configuration_ref,
+      project_configuration_sha256: runConfiguration.project_configuration_sha256,
+      model_selections: runConfiguration.model_selections });
   const nativeModelRuntime = createResearchSemanticNativeModelRuntime({ env, run_configuration: snapshotRunConfiguration,
     owner_ref: principal.principal_ref });
   const gateway = modelGatewayConfiguration(env);
@@ -136,6 +142,18 @@ async function assembleResearchSemanticServerHandlers(input: ResearchSemanticSer
     principal.credential_generation, principal.deployment_generation).first<{ handler_generation: unknown }>().catch(() => fail("WORKFLOW_STORAGE_UNAVAILABLE"));
   if (!isSemanticResearchHandlerGeneration(runBinding?.handler_generation)) fail("WORKFLOW_AUTHORITY_STALE");
   const handlerGeneration = runBinding.handler_generation;
+  const branchQueryBudgetSelection = runConfiguration.branch_query_budget_selection;
+  if (handlerGeneration === SERVER_OWNED_BRANCH_QUERY_HANDLER_GENERATION) {
+    const selected = branchQueryBudgetSelection?.selected_configuration;
+    if (selected === undefined || runConfiguration.mode === "legacy-installed" ||
+        selected.owner_ref !== principal.principal_ref ||
+        selected.owner_ref !== runConfiguration.project_owner_ref ||
+        selected.project_id !== runConfiguration.project_id ||
+        selected.configuration_ref !== runConfiguration.project_configuration_ref ||
+        selected.configuration_sha256 !== runConfiguration.project_configuration_sha256) {
+      fail("WORKFLOW_AUTHORITY_STALE");
+    }
+  }
   const resolvedSemanticConfig = await resolveResearchSemanticConfig({ env, database: env.CORE_DB }).catch((error) => {
     throw semanticConfigCheckpointError(error);
   });
@@ -215,6 +233,9 @@ async function assembleResearchSemanticServerHandlers(input: ResearchSemanticSer
     initial_manifest: input.initial_manifest,
     handler_generation: handlerGeneration,
     ...(snapshotRunConfiguration === undefined ? {} : { run_configuration: snapshotRunConfiguration }),
+    ...(branchQueryBudgetSelection === undefined ? {} : {
+      branch_query_budget_selection: branchQueryBudgetSelection,
+    }),
     ...(runConfiguration.native_acquisition_selection === undefined ? {} : {
       native_acquisition_selection: runConfiguration.native_acquisition_selection,
     }),
