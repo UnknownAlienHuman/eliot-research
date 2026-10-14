@@ -32,13 +32,24 @@ function isTerminalBundleState(state: string | undefined): boolean {
  * resolves to the same key. No caller identity, network attempt or click timestamp participates, and
  * nothing reports while the outcome is uncertain, rejected or quarantined.
  */
-function bundleCommitKey(memory: ImportMemory): string | undefined {
+function confirmedBundleCommitKey(memory: ImportMemory): string | undefined {
   const identity = memory.identity, status = memory.bundleState?.status, receipt = status?.receipt;
   if (identity && status?.state === 'COMMITTED' && receipt &&
     receipt.operation_id === identity.operation && receipt.manifest_sha256 === identity.manifestDigest &&
     receipt.source_revision_ref === identity.sourceRevision && ['ADMITTED', 'DUPLICATE'].includes(receipt.decision)) {
     return 'bundle:' + identity.generation + ':' + identity.operation;
   }
+  return undefined;
+}
+
+function hasCanonicalBundleTerminal(memory: ImportMemory): boolean {
+  const state = memory.bundleState?.status?.state;
+  return state === 'COMMITTED' ? confirmedBundleCommitKey(memory) !== undefined : isTerminalBundleState(state);
+}
+
+function bundleCommitKey(memory: ImportMemory): string | undefined {
+  const bundleKey = confirmedBundleCommitKey(memory);
+  if (bundleKey !== undefined) return bundleKey;
   const admission = memory.file?.admission;
   if (admission?.state === 'COMMITTED' && admission.admission_receipt &&
     ['ADMITTED', 'DUPLICATE'].includes(admission.admission_receipt.decision)) {
@@ -176,13 +187,13 @@ export function ImportPanel({ apis, privacy, context, locale, onImportCommitted 
   // acknowledgement after a canonical terminal readback; the terminal reason and receipt stay visible
   // until then, so a REJECTED or QUARANTINED outcome is never silently dropped and an uncertain
   // outcome never releases anything.
-  const bundleTerminal = isTerminalBundleState(saved.bundleState?.status?.state);
+  const bundleTerminal = hasCanonicalBundleTerminal(saved);
   const canDismissBundle = saved.bundle !== undefined && (bundleTerminal || saved.bundleRejected === true) &&
     saved.bundleState?.interrupted !== true;
   const clearBundle = () => {
     if (running.current || !canDismissBundle || !privacy.isCurrent(context)) return;
     const current = read();
-    if (!current.bundle || !(isTerminalBundleState(current.bundleState?.status?.state) || current.bundleRejected === true) || current.bundleState?.interrupted) return;
+    if (!current.bundle || !(hasCanonicalBundleTerminal(current) || current.bundleRejected === true) || current.bundleState?.interrupted) return;
     current.attempt?.dispose();
     // Disposal is exactly once: the shared attempt object is released and the local memory entry is
     // removed. No replacement attempt is minted and no re-run is scheduled.
@@ -199,8 +210,13 @@ export function ImportPanel({ apis, privacy, context, locale, onImportCommitted 
       const identity = intent.identity ?? recovered?.identity; if (!identity || identity.generation !== context.deploymentGeneration) throw new Error('Import generation changed');
       if (recovered) write(old => ({ ...old, identity, attempt: recovered.attempt }));
       const status = await actions.bundleStatus(identity, signal);
-      write(old => ({ ...old, bundleState: { ...old.bundleState, phase: status.state === 'COMMITTED' ? 'useful' : 'degraded', status,
-        ...(status.receipt ? { receipt: status.receipt } : {}), uncertain: !isTerminalBundleState(status.state), interrupted: false } }));
+      write(old => {
+        const next: ImportMemory = { ...old, identity, bundleState: { ...old.bundleState, phase: 'degraded', status,
+          ...(status.receipt ? { receipt: status.receipt } : {}), interrupted: false } };
+        return { ...next, bundleState: { ...next.bundleState,
+          phase: confirmedBundleCommitKey(next) === undefined ? 'degraded' : 'useful',
+          uncertain: !hasCanonicalBundleTerminal(next) } };
+      });
     }, () => write(old => ({ ...old, bundleState: { ...old.bundleState, phase: 'degraded', uncertain: true } })));
   };
   const refused = view === 'bundle' ? saved.bundleRejected : saved.admissionRejected;
@@ -209,7 +225,7 @@ export function ImportPanel({ apis, privacy, context, locale, onImportCommitted 
     : 'The import request was refused before execution. Review the input and access before continuing.';
   const operationMessage = busy ? text.working : refused ? refusedText : error ? text.error
     : view === 'bundle' ? saved.bundleState?.uncertain ? text.unknown
-      : saved.bundleState?.status?.state === 'COMMITTED' && saved.bundleState.receipt ? text.bundleCommitted
+      : confirmedBundleCommitKey(saved) !== undefined ? text.bundleCommitted
       : saved.review ? text.bundleReady : ''
     : fileState?.uncertain ? text.unknown
     : fileState?.admission?.state === 'COMMITTED' ? text.admitted
@@ -271,7 +287,12 @@ export function ImportPanel({ apis, privacy, context, locale, onImportCommitted 
             const identity = read().identity;
             if (!identity || !receipt) { write(old => ({ ...old, bundleState: { ...old.bundleState, phase: 'degraded', uncertain: true } })); return; }
             const status = await actions.bundleStatus(identity, signal);
-            write(old => ({ ...old, bundleState: { ...old.bundleState, phase: status.state === 'COMMITTED' ? 'useful' : 'degraded', receipt, status, uncertain: !isTerminalBundleState(status.state), interrupted: false } }));
+            write(old => {
+              const next: ImportMemory = { ...old, bundleState: { ...old.bundleState, phase: 'degraded', receipt, status, interrupted: false } };
+              return { ...next, bundleState: { ...next.bundleState,
+                phase: confirmedBundleCommitKey(next) === undefined ? 'degraded' : 'useful',
+                uncertain: !hasCanonicalBundleTerminal(next) } };
+            });
           }, error => {
             // A local refusal proves the request never left the browser, so the held attempt is
             // released. Once any part of the composite import has taken effect, the owned identity

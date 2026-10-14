@@ -35,6 +35,7 @@ interface ReadbackEnvironment {
   readonly client: ReturnType<typeof createWorkspaceQueryClient>;
   readonly privacy: ReturnType<typeof createPrivacyController>;
   readonly runtime: ReturnType<typeof createWorkspaceRuntime>;
+  readonly stopBinding: () => void;
   readbackProposalReads(): number;
   staleProposalReads(): number;
   isStaleReadValidated(): boolean;
@@ -292,6 +293,10 @@ function StudioPublishReadbackPreview() {
       clearProtected() { clearWorkspaceQueries(client); },
       verify: signal => runtime.verify(signal),
     });
+    const stopBinding = privacy.subscribe(() => {
+      const snapshot = privacy.getSnapshot();
+      if (snapshot.phase === 'available') runtime.bind(snapshot.context);
+    });
 
     const isStaleReadValidated = () => client.getQueryCache().getAll().some(query => {
       const data = query.state.data as WikiProposalReadView | undefined;
@@ -306,7 +311,7 @@ function StudioPublishReadbackPreview() {
     const staleProposalReadCount = () => proposalReads.get(staleId) ?? 0;
 
     return {
-      client, runtime, privacy,
+      client, runtime, privacy, stopBinding,
       readbackProposalReads: () => proposalReads.get(readbackId) ?? 0,
       staleProposalReads: staleProposalReadCount,
       isStaleReadValidated,
@@ -355,13 +360,9 @@ function StudioPublishReadbackPreview() {
   });
 
   useEffect(() => {
-    const unsubscribe = environment.privacy.subscribe(() => {
-      const snapshot = environment.privacy.getSnapshot();
-      if (snapshot.phase === 'available') environment.runtime.bind(snapshot.context);
-    });
     void environment.privacy.refresh();
     return () => {
-      unsubscribe();
+      environment.stopBinding();
       environment.privacy.dispose();
       environment.runtime.dispose();
       environment.client.clear();
@@ -390,7 +391,22 @@ async function playStudioPublishReadbackRegression({ canvas, userEvent }: {
   };
   readonly userEvent: { click(element: HTMLElement): Promise<void> };
 }) {
-  const firstChoice = await canvas.findByRole('button', { name: readbackTitle });
+  let firstChoice: HTMLElement;
+  try {
+    firstChoice = await canvas.findByRole('button', { name: readbackTitle, exact: false });
+  } catch (error) {
+    const root = document.querySelector<HTMLElement>('[data-studio-publish-readback-regression]');
+    const environment = root ? studioEnvironments.get(root) : undefined;
+    const failedQueries = environment?.client.getQueryCache().getAll()
+      .filter(query => query.state.error !== null)
+      .map(query => String(query.state.error));
+    const snapshot = environment?.privacy.getSnapshot();
+    const binding = snapshot?.phase === 'available' && environment
+      ? { current: environment.privacy.isCurrent(snapshot.context), bound: environment.runtime.read(snapshot.context) !== undefined }
+      : { phase: snapshot?.phase };
+    throw new Error('Studio fixture did not load its proposal: ' + JSON.stringify({ failedQueries, binding,
+      requests: environment?.requestEventsSince(0) }), { cause: error });
+  }
   const root = firstChoice.closest<HTMLElement>('[data-studio-publish-readback-regression]');
   if (!root) throw new Error('Composed Studio regression root is missing');
   const environment = studioEnvironments.get(root);
@@ -418,7 +434,7 @@ async function playStudioPublishReadbackRegression({ canvas, userEvent }: {
   }
   environment.assertReadbackRetry();
 
-  await userEvent.click(await canvas.findByRole('button', { name: staleTitle }));
+  await userEvent.click(await canvas.findByRole('button', { name: staleTitle, exact: false }));
   await canvas.findByText(staleBody, { selector: '.er-studio-live__body' });
   await userEvent.click(await canvas.findByRole('button', { name: 'Publish page', exact: true }));
   await userEvent.click(await canvas.findByRole('button', { name: 'Confirm publication', exact: true }));
@@ -440,7 +456,7 @@ async function playStudioPublishReadbackRegression({ canvas, userEvent }: {
   }
   environment.assertStaleSuccess();
 
-  await userEvent.click(await canvas.findByRole('button', { name: decoderTitle }));
+  await userEvent.click(await canvas.findByRole('button', { name: decoderTitle, exact: false }));
   await canvas.findByText(decoderBody, { selector: '.er-studio-live__body' });
   await userEvent.click(await canvas.findByRole('button', { name: 'Publish page', exact: true }));
   await userEvent.click(await canvas.findByRole('button', { name: 'Confirm publication', exact: true }));
