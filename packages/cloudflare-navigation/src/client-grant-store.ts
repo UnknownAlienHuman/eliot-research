@@ -30,16 +30,34 @@ export async function grantRead<T>(work: () => Promise<T>): Promise<T> {
     grantFail("CLIENT_GRANT_STORAGE_UNAVAILABLE", 503, "Grant storage is unavailable; migration 0072 is required", true);
   }
 }
-export async function requireGrantOwner(db: D1Database, projectId: string, principal: string): Promise<number> {
-  const row = await grantRead(() => db.prepare("SELECT p.generation FROM project p JOIN project_owner o " +
-    "ON o.project_id=p.project_id WHERE p.project_id=?1 AND o.principal_ref=?2")
-    .bind(projectId, principal).first<{ generation: number }>());
-  if (!row) grantFail("CLIENT_GRANT_PROJECT_UNAVAILABLE", 404, "Project is not available to this owner");
-  if (!Number.isSafeInteger(row.generation) || row.generation < 1) {
-    grantFail("CLIENT_GRANT_STORAGE_CORRUPT", 503, "Project generation is invalid");
-  }
-  return row.generation;
+export interface ClientGrantProjectFence {
+  readonly project_generation: number;
+  readonly membership_generation: number;
+  readonly deployment_generation: string;
 }
+
+export async function readClientGrantProjectFence(
+  db: D1Database, projectId: string, principal: string,
+): Promise<ClientGrantProjectFence> {
+  const row = await grantRead(() => db.prepare("SELECT p.generation AS project_generation, " +
+    "p.membership_generation, o.deployment_generation FROM project p JOIN project_owner o " +
+    "ON o.project_id=p.project_id WHERE p.project_id=?1 AND o.principal_ref=?2")
+    .bind(projectId, principal).first<ClientGrantProjectFence>());
+  if (!row) grantFail("CLIENT_GRANT_PROJECT_UNAVAILABLE", 404, "Project is not available to this owner");
+  if (!Number.isSafeInteger(row.project_generation) || row.project_generation < 1 ||
+      !Number.isSafeInteger(row.membership_generation) || row.membership_generation < 1 ||
+      typeof row.deployment_generation !== "string" ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u.test(row.deployment_generation)) {
+    grantFail("CLIENT_GRANT_STORAGE_CORRUPT", 503, "Project authority generation is invalid");
+  }
+  return Object.freeze({ project_generation: row.project_generation, membership_generation: row.membership_generation,
+    deployment_generation: row.deployment_generation });
+}
+
+export async function requireGrantOwner(db: D1Database, projectId: string, principal: string): Promise<number> {
+  return (await readClientGrantProjectFence(db, projectId, principal)).project_generation;
+}
+/** The global orientation epoch is a cache hint; exact operation fences establish current authority. */
 export async function grantEpoch(db: D1Database): Promise<number> {
   const row = await grantRead(() => db.prepare("SELECT generation FROM orientation_authority_epoch WHERE singleton=1")
     .first<{ generation: number }>());

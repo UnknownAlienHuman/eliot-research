@@ -1,7 +1,8 @@
 import type { ProjectClientGrant, ProjectClientOperation } from "@eliotr/contracts";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { canonicalJson } from "@eliotr/platform-cloudflare";
-import { findClientGrant, grantEpoch, grantFail, grantId, grantNow, grantRead, readClientGrant, requireGrantOwner } from "./client-grant-store.js";
+import { findClientGrant, grantEpoch, grantFail, grantId, grantNow, grantRead, readClientGrant,
+  readClientGrantProjectFence } from "./client-grant-store.js";
 
 /** Grant locators never authenticate. Read only the identity produced by the Access verifier. */
 function verifiedService(context: AuthenticatedRequestContext, now: number) {
@@ -52,10 +53,14 @@ export async function readClientProjectMembers(db: D1Database, project: string, 
 
 export interface ClientGrantLease {
   readonly grant: ProjectClientGrant;
+  /** Cache hint observed when this lease was created; never an authority token. */
   readonly authority_epoch: number;
   readonly project_generation: number;
+  readonly membership_generation: number;
+  readonly deployment_generation: string;
   readonly expires_at_ms: number;
-  requireCurrent(): Promise<void>;
+  bindOperationRevalidator(revalidate: () => Promise<void>): void;
+  requireCurrent(revalidate?: () => Promise<void>): Promise<void>;
   /** Revalidate the same grant after our own scope writes; caller must also validate its frozen scope. */
   requireGrantCurrent(): Promise<void>;
 }
@@ -75,7 +80,9 @@ export async function authorizeProjectClientGrant(db: D1Database, context: Authe
       (input.required_revision !== undefined && grant.revision !== input.required_revision) || Date.parse(grant.expires_at) <= started) {
     grantFail("CLIENT_GRANT_DENIED", 403, "No current delegation authorizes this actor, project and operation");
   }
-  const generation = await requireGrantOwner(db, grant.project_id, grant.grantor_principal_ref);
+  const projectFence = await readClientGrantProjectFence(db, grant.project_id, grant.grantor_principal_ref);
+  const generation = projectFence.project_generation;
+  const actorIdentity = canonicalJson(actor);
   const record = canonicalJson(grant);
   const expires = Math.min(Date.parse(grant.expires_at), Date.parse(context.access?.expires_at ?? ""));
   const namespace = input.ingest_namespace_id;
@@ -87,22 +94,45 @@ export async function authorizeProjectClientGrant(db: D1Database, context: Authe
   } else if (namespace !== undefined) {
     grantFail("CLIENT_GRANT_INPUT_INVALID", 400, "Import namespace is not a read scope");
   }
+  let observedEpoch = epoch;
+  let operationRevalidator: (() => Promise<void>) | undefined;
   const requireGrantCurrent = async () => {
     const instant = grantNow(now);
     if (instant < started || instant >= expires) grantFail("CLIENT_GRANT_DENIED", 403, "Delegation or service session expired");
-    verifiedService(context, instant);
+    if (canonicalJson(verifiedService(context, instant)) !== actorIdentity) {
+      grantFail("CLIENT_GRANT_IDENTITY_INVALID", 403, "Service identity changed during the delegated operation");
+    }
     const current = await readClientGrant(db, grant.grant_id);
-    if (!current || canonicalJson(current) !== record || await requireGrantOwner(db, grant.project_id, grant.grantor_principal_ref) !== generation) {
+    const currentFence = await readClientGrantProjectFence(db, grant.project_id, grant.grantor_principal_ref);
+    if (!current || canonicalJson(current) !== record || currentFence.project_generation !== generation ||
+        currentFence.membership_generation !== projectFence.membership_generation ||
+        currentFence.deployment_generation !== projectFence.deployment_generation) {
       grantFail("CLIENT_GRANT_AUTHORITY_CHANGED", 409, "Delegation or project authority changed", true);
     }
     if (namespace !== undefined) await requireClientGrantNamespaces(db, grant.grantor_principal_ref, [namespace]);
     if (grantNow(now) >= expires || context.request.signal.aborted) grantFail("CLIENT_GRANT_DENIED", 403, "Delegation expired or request was cancelled");
   };
-  const requireCurrent = async () => {
+  const requireCurrent = async (revalidate?: () => Promise<void>) => {
     await requireGrantCurrent();
-    if (await grantEpoch(db) !== epoch) grantFail("CLIENT_GRANT_AUTHORITY_CHANGED", 409, "Delegation or upstream authority changed; restart the read", true);
+    const currentEpoch = await grantEpoch(db);
+    if (currentEpoch !== observedEpoch) {
+      // The epoch only says that some authority changed somewhere. Re-read the
+      // operation's exact closure before continuing through unrelated churn.
+      const previousEpoch = observedEpoch;
+      observedEpoch = currentEpoch;
+      try {
+        await (revalidate ?? operationRevalidator)?.();
+        await requireGrantCurrent();
+      } catch (error) {
+        observedEpoch = previousEpoch;
+        throw error;
+      }
+    }
     if (grantNow(now) >= expires || context.request.signal.aborted) grantFail("CLIENT_GRANT_DENIED", 403, "Delegation expired or request was cancelled");
   };
   await requireCurrent();
-  return { grant, authority_epoch: epoch, project_generation: generation, expires_at_ms: expires, requireCurrent, requireGrantCurrent };
+  return { grant, authority_epoch: epoch, project_generation: generation,
+    membership_generation: projectFence.membership_generation, deployment_generation: projectFence.deployment_generation,
+    expires_at_ms: expires, bindOperationRevalidator(revalidate) { operationRevalidator = revalidate; },
+    requireCurrent, requireGrantCurrent };
 }

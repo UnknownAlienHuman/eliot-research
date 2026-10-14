@@ -99,10 +99,11 @@ async function issueClientScopeGrant(input: ClientScopeGrantInput, scopeOrigin?:
     : runOrigin ? [runOrigin.operation_id] : [];
   const { database: db, context, snapshot, lease, now } = input;
   const started = grantNow(now);
-  const epoch = await grantEpoch(db);
+  let writeEpoch = await grantEpoch(db);
   await lease.requireGrantCurrent();
   await input.require_current(snapshot);
   const loaded = await input.sources();
+  const sourceClosure = canonicalEvidenceJson(loaded);
   const disclosures = new Set(loaded.map((source) => source.policy.disclosure_ceiling));
   if (disclosures.size > 1 || loaded.some((source) => !source.policy_uses.includes("research") ||
       !source.authority.allowed_use.includes("research"))) {
@@ -135,38 +136,82 @@ async function issueClientScopeGrant(input: ClientScopeGrantInput, scopeOrigin?:
   const expected = { policy_authority_ref: snapshot.policy_authority_ref, allowed_use_json: JSON.stringify(allowedUses),
     disclosure_ceiling: loaded[0]?.policy.disclosure_ceiling ?? "private", authorization_receipt_ref: receipt,
     state: "ACTIVE", expires_at: new Date(expires).toISOString(), ...origin };
-  await lease.requireGrantCurrent();
-  if (grantNow(now) < started || grantNow(now) >= expires || context.request.signal.aborted) {
-    grantFail("CLIENT_SCOPE_AUTHORITY_STALE", 403, "Scope authority changed before issue");
-  }
-  try {
-    await db.prepare("INSERT INTO scope_access_grant (snapshot_id,snapshot_revision,principal_ref,client_class," +
-      "credential_generation,policy_authority_ref,allowed_use_json,disclosure_ceiling,authorization_receipt_ref,state," +
-      "expires_at,created_at,project_client_grant_id,project_client_grant_revision,project_client_operation," +
-      "project_client_project_generation,project_client_authority_epoch" + extraColumns + ") " +
-      "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,'ACTIVE',?10,?11,?12,?13,?17,?14,?15" +
-      extraValues + " FROM scope_snapshot s " +
-      "WHERE s.snapshot_id=?1 AND s.revision=?2 AND s.snapshot_digest=?16 AND s.invalidated_at IS NULL " +
-      "AND julianday(?10)>julianday('now') " +
-      "AND (SELECT generation FROM orientation_authority_epoch WHERE singleton=1)=?15 ON CONFLICT DO NOTHING")
-      .bind(snapshot.snapshot_id, snapshot.revision, access.principal_ref, access.client_class, access.credential_generation,
-        snapshot.policy_authority_ref, expected.allowed_use_json, expected.disclosure_ceiling, receipt, expected.expires_at,
-        new Date(started).toISOString(), origin.project_client_grant_id, origin.project_client_grant_revision,
-        origin.project_client_project_generation, epoch, snapshot.digest, origin.project_client_operation,
-        ...extraArgs).run();
-  } catch { /* An ambiguous write is read back once; it is never retried with a new identity. */ }
-  const settled = await grantRead(() => db.prepare("SELECT policy_authority_ref,allowed_use_json,disclosure_ceiling," +
+  const exactCurrent = async () => {
+    await lease.requireGrantCurrent();
+    await input.require_current(snapshot);
+    const currentSources = await input.sources();
+    if (canonicalEvidenceJson(currentSources) !== sourceClosure) {
+      grantFail("CLIENT_SCOPE_AUTHORITY_STALE", 403, "Source, read, admission or purge authority changed before scope issue");
+    }
+    const currentBoundary = await nextOrientationBoundary(db, lease.grant.grantor_principal_ref, {
+      resolved_scope_expression: { kind: "PROJECT", project_id: lease.grant.project_id },
+      member_source_revision_refs: snapshot.member_source_revision_refs, expires_at: snapshot.expires_at,
+    }, grantNow(now));
+    const currentExpiry = Math.min(currentBoundary, runOrigin ? Date.parse(lease.grant.expires_at) : lease.expires_at_ms, ceiling,
+      ...currentSources.flatMap((source) => [Date.parse(source.policy.expires_at),
+        source.authority.admission_expires_at === undefined ? Infinity : Date.parse(source.authority.admission_expires_at)]));
+    if (!Number.isSafeInteger(currentExpiry) || currentExpiry < expires || grantNow(now) >= currentExpiry ||
+        grantNow(now) < started || context.request.signal.aborted) {
+      grantFail("CLIENT_SCOPE_AUTHORITY_STALE", 403, "Scope authority expired or the query was cancelled");
+    }
+  };
+  const readSettled = () => grantRead(() => db.prepare("SELECT policy_authority_ref,allowed_use_json,disclosure_ceiling," +
     "authorization_receipt_ref,state,expires_at,project_client_grant_id,project_client_grant_revision," +
     "project_client_operation,project_client_project_generation" + extraColumns + " FROM scope_access_grant " +
     "WHERE snapshot_id=?1 AND snapshot_revision=?2 AND principal_ref=?3 AND client_class=?4 AND credential_generation=?5")
     .bind(snapshot.snapshot_id, snapshot.revision, access.principal_ref, access.client_class, access.credential_generation).first());
-  if (settled === null) {
-    if (await grantEpoch(db) !== epoch) grantFail("CLIENT_SCOPE_AUTHORITY_CHANGED", 409, "Authority changed before scope issue", true);
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await lease.requireGrantCurrent();
+    if (grantNow(now) < started || grantNow(now) >= expires || context.request.signal.aborted) {
+      grantFail("CLIENT_SCOPE_AUTHORITY_STALE", 403, "Scope authority changed before issue");
+    }
+    let confirmedNoop = false;
+    let ambiguousWrite = false;
+    try {
+      const write = await db.prepare("INSERT INTO scope_access_grant (snapshot_id,snapshot_revision,principal_ref,client_class," +
+        "credential_generation,policy_authority_ref,allowed_use_json,disclosure_ceiling,authorization_receipt_ref,state," +
+        "expires_at,created_at,project_client_grant_id,project_client_grant_revision,project_client_operation," +
+        "project_client_project_generation,project_client_authority_epoch" + extraColumns + ") " +
+        "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,'ACTIVE',?10,?11,?12,?13,?17,?14,?15" +
+        extraValues + " FROM scope_snapshot s " +
+        "WHERE s.snapshot_id=?1 AND s.revision=?2 AND s.snapshot_digest=?16 AND s.invalidated_at IS NULL " +
+        "AND julianday(?10)>julianday('now') " +
+        "AND (SELECT generation FROM orientation_authority_epoch WHERE singleton=1)=?15 ON CONFLICT DO NOTHING")
+        .bind(snapshot.snapshot_id, snapshot.revision, access.principal_ref, access.client_class, access.credential_generation,
+          snapshot.policy_authority_ref, expected.allowed_use_json, expected.disclosure_ceiling, receipt, expected.expires_at,
+          new Date(started).toISOString(), origin.project_client_grant_id, origin.project_client_grant_revision,
+          origin.project_client_project_generation, writeEpoch, snapshot.digest, origin.project_client_operation,
+          ...extraArgs).run();
+      confirmedNoop = write.success && write.meta.changes === 0;
+    } catch {
+      // An ambiguous write is read back once and is never retried.
+      ambiguousWrite = true;
+    }
+    const settled = await readSettled();
+    if (settled !== null) {
+      if (canonicalEvidenceJson(settled) !== canonicalEvidenceJson(expected)) {
+        grantFail("CLIENT_SCOPE_AUTHORITY_STALE", 403, "An existing scope grant cannot be replaced or revived");
+      }
+      await input.require_current(snapshot);
+      await requireClientScopeProvenance(db, access, snapshot, lease, scopeOrigin);
+      return;
+    }
+    const currentEpoch = await grantEpoch(db);
+    if (currentEpoch !== writeEpoch) {
+      await exactCurrent();
+      if (confirmedNoop && !ambiguousWrite && attempt === 0) {
+        writeEpoch = await grantEpoch(db);
+        continue;
+      }
+      grantFail("CLIENT_SCOPE_SETTLEMENT_UNCERTAIN", 503,
+        "No exact scope receipt after bounded authority revalidation; reconcile the same scope", true);
+    }
+    if (confirmedNoop && !ambiguousWrite) {
+      await exactCurrent();
+      grantFail("CLIENT_SCOPE_SETTLEMENT_UNCERTAIN", 503, "Scope grant was not committed; reconcile the same scope", true);
+    }
     grantFail("CLIENT_SCOPE_SETTLEMENT_UNCERTAIN", 503, "Scope grant could not be confirmed", true);
   }
-  if (canonicalEvidenceJson(settled) !== canonicalEvidenceJson(expected)) {
-    grantFail("CLIENT_SCOPE_AUTHORITY_STALE", 403, "An existing scope grant cannot be replaced or revived");
-  }
-  await input.require_current(snapshot);
-  await requireClientScopeProvenance(db, access, snapshot, lease, scopeOrigin);
+  grantFail("CLIENT_SCOPE_SETTLEMENT_UNCERTAIN", 503,
+    "No exact scope receipt after bounded authority revalidation; reconcile the same scope", true);
 }

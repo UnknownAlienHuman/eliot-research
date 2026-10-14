@@ -3,8 +3,9 @@ import { reset } from "cloudflare:test";
 import type { ProjectClientGrant, ProjectClientGrantPut } from "@eliotr/contracts";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { canonicalJson, sha256Utf8 } from "@eliotr/platform-cloudflare";
-import { authorizeProjectClientGrant, createProjectClientGrantService, createProjectOwnerService } from "@eliotr/cloudflare-navigation";
-import { db, observeDatabase, principal, runtime, setupOrientationDatabase } from "./orientation-fixture.js";
+import { authorizeProjectClientGrant, createD1ScopeService, createOwnerScopeAuthority,
+  createProjectClientGrantService, createProjectClientScopeAuthority, createProjectOwnerService } from "@eliotr/cloudflare-navigation";
+import { db, insert, observeDatabase, principal, runtime, seedSource, setupOrientationDatabase } from "./orientation-fixture.js";
 
 const issuer = "https://team.cloudflareaccess.com";
 const credential = "credential-v1";
@@ -24,20 +25,46 @@ function service(database = db) {
   return createProjectClientGrantService({ database, trusted_issuers: [issuer], now: () => clock });
 }
 
-function input(expected_revision = 0, subject = "client.access"): ProjectClientGrantPut {
+function input(expected_revision = 0, subject = "client.access",
+  allowed_operations: ProjectClientGrantPut["allowed_operations"] = ["status", "catalog"]): ProjectClientGrantPut {
   return { expected_revision, grantee: { issuer, authentication_method: "service_token", subject },
-    allowed_operations: ["status", "catalog"], ingest_namespace_ids: [],
+    allowed_operations: [...allowed_operations], ingest_namespace_ids: [],
     expires_at: new Date(clock + 3_600_000).toISOString() };
 }
 
-async function project() {
-  // The real owner service creates the prerequisite. No source/admission/grant receipt is seeded.
-  // Empty membership isolates grant mutation; nonempty scope/admission remains a separate gate.
+async function project(key = "project-create", title = "Grant project", source_ids: readonly string[] = []) {
+  // The real owner service creates the project; optional seeded members exercise source and scope paths.
   const owner = createProjectOwnerService({ database: db, deployment_generation: runtime.DEPLOYMENT_GENERATION, now: () => clock });
-  const created = await owner.create(context("project-create"), {
-    idempotency_key: "project-create", title: "Grant project", source_ids: [],
+  const created = await owner.create(context(key), {
+    idempotency_key: key, title, source_ids: [...source_ids],
   });
   return created.project_ref.id;
+}
+
+async function updateProject(id: string, key: string, expected_revision: number, title: string,
+  source_ids: readonly string[] = []): Promise<void> {
+  const owner = createProjectOwnerService({ database: db, deployment_generation: runtime.DEPLOYMENT_GENERATION, now: () => clock });
+  await owner.update(context(key), id, { idempotency_key: key, expected_revision, title, source_ids: [...source_ids] });
+}
+
+async function seedReadableSource(id: string): Promise<void> {
+  await seedSource(id);
+  await insert("source_admission_policy", { source_namespace_id: `ns-${id}`, revision: 1,
+    authorized_principal_refs_json: JSON.stringify([principal]), allowed_ownership_modes_json: '["immutable_import"]',
+    source_class: "document", assurance_ceiling: "QUALIFIED", instruction_taint: "DATA_ONLY", allowed_effects: "READ_ONLY",
+    allowed_use_json: '["research"]', disclosure_ceiling: "private", license_policy_ref: "license-1",
+    default_storage_policy: "NORMALIZED_CLOUD_ONLY", default_residency_profile_id: "residency-1",
+    default_retention_policy_id: "retention-1", minimum_quality_state: "standard", created_at: new Date(clock).toISOString() });
+}
+
+function serviceContext(key: string, grantId: string): AuthenticatedRequestContext {
+  const who = "client.access";
+  return { ...context(key, who), client_class: "named_api_client",
+    request: new Request("https://research.example/api/v1/research/projects", {
+      headers: { "X-Eliotr-Client-Grant": grantId },
+    }),
+    access: { principal_ref: who, credential_generation: credential, expires_at: new Date(clock + 3_600_000).toISOString(),
+      issuer, authentication_method: "service_token" } };
 }
 
 async function snapshot() {
@@ -179,20 +206,19 @@ describe("S91.1 project-client grants on actual Workers D1", () => {
     expect(await snapshot()).toEqual(committed);
   });
 
-  it("fences an actual project-authority change between preflight and the final native grant INSERT", async () => {
+  it("fences an actual membership-authority change before the final native grant INSERT", async () => {
+    await seedReadableSource("authority-source");
     const id = await project(); let changed = false;
     let committed: Awaited<ReturnType<typeof snapshot>> | undefined;
     const observed = observeDatabase(async (sql, phase) => {
       if (phase === "before" && sql.startsWith("INSERT INTO project_client_grant (") && !changed) {
         changed = true;
-        const owner = createProjectOwnerService({ database: db, deployment_generation: runtime.DEPLOYMENT_GENERATION, now: () => clock });
-        await owner.update(context("project-change"), id, { idempotency_key: "project-change", expected_revision: 1,
-          title: "Concurrent project generation", source_ids: [] });
+        await updateProject(id, "project-change", 1, "Membership changed", ["authority-source"]);
         committed = await snapshot();
       }
     });
     await expect(service(observed).put(context("stale-authority"), id, "grant-1", input()))
-      .rejects.toMatchObject({ code: "CLIENT_GRANT_REVISION_CONFLICT", status: 409 });
+      .rejects.toMatchObject({ code: "CLIENT_GRANT_AUTHORITY_CHANGED", status: 409 });
     if (committed === undefined) throw new Error("Actual project authority mutation was not reached");
     expect(await snapshot()).toEqual(committed);
     expect(await db.prepare("SELECT COUNT(*) AS n FROM project_client_grant").first<number>("n")).toBe(0);
@@ -227,6 +253,115 @@ describe("S91.1 project-client grants on actual Workers D1", () => {
     await expect(authorizeProjectClientGrant(db, actor, { operation: "catalog", project_id: id }, () => clock))
       .rejects.toMatchObject({ code: "CLIENT_GRANT_DENIED", status: 403 });
     expect(await snapshot()).toEqual(revoked);
+  });
+
+  it("keeps Project A grant listing across a causal Project B title update", async () => {
+    const projectA = await project("project-a", "Project A");
+    const projectB = await project("project-b", "Project B");
+    const granted = await service().put(context("grant-a"), projectA, "grant-a", input());
+    let changed = false;
+    const observed = observeDatabase(async (sql, phase) => {
+      if (phase === "before" && sql.includes("FROM project_client_grant_current") && !changed) {
+        changed = true;
+        await updateProject(projectB, "rename-b", 1, "Project B renamed");
+      }
+    });
+    await expect(service(observed).list(context("list-a"), projectA)).resolves.toMatchObject({ grants: [granted] });
+    expect(changed).toBe(true);
+  });
+
+  it("reconciles a Project A grant write after an unrelated Project B epoch CAS no-op", async () => {
+    const projectA = await project("project-a", "Project A");
+    const projectB = await project("project-b", "Project B");
+    let inserts = 0;
+    const observed = observeDatabase(async (sql, phase) => {
+      if (phase === "before" && sql.startsWith("INSERT INTO project_client_grant (")) {
+        inserts += 1;
+        if (inserts === 1) await updateProject(projectB, "rename-b", 1, "Project B renamed");
+      }
+    });
+    const granted = await service(observed).put(context("grant-a"), projectA, "grant-a", input());
+    expect(granted).toMatchObject({ project_id: projectA, revision: 1, state: "ACTIVE" });
+    expect(inserts).toBe(2);
+    await receipt(granted, "grant-a", "PUT", input());
+  });
+
+  it("keeps a Project A lease current through Project B title, source, membership, tag and scope churn", async () => {
+    const projectA = await project("project-a", "Project A");
+    const projectB = await project("project-b", "Project B");
+    const granted = await service().put(context("grant-a"), projectA, "grant-a", input());
+    const lease = await authorizeProjectClientGrant(db, serviceContext("client-a", granted.grant_id),
+      { operation: "catalog", project_id: projectA }, () => clock);
+
+    await updateProject(projectB, "rename-b", 1, "Project B renamed");
+    await seedReadableSource("b-source");
+    await updateProject(projectB, "add-b-member", 2, "Project B renamed", ["b-source"]);
+    await db.prepare("INSERT INTO source_tag (source_id,tag,valid_from,valid_to) VALUES (?1,'unrelated-b-tag',?2,NULL)")
+      .bind("b-source", new Date(clock).toISOString()).run();
+    const bScope = createD1ScopeService(db, createOwnerScopeAuthority(db, context("scope-b"), () => clock),
+      { now: () => clock });
+    await bScope.freeze({ kind: "PROJECT", project_id: projectB }, credential);
+
+    await expect(lease.requireCurrent()).resolves.toBeUndefined();
+    await service().revoke(context("revoke-a"), projectA, "grant-a", { expected_revision: 1 });
+    await expect(lease.requireCurrent()).rejects.toMatchObject({ code: "CLIENT_GRANT_AUTHORITY_CHANGED", status: 409 });
+  });
+
+  it("rejects Project A membership changes and service expiry", async () => {
+    await seedReadableSource("a-member");
+    const projectA = await project("project-a", "Project A");
+    const granted = await service().put(context("grant-a"), projectA, "grant-a", input());
+    const lease = await authorizeProjectClientGrant(db, serviceContext("client-a", granted.grant_id),
+      { operation: "catalog", project_id: projectA }, () => clock);
+    await updateProject(projectA, "add-a-member", 1, "Project A", ["a-member"]);
+    await expect(lease.requireCurrent()).rejects.toMatchObject({ code: "CLIENT_GRANT_AUTHORITY_CHANGED", status: 409 });
+
+    const expiryProject = await project("expiry-project", "Expiry project");
+    const expiryGrant = await service().put(context("expiry-grant"), expiryProject, "expiry-grant", input());
+    const expiryLease = await authorizeProjectClientGrant(db, serviceContext("expiry-client", expiryGrant.grant_id),
+      { operation: "catalog", project_id: expiryProject }, () => clock);
+    clock = expiryLease.expires_at_ms;
+    await expect(expiryLease.requireCurrent()).rejects.toMatchObject({ code: "CLIENT_GRANT_DENIED", status: 403 });
+  });
+
+  it("revalidates the bounded Project A scope before retrying after Project B churn", async () => {
+    await seedReadableSource("a-scope-source");
+    await seedReadableSource("b-scope-source");
+    const projectA = await project("project-a", "Project A", ["a-scope-source"]);
+    const projectB = await project("project-b", "Project B", ["b-scope-source"]);
+    const granted = await service().put(context("grant-a"), projectA, "grant-a",
+      input(0, "client.access", ["query"]));
+    let bChanged = false;
+    let scopeWrites = 0;
+    let sourceReads = 0;
+    const observed = observeDatabase(async (sql, phase) => {
+      if (phase === "before" && sql.includes("FROM source s JOIN source_revision r")) sourceReads += 1;
+      if (phase === "before" && sql.startsWith("INSERT INTO scope_access_grant (")) {
+        scopeWrites += 1;
+        if (!bChanged) {
+          bChanged = true;
+          await db.prepare("INSERT INTO source_tag (source_id,tag,valid_from,valid_to) VALUES (?1,'unrelated-b-tag',?2,NULL)")
+            .bind("b-scope-source", new Date(clock).toISOString()).run();
+          const bScopes = createD1ScopeService(db, createOwnerScopeAuthority(db, context("scope-b"), () => clock),
+            { now: () => clock });
+          await bScopes.freeze({ kind: "PROJECT", project_id: projectB }, credential);
+        }
+      }
+    });
+    const delegated = await createProjectClientScopeAuthority(observed, serviceContext("client-a", granted.grant_id),
+      { kind: "PROJECT", project_id: projectA }, () => clock);
+    const scopes = createD1ScopeService(observed, delegated.authority, { now: () => clock });
+    const snapshot = await scopes.freeze({ kind: "PROJECT", project_id: projectA }, credential);
+    sourceReads = 0;
+    await delegated.authority.grant(snapshot);
+    await delegated.requireScopeCurrent(snapshot);
+    expect(bChanged).toBe(true);
+    expect(scopeWrites).toBe(2);
+    expect(sourceReads).toBeLessThan(32);
+
+    await db.prepare("UPDATE scope_read_policy SET state='REVOKED' WHERE source_namespace_id=?1 " +
+      "AND principal_ref=?2 AND client_class='owner_pwa'").bind("ns-a-scope-source", principal).run();
+    await expect(delegated.requireScopeCurrent(snapshot)).rejects.toBeDefined();
   });
 
   it("keeps committed grant receipts append-only under actual D1 triggers", async () => {
