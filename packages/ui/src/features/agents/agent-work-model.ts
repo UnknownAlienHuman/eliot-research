@@ -82,7 +82,7 @@ type ToolCopy = Record<ResearchToolId | "request", { readonly label: string; rea
 
 export const AGENT_WORK_COPY = {
   en: {
-    agents: "Agents", tools: "Tools", tasks: "Tasks", manageAgents: "Manage agents", noTasks: "Tasks you hand over appear here.", noAgents: "No agents are connected to this workspace yet.", agentsUnavailable: "Agent connections have not been read here yet.",
+    agents: "Agents", tools: "Tools", tasks: "Tasks", manageAgents: "Manage agents", noTasks: "Tasks you hand over appear here.", noAgents: "No agent connections are configured in this workspace yet.", agentsUnavailable: "Agent connections have not been read here yet.",
     presence: { ready: "Ready", busy: "Working", offline: "Offline", unknown: "Presence not checked", disabled: "Disabled" } satisfies Record<AgentPresence, string>,
     moreAgents: "More connections", firstAgents: "First connections",
     transport: { mcp: "MCP", local: "Local", inbox: "Web inbox" } satisfies Record<AgentTransport, string>,
@@ -120,7 +120,7 @@ export const AGENT_WORK_COPY = {
     },
   },
   ru: {
-    agents: "Агенты", tools: "Инструменты", tasks: "Поручения", manageAgents: "Управление агентами", noTasks: "Здесь появятся ваши поручения.", noAgents: "К рабочему пространству пока не подключены агенты.", agentsUnavailable: "Подключения агентов здесь ещё не прочитаны.",
+    agents: "Агенты", tools: "Инструменты", tasks: "Поручения", manageAgents: "Управление агентами", noTasks: "Здесь появятся ваши поручения.", noAgents: "В рабочем пространстве пока не настроены подключения агентов.", agentsUnavailable: "Подключения агентов здесь ещё не прочитаны.",
     presence: { ready: "Готов", busy: "Работает", offline: "Не в сети", unknown: "Связь не проверена", disabled: "Отключено" } satisfies Record<AgentPresence, string>,
     moreAgents: "Ещё подключения", firstAgents: "Первые подключения",
     transport: { mcp: "MCP", local: "Локально", inbox: "Веб-инбокс" } satisfies Record<AgentTransport, string>,
