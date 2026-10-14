@@ -1,6 +1,10 @@
 import type { ManagedRankingOutcome } from "@eliotr/contracts";
 import { decodeAiSearchSearchResult, type AiSearchAdapter, type AiSearchInstanceLike, type AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
-import { compileQueryPlan } from "@eliotr/retrieval";
+import {
+  compileQueryPlan,
+  type ManagedSearchExecutionContextV1,
+  type RetrievalQueryAdmissionReceiptV1,
+} from "@eliotr/retrieval";
 import { createAiSearchScopeFilter, type AiSearchScopeFilter } from "./ai-search-scope-filter.js";
 import { AI_SEARCH_RERANKING_MODEL } from "./ai-search-profile.js";
 import { decodeAiSearchGenerationRegistrySnapshot } from "./ai-search-generation-registry-codec.js";
@@ -11,7 +15,6 @@ import { createAiSearchGenerationRegistryService } from "./ai-search-generation-
 type ManagedRequest = Parameters<AiSearchAdapter["search"]>[0];
 type ManagedLanes = Parameters<AiSearchAdapter["search"]>[1];
 type ManagedExpansion = Parameters<AiSearchAdapter["search"]>[2];
-type ManagedSearchArgs = Parameters<AiSearchAdapter["search"]>;
 type ManagedCandidates = Awaited<ReturnType<AiSearchAdapter["search"]>>;
 type ManagedCandidate = ManagedCandidates[number];
 type IndexMethod = Readonly<{ vector: boolean; keyword: boolean }>;
@@ -74,7 +77,19 @@ export type AiSearchManagedSearchExecution =
     }>;
 export interface AiSearchManagedSearchPort {
   readonly search: AiSearchAdapter["search"];
-  readonly searchManaged: (...args: ManagedSearchArgs) => Promise<AiSearchManagedSearchExecution>;
+  readonly preflightSearchManaged: (
+    request: ManagedRequest,
+    lanes: ManagedLanes,
+    contextExpansion: ManagedExpansion,
+    context?: ManagedSearchExecutionContextV1,
+  ) => Promise<void>;
+  readonly searchManaged: (
+    request: ManagedRequest,
+    lanes: ManagedLanes,
+    contextExpansion: ManagedExpansion,
+    admission?: RetrievalQueryAdmissionReceiptV1,
+    context?: ManagedSearchExecutionContextV1,
+  ) => Promise<AiSearchManagedSearchExecution>;
 }
 
 const MAX_RESULTS = 50, MAX_PREVIEW_BYTES = 64 * 1024;
@@ -311,18 +326,27 @@ export async function resolveAiSearchManagedSearchAuthority(rawSnapshot: unknown
     ...(record.profile.keyword_match_mode === undefined ? {} : { keyword_match_mode: record.profile.keyword_match_mode }),
   });
 }
-export function compileAiSearchManagedSearchRequest(request: ManagedRequest, lanes: ManagedLanes, contextExpansion: ManagedExpansion, inputAuthority: AiSearchManagedSearchAuthority): AiSearchManagedSearchRequest {
+export function compileAiSearchManagedSearchRequest(
+  request: ManagedRequest,
+  lanes: ManagedLanes,
+  contextExpansion: ManagedExpansion,
+  inputAuthority: AiSearchManagedSearchAuthority,
+  executionContext?: ManagedSearchExecutionContextV1,
+): AiSearchManagedSearchRequest {
   const active = authority(inputAuthority);
   if (!active.active) failure("AI_SEARCH_MANAGED_NOT_PROMOTED", "managed generation is not promoted");
   let plan: ReturnType<typeof compileQueryPlan>;
   try { plan = compileQueryPlan(request); }
   catch (cause) { failure("AI_SEARCH_MANAGED_INPUT_INVALID", "retrieval request has no supported query plan", false, cause); }
   const candidateLimit = requestCandidateLimit(request);
+  const contextualCandidateLimit = executionContext?.provider_candidate_limit === undefined
+    ? undefined
+    : integer(executionContext.provider_candidate_limit, "managed context.provider_candidate_limit", 0, MAX_RESULTS);
   const providerCandidateLimit = Math.min(
     MAX_RESULTS,
     active.max_results,
     plan.max_candidates_before_policy_recheck,
-    candidateLimit ?? Number.MAX_SAFE_INTEGER,
+    candidateLimit ?? contextualCandidateLimit ?? Number.MAX_SAFE_INTEGER,
   );
   const rerankingEnabled = plan.rerank && active.reranking === true;
   const type = retrievalType(lanes, active.index_method), query = requestQuery(request);
@@ -359,8 +383,23 @@ export function compileAiSearchManagedSearchRequest(request: ManagedRequest, lan
 }
 export function createAiSearchManagedSearchPort(namespace: AiSearchNamespaceLike, inputAuthority: AiSearchManagedSearchAuthority): AiSearchManagedSearchPort {
   namespaceBinding(namespace); const active = authority(inputAuthority);
-  const searchManaged = async (request: ManagedRequest, lanes: ManagedLanes, contextExpansion: ManagedExpansion): Promise<AiSearchManagedSearchExecution> => {
-    const compiled = compileAiSearchManagedSearchRequest(request, lanes, contextExpansion, active);
+  const preflightSearchManaged = async (
+    request: ManagedRequest,
+    lanes: ManagedLanes,
+    contextExpansion: ManagedExpansion,
+    context?: ManagedSearchExecutionContextV1,
+  ): Promise<void> => {
+    compileAiSearchManagedSearchRequest(request, lanes, contextExpansion, active, context);
+  };
+  const searchManaged = async (
+    request: ManagedRequest,
+    lanes: ManagedLanes,
+    contextExpansion: ManagedExpansion,
+    admission?: RetrievalQueryAdmissionReceiptV1,
+    context?: ManagedSearchExecutionContextV1,
+  ): Promise<AiSearchManagedSearchExecution> => {
+    void admission;
+    const compiled = compileAiSearchManagedSearchRequest(request, lanes, contextExpansion, active, context);
     const rerankRequested = compileQueryPlan(request).rerank;
     if (compiled.ai_search_options.retrieval.max_num_results === 0 ||
         request.scope_snapshot.member_source_revision_refs.length === 0) {
@@ -423,6 +462,7 @@ export function createAiSearchManagedSearchPort(namespace: AiSearchNamespaceLike
     async search(request: ManagedRequest, lanes: ManagedLanes, contextExpansion: ManagedExpansion) {
       return (await searchManaged(request, lanes, contextExpansion)).candidates;
     },
+    preflightSearchManaged,
     searchManaged,
   });
 }
@@ -436,9 +476,26 @@ async function readAuthority(registry: Pick<AiSearchGenerationRegistryService, "
 export function createRegistryBackedAiSearchManagedSearchPort(registry: Pick<AiSearchGenerationRegistryService, "read">, namespace: AiSearchNamespaceLike, inputPolicy: AiSearchManagedSearchPolicy): AiSearchManagedSearchPort {
   if (typeof registry !== "object" || registry === null || typeof registry.read !== "function") failure("AI_SEARCH_MANAGED_INPUT_INVALID", "AI Search registry service is invalid");
   namespaceBinding(namespace); const rules = policy(inputPolicy);
-  const searchManaged = async (request: ManagedRequest, lanes: ManagedLanes, contextExpansion: ManagedExpansion): Promise<AiSearchManagedSearchExecution> => {
+  const preflightSearchManaged = async (
+    request: ManagedRequest,
+    lanes: ManagedLanes,
+    contextExpansion: ManagedExpansion,
+    context?: ManagedSearchExecutionContextV1,
+  ): Promise<void> => {
     const before = await readAuthority(registry, rules);
-    const execution = await createAiSearchManagedSearchPort(namespace, before).searchManaged(request, lanes, contextExpansion);
+    await createAiSearchManagedSearchPort(namespace, before)
+      .preflightSearchManaged(request, lanes, contextExpansion, context);
+  };
+  const searchManaged = async (
+    request: ManagedRequest,
+    lanes: ManagedLanes,
+    contextExpansion: ManagedExpansion,
+    admission?: RetrievalQueryAdmissionReceiptV1,
+    context?: ManagedSearchExecutionContextV1,
+  ): Promise<AiSearchManagedSearchExecution> => {
+    const before = await readAuthority(registry, rules);
+    const execution = await createAiSearchManagedSearchPort(namespace, before)
+      .searchManaged(request, lanes, contextExpansion, admission, context);
     const after = await readAuthority(registry, rules);
     if (routingFingerprint(before) !== routingFingerprint(after)) failure("AI_SEARCH_MANAGED_REGISTRY_CHANGED", "AI Search active generation changed during retrieval", true);
     return execution;
@@ -447,6 +504,7 @@ export function createRegistryBackedAiSearchManagedSearchPort(registry: Pick<AiS
     async search(request: ManagedRequest, lanes: ManagedLanes, contextExpansion: ManagedExpansion) {
       return (await searchManaged(request, lanes, contextExpansion)).candidates;
     },
+    preflightSearchManaged,
     searchManaged,
   });
 }

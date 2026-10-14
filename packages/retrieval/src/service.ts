@@ -214,6 +214,39 @@ function isRetrievalDomainError(error: unknown): boolean {
   return code?.startsWith("RETRIEVAL_") === true || code?.startsWith("AI_SEARCH_MANAGED_") === true;
 }
 
+const MANAGED_CALL_BUDGET_POLL_MS = 25;
+
+/** Stop local waiting on budget/cancellation while retaining handlers for the in-flight provider promise. */
+function waitForManagedCallWithinBudget<T>(pending: Promise<T>, checkBudget: () => void): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (complete: () => void): void => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      complete();
+    };
+    const check = (): void => {
+      if (settled) return;
+      try {
+        checkBudget();
+      } catch (error: unknown) {
+        finish(() => reject(error));
+        return;
+      }
+      timer = setTimeout(check, MANAGED_CALL_BUDGET_POLL_MS);
+    };
+
+    // Promise.race-style handlers remain attached after the local wait ends, so late failures are observed.
+    pending.then(
+      (value) => finish(() => resolve(value)),
+      (error: unknown) => finish(() => reject(error)),
+    );
+    check();
+  });
+}
+
 function validateAdmissionReceipt(
   value: unknown,
   requestDigest: string,
@@ -462,6 +495,25 @@ export function createRetrievalQueryService(ports: RetrievalQueryPorts): Retriev
       }
       const executionBounds = createRetrievalExecutionBoundsV1(plan, scopedRequest);
       const candidateBudget = createRetrievalCandidateBudgetV1(ports.lanes, executionBounds);
+      let managedHybridPrimary = false;
+      let managedPreflight: Promise<void> | undefined;
+      const preflightManagedCall = (): Promise<void> => {
+        if (
+          !managedOutcomeRequired ||
+          semanticExecutor === null ||
+          candidateBudget.isExhausted() ||
+          scope.member_source_revision_refs.length === 0
+        ) {
+          return Promise.resolve();
+        }
+        managedPreflight ??= (async () => {
+          await semanticExecutor.preflightManagedCall?.(scopedRequest, {
+            provider_candidate_limit: executionBounds.provider_candidate_limit,
+          });
+          managedHybridPrimary = plan.lanes.includes("LEX");
+        })();
+        return managedPreflight;
+      };
       let admissionReceipt: RetrievalQueryAdmissionReceiptV1 | undefined;
       const beforeManagedCall = async (): Promise<RetrievalQueryAdmissionReceiptV1> => {
         const admission = ports.admission;
@@ -489,11 +541,11 @@ export function createRetrievalQueryService(ports: RetrievalQueryPorts): Retriev
           failQuery("RETRIEVAL_RESOLUTION_UNCERTAIN", "managed admission result is uncertain", true);
         }
       };
-      const managedHybridPrimary = plan.lanes.includes("SEM");
       const laneOptions = {
-        beforeLane: async () => {
+        beforeLane: async (lane: RetrievalLane) => {
           ports.checkBudget();
           await ports.requireCurrentScope(scope);
+          if (lane === "LEX") await preflightManagedCall();
         },
         skipLane: (lane: RetrievalLane) => {
           if (managedHybridPrimary && lane === "LEX") return "MANAGED_HYBRID_PRIMARY";
@@ -503,7 +555,15 @@ export function createRetrievalQueryService(ports: RetrievalQueryPorts): Retriev
         propagateError: (error: unknown, lane: RetrievalLane) => isRetrievalDomainError(error) ||
           (managedOutcomeRequired && lane === "SEM"),
         ...(managedOutcomeRequired
-          ? { executionContext: { beforeManagedCall } }
+          ? {
+              executionContext: {
+                beforeManagedCall,
+                preflightManagedCall,
+                provider_candidate_limit: executionBounds.provider_candidate_limit,
+                waitForManagedCall: <T>(pending: Promise<T>) =>
+                  waitForManagedCallWithinBudget(pending, ports.checkBudget),
+              },
+            }
           : {}),
       };
       let receipts: LaneExecutionReceipt[];
