@@ -166,6 +166,16 @@ export const CANONICAL_EXPORTED_TABLES: ReadonlySet<string> = new Set([
   "provider_native_model_candidate",
   "provider_native_model_qualification_proof",
   "provider_native_model_qualification_revocation",
+  // Immutable managed-target assignment, audit and replay history is the
+  // canonical target-assignment authority source. These rows are portable
+  // provenance, never rehydrated as current owner authority: every event
+  // references project_owner (NOT_A_BACKUP below), so a portable import
+  // cannot materialize assignment history until the restored controller
+  // re-admits the live project owner under current authorization, and the
+  // 0141 append guards additionally require the exact project generation
+  // and owner principal. The derived current read model stays
+  // REBUILD_REQUIRED below.
+  "managed_target_assignment_event",
 ]);
 
 const REBUILD_REQUIRED_TABLES: ReadonlySet<string> = new Set([
@@ -175,6 +185,12 @@ const REBUILD_REQUIRED_TABLES: ReadonlySet<string> = new Set([
   "research_change_feed",
   "evidence_handle_identity",
   "health_snapshot",
+  // Derived hot read model over the canonical managed-target assignment
+  // event history, maintained by the 0143 AFTER INSERT projection and its
+  // one-time backfill. It is regenerated from the re-admitted authority
+  // source after restore, never trusted from stale portable bytes, and
+  // remains absent until re-admission.
+  "managed_target_assignment_current",
 ]);
 
 const TRANSIENT_EXCLUDED_TABLES: ReadonlySet<string> = new Set([

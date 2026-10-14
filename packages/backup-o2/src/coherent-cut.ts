@@ -41,6 +41,7 @@ export const TABLE_SPECS: readonly TableSpec[] = [
   { manifest: "projects", table: "project", order_by: "project_id", columns: { project_id: "text", title: "text", default_disclosure: "text", retention_policy_ref: "text", default_source_policy_ref: "text", default_model_profile_ref: "text", default_depth_profile_ref: "text", generation: "int", membership_generation: "int", created_at: "text" }, required: true },
   { manifest: "projects", table: "project_source_membership", order_by: "project_id, source_id, valid_from", columns: { project_id: "text", source_id: "text", role: "text", valid_from: "text", valid_to: "text-or-null", membership_generation: "int" }, required: true },
   { manifest: "projects", table: "source_tag", order_by: "source_id, tag, valid_from", columns: { source_id: "text", tag: "text", valid_from: "text", valid_to: "text-or-null" }, required: false },
+  { manifest: "projects", table: "managed_target_assignment_event", order_by: "project_id, event_revision", columns: { project_id: "text", event_revision: "int", expected_event_revision: "int", event_kind: "text", project_generation: "int", project_owner_principal_ref: "text", target_namespace: "text-or-null", managed_instance_id: "text-or-null", managed_generation: "text-or-null", target_profile_identity_sha256: "text-or-null", previous_assignment_revision: "int-or-null", actor_kind: "text", actor_principal_ref: "text", authorization_receipt_ref: "text", created_at: "text" }, required: true },
   { manifest: "scopes", table: "scope_snapshot", order_by: "snapshot_id, revision", columns: { snapshot_id: "text", revision: "int", resolved_scope_expression_json: "text", participant_generations_json: "text", member_source_revision_refs_json: "text", source_owner_generations_json: "text", policy_authority_ref: "text", disclosure_closure_digest: "text", purge_ledger_revision: "int", client_fence_ref: "text-or-null", snapshot_digest: "text", created_at: "text", expires_at: "text", invalidated_at: "text-or-null", invalidation_reason: "text-or-null" }, required: true },
   { manifest: "handles", table: "evidence_handle", order_by: "handle_id, revision", columns: { handle_id: "text", revision: "int", source_namespace_id: "text", source_owner_generation: "text", source_revision_ref: "text", scope_snapshot_id: "text", scope_snapshot_revision: "int", anchor_json: "text", excerpt_sha256: "text", excerpt_byte_length: "int", coordinate_map_ref: "text-or-null", loss_map_ref: "text-or-null", object_residency_key_digest: "text", source_assurance_ceiling: "text", materializer_assurance_ceiling: "text", terminal_state: "text", invalidation_ref: "text-or-null", created_at: "text", expires_at: "text-or-null" }, required: true },
   { manifest: "handles", table: "evidence_handle_invalidation", order_by: "handle_id, handle_revision", columns: { invalidation_ref: "text", handle_id: "text", handle_revision: "int", terminal_state: "text", reason_code: "text", observed_at: "text" }, required: false },
@@ -100,6 +101,7 @@ const AUTHORITY_TABLE_INTRODUCTIONS: Readonly<Record<string, string>> = {
   backup_epoch_manifest_binding: "0119_backup_epoch_manifest_bindings.sql",
   backup_epoch_verification_receipt: "0119_backup_epoch_manifest_bindings.sql",
   model_route_qualification_failure_summary: "0122_model_qualification_failure_summary.sql",
+  managed_target_assignment_event: "0141_managed_target_assignment.sql",
 };
 
 const AUTHORITY_COLUMN_INTRODUCTIONS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
@@ -122,6 +124,7 @@ const AUTHORITY_MIGRATION_CHAINS = [
   ["0109_research_provider_key_configuration.sql", "0110_research_provider_key_model_use.sql", "0111_provider_native_model_authority.sql"],
   ["0055_model_route_qualification_dispatch.sql", "0122_model_qualification_failure_summary.sql"],
   ["0116_backup_epoch_producer_fence.sql", "0117_backup_erasure_primary_closure.sql", "0118_backup_primary_writer_qualification.sql", "0119_backup_epoch_manifest_bindings.sql"],
+  ["0141_managed_target_assignment.sql", "0143_managed_target_assignment_current.sql"],
 ] as const;
 
 /**
