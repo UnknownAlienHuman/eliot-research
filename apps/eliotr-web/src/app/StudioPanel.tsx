@@ -99,11 +99,19 @@ export function StudioPanel({ apis, privacy, context, locale }: {
       // The publication is canonical, so record the receipt and the proposal it belongs to before
       // reading it back. The identity stays until the readback matches it.
       write(old => {
-        const { intent: _intent, ...rest } = old;
-        return { ...rest, published: result, publishedProposalRef: intent.base.proposal_ref };
+        if (old.intent?.key !== intent.key) return old;
+        return { ...old, intent: { ...intent, phase: 'unknown' }, published: result, publishedProposalRef: intent.base.proposal_ref };
       });
       try {
-        await client.fetchQuery(options.proposal(intent.base.proposal_ref));
+        const fresh = await client.fetchQuery(options.proposal(intent.base.proposal_ref));
+        if (fresh.state === 'PUBLISHED' && sameRef(fresh.proposal_ref, intent.base.proposal_ref) &&
+            sameRef(fresh.page.page_ref, intent.base.page.page_ref)) {
+          write(old => {
+            if (old.intent?.key !== intent.key) return old;
+            const { intent: _intent, ...rest } = old;
+            return rest;
+          });
+        }
       } catch {
         // The protected proposal query owns this read failure and its read-only retry. It must never
         // be reclassified as a mutation failure, because the publication already succeeded and
@@ -151,10 +159,15 @@ export function StudioPanel({ apis, privacy, context, locale }: {
     run(async signal => {
       if (intent.kind === 'publish') {
         const fresh = await client.fetchQuery(options.proposal(intent.base.proposal_ref));
-        if (signal.aborted || !privacy.isCurrent(context) || !sameRef(fresh.page.page_ref, intent.base.page.page_ref)) return;
+        if (signal.aborted || !privacy.isCurrent(context) || !sameRef(fresh.proposal_ref, intent.base.proposal_ref) ||
+            !sameRef(fresh.page.page_ref, intent.base.page.page_ref)) return;
         if (fresh.state === 'PUBLISHED') {
           write(old => { const { intent: _intent, ...rest } = old; return rest; }); return;
         }
+        // An acknowledged publication is recovered by reads only, even if canonical readback lags.
+        const acknowledged = read();
+        if (acknowledged.published && acknowledged.publishedProposalRef &&
+            sameRef(acknowledged.publishedProposalRef, intent.base.proposal_ref)) return;
       } else {
         await client.fetchQuery(options.proposals());
         if (signal.aborted || !privacy.isCurrent(context)) return;
