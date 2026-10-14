@@ -39,6 +39,12 @@ export type ComputerAgentQualificationStatus = Awaited<
   ReturnType<BoundWorkspaceApis["connections"]["computerAgents"]["readComputerAgentQualification"]>
 >;
 
+function requireContextOwner(connection: ComputerAgentConnection, context: SessionContext): void {
+  if (connection.owner_principal_ref !== context.principal) {
+    throw new Error("Computer-agent connection belongs to another owner");
+  }
+}
+
 export function computerAgentQualificationOptions(
   apis: BoundWorkspaceApis,
   privacy: PrivacyController,
@@ -46,6 +52,7 @@ export function computerAgentQualificationOptions(
   connection: ComputerAgentConnection,
   transport: ComputerAgentQualificationStatus["transport"],
 ) {
+  requireContextOwner(connection, context);
   return {
     queryKey: [...protectedQueryKey(context, "computer-agent-qualification"),
       connection.connection_id, connection.revision, transport] as const,
@@ -75,16 +82,19 @@ export function computerAgentConnectionMutationActions(
   return Object.freeze({
     preparePut(connectionId: string, input: ComputerAgentConnectionPutInput, current?: ComputerAgentConnection) {
       requireCurrent(privacy, context);
+      if (current !== undefined) requireContextOwner(current, context);
       return api.prepareComputerAgentConnectionPut(connectionId, context.deploymentGeneration, input, current);
     },
     prepareDisable(current: ComputerAgentConnection) {
       requireCurrent(privacy, context);
+      requireContextOwner(current, context);
       return api.prepareComputerAgentConnectionDisable(current, context.deploymentGeneration);
     },
     async execute(intent: ComputerAgentConnectionMutationIntent) {
       requireCurrent(privacy, context);
       const receipt = await api.executeComputerAgentConnectionMutation(intent);
       requireCurrent(privacy, context);
+      requireContextOwner(receipt, context);
       return receipt;
     },
   });

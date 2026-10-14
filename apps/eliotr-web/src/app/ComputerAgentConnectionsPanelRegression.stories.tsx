@@ -1,8 +1,13 @@
 import { useEffect, useState } from "react";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router";
-import type { ComputerAgentConnection } from "@eliotr/owner-api-client";
-import { clearWorkspaceQueries, createWorkspaceQueryClient } from "../query/client";
+import type { ComputerAgentConnection, ComputerAgentConnectionMutationIntent } from "@eliotr/owner-api-client";
+import { clearWorkspaceQueries, createWorkspaceQueryClient, protectedQueryKey } from "../query/client";
+import {
+  computerAgentConnectionMutationActions,
+  computerAgentQualificationOptions,
+  type ComputerAgentConnectionPutInput,
+} from "../query/computerAgentConnections";
 import { createPrivacyController, type PrivacyController, type SessionContext } from "./privacy";
 import { Shell } from "./Shell";
 import { createWorkspaceRuntime, type BoundWorkspaceApis } from "./runtime";
@@ -13,15 +18,20 @@ const connectionId = "agent.private.01";
 const privateName = "Private Research Agent";
 const privateIssuer = "https://owner.cloudflareaccess.com";
 const privateSubject = "private-research-agent.access";
+const foreignConnectionId = "agent.foreign.02";
+const foreignPrivateName = "Foreign Private Agent";
+const foreignIssuer = "https://foreign-owner.cloudflareaccess.com";
+const foreignSubject = "foreign-agent.access";
 const traceId = "computer-agent-connections-regression-trace";
 
-type QualificationMode = "expired-ready" | "changed-transport" | "authorization-loss";
+type QualificationMode = "expired-ready" | "changed-transport";
 interface RequestEvent { readonly method: string; readonly path: string }
 interface MutationAttempt { readonly method: string; readonly path: string; readonly body: string; readonly key: string }
 interface ComputerAgentRegressionEnvironment {
   readonly client: ReturnType<typeof createWorkspaceQueryClient>;
   readonly privacy: PrivacyController;
   readonly runtime: ReturnType<typeof createWorkspaceRuntime>;
+  bindOwnerContext(apis: BoundWorkspaceApis, context: SessionContext): void;
   requestCount(): number;
   requestsSince(index: number): readonly RequestEvent[];
   mutationAttempts(): readonly MutationAttempt[];
@@ -30,6 +40,12 @@ interface ComputerAgentRegressionEnvironment {
   effectCount(): number;
   readbackFailureCount(): number;
   setQualificationMode(mode: QualificationMode): void;
+  assertForeignOwnerInputsRejected(): void;
+  resetCanonicalCommitSentinel(): void;
+  assertForeignReceiptNotCommitted(): void;
+  preparePostLossIntent(): ComputerAgentConnectionMutationIntent;
+  triggerAuthorizationLoss(): Promise<void>;
+  assertActionsBlockedAfterAuthorizationLoss(intent: ComputerAgentConnectionMutationIntent): Promise<void>;
   authorizationLossRequestCount(): number;
   assertPreparedOnly(): void;
   assertUnknownReadback(): void;
@@ -68,6 +84,7 @@ function createRegressionEnvironment(): ComputerAgentRegressionEnvironment {
   const requestEvents: RequestEvent[] = [];
   const attempts: MutationAttempt[] = [];
   let connection: ComputerAgentConnection | undefined;
+  let foreignConnection: ComputerAgentConnection | undefined;
   let mintedKeyCount = 0;
   let qualificationReads = 0;
   let effectCount = 0;
@@ -75,8 +92,10 @@ function createRegressionEnvironment(): ComputerAgentRegressionEnvironment {
   let readbackFailureCount = 0;
   let failNextListReadback = false;
   let qualificationMode: QualificationMode = "expired-ready";
+  let authorizationLossOnList = false;
   let authorizationLossCount = 0;
   let requestsAtAuthorizationLoss = -1;
+  let canonicalCommitSentinelKey: readonly unknown[] | undefined;
   let privacy!: PrivacyController;
 
   const fetchFixture: typeof fetch = async (input, init) => {
@@ -109,14 +128,18 @@ function createRegressionEnvironment(): ComputerAgentRegressionEnvironment {
 
     if (url.pathname === "/api/v1/system/computer-agents" && method === "GET") {
       listReads++;
+      if (authorizationLossOnList) return problem(401, "ACCESS_SESSION_REQUIRED");
       if (failNextListReadback) {
         failNextListReadback = false;
         readbackFailureCount++;
         return problem(503, "COMPUTER_AGENT_CONNECTION_READBACK_UNAVAILABLE", true);
       }
+      const connections = [connection, foreignConnection]
+        .filter((item): item is ComputerAgentConnection => item !== undefined)
+        .sort((left, right) => left.connection_id < right.connection_id ? -1 : left.connection_id > right.connection_id ? 1 : 0);
       return json({
         protocol: "eliotr.computer-agent-connections.v1",
-        connections: connection === undefined ? [] : [connection],
+        connections,
       });
     }
 
@@ -147,7 +170,8 @@ function createRegressionEnvironment(): ComputerAgentRegressionEnvironment {
           request.task_kinds.length !== 1 || request.task_kinds[0] !== "RESEARCH_BRANCH_ANALYSIS") {
         throw new Error("Reviewed PUT silently widened owner authority or changed the create revision");
       }
-      if (attempts.length === 1) {
+      const attemptsForConnection = attempts.filter(attempt => attempt.path === url.pathname);
+      if (selectedId === connectionId && attemptsForConnection.length === 1) {
         connection = {
           protocol: "eliotr.computer-agent-connection.v1",
           connection_id: connectionId,
@@ -166,19 +190,40 @@ function createRegressionEnvironment(): ComputerAgentRegressionEnvironment {
         effectCount++;
         throw new TypeError("Controlled lost mutation acknowledgement");
       }
-      const first = attempts[0];
-      if (attempts.length !== 2 || first?.body !== body || first.key !== key || effectCount !== 1 || connection === undefined) {
-        throw new Error("Same-action reconciliation minted or dispatched a different mutation");
+      if (selectedId === connectionId && attemptsForConnection.length === 2) {
+        const first = attemptsForConnection[0];
+        if (first?.body !== body || first.key !== key || effectCount !== 1 || connection === undefined) {
+          throw new Error("Same-action reconciliation minted or dispatched a different mutation");
+        }
+        failNextListReadback = true;
+        return json(connection);
       }
-      failNextListReadback = true;
-      return json(connection);
+      if (selectedId === foreignConnectionId && attemptsForConnection.length === 1) {
+        foreignConnection = {
+          protocol: "eliotr.computer-agent-connection.v1",
+          connection_id: foreignConnectionId,
+          revision: 1,
+          owner_principal_ref: "foreign-owner-regression",
+          state: "ENABLED",
+          display_name: request.display_name,
+          contour: request.contour,
+          actor: { ...request.actor },
+          transport_capabilities: [...request.transport_capabilities],
+          computer_capabilities: [...request.computer_capabilities],
+          task_kinds: [...request.task_kinds],
+          created_at: stamp,
+          updated_at: stamp,
+        };
+        effectCount++;
+        return json(foreignConnection);
+      }
+      throw new Error(`Unexpected computer-agent mutation attempt for ${selectedId}`);
     }
 
     const qualificationMatch = /^\/api\/v1\/system\/computer-agents\/([^/]+)\/qualifications\/([^/]+)$/u.exec(url.pathname);
     if (qualificationMatch && method === "GET") {
       qualificationReads++;
       if (!connection) throw new Error("Qualification was read before the canonical connection existed");
-      if (qualificationMode === "authorization-loss") return problem(401, "ACCESS_SESSION_REQUIRED");
       const requestedTransport = qualificationMatch[2] ?? "";
       const returnedTransport = qualificationMode === "changed-transport" ? "WEB_INBOX" : requestedTransport;
       return json({
@@ -232,11 +277,36 @@ function createRegressionEnvironment(): ComputerAgentRegressionEnvironment {
     clearProtected() { clearWorkspaceQueries(client); },
     verify: signal => runtime.verify(signal),
   });
+  let ownerBindings: {
+    readonly apis: BoundWorkspaceApis;
+    readonly context: SessionContext;
+    readonly actions: ReturnType<typeof computerAgentConnectionMutationActions>;
+  } | undefined;
+
+  function requireOwnerBindings() {
+    const current = ownerBindings;
+    assert(current !== undefined, "Strict owner context is not bound to the regression fixture");
+    return current;
+  }
+
+  function foreignCurrentDto(): ComputerAgentConnection {
+    assert(connection !== undefined, "Owned connection fixture must exist before constructing the foreign DTO");
+    return {
+      ...connection,
+      connection_id: foreignConnectionId,
+      owner_principal_ref: "foreign-owner-regression",
+      display_name: foreignPrivateName,
+      actor: { ...connection.actor, issuer: foreignIssuer, subject: foreignSubject },
+    };
+  }
 
   return {
     client,
     privacy,
     runtime,
+    bindOwnerContext(apis, context) {
+      ownerBindings = { apis, context, actions: computerAgentConnectionMutationActions(apis, privacy, context) };
+    },
     requestCount: () => requestEvents.length,
     requestsSince(index) { return requestEvents.slice(index); },
     mutationAttempts: () => attempts,
@@ -245,6 +315,107 @@ function createRegressionEnvironment(): ComputerAgentRegressionEnvironment {
     effectCount: () => effectCount,
     readbackFailureCount: () => readbackFailureCount,
     setQualificationMode(mode) { qualificationMode = mode; },
+    assertForeignOwnerInputsRejected() {
+      const { apis, context, actions: ownerActions } = requireOwnerBindings();
+      const foreign = foreignCurrentDto();
+      const input: ComputerAgentConnectionPutInput = {
+        expected_revision: foreign.revision,
+        display_name: foreign.display_name,
+        contour: foreign.contour,
+        actor: foreign.actor,
+        transport_capabilities: [...foreign.transport_capabilities],
+        computer_capabilities: [...foreign.computer_capabilities],
+        task_kinds: [...foreign.task_kinds],
+      };
+      const mintBefore = mintedKeyCount;
+      const requestsBefore = requestEvents.length;
+      let putRejected = false;
+      try { ownerActions.preparePut(foreign.connection_id, input, foreign); } catch { putRejected = true; }
+      assert(putRejected && mintedKeyCount === mintBefore && requestEvents.length === requestsBefore,
+        "Foreign-owner PUT input must be rejected before SDK key mint or request");
+      let disableRejected = false;
+      try { ownerActions.prepareDisable(foreign); } catch { disableRejected = true; }
+      assert(disableRejected && mintedKeyCount === mintBefore && requestEvents.length === requestsBefore,
+        "Foreign-owner disable input must be rejected before SDK key mint or request");
+      let qualificationRejected = false;
+      try { computerAgentQualificationOptions(apis, privacy, context, foreign, "MCP_WRITE"); } catch { qualificationRejected = true; }
+      assert(qualificationRejected && mintedKeyCount === mintBefore && requestEvents.length === requestsBefore &&
+        qualificationReads === 0,
+      "Foreign-owner qualification input must be rejected before query construction or request");
+    },
+    resetCanonicalCommitSentinel() {
+      const { context } = requireOwnerBindings();
+      canonicalCommitSentinelKey = protectedQueryKey(context, "computer-agent-qualification");
+      client.setQueryDefaults(canonicalCommitSentinelKey, { gcTime: Infinity });
+      client.setQueryData(canonicalCommitSentinelKey, { sentinel: "foreign-receipt-must-not-invalidate" });
+      const sentinel = client.getQueryCache().find({ queryKey: canonicalCommitSentinelKey, exact: true });
+      assert(sentinel !== undefined && !sentinel.state.isInvalidated,
+        "Canonical commit invalidation sentinel must start clear before the foreign receipt scenario");
+    },
+    assertForeignReceiptNotCommitted() {
+      const attemptsForForeign = attempts.filter(attempt => attempt.path.endsWith(`/${foreignConnectionId}`));
+      const foreignDataCached = client.getQueryCache().getAll().some(query =>
+        query.state.data !== undefined && JSON.stringify(query.state.data).includes(foreignPrivateName));
+      const sentinel = canonicalCommitSentinelKey === undefined
+        ? undefined
+        : client.getQueryCache().find({ queryKey: canonicalCommitSentinelKey, exact: true });
+      assert(foreignConnection?.owner_principal_ref === "foreign-owner-regression" &&
+        attemptsForForeign.length === 1 && mintedKeyCount === 2 && effectCount === 2,
+      "Foreign create must return one canonical-looking receipt after one actual server effect");
+      assert(!foreignDataCached, "Foreign connection name must never enter protected Query data");
+      assert(sentinel !== undefined && !sentinel.state.isInvalidated,
+        "Foreign receipt must not invoke the canonical-commit invalidation callback");
+    },
+    preparePostLossIntent() {
+      const { actions: ownerActions } = requireOwnerBindings();
+      assert(connection !== undefined, "Owned connection fixture must exist before preparing the authority-loss probe");
+      const input: ComputerAgentConnectionPutInput = {
+        expected_revision: 0,
+        display_name: "Authority Loss Probe",
+        contour: connection.contour,
+        actor: connection.actor,
+        transport_capabilities: [...connection.transport_capabilities],
+        computer_capabilities: [...connection.computer_capabilities],
+        task_kinds: [...connection.task_kinds],
+      };
+      const mintBefore = mintedKeyCount;
+      const intent = ownerActions.preparePut("agent.authority-probe", input);
+      assert(mintedKeyCount === mintBefore + 1,
+        "Authority-loss probe must hold a real prepared intent before the context closes");
+      return intent;
+    },
+    async triggerAuthorizationLoss() {
+      const { apis, context } = requireOwnerBindings();
+      authorizationLossOnList = true;
+      try { await apis.connections.computerAgents.readComputerAgentConnections(context.deploymentGeneration); }
+      catch { /* ACCESS_SESSION_REQUIRED is the controlled fixture outcome. */ }
+      assert(authorizationLossCount === 1 && requestsAtAuthorizationLoss === requestEvents.length,
+        "Strict composed SDK request must report ACCESS_SESSION_REQUIRED and close the captured context");
+    },
+    async assertActionsBlockedAfterAuthorizationLoss(intent) {
+      const { actions: ownerActions } = requireOwnerBindings();
+      assert(connection !== undefined, "Owned connection fixture must remain available to validate the blocked input");
+      const input: ComputerAgentConnectionPutInput = {
+        expected_revision: 0,
+        display_name: "Must Not Mint After Authority Loss",
+        contour: connection.contour,
+        actor: connection.actor,
+        transport_capabilities: [...connection.transport_capabilities],
+        computer_capabilities: [...connection.computer_capabilities],
+        task_kinds: [...connection.task_kinds],
+      };
+      const mintBefore = mintedKeyCount;
+      const requestCountBefore = requestEvents.length;
+      let prepareRejected = false;
+      try { ownerActions.preparePut("agent.after-authority-loss", input); } catch { prepareRejected = true; }
+      assert(prepareRejected && mintedKeyCount === mintBefore,
+        "Lost authority must reject preparePut before minting a new idempotency key");
+      let executeRejected = false;
+      try { await ownerActions.execute(intent); } catch { executeRejected = true; }
+      assert(executeRejected && requestEvents.length === requestCountBefore &&
+        requestCountBefore === requestsAtAuthorizationLoss,
+      "Lost authority must reject a retained intent without a late owner request");
+    },
     authorizationLossRequestCount: () => requestsAtAuthorizationLoss,
     assertPreparedOnly() {
       assert(mintedKeyCount === 1 && attempts.length === 0 && effectCount === 0,
@@ -288,7 +459,10 @@ function ComputerAgentConnectionsPanelRegressionPreview() {
       if (snapshot.phase === "available") {
         environment.runtime.bind(snapshot.context);
         const apis = environment.runtime.read(snapshot.context);
-        if (apis) setBound({ context: snapshot.context, apis });
+        if (apis) {
+          environment.bindOwnerContext(apis, snapshot.context);
+          setBound({ context: snapshot.context, apis });
+        }
       }
     });
     void environment.privacy.refresh();
@@ -367,6 +541,7 @@ async function playComputerAgentConnectionsPanelRegression({ canvas, canvasEleme
     throw new Error("Receipt reconciliation must issue only one explicit protected GET");
   }
   environment.assertConfirmedReadback();
+  environment.assertForeignOwnerInputsRejected();
 
   await userEvent.selectOptions(canvas.getByRole("combobox", { name: "Transport qualification" }), "MCP_WRITE");
   await userEvent.click(canvas.getByRole("button", { name: "Read qualification" }));
@@ -384,8 +559,42 @@ async function playComputerAgentConnectionsPanelRegression({ canvas, canvasEleme
     throw new Error("A qualification response for another transport was presented as current or online");
   }
 
-  environment.setQualificationMode("authorization-loss");
-  await userEvent.click(canvas.getByRole("button", { name: "Read qualification" }));
+  environment.resetCanonicalCommitSentinel();
+  await userEvent.click(canvas.getByRole("button", { name: "New connection" }));
+  await userEvent.type(canvas.getByRole("textbox", { name: "Logical connection ID" }), foreignConnectionId);
+  await userEvent.type(canvas.getByRole("textbox", { name: "Display name" }), foreignPrivateName);
+  await userEvent.selectOptions(canvas.getByRole("combobox", { name: "Provider contour" }), "OTHER");
+  await userEvent.type(canvas.getByRole("textbox", { name: "Service actor issuer" }), foreignIssuer);
+  await userEvent.type(canvas.getByRole("textbox", { name: "Service actor subject" }), foreignSubject);
+  await userEvent.click(canvas.getByRole("checkbox", { name: "Write through MCP" }));
+  await userEvent.click(canvas.getByRole("checkbox", { name: "Cloud browser" }));
+  await userEvent.click(canvas.getByRole("checkbox", { name: "Research branch analysis" }));
+  await userEvent.click(canvas.getByRole("checkbox", { name: "I understand that saving will create or enable this connection." }));
+  await userEvent.click(canvas.getByRole("button", { name: "Review and prepare save" }));
+  await canvas.findByRole("heading", { name: "Review this exact change" });
+  await userEvent.click(canvas.getByRole("button", { name: "Confirm and save enabled configuration" }));
+  await canvas.findByText(/The outcome is unknown/i);
+  await canvas.findByText(/Protected readback failed/i);
+  environment.assertForeignReceiptNotCommitted();
+  if (canvas.queryByRole("button", { name: "Retry the same reviewed action", exact: true })) {
+    throw new Error("Foreign-owner readback failure exposed a same-action mutation retry");
+  }
+
+  const beforeForeignReconciliation = environment.requestCount();
+  await userEvent.click(canvas.getByRole("button", { name: "Read the protected configuration again" }));
+  await canvas.findByText(/Protected readback failed/i);
+  const foreignReconciliationEvents = environment.requestsSince(beforeForeignReconciliation);
+  if (foreignReconciliationEvents.length !== 1 || foreignReconciliationEvents[0]?.method !== "GET" ||
+      foreignReconciliationEvents[0]?.path !== "/api/v1/system/computer-agents") {
+    throw new Error("Foreign-owner reconciliation must remain a protected read only");
+  }
+  if (canvas.queryByRole("button", { name: "Retry the same reviewed action", exact: true })) {
+    throw new Error("Rejected foreign-owner readback exposed a same-action mutation retry");
+  }
+  environment.assertForeignReceiptNotCommitted();
+
+  const postLossIntent = environment.preparePostLossIntent();
+  await environment.triggerAuthorizationLoss();
   for (let frame = 0; frame < 120 && environment.privacy.getSnapshot().phase === "available"; frame++) {
     await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
   }
@@ -393,7 +602,9 @@ async function playComputerAgentConnectionsPanelRegression({ canvas, canvasEleme
     throw new Error("ACCESS_SESSION_REQUIRED did not close the composed owner session");
   }
   await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
-  const privateValues = [privateName, privateIssuer, privateSubject, "Cloud browser"];
+  await environment.assertActionsBlockedAfterAuthorizationLoss(postLossIntent);
+  const privateValues = [privateName, privateIssuer, privateSubject, foreignPrivateName, foreignIssuer, foreignSubject,
+    "Cloud browser", "Write through MCP", "Research branch analysis"];
   const visibleText = storyRoot.textContent ?? "";
   const inputValues = [...storyRoot.querySelectorAll<HTMLInputElement>("input")].map(input => input.value);
   const codeValues = [...storyRoot.querySelectorAll<HTMLElement>("code")].map(node => node.textContent ?? "");
