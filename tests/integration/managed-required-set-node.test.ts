@@ -7,15 +7,15 @@ import type {
   ManagedRequiredSetFence,
   ManagedRequiredSetPage,
   ManagedRequiredSetPort,
-} from "./managed-required-set.js";
+} from "../../packages/cloudflare-projection/src/managed-required-set.js";
 import {
   createD1ManagedRequiredSetPort,
   enumerateManagedRequiredSet,
-} from "./managed-required-set.js";
+} from "../../packages/cloudflare-projection/src/managed-required-set.js";
 import {
   createD1ManagedTargetAssignmentPort,
   type ManagedTargetIdentity,
-} from "./managed-target-assignment.js";
+} from "../../packages/cloudflare-projection/src/managed-target-assignment.js";
 
 const TARGET: ManagedTargetIdentity = Object.freeze({
   namespace: "eliotr",
@@ -35,7 +35,7 @@ const DB_DIGEST = "b".repeat(64);
 const RESIDENCY_DIGEST = "c".repeat(64);
 const PROFILE_DIGEST = "d".repeat(64);
 
-const migrationDirectory = new URL("../../../infra/d1/core/migrations/", import.meta.url);
+const migrationDirectory = new URL("../../infra/d1/core/migrations/", import.meta.url);
 let database: DatabaseSync;
 
 function createMigratedCore(): DatabaseSync {
