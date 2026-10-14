@@ -14,7 +14,9 @@
     "apps/eliotr-web/src/app/ProjectsHome.tsx",
     "apps/eliotr-web/src/app/NewProjectPanel.tsx",
     "apps/eliotr-web/src/app/NewProjectPreview.tsx",
-    "apps/eliotr-web/src/app/NewProject.stories.tsx"
+    "apps/eliotr-web/src/app/NewProject.stories.tsx",
+    "apps/eliotr-web/src/query/projectCreation.ts",
+    "apps/eliotr-web/src/query/projectCreation.test.ts"
   ],
   "predecessor_refs": [
     {

@@ -169,11 +169,15 @@ export function createProjectCreationController(
   let notified = false;
   const listeners = new Set<() => void>();
 
-  function publish(): ProjectCreationState {
-    const state: ProjectCreationState = Object.freeze({
+  function snapshot(): ProjectCreationState {
+    return Object.freeze({
       phase, title, sourceIds, key, invalid, outcome, receipt, project, readback,
       editable: phase === "idle" || phase === "refused" || phase === "confirmed",
     });
+  }
+
+  function publish(): ProjectCreationState {
+    const state = snapshot();
     for (const listener of listeners) listener();
     return state;
   }
@@ -289,7 +293,7 @@ export function createProjectCreationController(
   }
 
   return {
-    getState: () => publish(),
+    getState: snapshot,
 
     subscribe(listener: () => void) {
       listeners.add(listener);
