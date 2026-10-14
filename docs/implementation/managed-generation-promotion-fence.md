@@ -31,8 +31,11 @@ jobs therefore remain required work. AI Search target namespace and canonical
 source namespaces are distinct; unsuccessful D1 pages raise even when empty.
 
 The owning package compiler, scoped lint, command/SQLite enumeration tests and
-migration depth checks passed. The migration has not been applied remotely and
-the Core assignment authorizer is not wired. This receipt counts project/revision
+migration depth checks passed. Guarded remote application of migration 0141
+passed on October 14: Core has 136 migrations through 0141; Search retains four.
+The verified maintenance release `c465ec4d` is installed. It did not create any
+project assignment or promote an AI Search generation. The Core assignment
+authorizer is not wired. The enumeration receipt counts project/revision
 copies, not desired items. The shared desired-item builder/promoter, structural
 project-specific item layout, writer drain, real T2/T3 and expected-head promotion
 remain pending. Neither the source publication nor provider presence establishes
