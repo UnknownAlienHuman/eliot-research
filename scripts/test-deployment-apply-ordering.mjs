@@ -15,6 +15,9 @@
 //   node scripts/test-deployment-apply-ordering.mjs
 //   node scripts/test-deployment-apply-ordering.mjs --only-application-schema-negative
 //   node scripts/test-deployment-apply-ordering.mjs --only-migration-directories-negative
+//   node scripts/test-deployment-apply-ordering.mjs --from-migration-directories-negative
+// Skip the retained migration-directory group as well:
+//   node scripts/test-deployment-apply-ordering.mjs --after-migration-directories-negative
 
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
@@ -35,6 +38,14 @@ import { loadResearchRuntimeEnvironment, RESEARCH_RUNTIME_CONFIGURATION_KEYS,
 const directExecution = process.argv[1] !== undefined && pathToFileURL(resolve(process.argv[1])).href === import.meta.url;
 const onlyApplicationSchemaNegative = process.argv.slice(2).includes("--only-application-schema-negative");
 const onlyMigrationDirectoriesNegative = process.argv.slice(2).includes("--only-migration-directories-negative");
+const fromMigrationDirectoriesNegative = process.argv.slice(2).includes("--from-migration-directories-negative");
+const afterMigrationDirectoriesNegative = process.argv.slice(2).includes("--after-migration-directories-negative");
+assert.ok(!(fromMigrationDirectoriesNegative && afterMigrationDirectoriesNegative) &&
+  !((fromMigrationDirectoriesNegative || afterMigrationDirectoriesNegative) &&
+    (onlyApplicationSchemaNegative || onlyMigrationDirectoriesNegative)), "Use one deployment ordering selector");
+const startingCheck = afterMigrationDirectoriesNegative
+  ? "maintenance deploy records blockers and budget findings without claiming a full release"
+  : fromMigrationDirectoriesNegative ? "missing or default migration directories stop before Worker upload" : null;
 if (directExecution && process.env.ELIOTR_TEST_GATE_REDIRECTED !== "1") {
   const shimHref = new URL("./test-usage-gate-shim.mjs", import.meta.url).href;
   const childEnv = { ...process.env, ELIOTR_TEST_GATE_REDIRECTED: "1" };
@@ -486,7 +497,10 @@ function harness(overrides = {}) {
     buildEvents: () => [...buildEvents] };
 }
 let cases = 0;
+let runRemainingChecks = startingCheck === null;
 const check = async (name, action) => {
+  if (name === startingCheck) runRemainingChecks = true;
+  if (!runRemainingChecks) return;
   if (onlyMigrationDirectoriesNegative && name !== "missing or default migration directories stop before Worker upload") return;
   await action(); cases += 1; console.log(`Deployment apply ordering: ${name}: PASS`);
 };
@@ -1258,6 +1272,7 @@ await check("source seal drift before build and prepared bundle drift before CAS
   assert.equal(bundleDrift.receipts.length, 0);
 });
 
+assert.ok(runRemainingChecks, "the selected starting check must execute");
 console.log(`Deployment apply ordering: ${cases} groups passed; live Cloudflare NOT_EXECUTED`);
 } finally {
   if (temporaryDirectory !== undefined) {
