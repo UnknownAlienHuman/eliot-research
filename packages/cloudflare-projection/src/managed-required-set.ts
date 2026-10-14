@@ -120,7 +120,8 @@ export class ManagedRequiredSetError extends Error {
       | "MANAGED_REQUIRED_SET_MEMBERSHIP_AMBIGUOUS"
       | "MANAGED_REQUIRED_SET_BOUNDS_EXCEEDED"
       | "MANAGED_REQUIRED_SET_FENCE_CHANGED"
-      | "MANAGED_REQUIRED_SET_AUTHORITY_UNAVAILABLE",
+      | "MANAGED_REQUIRED_SET_AUTHORITY_UNAVAILABLE"
+      | "MANAGED_REQUIRED_SET_READ_FAILED",
     message: string,
   ) {
     super(message);
@@ -557,6 +558,9 @@ export function createD1ManagedRequiredSetPort(
       } catch (cause) {
         if (cause instanceof ManagedRequiredSetError) throw cause;
         fail("MANAGED_REQUIRED_SET_AUTHORITY_UNAVAILABLE", "Core required-set page is unavailable");
+      }
+      if (!result.success) {
+        fail("MANAGED_REQUIRED_SET_READ_FAILED", "Core did not successfully complete the required-set page read");
       }
       const rows = result.results;
       if (!Array.isArray(rows) || rows.length > input.limit) {

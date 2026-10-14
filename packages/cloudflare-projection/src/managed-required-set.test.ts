@@ -380,7 +380,7 @@ function currentEpoch(): number {
   ).get() as { generation: number }).generation;
 }
 
-function d1CoreDatabase(): D1Database {
+function d1CoreDatabase(failPageReads = false): D1Database {
   return {
     prepare(sql: string) {
       return {
@@ -391,6 +391,7 @@ function d1CoreDatabase(): D1Database {
               return (statement.get(...values) ?? null) as T | null;
             },
             async all<T>(): Promise<D1Result<T>> {
+              if (failPageReads) return { success: false, results: [] } as unknown as D1Result<T>;
               return {
                 success: true,
                 results: statement.all(...values) as T[],
@@ -446,6 +447,19 @@ describe("canonical managed required-set enumeration", () => {
     expect(copies.every((copy) => copy.namespace === "eliotr" && copy.source_namespace_id === SOURCE_NAMESPACE)).toBe(true);
     expect(copies.every((copy) => copy.source_class === SOURCE_CLASS)).toBe(true);
     expect(receipt.required_set_digest).toMatch(/^[a-f0-9]{64}$/u);
+  });
+
+  it("raises on an unsuccessful D1 page even when results is empty", async () => {
+    let deliveredCopies = 0;
+    await expect(enumerateManagedRequiredSet(
+      createD1ManagedRequiredSetPort(d1CoreDatabase(true)),
+      {
+        target: TARGET,
+        as_of: AS_OF,
+        on_copy: () => { deliveredCopies += 1; },
+      },
+    )).rejects.toMatchObject({ code: "MANAGED_REQUIRED_SET_READ_FAILED" });
+    expect(deliveredCopies).toBe(0);
   });
 
   it("uses half-open membership validity and rejects an interleaved membership change", async () => {
