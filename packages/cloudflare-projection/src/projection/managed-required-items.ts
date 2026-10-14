@@ -1,6 +1,5 @@
 import {
   SourceRevisionSchema,
-  type ProjectionItem,
   type SourceRevision,
 } from "@eliotr/contracts";
 import {
@@ -14,10 +13,8 @@ import {
   assertProjectionInteger,
   assertProjectionSha256,
   profileIsValid,
-  projectionDigest,
   projectionFail,
-  projectionSha256Bytes,
-  utf8ProjectionBytes,
+  utf8ProjectionLength,
 } from "../canonical.js";
 import type { ManagedRequiredProjectRevisionCopy } from "../managed-required-set.js";
 import type { ProjectionExecutionProfile } from "../types.js";
@@ -171,7 +168,7 @@ function validateCapturedInput(captured: CapturedInput): string {
       "verified normalized Markdown bytes are missing",
     );
   }
-  if (projection.markdown.length > profile.maximum_markdown_bytes) {
+  if (utf8ProjectionLength(projection.markdown) > profile.maximum_markdown_bytes) {
     throw new StructuralProjectionError(
       "PROJECTION_ITEM_LIMIT_EXCEEDED",
       "normalized Markdown exceeds the immutable profile byte bound",
@@ -192,24 +189,9 @@ export async function projectManagedRequiredItemCopy(
   const captured = captureInput(input);
   const membershipId = validateCapturedInput(captured);
   const { projection, copy, profile } = captured;
-  const markdownBytes = utf8ProjectionBytes(projection.markdown);
-  if (markdownBytes.byteLength > profile.maximum_markdown_bytes) {
-    throw new StructuralProjectionError(
-      "PROJECTION_ITEM_LIMIT_EXCEEDED",
-      "normalized Markdown exceeds the immutable profile byte bound",
-    );
-  }
 
-  // This is the first await. Every caller-owned object, array and scalar used
-  // below has already been captured above.
-  const markdownDigest = await projectionSha256Bytes(markdownBytes);
-  if (
-    markdownDigest !== projection.source_revision.content_sha256 ||
-    markdownDigest !== copy.source_revision_content_sha256
-  ) {
-    authorityConflict("normalized Markdown bytes differ from the pinned SourceRevision digest");
-  }
-
+  // This is the first await. The structural projector owns section keys,
+  // spans and digests; the wrapper checks its returned document digest once.
   const exactProjectionInput: MarkdownProjectionInput = Object.freeze({
     ...projection,
     project_copy_layout: MANAGED_REQUIRED_ITEM_COPY_LAYOUT,
@@ -218,14 +200,8 @@ export async function projectManagedRequiredItemCopy(
     max_item_utf8_bytes: profile.maximum_item_utf8_bytes,
   });
   const result = await projectNormalizedMarkdown(exactProjectionInput);
-  if (
-    result.markdown_sha256 !== markdownDigest ||
-    !Array.isArray(result.items) ||
-    !Array.isArray(result.spans) ||
-    result.items.length === 0 ||
-    result.items.length !== result.spans.length
-  ) {
-    authorityConflict("structural projector returned an incomplete or different normalized document");
+  if (result.markdown_sha256 !== copy.source_revision_content_sha256) {
+    authorityConflict("structural projector document digest differs from the admitted SourceRevision");
   }
   if (result.items.length > profile.maximum_synchronous_items) {
     throw new StructuralProjectionError(
@@ -233,102 +209,13 @@ export async function projectManagedRequiredItemCopy(
       "document projection exceeds the immutable synchronous-item profile bound",
     );
   }
-
-  const itemSetRows: Array<{
-    readonly item_key: string;
-    readonly canonical_section_id: string;
-    readonly content_sha256: string;
-    readonly start: number;
-    readonly end: number;
-  }> = [];
-  const seenKeys = new Set<string>();
-  let previousEnd = 0;
-  for (let index = 0; index < result.items.length; index += 1) {
-    const item = result.items[index];
-    const span = result.spans[index];
-    if (item === undefined || span === undefined) {
-      authorityConflict("structural projector omitted a required item/span pair");
-    }
-    assertProjectionIdentifier(item.item_key, "projected copy item key");
-    assertProjectionIdentifier(item.canonical_section_id, "projected canonical section id");
-    assertProjectionSha256(item.content_sha256, "projected section content digest");
-    if (
-      seenKeys.has(item.item_key) ||
-      item.source_revision_ref !== projection.source_revision.source_revision_ref ||
-      item.project_membership_ids.length !== 1 ||
-      item.project_membership_ids[0] !== membershipId ||
-      item.projection_generation !== projection.projection_generation ||
-      item.canonical_section_id !== span.canonical_section_id ||
-      item.item_key !== span.item_key ||
-      item.normalized_offset_map_ref !==
-        `normalized-bytes:${span.normalized_start_byte}:${span.normalized_end_byte}` ||
-      !Number.isSafeInteger(span.normalized_start_byte) ||
-      !Number.isSafeInteger(span.normalized_end_byte) ||
-      span.normalized_start_byte !== previousEnd ||
-      span.normalized_end_byte <= span.normalized_start_byte ||
-      span.normalized_end_byte > markdownBytes.byteLength
-    ) {
-      authorityConflict("projected item identity, membership, or canonical byte span is invalid");
-    }
-
-    const expectedKeyDigest = await projectionDigest({
-      canonical_section_id: item.canonical_section_id,
-      projection_generation: projection.projection_generation,
-      project_membership_id: membershipId,
-    });
-    if (item.item_key !== `projection-${expectedKeyDigest.slice(0, 48)}`) {
-      authorityConflict("projected copy key does not bind its exact generation, section, and membership");
-    }
-
-    const sectionBytes = markdownBytes.subarray(
-      span.normalized_start_byte,
-      span.normalized_end_byte,
-    );
-    let sectionText: string;
-    try {
-      sectionText = new TextDecoder("utf-8", { fatal: true }).decode(sectionBytes);
-    } catch (cause) {
-      authorityConflict(`projected byte span is not valid UTF-8: ${String(cause)}`);
-    }
-    if (
-      sectionText !== item.section_text ||
-      await projectionSha256Bytes(sectionBytes) !== item.content_sha256
-    ) {
-      authorityConflict("projected section bytes or digest differ from verified normalized Markdown");
-    }
-
-    seenKeys.add(item.item_key);
-    previousEnd = span.normalized_end_byte;
-    itemSetRows.push({
-      item_key: item.item_key,
-      canonical_section_id: item.canonical_section_id,
-      content_sha256: item.content_sha256,
-      start: span.normalized_start_byte,
-      end: span.normalized_end_byte,
-    });
+  for (const item of result.items) {
+    Object.freeze(item.project_membership_ids);
+    Object.freeze(item.heading_path);
+    Object.freeze(item);
   }
-  if (previousEnd !== markdownBytes.byteLength) {
-    authorityConflict("projected spans do not cover all verified normalized Markdown bytes");
-  }
-
-  const expectedItemSetDigest = await projectionDigest(itemSetRows);
-  assertProjectionSha256(result.item_set_digest, "projected item-set digest");
-  if (result.item_set_digest !== expectedItemSetDigest) {
-    authorityConflict("projected item-set digest differs from its exact keys, sections, and spans");
-  }
-
-  const items: readonly ProjectionItem[] = Object.freeze(result.items.map((item) =>
-    Object.freeze({
-      ...item,
-      project_membership_ids: Object.freeze([...item.project_membership_ids]),
-      heading_path: Object.freeze([...item.heading_path]),
-    }),
-  ));
-  const spans = Object.freeze(result.spans.map((span) => Object.freeze({ ...span })));
-  return Object.freeze({
-    items,
-    spans,
-    item_set_digest: expectedItemSetDigest,
-    markdown_sha256: markdownDigest,
-  });
+  for (const span of result.spans) Object.freeze(span);
+  Object.freeze(result.items);
+  Object.freeze(result.spans);
+  return Object.freeze(result);
 }

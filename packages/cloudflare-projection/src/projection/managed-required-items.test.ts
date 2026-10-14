@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { SourceRevision } from "@eliotr/contracts";
+import * as structuralProjector from "@eliotr/retrieval";
 import {
   projectionDigest,
   projectionSha256Bytes,
@@ -140,6 +141,36 @@ describe("managed required-item copy projector", () => {
     expect(second.items.map((item) => item.item_key)).toEqual(first.items.map((item) => item.item_key));
     expect(Object.isFrozen(first.items)).toBe(true);
     expect(Object.isFrozen(first.items[0]?.project_membership_ids)).toBe(true);
+  });
+
+  it("calls the structural projector once and hashes the full document once", async () => {
+    const input = await copyInput();
+    const expectedBytes = new TextEncoder().encode(MARKDOWN);
+    const projectorSpy = vi.spyOn(structuralProjector, "projectNormalizedMarkdown");
+    const digestSpy = vi.spyOn(crypto.subtle, "digest");
+    try {
+      const result = await projectManagedRequiredItemCopy(input);
+      const completeDocumentHashCalls = digestSpy.mock.calls.filter(([algorithm, data]) => {
+        if (algorithm !== "SHA-256") return false;
+        const bytes = data instanceof ArrayBuffer
+          ? new Uint8Array(data)
+          : new Uint8Array(data.buffer, data.byteOffset, data.byteLength);
+        return bytes.byteLength === expectedBytes.byteLength &&
+          bytes.every((byte, index) => byte === expectedBytes[index]);
+      });
+      expect(result.markdown_sha256).toBe(input.markdown_projection_input.source_revision.content_sha256);
+      expect(projectorSpy).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        project_copy_layout: MANAGED_REQUIRED_ITEM_COPY_LAYOUT,
+        project_copy_membership_id: input.required_copy.project_membership_id,
+        projection_generation: input.markdown_projection_input.projection_generation,
+      }));
+      // projectNormalizedMarkdown emits one full-document digest; section and
+      // item-set digests use different byte strings. A wrapper pre-hash doubles it.
+      expect(completeDocumentHashCalls).toHaveLength(1);
+    } finally {
+      projectorSpy.mockRestore();
+      digestSpy.mockRestore();
+    }
   });
 
   it("projects required-set memberships serially with shared section bytes and exact copy keys", async () => {

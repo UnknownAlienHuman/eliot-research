@@ -12,7 +12,6 @@ import {
   createD1AiSearchGenerationRegistryStore,
   createD1ManagedRequiredSetPort,
   projectionDigest,
-  projectionSha256Bytes,
   type AiSearchGenerationRegistrySnapshot,
   type ManagedRequiredProjectRevisionCopy,
   type ManagedTargetIdentity,
@@ -246,8 +245,8 @@ function createCoreR2DocumentPort(
       catch (cause) {
         manifestFailure("MANAGED_TARGET_MANIFEST_SOURCE_INVALID", "normalized R2 Evidence stream is incomplete or unbounded", cause);
       }
-      if (bytes.byteLength !== object.size || await projectionSha256Bytes(bytes) !== authority.source_revision.content_sha256) {
-        manifestFailure("MANAGED_TARGET_MANIFEST_SOURCE_INVALID", "normalized R2 Evidence bytes differ from the admitted SourceRevision digest");
+      if (bytes.byteLength !== object.size) {
+        manifestFailure("MANAGED_TARGET_MANIFEST_SOURCE_INVALID", "normalized R2 Evidence stream length differs from its stored size");
       }
       let markdown: string;
       try { markdown = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }

@@ -27,7 +27,6 @@ export const MANAGED_TARGET_MANIFEST_COPY_LAYOUT = MANAGED_REQUIRED_ITEM_COPY_LA
 
 const MAX_TREE_FANOUT = 256;
 const SHA256 = /^[a-f0-9]{64}$/u;
-const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 
 export type ManagedTargetManifestShadowState =
   | "UNDECLARED"
@@ -501,28 +500,15 @@ export async function buildManagedTargetManifest(
         profile: input.profile.projection_profile,
         copy_layout: MANAGED_REQUIRED_ITEM_COPY_LAYOUT,
       });
-      if (
-        projection.items.length === 0 ||
-        projection.items.length !== projection.spans.length ||
-        projection.items.some((item) =>
-          item.projection_generation !== input.target.managed_generation ||
-          item.project_membership_ids.length !== 1 ||
-          item.project_membership_ids[0] !== copy.project_membership_id)
-      ) {
-        fail("MANAGED_TARGET_MANIFEST_PROJECTION_INVALID", "canonical required-item helper returned a wrong-generation or foreign project copy");
-      }
-      const firstItem = projection.items[0];
-      const projectionGeneration = firstItem?.projection_generation;
-      if (projectionGeneration === undefined || !IDENTIFIER.test(projectionGeneration) ||
-          projection.items.some((item) => item.projection_generation !== projectionGeneration)) {
-        fail("MANAGED_TARGET_MANIFEST_PROJECTION_INVALID", "one document produced inconsistent projection generations");
-      }
-      for (let index = 0; index < projection.items.length; index += 1) {
-        const item = projection.items[index];
+      const projectionGeneration = input.target.managed_generation;
+      const manifestItems = projection.items.map((item, index) => {
         const span = projection.spans[index];
-        if (item === undefined || span === undefined) {
-          fail("MANAGED_TARGET_MANIFEST_PROJECTION_INVALID", "projected item/span pair is missing");
+        if (span === undefined) {
+          fail("MANAGED_TARGET_MANIFEST_STAGE_INVALID", "trusted projector result has no span for an item");
         }
+        return Object.freeze({ item, span });
+      });
+      for (const { item, span } of manifestItems) {
         itemSetDigest = await projectionSha256Utf8(`${itemSetDigest}\n${canonicalProjectionJson({
           copy: copyIdentity(copy),
           item,
@@ -542,7 +528,7 @@ export async function buildManagedTargetManifest(
         markdown_sha256: projection.markdown_sha256,
         item_set_digest: projection.item_set_digest,
         item_count: projection.items.length,
-        items: projection.items.map((item, index) => ({ item, span: projection.spans[index] })),
+        items: manifestItems,
       } as const;
       const json = canonicalProjectionJson(copyPayload);
       const copyDigest = await projectionSha256Utf8(json);
