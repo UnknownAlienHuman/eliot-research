@@ -70,6 +70,7 @@ const PROJECT_COPY_TARGET = Object.freeze({
   namespace: AI_SEARCH_PRIMARY_NAMESPACE,
   managed_instance_id: AI_SEARCH_PRIMARY_INSTANCE_ID,
   managed_generation: AI_SEARCH_PRIMARY_GENERATION,
+  profile: AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
 });
 
 export interface AiSearchFunctionalProbeInput {
@@ -87,9 +88,9 @@ export interface AiSearchFunctionalProbeDependencies {
   /** Existing D1 owner-scope currentness adapter. */
   readonly require_current_scope: (access: EvidenceAccessContext, scope: ScopeSnapshot) => Promise<void>;
   /**
-   * Fresh, read-only Core project-copy resolver. It must recheck the frozen scope and current
-   * membership head on every invocation and return the existing PROJECT_COPY_V1 scope for this exact
-   * target; it must not infer membership facts from ScopeSnapshot.
+   * Fresh, read-only Core project-copy resolver. It must bind the returned target-profile digest to
+   * this immutable profile, recheck the frozen scope and current membership head on every invocation,
+   * and return the existing PROJECT_COPY_V1 scope; it must not infer membership facts from ScopeSnapshot.
    */
   readonly resolve_project_copy_scope?: (input: Readonly<{
     access: EvidenceAccessContext;
