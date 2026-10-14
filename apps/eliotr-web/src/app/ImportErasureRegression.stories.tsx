@@ -254,7 +254,7 @@ export const ImportPanelRefusalRecoveryAndExplicitDismissal = {
     await userEvent.click(canvas.getByRole("checkbox", { name: "Review the exact bytes below before anything is uploaded." }));
     await userEvent.click(await canvas.findByRole("button", { name: "Start the import" }));
     await until(() => probe.importMemory()?.bundleRejected === true, "local bundle dispatch guard refusal");
-    await canvas.findByText("The import request was refused before execution. Review the input and access before continuing.", { selector: ".er-import__note" });
+    await canvas.findByText("The import request was refused before execution. Review the input and access before continuing.", { selector: ".er-operation-announcement" });
 
     const rejectedBundle = probe.importMemory();
     assert(rejectedBundle?.bundle !== undefined, "Guard refusal discarded the inspected bundle");
