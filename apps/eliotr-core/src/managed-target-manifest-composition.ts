@@ -27,7 +27,7 @@ import {
   type ManagedTargetManifestShadowAuthorityPort,
   type ManagedTargetManifestShadowFence,
   type ManagedTargetManifestSourceAuthority,
-} from "../../../packages/cloudflare-projection/src/managed-target-manifest.js";
+} from "@eliotr/cloudflare-projection";
 import type { Env } from "./env.js";
 
 type ManagedTargetManifestEnvironment = Pick<

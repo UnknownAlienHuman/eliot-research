@@ -21,6 +21,24 @@ export type {
   ManagedRequiredItemMarkdownProjectionInput,
 } from "./projection/managed-required-items.js";
 export {
+  buildManagedTargetManifest,
+  MANAGED_TARGET_MANIFEST_COPY_LAYOUT,
+  MANAGED_TARGET_MANIFEST_PROTOCOL,
+  ManagedTargetManifestError,
+} from "./managed-target-manifest.js";
+export type {
+  ManagedTargetManifestDocument,
+  ManagedTargetManifestDocumentPort,
+  ManagedTargetManifestErrorCode,
+  ManagedTargetManifestInput,
+  ManagedTargetManifestProfile,
+  ManagedTargetManifestReceipt,
+  ManagedTargetManifestShadowAuthorityPort,
+  ManagedTargetManifestShadowFence,
+  ManagedTargetManifestShadowState,
+  ManagedTargetManifestSourceAuthority,
+} from "./managed-target-manifest.js";
+export {
   createD1ManagedTargetAssignmentPort,
   MANAGED_TARGET_ASSIGNMENT_PROTOCOL,
   ManagedTargetAssignmentError,
