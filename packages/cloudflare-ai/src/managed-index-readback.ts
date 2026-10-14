@@ -5,6 +5,7 @@ import {
   projectionSha256Bytes,
   projectionSha256Utf8,
 } from "@eliotr/cloudflare-projection";
+import { readStreamWithinBytes, RuntimeLimitError } from "@eliotr/platform-cloudflare";
 
 import type { ProjectionAuthorityPort } from "@eliotr/cloudflare-projection";
 
@@ -76,12 +77,22 @@ export class ManagedItemRecoveryBlockedError extends Error {
   public readonly retryable = true;
 
   public constructor(message: string, cause?: unknown) {
-    super(message, cause === undefined ? undefined : { cause });
+    // `undefined` is a valid rejected value; keep it as an explicit cause too.
+    super(message, { cause });
     this.name = "ManagedItemRecoveryBlockedError";
   }
 }
 
 const BUILTIN_METADATA_FIELDS = new Set(["filename", "folder", "timestamp"]);
+const MAX_MANAGED_ITEM_DOWNLOAD_CHUNKS = 4096;
+
+function isRuntimeLimitError(value: unknown): value is RuntimeLimitError {
+  try {
+    return value instanceof RuntimeLimitError;
+  } catch {
+    return false;
+  }
+}
 
 function assertExpectedMetadata(
   value: unknown,
@@ -223,8 +234,17 @@ export async function readManagedItem(
 ): Promise<ManagedItemReceipt> {
   const id = assertProjectionIdentifier(providerItemId, "provider item ID");
   const providerItem = instance.items.get(id);
+  let rawInfo: unknown;
+  try {
+    rawInfo = await providerItem.info();
+  } catch (cause) {
+    throw new ManagedItemRecoveryBlockedError(
+      "AI Search item info is temporarily unavailable",
+      cause,
+    );
+  }
   const readback = decodeManagedItemInfo(
-    await providerItem.info(),
+    rawInfo,
     item.key,
     item.size,
     item.metadata,
@@ -234,8 +254,17 @@ export async function readManagedItem(
       (listed.id !== readback.id || listed.chunks_count !== readback.chunks_count))) {
     throw new Error("AI Search item readback differs from exact source listing");
   }
+  let rawDownload: unknown;
+  try {
+    rawDownload = await providerItem.download();
+  } catch (cause) {
+    throw new ManagedItemRecoveryBlockedError(
+      "AI Search item download is temporarily unavailable",
+      cause,
+    );
+  }
   const contentSha256 = await readDownloadedContent(
-    await providerItem.download(),
+    rawDownload,
     item.key,
     item.size,
     item.document_sha256,
@@ -278,37 +307,22 @@ async function readDownloadedContent(
   ) {
     throw new Error("AI Search downloaded item envelope differs from the desired item");
   }
-  const reader = (record.body as ReadableStream<Uint8Array>).getReader();
-  const chunks: Uint8Array[] = [];
-  let byteLength = 0;
+  let bytes: Uint8Array;
   try {
-    for (;;) {
-      const next = await reader.read();
-      if (next.done) break;
-      if (!(next.value instanceof Uint8Array)) {
-        throw new Error("AI Search downloaded item body is not a byte stream");
-      }
-      byteLength += next.value.byteLength;
-      if (byteLength > expectedSize) {
-        await reader.cancel();
-        throw new Error("AI Search downloaded item exceeds the bounded desired size");
-      }
-      chunks.push(next.value);
-    }
+    bytes = await readStreamWithinBytes(record.body as ReadableStream<Uint8Array>, {
+      label: "AI Search downloaded item",
+      max_bytes: expectedSize,
+      max_chunks: MAX_MANAGED_ITEM_DOWNLOAD_CHUNKS,
+    });
   } catch (cause) {
-    try { await reader.cancel(); } catch { /* preserve the bounded-read failure */ }
-    throw cause;
-  } finally {
-    reader.releaseLock();
+    if (isRuntimeLimitError(cause)) throw cause;
+    throw new ManagedItemRecoveryBlockedError(
+      "AI Search downloaded item body is temporarily unavailable",
+      cause,
+    );
   }
-  if (byteLength !== expectedSize) {
+  if (bytes.byteLength !== expectedSize) {
     throw new Error("AI Search downloaded item byte length differs from the desired item");
-  }
-  const bytes = new Uint8Array(byteLength);
-  let offset = 0;
-  for (const chunk of chunks) {
-    bytes.set(chunk, offset);
-    offset += chunk.byteLength;
   }
   const digest = await projectionSha256Bytes(bytes);
   if (digest !== expectedSha256) {
