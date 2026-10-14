@@ -7,13 +7,24 @@ import type { ProjectionItem } from "@eliotr/contracts";
 import {
   assertProjectionIdentifier,
   assertProjectionSha256,
+  canonicalProjectionJson,
   profileIsValid,
   projectionGeneration,
   projectionFail,
   stableProjectionId,
   utf8ProjectionLength,
 } from "./canonical.js";
+import {
+  buildManagedProjectCopyPlan,
+  canonicalSourceProjectionIdentity,
+  canonicalSourceResourceBounds,
+  preflightManagedProjectCopies,
+} from "./core-managed-item-intent.js";
 import type {
+  CanonicalProjectionResourceBounds,
+  CanonicalSourceProjectionReceipt,
+  ManagedProjectCopyMapSetReceipt,
+  ManagedProjectCopyPlan,
   ManagedProjectionReceipt,
   ProjectionExecutionHandler,
   ProjectionExecutorDependencies,
@@ -26,6 +37,66 @@ import type {
 
 const DEFAULT_WORKER_ID = "eliotr-projection-executor";
 const DEFAULT_LEASE_MS = 5 * 60_000;
+
+function verifyCanonicalSourceReceipt(
+  canonical: CanonicalSourceProjectionReceipt,
+  context: ProjectionSourceContext,
+  generation: string,
+  projectorProfileSha256: string,
+  resourceBounds: CanonicalProjectionResourceBounds,
+  projection: { readonly items: readonly ProjectionItem[]; readonly item_set_digest: string },
+): void {
+  if (
+    canonical.protocol !== "eliotr.canonical-source-projection.v1" ||
+    canonical.source_revision_ref !== context.source_revision.source_revision_ref ||
+    canonical.complete_residency_key_sha256 !== context.source_revision.object_residency_key_digest ||
+    canonical.projector_profile_sha256 !== projectorProfileSha256 ||
+    canonical.canonical_projection_generation !== generation ||
+    canonical.canonical_section_count !== projection.items.length ||
+    canonical.canonical_section_set_sha256 !== projection.item_set_digest ||
+    canonical.sections.length !== projection.items.length ||
+    canonicalProjectionJson(canonical.resource_bounds) !== canonicalProjectionJson(resourceBounds)
+  ) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "canonical Work receipt differs from the exact source projection");
+  }
+  for (const [index, item] of projection.items.entries()) {
+    const section = canonical.sections[index];
+    if (
+      section === undefined ||
+      section.canonical_item_key !== item.item_key ||
+      section.canonical_section_id !== item.canonical_section_id ||
+      section.content_sha256 !== item.content_sha256
+    ) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "canonical Work sections differ from projector output");
+    }
+  }
+  assertProjectionIdentifier(canonical.canonical_source_ref, "canonical source Work ref");
+  assertProjectionSha256(canonical.canonical_source_sha256, "canonical source Work digest");
+}
+
+function verifyProjectCopyMapSet(
+  mapSet: ManagedProjectCopyMapSetReceipt,
+  canonical: CanonicalSourceProjectionReceipt,
+  plan: ManagedProjectCopyPlan,
+): void {
+  if (
+    mapSet.protocol !== "eliotr.managed-project-copy-map-set.v1" ||
+    mapSet.source_revision_ref !== canonical.source_revision_ref ||
+    mapSet.complete_residency_key_sha256 !== canonical.complete_residency_key_sha256 ||
+    mapSet.canonical_projection_generation !== canonical.canonical_projection_generation ||
+    mapSet.canonical_source_ref !== canonical.canonical_source_ref ||
+    mapSet.canonical_source_sha256 !== canonical.canonical_source_sha256 ||
+    mapSet.target.managed_instance_id !== plan.target.managed_instance_id ||
+    mapSet.target.managed_generation !== plan.target.managed_generation ||
+    mapSet.target.metadata_generation_digest !== plan.target.metadata_generation_digest ||
+    mapSet.provider_copy_count !== plan.provider_copy_count ||
+    mapSet.provider_copy_set_sha256 !== plan.provider_copy_set_sha256 ||
+    mapSet.provider_item_count !== plan.provider_item_count ||
+    mapSet.provider_item_set_sha256 !== plan.provider_item_set_sha256
+  ) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "project-copy Work receipt differs from the complete provider plan");
+  }
+}
 
 function verifyWorkSet(
   receipt: ProjectionWorkReceipt,
@@ -275,14 +346,21 @@ export function createProjectionExecutionHandler(
           return result;
         }
 
+        const canonicalIdentity = await canonicalSourceProjectionIdentity(context, dependencies.profile);
+        const canonicalSourceContext = {
+          source_revision: context.source_revision,
+          source_title: context.source_title,
+          source_class: context.source_class,
+          instruction_taint: context.instruction_taint,
+        } as const;
         const projection = await projectNormalizedMarkdown({
           source_revision: context.source_revision,
           title: context.source_title,
           source_class: context.source_class,
           markdown: content.markdown,
           instruction_taint: context.instruction_taint,
-          project_membership_ids: context.project_membership_ids,
-          projection_generation: generation,
+          project_membership_ids: [],
+          projection_generation: canonicalIdentity.generation,
           target_item_utf8_bytes: dependencies.profile.target_item_utf8_bytes,
           max_item_utf8_bytes: dependencies.profile.maximum_item_utf8_bytes,
         });
@@ -299,15 +377,94 @@ export function createProjectionExecutionHandler(
           return result;
         }
 
-        const work = await dependencies.work.materialize(context, generation, projection);
+        const copyPreflight = await preflightManagedProjectCopies(
+          context,
+          dependencies.profile,
+          projection.items,
+        );
+        if (copyPreflight.physical_item_count > dependencies.profile.maximum_synchronous_items) {
+          const result = await settleSharded(dependencies, context, generation, fence);
+          try { await dependencies.leases.complete(fence, result.receipt_ref, now()); }
+          catch { /* the durable terminal receipt is authority */ }
+          return result;
+        }
+
+        const resourceBounds = canonicalSourceResourceBounds(
+          dependencies.profile,
+          content.size_bytes,
+          projection.items,
+        );
+        const canonicalWork = await dependencies.work.materialize(
+          canonicalSourceContext,
+          canonicalIdentity.generation,
+          projection,
+          canonicalIdentity.profile_sha256,
+          resourceBounds,
+        );
+        const canonicalSource = canonicalWork.canonical_source;
+        if (canonicalSource === undefined) {
+          projectionFail("PROJECTION_AUTHORITY_CONFLICT", "Work did not return its canonical source receipt");
+        }
+        verifyCanonicalSourceReceipt(
+          canonicalSource,
+          context,
+          canonicalIdentity.generation,
+          canonicalIdentity.profile_sha256,
+          resourceBounds,
+          projection,
+        );
+        const copyPlan = await buildManagedProjectCopyPlan(
+          context,
+          dependencies.profile,
+          canonicalSource,
+          projection.items,
+        );
+        if (
+          copyPlan.provider_copy_count !== copyPreflight.provider_copy_count ||
+          copyPlan.items.length !== copyPreflight.physical_item_count ||
+          copyPlan.target.metadata_generation_digest !== copyPreflight.metadata_generation_digest ||
+          copyPlan.items.some((item, index) => {
+            const expected = copyPreflight.items[index];
+            return expected === undefined ||
+              item.item_key !== expected.item_key ||
+              item.canonical_item_key !== expected.canonical_item_key ||
+              item.canonical_section_id !== expected.canonical_section_id ||
+              item.content_sha256 !== expected.content_sha256 ||
+              item.normalized_start_byte !== expected.normalized_start_byte ||
+              item.normalized_end_byte !== expected.normalized_end_byte ||
+              item.provider_key !== expected.provider_key ||
+              item.project_id !== expected.project_id ||
+              item.project_membership_id !== expected.project_membership_id ||
+              item.membership_generation !== expected.membership_generation;
+          })
+        ) {
+          projectionFail("PROJECTION_AUTHORITY_CONFLICT", "complete provider plan changed after preflight");
+        }
+        const projectCopyMapSet = await dependencies.work.materializeProjectCopyMapPages(
+          canonicalSource,
+          copyPlan.target,
+          copyPlan.copies,
+        );
+        verifyProjectCopyMapSet(projectCopyMapSet, canonicalSource, copyPlan);
+        const work: ProjectionWorkReceipt = {
+          ...canonicalWork,
+          canonical_projection_generation: canonicalIdentity.generation,
+          metadata_generation_digest: copyPlan.target.metadata_generation_digest,
+          project_copy_map_set: projectCopyMapSet,
+        };
         verifyWorkSet(work, projection);
         await dependencies.authority.recordMaterialized(context, generation, work, fence);
-        const d1Search = await dependencies.search.activate(context, generation, projection);
-        verifySearchSet(d1Search, projection, generation);
+        const d1Search = await dependencies.search.activate(
+          context,
+          canonicalIdentity.generation,
+          projection,
+        );
+        verifySearchSet(d1Search, projection, canonicalIdentity.generation);
         const managed = await dependencies.managed.index(
           context,
           generation,
-          projection.items,
+          canonicalIdentity.generation,
+          copyPlan,
           fence,
         );
         const baseSettlement = managedSettlement(managed, []);

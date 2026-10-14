@@ -1,11 +1,13 @@
-import type { EvidenceAuthorityPort } from "./types.js";
+import { EvidenceRuntimeError, type EvidenceAuthorityPort } from "./types.js";
 import {
+  resolveManagedCopyCandidateAuthority,
   authorizeScopeAuthority,
   loadEvidenceHandle,
   loadScopeAuthority,
   loadSourceAuthority,
   resolveCandidateAuthority,
 } from "./authority-load.js";
+import { isManagedCopyLocatorCandidate } from "./managed-copy-locator.js";
 import {
   invalidateEvidenceHandle,
   persistEvidenceResolution,
@@ -38,10 +40,25 @@ export function createD1EvidenceAuthorityPort(
       }
       return loadSourceAuthority(dependencies.core_database, sourceRevisionRef, observed);
     },
-    resolveCandidate: (candidate) => resolveCandidateAuthority(
-      dependencies.search_database,
-      candidate,
-    ),
+    resolveCandidate: (candidate, source, scope) => {
+      if (isManagedCopyLocatorCandidate(candidate)) {
+        if (source === undefined || scope === undefined) {
+          throw new EvidenceRuntimeError(
+            "EVIDENCE_LOCATOR_NOT_RESOLVABLE",
+            "managed project-copy evidence requires current Core source and scope authority",
+          );
+        }
+        return resolveManagedCopyCandidateAuthority(
+          dependencies.core_database,
+          dependencies.search_database,
+          candidate,
+          source,
+          scope,
+          now,
+        );
+      }
+      return resolveCandidateAuthority(dependencies.search_database, candidate);
+    },
     loadHandle: (ref) => loadEvidenceHandle(dependencies.core_database, ref),
     persistResolution: (input) => persistEvidenceResolution(dependencies.core_database, input),
     persistCitationReceipt: (input) => persistCitationResolutionReceipt(

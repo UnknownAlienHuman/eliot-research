@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { describe, expect, it } from "vitest";
 import {
@@ -42,6 +43,15 @@ function databaseWithClock(clock: MutableClock): DatabaseSync {
       projection_generation TEXT NOT NULL,
       job_id TEXT NOT NULL,
       item_key TEXT NOT NULL,
+      canonical_projection_generation TEXT,
+      canonical_item_key TEXT,
+      project_id TEXT,
+      project_membership_id TEXT,
+      membership_generation INTEGER,
+      copy_layout TEXT,
+      metadata_generation_digest TEXT,
+      canonical_body_ref TEXT,
+      canonical_body_sha256 TEXT,
       desired_index INTEGER NOT NULL,
       normalized_start_byte INTEGER NOT NULL,
       normalized_end_byte INTEGER NOT NULL,
@@ -125,6 +135,15 @@ function databaseWithClock(clock: MutableClock): DatabaseSync {
       projection_generation TEXT NOT NULL,
       job_id TEXT NOT NULL,
       state TEXT NOT NULL,
+      managed_item_protocol TEXT,
+      managed_target_instance_id TEXT,
+      managed_target_generation TEXT,
+      managed_target_metadata_generation_digest TEXT,
+      canonical_projection_generation TEXT,
+      canonical_item_count INTEGER,
+      canonical_item_set_digest TEXT,
+      provider_copy_count INTEGER,
+      provider_copy_set_digest TEXT,
       PRIMARY KEY (source_revision_ref, projection_generation)
     );
     CREATE TABLE projection_terminal_guard (
@@ -241,8 +260,18 @@ function seedDispatchAuthority(
     "INSERT INTO job VALUES (?1,?2,?3,'RUNNING')",
   ).run(context.job_id, context.intent_ref.id, context.intent_ref.revision);
   database.prepare(
-    "INSERT INTO projection_generation VALUES (?1,?2,?3,'MATERIALIZED')",
-  ).run(revision.source_revision_ref, projectionGeneration, context.job_id);
+    "INSERT INTO projection_generation (source_revision_ref,projection_generation,job_id,state," +
+    "managed_item_protocol,managed_target_instance_id,managed_target_generation,managed_target_metadata_generation_digest) " +
+    "VALUES (?1,?2,?3,'MATERIALIZED',?4,?5,?6,?7)",
+  ).run(
+    revision.source_revision_ref,
+    projectionGeneration,
+    context.job_id,
+    "eliotr.managed-item-effects.v1",
+    "instance-clock",
+    "managed-clock",
+    createHash("sha256").update("eliotr.project-copy-generation.v1\0managed-clock", "utf8").digest("hex"),
+  );
 }
 
 function d1Adapter(

@@ -14,6 +14,7 @@ import {
 } from "./canonical.js";
 import { createD1ProjectionAuthority } from "./core-authority.js";
 import { MANAGED_ITEM_PROTOCOL_VERSION } from "./core-managed-item-receipts.js";
+import { managedProjectGenerationMetadataValue } from "./managed-project-path.js";
 import type {
   ProjectionExecutionProfile,
   ProjectionSourceContext,
@@ -72,6 +73,8 @@ const profile: ProjectionExecutionProfile = {
   managed_poll_interval_ms: 100,
   managed_timeout_ms: 1_000,
 };
+const targetMetadataDigest = await managedProjectGenerationMetadataValue(profile.managed_generation);
+const emptyCopySetDigest = await projectionDigest([]);
 
 interface GenerationFixture {
   readonly job_id: unknown;
@@ -91,6 +94,12 @@ interface GenerationFixture {
   readonly managed_item_protocol: unknown;
   readonly managed_target_instance_id: unknown;
   readonly managed_target_generation: unknown;
+  readonly managed_target_metadata_generation_digest: unknown;
+  readonly canonical_projection_generation: unknown;
+  readonly canonical_item_count: unknown;
+  readonly canonical_item_set_digest: unknown;
+  readonly provider_copy_count: unknown;
+  readonly provider_copy_set_digest: unknown;
   readonly semantic_receipt_ref: unknown;
   readonly semantic_readback_digest: unknown;
   readonly reason_codes_json: unknown;
@@ -117,6 +126,12 @@ function terminalGeneration(
     managed_item_protocol: null,
     managed_target_instance_id: null,
     managed_target_generation: null,
+    managed_target_metadata_generation_digest: null,
+    canonical_projection_generation: null,
+    canonical_item_count: null,
+    canonical_item_set_digest: null,
+    provider_copy_count: null,
+    provider_copy_set_digest: null,
     semantic_receipt_ref: "managed-receipt-1",
     semantic_readback_digest: A,
     reason_codes_json: "[]",
@@ -263,6 +278,12 @@ async function validManagedTerminalFixture(): Promise<{
     managed_item_protocol: MANAGED_ITEM_PROTOCOL_VERSION,
     managed_target_instance_id: profile.managed_instance_id,
     managed_target_generation: profile.managed_generation,
+    managed_target_metadata_generation_digest: targetMetadataDigest,
+    canonical_projection_generation: "canonical-generation-terminal-1",
+    canonical_item_count: 1,
+    canonical_item_set_digest: itemSetDigest,
+    provider_copy_count: 0,
+    provider_copy_set_digest: emptyCopySetDigest,
     item_set_digest: itemSetDigest,
     semantic_receipt_ref: managedReceiptRef,
     semantic_readback_digest: readbackDigest,
@@ -270,6 +291,15 @@ async function validManagedTerminalFixture(): Promise<{
   const operationId = await projectionExecutionOperationId(context, projectionGeneration);
   const itemRows = [{
     execution_operation_id: operationId,
+    canonical_projection_generation: null,
+    canonical_item_key: null,
+    project_id: null,
+    project_membership_id: null,
+    membership_generation: null,
+    copy_layout: null,
+    metadata_generation_digest: null,
+    canonical_body_ref: null,
+    canonical_body_sha256: null,
     dispatch_lease_generation: 1,
     managed_instance_id: profile.managed_instance_id,
     managed_generation: profile.managed_generation,
@@ -394,6 +424,12 @@ describe("projection terminal managed-item compatibility", () => {
       managed_item_protocol: MANAGED_ITEM_PROTOCOL_VERSION,
       managed_target_instance_id: profile.managed_instance_id,
       managed_target_generation: profile.managed_generation,
+      managed_target_metadata_generation_digest: targetMetadataDigest,
+      canonical_projection_generation: "canonical-generation-terminal-1",
+      canonical_item_count: 1,
+      canonical_item_set_digest: B,
+      provider_copy_count: 0,
+      provider_copy_set_digest: emptyCopySetDigest,
     });
     const missingItems = terminalDatabase(versioned);
     const authority = createD1ProjectionAuthority({
@@ -485,6 +521,12 @@ describe("projection terminal managed-item compatibility", () => {
       managed_item_protocol: MANAGED_ITEM_PROTOCOL_VERSION,
       managed_target_instance_id: profile.managed_instance_id,
       managed_target_generation: profile.managed_generation,
+      managed_target_metadata_generation_digest: targetMetadataDigest,
+      canonical_projection_generation: "canonical-generation-terminal-1",
+      canonical_item_count: 1,
+      canonical_item_set_digest: B,
+      provider_copy_count: 0,
+      provider_copy_set_digest: emptyCopySetDigest,
       semantic_receipt_ref: null,
       semantic_readback_digest: null,
     });

@@ -55,6 +55,13 @@ export interface ProjectionSourceContext {
   readonly project_membership_ids: readonly string[];
 }
 
+export interface CanonicalProjectionSourceContext {
+  readonly source_revision: SourceRevision;
+  readonly source_title: string;
+  readonly source_class: string;
+  readonly instruction_taint: ProjectionItem["instruction_taint"];
+}
+
 export interface ProjectionTerminalReceipt {
   readonly receipt: OperationReceipt;
   readonly receipt_ref: string;
@@ -85,12 +92,199 @@ export interface MaterializedProjectionItem {
   readonly etag: string;
 }
 
+export interface CanonicalProjectionResourceBounds {
+  readonly protocol: "eliotr.canonical-source-resource-bounds.v1";
+  readonly input_utf8_bytes: number;
+  readonly maximum_input_utf8_bytes: number;
+  readonly section_count: number;
+  readonly maximum_section_count: number;
+  readonly largest_section_utf8_bytes: number;
+  readonly maximum_section_utf8_bytes: number;
+  readonly canonical_body_put_count: number;
+  readonly canonical_manifest_put_count: 1;
+  readonly maximum_provider_copy_count: 256;
+  readonly maximum_provider_item_count: number;
+  readonly maximum_copy_map_page_count: 256;
+  /** Runtime CPU ceiling recorded for the default Worker envelope; not measured CPU usage. */
+  readonly cpu_time_budget_ms: 30_000;
+  readonly source_content_r2_get_bound: 1;
+  readonly canonical_r2_subrequest_bound: number;
+  readonly maximum_subrequest_bound: 10_000;
+}
+
+export interface ManagedProjectCopyResourceBounds {
+  readonly protocol: "eliotr.project-copy-resource-bounds.v1";
+  readonly provider_copy_count: number;
+  readonly provider_item_count: number;
+  readonly copy_map_page_count: number;
+  readonly copy_map_r2_put_count: number;
+  readonly copy_map_r2_subrequest_bound: number;
+  readonly cpu_time_budget_ms: 30_000;
+  readonly maximum_subrequest_bound: 10_000;
+}
+
+export interface CanonicalSourceProjectionReceipt {
+  readonly protocol: "eliotr.canonical-source-projection.v1";
+  readonly source_revision_ref: string;
+  readonly complete_residency_key_sha256: string;
+  readonly projector_profile_sha256: string;
+  readonly canonical_projection_generation: string;
+  readonly canonical_source_ref: string;
+  readonly canonical_source_sha256: string;
+  readonly canonical_section_count: number;
+  readonly canonical_section_set_sha256: string;
+  readonly resource_bounds: CanonicalProjectionResourceBounds;
+  readonly sections: readonly {
+    readonly canonical_item_key: string;
+    readonly canonical_section_id: string;
+    readonly content_sha256: string;
+    readonly normalized_start_byte: number;
+    readonly normalized_end_byte: number;
+    readonly canonical_body_ref: string;
+    readonly canonical_body_sha256: string;
+  }[];
+}
+
+export interface ManagedProjectCopyTargetReceipt {
+  readonly managed_instance_id: string;
+  readonly managed_generation: string;
+  readonly metadata_generation_digest: string;
+}
+
+export interface ManagedProjectCopyMapReceipt {
+  readonly protocol: "eliotr.managed-project-copy-map.v1";
+  readonly source_revision_ref: string;
+  readonly complete_residency_key_sha256: string;
+  readonly canonical_projection_generation: string;
+  readonly target: ManagedProjectCopyTargetReceipt;
+  readonly project_id: string;
+  readonly project_membership_id: string;
+  readonly membership_generation: number;
+  readonly canonical_source_ref: string;
+  readonly canonical_source_sha256: string;
+  readonly provider_copy_count: 1;
+  readonly provider_copy_set_sha256: string;
+  readonly provider_item_count: number;
+  readonly provider_item_set_sha256: string;
+  readonly items: readonly {
+    /** Project-specific provider item key, without path or .md suffix. */
+    readonly item_key: string;
+    readonly canonical_item_key: string;
+    readonly canonical_section_id: string;
+    readonly content_sha256: string;
+    readonly normalized_start_byte: number;
+    readonly normalized_end_byte: number;
+    /** Exact full Items key. Its path already contains the built-in folder. */
+    readonly provider_key: string;
+    readonly canonical_body_ref: string;
+    readonly canonical_body_sha256: string;
+  }[];
+}
+
+export interface ManagedProjectCopyMapPage {
+  readonly protocol: "eliotr.managed-project-copy-map-page.v1";
+  readonly source_revision_ref: string;
+  readonly complete_residency_key_sha256: string;
+  readonly canonical_projection_generation: string;
+  readonly canonical_source_ref: string;
+  readonly canonical_source_sha256: string;
+  readonly target: ManagedProjectCopyTargetReceipt;
+  readonly page_index: number;
+  readonly cursor_start_project_membership_id: string | null;
+  readonly cursor_end_project_membership_id: string | null;
+  readonly previous_page_sha256: string | null;
+  readonly page_sha256: string;
+  readonly provider_copy_count: number;
+  readonly provider_copy_set_sha256: string;
+  readonly provider_item_count: number;
+  readonly provider_item_set_sha256: string;
+  /** At most 256 membership mappings; these entries contain refs and keys, never section_text. */
+  readonly copies: readonly ManagedProjectCopyMapReceipt[];
+}
+
+export interface ManagedProjectCopyMapSetReceipt {
+  readonly protocol: "eliotr.managed-project-copy-map-set.v1";
+  readonly source_revision_ref: string;
+  readonly complete_residency_key_sha256: string;
+  readonly canonical_projection_generation: string;
+  readonly canonical_source_ref: string;
+  readonly canonical_source_sha256: string;
+  readonly target: ManagedProjectCopyTargetReceipt;
+  readonly page_count: number;
+  readonly page_set_sha256: string;
+  readonly provider_copy_count: number;
+  readonly provider_copy_set_sha256: string;
+  readonly provider_item_count: number;
+  readonly provider_item_set_sha256: string;
+  readonly resource_bounds: ManagedProjectCopyResourceBounds;
+  readonly pages: readonly {
+    readonly page_index: number;
+    readonly page_ref: string;
+    readonly page_sha256: string;
+    readonly provider_copy_count: number;
+    readonly provider_item_count: number;
+  }[];
+}
+
+export interface ManagedProjectionItemCopy extends ProjectionItem {
+  readonly normalized_start_byte: number;
+  readonly normalized_end_byte: number;
+  readonly copy_layout: "PROJECT_COPY_V1" | null;
+  readonly canonical_projection_generation: string;
+  readonly canonical_item_key: string | null;
+  readonly project_id: string | null;
+  readonly project_membership_id: string | null;
+  readonly membership_generation: number | null;
+  readonly provider_key: string;
+  readonly metadata_generation_digest: string | null;
+  readonly canonical_body_ref: string | null;
+  readonly canonical_body_sha256: string | null;
+}
+
+export interface ManagedProjectCopyPlan {
+  readonly target: ManagedProjectCopyTargetReceipt;
+  readonly items: readonly ManagedProjectionItemCopy[];
+  readonly copies: readonly ManagedProjectCopyMapReceipt[];
+  readonly provider_copy_count: number;
+  readonly provider_copy_set_sha256: string;
+  readonly provider_item_count: number;
+  readonly provider_item_set_sha256: string;
+}
+
+export interface CanonicalSourceProjectionWriter {
+  projectCanonicalSource(input: {
+    readonly source: CanonicalProjectionSourceContext;
+    readonly profile: Pick<
+      ProjectionExecutionProfile,
+      | "projector_profile"
+      | "target_item_utf8_bytes"
+      | "maximum_item_utf8_bytes"
+      | "maximum_markdown_bytes"
+      | "maximum_synchronous_items"
+    >;
+    readonly normalized_markdown: string;
+  }): Promise<CanonicalSourceProjectionReceipt>;
+  mapProjectCopies(input: {
+    readonly canonical: CanonicalSourceProjectionReceipt;
+    readonly target: ManagedProjectCopyTargetReceipt;
+    readonly memberships: readonly {
+      readonly project_id: string;
+      readonly project_membership_id: string;
+      readonly membership_generation: number;
+    }[];
+  }): Promise<ManagedProjectCopyMapSetReceipt>;
+}
+
 export interface ProjectionWorkReceipt {
   readonly manifest_ref: string;
   readonly manifest_sha256: string;
   readonly item_set_digest: string;
   readonly item_count: number;
   readonly item_receipts: readonly MaterializedProjectionItem[];
+  readonly canonical_projection_generation?: string;
+  readonly metadata_generation_digest?: string;
+  readonly canonical_source?: CanonicalSourceProjectionReceipt;
+  readonly project_copy_map_set?: ManagedProjectCopyMapSetReceipt;
 }
 
 export interface ProjectionSearchReceipt {
@@ -135,6 +329,11 @@ export interface ProjectionManagedItemGenerationProof {
   readonly managed_instance_id: string;
   readonly managed_generation: string;
   readonly managed_receipt_ref: string;
+  readonly canonical_item_count: number;
+  readonly canonical_item_set_digest: string;
+  readonly provider_copy_count: number;
+  readonly provider_copy_set_digest: string;
+  /** Physical provider intent/readback count; canonical Work count remains separate above. */
   readonly item_count: number;
   readonly item_set_digest: string;
   readonly readback_digest: string;
@@ -188,6 +387,15 @@ export interface ProjectionAuthorityPort {
       readonly desired_index: number;
       readonly item_key: string;
       readonly provider_key: string;
+      readonly copy_layout: "PROJECT_COPY_V1" | null;
+      readonly canonical_projection_generation: string | null;
+      readonly canonical_item_key: string | null;
+      readonly project_id: string | null;
+      readonly project_membership_id: string | null;
+      readonly membership_generation: number | null;
+      readonly metadata_generation_digest: string | null;
+      readonly canonical_body_ref: string | null;
+      readonly canonical_body_sha256: string | null;
       readonly provider_source: "builtin";
       readonly managed_instance_id: string;
       readonly managed_generation: string;
@@ -199,6 +407,7 @@ export interface ProjectionAuthorityPort {
       readonly metadata: Readonly<Record<string, string>>;
     }[],
     fence: ExecutionFence,
+    copyPlan?: ManagedProjectCopyPlan,
   ): Promise<readonly {
     readonly item_key: string;
     readonly state: "INTENT" | "DISPATCHED" | "UNKNOWN" | "READBACK_VERIFIED";
@@ -274,10 +483,17 @@ export interface ProjectionContentPort {
 
 export interface ProjectionWorkPort {
   materialize(
-    context: ProjectionSourceContext,
+    context: CanonicalProjectionSourceContext,
     projectionGeneration: string,
     projection: MarkdownProjectionResult,
+    projectorProfileSha256: string,
+    resourceBounds: CanonicalProjectionResourceBounds,
   ): Promise<ProjectionWorkReceipt>;
+  materializeProjectCopyMapPages(
+    canonical: CanonicalSourceProjectionReceipt,
+    target: ManagedProjectCopyTargetReceipt,
+    copies: readonly ManagedProjectCopyMapReceipt[],
+  ): Promise<ManagedProjectCopyMapSetReceipt>;
 }
 
 export interface ProjectionSearchPort {
@@ -291,8 +507,9 @@ export interface ProjectionSearchPort {
 export interface ManagedProjectionPort {
   index(
     context: ProjectionSourceContext,
-    projectionGeneration: string,
-    items: readonly ProjectionItem[],
+    executionGeneration: string,
+    canonicalProjectionGeneration: string,
+    copyPlan: ManagedProjectCopyPlan,
     fence: ExecutionFence,
   ): Promise<ManagedProjectionReceipt>;
 }
