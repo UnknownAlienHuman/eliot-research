@@ -52,18 +52,42 @@ export const CanonicalReadbackConfirms = {
   },
 };
 
-export const LostAcknowledgementKeepsIdentity = {
+export const EmptyProjectBootstrap = {
+  render: () => <NewProjectPreview emptyScope />,
+  play: async (context: PlayContext) => {
+    const probe = await prepare(context);
+    await context.canvas.findByText("No sources selected. You can add sources to this project later.");
+    if (context.canvasElement.querySelectorAll(".er-live-source-pick li").length !== 0) {
+      throw new Error("An empty project unexpectedly acquired a source picker row");
+    }
+    await context.userEvent.click(context.canvas.getByRole("button", { name: "Create project", exact: true }));
+    await until(() => probe.counts().committed.length === 1);
+    const counts = probe.counts();
+    const body = JSON.parse(counts.createBodies[0] ?? "null") as { title: string; source_ids: string[] };
+    if (body.title !== previewTitle || body.source_ids.length !== 0 || counts.createKeys.length !== 1) {
+      throw new Error("The first empty project was not created with its exact empty scope");
+    }
+  },
+};
+
+export const LostAcknowledgementRecoversSameIntent = {
   render: () => <NewProjectPreview />,
   play: async (context: PlayContext) => {
     const probe = await prepare(context);
     probe.failCreate("lost-ack");
     await context.userEvent.click(context.canvas.getByRole("button", { name: "Create project", exact: true }));
-    const check = await context.canvas.findByRole("button", { name: "Check project status" });
-    await context.userEvent.click(check);
-    await until(() => probe.counts().listReads === 1);
+    const recover = await context.canvas.findByRole("button", { name: "Recover original request", exact: true });
+    const beforeRecovery = probe.counts();
+    if (beforeRecovery.createKeys.length !== 1 || beforeRecovery.listReads !== 0 || beforeRecovery.committed.length !== 0) {
+      throw new Error("The lost acknowledgement triggered an automatic retry or inferred readback");
+    }
+    await context.userEvent.click(recover);
+    await until(() => probe.counts().committed.length === 1);
     const counts = probe.counts();
-    if (counts.createKeys.length !== 1 || counts.mintedKeys.length !== 1 || counts.committed.length !== 0) {
-      throw new Error("A lost acknowledgement was retried or inferred from an unrelated catalog row");
+    if (counts.createKeys.length !== 2 || counts.createKeys[0] !== counts.createKeys[1] ||
+        counts.mintedKeys.length !== 1 || counts.createBodies.length !== 2 ||
+        counts.createBodies[0] !== counts.createBodies[1] || counts.committed.length !== 1) {
+      throw new Error("Recovery changed the original request identity or minted a replacement key");
     }
   },
 };

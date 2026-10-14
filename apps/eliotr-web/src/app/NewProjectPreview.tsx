@@ -5,10 +5,9 @@
  * one protected Query memory, so the interactions below cross the same fences production uses. Wire bodies
  * satisfy the strict decoders in `sources/projects-library/projects.ts` unchanged.
  *
- * The lost acknowledgement is a real transport failure at the seam, and the frozen identity reconciles
- * through a canonical readback read. A foreign deployment generation, a foreign project row and an
- * unresolved refusal each keep the identity without a commit, and no identity is ever minted without an
- * explicit owner gesture. No provider, deployment or owner account is involved; the fetch port is local.
+ * The lost acknowledgement is a real transport failure at the seam, and the frozen identity recovers
+ * through the same create receipt path before canonical readback. The empty-scope variant exercises
+ * first-project bootstrap. No provider, deployment or owner account is involved; the fetch port is local.
  */
 
 import { useEffect, useState } from 'react';
@@ -40,7 +39,6 @@ function projectRow(id: string, rowTitle: string, sources: readonly string[], re
   };
 }
 
-const createdRow = projectRow('project-new', previewTitle, previewSourceIds);
 const earlierRow = projectRow('project-earlier', 'Earlier work', ['source:new-project-a']);
 
 const json = (data: unknown, responseGeneration = generation) => new Response(JSON.stringify({
@@ -76,13 +74,16 @@ export interface NewProjectPreviewEnvironment {
   dispose(): void;
 }
 
-export function buildNewProjectPreviewEnvironment(): NewProjectPreviewEnvironment {
+export function buildNewProjectPreviewEnvironment(options: { readonly emptyScope?: boolean } = {}): NewProjectPreviewEnvironment {
   const client = createWorkspaceQueryClient();
   const timers = { setTimeout: () => 0, clearTimeout() {} };
   const createBodies: string[] = [], createKeys: string[] = [], mintedKeys: string[] = [];
   const committed: ProjectSummary[] = [];
+  const projectSources = options.emptyScope ? [] : previewSourceIds;
+  const rowForIntent = projectRow('project-new', previewTitle, projectSources);
   let listReads = 0;
   let failure: 'lost-ack' | 'unreachable' | undefined;
+  let lostAcknowledgementReturned = false;
   let rowKind: 'canonical' | 'foreign' | 'moved-revision' | 'renamed' = 'canonical';
   let readbackGenerationValue = generation;
   const health = json({ ready: true, deployment_generation: generation, core_schema_generation: 'schema-1',
@@ -90,11 +91,11 @@ export function buildNewProjectPreviewEnvironment(): NewProjectPreviewEnvironmen
   const session = json({ protocol: 'eliotr.owner-session.v1', principal_ref: principal,
     credential_generation: 'credentials-1', client_class: 'owner_pwa', expires_at: '2027-01-01T00:00:00.000Z' });
   const acknowledgedRow = () => {
-    if (rowKind === 'moved-revision') return projectRow('project-new', previewTitle, previewSourceIds, 3);
-    if (rowKind === 'renamed') return projectRow('project-new', 'Renamed by the server', previewSourceIds);
-    return createdRow;
+    if (rowKind === 'moved-revision') return projectRow('project-new', previewTitle, projectSources, 3);
+    if (rowKind === 'renamed') return projectRow('project-new', 'Renamed by the server', projectSources);
+    return rowForIntent;
   };
-  const canonicalRow = () => rowKind === 'foreign' ? projectRow('project-someone-else', previewTitle, previewSourceIds) : acknowledgedRow();
+  const canonicalRow = () => rowKind === 'foreign' ? projectRow('project-someone-else', previewTitle, projectSources) : acknowledgedRow();
   const fetchFixture: typeof fetch = async (input, init) => {
     const url = new URL(String(input), 'https://preview.invalid');
     const method = (init as RequestInit | undefined)?.method ?? 'GET';
@@ -104,7 +105,10 @@ export function buildNewProjectPreviewEnvironment(): NewProjectPreviewEnvironmen
       const headers = new Headers((init as RequestInit | undefined)?.headers);
       createBodies.push(String((init as RequestInit | undefined)?.body));
       createKeys.push(headers.get('idempotency-key') ?? '');
-      if (failure === 'lost-ack') throw new TypeError('Synthetic lost acknowledgement before any response');
+      if (failure === 'lost-ack' && !lostAcknowledgementReturned) {
+        lostAcknowledgementReturned = true;
+        throw new TypeError('Synthetic lost acknowledgement after durable create');
+      }
       if (failure === 'unreachable') throw new TypeError('Synthetic unreachable owner response');
       return json(acknowledgedRow());
     }
@@ -153,8 +157,10 @@ export function buildNewProjectPreviewEnvironment(): NewProjectPreviewEnvironmen
 
 const environments = new WeakMap<HTMLElement, WeakRef<NewProjectPreviewEnvironment>>();
 
-export function NewProjectPreview() {
-  const [environment] = useState(() => buildNewProjectPreviewEnvironment());
+export interface NewProjectPreviewProps { readonly emptyScope?: boolean }
+
+export function NewProjectPreview({ emptyScope = false }: NewProjectPreviewProps) {
+  const [environment] = useState(() => buildNewProjectPreviewEnvironment({ emptyScope }));
   const [open, setOpen] = useState(false);
   const [, refresh] = useState(0);
   useEffect(() => {
@@ -168,7 +174,7 @@ export function NewProjectPreview() {
     {environment.privacy.getSnapshot().phase === 'available' && <>
       <button type="button" onClick={() => setOpen(true)}>New project</button>
       <NewProjectPanel locale="en" apis={environment.apis} privacy={environment.privacy} context={environment.context}
-        scope={previewSourceIds.map((id, index) => ({ id, label: previewSourceLabels[index] ?? id }))}
+        scope={(emptyScope ? [] : previewSourceIds).map((id, index) => ({ id, label: previewSourceLabels[index] ?? id }))}
         open={open} onClose={() => setOpen(false)} onProjectCommitted={environment.onProjectCommitted} />
     </>}
   </div>;

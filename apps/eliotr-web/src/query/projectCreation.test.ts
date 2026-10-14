@@ -11,7 +11,7 @@
  */
 
 import { describe, expect, it, vi } from "vitest";
-import type { LegacyErrorDetails, ProjectSummary } from "@eliotr/owner-api-client";
+import type { LegacyErrorDetails, ProjectListView, ProjectSummary } from "@eliotr/owner-api-client";
 import { createWorkspaceRuntime } from "../app/runtime";
 import { createPrivacyController, type SessionContext } from "../app/privacy";
 import { createWorkspaceQueryClient, clearWorkspaceQueries } from "./client";
@@ -52,8 +52,9 @@ const wire = (data: unknown, trace: string, withGeneration = generation) => JSON
 const createdWire = (row: object, withGeneration = generation) =>
   wire({ ...row, deployment_generation: withGeneration }, "trace-mutation", withGeneration);
 
-const listWire = (rows: readonly unknown[], withGeneration = generation) =>
-  wire({ protocol: "eliotr.project-owner-list.v1", projects: rows }, "trace-list", withGeneration);
+const listWire = (rows: readonly unknown[], withGeneration = generation, nextProjectId?: string) =>
+  wire({ protocol: "eliotr.project-owner-list.v1", projects: rows,
+    ...(nextProjectId === undefined ? {} : { next_project_id: nextProjectId }) }, "trace-list", withGeneration);
 
 const json = (body: string) => new Response(body, { headers: { "content-type": "application/json" } });
 const signal = () => new AbortController().signal;
@@ -76,12 +77,13 @@ class TypedProblem extends Error {
 const problem = (details: LegacyErrorDetails) => new TypedProblem(details);
 
 /** The canonical page a row belongs to, as a panel would hold it after its own protected read. */
-function pageFor(rows: readonly ReturnType<typeof projectRow>[]) {
+function pageFor(rows: readonly ReturnType<typeof projectRow>[], nextProjectId?: string, withGeneration = generation): ProjectListView {
   return {
     protocol: "eliotr.project-owner-list.v1" as const,
-    deployment_generation: generation,
+    deployment_generation: withGeneration,
     projects: rows.map(row => ({ project_id: row.project_ref.id, title: row.title,
       revision: row.revision, source_ids: row.source_ids, created_at: row.created_at })),
+    ...(nextProjectId === undefined ? {} : { next_project_id: nextProjectId }),
   };
 }
 
@@ -99,6 +101,9 @@ interface Fixture {
   /** Overrides the whole fetch handler, for the interrupted cases. */
   behave(handler: (path: string, init: RequestInit | undefined) => Promise<Response> | Response): void;
   bodies(): readonly unknown[];
+  idempotencyKeys(): readonly string[];
+  listReads(): number;
+  overrideProjectReads(read: (expectedGeneration: string, afterProjectId?: string, signal?: AbortSignal) => Promise<ProjectListView>): void;
   dispose(): void;
 }
 
@@ -154,6 +159,20 @@ async function fixture(): Promise<Fixture> {
       return fetcher.mock.calls
         .filter(call => (call[1] as RequestInit | undefined)?.method === "POST")
         .map(call => (call[1] as RequestInit | undefined)?.body);
+    },
+    idempotencyKeys() {
+      return fetcher.mock.calls
+        .filter(call => (call[1] as RequestInit | undefined)?.method === "POST")
+        .map(call => new Headers((call[1] as RequestInit | undefined)?.headers).get("idempotency-key") ?? "");
+    },
+    listReads() {
+      return fetcher.mock.calls.filter(call => {
+        const request = call[1] as RequestInit | undefined;
+        return String(call[0]).split("?")[0] === projectsPath && request?.method !== "POST";
+      }).length;
+    },
+    overrideProjectReads(read) {
+      Object.defineProperty(apis.sources.projects, "readProjects", { configurable: true, value: read });
     },
     dispose() { privacy.dispose(); runtime.dispose(); client.clear(); },
   };
@@ -261,28 +280,161 @@ describe("New Project mutation controller", () => {
     test.dispose();
   });
 
-  it("keeps the exact title, source ids and key when the acknowledgement is lost", async () => {
+  it("recovers a lost acknowledgement only by explicitly reusing the exact request and key", async () => {
     const test = await fixture();
     test.controller.setTitle(title);
     test.controller.setSourceIds(sourceIds);
     test.controller.setKey("intent-lost");
-    // The seam reached the transport and the deadline elapsed before any acknowledgement arrived.
-    test.reply(() => { throw problem({ code: "API_REQUEST_DEADLINE", status: 503,
-      message: "Request deadline elapsed", traceId: null, retryable: false }); }, listWire([earlierRow]));
+    let postCount = 0;
+    test.behave((path, request) => {
+      if (path === projectsPath && request?.method === "POST") {
+        postCount += 1;
+        if (postCount === 1) throw new TypeError("The durable create acknowledgement was lost");
+        return json(createdWire(createdRow));
+      }
+      if (path === projectsPath) return json(listWire([createdRow]));
+      throw new Error(`Unexpected request: ${path}`);
+    });
     const lost = await test.controller.submit(signal());
     expect(lost.phase).toBe("unconfirmed");
     expect(lost.title).toBe(title);
     expect(lost.sourceIds).toEqual([...sourceIds]);
-    // Same key: no replacement was minted, so the same request can be reconciled.
     expect(lost.key).toBe("intent-lost");
     expect(lost.receipt).toBeUndefined();
     expect(test.mint).not.toHaveBeenCalled();
     expect(lost.outcome).toMatchObject({ outcome: "OUTCOME_UNKNOWN", preservesIdentity: true, action: "READBACK_STATUS" });
-    // A canonical page without the new row does not confirm anything.
-    test.reply(createdWire(createdRow), listWire([earlierRow]));
-    const withoutRow = await test.controller.readStatus(signal());
-    expect(withoutRow.phase).toBe("unconfirmed");
-    expect(withoutRow.key).toBe("intent-lost");
+    expect(test.idempotencyKeys()).toEqual(["intent-lost"]);
+    expect(test.listReads()).toBe(0);
+
+    // A plain status read cannot infer an operation from the project catalog.
+    expect((await test.controller.readStatus(signal())).phase).toBe("unconfirmed");
+    expect(test.idempotencyKeys()).toEqual(["intent-lost"]);
+    expect(test.listReads()).toBe(0);
+
+    // An unknown intent cannot be edited, replaced or dismissed before recovery.
+    test.controller.setTitle("Different title");
+    test.controller.setSourceIds([]);
+    test.controller.setKey("replacement-key");
+    test.controller.mintKey();
+    expect(test.controller.getState()).toMatchObject({ title, sourceIds: [...sourceIds], key: "intent-lost" });
+    expect(test.mint).not.toHaveBeenCalled();
+
+    const recovered = await test.controller.recoverOriginalIntent(signal());
+    expect(recovered.phase).toBe("confirmed");
+    expect(test.idempotencyKeys()).toEqual(["intent-lost", "intent-lost"]);
+    expect(test.bodies()[0]).toBe(test.bodies()[1]);
+    expect(JSON.parse(String(test.bodies()[1]))).toEqual({ title, source_ids: [...sourceIds] });
+    expect(test.listReads()).toBe(1);
+    expect(test.committed).toHaveLength(1);
+    test.dispose();
+  });
+
+  it("creates the first project with an empty source set", async () => {
+    const test = await fixture();
+    const emptyProject = projectRow("project-empty", title, []);
+    test.controller.setTitle(title);
+    test.controller.setSourceIds([]);
+    test.controller.setKey("intent-empty-project");
+    test.reply(createdWire(emptyProject), listWire([emptyProject]));
+
+    const state = await test.controller.submit(signal());
+    expect(state.phase).toBe("confirmed");
+    expect(state.project?.source_ids).toEqual([]);
+    expect(JSON.parse(String(test.bodies()[0]))).toEqual({ title, source_ids: [] });
+    test.dispose();
+  });
+
+  it("finds an acknowledged project on a later canonical page", async () => {
+    const test = await fixture();
+    test.controller.setTitle(title);
+    test.controller.setSourceIds(sourceIds);
+    test.controller.setKey("intent-later-page");
+    test.reply(createdWire(createdRow), listWire([createdRow]));
+    const cursors: (string | undefined)[] = [];
+    test.overrideProjectReads(async (requestedGeneration, afterProjectId) => {
+      expect(requestedGeneration).toBe(generation);
+      cursors.push(afterProjectId);
+      if (afterProjectId === undefined) return pageFor([earlierRow], "project-existing");
+      if (afterProjectId === "project-existing") return pageFor([createdRow]);
+      throw new Error("Unexpected project cursor");
+    });
+
+    const state = await test.controller.submit(signal());
+    expect(cursors).toEqual([undefined, "project-existing"]);
+    expect(state.phase).toBe("confirmed");
+    expect(state.project?.project_id).toBe("project-new");
+    expect(test.committed).toHaveLength(1);
+    test.dispose();
+  });
+
+  it("keeps later-page reads fenced by generation and the owner session", async () => {
+    const foreignPage = await fixture();
+    foreignPage.controller.setTitle(title);
+    foreignPage.controller.setSourceIds(sourceIds);
+    foreignPage.controller.setKey("intent-foreign-later-page");
+    foreignPage.reply(createdWire(createdRow), listWire([createdRow]));
+    foreignPage.overrideProjectReads(async (_requestedGeneration, afterProjectId) => afterProjectId === undefined
+      ? pageFor([earlierRow], "project-existing")
+      : pageFor([createdRow], undefined, foreignGeneration));
+    expect((await foreignPage.controller.submit(signal())).phase).toBe("unconfirmed");
+    expect(foreignPage.committed).toHaveLength(0);
+    foreignPage.dispose();
+
+    const lostSession = await fixture();
+    lostSession.controller.setTitle(title);
+    lostSession.controller.setSourceIds(sourceIds);
+    lostSession.controller.setKey("intent-session-later-page");
+    lostSession.reply(createdWire(createdRow), listWire([createdRow]));
+    lostSession.overrideProjectReads(async (_requestedGeneration, afterProjectId) => {
+      if (afterProjectId === undefined) return pageFor([earlierRow], "project-existing");
+      lostSession.privacy.close();
+      return pageFor([createdRow]);
+    });
+    expect((await lostSession.controller.submit(signal())).phase).toBe("authorization-lost");
+    expect(lostSession.committed).toHaveLength(0);
+    lostSession.dispose();
+  });
+
+  it("fails closed when project cursors repeat or move backward", async () => {
+    const backward = await fixture();
+    backward.controller.setTitle(title);
+    backward.controller.setSourceIds(sourceIds);
+    backward.controller.setKey("intent-backward-cursor");
+    backward.reply(createdWire(createdRow), listWire([createdRow]));
+    backward.overrideProjectReads(async (_requestedGeneration, afterProjectId) => afterProjectId === undefined
+      ? pageFor([projectRow("project-a", "Unrelated", [])], "project-b")
+      : pageFor([projectRow("project-a", "Unrelated", [])]));
+    expect((await backward.controller.submit(signal())).phase).toBe("unconfirmed");
+    expect(backward.committed).toHaveLength(0);
+    backward.dispose();
+
+    const repeated = await fixture();
+    repeated.controller.setTitle(title);
+    repeated.controller.setSourceIds(sourceIds);
+    repeated.controller.setKey("intent-repeated-cursor");
+    repeated.reply(createdWire(createdRow), listWire([createdRow]));
+    repeated.overrideProjectReads(async (_requestedGeneration, afterProjectId) => afterProjectId === undefined
+      ? pageFor([earlierRow], "project-existing")
+      : pageFor([projectRow("project-other", "Unrelated", [])], "project-existing"));
+    expect((await repeated.controller.submit(signal())).phase).toBe("unconfirmed");
+    expect(repeated.committed).toHaveLength(0);
+    repeated.dispose();
+  });
+
+  it("bounds canonical project readback to a finite number of pages", async () => {
+    const test = await fixture();
+    test.controller.setTitle(title);
+    test.controller.setSourceIds(sourceIds);
+    test.controller.setKey("intent-bounded-read");
+    test.reply(createdWire(createdRow), listWire([createdRow]));
+    let pageNumber = 0;
+    test.overrideProjectReads(async () => {
+      const cursor = `cursor-${String(pageNumber++).padStart(3, "0")}`;
+      return pageFor([projectRow(cursor, "Unrelated", [])], cursor);
+    });
+
+    expect((await test.controller.submit(signal())).phase).toBe("unconfirmed");
+    expect(pageNumber).toBe(32);
     expect(test.committed).toHaveLength(0);
     test.dispose();
   });
@@ -367,7 +519,7 @@ describe("New Project mutation controller", () => {
     test.dispose();
   });
 
-  it("notifies the selected catalog root exactly once for the same canonical row", async () => {
+  it("notifies once per intent and not again for repeated readback", async () => {
     const test = await fixture();
     test.controller.setTitle(title);
     test.controller.setSourceIds(sourceIds);
@@ -378,13 +530,24 @@ describe("New Project mutation controller", () => {
     // A reconciliation read of the same row adds nothing.
     expect((await test.controller.readStatus(signal())).phase).toBe("confirmed");
     expect(test.committed).toHaveLength(1);
+    expect((await test.controller.readStatus(signal())).phase).toBe("confirmed");
+    expect(test.committed).toHaveLength(1);
     // A confirmation of a page the caller already read adds nothing either.
     test.controller.confirmReadback(pageFor([earlierRow, createdRow]));
     expect(test.committed).toHaveLength(1);
+
+    const secondRow = projectRow("project-second", "Second project", sourceIds);
+    test.controller.dismiss();
+    test.controller.setTitle("Second project");
+    test.controller.setSourceIds(sourceIds);
+    test.controller.setKey("intent-second");
+    test.reply(createdWire(secondRow), listWire([secondRow]));
+    expect((await test.controller.submit(signal())).phase).toBe("confirmed");
+    expect(test.committed.map(row => row.project_id)).toEqual(["project-new", "project-second"]);
     test.dispose();
   });
 
-  it("keeps an unresolved attempt blocked until an explicit new owner intent, without a replay", async () => {
+  it("does not resubmit an unconfirmed intent without the explicit recovery action", async () => {
     const test = await fixture();
     test.controller.setTitle(title);
     test.controller.setSourceIds(sourceIds);
@@ -395,7 +558,7 @@ describe("New Project mutation controller", () => {
     expect(blocked.phase).toBe("unconfirmed");
     expect(blocked.editable).toBe(false);
     expect(test.bodies()).toHaveLength(1);
-    // A retry of the same in-flight identity never writes a second request.
+    // A second submit gesture cannot bypass the dedicated receipt recovery action.
     expect(await test.controller.submit(signal())).toMatchObject({ phase: "unconfirmed", key: "intent-blocked" });
     expect(test.bodies()).toHaveLength(1);
     // A dismissal of an unresolved attempt is refused, because its outcome is still unknown.
