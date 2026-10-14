@@ -201,6 +201,78 @@ describe("Core managed target assignment on native D1", () => {
     });
   });
 
+  it("retires a stale-generation head under the current owner before reassigning", async () => {
+    const projectId = await createProject();
+    const target = await configuredTarget(projectId);
+    const assigned = await call(request(projectId, "PUT", assignmentBody(target, 0)));
+    expect(assigned.status).toBe(200);
+    const assignedEvent = ((await json(assigned)).data as JsonObject).event as JsonObject;
+
+    await createProjectOwnerService({
+      database: db,
+      deployment_generation: runtime.DEPLOYMENT_GENERATION,
+    }).update(ownerContext(), projectId, {
+      idempotency_key: `assignment-stale-generation-${crypto.randomUUID()}`,
+      expected_revision: 1,
+      title: "Project generation advanced",
+      source_ids: [],
+    });
+
+    const staleRead = await call(request(projectId, "GET"));
+    const staleData = (await json(staleRead)).data as JsonObject;
+    expect(staleRead.status).toBe(200);
+    expect(staleData).toMatchObject({
+      project_generation: 2,
+      event_head_revision: 1,
+      head_event: assignedEvent,
+      current_assignment: null,
+    });
+
+    const wrongRevision = await call(request(projectId, "POST", {
+      protocol: MANAGED_TARGET_ASSIGNMENT_PROTOCOL,
+      expected_event_revision: 2,
+    }));
+    expect(wrongRevision.status).toBe(409);
+    expect((await json(wrongRevision)).code).toBe("MANAGED_TARGET_ASSIGNMENT_CAS_CONFLICT");
+
+    const foreignOwner = await call(
+      request(projectId, "POST", {
+        protocol: MANAGED_TARGET_ASSIGNMENT_PROTOCOL,
+        expected_event_revision: 1,
+      }),
+      verifier("foreign-owner"),
+    );
+    expect(foreignOwner.status).toBe(404);
+    expect(await eventCount(projectId)).toBe(1);
+
+    const retired = await call(request(projectId, "POST", {
+      protocol: MANAGED_TARGET_ASSIGNMENT_PROTOCOL,
+      expected_event_revision: 1,
+    }));
+    expect(retired.status).toBe(200);
+    expect(((await json(retired)).data as JsonObject).event).toMatchObject({
+      event_kind: "RETIRE",
+      expected_event_revision: 1,
+      event_revision: 2,
+      project_generation: 2,
+      project_owner_principal_ref: principal,
+      previous_assignment_revision: 1,
+    });
+    expect(await eventCount(projectId)).toBe(2);
+
+    const reassigned = await call(request(projectId, "PUT", assignmentBody(target, 2)));
+    expect(reassigned.status).toBe(200);
+    expect(((await json(reassigned)).data as JsonObject).event).toMatchObject({
+      event_kind: "ASSIGN",
+      expected_event_revision: 2,
+      event_revision: 3,
+      project_generation: 2,
+      project_owner_principal_ref: principal,
+      target,
+    });
+    expect(await eventCount(projectId)).toBe(3);
+  });
+
   it("denies foreign and expired owners and rejects cross-origin writes", async () => {
     const projectId = await createProject();
     const target = await configuredTarget(projectId);

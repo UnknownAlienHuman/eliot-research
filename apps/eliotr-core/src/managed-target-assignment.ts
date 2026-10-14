@@ -306,6 +306,21 @@ export function createManagedTargetAssignmentService(
     }
   }
 
+  function assertRetirableProjectEvent(
+    event: ManagedTargetAssignmentEvent | null,
+    current: CurrentAssignmentHead,
+  ): void {
+    if (event !== null && (
+      event.project_owner_principal_ref !== current.project_owner_principal_ref ||
+      event.project_generation > current.project_generation
+    )) {
+      throw new ManagedTargetAssignmentError(
+        "MANAGED_TARGET_ASSIGNMENT_PROJECT_AUTHORITY_STALE",
+        "The assignment head belongs to another owner or a future project generation",
+      );
+    }
+  }
+
   function commandFor(
     current: CurrentAssignmentHead,
     eventKind: "ASSIGN" | "RETIRE",
@@ -467,7 +482,7 @@ export function createManagedTargetAssignmentService(
       await ownerAccessReceiptReference(access),
     );
     const head = current.head_event;
-    assertCurrentProjectEvent(head, current);
+    assertRetirableProjectEvent(head, current);
     if (head !== null && matchesIntent(head, command)) return head;
     if ((head?.event_revision ?? 0) !== expectedEventRevision) {
       throw new ManagedTargetAssignmentError(
