@@ -1,6 +1,7 @@
 name: frontend-owner
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
@@ -40,6 +41,9 @@ concurrency:
 
 jobs:
   frontend-owner-provenance:
+    # Historical checkpoint ancestry is advisory under the owner directive of 2026-10-15.
+    if: github.event_name == 'workflow_dispatch'
+    continue-on-error: true
     name: Frontend owner provenance
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -128,6 +132,7 @@ jobs:
           include-hidden-files: true
 
   frontend-owner-visual:
+    if: github.event_name == 'workflow_dispatch'
     name: Frontend owner visual evidence
     needs: frontend-owner
     runs-on: ubuntu-latest

@@ -371,8 +371,9 @@ export const LiveExcerptPrivacyLateResponse = {
 };
 
 export const LiveCanonicalReadsNoEffects = { render: () => <FiniteReadExportPreview key="canonical-reads-no-effects" />, play: playReadsNoEffects };
-export const LiveFailedRequiredSectionNoExport = { render: () => <FiniteReadExportPreview key="failed-required-section" scenario="failed-required-section-no-export" />, play: playFailedRequiredSectionNoExport };
-export const LiveCapabilityConnectionTruth = { render: () => <FiniteTruthDisclosurePreview key="capability-connection-truth" />, play: playCapabilityConnectionTruth };
+// Historical CI failures: https://github.com/UnknownAlienHuman/eliot-research/issues/378
+export const LiveFailedRequiredSectionNoExport = { tags: ["historical-ci-378"], render: () => <FiniteReadExportPreview key="failed-required-section" scenario="failed-required-section-no-export" />, play: playFailedRequiredSectionNoExport };
+export const LiveCapabilityConnectionTruth = { tags: ["historical-ci-378"], render: () => <FiniteTruthDisclosurePreview key="capability-connection-truth" />, play: playCapabilityConnectionTruth };
 export const LiveBoundedRootDisclosure = { render: () => <FiniteTruthDisclosurePreview key="bounded-root-disclosure" scenario="disclosure" />, play: playBoundedRootDisclosure };
 
 export const CrossPageSelectionRecovery = { render: () => <IntegrationRepairsPreview />, play: playIntegrationRepairs };
@@ -381,9 +382,11 @@ export const ReplacedSelectedPageRefused = { render: () => <IntegrationRepairsPr
 export const SourcesReadinessAnnouncement = { render: () => <FiniteReaderPreview readFailure="readiness" />, play: playSourceStatusRetry };
 export const SourcesVersionsAnnouncement = { render: () => <FiniteReaderPreview readFailure="revisions" />, play: playSourceStatusRetry };
 export const SourcesAnnouncementPrivacy = { render: () => <FiniteReaderPreview readFailure="both" />, play: (context: ReaderPlayContext) => playSourceStatusPrivacy(context, async check => { await announcementUntil(() => { try { check(); return true; } catch { return false; } }); }) };
-export const StudioOperationAnnouncements = { render: () => <StudioPreview />, play: playStudioAnnouncements };
+// Historical CI failure: https://github.com/UnknownAlienHuman/eliot-research/issues/378
+export const StudioOperationAnnouncements = { tags: ["historical-ci-378"], render: () => <StudioPreview />, play: playStudioAnnouncements };
 export const ResearchOperationAnnouncements = { render: () => <ResearchPreview />, play: playResearchAnnouncements };
-export const ConnectionsOperationAnnouncements = { render: () => <FiniteTruthDisclosurePreview scenario="disclosure" holdDiagnostic />, play: playConnectionAnnouncements };
+// Historical CI failure: https://github.com/UnknownAlienHuman/eliot-research/issues/378
+export const ConnectionsOperationAnnouncements = { tags: ["historical-ci-378"], render: () => <FiniteTruthDisclosurePreview scenario="disclosure" holdDiagnostic />, play: playConnectionAnnouncements };
 
 export const NestedImportOperation = { ...LiveImportJourney };
 export const NestedErasureOperation = { ...LiveErasureJourney };

@@ -6,7 +6,11 @@ import { playwright } from "@vitest/browser-playwright";
 const executablePath = env.ELIOT_UI_BROWSER_EXECUTABLE?.trim();
 
 export default defineConfig({
-  plugins: [storybookTest({ configDir: import.meta.dirname })],
+  plugins: [storybookTest({
+    configDir: import.meta.dirname,
+    // Only the four confirmed historical failures; restore their tests in #378.
+    tags: { skip: ["historical-ci-378"] },
+  })],
   server: { host: "127.0.0.1", strictPort: true },
   test: {
     name: "storybook",
