@@ -134,7 +134,7 @@ export const ReadbackCannotStartARun: Story = {
     const canvas = within(canvasElement);
 
     expect(canvas.getByText('The outcome of this run is not yet known.')).toBeInTheDocument();
-    expect(canvas.getByText(/Read back the run before starting anything new/)).toBeInTheDocument();
+    expect(canvas.getByText(/Check this research before asking anything new/)).toBeInTheDocument();
     expect(canvas.getByRole('button', { name: 'Read status' })).toBeInTheDocument();
     expect(canvas.getByRole('button', { name: 'Refresh snapshot' })).toBeInTheDocument();
 
@@ -148,7 +148,7 @@ export const CompletionIsNotAcceptance: Story = {
   args: { state: 'useful', scope: SCOPE, progress: PROGRESS_COMPLETED, snapshot: SNAPSHOT_COMPLETED },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    expect(canvas.getByText('Engine completion is not report acceptance or publication.')).toBeInTheDocument();
+    expect(canvas.getByText('This is a draft: it is not accepted or published yet.')).toBeInTheDocument();
     expect(canvas.getByText('18 stages completed · Finished')).toBeInTheDocument();
     expect(canvas.queryByText(/Next stage 19|Stage 19/u)).not.toBeInTheDocument();
   },
@@ -182,8 +182,8 @@ export const ControlledNextQuestionDraft: Story = {
   </>,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const englishDraft = canvas.getByRole('textbox', { name: 'Next question draft (unsent)' });
-    const russianDraft = canvas.getByRole('textbox', { name: 'Черновик следующего вопроса (не отправлен)' });
+    const englishDraft = canvas.getByRole('textbox', { name: 'Next question' });
+    const russianDraft = canvas.getByRole('textbox', { name: 'Следующий вопрос' });
     const englishText = 'Compare the evidence before the next question.';
     const russianText = 'Сравните источники и укажите ограничения для следующего вопроса.';
 

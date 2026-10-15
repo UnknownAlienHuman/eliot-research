@@ -86,11 +86,14 @@
   color: var(--md-sys-color-on-primary-container);
 }
 
+/* A chat bubble needs no caption; the label remains the accessible name only. */
 .er-research-run__recorded-label {
-  font-size: var(--eliot-type-label-medium-size);
-  line-height: var(--eliot-type-label-medium-line-height);
-  font-weight: var(--eliot-type-font-weight-medium);
-  opacity: 0.8;
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .er-research-run__recorded-value {
@@ -99,7 +102,8 @@
   overflow-wrap: anywhere;
 }
 
-.er-research-run > .er-status {
+.er-research-run > .er-status,
+.er-research-run__turn-body > .er-status {
   align-items: center;
   min-height: var(--eliot-size-control);
   color: var(--md-sys-color-on-surface);
@@ -107,8 +111,32 @@
   line-height: var(--eliot-type-body-large-line-height);
 }
 
-.er-research-run > .er-status > .er-symbol { color: var(--md-sys-color-tertiary); }
-.er-research-run > .er-status--error, .er-research-run > .er-status--error > .er-symbol { color: var(--md-sys-color-error); }
+.er-research-run > .er-status > .er-symbol, .er-research-run__turn-body > .er-status > .er-symbol { color: var(--md-sys-color-tertiary); }
+.er-research-run > .er-status--error, .er-research-run > .er-status--error > .er-symbol,
+.er-research-run__turn-body > .er-status--error, .er-research-run__turn-body > .er-status--error > .er-symbol { color: var(--md-sys-color-error); }
+
+/* Eliot's turn: an avatar beside plain content on the pane, as NotebookLM sets its answers —
+   no card around the answer; only the sources row and cautions carry tonal surfaces. */
+.er-research-run__turn {
+  display: grid;
+  grid-template-columns: var(--eliot-size-control) minmax(0, 1fr);
+  gap: var(--eliot-space-gutter);
+  align-items: start;
+}
+
+.er-research-run__turn-avatar {
+  display: grid;
+  place-items: center;
+  inline-size: var(--eliot-size-control);
+  block-size: var(--eliot-size-control);
+  border-radius: var(--eliot-shape-full);
+  background: var(--md-sys-color-tertiary-container);
+  color: var(--md-sys-color-on-tertiary-container);
+}
+
+.er-research-run__turn[data-state="error"] .er-research-run__turn-avatar { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
+.er-research-run__turn-body { display: grid; gap: var(--eliot-space-block-control); min-inline-size: 0; }
+.er-research-run__turn-body > .er-status > .er-symbol { display: none; }
 
 .er-research-run[data-phase="start"] > .er-status {
   min-height: 0;
@@ -131,7 +159,54 @@
 
 /* ---- Progress, snapshot and failure: soft tonal groups ---- */
 
-.er-research-run__progress,
+.er-research-run__progress { display: grid; gap: var(--eliot-space-block-control); min-inline-size: 0; }
+
+.er-research-run__stage {
+  margin: 0;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  font-variant-numeric: var(--eliot-type-numerals);
+}
+
+/* M3 indeterminate linear indicator while the engine works: a rounded track and one travelling
+   segment. Motion stops for reduced-motion users; the status line above still says it is working. */
+.er-research-run__meter {
+  position: relative;
+  display: block;
+  block-size: var(--eliot-space-tight);
+  overflow: hidden;
+  border-radius: var(--eliot-shape-full);
+  background: var(--md-sys-color-secondary-container);
+}
+
+.er-research-run__meter > span {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  inline-size: 40%;
+  border-radius: var(--eliot-shape-full);
+  background: var(--md-sys-color-primary);
+  animation: er-research-meter calc(var(--eliot-motion-spatial) * 6) var(--eliot-motion-standard-easing) infinite;
+}
+
+@keyframes er-research-meter { from { transform: translateX(-100%); } to { transform: translateX(250%); } }
+@media (prefers-reduced-motion: reduce) { .er-research-run__meter > span { animation: none; inline-size: 100%; opacity: 0.4; } }
+
+.er-research-run__answer[data-available="true"] { color: var(--md-sys-color-on-surface); font-size: var(--eliot-type-body-large-size); line-height: var(--eliot-type-body-large-line-height); }
+
+.er-research-run__more > summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--eliot-size-control-small);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  cursor: pointer;
+}
+
 .er-research-run__snapshot,
 .er-research-run__unknown,
 .er-research-run__failure {
@@ -142,7 +217,6 @@
   background: var(--eliot-color-group);
 }
 
-.er-research-run__progress-heading,
 .er-research-run__snapshot-heading,
 .er-research-run__failure-heading,
 .er-research-run__consequence-heading {
@@ -153,7 +227,6 @@
   font-weight: var(--eliot-type-font-weight-medium);
 }
 
-.er-research-run__progress-list,
 .er-research-run__details,
 .er-research-run__failure-list {
   display: grid;
@@ -163,20 +236,15 @@
   font-variant-numeric: var(--eliot-type-numerals);
 }
 
-.er-research-run__progress-list dt,
 .er-research-run__details dt,
 .er-research-run__failure-list dt { color: var(--md-sys-color-on-surface-variant); }
 
-.er-research-run__progress-list dd,
 .er-research-run__details dd,
 .er-research-run__failure-list dd { margin: 0; color: var(--md-sys-color-on-surface); overflow-wrap: anywhere; }
-
-.er-research-run__progress-list dd { font-weight: var(--eliot-type-font-weight-medium); }
 
 .er-research-run__details dd,
 .er-research-run__failure-list dd { font-family: var(--eliot-type-font-family-mono); font-size: var(--eliot-type-body-small-size); }
 
-.er-research-run__progress details > summary,
 .er-research-run__failure details > summary {
   display: inline-flex;
   align-items: center;
@@ -188,7 +256,7 @@
   font-weight: var(--eliot-type-font-weight-medium);
 }
 
-.er-research-run__progress details[open] > summary { margin-block-end: var(--eliot-space-tight); }
+.er-research-run__more[open] > summary { margin-block-end: var(--eliot-space-tight); }
 
 .er-research-run__answer,
 .er-research-run__snapshot-none,
@@ -210,6 +278,10 @@
 .er-research-run__unknown > .er-button { justify-self: start; }
 
 .er-research-run__failure { box-shadow: inset 0 0 0 var(--eliot-divider-width) var(--md-sys-color-error); }
+.er-research-run__failure-summary { margin: 0; color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-body-small-size); line-height: var(--eliot-type-body-small-line-height); overflow-wrap: anywhere; }
+.er-research-run__failure-summary > code { font-family: var(--eliot-type-font-family-mono); color: var(--md-sys-color-on-surface); }
+/* Inside Eliot's turn the outcome groups sit flush with the answer column. */
+.er-research-run__turn-body > .er-research-run__failure, .er-research-run__turn-body > .er-research-run__unknown { padding: var(--eliot-space-gutter) var(--eliot-space-panel); }
 .er-research-run__failure-heading { color: var(--md-sys-color-error); }
 
 .er-research-run__consequence-list { display: flex; flex-wrap: wrap; gap: var(--eliot-space-tight); margin: 0; padding: 0; list-style: none; }
@@ -382,12 +454,14 @@
   .er-research-run[data-phase="start"] .er-research-run__heading { font-size: var(--eliot-type-headline-small-size); line-height: var(--eliot-type-headline-small-line-height); }
   .er-research-run__composer { padding: var(--eliot-space-block-control) var(--eliot-space-block-control) var(--eliot-space-block-control) var(--eliot-space-panel); border-radius: var(--eliot-shape-large-increased); }
   .er-research-run__recorded { max-inline-size: 100%; }
-  .er-research-run__progress, .er-research-run__snapshot, .er-research-run__unknown, .er-research-run__failure { padding: var(--eliot-space-panel); }
+  .er-research-run__snapshot, .er-research-run__unknown, .er-research-run__failure { padding: var(--eliot-space-panel); }
+  .er-research-run__turn { grid-template-columns: minmax(0, 1fr); }
+  .er-research-run__turn-avatar { display: none; }
   .er-research-run__hints { padding-inline: var(--eliot-space-block-control); }
 }
 
 @media (forced-colors: active) {
-  .er-research-run__composer, .er-research-run__recorded, .er-research-run__progress,
+  .er-research-run__composer, .er-research-run__recorded, .er-research-run__meter,
   .er-research-run__snapshot, .er-research-run__unknown, .er-research-run__failure,
   .er-research-run__caution { border: var(--eliot-divider-width) solid CanvasText; }
   .er-research-run__dock { background: Canvas; }

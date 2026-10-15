@@ -77,6 +77,8 @@ export interface ResearchRunFeatureProps {
    * and before the composer, so the composer always closes the conversation. Presentation only.
    */
   readonly conversation?: ReactNode;
+  /** Root-owned actions on this answer (open the report, ask another question), set inside Eliot's turn. */
+  readonly answerActions?: ReactNode;
   /**
    * The open project, shown as the start cover's title (NotebookLM opens a notebook on its own
    * title and source count). Presentation only; without it the cover keeps its generic prompt.
@@ -88,6 +90,10 @@ const ENGINE_LABEL: Record<'en' | 'ru', Record<ResearchRunStatusView['engine_sta
   en: { queued: 'Queued', running: 'Running', paused: 'Paused', errored: 'Failed', terminated: 'Stopped', complete: 'Finished', waiting: 'Waiting', waitingForPause: 'Pausing', unknown: 'Status unknown' },
   ru: { queued: 'В очереди', running: 'Выполняется', paused: 'Приостановлено', errored: 'Ошибка', terminated: 'Остановлено', complete: 'Завершено', waiting: 'Ожидание', waitingForPause: 'Приостанавливается', unknown: 'Состояние неизвестно' },
 };
+/** The owner's word for an engine status, shared by the run card and the recent research list. */
+export function researchEngineLabel(locale: 'en' | 'ru', status: ResearchRunStatusView['engine_status']): string {
+  return ENGINE_LABEL[locale][status];
+}
 const FAILURE_LABEL = {
   en: { code: 'Code', stage: 'Stage', phase: 'Phase', retryable: 'Can retry', dispatch: 'Request outcome', references: 'References', recovery: 'Recovery', yes: 'Yes', no: 'No' },
   ru: { code: 'Код', stage: 'Этап', phase: 'Фаза', retryable: 'Повтор возможен', dispatch: 'Результат запроса', references: 'Ссылки', recovery: 'Восстановление', yes: 'Да', no: 'Нет' },
@@ -141,14 +147,14 @@ const REFERENCES_LABEL: Record<'en' | 'ru', Record<ResearchRunReferencesIntact, 
   en: { INTACT: 'references intact', UNKNOWN: 'references unknown' },
   ru: { INTACT: 'ссылки не нарушены', UNKNOWN: 'состояние ссылок неизвестно' },
 };
+// Owner-facing words. The distinctions the engine keeps (finished is not accepted, cancelled is not
+// finished, an unknown outcome is not a failure) stay in plain sentences, never in protocol terms.
 const COPY: Record<'en' | 'ru', {
-  heading: string;
   lead: string;
   questionLabel: string;
   nextQuestionLabel: string;
   questionPlaceholder: string;
   questionHint: string;
-  nextQuestionHint: string;
   heldQuestionHint: string;
   currentQuestionLabel: string;
   currentScopeHeading: string;
@@ -165,8 +171,6 @@ const COPY: Record<'en' | 'ru', {
   asking: string;
   recordedQuestion: string;
   progressHeading: string;
-  stagePrefix: string;
-  observedPrefix: string;
   refreshSnapshot: string;
   readStatus: string;
   recover: string;
@@ -180,119 +184,96 @@ const COPY: Record<'en' | 'ru', {
   consequenceHeading: string;
   outcomeUnknown: string;
   unknownReadbackForbidsNewIntent: string;
-  degraded: string;
-  error: string;
-    empty: string;
-    loading: string;
-    useful: string;
 }> = {
   en: {
-    heading: 'Research run',
     lead: 'Ask a question with the sources you choose.',
     questionLabel: 'Research question',
-    nextQuestionLabel: 'Next question draft (unsent)',
+    nextQuestionLabel: 'Next question',
     questionPlaceholder: 'Ask a question about the selected sources',
     questionHint: 'Your question keeps the sources selected when you ask it.',
-    nextQuestionHint: 'Draft your next question. This unsaved draft does not change the viewed run.',
-    heldQuestionHint: 'This draft is unsent and is not queued. Wait for the current action and explicitly release the current run before asking it.',
-    currentQuestionLabel: 'Current run question',
-    currentScopeHeading: 'Current run sources',
-    currentScopeEmpty: 'No source labels are shown here for the current run.',
-    currentScopeCount: function (count: number) { return 'Current run: ' + count + ' source labels shown'; },
-    scopeHeading: 'Selected scope',
-    scopeEmpty: 'No source is selected. Pick sources in Sources first.',
+    heldQuestionHint: 'Your draft is kept. Send it when you are done with this research.',
+    currentQuestionLabel: 'Your question',
+    currentScopeHeading: 'Sources for this question',
+    currentScopeEmpty: 'Source names are not shown for this question.',
+    currentScopeCount: function (count: number) { return count === 1 ? '1 source' : count + ' sources'; },
+    scopeHeading: 'Question sources',
+    scopeEmpty: 'No source is selected yet. Choose sources first.',
     scopeCount: function (count: number) { return count === 1 ? '1 source selected' : count + ' sources selected'; },
-    nextStage: function (index: number) { return 'Next stage ' + (index + 1); },
+    nextStage: function (index: number) { return 'Stage ' + (index + 1); },
     completedStages: function (index: number) { return index + ' stages completed'; },
     details: 'Details',
-    generationLabel: 'Deployment generation',
+    generationLabel: 'System version',
     ask: 'Ask',
     asking: 'Asking',
-    recordedQuestion: 'Recorded question',
-    progressHeading: 'Execution progress',
-    stagePrefix: 'Stage',
-    observedPrefix: 'Last observed',
+    recordedQuestion: 'Your question',
+    progressHeading: 'Progress',
     refreshSnapshot: 'Refresh snapshot',
     readStatus: 'Read status',
     recover: 'Recover this run',
-    snapshotHeading: 'Snapshot, explicit refresh only',
+    snapshotHeading: 'Snapshot',
     snapshotNone: 'No snapshot has been requested yet.',
-    completedNotAccepted: 'Engine completion is not report acceptance or publication.',
-    answerUnavailable: 'No answer is available yet.',
-    answerDraft: 'A draft answer exists.',
-    cancelledHint: 'Cancellation is not completion.',
-    firstCauseHeading: 'First failure cause',
-    consequenceHeading: 'Later consequences',
+    completedNotAccepted: 'This is a draft: it is not accepted or published yet.',
+    answerUnavailable: 'No answer yet.',
+    answerDraft: 'A draft answer is ready.',
+    cancelledHint: 'A cancelled run is not finished.',
+    firstCauseHeading: 'What went wrong',
+    consequenceHeading: 'What followed',
     outcomeUnknown: 'The outcome of this run is not yet known.',
-    unknownReadbackForbidsNewIntent: 'Read back the run before starting anything new. A new intent is not offered.',
-    degraded: 'Progress is unavailable until a fresh status readback succeeds.',
-    error: 'This run could not continue. Read back the run for what is known.',
-    empty: 'No run yet. Ask a question to begin.',
-    loading: 'The run is in progress. Progress comes from status readback.',
-    useful: 'The run finished. Review the draft answer.',
+    unknownReadbackForbidsNewIntent: 'Check this research before asking anything new.',
   },
   ru: {
-    heading: 'Запуск исследования',
     lead: 'Задайте вопрос по выбранным источникам.',
     questionLabel: 'Вопрос исследования',
-    nextQuestionLabel: 'Черновик следующего вопроса (не отправлен)',
+    nextQuestionLabel: 'Следующий вопрос',
     questionPlaceholder: 'Задайте вопрос по выбранным источникам',
     questionHint: 'Вопрос сохранит источники, выбранные на момент отправки.',
-    nextQuestionHint: 'Подготовьте следующий вопрос. Этот несохранённый черновик не меняет просматриваемый запуск.',
-    heldQuestionHint: 'Черновик не отправлен и не поставлен в очередь. Дождитесь завершения текущего действия и явно освободите текущий запуск перед отправкой.',
-    currentQuestionLabel: 'Вопрос текущего запуска',
-    currentScopeHeading: 'Источники текущего запуска',
-    currentScopeEmpty: 'Названия источников текущего запуска здесь не показаны.',
-    currentScopeCount: function (count: number) { return 'Текущий запуск: показано названий источников — ' + count; },
-    scopeHeading: 'Выбранная область',
-    scopeEmpty: 'Источник не выбран. Сначала выберите источники в разделе «Источники».',
-    scopeCount: function (count: number) { return 'Выбрано источников: ' + count; },
-    nextStage: function (index: number) { return 'Следующий этап ' + (index + 1); },
+    heldQuestionHint: 'Черновик сохранится. Отправьте его, когда закончите с этим исследованием.',
+    currentQuestionLabel: 'Ваш вопрос',
+    currentScopeHeading: 'Источники этого вопроса',
+    currentScopeEmpty: 'Названия источников этого вопроса здесь не показаны.',
+    currentScopeCount: function (count: number) { const tail = count % 10, hundred = count % 100; return count + ' ' + (tail === 1 && hundred !== 11 ? 'источник' : tail >= 2 && tail <= 4 && (hundred < 12 || hundred > 14) ? 'источника' : 'источников'); },
+    scopeHeading: 'Источники вопроса',
+    scopeEmpty: 'Источники ещё не выбраны. Сначала выберите их.',
+    scopeCount: function (count: number) { return 'Выбрано: ' + count; },
+    nextStage: function (index: number) { return 'Этап ' + (index + 1); },
     completedStages: function (index: number) { return 'Завершено этапов: ' + index; },
     details: 'Подробности',
-    generationLabel: 'Поколение развёртывания',
+    generationLabel: 'Версия системы',
     ask: 'Спросить',
     asking: 'Отправка',
-    recordedQuestion: 'Записанный вопрос',
-    progressHeading: 'Ход выполнения',
-    stagePrefix: 'Этап',
-    observedPrefix: 'Последнее наблюдение',
+    recordedQuestion: 'Ваш вопрос',
+    progressHeading: 'Ход работы',
     refreshSnapshot: 'Обновить снимок',
-    readStatus: 'Прочитать статус',
-    recover: 'Восстановить этот запуск',
-    snapshotHeading: 'Снимок только по явному обновлению',
+    readStatus: 'Проверить статус',
+    recover: 'Восстановить исследование',
+    snapshotHeading: 'Снимок',
     snapshotNone: 'Снимок ещё не запрашивался.',
-    completedNotAccepted: 'Завершение движка не является принятием или публикацией отчёта.',
-    answerUnavailable: 'Ответ пока недоступен.',
-    answerDraft: 'Доступен черновик ответа.',
-    cancelledHint: 'Отмена не является завершением.',
-    firstCauseHeading: 'Первая причина сбоя',
-    consequenceHeading: 'Последующие следствия',
-    outcomeUnknown: 'Результат этого запуска ещё не известен.',
-    unknownReadbackForbidsNewIntent: 'Перечитайте запуск прежде чем начинать что-либо новое. Новое намерение не предлагается.',
-    degraded: 'Ход выполнения недоступен, пока не удастся выполнить свежее чтение статуса.',
-    error: 'Этот запуск не может продолжаться. Перечитайте запуск, чтобы узнать известное.',
-    empty: 'Запусков ещё нет. Задайте вопрос, чтобы начать.',
-    loading: 'Запуск выполняется. Ход выполнения поступает из чтения статуса.',
-    useful: 'Запуск завершён. Ознакомьтесь с черновиком ответа.',
+    completedNotAccepted: 'Это черновик: он ещё не принят и не опубликован.',
+    answerUnavailable: 'Ответа пока нет.',
+    answerDraft: 'Черновик ответа готов.',
+    cancelledHint: 'Отмена — это не завершение.',
+    firstCauseHeading: 'Что пошло не так',
+    consequenceHeading: 'Что последовало',
+    outcomeUnknown: 'Результат этого исследования пока неизвестен.',
+    unknownReadbackForbidsNewIntent: 'Проверьте это исследование, прежде чем задавать новый вопрос.',
   },
 };
 const STATE_NOTICE: Record<'en' | 'ru', Record<ResearchRunState, string>> = {
   en: {
-    useful: 'The run finished. Review the draft answer.',
-    loading: 'The run is in progress. Progress comes from status readback.',
-    empty: 'No run yet. Ask a question to begin.',
-    degraded: 'Progress is unavailable until a fresh status readback succeeds.',
-    error: 'This run could not continue. Read back the run for what is known.',
-    cancelled: 'This run was cancelled. Cancellation is not completion.',
+    useful: 'Research finished.',
+    loading: 'Researching your sources…',
+    empty: 'No research yet. Ask a question to begin.',
+    degraded: 'Progress is unknown right now. Check the status again.',
+    error: 'The research stopped. Check the status to see what is known.',
+    cancelled: 'The research was cancelled.',
   },
   ru: {
-    useful: 'Запуск завершён. Ознакомьтесь с черновиком ответа.',
-    loading: 'Запуск выполняется. Ход выполнения поступает из чтения статуса.',
-    empty: 'Запусков ещё нет. Задайте вопрос, чтобы начать.',
-    degraded: 'Ход выполнения недоступен, пока не удастся выполнить свежее чтение статуса.',
-    error: 'Этот запуск не может продолжаться. Перечитайте запуск, чтобы узнать известное.',
-    cancelled: 'Этот запуск отменён. Отмена не является завершением.',
+    useful: 'Исследование завершено.',
+    loading: 'Исследую источники…',
+    empty: 'Исследований ещё нет. Задайте вопрос, чтобы начать.',
+    degraded: 'Ход работы сейчас неизвестен. Проверьте статус ещё раз.',
+    error: 'Исследование остановилось. Проверьте статус, чтобы узнать подробности.',
+    cancelled: 'Исследование отменено.',
   },
 };
 
@@ -314,6 +295,7 @@ export function ResearchRunFeature({
   onReadStatus,
   onRecover,
   conversation,
+  answerActions,
   cover,
 }: ResearchRunFeatureProps) {
   const [localDraft, setLocalDraft] = useState<string>('');
@@ -370,7 +352,7 @@ export function ResearchRunFeature({
         {busy ? copy.asking : copy.ask}
       </Button>}
       {onReadStatus === undefined ? null : (
-        <Button variant="tonal" disabled={busy} onClick={onReadStatus}>{copy.readStatus}</Button>
+        <Button variant="text" disabled={busy} onClick={onReadStatus}>{copy.readStatus}</Button>
       )}
       {onRefreshSnapshot === undefined ? null : (
         <Button variant="text" disabled={busy} onClick={onRefreshSnapshot}>{copy.refreshSnapshot}</Button>
@@ -402,71 +384,14 @@ export function ResearchRunFeature({
         {!hasQuestion ? <div className="er-research-run__composer-bar">{scopeDisclosure}{runActions}</div> : null}
       </div>
       <div className="er-research-run__hints">
-        {(controlledDraft || !hasQuestion) && <p id={questionId + '-hint'} className="er-research-run__question-hint">{controlledDraft && draftHeld ? copy.nextQuestionHint : copy.questionHint}</p>}
-        {hasQuestion ? <p className="er-research-run__question-hint">{copy.heldQuestionHint}</p> : null}
+        <p id={questionId + '-hint'} className="er-research-run__question-hint">{controlledDraft && draftHeld ? copy.heldQuestionHint : copy.questionHint}</p>
       </div>
     </div>
   );
 
-  return (
-    <section className="er-research-run" aria-labelledby={headingId} data-phase={hasQuestion ? 'conversation' : 'start'}>
-      <header className="er-research-run__intro">{!hasQuestion ? <span className="er-research-run__cover-icon"><MaterialSymbol name="spark" /></span> : null}<h2 className="er-research-run__heading" id={headingId}>{hasQuestion ? (locale === 'ru' ? 'Ваше исследование' : 'Your research') : cover?.title ?? (locale === 'ru' ? 'Спросите свои источники' : 'Ask your sources')}</h2>
-      {!hasQuestion && cover?.meta ? <p className="er-research-run__meta">{cover.meta}</p> : null}
-      {!hasQuestion ? <p className="er-research-run__lead">{copy.lead}</p> : null}</header>
-
-      {recordedQuestion === null ? null : (
-        <p className="er-research-run__recorded">
-          <span className="er-research-run__recorded-label">{controlledDraft && hasQuestion ? copy.currentQuestionLabel : copy.recordedQuestion}</span>
-          <span className="er-research-run__recorded-value">{recordedQuestion}</span>
-        </p>
-      )}
-
-      {/* The start cover already invites the first question; the empty notice would only repeat it. */}
-      {state === 'empty' && !hasQuestion ? null : <Status tone={state === 'error' ? 'error' : 'neutral'}>{notice}</Status>}
-
-      {hasQuestion ? <div className="er-research-run__current-controls">{scopeDisclosure}{runActions}</div> : null}
-
-      {progress === undefined ? null : (
-        <section className="er-research-run__progress" aria-label={copy.progressHeading}>
-          <h3 className="er-research-run__progress-heading">{copy.progressHeading}</h3>
-          <dl className="er-research-run__progress-list">
-            <dt>{copy.stagePrefix}</dt>
-            <dd>
-              {progress.execution_state === 'ENGINE_COMPLETED'
-                ? copy.completedStages(progress.next_stage_index)
-                : copy.nextStage(progress.next_stage_index)} · {ENGINE_LABEL[locale][progress.engine_status]}
-            </dd>
-          </dl>
-          <details>
-            <summary>{copy.details}</summary>
-            <dl className="er-research-run__details">
-              <dt>{copy.generationLabel}</dt>
-              <dd>{progress.deployment_generation}</dd>
-            </dl>
-          </details>
-          {progress.answer.availability === 'unavailable' ? (
-            <p className="er-research-run__answer">{copy.answerUnavailable}</p>
-          ) : (
-            <p className="er-research-run__answer">{copy.answerDraft}</p>
-          )}
-          {progress.execution_state === 'ENGINE_COMPLETED' ? (
-            <p className="er-research-run__caution">{copy.completedNotAccepted}</p>
-          ) : null}
-          {progress.execution_state === 'CANCELLED' ? (
-            <p className="er-research-run__caution">{copy.cancelledHint}</p>
-          ) : null}
-        </section>
-      )}
-
-      {(snapshot !== undefined || onRefreshSnapshot !== undefined) && <section className="er-research-run__snapshot">
-        <h3 className="er-research-run__snapshot-heading">{copy.snapshotHeading}</h3>
-        {snapshot === undefined ? (
-          <p className="er-research-run__snapshot-none">{copy.snapshotNone}</p>
-        ) : (
-          <p className="er-research-run__snapshot-state">{SNAPSHOT_LABEL[locale][snapshot.state]}</p>
-        )}
-      </section>}
-
+  // What stopped the run, or why its outcome is unknown: inside Eliot's turn once a question exists.
+  const outcome = (
+    <>
       {unknownOutcome ? (
         <section className="er-research-run__unknown">
           <Status tone="error">{copy.outcomeUnknown}</Status>
@@ -480,6 +405,7 @@ export function ResearchRunFeature({
       {firstCause === undefined ? null : (
         <section className="er-research-run__failure">
           <h3 className="er-research-run__failure-heading">{copy.firstCauseHeading}</h3>
+          <p className="er-research-run__failure-summary">{firstCause.stage === undefined ? null : <>{firstCause.stage} · </>}<code>{firstCause.code}</code></p>
           <details><summary>{copy.details}</summary>
           <dl className="er-research-run__failure-list">
             <dt>{FAILURE_LABEL[locale].code}</dt>
@@ -522,6 +448,77 @@ export function ResearchRunFeature({
           </details>
         </section>
       )}
+    </>
+  );
+
+  return (
+    <section className="er-research-run" aria-labelledby={headingId} data-phase={hasQuestion ? 'conversation' : 'start'}>
+      <header className="er-research-run__intro">{!hasQuestion ? <span className="er-research-run__cover-icon"><MaterialSymbol name="spark" /></span> : null}<h2 className="er-research-run__heading" id={headingId}>{hasQuestion ? (locale === 'ru' ? 'Ваше исследование' : 'Your research') : cover?.title ?? (locale === 'ru' ? 'Спросите свои источники' : 'Ask your sources')}</h2>
+      {!hasQuestion && cover?.meta ? <p className="er-research-run__meta">{cover.meta}</p> : null}
+      {!hasQuestion ? <p className="er-research-run__lead">{copy.lead}</p> : null}</header>
+
+      {recordedQuestion === null ? null : (
+        <p className="er-research-run__recorded">
+          <span className="er-research-run__recorded-label">{controlledDraft && hasQuestion ? copy.currentQuestionLabel : copy.recordedQuestion}</span>
+          <span className="er-research-run__recorded-value">{recordedQuestion}</span>
+        </p>
+      )}
+
+      {/* The start cover already invites the first question; the empty notice would only repeat it. */}
+      {!hasQuestion && state !== 'empty' ? <Status tone={state === 'error' ? 'error' : 'neutral'}>{notice}</Status> : null}
+
+      {/* Eliot's turn, as NotebookLM answers in the chat: one card with the run's state, its
+          progress, what exists and the sources the question froze. Technical facts stay in Details. */}
+      {hasQuestion ? <div className="er-research-run__turn" data-state={state}>
+        <span className="er-research-run__turn-avatar" aria-hidden="true"><MaterialSymbol name="spark" /></span>
+        <div className="er-research-run__turn-body">
+          <Status tone={state === 'error' ? 'error' : 'neutral'}>{notice}</Status>
+          {progress === undefined ? null : (
+            <section className="er-research-run__progress" aria-label={copy.progressHeading}>
+              {/* While the engine works its stage leads; once it is done the notice says so and the
+                  stage count moves into Details. */}
+              {progress.execution_state === 'ENGINE_COMPLETED' ? null : <p className="er-research-run__stage">
+                {copy.nextStage(progress.next_stage_index)} · {ENGINE_LABEL[locale][progress.engine_status]}
+              </p>}
+              {progress.execution_state === 'ACTIVE' && state === 'loading'
+                ? <span className="er-research-run__meter" aria-hidden="true"><span /></span> : null}
+              <p className="er-research-run__answer" data-available={progress.answer.availability === 'unavailable' ? 'false' : 'true'}>
+                {progress.answer.availability === 'unavailable' ? copy.answerUnavailable : copy.answerDraft}
+              </p>
+              {progress.execution_state === 'ENGINE_COMPLETED' ? (
+                <p className="er-research-run__caution">{copy.completedNotAccepted}</p>
+              ) : null}
+              {progress.execution_state === 'CANCELLED' ? (
+                <p className="er-research-run__caution">{copy.cancelledHint}</p>
+              ) : null}
+              <details className="er-research-run__more">
+                <summary>{copy.details}</summary>
+                {progress.execution_state === 'ENGINE_COMPLETED' ? <p className="er-research-run__stage">
+                  {copy.completedStages(progress.next_stage_index)} · {ENGINE_LABEL[locale][progress.engine_status]}
+                </p> : null}
+                <dl className="er-research-run__details">
+                  <dt>{copy.generationLabel}</dt>
+                  <dd>{progress.deployment_generation}</dd>
+                </dl>
+              </details>
+            </section>
+          )}
+          {outcome}
+          <div className="er-research-run__current-controls">{scopeDisclosure}{runActions}</div>
+          {answerActions}
+        </div>
+      </div> : null}
+
+      {(snapshot !== undefined || onRefreshSnapshot !== undefined) && <section className="er-research-run__snapshot">
+        <h3 className="er-research-run__snapshot-heading">{copy.snapshotHeading}</h3>
+        {snapshot === undefined ? (
+          <p className="er-research-run__snapshot-none">{copy.snapshotNone}</p>
+        ) : (
+          <p className="er-research-run__snapshot-state">{SNAPSHOT_LABEL[locale][snapshot.state]}</p>
+        )}
+      </section>}
+
+      {hasQuestion ? null : outcome}
       {conversation}
       {!hasQuestion || controlledDraft ? questionEditor : null}
     </section>

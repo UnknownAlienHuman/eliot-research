@@ -55,7 +55,7 @@ export async function playMaterialReading({ canvas, userEvent }: Parameters<type
   await userEvent.click(canvas.getByRole('link', { name: 'Research', exact: true }));
   await userEvent.type(await canvas.findByRole('textbox', { name: 'Research question' }), 'How can a question retain its original evidence?');
   await userEvent.click(canvas.getByRole('button', { name: 'Ask', exact: true }));
-  await canvas.findByText('The run finished. Review the draft answer.');
+  await canvas.findByText('Research finished.');
   await userEvent.click(canvas.getAllByRole('button', { name: 'Open saved report' })[0] as HTMLElement);
   const close = await canvas.findByRole('button', { name: 'Close report' });
   const reportTitle = await canvas.findByRole('heading', { name: 'Saved report', exact: true });

@@ -225,7 +225,7 @@ export const playResearchJourney = async ({ canvas, userEvent }: {
   if (canvas.queryByRole('button', { name: 'Ask another question', exact: true })) throw new Error('Navigation exposed dismissal of an unknown local intent');
   unknownUnchanged();
   await userEvent.click(await canvas.findByRole('button', { name: 'Reconcile this question' }));
-  await canvas.findByText('The run finished. Review the draft answer.');
+  await canvas.findByText('Research finished.');
   await userEvent.click(canvas.getAllByRole('button', { name: 'Open saved report' })[0] as HTMLElement);
   await canvas.findByText('40 declared');
   const exportButton = canvas.getByRole('button', { name: 'Export report' });
@@ -252,7 +252,7 @@ export async function playResearchHistoryReturn({ canvas, userEvent }: Parameter
   probe.assertNoIntent(); probe.assertEffects(0, 0);
   await userEvent.click(read);
   await canvas.findByText(historyState === 'CANCELLED'
-    ? 'This run was cancelled. Cancellation is not completion.' : 'The run finished. Review the draft answer.');
+    ? 'The research was cancelled.' : 'Research finished.');
   await canvas.findByRole('button', { name: 'Ask another question', exact: true });
   probe.assertHistorySelected(); probe.assertEffects(0, 0);
   await userEvent.click(canvas.getByRole('link', { name: 'Sources', exact: true }));
@@ -265,7 +265,7 @@ export async function playResearchHistoryReturn({ canvas, userEvent }: Parameter
   await canvas.findByText('40 declared');
   probe.assertHistorySelected(); probe.assertEffects(0, 0);
   await userEvent.click(canvas.getByRole('button', { name: 'Close report', exact: true }));
-  const held = await canvas.findByRole('textbox', { name: 'Next question draft (unsent)', exact: true });
+  const held = await canvas.findByRole('textbox', { name: 'Next question', exact: true });
   await userEvent.type(held, draft);
   probe.assertHistorySelected(); probe.assertEffects(0, 0);
   if (canvas.queryByRole('button', { name: 'Ask', exact: true })) throw new Error('Viewed history exposed admission before release');
@@ -275,16 +275,16 @@ export async function playResearchHistoryReturn({ canvas, userEvent }: Parameter
   if (!(question instanceof HTMLTextAreaElement) || question.value !== draft) throw new Error('History release lost the held next-question draft');
   probe.assertNoIntent(); probe.assertEffects(0, 0);
   if (canvas.queryByRole('button', { name: 'Ask another question', exact: true })) throw new Error('History release kept the old run selected');
-  const details = canvas.getByRole('heading', { name: 'Selected scope', exact: true }).closest('details');
+  const details = canvas.getByRole('heading', { name: 'Question sources', exact: true }).closest('details');
   if (!(details instanceof HTMLDetailsElement)) throw new Error('Next-question source scope is missing');
-  if (!details.open) await userEvent.click(canvas.getByRole('heading', { name: 'Selected scope', exact: true }));
+  if (!details.open) await userEvent.click(canvas.getByRole('heading', { name: 'Question sources', exact: true }));
   const labels = details.querySelectorAll('li');
   if (labels.length !== 1 || labels[0]?.textContent !== sourceName) throw new Error('History release changed the next-question source scope');
   const ask = canvas.getByRole('button', { name: 'Ask', exact: true });
   if (!(ask instanceof HTMLButtonElement) || ask.disabled) throw new Error('Released history did not enable the held question');
   probe.assertEffects(0, 0);
   await userEvent.click(ask);
-  await canvas.findByText('The run finished. Review the draft answer.');
+  await canvas.findByText('Research finished.');
   probe.assertAdmission(draft);
   if (canvas.queryByRole('button', { name: 'Reconcile this question' })) throw new Error('History fixture simulated a lost launch acknowledgement');
 }

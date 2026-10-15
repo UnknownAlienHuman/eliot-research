@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { skipToken, useQuery, useQueryClient } from '@tanstack/react-query';
 import { WorkspaceLink } from '../routes/WorkspaceLink';
-import { Button, MaterialSymbol, OperationAnnouncement, ResearchRunFeature, Status } from '@eliotr/ui';
+import { Button, MaterialSymbol, OperationAnnouncement, ResearchRunFeature, Status, researchEngineLabel } from '@eliotr/ui';
 import type { ResearchRunLaunchView, VersionedRef } from '@eliotr/owner-api-client';
 import type { BoundWorkspaceApis } from './runtime';
 import type { PrivacyController, SessionContext } from './privacy';
@@ -23,8 +23,8 @@ interface ResearchMemory {
   readonly artifact?: VersionedRef;
 }
 const copy = {
-  en: { statusUnavailable: 'The current run status could not be read.', working: 'Checking the current question.', runRead: 'Run status updated.', runFailed: 'The run reported a failure.', runComplete: 'The engine finished. Review its result.', cancelled: 'The run was cancelled.', historyLoaded: 'Recent research loaded.', scope: 'Choose sources', scopeStale: 'Review your selected sources again before asking a new question.', scopeEmpty: 'Choose the sources for your next question first.', noProject: 'Open a project to choose its sources.', projects: 'Open projects', blocked: 'Research needs a current configuration check.', check: 'Check research readiness', connections: 'Review connections', history: 'Recent research', readHistory: 'Refresh recent research', openRun: 'Read this run', report: 'Open saved report', unknown: 'The launch outcome is unknown. The original question and request identity are preserved.', recover: 'Reconcile this question', same: 'While this workspace remains open, recovery reads the acknowledged run or reuses the original request and identity when its acknowledgement is missing.', next: 'Ask another question', input: 'The question could not be prepared. Review its text and source selection.', unavailable: 'Recent research could not be read. Try a fresh read.', noRuns: 'Your questions and saved reports will appear here.', incomplete: 'The engine has not provided a draft report yet.' },
-  ru: { statusUnavailable: 'Не удалось прочитать текущий статус запуска.', working: 'Проверяется текущий вопрос.', runRead: 'Статус запуска обновлён.', runFailed: 'Запуск сообщил об ошибке.', runComplete: 'Движок завершил работу. Проверьте результат.', cancelled: 'Запуск отменён.', historyLoaded: 'Последние исследования прочитаны.', scope: 'Выбрать источники', scopeStale: 'Перед новым вопросом проверьте выбранные источники ещё раз.', scopeEmpty: 'Сначала выберите источники для следующего вопроса.', noProject: 'Откройте проект, чтобы выбрать его источники.', projects: 'Открыть проекты', blocked: 'Нужна актуальная проверка настроек исследования.', check: 'Проверить готовность исследования', connections: 'Проверить подключения', history: 'Последние исследования', readHistory: 'Обновить последние исследования', openRun: 'Прочитать этот запуск', report: 'Открыть сохранённый отчёт', unknown: 'Исход запуска неизвестен. Исходный вопрос и идентификатор запроса сохранены.', recover: 'Проверить этот вопрос', same: 'Пока рабочая область открыта, читается подтверждённый запуск. Если подтверждение потеряно, повторяется исходный запрос с тем же идентификатором.', next: 'Задать другой вопрос', input: 'Не удалось подготовить вопрос. Проверьте текст и выбранные источники.', unavailable: 'Не удалось прочитать последние исследования. Повторите чтение.', noRuns: 'Здесь появятся ваши вопросы и сохранённые отчёты.', incomplete: 'Движок пока не предоставил черновик отчёта.' },
+  en: { statusUnavailable: 'The research status could not be read.', working: 'Researching your question.', runRead: 'Status updated.', runFailed: 'The research ended with an error.', runComplete: 'The engine finished. Review its result.', cancelled: 'Research cancelled.', historyLoaded: 'Recent research loaded.', scope: 'Choose sources', scopeStale: 'Review your selected sources again before asking a new question.', scopeEmpty: 'Choose the sources for your next question first.', noProject: 'Open a project to choose its sources.', projects: 'Open projects', blocked: 'Research settings need a check before you ask.', check: 'Check research readiness', connections: 'Review connections', history: 'Recent research', readHistory: 'Refresh recent research', openRun: 'Read this run', report: 'Open saved report', unknown: 'The launch outcome is unknown. The original question and request identity are preserved.', recover: 'Reconcile this question', same: 'If the research started, it opens; if not, the same request is sent again without a duplicate.', next: 'Ask another question', input: 'The question could not be prepared. Review its text and source selection.', unavailable: 'Recent research could not be read. Refresh it.', noRuns: 'Your questions and saved reports will appear here.', incomplete: 'No draft report yet.' },
+  ru: { statusUnavailable: 'Не удалось узнать статус исследования.', working: 'Исследую ваш вопрос.', runRead: 'Статус обновлён.', runFailed: 'Исследование завершилось с ошибкой.', runComplete: 'Исследование завершено. Посмотрите результат.', cancelled: 'Исследование отменено.', historyLoaded: 'Последние исследования прочитаны.', scope: 'Выбрать источники', scopeStale: 'Перед новым вопросом проверьте выбранные источники ещё раз.', scopeEmpty: 'Сначала выберите источники для следующего вопроса.', noProject: 'Откройте проект, чтобы выбрать его источники.', projects: 'Открыть проекты', blocked: 'Перед вопросом нужно проверить настройки исследования.', check: 'Проверить готовность исследования', connections: 'Проверить подключения', history: 'Последние исследования', readHistory: 'Обновить список', openRun: 'Открыть исследование', report: 'Открыть отчёт', unknown: 'Не удалось подтвердить запуск исследования. Вопрос сохранён.', recover: 'Проверить этот вопрос', same: 'Если исследование началось, оно откроется; если нет — тот же запрос уйдёт ещё раз, без дубликата.', next: 'Задать другой вопрос', input: 'Не удалось подготовить вопрос. Проверьте текст и выбранные источники.', unavailable: 'Не удалось загрузить последние исследования. Обновите список.', noRuns: 'Здесь появятся ваши вопросы и сохранённые отчёты.', incomplete: 'Черновика отчёта пока нет.' },
 } as const;
 
 /** One explicit intent owns admission. Polling, navigation and history never allocate a run. */
@@ -189,8 +189,7 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
       {...(progress ? { progress, ...(progress.failure ? { firstCause: progress.failure } : {}) } : {})}
       onAsk={ask} {...(launch ? { onReadStatus: () => { void status.refetch(); } } : {})}
       {...(saved?.intent?.phase === 'unknown' ? { onRecover: reconcile } : {})}
-      conversation={<>
-        {(terminal || historyTerminal || progress?.answer.availability === 'draft') && <div className="er-live-actions">
+      answerActions={(terminal || historyTerminal || progress?.answer.availability === 'draft') ? <div className="er-live-actions">
         {progress?.answer.availability === 'draft' && <><Button variant="primary" onClick={() => { if (privacy.isCurrent(context) && progress.answer.availability === 'draft') { const artifact = progress.answer.artifact_ref; write(old => ({ ...old, artifact })); } }}>{text.report}</Button></>}
         {terminal && <Button variant="text" onClick={() => {
           if (privacy.isCurrent(context) && !running.current) write(old => {
@@ -200,14 +199,17 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
           });
         }}>{text.next}</Button>}
         {historyTerminal && <Button variant="text" onClick={dismissHistory}>{text.next}</Button>}
-        </div>}
+        </div> : undefined}
+      conversation={<>
         {saved?.intent?.phase === 'unknown' && <div className="er-live-callout er-live-callout--attention"><Status>{text.unknown}</Status><p>{text.same}</p>
           <Button variant="tonal" disabled={busy} onClick={reconcile}>{text.recover}</Button></div>}
         <section className="er-live-history" aria-label={text.history}><div className="er-live-history-heading"><h2 ref={historyHeading} tabIndex={-1}>{text.history}</h2>
           <Button variant="text" disabled={history.isFetching} onClick={() => { void history.refetch(); }}>{text.readHistory}</Button></div>
           {history.isError ? <Status>{text.unavailable}</Status> : history.data?.runs.length === 0 && history.data.saved_drafts.length === 0 ? <p>{text.noRuns}</p> : null}
           <ul>{!history.isError && history.data?.runs.map(entry => <li key={entry.status.workflow_instance_id}>
-            <time dateTime={entry.created_at}>{displayTime(entry.created_at)}</time><Button variant="text" disabled={saved?.intent !== undefined} onClick={() => {
+            <time dateTime={entry.created_at}>{displayTime(entry.created_at)}</time>
+            <span className="er-live-history-state" data-status={entry.status.engine_status}>{researchEngineLabel(locale, entry.status.engine_status)}</span>
+            <Button variant="text" disabled={saved?.intent !== undefined} onClick={() => {
               const observed = entry.status; write(old => ({ ...old, observedLaunch: { workflow_instance_id: observed.workflow_instance_id, investigation_ref: observed.investigation_ref, deployment_generation: observed.deployment_generation } }));
             }}>{text.openRun}</Button>
             {entry.status.answer.availability === 'draft' && <Button variant="tonal" onClick={() => {

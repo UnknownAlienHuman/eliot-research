@@ -92,7 +92,7 @@ export async function playIntegrationRepairs({ canvas, userEvent }: Journey) {
   await canvas.findByText('The launch outcome is unknown. The original question and request identity are preserved.', { selector: '.er-status > span' });
   await announcementUntil(() => unchangedChannel(root, region, 'The launch outcome is unknown. The original question and request identity are preserved.'));
   await userEvent.click(canvas.getByRole('button', { name: 'Reconcile this question', exact: true }));
-  await canvas.findByText('The run finished. Review the draft answer.');
+  await canvas.findByText('Research finished.');
   await announcementUntil(() => unchangedChannel(root, region, 'The engine finished. Review its result.'));
   const count = canvas.getByRole('button', { name: 'Read fixture request counts', exact: true });
   await userEvent.click(count);

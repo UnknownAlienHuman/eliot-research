@@ -207,6 +207,19 @@
   font-variant-numeric: var(--eliot-type-numerals);
 }
 .er-live-history span { color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
+/* Each run says where it stands in one small tonal label beside its time. */
+.er-live-history .er-live-history-state {
+  padding: var(--eliot-space-hairline) var(--eliot-space-block-control);
+  border-radius: var(--eliot-shape-full);
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  white-space: nowrap;
+}
+.er-live-history .er-live-history-state:is([data-status="running"], [data-status="queued"], [data-status="waiting"], [data-status="waitingForPause"]) { background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
+.er-live-history .er-live-history-state:is([data-status="errored"], [data-status="terminated"]) { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
 .er-live-history > p, .er-live-history > .er-status { padding-inline: var(--eliot-space-tight); color: var(--md-sys-color-on-surface-variant); }
 
 @media (max-width: 48rem) {
@@ -241,7 +254,7 @@
   letter-spacing: normal;
 }
 .er-shell[data-destination="research"] .er-shell-reading > .er-live-research { flex: 1 0 auto; display: flex; flex-direction: column; }
-.er-live-research > .er-research-run > .er-live-actions { margin-block: 0; }
+.er-live-research .er-research-run__turn-body > .er-live-actions { margin-block: var(--eliot-space-tight) 0; }
 .er-live-research .er-live-history { margin-block: var(--eliot-space-block-control) 0; }
 
 /* Notices: one calm callout each — leading glyph, the words, then their actions on the same row. */

@@ -11,7 +11,7 @@ export type { ErasureFeatureProps } from "./features/sources/erasure/ErasureFeat
 export { ImportFlow, IMPORT_FLOW_COPY } from "./features/sources/import/ImportFlow";
 export type { ImportFlowProps, ImportFlowView, ImportFileState, ImportBundleState, ImportFlowBundleReview } from "./features/sources/import/ImportFlow";
 export { ConnectionsFeature } from "./features/connections/ConnectionsFeature";
-export { ResearchRunFeature } from "./features/research/run/ResearchRunFeature";
+export { ResearchRunFeature, researchEngineLabel } from "./features/research/run/ResearchRunFeature";
 export { ReportFeature, REPORT_COPY } from "./features/research/report/ReportFeature";
 export { EvidenceFeature } from "./features/research/evidence/EvidenceFeature";
 export { StudioFeature, STUDIO_COPY } from "./features/studio/StudioFeature";
