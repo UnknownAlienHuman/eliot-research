@@ -17,17 +17,43 @@ export interface AiSearchExpectedProjectCopy {
   readonly membership_generation: number;
   readonly folder_prefix: string;
 }
-export interface AiSearchLocatorDecodeOptions {
+export type AiSearchExpectedProjectCopyV2 = AiSearchExpectedProjectCopy & (
+  | {
+    readonly membership_identity_version: 1;
+    readonly legacy_project_membership_id: string;
+    readonly stable_project_membership_id?: never;
+    readonly membership_revision?: never;
+    readonly project_membership_generation?: never;
+  }
+  | {
+    readonly membership_identity_version: 2;
+    readonly stable_project_membership_id: string;
+    readonly membership_revision: number;
+    /** Aggregate currentness fence; never part of the stable membership identity. */
+    readonly project_membership_generation: number;
+    readonly legacy_project_membership_id?: never;
+  }
+);
+interface AiSearchLocatorDecodeBounds {
   readonly expected_index_generation: string;
-  readonly project_copy_layout: "PROJECT_COPY_V1" | "LEGACY_FLAT";
-  readonly expected_generation_metadata_value?: string;
-  readonly expected_project_copies?: readonly AiSearchExpectedProjectCopy[];
   /** Exact history read fence; flat keys are rejected without this explicit match. */
   readonly historical_generation?: string;
   readonly requested_lanes: readonly ("SEM" | "LEX" | "LITERAL")[];
   readonly max_results: number;
   readonly max_preview_bytes: number;
 }
+export type AiSearchLocatorDecodeOptions = AiSearchLocatorDecodeBounds & (
+  | {
+    readonly project_copy_layout: "PROJECT_COPY_V1" | "LEGACY_FLAT";
+    readonly expected_generation_metadata_value?: string;
+    readonly expected_project_copies?: readonly AiSearchExpectedProjectCopy[];
+  }
+  | {
+    readonly project_copy_layout: "PROJECT_COPY_V2";
+    readonly expected_generation_metadata_value: string;
+    readonly expected_project_copies: readonly AiSearchExpectedProjectCopyV2[];
+  }
+);
 export class AiSearchLocatorDecodeError extends Error { public constructor(message: string, cause?: unknown) { super(message, cause === undefined ? undefined : { cause }); this.name = "AiSearchLocatorDecodeError"; } }
 interface Metadata { readonly canonical_section_id: string; readonly content_sha256: string; readonly instruction_taint: "CLEARED" | "DATA_ONLY" | "UNTRUSTED" | "COMMAND_LIKE"; readonly projection_generation: string; readonly source_revision_ref: string; }
 interface Scoring { readonly fusion_method?: "rrf" | "max"; readonly keyword_rank?: number; readonly keyword_score?: number; readonly reranking_score?: number; readonly vector_rank?: number; readonly vector_score?: number; }
@@ -39,15 +65,15 @@ export function decodeAiSearchSearchResult(request: RetrievalRequest, rawResult:
 }
 export function mapAiSearchChunkToLocator(request: RetrievalRequest, rawChunk: unknown, context: AiSearchLocatorDecodeOptions & { readonly provider_rank: number }): UnresolvedLocatorCandidate {
   validateRequest(request); validateOptions(request, context); const generation = nonemptyString(context.expected_index_generation, "expected_index_generation", 256); positiveInteger(context.provider_rank, "provider_rank"); const chunk = parseChunk(rawChunk, context);
-  const expectedGenerationMetadata = context.project_copy_layout === "PROJECT_COPY_V1"
+  const expectedGenerationMetadata = context.project_copy_layout !== "LEGACY_FLAT"
     ? context.expected_generation_metadata_value
     : context.expected_index_generation;
   if (chunk.metadata.projection_generation !== expectedGenerationMetadata) fail("AI Search chunk projection_generation does not match the selected managed generation");
   if (!request.scope_snapshot.member_source_revision_refs.includes(chunk.metadata.source_revision_ref)) fail("AI Search chunk source_revision_ref is outside the frozen ScopeSnapshot");
-  if (context.project_copy_layout === "PROJECT_COPY_V1" &&
+  if (context.project_copy_layout !== "LEGACY_FLAT" &&
       (new TextEncoder().encode(chunk.metadata.source_revision_ref).byteLength > 64 ||
        new TextEncoder().encode(chunk.metadata.projection_generation).byteLength > 64)) {
-    fail("PROJECT_COPY_V1 metadata exceeds Cloudflare's 64-byte filterable string prefix");
+    fail(`${context.project_copy_layout} metadata exceeds Cloudflare's 64-byte filterable string prefix`);
   }
   if (chunk.project_copy !== undefined && request.scope_snapshot.source_owner_generations[chunk.metadata.source_revision_ref] !== chunk.project_copy.source_owner_generation) fail("AI Search project copy source-owner generation differs from the frozen ScopeSnapshot");
   const row = { candidate_id: chunk.id, lane: selectLane(context.requested_lanes, chunk.scoring_details), source_revision_ref: chunk.metadata.source_revision_ref, canonical_section_id: chunk.metadata.canonical_section_id, preview: chunk.text, raw_score: chunk.score, rank: context.provider_rank, index_generation: generation, metadata: Object.freeze({ content_sha256: chunk.metadata.content_sha256, instruction_taint: chunk.metadata.instruction_taint, item_key: chunk.item_key, projection_generation: generation, provider: "cloudflare_ai_search", provider_chunk_type: chunk.type, provider_item_key: chunk.provider_item_key, ...(chunk.project_copy === undefined ? {} : { provider_project_folder: chunk.project_copy.folder_prefix, provider_project_id: chunk.project_copy.project_id, provider_project_membership_id: chunk.project_copy.project_membership_id }), ...(chunk.item_timestamp === undefined ? {} : { provider_item_timestamp: chunk.item_timestamp }), ...flattenScoring(chunk.scoring_details) }) };
@@ -66,14 +92,14 @@ function projectionItemKeyFromProviderKey(value: string, sourceRevisionRef: stri
     return { item_key: itemKey };
   }
   const slash = value.lastIndexOf("/");
-  if (slash < 0) fail("PROJECT_COPY_V1 AI Search item key must contain its canonical project folder");
+  if (slash < 0) fail(`${options.project_copy_layout} AI Search item key must contain its canonical project folder`);
   const folderPrefix = value.slice(0, slash + 1);
   const projectCopy = options.expected_project_copies?.find((copy) =>
     copy.source_revision_ref === sourceRevisionRef && copy.folder_prefix === folderPrefix);
   if (projectCopy === undefined) fail("AI Search provider folder is outside the frozen Core-authorized project membership scope");
-  if (projectCopy.project_membership_id !== `project:${projectCopy.project_id}:generation:${projectCopy.membership_generation}`) fail("AI Search provider folder mapping has an invalid Core membership identity");
+  if (options.project_copy_layout === "PROJECT_COPY_V1" && projectCopy.project_membership_id !== `project:${projectCopy.project_id}:generation:${projectCopy.membership_generation}`) fail("AI Search provider folder mapping has an invalid Core membership identity");
   const itemKey = value.slice(slash + 1, -3);
-  if (!/^projection-[a-f0-9]{48}$/u.test(itemKey)) fail("PROJECT_COPY_V1 item key is not the retained canonical projection hash");
+  if (!/^projection-[a-f0-9]{48}$/u.test(itemKey)) fail(`${options.project_copy_layout} item key is not the retained canonical projection hash`);
   return { item_key: itemKey, project_copy: projectCopy };
 }
 function parseMetadata(raw: unknown): Metadata { const value = exactObject(raw, METADATA_KEYS, "AI Search chunk.item.metadata"), digest = nonemptyString(value.content_sha256, "AI Search metadata.content_sha256", 64), taint = nonemptyString(value.instruction_taint, "AI Search metadata.instruction_taint", 32); if (!/^[a-f0-9]{64}$/u.test(digest)) fail("AI Search metadata.content_sha256 must be 64 lowercase hexadecimal characters"); if (!isTaint(taint)) fail("AI Search metadata.instruction_taint is invalid"); return { canonical_section_id: nonemptyString(value.canonical_section_id, "AI Search metadata.canonical_section_id", 256), content_sha256: digest, instruction_taint: taint, projection_generation: nonemptyString(value.projection_generation, "AI Search metadata.projection_generation", 256), source_revision_ref: nonemptyString(value.source_revision_ref, "AI Search metadata.source_revision_ref", 256) }; }
@@ -83,7 +109,7 @@ function selectLane(lanes: readonly ("SEM" | "LEX" | "LITERAL")[], scoring?: Sco
 function validateRequest(request: RetrievalRequest): void { if (typeof request !== "object" || request === null) fail("retrieval request must be an object"); if (!Number.isInteger(request.requested_limit) || request.requested_limit < 1) fail("retrieval request.requested_limit must be a positive integer"); if (typeof request.scope_snapshot !== "object" || request.scope_snapshot === null || !Array.isArray(request.scope_snapshot.member_source_revision_refs)) fail("retrieval request must contain a frozen ScopeSnapshot"); }
 function validateOptions(request: RetrievalRequest, options: AiSearchLocatorDecodeOptions): void {
   nonemptyString(options.expected_index_generation, "expected_index_generation", 256);
-  if (options.project_copy_layout !== "PROJECT_COPY_V1" && options.project_copy_layout !== "LEGACY_FLAT") {
+  if (options.project_copy_layout !== "PROJECT_COPY_V1" && options.project_copy_layout !== "PROJECT_COPY_V2" && options.project_copy_layout !== "LEGACY_FLAT") {
     fail("AI Search project_copy_layout is unsupported");
   }
   if (options.project_copy_layout === "PROJECT_COPY_V1") {
@@ -108,6 +134,8 @@ function validateOptions(request: RetrievalRequest, options: AiSearchLocatorDeco
     if (revisions.size !== request.scope_snapshot.member_source_revision_refs.length) {
       fail("PROJECT_COPY_V1 expected copy map omits a frozen source revision");
     }
+  } else if (options.project_copy_layout === "PROJECT_COPY_V2") {
+    validateProjectCopyV2Scope(request, options);
   } else if (options.historical_generation !== options.expected_index_generation) {
     fail("legacy flat keys require an exact historical generation");
   }
@@ -115,6 +143,60 @@ function validateOptions(request: RetrievalRequest, options: AiSearchLocatorDeco
   if (!Number.isInteger(options.max_results) || options.max_results < 1 || options.max_results > MAX_RESULTS) fail(`AI Search max_results must be an integer between 1 and ${MAX_RESULTS}`);
   if (options.max_results > request.requested_limit) fail("AI Search max_results exceeds the retrieval request limit");
   previewLimit(options.max_preview_bytes);
+}
+const COPY_COMMON_KEYS = ["source_revision_ref", "source_owner_generation", "project_id", "project_membership_id", "membership_generation", "folder_prefix", "membership_identity_version"];
+const COPY_V2_LEGACY_KEYS = new Set([...COPY_COMMON_KEYS, "legacy_project_membership_id"]);
+const COPY_V2_STABLE_KEYS = new Set([...COPY_COMMON_KEYS, "stable_project_membership_id", "membership_revision", "project_membership_generation"]);
+const COPY_V2_KEYS = new Set([...COPY_V2_LEGACY_KEYS, ...COPY_V2_STABLE_KEYS]);
+function validateProjectCopyV2Scope(request: RetrievalRequest, options: AiSearchLocatorDecodeOptions): void {
+  if (typeof options.expected_generation_metadata_value !== "string" ||
+      !/^[a-f0-9]{64}$/u.test(options.expected_generation_metadata_value) ||
+      !Array.isArray(options.expected_project_copies)) {
+    fail("PROJECT_COPY_V2 requires a generation digest and Core-authorized copy map");
+  }
+  const revisions = new Set<string>();
+  const folders = new Set<string>();
+  for (const raw of options.expected_project_copies) {
+    const copy = exactObject(raw, COPY_V2_KEYS, "PROJECT_COPY_V2 expected copy");
+    if (copy.membership_identity_version !== 1 && copy.membership_identity_version !== 2) {
+      fail("PROJECT_COPY_V2 expected copy has an invalid membership identity version");
+    }
+    exactObject(copy, copy.membership_identity_version === 1 ? COPY_V2_LEGACY_KEYS : COPY_V2_STABLE_KEYS,
+      "PROJECT_COPY_V2 versioned expected copy");
+    const source = nonemptyString(copy.source_revision_ref, "PROJECT_COPY_V2 source_revision_ref", 64);
+    const owner = nonemptyString(copy.source_owner_generation, "PROJECT_COPY_V2 source_owner_generation", 256);
+    const project = nonemptyString(copy.project_id, "PROJECT_COPY_V2 project_id", 256);
+    const membership = nonemptyString(copy.project_membership_id, "PROJECT_COPY_V2 project_membership_id", 256);
+    const folder = nonemptyString(copy.folder_prefix, "PROJECT_COPY_V2 folder_prefix", 64);
+    const generation = positiveInteger(copy.membership_generation, "PROJECT_COPY_V2 membership_generation");
+    if (!request.scope_snapshot.member_source_revision_refs.includes(source) || revisions.has(source) ||
+        folders.has(folder) || new TextEncoder().encode(source).byteLength > 64 ||
+        owner !== request.scope_snapshot.source_owner_generations[source] ||
+        !IDENTIFIER.test(project) || !IDENTIFIER.test(membership)) {
+      fail("PROJECT_COPY_V2 expected copy map is not bound to the frozen Core scope");
+    }
+    if (copy.membership_identity_version === 1) {
+      if (copy.legacy_project_membership_id !== membership ||
+          membership !== `project:${project}:generation:${generation}` ||
+          !/^projection\/[A-Za-z0-9_-]{43}\/$/u.test(folder)) {
+        fail("PROJECT_COPY_V2 legacy row has an invalid Core membership identity or folder");
+      }
+    } else {
+      positiveInteger(copy.membership_revision, "PROJECT_COPY_V2 membership_revision");
+      const aggregateGeneration = positiveInteger(copy.project_membership_generation,
+        "PROJECT_COPY_V2 project_membership_generation");
+      if (copy.stable_project_membership_id !== membership ||
+          !/^project-membership-[a-f0-9]{48}$/u.test(membership) ||
+          !/^projection\/p-[a-f0-9]{48}\/$/u.test(folder) || generation > aggregateGeneration) {
+        fail("PROJECT_COPY_V2 stable row has an invalid Core membership identity, folder or currentness fence");
+      }
+    }
+    revisions.add(source);
+    folders.add(folder);
+  }
+  if (revisions.size !== request.scope_snapshot.member_source_revision_refs.length) {
+    fail("PROJECT_COPY_V2 expected copy map omits a frozen source revision");
+  }
 }
 function validateLanes(lanes: readonly ("SEM" | "LEX" | "LITERAL")[]): void { if (!Array.isArray(lanes) || lanes.length < 1) fail("AI Search requested_lanes must be a non-empty array"); const seen = new Set<string>(); for (const lane of lanes) { if (lane !== "SEM" && lane !== "LEX" && lane !== "LITERAL") fail("AI Search requested_lanes contains an unsupported lane"); if (seen.has(lane)) fail(`AI Search requested_lanes contains duplicate lane ${lane}`); seen.add(lane); } }
 function previewLimit(value: number): void { if (!Number.isInteger(value) || value < 0 || value > MAX_PREVIEW_BYTES) fail(`AI Search max_preview_bytes must be an integer between 0 and ${MAX_PREVIEW_BYTES}`); }
