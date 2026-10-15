@@ -11,6 +11,7 @@ import {
   AI_SEARCH_PRIMARY_NAMESPACE,
   AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
   aiSearchPhysicalProfileDigest,
+  canonicalProjectionJson,
   createD1AiSearchGenerationRegistryStore,
   createD1ManagedRequiredSetPort,
   createAiSearchGenerationRegistryService,
@@ -24,6 +25,7 @@ import {
   type AiSearchManagedSearchAuthority,
 } from "@eliotr/cloudflare-projection";
 import type { ManagedGenerationPromotionEvidenceAuthorityPort } from "@eliotr/cloudflare-projection/ai-search";
+import { validateManagedGenerationDesiredManifestV3 } from "../../cloudflare-projection/src/managed-generation-promotion-evidence-v3.js";
 import type { ProjectCopyMembershipFact, resolveProjectCopyScope } from "@eliotr/cloudflare-navigation";
 import { createNativeTargetRegistryFixture } from "../../../apps/eliotr-core/test/managed-target-registry-fixture.js";
 import { retrieveWithHeldScope, type HeldScopeRetrievalInput } from "../src/research-retrieval-composition.js";
@@ -275,7 +277,7 @@ describe("research serving selection V2", () => {
     expect(required.assigned_project_count).toBe(1);
     expect(required.project_revision_copy_count).toBe(0);
     const emptySet = await projectionDigest([]);
-    const treeJson = JSON.stringify([]);
+    const treeJson = canonicalProjectionJson([]);
     const treeSha = await projectionSha256Utf8(treeJson);
     const treeRef = `planned-fixture/${treeSha}.json`;
     await w.bucket.put(treeRef, treeJson);
@@ -298,7 +300,7 @@ describe("research serving selection V2", () => {
       },
       manifest_tree_ref: treeRef, manifest_tree_sha256: treeSha,
     };
-    const rootJson = JSON.stringify(root);
+    const rootJson = canonicalProjectionJson(root);
     const rootSha = await projectionSha256Utf8(rootJson);
     const rootRef = `planned-fixture/${rootSha}.json`;
     await w.bucket.put(rootRef, rootJson);
@@ -321,21 +323,30 @@ describe("research serving selection V2", () => {
       expect(await projectionSha256Utf8(await tree.text())).toBe(treeSha);
       return { ...JSON.parse(bytes), manifest_ref: rootRef, manifest_sha256: rootSha, manifest_size_bytes: new TextEncoder().encode(bytes).byteLength };
     };
-    const unavailable = async (): Promise<never> => { throw new Error("declaration cannot claim qualification, provider inventory or writer hold"); };
+    const desired = await validateManagedGenerationDesiredManifestV3(await readDesiredManifest(captured.target), captured.target);
+    expect(desired.protocol).toBe("eliotr.managed-target-desired-items.v3");
+    expect(desired.target_selection).toEqual(captured);
+    expect(desired.target_fence.target_selection_sha256).toBe(await projectionDigest(captured));
+    expect(desired.desired_item_count).toBe(required.project_revision_copy_count);
+    const unavailable = vi.fn(async (): Promise<never> => { throw new Error("declaration cannot claim qualification, provider inventory or writer hold"); });
     const authority: ManagedGenerationPromotionEvidenceAuthorityPort = {
       readDesiredManifest, readCurrentEvidence: unavailable, readFreshCurrentAuthority: unavailable,
       runWithTargetWriterDrain: unavailable, assertTargetWriterDrainHold: unavailable,
       reconcileTargetWriterDrain: unavailable, readGenerationArchiveAuthorization: unavailable,
     };
     const registry = createAiSearchGenerationRegistryService(createD1AiSearchGenerationRegistryStore(w.searchBinding), { promotion_evidence: authority });
-    await registry.declare({ namespace: captured.target.namespace, generation: w.b, profile: AI_SEARCH_PRIMARY_PROJECTION_PROFILE, declared_at: coreNow() });
+    const declaration = await registry.declare({ namespace: captured.target.namespace, generation: w.b, profile: AI_SEARCH_PRIMARY_PROJECTION_PROFILE, declared_at: coreNow() });
+    expect(declaration).toMatchObject({ operation: "DECLARE", generation: w.b, active_head_generation: w.a });
     const declared = await registry.read(AI_SEARCH_PRIMARY_NAMESPACE);
-    expect(declared?.artifact.registry.generations.find(record => record.generation === w.b))
-      .toMatchObject({ state: "DECLARED", expected_item_count: required.project_revision_copy_count });
+    const bRecord = declared?.artifact.registry.generations.find(record => record.generation === w.b);
+    expect(bRecord).toMatchObject({ state: "DECLARED", expected_item_count: desired.desired_item_count });
+    expect(bRecord).not.toHaveProperty("promotion_evidence_v2");
+    expect(bRecord).not.toHaveProperty("promotion_evidence_v3");
     expect(declared?.artifact.revision).toBeGreaterThan(captured.registry_revision);
     const reread = await readDesiredManifest(captured.target);
     expect(reread).toMatchObject({ target_selection: captured, registry_revision_before: captured.registry_revision, registry_revision_after: captured.registry_revision });
     expect(currentCoreReads).toBeGreaterThanOrEqual(3);
+    expect(unavailable).not.toHaveBeenCalled();
     expect(w.get).not.toHaveBeenCalled();
   });
 
