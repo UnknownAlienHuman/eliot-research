@@ -868,6 +868,7 @@ export interface D1ErasureInventoryDependencies {
   readonly core_database: D1Database;
   readonly search_database: D1Database;
   readonly work_bucket?: R2Bucket;
+  readonly verify_managed_root_dependency_set?: (rootRef: string) => Promise<void>;
   readonly backup_offsite?: BackupErasurePort;
   readonly backup_primary_qualification?: BackupPrimaryWriterQualificationVerifier;
   readonly backup_primary_inventory?: BackupPrimaryInventoryPort;
@@ -1033,6 +1034,7 @@ export function createD1ErasureInventory(
               requestDigest,
               subject,
               row.source_revision_ref,
+              dependencies.verify_managed_root_dependency_set,
             );
             if (work.target === null || work.prefix !== snapshot.prefix) {
               erasureFail("ERASURE_CLOSURE_INCOMPLETE", "source Work inventory changed while creating its empty proof");
@@ -1199,6 +1201,7 @@ export function createD1ErasureInventory(
             dependencies.core_database,
             dependency.shared_reference_key,
             selectedSubjects,
+            dependencies.verify_managed_root_dependency_set,
           );
           registeredSharedCounts.set(dependency.shared_reference_key, liveSharedReferences);
         }
