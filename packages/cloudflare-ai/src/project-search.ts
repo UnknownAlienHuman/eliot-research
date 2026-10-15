@@ -51,7 +51,6 @@ export interface ProjectSearchBindings {
   readonly namespace: AiSearchNamespaceLike;
   readonly core_database: D1Database;
   readonly search_database: D1Database;
-  readonly work_bucket: R2Bucket;
 }
 
 function fail(code: ProjectSearchErrorCode, message: string): never {
@@ -117,7 +116,7 @@ async function currentProjectRevision(
     "JOIN source_revision r ON r.source_id=s.source_id AND r.source_revision_ref=?2 " +
     "WHERE m.project_id=?1 AND julianday(m.valid_from)<=julianday(?3) " +
     "AND (m.valid_to IS NULL OR julianday(m.valid_to)>julianday(?3)) " +
-    "AND r.purge_state='LIVE' LIMIT 1",
+    "AND r.purge_state='LIVE' AND r.source_owner_generation=s.source_owner_generation LIMIT 1",
   ).bind(projectId, sourceRevisionRef, observedAt).first<{ current: number }>();
   return row?.current === 1;
 }
@@ -136,7 +135,7 @@ async function projectSources(
     "WHERE m.project_id=?1 AND m.source_id IN (SELECT value FROM json_each(?2)) " +
     "AND julianday(m.valid_from)<=julianday(?3) " +
     "AND (m.valid_to IS NULL OR julianday(m.valid_to)>julianday(?3)) " +
-    "AND r.purge_state='LIVE' ORDER BY s.source_id LIMIT ?4",
+    "AND r.purge_state='LIVE' AND r.source_owner_generation=s.source_owner_generation ORDER BY s.source_id LIMIT ?4",
   ).bind(projectId, JSON.stringify(sourceIds), observedAt, sourceIds.length + 1)
     .all<ProjectSourceRow>();
   if (!result.success || !Array.isArray(result.results)) {
@@ -197,9 +196,6 @@ async function uploadOne(
   item: { readonly item_key: string; readonly document: string },
 ): Promise<void> {
   const key = await providerKey(projectId, lane, item.item_key);
-  await input.work_bucket.put(key, item.document, {
-    httpMetadata: { contentType: "text/markdown; charset=utf-8" },
-  });
   await input.namespace.get(PROJECT_SEARCH_INSTANCES[lane]).items.uploadAndPoll(
     key,
     new Blob([item.document], { type: "text/markdown" }),
@@ -247,18 +243,72 @@ function record(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
-async function sourceRevisionForItem(
+interface CanonicalItemRow {
+  readonly item_key: unknown;
+  readonly source_revision_ref: unknown;
+  readonly canonical_section_id: unknown;
+  readonly content_sha256: unknown;
+  readonly instruction_taint: unknown;
+  readonly projection_generation: unknown;
+}
+
+type CanonicalMetadata = Readonly<{
+  source_revision_ref: string;
+  canonical_section_id: string;
+  content_sha256: string;
+  instruction_taint: string;
+  projection_generation: string;
+}>;
+
+async function canonicalItemMetadata(
   database: D1Database,
-  itemKey: string,
-): Promise<string | null> {
+  itemKeys: readonly string[],
+): Promise<ReadonlyMap<string, CanonicalMetadata>> {
   const result = await database.prepare(
-    "SELECT source_revision_ref FROM projection_item WHERE item_key=?1 AND active=1 LIMIT 2",
-  ).bind(itemKey).all<{ source_revision_ref: unknown }>();
-  if (!result.success || !Array.isArray(result.results) || result.results.length > 1) {
+    "SELECT item_key,source_revision_ref,canonical_section_id,content_sha256,instruction_taint,projection_generation " +
+    "FROM projection_item WHERE active=1 AND item_key IN (SELECT value FROM json_each(?1)) LIMIT ?2",
+  ).bind(JSON.stringify(itemKeys), itemKeys.length + 1).all<CanonicalItemRow>();
+  if (!result.success || !Array.isArray(result.results) || result.results.length > itemKeys.length) {
     fail("PROJECT_SEARCH_STORAGE_UNAVAILABLE", "D1 Search item mapping is unavailable or ambiguous");
   }
-  const source = result.results[0]?.source_revision_ref;
-  return source === undefined ? null : identifier(source, "stored source_revision_ref");
+  const metadata = new Map<string, CanonicalMetadata>();
+  for (const row of result.results) {
+    const key = stringValue(row.item_key, "stored item key");
+    if (!itemKeys.includes(key) || metadata.has(key) ||
+        typeof row.content_sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(row.content_sha256)) {
+      fail("PROJECT_SEARCH_STORAGE_UNAVAILABLE", "D1 Search item metadata is inconsistent");
+    }
+    metadata.set(key, Object.freeze({
+      source_revision_ref: identifier(row.source_revision_ref, "stored source_revision_ref"),
+      canonical_section_id: identifier(row.canonical_section_id, "stored canonical_section_id"),
+      content_sha256: row.content_sha256,
+      instruction_taint: stringValue(row.instruction_taint, "stored instruction taint"),
+      projection_generation: identifier(row.projection_generation, "stored projection generation"),
+    }));
+  }
+  return metadata;
+}
+
+async function currentProjectRevisions(
+  database: D1Database,
+  projectId: string,
+  revisions: readonly string[],
+): Promise<ReadonlySet<string>> {
+  const result = await database.prepare(
+    "SELECT DISTINCT r.source_revision_ref FROM project_source_membership m " +
+    "JOIN project p ON p.project_id=m.project_id " +
+    "JOIN source s ON s.source_id=m.source_id " +
+    "JOIN source_revision r ON r.source_id=s.source_id AND r.source_revision_ref=s.head_rev " +
+    "WHERE m.project_id=?1 AND r.source_revision_ref IN (SELECT value FROM json_each(?2)) " +
+    "AND julianday(m.valid_from)<=julianday(?3) " +
+    "AND (m.valid_to IS NULL OR julianday(m.valid_to)>julianday(?3)) " +
+    "AND r.purge_state='LIVE' AND r.source_owner_generation=s.source_owner_generation LIMIT ?4",
+  ).bind(projectId, JSON.stringify(revisions), new Date().toISOString(), revisions.length + 1)
+    .all<{ source_revision_ref: unknown }>();
+  if (!result.success || !Array.isArray(result.results) || result.results.length > revisions.length) {
+    fail("PROJECT_SEARCH_STORAGE_UNAVAILABLE", "current project revisions are unavailable");
+  }
+  return new Set(result.results.map((row) => identifier(row.source_revision_ref, "stored source revision")));
 }
 
 /** Native AI Search with a mandatory Cloudflare folder filter and live D1 membership readback. */
@@ -283,7 +333,7 @@ export async function searchProject(
   if (response === null || !Array.isArray(response.chunks) || response.chunks.length > 50) {
     fail("PROJECT_SEARCH_PROVIDER_RESPONSE_INVALID", "AI Search returned an invalid chunk list");
   }
-  const chunks: unknown[] = [];
+  const candidates: { chunk: Record<string, unknown>; item: Record<string, unknown>; itemKey: string }[] = [];
   for (const rawChunk of response.chunks) {
     const chunk = record(rawChunk);
     const item = chunk === null ? null : record(chunk.item);
@@ -291,11 +341,18 @@ export async function searchProject(
     if (typeof key !== "string" || !key.startsWith(folder) || !key.endsWith(".md")) continue;
     const itemKey = key.slice(folder.length, -3);
     if (!ITEM_KEY.test(itemKey)) continue;
-    const sourceRevisionRef = await sourceRevisionForItem(input.search_database, itemKey);
-    if (sourceRevisionRef === null) continue;
-    if (await currentProjectRevision(input.core_database, projectId, sourceRevisionRef, new Date().toISOString())) {
-      chunks.push(rawChunk);
-    }
+    if (chunk !== null && item !== null) candidates.push({ chunk, item, itemKey });
   }
+  if (candidates.length === 0) return { ...response, chunks: [] };
+  // Provider results are locators. Revision, section and content identity come from D1.
+  const metadata = await canonicalItemMetadata(input.search_database, [...new Set(candidates.map((entry) => entry.itemKey))]);
+  const revisions = [...new Set([...metadata.values()].map((entry) => entry.source_revision_ref))];
+  if (revisions.length === 0) return { ...response, chunks: [] };
+  const current = await currentProjectRevisions(input.core_database, projectId, revisions);
+  const chunks = candidates.flatMap(({ chunk, item, itemKey }) => {
+    const canonical = metadata.get(itemKey);
+    return canonical !== undefined && current.has(canonical.source_revision_ref)
+      ? [{ ...chunk, item: { ...item, metadata: canonical } }] : [];
+  });
   return { ...response, chunks };
 }

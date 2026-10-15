@@ -204,7 +204,6 @@ export async function dispatchHttpApiRoute(
         namespace: env.AI_SEARCH,
         core_database: env.CORE_DB,
         search_database: env.SEARCH_DB,
-        work_bucket: env.WORK_BUCKET,
         project_id: result.project_ref.id,
         source_ids: input.source_ids,
       });
@@ -224,7 +223,6 @@ export async function dispatchHttpApiRoute(
         namespace: env.AI_SEARCH,
         core_database: env.CORE_DB,
         search_database: env.SEARCH_DB,
-        work_bucket: env.WORK_BUCKET,
         project_id: result.project_ref.id,
         source_ids: input.source_ids,
       });
