@@ -1,21 +1,71 @@
 # Cloudflare provision and deploy runbook
 
-**Deployment gate:** `deploy-cloudflare.mjs --confirm-live` defaults to `FULL_RELEASE`, retaining
-`assertLaunchCodeComplete`, `pnpm check`, and the full release gates. Explicit `--maintenance`
-selects `MAINTENANCE`: it records launch blockers and source-budget findings while still requiring
-compile, lint, boundary, build, binding, and Wrangler artifact checks. Both purposes use the guarded
-path and standard Wrangler deployment of one Worker version to 100% traffic with exact readback.
-Neither purpose applies D1 migrations. The four resource children run `--verify-existing` with
-GET-only exact readback; missing or drifted resources fail closed. The existing exact 18-counter
-usage envelope is not a prerequisite for this existing-resource deployment, but remains unknown and
-remains required by operations whose heavy-operation policy needs it. Apply D1 migrations separately
-through the pinned bounded migration operation described below. Resource creation and AI Search
-provisioning retain their existing admission controls. Deployment alone never promotes a product
-contour to `LIVE_QUALIFIED`. See
-[ADR-0009](../adr/0009-control-plane-deployment-and-runtime-cost-authority.md).
+**Routine existing-resource deploy:** `pnpm cf:deploy:routine` calls Wrangler directly for a
+minified dry run followed by a normal minified deploy. It reads the current checkout's ignored
+`apps/eliotr-core/wrangler.deploy.jsonc` unchanged. It does not generate config, provision resources,
+or apply migrations; Wrangler deploys the `DEPLOYMENT_GENERATION`, Research runtime vars, and
+Workflow bindings exactly as declared there. It intentionally skips the ADR-0009
+intent/provenance/attestation/18-counter ceremony. Keep that config aligned with the live runtime;
+never copy a stale config from another worktree.
+
+The existing `pnpm cf:deploy -- --confirm-live` remains the explicit full-release path through
+`scripts/deploy-cloudflare.mjs`. Resource provisioning is separate from both deploy paths.
+
+**Current hold (2026-10-15):** the live Worker reports generation `git-23e5e52f469f`; the supplied
+ignored donor config reports `git-13e0891d14b3` and is stale. Do not use that donor or run a deploy
+until the owner resolves the live `RETRIEVE_BRANCHES` / `WORKFLOW_EFFECT_UNCERTAIN` failure and
+validates the current generated config. The owner also reports frontend-owner CI green but four
+known fast-CI type errors in cancelled S52 fixtures remain pending removal; do not treat the existing
+CI gate as green until fast CI passes. Do not retry the uncertain Workflow effect.
+
+Cloudflare CLI documentation checked 2026-10-15: [Wrangler Workers commands](https://developers.cloudflare.com/workers/wrangler/commands/workers/)
+(updated 2026-10-09), [D1 Wrangler commands](https://developers.cloudflare.com/d1/wrangler-commands/),
+and [D1 Time Travel](https://developers.cloudflare.com/d1/reference/time-travel/) (both updated
+2026-04-21).
 
 This runbook deploys one Worker/PWA contour without committing Cloudflare account state. It is safe to
 hand to a deployment agent; no step requires reading the architecture master document.
+
+## Routine existing-resource deploy
+
+Run only after the existing CI is green, the asset directory named by the current production config
+has been built, `wrangler whoami` confirms the intended account, and the current generated config
+retains the active `DEPLOYMENT_GENERATION`, Research runtime vars, and `RESEARCH_WORKFLOW` binding.
+The package command below executes only these two Wrangler operations from `apps/eliotr-core`:
+
+```powershell
+pnpm --filter @eliotr/core exec wrangler whoami
+pnpm cf:deploy:routine
+```
+
+Equivalent commands:
+
+```powershell
+pnpm --filter @eliotr/core exec wrangler deploy --dry-run --minify --config wrangler.deploy.jsonc
+pnpm --filter @eliotr/core exec wrangler deploy --minify --config wrangler.deploy.jsonc
+```
+
+This routine path uses Wrangler's selected auth and the vars/bindings in the existing generated config.
+It does not pass `--keep-vars`, create resources, update config, or run D1 migrations. Resolve any
+Workflow outcome that is `UNKNOWN` before using it.
+
+## Explicit D1 migration with a Time Travel bookmark
+
+D1 changes are a separate operator action. First inspect pending migrations and record the current
+bookmark. Only after reviewing the complete pending set should the operator run `migrations apply`;
+Wrangler applies all unapplied migrations for that database and captures a backup after applying.
+The bookmark is retrieved separately and is not an argument to `migrations apply`.
+
+```powershell
+pnpm --filter @eliotr/core exec wrangler d1 time-travel info CORE_DB --json --config wrangler.deploy.jsonc
+pnpm --filter @eliotr/core exec wrangler d1 migrations list CORE_DB --remote --config wrangler.deploy.jsonc
+# After explicit migration review and authorization only:
+pnpm --filter @eliotr/core exec wrangler d1 migrations apply CORE_DB --remote --config wrangler.deploy.jsonc
+```
+
+The Time Travel bookmark can be used only through a separate, explicitly reviewed restore operation.
+For a reviewed Search migration, repeat the same commands with `SEARCH_DB`. Routine Worker deployment
+never applies a schema change.
 
 ## Operator identity (non-secret, browser OAuth only)
 
@@ -240,7 +290,7 @@ See `.env.example` for placeholder shapes (fictional values only). Google creden
 keys, OAuth tokens and Access cookies are secrets. Add runtime secrets with `wrangler secret put`
 or approved secret automation; never place them in tracked JSON or `.env` files.
 
-## Browser login, read-only preflight, first deploy, re-deploy
+## Explicit full-release/setup path: browser login, preflight, first deploy, re-deploy
 
 Every mutation in this runbook follows Intent → Attempt → Receipt → Readback → Reconciliation:
 the provisioner declares a plan (Intent), performs create-or-verify calls (Attempt), persists an
