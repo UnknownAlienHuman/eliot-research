@@ -33,6 +33,6 @@ export interface WikiRuntime extends WikiStorageRuntime {
 
 export type WikiReopenedArtifactDraft = ArtifactDraftReauthorizedRead |
   (Omit<ArtifactDraftReauthorizedRead, "protocol"> & {
-    readonly protocol: "eliotr.artifact-draft-reauthorization.v2";
+    readonly protocol: "eliotr.artifact-draft-reauthorization.v2" | "eliotr.artifact-draft-reauthorization.v3";
     readonly source_freshness: SourceRevisionFreshness;
   });
