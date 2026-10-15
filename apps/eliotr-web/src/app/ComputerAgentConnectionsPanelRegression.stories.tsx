@@ -661,15 +661,16 @@ async function playComputerAgentConnectionsPanelRegression({ canvas, canvasEleme
     const back = root.querySelector<HTMLAnchorElement>('.er-shell-nav a[data-destination="connections"]');
     if (!back) throw new Error("Workspace Connections route link is missing");
     await userEvent.click(back);
-    await canvas.findByRole("heading", { name: "Computer-agent connections" });
+    await canvas.findByRole("heading", { name: "Registered agents" });
   }
 
-  await canvas.findByRole("heading", { name: "Computer-agent connections" });
-  await userEvent.type(canvas.getByRole("textbox", { name: "Logical connection ID" }), connectionId);
+  await canvas.findByRole("heading", { name: "Registered agents" });
+  await userEvent.click(canvas.getByRole("button", { name: "New connection" }));
+  await userEvent.type(canvas.getByRole("textbox", { name: "Connection ID" }), connectionId);
   await userEvent.type(canvas.getByRole("textbox", { name: "Display name" }), privateName);
-  await userEvent.selectOptions(canvas.getByRole("combobox", { name: "Provider contour" }), "OTHER");
-  await userEvent.type(canvas.getByRole("textbox", { name: "Service actor issuer" }), privateIssuer);
-  await userEvent.type(canvas.getByRole("textbox", { name: "Service actor subject" }), privateSubject);
+  await userEvent.selectOptions(canvas.getByRole("combobox", { name: "Agent type" }), "OTHER");
+  await userEvent.type(canvas.getByRole("textbox", { name: "Service token issuer" }), privateIssuer);
+  await userEvent.type(canvas.getByRole("textbox", { name: "Service token client ID" }), privateSubject);
   await userEvent.click(canvas.getByRole("checkbox", { name: "Write through MCP" }));
   await userEvent.click(canvas.getByRole("checkbox", { name: "Cloud browser" }));
   await userEvent.click(canvas.getByRole("checkbox", { name: "Research branch analysis" }));
@@ -726,11 +727,11 @@ async function playComputerAgentConnectionsPanelRegression({ canvas, canvasEleme
 
   environment.resetCanonicalCommitSentinel();
   await userEvent.click(canvas.getByRole("button", { name: "New connection" }));
-  await userEvent.type(canvas.getByRole("textbox", { name: "Logical connection ID" }), foreignConnectionId);
+  await userEvent.type(canvas.getByRole("textbox", { name: "Connection ID" }), foreignConnectionId);
   await userEvent.type(canvas.getByRole("textbox", { name: "Display name" }), foreignPrivateName);
-  await userEvent.selectOptions(canvas.getByRole("combobox", { name: "Provider contour" }), "OTHER");
-  await userEvent.type(canvas.getByRole("textbox", { name: "Service actor issuer" }), foreignIssuer);
-  await userEvent.type(canvas.getByRole("textbox", { name: "Service actor subject" }), foreignSubject);
+  await userEvent.selectOptions(canvas.getByRole("combobox", { name: "Agent type" }), "OTHER");
+  await userEvent.type(canvas.getByRole("textbox", { name: "Service token issuer" }), foreignIssuer);
+  await userEvent.type(canvas.getByRole("textbox", { name: "Service token client ID" }), foreignSubject);
   await userEvent.click(canvas.getByRole("checkbox", { name: "Write through MCP" }));
   await userEvent.click(canvas.getByRole("checkbox", { name: "Cloud browser" }));
   await userEvent.click(canvas.getByRole("checkbox", { name: "Research branch analysis" }));
@@ -799,15 +800,16 @@ async function playComputerAgentLateCompletionRegression({ canvas, canvasElement
     const back = root.querySelector<HTMLAnchorElement>('.er-shell-nav a[data-destination="connections"]');
     if (!back) throw new Error("Workspace Connections route link is missing");
     await userEvent.click(back);
-    await canvas.findByRole("heading", { name: "Computer-agent connections" });
+    await canvas.findByRole("heading", { name: "Registered agents" });
   }
 
-  await canvas.findByRole("heading", { name: "Computer-agent connections" });
-  await userEvent.type(canvas.getByRole("textbox", { name: "Logical connection ID" }), connectionId);
+  await canvas.findByRole("heading", { name: "Registered agents" });
+  await userEvent.click(canvas.getByRole("button", { name: "New connection" }));
+  await userEvent.type(canvas.getByRole("textbox", { name: "Connection ID" }), connectionId);
   await userEvent.type(canvas.getByRole("textbox", { name: "Display name" }), privateName);
-  await userEvent.selectOptions(canvas.getByRole("combobox", { name: "Provider contour" }), "OTHER");
-  await userEvent.type(canvas.getByRole("textbox", { name: "Service actor issuer" }), privateIssuer);
-  await userEvent.type(canvas.getByRole("textbox", { name: "Service actor subject" }), privateSubject);
+  await userEvent.selectOptions(canvas.getByRole("combobox", { name: "Agent type" }), "OTHER");
+  await userEvent.type(canvas.getByRole("textbox", { name: "Service token issuer" }), privateIssuer);
+  await userEvent.type(canvas.getByRole("textbox", { name: "Service token client ID" }), privateSubject);
   await userEvent.click(canvas.getByRole("checkbox", { name: "Write through MCP" }));
   await userEvent.click(canvas.getByRole("checkbox", { name: "Cloud browser" }));
   await userEvent.click(canvas.getByRole("checkbox", { name: "Research branch analysis" }));
@@ -845,11 +847,11 @@ async function playComputerAgentLateCompletionRegression({ canvas, canvasElement
   }
 
   await userEvent.click(canvas.getByRole("button", { name: "New connection" }));
-  await userEvent.type(canvas.getByRole("textbox", { name: "Logical connection ID" }), lateConnectionId);
+  await userEvent.type(canvas.getByRole("textbox", { name: "Connection ID" }), lateConnectionId);
   await userEvent.type(canvas.getByRole("textbox", { name: "Display name" }), latePrivateName);
-  await userEvent.selectOptions(canvas.getByRole("combobox", { name: "Provider contour" }), "OTHER");
-  await userEvent.type(canvas.getByRole("textbox", { name: "Service actor issuer" }), privateIssuer);
-  await userEvent.type(canvas.getByRole("textbox", { name: "Service actor subject" }), privateSubject);
+  await userEvent.selectOptions(canvas.getByRole("combobox", { name: "Agent type" }), "OTHER");
+  await userEvent.type(canvas.getByRole("textbox", { name: "Service token issuer" }), privateIssuer);
+  await userEvent.type(canvas.getByRole("textbox", { name: "Service token client ID" }), privateSubject);
   await userEvent.click(canvas.getByRole("checkbox", { name: "Write through MCP" }));
   await userEvent.click(canvas.getByRole("checkbox", { name: "Cloud browser" }));
   await userEvent.click(canvas.getByRole("checkbox", { name: "Research branch analysis" }));
