@@ -24,6 +24,7 @@ import { StudioPanel } from "./StudioPanel";
 import { ProjectsHome } from "./ProjectsHome";
 import { NewProjectPanel } from "./NewProjectPanel";
 import { InboxPanel } from "./InboxPanel";
+import { ComputerAgentTaskAssignment } from "./ComputerAgentTaskAssignment";
 import { usePaneAnnouncement } from "./usePaneAnnouncement";
 
 const copy = {
@@ -209,7 +210,11 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
           if (privacy.isCurrent(context)) setAgentAfter(agentConnections.data.next_connection_id);
         } : undefined}
         onFirstAgents={agentAfter ? () => { if (privacy.isCurrent(context)) setAgentAfter(undefined); } : undefined}
-        onManageAgents={() => { if (privacy.isCurrent(context)) void navigate("/connections"); }} />
+        onManageAgents={() => { if (privacy.isCurrent(context)) void navigate("/connections"); }}
+        assign={<ComputerAgentTaskAssignment locale={locale} apis={apis} privacy={privacy} context={context}
+          projectId={selected?.project_id} projectTitle={selected?.title ?? text.untitled}
+          isProjectCurrent={isProjectCurrent} agents={agents} agentConnectionCursor={agentAfter}
+          agentsUnavailable={!agentsReadable} />} />
     </aside>
     <main className="er-shell-reading" id="workspace-main" data-tab-active={destination !== "research" || researchTab === "chat"}>
       <h1 id="workspace-heading" ref={headingRef} tabIndex={-1}>{text[destination]}</h1>
@@ -236,7 +241,6 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
         onNext={projects.data?.next_project_id ? () => { const next = projects.data?.next_project_id; if (next) { setProjectId(undefined); setProjectPages(pages => [...pages, next]); } } : undefined} />
         : destination === "research" ? <ResearchPanel locale={locale} apis={apis} privacy={privacy} context={context} scope={scope} scopeCurrent={scopeCurrent}
           isScopeCurrent={isScopeCurrent} projectId={selected?.project_id} isProjectCurrent={isProjectCurrent}
-          agents={agents} agentConnectionCursor={agentAfter} agentsUnavailable={!agentsReadable}
           cover={selected ? { title: selected.title, meta: text.sourceCount(selected.source_ids.length) } : undefined} />
         : destination === "inbox" ? <InboxPanel locale={locale} apis={apis} privacy={privacy} context={context} />
         : <StudioPanel locale={locale} apis={apis} privacy={privacy} context={context} />}

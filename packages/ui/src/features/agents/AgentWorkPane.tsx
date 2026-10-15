@@ -1,4 +1,4 @@
-import { useId } from "react";
+import { useId, type ReactNode } from "react";
 import { MaterialSymbol } from "../../catalog/MaterialSymbol";
 import {
   AGENT_WORK_COPY, TOOL_ACCENT, TOOL_ICON,
@@ -22,6 +22,8 @@ export interface AgentWorkPaneProps {
   readonly onFirstAgents?: (() => void) | undefined;
   readonly onMoreTasks?: (() => void) | undefined;
   readonly onFirstTasks?: (() => void) | undefined;
+  /** The workspace's own hand-over control, shown under the agents it can reach. */
+  readonly assign?: ReactNode;
 }
 
 /**
@@ -29,7 +31,7 @@ export interface AgentWorkPaneProps {
  * tools and handed-over tasks. Connection state and live presence remain separate observations.
  * Presentation only — the owner of the workspace decides what each callback does.
  */
-export function AgentWorkPane({ locale, agents, agentsUnavailable = false, tools, tasks, tasksUnavailable = false, onTool, onTask, onManageAgents, onMoreAgents, onFirstAgents, onMoreTasks, onFirstTasks }: AgentWorkPaneProps) {
+export function AgentWorkPane({ locale, agents, agentsUnavailable = false, tools, tasks, tasksUnavailable = false, onTool, onTask, onManageAgents, onMoreAgents, onFirstAgents, onMoreTasks, onFirstTasks, assign }: AgentWorkPaneProps) {
   const text = AGENT_WORK_COPY[locale];
   const id = useId();
   return <div className="er-agent-work">
@@ -50,6 +52,7 @@ export function AgentWorkPane({ locale, agents, agentsUnavailable = false, tools
         {onFirstAgents ? <button type="button" className="er-agent-work__link" onClick={onFirstAgents}>{text.firstAgents}</button> : null}
         {onMoreAgents ? <button type="button" className="er-agent-work__link" onClick={onMoreAgents}>{text.moreAgents}</button> : null}
       </div> : null}
+      {assign}
     </section>
 
     <section className="er-agent-work__section" aria-labelledby={`${id}-tools`}>

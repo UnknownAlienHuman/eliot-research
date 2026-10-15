@@ -19,58 +19,55 @@ type AssignmentOperation =
   | { readonly phase: "sending" | "unknown"; readonly context: SessionContext; readonly projectId: string; readonly intent: ComputerAgentDispatchCreateIntent; readonly agent: string }
   | { readonly phase: "created"; readonly context: SessionContext; readonly projectId: string; readonly dispatchId: string; readonly agent: string };
 
+// Plain words for the owner: what happens to the task, never the transport or protocol behind it.
 const copy = {
   en: {
-    assign: "Assign a question to an agent",
-    scope: "The agent receives a research request for this project's full source scope. The next-question source selection does not narrow this task.",
-    unavailable: "Agent connections have not been read. Refresh the connection list before assigning a task.",
-    noneEnabled: "No owner-enabled agent connection is available for this assignment.",
-    changedTarget: "The selected agent connection changed or was disabled. Refresh the connection list and choose again.",
-    routeUnavailable: "The selected agent is not eligible in this project's current research route and transport.",
-    grantUnavailable: "No active project run grant matches the selected agent.",
-    unsupported: "This handoff must be a research request for the selected project.",
-    projectChanged: "The owner session or selected project changed. Reopen the task sheet before assigning.",
-    prepareFailed: "The assignment could not be prepared. Refresh the project, agent connection and grant, then try again.",
-    preparing: "Checking the current route and grant before creating the task offer.",
-    sending: (agent: string) => `Submitting the task offer to ${agent}.`,
-    unknown: "The assignment outcome is unknown. Its original request and idempotency identity are retained in memory.",
-    retry: "Retry the same assignment",
-    waiting: (agent: string) => `Task offer saved for ${agent}. Waiting for the agent to accept it.`,
+    assign: "Hand a question to an agent",
+    scope: "The agent researches the whole project. Sources picked for the chat do not limit it.",
+    changedTarget: "This agent was changed or turned off. Choose again.",
+    routeUnavailable: "This agent cannot research this project yet. Check it on the Agents page.",
+    grantUnavailable: "This agent has no permission to run research in this project.",
+    unsupported: "The task must be a question about this project.",
+    projectChanged: "The project changed. Open the task again.",
+    prepareFailed: "The task could not be prepared. Try again.",
+    preparing: "Checking the agent's access…",
+    sending: (agent: string) => `Sending to ${agent}…`,
+    unknown: "Sending was not confirmed. Send the same task again — it will not be duplicated.",
+    retry: "Send again",
+    waiting: (agent: string) => `Sent to ${agent}. Waiting for the agent to accept.`,
     statusUnavailable: "The task status could not be read.",
-    readStatus: "Read task status again",
-    accepted: "The agent accepted the task and started the existing Research Workflow.",
-    abandoned: "The task offer was withdrawn.",
-    declined: "The agent declined the task. No replacement was started.",
-    expired: "The task offer expired before acceptance.",
-    stale: "The route, grant, connection or qualification changed. Refresh before assigning again.",
-    pending: "Waiting for the agent to accept the task offer.",
-    another: "Assign another task",
+    readStatus: "Check again",
+    accepted: "The agent accepted the task and started the research.",
+    abandoned: "The task was withdrawn.",
+    declined: "The agent declined the task.",
+    expired: "The agent did not accept the task in time.",
+    stale: "The agent's access changed. Hand the task over again.",
+    pending: "Waiting for the agent to accept.",
+    another: "Hand over another question",
   },
   ru: {
     assign: "Поручить вопрос агенту",
-    scope: "Агент получит запрос на исследование всего проекта. Выбор источников для следующего вопроса не сужает область этого поручения.",
-    unavailable: "Подключения агентов ещё не прочитаны. Обновите список перед назначением задачи.",
-    noneEnabled: "Для этого поручения нет подключённого агента, включённого владельцем.",
-    changedTarget: "Подключение выбранного агента изменилось или отключено. Обновите список и выберите ещё раз.",
-    routeUnavailable: "Выбранный агент не допущен в текущий маршрут исследования проекта и транспорт.",
-    grantUnavailable: "Нет активного разрешения на запуск для выбранного агента в этом проекте.",
-    unsupported: "Это поручение должно быть запросом на исследование выбранного проекта.",
-    projectChanged: "Сеанс владельца или выбранный проект изменился. Откройте форму поручения ещё раз.",
-    prepareFailed: "Не удалось подготовить поручение. Обновите проект, подключение агента и разрешение, затем повторите попытку.",
-    preparing: "Проверяется текущий маршрут и разрешение перед созданием поручения.",
-    sending: (agent: string) => `Отправляется предложение поручения агенту ${agent}.`,
-    unknown: "Результат назначения неизвестен. Исходный запрос и ключ идемпотентности сохранены в памяти.",
-    retry: "Повторить то же поручение",
-    waiting: (agent: string) => `Поручение для ${agent} сохранено. Ожидается принятие агентом.`,
-    statusUnavailable: "Не удалось прочитать статус поручения.",
-    readStatus: "Прочитать статус ещё раз",
-    accepted: "Агент принял поручение и запустил существующий Research Workflow.",
-    abandoned: "Предложение поручения отозвано.",
-    declined: "Агент отклонил поручение. Новое не создавалось.",
-    expired: "Срок предложения истёк до принятия.",
-    stale: "Маршрут, разрешение, подключение или квалификация изменились. Обновите данные перед новым назначением.",
-    pending: "Ожидается принятие предложения агентом.",
-    another: "Назначить ещё одну задачу",
+    scope: "Агент исследует весь проект. Источники, выбранные для чата, его не ограничивают.",
+    changedTarget: "Агент изменён или отключён. Выберите заново.",
+    routeUnavailable: "Этот агент пока не может исследовать этот проект. Проверьте его на странице «Агенты».",
+    grantUnavailable: "У агента нет разрешения запускать исследования в этом проекте.",
+    unsupported: "Поручение должно быть вопросом по этому проекту.",
+    projectChanged: "Проект сменился. Откройте поручение заново.",
+    prepareFailed: "Не удалось подготовить поручение. Повторите.",
+    preparing: "Проверяем доступ агента…",
+    sending: (agent: string) => `Отправляем агенту ${agent}…`,
+    unknown: "Отправка не подтвердилась. Отправьте то же поручение ещё раз — дубликата не будет.",
+    retry: "Отправить ещё раз",
+    waiting: (agent: string) => `Отправлено агенту ${agent}. Ждём, когда он примет поручение.`,
+    statusUnavailable: "Не удалось узнать статус поручения.",
+    readStatus: "Проверить снова",
+    accepted: "Агент принял поручение и начал исследование.",
+    abandoned: "Поручение отозвано.",
+    declined: "Агент отказался от поручения.",
+    expired: "Агент не принял поручение вовремя.",
+    stale: "Доступ агента изменился. Поручите заново.",
+    pending: "Ждём, когда агент примет поручение.",
+    another: "Поручить ещё вопрос",
   },
 } as const;
 
@@ -296,31 +293,32 @@ export function ComputerAgentTaskAssignment({
   }
 
   const statusMessage = assignmentStatus();
+  // The Agents section above already says when connections are unread, absent or switched off, so
+  // the hand-over control appears only once an agent can take the task or a task is in flight.
+  const inFlight = preparing || visibleOperation !== undefined || error !== undefined;
+  if (!currentProject || (!inFlight && (agentsUnavailable || !agents.some(isSelectable)))) return null;
   return <section className="er-live-agent-assignment" aria-label={text.assign}>
-    <p>{text.scope}</p>
-    {agentsUnavailable ? <Status>{text.unavailable}</Status>
-      : agents.every(agent => !isSelectable(agent)) ? <Status>{text.noneEnabled}</Status> : null}
-    {error ? <Status>{error}</Status> : null}
-    {visibleOperation?.phase === "unknown" && <div className="er-live-callout er-live-callout--attention">
+    <Button variant="tonal" icon="agent" disabled={!canOpen} onClick={() => {
+      if (projectId !== undefined) { setError(undefined); setOpenScope({ context, projectId }); }
+    }}>
+      {visibleOperation?.phase === "created" ? text.another : text.assign}
+    </Button>
+    {error && !sheetOpen ? <Status tone="error">{error}</Status> : null}
+    {visibleOperation?.phase === "unknown" && <div className="er-live-agent-assignment__state" data-tone="attention">
       <Status>{text.unknown}</Status>
-      <Button variant="tonal" disabled={preparing || !currentProject} onClick={() => { void retrySameAssignment(); }}>
+      <Button variant="text" disabled={preparing || !currentProject} onClick={() => { void retrySameAssignment(); }}>
         {text.retry}
       </Button>
     </div>}
     {preparing && visibleOperation?.phase !== "sending" && <Status announce>{text.preparing}</Status>}
     {visibleOperation?.phase === "sending" && <Status announce>{text.sending(visibleOperation.agent)}</Status>}
-    {visibleOperation?.phase === "created" && <div className="er-live-callout">
+    {visibleOperation?.phase === "created" && <div className="er-live-agent-assignment__state">
       <Status announce>{statusMessage ?? text.statusUnavailable}</Status>
       {taskStatus.isError && <Button variant="text" disabled={taskStatus.isFetching || !currentProject}
         onClick={() => { void taskStatus.refetch(); }}>{text.readStatus}</Button>}
     </div>}
-    <Button variant="tonal" disabled={!canOpen} onClick={() => {
-      if (projectId !== undefined) { setError(undefined); setOpenScope({ context, projectId }); }
-    }}>
-      {visibleOperation?.phase === "created" ? text.another : text.assign}
-    </Button>
     {sheetOpen && projectId !== undefined && <HandoffSheet locale={locale} open agents={agents} allowSystemTarget={false}
-      sending={preparing} submissionError={error} tools={[]} scope={scope} initialTool="request"
+      sending={preparing} submissionError={error} tools={[]} scope={scope} scopeNote={text.scope} initialTool="request"
       onSend={request => { void createAssignment(request); }}
       onClose={() => { if (!preparing) setOpenScope(undefined); }} />}
   </section>;

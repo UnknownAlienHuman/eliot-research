@@ -3,6 +3,7 @@ import { expect, fn, userEvent, within } from "storybook/test";
 import { AgentWorkPane } from "../../features/agents/AgentWorkPane";
 import { HandoffSheet } from "../../features/agents/HandoffSheet";
 import { DecisionInbox } from "../../features/agents/DecisionInbox";
+import { Button } from "../../primitives/primitives";
 import type { AgentSummary, AgentTaskSummary, DecisionItem, ResearchToolId, TaskScope } from "../../features/agents/agent-work-model";
 import "./agent-stories.css";
 
@@ -131,6 +132,38 @@ export const YourRequestNeedsWords: Story = {
     await expect(sheet.getByRole("alert")).toHaveTextContent("Сначала опишите запрос.");
     await userEvent.type(sheet.getByRole("textbox"), "Сверь даты с протоколом");
     await expect(sheet.queryByRole("alert")).toBeNull();
+  },
+};
+
+/* The workspace places its own hand-over control under the agents; the pane only gives it a place. */
+export const HandOverFromThePane: Story = {
+  render: () => <div className="er-agent-story-pane"><AgentWorkPane locale="ru" agents={AGENTS} tools={["versions", "import", "erase", "wiki"]}
+    tasks={TASKS.slice(0, 2)} onTool={fn()} onManageAgents={fn()}
+    assign={<Button variant="tonal" icon="agent" onClick={fn()}>Поручить вопрос агенту</Button>} /></div>,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const agents = canvas.getByRole("region", { name: "Агенты" });
+    await expect(within(agents).getByRole("button", { name: "Поручить вопрос агенту" })).toBeVisible();
+  },
+};
+
+/* A research question for the whole project: no tool group with a single choice, one plain scope line. */
+const asked = fn();
+export const AskAnAgentAboutTheProject: Story = {
+  render: () => <HandoffSheet locale="ru" open agents={AGENTS} allowSystemTarget={false} tools={[]}
+    scope={[{ id: "project", kind: "research", label: "Перевал Дятлова" }]} initialTool="request"
+    scopeNote="Агент исследует весь проект. Источники, выбранные для чата, его не ограничивают."
+    onSend={asked} onClose={fn()} />,
+  play: async ({ canvasElement }) => {
+    asked.mockClear();
+    const body = within(canvasElement.ownerDocument.body);
+    const sheet = within(await body.findByRole("dialog", { name: "Поручение" }));
+    await expect(sheet.queryByRole("group", { name: "Инструмент" })).toBeNull();
+    await expect(sheet.getByText("Агент исследует весь проект.", { exact: false })).toBeVisible();
+    await userEvent.type(sheet.getByRole("textbox", { name: "Вопрос для агента" }), "Сверь даты с протоколом");
+    await userEvent.click(sheet.getByRole("button", { name: "Отправить" }));
+    await expect(asked).toHaveBeenCalledWith({ target: "codex", tool: "request",
+      scope: [{ id: "project", kind: "research", label: "Перевал Дятлова" }], note: "Сверь даты с протоколом" });
   },
 };
 

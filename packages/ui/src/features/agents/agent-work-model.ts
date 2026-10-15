@@ -111,7 +111,8 @@ export const AGENT_WORK_COPY = {
     } satisfies ToolCopy,
     sheet: {
       title: "Hand over", to: "To", system: "Eliot itself", tool: "Tool", what: "What to hand over", note: "Notes",
-      notePlaceholder: "What to look at, what to skip, where to start", noteRequired: "Describe the request first.",
+      notePlaceholder: "What to look at, what to skip, where to start",
+      question: "Question for the agent", questionPlaceholder: "What should the agent find out?", noteRequired: "Describe the request first.",
       scopeRequired: "Add at least one item to hand over.", remove: (label: string) => `Remove ${label}`,
       cancel: "Cancel", send: "Send", sending: "Checking and sending…", offline: "offline",
       targetUnavailable: "Choose an enabled agent. Presence that has not been checked is still eligible.",
@@ -153,7 +154,8 @@ export const AGENT_WORK_COPY = {
     } satisfies ToolCopy,
     sheet: {
       title: "Поручение", to: "Кому", system: "Eliot сам", tool: "Инструмент", what: "Что передать", note: "Пожелания",
-      notePlaceholder: "На что смотреть, что пропустить, с чего начать", noteRequired: "Сначала опишите запрос.",
+      notePlaceholder: "На что смотреть, что пропустить, с чего начать",
+      question: "Вопрос для агента", questionPlaceholder: "Что агент должен выяснить?", noteRequired: "Сначала опишите запрос.",
       scopeRequired: "Добавьте хотя бы один элемент.", remove: (label: string) => `Убрать «${label}»`,
       cancel: "Отмена", send: "Отправить", sending: "Проверка и отправка…", offline: "не в сети",
       targetUnavailable: "Выберите включённого агента. Непроверенное присутствие не означает, что агент отключён.",

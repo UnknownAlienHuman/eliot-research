@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { skipToken, useQuery, useQueryClient } from '@tanstack/react-query';
 import { WorkspaceLink } from '../routes/WorkspaceLink';
-import { Button, MaterialSymbol, OperationAnnouncement, ResearchRunFeature, Status, type AgentSummary } from '@eliotr/ui';
+import { Button, MaterialSymbol, OperationAnnouncement, ResearchRunFeature, Status } from '@eliotr/ui';
 import type { ResearchRunLaunchView, VersionedRef } from '@eliotr/owner-api-client';
 import type { BoundWorkspaceApis } from './runtime';
 import type { PrivacyController, SessionContext } from './privacy';
@@ -10,7 +10,6 @@ import { matchesResearchRunLaunch, researchQueryOptions } from '../query/researc
 import { protectedQueryKey, runProtectedRead } from '../query/client';
 import { ReportPanel } from './ReportPanel';
 import { usePaneAnnouncement } from './usePaneAnnouncement';
-import { ComputerAgentTaskAssignment } from './ComputerAgentTaskAssignment';
 
 interface ResearchIntent {
   readonly body: string; readonly key: string; readonly question: string;
@@ -29,15 +28,11 @@ const copy = {
 } as const;
 
 /** One explicit intent owns admission. Polling, navigation and history never allocate a run. */
-export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurrent, isScopeCurrent, projectId, isProjectCurrent, cover,
-  agents, agentConnectionCursor, agentsUnavailable }: {
+export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurrent, isScopeCurrent, projectId, isProjectCurrent, cover }: {
   readonly apis: BoundWorkspaceApis; readonly privacy: PrivacyController; readonly context: SessionContext;
   readonly locale: 'en' | 'ru'; readonly scope: readonly NextQuestionSource[]; readonly scopeCurrent: boolean;
   readonly isScopeCurrent: () => boolean;
   readonly projectId: string | undefined; readonly isProjectCurrent: () => boolean;
-  readonly agents: readonly AgentSummary[];
-  readonly agentConnectionCursor: string | undefined;
-  readonly agentsUnavailable: boolean;
   /** Presentation only: the open project's title and source count for the start cover. */
   readonly cover?: { readonly title: string; readonly meta?: string } | undefined;
 }) {
@@ -182,10 +177,6 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
       <Status>{text.blocked}</Status><div className="er-live-actions"><Button variant="tonal" disabled={configuration.isFetching} onClick={() => { void configuration.refetch(); }}>{text.check}</Button><WorkspaceLink className="er-shell-link" to="/connections">{text.connections}</WorkspaceLink></div>
     </div> : null}
     {inputError && <Status tone="error">{text.input}</Status>}
-    <ComputerAgentTaskAssignment locale={locale} apis={apis} privacy={privacy} context={context}
-      projectId={projectId} projectTitle={cover?.title ?? (locale === 'ru' ? 'Проект' : 'Project')}
-      isProjectCurrent={isProjectCurrent} agents={agents} agentConnectionCursor={agentConnectionCursor}
-      agentsUnavailable={agentsUnavailable} />
     <div ref={composer} className="er-live-research"><ResearchRunFeature key={saved?.intent?.key ?? 'next-question'} locale={locale} state={state}
       {...(cover ? { cover } : {})}
       scope={saved?.intent?.scope ?? scope} busy={busy}

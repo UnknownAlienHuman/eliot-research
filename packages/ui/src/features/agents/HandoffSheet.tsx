@@ -18,6 +18,8 @@ export interface HandoffSheetProps {
   readonly tools: readonly ResearchToolId[];
   /** What the owner selected before opening the sheet: a section, a claim, sources or the research. */
   readonly scope: readonly TaskScope[];
+  /** One plain line on what the scope covers, when the chips alone do not say it. */
+  readonly scopeNote?: string | undefined;
   readonly initialTool?: ResearchToolId | "request" | undefined;
   readonly initialTarget?: string | undefined;
   readonly onSend: (request: HandoffRequest) => void;
@@ -35,7 +37,7 @@ export function HandoffSheet(props: HandoffSheetProps) {
   </Dialog>;
 }
 
-function HandoffForm({ locale, agents, tools, scope: initialScope, initialTool, initialTarget,
+function HandoffForm({ locale, agents, tools, scope: initialScope, scopeNote, initialTool, initialTarget,
   allowSystemTarget = true, sending = false, submissionError, onSend, onClose }: HandoffSheetProps) {
   const copy = AGENT_WORK_COPY[locale];
   const text = copy.sheet;
@@ -81,7 +83,8 @@ function HandoffForm({ locale, agents, tools, scope: initialScope, initialTool, 
       {problem === "target" || !targetSelectable ? <p className="er-handoff__problem" role="alert">{text.targetUnavailable}</p> : null}
     </fieldset>
 
-    <fieldset className="er-handoff__group">
+    {/* With no system tool on offer the task is the owner's own request: no one-choice group. */}
+    {tools.length > 0 ? <fieldset className="er-handoff__group">
       <legend>{text.tool}</legend>
       <div className="er-chip-row">
         {[...tools, "request" as const].map(option => <label key={option} className="er-chip" title={copy.tool[option].hint}>
@@ -90,7 +93,7 @@ function HandoffForm({ locale, agents, tools, scope: initialScope, initialTool, 
         </label>)}
       </div>
       <p className="er-handoff__hint">{copy.tool[tool].hint}</p>
-    </fieldset>
+    </fieldset> : null}
 
     <fieldset className="er-handoff__group">
       <legend>{text.what}</legend>
@@ -99,12 +102,13 @@ function HandoffForm({ locale, agents, tools, scope: initialScope, initialTool, 
         <button type="button" className="er-chip__remove" aria-label={text.remove(item.label)} disabled={sending}
           onClick={() => setScope(old => old.filter(entry => entry.id !== item.id))}><MaterialSymbol name="close" /></button>
       </li>)}</ul> : null}
+      {scopeNote ? <p className="er-handoff__hint">{scopeNote}</p> : null}
       {problem === "scope" ? <p className="er-handoff__problem" role="alert">{text.scopeRequired}</p> : null}
     </fieldset>
 
     <label className="er-handoff__note">
-      <span>{text.note}</span>
-      <textarea rows={2} value={note} placeholder={text.notePlaceholder} disabled={sending} aria-invalid={problem === "note"}
+      <span>{tools.length > 0 ? text.note : text.question}</span>
+      <textarea rows={2} value={note} placeholder={tools.length > 0 ? text.notePlaceholder : text.questionPlaceholder} disabled={sending} aria-invalid={problem === "note"}
         onChange={event => { setNote(event.target.value); if (problem === "note") setProblem(null); }} />
     </label>
     {problem === "note" ? <p className="er-handoff__problem" role="alert">{text.noteRequired}</p> : null}

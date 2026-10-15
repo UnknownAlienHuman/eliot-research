@@ -400,3 +400,10 @@
 
 /* Inbox: the lead and the decisions keep section rhythm. */
 .er-shell[data-destination="inbox"] .er-shell-lead { margin-block-end: var(--eliot-space-section); }
+
+/* Hand-over control under the agents it can reach: one full-width tonal action, then the task's
+   current state as quiet status lines; an unconfirmed send reads in the attention role. */
+.er-live-agent-assignment { display: grid; gap: var(--eliot-space-block-control); min-inline-size: 0; }
+.er-live-agent-assignment > .er-button { inline-size: 100%; }
+.er-live-agent-assignment__state { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--eliot-space-block-control); min-inline-size: 0; }
+.er-live-agent-assignment__state[data-tone="attention"] { padding: var(--eliot-space-block-control) var(--eliot-space-gutter); border-radius: var(--eliot-shape-medium); background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
