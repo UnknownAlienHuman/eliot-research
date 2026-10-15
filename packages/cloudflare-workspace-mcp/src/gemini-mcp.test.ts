@@ -62,6 +62,22 @@ async function body(response: Response): Promise<Record<string, unknown>> {
 }
 
 describe("Gemini Spark MCP protocol", () => {
+  it("accepts standard list metadata and an absent cursor without accepting tool arguments", async () => {
+    for (const method of ["tools/list", "resources/list", "prompts/list"]) {
+      const response = await handleGeminiMcpProtocol(request({ jsonrpc: "2.0", id: 7, method,
+        params: { cursor: null, _meta: { progressToken: "codex-list" } },
+      }, "2025-06-18"), server(), context);
+      expect(response.status).toBe(200);
+      expect(await body(response)).toHaveProperty("result");
+    }
+    for (const params of [{ project_id: "foreign-project" }, { cursor: "unissued" }, { _meta: "invalid" }]) {
+      const response = await handleGeminiMcpProtocol(request({ jsonrpc: "2.0", id: 8,
+        method: "tools/list", params,
+      }, "2025-06-18"), server(), context);
+      expect(await body(response)).toMatchObject({ error: { code: -32602 } });
+    }
+  });
+
   it("negotiates MCP 2025-06-18 and exposes only the bounded tool allow-list", async () => {
     const initialized = await handleGeminiMcpProtocol(request({
       jsonrpc: "2.0",

@@ -223,8 +223,18 @@ function requireObjectParams(request: JsonRpcRequest, label: string): Record<str
 function requireEmptyParams(request: JsonRpcRequest, label: string): void {
   if (request.params === undefined) return;
   const params = requireObjectParams(request, label);
-  if (Object.keys(params).length !== 0) {
-    throw new McpProtocolError(-32602, `${label} does not accept parameters`);
+  const paginated = label.endsWith("/list");
+  const allowed = new Set(paginated ? ["_meta", "cursor"] : ["_meta"]);
+  if (Object.keys(params).some((key) => !allowed.has(key))) {
+    throw new McpProtocolError(-32602, `${label} does not accept tool parameters`);
+  }
+  // MCP transport metadata carries no tool input or project authority.
+  if (params._meta !== undefined && !isRecord(params._meta)) {
+    throw new McpProtocolError(-32602, `${label} _meta must be an object`);
+  }
+  // These bounded lists return one complete page and never issue a continuation cursor.
+  if (paginated && params.cursor !== undefined && params.cursor !== null) {
+    throw new McpProtocolError(-32602, `${label} cursor is not valid for this complete list`);
   }
 }
 
