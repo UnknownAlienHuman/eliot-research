@@ -348,19 +348,20 @@ export async function researchClaimAuditStageFixture(
           return {
             getUrl: async () => `https://gateway.ai.cloudflare.com/v1/${"b".repeat(32)}/eliotr-reasoning`,
             getLog: async () => { throw new Error("fingerprinted audit response must not request a log"); },
-          };
-        },
-        run: async (model, inputs, options) => {
-              if (model !== (await modelGatewayDynamicRouteTarget(deployment)).model || inputs.model !== model || options.gateway.id !== "eliotr-reasoning" ||
-                  options.returnRawResponse !== true) {
+            run: async (request, requestOptions) => {
+              const model = (await modelGatewayDynamicRouteTarget(deployment)).model;
+              if (request.provider !== "compat" || request.endpoint !== "chat/completions" || Object.keys(request.headers).length !== 0 ||
+                  request.query.model !== model || requestOptions.gateway.collectLog !== true || requestOptions.gateway.skipCache !== true) {
                 throw new Error("unexpected audit binding request");
               }
-              const headers = new Headers(options?.extraHeaders as Record<string, string>);
+              const headers = new Headers(requestOptions.extraHeaders);
+              const metadataHeader = headers.get("cf-aig-metadata");
               if (headers.has("cf-aig-authorization") || headers.get("cf-aig-max-attempts") !== "1" ||
-                  headers.get("cf-aig-collect-log-payload") !== "false") {
-                throw new Error("audit binding policy changed");
+                  headers.get("cf-aig-collect-log-payload") !== "false" || headers.get("cf-aig-request-timeout") === null ||
+                  metadataHeader === null || JSON.stringify(requestOptions.gateway.metadata) !== metadataHeader) {
+                throw new Error("audit binding policy or metadata changed");
               }
-              const query = inputs as { readonly messages?: readonly { readonly role?: unknown; readonly content?: unknown }[] };
+              const query = request.query as { readonly messages?: readonly { readonly role?: unknown; readonly content?: unknown }[] };
               const user = query.messages?.find((message) => message.role === "user");
               if (typeof user?.content !== "string") throw new Error("audit prompt payload is missing");
               const payload = JSON.parse(user.content) as { readonly prompt?: unknown };
@@ -368,6 +369,7 @@ export async function researchClaimAuditStageFixture(
               if (binding === undefined || payload.prompt !== JSON.stringify(binding)) {
                 throw new Error("audit response was not bound to the trusted prompt");
               }
+              if (providerCalls !== 0) throw new Error("audit binding must make one request");
               providerCalls += 1;
               return new Response(JSON.stringify(auditResponseBody({
                 id: "freeze-audit-response", object: "chat.completion", created: 1,
@@ -383,6 +385,8 @@ export async function researchClaimAuditStageFixture(
                   "cf-aig-log-id": "freeze-audit-gateway-log",
                 },
               });
+            },
+          };
         },
       },
     },

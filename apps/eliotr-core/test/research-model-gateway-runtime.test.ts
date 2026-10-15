@@ -23,8 +23,10 @@ const GATEWAY_LOG = {
 } satisfies AiGatewayLog;
 
 function gateway(url: string) {
-  return { getUrl: async () => url, getLog: async () => GATEWAY_LOG };
+  return { getUrl: async () => url, getLog: async () => GATEWAY_LOG, run: async () => new Response("unexpected") };
 }
+
+type NativeGateway = ReturnType<ResearchModelGatewayBinding["gateway"]>;
 
 // Exact LEGACY_POLICY tuple from packages/cloudflare-model-transport/src/model-gateway-http-request.test.ts.
 const WORKERS_AI_POLICY = {
@@ -85,8 +87,7 @@ describe("research model gateway runtime", () => {
       reasoning_gateway_base_url: BASE_URL,
       transport_policy: INVALID_WORKERS_AI_BYOK_POLICY,
       ai_gateway_binding: {
-        gateway: () => gateway(BASE_URL),
-        run: async () => { bindingCalls += 1; return new Response("unexpected"); },
+        gateway: () => ({ ...gateway(BASE_URL), run: async () => { bindingCalls += 1; return new Response("unexpected"); } }),
       },
     })).toThrowError(ModelGatewayExecutionError);
     expect(bindingCalls).toBe(0);
@@ -94,8 +95,7 @@ describe("research model gateway runtime", () => {
     const binding = createResearchModelGatewayRuntime({
       reasoning_gateway_base_url: BASE_URL,
       ai_gateway_binding: {
-        gateway: () => gateway(BASE_URL),
-        run: async () => { bindingCalls += 1; return new Response("unexpected"); },
+        gateway: () => ({ ...gateway(BASE_URL), run: async () => { bindingCalls += 1; return new Response("unexpected"); } }),
       },
     });
     await expect(binding.binding_transport.fetch(ENDPOINT, {
@@ -110,31 +110,51 @@ describe("research model gateway runtime", () => {
   });
 
   it("uses the account-bound Worker gateway without a token and preserves request policy", async () => {
-    let invocation: { model: string; inputs: Record<string, unknown> } | undefined;
-    let options: Parameters<ResearchModelGatewayBinding["run"]>[2] | undefined;
+    let invocation: Parameters<NativeGateway["run"]>[0] | undefined;
+    let options: Parameters<NativeGateway["run"]>[1] | undefined;
+    let calls = 0;
+    const metadata = {
+      budget_reservation_ref: "budget-one", evidence_pack_ref: "pack-one:1", output_object_ref: "output-one",
+      prompt_generation: "prompt-one", schema_generation: "schema-one",
+    };
+    const canonicalHeaders = {
+      "cf-aig-collect-log": "true",
+      "cf-aig-collect-log-payload": "false",
+      "cf-aig-skip-cache": "true",
+      "cf-aig-metadata": JSON.stringify(metadata),
+      "cf-aig-request-timeout": "1000",
+      "cf-aig-max-attempts": "1",
+    };
+    const controller = new AbortController();
     const runtime = createResearchModelGatewayRuntime({
       reasoning_gateway_base_url: BASE_URL,
       ai_gateway_binding: { gateway(gatewayId) {
         expect(gatewayId).toBe("eliotr-reasoning");
-        return { getUrl: async () => BASE_URL,
-          getLog: async () => { throw new Error("fingerprinted response does not need a log read"); } };
-      }, async run(model, inputs, requestOptions) {
-        invocation = { model, inputs }; options = requestOptions;
-        return new Response('{"ok":true}', { headers: {
-          "cf-aig-log-id": "binding-log", "cf-aig-provider": "controlled", "cf-aig-model": "controlled",
-        } });
+        return {
+          getUrl: async () => BASE_URL,
+          getLog: async () => { throw new Error("fingerprinted response does not need a log read"); },
+          async run(request, requestOptions) {
+            calls += 1;
+            invocation = request;
+            options = requestOptions;
+            return new Response('{"ok":true}', { headers: {
+              "cf-aig-log-id": "binding-log", "cf-aig-provider": "controlled", "cf-aig-model": "controlled",
+            } });
+          },
+        };
       } },
     });
     const query = { model: "dynamic/eliotr-balanced", messages: [{ role: "user", content: "fixture" }] };
     const response = await runtime.binding_transport.fetch(ENDPOINT, {
-      ...requestInit(), body: JSON.stringify(query),
-      headers: { "cf-aig-request-timeout": "1000", "cf-aig-max-attempts": "1", "cf-aig-skip-cache": "true", "cf-aig-collect-log-payload": "false" },
+      ...requestInit(), signal: controller.signal, body: JSON.stringify(query), headers: canonicalHeaders,
     });
-    expect(invocation).toEqual({ model: query.model, inputs: query });
-    expect(options?.gateway).toEqual({ id: "eliotr-reasoning" });
-    expect(options?.returnRawResponse).toBe(true);
-    expect(options?.extraHeaders).toEqual({ "cf-aig-request-timeout": "1000", "cf-aig-max-attempts": "1", "cf-aig-skip-cache": "true", "cf-aig-collect-log-payload": "false" });
-    expect(options?.signal).toBeInstanceOf(AbortSignal);
+    expect(calls).toBe(1);
+    expect(invocation).toEqual({ provider: "compat", endpoint: "chat/completions", headers: {}, query });
+    expect(invocation?.query).toEqual(query);
+    expect(invocation?.query.model).toBe(query.model);
+    expect(options?.gateway).toEqual({ collectLog: true, skipCache: true, metadata });
+    expect(options?.extraHeaders).toEqual(canonicalHeaders);
+    expect(options?.signal).toBe(controller.signal);
     expect(runtime).not.toHaveProperty("credentials");
     expect(response).toBeInstanceOf(Response);
     if (!(response instanceof Response)) throw new Error("binding did not return a Response");
@@ -151,7 +171,8 @@ describe("research model gateway runtime", () => {
         ai_gateway_binding: { gateway: () => ({
           getUrl: async () => { if (cancel) controller.abort(); return cancel ? BASE_URL : BASE_URL.replace(ACCOUNT_ID, "b".repeat(32)); },
           getLog: async () => { throw new Error("denied account cannot read model logs"); },
-        }), run: async () => { calls += 1; return new Response("unexpected"); } },
+          run: async () => { calls += 1; return new Response("unexpected"); },
+        }) },
       });
       await expect(runtime.binding_transport.fetch(ENDPOINT, requestInit()))
         .rejects.toMatchObject(cancel ? { name: "AbortError" } : { code: "MODEL_GATEWAY_REQUEST_INVALID" });

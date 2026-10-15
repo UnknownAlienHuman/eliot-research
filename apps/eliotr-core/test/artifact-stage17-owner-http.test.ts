@@ -89,26 +89,45 @@ async function supportedAudit(): Promise<Audited> {
   let prepared: ModelAttemptReservationInput | undefined; let calls = 0;
   const auditModel: ResearchClaimAuditStageDependencies = { database: freeze.db, work_bucket: freeze.bucket, deployment_environment: "TEST", input, prompt,
     gateway: { reasoning_gateway_base_url: BASE_URL, ai_gateway_binding: {
-      gateway: () => ({ getUrl: async () => BASE_URL, getLog: async () => { throw new Error("Controlled fingerprint must not fetch a log"); } }),
-      run: async (model, query, options) => {
-        expect(model).toBe((await modelGatewayDynamicRouteTarget(deployment)).model); expect(query.model).toBe(model);
-        expect(options.gateway.id).toBe("eliotr-reasoning"); expect(options.returnRawResponse).toBe(true);
-        const headers = new Headers(options.extraHeaders as Record<string, string>);
-        expect(headers.has("cf-aig-authorization")).toBe(false); expect(headers.get("cf-aig-max-attempts")).toBe("1");
-        expect(headers.get("cf-aig-collect-log-payload")).toBe("false");
-        if (binding === undefined) throw new Error("Actual audit prompt binding is missing");
-        const user = (query.messages as { role: string; content: string }[]).find((message) => message.role === "user");
-        expect(JSON.parse(user?.content ?? "{}").prompt).toBe(JSON.stringify(binding)); calls += 1;
-        const observation = { schema: "eliotr.research.semantic-verifier-observation.v1", verifier_ref: binding.verifier_ref,
-          verifier_schema_generation: binding.verifier_schema_generation, evidence_input_sha256: binding.evidence_input_sha256,
-          claims: binding.claims.map((claim) => ({ ...claim, value_or_measurement_verification: "PASS", specification_compliance: "PASS",
-            method_artifact_alignment: "PASS", source_satisfies_requirement: "PASS", supplied_excerpt_supports_requirement: "PASS",
-            contradiction_observed: false, unsupported_precision_observed: false, notes: [] })) };
-        return new Response(JSON.stringify({ id: "stage17-native-audit", object: "chat.completion", created: 1, model: deployment.route_ref,
-          choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(observation) } }],
-          usage: { prompt_tokens: 8, completion_tokens: 16, total_tokens: 24 } }), { status: 200,
-          headers: { "content-type": "application/json", "cf-aig-provider": "controlled-audit-provider", "cf-aig-model": "controlled-audit-model", "cf-aig-log-id": "stage17-native-audit-log" } });
-      } } }, pricing: { quote: async () => ({ quote_ref: "stage17-native-quote", pricing_snapshot_ref: deployment.pricing_snapshot_ref, billed_usd: 0 }) },
+      gateway: (gatewayId) => {
+        if (gatewayId !== "eliotr-reasoning") throw new Error("unexpected stage17 gateway binding");
+        return {
+          getUrl: async () => BASE_URL,
+          getLog: async () => { throw new Error("Controlled fingerprint must not fetch a log"); },
+          run: async (request, requestOptions) => {
+            const model = (await modelGatewayDynamicRouteTarget(deployment)).model;
+            if (request.provider !== "compat" || request.endpoint !== "chat/completions" || Object.keys(request.headers).length !== 0 ||
+                request.query.model !== model || requestOptions.gateway.collectLog !== true || requestOptions.gateway.skipCache !== true) {
+              throw new Error("unexpected stage17 audit binding request");
+            }
+            const headers = new Headers(requestOptions.extraHeaders);
+            const metadataHeader = headers.get("cf-aig-metadata");
+            if (headers.has("cf-aig-authorization") || headers.get("cf-aig-max-attempts") !== "1" ||
+                headers.get("cf-aig-collect-log-payload") !== "false" || headers.get("cf-aig-request-timeout") !== "5000" ||
+                metadataHeader === null || JSON.stringify(requestOptions.gateway.metadata) !== metadataHeader) {
+              throw new Error("stage17 audit binding policy or metadata changed");
+            }
+            if (binding === undefined) throw new Error("Actual audit prompt binding is missing");
+            const query = request.query as { readonly messages?: readonly { readonly role?: unknown; readonly content?: unknown }[] };
+            const user = query.messages?.find((message) => message.role === "user");
+            if (typeof user?.content !== "string" || JSON.parse(user.content).prompt !== JSON.stringify(binding)) {
+              throw new Error("Actual audit prompt binding changed");
+            }
+            if (calls !== 0) throw new Error("stage17 audit binding must make one request");
+            calls += 1;
+            const observation = { schema: "eliotr.research.semantic-verifier-observation.v1", verifier_ref: binding.verifier_ref,
+              verifier_schema_generation: binding.verifier_schema_generation, evidence_input_sha256: binding.evidence_input_sha256,
+              claims: binding.claims.map((claim) => ({ ...claim, value_or_measurement_verification: "PASS", specification_compliance: "PASS",
+                method_artifact_alignment: "PASS", source_satisfies_requirement: "PASS", supplied_excerpt_supports_requirement: "PASS",
+                contradiction_observed: false, unsupported_precision_observed: false, notes: [] })) };
+            return new Response(JSON.stringify({ id: "stage17-native-audit", object: "chat.completion", created: 1, model: deployment.route_ref,
+              choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: JSON.stringify(observation) } }],
+              usage: { prompt_tokens: 8, completion_tokens: 16, total_tokens: 24 } }), { status: 200,
+              headers: { "content-type": "application/json", "cf-aig-provider": "controlled-audit-provider", "cf-aig-model": "controlled-audit-model", "cf-aig-log-id": "stage17-native-audit-log" } });
+          },
+        };
+      },
+    } }, pricing: { quote: async () => ({ quote_ref: "stage17-native-quote", pricing_snapshot_ref: deployment.pricing_snapshot_ref, billed_usd: 0 }) },
     spend_authorization: { read: async (request) => {
       if (prepared === undefined) throw new Error("Audit preparation is missing");
       return { authorization_ref: "stage17-native-authorization", decision_digest: "b".repeat(64),
