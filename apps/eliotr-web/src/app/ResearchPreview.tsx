@@ -204,7 +204,7 @@ export function ResearchPreview({ designReview = false, historyState, onProbe }:
   return <QueryClientProvider client={environment.client}><MemoryRouter initialEntries={['/sources']}><Shell privacy={environment.privacy} runtime={environment.runtime} fixture={designReview} /></MemoryRouter></QueryClientProvider>;
 }
 export const playResearchJourney = async ({ canvas, userEvent }: {
-  readonly canvas: { findByRole(role: string, options: { readonly name: string; readonly exact?: boolean }): Promise<HTMLElement>;
+  readonly canvas: { findByRole(role: string, options: { readonly name: string; readonly exact?: boolean; readonly level?: number }): Promise<HTMLElement>;
     getByRole(role: string, options: { readonly name: string; readonly exact?: boolean }): HTMLElement;
     queryByRole(role: string, options: { readonly name: string; readonly exact?: boolean }): HTMLElement | null;
     getAllByRole(role: string, options: { readonly name: string }): HTMLElement[];
