@@ -15,6 +15,7 @@ import {
 import {
   buildCanonicalProjectCopyMaps,
   buildCanonicalProjectCopyMapsV2,
+  buildCanonicalTargetRequiredSetCopyMapsV3,
   canonicalSourceProjectionIdentity,
   canonicalSourceResourceBounds,
 } from "./core-managed-item-intent.js";
@@ -36,9 +37,15 @@ import type {
   ManagedProjectCopyMapSetReceipt,
   ManagedProjectCopyMapSetReceiptV1,
   ManagedProjectCopyMapSetReceiptV2,
+  ManagedTargetRequiredSetCopyMapIndexV3,
+  ManagedTargetRequiredSetCopyMapIdentityV3,
+  ManagedTargetRequiredSetCopyMapPageV3,
+  ManagedTargetRequiredSetCopyMapSetReceiptV3,
   ManagedProjectCopyResourceBoundsV1,
   ManagedProjectCopyResourceBoundsV2,
   ManagedProjectCopyTargetReceipt,
+  TargetRequiredSetCopyAuthorityV3,
+  ProjectCopyMembershipCopyV2,
   MaterializedProjectionItem,
   ProjectCopyScopeV2,
   ProjectionWorkPort,
@@ -139,8 +146,66 @@ function copyPagePayload(
   };
 }
 
-function v2CopyIdentity(copy: ManagedProjectCopyMapReceiptV2): string {
+function v2CopyIdentity(copy: ProjectCopyMembershipCopyV2): string {
   return `${copy.membership_identity_version}:${copy.project_id}:${copy.project_membership_id}`;
+}
+
+function copyPagePayloadTargetRequiredSetV3(
+  canonical: CanonicalSourceProjectionReceipt,
+  target: ManagedProjectCopyTargetReceipt,
+  authority: TargetRequiredSetCopyAuthorityV3,
+  copies: readonly ManagedProjectCopyMapReceiptV2[],
+  pageIndex: number,
+  previousPageSha256: string | null,
+): Omit<ManagedTargetRequiredSetCopyMapPageV3, "page_sha256"> {
+  const firstCopy = copies[0];
+  const lastCopy = copies.at(-1);
+  return {
+    protocol: "eliotr.managed-project-copy-map-page.v3",
+    layout: "PROJECT_COPY_V2",
+    source_revision_ref: canonical.source_revision_ref,
+    complete_residency_key_sha256: canonical.complete_residency_key_sha256,
+    canonical_projection_generation: canonical.canonical_projection_generation,
+    canonical_source_ref: canonical.canonical_source_ref,
+    canonical_source_sha256: canonical.canonical_source_sha256,
+    target,
+    target_selection: authority.target_selection,
+    authority_kind: authority.authority_kind,
+    authority_sha256: authority.authority_sha256,
+    page_index: pageIndex,
+    cursor_start_copy_identity: firstCopy === undefined ? null : v2CopyIdentity(firstCopy),
+    cursor_end_copy_identity: lastCopy === undefined ? null : v2CopyIdentity(lastCopy),
+    previous_page_sha256: previousPageSha256,
+    provider_copy_count: copies.length,
+    provider_copy_set_sha256: "",
+    provider_item_count: copies.reduce((total, copy) => total + copy.provider_item_count, 0),
+    provider_item_set_sha256: "",
+    copies,
+  };
+}
+
+function mappedMembershipV2(copy: ManagedProjectCopyMapReceiptV2): ProjectCopyMembershipCopyV2 {
+  const base = {
+    source_revision_ref: copy.source_revision_ref,
+    source_owner_generation: copy.source_owner_generation,
+    project_id: copy.project_id,
+    project_membership_id: copy.project_membership_id,
+    membership_generation: copy.membership_generation,
+    project_membership_generation: copy.project_membership_generation,
+    folder_prefix: copy.folder_prefix,
+  };
+  return copy.membership_identity_version === 1
+    ? {
+      ...base,
+      membership_identity_version: 1,
+      legacy_project_membership_id: copy.legacy_project_membership_id,
+    }
+    : {
+      ...base,
+      membership_identity_version: 2,
+      stable_project_membership_id: copy.stable_project_membership_id,
+      membership_revision: copy.membership_revision,
+    };
 }
 
 function copyPagePayloadV2(
@@ -215,6 +280,36 @@ async function copyPageDigests(
       }))
     )),
   };
+}
+
+/** Shared path and aggregate digest derivation for the V3 Work writer and readback. */
+export async function createTargetRequiredSetCopyMapIdentityV3(input: {
+  readonly canonical: CanonicalSourceProjectionReceipt;
+  readonly target: ManagedProjectCopyTargetReceipt;
+  readonly authority: TargetRequiredSetCopyAuthorityV3;
+  readonly copies: readonly ManagedProjectCopyMapReceiptV2[];
+}): Promise<ManagedTargetRequiredSetCopyMapIdentityV3> {
+  assertProjectionSha256(input.authority.authority_sha256, "target required-set authority digest");
+  if (input.authority.authority_kind !== "TARGET_REQUIRED_SET_V3") {
+    throw new Error("target required-set V3 copy-map path needs its exact authority kind");
+  }
+  const canonicalSourcePrefix = workPrefixFromManifestRef(input.canonical.canonical_source_ref);
+  const targetToken = (await stableProjectionId(
+    "copy-target",
+    input.target.managed_instance_id,
+    input.target.managed_generation,
+  )).slice("copy-target-".length);
+  const digests = await copyPageDigests(input.copies);
+  return Object.freeze({
+    canonical_source_prefix: canonicalSourcePrefix,
+    target_token: targetToken,
+    provider_copy_set_sha256: digests.copy_set,
+    provider_item_set_sha256: digests.item_set,
+    page_prefix: canonicalSourcePrefix + "/target-required-set-copy-maps/" + targetToken + "/" +
+      input.authority.authority_sha256 + "/" + digests.copy_set + "/pages/",
+    index_ref: canonicalSourcePrefix + "/target-required-set-copy-maps/index/" + targetToken + "/" +
+      input.authority.authority_sha256 + "/" + digests.copy_set + ".json",
+  });
 }
 
 async function materializeV2ProjectCopyMapPages(
@@ -436,6 +531,275 @@ async function materializeV2ProjectCopyMapPages(
     scope_snapshot_id: scope.scope_snapshot_id,
     scope_snapshot_revision: scope.scope_snapshot_revision,
     scope_snapshot_digest: scope.scope_snapshot_digest,
+    page_count: pages.length,
+    page_set_sha256: pageSetSha256,
+    copy_map_index_ref: indexRef,
+    copy_map_index_sha256: indexReceipt.readback_sha256,
+    provider_copy_count: copies.length,
+    provider_copy_set_sha256: allDigests.copy_set,
+    provider_item_count: providerItemCount,
+    provider_item_set_sha256: allDigests.item_set,
+    resource_bounds: resourceBounds,
+    pages: Object.freeze(pages),
+  });
+}
+
+async function materializeTargetRequiredSetCopyMapPagesV3(
+  store: EvidenceObjectStore,
+  canonical: CanonicalSourceProjectionReceipt,
+  target: ManagedProjectCopyTargetReceipt,
+  authority: TargetRequiredSetCopyAuthorityV3,
+  memberships: readonly ProjectCopyMembershipCopyV2[],
+  rawCopies: readonly ManagedProjectCopyMapReceiptV2[],
+): Promise<ManagedTargetRequiredSetCopyMapSetReceiptV3> {
+  const expectedMetadataGeneration = await managedProjectGenerationMetadataValue(target.managed_generation);
+  if (
+    authority.authority_kind !== "TARGET_REQUIRED_SET_V3" ||
+    !/^[a-f0-9]{64}$/u.test(authority.authority_sha256) ||
+    target.metadata_generation_digest !== expectedMetadataGeneration ||
+    target.managed_instance_id !== authority.target.managed_instance_id ||
+    target.managed_generation !== authority.target.managed_generation ||
+    canonicalProjectionJson(authority.target) !== canonicalProjectionJson(authority.target_selection.target) ||
+    !Array.isArray(memberships) ||
+    !Array.isArray(rawCopies) ||
+    rawCopies.length !== memberships.length ||
+    rawCopies.length > MAX_COPY_MAPS_PER_PAGE
+  ) {
+    throw new Error("target required-set V3 map inputs differ from their frozen target authority");
+  }
+  const copies: ManagedProjectCopyMapReceiptV2[] = [];
+  for (const copy of rawCopies) {
+    if (
+      copy.protocol !== "eliotr.managed-project-copy-map.v2" ||
+      copy.layout !== "PROJECT_COPY_V2" ||
+      copy.source_revision_ref !== canonical.source_revision_ref ||
+      copy.complete_residency_key_sha256 !== canonical.complete_residency_key_sha256 ||
+      copy.canonical_projection_generation !== canonical.canonical_projection_generation ||
+      copy.canonical_source_ref !== canonical.canonical_source_ref ||
+      copy.canonical_source_sha256 !== canonical.canonical_source_sha256 ||
+      copy.target.managed_instance_id !== target.managed_instance_id ||
+      copy.target.managed_generation !== target.managed_generation ||
+      copy.target.metadata_generation_digest !== target.metadata_generation_digest ||
+      canonicalProjectionJson(copy.target_selection) !== canonicalProjectionJson(authority.target_selection)
+    ) {
+      throw new Error("target required-set V3 inner map differs from its canonical or frozen target authority");
+    }
+    copies.push(copy);
+  }
+  const expectedByIdentity = new Map(memberships.map((membership) => [v2CopyIdentity(membership), membership]));
+  const seen = new Set<string>();
+  for (const copy of copies) {
+    const identity = v2CopyIdentity(copy);
+    const expected = expectedByIdentity.get(identity);
+    if (
+      expected === undefined || seen.has(identity) ||
+      canonicalProjectionJson(mappedMembershipV2(copy)) !== canonicalProjectionJson(expected)
+    ) {
+      throw new Error("target required-set V3 inner map differs from its admitted membership row");
+    }
+    seen.add(identity);
+  }
+
+  const mapIdentity = await createTargetRequiredSetCopyMapIdentityV3({
+    canonical,
+    target,
+    authority,
+    copies,
+  });
+  const allDigests = {
+    copy_set: mapIdentity.provider_copy_set_sha256,
+    item_set: mapIdentity.provider_item_set_sha256,
+  };
+  const sourceScopedCopyPrefix = mapIdentity.page_prefix;
+  const indexRef = mapIdentity.index_ref;
+  const groups: ManagedProjectCopyMapReceiptV2[][] = [];
+  let group: ManagedProjectCopyMapReceiptV2[] = [];
+  const hashPlaceholder = "0".repeat(64);
+  const candidateSize = (
+    pageCopies: readonly ManagedProjectCopyMapReceiptV2[],
+    pageIndex: number,
+    previousPageSha256: string | null,
+  ): number => {
+    const payload = copyPagePayloadTargetRequiredSetV3(
+      canonical,
+      target,
+      authority,
+      pageCopies,
+      pageIndex,
+      previousPageSha256,
+    );
+    return utf8ProjectionBytes(canonicalProjectionJson({
+      ...payload,
+      provider_copy_set_sha256: hashPlaceholder,
+      provider_item_set_sha256: hashPlaceholder,
+      page_sha256: hashPlaceholder,
+    })).byteLength;
+  };
+  for (const copy of copies) {
+    const candidate = [...group, copy];
+    if (group.length > 0 && (
+      candidate.length > MAX_COPY_MAPS_PER_PAGE ||
+      candidateSize(candidate, groups.length, hashPlaceholder) > MAX_COPY_MAP_PAGE_BYTES
+    )) {
+      groups.push(group);
+      group = [copy];
+    } else {
+      group = candidate;
+    }
+    if (candidateSize([copy], groups.length, hashPlaceholder) > MAX_COPY_MAP_PAGE_BYTES) {
+      throw new Error("one target required-set V3 membership map exceeds its bounded Work page");
+    }
+  }
+  if (group.length > 0) groups.push(group);
+
+  const pages: ManagedTargetRequiredSetCopyMapSetReceiptV3["pages"][number][] = [];
+  const preparedPages: {
+    readonly key: string;
+    readonly bytes: Uint8Array;
+    readonly object_sha256: string;
+  }[] = [];
+  let previousPageSha256: string | null = null;
+  for (const [pageIndex, pageCopies] of groups.entries()) {
+    const pageDigests = await copyPageDigests(pageCopies);
+    const payload = {
+      ...copyPagePayloadTargetRequiredSetV3(
+        canonical,
+        target,
+        authority,
+        pageCopies,
+        pageIndex,
+        previousPageSha256,
+      ),
+      provider_copy_set_sha256: pageDigests.copy_set,
+      provider_item_set_sha256: pageDigests.item_set,
+    };
+    const pageSha256 = await projectionSha256Utf8(canonicalProjectionJson(payload));
+    const page: ManagedTargetRequiredSetCopyMapPageV3 = Object.freeze({ ...payload, page_sha256: pageSha256 });
+    const pageJson = canonicalProjectionJson(page);
+    const bytes = utf8ProjectionBytes(pageJson);
+    if (bytes.byteLength > MAX_COPY_MAP_PAGE_BYTES) {
+      throw new Error("serialized target required-set V3 map page exceeds its Work byte bound");
+    }
+    const key = sourceScopedCopyPrefix + String(pageIndex).padStart(4, "0") + "-" + pageSha256 + ".json";
+    preparedPages.push({
+      key,
+      bytes,
+      object_sha256: await projectionSha256Utf8(pageJson),
+    });
+    pages.push({
+      page_index: pageIndex,
+      page_ref: key,
+      page_sha256: pageSha256,
+      provider_copy_count: pageCopies.length,
+      provider_item_count: page.provider_item_count,
+    });
+    previousPageSha256 = pageSha256;
+  }
+
+  const pageSetSha256 = await projectionDigest(pages);
+  const providerItemCount = copies.reduce((total, copy) => total + copy.provider_item_count, 0);
+  const copyMapSubrequestBound = 2 * (pages.length + 1);
+  if (copyMapSubrequestBound > 10_000) {
+    throw new Error("target required-set V3 pages and erasure index exceed the default Worker subrequest envelope");
+  }
+  const resourceBounds: ManagedProjectCopyResourceBoundsV2 = Object.freeze({
+    protocol: "eliotr.project-copy-resource-bounds.v2",
+    provider_copy_count: copies.length,
+    provider_item_count: providerItemCount,
+    copy_map_page_count: pages.length,
+    copy_map_index_put_count: 1,
+    copy_map_r2_put_count: pages.length + 1,
+    copy_map_r2_subrequest_bound: copyMapSubrequestBound,
+    cpu_time_budget_ms: 30_000,
+    maximum_subrequest_bound: 10_000,
+  });
+  const indexPayload: ManagedTargetRequiredSetCopyMapIndexV3 = Object.freeze({
+    protocol: "eliotr.managed-project-copy-map-index.v3",
+    layout: "PROJECT_COPY_V2",
+    source_revision_ref: canonical.source_revision_ref,
+    complete_residency_key_sha256: canonical.complete_residency_key_sha256,
+    canonical_projection_generation: canonical.canonical_projection_generation,
+    canonical_source_ref: canonical.canonical_source_ref,
+    canonical_source_sha256: canonical.canonical_source_sha256,
+    target,
+    target_selection: authority.target_selection,
+    authority_kind: authority.authority_kind,
+    authority_sha256: authority.authority_sha256,
+    authority,
+    page_count: pages.length,
+    page_set_sha256: pageSetSha256,
+    provider_copy_count: copies.length,
+    provider_copy_set_sha256: allDigests.copy_set,
+    provider_item_count: providerItemCount,
+    provider_item_set_sha256: allDigests.item_set,
+    pages: Object.freeze(pages),
+  });
+  const indexJson = canonicalProjectionJson(indexPayload);
+  const indexBytes = utf8ProjectionBytes(indexJson);
+  if (indexBytes.byteLength > MAX_COPY_MAP_PAGE_BYTES) {
+    throw new Error("target required-set V3 erasure index exceeds its Work page bound");
+  }
+  const indexSha256 = await projectionSha256Utf8(indexJson);
+
+  // All map/index payloads and their bounds are frozen before the first Work write.
+  for (const page of preparedPages) {
+    const receipt = await store.putImmutable({
+      key: page.key,
+      body: projectionByteStream(page.bytes),
+      expected_sha256: page.object_sha256,
+      expected_size_bytes: page.bytes.byteLength,
+      content_type: "application/json; charset=utf-8",
+      custom_metadata: {
+        source_revision_ref: canonical.source_revision_ref,
+        canonical_projection_generation: canonical.canonical_projection_generation,
+        managed_instance_id: target.managed_instance_id,
+        managed_generation: target.managed_generation,
+        authority_kind: authority.authority_kind,
+        authority_sha256: authority.authority_sha256,
+      },
+    });
+    if (
+      receipt.key !== page.key || receipt.readback_sha256 !== page.object_sha256 ||
+      receipt.size_bytes !== page.bytes.byteLength
+    ) {
+      throw new Error("target required-set V3 page immutable readback differs from its serialized bytes");
+    }
+  }
+  const indexReceipt = await store.putImmutable({
+    key: indexRef,
+    body: projectionByteStream(indexBytes),
+    expected_sha256: indexSha256,
+    expected_size_bytes: indexBytes.byteLength,
+    content_type: "application/json; charset=utf-8",
+    custom_metadata: {
+      source_revision_ref: canonical.source_revision_ref,
+      canonical_projection_generation: canonical.canonical_projection_generation,
+      managed_instance_id: target.managed_instance_id,
+      managed_generation: target.managed_generation,
+      authority_kind: authority.authority_kind,
+      authority_sha256: authority.authority_sha256,
+      page_set_sha256: pageSetSha256,
+    },
+  });
+  if (
+    indexReceipt.key !== indexRef || indexReceipt.readback_sha256 !== indexSha256 ||
+    indexReceipt.size_bytes !== indexBytes.byteLength
+  ) {
+    throw new Error("target required-set V3 erasure index readback differs from its serialized bytes");
+  }
+  return Object.freeze({
+    protocol: "eliotr.managed-project-copy-map-set.v3",
+    layout: "PROJECT_COPY_V2",
+    source_revision_ref: canonical.source_revision_ref,
+    complete_residency_key_sha256: canonical.complete_residency_key_sha256,
+    canonical_projection_generation: canonical.canonical_projection_generation,
+    canonical_source_ref: canonical.canonical_source_ref,
+    canonical_source_sha256: canonical.canonical_source_sha256,
+    target,
+    target_selection: authority.target_selection,
+    authority_kind: authority.authority_kind,
+    authority_sha256: authority.authority_sha256,
+    authority,
     page_count: pages.length,
     page_set_sha256: pageSetSha256,
     copy_map_index_ref: indexRef,
@@ -717,7 +1081,8 @@ export function createR2ProjectionWorkPort(
 export function createR2CanonicalSourceProjectionWriter(
   dependencies: R2ProjectionWorkDependencies,
 ): CanonicalSourceProjectionWriter {
-  const work = createR2ProjectionWorkPort(dependencies);
+  const objectStore = dependencies.object_store ?? createR2EvidenceObjectStore(dependencies.work_bucket);
+  const work = createR2ProjectionWorkPort({ ...dependencies, object_store: objectStore });
   async function mapProjectCopies(input: {
     readonly canonical: CanonicalSourceProjectionReceipt;
     readonly target: ManagedProjectCopyTargetReceipt;
@@ -808,6 +1173,43 @@ export function createR2CanonicalSourceProjectionWriter(
     }
     return mapSet;
   }
+  async function mapTargetRequiredSetCopies(input: {
+    readonly canonical: CanonicalSourceProjectionReceipt;
+    readonly target: ManagedProjectCopyTargetReceipt;
+    readonly authority: TargetRequiredSetCopyAuthorityV3;
+    readonly copies: readonly ProjectCopyMembershipCopyV2[];
+  }): Promise<ManagedTargetRequiredSetCopyMapSetReceiptV3> {
+    if (!Array.isArray(input.copies) || input.copies.length > MAX_COPY_MAPS_PER_PAGE) {
+      throw new Error("canonical target required-set V3 copy mapping exceeds 256 memberships");
+    }
+    const copyMaps = await buildCanonicalTargetRequiredSetCopyMapsV3(
+      input.canonical,
+      input.target,
+      input.authority,
+      input.copies,
+    );
+    const mapSet = await materializeTargetRequiredSetCopyMapPagesV3(
+      objectStore,
+      input.canonical,
+      input.target,
+      input.authority,
+      input.copies,
+      copyMaps,
+    );
+    if (
+      mapSet.protocol !== "eliotr.managed-project-copy-map-set.v3" ||
+      mapSet.layout !== "PROJECT_COPY_V2" ||
+      mapSet.provider_copy_count !== input.copies.length ||
+      mapSet.target.metadata_generation_digest !==
+        await managedProjectGenerationMetadataValue(input.target.managed_generation) ||
+      mapSet.authority_kind !== input.authority.authority_kind ||
+      mapSet.authority_sha256 !== input.authority.authority_sha256 ||
+      canonicalProjectionJson(mapSet.authority) !== canonicalProjectionJson(input.authority)
+    ) {
+      throw new Error("canonical target required-set V3 map receipt differs from its target authority or memberships");
+    }
+    return mapSet;
+  }
   return {
     async projectCanonicalSource({ source, profile, normalized_markdown }) {
       if (typeof normalized_markdown !== "string" || normalized_markdown.length === 0) {
@@ -848,5 +1250,6 @@ export function createR2CanonicalSourceProjectionWriter(
     },
 
     mapProjectCopies,
+    mapTargetRequiredSetCopies,
   };
 }

@@ -16,6 +16,7 @@ import type {
   ManagedTargetIdentity,
   ManagedTargetSelectionV2,
 } from "./managed-target-assignment.js";
+import type { ManagedRequiredSetReceiptV2 } from "./managed-required-set.js";
 export type {
   ManagedTargetSelectionReceipt,
   ManagedTargetSelectionV2,
@@ -355,6 +356,100 @@ export interface ManagedProjectCopyMapIndexV2 {
   readonly pages: ManagedProjectCopyMapSetReceiptV2["pages"];
 }
 
+/** Target-wide Work staging authority; never a Core owner ScopeSnapshot. */
+export interface TargetRequiredSetCopyAuthorityV3 {
+  readonly protocol: "eliotr.target-required-set-copy-authority.v3";
+  readonly authority_kind: "TARGET_REQUIRED_SET_V3";
+  readonly target: ManagedTargetIdentity;
+  readonly target_selection: ManagedTargetSelectionV2;
+  /** Original required-set scan/fence time. */
+  readonly as_of: string;
+  readonly required_set_fence: ManagedRequiredSetReceiptV2["target_fence"];
+  readonly authority_sha256: string;
+}
+
+/** One target-wide membership copy map page; inner mappings remain exact V2 receipts. */
+export interface ManagedTargetRequiredSetCopyMapPageV3 {
+  readonly protocol: "eliotr.managed-project-copy-map-page.v3";
+  readonly layout: "PROJECT_COPY_V2";
+  readonly source_revision_ref: string;
+  readonly complete_residency_key_sha256: string;
+  readonly canonical_projection_generation: string;
+  readonly canonical_source_ref: string;
+  readonly canonical_source_sha256: string;
+  readonly target: ManagedProjectCopyTargetReceipt;
+  readonly target_selection: ManagedTargetSelectionV2;
+  readonly authority_kind: "TARGET_REQUIRED_SET_V3";
+  readonly authority_sha256: string;
+  readonly page_index: number;
+  readonly cursor_start_copy_identity: string | null;
+  readonly cursor_end_copy_identity: string | null;
+  readonly previous_page_sha256: string | null;
+  readonly page_sha256: string;
+  readonly provider_copy_count: number;
+  readonly provider_copy_set_sha256: string;
+  readonly provider_item_count: number;
+  readonly provider_item_set_sha256: string;
+  readonly copies: readonly ManagedProjectCopyMapReceiptV2[];
+}
+
+export interface ManagedTargetRequiredSetCopyMapIndexV3 {
+  readonly protocol: "eliotr.managed-project-copy-map-index.v3";
+  readonly layout: "PROJECT_COPY_V2";
+  readonly source_revision_ref: string;
+  readonly complete_residency_key_sha256: string;
+  readonly canonical_projection_generation: string;
+  readonly canonical_source_ref: string;
+  readonly canonical_source_sha256: string;
+  readonly target: ManagedProjectCopyTargetReceipt;
+  readonly target_selection: ManagedTargetSelectionV2;
+  readonly authority_kind: "TARGET_REQUIRED_SET_V3";
+  readonly authority_sha256: string;
+  readonly authority: TargetRequiredSetCopyAuthorityV3;
+  readonly page_count: number;
+  readonly page_set_sha256: string;
+  readonly provider_copy_count: number;
+  readonly provider_copy_set_sha256: string;
+  readonly provider_item_count: number;
+  readonly provider_item_set_sha256: string;
+  readonly pages: ManagedProjectCopyMapSetReceiptV2["pages"];
+}
+
+export interface ManagedTargetRequiredSetCopyMapSetReceiptV3 {
+  readonly protocol: "eliotr.managed-project-copy-map-set.v3";
+  readonly layout: "PROJECT_COPY_V2";
+  readonly source_revision_ref: string;
+  readonly complete_residency_key_sha256: string;
+  readonly canonical_projection_generation: string;
+  readonly canonical_source_ref: string;
+  readonly canonical_source_sha256: string;
+  readonly target: ManagedProjectCopyTargetReceipt;
+  readonly target_selection: ManagedTargetSelectionV2;
+  readonly authority_kind: "TARGET_REQUIRED_SET_V3";
+  readonly authority_sha256: string;
+  readonly authority: TargetRequiredSetCopyAuthorityV3;
+  readonly page_count: number;
+  readonly page_set_sha256: string;
+  readonly copy_map_index_ref: string;
+  readonly copy_map_index_sha256: string;
+  readonly provider_copy_count: number;
+  readonly provider_copy_set_sha256: string;
+  readonly provider_item_count: number;
+  readonly provider_item_set_sha256: string;
+  readonly resource_bounds: ManagedProjectCopyResourceBoundsV2;
+  readonly pages: ManagedProjectCopyMapSetReceiptV2["pages"];
+}
+
+/** Shared deterministic key/digest binding for V3 Work writer and readback. */
+export interface ManagedTargetRequiredSetCopyMapIdentityV3 {
+  readonly canonical_source_prefix: string;
+  readonly target_token: string;
+  readonly provider_copy_set_sha256: string;
+  readonly provider_item_set_sha256: string;
+  readonly page_prefix: string;
+  readonly index_ref: string;
+}
+
 export type ManagedProjectCopyMapPage = ManagedProjectCopyMapPageV1 | ManagedProjectCopyMapPageV2;
 export type ManagedProjectCopyMapSetReceipt =
   | ManagedProjectCopyMapSetReceiptV1
@@ -427,6 +522,12 @@ export interface CanonicalSourceProjectionWriter {
     readonly target: ManagedProjectCopyTargetReceipt;
     readonly scope: ProjectCopyScopeV2;
   }): Promise<ManagedProjectCopyMapSetReceiptV2>;
+  mapTargetRequiredSetCopies(input: {
+    readonly canonical: CanonicalSourceProjectionReceipt;
+    readonly target: ManagedProjectCopyTargetReceipt;
+    readonly authority: TargetRequiredSetCopyAuthorityV3;
+    readonly copies: readonly ProjectCopyMembershipCopyV2[];
+  }): Promise<ManagedTargetRequiredSetCopyMapSetReceiptV3>;
 }
 
 export interface ProjectionWorkReceipt {

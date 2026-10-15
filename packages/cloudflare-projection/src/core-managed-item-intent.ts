@@ -22,6 +22,7 @@ import {
 } from "./managed-project-path.js";
 import { parseManagedItemReceipt } from "./core-managed-item-receipts.js";
 import { hasValidManagedTargetRegistryCaptureV2 } from "./managed-target-assignment.js";
+import { createManagedRequiredSetTargetFenceV2 } from "./managed-required-set.js";
 import type { ProjectionAuthorityPort } from "./types.js";
 import type {
   CanonicalSourceProjectionReceipt,
@@ -37,6 +38,7 @@ import type {
   ProjectCopyMembershipCopyV2,
   ProjectCopyScopeV2,
   ManagedTargetSelectionV2,
+  TargetRequiredSetCopyAuthorityV3,
   ProjectionExecutionProfile,
   ProjectionSourceContext,
 } from "./types.js";
@@ -653,45 +655,36 @@ function compareCopyIdentityV2(
 }
 
 /** Build versioned mapping receipts from one canonical source; V2 rows never contain section bodies. */
-export async function buildCanonicalProjectCopyMapsV2(
+export async function buildCanonicalProjectCopyMapsV2FromSelectionAndCopies(
   canonical: CanonicalSourceProjectionReceipt,
   target: ManagedProjectCopyTargetReceipt,
-  scope: ProjectCopyScopeV2,
+  targetSelection: ManagedTargetSelectionV2,
+  memberships: readonly ProjectCopyMembershipCopyV2[],
 ): Promise<readonly ManagedProjectCopyMapReceiptV2[]> {
   const expectedMetadataGeneration = await managedProjectGenerationMetadataValue(target.managed_generation);
   if (
-    scope.layout !== "PROJECT_COPY_V2" ||
-    scope.representative_policy !== "ONE_CANONICAL_COPY_PER_SOURCE_REVISION" ||
-    scope.target.managed_instance_id !== target.managed_instance_id ||
-    scope.target.managed_generation !== target.managed_generation ||
-    scope.target_selection.target.managed_instance_id !== target.managed_instance_id ||
-    scope.target_selection.target.managed_generation !== target.managed_generation ||
-    scope.target_selection.target.namespace !== scope.target.namespace ||
-    scope.target_selection.target.target_profile_identity_sha256 !== scope.target.target_profile_identity_sha256 ||
-    scope.generation_metadata_value !== expectedMetadataGeneration ||
+    targetSelection.target.managed_instance_id !== target.managed_instance_id ||
+    targetSelection.target.managed_generation !== target.managed_generation ||
     target.metadata_generation_digest !== expectedMetadataGeneration ||
-    !Array.isArray(scope.copies) ||
-    scope.copies.length > MAX_MANAGED_PROJECT_MEMBERSHIPS ||
+    !Array.isArray(memberships) ||
+    memberships.length > MAX_MANAGED_PROJECT_MEMBERSHIPS ||
     canonical.sections.length !== canonical.canonical_section_count ||
-    canonical.source_revision_ref !== scope.copies[0]?.source_revision_ref && scope.copies.length > 0
+    (memberships.length > 0 && canonical.source_revision_ref !== memberships[0]?.source_revision_ref)
   ) {
-    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V2 copy scope differs from its canonical or target authority");
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V2 copy membership inputs differ from their canonical or target authority");
   }
-  assertProjectionIdentifier(scope.scope_snapshot_id, "V2 copy scope snapshot ID");
-  assertProjectionInteger(scope.scope_snapshot_revision, "V2 copy scope snapshot revision", 1, Number.MAX_SAFE_INTEGER);
-  assertProjectionSha256(scope.scope_snapshot_digest, "V2 copy scope snapshot digest");
-  assertProjectionIdentifier(scope.target_selection.target.namespace, "V2 selected target namespace");
-  assertProjectionSha256(scope.target_selection.target.target_profile_identity_sha256, "V2 selected physical profile digest");
-  if (!hasValidManagedTargetRegistryCaptureV2(scope.target_selection)) {
+  assertProjectionIdentifier(targetSelection.target.namespace, "V2 selected target namespace");
+  assertProjectionSha256(targetSelection.target.target_profile_identity_sha256, "V2 selected physical profile digest");
+  if (!hasValidManagedTargetRegistryCaptureV2(targetSelection)) {
     projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V2 target registry capture must be positive or paired-null SHADOW absence");
   }
-  assertProjectionSha256(scope.target_selection.v1_exact_profile_identity_sha256, "V2 exact V1 profile digest");
+  assertProjectionSha256(targetSelection.v1_exact_profile_identity_sha256, "V2 exact V1 profile digest");
   if (
-    scope.target_selection.protocol !== "eliotr.managed-target-selection.v2" ||
-    scope.target_selection.domain !== "MANAGED_SEARCH_PRODUCT" ||
-    scope.target_selection.decision_version !== 2 ||
-    scope.target_selection.selection_mode !== "STABLE_PHYSICAL_PROFILE_V2" ||
-    scope.target_selection.product_alias !== "primary"
+    targetSelection.protocol !== "eliotr.managed-target-selection.v2" ||
+    targetSelection.domain !== "MANAGED_SEARCH_PRODUCT" ||
+    targetSelection.decision_version !== 2 ||
+    targetSelection.selection_mode !== "STABLE_PHYSICAL_PROFILE_V2" ||
+    targetSelection.product_alias !== "primary"
   ) {
     projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V2 target selection is not the exact supported product protocol");
   }
@@ -701,7 +694,7 @@ export async function buildCanonicalProjectCopyMapsV2(
   assertProjectionSha256(canonical.canonical_section_set_sha256, "canonical section set digest");
   assertProjectionIdentifier(canonical.canonical_projection_generation, "canonical projection generation");
 
-  const ordered = [...scope.copies].sort(compareCopyIdentityV2);
+  const ordered = [...memberships].sort(compareCopyIdentityV2);
   const seen = new Set<string>();
   const copies: ManagedProjectCopyMapReceiptV2[] = [];
   for (const membership of ordered) {
@@ -854,7 +847,7 @@ export async function buildCanonicalProjectCopyMapsV2(
       complete_residency_key_sha256: canonical.complete_residency_key_sha256,
       canonical_projection_generation: canonical.canonical_projection_generation,
       target,
-      target_selection: scope.target_selection,
+      target_selection: targetSelection,
       canonical_source_ref: canonical.canonical_source_ref,
       canonical_source_sha256: canonical.canonical_source_sha256,
       provider_copy_count: 1 as const,
@@ -868,6 +861,101 @@ export async function buildCanonicalProjectCopyMapsV2(
     }));
   }
   return Object.freeze(copies);
+}
+
+export async function buildCanonicalProjectCopyMapsV2(
+  canonical: CanonicalSourceProjectionReceipt,
+  target: ManagedProjectCopyTargetReceipt,
+  scope: ProjectCopyScopeV2,
+): Promise<readonly ManagedProjectCopyMapReceiptV2[]> {
+  const expectedMetadataGeneration = await managedProjectGenerationMetadataValue(target.managed_generation);
+  if (
+    scope.layout !== "PROJECT_COPY_V2" ||
+    scope.representative_policy !== "ONE_CANONICAL_COPY_PER_SOURCE_REVISION" ||
+    scope.target.managed_instance_id !== target.managed_instance_id ||
+    scope.target.managed_generation !== target.managed_generation ||
+    scope.target_selection.target.namespace !== scope.target.namespace ||
+    scope.target_selection.target.target_profile_identity_sha256 !== scope.target.target_profile_identity_sha256 ||
+    scope.generation_metadata_value !== expectedMetadataGeneration ||
+    !Array.isArray(scope.copies) ||
+    scope.copies.length > MAX_MANAGED_PROJECT_MEMBERSHIPS
+  ) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V2 copy scope differs from its canonical or target authority");
+  }
+  assertProjectionIdentifier(scope.scope_snapshot_id, "V2 copy scope snapshot ID");
+  assertProjectionInteger(scope.scope_snapshot_revision, "V2 copy scope snapshot revision", 1, Number.MAX_SAFE_INTEGER);
+  assertProjectionSha256(scope.scope_snapshot_digest, "V2 copy scope snapshot digest");
+  return buildCanonicalProjectCopyMapsV2FromSelectionAndCopies(
+    canonical,
+    target,
+    scope.target_selection,
+    scope.copies,
+  );
+}
+
+export async function buildCanonicalTargetRequiredSetCopyMapsV3(
+  canonical: CanonicalSourceProjectionReceipt,
+  target: ManagedProjectCopyTargetReceipt,
+  authority: TargetRequiredSetCopyAuthorityV3,
+  copies: readonly ProjectCopyMembershipCopyV2[],
+): Promise<readonly ManagedProjectCopyMapReceiptV2[]> {
+  const fence = authority.required_set_fence;
+  if (
+    authority.protocol !== "eliotr.target-required-set-copy-authority.v3" ||
+    authority.authority_kind !== "TARGET_REQUIRED_SET_V3" ||
+    canonicalProjectionJson(authority.target) !== canonicalProjectionJson(authority.target_selection.target) ||
+    authority.target.managed_instance_id !== target.managed_instance_id ||
+    authority.target.managed_generation !== target.managed_generation ||
+    target.metadata_generation_digest !== await managedProjectGenerationMetadataValue(target.managed_generation) ||
+    typeof authority.as_of !== "string" || authority.as_of.trim().length === 0 ||
+    fence.protocol !== "eliotr.managed-required-set-target-fence.v2"
+  ) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "target required-set staging authority differs from its frozen target");
+  }
+  assertProjectionIdentifier(authority.target.namespace, "required-set target namespace");
+  assertProjectionSha256(authority.target.target_profile_identity_sha256, "required-set target profile digest");
+  assertProjectionText(authority.as_of, "required-set original as_of", 64);
+  assertProjectionSha256(authority.authority_sha256, "target required-set authority digest");
+  assertProjectionSha256(fence.digest, "required-set target fence digest");
+  assertProjectionSha256(fence.target_selection_sha256, "required-set target selection digest");
+  assertProjectionSha256(fence.assignment_heads_sha256, "required-set assignment-head digest");
+  assertProjectionSha256(fence.required_set_sha256, "required-set digest");
+  assertProjectionSha256(fence.page_provenance_sha256, "required-set page provenance digest");
+  assertProjectionInteger(fence.assigned_project_count, "required-set assigned project count", 0, Number.MAX_SAFE_INTEGER);
+  assertProjectionInteger(fence.project_revision_copy_count, "required-set project revision copy count", 0, Number.MAX_SAFE_INTEGER);
+  assertProjectionInteger(fence.page_count, "required-set page count", 0, Number.MAX_SAFE_INTEGER);
+
+  const expectedFence = await createManagedRequiredSetTargetFenceV2({
+    target: authority.target,
+    target_selection: authority.target_selection,
+    as_of: authority.as_of,
+    assignment_heads_sha256: fence.assignment_heads_sha256,
+    required_set_sha256: fence.required_set_sha256,
+    page_provenance_sha256: fence.page_provenance_sha256,
+    assigned_project_count: fence.assigned_project_count,
+    project_revision_copy_count: fence.project_revision_copy_count,
+    page_count: fence.page_count,
+  });
+  if (canonicalProjectionJson(expectedFence) !== canonicalProjectionJson(fence)) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "target required-set fence does not match the shared V2 preimage");
+  }
+  const expectedAuthoritySha256 = await projectionDigest({
+    protocol: authority.protocol,
+    authority_kind: authority.authority_kind,
+    target: authority.target,
+    target_selection: authority.target_selection,
+    as_of: authority.as_of,
+    required_set_fence: authority.required_set_fence,
+  });
+  if (expectedAuthoritySha256 !== authority.authority_sha256) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "target required-set authority digest does not match its complete preimage");
+  }
+  return buildCanonicalProjectCopyMapsV2FromSelectionAndCopies(
+    canonical,
+    target,
+    authority.target_selection,
+    copies,
+  );
 }
 
 /** Expand one canonical projector result into exact provider identities without re-projecting section text. */
