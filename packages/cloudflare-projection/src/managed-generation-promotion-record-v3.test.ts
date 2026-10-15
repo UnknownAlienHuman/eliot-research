@@ -19,7 +19,8 @@ import { validateManagedGenerationDesiredManifestV3, validateManagedGenerationPr
 import { validateManagedGenerationPromotionEvidence } from "./managed-generation-promotion-evidence-manifest.js";
 import { canonicalProjectionJson, projectionDigest } from "./canonical.js";
 import { createManagedRequiredSetTargetFenceV2 } from "./managed-required-set.js";
-import { desiredManifest, evidence, profileFor, targetForProfile } from "./managed-generation-promotion-evidence.test-support.js";
+import { createAiSearchGenerationRegistryService } from "./ai-search-generation-registry.js";
+import { desiredManifest, evidence, profileFor, targetForProfile, currentAuthority, MemoryRegistryStore, promotionAuthority } from "./managed-generation-promotion-evidence.test-support.js";
 
 async function fixture() {
   const profile = profileFor("physical-profile-label", "search-instance-b");
@@ -185,4 +186,33 @@ test("V3 rejects an old fence relabeled with only a new selection hash and rejec
       provider_copy_summary: { ...body.manifest.provider_copy_summary, provider_item_count: 1 } },
     item_readback: { ...body.item_readback, item_effect_count: 1, exact_readback_count: 1, provider_inventory_count: 1 },
   }, target)).rejects.toMatchObject({ code: "MANAGED_GENERATION_EVIDENCE_INVALID" });
+});
+
+test("the registry service retains V3 through held qualification, promotion and exact replay", async () => {
+  const f = await fixture();
+  const { authority, state } = promotionAuthority();
+  state.fence_overrides.set(f.target.managed_generation, f.proof.target_fence.digest);
+  const { evidence_sha256: _digest, ...currentBody } = f.proof;
+  void _digest;
+  const store = new MemoryRegistryStore(() => state.hold_active);
+  const service = createAiSearchGenerationRegistryService(store, { promotion_evidence: {
+    ...authority,
+    async readDesiredManifest() { return f.desired; },
+    async readCurrentEvidence() { return currentBody; },
+    async readFreshCurrentAuthority(target, proof) { return currentAuthority(proof, target); },
+  } });
+  await service.declare({ namespace: f.target.namespace, profile: f.profile,
+    generation: f.target.managed_generation, declared_at: f.legacy.as_of });
+  await service.qualify(f.target.namespace, { generation: f.target.managed_generation });
+  const request = { expected_active_head_generation: null, target_generation: f.target.managed_generation,
+    promoted_at: "2026-10-14T18:04:00.000Z" };
+  await service.promote(f.target.namespace, request);
+  const writes = store.writes;
+  await service.promote(f.target.namespace, request);
+  expect(store.writes).toBe(writes);
+  const record = store.snapshot?.artifact.registry.generations[0];
+  expect(record?.state).toBe("ACTIVE");
+  expect(record?.promotion_evidence_v3).toEqual(f.proof);
+  expect(record?.promotion_evidence_v2).toBeUndefined();
+  expect(state.hold_active).toBe(false);
 });
