@@ -746,6 +746,9 @@ export function ComputerAgentConnectionsPanel({ locale, apis, privacy, context }
     if (!privacy.isCurrent(context) || attemptingRef.current ||
         (operationToRun.phase !== "review" && operationToRun.phase !== "unknown") ||
         (operationToRun.phase === "unknown" && operationToRun.lastReadback === undefined)) return;
+    const intentKey = operationToRun.intent.idempotencyKey;
+    const heldOperation = queryClient.getQueryData<ConnectionOperation>(operationKey);
+    if (heldOperation?.intent.idempotencyKey !== intentKey || heldOperation.phase !== operationToRun.phase) return;
     attemptingRef.current = true;
     const inFlight: ConnectionOperation = {
       contextKey: operationToRun.contextKey,
@@ -755,7 +758,15 @@ export function ComputerAgentConnectionsPanel({ locale, apis, privacy, context }
       phase: "attempting",
       readbackError: false,
     };
-    writeOperation(() => inFlight);
+    writeOperation(current => current?.intent.idempotencyKey === intentKey && current.phase === operationToRun.phase
+      ? inFlight
+      : current);
+    const startedOperation = queryClient.getQueryData<ConnectionOperation>(operationKey);
+    if (!privacy.isCurrent(context) || startedOperation?.intent.idempotencyKey !== intentKey ||
+        startedOperation.phase !== "attempting") {
+      attemptingRef.current = false;
+      return;
+    }
     try {
       const receipt = await actions.execute(operationToRun.intent);
       if (!privacy.isCurrent(context)) return;
@@ -768,12 +779,19 @@ export function ComputerAgentConnectionsPanel({ locale, apis, privacy, context }
         receipt,
         readbackError: false,
       };
-      writeOperation(() => withReceipt);
+      writeOperation(current => current?.intent.idempotencyKey === intentKey
+        ? current.phase === "settled"
+          ? current
+          : { ...current, phase: "receipt", receipt, readbackError: false }
+        : current);
       await readbackFor(withReceipt, withReceipt.pageCursor);
     } catch {
       if (!privacy.isCurrent(context)) return;
       const unknown: ConnectionOperation = { ...inFlight, phase: "unknown", readbackError: false };
-      writeOperation(() => unknown);
+      writeOperation(current => current?.intent.idempotencyKey === intentKey &&
+          current.phase !== "receipt" && current.phase !== "settled"
+        ? { ...current, phase: "unknown", readbackError: false }
+        : current);
       await readbackFor(unknown, unknown.pageCursor);
     } finally {
       attemptingRef.current = false;

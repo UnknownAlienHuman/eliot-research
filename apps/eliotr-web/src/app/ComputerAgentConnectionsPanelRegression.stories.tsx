@@ -19,6 +19,8 @@ const connectionId = "agent.private.01";
 const privateName = "Private Research Agent";
 const privateIssuer = "https://owner.cloudflareaccess.com";
 const privateSubject = "private-research-agent.access";
+const lateConnectionId = "agent.late.03";
+const latePrivateName = "Late Completion Replacement Agent";
 const foreignConnectionId = "agent.foreign.02";
 const foreignPrivateName = "Foreign Private Agent";
 const foreignIssuer = "https://foreign-owner.cloudflareaccess.com";
@@ -47,6 +49,10 @@ interface ComputerAgentRegressionEnvironment {
   mutationAttempts(): readonly MutationAttempt[];
   captureOperationSnapshot(): OperationSnapshot;
   assertOperationSnapshot(snapshot: OperationSnapshot): void;
+  delayNextMutationResponse(): void;
+  assertDelayedMutationPending(): void;
+  releaseDelayedMutationResponse(): void;
+  waitForReadbackCompletion(connectionId: string): Promise<void>;
   mintedKeyCount(): number;
   qualificationReadCount(): number;
   effectCount(): number;
@@ -96,6 +102,7 @@ function createRegressionEnvironment(): ComputerAgentRegressionEnvironment {
   const requestEvents: RequestEvent[] = [];
   const attempts: MutationAttempt[] = [];
   let connection: ComputerAgentConnection | undefined;
+  let lateConnection: ComputerAgentConnection | undefined;
   let foreignConnection: ComputerAgentConnection | undefined;
   let mintedKeyCount = 0;
   let qualificationReads = 0;
@@ -103,6 +110,8 @@ function createRegressionEnvironment(): ComputerAgentRegressionEnvironment {
   let listReads = 0;
   let readbackFailureCount = 0;
   let failNextListReadback = false;
+  let shouldDelayNextMutationResponse = false;
+  let delayedMutationRelease: (() => void) | undefined;
   let qualificationMode: QualificationMode = "expired-ready";
   let authorizationLossOnList = false;
   let authorizationLossCount = 0;
@@ -145,7 +154,7 @@ function createRegressionEnvironment(): ComputerAgentRegressionEnvironment {
         readbackFailureCount++;
         return problem(503, "COMPUTER_AGENT_CONNECTION_READBACK_UNAVAILABLE", true);
       }
-      const connections = [connection, foreignConnection]
+      const connections = [connection, lateConnection, foreignConnection]
         .filter((item): item is ComputerAgentConnection => item !== undefined)
         .sort((left, right) => left.connection_id < right.connection_id ? -1 : left.connection_id > right.connection_id ? 1 : 0);
       return json({
@@ -160,7 +169,8 @@ function createRegressionEnvironment(): ComputerAgentRegressionEnvironment {
       const body = String(init?.body ?? "");
       const headers = new Headers(init?.headers);
       const key = headers.get("idempotency-key") ?? "";
-      if ((selectedId !== connectionId && selectedId !== foreignConnectionId) || headers.get("content-type") !== "application/json" ||
+      if ((selectedId !== connectionId && selectedId !== lateConnectionId && selectedId !== foreignConnectionId) ||
+          headers.get("content-type") !== "application/json" ||
           headers.get("x-eliotr-csrf") !== "1" || key.length === 0) {
         throw new Error("Strict SDK PUT lost its logical ID, JSON, CSRF, or idempotency binding");
       }
@@ -199,6 +209,14 @@ function createRegressionEnvironment(): ComputerAgentRegressionEnvironment {
           updated_at: stamp,
         };
         effectCount++;
+        if (shouldDelayNextMutationResponse) {
+          shouldDelayNextMutationResponse = false;
+          const created = connection;
+          if (created === undefined) throw new Error("Delayed mutation has no committed owner row");
+          return new Promise<Response>(resolve => {
+            delayedMutationRelease = () => resolve(json(created));
+          });
+        }
         throw new TypeError("Controlled lost mutation acknowledgement");
       }
       if (selectedId === connectionId && attemptsForConnection.length === 2) {
@@ -208,6 +226,25 @@ function createRegressionEnvironment(): ComputerAgentRegressionEnvironment {
         }
         failNextListReadback = true;
         return json(connection);
+      }
+      if (selectedId === lateConnectionId && attemptsForConnection.length === 1) {
+        lateConnection = {
+          protocol: "eliotr.computer-agent-connection.v1",
+          connection_id: lateConnectionId,
+          revision: 1,
+          owner_principal_ref: "owner-regression",
+          state: "ENABLED",
+          display_name: request.display_name,
+          contour: request.contour,
+          actor: request.actor,
+          transport_capabilities: [...request.transport_capabilities],
+          computer_capabilities: [...request.computer_capabilities],
+          task_kinds: [...request.task_kinds],
+          created_at: stamp,
+          updated_at: stamp,
+        };
+        effectCount++;
+        return json(lateConnection);
       }
       if (selectedId === foreignConnectionId && attemptsForConnection.length === 1) {
         foreignConnection = {
@@ -357,6 +394,46 @@ function createRegressionEnvironment(): ComputerAgentRegressionEnvironment {
     mutationAttempts: () => attempts,
     captureOperationSnapshot,
     assertOperationSnapshot,
+    delayNextMutationResponse() {
+      assert(!shouldDelayNextMutationResponse && delayedMutationRelease === undefined,
+        "Only one computer-agent mutation response may be delayed in this fixture");
+      shouldDelayNextMutationResponse = true;
+    },
+    assertDelayedMutationPending() {
+      assert(delayedMutationRelease !== undefined && attempts.length === 1 &&
+        mintedKeyCount === 1 && effectCount === 1,
+      "The first reviewed mutation must remain pending after its single server effect");
+    },
+    releaseDelayedMutationResponse() {
+      const release = delayedMutationRelease;
+      assert(release !== undefined, "No delayed computer-agent mutation response is pending");
+      delayedMutationRelease = undefined;
+      release();
+    },
+    waitForReadbackCompletion(targetConnectionId) {
+      const { context } = requireOwnerBindings();
+      const readbackKey = JSON.stringify([
+        ...protectedQueryKey(context, "computer-agent-readback"), targetConnectionId, null,
+      ]);
+      const operationKey = JSON.stringify(computerAgentConnectionOperationKey(context));
+      let readbackStarted = false;
+      let readbackFinished = false;
+      let operationWrites = 0;
+      return new Promise<void>(resolve => {
+        const unsubscribe = client.getQueryCache().subscribe(event => {
+          if (event.type !== "updated") return;
+          const key = JSON.stringify(event.query.queryKey);
+          if (key === readbackKey) {
+            if (event.query.state.fetchStatus === "fetching") readbackStarted = true;
+            else if (readbackStarted && event.query.state.fetchStatus === "idle") readbackFinished = true;
+          } else if (key === operationKey) operationWrites++;
+          if (readbackFinished && operationWrites >= 2) {
+            unsubscribe();
+            resolve();
+          }
+        });
+      });
+    },
     mintedKeyCount: () => mintedKeyCount,
     qualificationReadCount: () => qualificationReads,
     effectCount: () => effectCount,
@@ -549,7 +626,7 @@ function ComputerAgentConnectionsPanelRegressionPreview() {
   </div>;
 }
 
-async function playComputerAgentConnectionsPanelRegression({ canvas, canvasElement, userEvent }: {
+interface ComputerAgentRegressionPlayArgs {
   readonly canvas: {
     findByRole(role: string, options: { readonly name: string | RegExp; readonly exact?: boolean }): Promise<HTMLElement>;
     getByRole(role: string, options: { readonly name: string | RegExp; readonly exact?: boolean }): HTMLElement;
@@ -563,7 +640,9 @@ async function playComputerAgentConnectionsPanelRegression({ canvas, canvasEleme
     type(element: HTMLElement, text: string): Promise<void>;
     selectOptions(element: HTMLElement, value: string): Promise<void>;
   };
-}) {
+}
+
+async function playComputerAgentConnectionsPanelRegression({ canvas, canvasElement, userEvent }: ComputerAgentRegressionPlayArgs) {
   const storyRoot = canvasElement.querySelector<HTMLElement>("[data-computer-agent-connections-regression]");
   if (!storyRoot) throw new Error("Computer-agent regression story root is missing");
   const environment = environments.get(storyRoot);
@@ -701,6 +780,101 @@ async function playComputerAgentConnectionsPanelRegression({ canvas, canvasEleme
   root.setAttribute("data-play-ready", "ready");
 }
 
+async function playComputerAgentLateCompletionRegression({ canvas, canvasElement, userEvent }: ComputerAgentRegressionPlayArgs) {
+  const storyRoot = canvasElement.querySelector<HTMLElement>("[data-computer-agent-connections-regression]");
+  if (!storyRoot) throw new Error("Computer-agent regression story root is missing");
+  const environment = environments.get(storyRoot);
+  if (!environment) throw new Error("Composed runtime/strict API fixture is missing");
+
+  async function navigateAwayAndBack(root: HTMLElement): Promise<void> {
+    const away = root.querySelector<HTMLAnchorElement>('.er-shell-nav a[data-destination="inbox"]');
+    if (!away) throw new Error("Workspace Inbox route link is missing");
+    await userEvent.click(away);
+    await canvas.findByRole("heading", { name: "Inbox" });
+    const back = root.querySelector<HTMLAnchorElement>('.er-shell-nav a[data-destination="connections"]');
+    if (!back) throw new Error("Workspace Connections route link is missing");
+    await userEvent.click(back);
+    await canvas.findByRole("heading", { name: "Computer-agent connections" });
+  }
+
+  await canvas.findByRole("heading", { name: "Computer-agent connections" });
+  await userEvent.type(canvas.getByRole("textbox", { name: "Logical connection ID" }), connectionId);
+  await userEvent.type(canvas.getByRole("textbox", { name: "Display name" }), privateName);
+  await userEvent.selectOptions(canvas.getByRole("combobox", { name: "Provider contour" }), "OTHER");
+  await userEvent.type(canvas.getByRole("textbox", { name: "Service actor issuer" }), privateIssuer);
+  await userEvent.type(canvas.getByRole("textbox", { name: "Service actor subject" }), privateSubject);
+  await userEvent.click(canvas.getByRole("checkbox", { name: "Write through MCP" }));
+  await userEvent.click(canvas.getByRole("checkbox", { name: "Cloud browser" }));
+  await userEvent.click(canvas.getByRole("checkbox", { name: "Research branch analysis" }));
+  await userEvent.click(canvas.getByRole("checkbox", { name: "I understand that saving will create or enable this connection." }));
+  await userEvent.click(canvas.getByRole("button", { name: "Review and prepare save" }));
+  await canvas.findByRole("heading", { name: "Review this exact change" });
+  environment.assertPreparedOnly();
+
+  environment.delayNextMutationResponse();
+  await userEvent.click(canvas.getByRole("button", { name: "Confirm and save enabled configuration" }));
+  environment.assertDelayedMutationPending();
+  await navigateAwayAndBack(storyRoot);
+  await canvas.findByText(/The outcome is unknown/i);
+  const unknownA = environment.captureOperationSnapshot();
+  if (unknownA.phase !== "unknown" || unknownA.mutationAttempts !== 1 || unknownA.mintedKeys !== 1) {
+    throw new Error("Unmounting the pending first attempt must retain A as unknown without another request");
+  }
+
+  await userEvent.click(canvas.getByRole("button", { name: "Read the protected configuration again" }));
+  await canvas.findByText(/protected readback matches the requested result, but a canonical receipt is still required/i);
+  const readbackA = environment.captureOperationSnapshot();
+  if (readbackA.idempotencyKey !== unknownA.idempotencyKey || readbackA.body !== unknownA.body ||
+      readbackA.phase !== "unknown" || readbackA.mutationAttempts !== 1 || readbackA.mintedKeys !== 1) {
+    throw new Error("Manual readback must preserve A's original reviewed identity without retrying it");
+  }
+
+  await userEvent.click(canvas.getByRole("button", { name: "Retry the same reviewed action" }));
+  await canvas.findByText(/server returned a receipt for revision 1/i);
+  await canvas.findByText(/Protected readback failed/i);
+  await userEvent.click(canvas.getByRole("button", { name: "Read the protected configuration again" }));
+  await canvas.findByText(/confirmed by receipt and protected readback at revision 1/i);
+  const settledA = environment.captureOperationSnapshot();
+  if (settledA.phase !== "settled" || settledA.mutationAttempts !== 2 || settledA.mintedKeys !== 1) {
+    throw new Error("A must settle through its explicit same-key retry and matching protected readback");
+  }
+
+  await userEvent.click(canvas.getByRole("button", { name: "New connection" }));
+  await userEvent.type(canvas.getByRole("textbox", { name: "Logical connection ID" }), lateConnectionId);
+  await userEvent.type(canvas.getByRole("textbox", { name: "Display name" }), latePrivateName);
+  await userEvent.selectOptions(canvas.getByRole("combobox", { name: "Provider contour" }), "OTHER");
+  await userEvent.type(canvas.getByRole("textbox", { name: "Service actor issuer" }), privateIssuer);
+  await userEvent.type(canvas.getByRole("textbox", { name: "Service actor subject" }), privateSubject);
+  await userEvent.click(canvas.getByRole("checkbox", { name: "Write through MCP" }));
+  await userEvent.click(canvas.getByRole("checkbox", { name: "Cloud browser" }));
+  await userEvent.click(canvas.getByRole("checkbox", { name: "Research branch analysis" }));
+  await userEvent.click(canvas.getByRole("checkbox", { name: "I understand that saving will create or enable this connection." }));
+  await userEvent.click(canvas.getByRole("button", { name: "Review and prepare save" }));
+  await canvas.findByRole("heading", { name: "Review this exact change" });
+  const reviewedB = environment.captureOperationSnapshot();
+  if (reviewedB.phase !== "review" || reviewedB.idempotencyKey === settledA.idempotencyKey ||
+      !reviewedB.body.includes(latePrivateName) || reviewedB.mintedKeys !== 2 || reviewedB.mutationAttempts !== 2) {
+    throw new Error("B must have its own reviewed key and body before it is attempted");
+  }
+
+  await userEvent.click(canvas.getByRole("button", { name: "Confirm and save enabled configuration" }));
+  await canvas.findByText(/confirmed by receipt and protected readback at revision 1/i);
+  const settledB = environment.captureOperationSnapshot();
+  if (settledB.phase !== "settled" || settledB.idempotencyKey !== reviewedB.idempotencyKey ||
+      settledB.body !== reviewedB.body || settledB.mintedKeys !== 2 || settledB.mutationAttempts !== 3 ||
+      settledB.effects !== 2) {
+    throw new Error("B must settle with its own reviewed identity and one explicit mutation request");
+  }
+
+  const lateAReadback = environment.waitForReadbackCompletion(connectionId);
+  environment.releaseDelayedMutationResponse();
+  await lateAReadback;
+  environment.assertOperationSnapshot(settledB);
+
+  const root = storyRoot.closest<HTMLElement>(".er-shell") ?? storyRoot;
+  root.setAttribute("data-play-ready", "ready");
+}
+
 export default {
   title: "Workspace/Computer-agent connections regression",
   component: ComputerAgentConnectionsPanelRegressionPreview,
@@ -711,4 +885,10 @@ export const ComputerAgentConnectionsPanelRegression = {
   name: "Computer Agent Connections Panel Regression",
   render: () => <ComputerAgentConnectionsPanelRegressionPreview />,
   play: playComputerAgentConnectionsPanelRegression,
+};
+
+export const ComputerAgentConnectionsLateCompletionRegression = {
+  name: "Computer Agent Late Completion Race",
+  render: () => <ComputerAgentConnectionsPanelRegressionPreview />,
+  play: playComputerAgentLateCompletionRegression,
 };
