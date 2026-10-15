@@ -2015,11 +2015,23 @@ results; it establishes no quality, speed or ranking superiority over Luna.
 The owner canceled the S52 bespoke AI Search overlay: copy-identity/digest
 variants, generation registry promotion/rollback, managed-target assignment,
 manifest V2/V3 and required-set machinery are removed from delivery. Keep the
-ordinary source-revision queue path that writes canonical Work under its existing
-source prefix and activates narrow D1 FTS; project-scoped Cloudflare AI Search
+ordinary `source.revision.admitted` queue path that writes canonical Work under
+its existing source prefix and activates narrow D1 FTS without waiting for
+provider uploads. Project-membership changes retain the D1 intent/outbox and
+Queue path (`project.membership.index.v1`), indexing only added sources still
+current under the exact membership receipt. Project-scoped Cloudflare AI Search
 uses the existing shared `private-prose-g2` and `private-literal-g2` instances,
-native folder filtering and Items APIs, with D1 canonical-metadata and project-
-currentness rechecks. Defer generation promotion until an actual embedding-model
+native folder filtering and Items APIs. Provider hits remain locators; D1
+canonical metadata, membership and project-currentness checks still gate
+evidence resolution. Defer generation promotion until an actual embedding-model
 change. Core migration 0141 and Search migration 0004 are already applied
 remotely and remain recorded there; Core migrations 0142–0151 are absent. This
 work performs no remote migration or drop.
+
+At source `d87e9c52`, the owner UI exposes agent-task assignment and an explicit
+current-access read for saved reports whose original scope expired; the saved
+source scope is preserved. No agent connections, grants or routes are currently
+configured, so live agent use is not established. CI `38701478845` passed full
+type checks, lint, boundaries, 51 unit cases, both builds and Worker smoke.
+Deployment and live acceptance remain pending; this source/CI checkpoint is not
+`LIVE_QUALIFIED`.
