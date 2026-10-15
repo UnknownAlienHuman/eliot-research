@@ -443,8 +443,16 @@ describe("Core managed target assignment on native D1", () => {
         generation: incompatibleGeneration,
         embedding_model: "incompatible/embedding-profile",
     }))).rejects.toMatchObject({ code: "AI_SEARCH_PROFILE_IMMUTABLE_MISMATCH" });
-    await expect(resolveManagedTargetSelectionV2(runtime.SEARCH_DB, "SHADOW", incompatibleGeneration))
-      .rejects.toMatchObject({ code: "MANAGED_SEARCH_PRODUCT_GENERATION_NOT_FOUND" });
+    const beforePlan = await registry.read(AI_SEARCH_PRIMARY_NAMESPACE);
+    expect(beforePlan?.artifact.registry.generations.some(item => item.generation === incompatibleGeneration)).toBe(false);
+    const planned = await resolveManagedTargetSelectionV2(runtime.SEARCH_DB, "SHADOW", incompatibleGeneration);
+    expect(planned.target).toEqual({
+      namespace: AI_SEARCH_PRIMARY_NAMESPACE,
+      managed_instance_id: AI_SEARCH_PRIMARY_PROJECTION_PROFILE.id,
+      managed_generation: incompatibleGeneration,
+      target_profile_identity_sha256: await aiSearchPhysicalProfileDigest(AI_SEARCH_PRIMARY_PROJECTION_PROFILE),
+    });
+    expect((await registry.read(AI_SEARCH_PRIMARY_NAMESPACE))?.artifact_sha256).toBe(beforePlan?.artifact_sha256);
   });
 
   it("produces the physical profile digest used by the generation registry", async () => {
