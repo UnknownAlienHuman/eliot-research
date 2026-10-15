@@ -508,7 +508,7 @@ export function createCloudflareServiceModelProviderManagementPort(
   dependencies: CloudflareServiceModelProviderManagementDependencies,
 ): CloudflareServiceModelProviderManagementPort {
   const accountId = requireAccount(dependencies.account_id);
-  const gatewayId = requireGateway(dependencies.gateway_id);
+  requireGateway(dependencies.gateway_id);
   return Object.freeze({
     available: dependencies.available,
     async create(input: ManagementInput, context: ManagementContext) {

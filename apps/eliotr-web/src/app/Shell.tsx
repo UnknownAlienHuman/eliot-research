@@ -71,7 +71,7 @@ export function Shell({ privacy, fixture, fixtureOutlet: FixtureOutlet, runtime 
             preferences.current.querySelector("summary")?.focus();
           }
         }}>
-          <summary aria-label={locale === "ru" ? "Настройки интерфейса" : "Workspace preferences"}>
+          <summary aria-label={locale === "ru" ? "Оформление" : "Appearance"}>
             <MaterialSymbol name={theme === "dark" ? "dark-mode" : "light-mode"} /><span>{locale === "ru" ? "Оформление" : "Appearance"}</span>
           </summary>
           <div className="er-shell-preferences-panel">
