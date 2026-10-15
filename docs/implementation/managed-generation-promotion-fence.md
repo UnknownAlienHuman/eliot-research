@@ -75,3 +75,45 @@ Complete required-set checks must also be fenced against source mutations and un
 ## Evidence limits
 
 Local source review and scoped fixtures are separate from native provider qualification. Remote indexing, target-wide required-set/drain acceptance, promotion/rollback, T2/T3 qualification and live routing readback remain pending. No Issue, PR or Goal is closed by these checkpoints.
+
+## Source integration — October 15, 2026
+
+The current source separates canonical bodies, stable project/provider copy
+identities, per-operation execution generations and target-wide Work staging
+authority. Staging uses an explicit `TARGET_REQUIRED_SET_V3` receipt; it never
+substitutes a registry revision/hash for a real persisted Core ScopeSnapshot.
+The complete required-set fence and captured time remain bound through the
+manifest, ordered copy maps and promotion evidence. Initial SHADOW registry
+absence is represented by a paired null capture; it does not authorize upload.
+
+Core migrations 0146–0150 are source additions. The existing execution-lease
+ledger now holds target writers durably: new effects/dispatch are blocked,
+pending or UNKNOWN effects prevent acquisition, and worker expiry cannot
+release a hold. Release requires the exact committed Search transition plus
+Core reconciliation. A later namespace declaration and expired source policy
+cannot strand recovery of an already committed CAS; reconciliation may block
+the obsolete Core root instead of activating it. This is explicit cross-D1
+recovery, not a cross-D1 transaction.
+
+The candidate tree reader advances through bounded durable steps. It uses a
+depth-first stack, checks ordered leaf coverage and observed depth, and binds
+custom-prefix cursors to immutable Work receipts. Real owner PROJECT snapshots
+can be bound to existing projection jobs. The per-project admission/outbox
+composition is still being completed before this path can dispatch effects.
+
+Verification on the assembled source: Core source-overlay TypeScript and
+changed-module ESLint pass; nine manifest/authority cases pass through the real
+canonical/copy writer, including shared-source A/B copies. Target writer-hold
+and recovery cases passed in selected runs, including actual Search registry
+CAS. One native D1 first-use case applied the complete Core migration chain
+through 0150. Shared-root retirement has five helper cases and one assembled
+inventory case using the actual Core schema and 0148 purge trigger. The
+candidate reader's 4096-copy traversal, custom-prefix resume and excessive-depth
+denial pass locally. These are source/local proofs.
+
+The actual immutable Work dependency producer and runtime callback, complete
+owner admission/Queue composition, target finalizer, runtime capacity/CPU
+qualification and live T2/T3 acceptance remain open. The documented source
+budget observations remain advisory, and historical provenance failures remain
+unwaived. No remote migration, provider write or deployment is established by
+this source checkpoint; parent PRs #214, #244 and #325 remain open.

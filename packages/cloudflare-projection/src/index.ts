@@ -7,6 +7,8 @@ export * from "./managed-source-dependencies.js";
 export { createD1ManagedTargetWriterDrain } from "./managed-target-writer-drain.js";
 export type { D1ManagedTargetWriterDrainDependencies } from "./managed-target-writer-drain.js";
 export { readManagedTargetManifestCandidateTreeV3 } from "./managed-target-candidate-readback.js";
+export { createTargetRequiredSetCopyAuthorityV3, validateTargetRequiredSetCopyAuthorityV3 } from "./target-required-set-copy-authority-v3.js";
+export { readManagedTargetRequiredSetCopyMapSetV3 } from "./managed-target-manifest-copy-map-v3.js";
 export type {
   ManagedTargetCandidateTreeReadInput,
   ManagedTargetCandidateReadbackStep,
