@@ -3,6 +3,7 @@
 // never instantiates a factory or transport, and never derives readiness from a revision.
 import { useId, type ReactNode, type Ref } from "react";
 import { Button, IconButton, Status } from "../../../primitives/primitives";
+import { MaterialSymbol } from "../../../catalog/MaterialSymbol";
 import type { LibraryPage, LibraryReadinessView, SourceRevisionPage, ProjectListView } from "@eliotr/owner-api-client";
 import {
   selectProjectRow,
@@ -57,6 +58,10 @@ type Copy = {
   readonly exact: string;
   readonly lexical: string;
   readonly semantic: string;
+  readonly channels: string;
+  readonly summaryReady: string;
+  readonly summaryWorking: string;
+  readonly summaryBlocked: string;
   readonly revisionLabel: string;
   readonly revisionRef: string;
   readonly technicalDetails: string;
@@ -98,6 +103,10 @@ const COPY: Readonly<Record<"en" | "ru", Copy>> = {
     exact: "Exact",
     lexical: "Lexical",
     semantic: "Semantic",
+    channels: "Search channels",
+    summaryReady: "Ready for search",
+    summaryWorking: "Still being indexed",
+    summaryBlocked: "Not searchable yet",
     revisionLabel: "Saved versions",
     revisionRef: "Revision",
     technicalDetails: "Technical details",
@@ -137,6 +146,10 @@ const COPY: Readonly<Record<"en" | "ru", Copy>> = {
     exact: "Точный",
     lexical: "Лексический",
     semantic: "Семантический",
+    channels: "Каналы поиска",
+    summaryReady: "Готов к поиску",
+    summaryWorking: "Ещё индексируется",
+    summaryBlocked: "Пока не ищется",
     revisionLabel: "Сохранённые версии",
     revisionRef: "Ревизия",
     technicalDetails: "Технические сведения",
@@ -203,6 +216,11 @@ export function ProjectsLibraryFeature(props: ProjectsLibraryFeatureProps) {
   };
 
   const quality = copy.quality[readiness?.qualityState ?? "unqualified"];
+  // One answer first — can this source be searched — and the per-channel facts one tap away.
+  const channels = readiness === undefined ? [] : [readiness.exact, readiness.lexical, readiness.semantic].map(item => CHANNEL_LABEL[item]);
+  const summary = readiness === undefined ? undefined
+    : channels.every(item => item === "ready") ? "ready" as const
+      : channels.some(item => item === "unavailable") ? "blocked" as const : "working" as const;
   const selectedSource = rows.find(row => row.sourceId === props.selectedSourceId);
   const versionDate = (iso: string): string => {
     const date = new Date(iso);
@@ -270,19 +288,25 @@ export function ProjectsLibraryFeature(props: ProjectsLibraryFeatureProps) {
         <section className="er-projects-library__panel" aria-label={copy.readinessHeading}>
           <h3 className="er-projects-library__panel-heading">{copy.readinessHeading}</h3>
           {selectedSource && <p className="er-projects-library__hint">{selectedSource.title}</p>}
-          {props.readinessState === "idle" || readiness === undefined ? null : (
+          {props.readinessState === "idle" || readiness === undefined || summary === undefined ? null : <>
+            <p className="er-projects-library__summary" data-state={summary}>
+              <MaterialSymbol name={summary === "ready" ? "check" : summary === "blocked" ? "error" : "pending"} />
+              <span>{summary === "ready" ? copy.summaryReady : summary === "blocked" ? copy.summaryBlocked : copy.summaryWorking}</span>
+            </p>
+            <p className="er-projects-library__summary-facts">
+              <span>{quality ?? copy.unknown}</span>
+              <span>{readiness.currentnessVerified ? copy.checked : copy.unverified}</span>
+            </p>
+            <details className="er-projects-library__channels"><summary>{copy.channels}</summary>
             <dl className="er-projects-library__readiness">
-              <dt>{copy.qualityLabel}</dt>
-              <dd>{quality ?? copy.unknown}</dd>
               <dt>{copy.exact}</dt>
               <dd data-state={CHANNEL_LABEL[readiness.exact]}>{channelText(readiness.exact)}</dd>
               <dt>{copy.lexical}</dt>
               <dd data-state={CHANNEL_LABEL[readiness.lexical]}>{channelText(readiness.lexical)}</dd>
               <dt>{copy.semantic}</dt>
               <dd data-state={CHANNEL_LABEL[readiness.semantic]}>{channelText(readiness.semantic)}</dd>
-            </dl>
-          )}
-          {readiness && <p className="er-projects-library__hint">{readiness.currentnessVerified ? copy.checked : copy.unverified}</p>}
+            </dl></details>
+          </>}
           <details className="er-projects-library__facts"><summary>{copy.technicalDetails}</summary><dl>
             <dt>{copy.readinessRefLabel}</dt><dd>{selectedSource.readinessRef}</dd>
             <dt>{copy.sourceIdLabel}</dt><dd>{selectedSource.sourceId}</dd>

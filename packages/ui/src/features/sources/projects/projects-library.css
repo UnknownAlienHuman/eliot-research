@@ -339,3 +339,41 @@
 .er-projects-library > .er-button {
   justify-self: start;
 }
+
+/* Readiness answers first: one state line with a glyph, then quality and currentness, then channels. */
+.er-projects-library__summary {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: var(--eliot-space-tight);
+  margin: 0;
+  padding: var(--eliot-space-hairline) var(--eliot-space-gutter) var(--eliot-space-hairline) var(--eliot-space-block-control);
+  border-radius: var(--eliot-shape-full);
+  background: var(--md-sys-color-tertiary-container);
+  color: var(--md-sys-color-on-tertiary-container);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+.er-projects-library__summary[data-state="ready"] { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+.er-projects-library__summary[data-state="blocked"] { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
+.er-projects-library__summary > .er-symbol { inline-size: var(--eliot-icon-small-size); block-size: var(--eliot-icon-small-size); }
+.er-projects-library__summary-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--eliot-space-tight) var(--eliot-space-block-control);
+  margin: 0;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-body-small-size);
+  line-height: var(--eliot-type-body-small-line-height);
+}
+.er-projects-library__summary-facts > span + span::before { content: "·"; margin-inline-end: var(--eliot-space-block-control); }
+.er-projects-library__channels > summary {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--eliot-size-control-small);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-large-size);
+  font-weight: var(--eliot-type-font-weight-medium);
+  cursor: pointer;
+}
