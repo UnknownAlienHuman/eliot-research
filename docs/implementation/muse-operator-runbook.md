@@ -58,6 +58,79 @@ Managed OAuth remains a distinct profile and cannot be combined with service-tok
 MCP application, AUD and `/mcp` path remain separate from ordinary owner Access. Connection configuration
 is independent of Google transport selection.
 
+## First local Codex WEB_INBOX client
+
+This is a local client path for the existing task protocol, not a new scheduler or provider integration.
+As of 2026-10-15, owner approval for the short-lived token and README-project grant is still pending; no
+Access, token, grant, connection, route or provider change has been made by this helper work.
+
+After approval, the root owner performs the remote setup and exact readbacks:
+
+1. Create one Cloudflare Access service token named `eliotr-codex-local-20261015` with a 24-hour lifetime.
+   Add one `Service Auth` policy to the existing owner application `d49aec19-82ff-4f9d-90a1-e3d9f565f32a`
+   (AUD `5aa0a2bf091fd0ef57d5455bc86dc5e1b727979df2d42d2b1fb6827875e348f`), including only that returned
+   service-token ID. The current app has no service-token binding; keep the existing owner-email policy,
+   Worker managed-OAuth profile, and separate MCP application/AUD unchanged.
+2. Allowlist only the returned service token **Client ID** in the existing Worker verifier. Cloudflare's
+   service-token application JWT uses the Client ID as `common_name` and has an empty `sub`; the verifier
+   uses signed `common_name` as the service principal. The token name and token UUID are not that principal.
+   See [Cloudflare's application-token claims](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/application-token/)
+   and [service-token request headers](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/)
+   (docs checked 2026-10-15).
+3. Register one connection with display name `Codex local`, contour `OTHER`, computer scope `LOCAL`, and
+   only transport `WEB_INBOX` plus task kind `RESEARCH_BRANCH_ANALYSIS`. Bind it to the verified issuer
+   `https://iuriilisenkov.cloudflareaccess.com` and the returned Client ID.
+4. Issue a 24-hour grant for project `idproject-280b8cf7e84c97b6308b09fef67de468927d3cf2776f1014`
+   (the README project), with exactly `run`, `recover` and `evidence`. Do not add ingest permission.
+5. Publish the `RESEARCH_BRANCH_ANALYSIS` route with strategy `ORIGINATING_MATCH` and only the exact
+   current Codex connection revision. Read back the connection, grant, route and readiness; then issue a
+   one-shot `WEB_INBOX` qualification challenge and create an owner-authorized dispatch for that same
+   project, grant, connection and task kind.
+
+Store these values in a user-only local environment file outside the repository. Do not put the file in
+Git, print it, or pass its contents as command-line arguments:
+
+```text
+ELIOTR_WEB_INBOX_ISSUER=https://iuriilisenkov.cloudflareaccess.com
+ELIOTR_WEB_INBOX_ORIGIN=https://eliotr-core.kleymor-metal.workers.dev
+ELIOTR_WEB_INBOX_CLIENT_ID=<returned Client ID>
+ELIOTR_WEB_INBOX_CLIENT_SECRET=<returned Client Secret>
+ELIOTR_WEB_INBOX_GRANT_ID=<returned project-grant locator>
+ELIOTR_WEB_INBOX_WORKER_SLOT=codex-local-20261015
+ELIOTR_WEB_INBOX_CHALLENGE_ID=<one-shot challenge ID, temporarily>
+ELIOTR_WEB_INBOX_CHALLENGE_TOKEN=<one-shot challenge token, temporarily>
+```
+
+From the checkout containing `scripts/codex-web-inbox.mjs`, run in PowerShell:
+
+```powershell
+$envFile = 'C:\Development\Research\.eliotr-private-inputs\codex-web-inbox.env'
+node "--env-file=$envFile" scripts/codex-web-inbox.mjs qualify
+```
+
+Remove the two challenge entries from the private file after qualification. Once the owner has created a
+dispatch, run one task cycle with `node "--env-file=$envFile" scripts/codex-web-inbox.mjs run`. It pulls and
+accepts only a dispatch matching the exact project, task kind, transport and grant, then pulls one task,
+reads supplied evidence in verified ranges of at most 64 KiB, records progress, and submits the strict
+existing callback. It makes no ingest request. The callback wake/recovery remains Core-owned.
+
+The helper invokes the installed `codex exec` once, with stdin, a temporary output schema, an ephemeral
+session and a read-only sandbox. It sets no model or provider override, so the local Codex profile keeps the
+owner's native model selection (including Luna Max when selected). It strips the Access credential
+environment from the child, uses no browser/search, writes no checkout files, and records usage as
+`UNKNOWN` because the CLI does not provide a verified billing receipt.
+
+Use the `status <external-task-id>` command to reconcile a task. The `recover <external-task-id>` command
+first requires a status readback showing a durable result and an unsettled workflow, then uses the canonical
+`agent-recover-<first 24 request_sha256 hex>` key. After an uncertain result response, read status before
+retrying or recovering; never create a replacement task or reuse another actor's lease.
+
+```powershell
+$taskId = 'external-task:<64 lowercase hex characters>'
+node "--env-file=$envFile" scripts/codex-web-inbox.mjs status $taskId
+node "--env-file=$envFile" scripts/codex-web-inbox.mjs recover $taskId
+```
+
 ## Pull tasks and return results
 
 Migrations `0085_external_agent_task_delivery.sql` and `0086_external_agent_task_payload.sql` plus four
