@@ -130,7 +130,8 @@ export async function resolveResearchExecutionSpend(ports: ResearchClientExecuti
   return readResearchModelSpendPolicy(canonicalJson({ ...approved.template,
     protocol: "eliotr.research-delegated-model-spend-policy.v1",
     principal_ref: navigation.access.principal_ref, client_class: navigation.access.client_class,
-    credential_generation: navigation.access.credential_generation, policy_generation: policyGeneration,
+    credential_generation: navigation.access.credential_generation, deployment_generation: deployment,
+    policy_generation: policyGeneration,
     policy_authority_ref: navigation.scope.policy_authority_ref, expires_at: new Date(expiry).toISOString(),
     sponsor_principal_ref: approved.grant.grantor_principal_ref, sponsor_policy_sha256: approved.binding.policy_sha256 }), common.provenance);
 }

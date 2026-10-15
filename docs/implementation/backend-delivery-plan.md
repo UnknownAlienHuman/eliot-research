@@ -32,6 +32,17 @@ narrow AI Gateway control credential, and GitHub delivery needs its dedicated
 repository credential. These bounded observations do not qualify the whole
 research, recovery or agent-delivery contours; the project Goal remains active.
 
+At `git-4bf01fafde1b`, CI `38792564266` and ordinary deployment passed.
+The owner submitted a real browser dispatch, accepted by the qualified Codex MCP
+actor as `run-9c23e221b5efd16e9b789409e9fe551f42fdaa7e5f74d59d`.
+Its immutable configuration keeps the grantor as configuration owner and Codex
+as execution principal. Preparation then failed before stage 0 or model dispatch:
+the delegated policy derived from an owner v2 template omitted the run deployment
+generation. The run was canceled through the owner API and read back as
+`CANCELLED`; execution compatibility was not weakened. A new explicit owner offer
+after the fix is required, rather than recovering across a changed backend
+fingerprint. Task analysis and result settlement remain pending.
+
 ## Owner model settings, October 15, 2026, 16:05 UTC
 
 Routine deployment of `0b017872cf18c3028cc63fa10a2dd510614d3829` is live as

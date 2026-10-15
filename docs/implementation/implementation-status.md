@@ -5,8 +5,10 @@ October 15 owner correction: provider/key/model registration is global in
 in and selected by default. At `git-ac60029457b0`, global settings, a fresh upload
 and both native indexes, saved-report reopen with exact citations, and browser
 Inbox publication have live readbacks. Native doctor diagnosis completed without
-an external key. Codex is connected and visible, but service-run configuration
-admission still blocks task acceptance. External key management and GitHub doctor
+an external key. At `git-4bf01fafde1b`, Codex accepted a real browser assignment;
+the run then failed during v2 delegated spend-policy preparation before stage 0
+and was canceled with a confirmed receipt. Task settlement is not yet accepted.
+External key management and GitHub doctor
 delivery still lack their narrow server credentials. See the dated
 [delivery observation](backend-delivery-plan.md#owner-live-acceptance-october-15-2026-1910-utc)
 for exact deployment and verification boundaries. These observations do not
