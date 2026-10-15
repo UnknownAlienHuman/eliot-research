@@ -1,6 +1,6 @@
 import type { ModelCallReceipt, ModelRoutePort } from "@eliotr/research";
 import {
-  digest, MAX_WORKFLOW_OUTPUT_BYTES, WorkflowCheckpointError,
+  digest, MAX_WORKFLOW_OUTPUT_BYTES, WorkflowCheckpointError, workflowFailure,
   type WorkflowAttemptRecoveryInput, type WorkflowPrincipal, type WorkflowStageHandler,
   type StageRequest,
 } from "@eliotr/cloudflare-workflows";
@@ -220,6 +220,15 @@ async function readSucceededAttempt(
   return readBoundOutput(dependencies, output);
 }
 
+/** Preserve the closed diagnostic vocabulary without claiming that paid work can be repeated. */
+export function modelRouteFailure(cause: unknown, stage: StageRequest["stage"]): WorkflowCheckpointError {
+  const failure = workflowFailure(cause, "STAGE", stage);
+  return new WorkflowCheckpointError("WORKFLOW_EFFECT_UNCERTAIN", {
+    ...failure, phase: "STAGE", stage, retryable: false,
+    dispatch_state: "OUTCOME_UNKNOWN", references_intact: "UNKNOWN", recovery_action: "RECONCILE",
+  });
+}
+
 export function createGovernedModelAttemptHandler(
   dependencies: GovernedModelAttemptDependencies,
 ): GovernedModelAttemptHandler {
@@ -385,7 +394,7 @@ export function createGovernedModelAttemptHandler(
     if (quoteExpired(prepared.authority.expires_at, dependencies.now?.() ?? Date.now())) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_AUTHORITY_STALE");
     let receipt: ModelCallReceipt;
     try { receipt = await dependencies.route.execute(prepared.call); }
-    catch (_cause) { throw new WorkflowCheckpointError("WORKFLOW_EFFECT_UNCERTAIN"); }
+    catch (cause) { throw modelRouteFailure(cause, input.request.stage); }
     if (receipt.output_object_ref !== model_output_object_ref) corrupt("model receipt output is bound to a different model object");
     const output: ModelOutputBinding = {
       output_object_ref: model_output_object_ref, output_sha256: receipt.output_sha256, output_size_bytes: 0, readback_sha256: receipt.output_sha256,

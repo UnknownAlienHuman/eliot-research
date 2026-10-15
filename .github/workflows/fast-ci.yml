@@ -49,6 +49,7 @@ jobs:
           packages/owner-api-client/src/evidence/citations/reauthorization.test.ts
           apps/eliotr-web/src/query/reports.test.ts
           packages/cloudflare-model-control/src/research-model-gateway-binding.test.ts
+          packages/cloudflare-model-execution/src/model-route-failure.test.ts
           --reporter=verbose
       - name: Build served assets and owner web
         run: |
