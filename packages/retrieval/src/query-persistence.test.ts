@@ -67,8 +67,11 @@ interface RawDatabase {
   prepare(sql: string): RawStatement;
   exec(sql: string): void;
 }
-function spread(params: readonly unknown[]): never[] {
-  return params as never[];
+function sqliteBindings(sql: string, params: readonly unknown[]): never[] {
+  const numbered = [...new Set(sql.match(/\?[1-9][0-9]*/gu) ?? [])];
+  // Node 22's SQLite API treats ?NNN as named parameters, unlike later positional support.
+  if (numbered.length === 0) return params as never[];
+  return [Object.fromEntries(numbered.map((name) => [name, params[Number(name.slice(1)) - 1]]))] as never[];
 }
 function makeD1(database: RawDatabase): RetrievalQueryD1 {
   return {
@@ -76,17 +79,17 @@ function makeD1(database: RawDatabase): RetrievalQueryD1 {
       bind: (...params: unknown[]) => ({
         async first<T>() {
           const statement = database.prepare(sql);
-          const row = (params.length === 0 ? statement.get() : statement.get(...spread(params))) as T | undefined;
+          const row = (params.length === 0 ? statement.get() : statement.get(...sqliteBindings(sql, params))) as T | undefined;
           return (row ?? null) as T | null;
         },
         async all<T>() {
           const statement = database.prepare(sql);
-          const rows = (params.length === 0 ? statement.all() : statement.all(...spread(params))) as unknown as T[];
+          const rows = (params.length === 0 ? statement.all() : statement.all(...sqliteBindings(sql, params))) as unknown as T[];
           return { results: rows };
         },
         async run() {
           const statement = database.prepare(sql);
-          const result = params.length === 0 ? statement.run() : statement.run(...spread(params));
+          const result = params.length === 0 ? statement.run() : statement.run(...sqliteBindings(sql, params));
           return { meta: { changes: Number(result.changes ?? 0) } };
         },
       }),
@@ -151,7 +154,7 @@ function openDatabase(): { raw: RawDatabase; d1: RetrievalQueryD1 } {
 function insert(database: RawDatabase, table: string, fields: Record<string, string | number | null>): void {
   const keys = Object.keys(fields);
   const statement = database.prepare(
-    `INSERT INTO ${table} (${keys.join(",")}) VALUES (${keys.map((_, i) => `?${i + 1}`).join(",")})`,
+    `INSERT INTO ${table} (${keys.join(",")}) VALUES (${keys.map(() => "?").join(",")})`,
   );
   statement.run(...(Object.values(fields) as never[]));
 }
