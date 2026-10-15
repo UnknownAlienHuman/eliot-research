@@ -2033,5 +2033,11 @@ current-access read for saved reports whose original scope expired; the saved
 source scope is preserved. No agent connections, grants or routes are currently
 configured, so live agent use is not established. CI `38701478845` passed full
 type checks, lint, boundaries, 51 unit cases, both builds and Worker smoke.
-Deployment and live acceptance remain pending; this source/CI checkpoint is not
-`LIVE_QUALIFIED`.
+Ordinary Wrangler deployments of `d87e9c52` and the citation-authorization client
+fix `3f1e4590` completed on 2026-10-15. The latter passed both main CI workflows
+and 22 focused report/citation tests. After an ordinary upload, run the existing
+`synchronizeResearchDeploymentAuthority` helper and verify that its active D1
+generation matches the deployed Worker; otherwise new Research admission is
+refused by the retained runtime authority checks. This is an existing runtime
+data update, not a schema migration or the deferred ADR-0009 ceremony.
+Live acceptance remains in progress; this checkpoint is not `LIVE_QUALIFIED`.
