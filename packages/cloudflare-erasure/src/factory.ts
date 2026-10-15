@@ -29,6 +29,8 @@ export interface CloudflareErasureDependencies {
   readonly search_database: D1Database;
   readonly evidence_bucket: R2Bucket;
   readonly work_bucket: R2Bucket;
+  /** Exact immutable full-root dependency verifier; absence keeps managed roots live. */
+  readonly verify_managed_root_dependency_set?: (rootRef: string) => Promise<void>;
   readonly managed_search?: ManagedSearchErasureNamespace;
   /** Existing offsite erasure adapter; it is never sufficient without the primary bucket adapter. */
   readonly backup?: BackupErasurePort;
@@ -79,6 +81,9 @@ export function createConfiguredErasureBackend(
       core_database: dependencies.core_database,
       search_database: dependencies.search_database,
       work_bucket: dependencies.work_bucket,
+      ...(dependencies.verify_managed_root_dependency_set === undefined ? {} : {
+        verify_managed_root_dependency_set: dependencies.verify_managed_root_dependency_set,
+      }),
       ...(dependencies.backup === undefined ? {} : { backup_offsite: dependencies.backup }),
       ...(dependencies.backup_primary_qualification === undefined
         ? {} : { backup_primary_qualification: dependencies.backup_primary_qualification }),
@@ -120,6 +125,7 @@ export function createConfiguredErasureBackend(
           dependencies.work_bucket,
           request,
           target,
+          dependencies.verify_managed_root_dependency_set,
         );
         return;
       }

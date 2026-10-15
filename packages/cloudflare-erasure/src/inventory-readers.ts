@@ -215,15 +215,45 @@ export async function registeredSharedCount(
   database: D1Database,
   sharedReferenceKey: string,
   selectedSubjects: ReadonlySet<string>,
+  verifyManagedRootDependencySet?: (rootRef: string) => Promise<void>,
 ): Promise<number> {
+  // Legacy readers may run before 0148. Only the composed managed-root path
+  // reads its columns; without a full immutable verifier every shared ref lives.
+  const managedColumns = verifyManagedRootDependencySet === undefined ? "" :
+    ",managed_root_ref,managed_root_state,managed_object_kind," +
+    "CASE WHEN managed_root_state='BLOCKED' AND NOT EXISTS (" +
+    "SELECT 1 FROM erasure_dependency_registry other WHERE other.managed_root_ref=d.managed_root_ref " +
+    "AND other.managed_root_state IS NOT 'BLOCKED') THEN 1 ELSE 0 END AS entire_root_blocked";
   const result = await database.prepare(
-    "SELECT exact_subject_ref FROM erasure_dependency_registry " +
+    "SELECT exact_subject_ref" + managedColumns + " FROM erasure_dependency_registry d " +
     `WHERE shared_reference_key=?1 AND state='ACTIVE' ORDER BY exact_subject_ref LIMIT ${INVENTORY_FETCH_LIMIT}`,
-  ).bind(sharedReferenceKey).all<{ exact_subject_ref: unknown }>();
+  ).bind(sharedReferenceKey).all<{
+    exact_subject_ref: unknown;
+    managed_root_ref?: unknown;
+    managed_root_state?: unknown;
+    managed_object_kind?: unknown;
+    entire_root_blocked?: unknown;
+  }>();
   const live = new Set<string>();
+  const verifiedRoots = new Set<string>();
   for (const row of boundedRows(result, "registered shared-reference inventory")) {
     const subject = assertErasureIdentifier(row.exact_subject_ref, "shared dependency subject");
-    if (!selectedSubjects.has(subject)) live.add(subject);
+    if (selectedSubjects.has(subject)) continue;
+    if (verifyManagedRootDependencySet !== undefined && row.managed_object_kind === "SHARED_REF" &&
+        row.managed_root_state === "BLOCKED" && row.entire_root_blocked === 1 &&
+        typeof row.managed_root_ref === "string") {
+      const rootRef = assertErasureIdentifier(row.managed_root_ref, "shared managed root");
+      if (!verifiedRoots.has(rootRef)) {
+        try { await verifyManagedRootDependencySet(rootRef); }
+        catch (cause) { erasureFail("ERASURE_CLOSURE_INCOMPLETE", "blocked shared root lacks complete immutable dependency proof", false, cause); }
+        verifiedRoots.add(rootRef);
+      }
+      // The entire root is irreversibly blocked, so its body-free shared tree
+      // no longer authorizes any source. Other sources' COPY_REF/CANONICAL
+      // objects retain their independent identities and are never selected here.
+      continue;
+    }
+    live.add(subject);
   }
   return live.size;
 }
