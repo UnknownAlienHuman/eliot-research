@@ -49,6 +49,7 @@ interface ComputerAgentRegressionEnvironment {
   mutationAttempts(): readonly MutationAttempt[];
   captureOperationSnapshot(): OperationSnapshot;
   assertOperationSnapshot(snapshot: OperationSnapshot): void;
+  assertNoHeldOperation(): void;
   delayNextMutationResponse(): void;
   assertDelayedMutationPending(): void;
   releaseDelayedMutationResponse(): void;
@@ -394,6 +395,11 @@ function createRegressionEnvironment(): ComputerAgentRegressionEnvironment {
     mutationAttempts: () => attempts,
     captureOperationSnapshot,
     assertOperationSnapshot,
+    assertNoHeldOperation() {
+      const { context } = requireOwnerBindings();
+      assert(client.getQueryData(computerAgentConnectionOperationKey(context)) == null,
+        "Editing an unsubmitted review must clear the protected frozen operation holder");
+    },
     delayNextMutationResponse() {
       assert(!shouldDelayNextMutationResponse && delayedMutationRelease === undefined,
         "Only one computer-agent mutation response may be delayed in this fixture");
@@ -415,21 +421,19 @@ function createRegressionEnvironment(): ComputerAgentRegressionEnvironment {
       const readbackKey = JSON.stringify([
         ...protectedQueryKey(context, "computer-agent-readback"), targetConnectionId, null,
       ]);
-      const operationKey = JSON.stringify(computerAgentConnectionOperationKey(context));
       let readbackStarted = false;
-      let readbackFinished = false;
-      let operationWrites = 0;
       return new Promise<void>(resolve => {
         const unsubscribe = client.getQueryCache().subscribe(event => {
           if (event.type !== "updated") return;
           const key = JSON.stringify(event.query.queryKey);
           if (key === readbackKey) {
             if (event.query.state.fetchStatus === "fetching") readbackStarted = true;
-            else if (readbackStarted && event.query.state.fetchStatus === "idle") readbackFinished = true;
-          } else if (key === operationKey) operationWrites++;
-          if (readbackFinished && operationWrites >= 2) {
-            unsubscribe();
-            resolve();
+            else if (readbackStarted && event.query.state.fetchStatus === "idle") {
+              unsubscribe();
+              // Let the awaiting readback continuation and its React commit
+              // finish before checking the visible selected connection.
+              requestAnimationFrame(() => resolve());
+            }
           }
         });
       });
@@ -637,6 +641,7 @@ interface ComputerAgentRegressionPlayArgs {
   readonly canvasElement: HTMLElement;
   readonly userEvent: {
     click(element: HTMLElement): Promise<void>;
+    clear(element: HTMLElement): Promise<void>;
     type(element: HTMLElement, text: string): Promise<void>;
     selectOptions(element: HTMLElement, value: string): Promise<void>;
   };
@@ -870,6 +875,19 @@ async function playComputerAgentLateCompletionRegression({ canvas, canvasElement
   environment.releaseDelayedMutationResponse();
   await lateAReadback;
   environment.assertOperationSnapshot(settledB);
+  const displayedName = canvas.getByRole("textbox", { name: "Display name" }) as HTMLInputElement;
+  if (displayedName.value !== latePrivateName) {
+    throw new Error("Late A readback replaced B's selected connection or visible form");
+  }
+  await userEvent.clear(displayedName);
+  await userEvent.type(displayedName, "Unsubmitted connection review");
+  await userEvent.click(canvas.getByRole("button", { name: "Review and prepare save" }));
+  await canvas.findByRole("heading", { name: "Review this exact change" });
+  await userEvent.click(canvas.getByRole("button", { name: "Edit this unsubmitted review" }));
+  environment.assertNoHeldOperation();
+  if (canvas.queryByRole("heading", { name: "Review this exact change" })) {
+    throw new Error("An unsubmitted review remained locked after returning to its draft");
+  }
 
   const root = storyRoot.closest<HTMLElement>(".er-shell") ?? storyRoot;
   root.setAttribute("data-play-ready", "ready");
