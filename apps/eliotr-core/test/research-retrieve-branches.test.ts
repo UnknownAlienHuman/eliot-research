@@ -11,10 +11,9 @@ import {
   type RetrievalTrace,
 } from "@eliotr/contracts";
 import { readFreezeProtocolAndScopeCheckpoint } from "../../../packages/cloudflare-research/src/research-protocol-freeze.js";
-import { digest, readWorkflowObject, INSTALLED_INQUIRY_PROTOCOL_REFS } from "@eliotr/cloudflare-research";
+import { digest, readWorkflowObject } from "@eliotr/cloudflare-research";
 import { readRetrieveBranchesCheckpoint, serializeRetrieveBranchesCheckpoint } from "@eliotr/cloudflare-research-runtime/research-retrieve-branches.js";
 import { decodeRetrieveBranchesCheckpoint, managedRetrievalRefIdV1 } from "@eliotr/retrieval";
-import { textDigest } from "@eliotr/cloudflare-workflows";
 import { runtime, access, principal, fixture, prepareRetrieveStage, rowCounts } from "./research-retrieve-fixture.js";
 
 describe("RETRIEVE_BRANCHES over the persisted protocol scope", () => {

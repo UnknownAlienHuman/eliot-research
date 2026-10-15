@@ -361,8 +361,8 @@ async function resolveCandidate(
   scopeRef: VersionedRef,
   access: EvidenceAccessContext,
 ): Promise<ResolvedEvidence> {
-  let { scope, authorization } = await loadAuthorizedScope(dependencies, scopeRef, access);
-  let source = await loadSource(
+  const { scope, authorization } = await loadAuthorizedScope(dependencies, scopeRef, access);
+  const source = await loadSource(
     dependencies,
     candidate.source_revision_ref,
     scope,

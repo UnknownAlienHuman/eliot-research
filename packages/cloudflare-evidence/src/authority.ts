@@ -1,4 +1,4 @@
-import { EvidenceRuntimeError, type EvidenceAuthorityPort } from "./types.js";
+import type { EvidenceAuthorityPort } from "./types.js";
 import {
   authorizeScopeAuthority,
   loadEvidenceHandle,

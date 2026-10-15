@@ -232,7 +232,8 @@ describe("S04 project mutations on actual Workers D1", () => {
     expect(titleOnly.revision).toBe(2);
     expect(await jobs()).toHaveLength(1);
 
-    const originalJob = (await jobs())[0]!;
+    const originalJob = (await jobs())[0];
+    if (originalJob === undefined) throw new Error("Project membership indexing intent is missing");
     await db.prepare("DELETE FROM outbox WHERE outbox_id=?1").bind(originalJob.outbox_id).run();
     await db.prepare("DELETE FROM operation_intent WHERE intent_id=?1 AND revision=1")
       .bind(originalJob.intent_id).run();

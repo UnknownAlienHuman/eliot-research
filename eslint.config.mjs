@@ -7,8 +7,11 @@ const typescriptConfigs = tseslint.configs.recommended.map((config) => ({
   files: typescriptFiles,
 }));
 const nodeGlobals = {
+  AbortController: "readonly",
   AbortSignal: "readonly",
   Response: "readonly",
+  Request: "readonly",
+  Headers: "readonly",
   TextDecoder: "readonly",
   TextEncoder: "readonly",
   URLSearchParams: "readonly",
@@ -61,6 +64,7 @@ export default tseslint.config(
     files: [
       "scripts/**/*.mjs",
       "integrations/**/*.mjs",
+      "tests/integration/browser/research-session-projection-emitted/qualify.mjs",
       "eslint.config.mjs",
       "**/vite.config.ts",
       "**/vitest.config.ts",
@@ -72,7 +76,18 @@ export default tseslint.config(
     },
   },
   {
-    files: ["apps/eliotr-pwa/public/sw.js"],
+    files: ["tests/integration/browser/research-session-projection-emitted/qualify.mjs"],
+    languageOptions: { globals: { window: "readonly", WebSocket: "readonly" } },
+  },
+  {
+    files: ["tests/integration/browser/research-session-projection-emitted/worker-entry.mjs"],
+    languageOptions: { globals: {
+      __ELIOT_PROJECTION_QUALIFICATION__: "readonly", Response: "readonly", Request: "readonly",
+      URL: "readonly", Headers: "readonly", btoa: "readonly",
+    } },
+  },
+  {
+    files: ["apps/eliotr-pwa/public/sw.js", "apps/eliotr-web/public/sw.js"],
     languageOptions: {
       globals: {
         URL: "readonly",

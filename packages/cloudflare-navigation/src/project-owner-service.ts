@@ -440,7 +440,6 @@ export function createProjectOwnerCapability(options: ProjectOwnerCapabilityOpti
       const current = activeBySource.get(sourceId);
       return current === undefined || (attachment === undefined && current.role !== "member");
     });
-    const membershipChanged = closeMembershipIds.length > 0 || insertMembershipIds.length > 0;
     if (attachment !== undefined && (input.title !== before.title ||
         activeMemberships.some((membership) => !requestedSources.has(membership.source_id)))) {
       fail("PROJECT_SOURCE_DENIED", 403, "Project attachment cannot rename the project or remove a member");

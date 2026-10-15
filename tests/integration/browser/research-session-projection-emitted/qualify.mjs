@@ -9,7 +9,6 @@ import { build, createServer } from "vite";
 import { chromium } from "playwright-core";
 
 const workspaceRoot = path.resolve(fileURLToPath(new URL("../../../../", import.meta.url)));
-const resumeRoot = path.dirname(workspaceRoot);
 const harnessRoot = path.dirname(fileURLToPath(import.meta.url));
 const donorStateRoot = String.raw`C:\Development\Research\eliot-research\.eliotr-state\frontend-service-release-20261011`;
 const ownerHandoffPath = path.join(donorStateRoot, "owning-recent-generated-handoff-20261013.json");
@@ -593,14 +592,14 @@ try {
   report.failure = error instanceof Error ? (error.stack ?? error.message).slice(0, 5000) : String(error).slice(0, 5000);
   report.finished_at = new Date().toISOString();
 } finally {
-  try { if (pageA && !pageA.isClosed()) await pageA.close(); } catch {}
-  try { if (pageB && !pageB.isClosed()) await pageB.close(); } catch {}
-  try { if (context) await context.close(); } catch {}
-  try { if (browser) await browser.close(); } catch {}
+  try { if (pageA && !pageA.isClosed()) await pageA.close(); } catch { /* Cleanup is best effort; preserve the primary qualification result. */ }
+  try { if (pageB && !pageB.isClosed()) await pageB.close(); } catch { /* Cleanup is best effort; preserve the primary qualification result. */ }
+  try { if (context) await context.close(); } catch { /* Cleanup is best effort; preserve the primary qualification result. */ }
+  try { if (browser) await browser.close(); } catch { /* Cleanup is best effort; preserve the primary qualification result. */ }
   try {
     if (browserServer) await browserServer.close();
     report.cleanup.browser_closed = true;
-  } catch {}
+  } catch { /* Cleanup is best effort; preserve the primary qualification result. */ }
   try {
     if (runtime !== undefined) {
       await runtime.dispose();
