@@ -275,7 +275,7 @@ export function ImportPanel({ apis, privacy, context, locale, onImportCommitted 
   };
   // One step at a time: each runs only when the previous one is confirmed, and any uncertainty,
   // refusal or failure stops the chain and leaves that step's own recovery action to the owner.
-  // A still-running conversion or admission is re-read with the same identity a bounded number of times.
+  // Admission with a known operation id is re-read by GET a bounded number of times.
   //
   // Conversion has no GET status route, so an uncertain or STARTED conversion is never re-POSTed by
   // the chain: automatic progress stops there and leaves the owner's own same-id request to retry.
@@ -309,7 +309,8 @@ export function ImportPanel({ apis, privacy, context, locale, onImportCommitted 
     if (file.conversion?.state === 'COMPLETE' && !file.admission && !file.uncertain) { admit(); return undefined; }
     if (file.uncertain === 'admission' || file.admission) {
       const operationId = file.admission?.admission_operation_id;
-      return operationId === undefined ? (setAuto(false), undefined) : again(admit);
+      if (operationId === undefined) { setAuto(false); return undefined; }
+      return again(admit);
     }
     setAuto(false);
     return undefined;
