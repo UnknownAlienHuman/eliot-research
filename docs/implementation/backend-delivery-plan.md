@@ -1,5 +1,39 @@
 # Backend delivery plan
 
+## Owner model settings, October 15, 2026, 16:05 UTC
+
+Routine deployment of `0b017872cf18c3028cc63fa10a2dd510614d3829` is live as
+`git-0b017872cf18` (Worker `8d794cb1-f6d5-43bd-ae53-1f024e95995d`), after
+fast-ci run `38765076326`, Wrangler dry-run and ordinary deploy. The D1 active
+deployment readback passed. Only migration `0152_service_model_provider_operation.sql`
+was pending and applied, with a Time Travel bookmark retained before application.
+
+Provider/key/model registration belongs to global `/settings`, independently of
+project selection. Real owner requests to model settings and the global catalog
+return 200 without a project. The former project provider-key write returns
+410 `SERVICE_MODEL_SETTINGS_GLOBAL`. Cloudflare Workers AI is built in and the
+default is `@cf/zai-org/glm-5.3-flash`; indexing remains managed AI Search.
+External-provider management currently reports unavailable because the Worker
+has no dedicated Cloudflare control credential. Storage readiness is not proof
+that an external model has been invoked or qualified.
+
+The official provider-config API accepts a sensitive `secret` field and stores
+it in the gateway's Secrets Store; global D1 operations retain metadata only.
+References checked October 15: [provider configurations API](https://developers.cloudflare.com/api/resources/ai_gateway/subresources/provider_configs/methods/create/),
+[BYOK](https://developers.cloudflare.com/ai-gateway/configuration/bring-your-own-keys/)
+and [custom providers](https://developers.cloudflare.com/ai-gateway/configuration/custom-providers/).
+The earlier project provider-key implementation supplies the REST codec donor;
+the global operation store has no project identity or plaintext credential.
+
+A new owner upload completed capture, toMarkdown and library admission, then was
+attached to a separate QA project. Its D1 section projection completed and the
+project indexing outbox was sent; literal AI Search finished, while prose was
+still running at the last readback. This upload exposed an existing broad
+source-insert invalidation: an unchanged saved report's scope became
+`SCOPE_INPUT_CHANGED`. Historical report reopen and Wiki proposal creation are
+therefore not currently accepted. Codex task registration and native doctor
+escalation also remain unfinished. The project Goal remains active.
+
 ## Full continuation, October 8
 
 The owner explicitly resumed the entire remaining documented implementation and

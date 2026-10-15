@@ -1,5 +1,15 @@
 # Implementation status is executable
 
+October 15 owner correction: provider/key/model registration is global in
+`/settings`, independently of project selection. Cloudflare Workers AI is built
+in and selected by default. The deployed owner settings and global catalog were
+read back at `git-0b017872cf18`; external key management still lacks its narrow
+Cloudflare control credential. Doctor escalation, Codex task handoff, current
+saved-report reopen and Wiki publication are not accepted. See the dated
+[delivery observation](backend-delivery-plan.md#owner-model-settings-october-15-2026-1605-utc)
+for exact deployment and verification boundaries. These observations do not
+promote the registry's broader contours to `LIVE_QUALIFIED`.
+
 The architecture defines the target product. The machine-readable
 [implementation registry](implementation-status.json) records registered source contours; the
 [gap register](gap-register.md) records missing behavior, and the
