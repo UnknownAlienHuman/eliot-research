@@ -356,6 +356,7 @@
   font-weight: var(--eliot-type-font-weight-medium);
 }
 .er-projects-library__summary[data-state="ready"] { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+.er-projects-library__summary[data-state="unknown"] { background: var(--md-sys-color-surface-container); color: var(--md-sys-color-on-surface-variant); }
 .er-projects-library__summary[data-state="blocked"] { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
 .er-projects-library__summary > .er-symbol { inline-size: var(--eliot-icon-small-size); block-size: var(--eliot-icon-small-size); }
 .er-projects-library__summary-facts {

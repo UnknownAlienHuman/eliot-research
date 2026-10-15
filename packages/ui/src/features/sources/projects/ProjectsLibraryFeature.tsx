@@ -60,6 +60,7 @@ type Copy = {
   readonly semantic: string;
   readonly channels: string;
   readonly summaryReady: string;
+  readonly summaryPartial: string;
   readonly summaryWorking: string;
   readonly summaryBlocked: string;
   readonly revisionLabel: string;
@@ -105,6 +106,7 @@ const COPY: Readonly<Record<"en" | "ru", Copy>> = {
     semantic: "Semantic",
     channels: "Search channels",
     summaryReady: "Ready for search",
+    summaryPartial: "Search partly available",
     summaryWorking: "Still being indexed",
     summaryBlocked: "Not searchable yet",
     revisionLabel: "Saved versions",
@@ -148,6 +150,7 @@ const COPY: Readonly<Record<"en" | "ru", Copy>> = {
     semantic: "Семантический",
     channels: "Каналы поиска",
     summaryReady: "Готов к поиску",
+    summaryPartial: "Поиск частично доступен",
     summaryWorking: "Ещё индексируется",
     summaryBlocked: "Пока не ищется",
     revisionLabel: "Сохранённые версии",
@@ -180,6 +183,20 @@ const CHANNEL_LABEL: Readonly<Record<ReadinessPresentation, "ready" | "partial" 
   unavailable: "unavailable",
   unknown: "unknown",
 };
+
+type ReadinessSummary = "ready" | "working" | "partial" | "blocked" | "unknown";
+
+function summarizeReadiness(
+  channels: readonly ("ready" | "partial" | "unavailable" | "unknown")[],
+  currentnessVerified: boolean,
+): ReadinessSummary {
+  if (!currentnessVerified || channels.length === 0 || channels.includes("unknown")) return "unknown";
+  if (channels.every(item => item === "ready")) return "ready";
+  if (channels.includes("partial")) return "working";
+  if (channels.some(item => item === "ready") && channels.some(item => item === "unavailable")) return "partial";
+  if (channels.every(item => item === "unavailable")) return "blocked";
+  return "unknown";
+}
 
 function panelStatus(
   state: ProjectsLibraryPanelState | ProjectsLibraryState,
@@ -218,9 +235,10 @@ export function ProjectsLibraryFeature(props: ProjectsLibraryFeatureProps) {
   const quality = copy.quality[readiness?.qualityState ?? "unqualified"];
   // One answer first — can this source be searched — and the per-channel facts one tap away.
   const channels = readiness === undefined ? [] : [readiness.exact, readiness.lexical, readiness.semantic].map(item => CHANNEL_LABEL[item]);
-  const summary = readiness === undefined ? undefined
-    : channels.some(item => item === "ready") ? "ready" as const
-      : channels.some(item => item === "unavailable") ? "blocked" as const : "working" as const;
+  const summary = readiness === undefined ? undefined : summarizeReadiness(channels, readiness.currentnessVerified);
+  const summaryIcon = summary === "ready" ? "check"
+    : summary === "blocked" ? "error"
+      : summary === "partial" || summary === "unknown" ? "info" : "pending";
   const selectedSource = rows.find(row => row.sourceId === props.selectedSourceId);
   const versionDate = (iso: string): string => {
     const date = new Date(iso);
@@ -290,8 +308,11 @@ export function ProjectsLibraryFeature(props: ProjectsLibraryFeatureProps) {
           {selectedSource && <p className="er-projects-library__hint">{selectedSource.title}</p>}
           {props.readinessState === "idle" || readiness === undefined || summary === undefined ? null : <>
             <p className="er-projects-library__summary" data-state={summary}>
-              <MaterialSymbol name={summary === "ready" ? "check" : summary === "blocked" ? "error" : "pending"} />
-              <span>{summary === "ready" ? copy.summaryReady : summary === "blocked" ? copy.summaryBlocked : copy.summaryWorking}</span>
+              <MaterialSymbol name={summaryIcon} />
+              <span>{summary === "ready" ? copy.summaryReady
+                : summary === "partial" ? copy.summaryPartial
+                  : summary === "blocked" ? copy.summaryBlocked
+                    : summary === "unknown" ? copy.unknown : copy.summaryWorking}</span>
             </p>
             <p className="er-projects-library__summary-facts">
               <span>{quality ?? copy.unknown}</span>

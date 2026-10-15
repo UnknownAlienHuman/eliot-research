@@ -96,9 +96,25 @@ const readyReadiness: LibraryReadinessView = {
   channels: [channel("exact_ready", "ready", "gen-1", "rc-1"), channel("lexical_ready", "ready", "gen-1", "rc-2"), channel("semantic_ready", "ready", "gen-1", "rc-3")],
 };
 
-const blockedReadiness: LibraryReadinessView = {
+const partlyAvailableReadiness: LibraryReadinessView = {
   ...readyReadiness,
   channels: [channel("exact_ready", "ready", "gen-1", "rc-1"), channel("lexical_ready", "failed"), channel("semantic_ready", "ready", "gen-1", "rc-3")],
+};
+
+const semanticPendingReadiness: LibraryReadinessView = {
+  ...readyReadiness,
+  channels: [channel("exact_ready", "ready", "gen-1", "rc-1"), channel("lexical_ready", "ready", "gen-1", "rc-2"), channel("semantic_ready", "running")],
+};
+
+const unknownCurrentnessReadiness: LibraryReadinessView = {
+  ...readyReadiness,
+  currentness: { verification: "NOT_VERIFIED", recorded_freshness: "unknown", reason_codes: ["CURRENTNESS_UNAVAILABLE"] },
+  channels: [channel("exact_ready", "ready", "gen-1", "rc-1"), channel("lexical_ready", "ready", "gen-1", "rc-2"), channel("semantic_ready", "not_requested")],
+};
+
+const allChannelsBlockedReadiness: LibraryReadinessView = {
+  ...readyReadiness,
+  channels: [channel("exact_ready", "failed"), channel("lexical_ready", "failed"), channel("semantic_ready", "failed")],
 };
 
 const revisions: SourceRevisionPage = {
@@ -186,12 +202,59 @@ export const Error: StoryObj<typeof ProjectsLibraryFeature> = {
   },
 };
 
-export const ReadinessBlocked: StoryObj<typeof ProjectsLibraryFeature> = {
-  args: base({ readiness: blockedReadiness }),
+function requireReadinessChannelStates(
+  canvas: HTMLElement,
+  expected: readonly ("ready" | "partial" | "unavailable" | "unknown")[],
+): void {
+  const disclosure = canvas.querySelector(".er-projects-library__channels > summary");
+  assert(disclosure instanceof HTMLElement, "Missing native search-channel disclosure.");
+  disclosure.click();
+  const details = disclosure.parentElement;
+  assert(details instanceof HTMLDetailsElement && details.open, "Search-channel facts must remain available in native details.");
+  const actual = Array.from(details.querySelectorAll("dd"), item => item.getAttribute("data-state"));
+  assert(actual.length === expected.length && expected.every((state, index) => actual[index] === state),
+    `Search channel facts must remain exact: ${String(actual)}`);
+}
+
+export const ReadinessPartlyAvailable: StoryObj<typeof ProjectsLibraryFeature> = {
+  args: base({ readiness: partlyAvailableReadiness }),
   play: ({ canvasElement }) => {
-    const summary = requireText(canvasElement, "Ready for search");
-    assert(summary.closest(".er-projects-library__summary")?.getAttribute("data-state") === "ready",
-      "A failed channel must not hide that another channel can search this source.");
+    const summary = requireText(canvasElement, "Search partly available");
+    assert(summary.closest(".er-projects-library__summary")?.getAttribute("data-state") === "partial",
+      "A failed channel alongside ready channels must not appear fully ready or fully blocked.");
+    requireReadinessChannelStates(canvasElement, ["ready", "unavailable", "ready"]);
+  },
+};
+
+export const ReadinessSemanticPending: StoryObj<typeof ProjectsLibraryFeature> = {
+  args: base({ readiness: semanticPendingReadiness }),
+  play: ({ canvasElement }) => {
+    const summary = requireText(canvasElement, "Still being indexed");
+    assert(summary.closest(".er-projects-library__summary")?.getAttribute("data-state") === "working",
+      "A running semantic channel must remain in progress while faster channels are ready.");
+    requireReadinessChannelStates(canvasElement, ["ready", "ready", "partial"]);
+  },
+};
+
+export const ReadinessUnknownCurrentness: StoryObj<typeof ProjectsLibraryFeature> = {
+  args: base({ readiness: unknownCurrentnessReadiness }),
+  play: ({ canvasElement }) => {
+    const summary = requireText(canvasElement, "Unknown");
+    assert(summary.closest(".er-projects-library__summary")?.getAttribute("data-state") === "unknown",
+      "Unverified currentness and a not-requested channel must stay neutral.");
+    assert(requireText(canvasElement, "Currentness was not verified.").getClientRects().length > 0,
+      "The existing currentness warning must remain visible.");
+    requireReadinessChannelStates(canvasElement, ["ready", "ready", "unknown"]);
+  },
+};
+
+export const ReadinessBlocked: StoryObj<typeof ProjectsLibraryFeature> = {
+  args: base({ readiness: allChannelsBlockedReadiness }),
+  play: ({ canvasElement }) => {
+    const summary = requireText(canvasElement, "Not searchable yet");
+    assert(summary.closest(".er-projects-library__summary")?.getAttribute("data-state") === "blocked",
+      "Only three unavailable channels may produce the not-searchable summary.");
+    requireReadinessChannelStates(canvasElement, ["unavailable", "unavailable", "unavailable"]);
   },
 };
 
