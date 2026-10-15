@@ -35,3 +35,5 @@ export type { ArtifactRevision, VersionedRef, EvidenceHandle } from '@eliotr/con
 export type { RawMarkdownConversionRequest, MarkdownConversionOptions } from '@eliotr/contracts';
 export * from './research/index';
 export * from './mutations/index';
+export { RESEARCH_DEFAULT_INQUIRY_PROTOCOL_REF } from "@eliotr/contracts";
+export type { ComputerAgentQualificationTransport, ProjectClientGrant } from "@eliotr/contracts";

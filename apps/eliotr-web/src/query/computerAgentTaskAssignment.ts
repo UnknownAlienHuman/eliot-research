@@ -1,5 +1,5 @@
 import type { ComputerAgentConnection } from "@eliotr/owner-api-client";
-import type { ComputerAgentQualificationTransport, ProjectClientGrant } from "@eliotr/contracts";
+import type { ComputerAgentQualificationTransport, ProjectClientGrant } from "@eliotr/owner-api-client";
 import type { BoundWorkspaceApis } from "../app/runtime";
 import type { PrivacyController, SessionContext } from "../app/privacy";
 import { protectedQueryKey, runProtectedRead } from "./client";

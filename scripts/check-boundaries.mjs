@@ -245,7 +245,7 @@ const PACKAGE_RULES = new Map([
 ["packages/cloudflare-research-configuration", new Set(["@eliotr/cloudflare-ai","@eliotr/cloudflare-evidence","@eliotr/cloudflare-model-control","@eliotr/cloudflare-model-control/research-prepared-model-transport-policies.js","@eliotr/cloudflare-model-control/research-model-pricing-store.js","@eliotr/cloudflare-model-transport/model-gateway-http-request.js","@eliotr/cloudflare-model-transport/model-gateway-provider-native-response.js","@eliotr/cloudflare-native-models","@eliotr/cloudflare-research","@eliotr/cloudflare-research-stages","@eliotr/cloudflare-workflows","@eliotr/contracts","@eliotr/interfaces","@eliotr/platform-cloudflare","zod"])],
   ["packages/cloudflare-research-runtime", new Set([
     "@eliotr/cloudflare-artifacts/artifact-draft-reauthorization.js",
-    "@eliotr/cloudflare-ai", "@eliotr/cloudflare-evidence", "@eliotr/cloudflare-navigation",
+    "@eliotr/cloudflare-ai", "@eliotr/cloudflare-ai/project-search", "@eliotr/cloudflare-evidence", "@eliotr/cloudflare-navigation",
     "@eliotr/cloudflare-projection", "@eliotr/cloudflare-research", "@eliotr/cloudflare-research-stages",
     "@eliotr/cloudflare-workflows", "@eliotr/contracts", "@eliotr/domain", "@eliotr/interfaces",
     "@eliotr/platform-cloudflare", "@eliotr/policy", "@eliotr/retrieval", "@eliotr/research",
@@ -343,6 +343,7 @@ const PACKAGE_RULES = new Map([
     "@eliotr/cloudflare-markdown",
     "@eliotr/cloudflare-navigation",
     "@eliotr/cloudflare-ai",
+    "@eliotr/cloudflare-ai/project-search",
     "@eliotr/cloudflare-projection",
     "@eliotr/cloudflare-evidence",
     "@eliotr/cloudflare-federation",

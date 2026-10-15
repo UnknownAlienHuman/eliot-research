@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, HandoffSheet, Status, type AgentSummary, type HandoffRequest, type TaskScope } from "@eliotr/ui";
 import type { ComputerAgentConnection, ComputerAgentDispatchCreateIntent } from "@eliotr/owner-api-client";
-import { RESEARCH_DEFAULT_INQUIRY_PROTOCOL_REF, type ComputerAgentQualificationTransport } from "@eliotr/contracts";
+import { RESEARCH_DEFAULT_INQUIRY_PROTOCOL_REF, type ComputerAgentQualificationTransport } from "@eliotr/owner-api-client";
 import type { BoundWorkspaceApis } from "./runtime";
 import type { PrivacyController, SessionContext } from "./privacy";
 import {
