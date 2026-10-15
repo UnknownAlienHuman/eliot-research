@@ -7,6 +7,10 @@ import type { BoundWorkspaceApis } from "../app/runtime";
 import { protectedQueryKey, runProtectedRead } from "./client";
 import { computerAgentQueryOptions } from "./computerAgents";
 
+export function computerAgentConnectionOperationKey(context: SessionContext) {
+  return [...protectedQueryKey(context, "computer-agent-operation"), "local-intent"] as const;
+}
+
 export type ComputerAgentConnectionPutInput = Omit<ComputerAgentConnection,
   "protocol" | "connection_id" | "revision" | "owner_principal_ref" | "state" | "created_at" | "updated_at"> & {
     readonly expected_revision: number;

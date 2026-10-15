@@ -5,6 +5,7 @@ import type { ComputerAgentConnection, ComputerAgentConnectionMutationIntent } f
 import { clearWorkspaceQueries, createWorkspaceQueryClient, protectedQueryKey } from "../query/client";
 import {
   computerAgentConnectionMutationActions,
+  computerAgentConnectionOperationKey,
   computerAgentQualificationOptions,
   type ComputerAgentConnectionPutInput,
 } from "../query/computerAgentConnections";
@@ -27,6 +28,15 @@ const traceId = "computer-agent-connections-regression-trace";
 type QualificationMode = "expired-ready" | "changed-transport";
 interface RequestEvent { readonly method: string; readonly path: string }
 interface MutationAttempt { readonly method: string; readonly path: string; readonly body: string; readonly key: string }
+interface OperationSnapshot {
+  readonly serialized: string;
+  readonly idempotencyKey: string;
+  readonly body: string;
+  readonly phase: string;
+  readonly mintedKeys: number;
+  readonly mutationAttempts: number;
+  readonly effects: number;
+}
 interface ComputerAgentRegressionEnvironment {
   readonly client: ReturnType<typeof createWorkspaceQueryClient>;
   readonly privacy: PrivacyController;
@@ -35,6 +45,8 @@ interface ComputerAgentRegressionEnvironment {
   requestCount(): number;
   requestsSince(index: number): readonly RequestEvent[];
   mutationAttempts(): readonly MutationAttempt[];
+  captureOperationSnapshot(): OperationSnapshot;
+  assertOperationSnapshot(snapshot: OperationSnapshot): void;
   mintedKeyCount(): number;
   qualificationReadCount(): number;
   effectCount(): number;
@@ -288,6 +300,40 @@ function createRegressionEnvironment(): ComputerAgentRegressionEnvironment {
     return current;
   }
 
+  function captureOperationSnapshot(): OperationSnapshot {
+    const { context } = requireOwnerBindings();
+    const key = computerAgentConnectionOperationKey(context);
+    const query = client.getQueryCache().find({ queryKey: key, exact: true });
+    const operation = client.getQueryData<{
+      readonly intent: ComputerAgentConnectionMutationIntent;
+      readonly phase: string;
+    }>(key);
+    if (!query || !operation) throw new Error("Protected operation holder is missing");
+    if (query.options.gcTime !== Infinity || query.meta?.protected !== true || !Object.isFrozen(operation.intent)) {
+      throw new Error("Protected operation holder lost retention, protection, or its frozen intent");
+    }
+    const serialized = JSON.stringify(operation);
+    if (serialized === undefined) throw new Error("Protected operation holder could not be serialized for comparison");
+    return {
+      serialized,
+      idempotencyKey: operation.intent.idempotencyKey,
+      body: operation.intent.body,
+      phase: operation.phase,
+      mintedKeys: mintedKeyCount,
+      mutationAttempts: attempts.length,
+      effects: effectCount,
+    };
+  }
+
+  function assertOperationSnapshot(snapshot: OperationSnapshot): void {
+    const current = captureOperationSnapshot();
+    assert(current.serialized === snapshot.serialized &&
+      current.idempotencyKey === snapshot.idempotencyKey && current.body === snapshot.body &&
+      current.phase === snapshot.phase && current.mintedKeys === snapshot.mintedKeys &&
+      current.mutationAttempts === snapshot.mutationAttempts && current.effects === snapshot.effects,
+    "Route remount must retain the exact frozen operation without minting or dispatching it again");
+  }
+
   function foreignCurrentDto(): ComputerAgentConnection {
     assert(connection !== undefined, "Owned connection fixture must exist before constructing the foreign DTO");
     return {
@@ -309,6 +355,8 @@ function createRegressionEnvironment(): ComputerAgentRegressionEnvironment {
     requestCount: () => requestEvents.length,
     requestsSince(index) { return requestEvents.slice(index); },
     mutationAttempts: () => attempts,
+    captureOperationSnapshot,
+    assertOperationSnapshot,
     mintedKeyCount: () => mintedKeyCount,
     qualificationReadCount: () => qualificationReads,
     effectCount: () => effectCount,
@@ -353,15 +401,27 @@ function createRegressionEnvironment(): ComputerAgentRegressionEnvironment {
     },
     assertForeignReceiptNotCommitted() {
       const attemptsForForeign = attempts.filter(attempt => attempt.path.endsWith(`/${foreignConnectionId}`));
-      const foreignDataCached = client.getQueryCache().getAll().some(query =>
-        query.state.data !== undefined && JSON.stringify(query.state.data).includes(foreignPrivateName));
+      const { context } = requireOwnerBindings();
+      const reviewedOperation = client.getQueryData<{ readonly intent: ComputerAgentConnectionMutationIntent }>(
+        computerAgentConnectionOperationKey(context),
+      );
+      const foreignServerDataCached = client.getQueryCache().getAll().some(query => {
+        const serverSurface = query.queryKey.includes("computer-agents") ||
+          query.queryKey.includes("computer-agent-readback") ||
+          query.queryKey.includes("computer-agent-qualification");
+        return serverSurface && query.state.data !== undefined &&
+          JSON.stringify(query.state.data).includes(foreignPrivateName);
+      });
       const sentinel = canonicalCommitSentinelKey === undefined
         ? undefined
         : client.getQueryCache().find({ queryKey: canonicalCommitSentinelKey, exact: true });
       assert(foreignConnection?.owner_principal_ref === "foreign-owner-regression" &&
         attemptsForForeign.length === 1 && mintedKeyCount === 2 && effectCount === 2,
       "Foreign create must return one canonical-looking receipt after one actual server effect");
-      assert(!foreignDataCached, "Foreign connection name must never enter protected Query data");
+      assert(reviewedOperation !== undefined && reviewedOperation.intent.body.includes(foreignPrivateName),
+        "Owner-reviewed intent may retain the exact user-entered name in its private operation holder");
+      assert(!foreignServerDataCached,
+        "Foreign server receipt or readback must never enter computer-agent server query data");
       assert(sentinel !== undefined && !sentinel.state.isInvalidated,
         "Foreign receipt must not invoke the canonical-commit invalidation callback");
     },
@@ -390,6 +450,9 @@ function createRegressionEnvironment(): ComputerAgentRegressionEnvironment {
       catch { /* ACCESS_SESSION_REQUIRED is the controlled fixture outcome. */ }
       assert(authorizationLossCount === 1 && requestsAtAuthorizationLoss === requestEvents.length,
         "Strict composed SDK request must report ACCESS_SESSION_REQUIRED and close the captured context");
+      assert(client.getQueryCache().getAll().filter(query => query.meta?.protected === true)
+        .every(query => query.state.data === undefined),
+      "Authorization loss must synchronously clear every protected query, including the reviewed operation holder");
     },
     async assertActionsBlockedAfterAuthorizationLoss(intent) {
       const { actions: ownerActions } = requireOwnerBindings();
@@ -506,6 +569,17 @@ async function playComputerAgentConnectionsPanelRegression({ canvas, canvasEleme
   const environment = environments.get(storyRoot);
   if (!environment) throw new Error("Composed runtime/strict API fixture is missing");
 
+  async function navigateAwayAndBack(root: HTMLElement): Promise<void> {
+    const away = root.querySelector<HTMLAnchorElement>('.er-shell-nav a[data-destination="inbox"]');
+    if (!away) throw new Error("Workspace Inbox route link is missing");
+    await userEvent.click(away);
+    await canvas.findByRole("heading", { name: "Inbox" });
+    const back = root.querySelector<HTMLAnchorElement>('.er-shell-nav a[data-destination="connections"]');
+    if (!back) throw new Error("Workspace Connections route link is missing");
+    await userEvent.click(back);
+    await canvas.findByRole("heading", { name: "Computer-agent connections" });
+  }
+
   await canvas.findByRole("heading", { name: "Computer-agent connections" });
   await userEvent.type(canvas.getByRole("textbox", { name: "Logical connection ID" }), connectionId);
   await userEvent.type(canvas.getByRole("textbox", { name: "Display name" }), privateName);
@@ -523,10 +597,18 @@ async function playComputerAgentConnectionsPanelRegression({ canvas, canvasEleme
   await userEvent.click(canvas.getByRole("button", { name: "Confirm and save enabled configuration" }));
   await canvas.findByText(/protected readback matches the requested result, but a canonical receipt is still required/i);
   environment.assertUnknownReadback();
+  const unknownOperation = environment.captureOperationSnapshot();
+  await navigateAwayAndBack(storyRoot);
+  environment.assertOperationSnapshot(unknownOperation);
+  await canvas.findByText(/protected readback matches the requested result, but a canonical receipt is still required/i);
   await userEvent.click(canvas.getByRole("button", { name: "Retry the same reviewed action" }));
   await canvas.findByText(/server returned a receipt for revision 1/i);
   environment.assertSameActionRetry();
   environment.assertReceiptReadbackFailure();
+  const receiptOperation = environment.captureOperationSnapshot();
+  await navigateAwayAndBack(storyRoot);
+  environment.assertOperationSnapshot(receiptOperation);
+  await canvas.findByText(/server returned a receipt for revision 1/i);
   if (canvas.queryByRole("button", { name: "Retry the same reviewed action", exact: true })) {
     throw new Error("Receipt/readback lag exposed a mutation retry");
   }
@@ -610,11 +692,9 @@ async function playComputerAgentConnectionsPanelRegression({ canvas, canvasEleme
   if (privateValues.some(value => visibleText.includes(value) || inputValues.includes(value) || codeValues.some(code => code.includes(value)))) {
     throw new Error("Authority loss left a private connection name, actor, or capability visible");
   }
-  const protectedData = environment.client.getQueryCache().getAll().filter(query =>
-    query.queryKey.includes("computer-agents") || query.queryKey.includes("computer-agent-readback") ||
-    query.queryKey.includes("computer-agent-qualification"));
+  const protectedData = environment.client.getQueryCache().getAll().filter(query => query.meta?.protected === true);
   if (protectedData.some(query => query.state.data !== undefined)) {
-    throw new Error("Authority loss left computer-agent state in the protected query cache");
+    throw new Error("Authority loss left data in the protected query cache, including the operation holder");
   }
   environment.assertNoRequestAfterAuthorizationLoss();
   const root = storyRoot.closest<HTMLElement>(".er-shell") ?? storyRoot;

@@ -1,5 +1,5 @@
-import { useEffect, useId, useRef, useState, type FormEvent } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type FormEvent } from "react";
+import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Button,
   Field,
@@ -16,6 +16,7 @@ import { computerAgentQueryOptions } from "../query/computerAgents";
 import { protectedQueryKey } from "../query/client";
 import {
   computerAgentConnectionMutationActions,
+  computerAgentConnectionOperationKey,
   computerAgentConnectionReadbackPageOptions,
   computerAgentQualificationOptions,
   type ComputerAgentConnectionPutInput,
@@ -290,6 +291,15 @@ function contextKey(context: SessionContext): string {
   return [context.cacheEpoch, context.principal, context.credentialGeneration, context.deploymentGeneration].join("\u001f");
 }
 
+// React Query replaces stored data with a structural clone that is no longer frozen, but the strict
+// owner SDK only accepts an immutable prepared intent (intentInput requires Object.isFrozen). Re-freeze
+// the intent read back from the protected entry so the same frozen request identity is executed. The
+// idempotency key and reviewed body are unchanged strings, so this preserves identity, never re-mints.
+function restoreOperation(operation: ConnectionOperation | undefined): ConnectionOperation | undefined {
+  if (operation === undefined || Object.isFrozen(operation.intent)) return operation;
+  return { ...operation, intent: Object.freeze({ ...operation.intent }) };
+}
+
 function emptyForm(): ConnectionForm {
   return {
     connectionId: "", displayName: "", contour: "", issuer: "", subject: "",
@@ -428,8 +438,46 @@ export function ComputerAgentConnectionsPanel({ locale, apis, privacy, context }
   const [preparing, setPreparing] = useState(false);
   const preparingRef = useRef(false);
   const attemptingRef = useRef(false);
-  const [operationState, setOperationState] = useState<ConnectionOperation>();
-  const operation = operationState?.contextKey === ownerContextKey ? operationState : undefined;
+  // An unsettled operation must survive an ordinary route unmount/remount. Plain component state is
+  // destroyed on remount, which would drop the frozen request identity (idempotency key, reviewed
+  // body, action, phase and any receipt). Hold it in a protected QueryClient entry keyed by the
+  // owner context, mirroring StudioPanel's local-intent memory: gcTime Infinity keeps it out of
+  // garbage collection while the entry exists. Only the current owner context may write it; owner
+  // loss is handled by the privacy controller's clearProtected(), which clears the workspace cache.
+  const operationKey = useMemo(
+    () => computerAgentConnectionOperationKey(context),
+    [context],
+  );
+  const operationQuery = useQuery<ConnectionOperation | undefined>({
+    queryKey: operationKey,
+    queryFn: skipToken,
+    gcTime: Infinity,
+    // Retain the already frozen mutation identity by reference across route unmount/remount.
+    structuralSharing: false,
+  });
+  const writeOperation = useCallback((update: (current: ConnectionOperation | undefined) => ConnectionOperation | undefined) => {
+    if (!privacy.isCurrent(context)) return;
+    queryClient.setQueryData<ConnectionOperation | undefined>(operationKey, current => update(current));
+  }, [context, operationKey, privacy, queryClient]);
+  // On unmount, a mutation that was still attempting has an unknown outcome. Transition the held
+  // operation to UNKNOWN rather than dropping it or leaving a stale "attempting" phase. A receipt
+  // that arrives after unmount still upgrades the held entry (see attempt()); an unknown that
+  // survives unmount is never downgraded again. The attempting guard resets per mount so a remount
+  // does not believe a stale in-flight attempt is still running and never autoresends it.
+  useEffect(() => {
+    attemptingRef.current = false;
+    return () => {
+      attemptingRef.current = false;
+      if (privacy.isCurrent(context)) writeOperation(current =>
+        current?.contextKey === ownerContextKey && current.phase === "attempting"
+          ? { ...current, phase: "unknown" as const }
+          : current);
+    };
+  }, [context, ownerContextKey, privacy, writeOperation]);
+  // Restore the same identity only within the exact current owner context.
+  const operation = operationQuery.data?.contextKey === ownerContextKey
+    ? restoreOperation(operationQuery.data)
+    : undefined;
   const [qualificationTarget, setQualificationTarget] = useState<QualificationTarget>();
   const [qualificationNow, setQualificationNow] = useState(() => Date.now());
   const idPrefix = useId();
@@ -481,7 +529,6 @@ export function ComputerAgentConnectionsPanel({ locale, apis, privacy, context }
     if (!privacy.isCurrent(context)) {
       setSelection(undefined);
       setFormState({ contextKey: ownerContextKey, value: emptyForm() });
-      setOperationState(undefined);
       setQualificationTarget(undefined);
       setFormError(undefined);
       return;
@@ -489,7 +536,6 @@ export function ComputerAgentConnectionsPanel({ locale, apis, privacy, context }
     if (formState.contextKey !== ownerContextKey) {
       setSelection(undefined);
       setFormState({ contextKey: ownerContextKey, value: emptyForm() });
-      setOperationState(undefined);
       setQualificationTarget(undefined);
       setFormError(undefined);
     }
@@ -509,7 +555,7 @@ export function ComputerAgentConnectionsPanel({ locale, apis, privacy, context }
       value: update(current.contextKey === ownerContextKey ? current.value : emptyForm()),
     }));
     setFormError(undefined);
-    if (operation?.phase === "settled") setOperationState(undefined);
+    if (operation?.phase === "settled") writeOperation(() => undefined);
   }
 
   function startNewConnection(): void {
@@ -518,7 +564,7 @@ export function ComputerAgentConnectionsPanel({ locale, apis, privacy, context }
     setQualificationTarget(undefined);
     setFormState({ contextKey: ownerContextKey, value: emptyForm() });
     setFormError(undefined);
-    setOperationState(undefined);
+    writeOperation(() => undefined);
   }
 
   function selectConnection(connection: ComputerAgentConnection): void {
@@ -527,7 +573,7 @@ export function ComputerAgentConnectionsPanel({ locale, apis, privacy, context }
     setFormState({ contextKey: ownerContextKey, value: formFromConnection(connection) });
     setQualificationTarget(undefined);
     setFormError(undefined);
-    setOperationState(undefined);
+    writeOperation(() => undefined);
   }
 
   function loadLatestSelection(): void {
@@ -543,7 +589,7 @@ export function ComputerAgentConnectionsPanel({ locale, apis, privacy, context }
     setSelection(undefined);
     setFormState({ contextKey: ownerContextKey, value: emptyForm() });
     setQualificationTarget(undefined);
-    setOperationState(undefined);
+    writeOperation(() => undefined);
     setFormError(undefined);
     setCursorHistory(history);
     setAfterConnectionId(cursor);
@@ -576,18 +622,18 @@ export function ComputerAgentConnectionsPanel({ locale, apis, privacy, context }
         setSelection({ contextKey: ownerContextKey, cursor, connection: result.connection });
         setFormState({ contextKey: ownerContextKey, value: formFromConnection(result.connection) });
         setQualificationTarget(undefined);
-        setOperationState(current => current?.intent.idempotencyKey === operationToRead.intent.idempotencyKey
+        writeOperation(current => current?.intent.idempotencyKey === operationToRead.intent.idempotencyKey
           ? { ...current, phase: "settled", receipt, lastReadback: { ...result, cursor }, readbackError: false }
           : current);
         reportCanonicalCommit(`computer-agent:${result.connection.connection_id}:${result.connection.revision}`);
         return;
       }
-      setOperationState(current => current?.intent.idempotencyKey === operationToRead.intent.idempotencyKey
+      writeOperation(current => current?.intent.idempotencyKey === operationToRead.intent.idempotencyKey
         ? { ...current, lastReadback: { ...result, cursor }, readbackError: false }
         : current);
     } catch {
       if (!privacy.isCurrent(context)) return;
-      setOperationState(current => current?.intent.idempotencyKey === operationToRead.intent.idempotencyKey
+      writeOperation(current => current?.intent.idempotencyKey === operationToRead.intent.idempotencyKey
         ? { ...current, readbackError: true }
         : current);
     }
@@ -637,14 +683,14 @@ export function ComputerAgentConnectionsPanel({ locale, apis, privacy, context }
         return;
       }
       const intent = actions.preparePut(form.connectionId, reviewedPut, current);
-      setOperationState({
+      writeOperation(() => ({
         contextKey: ownerContextKey,
         intent,
         action: { kind: "put", desired: reviewedPut, ...(current ? { previous: current } : {}) },
         pageCursor: selected?.cursor,
         phase: "review",
         readbackError: false,
-      });
+      }));
       setFormError(undefined);
     } catch {
       if (privacy.isCurrent(context)) setFormError(text.prepareFailed);
@@ -678,14 +724,15 @@ export function ComputerAgentConnectionsPanel({ locale, apis, privacy, context }
         return;
       }
       const intent = actions.prepareDisable(fresh.connection);
-      setOperationState({
+      const disabled = fresh.connection;
+      writeOperation(() => ({
         contextKey: ownerContextKey,
         intent,
-        action: { kind: "disable", previous: fresh.connection },
+        action: { kind: "disable", previous: disabled },
         pageCursor: selected.cursor,
         phase: "review",
         readbackError: false,
-      });
+      }));
       setFormError(undefined);
     } catch {
       if (privacy.isCurrent(context)) setFormError(text.prepareFailed);
@@ -708,7 +755,7 @@ export function ComputerAgentConnectionsPanel({ locale, apis, privacy, context }
       phase: "attempting",
       readbackError: false,
     };
-    setOperationState(inFlight);
+    writeOperation(() => inFlight);
     try {
       const receipt = await actions.execute(operationToRun.intent);
       if (!privacy.isCurrent(context)) return;
@@ -721,12 +768,12 @@ export function ComputerAgentConnectionsPanel({ locale, apis, privacy, context }
         receipt,
         readbackError: false,
       };
-      setOperationState(withReceipt);
+      writeOperation(() => withReceipt);
       await readbackFor(withReceipt, withReceipt.pageCursor);
     } catch {
       if (!privacy.isCurrent(context)) return;
       const unknown: ConnectionOperation = { ...inFlight, phase: "unknown", readbackError: false };
-      setOperationState(unknown);
+      writeOperation(() => unknown);
       await readbackFor(unknown, unknown.pageCursor);
     } finally {
       attemptingRef.current = false;
@@ -946,7 +993,7 @@ export function ComputerAgentConnectionsPanel({ locale, apis, privacy, context }
       <Button variant="primary" onClick={() => { void attempt(operation); }}>
         {operation.action.kind === "disable" ? text.disableExact(operation.intent.expectedRevision) : text.saveEnabled}
       </Button>
-      <Button variant="text" onClick={() => setOperationState(undefined)}>{text.editDraft}</Button>
+      <Button variant="text" onClick={() => writeOperation(() => undefined)}>{text.editDraft}</Button>
     </section>}
 
     {operation && (operation.phase === "attempting" || operation.phase === "unknown" || operation.phase === "receipt" || operation.phase === "settled") && noticeState &&
