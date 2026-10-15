@@ -13,7 +13,8 @@ const MAX_ITEMS_PER_SOURCE = 1024;
 const MAX_PROVIDER_KEY_BYTES = 128;
 const MAX_QUERY_CHARS = 100_000;
 const UPLOAD_BATCH_SIZE = 4;
-const PROJECT_FOLDER_HASH_CHARS = 32;
+// The longest instance name plus this alias keeps the folder within the indexed 64-byte prefix.
+const PROJECT_FOLDER_HASH_CHARS = 30;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const ITEM_KEY = /^[A-Za-z0-9][A-Za-z0-9._:@-]{0,127}$/u;
 
@@ -327,6 +328,7 @@ export async function searchProject(
     readonly project_id: string;
     readonly lane: ProjectSearchLane;
     readonly query: string;
+    readonly source_revision_refs?: readonly string[];
   },
 ): Promise<unknown> {
   const projectId = identifier(input.project_id, "project_id");
@@ -335,9 +337,18 @@ export async function searchProject(
   }
   const folder = await projectSearchFolderPrefix(projectId, input.lane);
   const folderEnd = `${folder.slice(0, -1)}0`;
+  const allowedRevisions = input.source_revision_refs === undefined ? undefined
+    : new Set(input.source_revision_refs.map((ref) => identifier(ref, "source revision scope")));
+  if (allowedRevisions?.size === 0) return { chunks: [] };
   const raw = await input.namespace.get(PROJECT_SEARCH_INSTANCES[input.lane]).search({
     messages: [{ role: "user", content: input.query }],
-    ai_search_options: { retrieval: { filters: { folder: { $gte: folder, $lt: folderEnd } } } },
+    ai_search_options: { retrieval: { filters: {
+      folder: { $gte: folder, $lt: folderEnd },
+      // Native text filters index the first 64 UTF-8 bytes. IDs are ASCII; D1 checks full identities below.
+      ...(allowedRevisions === undefined ? {} : {
+        source_revision_ref: { $in: [...new Set([...allowedRevisions].map((ref) => ref.slice(0, 64)))] },
+      }),
+    } } },
   });
   const response = record(raw);
   if (response === null || !Array.isArray(response.chunks) || response.chunks.length > 50) {
@@ -356,7 +367,8 @@ export async function searchProject(
   if (candidates.length === 0) return { ...response, chunks: [] };
   // Provider results are locators. Revision, section and content identity come from D1.
   const metadata = await canonicalItemMetadata(input.search_database, [...new Set(candidates.map((entry) => entry.itemKey))]);
-  const revisions = [...new Set([...metadata.values()].map((entry) => entry.source_revision_ref))];
+  const revisions = [...new Set([...metadata.values()].map((entry) => entry.source_revision_ref))]
+    .filter((ref) => allowedRevisions === undefined || allowedRevisions.has(ref));
   if (revisions.length === 0) return { ...response, chunks: [] };
   const current = await currentProjectRevisions(input.core_database, projectId, revisions);
   const chunks = candidates.flatMap(({ chunk, item, itemKey }) => {
