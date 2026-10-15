@@ -56,6 +56,7 @@ const SELECTION_KEYS = [
   "registry_revision",
   "selection_mode",
   "target",
+  "v1_exact_profile_identity_sha256",
 ] as const;
 const TARGET_IDENTITY_KEYS = [
   "managed_generation",
@@ -146,6 +147,10 @@ export function validateRootSelectedProjectionTargets(
     }
     assertProjectionInteger(selection.registry_revision, "Root selection registry revision", 1, Number.MAX_SAFE_INTEGER);
     assertProjectionSha256(selection.registry_artifact_sha256, "Root selection registry artifact digest");
+    assertProjectionSha256(
+      selection.v1_exact_profile_identity_sha256,
+      "Root selection V1 exact registry profile digest",
+    );
     assertProjectionIdentifier(selection.target.namespace, "Root-selected registry namespace");
     assertProjectionIdentifier(selection.target.managed_instance_id, "Root-selected managed instance");
     assertProjectionIdentifier(selection.target.managed_generation, "Root-selected managed generation");
@@ -285,7 +290,6 @@ export function verifyProjectCopyMapSet(
   plan: ManagedProjectCopyPlan,
 ): void {
   if (
-    mapSet.protocol !== "eliotr.managed-project-copy-map-set.v1" ||
     mapSet.source_revision_ref !== canonical.source_revision_ref ||
     mapSet.complete_residency_key_sha256 !== canonical.complete_residency_key_sha256 ||
     mapSet.canonical_projection_generation !== canonical.canonical_projection_generation ||
@@ -301,6 +305,56 @@ export function verifyProjectCopyMapSet(
   ) {
     projectionFail("PROJECTION_AUTHORITY_CONFLICT", "project-copy Work receipt differs from the complete provider plan");
   }
+  if (mapSet.protocol === "eliotr.managed-project-copy-map-set.v1") {
+    if (
+      plan.layout !== undefined ||
+      plan.target_selection !== undefined ||
+      plan.scope_snapshot_id !== undefined ||
+      plan.scope_snapshot_revision !== undefined ||
+      plan.scope_snapshot_digest !== undefined ||
+      plan.project_copy_map_index_protocol !== undefined ||
+      plan.project_copy_map_index_ref !== undefined ||
+      plan.project_copy_map_index_sha256 !== undefined
+    ) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V1 map-set receipt cannot satisfy a V2 copy plan");
+    }
+    return;
+  }
+  const selection = plan.target_selection;
+  if (
+    mapSet.protocol !== "eliotr.managed-project-copy-map-set.v2" ||
+    plan.layout !== "PROJECT_COPY_V2" ||
+    mapSet.layout !== "PROJECT_COPY_V2" ||
+    selection === undefined ||
+    mapSet.scope_snapshot_id !== plan.scope_snapshot_id ||
+    mapSet.scope_snapshot_revision !== plan.scope_snapshot_revision ||
+    mapSet.scope_snapshot_digest !== plan.scope_snapshot_digest ||
+    canonicalProjectionJson(mapSet.target_selection) !== canonicalProjectionJson(selection) ||
+    mapSet.copy_map_index_ref.length === 0 ||
+    mapSet.provider_copy_count !== plan.provider_copy_count ||
+    mapSet.provider_item_count !== plan.provider_item_count ||
+    mapSet.pages.length !== mapSet.page_count ||
+    mapSet.resource_bounds.protocol !== "eliotr.project-copy-resource-bounds.v2" ||
+    mapSet.resource_bounds.provider_copy_count !== mapSet.provider_copy_count ||
+    mapSet.resource_bounds.provider_item_count !== mapSet.provider_item_count ||
+    mapSet.resource_bounds.copy_map_page_count !== mapSet.page_count ||
+    mapSet.resource_bounds.copy_map_index_put_count !== 1 ||
+    mapSet.resource_bounds.copy_map_r2_put_count !== mapSet.page_count + 1 ||
+    mapSet.resource_bounds.copy_map_r2_subrequest_bound !== 2 * (mapSet.page_count + 1) ||
+    mapSet.resource_bounds.copy_map_r2_subrequest_bound > mapSet.resource_bounds.maximum_subrequest_bound ||
+    mapSet.resource_bounds.cpu_time_budget_ms !== 30_000 ||
+    mapSet.resource_bounds.maximum_subrequest_bound !== 10_000
+  ) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V2 map-set receipt differs from its selected scope or index plan");
+  }
+  assertProjectionIdentifier(mapSet.scope_snapshot_id, "V2 copy map scope snapshot ID");
+  assertProjectionInteger(mapSet.scope_snapshot_revision, "V2 copy map scope revision", 1, Number.MAX_SAFE_INTEGER);
+  assertProjectionSha256(mapSet.scope_snapshot_digest, "V2 copy map scope digest");
+  assertProjectionIdentifier(mapSet.copy_map_index_ref, "V2 copy map index reference");
+  assertProjectionSha256(mapSet.copy_map_index_sha256, "V2 copy map index digest");
+  assertProjectionSha256(mapSet.page_set_sha256, "V2 copy map page-set digest");
+  assertProjectionSha256(mapSet.provider_copy_set_sha256, "V2 provider-copy set digest");
+  assertProjectionSha256(mapSet.provider_item_set_sha256, "V2 provider-item set digest");
 }
 
 export function verifyWorkSet(

@@ -1,9 +1,12 @@
 import {
   context,
   createManagedProjectionTestPort,
+  createManagedProjectionTestWriter,
   createMemoryManagedItemAuthority,
   downloaded,
   item,
+  managedProjectCopyPlanV1,
+  managedProjectCopyPlanV2,
   managedDocument,
   profile,
   SECTION_SHA256,
@@ -13,6 +16,173 @@ import { describe, expect, it, vi } from "vitest";
 import { ManagedItemRecoveryBlockedError } from "./managed-index-readback.js";
 
 describe("managed AI Search projection adapter", () => {
+  it("allows new ACTIVE writes only through an exact V2 project-copy selection", async () => {
+    let key = "";
+    let content = "";
+    let metadata: Readonly<Record<string, string>> = {};
+    const uploadAndPoll = vi.fn(async (
+      uploadedKey: string,
+      uploadedContent: string,
+      options?: { readonly metadata?: Readonly<Record<string, string>> },
+    ) => {
+      key = uploadedKey;
+      content = uploadedContent;
+      metadata = options?.metadata ?? {};
+      return {
+        id: "provider-active-v2",
+        key,
+        status: "completed",
+        chunks_count: 1,
+        file_size: new TextEncoder().encode(content).byteLength,
+        metadata: {
+          ...metadata,
+          filename: key.slice(key.lastIndexOf("/") + 1),
+          folder: key.slice(0, key.lastIndexOf("/") + 1),
+        },
+      };
+    });
+    const authority = createMemoryManagedItemAuthority();
+    const activeProfile = { ...profile, managed_generation_active: true };
+    const copyPlan = await managedProjectCopyPlanV2("ACTIVE", activeProfile);
+    const plannedItem = copyPlan.items[0];
+    if (plannedItem === undefined) throw new Error("V2 fixture has no provider item");
+    const canonicalGeneration = plannedItem.canonical_projection_generation;
+    const port = createManagedProjectionTestWriter({
+      authority,
+      profile: activeProfile,
+      namespace: {
+        get() {
+          return {
+            items: {
+              uploadAndPoll,
+              get() {
+                return {
+                  async info() {
+                    return {
+                      id: "provider-active-v2",
+                      key,
+                      status: "completed",
+                      chunks_count: 1,
+                      file_size: new TextEncoder().encode(content).byteLength,
+                      metadata: {
+                        ...metadata,
+                        filename: key.slice(key.lastIndexOf("/") + 1),
+                        folder: key.slice(0, key.lastIndexOf("/") + 1),
+                      },
+                    };
+                  },
+                  async download() { return downloaded(key.slice(key.lastIndexOf("/") + 1), content); },
+                };
+              },
+            },
+          };
+        },
+      },
+    });
+
+    const receipt = await port.index(
+      context,
+      "execution-active-v2",
+      canonicalGeneration,
+      copyPlan,
+      TEST_EXECUTION_FENCE,
+    );
+    expect(uploadAndPoll).toHaveBeenCalledOnce();
+    expect(receipt).toMatchObject({
+      state: "READY",
+      item_count: 1,
+      instance_id: activeProfile.managed_instance_id,
+      managed_generation: activeProfile.managed_generation,
+      reason_codes: [],
+    });
+    expect(authority.readManagedItemEffect(
+      context,
+      "execution-active-v2",
+      plannedItem.item_key,
+    )?.state).toBe("READBACK_VERIFIED");
+  });
+
+  it("keeps legacy flat ACTIVE writes refused before provider upload", async () => {
+    const uploadAndPoll = vi.fn();
+    const activeProfile = { ...profile, managed_generation_active: true };
+    const port = createManagedProjectionTestPort({
+      authority: createMemoryManagedItemAuthority(),
+      profile: activeProfile,
+      namespace: {
+        get() {
+          return {
+            items: {
+              uploadAndPoll,
+              get() { throw new Error("ACTIVE legacy write must stop before item readback"); },
+            },
+          };
+        },
+      },
+    });
+
+    await expect(port.index(context, "execution-active-flat", [item], TEST_EXECUTION_FENCE))
+      .resolves.toMatchObject({ state: "DEGRADED" });
+    expect(uploadAndPoll).not.toHaveBeenCalled();
+  });
+
+  it("keeps PROJECT_COPY_V1 ACTIVE writes refused before provider upload", async () => {
+    const uploadAndPoll = vi.fn();
+    const activeProfile = { ...profile, managed_generation_active: true };
+    const copyPlan = await managedProjectCopyPlanV1(activeProfile);
+    const plannedItem = copyPlan.items[0];
+    if (plannedItem === undefined) throw new Error("V1 fixture has no provider item");
+    const port = createManagedProjectionTestWriter({
+      authority: createMemoryManagedItemAuthority(),
+      profile: activeProfile,
+      namespace: {
+        get() {
+          return {
+            items: {
+              uploadAndPoll,
+              get() { throw new Error("V1 ACTIVE write must stop before item readback"); },
+            },
+          };
+        },
+      },
+    });
+
+    await expect(port.index(
+      context,
+      "execution-active-project-copy-v1",
+      plannedItem.canonical_projection_generation,
+      copyPlan,
+      TEST_EXECUTION_FENCE,
+    )).resolves.toMatchObject({ state: "DEGRADED" });
+    expect(uploadAndPoll).not.toHaveBeenCalled();
+  });
+
+  it("rejects a V2 SHADOW-purpose plan against an ACTIVE profile before provider access", async () => {
+    const activeProfile = { ...profile, managed_generation_active: true };
+    const copyPlan = await managedProjectCopyPlanV2("SHADOW", activeProfile);
+    const getInstance = vi.fn(() => ({
+      items: {
+        uploadAndPoll: vi.fn(),
+        get() { throw new Error("mismatched target selection must stop before item access"); },
+      },
+    }));
+    const port = createManagedProjectionTestWriter({
+      authority: createMemoryManagedItemAuthority(),
+      profile: activeProfile,
+      namespace: { get: getInstance },
+    });
+    const canonicalGeneration = copyPlan.items[0]?.canonical_projection_generation;
+    if (canonicalGeneration === undefined) throw new Error("V2 fixture has no canonical generation");
+
+    await expect(port.index(
+      context,
+      "execution-active-wrong-purpose",
+      canonicalGeneration,
+      copyPlan,
+      TEST_EXECUTION_FENCE,
+    )).resolves.toMatchObject({ state: "DEGRADED" });
+    expect(getInstance).not.toHaveBeenCalled();
+  });
+
   it("requires upload completion and exact item-info readback", async () => {
     let key = "";
     let size = 0;

@@ -10,7 +10,11 @@ import type {
 } from "@eliotr/platform-cloudflare";
 import { DeliveryRuntimeError } from "@eliotr/platform-cloudflare";
 import { describe, expect, it, vi } from "vitest";
-import { projectionDigest } from "./canonical.js";
+import { projectionDigest, stableProjectionId } from "./canonical.js";
+import {
+  managedProjectFolderPrefixV2,
+  managedProjectGenerationMetadataValue,
+} from "./managed-project-path.js";
 import { createProjectionExecutionHandler } from "./executor.js";
 import type {
   CanonicalProjectionResourceBounds,
@@ -25,6 +29,7 @@ import type {
   ProjectionExecutionProfile,
   ManagedTargetSelectionV2,
   ProjectionServingTargetDeltaPort,
+  ProjectCopyScopeV2,
   ProjectionSearchReceipt,
   ProjectionSettlement,
   ProjectionSourceContext,
@@ -256,14 +261,34 @@ function fixture(input: {
         canonical: CanonicalSourceProjectionReceipt,
         target: ManagedProjectCopyTargetReceipt,
         copies: readonly ManagedProjectCopyMapReceipt[],
+        scope?: ProjectCopyScopeV2,
       ) => {
         events.push("copy-map");
-        const providerCopySetSha256 = await projectionDigest(copies.map((copy) => ({
-          project_id: copy.project_id,
-          project_membership_id: copy.project_membership_id,
-          membership_generation: copy.membership_generation,
-          provider_copy_set_sha256: copy.provider_copy_set_sha256,
-        })));
+        const providerCopySetSha256 = await projectionDigest(copies.map((copy) =>
+          copy.protocol === "eliotr.managed-project-copy-map.v2"
+            ? {
+                project_id: copy.project_id,
+                project_membership_id: copy.project_membership_id,
+                membership_identity_version: copy.membership_identity_version,
+                legacy_project_membership_id: copy.membership_identity_version === 1
+                  ? copy.legacy_project_membership_id
+                  : null,
+                stable_project_membership_id: copy.membership_identity_version === 2
+                  ? copy.stable_project_membership_id
+                  : null,
+                membership_revision: copy.membership_identity_version === 2 ? copy.membership_revision : null,
+                membership_generation: copy.membership_generation,
+                project_membership_generation: copy.project_membership_generation,
+                folder_prefix: copy.folder_prefix,
+                provider_copy_set_sha256: copy.provider_copy_set_sha256,
+              }
+            : {
+                project_id: copy.project_id,
+                project_membership_id: copy.project_membership_id,
+                membership_generation: copy.membership_generation,
+                provider_copy_set_sha256: copy.provider_copy_set_sha256,
+              }
+        ));
         const providerItemSetSha256 = await projectionDigest(copies.flatMap((copy) =>
           copy.items.map((item) => ({
             item_key: item.item_key,
@@ -281,6 +306,44 @@ function fixture(input: {
           provider_copy_count: copies.length,
           provider_item_count: providerItemCount,
         }];
+        if (scope !== undefined) {
+          const copyMapIndexRef = `projection/${canonical.source_revision_ref}/copy-maps/index/` +
+            `${target.managed_generation}/${scope.scope_snapshot_digest}/${providerCopySetSha256}.json`;
+          return {
+            protocol: "eliotr.managed-project-copy-map-set.v2" as const,
+            layout: "PROJECT_COPY_V2" as const,
+            source_revision_ref: canonical.source_revision_ref,
+            complete_residency_key_sha256: canonical.complete_residency_key_sha256,
+            canonical_projection_generation: canonical.canonical_projection_generation,
+            canonical_source_ref: canonical.canonical_source_ref,
+            canonical_source_sha256: canonical.canonical_source_sha256,
+            target,
+            target_selection: scope.target_selection,
+            scope_snapshot_id: scope.scope_snapshot_id,
+            scope_snapshot_revision: scope.scope_snapshot_revision,
+            scope_snapshot_digest: scope.scope_snapshot_digest,
+            page_count: pages.length,
+            page_set_sha256: await projectionDigest(pages),
+            copy_map_index_ref: copyMapIndexRef,
+            copy_map_index_sha256: B,
+            provider_copy_count: copies.length,
+            provider_copy_set_sha256: providerCopySetSha256,
+            provider_item_count: providerItemCount,
+            provider_item_set_sha256: providerItemSetSha256,
+            resource_bounds: {
+              protocol: "eliotr.project-copy-resource-bounds.v2" as const,
+              provider_copy_count: copies.length,
+              provider_item_count: providerItemCount,
+              copy_map_page_count: pages.length,
+              copy_map_index_put_count: 1 as const,
+              copy_map_r2_put_count: pages.length + 1,
+              copy_map_r2_subrequest_bound: 2 * (pages.length + 1),
+              cpu_time_budget_ms: 30_000 as const,
+              maximum_subrequest_bound: 10_000 as const,
+            },
+            pages,
+          };
+        }
         return {
           protocol: "eliotr.managed-project-copy-map-set.v1" as const,
           source_revision_ref: canonical.source_revision_ref,
@@ -368,11 +431,63 @@ function rootSelectedSelections(): readonly ManagedTargetSelectionV2[] {
   ];
 }
 
-function withServingTargetPorts(
+async function rootSelectedProjectCopyScopes(
+  selections: readonly ManagedTargetSelectionV2[],
+): Promise<readonly ProjectCopyScopeV2[]> {
+  const projectId = "project-root-selected";
+  const stableMembershipId = await stableProjectionId(
+    "project-membership",
+    JSON.stringify([projectId, revision.source_id]),
+  );
+  const scopes: ProjectCopyScopeV2[] = [];
+  for (const selection of selections) {
+    const target = selection.target;
+    const folderPrefix = await managedProjectFolderPrefixV2({
+      instance_id: target.managed_instance_id,
+      projection_generation: target.managed_generation,
+      source_revision_ref: revision.source_revision_ref,
+      project_id: projectId,
+      stable_project_membership_id: stableMembershipId,
+      membership_revision: 1,
+    });
+    scopes.push({
+      layout: "PROJECT_COPY_V2",
+      scope_snapshot_id: "scope-root-selected-fixture",
+      scope_snapshot_revision: 1,
+      scope_snapshot_digest: B,
+      target,
+      generation_metadata_value: await managedProjectGenerationMetadataValue(target.managed_generation),
+      representative_policy: "ONE_CANONICAL_COPY_PER_SOURCE_REVISION",
+      target_selection: selection,
+      copies: [{
+        source_revision_ref: revision.source_revision_ref,
+        source_owner_generation: revision.source_owner_generation,
+        project_id: projectId,
+        project_membership_id: stableMembershipId,
+        membership_generation: 1,
+        project_membership_generation: 1,
+        membership_identity_version: 2,
+        stable_project_membership_id: stableMembershipId,
+        membership_revision: 1,
+        folder_prefix: folderPrefix,
+      }],
+    });
+  }
+  return scopes;
+}
+
+async function withServingTargetPorts(
   f: ReturnType<typeof fixture>,
   apply?: (input: Parameters<ProjectionServingTargetDeltaPort["apply"]>[0]) => Promise<ManagedProjectionReceipt>,
+  copyScopes?: readonly ProjectCopyScopeV2[],
 ) {
   const selections = rootSelectedSelections();
+  const scopes = copyScopes ?? await rootSelectedProjectCopyScopes(selections);
+  const originalLoad = f.dependencies.authority.load.bind(f.dependencies.authority);
+  f.dependencies.authority.load = vi.fn(async (deliveryMessage) => ({
+    ...await originalLoad(deliveryMessage),
+    project_copy_scopes_v2: scopes,
+  }));
   const applyMock = vi.fn<ProjectionServingTargetDeltaPort["apply"]>(async (input) => {
       f.events.push(`delta-${input.profile.managed_generation_active ? "ACTIVE" : "SHADOW"}`);
       if (apply !== undefined) return apply(input);
@@ -443,7 +558,7 @@ describe("projection execution coordinator", () => {
 
   it("applies one canonical source to the Root-selected ACTIVE and SHADOW", async () => {
     const f = fixture({ project_membership_ids: ["project:project-a:generation:1"] });
-    const selected = withServingTargetPorts(f);
+    const selected = await withServingTargetPorts(f);
 
     const result = await createProjectionExecutionHandler(selected.dependencies).execute(message, selected.selections);
 
@@ -464,9 +579,16 @@ describe("projection execution coordinator", () => {
     expect(f.dependencies.authority.settle).toHaveBeenCalledTimes(2);
   });
 
-  it("rejects the complete target effect set before Core, Work, Search, or provider writes", async () => {
-    const f = fixture({ project_membership_ids: ["not-a-canonical-membership"] });
-    const selected = withServingTargetPorts(f);
+  it("rejects a mismatched Root V2 copy scope before Core, Work, Search, or provider writes", async () => {
+    const f = fixture({ project_membership_ids: [] });
+    const validScopes = await rootSelectedProjectCopyScopes(rootSelectedSelections());
+    const malformedScopes = validScopes.map((scope, index) => index === 0
+      ? {
+          ...scope,
+          copies: scope.copies.map((copy) => ({ ...copy, folder_prefix: "projection/foreign/" })),
+        }
+      : scope);
+    const selected = await withServingTargetPorts(f, undefined, malformedScopes);
 
     await expect(createProjectionExecutionHandler(selected.dependencies).execute(message, selected.selections)).rejects.toThrow();
 
@@ -479,7 +601,7 @@ describe("projection execution coordinator", () => {
 
   it("continues the ACTIVE write when the SHADOW fails and leaves the delivery unsettled", async () => {
     const f = fixture({ project_membership_ids: ["project:project-a:generation:1"] });
-    const selected = withServingTargetPorts(f, async (input) => {
+    const selected = await withServingTargetPorts(f, async (input) => {
       if (!input.profile.managed_generation_active) throw new Error("shadow delta failed");
       return {
         state: "READY",
@@ -504,7 +626,7 @@ describe("projection execution coordinator", () => {
 
   it("keeps the ACTIVE partial terminal visible when the SHADOW succeeds", async () => {
     const f = fixture({ project_membership_ids: ["project:project-a:generation:1"] });
-    const selected = withServingTargetPorts(f, async (input) => input.profile.managed_generation_active
+    const selected = await withServingTargetPorts(f, async (input) => input.profile.managed_generation_active
       ? {
           state: "DEGRADED",
           item_count: 0,
@@ -534,7 +656,7 @@ describe("projection execution coordinator", () => {
 
   it("reconciles a duplicate Queue delivery from both target terminal receipts without repeating provider effects", async () => {
     const f = fixture({ project_membership_ids: ["project:project-a:generation:1"] });
-    const selected = withServingTargetPorts(f);
+    const selected = await withServingTargetPorts(f);
     const terminalByGeneration = new Map<string, ProjectionTerminalReceipt>();
     vi.spyOn(f.dependencies.authority, "readTerminal").mockImplementation(async (_context, generation) =>
       terminalByGeneration.get(generation) ?? null);
@@ -562,7 +684,7 @@ describe("projection execution coordinator", () => {
 
   it("reconciles a lost ACTIVE settlement acknowledgement before moving to the SHADOW", async () => {
     const f = fixture({ project_membership_ids: ["project:project-a:generation:1"] });
-    const selected = withServingTargetPorts(f);
+    const selected = await withServingTargetPorts(f);
     const terminalByGeneration = new Map<string, ProjectionTerminalReceipt>();
     vi.spyOn(f.dependencies.authority, "readTerminal").mockImplementation(async (_context, generation) =>
       terminalByGeneration.get(generation) ?? null);

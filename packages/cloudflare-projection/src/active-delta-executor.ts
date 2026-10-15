@@ -8,9 +8,11 @@ import {
   stableProjectionId,
 } from "./canonical.js";
 import {
+  bindProjectCopyMapIndex,
   buildManagedProjectCopyPlan,
   canonicalSourceProjectionIdentity,
   canonicalSourceResourceBounds,
+  managedProjectCopyScopeForProfile,
 } from "./core-managed-item-intent.js";
 import {
   DeliveryReconciliationError,
@@ -434,16 +436,20 @@ export async function executeRootSelectedProjectionDeltas(
         state.prepared.profile,
         canonicalSource,
         projection.items,
+        preflight,
       );
       if (!copyPlanMatchesPreflight(copyPlan, preflight)) {
         projectionFail("PROJECTION_AUTHORITY_CONFLICT", "complete Root-selected target effect set changed after preflight");
       }
+      const copyScope = managedProjectCopyScopeForProfile(context, state.prepared.profile);
       const projectCopyMapSet = await dependencies.work.materializeProjectCopyMapPages(
         canonicalSource,
         copyPlan.target,
         copyPlan.copies,
+        copyScope,
       );
       verifyProjectCopyMapSet(projectCopyMapSet, canonicalSource, copyPlan);
+      const providerCopyPlan = bindProjectCopyMapIndex(copyPlan, projectCopyMapSet);
       const targetWork: ProjectionWorkReceipt = {
         ...canonicalWork,
         canonical_projection_generation: canonicalIdentity.generation,
@@ -461,7 +467,7 @@ export async function executeRootSelectedProjectionDeltas(
         targetWork,
         fence,
       );
-      materialized.set(state, { work: targetWork, copy_plan: copyPlan });
+      materialized.set(state, { work: targetWork, copy_plan: providerCopyPlan });
     } catch (error) {
       await reconcileServingTargetFailure(dependencies, context, state, error, now);
     }

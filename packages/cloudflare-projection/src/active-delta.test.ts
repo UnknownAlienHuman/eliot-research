@@ -5,6 +5,8 @@ import { validateRootSelectedProjectionTargets } from "./active-delta.js";
 const A = "a".repeat(64);
 const B = "b".repeat(64);
 const C = "c".repeat(64);
+const D = "d".repeat(64);
+const E = "e".repeat(64);
 
 const baseProfile: ProjectionExecutionProfile = {
   projector_profile: "structural-markdown-v1",
@@ -29,6 +31,7 @@ function selection(purpose: "ACTIVE" | "SHADOW", generation: string): ManagedTar
     purpose,
     registry_revision: 7,
     registry_artifact_sha256: A,
+    v1_exact_profile_identity_sha256: generation === "generation-a" ? D : E,
     target: {
       namespace: "ai-search-primary",
       managed_instance_id: "search-instance-1",
@@ -40,16 +43,28 @@ function selection(purpose: "ACTIVE" | "SHADOW", generation: string): ManagedTar
 
 describe("Root-resolved ACTIVE delta selections", () => {
   it("accepts Root's exact V2 ACTIVE and SHADOW receipts on one physical target", () => {
+    const active = selection("ACTIVE", "generation-a");
+    const shadow = selection("SHADOW", "generation-b");
     const targets = validateRootSelectedProjectionTargets([
-      selection("ACTIVE", "generation-a"),
-      selection("SHADOW", "generation-b"),
+      active,
+      shadow,
     ], baseProfile);
+    expect(active.v1_exact_profile_identity_sha256).not.toBe(shadow.v1_exact_profile_identity_sha256);
     expect(targets.map((target) => [target.role, target.profile.managed_generation])).toEqual([
       ["ACTIVE", "generation-a"],
       ["SHADOW", "generation-b"],
     ]);
     expect(targets[0]?.profile.managed_generation_active).toBe(true);
     expect(targets[1]?.profile.managed_generation_active).toBe(false);
+  });
+
+  it("requires a valid exact V1 registry-profile digest on each V2 receipt", () => {
+    const active = selection("ACTIVE", "generation-a");
+    const shadow = selection("SHADOW", "generation-b");
+    expect(() => validateRootSelectedProjectionTargets([
+      active,
+      { ...shadow, v1_exact_profile_identity_sha256: "not-a-sha256" },
+    ], baseProfile)).toThrow();
   });
 
   it("rejects V1 or wrong-domain receipts and a repeated logical generation", () => {

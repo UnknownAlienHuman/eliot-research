@@ -1,9 +1,13 @@
 import type { ProjectionItem } from "@eliotr/contracts";
 import type { ExecutionFence } from "@eliotr/platform-cloudflare";
 import type {
+  ManagedProjectCopyMapItem,
+  ManagedProjectCopyMapReceiptV2,
+  ManagedProjectCopyMapReceiptV1,
   ManagedProjectCopyPlan,
   ManagedProjectionPort,
   ManagedProjectionReceipt,
+  ManagedTargetSelectionV2,
   ProjectionExecutionProfile,
   ProjectionSourceContext,
   ProjectionAuthorityPort,
@@ -418,3 +422,208 @@ export const profile: ProjectionExecutionProfile = {
   managed_poll_interval_ms: 100,
   managed_timeout_ms: 1_000,
 };
+
+export async function managedProjectCopyPlanV2(
+  purpose: "ACTIVE" | "SHADOW",
+  targetProfile: ProjectionExecutionProfile = profile,
+): Promise<ManagedProjectCopyPlan> {
+  const canonicalProjectionGeneration = "canonical-projection-1";
+  const metadataGenerationDigest = await projectionSha256Utf8(
+    `eliotr.project-copy-generation.v1\u0000${targetProfile.managed_generation}`,
+  );
+  const target = Object.freeze({
+    managed_instance_id: targetProfile.managed_instance_id,
+    managed_generation: targetProfile.managed_generation,
+    metadata_generation_digest: metadataGenerationDigest,
+  });
+  const selection: ManagedTargetSelectionV2 = Object.freeze({
+    protocol: "eliotr.managed-target-selection.v2",
+    domain: "MANAGED_SEARCH_PRODUCT",
+    decision_version: 2,
+    selection_mode: "STABLE_PHYSICAL_PROFILE_V2",
+    product_alias: "primary",
+    purpose,
+    registry_revision: 1,
+    registry_artifact_sha256: "c".repeat(64),
+    v1_exact_profile_identity_sha256: "d".repeat(64),
+    target: {
+      namespace: "ai-search-primary",
+      managed_instance_id: target.managed_instance_id,
+      managed_generation: target.managed_generation,
+      target_profile_identity_sha256: "e".repeat(64),
+    },
+  });
+  const canonicalItemKey = item.item_key;
+  const providerItemKey = `projection-${"f".repeat(48)}`;
+  const folderPrefix = `projection/${"a".repeat(43)}/`;
+  const providerKey = `${folderPrefix}${providerItemKey}.md`;
+  const projectId = "project-test";
+  const stableMembershipId = `project-membership-${"b".repeat(48)}`;
+  const canonicalSourceRef = "canonical-source-1";
+  const canonicalSourceSha256 = "9".repeat(64);
+  const canonicalBodyRef = "canonical-body-1";
+  const mappedItem: ManagedProjectCopyMapItem = Object.freeze({
+    item_key: providerItemKey,
+    canonical_item_key: canonicalItemKey,
+    canonical_section_id: item.canonical_section_id,
+    content_sha256: item.content_sha256,
+    normalized_start_byte: 0,
+    normalized_end_byte: 19,
+    provider_key: providerKey,
+    canonical_body_ref: canonicalBodyRef,
+    canonical_body_sha256: item.content_sha256,
+  });
+  const providerItemSetSha256 = await projectionDigest([{
+    item_key: mappedItem.item_key,
+    canonical_section_id: mappedItem.canonical_section_id,
+    content_sha256: mappedItem.content_sha256,
+    start: mappedItem.normalized_start_byte,
+    end: mappedItem.normalized_end_byte,
+  }]);
+  const copyPayload = {
+    protocol: "eliotr.managed-project-copy-map.v2",
+    layout: "PROJECT_COPY_V2",
+    source_revision_ref: context.source_revision.source_revision_ref,
+    source_owner_generation: context.source_revision.source_owner_generation,
+    complete_residency_key_sha256: context.source_revision.object_residency_key_digest,
+    canonical_projection_generation: canonicalProjectionGeneration,
+    target,
+    target_selection: selection,
+    canonical_source_ref: canonicalSourceRef,
+    canonical_source_sha256: canonicalSourceSha256,
+    project_id: projectId,
+    project_membership_id: stableMembershipId,
+    membership_generation: 1,
+    project_membership_generation: 1,
+    folder_prefix: folderPrefix,
+    membership_identity_version: 2,
+    stable_project_membership_id: stableMembershipId,
+    membership_revision: 1,
+    provider_copy_count: 1,
+    provider_item_count: 1,
+    provider_item_set_sha256: providerItemSetSha256,
+    items: [mappedItem],
+  } satisfies Omit<ManagedProjectCopyMapReceiptV2, "provider_copy_set_sha256">;
+  const copy = Object.freeze({
+    ...copyPayload,
+    provider_copy_set_sha256: await projectionDigest(copyPayload),
+  }) satisfies ManagedProjectCopyMapReceiptV2;
+  const plannedItem: ManagedProjectCopyPlan["items"][number] = Object.freeze({
+    ...item,
+    item_key: providerItemKey,
+    projection_generation: metadataGenerationDigest,
+    normalized_start_byte: 0,
+    normalized_end_byte: 19,
+    copy_layout: "PROJECT_COPY_V2",
+    canonical_projection_generation: canonicalProjectionGeneration,
+    canonical_item_key: canonicalItemKey,
+    project_id: projectId,
+    project_membership_id: stableMembershipId,
+    membership_generation: 1,
+    membership_identity_version: 2,
+    legacy_project_membership_id: null,
+    stable_project_membership_id: stableMembershipId,
+    membership_revision: 1,
+    project_membership_generation: 1,
+    project_membership_ids: [stableMembershipId],
+    provider_key: providerKey,
+    metadata_generation_digest: metadataGenerationDigest,
+    canonical_body_ref: canonicalBodyRef,
+    canonical_body_sha256: item.content_sha256,
+  });
+  const providerCopySetSha256 = await projectionDigest([{
+    project_id: projectId,
+    project_membership_id: stableMembershipId,
+    membership_identity_version: 2,
+    legacy_project_membership_id: null,
+    stable_project_membership_id: stableMembershipId,
+    membership_revision: 1,
+    membership_generation: 1,
+    project_membership_generation: 1,
+    folder_prefix: folderPrefix,
+    provider_copy_set_sha256: copy.provider_copy_set_sha256,
+  }]);
+  return Object.freeze({
+    target,
+    layout: "PROJECT_COPY_V2",
+    target_selection: selection,
+    scope_snapshot_id: "scope-snapshot-1",
+    scope_snapshot_revision: 1,
+    scope_snapshot_digest: "8".repeat(64),
+    project_copy_map_index_protocol: "eliotr.managed-project-copy-map-index.v2",
+    project_copy_map_index_ref: "projection/revision-1/copy-maps/index/g1/scope-1.json",
+    project_copy_map_index_sha256: "7".repeat(64),
+    items: [plannedItem],
+    copies: [copy],
+    provider_copy_count: 1,
+    provider_copy_set_sha256: providerCopySetSha256,
+    provider_item_count: 1,
+    provider_item_set_sha256: providerItemSetSha256,
+  });
+}
+
+export async function managedProjectCopyPlanV1(
+  targetProfile: ProjectionExecutionProfile = profile,
+): Promise<ManagedProjectCopyPlan> {
+  const v2Plan = await managedProjectCopyPlanV2("SHADOW", targetProfile);
+  const v2Copy = v2Plan.copies[0];
+  const v2Item = v2Plan.items[0];
+  if (v2Copy?.protocol !== "eliotr.managed-project-copy-map.v2" || v2Item === undefined) {
+    throw new Error("V2 fixture does not contain one provider copy");
+  }
+  const projectMembershipId = `project:${v2Copy.project_id}:generation:${v2Copy.membership_generation}`;
+  const copyItems = v2Copy.items.map((copyItem) => Object.freeze({ ...copyItem }));
+  const providerItemSetSha256 = await projectionDigest(copyItems.map((copyItem) => ({
+    item_key: copyItem.item_key,
+    canonical_section_id: copyItem.canonical_section_id,
+    content_sha256: copyItem.content_sha256,
+    start: copyItem.normalized_start_byte,
+    end: copyItem.normalized_end_byte,
+  })));
+  const copyPayload = {
+    protocol: "eliotr.managed-project-copy-map.v1",
+    source_revision_ref: v2Copy.source_revision_ref,
+    complete_residency_key_sha256: v2Copy.complete_residency_key_sha256,
+    canonical_projection_generation: v2Copy.canonical_projection_generation,
+    target: v2Copy.target,
+    project_id: v2Copy.project_id,
+    project_membership_id: projectMembershipId,
+    membership_generation: v2Copy.membership_generation,
+    canonical_source_ref: v2Copy.canonical_source_ref,
+    canonical_source_sha256: v2Copy.canonical_source_sha256,
+    provider_copy_count: 1 as const,
+    provider_item_count: copyItems.length,
+    provider_item_set_sha256: providerItemSetSha256,
+    items: copyItems,
+  } satisfies Omit<ManagedProjectCopyMapReceiptV1, "provider_copy_set_sha256">;
+  const copy: ManagedProjectCopyMapReceiptV1 = Object.freeze({
+    ...copyPayload,
+    provider_copy_set_sha256: await projectionDigest(copyPayload),
+  });
+  const plannedItem: ManagedProjectCopyPlan["items"][number] = Object.freeze({
+    ...v2Item,
+    project_membership_ids: [projectMembershipId],
+    copy_layout: "PROJECT_COPY_V1",
+    project_membership_id: projectMembershipId,
+    membership_identity_version: null,
+    legacy_project_membership_id: null,
+    stable_project_membership_id: null,
+    membership_revision: null,
+    project_membership_generation: null,
+  });
+  const providerCopySetSha256 = await projectionDigest([{
+    project_id: copy.project_id,
+    project_membership_id: copy.project_membership_id,
+    membership_generation: copy.membership_generation,
+    provider_copy_set_sha256: copy.provider_copy_set_sha256,
+  }]);
+  return Object.freeze({
+    target: v2Plan.target,
+    items: [plannedItem],
+    copies: [copy],
+    provider_copy_count: 1,
+    provider_copy_set_sha256: providerCopySetSha256,
+    provider_item_count: 1,
+    provider_item_set_sha256: providerItemSetSha256,
+  });
+}

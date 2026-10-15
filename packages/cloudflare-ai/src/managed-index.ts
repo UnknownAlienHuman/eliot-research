@@ -224,6 +224,7 @@ async function validateManagedProjectCopyPlan(
       selection.decision_version !== 2 ||
       selection.selection_mode !== "STABLE_PHYSICAL_PROFILE_V2" ||
       selection.product_alias !== "primary" ||
+      selection.purpose !== (profile.managed_generation_active ? "ACTIVE" : "SHADOW") ||
       selection.target === undefined ||
       selection.target === null ||
       selection.target.managed_instance_id !== target.managed_instance_id ||
@@ -827,6 +828,7 @@ async function indexManagedItem(
   effect: ManagedItemEffect,
   intent: ManagedItemIntent,
   readCurrentTarget: CurrentManagedTargetReader,
+  activeDeltaAuthorized: boolean,
 ): Promise<ManagedItemReceipt> {
   if (effect.state !== "INTENT") {
     return recoverManagedItem(
@@ -842,7 +844,7 @@ async function indexManagedItem(
     );
   }
   await assertCurrentManagedTarget(readCurrentTarget, fence, target);
-  if (profile.managed_generation_active) {
+  if (profile.managed_generation_active && !activeDeltaAuthorized) {
     throw new ManagedProjectionAdapterError(
       "new target-bound managed item keys must be built in a shadow generation before the active generation is changed",
     );
@@ -987,6 +989,8 @@ export function createManagedProjectionPort(
           projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed item intents are not the exact desired set");
         }
         const instance = dependencies.namespace.get(copyPlan.target.managed_instance_id);
+        const activeDeltaAuthorized = copyPlan.layout === "PROJECT_COPY_V2" &&
+          copyPlan.target_selection?.purpose === "ACTIVE";
         const receipts: ManagedItemReceipt[] = [];
         for (let index = 0; index < prepared.length; index += 1) {
           const item = prepared[index];
@@ -1007,6 +1011,7 @@ export function createManagedProjectionPort(
             effect,
             intent,
             dependencies.isCurrentTarget,
+            activeDeltaAuthorized,
           ));
         }
         if (receipts.length !== prepared.length) {
