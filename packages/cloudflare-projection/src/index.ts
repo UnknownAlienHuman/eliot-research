@@ -4,6 +4,14 @@ export * from "./executor.js";
 export * from "./content-store.js";
 export * from "./work-store.js";
 export * from "./managed-source-dependencies.js";
+export { createD1ManagedTargetWriterDrain } from "./managed-target-writer-drain.js";
+export type { D1ManagedTargetWriterDrainDependencies } from "./managed-target-writer-drain.js";
+export { readManagedTargetManifestCandidateTreeV3 } from "./managed-target-candidate-readback.js";
+export type {
+  ManagedTargetCandidateTreeReadInput,
+  ManagedTargetCandidateReadbackStep,
+  ManagedTargetCandidateReadbackResume,
+} from "./managed-target-candidate-readback.js";
 export * from "./d1-search.js";
 export * from "./d1-search-read.js";
 export * from "./d1-search-exact.js";
@@ -61,6 +69,7 @@ export type {
 } from "./managed-target-assignment.js";
 export {
   createD1ManagedRequiredSetPort,
+  createManagedRequiredSetTargetFenceV2,
   enumerateManagedRequiredSet,
   ManagedRequiredSetError,
 } from "./managed-required-set.js";
