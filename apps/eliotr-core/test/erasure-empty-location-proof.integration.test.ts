@@ -121,6 +121,32 @@ describe("authoritative empty-location proof over Worker D1 and R2", () => {
     ]);
   });
 
+  it("does not claim an empty D1 Search namespace while source items remain", async () => {
+    const { request, revision } = await fixture();
+    const itemKey = "empty-proof-item-" + crypto.randomUUID().replaceAll("-", "");
+    const now = new Date().toISOString();
+    await runtime.SEARCH_DB.batch([
+      runtime.SEARCH_DB.prepare(
+        "INSERT INTO projection_item(item_key,source_revision_ref,canonical_section_id,project_membership_ids_json," +
+        "source_class,title,heading_path,document_context_header,section_text,normalized_offset_map_ref," +
+        "content_sha256,instruction_taint,projection_generation,active,updated_at) " +
+        "VALUES (?1,?2,'section-1','[]','document','Title','Heading','Context','Indexed source text'," +
+        "'offset-map-1',?3,'trusted','generation-1',1,?4)",
+      ).bind(itemKey, revision, "c".repeat(64), now),
+      runtime.SEARCH_DB.prepare(
+        "INSERT INTO section_fts(item_key,title,heading_path,document_context_header,section_text) " +
+        "VALUES (?1,'Title','Heading','Context','Indexed source text')",
+      ).bind(itemKey),
+    ]);
+
+    await expect(createConfiguredErasureCoordinator(runtime).execute(request))
+      .rejects.toMatchObject({ code: "ERASURE_CLOSURE_INCOMPLETE" });
+    const storedTargets = await runtime.CORE_DB.prepare(
+      "SELECT COUNT(*) AS count FROM erasure_target WHERE erasure_id=?1",
+    ).bind(request.erasure_ref.id).first<{ count: number }>();
+    expect(storedTargets?.count).toBe(0);
+  });
+
   it("refuses a Work object written after initial enumeration and before closure persistence", async () => {
     const { request, revision } = await fixture();
     let injected = false;

@@ -99,6 +99,18 @@ function sourceRevisionInventoryD1(effectRows: readonly Record<string, unknown>[
     source_owner_generation: "owner-generation-1",
     content_sha256: contentSha,
   };
+  const rootIdentityRow = {
+    source_revision_ref: "revision-1",
+    source_id: "source-1",
+    source_namespace_id: "namespace-1",
+    source_owner_system_id: "owner-system-1",
+    revision_owner_generation: "owner-generation-1",
+    current_owner_generation: "owner-generation-1",
+    owner_incarnation_ref: "incarnation-1",
+    ownership_record_revision: 1,
+    content_sha256: contentSha,
+    object_residency_key_digest: "b".repeat(64),
+  };
   return {
     prepare(sql: string) {
       return {
@@ -106,6 +118,7 @@ function sourceRevisionInventoryD1(effectRows: readonly Record<string, unknown>[
           return {
             async first<T>() {
               if (sql.includes("FROM source_revision sr JOIN source s")) return rawSourceRow as T;
+              if (sql.includes("FROM source_revision r JOIN source s")) return rootIdentityRow as T;
               if (sql.includes("FROM source_revision WHERE source_revision_ref=?1")) return sourceRow as T;
               throw new Error(`unexpected first query: ${sql}`);
             },

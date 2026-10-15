@@ -111,6 +111,23 @@ export async function readR2WorkEmptySnapshot(bucket: R2Bucket, sourceRevisionRe
   return { prefix, keys, namespaceDigest: await erasureDigest(keys) };
 }
 
+async function assertSourceAuthorityStable(
+  core: D1Database,
+  sourceRevisionRef: string,
+  subjectRef: string,
+  root: EmptyLocationProofBody["root_identity"],
+  authorityDigest: string,
+): Promise<void> {
+  const [currentRoot, currentAuthorityDigest] = await Promise.all([
+    readErasureRootIdentity(core, sourceRevisionRef),
+    readEmptyProofAuthorityDigest(core, sourceRevisionRef, subjectRef, "Projection"),
+  ]);
+  if (
+    await erasureDigest(currentRoot) !== await erasureDigest(root) ||
+    currentAuthorityDigest !== authorityDigest
+  ) erasureFail("ERASURE_CLOSURE_INCOMPLETE", "source root or projection authority changed during R2 Work inventory");
+}
+
 export async function makeR2WorkEmptyProofTarget(
   core: D1Database,
   bucket: R2Bucket,
@@ -125,6 +142,7 @@ export async function makeR2WorkEmptyProofTarget(
     readR2WorkEmptySnapshot(bucket, sourceRevisionRef),
     readRegisteredWorkEmptySnapshot(core, bucket, sourceRevisionRef, subjectRef, verifyRootDependencySet),
   ]);
+  await assertSourceAuthorityStable(core, sourceRevisionRef, subjectRef, root, authorityDigest);
   if (snapshot.keys.length > 0 || registered.keys.length > 0 || registered.live_root_count > 0) {
     return { target: null, prefix: snapshot.prefix };
   }
@@ -166,6 +184,7 @@ export async function validateR2WorkEmptyProof(
     readR2WorkEmptySnapshot(bucket, sourceRevisionRef),
     readRegisteredWorkEmptySnapshot(core, bucket, sourceRevisionRef, proof.exact_subject_ref, verifyRootDependencySet),
   ]);
+  await assertSourceAuthorityStable(core, sourceRevisionRef, proof.exact_subject_ref, root, authorityDigest);
   const namespaceDigest = registered.generation === "r2-work-prefix-list.v1" ? snapshot.namespaceDigest :
     await erasureDigest({ source_namespace_digest: snapshot.namespaceDigest, registered_digest: registered.digest });
   if (await erasureDigest(root) !== await erasureDigest(proof.root_identity) ||
