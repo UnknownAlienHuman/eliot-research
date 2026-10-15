@@ -7,7 +7,14 @@ export interface ResearchModelGatewayBinding {
     model: string,
     inputs: Record<string, unknown>,
     options: {
-      readonly gateway: { readonly id: string };
+      readonly gateway: {
+        readonly id: string;
+        readonly collectLog: true;
+        readonly skipCache: true;
+        readonly metadata: Record<string, string>;
+        readonly requestTimeoutMs: number;
+        readonly retries: { readonly maxAttempts: 1 };
+      };
       readonly returnRawResponse: true;
       readonly extraHeaders: Record<string, string>;
       readonly signal?: AbortSignal;
@@ -148,10 +155,26 @@ export function createResearchModelGatewayBindingFetch(
     if (query === null || typeof query !== "object" || Array.isArray(query)) invalid("bound gateway request body is invalid");
     const inputs = query as Record<string, unknown>;
     if (typeof inputs.model !== "string" || inputs.model.length === 0) invalid("bound gateway request model is invalid");
+    const timeoutMs = Number(headers.get("cf-aig-request-timeout"));
+    if (headers.get("cf-aig-collect-log") !== "true" ||
+        headers.get("cf-aig-collect-log-payload") !== "false" ||
+        headers.get("cf-aig-skip-cache") !== "true" ||
+        headers.get("cf-aig-max-attempts") !== "1" ||
+        !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000) {
+      invalid("bound gateway request does not preserve the approved metadata-only single-attempt policy");
+    }
+    const metadata = exactMetadata(headers.get("cf-aig-metadata"), "AI Gateway request metadata");
     // Preserve canonical cache/logging/timeout/single-attempt headers on the
     // gateway request. Provider headers contain no separate gateway credential.
     const response = await binding.run(inputs.model, inputs, {
-      gateway: { id: "eliotr-reasoning" },
+      gateway: {
+        id: "eliotr-reasoning",
+        collectLog: true,
+        skipCache: true,
+        metadata,
+        requestTimeoutMs: timeoutMs,
+        retries: { maxAttempts: 1 },
+      },
       returnRawResponse: true,
       extraHeaders: Object.fromEntries(headers),
       ...(init.signal == null ? {} : { signal: init.signal }),
