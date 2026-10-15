@@ -9,7 +9,7 @@ import {
 } from "./managed-target-manifest-contract.js";
 import { MANAGED_TARGET_MANIFEST_PROTOCOL_V3 } from "./managed-target-manifest.js";
 import type { ManifestTreeObjectRef } from "./managed-target-manifest-tree.js";
-import { projectionSha256Utf8, canonicalProjectionJson } from "./canonical.js";
+import { projectionDigest, projectionSha256Utf8, canonicalProjectionJson } from "./canonical.js";
 import { putCanonicalManifestObjectIfAbsent } from "./managed-target-manifest-fragments.js";
 
 const TREE_INDEX_PROTOCOL = "eliotr.managed-target-manifest-index.v1" as const;
@@ -31,6 +31,16 @@ export interface ManagedTargetCandidateReadbackCursor {
   readonly next_ordinal: number;
   readonly pending: readonly ManifestTreeObjectRef[];
   readonly nodes_visited: number;
+}
+
+/**
+ * A resume request. The cursor is only ever accepted by its exact immutable Work object
+ * identity, so an external coordinator cannot resume from an unauthenticated client
+ * value: the bytes are read back and their digest must match the supplied receipt.
+ */
+export interface ManagedTargetCandidateReadbackResume {
+  readonly ref: string;
+  readonly sha256: string;
 }
 
 export interface ManagedTargetCandidateReadbackStep {
@@ -55,7 +65,11 @@ export interface ManagedTargetCandidateTreeReadInput {
   /** The exact stored V3 candidate payload, as read back from Work. */
   readonly candidate: ManagedTargetManifestCandidatePayloadV2;
   readonly candidate_sha256: string;
-  readonly cursor?: ManagedTargetCandidateReadbackCursor;
+  /**
+   * A resume must name the durable cursor object. Supplying only an in-memory cursor
+   * value is rejected; the cursor bytes are read back and their digest must match.
+   */
+  readonly cursor?: ManagedTargetCandidateReadbackResume;
   readonly cursor_prefix?: string;
 }
 
@@ -81,6 +95,14 @@ export async function readManagedTargetManifestCandidateTreeV3(
   const requiredCopyCount = candidate.required_set.project_revision_copy_count;
   const treeRef = candidate.tree as StoredCandidateTreeRef | null;
 
+  // The candidate payload is caller-supplied data, not authority. Bind it to the exact
+  // immutable bytes it claims, so a mismatched or rewritten payload fails closed.
+  const candidateJson = canonicalProjectionJson(candidate);
+  if (candidateJson.length > MAX_CANDIDATE_OBJECT_BYTES ||
+      await projectionSha256Utf8(candidateJson) !== candidateSha) {
+    fail("supplied candidate payload bytes do not bind to candidate_sha256");
+  }
+
   if (treeRef === null) {
     if (requiredCopyCount !== 0) fail("non-empty candidate lacks its tree root");
     return Object.freeze({
@@ -102,31 +124,42 @@ export async function readManagedTargetManifestCandidateTreeV3(
   if (treeRef.item_count !== candidate.desired_item_count) {
     fail("candidate tree root item count differs from its desired-item count");
   }
-  if (input.cursor !== undefined &&
-      (input.cursor.candidate_sha256 !== candidateSha || input.cursor.root_key !== treeRef.key)) {
-    fail("readback cursor belongs to a different candidate");
-  }
+  // The producer's tree writer returns the sole COPY leaf unchanged when the
+  // manifest holds exactly one copy, and an INDEX node otherwise. The root kind is
+  // therefore part of the writer contract, not a reader assumption.
+  const rootKind: "COPY" | "INDEX" = requiredCopyCount === 1 ? "COPY" : "INDEX";
+  const rootNode: ManifestTreeObjectRef = Object.freeze({
+    kind: rootKind,
+    key: treeRef.key,
+    sha256: treeRef.sha256,
+    size_bytes: 0,
+    first_copy_ordinal: 0,
+    last_copy_ordinal: requiredCopyCount - 1,
+    copy_count: requiredCopyCount,
+    item_count: candidate.desired_item_count,
+  });
 
   let pending: ManifestTreeObjectRef[];
   let nextOrdinal: number;
   let nodesVisited: number;
   if (input.cursor === undefined) {
-    pending = [Object.freeze({
-      kind: "INDEX" as const,
-      key: treeRef.key,
-      sha256: treeRef.sha256,
-      size_bytes: 0,
-      first_copy_ordinal: 0,
-      last_copy_ordinal: requiredCopyCount - 1,
-      copy_count: requiredCopyCount,
-      item_count: candidate.desired_item_count,
-    })];
+    pending = [rootNode];
     nextOrdinal = 0;
     nodesVisited = 0;
   } else {
-    pending = [...input.cursor.pending];
-    nextOrdinal = input.cursor.next_ordinal;
-    nodesVisited = input.cursor.nodes_visited;
+    const storedCursor = await readCursorObject(store, input.cursor);
+    if (storedCursor.candidate_sha256 !== candidateSha || storedCursor.root_key !== treeRef.key) {
+      fail("readback cursor belongs to a different candidate");
+    }
+    if (storedCursor.pending.length === 0 && storedCursor.next_ordinal !== requiredCopyCount) {
+      fail("readback cursor has no pending tree work but has not covered the required set");
+    }
+    pending = storedCursor.pending.map((node) => {
+      if (!isTreeRef(node)) fail("readback cursor carries a malformed tree node");
+      return node;
+    });
+    nextOrdinal = storedCursor.next_ordinal;
+    nodesVisited = storedCursor.nodes_visited;
   }
 
   const leaves: ManifestTreeObjectRef[] = [];
@@ -205,7 +238,7 @@ export async function readManagedTargetManifestCandidateTreeV3(
       nodes_visited: nodesVisited,
     });
     const prefix = input.cursor_prefix ?? "candidate-readback";
-    const digest = await projectionSha256Utf8(canonicalProjectionJson(cursorState));
+    const digest = await projectionDigest(cursorState);
     const key = `${prefix}/${candidateSha}/${digest}.json`;
     const put = await putCanonicalManifestObjectIfAbsent(store, key, cursorState, {
       manifest_kind: "managed-target-manifest-candidate-readback-cursor",
@@ -229,6 +262,53 @@ function fail(message: string): never {
 
 function isSha256(value: unknown): value is string {
   return typeof value === "string" && SHA256.test(value);
+}
+
+/**
+ * Reads a durable cursor back from Work and binds it to the exact bytes it claims. A
+ * resume is never accepted from an unauthenticated in-memory value.
+ */
+async function readCursorObject(
+  store: EvidenceObjectStore,
+  resume: ManagedTargetCandidateReadbackResume,
+): Promise<ManagedTargetCandidateReadbackCursor> {
+  const prefix = "candidate-readback";
+  if (typeof resume.ref !== "string" || !resume.ref.startsWith(`${prefix}/`) ||
+      !isSha256(resume.sha256)) {
+    fail("readback cursor resume is not an exact immutable Work object receipt");
+  }
+  const stored = await openTreeObject(store, Object.freeze({
+    kind: "INDEX" as const,
+    key: resume.ref,
+    sha256: resume.sha256,
+    size_bytes: 0,
+    first_copy_ordinal: 0,
+    last_copy_ordinal: 0,
+    copy_count: 0,
+    item_count: 0,
+  }));
+  const value = stored.value;
+  if (!isRecord(value) || value.protocol !== "eliotr.managed-target-manifest-candidate-readback-cursor.v1" ||
+      !Array.isArray(value.pending) || !isCount(value.next_ordinal) || !isCount(value.nodes_visited)) {
+    fail("readback cursor object is not a valid bounded cursor");
+  }
+  return Object.freeze({
+    protocol: "eliotr.managed-target-manifest-candidate-readback-cursor.v1",
+    candidate_sha256: typeof value.candidate_sha256 === "string" ? value.candidate_sha256 : "",
+    root_key: typeof value.root_key === "string" ? value.root_key : "",
+    root_sha256: typeof value.root_sha256 === "string" ? value.root_sha256 : "",
+    next_ordinal: value.next_ordinal,
+    pending: value.pending,
+    nodes_visited: value.nodes_visited,
+  });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isCount(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 
 function isTreeRef(value: unknown): value is ManifestTreeObjectRef {
@@ -266,6 +346,3 @@ async function openTreeObject(
   if (canonicalProjectionJson(value) !== json) fail(`tree object ${ref.key} bytes are not canonical JSON`);
   return Object.freeze({ value });
 }
-
-
-

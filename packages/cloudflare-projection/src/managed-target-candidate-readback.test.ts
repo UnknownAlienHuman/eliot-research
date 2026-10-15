@@ -9,14 +9,8 @@ import {
 } from "./managed-target-manifest-contract.js";
 import { ManagedTargetManifestTreeWriter, type ManifestTreeObjectRef } from "./managed-target-manifest-tree.js";
 import { canonicalProjectionJson, projectionSha256Utf8 } from "./canonical.js";
-import {
-  putCanonicalManifestObjectIfAbsent,
-  readCanonicalManifestObject,
-} from "./managed-target-manifest-fragments.js";
-import {
-  readManagedTargetManifestCandidateTreeV3,
-  type ManagedTargetCandidateReadbackCursor,
-} from "./managed-target-candidate-readback.js";
+import { putCanonicalManifestObjectIfAbsent } from "./managed-target-manifest-fragments.js";
+import { readManagedTargetManifestCandidateTreeV3 } from "./managed-target-candidate-readback.js";
 
 const AS_OF = "2026-10-14T16:00:00.000Z";
 const TARGET = Object.freeze({
@@ -183,16 +177,6 @@ async function stageCandidate(copyCount: number): Promise<{
   });
 }
 
-async function loadCursor(
-  store: EvidenceObjectStore,
-  ref: string,
-  sha256: string,
-): Promise<ManagedTargetCandidateReadbackCursor> {
-  const stored = await readCanonicalManifestObject(store, ref);
-  if (stored === null || stored.ref.sha256 !== sha256) throw new Error("readback cursor readback differs");
-  return stored.value as ManagedTargetCandidateReadbackCursor;
-}
-
 function tamperTree(
   objects: Map<string, string>,
   rootKey: string,
@@ -206,12 +190,14 @@ function rootKeyOf(candidate: ManagedTargetManifestCandidatePayloadV2): string {
 }
 
 
+
+
 describe("managed target candidate tree readback V3", () => {
   it("walks a complete ordered copy tree in bounded durable steps", async () => {
     const copyCount = 120;
     const { store, candidate, candidate_sha256 } = await stageCandidate(copyCount);
     const seen: ManifestTreeObjectRef[] = [];
-    let cursor: ManagedTargetCandidateReadbackCursor | undefined;
+    let cursor: { readonly ref: string; readonly sha256: string } | null = null;
     let steps = 0;
     let previousNodesVisited = 0;
     while (steps < 1000) {
@@ -220,10 +206,9 @@ describe("managed target candidate tree readback V3", () => {
         store,
         candidate,
         candidate_sha256,
-        ...(cursor === undefined ? {} : { cursor }),
+        ...(cursor === null ? {} : { cursor }),
       });
-      // nodes_visited is cumulative across the whole read; each step advances it
-      // by at most the single per-step object budget.
+      // nodes_visited is cumulative; each step advances it by at most the object budget.
       expect(step.leaves.length).toBeLessThanOrEqual(24);
       expect(step.nodes_visited - previousNodesVisited).toBeLessThanOrEqual(24);
       expect(step.nodes_visited).toBeGreaterThan(previousNodesVisited);
@@ -235,7 +220,7 @@ describe("managed target candidate tree readback V3", () => {
         break;
       }
       expect(step.cursor).not.toBeNull();
-      cursor = await loadCursor(store, step.cursor?.ref ?? "", step.cursor?.sha256 ?? "");
+      cursor = step.cursor;
     }
     expect(steps).toBeGreaterThan(1);
     expect(seen).toHaveLength(copyCount);
@@ -247,6 +232,43 @@ describe("managed target candidate tree readback V3", () => {
     });
   });
 
+  it("reads a single-copy candidate whose tree root is the sole COPY leaf", async () => {
+    // The producer tree writer returns that lone leaf unchanged, so the root kind is
+    // COPY rather than INDEX. This is the one-copy case the reader must accept.
+    const { store, candidate, candidate_sha256 } = await stageCandidate(1);
+    const step = await readManagedTargetManifestCandidateTreeV3({ store, candidate, candidate_sha256 });
+    expect(step.status).toBe("COMPLETE");
+    expect(step.next_ordinal).toBe(1);
+    expect(step.leaves).toHaveLength(1);
+    expect(step.leaves[0]?.kind).toBe("COPY");
+    expect(step.leaves[0]?.first_copy_ordinal).toBe(0);
+    expect(step.cursor).toBeNull();
+  });
+
+  it("reads a two-copy candidate through a real INDEX node", async () => {
+    const { objects, store, candidate, candidate_sha256 } = await stageCandidate(2);
+    const rootKey = rootKeyOf(candidate);
+    const root = JSON.parse(objects.get(rootKey) ?? "{}") as { protocol: string; children: ManifestTreeObjectRef[] };
+    expect(root.protocol).toBe("eliotr.managed-target-manifest-index.v1");
+    expect(root.children).toHaveLength(2);
+
+    const seen: ManifestTreeObjectRef[] = [];
+    let cursor: { readonly ref: string; readonly sha256: string } | null = null;
+    for (let step = 0; step < 20; step += 1) {
+      const advanced = await readManagedTargetManifestCandidateTreeV3({
+        store,
+        candidate,
+        candidate_sha256,
+        ...(cursor === null ? {} : { cursor }),
+      });
+      seen.push(...advanced.leaves);
+      if (advanced.status === "COMPLETE") break;
+      cursor = advanced.cursor;
+    }
+    expect(seen).toHaveLength(2);
+    expect(seen.map((leaf) => leaf.first_copy_ordinal)).toEqual([0, 1]);
+  });
+
   it("completes an empty tree without persisting a cursor", async () => {
     const { store, candidate, candidate_sha256 } = await stageCandidate(0);
     const step = await readManagedTargetManifestCandidateTreeV3({ store, candidate, candidate_sha256 });
@@ -254,6 +276,19 @@ describe("managed target candidate tree readback V3", () => {
     expect(step.cursor).toBeNull();
     expect(step.leaves).toHaveLength(0);
     expect(step.next_ordinal).toBe(0);
+  });
+
+  it("denies a candidate payload whose bytes do not bind to candidate_sha256", async () => {
+    const { store, candidate } = await stageCandidate(3);
+    const truth = await projectionSha256Utf8(canonicalProjectionJson(candidate));
+    await expect(
+      readManagedTargetManifestCandidateTreeV3({
+        store,
+        candidate,
+        candidate_sha256: "0".repeat(64),
+      }),
+    ).rejects.toThrowError(ManagedTargetManifestError);
+    expect(truth).not.toBe("0".repeat(64));
   });
 
   it("denies a candidate whose tree omits required copies", async () => {
@@ -313,6 +348,23 @@ describe("managed target candidate tree readback V3", () => {
     ).rejects.toThrowError(ManagedTargetManifestError);
   });
 
+  it("denies a forged cursor whose supplied digest differs from its Work bytes", async () => {
+    const { store, candidate, candidate_sha256 } = await stageCandidate(40);
+    const first = await readManagedTargetManifestCandidateTreeV3({ store, candidate, candidate_sha256 });
+    expect(first.status).toBe("CONTINUE");
+    const real = first.cursor;
+    if (real === null) throw new Error("a CONTINUE step must persist a cursor");
+    // An external caller cannot resume from an unauthenticated in-memory cursor value.
+    await expect(
+      readManagedTargetManifestCandidateTreeV3({
+        store,
+        candidate,
+        candidate_sha256,
+        cursor: { ref: real.ref, sha256: "0".repeat(64) },
+      }),
+    ).rejects.toThrowError(ManagedTargetManifestError);
+  });
+
   it("denies a cursor bound to a different candidate", async () => {
     const first = await stageCandidate(40);
     const second = await stageCandidate(4);
@@ -322,7 +374,8 @@ describe("managed target candidate tree readback V3", () => {
       candidate_sha256: first.candidate_sha256,
     });
     expect(step.status).toBe("CONTINUE");
-    const cursor = await loadCursor(first.store, step.cursor?.ref ?? "", step.cursor?.sha256 ?? "");
+    const cursor = step.cursor;
+    if (cursor === null) throw new Error("a CONTINUE step must persist a cursor");
     await expect(
       readManagedTargetManifestCandidateTreeV3({
         store: second.store,
@@ -333,6 +386,25 @@ describe("managed target candidate tree readback V3", () => {
     ).rejects.toThrowError(ManagedTargetManifestError);
   });
 
+  it("resumes across many durable steps to complete the whole tree", async () => {
+    const { store, candidate, candidate_sha256 } = await stageCandidate(200);
+    let cursor: { readonly ref: string; readonly sha256: string } | null = null;
+    for (let step = 0; step < 500; step += 1) {
+      const advanced = await readManagedTargetManifestCandidateTreeV3({
+        store,
+        candidate,
+        candidate_sha256,
+        ...(cursor === null ? {} : { cursor }),
+      });
+      if (advanced.status === "COMPLETE") {
+        expect(advanced.next_ordinal).toBe(200);
+        return;
+      }
+      cursor = advanced.cursor;
+    }
+    throw new Error("resumable readback did not complete");
+  });
+
   it("reuses the existing projection-invalid error code rather than adding one", async () => {
     const { store, candidate, candidate_sha256 } = await stageCandidate(2);
     const forged = { ...candidate, copy_layout: "PROJECT_COPY_V1" } as unknown as ManagedTargetManifestCandidatePayloadV2;
@@ -341,6 +413,3 @@ describe("managed target candidate tree readback V3", () => {
     ).rejects.toMatchObject({ code: "MANAGED_TARGET_MANIFEST_PROJECTION_INVALID" });
   });
 });
-
-
-
