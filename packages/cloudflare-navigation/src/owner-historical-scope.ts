@@ -7,6 +7,7 @@ import {
 } from "@eliotr/contracts";
 import {
   canonicalEvidenceJson,
+  createD1ScopeSnapshotStore,
   evidenceSha256Bytes,
   loadScopeAuthority,
   type EvidenceAccessContext,
@@ -19,14 +20,16 @@ import {
 } from "@eliotr/domain";
 import { createD1ScopeService } from "./d1-scope-service.js";
 import { orientationCurrentness, nextOrientationBoundary } from "./orientation-currentness.js";
-import { createOwnerScopeAuthority, createProjectClientArtifactAuthority, splitExhaustiveSourceRefs, type OwnerScopeAuthority } from "./orientation-authority.js";
-import { ScopeServiceError } from "./scope-service.js";
+import { createOwnerScopeAuthority, createProjectClientArtifactAuthority, splitExhaustiveSourceRefs,
+  type OwnerScopeAuthority, type OwnerScopePolicyIdentityOverride } from "./orientation-authority.js";
+import { createScopeService, ScopeServiceError } from "./scope-service.js";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { issueClientArtifactScopeGrant, requireClientScopeProvenance, type ClientArtifactScopeOrigin } from "./client-scope-grant.js";
 
 import { createD1ScopeProfilePort } from "@eliotr/retrieval";
 import { readOwnerScopeProfile, OWNER_RESEARCH_SCOPE_PROFILE } from "./owner-scope-profile.js";
-import { matchesHistoricalOwnerPolicyAuthority, readOwnerPolicyLeaseHistory, type OwnerPolicyLeaseHistoryProof } from "./owner-policy-lease-history.js";
+import { matchesHistoricalOwnerPolicyAuthority, readOwnerPolicyLeaseHistory,
+  type HistoricalPolicyRow, type OwnerPolicyLeaseHistoryProof } from "./owner-policy-lease-history.js";
 
 export interface OwnerHistoricalScopeInput {
   readonly database: D1Database;
@@ -62,6 +65,13 @@ interface SourceHeadWitnessRow {
   readonly source_owner_generation: unknown;
   readonly purge_state: unknown;
   readonly head_revision_ref: unknown;
+}
+
+type SourceHeadState = "UNCHANGED" | "ADVANCED";
+
+interface HistoricalScopeRecordProof {
+  readonly lease_history: OwnerPolicyLeaseHistoryProof | null;
+  readonly source_head_state: SourceHeadState | null;
 }
 
 function stale(): never {
@@ -138,9 +148,9 @@ async function historicalAtomResolver(
     const source = byRevision.get(currentMember.source_revision_ref);
     if (source === undefined) stale();
     const historical = historicalBySourceId.get(source.revision.source_id);
-    // New current members are omitted. The final scope service comparison still
-    // requires every original member, while additions cannot enter provenance.
-    if (historical === undefined) continue;
+    // A historical read may retain old revisions for existing source IDs, but
+    // it must not hide current membership additions from the exact-scope check.
+    if (historical === undefined) stale();
     if (historical.source_owner_generation !== source.revision.source_owner_generation) stale();
     members.push(historical);
   }
@@ -168,14 +178,49 @@ function requireExactHistoricalIdentity(original: ScopeSnapshot, fresh: ScopeSna
       fresh.purge_ledger_revision < original.purge_ledger_revision) stale();
 }
 
-/** SCOPE_INPUT_CHANGED is reusable only when the persisted source revisions are
- * still live and the source table proves an actual head advance. */
-async function provesSourceHeadAdvance(
+async function provesOriginalScopeInputsCurrent(
+  database: D1Database,
+  owner: OwnerScopeAuthority,
+  original: ScopeSnapshot,
+  maximumMembers: number,
+  baselinePolicies: readonly HistoricalPolicyRow[],
+): Promise<OwnerScopePolicyIdentityOverride | null> {
+  const snapshotStore = createD1ScopeSnapshotStore(database);
+  for (const membersOnly of [false, true]) {
+    const policyIdentity: OwnerScopePolicyIdentityOverride = { rows: baselinePolicies, members_only: membersOnly };
+    const baselineScopes = createScopeService({
+      resolveAtom: (atom, observedAt) => owner.exhaustiveResolveAtom(atom, observedAt, policyIdentity),
+      resolveAuthorityClosure: (request) => owner.exhaustiveResolveAuthorityClosure(request, policyIdentity),
+      persistSnapshot: (snapshot) => snapshotStore.persistSnapshot(snapshot),
+      // Historical proof may inspect an immutable SCOPE_INPUT_CHANGED record,
+      // but the normal D1 reader must continue hiding every invalidated scope.
+      readSnapshot: async (id, revision) => {
+        if (id !== original.snapshot_id || revision !== original.revision) return null;
+        const stored = await loadScopeAuthority(database, { id, revision });
+        if (stored === null ||
+            (stored.invalidated_at !== null && stored.invalidation_reason !== "SCOPE_INPUT_CHANGED") ||
+            canonicalEvidenceJson(stored.snapshot) !== canonicalEvidenceJson(original)) return null;
+        return stored.snapshot;
+      },
+    }, {
+      now: () => Date.parse(original.created_at),
+      max_snapshot_members: maximumMembers,
+      preserve_resolution_errors: true,
+    });
+    const currentness = await baselineScopes.validateCurrent(original);
+    if (currentness.current) return policyIdentity;
+  }
+  return null;
+}
+
+/** Classify the saved members without treating an unrelated source insert as
+ * proof of a head change. Null means a saved source is no longer safe to read. */
+async function readSourceHeadState(
   database: D1Database,
   original: ScopeSnapshot,
-): Promise<boolean> {
+): Promise<SourceHeadState | null> {
   const refs = original.member_source_revision_refs;
-  if (refs.length === 0) return false;
+  if (refs.length === 0) return "UNCHANGED";
   const expected = new Set(refs);
   let advanced = false;
   for (const batch of splitExhaustiveSourceRefs(refs)) {
@@ -186,17 +231,18 @@ async function provesSourceHeadAdvance(
         "WHERE sr.source_revision_ref IN (SELECT value FROM json_each(?1)) " +
         "ORDER BY sr.source_revision_ref LIMIT ?2",
     ).bind(JSON.stringify(batch), batch.length + 1).all<SourceHeadWitnessRow>();
-    if (!result.success || !Array.isArray(result.results) || result.results.length !== batch.length) return false;
+    if (!result.success || !Array.isArray(result.results) || result.results.length !== batch.length) return null;
     const requested = new Set(batch);
     for (const row of result.results) {
       if (typeof row.source_revision_ref !== "string" || !requested.delete(row.source_revision_ref) ||
           !expected.delete(row.source_revision_ref) || row.purge_state !== "LIVE" ||
           row.source_owner_generation !== original.source_owner_generations[row.source_revision_ref] ||
-          typeof row.head_revision_ref !== "string" || row.head_revision_ref.length === 0) return false;
+          typeof row.head_revision_ref !== "string" || row.head_revision_ref.length === 0) return null;
       if (row.head_revision_ref !== row.source_revision_ref) advanced = true;
     }
   }
-  return expected.size === 0 && advanced;
+  if (expected.size !== 0) return null;
+  return advanced ? "ADVANCED" : "UNCHANGED";
 }
 
 /** Check immutable original bytes and the one supported head-advance invalidation.
@@ -211,7 +257,7 @@ async function requireHistoricalScopeRecord(
   database: D1Database, originalRef: VersionedRef, original: ScopeSnapshot,
   independentMachineOwner: boolean,
   ownerReader?: { readonly principal_ref: string; readonly allow_lease_refresh: boolean; readonly now: string },
-): Promise<OwnerPolicyLeaseHistoryProof | null> {
+): Promise<HistoricalScopeRecordProof> {
   const persisted = await loadScopeAuthority(database, originalRef);
   if (persisted === null || canonicalEvidenceJson(persisted.snapshot) !== canonicalEvidenceJson(original)) stale();
   let leaseHistory: OwnerPolicyLeaseHistoryProof | null = null;
@@ -233,20 +279,25 @@ async function requireHistoricalScopeRecord(
   }
   if (persisted.invalidated_at === null) {
     if (leaseHistory?.has_lease_events && ownerReader?.allow_lease_refresh !== true) stale();
-    return ownerReader?.allow_lease_refresh === true ? leaseHistory : null;
+    return { lease_history: ownerReader?.allow_lease_refresh === true ? leaseHistory : null, source_head_state: null };
   }
   // Only the exact machine report's independently authorized original grantor
   // may retain historical provenance after the service grant was invalidated.
   // This never changes the old snapshot or the old service's effective authority.
-  if (independentMachineOwner && persisted.invalidation_reason === "CLIENT_DELEGATION_STALE") return null;
+  if (independentMachineOwner && persisted.invalidation_reason === "CLIENT_DELEGATION_STALE") {
+    return { lease_history: null, source_head_state: null };
+  }
   if (persisted.invalidation_reason === "READ_POLICY_LEASE_REFRESHED") {
     if (ownerReader?.allow_lease_refresh !== true || leaseHistory?.has_lease_events !== true) stale();
-    return leaseHistory;
+    return { lease_history: leaseHistory, source_head_state: null };
   }
-  if (persisted.invalidation_reason !== "SCOPE_INPUT_CHANGED" ||
-      !(await provesSourceHeadAdvance(database, original))) stale();
-  if (ownerReader?.allow_lease_refresh === true) return leaseHistory;
-  return leaseHistory?.has_lease_events ? leaseHistory : null;
+  if (persisted.invalidation_reason !== "SCOPE_INPUT_CHANGED") stale();
+  const sourceHeadState = await readSourceHeadState(database, original);
+  if (sourceHeadState === null) stale();
+  return {
+    lease_history: leaseHistory,
+    source_head_state: sourceHeadState,
+  };
 }
 
 async function requireOriginalGrantNotRevoked(
@@ -402,9 +453,13 @@ async function reauthorizeHistoricalScope(
       allow_lease_refresh: allowLeaseRefresh,
       now: new Date(now()).toISOString(),
     });
-  let leaseHistory = await readHistoricalRecord();
+  let historicalRecord = await readHistoricalRecord();
+  let leaseHistory = historicalRecord.lease_history;
+  const exactCurrentRecovery = historicalRecord.source_head_state === "UNCHANGED";
+  let exactPolicyIdentity: OwnerScopePolicyIdentityOverride | undefined;
   const requireHistoricalOrigin = async () => {
-    leaseHistory = await readHistoricalRecord();
+    historicalRecord = await readHistoricalRecord();
+    leaseHistory = historicalRecord.lease_history;
     if (leaseHistory !== null && allowLeaseRefresh) {
       const currentOwner = historicalOwner.authority;
       if (currentOwner === undefined) return;
@@ -429,15 +484,27 @@ async function reauthorizeHistoricalScope(
   else await currentOwner.requireReadPolicy();
   const historicalSources = await currentOwner.exhaustiveSources(original.member_source_revision_refs);
   await requireHistoricalOrigin();
+  if (exactCurrentRecovery) {
+    const baselinePolicies = historicalRecord.lease_history?.baseline_policies;
+    if (baselinePolicies === undefined) stale();
+    exactPolicyIdentity = await provesOriginalScopeInputsCurrent(
+      input.database, currentOwner, original, maximumMembers, baselinePolicies,
+    ) ?? undefined;
+    if (exactPolicyIdentity === undefined) stale();
+  }
   const historicalBySourceId = indexHistoricalSources(historicalSources, original);
-  const resolveAtom = (atom: DeterministicScopeAtom, observedAt: string) =>
-    historicalAtomResolver(currentOwner, original, historicalBySourceId, atom, observedAt);
+  const resolveAtom = exactCurrentRecovery
+    ? (atom: DeterministicScopeAtom, observedAt: string) =>
+      currentOwner.exhaustiveResolveAtom(atom, observedAt, exactPolicyIdentity)
+    : (atom: DeterministicScopeAtom, observedAt: string) =>
+      historicalAtomResolver(currentOwner, original, historicalBySourceId, atom, observedAt);
   const scopes = createD1ScopeService(input.database, currentOwner, {
     now,
     max_snapshot_members: maximumMembers,
     preserve_resolution_errors: true,
     resolveAtom,
-    resolveAuthorityClosure: (request) => currentOwner.exhaustiveResolveAuthorityClosure(request),
+    resolveAuthorityClosure: (request) => currentOwner.exhaustiveResolveAuthorityClosure(request,
+      exactCurrentRecovery ? exactPolicyIdentity : undefined),
   });
   const requireScopeCurrent = ownerArtifactOrigin === undefined
     ? (scope: ScopeSnapshot) => scopes.requireCurrent(scope)

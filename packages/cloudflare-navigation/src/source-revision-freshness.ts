@@ -3,7 +3,7 @@ import {
   loadScopeAuthority,
   type NavigationReadAuthority,
 } from "@eliotr/cloudflare-evidence";
-import type { VersionedRef } from "@eliotr/contracts";
+import type { ScopeSnapshot, VersionedRef } from "@eliotr/contracts";
 import { CatalogInputError } from "./catalog-service.js";
 
 import { readOwnerScopeProfile } from "./owner-scope-profile.js";
@@ -52,6 +52,19 @@ function errorCode(error: unknown): string | undefined {
   if (error === null || typeof error !== "object" || !("code" in error)) return undefined;
   const code = (error as { readonly code?: unknown }).code;
   return typeof code === "string" ? code : undefined;
+}
+
+function sameSavedScopeIdentity(original: ScopeSnapshot, current: ScopeSnapshot): boolean {
+  return canonicalEvidenceJson(original.resolved_scope_expression) ===
+      canonicalEvidenceJson(current.resolved_scope_expression) &&
+    canonicalEvidenceJson([...original.member_source_revision_refs].sort()) ===
+      canonicalEvidenceJson([...current.member_source_revision_refs].sort()) &&
+    canonicalEvidenceJson(original.source_owner_generations) ===
+      canonicalEvidenceJson(current.source_owner_generations) &&
+    canonicalEvidenceJson(original.participant_generations) ===
+      canonicalEvidenceJson(current.participant_generations) &&
+    original.disclosure_closure_digest === current.disclosure_closure_digest &&
+    current.purge_ledger_revision >= original.purge_ledger_revision;
 }
 
 /** Compare saved scope members with the current source heads without loading the corpus. */
@@ -131,8 +144,10 @@ export async function readSourceRevisionFreshness(
       head_revision_ref: row.head_revision_ref,
     }];
   });
-  if (original.invalidated_at !== null && !retainedMachineOrigin && changedSources.length === 0) {
-    throw new CatalogInputError("WIKI_POLICY_DENIED", "saved Wiki scope invalidation is not a source head change", 410);
+  if (original.invalidated_at !== null && !retainedMachineOrigin && changedSources.length === 0 &&
+      (original.invalidation_reason !== "SCOPE_INPUT_CHANGED" ||
+       !sameSavedScopeIdentity(original.snapshot, navigationScope))) {
+    throw new CatalogInputError("WIKI_POLICY_DENIED", "saved Wiki scope invalidation is not an exact current scope", 410);
   }
   await authorization.requireCurrent();
   return {

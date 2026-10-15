@@ -1,11 +1,13 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createD1NavigationStore } from "@eliotr/cloudflare-evidence";
-import { createD1ScopeService, createOwnerScopeAuthority } from "@eliotr/cloudflare-navigation";
+import { createD1ScopeService, createOwnerScopeAuthority, reauthorizeOwnerHistoricalScope } from "@eliotr/cloudflare-navigation";
 import type { ScopeExpression, ScopeSnapshot } from "@eliotr/contracts";
+import { prepareOwnerScopeReauthorization } from "@eliotr/cloudflare-wiki/wiki-proposal-reauthorization";
 import { access, artifacts, clearDatabase, db, grant, NOW, seedSource, source, TIME } from "./navigation-fixture.js";
 
 const PROJECT_A = "project-a";
 const PROJECT_B = "project-b";
+const PROJECT_C = "project-c";
 const A = "a".repeat(64);
 const B = "b".repeat(64);
 const CANONICAL_COLUMNS = [
@@ -115,7 +117,7 @@ describe("project-scoped ScopeSnapshot invalidation in Core D1", () => {
     const projectBBeforeTitle = await stored(snapshots.projectB);
     const titleAt = new Date(NOW + 1).toISOString();
     await db.batch([
-      db.prepare("UPDATE project SET title='Project A renamed',generation=2 WHERE project_id=?1").bind(PROJECT_A),
+      db.prepare("UPDATE project SET title='Project A renamed' WHERE project_id=?1").bind(PROJECT_A),
       db.prepare("UPDATE project_owner SET updated_at=?2 WHERE project_id=?1").bind(PROJECT_A, titleAt),
     ]);
     await expect(harness.scopes.requireCurrent(snapshots.projectA)).resolves.toEqual(snapshots.projectA);
@@ -128,7 +130,7 @@ describe("project-scoped ScopeSnapshot invalidation in Core D1", () => {
     const changedAt = new Date(NOW + 1_000).toISOString();
     harness.advanceTo(NOW + 1_000);
     await db.batch([
-      db.prepare("UPDATE project SET generation=3,membership_generation=2 WHERE project_id=?1").bind(PROJECT_A),
+      db.prepare("UPDATE project SET generation=3 WHERE project_id=?1").bind(PROJECT_A),
       db.prepare("UPDATE project_source_membership SET valid_to=?2 WHERE project_id=?1 AND valid_to IS NULL")
         .bind(PROJECT_A, changedAt),
       db.prepare("INSERT INTO project_source_membership " +
@@ -215,6 +217,97 @@ describe("project-scoped ScopeSnapshot invalidation in Core D1", () => {
     expect((await stored(b)).invalidated_at).toBeNull();
     await expect(scopes.requireCurrent(a)).rejects.toMatchObject({ code: "SCOPE_SNAPSHOT_STALE" });
     await expect(scopes.requireCurrent(b)).resolves.toEqual(b);
+  });
+
+  it("scopes SOURCE_CLASS insertion invalidation to that expression", async () => {
+    await seedSource(source("revision-class-a"));
+    const scopes = scopeHarness().scopes;
+    const classScope = await scopes.freeze({ kind: "SOURCE_CLASS", source_class: "document" }, access.credential_generation);
+    await used(classScope, "source-class-insert");
+    await seedSource(source("revision-class-b"));
+    expect((await stored(classScope)).invalidation_reason).toBe("SCOPE_INPUT_CHANGED");
+    await expect(scopes.requireCurrent(classScope)).rejects.toMatchObject({ code: "SCOPE_SNAPSHOT_STALE" });
+  });
+
+  it("recovers an exact scope after unrelated source admission and denies membership drift or revocation", async () => {
+    const withWikiTime = async (work: () => Promise<void>) => {
+      vi.setSystemTime(new Date(NOW + 3_000));
+      try { await work(); }
+      finally { vi.useRealTimers(); }
+    };
+    await seedSource(source("revision-a1"));
+    await seedSource(source("revision-b1"));
+    await seedProject(PROJECT_A, ["revision-a1"]);
+    await seedProject(PROJECT_B, ["revision-b1"]);
+    const scopes = scopeHarness().scopes;
+    const scopeA = await scopes.freeze({ kind: "PROJECT", project_id: PROJECT_A }, access.credential_generation);
+    const scopeB = await scopes.freeze({ kind: "PROJECT", project_id: PROJECT_B }, access.credential_generation);
+    await used(scopeA, "unrelated-source-a");
+    await used(scopeB, "unrelated-source-b");
+    await grant(scopeA);
+    await grant(scopeB);
+
+    await seedSource(source("revision-c1"));
+    await seedProject(PROJECT_C, ["revision-c1"]);
+    await expect(scopes.requireCurrent(scopeA)).resolves.toEqual(scopeA);
+    await expect(scopes.requireCurrent(scopeB)).resolves.toEqual(scopeB);
+    const scopeC = await scopes.freeze({ kind: "PROJECT", project_id: PROJECT_C }, access.credential_generation);
+    await used(scopeC, "unrelated-source-c");
+    await grant(scopeC);
+
+    const invalidatedAt = new Date(NOW + 2_000).toISOString();
+    await db.prepare("UPDATE scope_snapshot SET invalidated_at=?3,invalidation_reason='SCOPE_INPUT_CHANGED' " +
+      "WHERE snapshot_id=?1 AND revision=?2").bind(scopeA.snapshot_id, scopeA.revision, invalidatedAt).run();
+    const originalRef = { id: scopeA.snapshot_id, revision: scopeA.revision };
+    const historical = await reauthorizeOwnerHistoricalScope({ database: db, access, original_ref: originalRef,
+      original: scopeA, now: () => NOW + 3_000 });
+    expect(historical.scope.member_source_revision_refs).toEqual(scopeA.member_source_revision_refs);
+    await withWikiTime(async () => {
+      const wiki = await prepareOwnerScopeReauthorization({ database: db }, access, originalRef);
+      await expect(wiki.requireCurrent()).resolves.toBeUndefined();
+    });
+    expect((await stored(scopeA)).invalidated_at).toBe(invalidatedAt);
+    expect((await stored(scopeA)).invalidation_reason).toBe("SCOPE_INPUT_CHANGED");
+
+    await seedSource(source("revision-a2"));
+    await db.batch([
+      db.prepare("UPDATE project SET generation=2 WHERE project_id=?1").bind(PROJECT_A),
+      db.prepare("INSERT INTO project_source_membership " +
+      "(project_id,source_id,role,valid_from,valid_to,membership_generation) VALUES (?1,?2,'member',?3,NULL,2)")
+        .bind(PROJECT_A, source("revision-a2").source_id, TIME),
+    ]);
+    await expect(reauthorizeOwnerHistoricalScope({ database: db, access, original_ref: originalRef,
+      original: scopeA, now: () => NOW + 4_000 })).rejects.toMatchObject({ code: "SCOPE_SNAPSHOT_STALE" });
+    await withWikiTime(async () => {
+      await expect(prepareOwnerScopeReauthorization({ database: db }, access, originalRef))
+        .rejects.toMatchObject({ code: "WIKI_POLICY_DENIED" });
+    });
+
+    const revokedRef = { id: scopeB.snapshot_id, revision: scopeB.revision };
+    await db.prepare("UPDATE scope_snapshot SET invalidated_at=?3,invalidation_reason='SCOPE_INPUT_CHANGED' " +
+      "WHERE snapshot_id=?1 AND revision=?2").bind(scopeB.snapshot_id, scopeB.revision, invalidatedAt).run();
+    await db.prepare("UPDATE scope_access_grant SET state='REVOKED' WHERE snapshot_id=?1 AND snapshot_revision=?2 " +
+      "AND principal_ref=?3 AND client_class='owner_pwa'").bind(scopeB.snapshot_id, scopeB.revision, access.principal_ref).run();
+    await expect(reauthorizeOwnerHistoricalScope({ database: db, access, original_ref: originalRef,
+      original: scopeA, now: () => NOW + 5_000 })).rejects.toMatchObject({ code: "SCOPE_SNAPSHOT_STALE" });
+    await expect(reauthorizeOwnerHistoricalScope({ database: db, access, original_ref: revokedRef,
+      original: scopeB, now: () => NOW + 5_000 })).rejects.toMatchObject({ code: "SCOPE_SNAPSHOT_STALE" });
+    await withWikiTime(async () => {
+      await expect(prepareOwnerScopeReauthorization({ database: db }, access, revokedRef))
+        .rejects.toMatchObject({ code: "WIKI_POLICY_DENIED" });
+    });
+
+    await db.prepare("UPDATE scope_snapshot SET invalidated_at=?3,invalidation_reason='SCOPE_INPUT_CHANGED' " +
+      "WHERE snapshot_id=?1 AND revision=?2").bind(scopeC.snapshot_id, scopeC.revision, invalidatedAt).run();
+    await db.prepare("UPDATE source SET head_rev='unadmitted-head' WHERE source_id=?1")
+      .bind(source("revision-c1").source_id).run();
+    await expect(reauthorizeOwnerHistoricalScope({ database: db, access,
+      original_ref: { id: scopeC.snapshot_id, revision: scopeC.revision }, original: scopeC,
+      now: () => NOW + 6_000 })).rejects.toMatchObject({ code: "SCOPE_SNAPSHOT_STALE" });
+    await withWikiTime(async () => {
+      await expect(prepareOwnerScopeReauthorization({ database: db }, access,
+        { id: scopeC.snapshot_id, revision: scopeC.revision })).rejects.toMatchObject({ code: "WIKI_POLICY_DENIED" });
+    });
   });
 
   it("retains source-owner-generation denial", async () => {

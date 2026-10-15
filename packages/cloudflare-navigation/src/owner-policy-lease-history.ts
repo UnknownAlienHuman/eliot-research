@@ -200,8 +200,12 @@ export async function matchesHistoricalOwnerPolicyAuthority(input: {
   }
   const expected = input.original.participant_generations["member-policy-closure"];
   if (expected === undefined || await memberPolicyClosureGeneration(memberClosures) !== expected) return false;
-  const policyAuthorityRef = await historicalPolicyAuthorityRef({ access: input.access,
-    policies: input.baseline_policies,
-    members });
-  return policyAuthorityRef === input.original.policy_authority_ref;
+  const legacyPolicyAuthorityRef = await historicalPolicyAuthorityRef({ access: input.access,
+    policies: input.baseline_policies, members });
+  if (legacyPolicyAuthorityRef === input.original.policy_authority_ref) return true;
+  const memberNamespaces = new Set(input.sources.map((source) => source.revision.source_namespace_id));
+  const scopedPolicies = input.baseline_policies.filter((policy) => memberNamespaces.has(policy.source_namespace_id));
+  const scopedPolicyAuthorityRef = await historicalPolicyAuthorityRef({ access: input.access,
+    policies: scopedPolicies, members });
+  return scopedPolicyAuthorityRef === input.original.policy_authority_ref;
 }

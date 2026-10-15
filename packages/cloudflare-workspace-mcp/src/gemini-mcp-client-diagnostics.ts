@@ -170,6 +170,9 @@ export async function confirmClientDiagnostic(
     trace_id: before.trace_id,
     deployment_generation: before.deployment_generation,
     verified_actor: before.verified_actor,
+    ...(context.verified_access === undefined
+      ? {}
+      : { verified_access: Object.freeze({ ...context.verified_access }) }),
   });
 
   let rawResult: unknown;

@@ -16,6 +16,7 @@ import {
   createProfiledOwnerScopeService,
   readOwnerScopeProfile,
   OWNER_RESEARCH_SCOPE_PROFILE,
+  readSourceRevisionFreshness,
   createOwnerScopeAuthority,
   reauthorizeOwnerHistoricalScope,
 } from "@eliotr/cloudflare-navigation";
@@ -137,7 +138,8 @@ async function loadOriginalScope(
   context: WikiVerifiedActor,
   scopeRef: VersionedRef,
   allowHeadInvalidation = false,
-): Promise<{ readonly originalRef: VersionedRef; readonly original: ScopeSnapshot }> {
+): Promise<{ readonly originalRef: VersionedRef; readonly original: ScopeSnapshot;
+  readonly invalidated_at: string | null; readonly invalidation_reason: string | null }> {
   if (context.client_class !== "owner_pwa") stale("Wiki access requires the owner profile", 403);
   const originalRef = VersionedRefSchema.parse(scopeRef);
   const originalAuthority = await loadScopeAuthority(runtime.database, originalRef);
@@ -146,7 +148,25 @@ async function loadOriginalScope(
        (!allowHeadInvalidation || originalAuthority.invalidation_reason !== "SCOPE_INPUT_CHANGED"))) {
     stale("Wiki proposal scope is no longer available");
   }
-  return { originalRef, original: ScopeSnapshotSchema.parse(originalAuthority.snapshot) };
+  return {
+    originalRef,
+    original: ScopeSnapshotSchema.parse(originalAuthority.snapshot),
+    invalidated_at: originalAuthority.invalidated_at,
+    invalidation_reason: originalAuthority.invalidation_reason,
+  };
+}
+
+async function requireOriginalOwnerGrantNotRevoked(
+  runtime: WikiDatabaseRuntime,
+  context: WikiVerifiedActor,
+  originalRef: VersionedRef,
+): Promise<void> {
+  const revoked = await runtime.database.prepare(
+    "SELECT 1 AS revoked FROM scope_access_grant WHERE snapshot_id=?1 AND snapshot_revision=?2 " +
+      "AND principal_ref=?3 AND client_class='owner_pwa' AND state='REVOKED' LIMIT 1",
+  ).bind(originalRef.id, originalRef.revision, context.principal_ref)
+    .first<{ readonly revoked: unknown }>();
+  if (revoked !== null) stale("Wiki proposal's original owner grant was revoked");
 }
 
 /** Build a fresh owner authorization while retaining the saved scope as provenance. */
@@ -155,8 +175,39 @@ export async function prepareOwnerScopeReauthorization(
   context: WikiVerifiedActor,
   scopeRef: VersionedRef,
 ): Promise<WikiProposalReadAuthorization> {
-  const { originalRef, original } = await loadOriginalScope(runtime, context, scopeRef);
+  const { originalRef, original, invalidated_at, invalidation_reason } =
+    await loadOriginalScope(runtime, context, scopeRef, true);
+  await requireOriginalOwnerGrantNotRevoked(runtime, context, originalRef);
   const now = Date.now;
+  if (invalidated_at !== null && invalidation_reason === "SCOPE_INPUT_CHANGED") {
+    const historical = await reauthorizeOwnerHistoricalScope({
+      database: runtime.database,
+      access: context,
+      original_ref: originalRef,
+      original,
+      now,
+    }).catch((error: unknown) => {
+      if (!canReauthorize(error)) throw error;
+      stale("Wiki proposal scope is no longer current");
+    });
+    const navigation = createNavigationReadAuthority({
+      database: runtime.database,
+      scope_snapshot: historical.scope,
+      access: context,
+      require_current: historical.requireCurrent,
+      now,
+    });
+    const authorization = await navigation.current();
+    const freshness = await readSourceRevisionFreshness(runtime.database, {
+      original_scope_snapshot_ref: originalRef,
+      navigation,
+      requireCurrent: async () => { await historical.requireCurrent(historical.scope); },
+    });
+    if (freshness.state !== "CURRENT_REVISIONS") {
+      stale("Wiki from-run scope no longer has its original current source revisions");
+    }
+    return bindAuthorization(originalRef, navigation, authorization);
+  }
   const owner = createOwnerScopeAuthority(runtime.database, context, now);
   const profile = await readOwnerScopeProfile(runtime.database, original);
   const scopes = createProfiledOwnerScopeService(runtime.database, owner, profile, now);
@@ -198,7 +249,7 @@ export async function prepareOwnerScopeReadAuthorization(
   context: WikiVerifiedActor,
   scopeRef: VersionedRef,
 ): Promise<WikiProposalReadAuthorization> {
-  const { originalRef, original } = await loadOriginalScope(runtime, context, scopeRef);
+  const { originalRef, original } = await loadOriginalScope(runtime, context, scopeRef, true);
   const now = Date.now;
   const owner = createOwnerScopeAuthority(runtime.database, context, now);
   const profile = await readOwnerScopeProfile(runtime.database, original);

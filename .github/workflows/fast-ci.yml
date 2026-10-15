@@ -62,6 +62,7 @@ jobs:
           packages/cloudflare-model-execution/src/model-route-failure.test.ts
           packages/cloudflare-workspace-mcp/src/gemini-mcp.test.ts
           packages/cloudflare-workspace-mcp/src/gemini-mcp-service-token.test.ts
+          packages/cloudflare-workspace-mcp/src/gemini-mcp-client-diagnostics.test.ts
           apps/eliotr-core/test/research-model-gateway-runtime.test.ts
           --reporter=verbose
       - name: Native Worker model settings and Gateway contracts
@@ -73,6 +74,7 @@ jobs:
           test/mcp-client-diagnostic-roundtrip.test.ts
           test/doctor.test.ts
           test/scheduled-isolation.test.ts
+          test/project-scope-currentness.test.ts
           --reporter=verbose
       - name: Build served assets and owner web
         run: |

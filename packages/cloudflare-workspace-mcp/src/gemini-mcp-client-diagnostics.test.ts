@@ -165,7 +165,14 @@ describe("MCP client diagnostic confirmation tool", () => {
   });
 
   it("calls the trusted callback only with a valid context and returns public DTO fields", async () => {
-    const context = serviceContext();
+    const verifiedAccess = {
+      principal_ref: "codex-client.access",
+      credential_generation: "credential-1",
+      authentication_method: "service_token" as const,
+      issuer: "https://team-example.cloudflareaccess.com",
+      expires_at: ACTOR_EXPIRY,
+    };
+    const context = serviceContext({ verified_access: verifiedAccess });
     let received: McpDiagnosticConsumeInput | undefined;
     const result = await confirmClientDiagnostic(diagnosticDependencies({
       mcpClientDiagnosticConsume: async (input, receivedContext) => {
@@ -173,6 +180,7 @@ describe("MCP client diagnostic confirmation tool", () => {
         expect(receivedContext).not.toBe(context);
         expect(Object.isFrozen(receivedContext)).toBe(true);
         expect(receivedContext.verified_actor === undefined || Object.isFrozen(receivedContext.verified_actor)).toBe(true);
+        expect(receivedContext.verified_access).toEqual(verifiedAccess);
         return confirmedResult(input, receivedContext);
       },
     }), CHALLENGE_INPUT, context);
@@ -262,7 +270,7 @@ describe("MCP client diagnostic confirmation tool", () => {
     expect(called).toBe(false);
   });
 
-  it("rejects profile mismatch and callback failures without serializing internal details", async () => {
+  it("resolves diagnostic profile from the verified request and hides callback failures", async () => {
     let called = false;
     const mismatch = await callGeminiMcpTool(
       toolDependencies({
@@ -276,11 +284,8 @@ describe("MCP client diagnostic confirmation tool", () => {
       CHALLENGE_INPUT,
       serviceContext(),
     );
-    expect(mismatch).toMatchObject({
-      isError: true,
-      structuredContent: { code: "MCP_CLIENT_DIAGNOSTIC_UNAVAILABLE" },
-    });
-    expect(called).toBe(false);
+    expect(mismatch.isError).not.toBe(true);
+    expect(called).toBe(true);
 
     const replay = await callGeminiMcpTool(
       toolDependencies({

@@ -13,12 +13,18 @@ import { orientationCurrentness } from "./orientation-currentness.js";
 import { issueClientResearchScopeGrant, issueClientQueryScopeGrant, requireClientScopeProvenance, requireClientArtifactScopeSchema, requireClientScopeSchema, type ClientArtifactScopeOrigin } from "./client-scope-grant.js";
 import type { ScopeAuthorityRequest, ScopeRepository } from "./scope-service.js";
 import { ORIENTATION_MAX_SOURCES, orientationFail, orientationId } from "./orientation-input.js";
-import { historicalPolicyAuthorityRef, historicalPolicyClosureRef as computeHistoricalPolicyClosureRef } from "./owner-policy-lease-history.js";
+import { historicalPolicyAuthorityRef, historicalPolicyClosureRef as computeHistoricalPolicyClosureRef,
+  type HistoricalPolicyRow } from "./owner-policy-lease-history.js";
 
 type Bind = string | number | null;
 interface PolicyRow {
   source_namespace_id: string; policy_ref: string; generation: number; allowed_use_json: string;
   disclosure_ceiling: string; expires_at: string;
+}
+export interface OwnerScopePolicyIdentityOverride {
+  readonly rows: readonly HistoricalPolicyRow[];
+  /** false reproduces the pre-scope policy fingerprint; true fingerprints only member namespaces. */
+  readonly members_only: boolean;
 }
 interface SourceRow {
   source_revision_ref: string; source_id: string; source_namespace_id: string; source_owner_system_id: string;
@@ -47,8 +53,10 @@ export interface OrientationSource {
   readonly kind: string;
 }
 export interface OwnerScopeAuthority extends Pick<ScopeRepository, "resolveAtom" | "resolveAuthorityClosure"> {
-  exhaustiveResolveAtom(atom: DeterministicScopeAtom, observedAt: string): Promise<Awaited<ReturnType<ScopeRepository["resolveAtom"]>>>;
-  exhaustiveResolveAuthorityClosure(request: ScopeAuthorityRequest): Promise<Awaited<ReturnType<ScopeRepository["resolveAuthorityClosure"]>>>;
+  exhaustiveResolveAtom(atom: DeterministicScopeAtom, observedAt: string,
+    policyIdentity?: OwnerScopePolicyIdentityOverride): Promise<Awaited<ReturnType<ScopeRepository["resolveAtom"]>>>;
+  exhaustiveResolveAuthorityClosure(request: ScopeAuthorityRequest,
+    policyIdentity?: OwnerScopePolicyIdentityOverride): Promise<Awaited<ReturnType<ScopeRepository["resolveAuthorityClosure"]>>>;
   requireReadPolicy(): Promise<void>;
   sources(refs: readonly string[]): Promise<readonly OrientationSource[]>;
   /**
@@ -133,6 +141,23 @@ function createReadPolicyAuthority(db: D1Database, context: EvidenceAccessContex
     }
     return parsed.map(orientationId);
   }
+  function scopePolicyIdentityRows(
+    sources: readonly OrientationSource[],
+    override?: OwnerScopePolicyIdentityOverride,
+  ): PolicyRow[] {
+    // Authority fingerprints belong to the resolved member namespaces; an
+    // unrelated project's policy row must not stale this scope atom.
+    const memberNamespaces = new Set(sources.map((source) => source.revision.source_namespace_id));
+    const candidates = override?.rows ?? sources.map((source) => source.policy);
+    const rows = new Map<string, PolicyRow>();
+    for (const policy of candidates) {
+      if (!override?.members_only || memberNamespaces.has(policy.source_namespace_id)) {
+        rows.set(policy.source_namespace_id, policy);
+      }
+    }
+    return [...rows.values()].sort((left, right) =>
+      left.source_namespace_id < right.source_namespace_id ? -1 : left.source_namespace_id > right.source_namespace_id ? 1 : 0);
+  }
   async function decode(rows: SourceRow[], policyRows: Map<string, PolicyRow>): Promise<OrientationSource[]> {
     const authorities: EvidenceSourceAuthority[] = [];
     for (let offset = 0; offset < rows.length; offset += ORIENTATION_MAX_SOURCES) {
@@ -178,7 +203,8 @@ function createReadPolicyAuthority(db: D1Database, context: EvidenceAccessContex
     }
     return loaded.sort((a, b) => a.revision.source_revision_ref < b.revision.source_revision_ref ? -1 : 1);
   }
-  async function resolveAtomWithLimit(atom: DeterministicScopeAtom, observedAt: string, maximumSources: number) {
+  async function resolveAtomWithLimit(atom: DeterministicScopeAtom, observedAt: string, maximumSources: number,
+    policyIdentity?: OwnerScopePolicyIdentityOverride) {
     const currentPolicies = await policies(maximumSources);
     const filters: string[] = ["r.source_revision_ref=s.head_rev", "r.purge_state='LIVE'",
       "s.source_namespace_id IN (SELECT value FROM json_each(?1))"];
@@ -219,6 +245,7 @@ function createReadPolicyAuthority(db: D1Database, context: EvidenceAccessContex
     const loaded = await decode(rows, currentPolicies);
     const members = loaded.map((source) => ({ source_revision_ref: source.revision.source_revision_ref,
       source_owner_generation: source.revision.source_owner_generation, policy_closure_ref: source.policy_closure_ref }));
+    const identityPolicies = scopePolicyIdentityRows(loaded, policyIdentity);
     const projectMembershipIdentity = project === null ? null : {
       project_id: project.project_id,
       generation: project.generation,
@@ -231,22 +258,23 @@ function createReadPolicyAuthority(db: D1Database, context: EvidenceAccessContex
       owner_deployment_generation: project.owner_deployment_generation,
     };
     return { atom_generation_ref: `atom-${await evidenceSha256({
-      atom, project: projectMembershipIdentity, members, policies: [...currentPolicies.values()],
+      atom, project: projectMembershipIdentity, members, policies: identityPolicies,
     })}`, members };
   }
   async function resolveAtom(atom: DeterministicScopeAtom, observedAt: string) {
     return resolveAtomWithLimit(atom, observedAt, ORIENTATION_MAX_SOURCES);
   }
-  async function exhaustiveResolveAtom(atom: DeterministicScopeAtom, observedAt: string) {
-    return resolveAtomWithLimit(atom, observedAt, 4096);
+  async function exhaustiveResolveAtom(atom: DeterministicScopeAtom, observedAt: string,
+    policyIdentity?: OwnerScopePolicyIdentityOverride) {
+    return resolveAtomWithLimit(atom, observedAt, 4096, policyIdentity);
   }
   async function resolveAuthorityClosureWithLoader(
     request: ScopeAuthorityRequest,
     load: (refs: readonly string[]) => Promise<readonly OrientationSource[]>,
-    maximumPolicyRows: number,
+    policyIdentity?: OwnerScopePolicyIdentityOverride,
   ) {
     const loaded = await load(request.member_source_revision_refs);
-    const policyRows = [...(await policies(maximumPolicyRows)).values()];
+    const policyRows = scopePolicyIdentityRows(loaded, policyIdentity);
     if (loaded.some((source) => request.member_policy_closure_refs[source.revision.source_revision_ref] !== source.policy_closure_ref)) {
       orientationFail("ORIENTATION_POLICY_CHANGED", 409);
     }
@@ -262,10 +290,11 @@ function createReadPolicyAuthority(db: D1Database, context: EvidenceAccessContex
     denied_source_revision_refs: [] };
   }
   async function resolveAuthorityClosure(request: ScopeAuthorityRequest) {
-    return resolveAuthorityClosureWithLoader(request, sources, ORIENTATION_MAX_SOURCES);
+    return resolveAuthorityClosureWithLoader(request, sources);
   }
-  async function exhaustiveResolveAuthorityClosure(request: ScopeAuthorityRequest) {
-    return resolveAuthorityClosureWithLoader(request, exhaustiveSources, 4096);
+  async function exhaustiveResolveAuthorityClosure(request: ScopeAuthorityRequest,
+    policyIdentity?: OwnerScopePolicyIdentityOverride) {
+    return resolveAuthorityClosureWithLoader(request, exhaustiveSources, policyIdentity);
   }
   async function grantWithLoader(
     snapshot: ScopeSnapshot,
@@ -277,7 +306,9 @@ function createReadPolicyAuthority(db: D1Database, context: EvidenceAccessContex
     const allowedUses = [...new Set(loaded.flatMap((source) => source.authority.allowed_use))].sort();
     if (!allowedUses.length) allowedUses.push("research");
     const disclosure = loaded[0]?.policy.disclosure_ceiling ?? "private";
-    const policyExpiry = Math.min(...[...(await policies(maximumPolicyRows)).values()].map((policy) => Date.parse(policy.expires_at)));
+    const policyRows = scopePolicyIdentityRows(loaded);
+    const policyExpiry = policyRows.length === 0 ? Date.parse(snapshot.expires_at) :
+      Math.min(...policyRows.map((policy) => Date.parse(policy.expires_at)));
     if (expiresAtCeilingMs !== undefined && (!Number.isSafeInteger(expiresAtCeilingMs) ||
         expiresAtCeilingMs <= now())) orientationFail("ORIENTATION_OPERATION_EXPIRED", 409);
     const expiresAt = new Date(Math.min(Date.parse(snapshot.expires_at), policyExpiry,
