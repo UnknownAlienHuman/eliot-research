@@ -36,6 +36,22 @@ authorization and external-key acceptance are not yet verified. Do not copy
 Wrangler's broad OAuth credential into the Worker or claim that a manually
 provided API token is the only supported authorization route.
 
+The bounded implementation review selects the existing server management seam,
+not a new OAuth application/token lifecycle. A single service credential with
+AI Gateway Edit and Account Secrets Store Edit can be provisioned through the
+Cloudflare dashboard and installed as the existing encrypted Worker Secret.
+Browser login authorizes the operator; it does not grant the deployed Worker
+Cloudflare administration rights. This one-time setup remains blocked by the
+unavailable browser tooling, not by project selection or model-provider keys.
+
+At 22:24 UTC the supplied OpenRouter test credential authenticated successfully;
+both explicitly named free models were present with zero input/output price.
+One direct OpenAI-compatible call to `dots-studio/dots-3-note-preview:free`
+returned HTTP 200, one completed choice and the requested JSON. This proves
+upstream compatibility only, not service settings or Gateway routing. The
+supplied OpenCode `step-5-preview-free` ID was absent from its current model
+catalog; no substitute paid model or inference request was used.
+
 References: [Cloudflare OAuth clients](https://developers.cloudflare.com/fundamentals/oauth/create-an-oauth-client/),
 [OAuth integration](https://developers.cloudflare.com/fundamentals/oauth/integrate-with-cloudflare/),
 [BYOK](https://developers.cloudflare.com/ai-gateway/configuration/bring-your-own-keys/).
