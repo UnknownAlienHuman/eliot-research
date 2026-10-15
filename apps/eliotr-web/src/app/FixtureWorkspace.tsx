@@ -28,11 +28,12 @@ const copy = {
       { id: "sample-wiki", kind: "wiki", risk: "D2", title: "Wiki page: evidence and its scope", from: "Sample agent", detail: "Analytical summary of three sources." },
     ] satisfies readonly DecisionItem[],
     report: "An explicit source scope keeps a claim connected to the material that informed it. Review the original passage, keep uncertainty visible, and distinguish a saved draft from an accepted report.",
+    settings: "Settings",
   },
   ru: {
     projects: "Проекты", project: "Проект", knowledge: "Доказательства в повседневной исследовательской работе", design: "Проектирование понятного рабочего пространства знаний",
     inbox: "Входящие", sources: "Источники", research: "Исследование", studio: "Студия", connections: "Агенты и модели",
-    nextScope: "Для следующего вопроса", choose: "Выбрать источники", original: "Образец отчёта сохраняет первоначальный набор источников.",
+    settings: "Настройки", nextScope: "Для следующего вопроса", choose: "Выбрать источники", original: "Образец отчёта сохраняет первоначальный набор источников.",
     selected: (count: number) => `Выбрано источников: ${count}`,
     frozen: (count: number) => `Первоначальный набор образца отчёта: ${count}`,
     evidence: "Доказательство", passage: "Ясность начинается с понятной связи между вопросом, источником и утверждением.",
@@ -138,3 +139,6 @@ function LocalProject({ destination, locale, headingRef, project, projectTitle, 
     </Dialog>
   </div>;
 }
+
+
+

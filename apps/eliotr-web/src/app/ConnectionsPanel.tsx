@@ -7,19 +7,22 @@ import type { BoundWorkspaceApis } from "./runtime";
 import { connectionsQueryOptions } from "../query/connections";
 import { protectedQueryKey } from "../query/client";
 import { ComputerAgentConnectionsPanel } from "./ComputerAgentConnectionsPanel";
-import { ModelSettingsPanel } from "./ModelSettingsPanel";
 import { usePaneAnnouncement } from "./usePaneAnnouncement";
+import { WorkspaceLink } from "../routes/WorkspaceLink";
 
 const copy = {
-  en: { reading: 'Reading connection status.', failed: 'Some status checks failed. Review the affected rows.', loaded: 'Connection status checks updated.', choose: "Choose a project", project: "Project", next: "Next project page", previous: "Previous project page" },
-  ru: { reading: 'Читается статус подключений.', failed: 'Некоторые проверки статуса завершились ошибкой. Проверьте соответствующие строки.', loaded: 'Проверки статуса подключений обновлены.', choose: "Выберите проект", project: "Проект", next: "Следующая страница проектов", previous: "Предыдущая страница проектов" },
+  en: { reading: 'Reading connection status.', failed: 'Some status checks failed. Review the affected rows.', loaded: 'Connection status checks updated.', choose: "Choose a project", project: "Project", next: "Next project page", previous: "Previous project page", modelSettings: "Model and provider settings are global; open Settings to connect an external provider.", openSettings: "Open settings" },
+  ru: { reading: 'Читается статус подключений.', failed: 'Некоторые проверки статуса завершились ошибкой. Проверьте соответствующие строки.', loaded: 'Проверки статуса подключений обновлены.', choose: "Выберите проект", project: "Проект", next: "Следующая страница проектов", previous: "Предыдущая страница проектов", modelSettings: "Настройки моделей и провайдеров общие; внешний провайдер подключается в Настройках", openSettings: "Открыть настройки" },
 } as const;
 
 function rowState<T>(query: UseQueryResult<T, Error>, enabled = true): "idle" | "loading" | "loaded" | "failed" {
   return !enabled ? "idle" : query.isPending ? "loading" : query.isError ? "failed" : "loaded";
 }
 
-/** Each row observes its own protected read; model selection never substitutes for operation status. */
+/**
+ * Agents and their project permissions. Model and provider setup is not part of this pane: it is a
+ * service-wide fact and lives in /settings, so no project selector gates a provider, key or model.
+ */
 export function ConnectionsPanel({ locale, apis, privacy, context, projects, projectQueryKey, projectId, onProject, onNext, onPrevious }: {
   readonly locale: "en" | "ru"; readonly apis: BoundWorkspaceApis; readonly privacy: PrivacyController; readonly context: SessionContext;
   readonly projects: UseQueryResult<ProjectListView, Error>; readonly projectId: string | undefined;
@@ -33,14 +36,12 @@ export function ConnectionsPanel({ locale, apis, privacy, context, projects, pro
   const active = page !== undefined && projectId !== undefined && page.projects.some(project => project.project_id === projectId);
   const health = useQuery(options.health()), session = useQuery(options.session()), diagnostic = useQuery(options.diagnostic());
   const grants = useQuery(active ? options.grants(page, projectId) : { queryKey: [...key, "grants-unselected"], queryFn: skipToken });
-  const providers = useQuery(active ? options.providers(page, projectId) : { queryKey: [...key, "providers-unselected"], queryFn: skipToken });
-  const models = useQuery(active ? options.models(page, projectId) : { queryKey: [...key, "models-unselected"], queryFn: skipToken });
-  const readiness = useQuery(active ? options.readiness(page, projectId) : { queryKey: [...key, "readiness-unselected"], queryFn: skipToken });
   const refresh = () => {
     if (privacy.isCurrent(context)) void client.invalidateQueries({ queryKey: key });
   };
-  const facts = { health, session, diagnostic, googleTransport: health, grant: grants, providerConfig: providers,
-    projectModel: models, researchReadiness: readiness };
+  // Only access facts remain. Provider, model and readiness rows move to /settings, so a project
+  // selector here addresses agent permissions on private sources and nothing else.
+  const facts = { health, session, diagnostic, grant: grants };
   const retry = () => {
     if (!privacy.isCurrent(context)) return;
     for (const query of new Set(Object.values(facts))) if (query.isError && !query.isFetching) void query.refetch();
@@ -65,22 +66,24 @@ export function ConnectionsPanel({ locale, apis, privacy, context, projects, pro
       {onPrevious && <Button variant="text" onClick={onPrevious}>{text.previous}</Button>}
       {onNext && <Button variant="tonal" onClick={onNext}>{text.next}</Button>}
     </div>
+    <p>{text.modelSettings}</p>
+    <WorkspaceLink className="er-shell-link" to="/settings">{text.openSettings}</WorkspaceLink>
     <ConnectionsFeature locale={locale} queries={{ health: rowState(health), session: rowState(session), diagnostic: rowState(diagnostic),
-      googleTransport: rowState(health), grant: rowState(grants, active), providerConfig: rowState(providers, active),
-      projectModel: rowState(models, active), researchReadiness: rowState(readiness, active), providerModelUse: "idle" }}
-      health={health.data} session={session.data} grants={grants.data?.grants} providerConfigurations={providers.data?.configurations}
-      projectModel={models.data} readiness={readiness.data} diagnostic={diagnostic.data ?? undefined}
-      pendingActions={{ refresh: [...new Set(Object.values(facts))].some(query => query.isFetching),
-        retry: [...new Set(Object.values(facts))].some(query => query.isError && query.isFetching),
+      grant: rowState(grants, active), providerConfig: "idle", projectModel: "idle", researchReadiness: "idle",
+      googleTransport: "idle", providerModelUse: "idle" }}
+      health={health.data} session={session.data} grants={grants.data?.grants}
+      diagnostic={diagnostic.data ?? undefined}
+      pendingActions={{ refresh: observed.some(query => query.isFetching),
+        retry: observed.some(query => query.isError && query.isFetching),
         diagnostics: diagnostic.isFetching }}
-      onRefresh={refresh} {...(Object.values(facts).some(query => query.isError) ? { onRetry: retry } : {})} onRetryRow={row => {
+      onRefresh={refresh} {...(observed.some(query => query.isError) ? { onRetry: retry } : {})} onRetryRow={row => {
         if (row === "providerModelUse") return;
-        const query = facts[row];
+        const query = facts[row as keyof typeof facts];
         if (privacy.isCurrent(context) && query.isError && !query.isFetching) void query.refetch();
       }} onOpenDiagnostics={() => { if (privacy.isCurrent(context)) void diagnostic.refetch(); }} />
-    {active && page !== undefined && projectId !== undefined && <ModelSettingsPanel
-      key={`${context.cacheEpoch}:${context.principal}:${context.credentialGeneration}:${context.deploymentGeneration}:${projectId}`}
-      locale={locale} apis={apis} privacy={privacy} context={context} projectPage={page} projectId={projectId}
-      projectQueryKey={projectQueryKey} providers={providers} models={models} />}
   </>;
 }
+
+
+
+
