@@ -403,9 +403,6 @@ describe("Core managed target assignment on native D1", () => {
     expect(legacyRead.status).toBe(409);
     expect((await json(legacyRead)).code).toBe("MANAGED_TARGET_ASSIGNMENT_VERSIONED_HEAD");
 
-    const registry = createAiSearchGenerationRegistryService(
-      createD1AiSearchGenerationRegistryStore(runtime.SEARCH_DB),
-    );
     const unreviewedGeneration = "unreviewed-managed-search-shadow";
     await registry.declare({
       namespace: AI_SEARCH_PRIMARY_NAMESPACE,
