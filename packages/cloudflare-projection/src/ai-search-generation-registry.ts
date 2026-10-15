@@ -285,6 +285,14 @@ export function createAiSearchGenerationRegistryService(
         );
       }
       const target = await boundEvidenceTarget(current.namespace, current.profile, current.generation);
+      const retained = getAiSearchGenerationPromotionEvidence(current);
+      if (retained !== undefined && authority.reconcileAppliedQualification !== undefined &&
+          await authority.reconcileAppliedQualification({ target, evidence_sha256: retained.evidence_sha256,
+            registry_readback: { namespace: boundedNamespace, revision: previous.artifact.revision,
+              artifact_sha256: previous.artifact_sha256,
+              active_head_generation: previous.artifact.registry.active_head_generation } })) {
+        return existingReceipt("QUALIFY", current.generation, previous);
+      }
       const evidence = await readCurrentEvidenceBundle(authority, target);
       const nextRecord = qualifyAiSearchGeneration(current, evidence);
       if (exactExistingRecord(current, nextRecord)) {

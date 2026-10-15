@@ -20,7 +20,7 @@ import {
 import { validateManagedGenerationPromotionHold } from "./managed-generation-promotion-evidence-validation.js";
 
 type DrainPort = Pick<ManagedGenerationPromotionEvidenceAuthorityPort,
-  "runWithTargetWriterDrain" | "assertTargetWriterDrainHold" | "reconcileTargetWriterDrain">;
+  "runWithTargetWriterDrain" | "assertTargetWriterDrainHold" | "reconcileTargetWriterDrain" | "reconcileAppliedQualification">;
 type RegistryReadback = Parameters<DrainPort["reconcileTargetWriterDrain"]>[0]["registry_readback"];
 
 interface HoldRow {
@@ -43,6 +43,7 @@ export interface D1ManagedTargetWriterDrainDependencies {
   /** Atomically activate or block/retire the Core root under current authority after verified Search CAS. */
   readonly reconcile_core: (input: {
     readonly hold: ManagedGenerationPromotionHoldV1;
+    readonly applied_registry_readback: RegistryReadback;
     readonly registry_readback: RegistryReadback;
   }) => Promise<void>;
 }
@@ -165,8 +166,7 @@ export function createD1ManagedTargetWriterDrain(dependencies: D1ManagedTargetWr
     const row = await rowFor(input.operation_id);
     if (row === null) unavailable("promotion reconciliation has no durable Core hold");
     const applied = await findApplied(input.operation_id);
-    if (canonicalProjectionJson(identity(applied)) !== canonicalProjectionJson(input.registry_readback) ||
-        applied.transition_json.length > 786432 ||
+    if (applied.transition_json.length > 786432 ||
         await projectionSha256Utf8(applied.transition_json) !== applied.transition_sha256) {
       unavailable("requested registry readback is not this operation's exact committed Search transition");
     }
@@ -181,9 +181,15 @@ export function createD1ManagedTargetWriterDrain(dependencies: D1ManagedTargetWr
       unavailable("Search transition does not retain the exact Core writer hold");
     }
     const current = await decodeAiSearchGenerationRegistrySnapshot(await registry.read(applied.namespace), applied.namespace);
-    if (current.artifact.revision !== applied.revision || current.artifact_sha256 !== applied.artifact_sha256 ||
-        current.artifact.registry.active_head_generation !== applied.active_head_generation) {
-      unavailable("Search registry advanced or differs from the committed hold transition");
+    const currentIdentity: RegistryReadback = { namespace: current.artifact.namespace,
+      revision: current.artifact.revision, artifact_sha256: current.artifact_sha256,
+      active_head_generation: current.artifact.registry.active_head_generation };
+    if (current.artifact.revision < applied.revision ||
+        (current.artifact.revision === applied.revision &&
+          canonicalProjectionJson(currentIdentity) !== canonicalProjectionJson(identity(applied))) ||
+        ![canonicalProjectionJson(identity(applied)), canonicalProjectionJson(currentIdentity)]
+          .includes(canonicalProjectionJson(input.registry_readback))) {
+      unavailable("registry readback is neither this committed transition nor the actual current Search artifact");
     }
     const readbackJson = canonicalProjectionJson(identity(applied));
     if (row.state === "COMPLETED") {
@@ -193,7 +199,9 @@ export function createD1ManagedTargetWriterDrain(dependencies: D1ManagedTargetWr
     // Authority may have changed after Search committed. The Core reconciler
     // must then block/retire that exact root instead of activating stale data.
     await assertHeld(hold, false);
-    await dependencies.reconcile_core({ hold, registry_readback: identity(applied) });
+    // The immutable applied identity and independently decoded current identity
+    // are distinct: unrelated DECLAREs may advance the namespace after this CAS.
+    await dependencies.reconcile_core({ hold, applied_registry_readback: identity(applied), registry_readback: currentIdentity });
     await assertHeld(hold, false);
     await core.prepare("UPDATE operation_execution_lease SET state='COMPLETED'," +
       "managed_target_registry_readback_json=?3,terminal_receipt_ref=?4," +
@@ -218,5 +226,25 @@ export function createD1ManagedTargetWriterDrain(dependencies: D1ManagedTargetWr
     },
     assertTargetWriterDrainHold: assertHeld,
     reconcileTargetWriterDrain: reconcile,
+    async reconcileAppliedQualification(input): Promise<boolean> {
+      assertProjectionSha256(input.evidence_sha256, "retained qualification evidence");
+      const rows = await search.prepare("SELECT transition_json FROM ai_search_generation_registry_transition t " +
+        "WHERE namespace=?1 AND operation='QUALIFY' AND generation=?2 " +
+        "AND EXISTS (SELECT 1 FROM json_each(t.transition_json,'$.changed_generations') c " +
+        "WHERE json_extract(c.value,'$.generation')=?2 AND json_extract(c.value,'$.next_evidence_sha256')=?3) " +
+        "ORDER BY revision DESC LIMIT 2")
+        .bind(input.target.namespace, input.target.managed_generation, input.evidence_sha256)
+        .all<{ transition_json: string }>();
+      if (rows.success !== true || rows.results.length > 1) unavailable("qualification recovery transition is unavailable or ambiguous");
+      const transition = rows.results[0];
+      if (transition === undefined) return false;
+      const event = JSON.parse(transition.transition_json) as { promotion_hold?: { operation_id?: unknown } };
+      const operationId = event.promotion_hold?.operation_id;
+      if (typeof operationId !== "string") unavailable("qualification recovery transition lacks its hold identity");
+      const row = await rowFor(operationId);
+      if (row === null || row.state === "COMPLETED") return false;
+      await reconcile({ operation_id: operationId, registry_readback: input.registry_readback });
+      return true;
+    },
   };
 }

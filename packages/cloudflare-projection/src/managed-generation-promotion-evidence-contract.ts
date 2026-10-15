@@ -273,6 +273,21 @@ export interface ManagedGenerationPromotionEvidenceAuthorityPort {
     };
   }): Promise<void>;
   /**
+   * Recover only an already committed QUALIFY with an outstanding durable Core
+   * hold, before fresh qualification checks. Returning false follows the normal
+   * current-evidence path. This does not newly qualify expired authority.
+   */
+  reconcileAppliedQualification?(input: {
+    readonly target: ManagedGenerationPromotionTarget;
+    readonly evidence_sha256: string;
+    readonly registry_readback: {
+      readonly namespace: string;
+      readonly revision: number;
+      readonly artifact_sha256: string;
+      readonly active_head_generation: string | null;
+    };
+  }): Promise<boolean>;
+  /**
    * Reads an immutable rollback-window and backup-readback receipt for exactly
    * one record. The caller cannot request bulk cleanup or supply retention flags.
    */
