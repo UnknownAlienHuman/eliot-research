@@ -7,7 +7,12 @@ import type {
   ManagedRequiredSetPort,
   ManagedRequiredSetReceipt,
 } from "./managed-required-set.js";
-import type { ProjectionExecutionProfile } from "./types.js";
+import type {
+  CanonicalSourceProjectionReceipt,
+  CanonicalSourceProjectionWriter,
+  ManagedProjectCopyMapSetReceipt,
+  ProjectionExecutionProfile,
+} from "./types.js";
 import type { ManagedTargetProviderCapacityAuthorityPort } from "./managed-target-manifest-fragments.js";
 import type { MANAGED_TARGET_MANIFEST_PROTOCOL, MANAGED_TARGET_MANIFEST_COPY_LAYOUT } from "./managed-target-manifest.js";
 
@@ -69,87 +74,51 @@ export interface ManagedTargetManifestDocument extends ManagedTargetManifestSour
   readonly markdown: string;
 }
 
-export interface ManagedTargetManifestCanonicalSectionRef {
-  readonly canonical_section_id: string;
-  readonly content_sha256: string;
-  readonly normalized_start_byte: number;
-  readonly normalized_end_byte: number;
-  readonly canonical_body_ref: string;
-  readonly canonical_body_sha256: string;
-}
-
-/** The source writer owns body bytes under the complete-residency Work inventory. */
-export interface CanonicalSourceProjectionReceipt {
-  readonly protocol: "eliotr.canonical-source-projection.v1";
-  readonly source_revision_ref: string;
-  readonly complete_residency_key_sha256: string;
-  readonly projector_profile_sha256: string;
-  readonly canonical_projection_generation: string;
-  readonly canonical_source_ref: string;
-  readonly canonical_source_sha256: string;
-  readonly canonical_section_count: number;
-  readonly canonical_section_set_sha256: string;
-  readonly sections: readonly ManagedTargetManifestCanonicalSectionRef[];
-}
-
-/** A small, exact provider-copy map. It contains refs and keys, never section text. */
-export interface ManagedProjectCopyMapReceipt {
-  readonly protocol: "eliotr.managed-project-copy-map.v1";
-  readonly source_revision_ref: string;
-  readonly complete_residency_key_sha256: string;
-  readonly target: ManagedTargetIdentity;
-  readonly project_id: string;
-  readonly project_membership_id: string;
-  readonly membership_generation: number;
-  readonly canonical_source_ref: string;
-  readonly canonical_source_sha256: string;
-  readonly provider_copy_count: 1;
-  readonly provider_copy_set_sha256: string;
-  readonly provider_item_count: number;
-  readonly provider_item_set_sha256: string;
-  readonly items: readonly {
-    readonly item_key: string;
-    readonly canonical_section_id: string;
-    readonly content_sha256: string;
-    readonly canonical_body_ref: string;
-    readonly canonical_body_sha256: string;
-  }[];
-}
-
-export interface ManagedTargetManifestCanonicalProjectionPort {
-  readCanonicalSource(input: {
+export interface ManagedTargetManifestDocumentPort {
+  /** One bounded D1 batch validates the exact authority of at most 24 required copies. */
+  readAuthorityBatch(input: {
+    readonly target: ManagedTargetIdentity;
+    readonly profile: ManagedTargetManifestProfile;
+    readonly copies: readonly ManagedRequiredProjectRevisionCopy[];
+    readonly as_of: string;
+  }): Promise<{
+    /** Results are positionally aligned with copies; missing or extra rows fail closed. */
+    readonly authorities: readonly ManagedTargetManifestSourceAuthority[];
+    readonly budget: ManagedTargetManifestOperationBudgetReceipt;
+  }>;
+  readNormalizedContent(input: {
     readonly target: ManagedTargetIdentity;
     readonly profile: ManagedTargetManifestProfile;
     readonly copy: ManagedRequiredProjectRevisionCopy;
     readonly source_authority: ManagedTargetManifestSourceAuthority;
     readonly as_of: string;
-    readonly operation_budget_remaining: number;
-    readonly subrequest_budget_remaining: number;
   }): Promise<{
-    readonly receipt: CanonicalSourceProjectionReceipt;
-    readonly budget: ManagedTargetManifestOperationBudgetReceipt;
-  }>;
-  readProjectCopy(input: {
-    readonly target: ManagedTargetIdentity;
-    readonly profile: ManagedTargetManifestProfile;
-    readonly copy: ManagedRequiredProjectRevisionCopy;
-    readonly canonical_source: CanonicalSourceProjectionReceipt;
-    readonly operation_budget_remaining: number;
-    readonly subrequest_budget_remaining: number;
-  }): Promise<{
-    readonly receipt: ManagedProjectCopyMapReceipt;
+    readonly normalized_markdown: string;
+    readonly normalized_object_ref: string;
+    readonly readback_sha256: string;
+    readonly size_bytes: number;
     readonly budget: ManagedTargetManifestOperationBudgetReceipt;
   }>;
 }
 
-export interface ManagedTargetManifestDocumentPort {
-  readAuthority(input: {
-    readonly target: ManagedTargetIdentity;
-    readonly profile: ManagedTargetManifestProfile;
-    readonly copy: ManagedRequiredProjectRevisionCopy;
-    readonly as_of: string;
+/** A budgeted Core adapter over CanonicalSourceProjectionWriter; receipts stay writer-owned. */
+export interface ManagedTargetManifestCanonicalProjectionPort {
+  projectCanonicalSource(input: Parameters<CanonicalSourceProjectionWriter["projectCanonicalSource"]>[0] & {
+    readonly operation_budget_remaining: number;
+    readonly subrequest_budget_remaining: number;
+    readonly cpu_budget_remaining_ms: number;
+    readonly input_bytes_budget_remaining: number;
   }): Promise<{
-    readonly authority: ManagedTargetManifestSourceAuthority;
+    readonly receipt: CanonicalSourceProjectionReceipt;
+    readonly budget: ManagedTargetManifestOperationBudgetReceipt;
+  }>;
+  mapProjectCopies(input: Parameters<CanonicalSourceProjectionWriter["mapProjectCopies"]>[0] & {
+    readonly operation_budget_remaining: number;
+    readonly subrequest_budget_remaining: number;
+    readonly cpu_budget_remaining_ms: number;
+    readonly input_bytes_budget_remaining: number;
+  }): Promise<{
+    readonly receipt: ManagedProjectCopyMapSetReceipt;
     readonly budget: ManagedTargetManifestOperationBudgetReceipt;
   }>;
 }
@@ -262,17 +231,20 @@ export interface ManagedTargetManifestProviderCopySummary {
 }
 
 export interface ManagedTargetManifestInvocationBudget {
-  readonly protocol: "eliotr.managed-target-manifest-invocation-budget.v1";
+  readonly protocol: "eliotr.managed-target-manifest-invocation-budget.v2";
   readonly invocation_index: number;
-  readonly operation_limit: 16;
+  readonly operation_limit: 386;
   readonly operation_upper_bound: number;
   readonly subrequest_limit: 10_000;
   readonly subrequest_upper_bound: number;
   readonly cpu_limit_ms: 30_000;
   readonly cpu_upper_bound_ms: number;
   readonly calls: {
+    /** D1 binding subrequests. A bounded D1 batch may contain several SQL statements. */
     readonly core_d1: number;
+    readonly core_d1_statements: number;
     readonly search_d1: number;
+    readonly search_d1_statements: number;
     readonly capacity_authority: number;
     readonly capacity_authority_subrequests: number;
     readonly writer_subrequests: number;
@@ -290,6 +262,7 @@ export interface ManagedTargetManifestInvocationBudget {
     readonly copies_processed: number;
     readonly items_processed: number;
     readonly fragment_bytes: number;
+    readonly microsteps_processed: number;
   };
 }
 

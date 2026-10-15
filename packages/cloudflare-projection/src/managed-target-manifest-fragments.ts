@@ -5,18 +5,25 @@ import {
 } from "@eliotr/platform-cloudflare";
 import type { ManagedTargetIdentity } from "./managed-target-assignment.js";
 import type {
-  CanonicalSourceProjectionReceipt,
-  ManagedProjectCopyMapReceipt,
   ManagedTargetManifestOperationBudgetReceipt,
   ManagedTargetManifestProfile,
   ManagedTargetManifestSourceAuthority,
 } from "./managed-target-manifest-contract.js";
 import type { ManagedRequiredProjectRevisionCopy } from "./managed-required-set.js";
+import type {
+  CanonicalSourceProjectionReceipt,
+  ManagedProjectCopyMapPage,
+  ManagedProjectCopyMapReceipt,
+  ManagedProjectCopyMapSetReceipt,
+  ManagedProjectCopyTargetReceipt,
+} from "./types.js";
+import { buildCanonicalProjectCopyMaps } from "./core-managed-item-intent.js";
 import {
   canonicalProjectionJson,
   projectionByteStream,
   projectionDigest,
   projectionSha256Utf8,
+  stableProjectionId,
   utf8ProjectionBytes,
 } from "./canonical.js";
 
@@ -91,32 +98,6 @@ export function managedRequiredCopyIdentity(copy: ManagedRequiredProjectRevision
     source_id: copy.source_id,
     source_revision_ref: copy.source_revision_ref,
   });
-}
-
-export async function providerItemSetDigest(
-  items: ManagedProjectCopyMapReceipt["items"],
-): Promise<string> {
-  return projectionDigest({
-    protocol: "eliotr.managed-provider-item-set.v1",
-    items: items.map((item) => ({
-      item_key: item.item_key,
-      canonical_section_id: item.canonical_section_id,
-      content_sha256: item.content_sha256,
-      canonical_body_ref: item.canonical_body_ref,
-      canonical_body_sha256: item.canonical_body_sha256,
-    })),
-  });
-}
-
-export async function providerCopySetDigest(input: {
-  readonly target: ManagedTargetIdentity;
-  readonly project_id: string;
-  readonly project_membership_id: string;
-  readonly membership_generation: number;
-  readonly provider_item_set_sha256: string;
-  readonly provider_item_count: number;
-}): Promise<string> {
-  return projectionDigest({ protocol: "eliotr.managed-provider-copy-set.v1", ...input });
 }
 
 export async function validateManagedTargetProviderCapacityReceipt(
@@ -225,6 +206,7 @@ export async function validateCanonicalSourceProjectionReceipt(input: {
 }): Promise<CanonicalSourceProjectionReceipt> {
   const { receipt, source_authority: authority, copy, profile } = input;
   const prefix = await sourceResidencyWorkPrefix(copy.source_revision_ref);
+  const bounds = receipt.resource_bounds;
   if (
     receipt.protocol !== "eliotr.canonical-source-projection.v1" ||
     receipt.source_revision_ref !== copy.source_revision_ref ||
@@ -238,7 +220,26 @@ export async function validateCanonicalSourceProjectionReceipt(input: {
     !Number.isSafeInteger(receipt.canonical_section_count) ||
     receipt.canonical_section_count < 1 ||
     receipt.canonical_section_count > profile.projection_profile.maximum_synchronous_items ||
-    !Array.isArray(receipt.sections) || receipt.sections.length !== receipt.canonical_section_count
+    !Array.isArray(receipt.sections) || receipt.sections.length !== receipt.canonical_section_count ||
+    bounds.protocol !== "eliotr.canonical-source-resource-bounds.v1" ||
+    !Number.isSafeInteger(bounds.input_utf8_bytes) || bounds.input_utf8_bytes < 1 ||
+    bounds.input_utf8_bytes > profile.projection_profile.maximum_markdown_bytes ||
+    bounds.maximum_input_utf8_bytes !== profile.projection_profile.maximum_markdown_bytes ||
+    bounds.section_count !== receipt.canonical_section_count ||
+    bounds.maximum_section_count !== profile.projection_profile.maximum_synchronous_items ||
+    !Number.isSafeInteger(bounds.largest_section_utf8_bytes) || bounds.largest_section_utf8_bytes < 1 ||
+    bounds.maximum_section_utf8_bytes !== profile.projection_profile.maximum_item_utf8_bytes ||
+    bounds.largest_section_utf8_bytes > bounds.maximum_section_utf8_bytes ||
+    bounds.canonical_body_put_count !== receipt.canonical_section_count ||
+    bounds.canonical_manifest_put_count !== 1 ||
+    bounds.maximum_provider_copy_count !== 256 ||
+    bounds.maximum_provider_item_count < receipt.canonical_section_count ||
+    bounds.maximum_copy_map_page_count !== 256 ||
+    bounds.cpu_time_budget_ms !== 30_000 ||
+    bounds.source_content_r2_get_bound !== 1 ||
+    bounds.canonical_r2_subrequest_bound !== 1 + 2 * (receipt.canonical_section_count + 1) ||
+    bounds.canonical_r2_subrequest_bound >= 10_000 ||
+    bounds.maximum_subrequest_bound !== 10_000
   ) {
     throw new Error("MANAGED_TARGET_MANIFEST_PROJECTION_INVALID: canonical source receipt is outside the source-residency/profile identity");
   }
@@ -251,7 +252,9 @@ export async function validateCanonicalSourceProjectionReceipt(input: {
   for (const section of receipt.sections) {
     if (
       !IDENTIFIER.test(section.canonical_section_id) || sectionIds.has(section.canonical_section_id) ||
+      !IDENTIFIER.test(section.canonical_item_key) ||
       !SHA256.test(section.content_sha256) || !SHA256.test(section.canonical_body_sha256) ||
+      section.canonical_body_sha256 !== section.content_sha256 ||
       !Number.isSafeInteger(section.normalized_start_byte) || section.normalized_start_byte < lastEnd ||
       !Number.isSafeInteger(section.normalized_end_byte) || section.normalized_end_byte <= section.normalized_start_byte ||
       !section.canonical_body_ref.startsWith(prefix) || section.canonical_body_ref.length > 1024
@@ -261,10 +264,13 @@ export async function validateCanonicalSourceProjectionReceipt(input: {
     sectionIds.add(section.canonical_section_id);
     lastEnd = section.normalized_end_byte;
   }
-  const expectedSections = await projectionDigest({
-    protocol: "eliotr.canonical-section-set.v1",
-    sections: receipt.sections,
-  });
+  const expectedSections = await projectionDigest(receipt.sections.map((section) => ({
+    item_key: section.canonical_item_key,
+    canonical_section_id: section.canonical_section_id,
+    content_sha256: section.content_sha256,
+    start: section.normalized_start_byte,
+    end: section.normalized_end_byte,
+  })));
   if (expectedSections !== receipt.canonical_section_set_sha256) {
     throw new Error("MANAGED_TARGET_MANIFEST_PROJECTION_INVALID: canonical section set digest differs from its references");
   }
@@ -274,56 +280,146 @@ export async function validateCanonicalSourceProjectionReceipt(input: {
 export async function validateManagedProjectCopyMapReceipt(input: {
   readonly receipt: ManagedProjectCopyMapReceipt;
   readonly canonical_source: CanonicalSourceProjectionReceipt;
-  readonly target: ManagedTargetIdentity;
+  readonly target: ManagedProjectCopyTargetReceipt;
   readonly copy: ManagedRequiredProjectRevisionCopy;
 }): Promise<ManagedProjectCopyMapReceipt> {
-  const { receipt, canonical_source: source, target, copy } = input;
-  if (
-    receipt.protocol !== "eliotr.managed-project-copy-map.v1" ||
-    receipt.source_revision_ref !== copy.source_revision_ref ||
-    receipt.complete_residency_key_sha256 !== source.complete_residency_key_sha256 ||
-    canonicalProjectionJson(receipt.target) !== canonicalProjectionJson(target) ||
-    receipt.project_id !== copy.project_id ||
-    receipt.project_membership_id !== copy.project_membership_id ||
-    receipt.membership_generation !== copy.membership_generation ||
-    receipt.canonical_source_ref !== source.canonical_source_ref ||
-    receipt.canonical_source_sha256 !== source.canonical_source_sha256 ||
-    receipt.provider_copy_count !== 1 ||
-    !Number.isSafeInteger(receipt.provider_item_count) ||
-    receipt.provider_item_count !== source.canonical_section_count ||
-    !SHA256.test(receipt.provider_copy_set_sha256) ||
-    !SHA256.test(receipt.provider_item_set_sha256) ||
-    !Array.isArray(receipt.items) || receipt.items.length !== receipt.provider_item_count
-  ) {
-    throw new Error("MANAGED_TARGET_MANIFEST_PROJECTION_INVALID: provider-copy mapping differs from its exact membership/source identity");
+  const expected = await buildCanonicalProjectCopyMaps(
+    input.canonical_source,
+    input.target,
+    [input.copy.project_membership_id],
+  );
+  const expectedCopy = expected[0];
+  if (expectedCopy === undefined || canonicalProjectionJson(input.receipt) !== canonicalProjectionJson(expectedCopy)) {
+    throw new Error("MANAGED_TARGET_MANIFEST_PROJECTION_INVALID: provider-copy map differs from the writer-owned membership derivation");
   }
-  const itemDigest = await providerItemSetDigest(receipt.items);
-  const copyDigest = await providerCopySetDigest({
-    target,
+  return input.receipt;
+}
+
+function providerCopySetDigest(copies: readonly ManagedProjectCopyMapReceipt[]): Promise<string> {
+  return projectionDigest(copies.map((copy) => ({
     project_id: copy.project_id,
     project_membership_id: copy.project_membership_id,
     membership_generation: copy.membership_generation,
-    provider_item_set_sha256: itemDigest,
-    provider_item_count: receipt.provider_item_count,
-  });
-  if (itemDigest !== receipt.provider_item_set_sha256 || copyDigest !== receipt.provider_copy_set_sha256) {
-    throw new Error("MANAGED_TARGET_MANIFEST_PROJECTION_INVALID: provider-copy/item digest differs from its exact item map");
+    provider_copy_set_sha256: copy.provider_copy_set_sha256,
+  })));
+}
+
+function providerItemSetDigest(copies: readonly ManagedProjectCopyMapReceipt[]): Promise<string> {
+  return projectionDigest(copies.flatMap((copy) => copy.items.map((item) => ({
+    item_key: item.item_key,
+    canonical_section_id: item.canonical_section_id,
+    content_sha256: item.content_sha256,
+    start: item.normalized_start_byte,
+    end: item.normalized_end_byte,
+  }))));
+}
+
+/** Read back and validate the writer-owned source/canonical/target page set. */
+export async function readManagedProjectCopyMapSet(input: {
+  readonly receipt: ManagedProjectCopyMapSetReceipt;
+  readonly canonical_source: CanonicalSourceProjectionReceipt;
+  readonly target: ManagedProjectCopyTargetReceipt;
+  readonly memberships: readonly { readonly project_id: string; readonly project_membership_id: string; readonly membership_generation: number }[];
+  readonly store: EvidenceObjectStore;
+}): Promise<{ readonly copies: readonly ManagedProjectCopyMapReceipt[]; readonly page_object_bytes: number }> {
+  const { receipt, canonical_source: canonical, target, memberships, store } = input;
+  if (!Array.isArray(receipt.pages) || !Array.isArray(memberships)) {
+    throw new Error("MANAGED_TARGET_MANIFEST_PROJECTION_INVALID: copy-map page or membership list is malformed");
   }
-  for (let index = 0; index < receipt.items.length; index += 1) {
-    const item = receipt.items[index];
-    const section = source.sections[index];
-    if (
-      item === undefined || section === undefined ||
-      !IDENTIFIER.test(item.item_key) || item.item_key.includes("//") || item.item_key.includes("../") ||
-      item.canonical_section_id !== section.canonical_section_id ||
-      item.content_sha256 !== section.content_sha256 ||
-      item.canonical_body_ref !== section.canonical_body_ref ||
-      item.canonical_body_sha256 !== section.canonical_body_sha256
-    ) {
-      throw new Error("MANAGED_TARGET_MANIFEST_PROJECTION_INVALID: provider item does not reference the matching canonical section");
+  const expectedCopies = await buildCanonicalProjectCopyMaps(
+    canonical,
+    target,
+    memberships.map((membership) => membership.project_membership_id),
+  );
+  const resource = receipt.resource_bounds;
+  if (
+    receipt.protocol !== "eliotr.managed-project-copy-map-set.v1" ||
+    receipt.source_revision_ref !== canonical.source_revision_ref ||
+    receipt.complete_residency_key_sha256 !== canonical.complete_residency_key_sha256 ||
+    receipt.canonical_projection_generation !== canonical.canonical_projection_generation ||
+    receipt.canonical_source_ref !== canonical.canonical_source_ref ||
+    receipt.canonical_source_sha256 !== canonical.canonical_source_sha256 ||
+    canonicalProjectionJson(receipt.target) !== canonicalProjectionJson(target) ||
+    receipt.provider_copy_count !== expectedCopies.length ||
+    receipt.page_count !== receipt.pages.length || receipt.page_count < 1 || receipt.page_count > 256 ||
+    !SHA256.test(receipt.page_set_sha256) ||
+    !SHA256.test(receipt.provider_copy_set_sha256) || !SHA256.test(receipt.provider_item_set_sha256) ||
+    resource.protocol !== "eliotr.project-copy-resource-bounds.v1" ||
+    resource.provider_copy_count !== receipt.provider_copy_count ||
+    resource.provider_item_count !== receipt.provider_item_count ||
+    resource.copy_map_page_count !== receipt.page_count ||
+    resource.copy_map_r2_put_count !== receipt.page_count ||
+    resource.copy_map_r2_subrequest_bound !== 2 * receipt.page_count ||
+    resource.copy_map_r2_subrequest_bound >= 10_000 ||
+    resource.cpu_time_budget_ms !== 30_000 || resource.maximum_subrequest_bound !== 10_000 ||
+    receipt.provider_item_count !== expectedCopies.reduce((total, copy) => total + copy.provider_item_count, 0) ||
+    receipt.provider_copy_set_sha256 !== await providerCopySetDigest(expectedCopies) ||
+    receipt.provider_item_set_sha256 !== await providerItemSetDigest(expectedCopies) ||
+    receipt.page_set_sha256 !== await projectionDigest(receipt.pages)
+  ) {
+    throw new Error("MANAGED_TARGET_MANIFEST_PROJECTION_INVALID: copy-map set receipt differs from its exact source, target, membership, or resource bounds");
+  }
+
+  const manifestMarker = "/manifests/";
+  const manifestMarkerIndex = canonical.canonical_source_ref.lastIndexOf(manifestMarker);
+  if (manifestMarkerIndex < 1) throw new Error("MANAGED_TARGET_MANIFEST_PROJECTION_INVALID: canonical manifest ref has no generation prefix");
+  const generationPrefix = canonical.canonical_source_ref.slice(0, manifestMarkerIndex);
+  const targetToken = (await stableProjectionId("copy-target", target.managed_instance_id, target.managed_generation))
+    .slice("copy-target-".length);
+  const pagePrefix = `${generationPrefix}/copy-maps/${targetToken}/${receipt.provider_copy_set_sha256}/pages/`;
+  const sourcePrefix = await sourceResidencyWorkPrefix(canonical.source_revision_ref);
+  if (!generationPrefix.startsWith(sourcePrefix)) {
+    throw new Error("MANAGED_TARGET_MANIFEST_PROJECTION_INVALID: canonical manifest escaped its source-residency prefix");
+  }
+  const copies: ManagedProjectCopyMapReceipt[] = [];
+  let pageObjectBytes = 0;
+  let previousPageSha256: string | null = null;
+  for (let pageIndex = 0; pageIndex < receipt.pages.length; pageIndex += 1) {
+    const pageRef = receipt.pages[pageIndex];
+    if (pageRef === undefined || !Number.isSafeInteger(pageRef.provider_copy_count) ||
+        pageRef.provider_copy_count < 1 || pageRef.provider_copy_count > 256 ||
+        !Number.isSafeInteger(pageRef.provider_item_count) || pageRef.provider_item_count < 1 ||
+        pageRef.page_index !== pageIndex || !SHA256.test(pageRef.page_sha256) ||
+        pageRef.page_ref !== `${pagePrefix}${String(pageIndex).padStart(4, "0")}-${pageRef.page_sha256}.json`) {
+      throw new Error("MANAGED_TARGET_MANIFEST_PROJECTION_INVALID: copy-map page locator is malformed or outside source residency");
     }
+    const stored = await readCanonicalManifestObject(store, pageRef.page_ref);
+    if (stored === null) throw new Error("MANAGED_TARGET_MANIFEST_PROJECTION_INVALID: listed copy-map page is absent on exact readback");
+    pageObjectBytes += stored.ref.size_bytes;
+    const page = stored.value as ManagedProjectCopyMapPage;
+    const { page_sha256: pageSha256, ...payload } = page;
+    const start = copies.length;
+    const expectedPageCopies = expectedCopies.slice(start, start + pageRef.provider_copy_count);
+    if (
+      page.protocol !== "eliotr.managed-project-copy-map-page.v1" ||
+      page.source_revision_ref !== canonical.source_revision_ref ||
+      page.complete_residency_key_sha256 !== canonical.complete_residency_key_sha256 ||
+      page.canonical_projection_generation !== canonical.canonical_projection_generation ||
+      page.canonical_source_ref !== canonical.canonical_source_ref ||
+      page.canonical_source_sha256 !== canonical.canonical_source_sha256 ||
+      canonicalProjectionJson(page.target) !== canonicalProjectionJson(target) ||
+      page.page_index !== pageIndex || page.page_sha256 !== pageRef.page_sha256 ||
+      page.provider_copy_count !== page.copies.length || page.provider_copy_count !== pageRef.provider_copy_count ||
+      page.provider_item_count !== pageRef.provider_item_count ||
+      page.previous_page_sha256 !== previousPageSha256 ||
+      page.cursor_start_project_membership_id !== (page.copies[0]?.project_membership_id ?? null) ||
+      page.cursor_end_project_membership_id !== (page.copies.at(-1)?.project_membership_id ?? null) ||
+      !Array.isArray(page.copies) || page.copies.length > 256 ||
+      pageSha256 !== await projectionSha256Utf8(canonicalProjectionJson(payload)) ||
+      page.provider_copy_set_sha256 !== await providerCopySetDigest(page.copies) ||
+      page.provider_item_set_sha256 !== await providerItemSetDigest(page.copies) ||
+      page.copies.length !== expectedPageCopies.length ||
+      expectedPageCopies.some((copy, index) => canonicalProjectionJson(copy) !== canonicalProjectionJson(page.copies[index]))
+    ) {
+      throw new Error("MANAGED_TARGET_MANIFEST_PROJECTION_INVALID: copy-map page content or chain differs from its source-set receipt");
+    }
+    copies.push(...page.copies);
+    previousPageSha256 = page.page_sha256;
   }
-  return receipt;
+  if (copies.length !== expectedCopies.length) {
+    throw new Error("MANAGED_TARGET_MANIFEST_PROJECTION_INVALID: copy-map pages omit a membership mapping");
+  }
+  return Object.freeze({ copies: Object.freeze(copies), page_object_bytes: pageObjectBytes });
 }
 
 export async function putCanonicalManifestObjectIfAbsent(

@@ -1,8 +1,8 @@
 import type {
   OperationReceipt,
-  ProjectionItem,
   SourceRevision,
 } from "@eliotr/contracts";
+import type { MarkdownProjectionResult } from "@eliotr/retrieval";
 import type {
   DeliveryMessage,
   ExecutionLease,
@@ -10,9 +10,16 @@ import type {
 } from "@eliotr/platform-cloudflare";
 import { DeliveryRuntimeError } from "@eliotr/platform-cloudflare";
 import { describe, expect, it, vi } from "vitest";
+import { projectionDigest } from "./canonical.js";
 import { createProjectionExecutionHandler } from "./executor.js";
 import type {
+  CanonicalProjectionResourceBounds,
+  CanonicalProjectionSourceContext,
+  CanonicalSourceProjectionReceipt,
+  ManagedProjectCopyPlan,
   ManagedProjectionReceipt,
+  ManagedProjectCopyMapReceipt,
+  ManagedProjectCopyTargetReceipt,
   ProjectionAuthorityPort,
   ProjectionExecutionProfile,
   ProjectionSearchReceipt,
@@ -122,13 +129,17 @@ function fixture(input: {
   readonly prior?: ProjectionTerminalReceipt | null;
   readonly managed?: ManagedProjectionReceipt;
   readonly sharded?: boolean;
+  readonly project_membership_ids?: readonly string[];
   readonly work_receipt?: Partial<ProjectionWorkReceipt>;
   readonly search_receipt?: Partial<ProjectionSearchReceipt>;
 } = {}) {
   const events: string[] = [];
   let settlement: ProjectionSettlement | undefined;
   const authority: ProjectionAuthorityPort = {
-    load: vi.fn(async () => { events.push("load"); return context; }),
+    load: vi.fn(async () => {
+      events.push("load");
+      return { ...context, project_membership_ids: input.project_membership_ids ?? [] };
+    }),
     readTerminal: vi.fn(async (_context, _generation, _profile) => input.prior ?? null),
     begin: vi.fn(async () => { events.push("begin"); }),
     recordMaterialized: vi.fn(async () => { events.push("record-materialized"); }),
@@ -189,11 +200,39 @@ function fixture(input: {
       }),
     },
     work: {
-      materialize: vi.fn(async (_context: ProjectionSourceContext, _generation: string, projection: {
-        readonly items: readonly ProjectionItem[];
-        readonly item_set_digest: string;
-      }) => {
+      materialize: vi.fn(async (
+        _context: CanonicalProjectionSourceContext,
+        generation: string,
+        projection: MarkdownProjectionResult,
+        projectorProfileSha256: string,
+        resourceBounds: CanonicalProjectionResourceBounds,
+      ) => {
         events.push("work");
+        const canonicalSource = {
+          protocol: "eliotr.canonical-source-projection.v1" as const,
+          source_revision_ref: revision.source_revision_ref,
+          complete_residency_key_sha256: revision.object_residency_key_digest,
+          projector_profile_sha256: projectorProfileSha256,
+          canonical_projection_generation: generation,
+          canonical_source_ref: workReceipt.manifest_ref,
+          canonical_source_sha256: workReceipt.manifest_sha256,
+          canonical_section_count: projection.items.length,
+          canonical_section_set_sha256: projection.item_set_digest,
+          resource_bounds: resourceBounds,
+          sections: projection.items.map((item, index) => {
+            const span = projection.spans[index];
+            if (span === undefined) throw new Error("projection test span is missing");
+            return {
+              canonical_item_key: item.item_key,
+              canonical_section_id: item.canonical_section_id,
+              content_sha256: item.content_sha256,
+              normalized_start_byte: span.normalized_start_byte,
+              normalized_end_byte: span.normalized_end_byte,
+              canonical_body_ref: `projection/${item.item_key}.md`,
+              canonical_body_sha256: item.content_sha256,
+            };
+          }),
+        };
         return {
           ...workReceipt,
           item_set_digest: projection.item_set_digest,
@@ -205,7 +244,65 @@ function fixture(input: {
             size_bytes: new TextEncoder().encode(item.section_text).byteLength,
             etag: "etag-1",
           })),
+          canonical_projection_generation: generation,
+          canonical_source: canonicalSource,
           ...input.work_receipt,
+        };
+      }),
+      materializeProjectCopyMapPages: vi.fn(async (
+        canonical: CanonicalSourceProjectionReceipt,
+        target: ManagedProjectCopyTargetReceipt,
+        copies: readonly ManagedProjectCopyMapReceipt[],
+      ) => {
+        events.push("copy-map");
+        const providerCopySetSha256 = await projectionDigest(copies.map((copy) => ({
+          project_id: copy.project_id,
+          project_membership_id: copy.project_membership_id,
+          membership_generation: copy.membership_generation,
+          provider_copy_set_sha256: copy.provider_copy_set_sha256,
+        })));
+        const providerItemSetSha256 = await projectionDigest(copies.flatMap((copy) =>
+          copy.items.map((item) => ({
+            item_key: item.item_key,
+            canonical_section_id: item.canonical_section_id,
+            content_sha256: item.content_sha256,
+            start: item.normalized_start_byte,
+            end: item.normalized_end_byte,
+          }))
+        ));
+        const providerItemCount = copies.reduce((total, copy) => total + copy.provider_item_count, 0);
+        const pages = copies.length === 0 ? [] : [{
+          page_index: 0,
+          page_ref: "projection/copy-page.json",
+          page_sha256: B,
+          provider_copy_count: copies.length,
+          provider_item_count: providerItemCount,
+        }];
+        return {
+          protocol: "eliotr.managed-project-copy-map-set.v1" as const,
+          source_revision_ref: canonical.source_revision_ref,
+          complete_residency_key_sha256: canonical.complete_residency_key_sha256,
+          canonical_projection_generation: canonical.canonical_projection_generation,
+          canonical_source_ref: canonical.canonical_source_ref,
+          canonical_source_sha256: canonical.canonical_source_sha256,
+          target,
+          page_count: pages.length,
+          page_set_sha256: await projectionDigest(pages),
+          provider_copy_count: copies.length,
+          provider_copy_set_sha256: providerCopySetSha256,
+          provider_item_count: providerItemCount,
+          provider_item_set_sha256: providerItemSetSha256,
+          resource_bounds: {
+            protocol: "eliotr.project-copy-resource-bounds.v1" as const,
+            provider_copy_count: copies.length,
+            provider_item_count: providerItemCount,
+            copy_map_page_count: pages.length,
+            copy_map_r2_put_count: pages.length,
+            copy_map_r2_subrequest_bound: 2 * pages.length,
+            cpu_time_budget_ms: 30_000 as const,
+            maximum_subrequest_bound: 10_000 as const,
+          },
+          pages,
         };
       }),
     },
@@ -222,7 +319,15 @@ function fixture(input: {
       }),
     },
     managed: {
-      index: vi.fn(async () => { events.push("managed"); return input.managed ?? defaultManaged; }),
+      index: vi.fn(async (
+        _context: ProjectionSourceContext,
+        _executionGeneration: string,
+        _canonicalGeneration: string,
+        copyPlan: ManagedProjectCopyPlan,
+      ) => {
+        events.push("managed");
+        return input.managed ?? { ...defaultManaged, item_count: copyPlan.items.length };
+      }),
     },
     leases: leaseStore(),
     profile,
@@ -241,12 +346,41 @@ describe("projection execution coordinator", () => {
       "begin",
       "content",
       "work",
+      "copy-map",
       "record-materialized",
       "search",
       "managed",
       "settle",
     ]);
     expect(f.settlement).toMatchObject({ outcome: "SUCCEEDED", reason_codes: [] });
+  });
+
+  it("projects one canonical source and maps its body to separate A/B physical provider items", async () => {
+    const f = fixture({
+      project_membership_ids: [
+        "project:project-a:generation:1",
+        "project:project-b:generation:1",
+      ],
+    });
+    await createProjectionExecutionHandler(f.dependencies).execute(message);
+
+    const materialization = f.dependencies.work.materialize.mock.calls[0];
+    expect(materialization).toBeDefined();
+    expect(f.dependencies.work.materialize).toHaveBeenCalledTimes(1);
+    expect(materialization?.[0]).not.toHaveProperty("project_membership_ids");
+    expect(materialization?.[2].items[0]?.project_membership_ids).toEqual([]);
+
+    const plan = f.dependencies.managed.index.mock.calls[0]?.[3];
+    expect(plan?.items).toHaveLength(2);
+    expect(new Set(plan?.items.map((item) => item.canonical_body_ref)).size).toBe(1);
+    expect(new Set(plan?.items.map((item) => item.provider_key)).size).toBe(2);
+    expect(new Set(plan?.items.map((item) => item.canonical_projection_generation)).size).toBe(1);
+    expect(f.dependencies.search.activate).toHaveBeenCalledTimes(1);
+    expect(f.dependencies.search.activate.mock.calls[0]?.[1])
+      .toBe(plan?.items[0]?.canonical_projection_generation);
+    expect(f.dependencies.search.activate.mock.calls[0]?.[2].items[0]?.project_membership_ids)
+      .toEqual([]);
+    expect(f.dependencies.work.materializeProjectCopyMapPages).toHaveBeenCalledTimes(1);
   });
 
   it("settles a durable partial result when managed indexing cannot be read back", async () => {

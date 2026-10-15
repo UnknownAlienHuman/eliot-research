@@ -20,10 +20,14 @@ import {
   type ManagedItemIntent,
   type ManagedItemReceipt,
 } from "./core-managed-item-intent.js";
+import { managedProjectGenerationMetadataValue } from "./managed-project-path.js";
 import type {
+  ManagedProjectCopyPlan,
   ProjectionExecutionProfile,
   ProjectionSourceContext,
 } from "./types.js";
+
+const MAX_MANAGED_PROJECT_MEMBERSHIPS = 256;
 
 interface ExecutionLeaseRow {
   readonly operation_id: unknown;
@@ -199,7 +203,9 @@ async function loadEffectRow(
       "AND complete.job_id = ?3) = ?5 ";
   return database.prepare(
     "SELECT source_revision_ref, projection_generation, job_id, item_key, desired_index, " +
-    "normalized_start_byte, normalized_end_byte, " +
+    "canonical_projection_generation, canonical_item_key, project_id, project_membership_id, " +
+    "membership_generation, copy_layout, metadata_generation_digest, canonical_body_ref, " +
+    "canonical_body_sha256, normalized_start_byte, normalized_end_byte, " +
     "intent_id, intent_revision, attempt_id, execution_operation_id, dispatch_lease_generation, " +
     "managed_instance_id, managed_generation, provider_source, provider_key, " +
     "section_content_sha256, document_sha256, document_size_bytes, metadata_json, state, " +
@@ -224,6 +230,7 @@ export async function prepareManagedItemEffects(
   profile: ProjectionExecutionProfile,
   items: readonly ManagedItemIntent[],
   callerFence: ExecutionFence,
+  copyPlan?: ManagedProjectCopyPlan,
 ): Promise<readonly ManagedItemEffect[]> {
   if (
     items.length < 1 ||
@@ -236,7 +243,10 @@ export async function prepareManagedItemEffects(
   assertCallerFenceInput(operationId, callerFence);
   await assertCallerFence(database, operationId, callerFence, readClock(clock));
   const generation = await database.prepare(
-    "SELECT job_id, state, item_count, item_set_digest FROM projection_generation WHERE source_revision_ref = ?1 " +
+    "SELECT job_id, state, item_count, item_set_digest, canonical_projection_generation, " +
+    "canonical_item_count, canonical_item_set_digest, provider_copy_count, " +
+    "provider_copy_set_digest, managed_target_metadata_generation_digest " +
+    "FROM projection_generation WHERE source_revision_ref = ?1 " +
     "AND projection_generation = ?2 LIMIT 1",
   ).bind(context.source_revision.source_revision_ref, projectionGeneration)
     .first<{
@@ -244,6 +254,12 @@ export async function prepareManagedItemEffects(
       readonly state: unknown;
       readonly item_count: unknown;
       readonly item_set_digest: unknown;
+      readonly canonical_projection_generation: unknown;
+      readonly canonical_item_count: unknown;
+      readonly canonical_item_set_digest: unknown;
+      readonly provider_copy_count: unknown;
+      readonly provider_copy_set_digest: unknown;
+      readonly managed_target_metadata_generation_digest: unknown;
     }>();
   if (
     generation === null ||
@@ -255,16 +271,92 @@ export async function prepareManagedItemEffects(
       "managed item intents require the exact materialized projection generation",
     );
   }
-  const manifestItemCount = assertProjectionInteger(
+  const canonicalItemCount = assertProjectionInteger(
     generation.item_count,
     "managed materialized item count",
     1,
     profile.maximum_synchronous_items,
   );
-  const expectedItemSetDigest = assertProjectionSha256(
+  const canonicalItemSetDigest = assertProjectionSha256(
     generation.item_set_digest,
     "managed materialized item set digest",
   );
+  const canonicalProjectionGeneration = assertProjectionIdentifier(
+    generation.canonical_projection_generation,
+    "managed canonical projection generation",
+  );
+  const storedCanonicalItemCount = assertProjectionInteger(
+    generation.canonical_item_count,
+    "managed canonical item count",
+    1,
+    1024,
+  );
+  const storedCanonicalItemSetDigest = assertProjectionSha256(
+    generation.canonical_item_set_digest,
+    "managed canonical item set digest",
+  );
+  const providerCopyCount = assertProjectionInteger(
+    generation.provider_copy_count,
+    "managed provider copy count",
+    0,
+    MAX_MANAGED_PROJECT_MEMBERSHIPS,
+  );
+  const providerCopySetDigest = assertProjectionSha256(
+    generation.provider_copy_set_digest,
+    "managed provider copy set digest",
+  );
+  const targetMetadataGenerationDigest = await managedProjectGenerationMetadataValue(
+    profile.managed_generation,
+  );
+  if (
+    storedCanonicalItemCount !== canonicalItemCount ||
+    storedCanonicalItemSetDigest !== canonicalItemSetDigest ||
+    generation.managed_target_metadata_generation_digest !== targetMetadataGenerationDigest
+  ) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed generation copy receipt differs from its Work and target pins");
+  }
+  const manifestItemCount = canonicalItemCount * (providerCopyCount === 0 ? 1 : providerCopyCount);
+  if (manifestItemCount > profile.maximum_synchronous_items) {
+    projectionFail("PROJECTION_INPUT_INVALID", "managed provider effect set exceeds the synchronous item bound");
+  }
+  if (
+    providerCopyCount > 0 && copyPlan === undefined
+  ) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "project-copy intents require their complete durable map plan");
+  }
+  if (copyPlan !== undefined && (
+    copyPlan.target.managed_instance_id !== profile.managed_instance_id ||
+    copyPlan.target.managed_generation !== profile.managed_generation ||
+    copyPlan.target.metadata_generation_digest !== targetMetadataGenerationDigest ||
+    copyPlan.provider_copy_count !== providerCopyCount ||
+    copyPlan.provider_copy_set_sha256 !== providerCopySetDigest ||
+    (providerCopyCount > 0 && (
+      copyPlan.provider_item_count !== manifestItemCount ||
+      copyPlan.items.length !== manifestItemCount ||
+      copyPlan.copies.length !== providerCopyCount
+    )) ||
+    (providerCopyCount === 0 && (
+      copyPlan.copies.length !== 0 ||
+      copyPlan.items.length !== canonicalItemCount
+    ))
+  )) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed project-copy plan differs from its immutable Core receipt");
+  }
+  if (providerCopyCount > 0 && copyPlan !== undefined) {
+    const plannedItemSetDigest = await projectionDigest(copyPlan.items.map((item) => ({
+      item_key: item.item_key,
+      canonical_section_id: item.canonical_section_id,
+      content_sha256: item.content_sha256,
+      start: item.normalized_start_byte,
+      end: item.normalized_end_byte,
+    })));
+    if (plannedItemSetDigest !== copyPlan.provider_item_set_sha256) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed project-copy item digest differs from the complete plan");
+    }
+  }
+  const expectedItemSetDigest = providerCopyCount === 0
+    ? canonicalItemSetDigest
+    : copyPlan?.provider_item_set_sha256;
   let singleItemManifestDigest: string | undefined;
   if (items.length === 1) {
     const item = items[0];
@@ -280,7 +372,14 @@ export async function prepareManagedItemEffects(
         "managed item refresh is outside the prepared manifest",
       );
     }
-    assertManagedItemIntent(context, projectionGeneration, profile, item, item.desired_index);
+    assertManagedItemIntent(
+      context,
+      projectionGeneration,
+      profile,
+      item,
+      item.desired_index,
+      canonicalProjectionGeneration,
+    );
     if (manifestItemCount === 1) {
       singleItemManifestDigest = await projectionDigest([{
         item_key: item.item_key,
@@ -289,7 +388,7 @@ export async function prepareManagedItemEffects(
         start: item.normalized_start_byte,
         end: item.normalized_end_byte,
       }]);
-      if (singleItemManifestDigest !== expectedItemSetDigest) {
+      if (expectedItemSetDigest !== undefined && singleItemManifestDigest !== expectedItemSetDigest) {
         projectionFail(
           "PROJECTION_AUTHORITY_CONFLICT",
           "managed item intent differs from the exact durable projection manifest item set",
@@ -328,8 +427,29 @@ export async function prepareManagedItemEffects(
       "managed item refresh must name one item from the prepared manifest",
     );
   }
+  if (copyPlan !== undefined && copyPlan.items.length !== items.length) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed effect set differs from its complete copy-plan size");
+  }
   const actualItemSetDigest = singleItemManifestDigest ?? await projectionDigest(items.map((item, index) => {
-    assertManagedItemIntent(context, projectionGeneration, profile, item, index);
+    assertManagedItemIntent(context, projectionGeneration, profile, item, index, canonicalProjectionGeneration);
+    const planned = copyPlan?.items[index];
+    if (copyPlan !== undefined && (
+      planned === undefined ||
+      planned.item_key !== item.item_key ||
+      planned.canonical_projection_generation !== item.canonical_projection_generation ||
+      planned.canonical_item_key !== item.canonical_item_key ||
+      planned.project_id !== item.project_id ||
+      planned.project_membership_id !== item.project_membership_id ||
+      planned.membership_generation !== item.membership_generation ||
+      planned.provider_key !== item.provider_key ||
+      planned.metadata_generation_digest !== item.metadata_generation_digest ||
+      planned.canonical_body_ref !== item.canonical_body_ref ||
+      planned.canonical_body_sha256 !== item.canonical_body_sha256 ||
+      planned.content_sha256 !== item.section_content_sha256 ||
+      planned.normalized_offset_map_ref !== `normalized-bytes:${item.normalized_start_byte}:${item.normalized_end_byte}`
+    )) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed effect intent differs from its copy-plan mapping");
+    }
     return {
       item_key: item.item_key,
       canonical_section_id: item.metadata.canonical_section_id,
@@ -350,17 +470,20 @@ export async function prepareManagedItemEffects(
     const now = nowIso(() => mutationNowMs);
     await database.prepare(
       "INSERT INTO projection_managed_item_effect(" +
-      "source_revision_ref, projection_generation, job_id, item_key, desired_index, " +
-      "normalized_start_byte, normalized_end_byte, " +
+      "source_revision_ref, projection_generation, job_id, item_key, " +
+      "canonical_projection_generation, canonical_item_key, project_id, project_membership_id, " +
+      "membership_generation, copy_layout, metadata_generation_digest, canonical_body_ref, " +
+      "canonical_body_sha256, desired_index, normalized_start_byte, normalized_end_byte, " +
       "intent_id, intent_revision, attempt_id, execution_operation_id, " +
       "dispatch_lease_generation, managed_instance_id, managed_generation, provider_source, " +
       "provider_key, section_content_sha256, document_sha256, document_size_bytes, metadata_json, " +
       "state, provider_item_id, readback_receipt_json, readback_sha256, created_at, updated_at) " +
-      "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,NULL,?12,?13,'builtin',?14,?15,?16,?17,?18, " +
-      "'INTENT',NULL,NULL,NULL,?19,?19 WHERE EXISTS (SELECT 1 FROM operation_execution_lease l " +
-      "WHERE l.operation_id = ?20 AND l.operation_kind = 'PROJECTION_EXECUTE' " +
-      "AND l.lease_owner = ?21 AND l.lease_generation = ?22 AND l.state = 'LEASED' " +
-      "AND l.lease_until > ?23 AND l.lease_until > " + D1_EXECUTION_LEASE_NOW_SQL +
+      "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20, " +
+      "NULL,?21,?22,?23,?24,?25,?26,?27,?28,'INTENT',NULL,NULL,NULL,?29,?29 " +
+      "WHERE EXISTS (SELECT 1 FROM operation_execution_lease l " +
+      "WHERE l.operation_id = ?30 AND l.operation_kind = 'PROJECTION_EXECUTE' " +
+      "AND l.lease_owner = ?31 AND l.lease_generation = ?32 AND l.state = 'LEASED' " +
+      "AND l.lease_until > ?33 AND l.lease_until > " + D1_EXECUTION_LEASE_NOW_SQL +
       ") ON CONFLICT(source_revision_ref,projection_generation,item_key) " +
       "DO NOTHING",
     ).bind(
@@ -368,6 +491,15 @@ export async function prepareManagedItemEffects(
       projectionGeneration,
       context.job_id,
       item.item_key,
+      item.copy_layout === "PROJECT_COPY_V1" ? item.canonical_projection_generation : null,
+      item.canonical_item_key,
+      item.project_id,
+      item.project_membership_id,
+      item.membership_generation,
+      item.copy_layout,
+      item.metadata_generation_digest,
+      item.canonical_body_ref,
+      item.canonical_body_sha256,
       item.desired_index,
       item.normalized_start_byte,
       item.normalized_end_byte,
@@ -375,15 +507,16 @@ export async function prepareManagedItemEffects(
       context.intent_ref.revision,
       context.acceptance_attempt_id,
       operationId,
-      profile.managed_instance_id,
-      profile.managed_generation,
+      item.managed_instance_id,
+      item.managed_generation,
+      item.provider_source,
       item.provider_key,
       item.section_content_sha256,
       item.document_sha256,
       item.document_size_bytes,
       canonicalProjectionJson(item.metadata),
       now,
-      callerFence.operation_id,
+      operationId,
       callerFence.lease_owner,
       callerFence.lease_generation,
       mutationNowMs,

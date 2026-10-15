@@ -27,18 +27,19 @@ import {
   matchAiSearchProfileIdentity,
 } from "./ai-search-profile-identity-digest.js";
 
-export const MANAGED_TARGET_MANIFEST_COPY_BATCH_SIZE = 1;
-export const MANAGED_TARGET_MANIFEST_SUMMARY_PAGE_SIZE = 8;
+export const MANAGED_TARGET_MANIFEST_COPY_BATCH_SIZE = 24;
+export const MANAGED_TARGET_MANIFEST_SUMMARY_PAGE_SIZE = 256;
 export const MANAGED_TARGET_MANIFEST_FENCE_PAGE_SIZE = 256;
 export const MANAGED_TARGET_MANIFEST_FENCE_PAGES_PER_STEP = 3;
-export const MANAGED_TARGET_MANIFEST_MAX_OPERATIONS_PER_STEP = 16;
+export const MANAGED_TARGET_MANIFEST_CHECKPOINT_SUBREQUEST_RESERVE = 2;
+export const MANAGED_TARGET_MANIFEST_MAX_OPERATIONS_PER_STEP =
+  MANAGED_TARGET_MANIFEST_COPY_BATCH_SIZE * 16 + MANAGED_TARGET_MANIFEST_CHECKPOINT_SUBREQUEST_RESERVE;
 export const MANAGED_TARGET_MANIFEST_MAX_WORKFLOW_STEPS = 10_000;
 export const MANAGED_TARGET_MANIFEST_LOCAL_CPU_BOUND_MS = 5_000;
 export const MANAGED_TARGET_MANIFEST_ASSIGNMENT_ROW_CPU_BOUND_MS = 0.2;
 export const MANAGED_TARGET_MANIFEST_MAX_COPIES = 102_400;
 export const MANAGED_TARGET_MANIFEST_MAX_PAGES = 400;
 export const MANAGED_TARGET_MANIFEST_MAX_TREE_NODES_PER_STEP = 96;
-export const MANAGED_TARGET_MANIFEST_CHECKPOINT_SUBREQUEST_RESERVE = 2;
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
@@ -72,7 +73,8 @@ export interface ScanProgress {
 }
 
 export interface ManifestBudgetSummary {
-  readonly step_count: number;
+  readonly workflow_step_count: number;
+  readonly microstep_count: number;
   readonly total_subrequest_upper_bound: number;
   readonly total_operation_upper_bound: number;
   readonly maximum_step_subrequests: number;
@@ -94,7 +96,7 @@ export interface FenceScanProgress {
 }
 
 export interface ManifestContinuationState {
-  readonly protocol: "eliotr.managed-target-manifest-continuation.v1";
+  readonly protocol: "eliotr.managed-target-manifest-continuation.v2";
   readonly execution_id: string;
   readonly target: ManagedTargetIdentity;
   readonly target_profile_sha256: string;
@@ -142,7 +144,9 @@ export interface ManifestContinuationState {
 
 export class ManifestInvocationBudget {
   private coreD1 = 0;
+  private coreD1Statements = 0;
   private searchD1 = 0;
+  private searchD1Statements = 0;
   private capacityCalls = 0;
   private capacitySubrequests = 0;
   private writerCalls = 0;
@@ -159,15 +163,22 @@ export class ManifestInvocationBudget {
   private copiesProcessed = 0;
   private itemsProcessed = 0;
   private fragmentBytes = 0;
+  private microstepsProcessed = 0;
 
   public constructor(
-    public readonly invocationIndex: number,
+    public invocationIndex: number,
     private readonly clockReads: number,
     private readonly profileValidations: number,
   ) {}
 
-  public addCoreD1(count = 1): void { this.coreD1 += count; }
-  public addSearchD1(count = 1): void { this.searchD1 += count; }
+  public addCoreD1(subrequests = 1, statements = subrequests): void {
+    this.coreD1 += subrequests;
+    this.coreD1Statements += statements;
+  }
+  public addSearchD1(subrequests = 1, statements = subrequests): void {
+    this.searchD1 += subrequests;
+    this.searchD1Statements += statements;
+  }
   public addCapacity(budget: ManagedTargetManifestOperationBudgetReceipt): void {
     const valid = validateOperationBudgetReceipt(budget);
     this.capacityCalls += 1;
@@ -178,6 +189,7 @@ export class ManifestInvocationBudget {
   public addShadow(budget: ManagedTargetManifestOperationBudgetReceipt): void {
     const valid = validateOperationBudgetReceipt(budget);
     this.searchD1 += valid.subrequest_upper_bound;
+    this.searchD1Statements += 1;
     this.writerCpuMs += valid.cpu_upper_bound_ms;
     this.maxInputBytes += valid.input_bytes_upper_bound;
   }
@@ -192,19 +204,47 @@ export class ManifestInvocationBudget {
   public addR2Readback(count = 1): void { this.r2Readback += count; }
   public addR2List(count = 1): void { this.r2List += count; }
   public addR2Delete(count = 1): void { this.r2Delete += count; }
-  public addOwnerAuthorityRead(): void { this.ownerReads += 1; this.coreD1 += 1; }
+  public addOwnerAuthorityRead(reads = 1, subrequests = reads): void {
+    this.ownerReads += reads;
+    this.coreD1 += subrequests;
+    this.coreD1Statements += reads;
+  }
   public addRequiredRows(count: number): void { this.requiredRows += count; }
   public addCopy(count = 1): void { this.copiesProcessed += count; }
   public addItems(count: number): void { this.itemsProcessed += count; }
   public addFragmentBytes(count: number): void { this.fragmentBytes = Math.max(this.fragmentBytes, count); }
   public addLocalCpu(ms: number): void { this.localCpuMs += ms; }
   public addInputBytes(count: number): void { this.maxInputBytes += count; }
+  public addMicrosteps(count = 1): void {
+    if (!Number.isSafeInteger(count) || count < 0 ||
+        this.microstepsProcessed + count > MANAGED_TARGET_MANIFEST_COPY_BATCH_SIZE) {
+      throw new ManagedTargetManifestError(
+        "MANAGED_TARGET_MANIFEST_BUDGET_EXCEEDED",
+        "Workflow invocation exceeded its 24 durable microstep ceiling",
+      );
+    }
+    this.microstepsProcessed += count;
+  }
+
+  public remainingSubrequests(): number {
+    return Math.max(0, 10_000 - 1 - this.currentOperations() - MANAGED_TARGET_MANIFEST_CHECKPOINT_SUBREQUEST_RESERVE);
+  }
+
+  public remainingCpuMilliseconds(): number {
+    return Math.max(0, 30_000 - this.localCpuMs - this.writerCpuMs - 1);
+  }
+
+  public remainingInputBytes(): number {
+    return Math.max(0, 128 * 1024 * 1024 - this.maxInputBytes);
+  }
+
+  public microsteps(): number { return this.microstepsProcessed; }
 
   public reserveOperations(count = 1): void {
     if (!Number.isSafeInteger(count) || count < 0 || this.currentOperations() + count > MANAGED_TARGET_MANIFEST_MAX_OPERATIONS_PER_STEP) {
       throw new ManagedTargetManifestError(
         "MANAGED_TARGET_MANIFEST_BUDGET_EXCEEDED",
-        "operation would cross the 16-operation invocation ceiling",
+        "operation would cross the 386-operation batch ceiling including checkpoint reserve",
       );
     }
   }
@@ -230,9 +270,9 @@ export class ManifestInvocationBudget {
       );
     }
     return Object.freeze({
-      protocol: "eliotr.managed-target-manifest-invocation-budget.v1",
+      protocol: "eliotr.managed-target-manifest-invocation-budget.v2",
       invocation_index: this.invocationIndex,
-      operation_limit: MANAGED_TARGET_MANIFEST_MAX_OPERATIONS_PER_STEP,
+      operation_limit: 386,
       operation_upper_bound: operations,
       subrequest_limit: 10_000,
       subrequest_upper_bound: subrequests,
@@ -240,7 +280,9 @@ export class ManifestInvocationBudget {
       cpu_upper_bound_ms: cpu,
       calls: Object.freeze({
         core_d1: this.coreD1,
+        core_d1_statements: this.coreD1Statements,
         search_d1: this.searchD1,
+        search_d1_statements: this.searchD1Statements,
         capacity_authority: this.capacityCalls,
         capacity_authority_subrequests: this.capacitySubrequests,
         writer_subrequests: this.writerCalls,
@@ -258,6 +300,7 @@ export class ManifestInvocationBudget {
         copies_processed: this.copiesProcessed,
         items_processed: this.itemsProcessed,
         fragment_bytes: this.fragmentBytes,
+        microsteps_processed: this.microstepsProcessed,
       }),
     });
   }

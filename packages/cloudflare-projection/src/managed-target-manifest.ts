@@ -17,8 +17,6 @@ export {
   type ManagedTargetManifestDocument,
   type ManagedTargetManifestDocumentPort,
   type ManagedTargetManifestCanonicalProjectionPort,
-  type CanonicalSourceProjectionReceipt,
-  type ManagedProjectCopyMapReceipt,
   type ManagedTargetManifestInput,
   type ManagedTargetManifestReadyCandidate,
   type ManagedTargetManifestAdvanceReceipt,
