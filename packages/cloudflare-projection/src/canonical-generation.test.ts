@@ -184,6 +184,11 @@ describe("projection generation identity", () => {
     const nextIntent = { ...a, intent_ref: { id: "intent-2", revision: 1 }, job_id: "job-2" };
     expect(await projectionGeneration(nextIntent, profile)).not.toBe(generation);
     expect(await projectionGeneration(b, profile)).not.toBe(generation);
+    const scope = a.project_copy_scopes_v2?.[0];
+    if (scope === undefined) throw new Error("missing target scope fixture");
+    const otherNamespace = { ...scope.target, namespace: "other-namespace" };
+    expect(await projectionGeneration({ ...a, project_copy_scopes_v2: [{ ...scope,
+      target: otherNamespace, target_selection: { ...scope.target_selection, target: otherNamespace } }] }, profile)).not.toBe(generation);
     expect(await canonicalSourceProjectionIdentity(nextIntent, profile)).toEqual(await canonicalSourceProjectionIdentity(a, profile));
     expect(await canonicalSourceProjectionIdentity(b, profile)).toEqual(await canonicalSourceProjectionIdentity(a, profile));
     const copy = a.project_copy_scopes_v2?.[0]?.copies[0];

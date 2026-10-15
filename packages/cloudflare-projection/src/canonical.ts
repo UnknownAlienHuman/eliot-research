@@ -177,7 +177,7 @@ export async function projectionGeneration(
       profile.managed_instance_id, profile.managed_generation,
       context.source_revision.source_revision_ref, context.source_revision.content_sha256,
       context.source_revision.object_residency_key_digest,
-      canonicalProjectionJson({ intent_ref: context.intent_ref, copies,
+      canonicalProjectionJson({ intent_ref: context.intent_ref, target: scope.target, copies,
         source_title: context.source_title, source_class: context.source_class,
         instruction_taint: context.instruction_taint,
         target_item_utf8_bytes: profile.target_item_utf8_bytes,
