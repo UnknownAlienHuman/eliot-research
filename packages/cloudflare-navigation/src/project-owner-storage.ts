@@ -24,6 +24,8 @@ export interface ProjectBasePage {
 
 export interface StoredProjectMembershipRow {
   readonly source_id: unknown;
+  readonly membership_generation: unknown;
+  readonly project_generation: unknown;
 }
 
 function decodeBase(row: ProjectBaseRow): ProjectBase {
@@ -36,15 +38,11 @@ function decodeBase(row: ProjectBaseRow): ProjectBase {
   if (!Number.isSafeInteger(row.generation) || Number(row.generation) < 1) {
     fail("PROJECT_STORAGE_UNAVAILABLE", 503, "stored project revision is invalid", true);
   }
-  if (!Number.isSafeInteger(row.membership_generation) || Number(row.membership_generation) < 1) {
-    fail("PROJECT_STORAGE_UNAVAILABLE", 503, "stored project membership revision is invalid", true);
-  }
   const createdAt = canonicalTime(row.created_at, "stored project creation time", "PROJECT_STORAGE_UNAVAILABLE", true);
   return {
     project_id: projectId,
     title,
     revision: Number(row.generation),
-    membership_generation: Number(row.membership_generation),
     created_at: createdAt,
     principal_ref: storedIdentifier(row.principal_ref, "project owner principal"),
     deployment_generation: storedIdentifier(row.deployment_generation, "project deployment generation"),
@@ -133,7 +131,7 @@ export async function readBase(database: D1Database, principal: string, projectI
   let row: ProjectBaseRow | null;
   try {
     row = await database.prepare(
-      "SELECT p.project_id,p.title,p.generation,p.membership_generation,p.created_at,o.principal_ref,o.deployment_generation " +
+      "SELECT p.project_id,p.title,p.generation,p.created_at,o.principal_ref,o.deployment_generation " +
       "FROM project p JOIN project_owner o ON o.project_id=p.project_id " +
       "WHERE p.project_id=?1 AND o.principal_ref=?2 LIMIT 1",
     ).bind(projectId, principal).first<ProjectBaseRow>();
@@ -146,7 +144,7 @@ export async function readBase(database: D1Database, principal: string, projectI
 export async function readProjectBases(database: D1Database, principal: string, afterProjectId?: string): Promise<ProjectBasePage> {
   const limit = MAX_PROJECTS + 1;
   const afterClause = afterProjectId === undefined ? "" : " AND p.project_id>?2";
-  const statement = "SELECT p.project_id,p.title,p.generation,p.membership_generation,p.created_at,o.principal_ref,o.deployment_generation " +
+  const statement = "SELECT p.project_id,p.title,p.generation,p.created_at,o.principal_ref,o.deployment_generation " +
     "FROM project p JOIN project_owner o ON o.project_id=p.project_id WHERE o.principal_ref=?1" + afterClause +
     ` ORDER BY p.project_id LIMIT ?${afterProjectId === undefined ? 2 : 3}`;
   let result: { readonly results?: readonly ProjectBaseRow[] };
@@ -168,8 +166,9 @@ export async function readActiveMembershipIds(database: D1Database, projectId: s
   let result: { readonly results?: readonly StoredProjectMembershipRow[] };
   try {
     result = await database.prepare(
-      "SELECT m.source_id FROM project_source_membership m JOIN project p ON p.project_id=m.project_id " +
-      "AND p.membership_generation=m.membership_generation WHERE m.project_id=?1 AND m.valid_to IS NULL " +
+      "SELECT m.source_id,m.membership_generation,p.generation AS project_generation " +
+      "FROM project_source_membership m JOIN project p ON p.project_id=m.project_id " +
+      "WHERE m.project_id=?1 AND m.valid_to IS NULL " +
       "ORDER BY m.source_id LIMIT ?2",
     ).bind(projectId, MAX_SOURCE_IDS + 1).all<StoredProjectMembershipRow>();
   } catch (cause) {
@@ -178,7 +177,14 @@ export async function readActiveMembershipIds(database: D1Database, projectId: s
   if (!Array.isArray(result.results) || result.results.length > MAX_SOURCE_IDS) {
     fail("PROJECT_STORAGE_UNAVAILABLE", 503, "project has too many active memberships", true);
   }
-  const ids = result.results.map((row) => storedIdentifier(row.source_id, "active membership source id"));
+  const ids = result.results.map((row) => {
+    if (!Number.isSafeInteger(row.membership_generation) || Number(row.membership_generation) < 1 ||
+        !Number.isSafeInteger(row.project_generation) || Number(row.project_generation) < 1 ||
+        Number(row.membership_generation) > Number(row.project_generation)) {
+      fail("PROJECT_STORAGE_UNAVAILABLE", 503, "stored project membership generation is invalid", true);
+    }
+    return storedIdentifier(row.source_id, "active membership source id");
+  });
   if (new Set(ids).size !== ids.length) fail("PROJECT_STORAGE_UNAVAILABLE", 503, "project has duplicate active memberships", true);
   return Object.freeze(ids);
 }
@@ -344,10 +350,10 @@ export function currentMembershipsReadableGuard(): string {
   // here avoids nesting the full JSON/admission policy expression below the
   // project UPDATE, which exceeds D1's expression-depth limit.
   return "NOT EXISTS (SELECT 1 FROM project_source_membership old " +
-    "JOIN project p ON p.project_id=old.project_id AND p.membership_generation=old.membership_generation " +
+    "JOIN project p ON p.project_id=old.project_id " +
     "WHERE old.project_id=?1 AND old.valid_to IS NULL " +
-    "AND NOT EXISTS (SELECT 1 FROM current_readable_sources readable " +
-    "WHERE readable.source_id=old.source_id))";
+    "AND (old.membership_generation>p.generation OR NOT EXISTS (SELECT 1 FROM current_readable_sources readable " +
+    "WHERE readable.source_id=old.source_id)))";
 }
 
 export function eligibleSourceCte(sourceJson: string, principal: string, observed: string, projectId?: string): string {
@@ -357,8 +363,8 @@ export function eligibleSourceCte(sourceJson: string, principal: string, observe
   const projectCandidates = projectId === undefined ? "NULL" : projectId;
   return `WITH requested AS (SELECT value AS source_id FROM json_each(${sourceJson})), candidate_source_ids AS (` +
     "SELECT source_id FROM requested UNION SELECT old.source_id FROM project_source_membership old " +
-    "JOIN project p ON p.project_id=old.project_id AND p.membership_generation=old.membership_generation " +
-    `WHERE old.project_id=${projectCandidates} AND old.valid_to IS NULL), current_readable_sources AS (` +
+    "JOIN project p ON p.project_id=old.project_id " +
+    `WHERE old.project_id=${projectCandidates} AND old.valid_to IS NULL AND old.membership_generation<=p.generation), current_readable_sources AS (` +
     "SELECT DISTINCT s.source_id FROM candidate_source_ids candidate " +
     "JOIN source s ON s.source_id=candidate.source_id " +
     "JOIN source_revision r ON r.source_id=s.source_id " +
@@ -388,7 +394,7 @@ export async function readMembershipIds(database: D1Database, principal: string,
   try {
     result = await database.prepare(
       "SELECT DISTINCT m.project_id,m.source_id FROM project_source_membership m " +
-      "JOIN project p ON p.project_id=m.project_id AND p.membership_generation=m.membership_generation " + sourceReadJoins("?2", "?3") +
+      "JOIN project p ON p.project_id=m.project_id AND m.membership_generation<=p.generation " + sourceReadJoins("?2", "?3") +
       " AND m.project_id IN (SELECT value FROM json_each(?1)) " +
       "AND m.valid_to IS NULL AND julianday(m.valid_from)<=julianday(?3) " +
       "ORDER BY m.project_id,m.source_id LIMIT ?4",

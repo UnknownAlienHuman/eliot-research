@@ -26,9 +26,9 @@ interface SourceRow {
   normalized_artifact_ref: string; captured_at: string; parser_profile_generation: string | null;
   quality_state: string; purge_state: string; title: string; kind: string; source_class: string;
 }
-interface ProjectMembershipHeadRow {
+interface ProjectHeadRow {
   readonly project_id: string;
-  readonly membership_generation: number;
+  readonly generation: number;
   readonly default_disclosure: string;
   readonly default_source_policy_ref: string;
   readonly retention_policy_ref: string;
@@ -82,13 +82,13 @@ export function createOwnerScopeAuthority(db: D1Database, context: EvidenceAcces
   return createReadPolicyAuthority(db, context, context.principal_ref, now);
 }
 
-async function projectMembershipGeneration(db: D1Database, projectId: string): Promise<number> {
-  const row = await db.prepare("SELECT membership_generation FROM project WHERE project_id=?1")
-    .bind(projectId).first<{ membership_generation: number }>();
-  if (!row || !Number.isSafeInteger(row.membership_generation) || row.membership_generation < 1) {
-    grantFail("CLIENT_SCOPE_AUTHORITY_UNAVAILABLE", 503, "Project membership head is unavailable", true);
+async function projectGeneration(db: D1Database, projectId: string): Promise<number> {
+  const row = await db.prepare("SELECT generation FROM project WHERE project_id=?1")
+    .bind(projectId).first<{ generation: number }>();
+  if (!row || !Number.isSafeInteger(row.generation) || row.generation < 1) {
+    grantFail("CLIENT_SCOPE_AUTHORITY_UNAVAILABLE", 503, "Project revision is unavailable", true);
   }
-  return row.membership_generation;
+  return row.generation;
 }
 
 /** The policy subject is separate from the authenticated actor. Not exported as an impersonation factory. */
@@ -183,7 +183,7 @@ function createReadPolicyAuthority(db: D1Database, context: EvidenceAccessContex
     const filters: string[] = ["r.source_revision_ref=s.head_rev", "r.purge_state='LIVE'",
       "s.source_namespace_id IN (SELECT value FROM json_each(?1))"];
     const binds: Bind[] = [JSON.stringify([...currentPolicies.keys()]), observedAt];
-    let project: ProjectMembershipHeadRow | null = null;
+    let project: ProjectHeadRow | null = null;
     switch (atom.kind) {
       case "GLOBAL_LIBRARY": break;
       case "SELECTED_SOURCES":
@@ -194,17 +194,18 @@ function createReadPolicyAuthority(db: D1Database, context: EvidenceAccessContex
           "AND julianday(t.valid_from)<=julianday(?2) AND (t.valid_to IS NULL OR julianday(t.valid_to)>julianday(?2)))");
         binds.push(atom.tag); break;
       case "PROJECT":
-        project = await db.prepare("SELECT p.project_id, p.membership_generation, p.default_disclosure, p.default_source_policy_ref, " +
+        project = await db.prepare("SELECT p.project_id, p.generation, p.default_disclosure, p.default_source_policy_ref, " +
           "p.retention_policy_ref, p.default_model_profile_ref, p.default_depth_profile_ref, " +
           "po.principal_ref AS owner_principal_ref, po.deployment_generation AS owner_deployment_generation " +
           "FROM project p JOIN project_owner po ON po.project_id=p.project_id AND po.principal_ref=?2 " +
           "WHERE p.project_id=?1")
-          .bind(atom.project_id, policyPrincipal).first<ProjectMembershipHeadRow>();
+          .bind(atom.project_id, policyPrincipal).first<ProjectHeadRow>();
         if (!project) orientationFail("ORIENTATION_PROJECT_UNAVAILABLE", 404);
-        if (!Number.isSafeInteger(project.membership_generation) || project.membership_generation < 1) {
+        if (!Number.isSafeInteger(project.generation) || project.generation < 1) {
           orientationFail("ORIENTATION_PROJECT_UNAVAILABLE", 404);
         }
-        filters.push("EXISTS (SELECT 1 FROM project_source_membership m WHERE m.source_id=s.source_id AND m.project_id=?3 " +
+        filters.push("EXISTS (SELECT 1 FROM project_source_membership m JOIN project p ON p.project_id=m.project_id " +
+          "AND m.membership_generation<=p.generation WHERE m.source_id=s.source_id AND m.project_id=?3 " +
           "AND julianday(m.valid_from)<=julianday(?2) AND (m.valid_to IS NULL OR julianday(m.valid_to)>julianday(?2)))");
         binds.push(atom.project_id); break;
     }
@@ -220,7 +221,7 @@ function createReadPolicyAuthority(db: D1Database, context: EvidenceAccessContex
       source_owner_generation: source.revision.source_owner_generation, policy_closure_ref: source.policy_closure_ref }));
     const projectMembershipIdentity = project === null ? null : {
       project_id: project.project_id,
-      membership_generation: project.membership_generation,
+      generation: project.generation,
       default_disclosure: project.default_disclosure,
       default_source_policy_ref: project.default_source_policy_ref,
       retention_policy_ref: project.retention_policy_ref,
@@ -335,13 +336,13 @@ export async function createProjectClientCatalogAuthority(db: D1Database, contex
   const members = new Set(refs);
   const shared = createReadPolicyAuthority(db, context, lease.grant.grantor_principal_ref, now);
   async function requireMembers() {
-    if (await projectMembershipGeneration(db, projectId) !== lease.membership_generation) {
-      grantFail("CLIENT_SCOPE_MEMBERSHIP_CHANGED", 409, "Delegated project membership changed", true);
+    if (await projectGeneration(db, projectId) !== lease.project_generation) {
+      grantFail("CLIENT_SCOPE_AUTHORITY_CHANGED", 409, "Delegated project revision changed", true);
     }
     const current = await readClientProjectMembers(db, projectId, now());
     if (canonicalEvidenceJson(current) !== canonicalEvidenceJson(refs) ||
-        await projectMembershipGeneration(db, projectId) !== lease.membership_generation) {
-      grantFail("CLIENT_SCOPE_MEMBERSHIP_CHANGED", 409, "Delegated project membership changed", true);
+        await projectGeneration(db, projectId) !== lease.project_generation) {
+      grantFail("CLIENT_SCOPE_AUTHORITY_CHANGED", 409, "Delegated project revision changed", true);
     }
   }
   async function revalidateSources(requested: readonly string[], expected: readonly OrientationSource[]) {
@@ -394,13 +395,13 @@ export async function createProjectClientScopeAuthority(db: D1Database, context:
   const lease = await authorizeProjectClientGrant(db, context, { operation: execution ? "run" : "query",
     ...(projects[0] === undefined ? {} : { project_id: projects[0] }) }, now);
   const projectId = lease.grant.project_id;
-  const membershipGeneration = lease.membership_generation;
-  if (await projectMembershipGeneration(db, projectId) !== membershipGeneration) {
-    grantFail("CLIENT_SCOPE_MEMBERSHIP_CHANGED", 409, "Project membership changed during scope resolution", true);
+  const projectRevision = lease.project_generation;
+  if (await projectGeneration(db, projectId) !== projectRevision) {
+    grantFail("CLIENT_SCOPE_AUTHORITY_CHANGED", 409, "Project revision changed during scope resolution", true);
   }
   const refs = await readClientProjectMembers(db, projectId, now());
-  if (await projectMembershipGeneration(db, projectId) !== membershipGeneration) {
-    grantFail("CLIENT_SCOPE_MEMBERSHIP_CHANGED", 409, "Project membership changed during scope resolution", true);
+  if (await projectGeneration(db, projectId) !== projectRevision) {
+    grantFail("CLIENT_SCOPE_AUTHORITY_CHANGED", 409, "Project revision changed during scope resolution", true);
   }
   const members = new Set(refs);
   const identity = scopeExpressionIdentity(expression);
@@ -408,19 +409,19 @@ export async function createProjectClientScopeAuthority(db: D1Database, context:
   // Source-scope identity binds the membership head. The lease separately fences grant authority.
   const delegation = { grant_id: lease.grant.grant_id, revision: lease.grant.revision,
     project_id: projectId,
-    project_membership_generation: membershipGeneration, operation: execution ? "run" : "query",
+    project_generation: projectRevision, operation: execution ? "run" : "query",
     ...(execution ? { operation_id: execution.operation_id } : {}) };
   const delegationDigest = await evidenceSha256(lease.grant);
   async function requireProjectMembers() {
-    if (await projectMembershipGeneration(db, projectId) !== membershipGeneration) {
-      grantFail("CLIENT_SCOPE_MEMBERSHIP_CHANGED", 409, "Project membership head changed; repeat with a new request", true);
+    if (await projectGeneration(db, projectId) !== projectRevision) {
+      grantFail("CLIENT_SCOPE_AUTHORITY_CHANGED", 409, "Project revision changed; repeat with a new request", true);
     }
     const current = await readClientProjectMembers(db, projectId, now());
     if (current.length !== members.size || current.some((ref) => !members.has(ref))) {
       grantFail("CLIENT_SCOPE_MEMBERSHIP_CHANGED", 409, "Delegated project membership changed; repeat with a new request", true);
     }
-    if (await projectMembershipGeneration(db, projectId) !== membershipGeneration) {
-      grantFail("CLIENT_SCOPE_MEMBERSHIP_CHANGED", 409, "Project membership head changed during read", true);
+    if (await projectGeneration(db, projectId) !== projectRevision) {
+      grantFail("CLIENT_SCOPE_AUTHORITY_CHANGED", 409, "Project revision changed during read", true);
     }
   }
   async function revalidateRequestedExpression() {
@@ -601,13 +602,11 @@ export async function createProjectClientArtifactAuthority(
   const readOrigin = () => db.prepare("SELECT origin_client_class FROM project_client_artifact_read_origin " +
     "WHERE artifact_id=?1 AND artifact_revision=?2 AND principal_ref=?3 " +
     "AND scope_snapshot_id=?4 AND scope_snapshot_revision=?5 AND client_grant_id=?6 " +
-    "AND client_grant_revision=?7 AND ((project_client_provenance_version=1 AND project_generation=?8) OR " +
-    "(project_client_provenance_version=2 AND project_client_membership_generation=?9 " +
-    "AND project_client_owner_deployment_generation=?10)) " +
-    "AND (origin_client_class='owner_pwa' OR origin_client_class=?11) LIMIT 1")
+    "AND client_grant_revision=?7 AND project_generation=?8 " +
+    "AND (origin_client_class='owner_pwa' OR origin_client_class=?9) LIMIT 1")
     .bind(origin.artifact_ref.id, origin.artifact_ref.revision, originalPrincipal, original.snapshot_id,
       original.revision, lease.grant.grant_id, lease.grant.revision, lease.project_generation,
-      lease.membership_generation, lease.deployment_generation, context.client_class)
+      context.client_class)
     .first<{ origin_client_class: EvidenceAccessContext["client_class"] }>();
   const recorded = await readOrigin();
   if (!recorded || !["owner_pwa", "trusted_agent", "named_api_client"].includes(recorded.origin_client_class)) {
@@ -673,7 +672,7 @@ export async function createProjectClientArtifactAuthority(
     const closure = await shared.exhaustiveResolveAuthorityClosure(request);
     const policy = `client-report-${await evidenceSha256({ original: closure.policy_authority_ref,
       scope: original.digest, artifact: origin, grant: lease.grant,
-      project_membership_generation: lease.membership_generation,
+      project_generation: lease.project_generation,
       project_owner_deployment_generation: lease.deployment_generation })}`;
     await requireOrigin();
     await lease.requireCurrent(async () => {
@@ -748,14 +747,11 @@ export async function createProjectClientRunReadAuthority(
       "AND deployment_generation=?5 AND handler_generation=?6 AND scope_snapshot_id=?7 " +
       "AND scope_snapshot_revision=?8 AND policy_authority_ref=?9 AND authorization_receipt_ref=?10 " +
       "AND client_grant_id=?11 AND client_grant_revision=?12 AND origin_client_class=?13 " +
-       "AND ((project_client_provenance_version=1 AND project_generation=?14) OR " +
-       "(project_client_provenance_version=2 AND project_client_membership_generation=?15 " +
-       "AND project_client_owner_deployment_generation=?16)) LIMIT 1")
+       "AND project_generation=?14 LIMIT 1")
       .bind(operationId, binding.investigation_id, binding.principal_ref, binding.credential_generation,
         binding.deployment_generation, binding.handler_generation, ref.id, ref.revision,
         binding.policy_authority_ref, binding.authorization_receipt_ref, lease.grant.grant_id,
-        lease.grant.revision, binding.origin_client_class, lease.project_generation,
-        lease.membership_generation, lease.deployment_generation).first();
+        lease.grant.revision, binding.origin_client_class, lease.project_generation).first();
     if (row === null) grantFail("CLIENT_RUN_DENIED", 403, "Original run authority was revoked or changed");
     await lease.requireGrantCurrent();
   };

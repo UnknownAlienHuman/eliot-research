@@ -159,7 +159,7 @@ export function createProjectClientGrantService(options: ClientGrantServiceOptio
       }
       owner(context);
       const currentFence = await readClientGrantProjectFence(db, projectId, principal);
-      if (currentFence.membership_generation !== projectFence.membership_generation ||
+      if (currentFence.project_generation !== projectFence.project_generation ||
           currentFence.deployment_generation !== projectFence.deployment_generation) {
         grantFail("CLIENT_GRANT_AUTHORITY_CHANGED", 409, "Project owner or membership authority changed", true);
       }
@@ -203,13 +203,13 @@ export function createProjectClientGrantService(options: ClientGrantServiceOptio
           "spend_policy_protocol,spend_policy_sha256,spend_deployment_generation,spend_expires_at) " +
           "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?17,?18,?19,?20 FROM project p " +
           "JOIN project_owner o ON o.project_id=p.project_id " +
-          "WHERE p.project_id=?3 AND o.principal_ref=?4 AND p.membership_generation=?14 " +
+          "WHERE p.project_id=?3 AND o.principal_ref=?4 AND p.generation=?14 " +
           "AND o.deployment_generation=?21 " +
           "AND (SELECT generation FROM orientation_authority_epoch WHERE singleton=1)=?15 " +
           "AND julianday(?16)>julianday('now')")
           .bind(result.grant_id, result.revision, projectId, principal, result.grantee.issuer,
             result.grantee.authentication_method, result.grantee.subject, result.state, result.expires_at,
-            key, requestDigest, record, digest, projectFence.membership_generation, writeEpoch,
+            key, requestDigest, record, digest, projectFence.project_generation, writeEpoch,
             new Date(authorityDeadline).toISOString(), sponsorship?.policy_protocol ?? null,
             sponsorship?.policy_sha256 ?? null, sponsorship?.deployment_generation ?? null,
             sponsorship?.expires_at ?? null, projectFence.deployment_generation).run();

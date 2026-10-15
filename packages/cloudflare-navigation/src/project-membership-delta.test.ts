@@ -24,8 +24,6 @@ interface MembershipRecord {
   readonly valid_from: string;
   readonly valid_to: string | null;
   readonly membership_generation: number;
-  readonly membership_id: string;
-  readonly membership_revision: number;
 }
 
 function nativeD1(database: DatabaseSync) {
@@ -70,16 +68,6 @@ function nativeD1(database: DatabaseSync) {
     },
   } as unknown as D1Database;
   return { core, batchChanges };
-}
-
-function membershipId(sourceId: string): string {
-  return JSON.stringify([PROJECT_ID, sourceId]);
-}
-
-function membershipRowIdentity(row: MembershipRecord): string {
-  // Internal SQL pair plus temporal revision; Root derives the bounded public
-  // ProjectMembershipID from the raw pair before using it in copy bindings.
-  return JSON.stringify([row.membership_id, row.membership_revision]);
 }
 
 function context(): AuthenticatedRequestContext {
@@ -128,20 +116,20 @@ async function insertGrant(database: DatabaseSync, revision: number, updatedAt: 
 
 function readMembershipRows(database: DatabaseSync): MembershipRecord[] {
   return database.prepare(
-    "SELECT rowid,source_id,role,valid_from,valid_to,membership_generation,membership_id,membership_revision " +
+    "SELECT rowid,source_id,role,valid_from,valid_to,membership_generation " +
     "FROM project_source_membership WHERE project_id=?1 ORDER BY source_id,valid_from",
   ).all(PROJECT_ID) as unknown as MembershipRecord[];
 }
 
-describe("stable project membership delta and delegated lease", () => {
-  it("keeps title edits O(1), then writes only the changed membership and rejects its old lease", async () => {
+describe("canonical project membership delta and delegated lease", () => {
+  it("keeps title edits O(1), preserves membership rows, and rejects stale project revisions", async () => {
     const database = new DatabaseSync(":memory:");
     database.exec(`
       CREATE TABLE project (
         project_id TEXT PRIMARY KEY, title TEXT NOT NULL, default_disclosure TEXT NOT NULL,
         retention_policy_ref TEXT NOT NULL, default_source_policy_ref TEXT NOT NULL,
         default_model_profile_ref TEXT NOT NULL, default_depth_profile_ref TEXT NOT NULL,
-        generation INTEGER NOT NULL, membership_generation INTEGER NOT NULL, created_at TEXT NOT NULL
+        generation INTEGER NOT NULL, created_at TEXT NOT NULL
       );
       CREATE TABLE project_owner (
         project_id TEXT NOT NULL, principal_ref TEXT NOT NULL, deployment_generation TEXT NOT NULL,
@@ -150,8 +138,7 @@ describe("stable project membership delta and delegated lease", () => {
       CREATE TABLE project_source_membership (
         project_id TEXT NOT NULL, source_id TEXT NOT NULL, role TEXT NOT NULL,
         valid_from TEXT NOT NULL, valid_to TEXT, membership_generation INTEGER NOT NULL,
-        membership_id TEXT NOT NULL, membership_revision INTEGER NOT NULL,
-        PRIMARY KEY(project_id,source_id,valid_from), UNIQUE(membership_id,membership_revision)
+        PRIMARY KEY(project_id,source_id,valid_from)
       );
       CREATE TABLE project_mutation_guard (
         principal_ref TEXT NOT NULL, idempotency_key TEXT NOT NULL, operation TEXT NOT NULL,
@@ -176,13 +163,13 @@ describe("stable project membership delta and delegated lease", () => {
       CREATE TABLE orientation_authority_epoch(singleton INTEGER PRIMARY KEY, generation INTEGER NOT NULL);
       INSERT INTO orientation_authority_epoch VALUES (1,1);
       INSERT INTO project VALUES (
-        '${PROJECT_ID}','Initial','private','retention-a','policy-a','model-a','depth-a',1,4,'${STARTED_AT}'
+        '${PROJECT_ID}','Initial','private','retention-a','policy-a','model-a','depth-a',1,'${STARTED_AT}'
       );
       INSERT INTO project_owner VALUES ('${PROJECT_ID}','${OWNER}','${DEPLOYMENT}','${STARTED_AT}','${STARTED_AT}');
       INSERT INTO project_source_membership VALUES
-        ('${PROJECT_ID}','source-a','member','${STARTED_AT}',NULL,4,'${membershipId("source-a")}',1),
-        ('${PROJECT_ID}','source-b','member','${STARTED_AT}',NULL,4,'${membershipId("source-b")}',1),
-        ('${PROJECT_ID}','source-c','member','${STARTED_AT}',NULL,4,'${membershipId("source-c")}',1);
+        ('${PROJECT_ID}','source-a','member','${STARTED_AT}',NULL,1),
+        ('${PROJECT_ID}','source-b','member','${STARTED_AT}',NULL,1),
+        ('${PROJECT_ID}','source-c','member','${STARTED_AT}',NULL,1);
       CREATE TRIGGER project_epoch AFTER UPDATE ON project BEGIN
         UPDATE orientation_authority_epoch SET generation=generation+1 WHERE singleton=1;
       END;
@@ -224,11 +211,7 @@ describe("stable project membership delta and delegated lease", () => {
     await insertGrant(database, 1, STARTED_AT);
     const firstLease = await authorizeProjectClientGrant(native.core, context(),
       { operation: "query", project_id: PROJECT_ID }, () => now);
-    let currentnessRevalidations = 0;
-    firstLease.bindOperationRevalidator(async () => { currentnessRevalidations += 1; });
-
     const beforeRename = readMembershipRows(database).filter((row) => row.valid_to === null);
-    const beforeKeys = new Map(beforeRename.map((row) => [row.source_id, membershipRowIdentity(row)]));
     now += 1_000;
     const renamed = await owner.update(actor, PROJECT_ID,
       { expected_revision: 1, title: "Renamed", source_ids: MEMBERS }, "rename-1");
@@ -236,13 +219,11 @@ describe("stable project membership delta and delegated lease", () => {
     expect(native.batchChanges.at(-1)).toEqual([1, 1, 1, 0, 0, 1, 1]);
     expect(readMembershipRows(database).filter((row) => row.valid_to === null).map((row) => ({
       source_id: row.source_id, rowid: row.rowid, membership_generation: row.membership_generation,
-      key: membershipRowIdentity(row),
     }))).toEqual(beforeRename.map((row) => ({
       source_id: row.source_id, rowid: row.rowid, membership_generation: row.membership_generation,
-      key: beforeKeys.get(row.source_id),
     })));
-    await firstLease.requireCurrent();
-    expect(currentnessRevalidations).toBe(1);
+    expect(firstLease.project_generation).toBe(1);
+    await expect(firstLease.requireCurrent()).rejects.toMatchObject({ code: "CLIENT_GRANT_AUTHORITY_CHANGED" });
 
     now += 1_000;
     await insertGrant(database, 2, new Date(now).toISOString());
@@ -260,18 +241,14 @@ describe("stable project membership delta and delegated lease", () => {
     expect(activeAfterDelta.map((row) => row.source_id)).toEqual(["source-a", "source-b", "source-d"]);
     const priorA = beforeRename.find((row) => row.source_id === "source-a");
     const currentA = activeAfterDelta.find((row) => row.source_id === "source-a");
-    expect(currentA).toMatchObject({ rowid: priorA?.rowid, membership_generation: 4,
-      membership_id: priorA?.membership_id, membership_revision: priorA?.membership_revision });
-    expect(currentA && membershipRowIdentity(currentA)).toBe(beforeKeys.get("source-a"));
+    expect(currentA).toMatchObject({ rowid: priorA?.rowid, membership_generation: 1 });
     const priorB = beforeRename.find((row) => row.source_id === "source-b");
     const currentB = activeAfterDelta.find((row) => row.source_id === "source-b");
-    expect(currentB).toMatchObject({ rowid: priorB?.rowid, membership_generation: 4,
-      membership_id: priorB?.membership_id, membership_revision: priorB?.membership_revision });
-    expect(currentB && membershipRowIdentity(currentB)).toBe(beforeKeys.get("source-b"));
+    expect(currentB).toMatchObject({ rowid: priorB?.rowid, membership_generation: 1 });
     expect(afterDelta).toHaveLength(4);
     expect(afterDelta.filter((row) => row.valid_to !== null)).toHaveLength(1);
     expect(activeAfterDelta.find((row) => row.source_id === "source-d")).toMatchObject({
-      membership_generation: 5, membership_id: membershipId("source-d"), membership_revision: 1,
+      membership_generation: 3,
     });
     await expect(secondLease.requireCurrent()).rejects.toMatchObject({ code: "CLIENT_GRANT_AUTHORITY_CHANGED" });
     database.close();

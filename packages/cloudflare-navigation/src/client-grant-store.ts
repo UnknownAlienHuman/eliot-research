@@ -31,9 +31,8 @@ export async function grantRead<T>(work: () => Promise<T>): Promise<T> {
   }
 }
 export interface ClientGrantProjectFence {
-  /** Retained for legacy v1 delegated-origin comparisons; v2 authority uses membership/deployment fields. */
+  /** Current project revision binds delegated scope and owner decisions. */
   readonly project_generation: number;
-  readonly membership_generation: number;
   readonly deployment_generation: string;
 }
 
@@ -41,18 +40,16 @@ export async function readClientGrantProjectFence(
   db: D1Database, projectId: string, principal: string,
 ): Promise<ClientGrantProjectFence> {
   const row = await grantRead(() => db.prepare("SELECT p.generation AS project_generation, " +
-    "p.membership_generation, o.deployment_generation FROM project p JOIN project_owner o " +
+    "o.deployment_generation FROM project p JOIN project_owner o " +
     "ON o.project_id=p.project_id WHERE p.project_id=?1 AND o.principal_ref=?2")
     .bind(projectId, principal).first<ClientGrantProjectFence>());
   if (!row) grantFail("CLIENT_GRANT_PROJECT_UNAVAILABLE", 404, "Project is not available to this owner");
   if (!Number.isSafeInteger(row.project_generation) || row.project_generation < 1 ||
-      !Number.isSafeInteger(row.membership_generation) || row.membership_generation < 1 ||
       typeof row.deployment_generation !== "string" ||
       !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u.test(row.deployment_generation)) {
     grantFail("CLIENT_GRANT_STORAGE_CORRUPT", 503, "Project authority generation is invalid");
   }
-  return Object.freeze({ project_generation: row.project_generation, membership_generation: row.membership_generation,
-    deployment_generation: row.deployment_generation });
+  return Object.freeze({ project_generation: row.project_generation, deployment_generation: row.deployment_generation });
 }
 
 export async function requireGrantOwner(db: D1Database, projectId: string, principal: string): Promise<number> {

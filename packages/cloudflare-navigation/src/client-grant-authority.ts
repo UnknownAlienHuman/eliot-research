@@ -38,6 +38,7 @@ export async function requireClientGrantNamespaces(db: D1Database, principal: st
 /** Metadata only; a caller requesting a project is never silently given its first page as its scope. */
 export async function readClientProjectMembers(db: D1Database, project: string, now: number): Promise<readonly string[]> {
   const rows = await grantRead(() => db.prepare("SELECT m.source_id,s.head_rev FROM project_source_membership m " +
+    "JOIN project p ON p.project_id=m.project_id AND m.membership_generation<=p.generation " +
     "LEFT JOIN source s ON s.source_id=m.source_id WHERE m.project_id=?1 AND julianday(m.valid_from)<=julianday(?2) " +
     "AND (m.valid_to IS NULL OR julianday(m.valid_to)>julianday(?2)) ORDER BY m.source_id LIMIT 4097")
     .bind(project, new Date(now).toISOString()).all<{ source_id: string; head_rev: string | null }>());
@@ -55,9 +56,8 @@ export interface ClientGrantLease {
   readonly grant: ProjectClientGrant;
   /** Cache hint observed when this lease was created; never an authority token. */
   readonly authority_epoch: number;
-  /** Persisted only for legacy v1 origin comparisons; v2 currentness excludes project presentation revision. */
+  /** Project revision captured when this delegated operation starts. */
   readonly project_generation: number;
-  readonly membership_generation: number;
   readonly deployment_generation: string;
   readonly expires_at_ms: number;
   bindOperationRevalidator(revalidate: () => Promise<void>): void;
@@ -82,7 +82,6 @@ export async function authorizeProjectClientGrant(db: D1Database, context: Authe
     grantFail("CLIENT_GRANT_DENIED", 403, "No current delegation authorizes this actor, project and operation");
   }
   const projectFence = await readClientGrantProjectFence(db, grant.project_id, grant.grantor_principal_ref);
-  const legacyProjectGeneration = projectFence.project_generation;
   const actorIdentity = canonicalJson(actor);
   const record = canonicalJson(grant);
   const expires = Math.min(Date.parse(grant.expires_at), Date.parse(context.access?.expires_at ?? ""));
@@ -106,7 +105,7 @@ export async function authorizeProjectClientGrant(db: D1Database, context: Authe
     const current = await readClientGrant(db, grant.grant_id);
     const currentFence = await readClientGrantProjectFence(db, grant.project_id, grant.grantor_principal_ref);
     if (!current || canonicalJson(current) !== record ||
-        currentFence.membership_generation !== projectFence.membership_generation ||
+        currentFence.project_generation !== projectFence.project_generation ||
         currentFence.deployment_generation !== projectFence.deployment_generation) {
       grantFail("CLIENT_GRANT_AUTHORITY_CHANGED", 409, "Delegation or project authority changed", true);
     }
@@ -132,8 +131,8 @@ export async function authorizeProjectClientGrant(db: D1Database, context: Authe
     if (grantNow(now) >= expires || context.request.signal.aborted) grantFail("CLIENT_GRANT_DENIED", 403, "Delegation expired or request was cancelled");
   };
   await requireCurrent();
-  return { grant, authority_epoch: epoch, project_generation: legacyProjectGeneration,
-    membership_generation: projectFence.membership_generation, deployment_generation: projectFence.deployment_generation,
+  return { grant, authority_epoch: epoch, project_generation: projectFence.project_generation,
+    deployment_generation: projectFence.deployment_generation,
     expires_at_ms: expires, bindOperationRevalidator(revalidate) { operationRevalidator = revalidate; },
     requireCurrent, requireGrantCurrent };
 }
