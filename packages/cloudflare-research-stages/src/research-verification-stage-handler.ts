@@ -62,6 +62,19 @@ function failCorrupt(): never {
   return fail("WORKFLOW_OUTPUT_CORRUPT");
 }
 
+function failCandidateCorrupt(): never {
+  throw new WorkflowCheckpointError("WORKFLOW_OUTPUT_CORRUPT", {
+    protocol: "eliotr.workflow-failure-outcome.v1",
+    code: "WORKFLOW_OUTPUT_CORRUPT",
+    phase: "STAGE",
+    stage: "VERIFY",
+    retryable: false,
+    dispatch_state: "NOT_STARTED",
+    references_intact: "INTACT",
+    recovery_action: "NONE",
+  });
+}
+
 function failAuthority(): never {
   return fail("WORKFLOW_AUTHORITY_STALE");
 }
@@ -88,11 +101,11 @@ function requireCandidateRefs(
   context: EvidenceFreezeSynthesisContext,
 ): void {
   const keys = refs.map(refKey);
-  if (new Set(keys).size !== keys.length || refs.length === 0) failCorrupt();
+  if (new Set(keys).size !== keys.length || refs.length === 0) failCandidateCorrupt();
   const manifest = new Set(context.manifest.allowed_evidence_handle_refs.map(refKey));
   const frozen = new Set(context.freeze.included_evidence.map((item) => refKey(item.handle_ref)));
   const pack = new Set(context.stage_five.evidence_pack.resolved_evidence.map((item) => refKey(item.handle.handle_ref)));
-  if (keys.some((key) => !manifest.has(key) || !frozen.has(key) || !pack.has(key))) failCorrupt();
+  if (keys.some((key) => !manifest.has(key) || !frozen.has(key) || !pack.has(key))) failCandidateCorrupt();
 }
 
 async function committedSynthesisInput(
@@ -220,12 +233,12 @@ export function createResearchVerificationStageHandler(
             required_precision: v2Config.required_precision,
             required_source_class: v2Config.required_source_class,
           });
-        } catch { return failCorrupt(); }
+        } catch { return failCandidateCorrupt(); }
         citedHandleRefs = normalized.cited_handle_refs;
         requireCandidateRefs(citedHandleRefs, context);
       } else {
         try { candidate = decodeSynthesisSectionCandidate(assistantContent); }
-        catch { return failCorrupt(); }
+        catch { return failCandidateCorrupt(); }
         citedHandleRefs = candidate.cited_handle_refs;
         requireCandidateRefs(citedHandleRefs, context);
       }

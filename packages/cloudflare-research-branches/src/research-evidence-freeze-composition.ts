@@ -14,7 +14,7 @@ import type { ModelAttemptPreparationContext, GovernedModelAttemptHandler } from
 import type { ModelAttemptReservationInput } from "@eliotr/cloudflare-model-execution";
 import { type AllowedReferenceManifest,
   type EvidenceFreeze, type EvidenceFreezeBranchFindings } from "@eliotr/contracts";
-import { digest, fail, type StageRequest, type WorkflowPrincipal, type WorkflowStageHandler, type StageReceipt } from "@eliotr/cloudflare-workflows";
+import { digest, fail, WorkflowCheckpointError, type StageRequest, type WorkflowPrincipal, type WorkflowStageHandler, type StageReceipt } from "@eliotr/cloudflare-workflows";
 import {
   createEvidenceFreezeStageHandler,
   type EvidenceFreezeAuthorityPort,
@@ -581,6 +581,19 @@ export function createEvidenceFreezeSynthesisHandler(input: {
     ...input.model,
     prepare: async (context) => {
       const frozen = await input.context.read(context);
+      const evidencePack = frozen.synthesis_evidence_pack ?? frozen.stage_five.evidence_pack;
+      if (evidencePack.resolved_evidence.length === 0) {
+        throw new WorkflowCheckpointError("WORKFLOW_INPUT_INVALID", {
+          protocol: "eliotr.workflow-failure-outcome.v1",
+          code: "WORKFLOW_INPUT_INVALID",
+          phase: "STAGE",
+          stage: "SYNTHESIZE",
+          retryable: false,
+          dispatch_state: "NOT_STARTED",
+          references_intact: "INTACT",
+          recovery_action: "NONE",
+        });
+      }
       const prepared = await input.model.prepare(context, frozen);
       assertSynthesisPreparation(prepared, frozen);
       return prepared;
