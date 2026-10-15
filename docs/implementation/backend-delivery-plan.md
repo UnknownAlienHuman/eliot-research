@@ -1,5 +1,36 @@
 # Backend delivery plan
 
+## Current owner checkpoint, October 15, 2026, 23:28 UTC
+
+Main `6e11fc278c1308743360dbd770cdb86923e12fce` is live as
+`git-6e11fc278c13`, Worker `1db30578-e4cd-4491-b6c4-ac73a25c5e6b`.
+Fast CI `38822300026`, routine dry-run/deploy and active D1 authority readback
+passed. The unchanged owner UI has frontend CI `38820008750` on its source
+ancestor `aab5a2b5`; the current fast CI rebuilt the exact release assets.
+No new migration was applied. The selected Codex target and repository are
+installed, and actual MCP discovery/qualification passed after deployment.
+
+Live doctor pull exposed a missing configuration projection: the Worker had
+the two target settings, but `projectWorkspaceMcpEnvironment` discarded them.
+The bounded fix forwards only those non-secret settings. The native lease and
+receipt suite now runs through that same projection; its five cases, the
+explicit-field-set check, global typecheck and touched lint passed.
+
+The new-source run's stored retrieval result was `NONE`/`NO_HIT`, with zero
+evidence and zero bytes before prose indexing completed. Source `de8c4d6b`
+rejects that input before model preparation and classifies strict VERIFY
+candidate rejection as a known no-dispatch failure. Sixteen focused cases
+passed; no model output was repaired or replayed. The source is integrated for
+the next checked release, not yet live.
+
+Run `c15e9f3d...` remains canonically ACTIVE with its original failure and no
+cancellation receipt. Cloudflare independently confirms its native instance
+errored at 22:38:36 UTC with 14 steps; no model work remains active. The owner
+cancel returned 403. The filtered-project historical-scope defect was reproduced
+and fixed with ten native positive/negative cases; a remaining control
+authorization refusal is still under bounded read-only investigation. Do not
+claim this run was canceled or rewrite its immutable outputs.
+
 ## Current owner checkpoint, October 15, 2026, 22:15 UTC
 
 Main `a154880e744b37bcb762bb23fd98d4b86557fd35` is deployed as

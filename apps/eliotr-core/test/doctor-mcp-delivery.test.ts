@@ -17,6 +17,7 @@ import {
   createWorkspaceMcpDiagnosticConsume,
   GeminiMcpToolError,
   McpClientDiagnosticServiceError,
+  projectWorkspaceMcpEnvironment,
 } from "@eliotr/cloudflare-workspace-mcp";
 import { runScheduledDoctor } from "../src/doctor.js";
 import { callMcpDoctorDelivery } from "../src/mcp-doctor-delivery.js";
@@ -387,7 +388,7 @@ describe("doctor MCP system delivery", () => {
   });
 
   it("pulls from the single D1 outbox and fences receipt by selected agent, lease and idempotency", async () => {
-    const env = doctorEnv();
+    const env = projectWorkspaceMcpEnvironment(doctorEnv());
     await prepareOtherConnection();
     const empty = await callMcpDoctorDelivery(env, agentContext(), "eliotr_doctor_delivery_pull", {
       worker_slot: "codex",

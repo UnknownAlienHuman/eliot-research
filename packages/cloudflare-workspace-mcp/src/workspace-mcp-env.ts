@@ -20,6 +20,8 @@ export interface WorkspaceMcpEnvironmentSource<
   readonly AI_GATEWAY_REASONING_URL: string;
   readonly AI_GATEWAY_RETRIEVAL_URL: string;
   readonly ELIOTR_MODEL_GATEWAY_TOKEN?: string | undefined;
+  readonly ELIOTR_DOCTOR_AGENT_CONNECTION_ID?: string | undefined;
+  readonly ELIOTR_DOCTOR_GITHUB_REPOSITORY?: string | undefined;
   readonly ELIOTR_MODEL_PROFILE_DEFINITION_JSON?: string | undefined;
   readonly ELIOTR_MODEL_PROFILE_PROVENANCE_REF?: string | undefined;
   readonly ELIOTR_MODEL_SPEND_POLICY_JSON?: string | undefined;
@@ -61,6 +63,8 @@ export interface WorkspaceMcpEnvironmentProjection<
   readonly AI_GATEWAY_REASONING_URL: string;
   readonly AI_GATEWAY_RETRIEVAL_URL: string;
   readonly ELIOTR_MODEL_GATEWAY_TOKEN: string | undefined;
+  readonly ELIOTR_DOCTOR_AGENT_CONNECTION_ID: string | undefined;
+  readonly ELIOTR_DOCTOR_GITHUB_REPOSITORY: string | undefined;
   readonly ELIOTR_MODEL_PROFILE_DEFINITION_JSON: string | undefined;
   readonly ELIOTR_MODEL_PROFILE_PROVENANCE_REF: string | undefined;
   readonly ELIOTR_MODEL_SPEND_POLICY_JSON: string | undefined;
@@ -104,6 +108,8 @@ export function projectWorkspaceMcpEnvironment<
     AI_GATEWAY_REASONING_URL: source.AI_GATEWAY_REASONING_URL,
     AI_GATEWAY_RETRIEVAL_URL: source.AI_GATEWAY_RETRIEVAL_URL,
     ELIOTR_MODEL_GATEWAY_TOKEN: source.ELIOTR_MODEL_GATEWAY_TOKEN,
+    ELIOTR_DOCTOR_AGENT_CONNECTION_ID: source.ELIOTR_DOCTOR_AGENT_CONNECTION_ID,
+    ELIOTR_DOCTOR_GITHUB_REPOSITORY: source.ELIOTR_DOCTOR_GITHUB_REPOSITORY,
     ELIOTR_MODEL_PROFILE_DEFINITION_JSON: source.ELIOTR_MODEL_PROFILE_DEFINITION_JSON,
     ELIOTR_MODEL_PROFILE_PROVENANCE_REF: source.ELIOTR_MODEL_PROFILE_PROVENANCE_REF,
     ELIOTR_MODEL_SPEND_POLICY_JSON: source.ELIOTR_MODEL_SPEND_POLICY_JSON,
