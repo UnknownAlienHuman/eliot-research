@@ -4,6 +4,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ScopeSnapshot } from "@eliotr/contracts";
 import type { RetrievalQueryPorts } from "@eliotr/retrieval";
+import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import type { AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
 import type * as RetrievalModule from "@eliotr/retrieval";
 import type * as NavigationModule from "@eliotr/cloudflare-navigation";
@@ -34,12 +35,19 @@ import {
   ManagedSearchProductSelectionError,
 } from "../../../apps/eliotr-core/src/managed-search-product-selection.js";
 import { registryFence } from "../../../apps/eliotr-core/src/managed-target-manifest-registry-fence.js";
+import type { Env } from "../../../apps/eliotr-core/src/env.js";
+import { createManagedSearchProductOptInService } from "../../../apps/eliotr-core/src/managed-target-assignment.js";
 
 const probes = vi.hoisted(() => ({
   copies: [] as readonly ProjectCopyMembershipFact[],
   scopes: [] as Awaited<ReturnType<typeof resolveProjectCopyScope>>[],
   current: vi.fn(async () => undefined),
 }));
+
+// The Core error barrel also imports Worker composition/decorated DO startup.
+// Use its exact exported error class while exercising the real consent service.
+vi.mock("../../../apps/eliotr-core/src/http-errors.js", async () =>
+  import("@eliotr/cloudflare-http-protocol/http-request-error.js"));
 
 // Drive the real caller's SEM lane while isolating unrelated admission, result
 // persistence and evidence resolution. Scope currentness and atom/required-set
@@ -114,11 +122,11 @@ function nativeD1(database: DatabaseSync, beforeRead: () => Promise<void> = asyn
       bind: (...bound: SQLInputValue[]) => statement(sql, bound),
       async first(column?: string) {
         if (sql.includes("FROM ai_search_generation_registry ")) await beforeRead();
-        const row = prepared().get(bindings) ?? null;
+        const row = (/\?\d+/u.test(sql) ? prepared().get(bindings) : prepared().get(...values)) ?? null;
         return column === undefined ? row : row?.[column] ?? null;
       },
-      async all() { return { success: true, results: prepared().all(bindings) }; },
-      async run() { const result = prepared().run(bindings); return { success: true, results: [], meta: { changes: Number(result.changes) } }; },
+      async all() { return { success: true, results: /\?\d+/u.test(sql) ? prepared().all(bindings) : prepared().all(...values) }; },
+      async run() { const result = /\?\d+/u.test(sql) ? prepared().run(bindings) : prepared().run(...values); return { success: true, results: [], meta: { changes: Number(result.changes) } }; },
     } as unknown as D1PreparedStatement;
   }
   return {
@@ -135,7 +143,7 @@ function nativeD1(database: DatabaseSync, beforeRead: () => Promise<void> = asyn
   } as unknown as D1Database;
 }
 
-async function world(stageB = true) {
+async function world(stageB = true, stageA = true) {
   const search = new DatabaseSync(":memory:");
   databases.push(search);
   const migrations = new URL("../../../infra/d1/search/migrations/", import.meta.url);
@@ -155,11 +163,13 @@ async function world(stageB = true) {
   const fixture = createNativeTargetRegistryFixture(searchBinding, bucket);
   const a = AI_SEARCH_PRIMARY_PROJECTION_PROFILE.generation;
   const b = "serving-generation-b";
-  await fixture.declare(AI_SEARCH_PRIMARY_PROJECTION_PROFILE);
-  await fixture.registry.qualify(AI_SEARCH_PRIMARY_NAMESPACE, { generation: a });
-  await fixture.registry.promote(AI_SEARCH_PRIMARY_NAMESPACE, {
-    expected_active_head_generation: null, target_generation: a, promoted_at: new Date().toISOString(),
-  });
+  if (stageA) {
+    await fixture.declare(AI_SEARCH_PRIMARY_PROJECTION_PROFILE);
+    await fixture.registry.qualify(AI_SEARCH_PRIMARY_NAMESPACE, { generation: a });
+    await fixture.registry.promote(AI_SEARCH_PRIMARY_NAMESPACE, {
+      expected_active_head_generation: null, target_generation: a, promoted_at: new Date().toISOString(),
+    });
+  }
   if (stageB) {
     await fixture.declare({ ...AI_SEARCH_PRIMARY_PROJECTION_PROFILE, generation: b });
     await fixture.registry.qualify(AI_SEARCH_PRIMARY_NAMESPACE, { generation: b });
@@ -226,16 +236,20 @@ describe("research serving selection V2", () => {
   });
 
   it("bootstraps undeclared B from frozen V2 Core owners and an R2-backed desired manifest", async () => {
-    const w = await world(false);
+    const w = await world(false, false);
     const before = await w.fixture.registry.read(AI_SEARCH_PRIMARY_NAMESPACE);
+    expect(before).toBeNull();
     const captured = await resolveManagedTargetSelectionV2(w.searchBinding, "SHADOW", w.b);
     expect(captured.target.managed_generation).toBe(w.b);
-    expect(captured.registry_revision).toBe(before?.artifact.revision);
-    expect(captured.registry_artifact_sha256).toBe(before?.artifact_sha256);
+    expect(captured.registry_revision).toBeNull();
+    expect(captured.registry_artifact_sha256).toBeNull();
+    const capturedJson = JSON.stringify(captured);
+    expect(await revalidateFrozenManagedTargetSelectionV2(w.searchBinding, captured)).toBe(captured);
     expect((await registryFence(before, captured.target, AI_SEARCH_PRIMARY_PROJECTION_PROFILE)).generation_state)
       .toBe("UNDECLARED");
     expect(await w.fixture.registry.read(AI_SEARCH_PRIMARY_NAMESPACE)).toEqual(before);
-    expect((await resolveManagedTargetSelectionV2(w.searchBinding, "ACTIVE")).target.managed_generation).toBe(w.a);
+    await expect(resolveManagedTargetSelectionV2(w.searchBinding, "ACTIVE"))
+      .rejects.toMatchObject({ code: "MANAGED_SEARCH_PRODUCT_REGISTRY_UNAVAILABLE" });
     await expect(resolveManagedTargetSelectionV2(w.searchBinding, "ACTIVE", w.b))
       .rejects.toMatchObject({ code: "MANAGED_SEARCH_PRODUCT_GENERATION_NOT_FOUND" });
 
@@ -253,13 +267,43 @@ describe("research serving selection V2", () => {
       core.prepare("INSERT INTO project_owner(project_id,principal_ref,deployment_generation,created_at,updated_at) " +
         "VALUES (?,'owner-1','deployment-1','2026-10-14T12:00:00.000Z','2026-10-14T12:00:00.000Z')").run(project);
     }
-    core.prepare("INSERT INTO managed_target_assignment_event(project_id,event_revision,expected_event_revision,event_kind," +
-      "project_generation,project_owner_principal_ref,target_namespace,managed_instance_id,managed_generation," +
-      "target_profile_identity_sha256,previous_assignment_revision,actor_kind,actor_principal_ref,authorization_receipt_ref," +
-      "created_at,decision_version,selection_mode,product_alias) VALUES ('opted-in',1,0,'ASSIGN',1,'owner-1',?,?,?,?,NULL," +
-      "'OWNER','owner-1','explicit-opt-in-receipt','2026-10-14T12:00:00.000Z',2,'STABLE_PHYSICAL_PROFILE_V2','primary')")
-      .run(captured.target.namespace, captured.target.managed_instance_id, w.a, captured.target.target_profile_identity_sha256);
     const coreBinding = nativeD1(core);
+    const forbiddenConsentEffect = vi.fn((): never => { throw new Error("consent must not resolve a registry target or call a provider"); });
+    const consentEnv: Env = {
+      CORE_DB: coreBinding, EVIDENCE_BUCKET: w.bucket, WORK_BUCKET: w.bucket,
+      DEPLOYMENT_GENERATION: "deployment-1", ENVIRONMENT: "development",
+      AI_GATEWAY_REASONING_URL: "https://unused.invalid", AI_GATEWAY_RETRIEVAL_URL: "https://unused.invalid",
+      get SEARCH_DB(): never { return forbiddenConsentEffect(); },
+      get AI_SEARCH(): never { return forbiddenConsentEffect(); },
+      get JOB_QUEUE(): never { return forbiddenConsentEffect(); },
+      get RESEARCH_SESSION(): never { return forbiddenConsentEffect(); },
+      get RESEARCH_WORKFLOW(): never { return forbiddenConsentEffect(); },
+      get METRICS(): never { return forbiddenConsentEffect(); },
+      get ASSETS(): never { return forbiddenConsentEffect(); },
+    };
+    // Exercise the real owner service and append guards on migrated
+    // SQLite. Access claims are explicit local inputs; no qualification exists.
+    async function consent(method: "GET" | "PUT") {
+      const request = new Request("https://research.example/api/v1/research/projects/opted-in/managed-search", {
+        method,
+      });
+      const context: AuthenticatedRequestContext = {
+        request, principal_ref: "owner-1", credential_generation: "credential-1", client_class: "owner_pwa", trace_id: "bootstrap-consent",
+        access: { principal_ref: "owner-1", credential_generation: "credential-1", authentication_method: "cloudflare_access",
+          expires_at: new Date(Date.now() + 60_000).toISOString() },
+      };
+      const service = createManagedSearchProductOptInService(consentEnv, context, "opted-in");
+      return method === "GET" ? service.read() : service.decide({ decision: "ENABLED", expected_head_revision: 0 });
+    }
+    expect(await consent("GET")).toMatchObject({ decision: "DISABLED", expected_head_revision: 0 });
+    const enabled = { decision: "ENABLED", product_alias: "primary", expected_head_revision: 1 };
+    expect(await consent("PUT")).toMatchObject(enabled);
+    expect(await consent("GET")).toMatchObject(enabled);
+    expect(core.prepare("SELECT decision_version,managed_generation,target_profile_identity_sha256 FROM managed_target_assignment_event").all())
+      .toEqual([{ decision_version: 2, managed_generation: AI_SEARCH_PRIMARY_PROJECTION_PROFILE.generation,
+        target_profile_identity_sha256: captured.target.target_profile_identity_sha256 }]);
+    expect(forbiddenConsentEffect).not.toHaveBeenCalled();
+    expect(await w.fixture.registry.read(AI_SEARCH_PRIMARY_NAMESPACE)).toBeNull();
     const coreNow = () => {
       const value = core.prepare("SELECT strftime('%Y-%m-%dT%H:%M:%fZ','now') AS checked_at").get()?.checked_at;
       if (typeof value !== "string") throw new Error("trusted fixture Core clock is unavailable");
@@ -321,7 +365,10 @@ describe("research serving selection V2", () => {
       const tree = await w.bucket.get(treeRef);
       if (tree === null) throw new Error("empty desired manifest tree is missing");
       expect(await projectionSha256Utf8(await tree.text())).toBe(treeSha);
-      return { ...JSON.parse(bytes), manifest_ref: rootRef, manifest_sha256: rootSha, manifest_size_bytes: new TextEncoder().encode(bytes).byteLength };
+      return {
+        ...JSON.parse(bytes), registry_revision_after: snapshot?.artifact.revision ?? null,
+        manifest_ref: rootRef, manifest_sha256: rootSha, manifest_size_bytes: new TextEncoder().encode(bytes).byteLength,
+      };
     };
     const desired = await validateManagedGenerationDesiredManifestV3(await readDesiredManifest(captured.target), captured.target);
     expect(desired.protocol).toBe("eliotr.managed-target-desired-items.v3");
@@ -336,23 +383,50 @@ describe("research serving selection V2", () => {
     };
     const registry = createAiSearchGenerationRegistryService(createD1AiSearchGenerationRegistryStore(w.searchBinding), { promotion_evidence: authority });
     const declaration = await registry.declare({ namespace: captured.target.namespace, generation: w.b, profile: AI_SEARCH_PRIMARY_PROJECTION_PROFILE, declared_at: coreNow() });
-    expect(declaration).toMatchObject({ operation: "DECLARE", generation: w.b, active_head_generation: w.a });
+    expect(declaration).toMatchObject({ operation: "DECLARE", generation: w.b, active_head_generation: null });
     const declared = await registry.read(AI_SEARCH_PRIMARY_NAMESPACE);
     const bRecord = declared?.artifact.registry.generations.find(record => record.generation === w.b);
     expect(bRecord).toMatchObject({ state: "DECLARED", expected_item_count: desired.desired_item_count });
     expect(bRecord).not.toHaveProperty("promotion_evidence_v2");
     expect(bRecord).not.toHaveProperty("promotion_evidence_v3");
-    expect(declared?.artifact.revision).toBeGreaterThan(captured.registry_revision);
+    expect(declared?.artifact.revision).toBeGreaterThan(0);
+    expect(declared?.artifact.registry.active_head_generation).toBeNull();
     const reread = await readDesiredManifest(captured.target);
-    expect(reread).toMatchObject({ target_selection: captured, registry_revision_before: captured.registry_revision, registry_revision_after: captured.registry_revision });
+    expect(reread).toMatchObject({ target_selection: captured, registry_revision_before: null, registry_revision_after: declared?.artifact.revision });
+    expect((await validateManagedGenerationDesiredManifestV3(reread, captured.target)).target_selection).toEqual(captured);
+    expect(JSON.stringify(captured)).toBe(capturedJson);
+    expect(await revalidateFrozenManagedTargetSelectionV2(w.searchBinding, captured)).toBe(captured);
+    await expect(resolveManagedTargetSelectionV2(w.searchBinding, "ACTIVE"))
+      .rejects.toMatchObject({ code: "MANAGED_SEARCH_PRODUCT_GENERATION_NOT_FOUND" });
     expect(currentCoreReads).toBeGreaterThanOrEqual(3);
     expect(unavailable).not.toHaveBeenCalled();
     expect(w.get).not.toHaveBeenCalled();
+    expect(w.searchCall).not.toHaveBeenCalled();
+  });
+
+  it("rejects mixed null captures and failed registry reads during initial planning", async () => {
+    const w = await world(false, false);
+    const captured = await resolveManagedTargetSelectionV2(w.searchBinding, "SHADOW", w.b);
+    for (const patch of [{ registry_revision: 1 }, { registry_artifact_sha256: "0".repeat(64) }, { purpose: "ACTIVE" as const }]) {
+      await expect(revalidateFrozenManagedTargetSelectionV2(w.searchBinding, { ...captured, ...patch }))
+        .rejects.toMatchObject({ code: "MANAGED_SEARCH_PRODUCT_REGISTRY_INVALID" });
+    }
+    await expect(revalidateFrozenManagedTargetSelectionV2(w.searchBinding, {
+      ...captured, registry_revision: 1, registry_artifact_sha256: "0".repeat(64),
+    })).rejects.toMatchObject({ code: "MANAGED_SEARCH_PRODUCT_REGISTRY_INVALID" });
+    w.hook(async () => { throw new Error("fixture SEARCH_DB read failure"); });
+    await expect(resolveManagedTargetSelectionV2(w.searchBinding, "SHADOW", w.b))
+      .rejects.toMatchObject({ code: "MANAGED_SEARCH_PRODUCT_REGISTRY_UNAVAILABLE" });
+    await expect(revalidateFrozenManagedTargetSelectionV2(w.searchBinding, captured))
+      .rejects.toMatchObject({ code: "MANAGED_SEARCH_PRODUCT_REGISTRY_UNAVAILABLE" });
+    expect(w.get).not.toHaveBeenCalled();
+    expect(w.searchCall).not.toHaveBeenCalled();
   });
 
   it("retains the captured SHADOW receipt through a qualified registry promotion", async () => {
     const w = await world();
     const captured = await resolveManagedTargetSelectionV2(w.searchBinding, "SHADOW", w.b);
+    if (captured.registry_revision === null) throw new Error("registered target must capture a positive registry revision");
     const capturedJson = JSON.stringify(captured);
     expect(await revalidateFrozenManagedTargetSelectionV2(w.searchBinding, captured)).toBe(captured);
     await w.rotate();

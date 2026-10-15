@@ -4,6 +4,7 @@ import { AI_SEARCH_PRIMARY_INSTANCE_ID, AI_SEARCH_PRIMARY_NAMESPACE, AI_SEARCH_P
 import { aiSearchPhysicalProfileDigest } from "./ai-search-profile-identity-digest.js";
 import { assertImmutableAiSearchProfile, getAiSearchGenerationPromotionEvidence } from "./ai-search-generation.js";
 import { projectionDigest } from "./canonical.js";
+import { hasValidManagedTargetRegistryCaptureV2 } from "./managed-target-assignment.js";
 import type { AiSearchGenerationRecord } from "./ai-search-generation.js";
 import type { AiSearchGenerationRegistrySnapshot } from "./ai-search-generation-registry-contract.js";
 import type { AiSearchManagedSearchAuthority } from "./ai-search-managed-read.js";
@@ -34,31 +35,29 @@ function fail(
 }
 
 function generationRecord(
-  snapshot: AiSearchGenerationRegistrySnapshot,
+  snapshot: AiSearchGenerationRegistrySnapshot | null,
   purpose: "ACTIVE" | "SHADOW",
   shadowGeneration?: string,
-): { readonly record: AiSearchGenerationRecord; readonly generation: string } {
-  const registry = snapshot.artifact.registry;
+): { readonly record: AiSearchGenerationRecord | null; readonly generation: string } {
+  const registry = snapshot?.artifact.registry;
   const generation = purpose === "ACTIVE"
-    ? registry.active_head_generation
+    ? registry?.active_head_generation
     : shadowGeneration;
   if (generation === null || generation === undefined || !IDENTIFIER.test(generation)) {
     return fail("MANAGED_SEARCH_PRODUCT_GENERATION_NOT_FOUND",
       "The existing SEARCH_DB registry has no eligible generation for this selection");
   }
-  const record = registry.generations.find((item) => item.generation === generation);
+  const record = registry?.generations.find((item) => item.generation === generation);
   if (record === undefined) {
     if (purpose === "SHADOW") {
-      const active = registry.generations.find(item => item.generation === registry.active_head_generation);
-      if (active?.state === "ACTIVE" && getAiSearchGenerationPromotionEvidence(active) !== undefined) {
-        return { record: active, generation };
-      }
+      assertPlannedPrimary(snapshot);
+      return { record: null, generation };
     }
     return fail("MANAGED_SEARCH_PRODUCT_GENERATION_NOT_FOUND",
-      "The selected generation is absent and has no qualified ACTIVE physical-profile authority for planning");
+      "The selected ACTIVE generation is absent");
   }
   const stateAllowed = purpose === "ACTIVE"
-    ? record.state === "ACTIVE" && registry.active_head_generation === record.generation
+    ? record.state === "ACTIVE" && registry?.active_head_generation === record.generation
     : record.state === "DECLARED" ||
       record.state === "SHADOW_BUILDING" ||
       record.state === "SHADOW_COMPLETE";
@@ -73,12 +72,51 @@ function generationRecord(
   return { record, generation };
 }
 
+function assertReviewedPrimary(record: AiSearchGenerationRecord): void {
+  try {
+    if (record.namespace !== AI_SEARCH_PRIMARY_NAMESPACE || record.profile.id !== AI_SEARCH_PRIMARY_INSTANCE_ID) {
+      throw new Error("foreign primary physical profile");
+    }
+    assertImmutableAiSearchProfile(record.profile, AI_SEARCH_PRIMARY_PROJECTION_PROFILE);
+  } catch {
+    fail("MANAGED_SEARCH_PRODUCT_PROFILE_MISMATCH",
+      "The registry generation is physically incompatible with the reviewed primary profile");
+  }
+}
+
+function assertPlannedPrimary(snapshot: AiSearchGenerationRegistrySnapshot | null): void {
+  const registry = snapshot?.artifact.registry;
+  for (const record of registry?.generations ?? []) {
+    if (record.profile.id === AI_SEARCH_PRIMARY_INSTANCE_ID || record.generation === registry?.active_head_generation) {
+      assertReviewedPrimary(record);
+    }
+  }
+}
+
+async function readPrimaryRegistry(searchDatabase: D1Database): Promise<AiSearchGenerationRegistrySnapshot | null> {
+  let snapshot: AiSearchGenerationRegistrySnapshot | null;
+  try {
+    snapshot = await createAiSearchGenerationRegistryService(
+      createD1AiSearchGenerationRegistryStore(searchDatabase),
+    ).read(AI_SEARCH_PRIMARY_NAMESPACE);
+  } catch {
+    return fail("MANAGED_SEARCH_PRODUCT_REGISTRY_UNAVAILABLE",
+      "The existing SEARCH_DB managed-generation registry could not be read");
+  }
+  if (snapshot !== null && (!Number.isSafeInteger(snapshot.artifact.revision) || snapshot.artifact.revision < 1 ||
+      !SHA256.test(snapshot.artifact_sha256) || snapshot.artifact.namespace !== AI_SEARCH_PRIMARY_NAMESPACE)) {
+    return fail("MANAGED_SEARCH_PRODUCT_REGISTRY_INVALID", "The existing SEARCH_DB registry receipt is invalid");
+  }
+  return snapshot;
+}
+
 /**
- * Resolve the reviewed primary alias from the existing immutable registry.
+ * Resolve the sole reviewed primary alias against the immutable registry.
  * SHADOW is internal planning authority: an undeclared logical generation may
- * use the qualified ACTIVE primary's physical profile and captured registry
- * revision/digest. Its target is the requested generation, never an ACTIVE
- * fallback. The builder must independently prove UNDECLARED with its shadow
+ * use the reviewed physical descriptor before any qualification or declaration.
+ * Successful registry absence is captured as a null revision/digest pair;
+ * failed reads remain errors. Its target is the requested generation. The
+ * builder must independently prove UNDECLARED with its shadow
  * fence. This receipt declares, qualifies, promotes and enables nothing.
  *
  * The full-profile V1 digest is frozen from that physical profile descriptor;
@@ -98,42 +136,23 @@ export async function resolveManagedTargetSelectionV2(
       "The requested managed-search generation selector is invalid");
   }
 
-  let snapshot: AiSearchGenerationRegistrySnapshot | null;
-  try {
-    snapshot = await createAiSearchGenerationRegistryService(
-      createD1AiSearchGenerationRegistryStore(searchDatabase),
-    ).read(AI_SEARCH_PRIMARY_NAMESPACE);
-  } catch {
-    return fail("MANAGED_SEARCH_PRODUCT_REGISTRY_UNAVAILABLE",
-      "The existing SEARCH_DB managed-generation registry could not be read");
-  }
-  if (snapshot === null) {
+  const snapshot = await readPrimaryRegistry(searchDatabase);
+  if (snapshot === null && purpose === "ACTIVE") {
     return fail("MANAGED_SEARCH_PRODUCT_REGISTRY_UNAVAILABLE",
       "The reviewed primary namespace has no SEARCH_DB generation registry");
   }
-  if (!Number.isSafeInteger(snapshot.artifact.revision) || snapshot.artifact.revision < 1 ||
-      !SHA256.test(snapshot.artifact_sha256) ||
-      snapshot.artifact.namespace !== AI_SEARCH_PRIMARY_NAMESPACE) {
-    return fail("MANAGED_SEARCH_PRODUCT_REGISTRY_INVALID",
-      "The existing SEARCH_DB registry receipt is invalid");
-  }
-
   const { record, generation } = generationRecord(snapshot, purpose, shadowGeneration);
-  if (record.namespace !== AI_SEARCH_PRIMARY_NAMESPACE ||
-      record.profile.id !== AI_SEARCH_PRIMARY_INSTANCE_ID) {
-    return fail("MANAGED_SEARCH_PRODUCT_PROFILE_MISMATCH",
-      "The registry generation does not belong to the reviewed primary physical profile");
-  }
+  if (record !== null) assertReviewedPrimary(record);
+  const profile = record?.profile ?? AI_SEARCH_PRIMARY_PROJECTION_PROFILE;
 
   let profileDigest: string;
   let legacyProfileDigest: string;
   try {
-    assertImmutableAiSearchProfile(record.profile, AI_SEARCH_PRIMARY_PROJECTION_PROFILE);
-    profileDigest = await aiSearchPhysicalProfileDigest(record.profile);
+    profileDigest = await aiSearchPhysicalProfileDigest(profile);
     legacyProfileDigest = await projectionDigest({
-      ...record.profile,
-      index_method: { ...record.profile.index_method },
-      metadata_fields: [...record.profile.metadata_fields].sort(),
+      ...profile,
+      index_method: { ...profile.index_method },
+      metadata_fields: [...profile.metadata_fields].sort(),
     });
     const configuredDigest = await aiSearchPhysicalProfileDigest(AI_SEARCH_PRIMARY_PROJECTION_PROFILE);
     if (profileDigest !== configuredDigest) {
@@ -147,6 +166,7 @@ export async function resolveManagedTargetSelectionV2(
 
   if (expectedAuthority !== undefined && (
       purpose !== "ACTIVE" || expectedAuthority.active !== true ||
+      snapshot === null || record === null ||
       expectedAuthority.registry_revision !== snapshot.artifact.revision ||
       expectedAuthority.registry_artifact_sha256 !== snapshot.artifact_sha256 ||
       expectedAuthority.namespace !== snapshot.artifact.namespace ||
@@ -164,12 +184,12 @@ export async function resolveManagedTargetSelectionV2(
     selection_mode: "STABLE_PHYSICAL_PROFILE_V2",
     product_alias: "primary",
     purpose,
-    registry_revision: snapshot.artifact.revision,
-    registry_artifact_sha256: snapshot.artifact_sha256,
+    registry_revision: snapshot?.artifact.revision ?? null,
+    registry_artifact_sha256: snapshot?.artifact_sha256 ?? null,
     v1_exact_profile_identity_sha256: legacyProfileDigest,
     target: Object.freeze({
-      namespace: record.namespace,
-      managed_instance_id: record.profile.id,
+      namespace: AI_SEARCH_PRIMARY_NAMESPACE,
+      managed_instance_id: profile.id,
       managed_generation: generation,
       target_profile_identity_sha256: profileDigest,
     }),
@@ -177,9 +197,11 @@ export async function resolveManagedTargetSelectionV2(
 }
 
 /**
- * Revalidate a trusted manifest's captured SHADOW selection after declaration
- * or promotion. The manifest readback owns provenance of the captured receipt.
- * This checks the exact registered B physical identity, and returns the
+ * Revalidate a trusted manifest's captured SHADOW selection before declaration
+ * or after declaration/promotion. An absent target uses the reviewed descriptor;
+ * only an originally absent registry may still be absent. The manifest readback
+ * owns provenance of the capture. This checks the registered B physical identity,
+ * when present, and returns the
  * original receipt unchanged: global registry revision changes must not mint
  * a different manifest fence. The promotion owner separately rereads current
  * Core authority using this receipt and a fresh trusted D1 time.
@@ -191,8 +213,7 @@ export async function revalidateFrozenManagedTargetSelectionV2(
   if (captured.protocol !== "eliotr.managed-target-selection.v2" ||
       captured.domain !== "MANAGED_SEARCH_PRODUCT" || captured.decision_version !== 2 ||
       captured.selection_mode !== "STABLE_PHYSICAL_PROFILE_V2" || captured.product_alias !== "primary" ||
-      captured.purpose !== "SHADOW" || !Number.isSafeInteger(captured.registry_revision) ||
-      captured.registry_revision < 1 || !SHA256.test(captured.registry_artifact_sha256) ||
+      captured.purpose !== "SHADOW" || !hasValidManagedTargetRegistryCaptureV2(captured) ||
       !SHA256.test(captured.v1_exact_profile_identity_sha256) ||
       captured.target.namespace !== AI_SEARCH_PRIMARY_NAMESPACE ||
       captured.target.managed_instance_id !== AI_SEARCH_PRIMARY_INSTANCE_ID ||
@@ -200,30 +221,25 @@ export async function revalidateFrozenManagedTargetSelectionV2(
       !SHA256.test(captured.target.target_profile_identity_sha256)) {
     return fail("MANAGED_SEARCH_PRODUCT_REGISTRY_INVALID", "The captured manifest selection is invalid");
   }
-  let snapshot: AiSearchGenerationRegistrySnapshot | null;
-  try {
-    snapshot = await createAiSearchGenerationRegistryService(
-      createD1AiSearchGenerationRegistryStore(searchDatabase),
-    ).read(AI_SEARCH_PRIMARY_NAMESPACE);
-  } catch {
-    return fail("MANAGED_SEARCH_PRODUCT_REGISTRY_UNAVAILABLE", "The current registry could not revalidate the captured manifest target");
-  }
-  if (snapshot === null || snapshot.artifact.revision < captured.registry_revision ||
-      (snapshot.artifact.revision === captured.registry_revision && snapshot.artifact_sha256 !== captured.registry_artifact_sha256)) {
+  const snapshot = await readPrimaryRegistry(searchDatabase);
+  if (captured.registry_revision !== null && (snapshot === null ||
+      snapshot.artifact.revision < captured.registry_revision ||
+      (snapshot.artifact.revision === captured.registry_revision && snapshot.artifact_sha256 !== captured.registry_artifact_sha256))) {
     return fail("MANAGED_SEARCH_PRODUCT_REGISTRY_INVALID", "The current registry predates or contradicts the captured manifest selection");
   }
-  const record = snapshot.artifact.registry.generations.find(item => item.generation === captured.target.managed_generation);
-  if (record === undefined || !["DECLARED", "SHADOW_BUILDING", "SHADOW_COMPLETE", "ACTIVE", "INACTIVE_QUALIFIED"].includes(record.state)) {
+  const record = snapshot?.artifact.registry.generations.find(item => item.generation === captured.target.managed_generation);
+  if (record !== undefined && !["DECLARED", "SHADOW_BUILDING", "SHADOW_COMPLETE", "ACTIVE", "INACTIVE_QUALIFIED"].includes(record.state)) {
     return fail("MANAGED_SEARCH_PRODUCT_GENERATION_NOT_FOUND", "The captured manifest target has no eligible registered generation");
   }
-  if (["SHADOW_COMPLETE", "ACTIVE", "INACTIVE_QUALIFIED"].includes(record.state) &&
+  if (record !== undefined && ["SHADOW_COMPLETE", "ACTIVE", "INACTIVE_QUALIFIED"].includes(record.state) &&
       getAiSearchGenerationPromotionEvidence(record) === undefined) {
     return fail("MANAGED_SEARCH_PRODUCT_GENERATION_NOT_FOUND", "The registered completed target lacks retained qualification evidence");
   }
   try {
-    assertImmutableAiSearchProfile(record.profile, AI_SEARCH_PRIMARY_PROJECTION_PROFILE);
-    if (record.namespace !== captured.target.namespace || record.profile.id !== captured.target.managed_instance_id ||
-        await aiSearchPhysicalProfileDigest(record.profile) !== captured.target.target_profile_identity_sha256 ||
+    if (record === undefined) assertPlannedPrimary(snapshot);
+    else assertReviewedPrimary(record);
+    const profile = record?.profile ?? AI_SEARCH_PRIMARY_PROJECTION_PROFILE;
+    if (await aiSearchPhysicalProfileDigest(profile) !== captured.target.target_profile_identity_sha256 ||
         await aiSearchPhysicalProfileDigest(AI_SEARCH_PRIMARY_PROJECTION_PROFILE) !== captured.target.target_profile_identity_sha256) {
       return fail("MANAGED_SEARCH_PRODUCT_PROFILE_MISMATCH", "The registered physical profile differs from the captured manifest target");
     }

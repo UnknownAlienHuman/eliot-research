@@ -19,11 +19,6 @@ import {
 } from "@eliotr/cloudflare-projection";
 import type { Env } from "./env.js";
 import { HttpRequestError } from "./http-errors.js";
-import {
-  ManagedSearchProductSelectionError,
-  resolveManagedTargetSelectionV2,
-  type ManagedTargetSelectionV2,
-} from "./managed-search-product-selection.js";
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const MAX_EXPECTED_EVENT_REVISION = 999_999;
@@ -819,7 +814,7 @@ export function createManagedSearchProductOptInService(
   async function appendDecision(
     current: ManagedSearchProductCurrent,
     decision: "ENABLED" | "DISABLED",
-    selection: ManagedTargetSelectionV2 | null,
+    consentTarget: ManagedTargetIdentity | null,
   ): Promise<void> {
     const head = current.head_event;
     const accessReceiptRef = await ownerAccessReceiptReference(access);
@@ -842,14 +837,14 @@ export function createManagedSearchProductOptInService(
       | (typeof common & { readonly event_kind: "ASSIGN"; readonly target: ManagedTargetIdentity })
       | (typeof common & { readonly event_kind: "RETIRE"; readonly previous_assignment_revision: number });
     if (decision === "ENABLED") {
-      if (selection === null) {
+      if (consentTarget === null) {
         fail("MANAGED_TARGET_ASSIGNMENT_PROFILE_UNAVAILABLE", 503,
-          "The reviewed primary registry target was not resolved", true);
+          "The reviewed primary physical descriptor was not resolved", true);
       }
       command = {
         ...common,
         event_kind: "ASSIGN" as const,
-        target: selection.target,
+        target: consentTarget,
       };
     } else {
       if (head === null || head.event_kind !== "ASSIGN") {
@@ -885,13 +880,13 @@ export function createManagedSearchProductOptInService(
             "The verified owner context does not authorize this product decision");
         }
         if (candidate.event_kind === "ASSIGN" &&
-            (selection === null ||
-             candidate.target.namespace !== selection.target.namespace ||
-             candidate.target.managed_instance_id !== selection.target.managed_instance_id ||
-             candidate.target.managed_generation !== selection.target.managed_generation ||
-             candidate.target.target_profile_identity_sha256 !== selection.target.target_profile_identity_sha256)) {
+            (consentTarget === null ||
+             candidate.target.namespace !== consentTarget.namespace ||
+             candidate.target.managed_instance_id !== consentTarget.managed_instance_id ||
+             candidate.target.managed_generation !== consentTarget.managed_generation ||
+             candidate.target.target_profile_identity_sha256 !== consentTarget.target_profile_identity_sha256)) {
           throw new HttpRequestError("MANAGED_TARGET_ASSIGNMENT_PROFILE_MISMATCH", 409,
-            "The resolved registry target differs from the authorized product selection");
+            "The recorded descriptor differs from the authorized product consent");
         }
         const fresh = await readCurrent();
         if (candidate.expected_event_revision !== fresh.head_revision ||
@@ -958,17 +953,11 @@ export function createManagedSearchProductOptInService(
     if (head?.event_kind === "ASSIGN" && head.decision_version === 1) {
       await ensureV1HeadUsesPrimaryProfile(head);
     }
-    let selection: ManagedTargetSelectionV2;
-    try {
-      selection = await resolveManagedTargetSelectionV2(env.SEARCH_DB, "ACTIVE");
-    } catch (error) {
-      if (error instanceof ManagedSearchProductSelectionError) {
-        const status = error.code === "MANAGED_SEARCH_PRODUCT_GENERATION_NOT_FOUND" ? 409 : 503;
-        throw new HttpRequestError(error.code, status, error.message, status === 503);
-      }
-      throw error;
-    }
-    await appendDecision(current, "ENABLED", selection);
+    // V2 consent binds the reviewed physical profile before installation or
+    // qualification. The legacy non-null generation column retains only the
+    // descriptor label here; ACTIVE selection is a separate registry decision.
+    const consentTarget = await readConfiguredManagedTargetIdentity();
+    await appendDecision(current, "ENABLED", consentTarget);
     return snapshot(await readCurrent());
   }
 

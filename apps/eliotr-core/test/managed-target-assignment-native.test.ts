@@ -1,9 +1,11 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { reset } from "cloudflare:test";
 import type { AccessVerifier } from "@eliotr/cloudflare-access";
+import type { AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
 import { createProjectOwnerService } from "@eliotr/cloudflare-navigation";
 import { AI_SEARCH_PRIMARY_PROJECTION_PROFILE, MANAGED_TARGET_ASSIGNMENT_PROTOCOL,
   AI_SEARCH_PRIMARY_NAMESPACE, aiSearchPhysicalProfileDigest, createD1ManagedTargetAssignmentPort, projectionDigest,
+  createAiSearchGenerationRegistryService, createD1AiSearchGenerationRegistryStore,
   type ManagedTargetIdentity } from "@eliotr/cloudflare-projection";
 import type { ApplicationLifecycle, AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { handleHttp } from "../src/http.js";
@@ -215,6 +217,54 @@ async function eventCount(projectId: string): Promise<number> {
 }
 
 describe("Core managed target assignment on native D1", () => {
+  it("records first-use consent before any registry declaration", async () => {
+    const registry = createAiSearchGenerationRegistryService(createD1AiSearchGenerationRegistryStore(runtime.SEARCH_DB));
+    expect(await registry.read(AI_SEARCH_PRIMARY_NAMESPACE)).toBeNull();
+    const projectId = await createProject();
+    const unexpectedSearchRead = vi.fn((): never => { throw new Error("consent must not consult the generation registry"); });
+    const unexpectedProvider = vi.fn((): never => { throw new Error("consent cannot call a provider"); });
+    const namespace: AiSearchNamespaceLike = {
+      get: unexpectedProvider, list: unexpectedProvider, create: unexpectedProvider,
+      update: unexpectedProvider, search: unexpectedProvider,
+    };
+    const searchDatabase: D1Database = {
+      prepare: unexpectedSearchRead, batch: unexpectedSearchRead, exec: unexpectedSearchRead,
+      withSession: unexpectedSearchRead, dump: unexpectedSearchRead,
+    };
+    const env = { ...runtime, SEARCH_DB: searchDatabase, AI_SEARCH: namespace };
+    const before = await call(productRequest(projectId, "GET"), verifier(), env);
+    expect(before.status).toBe(200);
+    expect((await json(before)).data).toMatchObject({ decision: "DISABLED", expected_head_revision: 0 });
+    expect(await eventCount(projectId)).toBe(0);
+    const enabled = await call(productRequest(projectId, "PUT", {
+      protocol: MANAGED_SEARCH_PRODUCT_OPT_IN_PROTOCOL, expected_head_revision: 0,
+      decision: "ENABLED", product_alias: "primary",
+    }), verifier(), env);
+    expect(enabled.status).toBe(200);
+    const consent = (await json(enabled)).data as JsonObject;
+    expect(consent).toMatchObject({ decision: "ENABLED", product_alias: "primary", expected_head_revision: 1 });
+    for (const field of ["target", "configured_target", "target_selection", "qualified", "active", "registry_revision", "registry_artifact_sha256"]) {
+      expect(consent).not.toHaveProperty(field);
+    }
+    expect(await db.prepare(
+      "SELECT decision_version,selection_mode,product_alias,target_namespace,managed_instance_id,managed_generation," +
+      "target_profile_identity_sha256 FROM managed_target_assignment_event WHERE project_id=?1",
+    ).bind(projectId).first()).toEqual({
+      decision_version: 2, selection_mode: "STABLE_PHYSICAL_PROFILE_V2", product_alias: "primary",
+      target_namespace: AI_SEARCH_PRIMARY_NAMESPACE, managed_instance_id: AI_SEARCH_PRIMARY_PROJECTION_PROFILE.id,
+      // Legacy non-null column is label metadata for this V2 consent, not ACTIVE authority.
+      managed_generation: AI_SEARCH_PRIMARY_PROJECTION_PROFILE.generation,
+      target_profile_identity_sha256: await aiSearchPhysicalProfileDigest(AI_SEARCH_PRIMARY_PROJECTION_PROFILE),
+    });
+    const after = await call(productRequest(projectId, "GET"), verifier(), env);
+    expect(after.status).toBe(200);
+    expect((await json(after)).data).toEqual(consent);
+    expect(await eventCount(projectId)).toBe(1);
+    expect(unexpectedSearchRead).not.toHaveBeenCalled();
+    expect(unexpectedProvider).not.toHaveBeenCalled();
+    expect(await registry.read(AI_SEARCH_PRIMARY_NAMESPACE)).toBeNull();
+  });
+
   it("upgrades a compatible V1 primary assignment directly to explicit V2 opt-in", async () => {
     await seedPrimaryRegistryWithShadow();
     const projectId = await createProject();
