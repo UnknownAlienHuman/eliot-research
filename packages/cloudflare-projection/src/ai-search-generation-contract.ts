@@ -66,7 +66,7 @@ export interface AiSearchGenerationRecord {
 /** A record carries one explicit evidence version; never reinterpret a V3 body as V2. */
 export function getAiSearchGenerationPromotionEvidence(record: AiSearchGenerationRecord): ManagedGenerationPromotionEvidence | undefined {
   if (record.promotion_evidence_v2 !== undefined && record.promotion_evidence_v3 !== undefined) {
-    generationFailure("AI_SEARCH_PROMOTION_EVIDENCE_REQUIRED", "generation record contains conflicting evidence versions");
+    throw new AiSearchGenerationError("AI_SEARCH_PROMOTION_EVIDENCE_REQUIRED", "generation record contains conflicting evidence versions");
   }
   return record.promotion_evidence_v3 ?? record.promotion_evidence_v2;
 }
