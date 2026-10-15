@@ -17,6 +17,13 @@ const MAX_TREE_FANOUT = 256;
 const MAX_TREE_DEPTH = 12;
 const MAX_CANDIDATE_OBJECT_BYTES = 4 * 1024 * 1024;
 const NODES_PER_STEP = 24;
+/**
+ * Depth-first pending-stack ceiling. A writer-built tree never needs more than one
+ * fanout row per level, so this bound proves the stack stayed depth-first rather than
+ * accumulating a breadth-first frontier. It keeps the durable cursor well inside its
+ * fixed object byte bound even at the 102400-copy ceiling.
+ */
+const MAX_TREE_PENDING = MAX_TREE_FANOUT * MAX_TREE_DEPTH;
 const SHA256 = /^[a-f0-9]{64}$/u;
 
 /**
@@ -76,12 +83,16 @@ export interface ManagedTargetCandidateTreeReadInput {
 /**
  * Bounded resumable readback of one stored V3 manifest candidate's immutable copy tree.
  *
- * Each step visits at most NODES_PER_STEP tree nodes and yields at most LEAVES_PER_STEP
- * copy leaves, so no single invocation walks the whole corpus. A production manifest of
- * 102400 copies needs many durable steps driven by an external coordinator; this reader
- * neither accumulates the corpus nor claims a one-shot full read. It verifies the exact
- * protocol discriminator, the contiguous ordered ordinal coverage, per-node aggregates,
- * fanout and depth bounds, and every tree object digest against its parent receipt.
+ * The tree is walked depth-first. Each step opens at most NODES_PER_STEP Work objects,
+ * so no single invocation walks the whole corpus. A production manifest of 102400 copies
+ * needs many durable steps driven by an external coordinator; this reader neither
+ * accumulates the corpus nor claims a one-shot full read. The pending stack is bounded by
+ * MAX_TREE_FANOUT times MAX_TREE_DEPTH, which keeps the durable cursor inside its fixed
+ * object byte bound; a breadth-first queue would inflate the whole corpus before the
+ * first leaf and overflow it. It verifies the exact protocol discriminators, the
+ * candidate bytes against candidate_sha256, ordered ordinal coverage proven leaf by leaf,
+ * per-node aggregates, fanout and depth bounds, and every tree object digest against its
+ * parent receipt.
  */
 export async function readManagedTargetManifestCandidateTreeV3(
   input: ManagedTargetCandidateTreeReadInput,
@@ -173,10 +184,16 @@ export async function readManagedTargetManifestCandidateTreeV3(
     nodesVisited += 1;
     const stored = await openTreeObject(store, node);
     if (node.kind === "COPY") {
-      if (node.copy_count !== 1) fail("copy leaf does not carry exactly one copy ordinal");
+      if (node.copy_count !== 1 || node.first_copy_ordinal !== node.last_copy_ordinal) {
+        fail("copy leaf does not carry exactly one copy ordinal");
+      }
+      // The ordered coverage is proved by the leaves themselves: each must name the
+      // exact next ordinal, so a forged or foreign leaf cannot skip or repeat one.
+      if (node.first_copy_ordinal !== nextOrdinal) {
+        fail(`copy leaf ordinal ${node.first_copy_ordinal} is not the next expected ordinal ${nextOrdinal}`);
+      }
       leaves.push(node);
       nextOrdinal += 1;
-      if (nextOrdinal > requiredCopyCount) fail("tree leaves exceed the candidate required-set copy count");
       continue;
     }
     const payload = stored.value as {
@@ -204,6 +221,9 @@ export async function readManagedTargetManifestCandidateTreeV3(
     let expectedFirst = payload.first_copy_ordinal;
     let copyTotal = 0;
     let itemTotal = 0;
+    const validatedChildren: ManifestTreeObjectRef[] = [];
+    // Validate every child before any is enqueued, so a malformed child never lands in
+    // the durable stack and the node is either fully accepted or fully rejected.
     for (const child of payload.children) {
       if (!isTreeRef(child)) fail(`tree node ${node.key} child is malformed`);
       if (child.first_copy_ordinal !== expectedFirst) {
@@ -215,13 +235,21 @@ export async function readManagedTargetManifestCandidateTreeV3(
       copyTotal += child.copy_count;
       itemTotal += child.item_count;
       expectedFirst = child.last_copy_ordinal + 1;
-      pending.push(child);
+      validatedChildren.push(child);
     }
     if (expectedFirst - 1 !== payload.last_copy_ordinal) {
       fail(`tree node ${node.key} children do not span its full ordinal range`);
     }
     if (copyTotal !== payload.copy_count || itemTotal !== payload.item_count) {
       fail(`tree node ${node.key} aggregates differ from its children`);
+    }
+    // Depth-first: unshift the whole validated child run once, preserving order.
+    // Unshifting one child at a time would reverse the run. Pushing would turn this
+    // stack into a breadth-first queue that inflates the whole corpus before any leaf,
+    // which at 102400 copies overflows the durable cursor byte bound.
+    pending.unshift(...validatedChildren);
+    if (pending.length > MAX_TREE_PENDING) {
+      fail(`tree pending stack ${pending.length} exceeds its bounded depth-times-fanout ceiling`);
     }
   }
 

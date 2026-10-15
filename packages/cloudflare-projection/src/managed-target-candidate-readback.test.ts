@@ -269,6 +269,57 @@ describe("managed target candidate tree readback V3", () => {
     expect(seen.map((leaf) => leaf.first_copy_ordinal)).toEqual([0, 1]);
   });
 
+  it("keeps the durable cursor inside its bounded DFS stack on a 4096-copy tree", async () => {
+    // A breadth-first queue would inflate the whole 4096-copy frontier before the first
+    // leaf and overflow the durable cursor byte bound. Depth-first descent must keep the
+    // pending stack within MAX_TREE_FANOUT * MAX_TREE_DEPTH, then still deliver complete
+    // ordered coverage.
+    const copyCount = 4096;
+    const { store, candidate, candidate_sha256 } = await stageCandidate(copyCount);
+    const first = await readManagedTargetManifestCandidateTreeV3({ store, candidate, candidate_sha256 });
+    expect(first.status).toBe("CONTINUE");
+    expect(first.cursor).not.toBeNull();
+    if (first.cursor === null) throw new Error("a CONTINUE step must persist a cursor");
+
+    const opened = await store.open(first.cursor.ref);
+    if (opened === null) throw new Error("durable cursor object is absent");
+    const cursorBytes = new TextEncoder().encode(await new Response(opened.body).text());
+    expect(cursorBytes.byteLength).toBeLessThanOrEqual(2 * 1024 * 1024);
+    const cursor = JSON.parse(new TextDecoder().decode(cursorBytes)) as {
+      readonly pending: readonly ManifestTreeObjectRef[];
+    };
+    expect(cursor.pending.length).toBeLessThanOrEqual(256 * 12);
+    expect(cursor.pending.length).toBeGreaterThan(0);
+
+    let cursor_ref = first.cursor;
+    // The first step already delivered some leaves; carry its ordinal forward.
+    let ordinal = first.next_ordinal;
+    first.leaves.forEach((leaf, index) => {
+      expect(leaf.kind).toBe("COPY");
+      expect(leaf.first_copy_ordinal).toBe(index);
+    });
+    for (let step = 0; step < 2000; step += 1) {
+      const advanced = await readManagedTargetManifestCandidateTreeV3({
+        store,
+        candidate,
+        candidate_sha256,
+        cursor: cursor_ref,
+      });
+      advanced.leaves.forEach((leaf, index) => {
+        expect(leaf.kind).toBe("COPY");
+        expect(leaf.first_copy_ordinal).toBe(ordinal + index);
+      });
+      ordinal += advanced.leaves.length;
+      if (advanced.status === "COMPLETE") {
+        expect(ordinal).toBe(copyCount);
+        return;
+      }
+      if (advanced.cursor === null) throw new Error("a CONTINUE step must persist a cursor");
+      cursor_ref = advanced.cursor;
+    }
+    throw new Error("resumable readback did not complete the 4096-copy tree");
+  });
+
   it("completes an empty tree without persisting a cursor", async () => {
     const { store, candidate, candidate_sha256 } = await stageCandidate(0);
     const step = await readManagedTargetManifestCandidateTreeV3({ store, candidate, candidate_sha256 });
