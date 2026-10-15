@@ -30,9 +30,22 @@ const LOG_METADATA_KEYS = new Set([
   "prompt_generation",
   "schema_generation",
 ]);
+type SafeResponseReason = NonNullable<ModelGatewayExecutionError["safe_response_reason"]>;
 
 function invalid(message: string): never {
   throw new ModelGatewayExecutionError("MODEL_GATEWAY_REQUEST_INVALID", message);
+}
+
+function safeResponseCause(cause: unknown): ModelGatewayExecutionError {
+  if (cause instanceof ModelGatewayExecutionError) return cause;
+  return new ModelGatewayExecutionError("MODEL_GATEWAY_RESPONSE_INVALID", "AI Gateway response normalization failed");
+}
+
+function responseInvalid(reason: SafeResponseReason, message: string, cause?: unknown): never {
+  throw new ModelGatewayExecutionError("MODEL_GATEWAY_RESPONSE_INVALID", message, {
+    safe_response_reason: reason,
+    ...(cause === undefined ? {} : { cause: safeResponseCause(cause) }),
+  });
 }
 
 function plainRecord(value: unknown, label: string): Record<string, unknown> {
@@ -47,6 +60,11 @@ function plainRecord(value: unknown, label: string): Record<string, unknown> {
 function identifier(value: unknown, label: string): string {
   if (typeof value !== "string" || !IDENTIFIER.test(value)) invalid(`${label} is invalid`);
   return value;
+}
+
+function responseIdentifier(value: unknown, label: string, reason: SafeResponseReason): string {
+  try { return identifier(value, label); }
+  catch (cause) { responseInvalid(reason, `${label} is invalid`, cause); }
 }
 
 function exactMetadata(value: unknown, label: string): Record<string, string> {
@@ -65,6 +83,11 @@ function exactMetadata(value: unknown, label: string): Record<string, string> {
   return result;
 }
 
+function responseMetadata(value: unknown, label: string): Record<string, string> {
+  try { return exactMetadata(value, label); }
+  catch (cause) { responseInvalid("LOG_CORRELATION_INVALID", `${label} is invalid`, cause); }
+}
+
 function sameMetadata(left: Record<string, string>, right: Record<string, string>): boolean {
   for (const key of LOG_METADATA_KEYS) if (left[key] !== right[key]) return false;
   return true;
@@ -79,7 +102,9 @@ async function readGatewayLog(gateway: Pick<AiGateway, "getLog">, logId: string)
     catch (cause) {
       const missing = cause instanceof Error && cause.name === "AiGatewayLogNotFound";
       const delay = delays[attempt];
-      if (!missing || delay === undefined) invalid("AI Gateway log readback is unavailable");
+      if (!missing || delay === undefined) {
+        responseInvalid("LOG_READBACK_UNAVAILABLE", "AI Gateway log readback is unavailable", cause);
+      }
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
@@ -94,28 +119,32 @@ async function normalizeFingerprintHeaders(
   const model = response.headers.get("cf-aig-model");
   if (provider !== null && model !== null) return response;
   const logId = response.headers.get("cf-aig-log-id");
-  if (logId === null) invalid("AI Gateway response is missing its response-scoped log id");
-  const boundedLogId = identifier(logId, "AI Gateway response log id");
-  const metadata = exactMetadata(requestHeaders.get("cf-aig-metadata"), "AI Gateway request metadata");
+  if (logId === null) responseInvalid("LOG_ID_MISSING", "AI Gateway response is missing its response-scoped log id");
+  const boundedLogId = responseIdentifier(logId, "AI Gateway response log id", "LOG_ID_INVALID");
+  const metadata = responseMetadata(requestHeaders.get("cf-aig-metadata"), "AI Gateway request metadata");
   const log = await readGatewayLog(gateway, boundedLogId);
-  const record = plainRecord(log, "AI Gateway log readback");
-  if (identifier(record.id, "AI Gateway log id") !== boundedLogId ||
+  let record: Record<string, unknown>;
+  try { record = plainRecord(log, "AI Gateway log readback"); }
+  catch (cause) { responseInvalid("LOG_CORRELATION_INVALID", "AI Gateway log readback is invalid", cause); }
+  if (responseIdentifier(record.id, "AI Gateway log id", "LOG_CORRELATION_INVALID") !== boundedLogId ||
       record.status_code !== response.status ||
       !Number.isSafeInteger(record.status_code) ||
-      (record.status_code as number) < 200 || (record.status_code as number) > 299 ||
-      record.cached !== false) {
-    invalid("AI Gateway log readback does not match the response");
+      (record.status_code as number) < 200 || (record.status_code as number) > 299) {
+    responseInvalid("LOG_CORRELATION_INVALID", "AI Gateway log readback does not match the response");
   }
-  if (!sameMetadata(metadata, exactMetadata(record.metadata, "AI Gateway log metadata"))) {
-    invalid("AI Gateway log metadata does not match the request");
+  if (record.cached !== false) {
+    responseInvalid("CACHE_INVALID", "AI Gateway log readback reports a cached response");
   }
-  const loggedProvider = identifier(record.provider, "AI Gateway log provider");
-  const loggedModel = identifier(record.model, "AI Gateway log model");
-  if (provider !== null && identifier(provider, "AI Gateway response provider") !== loggedProvider) {
-    invalid("AI Gateway response provider does not match its log");
+  if (!sameMetadata(metadata, responseMetadata(record.metadata, "AI Gateway log metadata"))) {
+    responseInvalid("LOG_CORRELATION_INVALID", "AI Gateway log metadata does not match the request");
   }
-  if (model !== null && identifier(model, "AI Gateway response model") !== loggedModel) {
-    invalid("AI Gateway response model does not match its log");
+  const loggedProvider = responseIdentifier(record.provider, "AI Gateway log provider", "FINGERPRINT_INVALID");
+  const loggedModel = responseIdentifier(record.model, "AI Gateway log model", "FINGERPRINT_INVALID");
+  if (provider !== null && responseIdentifier(provider, "AI Gateway response provider", "FINGERPRINT_INVALID") !== loggedProvider) {
+    responseInvalid("LOG_CORRELATION_INVALID", "AI Gateway response provider does not match its log");
+  }
+  if (model !== null && responseIdentifier(model, "AI Gateway response model", "FINGERPRINT_INVALID") !== loggedModel) {
+    responseInvalid("LOG_CORRELATION_INVALID", "AI Gateway response model does not match its log");
   }
   const headers = new Headers(response.headers);
   if (provider === null) headers.set("cf-aig-provider", loggedProvider);
@@ -186,8 +215,13 @@ export function createResearchModelGatewayBindingFetch(
       // authenticated Gateway log supplies observed identity, never a default.
       return await normalizeFingerprintHeaders(response, gateway, headers);
     } catch (cause) {
+      const typedCause = safeResponseCause(cause);
       throw new ModelGatewayExecutionError("MODEL_GATEWAY_RESPONSE_INVALID",
-        "AI Gateway response does not contain a valid dynamic-route fingerprint", { cause });
+        "AI Gateway response does not contain a valid dynamic-route fingerprint", {
+          http_status: response.status,
+          ...(typedCause.safe_response_reason === undefined ? {} : { safe_response_reason: typedCause.safe_response_reason }),
+          cause: typedCause,
+        });
     }
   };
 }

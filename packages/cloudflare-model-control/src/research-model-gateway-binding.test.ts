@@ -1,3 +1,4 @@
+import { ModelGatewayExecutionError } from "@eliotr/cloudflare-ai";
 import { describe, expect, it, vi } from "vitest";
 import { createResearchModelGatewayBindingFetch, type ResearchModelGatewayBinding } from "./research-model-gateway-binding.js";
 
@@ -13,8 +14,10 @@ function headers() {
     "cf-aig-metadata": JSON.stringify(metadata), "cf-aig-request-timeout": "180000", "cf-aig-max-attempts": "1",
   };
 }
-function fixture() {
-  const getLog = vi.fn(async () => ({ id: "log-one", status_code: 200, cached: false,
+function fixture(options: { readonly logId?: string; readonly responseLogId?: string } = {}) {
+  const logId = options.logId ?? "log-one";
+  const responseLogId = options.responseLogId ?? logId;
+  const getLog = vi.fn(async () => ({ id: logId, status_code: 200, cached: false,
     provider: "workers-ai", model: "@cf/zai-org/glm-5.3-flash", metadata,
     path: "/compat/chat/completions", duration: 1, success: true, request_size: 0,
     response_size: 2, request_head_complete: false, response_head_complete: false,
@@ -25,7 +28,7 @@ function fixture() {
     expect(options.gateway).toEqual({ id: "eliotr-reasoning", collectLog: true, skipCache: true,
       metadata, requestTimeoutMs: 180000, retries: { maxAttempts: 1 } });
     expect(options.extraHeaders["cf-aig-collect-log-payload"]).toBe("false");
-    return new Response("{}", { headers: { "cf-aig-log-id": "log-one" } });
+    return new Response("{}", { headers: { "cf-aig-log-id": responseLogId } });
   });
   const binding: ResearchModelGatewayBinding = { gateway: () => ({ getUrl: async () => base, getLog }), run };
   return { fetch: createResearchModelGatewayBindingFetch(binding, endpoint), run, getLog };
@@ -40,6 +43,24 @@ describe("native AI Gateway policy transport", () => {
     expect(subject.getLog).toHaveBeenCalledWith("log-one");
     expect(response.headers.get("cf-aig-provider")).toBe("workers-ai");
     expect(response.headers.get("cf-aig-model")).toBe("@cf/zai-org/glm-5.3-flash");
+  });
+
+  it("rejects a log readback correlated to a different response id with safe typed diagnostics", async () => {
+    const subject = fixture({ logId: "log-two", responseLogId: "log-one" });
+    const failure = await subject.fetch(endpoint, { method: "POST", body, headers: headers() })
+      .then(() => undefined, (cause: unknown) => cause);
+
+    expect(subject.getLog).toHaveBeenCalledWith("log-one");
+    expect(failure).toBeInstanceOf(ModelGatewayExecutionError);
+    expect(failure).toMatchObject({
+      code: "MODEL_GATEWAY_RESPONSE_INVALID",
+      http_status: 200,
+      safe_response_reason: "LOG_CORRELATION_INVALID",
+      cause: expect.objectContaining({
+        name: "ModelGatewayExecutionError",
+        safe_response_reason: "LOG_CORRELATION_INVALID",
+      }),
+    });
   });
 
   it("refuses payload logging or provider retries before inference", async () => {
