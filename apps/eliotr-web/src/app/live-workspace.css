@@ -433,3 +433,19 @@
 .er-live-report-section:has(.er-live-report-body > .er-safe-markdown > :is(h1, h2, h3):first-child) > h2 {
   position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
 }
+
+/* The report reads as one document: each section's text in reading type, its quotes one quiet action
+   away; a section still being read holds a soft placeholder line so the page does not jump. */
+.er-live-report-document { display: grid; gap: var(--eliot-space-section); margin-block: var(--eliot-space-panel) var(--eliot-space-section); }
+.er-live-report-part { display: grid; gap: var(--eliot-space-block-control); max-inline-size: var(--eliot-type-reading-measure); }
+.er-live-report-part > .er-safe-markdown { font-size: var(--eliot-type-reading-size); line-height: var(--eliot-type-reading-line-height); }
+.er-live-report-part > .er-safe-markdown > * + * { margin-block-start: var(--eliot-space-panel); }
+.er-live-report-part > .er-button { justify-self: start; }
+.er-live-report-pending { display: grid; gap: var(--eliot-space-tight); margin: 0; }
+.er-live-report-pending > span {
+  inline-size: 60%; min-block-size: var(--eliot-type-reading-line-height); border-radius: var(--eliot-shape-small);
+  background: var(--eliot-color-group); color: transparent; overflow: hidden; white-space: nowrap;
+  animation: er-report-pending calc(var(--eliot-motion-spatial) * 4) var(--eliot-motion-standard-easing) infinite alternate;
+}
+@keyframes er-report-pending { to { opacity: 0.45; } }
+@media (prefers-reduced-motion: reduce) { .er-live-report-pending > span { animation: none; } }

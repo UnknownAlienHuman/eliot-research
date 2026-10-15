@@ -347,11 +347,10 @@ export async function playFailedRequiredSectionNoExport({ canvasElement, canvas,
   const { root, environment } = environmentFor(canvasElement, 'failed-required-section-no-export'), { trace, client } = environment;
   await userEvent.click(await canvas.findByRole('button', { name: 'Open saved report', exact: true }));
   await canvas.findByText('2 sections');
-  check(trace.sectionReads.length === 0 && exportButton(canvas).disabled, 'Manifest read eagerly completed required sections');
-  for (const section of ['required-beta:1', 'required-alpha:1']) {
-    await openOutline(root, userEvent); await userEvent.click(rowButton(root, section));
-    await until(() => trace.sectionReads.includes(section) && client.isFetching() === 0, 'Required read did not settle: ' + section);
-  }
+  // The report reads every declared section by itself, once each, in declared order.
+  await until(() => trace.sectionReads.length === 2 && client.isFetching() === 0, 'Automatic required reads did not settle');
+  check(trace.sectionReads.join(',') === 'required-alpha:1,required-beta:1', 'Automatic reads skipped, repeated or reordered a section');
+  await openOutline(root, userEvent); await userEvent.click(rowButton(root, 'required-alpha:1'));
   await openOutline(root, userEvent);
   const held = environment.report(), reads = held.artifact.sections.map(declared =>
     client.getQueryData<ArtifactSectionResponse>(held.options.section(held.artifact, declared).queryKey));

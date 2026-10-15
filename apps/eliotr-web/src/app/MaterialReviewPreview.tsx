@@ -61,13 +61,12 @@ export async function playMaterialReading({ canvas, userEvent }: Parameters<type
   const reportTitle = await canvas.findByRole('heading', { name: 'Saved report', exact: true });
   if (document.activeElement !== reportTitle) throw new Error('Opening a report lost keyboard focus');
   await canvas.findByText('4 sections');
-  const exportButton = canvas.getByRole('button', { name: 'Export report' });
-  if (!(exportButton instanceof HTMLButtonElement) || !exportButton.disabled) throw new Error('Unread sections permitted export');
-  await userEvent.click(canvas.getByRole('button', { name: 'Read · Section 1' }));
+  // The report reads itself in order; its first section opens with its quotes.
+  await userEvent.click(await canvas.findByRole('button', { name: 'Open · Section 1' }));
   await canvas.findByText('Evidence that remains in context');
   await userEvent.click(await canvas.findByRole('button', { name: 'Open cited excerpt 1' }));
   await canvas.findByText('The saved question keeps its original source scope.');
-  if (!exportButton.disabled || canvas.queryByText('Supported')) throw new Error('One excerpt promoted completeness or semantic support');
+  if (canvas.queryByText('Supported')) throw new Error('One excerpt promoted semantic support');
   await userEvent.click(close);
   const recent = await canvas.findByRole('heading', { name: 'Recent research', exact: true });
   if (document.activeElement !== recent) throw new Error('Report close did not return to recent research');

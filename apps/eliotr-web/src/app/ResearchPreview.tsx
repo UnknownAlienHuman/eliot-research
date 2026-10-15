@@ -118,12 +118,12 @@ export function ResearchPreview({ designReview = false, historyState, onProbe }:
         const artifact = await readyManifest, index = artifact.sections.findIndex(section => `${section.section_ref.id}:${section.section_ref.revision}` === part);
         const section = artifact.sections[index]; if (!section) throw new Error('Undeclared section request');
         if (url.pathname.endsWith('/citations')) return json({ protocol: 'eliotr.artifact-section-citations.v1', artifact_ref: artifactRef, section_ref: section.section_ref, scope_snapshot_ref: scopeRef, verification_receipt_ref: section.verification_receipt_ref, semantic_verification: 'NOT_EXECUTED', cited_evidence: [{ handle_ref: handleRef, excerpt_sha256: await excerptHash }] });
-        sectionsRead++; if (!designReview && (sectionsRead !== 1 || index !== 0)) throw new Error('Report eagerly fetched an unrequested required section');
+        sectionsRead++; if (!designReview && index !== sectionsRead - 1) throw new Error('Report read its sections out of order or more than once');
         const bytes = encode(sectionTexts[index] ?? '');
         return new Response(bytes, { headers: { 'content-type': 'application/octet-stream', 'content-length': String(bytes.byteLength), 'x-eliotr-artifact-ref': encodeURIComponent('report-fixture:1'), 'x-eliotr-section-ref': encodeURIComponent(part), 'x-eliotr-section-object-ref': encodeURIComponent(section.body_object_ref), 'x-eliotr-section-sha256': section.body_sha256, 'x-eliotr-deployment-generation': generation } });
       }
       if (url.pathname === '/api/v1/research/verify') {
-        verifications++; if (!designReview && (sectionsRead !== 1 || starts !== 2 || mints !== 1)) throw new Error('Evidence opened before the exact lazy section or recovery');
+        verifications++; if (!designReview && (sectionsRead < 1 || starts !== 2 || mints !== 1)) throw new Error('Evidence opened before the exact lazy section or recovery');
         const body: unknown = JSON.parse(String(init?.body));
         if (!body || typeof body !== 'object' || !('scope_snapshot_ref' in body) || !('handle_ref' in body) || JSON.stringify(body.scope_snapshot_ref) !== JSON.stringify(scopeRef) || JSON.stringify(body.handle_ref) !== JSON.stringify(handleRef)) throw new Error('Evidence scope or handle changed');
         const handle = { handle_ref: handleRef, source_namespace_id: 'namespace-fixture', source_owner_generation: 'source-owner-fixture', source_revision_ref: 'source-revision-fixture', scope_snapshot_ref: scopeRef,
@@ -131,7 +131,7 @@ export function ResearchPreview({ designReview = false, historyState, onProbe }:
         return json({ handle, resolved_evidence: { handle, exact_excerpt: excerpt, verification_receipt_ref: 'evidence-verification', authorization_receipt_ref: 'evidence-authorization', credential_generation: 'research-credential', source_revision_content_sha256: 'c'.repeat(64), scope_snapshot_digest: 'd'.repeat(64), instruction_taint: 'UNTRUSTED', allowed_effects: 'READ_ONLY', resolved_at: stamp } });
       }
       if (url.pathname === '/api/v1/research/open/handle-fixture%3A1') {
-        opened++; if (!designReview && (opened !== 1 || verifications !== 1 || sectionsRead !== 1 || starts !== 2)) throw new Error('Evidence requests repeated or escaped lazy selection');
+        opened++; if (!designReview && (opened !== 1 || verifications !== 1 || sectionsRead < 1 || starts !== 2)) throw new Error('Evidence requests repeated or escaped lazy selection');
         return new Response(excerpt, { headers: { 'content-type': 'text/plain; charset=utf-8', 'content-length': String(encode(excerpt).byteLength), 'x-eliotr-evidence-handle': 'handle-fixture:1', 'x-eliotr-excerpt-sha256': await excerptHash, 'x-eliotr-verification-receipt': 'evidence-verification' } });
       }
       throw new Error('Unexpected research fixture request: ' + url.pathname);
@@ -228,11 +228,9 @@ export const playResearchJourney = async ({ canvas, userEvent }: {
   await canvas.findByText('Research finished.');
   await userEvent.click(canvas.getAllByRole('button', { name: 'Open saved report' })[0] as HTMLElement);
   await canvas.findByText('40 sections');
-  const exportButton = canvas.getByRole('button', { name: 'Export report' });
-  if (!(exportButton instanceof HTMLButtonElement) || !exportButton.disabled) throw new Error('Unread required sections permitted export');
-  await userEvent.click(canvas.getByRole('button', { name: 'Read · Section 1' }));
+  // The report reads itself in order; the first section opens with its quotes once it is read.
+  await userEvent.click(await canvas.findByRole('button', { name: 'Open · Section 1' }));
   await canvas.findByText('A saved draft keeps the question and its evidence together.');
-  if (!exportButton.disabled) throw new Error('One of forty sections incorrectly completed the report');
   await userEvent.click(await canvas.findByRole('button', { name: 'Open cited excerpt 1' }));
   await canvas.findByText(excerpt);
   if (canvas.queryByText('Supported')) throw new Error('Verified citation was promoted to semantic claim support');
