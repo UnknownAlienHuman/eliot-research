@@ -1,15 +1,23 @@
 import type { ProjectionItem } from "@eliotr/contracts";
 import type { ExecutionFence } from "@eliotr/platform-cloudflare";
 import type {
+  ManagedProjectCopyPlan,
+  ManagedProjectionPort,
+  ManagedProjectionReceipt,
   ProjectionExecutionProfile,
   ProjectionSourceContext,
   ProjectionAuthorityPort,
   ProjectionManagedItemAuthorityPort,
 } from "@eliotr/cloudflare-projection";
-import { canonicalProjectionJson } from "@eliotr/cloudflare-projection";
+import {
+  canonicalProjectionJson,
+  projectionDigest,
+  projectionSha256Utf8,
+} from "@eliotr/cloudflare-projection";
 import {
   createManagedProjectionPort,
   type ProjectionAiSearchNamespace,
+  type ManagedProjectionDependencies,
 } from "./managed-index.js";
 import type { ManagedItemReceipt } from "./managed-index-readback.js";
 
@@ -32,6 +40,10 @@ interface MemoryManagedItemEffect {
 }
 
 export interface MemoryManagedItemAuthority extends ProjectionManagedItemAuthorityPort {
+  readManagedProjectCopyPlan(
+    context: ProjectionSourceContext,
+    generation: string,
+  ): ManagedProjectCopyPlan | null;
   readManagedItemEffect(
     context: ProjectionSourceContext,
     generation: string,
@@ -41,8 +53,11 @@ export interface MemoryManagedItemAuthority extends ProjectionManagedItemAuthori
 
 export function createMemoryManagedItemAuthority(): MemoryManagedItemAuthority {
   const effects = new Map<string, MemoryManagedItemEffect>();
+  const copyPlans = new Map<string, ManagedProjectCopyPlan>();
   const id = (context: ProjectionSourceContext, generation: string, itemKey: string) =>
     [context.source_revision.source_revision_ref, generation, itemKey].join("\u0000");
+  const planId = (context: ProjectionSourceContext, generation: string) =>
+    [context.source_revision.source_revision_ref, generation, "copy-plan"].join("\u0000");
   const assertLineage = (effect: MemoryManagedItemEffect, context: ProjectionSourceContext) => {
     if (
       effect.job_id !== context.job_id ||
@@ -54,6 +69,10 @@ export function createMemoryManagedItemAuthority(): MemoryManagedItemAuthority {
     }
   };
   const authority: MemoryManagedItemAuthority = {
+    readManagedProjectCopyPlan(context, generation) {
+      const copyPlan = copyPlans.get(planId(context, generation));
+      return copyPlan === undefined ? null : copyPlan;
+    },
     readManagedItemEffect(context, generation, itemKey) {
       const effect = effects.get(id(context, generation, itemKey));
       return effect === undefined ? null : Object.freeze({ ...effect });
@@ -63,7 +82,23 @@ export function createMemoryManagedItemAuthority(): MemoryManagedItemAuthority {
     async begin() {},
     async recordMaterialized() {},
     async settle() { throw new Error("test authority settle is unused"); },
-    async prepareManagedItems(context, generation, _profile, intents) {
+    async prepareManagedItems(context, generation, _profile, intents, _fence, copyPlan) {
+      const keyForPlan = planId(context, generation);
+      const existingPlan = copyPlans.get(keyForPlan);
+      if (copyPlan !== undefined) {
+        if (
+          existingPlan !== undefined &&
+          canonicalProjectionJson(existingPlan) !== canonicalProjectionJson(copyPlan)
+        ) {
+          throw new Error("test managed copy plan changed across replay");
+        }
+        copyPlans.set(keyForPlan, copyPlan);
+      } else if (
+        intents.some((intent) => intent.copy_layout === "PROJECT_COPY_V1") &&
+        existingPlan === undefined
+      ) {
+        throw new Error("test PROJECT_COPY_V1 intents require the full durable copy plan");
+      }
       return intents.map((intent) => {
         const key = id(context, generation, intent.item_key);
         let effect = effects.get(key);
@@ -171,6 +206,15 @@ export function createManagedProjectionTestPort(input: {
   readonly namespace: ProjectionAiSearchNamespace;
   readonly authority: ProjectionManagedItemAuthorityPort;
 }) {
+  const writer = createManagedProjectionTestWriter(input);
+  return createLegacyFlatManagedProjectionTestAdapter(writer, input.profile);
+}
+
+export function createManagedProjectionTestWriter(input: {
+  readonly profile: ProjectionExecutionProfile;
+  readonly namespace: ProjectionAiSearchNamespace;
+  readonly authority: ProjectionManagedItemAuthorityPort;
+}): ManagedProjectionPort {
   const observedUploads = new Map<string, unknown>();
   const namespace: ProjectionAiSearchNamespace = {
     get(instanceId) {
@@ -208,6 +252,80 @@ export function createManagedProjectionTestPort(input: {
     // Trusted test fixture only; production must supply the current-target authority reader.
     isCurrentTarget: async () => true,
   });
+}
+
+export function createLegacyFlatManagedProjectionTestAdapter(
+  writer: ManagedProjectionPort,
+  profile: ProjectionExecutionProfile,
+): {
+  index(
+    context: ProjectionSourceContext,
+    executionGeneration: string,
+    items: readonly ProjectionItem[],
+    fence: ExecutionFence,
+  ): Promise<ManagedProjectionReceipt>;
+} {
+  return {
+    async index(context, executionGeneration, items, fence) {
+      const emptySetDigest = await projectionDigest([]);
+      const metadataGenerationDigest = await projectionSha256Utf8(
+        `eliotr.project-copy-generation.v1\u0000${profile.managed_generation}`,
+      );
+      const plannedItems = items.map((item, index) => {
+        const match = /^normalized-bytes:(0|[1-9][0-9]*):(0|[1-9][0-9]*)$/u.exec(
+          item.normalized_offset_map_ref,
+        );
+        const normalizedStart = match?.[1] === undefined ? Number.NaN : Number(match[1]);
+        const normalizedEnd = match?.[2] === undefined ? Number.NaN : Number(match[2]);
+        if (
+          !Number.isSafeInteger(normalizedStart) ||
+          !Number.isSafeInteger(normalizedEnd) ||
+          normalizedStart < 0 ||
+          normalizedEnd <= normalizedStart
+        ) {
+          throw new Error(`legacy test item ${index} has an invalid normalized byte span`);
+        }
+        return Object.freeze({
+          ...item,
+          normalized_start_byte: normalizedStart,
+          normalized_end_byte: normalizedEnd,
+          copy_layout: null,
+          canonical_projection_generation: executionGeneration,
+          canonical_item_key: null,
+          project_id: null,
+          project_membership_id: null,
+          membership_generation: null,
+          provider_key: `${item.item_key}.md`,
+          metadata_generation_digest: null,
+          canonical_body_ref: null,
+          canonical_body_sha256: null,
+        });
+      });
+      const copyPlan: ManagedProjectCopyPlan = Object.freeze({
+        target: Object.freeze({
+          managed_instance_id: profile.managed_instance_id,
+          managed_generation: profile.managed_generation,
+          metadata_generation_digest: metadataGenerationDigest,
+        }),
+        items: Object.freeze(plannedItems),
+        copies: Object.freeze([]),
+        provider_copy_count: 0,
+        provider_copy_set_sha256: emptySetDigest,
+        provider_item_count: 0,
+        provider_item_set_sha256: emptySetDigest,
+      });
+      return writer.index(context, executionGeneration, executionGeneration, copyPlan, fence);
+    },
+  };
+}
+
+export function createLegacyFlatManagedProjectionPort(
+  dependencies: ManagedProjectionDependencies,
+): ReturnType<typeof createLegacyFlatManagedProjectionTestAdapter> {
+  return createLegacyFlatManagedProjectionTestAdapter(
+    createManagedProjectionPort(dependencies),
+    dependencies.profile,
+  );
 }
 
 export const A = "a".repeat(64);

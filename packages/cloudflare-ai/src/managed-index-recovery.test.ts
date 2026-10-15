@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { createManagedProjectionPort, type ProjectionAiSearchNamespace } from "./managed-index.js";
 import { ManagedItemRecoveryBlockedError } from "./managed-index-readback.js";
 import {
+  createLegacyFlatManagedProjectionPort as createManagedProjectionPort,
   context,
   createMemoryManagedItemAuthority,
   downloaded,
@@ -10,6 +10,7 @@ import {
   profile,
   TEST_EXECUTION_FENCE,
 } from "./managed-index.test-support.js";
+import type { ProjectionAiSearchNamespace } from "./managed-index.js";
 
 interface StoredItem {
   readonly id: string;

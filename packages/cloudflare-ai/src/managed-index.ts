@@ -4,7 +4,9 @@ import {
   assertProjectionIdentifier,
   assertProjectionInteger,
   assertProjectionSha256,
+  assertProjectionText,
   canonicalProjectionJson,
+  profileIsValid,
   projectionDigest,
   projectionSha256Utf8,
   ProjectionRuntimeError,
@@ -12,6 +14,8 @@ import {
   stableProjectionId,
   type ManagedProjectionPort,
   type ManagedProjectionReceipt,
+  type ManagedProjectCopyPlan,
+  type ManagedProjectCopyTargetReceipt,
   type ProjectionAuthorityPort,
   type ProjectionExecutionProfile,
   type ProjectionManagedItemAuthorityPort,
@@ -39,8 +43,11 @@ type ManagedItemEffect = Awaited<
 >[number];
 
 type ManagedItemAuthority = ProjectionManagedItemAuthorityPort;
-type ManagedExecutionFence = Parameters<ManagedProjectionPort["index"]>[3];
-type CurrentManagedTargetReader = (fence: ManagedExecutionFence) => Promise<boolean>;
+type ManagedExecutionFence = Parameters<ManagedProjectionPort["index"]>[4];
+type CurrentManagedTargetReader = (
+  fence: ManagedExecutionFence,
+  target: ManagedProjectCopyTargetReceipt,
+) => Promise<boolean>;
 
 class ManagedProjectionInputError extends Error {
   public readonly reason_code = "PROJECTION_INPUT_INVALID" as const;
@@ -70,6 +77,7 @@ class ManagedProjectionCurrentnessError extends Error {
 async function assertCurrentManagedTarget(
   readCurrentTarget: CurrentManagedTargetReader,
   fence: ManagedExecutionFence,
+  target: ManagedProjectCopyTargetReceipt,
 ): Promise<void> {
   if (typeof readCurrentTarget !== "function") {
     throw new ManagedProjectionCurrentnessError(
@@ -79,7 +87,7 @@ async function assertCurrentManagedTarget(
   }
   let current: boolean;
   try {
-    current = await readCurrentTarget(fence);
+    current = await readCurrentTarget(fence, target);
   } catch (cause) {
     throw new ManagedProjectionCurrentnessError(
       "MANAGED_GENERATION_CURRENTNESS_UNVERIFIED",
@@ -141,12 +149,184 @@ function managedItemSpan(item: ProjectionItem): {
   return { normalized_start_byte: start, normalized_end_byte: end };
 }
 
+function managedCopyItemIdentity(item: ManagedProjectCopyPlan["items"][number]) {
+  return {
+    item_key: item.item_key,
+    canonical_item_key: item.canonical_item_key,
+    canonical_section_id: item.canonical_section_id,
+    content_sha256: item.content_sha256,
+    normalized_start_byte: item.normalized_start_byte,
+    normalized_end_byte: item.normalized_end_byte,
+    provider_key: item.provider_key,
+    canonical_body_ref: item.canonical_body_ref,
+    canonical_body_sha256: item.canonical_body_sha256,
+    project_id: item.project_id,
+    project_membership_id: item.project_membership_id,
+    membership_generation: item.membership_generation,
+  };
+}
+
+async function validateManagedProjectCopyPlan(
+  context: ProjectionSourceContext,
+  canonicalProjectionGeneration: string,
+  profile: ProjectionExecutionProfile,
+  copyPlan: ManagedProjectCopyPlan,
+): Promise<void> {
+  const target = copyPlan.target;
+  assertProjectionIdentifier(target.managed_instance_id, "managed copy target instance");
+  assertProjectionIdentifier(target.managed_generation, "managed copy target generation");
+  assertProjectionSha256(target.metadata_generation_digest, "managed copy target metadata digest");
+  const expectedMetadataDigest = await projectionSha256Utf8(
+    `eliotr.project-copy-generation.v1\u0000${target.managed_generation}`,
+  );
+  if (target.metadata_generation_digest !== expectedMetadataDigest) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "copy-plan target digest is not bound to its exact managed generation");
+  }
+
+  const copyCount = assertProjectionInteger(
+    copyPlan.provider_copy_count,
+    "managed provider copy count",
+    0,
+    256,
+  );
+  const physicalCount = assertProjectionInteger(
+    copyPlan.items.length,
+    "managed physical item count",
+    1,
+    profile.maximum_synchronous_items,
+  );
+  assertProjectionSha256(copyPlan.provider_copy_set_sha256, "managed provider copy-set digest");
+  assertProjectionSha256(copyPlan.provider_item_set_sha256, "managed provider item-set digest");
+  const emptySetDigest = await projectionDigest([]);
+  if (copyCount === 0) {
+    if (
+      copyPlan.copies.length !== 0 ||
+      copyPlan.provider_item_count !== 0 ||
+      copyPlan.provider_copy_set_sha256 !== emptySetDigest ||
+      copyPlan.provider_item_set_sha256 !== emptySetDigest
+    ) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "flat managed copy plan carries project-copy counts or digests");
+    }
+    return;
+  }
+
+  if (
+    copyPlan.copies.length !== copyCount ||
+    copyPlan.provider_item_count !== physicalCount
+  ) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "project-copy plan counts differ from its complete item mapping");
+  }
+  const expectedProviderItems = await projectionDigest(copyPlan.items.map((item) => ({
+    item_key: item.item_key,
+    canonical_section_id: item.canonical_section_id,
+    content_sha256: item.content_sha256,
+    start: item.normalized_start_byte,
+    end: item.normalized_end_byte,
+  })));
+  if (expectedProviderItems !== copyPlan.provider_item_set_sha256) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "project-copy item digest differs from its complete provider plan");
+  }
+
+  const mappedItems = [];
+  const copySetEntries: {
+    project_id: string;
+    project_membership_id: string;
+    membership_generation: number;
+    provider_copy_set_sha256: string;
+  }[] = [];
+  for (const [index, copy] of copyPlan.copies.entries()) {
+    if (
+      copy.protocol !== "eliotr.managed-project-copy-map.v1" ||
+      copy.source_revision_ref !== context.source_revision.source_revision_ref ||
+      copy.complete_residency_key_sha256 !== context.source_revision.object_residency_key_digest ||
+      copy.canonical_projection_generation !== canonicalProjectionGeneration ||
+      copy.target.managed_instance_id !== target.managed_instance_id ||
+      copy.target.managed_generation !== target.managed_generation ||
+      copy.target.metadata_generation_digest !== target.metadata_generation_digest ||
+      copy.provider_copy_count !== 1 ||
+      copy.provider_item_count !== copy.items.length
+    ) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", `project-copy mapping ${index} differs from its source or target`);
+    }
+    assertProjectionIdentifier(copy.canonical_source_ref, "managed canonical source reference");
+    assertProjectionSha256(copy.canonical_source_sha256, "managed canonical source digest");
+    assertProjectionIdentifier(copy.project_id, "managed project ID");
+    assertProjectionIdentifier(copy.project_membership_id, "managed project membership ID");
+    assertProjectionInteger(copy.membership_generation, "managed project membership generation", 1, Number.MAX_SAFE_INTEGER);
+    assertProjectionSha256(copy.provider_item_set_sha256, "managed project-copy item-set digest");
+    assertProjectionSha256(copy.provider_copy_set_sha256, "managed project-copy receipt digest");
+    const mapItemSetDigest = await projectionDigest(copy.items.map((item) => ({
+      item_key: item.item_key,
+      canonical_section_id: item.canonical_section_id,
+      content_sha256: item.content_sha256,
+      start: item.normalized_start_byte,
+      end: item.normalized_end_byte,
+    })));
+    if (mapItemSetDigest !== copy.provider_item_set_sha256) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", `project-copy mapping ${index} item digest differs`);
+    }
+    const { provider_copy_set_sha256: copyDigest, ...copyPayload } = copy;
+    if (await projectionDigest(copyPayload) !== copyDigest) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", `project-copy mapping ${index} receipt digest differs`);
+    }
+    copySetEntries.push({
+      project_id: copy.project_id,
+      project_membership_id: copy.project_membership_id,
+      membership_generation: copy.membership_generation,
+      provider_copy_set_sha256: copy.provider_copy_set_sha256,
+    });
+    for (const item of copy.items) {
+      mappedItems.push({
+        item_key: item.item_key,
+        canonical_item_key: item.canonical_item_key,
+        canonical_section_id: item.canonical_section_id,
+        content_sha256: item.content_sha256,
+        normalized_start_byte: item.normalized_start_byte,
+        normalized_end_byte: item.normalized_end_byte,
+        provider_key: item.provider_key,
+        canonical_body_ref: item.canonical_body_ref,
+        canonical_body_sha256: item.canonical_body_sha256,
+        project_id: copy.project_id,
+        project_membership_id: copy.project_membership_id,
+        membership_generation: copy.membership_generation,
+      });
+    }
+  }
+  const expectedCopySet = await projectionDigest(copySetEntries);
+  if (
+    expectedCopySet !== copyPlan.provider_copy_set_sha256 ||
+    canonicalProjectionJson(mappedItems) !== canonicalProjectionJson(copyPlan.items.map(managedCopyItemIdentity))
+  ) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "provider items differ from their complete body-free copy mappings");
+  }
+}
+
+function profileForCopyPlan(
+  base: ProjectionExecutionProfile,
+  copyPlan: ManagedProjectCopyPlan,
+): ProjectionExecutionProfile {
+  if (
+    copyPlan.target.managed_instance_id !== base.managed_instance_id ||
+    copyPlan.target.managed_generation !== base.managed_generation
+  ) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "copy-plan target differs from its target-scoped AI Search port");
+  }
+  const profile = Object.freeze({
+    ...base,
+    managed_instance_id: copyPlan.target.managed_instance_id,
+    managed_generation: copyPlan.target.managed_generation,
+  });
+  profileIsValid(profile);
+  return profile;
+}
+
 async function prepareManagedItems(
   context: ProjectionSourceContext,
-  projectionGeneration: string,
+  canonicalProjectionGeneration: string,
   profile: ProjectionExecutionProfile,
-  items: readonly ProjectionItem[],
+  copyPlan: ManagedProjectCopyPlan,
 ): Promise<readonly PreparedManagedItem[]> {
+  const items = copyPlan.items;
   if (!Array.isArray(items)) {
     projectionFail("PROJECTION_INPUT_INVALID", "managed projection desired set is invalid");
   }
@@ -163,7 +343,14 @@ async function prepareManagedItems(
       projectionFail("PROJECTION_INPUT_INVALID", `managed projection item ${index} is invalid`);
     }
     const itemKey = assertProjectionIdentifier(item.item_key, `projection item ${index}.item_key`);
-    const key = managedItemFilename(itemKey);
+    const filename = managedItemFilename(itemKey);
+    const key = assertProjectionText(item.provider_key, `projection item ${index}.provider_key`, 128);
+    if (
+      (item.copy_layout === null && key !== filename) ||
+      (item.copy_layout === "PROJECT_COPY_V1" && !key.endsWith(`/${filename}`))
+    ) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "provider key differs from its complete managed copy plan");
+    }
     const span = managedItemSpan(item);
     if (seenKeys.has(itemKey)) {
       projectionFail("PROJECTION_INPUT_INVALID", "managed projection desired set has duplicate item keys");
@@ -175,11 +362,23 @@ async function prepareManagedItems(
         "projection item source revision differs from the execution context",
       );
     }
-    if (item.projection_generation !== projectionGeneration) {
+    const expectedProjectionGeneration = item.copy_layout === "PROJECT_COPY_V1"
+      ? copyPlan.target.metadata_generation_digest
+      : canonicalProjectionGeneration;
+    if (
+      item.projection_generation !== expectedProjectionGeneration ||
+      item.canonical_projection_generation !== canonicalProjectionGeneration
+    ) {
       projectionFail(
         "PROJECTION_INPUT_INVALID",
-        "projection item generation differs from the requested managed generation",
+        "projection item generation differs from the canonical and managed target pins",
       );
+    }
+    if (
+      span.normalized_start_byte !== item.normalized_start_byte ||
+      span.normalized_end_byte !== item.normalized_end_byte
+    ) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed item span differs from its copy-plan proof");
     }
     assertProjectionIdentifier(item.canonical_section_id, "projection item canonical_section_id");
     assertProjectionIdentifier(item.source_revision_ref, "projection item source_revision_ref");
@@ -202,11 +401,49 @@ async function prepareManagedItems(
         "projection item content digest differs from its section bytes",
       );
     }
+    if (item.copy_layout === "PROJECT_COPY_V1") {
+      if (
+        item.canonical_item_key === null ||
+        item.project_id === null ||
+        item.project_membership_id === null ||
+        item.membership_generation === null ||
+        item.metadata_generation_digest !== copyPlan.target.metadata_generation_digest ||
+        item.canonical_body_ref === null ||
+        item.canonical_body_sha256 !== item.content_sha256
+      ) {
+        projectionFail("PROJECTION_AUTHORITY_CONFLICT", "PROJECT_COPY_V1 item lacks its canonical mapping proof");
+      }
+      assertProjectionIdentifier(item.canonical_item_key, "managed canonical item key");
+      assertProjectionIdentifier(item.project_id, "managed project ID");
+      assertProjectionIdentifier(item.project_membership_id, "managed project membership ID");
+      assertProjectionInteger(item.membership_generation, "managed project membership generation", 1, Number.MAX_SAFE_INTEGER);
+      assertProjectionText(item.canonical_body_ref, "managed canonical body reference", 2048);
+      assertProjectionSha256(item.canonical_body_sha256, "managed canonical body digest");
+      if (
+        item.project_membership_ids.length !== 1 ||
+        item.project_membership_ids[0] !== item.project_membership_id
+      ) {
+        projectionFail("PROJECTION_AUTHORITY_CONFLICT", "PROJECT_COPY_V1 item membership list differs from its copy mapping");
+      }
+    } else if (
+      item.copy_layout !== null ||
+      item.canonical_item_key !== null ||
+      item.project_id !== null ||
+      item.project_membership_id !== null ||
+      item.membership_generation !== null ||
+      item.metadata_generation_digest !== null ||
+      item.canonical_body_ref !== null ||
+      item.canonical_body_sha256 !== null
+    ) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "flat managed item carries project-copy identity fields");
+    }
     // AI Search's projection_generation is the managed profile generation; the
     // source-specific generation remains in the durable Eliot intent lineage.
     const metadata = Object.freeze({
       ...projectionMetadata(item),
-      projection_generation: profile.managed_generation,
+      projection_generation: item.copy_layout === "PROJECT_COPY_V1"
+        ? copyPlan.target.metadata_generation_digest
+        : profile.managed_generation,
     });
     if (
       Object.keys(metadata).sort().join("\u0000") !== CUSTOM_METADATA_FIELDS.join("\u0000") ||
@@ -247,15 +484,29 @@ function assertManagedItemAuthority(
 
 function managedItemIntents(
   prepared: readonly PreparedManagedItem[],
-  profile: ProjectionExecutionProfile,
+  copyPlan: ManagedProjectCopyPlan,
 ): readonly ManagedItemIntent[] {
-  return Object.freeze(prepared.map((item, desiredIndex) => ({
+  return Object.freeze(prepared.map((item, desiredIndex) => {
+    const planned = copyPlan.items[desiredIndex];
+    if (planned === undefined || planned.item_key !== item.item_key || planned.provider_key !== item.key) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "prepared provider item differs from the complete copy plan");
+    }
+    return {
     desired_index: desiredIndex,
     item_key: item.item_key,
     provider_key: item.key,
+    copy_layout: planned.copy_layout,
+    canonical_projection_generation: planned.canonical_projection_generation,
+    canonical_item_key: planned.canonical_item_key,
+    project_id: planned.project_id,
+    project_membership_id: planned.project_membership_id,
+    membership_generation: planned.membership_generation,
+    metadata_generation_digest: planned.metadata_generation_digest,
+    canonical_body_ref: planned.canonical_body_ref,
+    canonical_body_sha256: planned.canonical_body_sha256,
     provider_source: "builtin" as const,
-    managed_instance_id: profile.managed_instance_id,
-    managed_generation: profile.managed_generation,
+    managed_instance_id: copyPlan.target.managed_instance_id,
+    managed_generation: copyPlan.target.managed_generation,
     section_content_sha256: assertProjectionSha256(
       item.metadata.content_sha256,
       "managed section content digest",
@@ -265,7 +516,8 @@ function managedItemIntents(
     document_sha256: item.document_sha256,
     document_size_bytes: item.size,
     metadata: item.metadata,
-  })));
+    };
+  }));
 }
 
 function effectFor(effects: readonly ManagedItemEffect[], itemKey: string): ManagedItemEffect {
@@ -291,13 +543,14 @@ async function recoverManagedItem(
   authority: ManagedItemAuthority,
   context: ProjectionSourceContext,
   projectionGeneration: string,
+  target: ManagedProjectCopyTargetReceipt,
   fence: ManagedExecutionFence,
   instance: ProjectionAiSearchInstance,
   item: PreparedManagedItem,
   effect: ManagedItemEffect,
   readCurrentTarget: CurrentManagedTargetReader,
 ): Promise<ManagedItemReceipt> {
-  await assertCurrentManagedTarget(readCurrentTarget, fence);
+  await assertCurrentManagedTarget(readCurrentTarget, fence, target);
   let listed;
   try {
     listed = await listExactManagedItem(instance, item);
@@ -323,9 +576,9 @@ async function recoverManagedItem(
     listed.id,
     fence,
   );
-  await assertCurrentManagedTarget(readCurrentTarget, fence);
+  await assertCurrentManagedTarget(readCurrentTarget, fence, target);
   const receipt = await readManagedItem(instance, item, listed.id, listed);
-  await assertCurrentManagedTarget(readCurrentTarget, fence);
+  await assertCurrentManagedTarget(readCurrentTarget, fence, target);
   if (
     effect.receipt !== null &&
     canonicalProjectionJson(effect.receipt) !== canonicalProjectionJson(receipt)
@@ -342,6 +595,7 @@ async function indexManagedItem(
   authority: ManagedItemAuthority,
   context: ProjectionSourceContext,
   projectionGeneration: string,
+  target: ManagedProjectCopyTargetReceipt,
   fence: ManagedExecutionFence,
   profile: ProjectionExecutionProfile,
   instance: ProjectionAiSearchInstance,
@@ -355,6 +609,7 @@ async function indexManagedItem(
       authority,
       context,
       projectionGeneration,
+      target,
       fence,
       instance,
       item,
@@ -362,7 +617,7 @@ async function indexManagedItem(
       readCurrentTarget,
     );
   }
-  await assertCurrentManagedTarget(readCurrentTarget, fence);
+  await assertCurrentManagedTarget(readCurrentTarget, fence, target);
   if (profile.managed_generation_active) {
     throw new ManagedProjectionAdapterError(
       "new target-bound managed item keys must be built in a shadow generation before the active generation is changed",
@@ -387,6 +642,7 @@ async function indexManagedItem(
       authority,
       context,
       projectionGeneration,
+      target,
       fence,
       instance,
       item,
@@ -396,7 +652,7 @@ async function indexManagedItem(
   }
 
   try {
-    await assertCurrentManagedTarget(readCurrentTarget, fence);
+    await assertCurrentManagedTarget(readCurrentTarget, fence, target);
     const acknowledgement = await instance.items.uploadAndPoll(item.key, item.document, {
       metadata: item.metadata,
       pollIntervalMs: profile.managed_poll_interval_ms,
@@ -432,6 +688,7 @@ async function indexManagedItem(
     authority,
     context,
     projectionGeneration,
+    target,
     fence,
     instance,
     item,
@@ -451,16 +708,37 @@ export function createManagedProjectionPort(
   dependencies: ManagedProjectionDependencies,
 ): ManagedProjectionPort {
   return {
-    async index(context, projectionGeneration, items, fence): Promise<ManagedProjectionReceipt> {
+    async index(
+      context,
+      executionGeneration,
+      canonicalProjectionGeneration,
+      copyPlan,
+      fence,
+    ): Promise<ManagedProjectionReceipt> {
+      const itemCount = Array.isArray(copyPlan?.items) ? copyPlan.items.length : 0;
+      const fallbackTarget = copyPlan?.target ?? {
+        managed_instance_id: dependencies.profile.managed_instance_id,
+        managed_generation: dependencies.profile.managed_generation,
+        metadata_generation_digest: "",
+      };
       try {
-        await assertCurrentManagedTarget(dependencies.isCurrentTarget, fence);
+        assertProjectionIdentifier(executionGeneration, "managed execution generation");
+        assertProjectionIdentifier(canonicalProjectionGeneration, "canonical projection generation");
+        const profile = profileForCopyPlan(dependencies.profile, copyPlan);
+        await validateManagedProjectCopyPlan(
+          context,
+          canonicalProjectionGeneration,
+          profile,
+          copyPlan,
+        );
+        await assertCurrentManagedTarget(dependencies.isCurrentTarget, fence, copyPlan.target);
         let prepared: readonly PreparedManagedItem[];
         try {
           prepared = await prepareManagedItems(
             context,
-            projectionGeneration,
-            dependencies.profile,
-            items,
+            canonicalProjectionGeneration,
+            profile,
+            copyPlan,
           );
         } catch (error) {
           if (error instanceof ProjectionRuntimeError) {
@@ -469,13 +747,14 @@ export function createManagedProjectionPort(
           throw error;
         }
         assertManagedItemAuthority(dependencies.authority);
-        const intents = managedItemIntents(prepared, dependencies.profile);
+        const intents = managedItemIntents(prepared, copyPlan);
         const effects = await dependencies.authority.prepareManagedItems(
           context,
-          projectionGeneration,
-          dependencies.profile,
+          executionGeneration,
+          profile,
           intents,
           fence,
+          copyPlan,
         );
         if (
           effects.length !== prepared.length ||
@@ -483,7 +762,7 @@ export function createManagedProjectionPort(
         ) {
           projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed item intents are not the exact desired set");
         }
-        const instance = dependencies.namespace.get(dependencies.profile.managed_instance_id);
+        const instance = dependencies.namespace.get(copyPlan.target.managed_instance_id);
         const receipts: ManagedItemReceipt[] = [];
         for (let index = 0; index < prepared.length; index += 1) {
           const item = prepared[index];
@@ -495,9 +774,10 @@ export function createManagedProjectionPort(
           receipts.push(await indexManagedItem(
             dependencies.authority,
             context,
-            projectionGeneration,
+            executionGeneration,
+            copyPlan.target,
             fence,
-            dependencies.profile,
+            profile,
             instance,
             item,
             effect,
@@ -514,17 +794,17 @@ export function createManagedProjectionPort(
         const receiptRef = await stableProjectionId(
           "managed-search-receipt",
           context.source_revision.source_revision_ref,
-          projectionGeneration,
-          dependencies.profile.managed_generation,
+          executionGeneration,
+          copyPlan.target.managed_generation,
           readbackDigest,
         );
-        await assertCurrentManagedTarget(dependencies.isCurrentTarget, fence);
-        if (!dependencies.profile.managed_generation_active) {
+        await assertCurrentManagedTarget(dependencies.isCurrentTarget, fence, copyPlan.target);
+        if (!profile.managed_generation_active) {
           return {
             state: "DEGRADED",
-            item_count: items.length,
-            instance_id: dependencies.profile.managed_instance_id,
-            managed_generation: dependencies.profile.managed_generation,
+            item_count: prepared.length,
+            instance_id: copyPlan.target.managed_instance_id,
+            managed_generation: copyPlan.target.managed_generation,
             shadow_receipt_ref: receiptRef,
             shadow_readback_digest: readbackDigest,
             reason_codes: ["MANAGED_GENERATION_NOT_PROMOTED"],
@@ -534,9 +814,9 @@ export function createManagedProjectionPort(
           state: "READY",
           receipt_ref: receiptRef,
           readback_digest: readbackDigest,
-          item_count: items.length,
-          instance_id: dependencies.profile.managed_instance_id,
-          managed_generation: dependencies.profile.managed_generation,
+          item_count: prepared.length,
+          instance_id: copyPlan.target.managed_instance_id,
+          managed_generation: copyPlan.target.managed_generation,
           reason_codes: [],
         };
       } catch (error) {
@@ -548,9 +828,9 @@ export function createManagedProjectionPort(
         }
         return {
           state: "DEGRADED",
-          item_count: items.length,
-          instance_id: dependencies.profile.managed_instance_id,
-          managed_generation: dependencies.profile.managed_generation,
+          item_count: itemCount,
+          instance_id: fallbackTarget.managed_instance_id,
+          managed_generation: fallbackTarget.managed_generation,
           reason_codes: [
             error instanceof ManagedProjectionCurrentnessError
               ? error.reason_code

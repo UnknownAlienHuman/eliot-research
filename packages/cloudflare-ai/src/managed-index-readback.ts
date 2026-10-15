@@ -86,6 +86,13 @@ export class ManagedItemRecoveryBlockedError extends Error {
 const BUILTIN_METADATA_FIELDS = new Set(["filename", "folder", "timestamp"]);
 const MAX_MANAGED_ITEM_DOWNLOAD_CHUNKS = 4096;
 
+function providerKeyPath(key: string): { readonly filename: string; readonly folder: string } {
+  const separator = key.lastIndexOf("/");
+  return separator < 0
+    ? { filename: key, folder: "" }
+    : { filename: key.slice(separator + 1), folder: key.slice(0, separator + 1) };
+}
+
 function isRuntimeLimitError(value: unknown): value is RuntimeLimitError {
   try {
     return value instanceof RuntimeLimitError;
@@ -118,11 +125,18 @@ function assertExpectedMetadata(
       throw new Error(`${label}.metadata.${key} differs from the uploaded generation`);
     }
   }
-  if (Object.hasOwn(record, "filename") && record.filename !== expectedFilename) {
+  const expectedPath = providerKeyPath(expectedFilename);
+  if (
+    (expectedPath.folder !== "" && record.filename !== expectedPath.filename) ||
+    (expectedPath.folder === "" && Object.hasOwn(record, "filename") && record.filename !== expectedPath.filename)
+  ) {
     throw new Error(`${label}.metadata.filename differs from the uploaded key`);
   }
-  if (Object.hasOwn(record, "folder") && record.folder !== "") {
-    throw new Error(`${label}.metadata.folder differs from the flat uploaded key`);
+  if (
+    (expectedPath.folder !== "" && record.folder !== expectedPath.folder) ||
+    (expectedPath.folder === "" && Object.hasOwn(record, "folder") && record.folder !== "")
+  ) {
+    throw new Error(`${label}.metadata.folder differs from the uploaded key`);
   }
   if (
     Object.hasOwn(record, "timestamp") &&
@@ -265,7 +279,7 @@ export async function readManagedItem(
   }
   const contentSha256 = await readDownloadedContent(
     rawDownload,
-    item.key,
+    providerKeyPath(item.key).filename,
     item.size,
     item.document_sha256,
   );

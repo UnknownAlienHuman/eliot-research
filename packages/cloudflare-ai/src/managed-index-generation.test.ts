@@ -1,20 +1,19 @@
 import {
   context,
+  createLegacyFlatManagedProjectionPort,
   createManagedProjectionTestPort,
   createMemoryManagedItemAuthority,
   downloaded,
   item,
   profile,
 } from "./managed-index.test-support.js";
-import {
-  createManagedProjectionPort,
-  type ProjectionAiSearchNamespace,
-} from "./managed-index.js";
+import type { ProjectionAiSearchNamespace } from "./managed-index.js";
 import { createCurrentnessGuardedProjectionAuthority } from "./projection-execution-delivery-handler.js";
-import type {
-  ManagedProjectionPort,
-  ManagedProjectionReceipt,
-  ProjectionSettlement,
+import {
+  projectionSha256Utf8,
+  type ManagedProjectionPort,
+  type ManagedProjectionReceipt,
+  type ProjectionSettlement,
 } from "@eliotr/cloudflare-projection";
 import { describe, expect, it, vi } from "vitest";
 
@@ -22,7 +21,7 @@ const executionFence = {
   operation_id: "managed-generation-test",
   lease_owner: "managed-generation-test-worker",
   lease_generation: 1,
-} satisfies Parameters<ManagedProjectionPort["index"]>[3];
+} satisfies Parameters<ManagedProjectionPort["index"]>[4];
 
 describe("managed AI Search generation reconciliation", () => {
   it("rejects stale or foreign managed generation metadata on provider readback", async () => {
@@ -278,7 +277,7 @@ describe("managed AI Search generation reconciliation", () => {
         };
       },
     };
-    const port = createManagedProjectionPort({
+    const port = createLegacyFlatManagedProjectionPort({
       authority: createMemoryManagedItemAuthority(),
       isCurrentTarget,
       namespace,
@@ -335,7 +334,13 @@ describe("managed AI Search generation reconciliation", () => {
         executionFence,
       ),
     ).rejects.toMatchObject({ code: "PROJECTION_AUTHORITY_CONFLICT" });
-    expect(isCurrentTarget).toHaveBeenCalledWith(executionFence);
+    expect(isCurrentTarget).toHaveBeenCalledWith(executionFence, {
+      managed_instance_id: profile.managed_instance_id,
+      managed_generation: profile.managed_generation,
+      metadata_generation_digest: await projectionSha256Utf8(
+        `eliotr.project-copy-generation.v1\u0000${profile.managed_generation}`,
+      ),
+    });
     expect(settle).not.toHaveBeenCalled();
     await expect(
       guardedAuthority.readTerminal(context, "projection-g1", profile),

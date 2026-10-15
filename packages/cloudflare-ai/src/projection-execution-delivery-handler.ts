@@ -17,7 +17,9 @@ import {
   createR2ProjectionContentPort,
   createR2ProjectionWorkPort,
   projectionFail,
+  projectionSha256Utf8,
   type ProjectionManagedItemAuthorityPort,
+  type ManagedProjectCopyTargetReceipt,
   type ManagedProjectionPort,
   type ProjectionExecutionProfile,
 } from "@eliotr/cloudflare-projection";
@@ -28,8 +30,11 @@ import {
   type DeliveryHandler,
 } from "@eliotr/platform-cloudflare";
 
-type ManagedExecutionFence = Parameters<ManagedProjectionPort["index"]>[3];
-type CurrentManagedTargetReader = (fence: ManagedExecutionFence) => Promise<boolean>;
+type ManagedExecutionFence = Parameters<ManagedProjectionPort["index"]>[4];
+type CurrentManagedTargetReader = (
+  fence: ManagedExecutionFence,
+  target: ManagedProjectCopyTargetReceipt,
+) => Promise<boolean>;
 
 interface ProjectionGenerationCurrentnessGuard {
   readonly isCurrentSnapshot: () => Promise<boolean>;
@@ -138,10 +143,20 @@ export function createCurrentnessGuardedProjectionAuthority(
     }
   };
 
-  const assertTargetCurrent = async (fence: ManagedExecutionFence): Promise<void> => {
+  const assertTargetCurrent = async (
+    fence: ManagedExecutionFence,
+    profile: ProjectionExecutionProfile,
+  ): Promise<void> => {
     let current: boolean;
     try {
-      current = await currentness.isCurrentTarget(fence);
+      const target: ManagedProjectCopyTargetReceipt = {
+        managed_instance_id: profile.managed_instance_id,
+        managed_generation: profile.managed_generation,
+        metadata_generation_digest: await projectionSha256Utf8(
+          `eliotr.project-copy-generation.v1\u0000${profile.managed_generation}`,
+        ),
+      };
+      current = await currentness.isCurrentTarget(fence, target);
     } catch (cause) {
       projectionFail(
         "PROJECTION_AUTHORITY_CONFLICT",
@@ -167,7 +182,7 @@ export function createCurrentnessGuardedProjectionAuthority(
       return terminal;
     },
     async settle(context, projectionGeneration, profile, settlement, fence) {
-      await assertTargetCurrent(fence);
+      await assertTargetCurrent(fence, profile);
       const terminal = await authority.settle(
         context,
         projectionGeneration,
@@ -175,7 +190,7 @@ export function createCurrentnessGuardedProjectionAuthority(
         settlement,
         fence,
       );
-      await assertTargetCurrent(fence);
+      await assertTargetCurrent(fence, profile);
       return terminal;
     },
   };
@@ -235,7 +250,13 @@ export function createProjectionExecutionDeliveryHandler(
     };
     const currentness: ProjectionGenerationCurrentnessGuard = {
       isCurrentSnapshot,
-      isCurrentTarget: async (_fence) => isCurrentSnapshot(),
+      isCurrentTarget: async (_fence, target) =>
+        target.managed_instance_id === profile.managed_instance_id &&
+        target.managed_generation === profile.managed_generation &&
+        target.metadata_generation_digest === await projectionSha256Utf8(
+          `eliotr.project-copy-generation.v1\u0000${profile.managed_generation}`,
+        ) &&
+        isCurrentSnapshot(),
     };
     return projectionExecutor(bindings, profile, currentness).execute(message);
   };
