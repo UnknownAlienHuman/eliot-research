@@ -11,12 +11,11 @@ never copy a stale config from another worktree.
 The existing `pnpm cf:deploy -- --confirm-live` remains the explicit full-release path through
 `scripts/deploy-cloudflare.mjs`. Resource provisioning is separate from both deploy paths.
 
-**Current hold (2026-10-15):** the live Worker reports generation `git-23e5e52f469f`; the supplied
-ignored donor config reports `git-13e0891d14b3` and is stale. Do not use that donor or run a deploy
-until the owner resolves the live `RETRIEVE_BRANCHES` / `WORKFLOW_EFFECT_UNCERTAIN` failure and
-validates the current generated config. The owner also reports frontend-owner CI green but four
-known fast-CI type errors in cancelled S52 fixtures remain pending removal; do not treat the existing
-CI gate as green until fast CI passes. Do not retry the uncertain Workflow effect.
+Use current live settings as the config source; an ignored file from another checkout may be stale.
+Set the intended release's deployment generation and preserve the existing runtime configuration and
+Workflow continuation contract. Failed or uncertain historical runs remain available for readback
+and reconciliation; deploying code does not authorize repeating their effects. Record current
+diagnostic failures in the delivery checkpoint, rather than adding a permanent release ceremony here.
 
 Cloudflare CLI documentation checked 2026-10-15: [Wrangler Workers commands](https://developers.cloudflare.com/workers/wrangler/commands/workers/)
 (updated 2026-10-09), [D1 Wrangler commands](https://developers.cloudflare.com/d1/wrangler-commands/),
@@ -30,7 +29,8 @@ hand to a deployment agent; no step requires reading the architecture master doc
 
 Run only after the existing CI is green, the asset directory named by the current production config
 has been built, `wrangler whoami` confirms the intended account, and the current generated config
-retains the active `DEPLOYMENT_GENERATION`, Research runtime vars, and `RESEARCH_WORKFLOW` binding.
+declares the intended `DEPLOYMENT_GENERATION`, compatible Research runtime vars, and the existing
+`RESEARCH_WORKFLOW` binding.
 The package command below executes only these two Wrangler operations from `apps/eliotr-core`:
 
 ```powershell
@@ -46,8 +46,9 @@ pnpm --filter @eliotr/core exec wrangler deploy --minify --config wrangler.deplo
 ```
 
 This routine path uses Wrangler's selected auth and the vars/bindings in the existing generated config.
-It does not pass `--keep-vars`, create resources, update config, or run D1 migrations. Resolve any
-Workflow outcome that is `UNKNOWN` before using it.
+It does not pass `--keep-vars`, create resources, update config, or run D1 migrations. Historical
+Workflow outcomes that are `UNKNOWN` must keep their original identity and must not be retried by
+the deployment command.
 
 ## Explicit D1 migration with a Time Travel bookmark
 
