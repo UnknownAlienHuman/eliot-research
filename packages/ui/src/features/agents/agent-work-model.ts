@@ -84,7 +84,7 @@ type ToolCopy = Record<ResearchToolId | "request", { readonly label: string; rea
 
 export const AGENT_WORK_COPY = {
   en: {
-    agents: "Agents", tools: "Tools", tasks: "Tasks", manageAgents: "Manage agents", noTasks: "Tasks you hand over appear here.", noAgents: "No agent connections are configured in this workspace yet.", agentsUnavailable: "Agent connections have not been read here yet.",
+    agents: "Agents", tools: "Tools", tasks: "Tasks", manageAgents: "Manage agents", noTasks: "Tasks you hand over appear here.", noAgents: "No agent is connected yet. Connect Codex, Claude Code or another agent to hand it questions.", agentsUnavailable: "Agent connections have not been read here yet.",
     connectionState: { "owner-enabled": "Enabled", disabled: "Disabled" } satisfies Record<AgentConnectionState, string>,
     presence: { ready: "Ready", busy: "Working", offline: "Offline", unknown: "Presence not checked", disabled: "Disabled" } satisfies Record<AgentPresence, string>,
     moreAgents: "More connections", firstAgents: "First connections",
@@ -127,7 +127,7 @@ export const AGENT_WORK_COPY = {
     },
   },
   ru: {
-    agents: "Агенты", tools: "Инструменты", tasks: "Поручения", manageAgents: "Управление агентами", noTasks: "Здесь появятся ваши поручения.", noAgents: "В рабочем пространстве пока не настроены подключения агентов.", agentsUnavailable: "Подключения агентов здесь ещё не прочитаны.",
+    agents: "Агенты", tools: "Инструменты", tasks: "Поручения", manageAgents: "Управление агентами", noTasks: "Здесь появятся ваши поручения.", noAgents: "Агенты пока не подключены. Подключите Codex, Claude Code или другого агента, чтобы поручать ему вопросы.", agentsUnavailable: "Подключения агентов здесь ещё не прочитаны.",
     connectionState: { "owner-enabled": "Включено владельцем", disabled: "Отключено" } satisfies Record<AgentConnectionState, string>,
     presence: { ready: "Готов", busy: "Работает", offline: "Не в сети", unknown: "Связь не проверена", disabled: "Отключено" } satisfies Record<AgentPresence, string>,
     moreAgents: "Ещё подключения", firstAgents: "Первые подключения",

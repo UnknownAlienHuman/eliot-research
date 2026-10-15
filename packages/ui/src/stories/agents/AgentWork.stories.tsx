@@ -60,8 +60,10 @@ export const ConfiguredPresenceUnknown: Story = {
     tools={["versions"]} tasks={[]} onTool={fn()} onMoreAgents={fn()} onManageAgents={fn()} /></div>,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(canvas.getByText("Enabled · Presence not checked")).toBeVisible();
-    await expect(canvas.getByText("Disabled · Presence not checked")).toBeVisible();
+    // Unchecked presence is not shown as a fact; the saved connection state is.
+    await expect(canvas.getByText("Enabled", { exact: true })).toBeVisible();
+    await expect(canvas.getByText("Disabled", { exact: true })).toBeVisible();
+    await expect(canvas.queryByText(/Presence not checked/u)).toBeNull();
     await expect(canvas.queryByText("Ready", { exact: true })).not.toBeInTheDocument();
     await expect(canvas.getByRole("button", { name: "More connections" })).toBeVisible();
     const dot = canvasElement.querySelector<HTMLElement>('[data-presence="unknown"] .er-agent-chip__dot');
@@ -82,7 +84,8 @@ export const UnreadTasks: Story = {
     tasksUnavailable onTool={fn()} onMoreTasks={fn()} /></div>,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(canvas.getByText("Tasks have not been read for this project.")).toBeVisible();
+    // Unread tasks claim nothing: no task section, no stale task.
+    await expect(canvas.queryByRole("heading", { name: "Tasks" })).toBeNull();
     await expect(canvas.queryByText("Private stale task")).not.toBeInTheDocument();
     await expect(canvas.queryByRole("button", { name: "More tasks" })).not.toBeInTheDocument();
   },

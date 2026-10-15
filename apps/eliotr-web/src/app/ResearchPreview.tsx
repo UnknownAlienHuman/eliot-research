@@ -22,18 +22,23 @@ const encode = (value: string) => new TextEncoder().encode(value);
 const digest = async (bytes: Uint8Array) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new Uint8Array(bytes).buffer))].map(value => value.toString(16).padStart(2, '0')).join('');
 
 export type ResearchHistoryState = Extract<ResearchRunStatusView['execution_state'], 'ENGINE_COMPLETED' | 'CANCELLED'>;
+export type ResearchScopeMode = 'project' | 'selected';
 export interface ResearchPreviewProbe {
   assertEffects(admissions: number, intents: number): void;
   assertNoIntent(): void;
   assertHistorySelected(): void;
   holdUnknownIntent(): () => void;
   assertAdmission(question: string): void;
+  assertScopeAdmission(question: string, mode: ResearchScopeMode): void;
+  makeProjectUnavailable(): void;
+  makeSelectedPageStale(): void;
 }
 
 /** Actual runtime/Query/components; only the default recovery mode loses a durable ack. */
-export function ResearchPreview({ designReview = false, historyState, onProbe }: {
+export function ResearchPreview({ designReview = false, historyState, scopeMode, onProbe }: {
   readonly designReview?: boolean;
   readonly historyState?: ResearchHistoryState;
+  readonly scopeMode?: ResearchScopeMode;
   readonly onProbe?: (probe: ResearchPreviewProbe) => void;
 } = {}) {
   const [environment] = useState(() => {
@@ -43,7 +48,12 @@ export function ResearchPreview({ designReview = false, historyState, onProbe }:
     let originalBody: string | undefined, originalKey: string | undefined;
     const sectionTexts = designReview ? materialSections : Array.from({ length: 40 }, (_, index) => `## Section ${index + 1}\n\nA saved draft keeps the question and its evidence together.\n`);
     const sectionTitles = sectionTexts.map(value => /^## ([^\r\n]+)/u.exec(value)?.[1] ?? '');
-    const sourceRows = (designReview ? [...materialSources] : [{ id: 'source-fixture', title: 'How source versions preserve evidence' }]).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+    const scopeSources = [
+      { id: 'source-fixture', title: 'How source versions preserve evidence' },
+      { id: 'source-other-fixture', title: 'A second project source' },
+    ];
+    const sourceRows = (scopeMode ? scopeSources : designReview ? [...materialSources] : [{ id: 'source-fixture', title: 'How source versions preserve evidence' }])
+      .sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
     const readingHash = digest(encode(materialReading));
     const readyManifest: Promise<ArtifactRevisionRead> = Promise.all(sectionTexts.map(text => digest(encode(text)))).then(hashes => ({
       artifact_ref: artifactRef, spec_ref: { id: 'spec-fixture', revision: 1 }, spec_digest: 'a'.repeat(64),
@@ -105,6 +115,11 @@ export function ResearchPreview({ designReview = false, historyState, onProbe }:
         const headers = new Headers(init.headers), body = String(init.body), key = headers.get('idempotency-key');
         if (!key || headers.get('x-eliotr-csrf') !== '1' || (!designReview && mints !== 1)) throw new Error('Run intent or CSRF changed');
         starts++;
+        if (scopeMode) {
+          if (starts !== 1) throw new Error('Scope story repeated research admission');
+          originalBody = body; originalKey = key;
+          return json(launch);
+        }
         if (designReview || historyState) {
           if (historyState) {
             if (starts !== 1 || mints !== 1) throw new Error('History return repeated admission or intent');
@@ -192,6 +207,37 @@ export function ResearchPreview({ designReview = false, historyState, onProbe }:
           !('scope_expression' in request) || JSON.stringify(request.scope_expression) !== JSON.stringify(expectedScope))
           throw new Error('Explicit Ask lost its held draft or selected project/source scope');
       },
+      assertScopeAdmission(question, mode) {
+        probe.assertEffects(1, 1);
+        const intent = memory()?.intent;
+        if (!intent || typeof intent !== 'object' || !('phase' in intent) || intent.phase !== 'admitted' ||
+          !('body' in intent) || intent.body !== originalBody || !('key' in intent) || intent.key !== originalKey)
+          throw new Error('Scope Ask did not preserve its acknowledged admission intent');
+        const request: unknown = JSON.parse(originalBody ?? 'null');
+        const expectedScope = mode === 'project'
+          ? { kind: 'PROJECT', project_id: 'project-fixture' }
+          : { kind: 'INTERSECT', left: { kind: 'PROJECT', project_id: 'project-fixture' },
+            right: { kind: 'SELECTED_SOURCES', source_ids: ['source-fixture'] } };
+        if (!request || typeof request !== 'object' || !('query' in request) || request.query !== question ||
+          !('scope_expression' in request) || JSON.stringify(request.scope_expression) !== JSON.stringify(expectedScope))
+          throw new Error('Scope Ask changed the current project or selected-source request body');
+      },
+      makeProjectUnavailable() {
+        const snapshot = privacy.getSnapshot();
+        if (snapshot.phase !== 'available') throw new Error('Research fixture context is unavailable');
+        const queryKey = [...protectedQueryKey(snapshot.context, 'sources'), 'projects', null];
+        const page = client.getQueryData<{ readonly projects: readonly unknown[] }>(queryKey);
+        if (!page) throw new Error('Current project page is missing');
+        client.setQueryData(queryKey, { ...page, projects: [] });
+      },
+      makeSelectedPageStale() {
+        const snapshot = privacy.getSnapshot();
+        if (snapshot.phase !== 'available') throw new Error('Research fixture context is unavailable');
+        const queryKey = [...protectedQueryKey(snapshot.context, 'sources'), 'library', 'project-fixture', null];
+        const page = client.getQueryData<Record<string, unknown>>(queryKey);
+        if (!page || typeof page.generation !== 'string') throw new Error('Selected source page is missing');
+        client.setQueryData(queryKey, { ...page, generation: 'stale-story-generation' });
+      },
     };
     return { client, runtime, privacy, probe };
   });
@@ -244,6 +290,51 @@ export const playResearchJourney = async ({ canvas, userEvent }: {
   // Terminal visual readiness: the excerpt reached the actual citation surface with no promotion to support.
   markVisualReady(document.querySelector<HTMLElement>('.er-shell'));
 };
+
+/** Browser stories for project-wide default scope and the stricter selected-source currentness guard. */
+export async function playResearchScopeJourney({ canvas, userEvent }: Parameters<typeof playResearchJourney>[0],
+  probe: ResearchPreviewProbe, mode: ResearchScopeMode, stale = false) {
+  const selectedSourceName = 'How source versions preserve evidence';
+  const excludedSourceName = 'A second project source';
+  const sourceNames = [selectedSourceName, excludedSourceName];
+  const question = mode === 'project'
+    ? 'What does the whole project say about evidence?'
+    : 'What does the selected source say about evidence?';
+  await userEvent.selectOptions(await canvas.findByRole('combobox', { name: 'Project', exact: true }), 'project-fixture');
+  await userEvent.click(await canvas.findByText('Sources for your next question'));
+  if (mode === 'project') {
+    for (const name of sourceNames) {
+      const checkbox = await canvas.findByRole('checkbox', { name, exact: true });
+      if (!(checkbox instanceof HTMLInputElement) || checkbox.checked) throw new Error('Project-wide story unexpectedly selected a source');
+    }
+  } else {
+    await userEvent.click(await canvas.findByRole('checkbox', { name: selectedSourceName, exact: true }));
+    const excluded = await canvas.findByRole('checkbox', { name: excludedSourceName, exact: true });
+    if (!(excluded instanceof HTMLInputElement) || excluded.checked) throw new Error('Selected-source story included an unchecked source');
+  }
+  await userEvent.click(canvas.getByRole('link', { name: 'Research', exact: true }));
+  if (mode === 'project') await canvas.findByText('All 2 sources');
+  await userEvent.type(await canvas.findByRole('textbox', { name: 'Research question', exact: true }), question);
+  if (stale) {
+    if (mode === 'project') {
+      probe.makeProjectUnavailable();
+      await canvas.findByText('Open a project to choose its sources.');
+    } else {
+      probe.makeSelectedPageStale();
+      await canvas.findByText('Review your selected sources again before asking a new question.');
+    }
+    const ask = canvas.getByRole('button', { name: 'Ask', exact: true });
+    if (!(ask instanceof HTMLButtonElement) || !ask.disabled) throw new Error('A stale research scope remained submittable');
+    await userEvent.click(ask);
+    probe.assertNoIntent(); probe.assertEffects(0, 0);
+    return;
+  }
+  const ask = canvas.getByRole('button', { name: 'Ask', exact: true });
+  if (!(ask instanceof HTMLButtonElement) || ask.disabled) throw new Error('A current research scope was not submittable');
+  await userEvent.click(ask);
+  await canvas.findByText('Research finished.');
+  probe.assertScopeAdmission(question, mode);
+}
 
 /** One preexisting terminal history row, no local intent; only explicit Ask admits new work. */
 export async function playResearchHistoryReturn({ canvas, userEvent }: Parameters<typeof playResearchJourney>[0],

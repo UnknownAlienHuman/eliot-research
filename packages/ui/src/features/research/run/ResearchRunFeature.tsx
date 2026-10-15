@@ -84,6 +84,11 @@ export interface ResearchRunFeatureProps {
    * title and source count). Presentation only; without it the cover keeps its generic prompt.
    */
   readonly cover?: { readonly title: string; readonly meta?: string };
+  /**
+   * When set, asking with no ticked source asks the whole project; this label names that scope
+   * ("All 3 sources") in the composer chip. Without it an empty selection stays "none selected".
+   */
+  readonly wholeScope?: string;
 }
 
 const ENGINE_LABEL: Record<'en' | 'ru', Record<ResearchRunStatusView['engine_status'], string>> = {
@@ -162,6 +167,7 @@ const COPY: Record<'en' | 'ru', {
   currentScopeCount: (count: number) => string;
   scopeHeading: string;
   scopeEmpty: string;
+  scopeWhole: string;
   scopeCount: (count: number) => string;
   nextStage: (index: number) => string;
   completedStages: (index: number) => string;
@@ -186,10 +192,10 @@ const COPY: Record<'en' | 'ru', {
   unknownReadbackForbidsNewIntent: string;
 }> = {
   en: {
-    lead: 'Ask a question with the sources you choose.',
+    lead: 'Ask anything about your sources.',
     questionLabel: 'Research question',
     nextQuestionLabel: 'Next question',
-    questionPlaceholder: 'Ask a question about the selected sources',
+    questionPlaceholder: 'Ask about your sources',
     questionHint: 'Your question keeps the sources selected when you ask it.',
     heldQuestionHint: 'Your draft is kept. Send it when you are done with this research.',
     currentQuestionLabel: 'Your question',
@@ -198,6 +204,7 @@ const COPY: Record<'en' | 'ru', {
     currentScopeCount: function (count: number) { return count === 1 ? '1 source' : count + ' sources'; },
     scopeHeading: 'Question sources',
     scopeEmpty: 'No source is selected yet. Choose sources first.',
+    scopeWhole: 'The question uses every source in the project. Tick sources on the left to narrow it.',
     scopeCount: function (count: number) { return count === 1 ? '1 source selected' : count + ' sources selected'; },
     nextStage: function (index: number) { return 'Stage ' + (index + 1); },
     completedStages: function (index: number) { return index + ' stages completed'; },
@@ -222,10 +229,10 @@ const COPY: Record<'en' | 'ru', {
     unknownReadbackForbidsNewIntent: 'Check this research before asking anything new.',
   },
   ru: {
-    lead: 'Задайте вопрос по выбранным источникам.',
+    lead: 'Спросите что угодно по вашим источникам.',
     questionLabel: 'Вопрос исследования',
     nextQuestionLabel: 'Следующий вопрос',
-    questionPlaceholder: 'Задайте вопрос по выбранным источникам',
+    questionPlaceholder: 'Спросите по вашим источникам',
     questionHint: 'Вопрос сохранит источники, выбранные на момент отправки.',
     heldQuestionHint: 'Черновик сохранится. Отправьте его, когда закончите с этим исследованием.',
     currentQuestionLabel: 'Ваш вопрос',
@@ -234,6 +241,7 @@ const COPY: Record<'en' | 'ru', {
     currentScopeCount: function (count: number) { const tail = count % 10, hundred = count % 100; return count + ' ' + (tail === 1 && hundred !== 11 ? 'источник' : tail >= 2 && tail <= 4 && (hundred < 12 || hundred > 14) ? 'источника' : 'источников'); },
     scopeHeading: 'Источники вопроса',
     scopeEmpty: 'Источники ещё не выбраны. Сначала выберите их.',
+    scopeWhole: 'Вопрос использует все источники проекта. Отметьте источники слева, чтобы сузить его.',
     scopeCount: function (count: number) { return 'Выбрано: ' + count; },
     nextStage: function (index: number) { return 'Этап ' + (index + 1); },
     completedStages: function (index: number) { return 'Завершено этапов: ' + index; },
@@ -297,6 +305,7 @@ export function ResearchRunFeature({
   conversation,
   answerActions,
   cover,
+  wholeScope,
 }: ResearchRunFeatureProps) {
   const [localDraft, setLocalDraft] = useState<string>('');
   const [recorded, setRecorded] = useState<string | null>(question ?? null);
@@ -328,9 +337,11 @@ export function ResearchRunFeature({
   const scopeDisclosure = (
     <details className="er-research-run__scope">
       <summary><h3 className="er-research-run__scope-heading">{controlledDraft && question !== undefined ? copy.currentScopeHeading : copy.scopeHeading}</h3>
-        <span className="er-research-run__scope-count">{controlledDraft && question !== undefined ? copy.currentScopeCount(selected.length) : copy.scopeCount(selected.length)}</span></summary>
+        <span className="er-research-run__scope-count">{controlledDraft && question !== undefined ? copy.currentScopeCount(selected.length)
+          : selected.length === 0 && wholeScope !== undefined ? wholeScope : copy.scopeCount(selected.length)}</span></summary>
       {selected.length === 0 ? (
-        <p className="er-research-run__scope-empty">{controlledDraft && question !== undefined ? copy.currentScopeEmpty : copy.scopeEmpty}</p>
+        <p className="er-research-run__scope-empty">{controlledDraft && question !== undefined ? copy.currentScopeEmpty
+          : wholeScope !== undefined ? copy.scopeWhole : copy.scopeEmpty}</p>
       ) : (
         <ul className="er-research-run__scope-list">
           {selected.map(function (item) {

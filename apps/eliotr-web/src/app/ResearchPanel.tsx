@@ -28,11 +28,13 @@ const copy = {
 } as const;
 
 /** One explicit intent owns admission. Polling, navigation and history never allocate a run. */
-export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurrent, isScopeCurrent, projectId, isProjectCurrent, cover }: {
+export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurrent, isScopeCurrent, projectId, isProjectCurrent, cover, wholeScope }: {
   readonly apis: BoundWorkspaceApis; readonly privacy: PrivacyController; readonly context: SessionContext;
   readonly locale: 'en' | 'ru'; readonly scope: readonly NextQuestionSource[]; readonly scopeCurrent: boolean;
   readonly isScopeCurrent: () => boolean;
   readonly projectId: string | undefined; readonly isProjectCurrent: () => boolean;
+  /** Names the whole-project scope used when no source is ticked ("All 3 sources"). */
+  readonly wholeScope?: string | undefined;
   /** Presentation only: the open project's title and source count for the start cover. */
   readonly cover?: { readonly title: string; readonly meta?: string } | undefined;
 }) {
@@ -109,7 +111,10 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     write(old => old.intent?.key === intent.key ? { ...old, intent: { ...intent, phase: 'admitted', launch: result } } : old);
   };
   const ask = (question: string) => {
-    if (read().intent || read().observedLaunch || running.current || projectId === undefined || !isProjectCurrent() || !scopeCurrent || !isScopeCurrent() || !privacy.isCurrent(context) ||
+    // No ticked source asks the whole open project (a PROJECT scope); a selection must still be current.
+    const wholeProject = scope.length === 0;
+    if (read().intent || read().observedLaunch || running.current || projectId === undefined || !isProjectCurrent() ||
+      (!wholeProject && (!scopeCurrent || !isScopeCurrent())) || !privacy.isCurrent(context) ||
       configuration.isError || configuration.isFetching || !configuration.data ||
       client.getQueryData(options.configuration().queryKey) !== configuration.data || configuration.data.run_readiness === 'blocked') return;
     try {
@@ -184,7 +189,8 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
       draftQuestion={nextQuestionDraft} onDraftQuestionChange={value => {
         if (mounted.current && privacy.isCurrent(context)) setHeldDraft({ context, text: value });
       }}
-      canSubmit={!saved?.intent && !saved?.observedLaunch && scopeCurrent && !configuration.isError && !configuration.isFetching && configuration.data !== undefined && configuration.data.run_readiness !== 'blocked'}
+      {...(projectId !== undefined && wholeScope !== undefined ? { wholeScope } : {})}
+      canSubmit={!saved?.intent && !saved?.observedLaunch && projectId !== undefined && (scope.length === 0 || scopeCurrent) && !configuration.isError && !configuration.isFetching && configuration.data !== undefined && configuration.data.run_readiness !== 'blocked'}
       {...(saved?.intent ? { question: saved.intent.question } : {})}
       {...(progress ? { progress, ...(progress.failure ? { firstCause: progress.failure } : {}) } : {})}
       onAsk={ask} {...(launch ? { onReadStatus: () => { void status.refetch(); } } : {})}
