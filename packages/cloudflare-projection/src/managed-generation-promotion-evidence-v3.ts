@@ -1,6 +1,6 @@
 import { projectionDigest } from "./canonical.js";
 import { createManagedRequiredSetTargetFenceV2 } from "./managed-required-set.js";
-import type { ManagedTargetSelectionV2 } from "./managed-target-assignment.js";
+import { hasValidManagedTargetRegistryCaptureV2, type ManagedTargetSelectionV2 } from "./managed-target-assignment.js";
 import type { ManagedTargetManifestCanonicalSourceSummary, ManagedTargetManifestProviderCopySummary } from "./managed-target-manifest-contract.js";
 import {
   MANAGED_GENERATION_PROMOTION_EVIDENCE_PROTOCOL_V3,
@@ -14,7 +14,7 @@ import {
 import { validateManagedGenerationPromotionEvidenceParts } from "./managed-generation-promotion-evidence-manifest.js";
 import {
   EVIDENCE_KEYS, EVIDENCE_MANIFEST_KEYS, MANIFEST_KEYS,
-  count, digest, exactObject, fail, reference, sameTarget, targetValue, timestamp,
+  count, digest, exactObject, fail, reference, safeNullableRevision, sameTarget, targetValue, timestamp,
 } from "./managed-generation-promotion-evidence-validation.js";
 
 const SELECTION_KEYS = new Set(["protocol", "domain", "decision_version", "selection_mode", "product_alias", "purpose",
@@ -37,14 +37,16 @@ function selectionValue(raw: unknown, target: ManagedGenerationPromotionTarget):
   }
   const selected = targetValue(value.target, "selection.target");
   if (!sameTarget(selected, target)) fail("MANAGED_GENERATION_EVIDENCE_STALE", "captured selection belongs to another target");
-  return Object.freeze({
+  const selection: ManagedTargetSelectionV2 = Object.freeze({
     protocol: "eliotr.managed-target-selection.v2", domain: "MANAGED_SEARCH_PRODUCT", decision_version: 2,
     selection_mode: "STABLE_PHYSICAL_PROFILE_V2", product_alias: "primary", purpose: "SHADOW",
-    registry_revision: count(value.registry_revision, "selection.registry_revision", 1),
-    registry_artifact_sha256: digest(value.registry_artifact_sha256, "selection.registry_artifact_sha256"),
+    registry_revision: safeNullableRevision(value.registry_revision, "selection.registry_revision"),
+    registry_artifact_sha256: value.registry_artifact_sha256 === null ? null : digest(value.registry_artifact_sha256, "selection.registry_artifact_sha256"),
     v1_exact_profile_identity_sha256: digest(value.v1_exact_profile_identity_sha256, "selection.v1_exact_profile_identity_sha256"),
     target: selected,
   });
+  if (!hasValidManagedTargetRegistryCaptureV2(selection)) fail("MANAGED_GENERATION_EVIDENCE_INVALID", "captured registry absence must be an exact SHADOW null pair");
+  return selection;
 }
 
 async function headValue(value: Record<string, unknown>, expected: ManagedGenerationPromotionTarget, asOf: string) {
@@ -117,9 +119,9 @@ export async function validateManagedGenerationDesiredManifestV3(
   const copyCount = count(value.project_revision_copy_count, "manifest.project_revision_copy_count");
   const assignedCount = count(value.assigned_project_count, "manifest.assigned_project_count", 1);
   const desiredCount = count(value.desired_item_count, "manifest.desired_item_count");
-  const before = count(value.registry_revision_before, "manifest.registry_revision_before", 1);
-  const after = count(value.registry_revision_after, "manifest.registry_revision_after", 1);
-  if (before !== selection.registry_revision || after < before || fence.assigned_project_count !== assignedCount ||
+  const before = safeNullableRevision(value.registry_revision_before, "manifest.registry_revision_before");
+  const after = safeNullableRevision(value.registry_revision_after, "manifest.registry_revision_after");
+  if (before !== selection.registry_revision || (before !== null && (after === null || after < before)) || fence.assigned_project_count !== assignedCount ||
       fence.project_revision_copy_count !== copyCount || fence.required_set_sha256 !== digest(value.required_set_digest, "manifest.required_set_digest")) {
     fail("MANAGED_GENERATION_EVIDENCE_STALE", "V3 manifest differs from its captured selection or fresh target fence");
   }

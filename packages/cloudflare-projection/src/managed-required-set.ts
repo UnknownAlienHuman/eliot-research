@@ -3,6 +3,7 @@ import {
   projectionSha256Utf8,
   stableProjectionId,
 } from "./canonical.js";
+import { hasValidManagedTargetRegistryCaptureV2 } from "./managed-target-assignment.js";
 import type {
   ManagedTargetIdentity,
   ManagedTargetSelectionReceipt,
@@ -307,8 +308,7 @@ function validateSelection(
       selection.selection_mode !== "STABLE_PHYSICAL_PROFILE_V2" ||
       selection.product_alias !== "primary" ||
       (selection.purpose !== "ACTIVE" && selection.purpose !== "SHADOW") ||
-      !Number.isSafeInteger(selection.registry_revision) || selection.registry_revision < 1 ||
-      !SHA256.test(selection.registry_artifact_sha256) ||
+      !hasValidManagedTargetRegistryCaptureV2(selection) ||
       !SHA256.test(selection.v1_exact_profile_identity_sha256)) {
     fail("MANAGED_REQUIRED_SET_INPUT_INVALID", "V2 physical-profile selection receipt is invalid");
   }

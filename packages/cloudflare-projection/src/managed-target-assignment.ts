@@ -20,7 +20,7 @@ export interface ManagedTargetSelectionV1 {
   readonly target: ManagedTargetIdentity;
 }
 
-/** V2 product selection is stable by physical profile but resolves one exact registry target. */
+/** V2 physical selection captures a registry receipt or explicit absence for a planned SHADOW. */
 export interface ManagedTargetSelectionV2 {
   readonly protocol: "eliotr.managed-target-selection.v2";
   readonly domain: "MANAGED_SEARCH_PRODUCT";
@@ -28,8 +28,8 @@ export interface ManagedTargetSelectionV2 {
   readonly selection_mode: "STABLE_PHYSICAL_PROFILE_V2";
   readonly product_alias: "primary";
   readonly purpose: "ACTIVE" | "SHADOW";
-  readonly registry_revision: number;
-  readonly registry_artifact_sha256: string;
+  readonly registry_revision: number | null;
+  readonly registry_artifact_sha256: string | null;
   /** Exact full-profile legacy V1 digest accepted only at this exact generation. */
   readonly v1_exact_profile_identity_sha256: string;
   readonly target: ManagedTargetIdentity;
@@ -38,6 +38,16 @@ export interface ManagedTargetSelectionV2 {
 export type ManagedTargetSelectionReceipt =
   | ManagedTargetSelectionV1
   | ManagedTargetSelectionV2;
+
+/** Null is honest bootstrap absence, never ACTIVE or a failed registry read. */
+export function hasValidManagedTargetRegistryCaptureV2(selection: Pick<ManagedTargetSelectionV2,
+  "purpose" | "registry_revision" | "registry_artifact_sha256">): boolean {
+  if (selection.registry_revision === null || selection.registry_artifact_sha256 === null) {
+    return selection.purpose === "SHADOW" && selection.registry_revision === null && selection.registry_artifact_sha256 === null;
+  }
+  return Number.isSafeInteger(selection.registry_revision) && selection.registry_revision >= 1 &&
+    /^[a-f0-9]{64}$/u.test(selection.registry_artifact_sha256);
+}
 
 export interface ManagedTargetAssignmentActor {
   readonly kind: "OWNER" | "OPERATOR";

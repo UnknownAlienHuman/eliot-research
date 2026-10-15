@@ -44,6 +44,7 @@ export {
   MANAGED_TARGET_ASSIGNMENT_PROTOCOL,
   ManagedTargetAssignmentError,
   parseManagedTargetAssignmentCommand,
+  hasValidManagedTargetRegistryCaptureV2,
 } from "./managed-target-assignment.js";
 export type {
   AssignManagedTargetCommand,

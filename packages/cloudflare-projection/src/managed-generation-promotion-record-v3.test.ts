@@ -19,6 +19,7 @@ import { validateManagedGenerationDesiredManifestV3, validateManagedGenerationPr
 import { validateManagedGenerationPromotionEvidence } from "./managed-generation-promotion-evidence-manifest.js";
 import { canonicalProjectionJson, projectionDigest } from "./canonical.js";
 import { createManagedRequiredSetTargetFenceV2 } from "./managed-required-set.js";
+import { hasValidManagedTargetRegistryCaptureV2 } from "./managed-target-assignment.js";
 import { createAiSearchGenerationRegistryService } from "./ai-search-generation-registry.js";
 import { desiredManifest, evidence, profileFor, targetForProfile, currentAuthority, MemoryRegistryStore, promotionAuthority } from "./managed-generation-promotion-evidence.test-support.js";
 
@@ -215,4 +216,24 @@ test("the registry service retains V3 through held qualification, promotion and 
   expect(record?.promotion_evidence_v3).toEqual(f.proof);
   expect(record?.promotion_evidence_v2).toBeUndefined();
   expect(state.hold_active).toBe(false);
+});
+
+test("initial SHADOW captures registry absence honestly while ACTIVE and mixed captures remain invalid", async () => {
+  const f = await fixture();
+  const selection = { ...f.desired.target_selection, registry_revision: null, registry_artifact_sha256: null };
+  expect(hasValidManagedTargetRegistryCaptureV2(selection)).toBe(true);
+  expect(hasValidManagedTargetRegistryCaptureV2({ ...selection, purpose: "ACTIVE" })).toBe(false);
+  expect(hasValidManagedTargetRegistryCaptureV2({ ...selection, registry_revision: 1 })).toBe(false);
+  const fence = await createManagedRequiredSetTargetFenceV2({ ...f.desired.target_fence,
+    target: f.target, target_selection: selection, as_of: f.desired.as_of });
+  const initial = { ...f.desired, target_selection: selection, target_fence: fence,
+    registry_revision_before: null, registry_revision_after: null };
+  const parsed = await validateManagedGenerationDesiredManifestV3(initial, f.target);
+  expect(parsed.registry_revision_before).toBeNull();
+  expect(parsed.target_selection.registry_artifact_sha256).toBeNull();
+  await expect(validateManagedGenerationDesiredManifestV3({ ...initial, registry_revision_after: 1 }, f.target))
+    .resolves.toMatchObject({ registry_revision_before: null, registry_revision_after: 1 });
+  await expect(validateManagedGenerationDesiredManifestV3({ ...initial,
+    target_selection: { ...selection, registry_artifact_sha256: "a".repeat(64) } }, f.target))
+    .rejects.toMatchObject({ code: "MANAGED_GENERATION_EVIDENCE_INVALID" });
 });
