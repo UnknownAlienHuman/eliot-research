@@ -1,4 +1,5 @@
 import {
+  canonicalArtifactRevisionFromReadback,
   AllowedReferenceManifestSchema,
   VersionedRefSchema,
   type EvidenceLabel,
@@ -334,7 +335,7 @@ export async function proposeWikiFromResearchRun(
         if (!("artifact_ref" in reopened.artifact) || "body" in reopened.artifact) {
           fail("WIKI_RESEARCH_OUTPUT_CORRUPT", "research artifact readback is incomplete", 409);
         }
-        const artifact = reopened.artifact;
+        const artifact = canonicalArtifactRevisionFromReadback(reopened.artifact);
         if (artifact.status !== "DRAFT" || !sameRef(artifact.artifact_ref, artifact_ref) ||
             !sameRef(reopened.original_scope_snapshot_ref, original_scope_snapshot_ref)) {
           fail("WIKI_RESEARCH_OUTPUT_CORRUPT", "research artifact identity is inconsistent", 409);

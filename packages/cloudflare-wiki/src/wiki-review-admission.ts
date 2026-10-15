@@ -1,5 +1,6 @@
 import {
   ArtifactRevisionSchema,
+  canonicalArtifactRevisionFromReadback,
   CoverageReceiptSchema,
   VersionedRefSchema,
   type ArtifactRevision,
@@ -231,7 +232,7 @@ async function readOwnerResearchProof(
       if (!("artifact_ref" in reopened.artifact) || "body" in reopened.artifact) {
         fail("WIKI_PROPOSAL_READBACK_MISMATCH", "research artifact readback is incomplete");
       }
-      const artifact = reopened.artifact;
+      const artifact = canonicalArtifactRevisionFromReadback(reopened.artifact);
       if (artifact.status !== "DRAFT" || !sameRef(artifact.artifact_ref, artifact_ref) ||
           !sameRef(reopened.original_scope_snapshot_ref, original_scope_snapshot_ref)) {
         fail("WIKI_PROPOSAL_READBACK_MISMATCH", "research artifact identity is inconsistent");

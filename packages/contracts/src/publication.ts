@@ -79,6 +79,17 @@ export const ArtifactRevisionReadSchema = ArtifactRevisionSchema.extend({
 }).strict();
 export type ArtifactRevisionRead = z.infer<typeof ArtifactRevisionReadSchema>;
 
+/** Display titles never change the canonical artifact embedded in durable Wiki evidence. */
+export function canonicalArtifactRevisionFromReadback(value: unknown): ArtifactRevision {
+  const read = ArtifactRevisionReadSchema.safeParse(value);
+  if (!read.success) return ArtifactRevisionSchema.parse(value);
+  const { title: _title, sections, ...revision } = read.data;
+  return ArtifactRevisionSchema.parse({
+    ...revision,
+    sections: sections.map(({ title: _sectionTitle, ...section }) => section),
+  });
+}
+
 export const WikiPageTypeSchema = z.enum([
   "Project", "Topic", "Source", "Method", "Hypothesis", "Comparison", "Audit", "Contradiction",
   "Timeline", "Report", "FailedPath", "OpenQuestion", "Glossary",
