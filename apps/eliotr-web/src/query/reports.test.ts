@@ -69,8 +69,7 @@ describe('protected report reads', () => {
       const fresh: ReauthorizedSectionCitationsView = { protocol: 'eliotr.artifact-draft-citations-reauthorization.v1',
         artifact_ref: artifact.artifact_ref, section_ref: section.section_ref, verification_receipt_ref: section.verification_receipt_ref,
         original_scope_snapshot_ref: savedScope, authorization_scope_snapshot_ref: { id: 'scope-grant-2', revision: 2 },
-        authorization: { authorization_receipt_ref: 'grant-2', principal_ref: 'owner',
-          credential_generation: 'credential', scope_snapshot_ref: { id: 'scope-grant-2', revision: 2 } },
+        authorization: { ...grant, authorization_receipt_ref: 'grant-2' },
         deployment_generation: 'deployment', semantic_verification: 'NOT_EXECUTED', cited_evidence: [] };
       const read = vi.fn(async () => fresh);
       vi.spyOn(test.bound.evidence.reauthorization, 'readReauthorizedSectionCitations').mockImplementation(read);

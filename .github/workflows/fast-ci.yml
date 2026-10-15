@@ -43,6 +43,9 @@ jobs:
           packages/retrieval/src/query-persistence.test.ts
           apps/eliotr-web/src/query/research.test.ts
           packages/owner-api-client/src/research/runs/authority.test.ts
+          packages/owner-api-client/src/evidence/citations/audit.test.ts
+          packages/owner-api-client/src/evidence/citations/reauthorization.test.ts
+          apps/eliotr-web/src/query/reports.test.ts
           --reporter=verbose
       - name: Build served assets and owner web
         run: |

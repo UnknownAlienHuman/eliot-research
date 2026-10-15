@@ -5,7 +5,7 @@
  * and rejection is preserved exactly from the legacy workspace decoders.
  */
 
-import { Sha256Schema, type VersionedRef } from '@eliotr/contracts';
+import { IsoDateTimeSchema, Sha256Schema, type VersionedRef } from '@eliotr/contracts';
 import type { ResearchRunWire } from '../../research/runs/wire.js';
 import type { LegacyErrorFactory } from '../../legacy/http.js';
 
@@ -38,10 +38,11 @@ export interface CitationAuditView {
 }
 
 export interface CitationScopeAuthorizationView {
-  readonly principal_ref: string;
-  readonly credential_generation: string;
   readonly authorization_receipt_ref: string;
-  readonly scope_snapshot_ref: { readonly id: string; readonly revision: number };
+  readonly policy_authority_ref: string;
+  readonly allowed_use: readonly string[];
+  readonly disclosure_ceiling: string;
+  readonly expires_at: string;
 }
 
 export interface CitationAuditHelpers {
@@ -181,19 +182,27 @@ export function createCitationAuditHelpers(
 
   const scopeAuthorization = (value: unknown): CitationScopeAuthorizationView => {
     const view = wire.record(value, [
-      'principal_ref',
-      'credential_generation',
       'authorization_receipt_ref',
-      'scope_snapshot_ref',
+      'policy_authority_ref',
+      'allowed_use',
+      'disclosure_ceiling',
+      'expires_at',
     ]);
+    if (!Array.isArray(view.allowed_use) || view.allowed_use.length > 32) {
+      invalid('authorization.allowed_use is invalid');
+    }
+    const expiresAt = wire.boundedString(view.expires_at, 'authorization.expires_at', 64);
+    if (!IsoDateTimeSchema.safeParse(expiresAt).success) invalid('authorization.expires_at is invalid');
     return {
-      principal_ref: wire.identifier(view.principal_ref, 'authorization.principal_ref'),
-      credential_generation: wire.identifier(view.credential_generation, 'authorization.credential_generation'),
       authorization_receipt_ref: wire.identifier(
         view.authorization_receipt_ref,
         'authorization.authorization_receipt_ref',
       ),
-      scope_snapshot_ref: wire.versionedRef(view.scope_snapshot_ref, 'authorization.scope_snapshot_ref'),
+      policy_authority_ref: wire.boundedString(view.policy_authority_ref, 'authorization.policy_authority_ref'),
+      allowed_use: (view.allowed_use as unknown[]).map((use, index) =>
+        wire.boundedString(use, `authorization.allowed_use[${index}]`, 128)),
+      disclosure_ceiling: wire.boundedString(view.disclosure_ceiling, 'authorization.disclosure_ceiling', 128),
+      expires_at: expiresAt,
     };
   };
 

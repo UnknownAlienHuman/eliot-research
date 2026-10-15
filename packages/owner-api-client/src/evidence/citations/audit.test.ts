@@ -88,13 +88,18 @@ describe('C3-EC citation audit helpers', () => {
     expect(Sha256Schema.safeParse(helpers.sha256Digest(SHA_A, 'digest')).success).toBe(true);
   });
 
-  it('decodes an authorization view without collapsing its scope', () => {
-    const view = helpers.scopeAuthorization({
-      principal_ref: 'principal-1',
-      credential_generation: 'credential-1',
+  it('decodes the ScopeAuthorization fields returned by the artifact citation service', () => {
+    const authorization = {
       authorization_receipt_ref: 'auth-1',
-      scope_snapshot_ref: { id: 'scope-1', revision: 2 },
-    });
-    expect(view.scope_snapshot_ref).toEqual({ id: 'scope-1', revision: 2 });
+      policy_authority_ref: 'policy-1',
+      allowed_use: ['research'],
+      disclosure_ceiling: 'PRIVATE',
+      expires_at: '2027-01-01T00:00:00.000Z',
+    };
+    expect(helpers.scopeAuthorization(authorization)).toEqual(authorization);
+    for (const change of [{ expires_at: 'invalid' }, { allowed_use: Array(33).fill('research') }]) {
+      expect(thrown(() => helpers.scopeAuthorization({ ...authorization, ...change })).code).toBe('EVIDENCE_RESPONSE_INVALID');
+    }
+    expect(thrown(() => helpers.scopeAuthorization({ ...authorization, principal_ref: 'owner' })).code).toBe('RESEARCH_RUN_RESPONSE_INVALID');
   });
 });
