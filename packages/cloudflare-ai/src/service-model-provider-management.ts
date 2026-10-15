@@ -26,6 +26,7 @@ const ACCOUNT_ID = /^[a-f0-9]{32}$/u;
 const GATEWAY_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
 const PROVIDER_ID = /^[a-z0-9][a-z0-9-]{0,62}$/u;
 const ALIAS = /^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/u;
+const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const SECRET = /^[\x21-\x7e]{16,4096}$/u;
 const KNOWN_NATIVE_PROVIDERS = new Set(["openrouter", "openai", "anthropic"]);
 const DEFAULT_EXECUTION_MS = 30_000;
@@ -62,6 +63,22 @@ export interface CloudflareServiceModelProviderManagementPort {
     readonly provider_slug: string;
     readonly alias: string;
   }>;
+  read(
+    input: {
+      readonly provider_id: string;
+      readonly provider_slug: string;
+      readonly alias: string;
+      readonly provider_config_id: string | null;
+    },
+    context?: {
+      readonly signal?: AbortSignal;
+      readonly deadline_ms?: number;
+    },
+  ): Promise<{
+    readonly provider_config_id: string;
+    readonly provider_slug: string;
+    readonly alias: string;
+  } | null>;
 }
 
 interface LinkedExecution {
@@ -76,6 +93,8 @@ interface RequestEnvelope {
 
 type ManagementInput = Parameters<CloudflareServiceModelProviderManagementPort["create"]>[0];
 type ManagementContext = Parameters<CloudflareServiceModelProviderManagementPort["create"]>[1];
+type ManagementReadInput = Parameters<CloudflareServiceModelProviderManagementPort["read"]>[0];
+type ManagementReadContext = Parameters<CloudflareServiceModelProviderManagementPort["read"]>[1];
 
 function requireAccount(raw: unknown): string {
   if (typeof raw !== "string" || !ACCOUNT_ID.test(raw)) {
@@ -409,6 +428,67 @@ async function createOneProviderConfig(
   }
 }
 
+async function readOneProviderConfig(
+  dependencies: CloudflareServiceModelProviderManagementDependencies,
+  input: ManagementReadInput,
+  context: ManagementReadContext,
+): Promise<{
+  readonly provider_config_id: string;
+  readonly provider_slug: string;
+  readonly alias: string;
+} | null> {
+  const providerId = requireProvider(input.provider_id);
+  const providerSlug = requireProvider(input.provider_slug);
+  const alias = requireAlias(input.alias);
+  if (providerSlug !== providerId && providerSlug !== `custom-${providerId}`) {
+    providerConfigRestFailure(
+      "PROVIDER_CONFIG_INPUT_INVALID",
+      "Readback provider slug does not match the logical provider",
+    );
+  }
+  const expectedId = input.provider_config_id === null ? null : input.provider_config_id;
+  if (expectedId !== null && !SAFE_ID.test(expectedId)) {
+    providerConfigRestFailure("PROVIDER_CONFIG_INPUT_INVALID", "Provider-config ID is invalid");
+  }
+  const execution = linkedExecution(context);
+  try {
+    let token: string;
+    try {
+      token = requireApiToken(await waitForSignal(dependencies.credentials.readApiToken(), execution.signal));
+    } catch (error) {
+      if (error instanceof ProviderConfigRestError) throw error;
+      providerConfigRestFailure(
+        "PROVIDER_CONFIG_CREDENTIAL_INVALID",
+        "Cloudflare provider-config credential is unavailable or invalid",
+        { effect: "NONE", cause: error },
+      );
+    }
+    const accountId = requireAccount(dependencies.account_id);
+    const gatewayId = requireGateway(dependencies.gateway_id);
+    const baseUrl = `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai-gateway/gateways/${encodeURIComponent(gatewayId)}/provider_configs`;
+    const observed = (await listConfigs(
+      dependencies, token, baseUrl, gatewayId, "READBACK", execution.signal,
+    )).filter((config) => config.alias === alias && config.provider_slug === providerSlug);
+    if (observed.length > 1) {
+      providerConfigRestFailure(
+        "PROVIDER_CONFIG_RESPONSE_INVALID",
+        "Provider-config readback contains duplicate logical identities",
+        { effect: "CREATE" },
+      );
+    }
+    const match = observed[0];
+    if (match === undefined || match.default_config || match.gateway_id !== gatewayId ||
+        (expectedId !== null && match.id !== expectedId)) return null;
+    return Object.freeze({
+      provider_config_id: match.id,
+      provider_slug: match.provider_slug,
+      alias: match.alias,
+    });
+  } finally {
+    execution.dispose();
+  }
+}
+
 export function createCloudflareServiceModelProviderManagementPort(
   dependencies: CloudflareServiceModelProviderManagementDependencies,
 ): CloudflareServiceModelProviderManagementPort {
@@ -433,7 +513,14 @@ export function createCloudflareServiceModelProviderManagementPort(
         );
       }
       const useCustomProvider = customProviderNeeded(providerId, input.base_url);
-      const providerSlug = useCustomProvider ? `custom-${providerId}` : providerId;
+      const providerSlug = useCustomProvider ? "custom-" + providerId : providerId;
+      if (providerSlug.length > 63) {
+        providerConfigRestFailure(
+          "PROVIDER_CONFIG_INPUT_INVALID",
+          "Cloudflare custom provider slug exceeds its 63-character bound",
+          { effect: "NONE" },
+        );
+      }
       if (useCustomProvider) {
         const customBaseUrl = requireCustomBaseUrl(providerId, input.base_url);
         await ensureCloudflareCustomProvider({
@@ -458,9 +545,12 @@ export function createCloudflareServiceModelProviderManagementPort(
       );
       return Object.freeze({
         provider_config_id: providerConfigId,
-        provider_slug: providerId,
+        provider_slug: providerSlug,
         alias,
       });
+    },
+    async read(input: ManagementReadInput, context: ManagementReadContext) {
+      return readOneProviderConfig(dependencies, input, context);
     },
   });
 }

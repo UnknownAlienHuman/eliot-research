@@ -16,6 +16,7 @@ const PROVIDER_ID = /^[a-z0-9][a-z0-9-]{0,62}$/u;
 const SAFE_ALIAS = /^[A-Za-z0-9][A-Za-z0-9._-]{0,62}$/u;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
+const KNOWN_NATIVE_PROVIDER_IDS = new Set(["openrouter", "openai", "anthropic"]);
 const MAX_HISTORY = 50;
 const MANAGEMENT_DEADLINE_MS = 30_000;
 
@@ -75,6 +76,27 @@ export interface ServiceModelProviderManagementPort {
     readonly provider_slug: string;
     readonly alias: string;
   }>;
+  /** Read-only control-plane reconciliation; it never accepts a provider key. */
+  read(
+    input: ServiceModelProviderManagementReadInput,
+    context?: {
+      readonly signal?: AbortSignal;
+      readonly deadline_ms?: number;
+    },
+  ): Promise<ServiceModelProviderManagementReadback | null>;
+}
+
+export interface ServiceModelProviderManagementReadInput {
+  readonly provider_id: string;
+  readonly provider_slug: string;
+  readonly alias: string;
+  readonly provider_config_id: string | null;
+}
+
+export interface ServiceModelProviderManagementReadback {
+  readonly provider_config_id: string;
+  readonly provider_slug: string;
+  readonly alias: string;
 }
 
 export interface ServiceModelProviderService {
@@ -182,6 +204,12 @@ function baseUrl(value: string | undefined): string | null {
   return value === undefined || value === "" ? null : value;
 }
 
+function expectedProviderSlug(providerId: string, baseUrlValue: string | null): string {
+  return KNOWN_NATIVE_PROVIDER_IDS.has(providerId) && baseUrlValue === null
+    ? providerId
+    : `custom-${providerId}`;
+}
+
 function parsedModelIds(value: unknown): string[] {
   if (typeof value !== "string") {
     fail("SERVICE_MODEL_PROVIDER_STORAGE_UNAVAILABLE", 503,
@@ -230,6 +258,9 @@ function mapConnection(row: ServiceModelProviderOperationRow): ServiceModelProvi
   const displayName = rowString(row.display_name, /^.{1,128}$/u, "Stored service model provider display name is invalid");
   const storedAlias = row.alias === null ? null : rowString(row.alias, SAFE_ALIAS, "Stored service model provider alias is invalid");
   const storedBaseUrl = row.base_url === null ? null : rowString(row.base_url, /^https:\/\//u, "Stored service model provider URL is invalid");
+  const storedProviderSlug = row.provider_slug === null
+    ? null
+    : rowString(row.provider_slug, PROVIDER_ID, "Stored Cloudflare provider slug is invalid");
   const requestSha = rowString(row.request_sha256, SHA256, "Stored service model provider request digest is invalid");
   const modelIds = parsedModelIds(row.model_ids_json);
   const createdAt = exactTimestamp(row.created_at);
@@ -247,7 +278,8 @@ function mapConnection(row: ServiceModelProviderOperationRow): ServiceModelProvi
   if (state === "CONFIGURED") {
     providerConfigId = rowString(row.provider_config_id, SAFE_ID,
       "Stored service model provider configuration ID is invalid");
-    if (row.provider_slug !== providerId || storedAlias === null || row.metadata_sha256 === null ||
+    if (storedProviderSlug !== expectedProviderSlug(providerId, storedBaseUrl) ||
+        storedAlias === null || row.metadata_sha256 === null ||
         !SHA256.test(String(row.metadata_sha256)) || storedFailureCode !== null || providerHttpStatus !== null) {
       fail("SERVICE_MODEL_PROVIDER_STORAGE_UNAVAILABLE", 503,
         "Stored service model provider receipt is invalid", true);
@@ -255,14 +287,14 @@ function mapConnection(row: ServiceModelProviderOperationRow): ServiceModelProvi
     status = "configured";
     connectionAlias = storedAlias;
   } else if (state === "PENDING" || state === "SUBMITTING" || state === "UNCERTAIN") {
-    if (providerConfigId !== null || row.provider_slug !== null ||
+    if (providerConfigId !== null || storedProviderSlug !== null ||
         row.metadata_sha256 !== null || storedFailureCode !== null || providerHttpStatus !== null) {
       fail("SERVICE_MODEL_PROVIDER_STORAGE_UNAVAILABLE", 503,
         "Stored uncertain service model provider receipt is invalid", true);
     }
     status = "uncertain";
   } else if (state === "FAILED_NO_EFFECT") {
-    if (providerConfigId !== null || row.provider_slug !== null ||
+    if (providerConfigId !== null || storedProviderSlug !== null ||
         row.metadata_sha256 !== null || storedFailureCode === null) {
       fail("SERVICE_MODEL_PROVIDER_STORAGE_UNAVAILABLE", 503,
         "Stored failed service model provider receipt is invalid", true);
@@ -300,6 +332,8 @@ function requestReceipt(row: ServiceModelProviderOperationRow): ServiceModelProv
     fail("SERVICE_MODEL_PROVIDER_OUTCOME_UNKNOWN", 503,
       "Service model provider operation has no acknowledged configuration", false, "UNKNOWN");
   }
+  const providerSlug = rowString(row.provider_slug, PROVIDER_ID,
+    "Stored Cloudflare provider slug is invalid");
   return Object.freeze({
     protocol: SERVICE_MODEL_PROVIDER_CREATE_PROTOCOL,
     operation_id: connection.operation_id,
@@ -309,7 +343,7 @@ function requestReceipt(row: ServiceModelProviderOperationRow): ServiceModelProv
     base_url: connection.base_url,
     alias: connection.alias,
     provider_config_id: connection.provider_config_id,
-    provider_slug: connection.provider_id,
+    provider_slug: providerSlug,
     status: "configured",
     created_at: connection.created_at,
   });
@@ -461,6 +495,75 @@ export function createServiceModelProviderService(options: {
     return null;
   }
 
+  async function reconcileUncertain(
+    context: AuthenticatedRequestContext,
+    owner: string,
+    row: ServiceModelProviderOperationRow,
+  ): Promise<ServiceModelProviderConnection> {
+    const current = mapConnection(row);
+    const management = options.managementPort;
+    if (management === undefined || management.available === false) return current;
+    const read = management.read;
+    if (read === undefined) return current;
+    const providerId = rowString(row.provider_id, PROVIDER_ID,
+      "Stored service model provider ID is invalid");
+    const operationId = rowString(row.operation_id, UUID,
+      "Stored service model provider operation ID is invalid");
+    const storedBaseUrl = row.base_url === null ? null : rowString(row.base_url, /^https:\/\//u,
+      "Stored service model provider URL is invalid");
+    const providerSlug = expectedProviderSlug(providerId, storedBaseUrl);
+    const alias = rowString(row.alias, SAFE_ALIAS, "Stored service model provider alias is invalid");
+    const deadline = now() + MANAGEMENT_DEADLINE_MS;
+    if (!Number.isSafeInteger(deadline) || deadline <= 0) return current;
+
+    let readback: ServiceModelProviderManagementReadback | null;
+    try {
+      readback = await read({
+        provider_id: providerId,
+        provider_slug: providerSlug,
+        alias,
+        provider_config_id: null,
+      }, { signal: context.request.signal, deadline_ms: deadline });
+    } catch {
+      return current;
+    }
+    ownerPrincipal(context, now);
+    if (readback === null || !SAFE_ID.test(readback.provider_config_id) ||
+        readback.provider_slug !== providerSlug || readback.alias !== alias) {
+      return current;
+    }
+    const metadataSha = await sha256(JSON.stringify([
+      SERVICE_MODEL_PROVIDER_CREATE_PROTOCOL, operationId, providerId,
+      readback.provider_slug, readback.provider_config_id, alias,
+    ]));
+    let updated;
+    try {
+      updated = await options.database.prepare(
+        "UPDATE service_model_provider_operation SET state='CONFIGURED',provider_config_id=?1," +
+        "provider_slug=?2,metadata_sha256=?3,updated_at=?4 " +
+        "WHERE owner_id=?5 AND operation_id=?6 AND state IN ('UNCERTAIN','SUBMITTING') AND request_sha256=?7",
+      ).bind(readback.provider_config_id, readback.provider_slug, metadataSha, validNow(now),
+        owner, operationId, row.request_sha256).run();
+    } catch {
+      fail("SERVICE_MODEL_PROVIDER_STORAGE_UNAVAILABLE", 503,
+        "Service model provider reconciliation could not be recorded", true);
+    }
+    if (updated.meta.changes !== 1) {
+      const latest = await readRow(owner, operationId);
+      if (latest === null) {
+        fail("SERVICE_MODEL_PROVIDER_STORAGE_UNAVAILABLE", 503,
+          "Service model provider reconciliation row disappeared", true);
+      }
+      return mapConnection(latest);
+    }
+    const acknowledged = await readRow(owner, operationId);
+    if (acknowledged === null) {
+      fail("SERVICE_MODEL_PROVIDER_STORAGE_UNAVAILABLE", 503,
+        "Service model provider reconciliation readback is unavailable", true);
+    }
+    return mapConnection(acknowledged);
+  }
+
   return Object.freeze({
     async list(context: AuthenticatedRequestContext) {
       const owner = ownerPrincipal(context, now);
@@ -471,7 +574,11 @@ export function createServiceModelProviderService(options: {
       const owner = ownerPrincipal(context, now);
       const operationId = validOperationId(operationIdRaw);
       const row = await readRow(owner, operationId);
-      return row === null ? null : mapConnection(row);
+      if (row === null) return null;
+      if (row.state === "UNCERTAIN" || row.state === "SUBMITTING") {
+        return reconcileUncertain(context, owner, row);
+      }
+      return mapConnection(row);
     },
 
     async create(context: AuthenticatedRequestContext, rawInput: ServiceModelProviderCreateRequest) {
@@ -489,6 +596,11 @@ export function createServiceModelProviderService(options: {
       const input = parsed.data;
       const operationId = input.operation_id;
       const normalizedBaseUrl = baseUrl(input.base_url);
+      const actualProviderSlug = expectedProviderSlug(input.provider_id, normalizedBaseUrl);
+      if (actualProviderSlug.length > 63) {
+        fail("SERVICE_MODEL_PROVIDER_INPUT_INVALID", 400,
+          "Service model provider ID cannot form a valid Cloudflare provider slug", false);
+      }
       const keyFingerprint = await sha256(input.api_key);
       const requestSha = await sha256(JSON.stringify([
         SERVICE_MODEL_PROVIDER_CREATE_PROTOCOL, owner, operationId, input.provider_id,
@@ -581,7 +693,8 @@ export function createServiceModelProviderService(options: {
       if (managed === undefined) return await failUnknown(owner, operationId);
 
       if (typeof managed.provider_config_id !== "string" || !SAFE_ID.test(managed.provider_config_id) ||
-          managed.provider_slug !== input.provider_id || managed.alias !== alias) {
+          managed.provider_slug !== expectedProviderSlug(input.provider_id, normalizedBaseUrl) ||
+          managed.alias !== alias) {
         return await failUnknown(owner, operationId);
       }
       const metadataSha = await sha256(JSON.stringify([

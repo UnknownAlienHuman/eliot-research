@@ -67,9 +67,12 @@ function managementPort(overrides: Partial<ServiceModelProviderManagementPort> =
     available: true,
     create: vi.fn(async (input) => ({
       provider_config_id: `config-${input.operation_id}`,
-      provider_slug: input.provider_id,
+      provider_slug: input.provider_id === "openrouter" && input.base_url === null
+        ? input.provider_id
+        : "custom-" + input.provider_id,
       alias: input.alias,
     })),
+    read: vi.fn(async () => null),
     ...overrides,
   };
 }
@@ -86,6 +89,7 @@ describe("global service model provider operations", () => {
 
     expect(created.replayed).toBe(false);
     expect(replayed.replayed).toBe(true);
+    expect(created.receipt.provider_slug).toBe("custom-opencode-go");
     expect(management.create).toHaveBeenCalledTimes(1);
     expect(listed.connections).toMatchObject([{
       provider_id: "opencode-go",
@@ -137,6 +141,38 @@ describe("global service model provider operations", () => {
       provider_config_id: null,
       alias: null,
     });
+  });
+
+  it("reconciles an uncertain custom provider by read-only native readback without another POST", async () => {
+    const store = database();
+    const management = managementPort({
+      create: vi.fn(async () => {
+        throw Object.assign(new Error("synthetic lost acknowledgement"), { effect: "UNKNOWN" });
+      }),
+      read: vi.fn(async (input) => ({
+        provider_config_id: "reconciled-config",
+        provider_slug: input.provider_slug,
+        alias: input.alias,
+      })),
+    });
+    const service = createServiceModelProviderService({ database: store.d1, managementPort: management, now: () => NOW });
+
+    await expect(service.create(ownerContext(), REQUEST)).rejects.toMatchObject({
+      code: "SERVICE_MODEL_PROVIDER_OUTCOME_UNKNOWN",
+      status: 503,
+      effect: "UNKNOWN",
+    });
+    const reconciled = await service.readOperation(ownerContext(), REQUEST.operation_id);
+
+    expect(reconciled).toMatchObject({
+      operation_id: REQUEST.operation_id,
+      provider_id: "opencode-go",
+      status: "configured",
+      provider_config_id: "reconciled-config",
+    });
+    expect(management.create).toHaveBeenCalledTimes(1);
+    expect(management.read).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(reconciled)).not.toContain(REQUEST.api_key);
   });
 
 });

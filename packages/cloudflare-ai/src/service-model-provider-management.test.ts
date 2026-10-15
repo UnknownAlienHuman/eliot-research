@@ -25,14 +25,14 @@ function page(result: readonly unknown[]): Response {
   });
 }
 
-function config(alias: string): Record<string, unknown> {
+function config(alias: string, provider_slug = "openrouter"): Record<string, unknown> {
   return {
     id: "provider-config-fixture",
     alias,
     default_config: false,
     gateway_id: GATEWAY_ID,
     modified_at: "2026-10-15T14:00:00.000Z",
-    provider_slug: "openrouter",
+    provider_slug,
     secret_id: "secret-id-fixture",
     secret_preview: "••••",
     rate_limit: 0,
@@ -82,5 +82,82 @@ describe("Cloudflare service-model provider management", () => {
     expect(requests.filter(({ init }) => init.method === "POST")).toHaveLength(1);
     expect(postBody).toMatchObject({ provider_slug: "openrouter", default_config: false, secret: API_KEY });
     expect(JSON.stringify(receipt)).not.toContain(API_KEY);
+  });
+
+  it("returns the actual custom slug and rejects an overlong custom slug before any CF effect", async () => {
+    const requests: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+    const customProvider = {
+      id: "custom-provider-fixture",
+      name: "OpenCode Go",
+      slug: "opencode-go",
+      base_url: "https://provider.example/v1",
+      created_at: "2026-10-15T14:00:00.000Z",
+      modified_at: "2026-10-15T14:00:00.000Z",
+      enable: true,
+      beta: false,
+    };
+    const alias = "eliotr-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    const queue: Response[] = [
+      page([]),
+      envelope(customProvider),
+      envelope(customProvider),
+      page([]),
+      envelope(config(alias, "custom-opencode-go")),
+      page([config(alias, "custom-opencode-go")]),
+    ];
+    const port = createCloudflareServiceModelProviderManagementPort({
+      account_id: ACCOUNT_ID,
+      gateway_id: GATEWAY_ID,
+      available: true,
+      credentials: { async readApiToken() { return TOKEN; } },
+      fetch: {
+        async fetch(url, init) {
+          requests.push({ url, init });
+          const response = queue.shift();
+          if (response === undefined) throw new Error("fixture response queue exhausted");
+          return response;
+        },
+      },
+    });
+    const receipt = await port.create({
+      protocol: "eliotr.service-model-provider-create.v1",
+      operation_id: "c0a8012e-0f58-4e7b-8dd2-c8bfdf8b5ad4",
+      provider_id: "opencode-go",
+      display_name: "OpenCode Go",
+      base_url: "https://provider.example/v1",
+      model_ids: ["step-5-preview-free"],
+      alias,
+      api_key: API_KEY,
+    });
+
+    expect(receipt.provider_slug).toBe("custom-opencode-go");
+    expect(requests.map(({ init }) => init.method)).toEqual(["GET", "POST", "GET", "GET", "POST", "GET"]);
+    expect(requests.filter(({ init }) => init.method === "POST")).toHaveLength(2);
+    expect(JSON.stringify(receipt)).not.toContain(API_KEY);
+
+    const invalidRequests: RequestInit[] = [];
+    const invalidPort = createCloudflareServiceModelProviderManagementPort({
+      account_id: ACCOUNT_ID,
+      gateway_id: GATEWAY_ID,
+      available: true,
+      credentials: { async readApiToken() { return TOKEN; } },
+      fetch: {
+        async fetch(_url, init) {
+          invalidRequests.push(init);
+          throw new Error("unexpected Cloudflare effect");
+        },
+      },
+    });
+    await expect(invalidPort.create({
+      protocol: "eliotr.service-model-provider-create.v1",
+      operation_id: "c0a8012e-0f58-4e7b-8dd2-c8bfdf8b5ad4",
+      provider_id: "a".repeat(63),
+      display_name: "Too Long",
+      base_url: "https://provider.example/v1",
+      model_ids: ["model-1"],
+      alias,
+      api_key: API_KEY,
+    })).rejects.toMatchObject({ code: "PROVIDER_CONFIG_INPUT_INVALID", effect: "NONE" });
+    expect(invalidRequests).toHaveLength(0);
   });
 });
