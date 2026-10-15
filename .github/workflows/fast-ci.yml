@@ -48,3 +48,10 @@ jobs:
           pnpm --dir apps/eliotr-web exec vite build --manifest
       - name: Worker packaging smoke without remote changes
         run: pnpm --dir apps/eliotr-core exec wrangler deploy --dry-run --minify --outdir dist
+      - name: Save the checked Worker bundle for routine Wrangler deployment
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: worker-build-${{ github.sha }}
+          path: apps/eliotr-core/dist
+          if-no-files-found: error
+          retention-days: 7
