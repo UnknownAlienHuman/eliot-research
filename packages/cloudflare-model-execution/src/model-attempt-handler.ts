@@ -223,6 +223,21 @@ async function readSucceededAttempt(
 /** Preserve the closed diagnostic vocabulary without claiming that paid work can be repeated. */
 export function modelRouteFailure(cause: unknown, stage: StageRequest["stage"]): WorkflowCheckpointError {
   const failure = workflowFailure(cause, "STAGE", stage);
+  const own = (key: string): unknown => cause !== null && typeof cause === "object"
+    ? Object.getOwnPropertyDescriptor(cause, key)?.value : undefined;
+  const status = own("http_status");
+  const reason = own("safe_response_reason");
+  const responseReasons = new Set([
+    "FINGERPRINT_INVALID", "LOG_READBACK_UNAVAILABLE", "LOG_CORRELATION_INVALID", "LOG_ID_MISSING",
+    "LOG_ID_INVALID", "CONTENT_TYPE_INVALID", "BODY_TOO_LARGE", "BODY_JSON_INVALID", "BODY_SHAPE_INVALID",
+    "MODEL_ID_INVALID", "CACHE_INVALID", "UNCLASSIFIED",
+  ]);
+  // Provider text, payloads, stacks and arbitrary object properties never enter telemetry.
+  console.error(JSON.stringify({ event: "research_model_route_failed", code: failure.code, stage,
+    ...(typeof status === "number" && Number.isInteger(status) && status >= 400 && status <= 599
+      ? { http_status: status } : {}),
+    ...(typeof reason === "string" && responseReasons.has(reason) ? { safe_response_reason: reason } : {}),
+  }));
   return new WorkflowCheckpointError("WORKFLOW_EFFECT_UNCERTAIN", {
     ...failure, phase: "STAGE", stage, retryable: false,
     dispatch_state: "OUTCOME_UNKNOWN", references_intact: "UNKNOWN", recovery_action: "RECONCILE",

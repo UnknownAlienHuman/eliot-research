@@ -35,6 +35,8 @@ jobs:
         run: node scripts/check-boundaries.mjs
       - name: Lint
         run: pnpm lint
+      - name: Codex child credential isolation
+        run: node scripts/test-codex-web-inbox-env.mjs
       - name: Source sections, exact evidence and owner Research regressions
         run: >-
           pnpm exec vitest run --config vitest.config.ts
