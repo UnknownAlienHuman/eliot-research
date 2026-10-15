@@ -365,14 +365,13 @@ describe("managed target candidate tree readback V3", () => {
     const { objects, store, candidate } = await stageCandidate(2);
     const chainLength = 13;
     const originalRootKey = rootKeyOf(candidate);
-    const original = JSON.parse(objects.get(originalRootKey) ?? "{}") as {
-      readonly children: readonly ManifestTreeObjectRef[];
-    };
-    const grandchild = original.children[0];
-    if (grandchild === undefined) throw new Error("fixture tree has no first child");
-
-    // Build the chain root -> n1 -> ... -> n13 -> grandchild, each declaring level 0.
-    let childRef = grandchild;
+    if (candidate.tree === null) throw new Error("two-copy fixture lacks its original INDEX root");
+    // Wrap the complete two-copy root, retaining matching counts at every
+    // header so only the observed-depth guard can reject the forged chain.
+    let childRef: ManifestTreeObjectRef = { kind: "INDEX", key: originalRootKey,
+      sha256: candidate.tree.sha256,
+      size_bytes: new TextEncoder().encode(objects.get(originalRootKey) ?? "").byteLength,
+      first_copy_ordinal: 0, last_copy_ordinal: 1, copy_count: 2, item_count: candidate.desired_item_count };
     for (let depth = chainLength; depth >= 1; depth -= 1) {
       const key = "scope/build/forged-chain/" + String(depth).padStart(2, "0") + ".json";
       const value = {
@@ -406,7 +405,7 @@ describe("managed target candidate tree readback V3", () => {
 
     await expect(
       readManagedTargetManifestCandidateTreeV3({ store, candidate: forgedCandidate, candidate_sha256: forgedSha }),
-    ).rejects.toThrowError(ManagedTargetManifestError);
+    ).rejects.toThrowError(/tree descent depth 13 exceeds its observed bound/u);
   });
 
   it("completes an empty tree without persisting a cursor", async () => {
