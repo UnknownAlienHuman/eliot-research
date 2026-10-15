@@ -152,7 +152,8 @@ describe("research model gateway runtime", () => {
     expect(invocation).toEqual({ provider: "compat", endpoint: "chat/completions", headers: {}, query });
     if (invocation === undefined || Array.isArray(invocation)) throw new Error("expected one Universal request");
     expect(invocation.query).toEqual(query);
-    expect(options?.gateway).toEqual({ id: "eliotr-reasoning", collectLog: true, skipCache: true, metadata });
+    expect(options?.gateway).toEqual({ id: "eliotr-reasoning", collectLog: true, skipCache: true, metadata,
+      requestTimeoutMs: 1000, retries: { maxAttempts: 1 } });
     expect(options?.extraHeaders).toEqual(canonicalHeaders);
     expect(options?.signal).toBeInstanceOf(AbortSignal);
     expect(runtime).not.toHaveProperty("credentials");

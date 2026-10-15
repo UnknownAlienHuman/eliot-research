@@ -1,4 +1,4 @@
-import { ModelGatewayExecutionError } from "@eliotr/cloudflare-ai";
+import { ModelGatewayExecutionError, type ModelGatewayTransportPolicyV1 } from "@eliotr/cloudflare-ai";
 import { describe, expect, it, vi } from "vitest";
 import { createResearchModelGatewayBindingFetch, type ResearchModelGatewayBinding } from "./research-model-gateway-binding.js";
 
@@ -25,17 +25,41 @@ function fixture(options: { readonly logId?: string; readonly responseLogId?: st
   } satisfies AiGatewayLog));
   const run = vi.fn<ReturnType<ResearchModelGatewayBinding["gateway"]>["run"]>(async (request, options) => {
     expect(request).toEqual({ provider: "compat", endpoint: "chat/completions", headers: {}, query: JSON.parse(body) });
-    expect(options?.gateway).toEqual({ id: "eliotr-reasoning", collectLog: true, skipCache: true, metadata });
+    expect(options?.gateway).toEqual({ id: "eliotr-reasoning", collectLog: true, skipCache: true, metadata,
+      requestTimeoutMs: 180000, retries: { maxAttempts: 1 } });
     expect(options?.extraHeaders).toMatchObject({ "cf-aig-collect-log-payload": "false",
       "cf-aig-request-timeout": "180000", "cf-aig-max-attempts": "1" });
     return new Response("{}", { headers: { "cf-aig-log-id": responseLogId } });
   });
   const binding: ResearchModelGatewayBinding = { gateway: () => ({ getUrl: async () => base, getLog, run }) };
-  return { fetch: createResearchModelGatewayBindingFetch(binding, endpoint), run, getLog };
+  return { fetch: createResearchModelGatewayBindingFetch(binding, endpoint), binding, run, getLog };
 }
 const body = JSON.stringify({ model: "dynamic/eliotr-balanced", messages: [{ role: "user", content: "test" }] });
 
 describe("native AI Gateway policy transport", () => {
+  it("calls the qualified Workers AI model once and verifies its actual response-scoped log", async () => {
+    const subject = fixture();
+    const nativeRun = vi.fn(async () => new Response("{}", { headers: { "cf-aig-log-id": "log-one" } }));
+    subject.binding.run = nativeRun;
+    const policy: ModelGatewayTransportPolicyV1 = { version: 1, transport: "cloudflare-ai-gateway",
+      api: "compat-chat-completions", provider: "workers-ai", model: "@cf/zai-org/glm-5.3-flash",
+      billing: { mode: "unified" }, capabilities: { max_output_tokens_field: "max_completion_tokens", reasoning_efforts: ["low", "high", "max"] } };
+    const fetch = createResearchModelGatewayBindingFetch(subject.binding, endpoint, policy);
+
+    const response = await fetch(endpoint, { method: "POST", body, headers: headers() });
+
+    expect(nativeRun).toHaveBeenCalledExactlyOnceWith(policy.model, { messages: [{ role: "user", content: "test" }] },
+      expect.objectContaining({ returnRawResponse: true,
+        gateway: { id: "eliotr-reasoning", collectLog: true, skipCache: true, metadata,
+          requestTimeoutMs: 180000, retries: { maxAttempts: 1 } },
+        extraHeaders: expect.objectContaining({ "cf-aig-collect-log-payload": "false", "cf-aig-max-attempts": "1" }),
+      }));
+    expect(subject.run).not.toHaveBeenCalled();
+    expect(subject.getLog).toHaveBeenCalledWith("log-one");
+    expect(response.headers.get("cf-aig-provider")).toBe("workers-ai");
+    expect(response.headers.get("cf-aig-model")).toBe(policy.model);
+  });
+
   it("uses native gateway options and verifies observed identity from response-scoped metadata", async () => {
     const subject = fixture();
     const response = await subject.fetch(endpoint, { method: "POST", body, headers: headers() });

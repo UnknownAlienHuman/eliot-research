@@ -1,8 +1,9 @@
-import { ModelGatewayExecutionError, resolveModelGatewayReasoningEndpoint } from "@eliotr/cloudflare-ai";
+import { ModelGatewayExecutionError, resolveModelGatewayReasoningEndpoint, type ModelGatewayTransportPolicyV1 } from "@eliotr/cloudflare-ai";
 
 /** Native Worker capability; acquisition and authentication stay inside Cloudflare. */
 export interface ResearchModelGatewayBinding {
   gateway(gatewayId: string): Pick<AiGateway, "getUrl" | "getLog" | "run">;
+  run?(model: string, inputs: Record<string, unknown>, options: AiOptions): Promise<unknown>;
 }
 
 const IDENTIFIER = /^[A-Za-z0-9._:@/-]{1,256}$/u;
@@ -138,6 +139,7 @@ async function normalizeFingerprintHeaders(
 export function createResearchModelGatewayBindingFetch(
   binding: ResearchModelGatewayBinding,
   endpoint: string,
+  transportPolicy?: ModelGatewayTransportPolicyV1,
 ): (url: string, init: RequestInit) => Promise<Response> {
   if (binding === null || typeof binding !== "object" || typeof binding.gateway !== "function") {
     invalid("reasoning gateway Worker binding is unavailable");
@@ -145,6 +147,10 @@ export function createResearchModelGatewayBindingFetch(
   const gateway = binding.gateway("eliotr-reasoning");
   if (gateway === null || typeof gateway !== "object" || typeof gateway.getUrl !== "function" || typeof gateway.run !== "function") {
     invalid("reasoning gateway Worker binding is invalid");
+  }
+  const nativeModel = transportPolicy?.provider === "workers-ai" ? transportPolicy.model : undefined;
+  if (nativeModel !== undefined && (!nativeModel.startsWith("@cf/") || typeof binding.run !== "function")) {
+    invalid("the selected Workers AI model requires its native binding");
   }
   return async (url, init) => {
     if (url !== endpoint || typeof init.body !== "string") invalid("bound gateway request is invalid");
@@ -178,18 +184,30 @@ export function createResearchModelGatewayBindingFetch(
     const metadata = exactMetadata(headers.get("cf-aig-metadata"), "AI Gateway request metadata");
     // Preserve canonical cache/logging/timeout/single-attempt headers on the
     // gateway request. Provider headers contain no separate gateway credential.
-    // Use the Gateway's HTTP transport so response-scoped routing/log headers survive.
-    // This is one Universal request to the existing compatibility route, not a fallback.
-    const response = await gateway.run({ provider: "compat", endpoint: "chat/completions", headers: {}, query: inputs }, {
+    const options = {
       gateway: {
         id: "eliotr-reasoning",
         collectLog: true,
         skipCache: true,
         metadata,
+        requestTimeoutMs: timeoutMs,
+        retries: { maxAttempts: 1 as const },
       },
       extraHeaders: Object.fromEntries(headers),
       ...(init.signal == null ? {} : { signal: init.signal }),
-    });
+    };
+    // Workers AI has an exact server-qualified model and needs no dynamic route.
+    // Its native response retains the log id used below to verify actual identity.
+    // Strip the internal route selector before sending inputs to that model.
+    let response: unknown;
+    if (nativeModel === undefined) {
+      response = await gateway.run({ provider: "compat", endpoint: "chat/completions", headers: {}, query: inputs }, options);
+    } else {
+      const nativeInputs = { ...inputs };
+      delete nativeInputs.model;
+      if (typeof binding.run !== "function") invalid("Workers AI binding became unavailable");
+      response = await binding.run(nativeModel, nativeInputs, { ...options, returnRawResponse: true });
+    }
     if (!(response instanceof Response)) invalid("native AI Gateway binding did not return a Response");
     if (!response.ok) return response;
     try {

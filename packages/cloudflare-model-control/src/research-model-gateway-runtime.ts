@@ -313,7 +313,7 @@ export function createResearchModelGatewayRuntime(
   const token = binding === undefined ? validateModelGatewayToken(input.gateway_token) : undefined;
   const fetchImpl = binding === undefined
     ? input.fetch ?? globalThis.fetch.bind(globalThis)
-    : createResearchModelGatewayBindingFetch(binding, endpoint);
+    : createResearchModelGatewayBindingFetch(binding, endpoint, transportPolicy);
   const bindingBase = binding === undefined ? undefined : endpoint.slice(0, -modelGatewayProviderNativePath(api).length);
   const transport: ModelGatewayFetchPort = Object.freeze({
     async fetch(url: string, init: RequestInit): Promise<Response> {
