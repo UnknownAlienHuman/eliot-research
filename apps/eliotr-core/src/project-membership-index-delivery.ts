@@ -65,14 +65,14 @@ function decodeMembershipIndexRef(message: Parameters<DeliveryHandler>[0]): Proj
     throw new DeliveryRuntimeError("DELIVERY_INPUT_INVALID", "project membership-index delivery identity is invalid");
   }
   const match = PROJECT_INDEX_REF.exec(message.payload_ref);
-  if (match === null) {
+  if (match === null || match[1] === undefined || match[2] === undefined || match[3] === undefined) {
     throw new DeliveryRuntimeError("DELIVERY_INPUT_INVALID", "project membership-index reference is invalid");
   }
   const revision = Number(match[2]);
   if (!Number.isSafeInteger(revision) || revision < 1) {
     throw new DeliveryRuntimeError("DELIVERY_INPUT_INVALID", "project mutation revision is invalid");
   }
-  return { project_id: match[1]!, project_revision: revision, request_sha256: match[3]! };
+  return { project_id: match[1], project_revision: revision, request_sha256: match[3] };
 }
 
 interface DeliveryAuthorityRow {

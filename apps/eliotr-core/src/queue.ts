@@ -11,6 +11,7 @@ import type { Env } from "./env.js";
 import { createProjectionDeliveryHandler } from "@eliotr/cloudflare-projection";
 import { createProjectionExecutionDeliveryHandler } from "@eliotr/cloudflare-ai";
 import { createExternalTaskResultDeliveryHandler, EXTERNAL_AGENT_RESULT_WAKE_TOPIC } from "@eliotr/cloudflare-workflows";
+import { createProjectMembershipIndexDeliveryHandler, PROJECT_MEMBERSHIP_INDEX_TOPIC } from "./project-membership-index-delivery.js";
 
 const CONSUMER_WORKER_ID = "eliotr-queue-consumer";
 const CONSUMER_LEASE_MS = 60_000;
@@ -41,13 +42,16 @@ function projectionHandler(env: Env): DeliveryHandler {
 
 function deliveryHandler(env: Env): DeliveryHandler {
   const projection = projectionHandler(env);
+  const membershipIndex = createProjectMembershipIndexDeliveryHandler(env);
   const externalResult = createExternalTaskResultDeliveryHandler({
     database: env.CORE_DB,
     get_instance: (operationId) => env.RESEARCH_WORKFLOW.get(operationId),
   });
-  return (message, context) => message.topic === EXTERNAL_AGENT_RESULT_WAKE_TOPIC
-    ? externalResult(message, context)
-    : projection(message, context);
+  return (message, context) => {
+    if (message.topic === EXTERNAL_AGENT_RESULT_WAKE_TOPIC) return externalResult(message, context);
+    if (message.topic === PROJECT_MEMBERSHIP_INDEX_TOPIC) return membershipIndex(message, context);
+    return projection(message, context);
+  };
 }
 
 // IMPLEMENTED_NOT_LIVE: ER-24 Queue dispatch requires remote duplicate-delivery and DLQ receipts.
