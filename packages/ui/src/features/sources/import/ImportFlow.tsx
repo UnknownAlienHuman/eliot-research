@@ -3,8 +3,9 @@
  * No transport, factory, store, Query client, file hashing or persistence. Local UI state only;
  * every remote value arrives as a remote DTO prop and every action is an explicit callback.
  *
- * Conversion is never automatic: the caller-selected `RawMarkdownConversionRequest` arrives as
- * a root-supplied typed prop, and the control is absent rather than disabled when it is missing.
+ * The root decides how steps advance. With `automatic`, the owner only picks a file: the root runs
+ * capture, processing and Library admission itself and this feature shows one progress list; every
+ * step still keeps its own uncertainty and recovery action. Without it the step buttons render.
  *
  * Bundle import is one honest stage. `attempt.run()` performs prepare, upload and commit in a
  * single call, so the review gate renders the frozen bytes before that call and the panel claims
@@ -12,6 +13,7 @@
  */
 import { useId, useState } from "react";
 import { Button, Field, Status } from "../../../primitives/primitives";
+import { MaterialSymbol } from "../../../catalog/MaterialSymbol";
 import type {
   BrowserBundleImport,
   ImportProgress,
@@ -101,6 +103,13 @@ export interface ImportFlowCopy {
   readonly not_complete: string;
   readonly committed: string;
   readonly loading: string;
+  readonly drop_title: string;
+  readonly auto_hint: string;
+  readonly step_upload: string;
+  readonly step_process: string;
+  readonly step_library: string;
+  readonly added: string;
+  readonly details: string;
 }
 
 export interface ImportFlowProps {
@@ -131,14 +140,18 @@ export interface ImportFlowProps {
   readonly onInspectBundle?: (() => void) | undefined;
   readonly onDisposeBundle?: (() => void) | undefined;
   readonly onViewChange?: ((view: ImportFlowView) => void) | undefined;
+  /** The root advances the file steps by itself; the owner only picks the file. */
+  readonly automatic?: boolean | undefined;
+  /** While true the automatic chain is moving, so the current step reads as in progress. */
+  readonly working?: boolean | undefined;
 }
 
 const EN_COPY: ImportFlowCopy = {
-  title: "Import a document or a saved bundle",
+  title: "Add a source",
   file_tab: "Single file",
   bundle_tab: "Saved bundle",
-  file_hint: "Choose one file, review what the server captured, then process it before any Library step.",
-  bundle_hint: "Choose a bundle folder, review the frozen bytes, then start one import that prepares, uploads and commits.",
+  file_hint: "Choose one file. Eliot uploads it, turns it into text and adds it to the Library.",
+  bundle_hint: "Choose the files of a saved bundle. Eliot checks them and imports them in one go.",
   choose_file: "Choose a file",
   choose_bundle: "Choose bundle files",
   recovery_id: "Operation ID from a previous upload",
@@ -147,14 +160,14 @@ const EN_COPY: ImportFlowCopy = {
   capture: "Capture the selected file",
   recover_capture: "Check the previous capture",
   convert: "Process the captured file",
-  convert_unavailable: "Processing options have not been chosen yet. Nothing was sent.",
+  convert_unavailable: "Processing has not started yet.",
   retry_convert: "Try processing again",
   reconcile_conversion: "Check processing status",
   admit: "Add to Library",
   admit_status: "Check Library status",
   review_intro: "Review the exact bytes below before anything is uploaded.",
   review_files: "Frozen files",
-  review_total: "Total bytes",
+  review_total: "Size",
   review_identity: "Import identity",
   review_operation: "Operation",
   run: "Start the import",
@@ -167,61 +180,104 @@ const EN_COPY: ImportFlowCopy = {
   source_revision: "Source revision",
   phase: "Progress",
   unknown_heading: "The last outcome is unknown. Re-read the same identity before starting anything new.",
-  unknown_conversion: "Processing outcome is unknown. Check the same processing identity again.",
+  unknown_conversion: "Not sure whether processing finished. Check its status.",
   unknown_admission: "Library admission outcome is unknown. Check the same admission identity again.",
-  unknown_bundle: "Import outcome is unknown. Check the same import identity again.",
+  unknown_bundle: "Not sure whether the import finished. Check its status.",
   interrupted: "Stopped before it finished. Requests already sent may have completed.",
-  missing_request: "No processing request was selected, so processing cannot start.",
+  missing_request: "Processing has not started yet.",
   not_complete: "Processing must be complete before the file can be added to Library.",
   committed: "Committed with a verified receipt.",
   loading: "Loading import state…",
+  drop_title: "Choose a file or drop it here",
+  auto_hint: "Eliot uploads it, turns it into text and adds it to the Library by itself.",
+  step_upload: "Upload",
+  step_process: "Turn into text",
+  step_library: "Add to the Library",
+  added: "The source is in the Library.",
+  details: "Details",
 };
 
 const RU_COPY: ImportFlowCopy = {
-  title: "Импорт документа или сохранённой подборки",
+  title: "Добавить источник",
   file_tab: "Один файл",
   bundle_tab: "Сохранённая подборка",
-  file_hint: "Выберите один файл, проверьте, что зафиксировал сервер, и обработайте его перед любым шагом добавления в библиотеку.",
-  bundle_hint: "Выберите папку подборки, проверьте зафиксированные байты, затем запустите один импорт, который подготовит, отправит и зафиксирует данные.",
+  file_hint: "Выберите файл. Eliot загрузит его, переведёт в текст и добавит в библиотеку.",
+  bundle_hint: "Выберите файлы сохранённой подборки. Eliot проверит их и импортирует за один раз.",
   choose_file: "Выберите файл",
   choose_bundle: "Выберите файлы подборки",
   recovery_id: "Идентификатор операции предыдущей загрузки",
   prepare: "Проверить выбранный файл",
   prepare_bundle: "Проверить файлы подборки",
-  capture: "Зафиксировать выбранный файл",
-  recover_capture: "Проверить предыдущую фиксацию",
-  convert: "Обработать зафиксированный файл",
-  convert_unavailable: "Параметры обработки ещё не выбраны. Ничего не отправлено.",
+  capture: "Загрузить выбранный файл",
+  recover_capture: "Проверить загрузку",
+  convert: "Перевести в текст",
+  convert_unavailable: "Обработка ещё не началась.",
   retry_convert: "Повторить обработку",
   reconcile_conversion: "Проверить статус обработки",
   admit: "Добавить в библиотеку",
   admit_status: "Проверить статус в библиотеке",
-  review_intro: "Проверьте точные байты ниже до того, как что-либо будет отправлено.",
-  review_files: "Зафиксированные файлы",
-  review_total: "Всего байт",
+  review_intro: "Проверьте файлы ниже до отправки.",
+  review_files: "Файлы подборки",
+  review_total: "Размер",
   review_identity: "Идентификатор импорта",
   review_operation: "Операция",
   run: "Начать импорт",
   stop: "Остановить отправку",
   inspect: "Проверить статус импорта",
   dispose: "Очистить этот импорт",
-  captured_at: "Зафиксировано",
+  captured_at: "Загружен",
   conversion_state: "Обработка",
-  admission_state: "Допуск в библиотеку",
+  admission_state: "Библиотека",
   source_revision: "Ревизия источника",
   phase: "Прогресс",
-  unknown_heading: "Последний результат неизвестен. Перечитайте тот же идентификатор перед началом чего-либо нового.",
-  unknown_conversion: "Результат обработки неизвестен. Проверьте тот же идентификатор обработки снова.",
-  unknown_admission: "Результат допуска в библиотеку неизвестен. Проверьте тот же идентификатор допуска снова.",
-  unknown_bundle: "Результат импорта неизвестен. Проверьте тот же идентификатор импорта снова.",
+  unknown_heading: "Не удалось подтвердить последний шаг. Проверьте его, прежде чем продолжать.",
+  unknown_conversion: "Не ясно, закончилась ли обработка. Проверьте статус.",
+  unknown_admission: "Не ясно, добавлен ли источник в библиотеку. Проверьте статус.",
+  unknown_bundle: "Не ясно, закончился ли импорт. Проверьте статус.",
   interrupted: "Остановлено до завершения. Уже отправленные запросы могли завершиться.",
-  missing_request: "Запрос на обработку не выбран, поэтому обработка не может начаться.",
-  not_complete: "Обработка должна завершиться до добавления файла в библиотеку.",
-  committed: "Зафиксировано с подтверждённой квитанцией.",
+  missing_request: "Обработка ещё не началась.",
+  not_complete: "Сначала файл должен быть переведён в текст.",
+  committed: "Импорт подтверждён.",
   loading: "Загрузка состояния импорта…",
+  drop_title: "Выберите файл или перетащите его сюда",
+  auto_hint: "Eliot сам загрузит его, переведёт в текст и добавит в библиотеку.",
+  step_upload: "Загрузка",
+  step_process: "Перевод в текст",
+  step_library: "Добавление в библиотеку",
+  added: "Источник добавлен в библиотеку.",
+  details: "Подробности",
 };
 
 export const IMPORT_FLOW_COPY = { en: EN_COPY, ru: RU_COPY } as const;
+
+type StepState = "done" | "active" | "todo" | "attention";
+
+/** The automatic file chain as three owner-facing steps; a problem marks its step, never a later one. */
+function fileSteps(file: ImportFileState | undefined, working: boolean): readonly [StepState, StepState, StepState] {
+  const captured = file?.receipt !== undefined;
+  const converted = file?.conversion?.state === "COMPLETE";
+  const admitted = file?.admission?.state === "COMMITTED";
+  const upload: StepState = captured ? "done" : file?.uncertain === "capture" ? "attention" : working ? "active" : "todo";
+  const process: StepState = converted ? "done"
+    : file?.conversion?.state === "FAILED" || (file?.uncertain === "conversion" && !working) ? "attention"
+      : captured && working ? "active" : "todo";
+  const library: StepState = admitted ? "done"
+    : file?.admission?.state === "REJECTED" || file?.admission?.state === "QUARANTINED" || (file?.uncertain === "admission" && !working) ? "attention"
+      : converted && working ? "active" : "todo";
+  return [upload, process, library];
+}
+
+const STEP_ICON: Record<StepState, "check" | "pending" | "error" | "document"> = {
+  done: "check", active: "pending", attention: "error", todo: "document",
+};
+
+function formatSize(locale: ImportFlowLocale, bytes: number): string {
+  const units = locale === "ru" ? ["Б", "КБ", "МБ", "ГБ"] : ["B", "KB", "MB", "GB"];
+  let value = bytes, unit = 0;
+  while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit += 1; }
+  const digits = unit === 0 || value >= 10 ? 0 : 1;
+  return `${new Intl.NumberFormat(locale === "ru" ? "ru-RU" : "en-US", { maximumFractionDigits: digits }).format(value)} ${units[unit]}`;
+}
 
 export function ImportFlow(props: ImportFlowProps) {
   const fileInputId = useId(), bundleInputId = useId();
@@ -229,7 +285,12 @@ export function ImportFlow(props: ImportFlowProps) {
   const file = props.fileState, bundle = props.bundleState, review = props.bundleReview;
   const [confirmedReview, setConfirmedReview] = useState<ImportFlowBundleReview>();
   const active = props.active !== false, busy = file?.phase === "loading" || bundle?.phase === "loading";
-  const uncertain = file?.uncertain !== undefined || file?.conversion?.state === "UNKNOWN" || bundle?.uncertain === true || bundle?.interrupted === true;
+  const automatic = props.automatic === true && view === "file";
+  const working = automatic && (props.working === true || file?.phase === "loading");
+  // Each view answers for its own outcome: an unsettled file step never hides the bundle picker.
+  const uncertain = view === "file"
+    ? file?.uncertain !== undefined || file?.conversion?.state === "UNKNOWN"
+    : bundle?.uncertain === true || bundle?.interrupted === true;
   const capture = file?.receipt;
   const canConvert = capture !== undefined && file?.conversion === undefined && props.conversionRequest !== undefined && !uncertain && !busy;
   const canAdmit = file?.conversion?.state === "COMPLETE" && file.admission === undefined && !uncertain && !busy;
@@ -252,16 +313,39 @@ export function ImportFlow(props: ImportFlowProps) {
         <Button variant={view === "bundle" ? "tonal" : "text"} onClick={() => props.onViewChange?.("bundle")}>{copy.bundle_tab}</Button>
       </div>}
     </header>
-    <p className="er-import__hint">{view === "file" ? copy.file_hint : copy.bundle_hint}</p>
-    {busy && <Status icon="search">{copy.loading}</Status>}
+    {automatic ? null : <p className="er-import__hint">{view === "file" ? copy.file_hint : copy.bundle_hint}</p>}
+    {busy && !automatic && <Status icon="search">{copy.loading}</Status>}
     {view === "file" ? <div className="er-import__review">
-      {!uncertain && !capture && props.onSelectFile && <label className="er-import__picker er-button er-button--tonal" htmlFor={fileInputId}>
+      {automatic && !uncertain && !capture && !props.selectionName && props.onSelectFile ? <label className="er-import__drop" htmlFor={fileInputId}>
+        <span className="er-import__drop-glyph" aria-hidden="true"><MaterialSymbol name="upload" /></span>
+        <span className="er-import__drop-title">{copy.drop_title}</span>
+        <span className="er-import__drop-hint">{copy.auto_hint}</span>
+        <input id={fileInputId} type="file" disabled={busy} aria-label={copy.choose_file}
+          onChange={event => { const selected = event.target.files?.[0]; if (selected) props.onSelectFile?.(selected); event.target.value = ""; }} />
+      </label> : null}
+      {!automatic && !uncertain && !capture && props.onSelectFile && <label className="er-import__picker er-button er-button--tonal" htmlFor={fileInputId}>
         <span>{copy.choose_file}</span>
         <input id={fileInputId} type="file" disabled={busy}
           onChange={event => { const selected = event.target.files?.[0]; if (selected) props.onSelectFile?.(selected); event.target.value = ""; }} />
       </label>}
-      {props.selectionName && !capture && <p className="er-import__note">{props.selectionName}</p>}
-      {capture && <dl className="er-import__facts">
+      {automatic && (props.selectionName || capture) ? <div className="er-import__progress">
+        <p className="er-import__file-row">
+          <span className="er-import__file-glyph" aria-hidden="true"><MaterialSymbol name="document" /></span>
+          <span className="er-import__file-name">{capture?.original_file_name ?? props.selectionName}</span>
+          {capture ? <span className="er-import__file-size">{formatSize(locale, capture.size_bytes)}</span> : null}
+        </p>
+        <ol className="er-import__steps">
+          {fileSteps(file, working).map((state, index) => <li key={index} className="er-import__step" data-state={state}>
+            <span className="er-import__step-glyph" aria-hidden="true"><MaterialSymbol name={STEP_ICON[state]} /></span>
+            <span>{[copy.step_upload, copy.step_process, copy.step_library][index]}</span>
+            {index === 1 && file?.conversion && file.conversion.state !== "COMPLETE"
+              ? <span className="er-import__step-note">{conversionLabel(file.conversion.state)}</span> : null}
+          </li>)}
+        </ol>
+        {file?.admission?.state === "COMMITTED" ? <Status icon="check">{copy.added}</Status> : null}
+      </div> : null}
+      {!automatic && props.selectionName && !capture && <p className="er-import__note">{props.selectionName}</p>}
+      {!automatic && capture && <dl className="er-import__facts">
         <div className="er-import__fact"><dt>{copy.choose_file}</dt><dd>{capture.original_file_name}</dd></div>
         <div className="er-import__fact"><dt>{copy.review_total}</dt><dd>{number(capture.size_bytes)}</dd></div>
         <div className="er-import__fact"><dt>{copy.captured_at}</dt><dd>{capture.captured_at}</dd></div>
@@ -270,12 +354,17 @@ export function ImportFlow(props: ImportFlowProps) {
       {(file?.uncertain === "conversion" || file?.conversion?.state === "UNKNOWN") && <Status>{copy.unknown_conversion}</Status>}
       {file?.uncertain === "admission" && <Status>{copy.unknown_admission}</Status>}
       {file?.interrupted && <Status>{copy.interrupted}</Status>}
-      {file?.conversion && <dl className="er-import__facts"><div className="er-import__fact"><dt>{copy.conversion_state}</dt><dd>{conversionLabel(file.conversion.state)}</dd></div></dl>}
-      {file?.admission && <dl className="er-import__facts">
+      {file?.conversion && !automatic && <dl className="er-import__facts"><div className="er-import__fact"><dt>{copy.conversion_state}</dt><dd>{conversionLabel(file.conversion.state)}</dd></div></dl>}
+      {file?.admission && !automatic && <dl className="er-import__facts">
         <div className="er-import__fact"><dt>{copy.admission_state}</dt><dd>{file.admission.state}</dd></div>
         <div className="er-import__fact"><dt>{copy.source_revision}</dt><dd>{file.admission.source_revision_ref}</dd></div>
       </dl>}
-      {capture && !props.conversionRequest && !file?.conversion && <p className="er-import__note">{copy.convert_unavailable}</p>}
+      {file?.admission && automatic && <details className="er-import__details"><summary>{copy.details}</summary><dl className="er-import__facts">
+        <div className="er-import__fact"><dt>{copy.admission_state}</dt><dd>{file.admission.state}</dd></div>
+        <div className="er-import__fact"><dt>{copy.source_revision}</dt><dd>{file.admission.source_revision_ref}</dd></div>
+        {capture ? <div className="er-import__fact"><dt>{copy.captured_at}</dt><dd>{capture.captured_at}</dd></div> : null}
+      </dl></details>}
+      {!automatic && capture && !props.conversionRequest && !file?.conversion && <p className="er-import__note">{copy.convert_unavailable}</p>}
       <div className="er-import__actions">
         {!capture && !uncertain && props.onPrepareFile && <Button variant="text" onClick={props.onPrepareFile} loading={busy}>{copy.prepare}</Button>}
         {!capture && !uncertain && props.onCapture && <Button onClick={props.onCapture} loading={busy}>{copy.capture}</Button>}

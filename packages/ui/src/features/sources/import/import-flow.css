@@ -167,7 +167,7 @@
 }
 
 /* The confirmation checkbox row keeps one control-height line. */
-.er-import__review > label:not(.er-import__picker) {
+.er-import__review > label:not(.er-import__picker, .er-import__drop) {
   display: flex;
   align-items: center;
   gap: var(--eliot-space-block-control);
@@ -210,4 +210,132 @@
   .er-import__files {
     border: var(--eliot-divider-width) solid CanvasText;
   }
+}
+
+/* ---- Automatic mode: one drop zone, then one progress list ---- */
+
+/* The drop zone is the whole action: a dashed tonal area whose native input covers it, so a click
+   opens the picker and a dropped file lands on the input itself. */
+.er-import__drop {
+  position: relative;
+  display: grid;
+  justify-items: center;
+  gap: var(--eliot-space-block-control);
+  padding: var(--eliot-space-section) var(--eliot-space-group);
+  border: var(--eliot-divider-width) dashed var(--md-sys-color-outline);
+  border-radius: var(--eliot-shape-extra-large);
+  background: var(--eliot-color-group);
+  text-align: center;
+  cursor: pointer;
+  transition:
+    background-color var(--eliot-motion-effects) var(--eliot-motion-standard-easing),
+    border-color var(--eliot-motion-effects) var(--eliot-motion-standard-easing),
+    border-radius var(--eliot-motion-spatial) var(--eliot-motion-expressive-easing);
+}
+
+.er-import__drop:hover { background: color-mix(in srgb, var(--md-sys-color-primary) 8%, var(--eliot-color-group)); border-color: var(--md-sys-color-primary); }
+.er-import__drop:active { border-radius: var(--eliot-shape-large); }
+.er-import__drop:has(input:focus-visible) { outline: var(--eliot-focus-width) solid var(--md-sys-color-primary); outline-offset: var(--eliot-focus-offset); }
+
+.er-import__drop input {
+  position: absolute;
+  inset: 0;
+  inline-size: 100%;
+  block-size: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.er-import__drop-glyph {
+  display: grid;
+  place-items: center;
+  inline-size: var(--eliot-size-touch-target);
+  block-size: var(--eliot-size-touch-target);
+  border-radius: var(--eliot-shape-full);
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+}
+
+.er-import__drop-title {
+  color: var(--md-sys-color-on-surface);
+  font-size: var(--eliot-type-title-medium-size);
+  line-height: var(--eliot-type-title-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+
+.er-import__drop-hint {
+  max-inline-size: var(--eliot-layout-reading-max);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+}
+
+.er-import__progress {
+  display: grid;
+  gap: var(--eliot-space-gutter);
+  padding: var(--eliot-space-panel) var(--eliot-space-group);
+  border-radius: var(--eliot-shape-large-increased);
+  background: var(--eliot-color-group);
+}
+
+.er-import__file-row {
+  display: flex;
+  align-items: center;
+  gap: var(--eliot-space-gutter);
+  min-width: 0;
+  margin: 0;
+}
+
+.er-import__file-glyph { display: grid; place-items: center; color: var(--md-sys-color-primary); }
+.er-import__file-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: var(--eliot-type-font-weight-medium); }
+.er-import__file-size { color: var(--md-sys-color-on-surface-variant); font-variant-numeric: var(--eliot-type-numerals); white-space: nowrap; }
+
+.er-import__steps { display: grid; gap: var(--eliot-space-tight); margin: 0; padding: 0; list-style: none; }
+
+.er-import__step {
+  display: flex;
+  align-items: center;
+  gap: var(--eliot-space-gutter);
+  min-height: var(--eliot-size-control);
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.er-import__step-glyph {
+  display: grid;
+  place-items: center;
+  inline-size: var(--eliot-size-control-small);
+  block-size: var(--eliot-size-control-small);
+  border-radius: var(--eliot-shape-full);
+  background: var(--md-sys-color-surface-container-high);
+}
+
+.er-import__step[data-state="done"] { color: var(--md-sys-color-on-surface); }
+.er-import__step-note { margin-inline-start: auto; color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-body-small-size); font-weight: var(--eliot-type-font-weight-regular); }
+/* Inside the dialog its own title already names the flow; the section heading stays for assistive tech. */
+.er-dialog .er-import__title { position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.er-import__step[data-state="done"] .er-import__step-glyph { background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); }
+.er-import__step[data-state="active"] { color: var(--md-sys-color-on-surface); font-weight: var(--eliot-type-font-weight-medium); }
+.er-import__step[data-state="active"] .er-import__step-glyph {
+  background: var(--md-sys-color-tertiary-container);
+  color: var(--md-sys-color-on-tertiary-container);
+  animation: er-import-pulse calc(var(--eliot-motion-spatial) * 4) var(--eliot-motion-standard-easing) infinite alternate;
+}
+.er-import__step[data-state="attention"] { color: var(--md-sys-color-error); }
+.er-import__step[data-state="attention"] .er-import__step-glyph { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
+
+@keyframes er-import-pulse { to { transform: scale(0.85); } }
+@media (prefers-reduced-motion: reduce) { .er-import__step[data-state="active"] .er-import__step-glyph { animation: none; } }
+
+.er-import__details > summary {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--eliot-size-control-small);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-medium-size);
+  font-weight: var(--eliot-type-font-weight-medium);
+  cursor: pointer;
+}
+
+@media (forced-colors: active) {
+  .er-import__drop, .er-import__progress { border: var(--eliot-divider-width) solid CanvasText; }
 }

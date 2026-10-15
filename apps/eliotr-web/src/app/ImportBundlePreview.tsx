@@ -104,13 +104,9 @@ export const playBundleJourney = async ({ canvas, userEvent }: {
     await userEvent.click(canvas.getByRole('button', { name: 'Saved bundle' }));
     const region = paneAnnouncement(dialog);
     await userEvent.upload(canvas.getByLabelText('Choose bundle files'), files);
-    await userEvent.click(await canvas.findByRole('button', { name: 'Review bundle files' }));
+    // Picking the bundle files checks and imports them in one go; a lost acknowledgement stops there.
     await canvas.findByText('content.md');
-    const start = canvas.getByRole('button', { name: 'Start the import' });
-    if (!(start instanceof HTMLButtonElement) || !start.disabled) throw new Error('Bundle began before explicit frozen-byte review');
-    await userEvent.click(canvas.getByRole('checkbox', { name: 'Review the exact bytes below before anything is uploaded.' }));
-    start.click(); start.click();
-    await canvas.findByText('Import outcome is unknown. Check the same import identity again.');
+    await canvas.findByText('Not sure whether the import finished. Check its status.');
     await announcementUntil(() => unchangedChannel(dialog, region, 'The last step could not be verified. Check its saved status before starting again.'));
     if (canvas.queryByRole('button', { name: 'Start the import' })) throw new Error('Lost commit acknowledgement exposed a replacement import');
     await userEvent.click(canvas.getByRole('button', { name: 'Back to sources' }));

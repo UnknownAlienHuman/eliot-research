@@ -55,6 +55,16 @@ async function until(predicate: () => boolean, label: string): Promise<void> {
   throw new Error("Import/erasure regression fixture timed out: " + label);
 }
 
+/** The automatic import re-reads an unsettled step on a timer, so its wait is measured in time. */
+async function eventually(predicate: () => boolean, label: string, ms = 10000): Promise<void> {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (predicate()) return;
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  throw new Error("Import/erasure regression fixture timed out: " + label);
+}
+
 async function bundleFiles(): Promise<File[]> {
   const encode = (value: string) => new TextEncoder().encode(value);
   const digest = async (bytes: Uint8Array) => Array.from(
@@ -163,19 +173,11 @@ export const ImportPanelRefusalRecoveryAndExplicitDismissal = {
     const originalText = "Original editable source bytes stay with the owner.";
     await userEvent.click(await canvas.findByRole("button", { name: "Import sources" }));
     await canvas.findByRole("dialog", { name: "Import sources" });
-    await canvas.findByRole("option", { name: "Panel imports" });
-    await userEvent.selectOptions(canvas.getByRole("combobox", { name: "Save the file in" }), "workspace-panel-1");
+    // One workspace is chosen for the owner; picking the file starts capture, processing and admission.
+    await eventually(() => canvas.queryByLabelText("Choose a file") !== null, "file picker");
+    assert(canvas.queryByLabelText("Save the file in") === null, "A single workspace asked the owner to choose it");
     await userEvent.upload(canvas.getByLabelText("Choose a file"), new File([originalText], "original.md", { type: "text/markdown" }));
-    await userEvent.click(canvas.getByRole("button", { name: "Review the selected file" }));
-    await userEvent.click(await canvas.findByRole("button", { name: "Capture the selected file" }));
-
-    await userEvent.type(await canvas.findByRole("spinbutton", { name: "Maximum result size (bytes)" }), "4096");
-    await userEvent.type(canvas.getByRole("spinbutton", { name: "Maximum processing tokens" }), "64");
-    await userEvent.type(canvas.getByRole("spinbutton", { name: "Time limit (milliseconds)" }), "30000");
-    await userEvent.click(canvas.getByRole("button", { name: "Review processing options" }));
-    await userEvent.click(await canvas.findByRole("button", { name: "Process the captured file" }));
-    await userEvent.click(await canvas.findByRole("button", { name: "Add to Library" }));
-    await until(() => probe.importMemory()?.file?.admission?.state === "UNKNOWN", "unknown raw admission outcome");
+    await eventually(() => probe.importMemory()?.file?.admission?.state === "UNKNOWN", "unknown raw admission outcome");
 
     const unknownAdmission = probe.importMemory();
     if (!unknownAdmission) throw new Error("Unknown admission outcome lost its protected intent");
@@ -203,10 +205,9 @@ export const ImportPanelRefusalRecoveryAndExplicitDismissal = {
       idempotency_key: probe.counts().rawAdmissionKeys[0],
       conversion_operation_id: completedConversion.operation_id,
     }, "Unknown admission changed its original request identity");
-    assertDeepEqual(probe.counts().rawAdmissionStatusPaths, [], "Unknown admission read status before an explicit check");
     await canvas.findByText("Library admission outcome is unknown. Check the same admission identity again.");
-    await userEvent.click(await canvas.findByRole("button", { name: "Check Library status" }));
-    await until(() => probe.importMemory()?.file?.admission?.state === "COMMITTED", "committed raw admission readback");
+    // The chain re-reads the same admission identity by itself; it never repeats the mutation.
+    await eventually(() => probe.importMemory()?.file?.admission?.state === "COMMITTED", "committed raw admission readback");
     const committedAdmission = probe.importMemory()?.file?.admission;
     assert(probe.importMemory()?.file?.uncertain === undefined, "Committed admission retained uncertainty");
     assertEqual(committedAdmission?.admission_receipt?.operation_id, admissionOperationId, "Admission readback changed operation identity");
@@ -216,12 +217,11 @@ export const ImportPanelRefusalRecoveryAndExplicitDismissal = {
     assertDeepEqual(probe.counts().rawAdmissionStatusPaths, [
       `/api/v1/ingest/raw/${capturedFile.capture_id}/admission/${admissionOperationId}`,
     ], "Admission status readback changed its canonical path");
-    await userEvent.click(canvas.getByRole("button", { name: "Choose another file" }));
+    await canvas.findByText("The source is in the Library.");
+    await userEvent.click(canvas.getByRole("button", { name: "Add another file" }));
 
     const uncertainText = "Second source whose capture acknowledgement is lost.";
     await userEvent.upload(canvas.getByLabelText("Choose a file"), new File([uncertainText], "second.md", { type: "text/markdown" }));
-    await userEvent.click(canvas.getByRole("button", { name: "Review the selected file" }));
-    await userEvent.click(await canvas.findByRole("button", { name: "Capture the selected file" }));
     await canvas.findByText("The last outcome is unknown. Re-read the same identity before starting anything new.");
 
     const beforeRemount = probe.importMemory();
@@ -246,14 +246,14 @@ export const ImportPanelRefusalRecoveryAndExplicitDismissal = {
     await until(() => probe.importMemory()?.file?.receipt !== undefined, "saved capture receipt readback");
     assertDeepEqual(probe.counts().rawCaptureReadKeys, [captureKey], "Capture readback changed the saved identity");
     assertLength(probe.counts().rawCapturePostKeys, 2, "Capture readback repeated capture");
+    // The recovered file then continues on its own to the Library.
+    await eventually(() => probe.importMemory()?.file?.admission?.state === "COMMITTED", "recovered file reaches the Library");
 
     await userEvent.click(canvas.getByRole("button", { name: "Saved bundle" }));
+    // Picking the bundle files checks and imports them in one go.
     await userEvent.upload(canvas.getByLabelText("Choose bundle files"), await bundleFiles());
-    await userEvent.click(canvas.getByRole("button", { name: "Review bundle files" }));
+    await eventually(() => probe.importMemory()?.bundleRejected === true, "local bundle dispatch guard refusal");
     await canvas.findByText("content.md");
-    await userEvent.click(canvas.getByRole("checkbox", { name: "Review the exact bytes below before anything is uploaded." }));
-    await userEvent.click(await canvas.findByRole("button", { name: "Start the import" }));
-    await until(() => probe.importMemory()?.bundleRejected === true, "local bundle dispatch guard refusal");
     await canvas.findByText("The import request was refused before execution. Review the input and access before continuing.", { selector: ".er-operation-announcement" });
 
     const rejectedBundle = probe.importMemory();

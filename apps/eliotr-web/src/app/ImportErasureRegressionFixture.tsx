@@ -374,7 +374,7 @@ async function buildEnvironment(): Promise<PanelEnvironment> {
           !/^raw-admission-[a-f0-9]{64}$/u.test(request.idempotency_key) ||
           typeof request.conversion_operation_id !== "string" ||
           request.conversion_operation_id !== "e".repeat(64) ||
-          evidence.rawAdmissionKeys.length !== 0) {
+          (evidence.rawAdmissionKeys.length !== 0 && admissionSnapshot?.captureId === captureId)) {
         throw new Error("Raw admission did not preserve its original request identity");
       }
       evidence.rawAdmissionKeys.push(request.idempotency_key);

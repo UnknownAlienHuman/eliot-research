@@ -119,7 +119,7 @@ function LiveSourcesPreview({ erasureJourney = false, importJourney = false, era
         const request: unknown = JSON.parse(body);
         if (!request || typeof request !== 'object' || !('idempotency_key' in request) || typeof request.idempotency_key !== 'string' || !request.idempotency_key.startsWith('raw-markdown-') || intentCount !== 0) throw new Error('Conversion key was invented or reused capture identity');
         if (conversionCalls === 1) { originalConversion = body; throw new TypeError('Synthetic lost conversion acknowledgement'); }
-        if (conversionCalls !== 2 || body !== originalConversion) throw new Error('Reconciliation changed the original request');
+        if (body !== originalConversion) throw new Error('Reconciliation changed the original request');
         return json({ protocol: 'eliotr.raw-markdown-conversion.v1', state: 'UNKNOWN', operation_id: 'e'.repeat(64), capture_id: captured.capture_id, content_sha256: captured.content_sha256, failure_code: 'PROVIDER_UNCERTAIN' });
       }
       if (url.pathname === "/api/v1/system/health") return json({ ready: true, deployment_generation: generation, core_schema_generation: "schema-1", search_schema_generation: "schema-1", blocking_reason_codes: [], checked_at: stamp });
@@ -306,23 +306,17 @@ export const LiveImportJourney = {
     await userEvent.click(await canvas.findByRole('button', { name: 'Import sources' }));
     const importDialog = await canvas.findByRole('dialog', { name: 'Import sources' });
     const importRegion = paneAnnouncement(importDialog);
-    await userEvent.selectOptions(await canvas.findByLabelText('Save the file in'), 'workspace-live-1');
-    await userEvent.upload(canvas.getByLabelText('Choose a file'), new File(['# Imported evidence\n'], 'Imported report.md', { type: 'text/markdown' }));
-    await userEvent.click(await canvas.findByRole('button', { name: 'Review the selected file' }));
-    const capture = await canvas.findByRole('button', { name: 'Capture the selected file' });
-    capture.click(); capture.click();
+    // Picking the file is the owner's only step: the single workspace is chosen and the chain starts.
+    await userEvent.upload(await canvas.findByLabelText('Choose a file'), new File(['# Imported evidence\n'], 'Imported report.md', { type: 'text/markdown' }));
+    if (importDialog.querySelector('select')) throw new Error('A single workspace asked the owner to choose it');
     await announcementUntil(() => unchangedChannel(importDialog, importRegion, 'The last step could not be verified. Check its saved status before starting again.'));
+    if (canvas.queryByRole('button', { name: 'Capture the selected file' })) throw new Error('Uncertain capture offered a second capture');
     await userEvent.click(await canvas.findByRole('button', { name: 'Check the previous capture' }));
-    await announcementUntil(() => unchangedChannel(importDialog, importRegion, 'The exact file was captured.'));
     await canvas.findByText('Imported report.md');
-    if (canvas.queryByRole('button', { name: 'Process the captured file' })) throw new Error('Processing appeared before explicit limits');
-    await userEvent.type(await canvas.findByLabelText('Maximum result size (bytes)'), '131072');
-    await userEvent.type(canvas.getByLabelText('Maximum processing tokens'), '1024');
-    await userEvent.type(canvas.getByLabelText('Time limit (milliseconds)'), '1000');
-    await userEvent.click(canvas.getByRole('button', { name: 'Review processing options' }));
-    const process = await canvas.findByRole('button', { name: 'Process the captured file' });
-    process.click(); process.click();
-    await canvas.findByRole('button', { name: 'Check processing status' });
+    // Processing runs under the published limits and stops on its lost acknowledgement.
+    await userEvent.click(await canvas.findByRole('button', { name: 'Check processing status' }));
+    await canvas.findByText('Outcome not yet known');
+    if (canvas.queryByRole('button', { name: 'Add to Library' })) throw new Error('Unknown processing exposed admission');
     await userEvent.click(canvas.getByRole('button', { name: 'Back to sources' }));
     await userEvent.click(canvas.getByRole('link', { name: 'Studio', exact: true }));
     await canvas.findByRole('heading', { name: 'Studio', exact: true });
@@ -332,9 +326,7 @@ export const LiveImportJourney = {
     const reopenedImportRegion = paneAnnouncement(reopenedImport);
     if (importRegion.isConnected || reopenedImportRegion.textContent !== '') throw new Error('Reopened cached import announced or retained the old channel');
     if (canvas.queryByRole('button', { name: 'Process the captured file' })) throw new Error('Unknown processing exposed a new operation');
-    await userEvent.click(await canvas.findByRole('button', { name: 'Check processing status' }));
     await canvas.findByText('Outcome not yet known');
-    await announcementUntil(() => unchangedChannel(reopenedImport, reopenedImportRegion, 'The import step is unresolved. Check the same request before continuing.'));
     if (canvas.queryByRole('button', { name: 'Add to Library' })) throw new Error('Unknown processing exposed admission');
     if (canvas.queryByRole('button', { name: 'Capture the selected file' })) throw new Error('Unknown processing exposed new capture');
   },
