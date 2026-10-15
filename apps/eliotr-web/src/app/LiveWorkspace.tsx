@@ -235,6 +235,7 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
         onNext={projects.data?.next_project_id ? () => { const next = projects.data?.next_project_id; if (next) { setProjectId(undefined); setProjectPages(pages => [...pages, next]); } } : undefined} />
         : destination === "research" ? <ResearchPanel locale={locale} apis={apis} privacy={privacy} context={context} scope={scope} scopeCurrent={scopeCurrent}
           isScopeCurrent={isScopeCurrent} projectId={selected?.project_id} isProjectCurrent={isProjectCurrent}
+          agents={agents} agentConnectionCursor={agentAfter} agentsUnavailable={!agentsReadable}
           cover={selected ? { title: selected.title, meta: text.sourceCount(selected.source_ids.length) } : undefined} />
         : destination === "inbox" ? <InboxPanel locale={locale} apis={apis} privacy={privacy} context={context} />
         : <StudioPanel locale={locale} apis={apis} privacy={privacy} context={context} />}

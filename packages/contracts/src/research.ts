@@ -8,6 +8,12 @@ import { ScopeSnapshotSchema } from "./scope.js";
 /** Complete Research HTTP JSON envelope; never a character or query-only quota. */
 export const RESEARCH_REQUEST_MAX_BYTES = 262144;
 
+/** Shared reference for the default server-owned inquiry protocol used by owner research entrypoints. */
+export const RESEARCH_DEFAULT_INQUIRY_PROTOCOL_REF = Object.freeze({
+  id: "eliotr.research.profile.corpus-exploratory-lookup",
+  revision: 1,
+}) satisfies z.infer<typeof VersionedRefSchema>;
+
 /** Validate original UTF-16 before hashing/encoding; accept LF, CRLF and HT without rewriting. */
 export function isResearchQuestionText(value: unknown): value is string {
   if (typeof value !== "string" || value.length === 0 ||

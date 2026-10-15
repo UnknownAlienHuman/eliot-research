@@ -1,5 +1,6 @@
 import {
   InquiryProtocolProfileSchema,
+  RESEARCH_DEFAULT_INQUIRY_PROTOCOL_REF,
   type EvidenceGrade,
   type InquiryObligation,
   type InquiryProtocolProfile,
@@ -11,7 +12,7 @@ import type { LedgerObligation } from "@eliotr/research";
 export const RESEARCH_RUN_REQUEST_V2 = "eliotr.research-run-request.v2" as const;
 
 export const INSTALLED_INQUIRY_PROTOCOL_REFS = Object.freeze({
-  lookup: Object.freeze({ id: "eliotr.research.profile.corpus-exploratory-lookup", revision: 1 }),
+  lookup: Object.freeze({ ...RESEARCH_DEFAULT_INQUIRY_PROTOCOL_REF }),
   evidence_review: Object.freeze({ id: "eliotr.research.profile.corpus-evidence-review", revision: 1 }),
   architecture_decision: Object.freeze({ id: "eliotr.research.profile.corpus-architecture-decision", revision: 1 }),
 }) satisfies Readonly<Record<string, VersionedRef>>;

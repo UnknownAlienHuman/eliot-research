@@ -11,6 +11,9 @@ export interface HandoffSheetProps {
   readonly locale: AgentWorkLocale;
   readonly open: boolean;
   readonly agents: readonly AgentSummary[];
+  readonly allowSystemTarget?: boolean | undefined;
+  readonly sending?: boolean | undefined;
+  readonly submissionError?: string | undefined;
   /** The system's tools for this project; "Your request" is always offered for anything else. */
   readonly tools: readonly ResearchToolId[];
   /** What the owner selected before opening the sheet: a section, a claim, sources or the research. */
@@ -32,21 +35,31 @@ export function HandoffSheet(props: HandoffSheetProps) {
   </Dialog>;
 }
 
-function HandoffForm({ locale, agents, tools, scope: initialScope, initialTool, initialTarget, onSend, onClose }: HandoffSheetProps) {
+function HandoffForm({ locale, agents, tools, scope: initialScope, initialTool, initialTarget,
+  allowSystemTarget = true, sending = false, submissionError, onSend, onClose }: HandoffSheetProps) {
   const copy = AGENT_WORK_COPY[locale];
   const text = copy.sheet;
   const id = useId();
-  const firstReady = agents.find(agent => agent.presence !== "offline")?.id ?? "eliot";
-  const [target, setTarget] = useState(initialTarget ?? firstReady);
+  // Connection configuration is authoritative; unknown presence remains assignable.
+  const canSelectAgent = (agent: AgentSummary) => agent.connectionState === "owner-enabled" && agent.presence !== "offline";
+  const firstReady = agents.find(canSelectAgent)?.id ?? (allowSystemTarget ? "eliot" : "");
+  const initialAgent = agents.find(agent => agent.id === initialTarget);
+  const initialTargetIsSelectable = initialTarget === "eliot" ? allowSystemTarget
+    : initialAgent !== undefined && canSelectAgent(initialAgent);
+  const [target, setTarget] = useState(initialTargetIsSelectable ? initialTarget ?? firstReady : firstReady);
   const [tool, setTool] = useState<ResearchToolId | "request">(initialTool ?? tools[0] ?? "request");
   const [scope, setScope] = useState<readonly TaskScope[]>(initialScope);
   const [note, setNote] = useState("");
-  const [problem, setProblem] = useState<"note" | "scope" | null>(null);
+  const [problem, setProblem] = useState<"note" | "scope" | "target" | null>(null);
+  const selectedAgent = agents.find(agent => agent.id === target);
+  const targetSelectable = target === "eliot" ? allowSystemTarget
+    : selectedAgent !== undefined && canSelectAgent(selectedAgent);
   const targetName = target === "eliot" ? text.system : agents.find(agent => agent.id === target)?.name ?? text.system;
   const toolLabel = copy.tool[tool].label;
   const items = scope.map(item => item.label).join(", ");
 
   const send = () => {
+    if (!targetSelectable) { setProblem("target"); return; }
     if (scope.length === 0) { setProblem("scope"); return; }
     if (tool === "request" && note.trim().length === 0) { setProblem("note"); return; }
     onSend({ target, tool, scope, note: note.trim() });
@@ -56,20 +69,23 @@ function HandoffForm({ locale, agents, tools, scope: initialScope, initialTool, 
     <fieldset className="er-handoff__group">
       <legend>{text.to}</legend>
       <div className="er-chip-row">
-        <label className="er-chip"><input type="radio" name={`${id}-to`} checked={target === "eliot"} onChange={() => setTarget("eliot")} />
-          <MaterialSymbol name="spark" /><span>{text.system}</span></label>
-        {agents.map(agent => <label key={agent.id} className="er-chip" data-presence={agent.presence}>
-          <input type="radio" name={`${id}-to`} checked={target === agent.id} disabled={agent.presence === "offline"} onChange={() => setTarget(agent.id)} />
-          <MaterialSymbol name="agent" /><span>{agent.name}</span>{agent.presence === "offline" ? <span className="er-chip__meta">{text.offline}</span> : null}
+        {allowSystemTarget ? <label className="er-chip"><input type="radio" name={`${id}-to`} checked={target === "eliot"} disabled={sending} onChange={() => setTarget("eliot")} />
+          <MaterialSymbol name="spark" /><span>{text.system}</span></label> : null}
+        {agents.map(agent => <label key={agent.id} className="er-chip" data-connection-state={agent.connectionState} data-presence={agent.presence}>
+          <input type="radio" name={`${id}-to`} checked={target === agent.id}
+            disabled={sending || !canSelectAgent(agent)} onChange={() => { setTarget(agent.id); if (problem === "target") setProblem(null); }} />
+          <MaterialSymbol name="agent" /><span>{agent.name}</span>
+          <span className="er-chip__meta">{copy.connectionState[agent.connectionState]} · {copy.presence[agent.presence]}</span>
         </label>)}
       </div>
+      {problem === "target" || !targetSelectable ? <p className="er-handoff__problem" role="alert">{text.targetUnavailable}</p> : null}
     </fieldset>
 
     <fieldset className="er-handoff__group">
       <legend>{text.tool}</legend>
       <div className="er-chip-row">
         {[...tools, "request" as const].map(option => <label key={option} className="er-chip" title={copy.tool[option].hint}>
-          <input type="radio" name={`${id}-tool`} checked={tool === option} onChange={() => { setTool(option); if (problem === "note") setProblem(null); }} />
+          <input type="radio" name={`${id}-tool`} checked={tool === option} disabled={sending} onChange={() => { setTool(option); if (problem === "note") setProblem(null); }} />
           <MaterialSymbol name={TOOL_ICON[option]} /><span>{copy.tool[option].label}</span>
         </label>)}
       </div>
@@ -80,7 +96,7 @@ function HandoffForm({ locale, agents, tools, scope: initialScope, initialTool, 
       <legend>{text.what}</legend>
       {scope.length > 0 ? <ul className="er-chip-row" aria-label={text.what}>{scope.map(item => <li key={item.id} className="er-chip er-chip--input">
         <span className="er-chip__kind">{copy.scopeKind[item.kind]}</span><span>{item.label}</span>
-        <button type="button" className="er-chip__remove" aria-label={text.remove(item.label)}
+        <button type="button" className="er-chip__remove" aria-label={text.remove(item.label)} disabled={sending}
           onClick={() => setScope(old => old.filter(entry => entry.id !== item.id))}><MaterialSymbol name="close" /></button>
       </li>)}</ul> : null}
       {problem === "scope" ? <p className="er-handoff__problem" role="alert">{text.scopeRequired}</p> : null}
@@ -88,10 +104,11 @@ function HandoffForm({ locale, agents, tools, scope: initialScope, initialTool, 
 
     <label className="er-handoff__note">
       <span>{text.note}</span>
-      <textarea rows={2} value={note} placeholder={text.notePlaceholder} aria-invalid={problem === "note"}
+      <textarea rows={2} value={note} placeholder={text.notePlaceholder} disabled={sending} aria-invalid={problem === "note"}
         onChange={event => { setNote(event.target.value); if (problem === "note") setProblem(null); }} />
     </label>
     {problem === "note" ? <p className="er-handoff__problem" role="alert">{text.noteRequired}</p> : null}
+    {submissionError ? <p className="er-handoff__problem" role="alert">{submissionError}</p> : null}
 
     <p className="er-handoff__summary">
       <MaterialSymbol name={target === "eliot" ? "spark" : "agent"} />
@@ -99,8 +116,10 @@ function HandoffForm({ locale, agents, tools, scope: initialScope, initialTool, 
     </p>
 
     <div className="er-handoff__actions">
-      <Button variant="text" type="button" onClick={onClose}>{text.cancel}</Button>
-      <Button variant="primary" type="submit" icon="send">{text.send}</Button>
+      <Button variant="text" type="button" disabled={sending} onClick={onClose}>{text.cancel}</Button>
+      <Button variant="primary" type="submit" icon="send" disabled={sending || !targetSelectable}>
+        {sending ? text.sending : text.send}
+      </Button>
     </div>
   </form>;
 }

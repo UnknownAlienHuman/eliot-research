@@ -108,7 +108,8 @@ export const HandOverAClaimCheck: Story = {
     const body = within(canvasElement.ownerDocument.body);
     const dialog = await body.findByRole("dialog", { name: "Hand over" });
     const sheet = within(dialog);
-    await expect(sheet.getByRole("radio", { name: "Gemini Spark offline" })).toBeDisabled();
+    await expect(sheet.getByRole("radio", { name: /Gemini Spark.*Disabled.*Presence not checked/ })).toBeDisabled();
+    await expect(sheet.getByRole("radio", { name: /Codex.*Enabled.*Presence not checked/ })).toBeEnabled();
     await userEvent.click(sheet.getByRole("button", { name: "Remove Protocol 1959.docx" }));
     await expect(sheet.queryByText("Protocol 1959.docx")).toBeNull();
     await expect(sheet.getByText("Codex · Check a claim: 2. Versions of the cause.")).toBeVisible();

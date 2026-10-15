@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { RESEARCH_DEFAULT_INQUIRY_PROTOCOL_REF } from "@eliotr/contracts";
 
 import {
   INSTALLED_INQUIRY_PROTOCOL_REFS,
+  defaultInquiryProtocolRef,
   InstalledInquiryProtocolError,
   assertInstalledInquiryProtocolProfile,
   compileInstalledInquiryProtocol,
@@ -9,6 +11,11 @@ import {
 } from "./research-inquiry-protocol.js";
 
 describe("installed InquiryProtocol profiles", () => {
+  it("shares the explicit owner-dispatch default with the installed lookup profile", () => {
+    expect(INSTALLED_INQUIRY_PROTOCOL_REFS.lookup).toEqual(RESEARCH_DEFAULT_INQUIRY_PROTOCOL_REF);
+    expect(defaultInquiryProtocolRef()).toEqual(RESEARCH_DEFAULT_INQUIRY_PROTOCOL_REF);
+  });
+
   it("keeps the historical lookup profile byte-compatible while explicit v2 adds obligations", async () => {
     const legacy = await compileInstalledInquiryProtocol({
       definition_ref: INSTALLED_INQUIRY_PROTOCOL_REFS.lookup,
