@@ -19,6 +19,11 @@ import {
 } from "@eliotr/cloudflare-projection";
 import type { Env } from "./env.js";
 import { HttpRequestError } from "./http-errors.js";
+import {
+  ManagedSearchProductSelectionError,
+  resolveManagedTargetSelectionV2,
+  type ManagedTargetSelectionV2,
+} from "./managed-search-product-selection.js";
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const MAX_EXPECTED_EVENT_REVISION = 999_999;
@@ -46,6 +51,10 @@ interface AssignmentHeadRow {
   readonly event_managed_instance_id: unknown;
   readonly event_managed_generation: unknown;
   readonly event_target_profile_identity_sha256: unknown;
+  readonly event_decision_version: unknown;
+  readonly event_selection_mode: unknown;
+  readonly event_product_alias: unknown;
+  readonly current_event_revision: unknown;
   readonly previous_assignment_revision: unknown;
   readonly actor_kind: unknown;
   readonly actor_principal_ref: unknown;
@@ -57,7 +66,43 @@ interface CurrentAssignmentHead {
   readonly project_generation: number;
   readonly project_owner_principal_ref: string;
   readonly d1_now: string;
+  readonly head_revision: number;
   readonly head_event: ManagedTargetAssignmentEvent | null;
+}
+
+export interface ManagedSearchProductOptInSnapshotV2 {
+  readonly protocol: "eliotr.managed-search-product-optin.v2";
+  readonly decision_version: 2;
+  readonly project_id: string;
+  readonly decision: "ENABLED" | "DISABLED";
+  readonly product_alias?: "primary";
+  readonly expected_head_revision: number;
+}
+
+interface ManagedSearchProductEvent {
+  readonly event_revision: number;
+  readonly expected_event_revision: number;
+  readonly event_kind: "ASSIGN" | "RETIRE";
+  readonly project_id: string;
+  readonly project_generation: number;
+  readonly project_owner_principal_ref: string;
+  readonly actor_kind: "OWNER" | "OPERATOR";
+  readonly actor_principal_ref: string;
+  readonly authorization_receipt_ref: string;
+  readonly created_at: string;
+  readonly decision_version: 1 | 2;
+  readonly selection_mode: "EXACT_GENERATION_V1" | "STABLE_PHYSICAL_PROFILE_V2";
+  readonly product_alias: "primary" | null;
+  readonly target: ManagedTargetIdentity | null;
+  readonly previous_assignment_revision: number | null;
+}
+
+interface ManagedSearchProductCurrent {
+  readonly project_generation: number;
+  readonly project_owner_principal_ref: string;
+  readonly d1_now: string;
+  readonly head_revision: number;
+  readonly head_event: ManagedSearchProductEvent | null;
 }
 
 export interface ManagedTargetAssignmentSnapshot {
@@ -163,6 +208,12 @@ function sameTarget(left: ManagedTargetIdentity, right: ManagedTargetIdentity): 
 
 function decodeHeadEvent(row: AssignmentHeadRow): ManagedTargetAssignmentEvent | null {
   if (row.event_project_id === null) return null;
+  if (row.event_decision_version !== 1 ||
+      row.event_selection_mode !== "EXACT_GENERATION_V1" ||
+      row.event_product_alias !== null) {
+    fail("MANAGED_TARGET_ASSIGNMENT_VERSIONED_HEAD", 409,
+      "This assignment head uses the V2 managed-search product API");
+  }
   try {
     const commandInput: Record<string, unknown> = {
       event_kind: row.event_kind,
@@ -196,6 +247,83 @@ function decodeHeadEvent(row: AssignmentHeadRow): ManagedTargetAssignmentEvent |
   } catch {
     fail("MANAGED_TARGET_ASSIGNMENT_READBACK_INVALID", 503,
       "The durable managed target assignment head is invalid", true);
+  }
+}
+
+function decodeManagedSearchProductEvent(
+  row: AssignmentHeadRow,
+): ManagedSearchProductEvent | null {
+  if (row.event_project_id === null) {
+    if (row.current_event_revision !== null) {
+      fail("MANAGED_TARGET_ASSIGNMENT_READBACK_INVALID", 503,
+        "The current managed-search head has no matching immutable event", true);
+    }
+    return null;
+  }
+  if (!Number.isSafeInteger(row.current_event_revision) ||
+      !Number.isSafeInteger(row.event_revision) ||
+      row.current_event_revision !== row.event_revision) {
+    fail("MANAGED_TARGET_ASSIGNMENT_READBACK_INVALID", 503,
+      "The current managed-search head revision is invalid", true);
+  }
+  const decisionVersion = row.event_decision_version;
+  const selectionMode = row.event_selection_mode;
+  const productAlias = row.event_product_alias;
+  if (!(
+    (decisionVersion === 1 && selectionMode === "EXACT_GENERATION_V1" && productAlias === null) ||
+    (decisionVersion === 2 && selectionMode === "STABLE_PHYSICAL_PROFILE_V2" && productAlias === "primary")
+  )) {
+    fail("MANAGED_TARGET_ASSIGNMENT_READBACK_INVALID", 503,
+      "The current managed-search head has an invalid versioned selection marker", true);
+  }
+
+  const commandInput: Record<string, unknown> = {
+    event_kind: row.event_kind,
+    project_id: row.event_project_id,
+    project_generation: row.event_project_generation,
+    project_owner_principal_ref: row.event_project_owner_principal_ref,
+    expected_event_revision: row.expected_event_revision,
+    actor: {
+      kind: row.actor_kind,
+      principal_ref: row.actor_principal_ref,
+      authorization_receipt_ref: row.authorization_receipt_ref,
+    },
+    created_at: row.created_at,
+  };
+  if (row.event_kind === "ASSIGN") {
+    commandInput.target = {
+      namespace: row.event_target_namespace,
+      managed_instance_id: row.event_managed_instance_id,
+      managed_generation: row.event_managed_generation,
+      target_profile_identity_sha256: row.event_target_profile_identity_sha256,
+    };
+  } else if (row.event_kind === "RETIRE") {
+    commandInput.previous_assignment_revision = row.previous_assignment_revision;
+  } else {
+    fail("MANAGED_TARGET_ASSIGNMENT_READBACK_INVALID", 503,
+      "The current managed-search event kind is invalid", true);
+  }
+
+  try {
+    const command = parseManagedTargetAssignmentCommand(commandInput);
+    if (command.project_id !== row.event_project_id ||
+        command.expected_event_revision + 1 !== row.event_revision) {
+      throw new Error("managed-search event revision does not match its command");
+    }
+    return Object.freeze({
+      ...command,
+      event_revision: row.event_revision as number,
+      decision_version: decisionVersion as 1 | 2,
+      selection_mode: selectionMode as ManagedSearchProductEvent["selection_mode"],
+      product_alias: productAlias as "primary" | null,
+      target: command.event_kind === "ASSIGN" ? command.target : null,
+      previous_assignment_revision: command.event_kind === "RETIRE"
+        ? command.previous_assignment_revision
+        : null,
+    });
+  } catch {
+    fail("MANAGED_TARGET_ASSIGNMENT_READBACK_INVALID", 503,
+      "The current managed-search event is invalid", true);
   }
 }
 
@@ -250,10 +378,12 @@ export function createManagedTargetAssignmentService(
         "e.target_namespace AS event_target_namespace,e.managed_instance_id AS event_managed_instance_id," +
         "e.managed_generation AS event_managed_generation," +
         "e.target_profile_identity_sha256 AS event_target_profile_identity_sha256," +
+        "e.decision_version AS event_decision_version,e.selection_mode AS event_selection_mode," +
+        "e.product_alias AS event_product_alias,h.event_revision AS current_event_revision," +
         "e.previous_assignment_revision,e.actor_kind,e.actor_principal_ref,e.authorization_receipt_ref,e.created_at " +
         "FROM project p JOIN project_owner o ON o.project_id=p.project_id " +
-        "LEFT JOIN managed_target_assignment_event e ON e.project_id=p.project_id AND e.event_revision=(" +
-        "SELECT MAX(head.event_revision) FROM managed_target_assignment_event head WHERE head.project_id=p.project_id) " +
+        "LEFT JOIN managed_target_assignment_current h ON h.project_id=p.project_id " +
+        "LEFT JOIN managed_target_assignment_event e ON e.project_id=h.project_id AND e.event_revision=h.event_revision " +
         "WHERE p.project_id=?1 AND o.principal_ref=?2 LIMIT 1",
       ).bind(projectId, principalRef, access.expires_at).first<AssignmentHeadRow>();
     } catch {
@@ -288,6 +418,9 @@ export function createManagedTargetAssignmentService(
       project_generation: row.current_project_generation as number,
       project_owner_principal_ref: row.current_project_owner_principal_ref,
       d1_now: row.d1_now,
+      head_revision: row.current_event_revision === null
+        ? 0
+        : row.current_event_revision as number,
       head_event: decodeHeadEvent(row),
     });
   }
@@ -515,6 +648,328 @@ export function createManagedTargetAssignmentService(
   }
 
   return Object.freeze({ read, assign, retire });
+}
+
+export function createManagedSearchProductOptInService(
+  env: Env,
+  context: AuthenticatedRequestContext,
+  rawProjectId: string,
+) {
+  const access = requireOwnerContext(context);
+  if (!IDENTIFIER.test(rawProjectId)) {
+    fail("MANAGED_TARGET_ASSIGNMENT_INPUT_INVALID", 400, "Project id is invalid");
+  }
+  const projectId = rawProjectId;
+  const principalRef = context.principal_ref;
+
+  async function readCurrent(): Promise<ManagedSearchProductCurrent> {
+    if (context.request.signal.aborted) {
+      fail("MANAGED_TARGET_ASSIGNMENT_AUTHORITY_CHANGED", 409,
+        "Owner product-decision request was cancelled");
+    }
+    let row: AssignmentHeadRow | null;
+    try {
+      row = await env.CORE_DB.prepare(
+        "SELECT p.generation AS current_project_generation," +
+        "o.principal_ref AS current_project_owner_principal_ref," +
+        "CASE WHEN julianday(?3)>julianday('now') THEN 1 ELSE 0 END AS access_current," +
+        "strftime('%Y-%m-%dT%H:%M:%fZ','now') AS d1_now," +
+        "e.project_id AS event_project_id,e.event_revision,e.expected_event_revision,e.event_kind," +
+        "e.project_generation AS event_project_generation," +
+        "e.project_owner_principal_ref AS event_project_owner_principal_ref," +
+        "e.target_namespace AS event_target_namespace,e.managed_instance_id AS event_managed_instance_id," +
+        "e.managed_generation AS event_managed_generation," +
+        "e.target_profile_identity_sha256 AS event_target_profile_identity_sha256," +
+        "e.decision_version AS event_decision_version,e.selection_mode AS event_selection_mode," +
+        "e.product_alias AS event_product_alias,h.event_revision AS current_event_revision," +
+        "e.previous_assignment_revision,e.actor_kind,e.actor_principal_ref,e.authorization_receipt_ref,e.created_at " +
+        "FROM project p JOIN project_owner o ON o.project_id=p.project_id " +
+        "LEFT JOIN managed_target_assignment_current h ON h.project_id=p.project_id " +
+        "LEFT JOIN managed_target_assignment_event e ON e.project_id=h.project_id AND e.event_revision=h.event_revision " +
+        "WHERE p.project_id=?1 AND o.principal_ref=?2 LIMIT 1",
+      ).bind(projectId, principalRef, access.expires_at).first<AssignmentHeadRow>();
+    } catch {
+      fail("MANAGED_TARGET_ASSIGNMENT_AUTHORITY_UNAVAILABLE", 503,
+        "Current managed-search product authority could not be read", true);
+    }
+    if (row === null) {
+      fail("MANAGED_TARGET_ASSIGNMENT_PROJECT_NOT_FOUND", 404,
+        "Project is unavailable to the authenticated owner");
+    }
+    if (row.access_current !== 1) {
+      fail("MANAGED_TARGET_ASSIGNMENT_OWNER_AUTH_EXPIRED", 401,
+        "The owner Access session has expired");
+    }
+    if (context.request.signal.aborted) {
+      fail("MANAGED_TARGET_ASSIGNMENT_AUTHORITY_CHANGED", 409,
+        "Owner product-decision request was cancelled");
+    }
+    if (
+      typeof row.current_project_owner_principal_ref !== "string" ||
+      row.current_project_owner_principal_ref !== principalRef ||
+      !Number.isSafeInteger(row.current_project_generation) ||
+      (row.current_project_generation as number) < 1 ||
+      typeof row.d1_now !== "string" ||
+      !Number.isFinite(Date.parse(row.d1_now)) ||
+      new Date(row.d1_now).toISOString() !== row.d1_now
+    ) {
+      fail("MANAGED_TARGET_ASSIGNMENT_AUTHORITY_UNAVAILABLE", 503,
+        "Current project product authority is invalid", true);
+    }
+    const headRevision = row.current_event_revision === null
+      ? 0
+      : row.current_event_revision;
+    if (!Number.isSafeInteger(headRevision) || (headRevision as number) < 0) {
+      fail("MANAGED_TARGET_ASSIGNMENT_READBACK_INVALID", 503,
+        "Current managed-search event-head revision is invalid", true);
+    }
+    return Object.freeze({
+      project_generation: row.current_project_generation as number,
+      project_owner_principal_ref: row.current_project_owner_principal_ref,
+      d1_now: row.d1_now,
+      head_revision: headRevision as number,
+      head_event: decodeManagedSearchProductEvent(row),
+    });
+  }
+
+  function eventDecision(event: ManagedSearchProductEvent | null, current: ManagedSearchProductCurrent): "ENABLED" | "DISABLED" {
+    return event !== null &&
+      event.decision_version === 2 &&
+      event.selection_mode === "STABLE_PHYSICAL_PROFILE_V2" &&
+      event.product_alias === "primary" &&
+      event.event_kind === "ASSIGN" &&
+      event.project_owner_principal_ref === current.project_owner_principal_ref &&
+      event.project_generation <= current.project_generation
+      ? "ENABLED"
+      : "DISABLED";
+  }
+
+  function snapshot(current: ManagedSearchProductCurrent): ManagedSearchProductOptInSnapshotV2 {
+    const decision = eventDecision(current.head_event, current);
+    return Object.freeze({
+      protocol: "eliotr.managed-search-product-optin.v2",
+      decision_version: 2,
+      project_id: projectId,
+      decision,
+      ...(decision === "ENABLED" ? { product_alias: "primary" as const } : {}),
+      expected_head_revision: current.head_revision,
+    });
+  }
+
+  function assertWritableHead(current: ManagedSearchProductCurrent): void {
+    const head = current.head_event;
+    if (head !== null && (
+      head.project_owner_principal_ref !== current.project_owner_principal_ref ||
+      head.project_generation > current.project_generation
+    )) {
+      throw new ManagedTargetAssignmentError(
+        "MANAGED_TARGET_ASSIGNMENT_PROJECT_AUTHORITY_STALE",
+        "The current product decision belongs to another owner or a future project generation",
+      );
+    }
+  }
+
+  function isDecisionReplay(
+    event: ManagedSearchProductEvent | null,
+    expectedHeadRevision: number,
+    decision: "ENABLED" | "DISABLED",
+  ): boolean {
+    return event !== null &&
+      event.decision_version === 2 &&
+      event.selection_mode === "STABLE_PHYSICAL_PROFILE_V2" &&
+      event.product_alias === "primary" &&
+      event.expected_event_revision === expectedHeadRevision &&
+      event.event_revision === expectedHeadRevision + 1 &&
+      ((decision === "ENABLED" && event.event_kind === "ASSIGN") ||
+        (decision === "DISABLED" && event.event_kind === "RETIRE"));
+  }
+
+  async function ensureV1HeadUsesPrimaryProfile(
+    event: ManagedSearchProductEvent,
+  ): Promise<void> {
+    if (event.event_kind !== "ASSIGN" ||
+        event.decision_version !== 1 ||
+        event.target === null ||
+        event.target.namespace !== AI_SEARCH_PRIMARY_NAMESPACE ||
+        event.target.managed_instance_id !== AI_SEARCH_PRIMARY_INSTANCE_ID) {
+      throw new HttpRequestError("MANAGED_TARGET_ASSIGNMENT_PROFILE_MISMATCH", 409,
+        "An existing exact-generation assignment cannot be upgraded to the reviewed primary product");
+    }
+    const currentMatch = await matchAiSearchProfileIdentity(
+      AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
+      event.target.target_profile_identity_sha256,
+    );
+    if (currentMatch === "PHYSICAL_V1") return;
+    if (currentMatch === "LEGACY_GENERATION_V1" &&
+        event.target.managed_generation === AI_SEARCH_PRIMARY_PROJECTION_PROFILE.generation) return;
+    const legacyProfile = {
+      ...AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
+      generation: event.target.managed_generation,
+      index_method: { ...AI_SEARCH_PRIMARY_PROJECTION_PROFILE.index_method },
+      metadata_fields: [...AI_SEARCH_PRIMARY_PROJECTION_PROFILE.metadata_fields].sort(),
+    };
+    if (event.target.target_profile_identity_sha256 === await projectionDigest(legacyProfile)) return;
+    throw new HttpRequestError("MANAGED_TARGET_ASSIGNMENT_PROFILE_MISMATCH", 409,
+      "The existing exact-generation assignment does not prove the reviewed primary physical profile");
+  }
+
+  async function appendDecision(
+    current: ManagedSearchProductCurrent,
+    decision: "ENABLED" | "DISABLED",
+    selection: ManagedTargetSelectionV2 | null,
+  ): Promise<void> {
+    const head = current.head_event;
+    if (decision === "ENABLED" && selection === null) {
+      fail("MANAGED_TARGET_ASSIGNMENT_PROFILE_UNAVAILABLE", 503,
+        "The reviewed primary registry target was not resolved", true);
+    }
+    if (decision === "DISABLED" && (head === null || head.event_kind !== "ASSIGN")) {
+      fail("MANAGED_TARGET_ASSIGNMENT_RETIREMENT_STALE", 409,
+        "A product disable append requires the current assigned event");
+    }
+    const accessReceiptRef = await ownerAccessReceiptReference(access);
+    const common = {
+      project_id: projectId,
+      project_generation: current.project_generation,
+      project_owner_principal_ref: current.project_owner_principal_ref,
+      expected_event_revision: current.head_revision,
+      actor: {
+        kind: "OWNER" as const,
+        principal_ref: principalRef,
+        authorization_receipt_ref: accessReceiptRef,
+      },
+      created_at: current.d1_now,
+      decision_version: 2 as const,
+      selection_mode: "STABLE_PHYSICAL_PROFILE_V2" as const,
+      product_alias: "primary" as const,
+    };
+    const command = decision === "ENABLED"
+      ? {
+        ...common,
+        event_kind: "ASSIGN" as const,
+        target: selection.target,
+      }
+      : {
+        ...common,
+        event_kind: "RETIRE" as const,
+        previous_assignment_revision: head.event_revision,
+      };
+    const port = createD1ManagedTargetAssignmentPort(env.CORE_DB, async () => undefined, access.expires_at);
+    const appendProductDecisionV2 = port.appendProductDecisionV2;
+    if (appendProductDecisionV2 === undefined) {
+      fail("MANAGED_TARGET_ASSIGNMENT_AUTHORITY_UNAVAILABLE", 503,
+        "The versioned managed-search decision writer is unavailable", true);
+    }
+    try {
+      await appendProductDecisionV2(command, async (candidate) => {
+        if (context.request.signal.aborted) {
+          throw new HttpRequestError("MANAGED_TARGET_ASSIGNMENT_AUTHORITY_CHANGED", 409,
+            "Owner product-decision request was cancelled");
+        }
+        if (
+          candidate.project_id !== projectId ||
+          candidate.project_owner_principal_ref !== principalRef ||
+          candidate.actor.kind !== "OWNER" ||
+          candidate.actor.principal_ref !== principalRef ||
+          candidate.actor.authorization_receipt_ref !== accessReceiptRef
+        ) {
+          throw new HttpRequestError("MANAGED_TARGET_ASSIGNMENT_AUTHORIZATION_DENIED", 403,
+            "The verified owner context does not authorize this product decision");
+        }
+        if (candidate.event_kind === "ASSIGN" &&
+            (selection === null ||
+             candidate.target.namespace !== selection.target.namespace ||
+             candidate.target.managed_instance_id !== selection.target.managed_instance_id ||
+             candidate.target.managed_generation !== selection.target.managed_generation ||
+             candidate.target.target_profile_identity_sha256 !== selection.target.target_profile_identity_sha256)) {
+          throw new HttpRequestError("MANAGED_TARGET_ASSIGNMENT_PROFILE_MISMATCH", 409,
+            "The resolved registry target differs from the authorized product selection");
+        }
+        const fresh = await readCurrent();
+        if (candidate.expected_event_revision !== fresh.head_revision ||
+            candidate.project_generation !== fresh.project_generation ||
+            candidate.project_owner_principal_ref !== fresh.project_owner_principal_ref) {
+          throw new HttpRequestError("MANAGED_TARGET_ASSIGNMENT_PROJECT_AUTHORITY_STALE", 409,
+            "Project owner, revision, or decision head changed before product append");
+        }
+      });
+    } catch (error) {
+      if (error instanceof ManagedTargetAssignmentError &&
+          error.code === "MANAGED_TARGET_ASSIGNMENT_AUTHORIZATION_DENIED" &&
+          error.cause instanceof HttpRequestError) {
+        throw error.cause;
+      }
+      if (error instanceof ManagedTargetAssignmentError && (
+        error.code === "MANAGED_TARGET_ASSIGNMENT_OUTCOME_UNKNOWN" ||
+        error.code === "MANAGED_TARGET_ASSIGNMENT_CAS_CONFLICT"
+      )) {
+        try {
+          const observed = await readCurrent();
+          if (isDecisionReplay(observed.head_event, current.head_revision, decision)) return;
+        } catch {
+          // Preserve the uncertain append; a later GET is the recovery read.
+        }
+      }
+      throw error;
+    }
+  }
+
+  async function decide(input: {
+    readonly expected_head_revision: number;
+    readonly decision: "ENABLED" | "DISABLED";
+  }): Promise<ManagedSearchProductOptInSnapshotV2> {
+    if (!Number.isSafeInteger(input.expected_head_revision) ||
+        input.expected_head_revision < 0 || input.expected_head_revision > MAX_EXPECTED_EVENT_REVISION) {
+      fail("MANAGED_TARGET_ASSIGNMENT_INPUT_INVALID", 400,
+        "Expected managed-search head revision is invalid");
+    }
+    const current = await readCurrent();
+    const head = current.head_event;
+    if (head !== null && isDecisionReplay(head, input.expected_head_revision, input.decision)) {
+      return snapshot(current);
+    }
+    if (current.head_revision !== input.expected_head_revision) {
+      throw new ManagedTargetAssignmentError(
+        "MANAGED_TARGET_ASSIGNMENT_CAS_CONFLICT",
+        "Expected managed-search head differs from the current event revision",
+      );
+    }
+    const alreadyDisabled = input.decision === "DISABLED" &&
+      (head === null || head.event_kind === "RETIRE");
+    if ((input.decision === "ENABLED" && eventDecision(head, current) === "ENABLED") || alreadyDisabled) {
+      return snapshot(current);
+    }
+    assertWritableHead(current);
+
+    if (input.decision === "DISABLED") {
+      if (head === null || head.event_kind === "RETIRE") return snapshot(current);
+      await appendDecision(current, "DISABLED", null);
+      return snapshot(await readCurrent());
+    }
+
+    if (head?.event_kind === "ASSIGN" && head.decision_version === 1) {
+      await ensureV1HeadUsesPrimaryProfile(head);
+    }
+    let selection: ManagedTargetSelectionV2;
+    try {
+      selection = await resolveManagedTargetSelectionV2(env.SEARCH_DB, "ACTIVE");
+    } catch (error) {
+      if (error instanceof ManagedSearchProductSelectionError) {
+        const status = error.code === "MANAGED_SEARCH_PRODUCT_GENERATION_NOT_FOUND" ? 409 : 503;
+        throw new HttpRequestError(error.code, status, error.message, status === 503);
+      }
+      throw error;
+    }
+    await appendDecision(current, "ENABLED", selection);
+    return snapshot(await readCurrent());
+  }
+
+  return Object.freeze({
+    async read(): Promise<ManagedSearchProductOptInSnapshotV2> {
+      return snapshot(await readCurrent());
+    },
+    decide,
+  });
 }
 
 export function mapManagedTargetAssignmentError(error: unknown): never {

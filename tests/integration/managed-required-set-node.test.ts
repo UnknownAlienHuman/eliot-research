@@ -45,6 +45,7 @@ function createMigratedCore(): DatabaseSync {
     db.exec(readFileSync(new URL(migration, migrationDirectory), "utf8"));
   }
   ensureProjectMembershipGenerationColumn(db);
+  ensureStableProjectMembershipColumns(db);
   return db;
 }
 
@@ -58,6 +59,7 @@ function createCoreBeforeAssignmentCurrent(): DatabaseSync {
     db.exec(readFileSync(new URL(migration, migrationDirectory), "utf8"));
   }
   ensureProjectMembershipGenerationColumn(db);
+  ensureStableProjectMembershipColumns(db);
   return db;
 }
 
@@ -75,6 +77,16 @@ function ensureProjectMembershipGenerationColumn(db: DatabaseSync): void {
   }
 }
 
+function ensureStableProjectMembershipColumns(db: DatabaseSync): void {
+  const columns = db.prepare("PRAGMA table_info(project_source_membership)").all() as { name: string }[];
+  if (!columns.some((column) => column.name === "membership_id")) {
+    db.exec("ALTER TABLE project_source_membership ADD COLUMN membership_id TEXT");
+  }
+  if (!columns.some((column) => column.name === "membership_revision")) {
+    db.exec("ALTER TABLE project_source_membership ADD COLUMN membership_revision INTEGER NOT NULL DEFAULT 1 CHECK (membership_revision > 0)");
+  }
+}
+
 function insertProject(projectId: string): void {
   database.prepare(
     "INSERT INTO project(project_id,title,default_disclosure,retention_policy_ref," +
@@ -87,7 +99,11 @@ function insertProject(projectId: string): void {
   ).run(projectId, "owner-principal-1", "deployment-1", CREATED_AT, CREATED_AT);
 }
 
-function insertAssignment(projectId: string, expectedRevision = 0): void {
+function insertAssignment(
+  projectId: string,
+  expectedRevision = 0,
+  target: ManagedTargetIdentity = TARGET,
+): void {
   const nextRevision = expectedRevision + 1;
   database.prepare(
     "INSERT INTO managed_target_assignment_event(project_id,event_revision,expected_event_revision," +
@@ -99,20 +115,39 @@ function insertAssignment(projectId: string, expectedRevision = 0): void {
     projectId,
     nextRevision,
     expectedRevision,
-    TARGET.namespace,
-    TARGET.managed_instance_id,
-    TARGET.managed_generation,
-    TARGET.target_profile_identity_sha256,
+    target.namespace,
+    target.managed_instance_id,
+    target.managed_generation,
+    target.target_profile_identity_sha256,
     `assignment-receipt-${projectId}`,
+    CREATED_AT,
+  );
+}
+
+function insertStableProductAssignment(projectId: string, target: ManagedTargetIdentity): void {
+  database.prepare(
+    "INSERT INTO managed_target_assignment_event(project_id,event_revision,expected_event_revision," +
+    "event_kind,project_generation,project_owner_principal_ref,target_namespace,managed_instance_id," +
+    "managed_generation,target_profile_identity_sha256,previous_assignment_revision,actor_kind," +
+    "actor_principal_ref,authorization_receipt_ref,created_at,decision_version,selection_mode,product_alias) " +
+    "VALUES (?,1,0,'ASSIGN',1,'owner-principal-1',?,?,?,?,NULL,'OWNER','owner-principal-1',?,?,2," +
+    "'STABLE_PHYSICAL_PROFILE_V2','primary')",
+  ).run(
+    projectId,
+    target.namespace,
+    target.managed_instance_id,
+    target.managed_generation,
+    target.target_profile_identity_sha256,
+    `product-opt-in-${projectId}`,
     CREATED_AT,
   );
 }
 
 function insertMembership(projectId: string, sourceId = SOURCE_ID): void {
   database.prepare(
-    "INSERT INTO project_source_membership(project_id,source_id,role,valid_from,valid_to,membership_generation) " +
-    "VALUES (?,?,?, ?,NULL,1)",
-  ).run(projectId, sourceId, "member", "2026-10-01T00:00:00.000Z");
+    "INSERT INTO project_source_membership(project_id,source_id,role,valid_from,valid_to,membership_generation," +
+    "membership_id,membership_revision) VALUES (?,?,?, ?,NULL,1,json_array(?,?),1)",
+  ).run(projectId, sourceId, "member", "2026-10-01T00:00:00.000Z", projectId, sourceId);
 }
 
 function seedCanonicalEligibleSource(): void {
@@ -367,11 +402,118 @@ describe("canonical managed required-set enumeration", () => {
       "project:project-1:generation:1",
       "project:project-2:generation:1",
     ]);
+    expect(copies.every((copy) => copy.project_membership_id.length <= 256)).toBe(true);
+    expect(copies.map((copy) => copy.stable_project_membership_id))
+      .toEqual(copies.map(() => expect.stringMatching(/^project-membership-[a-f0-9]{48}$/u)));
+    expect(copies.every((copy) =>
+      copy.membership_id === JSON.stringify([copy.project_id, copy.source_id]) &&
+      copy.membership_revision === 1 && copy.project_membership_generation === 1)).toBe(true);
     expect(copies.every((copy) => copy.source_revision_ref === SOURCE_REVISION)).toBe(true);
     expect(copies.every((copy) => copy.namespace === "eliotr" && copy.source_namespace_id === SOURCE_NAMESPACE)).toBe(true);
     expect(copies.every((copy) => copy.source_class === SOURCE_CLASS)).toBe(true);
     expect(receipt.required_set_digest).toMatch(/^[a-f0-9]{64}$/u);
     expect(receipt.target_fence.digest).toMatch(/^[a-f0-9]{64}$/u);
+  });
+
+  it("follows one V2 physical-profile opt-in from ACTIVE A to SHADOW B and rejects incompatible profiles", async () => {
+    insertProject("project-stable");
+    insertMembership("project-stable");
+    insertStableProductAssignment("project-stable", TARGET);
+
+    const targetB = Object.freeze({ ...TARGET, managed_generation: "generation-b" });
+    const selection = Object.freeze({
+      protocol: "eliotr.managed-target-selection.v2" as const,
+      domain: "MANAGED_SEARCH_PRODUCT" as const,
+      decision_version: 2 as const,
+      selection_mode: "STABLE_PHYSICAL_PROFILE_V2" as const,
+      product_alias: "primary" as const,
+      purpose: "SHADOW" as const,
+      registry_revision: 2,
+      registry_artifact_sha256: "e".repeat(64),
+      v1_exact_profile_identity_sha256: "f".repeat(64),
+      target: targetB,
+    });
+    insertProject("project-legacy-b");
+    insertMembership("project-legacy-b");
+    insertAssignment("project-legacy-b", 0, {
+      ...targetB,
+      target_profile_identity_sha256: selection.v1_exact_profile_identity_sha256,
+    });
+    const copies: ManagedRequiredProjectRevisionCopy[] = [];
+    const receipt = await enumerateManagedRequiredSet(createD1ManagedRequiredSetPort(d1CoreDatabase()), {
+      target: targetB,
+      selection,
+      as_of: AS_OF,
+      on_copy: (copy) => { copies.push(copy); },
+    });
+
+    expect(receipt.protocol).toBe("eliotr.managed-required-project-revisions.v3");
+    expect(receipt.target_selection).toEqual(selection);
+    expect(receipt.target_fence.target_selection_sha256).toMatch(/^[a-f0-9]{64}$/u);
+    expect(receipt.assigned_project_count).toBe(2);
+    expect(copies.map((copy) => copy.project_id)).toEqual(["project-legacy-b", "project-stable"]);
+    expect(copies[0]).toMatchObject({
+      assignment_decision_version: 1,
+      project_membership_identity_version: 1,
+      project_membership_id: "project:project-legacy-b:generation:1",
+      legacy_project_membership_id: "project:project-legacy-b:generation:1",
+    });
+    expect(copies[1]).toMatchObject({
+      managed_generation: "generation-b",
+      assignment_managed_generation: TARGET.managed_generation,
+      assignment_decision_version: 2,
+      assignment_selection_mode: "STABLE_PHYSICAL_PROFILE_V2",
+      assignment_product_alias: "primary",
+      project_membership_identity_version: 2,
+      membership_id: JSON.stringify(["project-stable", SOURCE_ID]),
+      membership_revision: 1,
+      membership_generation: 1,
+      project_membership_generation: 1,
+      legacy_project_membership_id: null,
+    });
+    expect(copies[1]?.project_membership_id).toMatch(/^project-membership-[a-f0-9]{48}$/u);
+
+    const incompatibleTarget = Object.freeze({
+      ...targetB,
+      target_profile_identity_sha256: "9".repeat(64),
+    });
+    await expect(enumerateManagedRequiredSet(createD1ManagedRequiredSetPort(d1CoreDatabase()), {
+      target: incompatibleTarget,
+      selection: Object.freeze({
+        ...selection,
+        target: incompatibleTarget,
+        v1_exact_profile_identity_sha256: "9".repeat(64),
+      }),
+      as_of: AS_OF,
+      on_copy: () => undefined,
+    })).rejects.toMatchObject({ code: "MANAGED_REQUIRED_SET_ASSIGNMENT_MISSING" });
+
+    const exactGenerationBTarget = Object.freeze({
+      ...targetB,
+      target_profile_identity_sha256: selection.v1_exact_profile_identity_sha256,
+    });
+    const exactGenerationB = Object.freeze({
+      protocol: "eliotr.managed-target-selection.v1" as const,
+      domain: "MANAGED_TARGET_ASSIGNMENT" as const,
+      decision_version: 1 as const,
+      selection_mode: "EXACT_GENERATION_V1" as const,
+      target: exactGenerationBTarget,
+    });
+    const exactV1Copies: ManagedRequiredProjectRevisionCopy[] = [];
+    const exactV1Receipt = await enumerateManagedRequiredSet(createD1ManagedRequiredSetPort(d1CoreDatabase()), {
+      target: exactGenerationBTarget,
+      selection: exactGenerationB,
+      as_of: AS_OF,
+      on_copy: (copy) => { exactV1Copies.push(copy); },
+    });
+    expect(exactV1Receipt.protocol).toBe("eliotr.managed-required-project-revisions.v2");
+    expect(exactV1Copies).toHaveLength(1);
+    expect(exactV1Copies[0]).toMatchObject({
+      project_id: "project-legacy-b",
+      assignment_decision_version: 1,
+      project_membership_identity_version: 1,
+      project_membership_id: "project:project-legacy-b:generation:1",
+    });
   });
 
   it("raises on an unsuccessful D1 page even when results is empty", async () => {
@@ -425,6 +567,20 @@ describe("canonical managed required-set enumeration", () => {
   });
 
   it("uses half-open membership validity and rejects an interleaved membership change", async () => {
+    const validAfterObservation = "2026-10-14T13:00:00.000Z";
+    database.prepare(
+      "UPDATE project_source_membership SET valid_to=? WHERE project_id='project-2' AND source_id=?",
+    ).run(validAfterObservation, SOURCE_ID);
+    const asOfCopies: ManagedRequiredProjectRevisionCopy[] = [];
+    const historical = await enumerateManagedRequiredSet(requiredSetPort(), {
+      target: TARGET,
+      as_of: AS_OF,
+      on_copy: (copy) => { asOfCopies.push(copy); },
+    });
+    expect(historical.project_revision_copy_count).toBe(2);
+    expect(asOfCopies.find((copy) => copy.project_id === "project-2")?.membership_valid_to)
+      .toBe(validAfterObservation);
+
     database.prepare(
       "UPDATE project_source_membership SET valid_to=? WHERE project_id='project-2' AND source_id=?",
     ).run(AS_OF, SOURCE_ID);
@@ -690,7 +846,7 @@ describe("canonical managed required-set enumeration", () => {
     expect(receipt.project_revision_copy_count).toBe(2);
 
     const lookup = calls.find((call) => call.sql.includes("managed_target_assignment_current h") &&
-      call.sql.includes("ORDER BY a.project_id LIMIT ?5"));
+      call.sql.includes("ORDER BY a.project_id LIMIT ?10"));
     expect(lookup).toBeDefined();
     const plan = database.prepare(`EXPLAIN QUERY PLAN ${lookup?.sql ?? ""}`)
       .all(...(lookup?.values ?? [])) as { detail: string }[];

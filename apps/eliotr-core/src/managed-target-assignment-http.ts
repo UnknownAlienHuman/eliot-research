@@ -14,6 +14,7 @@ import {
   createManagedTargetAssignmentService,
   mapManagedTargetAssignmentError,
 } from "./managed-target-assignment.js";
+import { handleManagedSearchProductOptInHttp } from "./managed-search-product-opt-in-http.js";
 
 export const MANAGED_TARGET_ASSIGNMENT_HTTP_MAX_BYTES = 2_048;
 const MAX_EXPECTED_EVENT_REVISION = 999_999;
@@ -109,6 +110,9 @@ export async function handleManagedTargetAssignmentHttp(
   routeLimit: number,
 ): Promise<Response> {
   const url = new URL(request.url);
+  if (url.pathname.endsWith("/managed-search")) {
+    return handleManagedSearchProductOptInHttp(request, env, context, projectId, routeLimit);
+  }
   const service = createManagedTargetAssignmentService(env, context, projectId);
   try {
     if (request.method === "GET") {

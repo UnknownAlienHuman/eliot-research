@@ -7,16 +7,20 @@ import {
 } from "@eliotr/domain";
 import {
   assertAiSearchScopeFilterBudget,
+  canonicalProjectionJson,
   createD1ManagedRequiredSetPort,
   enumerateManagedRequiredSet,
+  MANAGED_PROJECT_FOLDER_FILTER_MAX_BYTES,
   managedProjectFolderPrefix,
   managedProjectGenerationMetadataValue,
-  compareManagedProjectMemberships,
+  projectionDigest,
+  stableProjectionId,
   type AiSearchAuthorizedProjectCopy,
   type AiSearchManagedProjectCopyScopeResolver,
   type AiSearchProjectCopyScope,
   type ManagedTargetIdentity,
   type ManagedRequiredSetReceipt,
+  type ManagedTargetSelectionReceipt,
 } from "@eliotr/cloudflare-projection";
 import type { EvidenceAccessContext } from "@eliotr/cloudflare-evidence";
 import { createOwnerScopeAuthority } from "./orientation-authority.js";
@@ -31,18 +35,58 @@ export interface ProjectCopyMembershipFact {
   readonly source_owner_generation: string;
   readonly project_id: string;
   readonly project_membership_id: string;
+  readonly stable_project_membership_id: string;
+  readonly legacy_project_membership_id: string | null;
+  readonly project_membership_identity_version: 1 | 2;
+  readonly membership_id: string;
+  readonly membership_revision: number;
   readonly membership_generation: number;
+  readonly project_membership_generation: number;
+  readonly assignment_decision_version: 1 | 2;
 }
 
-export interface ProjectCopyRequiredSetFacts extends ManagedRequiredSetReceipt {
+type ProjectCopySelectionReceipt = ManagedTargetSelectionReceipt;
+
+type ProjectCopyV2Selection = Extract<ProjectCopySelectionReceipt, { readonly decision_version: 2 }>;
+
+type ProjectCopyV2MembershipCopy = AiSearchAuthorizedProjectCopy & (
+  | {
+    readonly membership_identity_version: 1;
+    readonly legacy_project_membership_id: string;
+  }
+  | {
+    readonly membership_identity_version: 2;
+    readonly stable_project_membership_id: string;
+    readonly membership_revision: number;
+    readonly project_membership_generation: number;
+  }
+);
+
+/** Internal versioned copy receipt; Root ports this shape to public consumers. */
+export interface ProjectCopyScopeV2 {
+  readonly layout: "PROJECT_COPY_V2";
+  readonly scope_snapshot_id: string;
+  readonly scope_snapshot_revision: number;
+  readonly scope_snapshot_digest: string;
+  readonly target: AiSearchProjectCopyScope["target"];
+  readonly generation_metadata_value: string;
+  readonly representative_policy: "ONE_CANONICAL_COPY_PER_SOURCE_REVISION";
+  readonly target_selection: ProjectCopyV2Selection;
+  readonly copies: readonly ProjectCopyV2MembershipCopy[];
+}
+
+export type ProjectCopyResolvedScope = AiSearchProjectCopyScope | ProjectCopyScopeV2;
+
+export type ProjectCopyRequiredSetFacts = ManagedRequiredSetReceipt & {
   /** Bounded projection of the existing #356 read model, already Core-fenced. */
   readonly copies: readonly ProjectCopyMembershipFact[];
-}
+};
 
 export interface ResolveProjectCopyScopeInput {
   readonly scope_snapshot: ScopeSnapshot;
   readonly observed_at: string;
   readonly target: ManagedTargetIdentity;
+  readonly selection?: ProjectCopySelectionReceipt;
   /** Existing scope currentness service; includes project membership-head fencing. */
   readonly require_current_scope: (snapshot: ScopeSnapshot) => Promise<unknown>;
   /** Existing canonical Core atom resolver, never a PROJECT-token scan. */
@@ -55,6 +99,7 @@ export interface ResolveProjectCopyScopeInput {
     target: ManagedTargetIdentity,
     as_of: string,
     source_revision_refs: readonly string[],
+    selection?: ProjectCopySelectionReceipt,
   ) => Promise<ProjectCopyRequiredSetFacts>;
 }
 
@@ -181,21 +226,64 @@ function annotateExpression(
 }
 
 function compareCopy(left: ProjectCopyMembershipFact, right: ProjectCopyMembershipFact): number {
-  return compareManagedProjectMemberships(left, right);
+  return compareText(left.project_id, right.project_id) ||
+    left.membership_revision - right.membership_revision ||
+    compareText(left.stable_project_membership_id, right.stable_project_membership_id);
+}
+
+function sameSelection(
+  left: ProjectCopySelectionReceipt,
+  right: ProjectCopySelectionReceipt,
+): boolean {
+  return canonicalProjectionJson(left) === canonicalProjectionJson(right);
+}
+
+async function stableMembershipFolderPrefix(
+  target: ManagedTargetIdentity,
+  copy: ProjectCopyMembershipFact,
+): Promise<string> {
+  const token = await stableProjectionId(
+    "p",
+    "PROJECT_COPY_V2",
+    target.managed_instance_id,
+    target.managed_generation,
+    copy.source_revision_ref,
+    copy.project_id,
+    copy.stable_project_membership_id,
+    String(copy.membership_revision),
+  );
+  const prefix = `projection/${token}/`;
+  if (new TextEncoder().encode(prefix).byteLength >= MANAGED_PROJECT_FOLDER_FILTER_MAX_BYTES) {
+    fail("PROJECT_COPY_SCOPE_REQUIRED_SET_INVALID", "stable membership folder prefix exceeds the provider filter bound");
+  }
+  return prefix;
 }
 
 /**
- * Resolve one Core-authorized PROJECT_COPY_V1 representative for each source
+ * Resolve one Core-authorized versioned project-copy representative per source
  * in the frozen scope. The canonical ScopeExpression evaluator determines the
  * source set; the accompanying provenance fold retains set-operation meaning
  * while mapping each surviving source to eligible project memberships.
  */
 export async function resolveProjectCopyScope(
   input: ResolveProjectCopyScopeInput,
-): Promise<AiSearchProjectCopyScope> {
+): Promise<ProjectCopyResolvedScope> {
   const parsed = ScopeSnapshotSchema.safeParse(input.scope_snapshot);
   if (!parsed.success) fail("PROJECT_COPY_SCOPE_INPUT_INVALID", "frozen ScopeSnapshot failed strict validation");
   const snapshot = parsed.data;
+  const selection: ProjectCopySelectionReceipt = input.selection ?? Object.freeze({
+    protocol: "eliotr.managed-target-selection.v1",
+    domain: "MANAGED_TARGET_ASSIGNMENT",
+    decision_version: 1,
+    selection_mode: "EXACT_GENERATION_V1",
+    target: input.target,
+  });
+  if (selection.target.namespace !== input.target.namespace ||
+      selection.target.managed_instance_id !== input.target.managed_instance_id ||
+      selection.target.managed_generation !== input.target.managed_generation ||
+      selection.target.target_profile_identity_sha256 !== input.target.target_profile_identity_sha256) {
+    fail("PROJECT_COPY_SCOPE_INPUT_INVALID", "versioned target selection differs from the exact target");
+  }
   const observedAtMs = Date.parse(input.observed_at);
   if (!Number.isFinite(observedAtMs) || new Date(observedAtMs).toISOString() !== input.observed_at) {
     fail("PROJECT_COPY_SCOPE_INPUT_INVALID", "project-copy membership observation time is not canonical UTC");
@@ -224,8 +312,7 @@ export async function resolveProjectCopyScope(
 
   if (resolvedRefs.length === 0) {
     await input.require_current_scope(snapshot);
-    return Object.freeze({
-      layout: "PROJECT_COPY_V1",
+    const emptyScopeBase = {
       scope_snapshot_id: snapshot.snapshot_id,
       scope_snapshot_revision: snapshot.revision,
       scope_snapshot_digest: snapshot.digest,
@@ -237,14 +324,32 @@ export async function resolveProjectCopyScope(
       }),
       generation_metadata_value: await managedProjectGenerationMetadataValue(input.target.managed_generation),
       representative_policy: "ONE_CANONICAL_COPY_PER_SOURCE_REVISION",
-      copies: Object.freeze([]),
-    });
+      copies: Object.freeze([]) as readonly [],
+    };
+    return selection.decision_version === 2
+      ? Object.freeze({ ...emptyScopeBase, layout: "PROJECT_COPY_V2", target_selection: selection })
+      : Object.freeze({ ...emptyScopeBase, layout: "PROJECT_COPY_V1" });
   }
 
-  const required = await input.load_required_set(input.target, input.observed_at, resolvedRefs);
-  if (required.protocol !== "eliotr.managed-required-project-revisions.v2" ||
+  const required = await input.load_required_set(
+    input.target,
+    input.observed_at,
+    resolvedRefs,
+    input.selection,
+  );
+  const stableSelection = selection.decision_version === 2;
+  const selectionDigest = stableSelection ? await projectionDigest(selection) : null;
+  const selectionReceiptMatches = stableSelection
+    ? required.protocol === "eliotr.managed-required-project-revisions.v3" &&
+      required.target_fence.protocol === "eliotr.managed-required-set-target-fence.v2" &&
+      "target_selection" in required &&
+      sameSelection(required.target_selection, selection) &&
+      required.target_fence.target_selection_sha256 === selectionDigest
+    : required.protocol === "eliotr.managed-required-project-revisions.v2" &&
+      required.target_fence.protocol === "eliotr.managed-required-set-target-fence.v1" &&
+      !("target_selection" in required);
+  if (!selectionReceiptMatches ||
       required.as_of !== input.observed_at ||
-      required.target_fence?.protocol !== "eliotr.managed-required-set-target-fence.v1" ||
       !/^[a-f0-9]{64}$/u.test(required.target_fence.digest) ||
       required.target_fence.required_set_sha256 !== required.required_set_digest ||
       required.target_fence.project_revision_copy_count !== required.project_revision_copy_count ||
@@ -263,10 +368,36 @@ export async function resolveProjectCopyScope(
   const copiesBySource = new Map<string, ProjectCopyMembershipFact[]>();
   for (const copy of required.copies) {
     if (!sourceRefSet.has(copy.source_revision_ref)) continue;
+    let rawPair: unknown;
+    try {
+      rawPair = JSON.parse(copy.membership_id);
+    } catch {
+      fail("PROJECT_COPY_SCOPE_REQUIRED_SET_INVALID", "Core membership pair is not canonical JSON");
+    }
+    const stableMembershipId = await stableProjectionId("project-membership", copy.membership_id);
+    const legacyMembershipId = `project:${copy.project_id}:generation:${copy.membership_generation}`;
+    const rowMembershipIdentityValid = copy.assignment_decision_version === 1
+      ? copy.project_membership_identity_version === 1 &&
+        copy.legacy_project_membership_id === legacyMembershipId &&
+        copy.project_membership_id === legacyMembershipId
+      : copy.assignment_decision_version === 2 &&
+        copy.project_membership_identity_version === 2 &&
+        copy.legacy_project_membership_id === null &&
+        copy.project_membership_id === stableMembershipId;
+    const assignmentSelectionValid = selection.decision_version === 1
+      ? copy.assignment_decision_version === 1
+      : (copy.assignment_decision_version === 1 || copy.assignment_decision_version === 2);
     if (snapshot.source_owner_generations[copy.source_revision_ref] !== copy.source_owner_generation ||
+        !Array.isArray(rawPair) || rawPair.length !== 2 ||
+        rawPair[0] !== copy.project_id || rawPair[1] !== copy.source_id ||
+        canonicalProjectionJson(rawPair) !== copy.membership_id ||
+        copy.stable_project_membership_id !== stableMembershipId ||
         !Number.isSafeInteger(copy.membership_generation) || copy.membership_generation < 1 ||
-        copy.project_membership_id !== `project:${copy.project_id}:generation:${copy.membership_generation}`) {
-      fail("PROJECT_COPY_SCOPE_REQUIRED_SET_INVALID", "Core project copy differs from the frozen source or membership identity");
+        !Number.isSafeInteger(copy.membership_revision) || copy.membership_revision < 1 ||
+        !Number.isSafeInteger(copy.project_membership_generation) || copy.project_membership_generation < 1 ||
+        copy.membership_generation > copy.project_membership_generation ||
+        !rowMembershipIdentityValid || !assignmentSelectionValid) {
+      fail("PROJECT_COPY_SCOPE_REQUIRED_SET_INVALID", "Core project copy differs from the frozen source or versioned membership identity");
     }
     const forSource = copiesBySource.get(copy.source_revision_ref) ?? [];
     if (forSource.length >= 256) fail("PROJECT_COPY_SCOPE_REQUIRED_SET_INVALID", "source exceeds the 256-project membership bound");
@@ -306,23 +437,47 @@ export async function resolveProjectCopyScope(
   const projectIds = new Set(selected.map((copy) => copy.project_id));
   if (projectIds.size > 256) fail("PROJECT_COPY_SCOPE_REQUIRED_SET_INVALID", "scope exceeds the 256-project owner bound");
   assertAiSearchScopeFilterBudget(resolvedRefs, generationMetadataValue, selected.length);
-  const copies: AiSearchAuthorizedProjectCopy[] = await Promise.all(selected.map(async (copy) => ({
-    source_revision_ref: copy.source_revision_ref,
-    source_owner_generation: copy.source_owner_generation,
-    project_id: copy.project_id,
-    project_membership_id: copy.project_membership_id,
-    membership_generation: copy.membership_generation,
-    folder_prefix: await managedProjectFolderPrefix({
-      instance_id: input.target.managed_instance_id,
-      projection_generation: input.target.managed_generation,
+  const copies: (AiSearchAuthorizedProjectCopy | ProjectCopyV2MembershipCopy)[] = await Promise.all(selected.map(async (copy) => {
+    const isStableMembership = copy.project_membership_identity_version === 2;
+    const membershipId = isStableMembership
+      ? copy.stable_project_membership_id
+      : copy.legacy_project_membership_id;
+    if (membershipId === null) {
+      fail("PROJECT_COPY_SCOPE_REQUIRED_SET_INVALID", "V1 membership identity lacks its preserved legacy key");
+    }
+    const folderPrefix = isStableMembership
+      ? await stableMembershipFolderPrefix(input.target, copy)
+      : await managedProjectFolderPrefix({
+        instance_id: input.target.managed_instance_id,
+        projection_generation: input.target.managed_generation,
+        source_revision_ref: copy.source_revision_ref,
+        project_id: copy.project_id,
+        project_membership_id: membershipId,
+        membership_generation: copy.membership_generation,
+      });
+    const base = {
       source_revision_ref: copy.source_revision_ref,
+      source_owner_generation: copy.source_owner_generation,
       project_id: copy.project_id,
-      project_membership_id: copy.project_membership_id,
+      project_membership_id: membershipId,
       membership_generation: copy.membership_generation,
-    }),
-  })));
-  return Object.freeze({
-    layout: "PROJECT_COPY_V1",
+      folder_prefix: folderPrefix,
+    };
+    return selection.decision_version === 2
+      ? Object.freeze({
+        ...base,
+        membership_identity_version: copy.project_membership_identity_version,
+        ...(isStableMembership
+          ? {
+            stable_project_membership_id: copy.stable_project_membership_id,
+            membership_revision: copy.membership_revision,
+            project_membership_generation: copy.project_membership_generation,
+          }
+          : { legacy_project_membership_id: copy.legacy_project_membership_id }),
+      }) as ProjectCopyV2MembershipCopy
+      : Object.freeze(base);
+  }));
+  const resolvedScopeBase = {
     scope_snapshot_id: snapshot.snapshot_id,
     scope_snapshot_revision: snapshot.revision,
     scope_snapshot_digest: snapshot.digest,
@@ -334,14 +489,28 @@ export async function resolveProjectCopyScope(
     }),
     generation_metadata_value: generationMetadataValue,
     representative_policy: "ONE_CANONICAL_COPY_PER_SOURCE_REVISION",
-    copies: Object.freeze(copies),
-  });
+  };
+  return selection.decision_version === 2
+    ? Object.freeze({
+      ...resolvedScopeBase,
+      layout: "PROJECT_COPY_V2",
+      target_selection: selection,
+      copies: Object.freeze(copies as ProjectCopyV2MembershipCopy[]),
+    })
+    : Object.freeze({
+      ...resolvedScopeBase,
+      layout: "PROJECT_COPY_V1",
+      copies: Object.freeze(copies as AiSearchAuthorizedProjectCopy[]),
+    });
 }
 
 export interface CreateD1ProjectCopyScopeResolverInput {
   readonly database: D1Database;
   readonly access: EvidenceAccessContext;
   readonly require_current_scope: (snapshot: ScopeSnapshot) => Promise<unknown>;
+  readonly resolve_selection?: (
+    authority: Parameters<AiSearchManagedProjectCopyScopeResolver>[1],
+  ) => Promise<ProjectCopySelectionReceipt>;
 }
 
 /**
@@ -352,35 +521,46 @@ export interface CreateD1ProjectCopyScopeResolverInput {
 export function createD1ProjectCopyScopeResolver(
   input: CreateD1ProjectCopyScopeResolverInput,
 ): AiSearchManagedProjectCopyScopeResolver {
-  return async (request, active) => resolveD1ProjectCopyScope({
-    ...input,
-    scope_snapshot: request.scope_snapshot,
-    observed_at: new Date().toISOString(),
-    target: {
+  const resolver = async (request: Parameters<AiSearchManagedProjectCopyScopeResolver>[0],
+    active: Parameters<AiSearchManagedProjectCopyScopeResolver>[1]) => {
+    const target = {
       namespace: active.namespace,
       managed_instance_id: active.instance_id,
       managed_generation: active.index_generation,
       target_profile_identity_sha256: active.target_profile_identity_sha256,
-    },
-  });
+    };
+    const selection = await input.resolve_selection?.(active);
+    return resolveD1ProjectCopyScope({
+      ...input,
+      scope_snapshot: request.scope_snapshot,
+      observed_at: new Date().toISOString(),
+      target,
+      ...(selection === undefined ? {} : { selection }),
+    });
+  };
+  // The public AI Search scope type is Root-owned and still V1-only. Runtime V2
+  // receipts are explicit here; Root updates that public resolver contract.
+  return resolver as unknown as AiSearchManagedProjectCopyScopeResolver;
 }
 
 /** Shared Core composition for a frozen snapshot; callers never fabricate a retrieval request. */
 export async function resolveD1ProjectCopyScope(
-  input: CreateD1ProjectCopyScopeResolverInput & Pick<ResolveProjectCopyScopeInput, "scope_snapshot" | "observed_at" | "target">,
-): Promise<AiSearchProjectCopyScope> {
+  input: CreateD1ProjectCopyScopeResolverInput & Pick<ResolveProjectCopyScopeInput, "scope_snapshot" | "observed_at" | "target" | "selection">,
+): Promise<ProjectCopyResolvedScope> {
   const requiredSetPort = createD1ManagedRequiredSetPort(input.database);
   return resolveProjectCopyScope({
     scope_snapshot: input.scope_snapshot,
     observed_at: input.observed_at,
     target: input.target,
+    ...(input.selection === undefined ? {} : { selection: input.selection }),
     require_current_scope: input.require_current_scope,
     resolve_atom: createOwnerScopeAuthority(input.database, input.access).exhaustiveResolveAtom,
-    load_required_set: async (target, asOf, sourceRevisionRefs) => {
+    load_required_set: async (target, asOf, sourceRevisionRefs, selection) => {
       const selectedRefs = new Set(sourceRevisionRefs);
       const copies: ProjectCopyMembershipFact[] = [];
       const receipt = await enumerateManagedRequiredSet(requiredSetPort, {
         target,
+        ...(selection === undefined ? {} : { selection }),
         as_of: asOf,
         on_copy(copy) {
           if (!selectedRefs.has(copy.source_revision_ref)) return;
@@ -389,7 +569,14 @@ export async function resolveD1ProjectCopyScope(
             source_owner_generation: copy.source_owner_generation,
             project_id: copy.project_id,
             project_membership_id: copy.project_membership_id,
+            stable_project_membership_id: copy.stable_project_membership_id,
+            legacy_project_membership_id: copy.legacy_project_membership_id,
+            project_membership_identity_version: copy.project_membership_identity_version,
+            membership_id: copy.membership_id,
+            membership_revision: copy.membership_revision,
             membership_generation: copy.membership_generation,
+            project_membership_generation: copy.project_membership_generation,
+            assignment_decision_version: copy.assignment_decision_version,
           });
         },
       });
