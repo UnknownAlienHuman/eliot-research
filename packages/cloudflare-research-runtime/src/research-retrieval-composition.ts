@@ -15,6 +15,7 @@ import {
   createD1SearchExactPort,
   createD1SearchIdentPort,
   createD1SearchLexPort,
+  resolveManagedTargetSelectionV2,
 } from "@eliotr/cloudflare-projection";
 import {
   createD1RetrievalResultStore,
@@ -170,6 +171,9 @@ async function createHeldScopeRetrievalQuery(
     database: env.CORE_DB,
     access,
     require_current_scope: scopePorts.requireCurrentScope,
+    resolve_selection: (authority) => resolveManagedTargetSelectionV2(
+      env.SEARCH_DB, "ACTIVE", undefined, authority,
+    ),
   });
   const sem = env.AI_SEARCH === undefined ? null : createSemLaneExecutor(createD1BackedAiSearchManagedSearchPort(
     env.SEARCH_DB,
