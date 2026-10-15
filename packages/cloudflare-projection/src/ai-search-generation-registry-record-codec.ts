@@ -18,7 +18,7 @@ import {
   aiSearchRegistryReadbackFailure as readbackFailure,
   exactAiSearchRegistryObject,
 } from "./ai-search-registry-validation.js";
-import { validateStoredManagedGenerationPromotionEvidence } from "./managed-generation-promotion-evidence.js";
+import { validateStoredManagedGenerationPromotionEvidenceValue } from "./managed-generation-promotion-evidence.js";
 
 const MODEL_TOKEN = /^[A-Za-z0-9._:@/-]{1,256}$/u;
 const ARTIFACT_KEYS = new Set(["namespace", "registry", "revision", "schema"]);
@@ -44,6 +44,7 @@ const RECORD_KEYS_V2 = new Set([
   ...RECORD_KEYS_V1,
   "inactive_at",
   "promotion_evidence_v2",
+  "promotion_evidence_v3",
 ]);
 const PROFILE_KEYS = new Set([
   "embedding_model",
@@ -263,9 +264,12 @@ async function decodeRecord(
     `${label}.retired_at`,
   );
   const inactive = optionalIdentifier(value, "inactive_at", `${label}.inactive_at`);
-  const evidence = Object.hasOwn(value, "promotion_evidence_v2")
-    ? await validateStoredManagedGenerationPromotionEvidence(
-      value.promotion_evidence_v2,
+  const hasV2 = Object.hasOwn(value, "promotion_evidence_v2");
+  const hasV3 = Object.hasOwn(value, "promotion_evidence_v3");
+  if (hasV2 && hasV3) readbackFailure(`${label} contains conflicting promotion evidence versions`);
+  const evidence = hasV2 || hasV3
+    ? await validateStoredManagedGenerationPromotionEvidenceValue(
+      hasV3 ? value.promotion_evidence_v3 : value.promotion_evidence_v2,
       {
         namespace,
         managed_instance_id: profile.id,
@@ -276,6 +280,11 @@ async function decodeRecord(
       },
     )
     : undefined;
+  if (evidence !== undefined && evidence.protocol !== (hasV3
+    ? "eliotr.managed-generation-promotion-evidence.v3"
+    : "eliotr.managed-generation-promotion-evidence.v2")) {
+    readbackFailure(`${label} promotion evidence field and protocol version disagree`);
+  }
   const state = value.state as AiSearchGenerationState;
   if (legacy && (inactive !== undefined || evidence !== undefined)) {
     readbackFailure(`${label} v1 record contains v2 lifecycle fields`);
@@ -321,7 +330,9 @@ async function decodeRecord(
     ...(activated === undefined ? {} : { activated_at: activated }),
     ...(inactive === undefined ? {} : { inactive_at: inactive }),
     ...(retired === undefined ? {} : { retired_at: retired }),
-    ...(evidence === undefined ? {} : { promotion_evidence_v2: evidence }),
+    ...(evidence === undefined ? {} : evidence.protocol === "eliotr.managed-generation-promotion-evidence.v3"
+      ? { promotion_evidence_v3: evidence }
+      : { promotion_evidence_v2: evidence }),
   });
 }
 

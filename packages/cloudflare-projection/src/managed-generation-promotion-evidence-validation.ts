@@ -1,5 +1,5 @@
 import { assertProjectionIdentifier, assertProjectionInteger, assertProjectionSha256, projectionDigest } from "./canonical.js";
-import { MANAGED_GENERATION_ARCHIVE_AUTHORIZATION_PROTOCOL, MANAGED_GENERATION_CURRENT_AUTHORITY_PROTOCOL, MANAGED_GENERATION_PROMOTION_HOLD_PROTOCOL, MANAGED_TARGET_FENCE_PROTOCOL, ManagedGenerationPromotionEvidenceError, type ManagedGenerationArchiveAuthorizationRequest, type ManagedGenerationArchiveAuthorizationV1, type ManagedGenerationCurrentAuthorityV1, type ManagedGenerationPromotionEvidenceErrorCode, type ManagedGenerationPromotionEvidenceV2, type ManagedGenerationPromotionHoldRequest, type ManagedGenerationPromotionHoldV1, type ManagedGenerationPromotionTarget, type ManagedGenerationTargetFence } from "./managed-generation-promotion-evidence-contract.js";
+import { MANAGED_GENERATION_ARCHIVE_AUTHORIZATION_PROTOCOL, MANAGED_GENERATION_CURRENT_AUTHORITY_PROTOCOL, MANAGED_GENERATION_PROMOTION_HOLD_PROTOCOL, MANAGED_TARGET_FENCE_PROTOCOL, ManagedGenerationPromotionEvidenceError, type ManagedGenerationArchiveAuthorizationRequest, type ManagedGenerationArchiveAuthorizationV1, type ManagedGenerationCurrentAuthorityV1, type ManagedGenerationPromotionEvidenceErrorCode, type ManagedGenerationPromotionEvidence, type ManagedGenerationPromotionHoldRequest, type ManagedGenerationPromotionHoldV1, type ManagedGenerationPromotionTarget, type ManagedGenerationTargetFence } from "./managed-generation-promotion-evidence-contract.js";
 
 function fail(
   code: ManagedGenerationPromotionEvidenceErrorCode,
@@ -273,7 +273,7 @@ function safeNullableRevision(value: unknown, label: string): number | null {
 export function validateManagedGenerationCurrentAuthority(
   raw: unknown,
   expectedTarget: ManagedGenerationPromotionTarget,
-  evidence: ManagedGenerationPromotionEvidenceV2,
+  evidence: ManagedGenerationPromotionEvidence,
 ): ManagedGenerationCurrentAuthorityV1 {
   const value = exactObject(raw, CURRENT_AUTHORITY_KEYS, "current target authority readback");
   const target = targetValue(value.target, "current_authority.target");

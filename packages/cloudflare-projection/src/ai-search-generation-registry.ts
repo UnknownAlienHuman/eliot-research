@@ -1,3 +1,4 @@
+import { getAiSearchGenerationPromotionEvidence } from "./ai-search-generation-contract.js";
 import {
   archiveAiSearchGeneration,
   declareAiSearchGeneration,
@@ -186,7 +187,7 @@ export function createAiSearchGenerationRegistryService(
         (record) => record.generation === request.expected_active_head_generation,
       );
       if (isExactAppliedPromotionReplay(previous.artifact.registry, request)) {
-        const evidence = targetRecord.promotion_evidence_v2;
+        const evidence = getAiSearchGenerationPromotionEvidence(targetRecord);
         if (evidence === undefined) {
           aiSearchGenerationRegistryFailure(
             "AI_SEARCH_REGISTRY_READBACK_INVALID",
@@ -361,7 +362,7 @@ export function createAiSearchGenerationRegistryService(
         );
       }
       if (isExactAppliedRollbackReplay(previous.artifact.registry, request)) {
-        const targetEvidence = target.promotion_evidence_v2;
+        const targetEvidence = getAiSearchGenerationPromotionEvidence(target);
         if (targetEvidence === undefined) {
           aiSearchGenerationRegistryFailure(
             "AI_SEARCH_REGISTRY_READBACK_INVALID",

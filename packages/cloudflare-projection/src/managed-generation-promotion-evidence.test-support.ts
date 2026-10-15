@@ -7,7 +7,7 @@ import {
   MANAGED_GENERATION_CURRENT_AUTHORITY_PROTOCOL,
   MANAGED_GENERATION_PROMOTION_HOLD_PROTOCOL,
   type ManagedGenerationPromotionEvidenceAuthorityPort,
-  type ManagedGenerationPromotionEvidenceV2,
+  type ManagedGenerationPromotionEvidence,
   type ManagedGenerationPromotionTarget,
 } from "./managed-generation-promotion-evidence.js";
 import { AI_SEARCH_CUSTOM_METADATA_FIELDS } from "./ai-search-profile.js";
@@ -132,7 +132,7 @@ function evidence(
 }
 
 function currentAuthority(
-  proof: ManagedGenerationPromotionEvidenceV2,
+  proof: ManagedGenerationPromotionEvidence,
   proofTarget: ManagedGenerationPromotionTarget = proof.target,
   overrides: Record<string, unknown> = {},
 ) {

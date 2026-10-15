@@ -1,7 +1,8 @@
 import type { LocatorCandidate } from "@eliotr/contracts";
+import { getAiSearchGenerationPromotionEvidence } from "./ai-search-generation-contract.js";
 import type { AiSearchInstanceProfile } from "@eliotr/platform-cloudflare";
 import type { AiSearchGenerationArchiveRequest, AiSearchGenerationDeclaration, AiSearchGenerationRecord, AiSearchGenerationRegistry, AiSearchPromotionRequest, AiSearchRollbackRequest, AiSearchShadowObservation } from "./ai-search-generation-contract.js";
-import type { ManagedGenerationPromotionEvidenceV2 } from "./managed-generation-promotion-evidence-contract.js";
+import type { ManagedGenerationPromotionEvidence } from "./managed-generation-promotion-evidence-contract.js";
 import { assertImmutableAiSearchProfile, boundedIdentifier, exactShadowObservation, generationFailure, MAX_AI_SEARCH_GENERATIONS, nonNegativeInteger, normalizedAiSearchProfile, validateObservationTimestamp } from "./ai-search-generation-support.js";
 import { validateAiSearchGenerationRecord, validateAiSearchGenerationRegistry } from "./ai-search-generation-validation.js";
 
@@ -132,7 +133,7 @@ export function recordAiSearchShadowObservation(
  */
 export function qualifyAiSearchGeneration(
   record: AiSearchGenerationRecord,
-  evidence: ManagedGenerationPromotionEvidenceV2,
+  evidence: ManagedGenerationPromotionEvidence,
 ): AiSearchGenerationRecord {
   validateAiSearchGenerationRecord(record);
   if (record.state === "RETIRED") {
@@ -159,15 +160,20 @@ export function qualifyAiSearchGeneration(
       : record.state === "INACTIVE_UNQUALIFIED"
         ? "INACTIVE_QUALIFIED"
         : "SHADOW_COMPLETE";
+  const { promotion_evidence_v2: _oldV2, promotion_evidence_v3: _oldV3, ...previous } = record;
+  void _oldV2;
+  void _oldV3;
   return Object.freeze({
-    ...record,
+    ...previous,
     state,
     indexed_item_count: evidence.manifest.desired_item_count,
     readback_item_count: evidence.item_readback.exact_readback_count,
     failed_item_count: 0,
     mismatch_count: 0,
     golden_set_result_ref: evidence.qualification.t2_result_ref,
-    promotion_evidence_v2: evidence,
+    ...(evidence.protocol === "eliotr.managed-generation-promotion-evidence.v3"
+      ? { promotion_evidence_v3: evidence }
+      : { promotion_evidence_v2: evidence }),
     observed_at: evidence.verified_at,
   });
 }
@@ -205,7 +211,7 @@ export function promoteAiSearchGeneration(
   if (target.state === "ACTIVE") {
     return registry;
   }
-  if (target.state !== "SHADOW_COMPLETE" || target.promotion_evidence_v2 === undefined) {
+  if (target.state !== "SHADOW_COMPLETE" || getAiSearchGenerationPromotionEvidence(target) === undefined) {
     generationFailure(
       "AI_SEARCH_PROMOTION_EVIDENCE_REQUIRED",
       "target generation lacks version 2 authoritative promotion evidence",
@@ -223,7 +229,7 @@ export function promoteAiSearchGeneration(
     if (record.state === "ACTIVE") {
       return {
         ...record,
-        state: record.promotion_evidence_v2 === undefined
+        state: getAiSearchGenerationPromotionEvidence(record) === undefined
           ? "INACTIVE_UNQUALIFIED" as const
           : "INACTIVE_QUALIFIED" as const,
         inactive_at: request.promoted_at,
@@ -259,10 +265,10 @@ export function rollbackAiSearchGeneration(
   if (
     target === undefined ||
     target.state !== "INACTIVE_QUALIFIED" ||
-    target.promotion_evidence_v2 === undefined ||
+    getAiSearchGenerationPromotionEvidence(target) === undefined ||
     current === undefined ||
     current.state !== "ACTIVE" ||
-    current.promotion_evidence_v2 === undefined
+    getAiSearchGenerationPromotionEvidence(current) === undefined
   ) {
     generationFailure(
       "AI_SEARCH_ROLLBACK_CONFLICT",

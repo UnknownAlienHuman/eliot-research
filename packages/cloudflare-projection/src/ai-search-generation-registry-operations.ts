@@ -21,6 +21,7 @@ import {
   sameAiSearchGenerationRegistrySnapshot,
 } from "./ai-search-generation-registry-codec.js";
 import { canonicalProjectionJson, projectionDigest } from "./canonical.js";
+import { getAiSearchGenerationPromotionEvidence } from "./ai-search-generation-contract.js";
 import { canonicalAiSearchPhysicalProfile } from "./ai-search-generation-profile-identity.js";
 import {
   readManagedGenerationCurrentAuthority,
@@ -30,7 +31,7 @@ import {
   validateManagedGenerationPromotionHold,
   type ManagedGenerationArchiveAuthorizationV1,
   type ManagedGenerationPromotionEvidenceAuthorityPort,
-  type ManagedGenerationPromotionEvidenceV2,
+  type ManagedGenerationPromotionEvidence,
   type ManagedGenerationPromotionHoldRequest,
   type ManagedGenerationPromotionHoldV1,
   type ManagedGenerationPromotionTarget,
@@ -114,7 +115,7 @@ function isExactAppliedPromotionReplay(
   );
   if (
     target?.state !== "ACTIVE" ||
-    target.promotion_evidence_v2 === undefined ||
+    getAiSearchGenerationPromotionEvidence(target) === undefined ||
     target.activated_at !== request.promoted_at
   ) {
     return false;
@@ -133,9 +134,9 @@ function isExactAppliedPromotionReplay(
     retirementMarkers.length === 1 &&
     displaced?.generation === request.expected_active_head_generation &&
     ((displaced.state === "INACTIVE_QUALIFIED" &&
-      displaced.promotion_evidence_v2 !== undefined) ||
+      getAiSearchGenerationPromotionEvidence(displaced) !== undefined) ||
       (displaced.state === "INACTIVE_UNQUALIFIED" &&
-        displaced.promotion_evidence_v2 === undefined))
+        getAiSearchGenerationPromotionEvidence(displaced) === undefined))
   );
 }
 
@@ -147,10 +148,10 @@ function isExactAppliedRollbackReplay(
   const target = registry.generations.find((record) => record.generation === request.target_generation);
   const displaced = registry.generations.find((record) => record.generation === request.expected_active_head_generation);
   return target?.state === "ACTIVE" &&
-    target.promotion_evidence_v2 !== undefined &&
+    getAiSearchGenerationPromotionEvidence(target) !== undefined &&
     target.activated_at === request.rolled_back_at &&
     displaced?.state === "INACTIVE_QUALIFIED" &&
-    displaced.promotion_evidence_v2 !== undefined &&
+    getAiSearchGenerationPromotionEvidence(displaced) !== undefined &&
     displaced.inactive_at === request.rolled_back_at;
 }
 
@@ -193,7 +194,7 @@ function requireEvidenceAuthority(
 async function readCurrentEvidenceBundle(
   authority: ManagedGenerationPromotionEvidenceAuthorityPort,
   target: ManagedGenerationPromotionTarget,
-): Promise<ManagedGenerationPromotionEvidenceV2> {
+): Promise<ManagedGenerationPromotionEvidence> {
   const desired = await readManagedGenerationDesiredManifest(authority, target);
   const current = await readManagedGenerationPromotionEvidence(authority, target);
   if (
@@ -221,6 +222,16 @@ async function readCurrentEvidenceBundle(
       "current target manifest and promotion readback do not describe the same immutable desired set",
     );
   }
+  if (current.protocol === "eliotr.managed-generation-promotion-evidence.v3") {
+    if (desired.protocol !== "eliotr.managed-target-desired-items.v3" ||
+        canonicalProjectionJson(current.target_selection) !== canonicalProjectionJson(desired.target_selection) ||
+        canonicalProjectionJson(current.manifest.canonical_source_summary) !== canonicalProjectionJson(desired.canonical_source_summary) ||
+        canonicalProjectionJson(current.manifest.provider_copy_summary) !== canonicalProjectionJson(desired.provider_copy_summary)) {
+      aiSearchGenerationRegistryFailure("AI_SEARCH_REGISTRY_EVIDENCE_STALE", "V3 evidence and immutable manifest selection or denominators differ");
+    }
+  } else if (desired.protocol === "eliotr.managed-target-desired-items.v3") {
+    aiSearchGenerationRegistryFailure("AI_SEARCH_REGISTRY_EVIDENCE_STALE", "V3 manifest cannot use V2 promotion evidence");
+  }
   await readManagedGenerationCurrentAuthority(authority, target, current);
   return current;
 }
@@ -228,8 +239,8 @@ async function readCurrentEvidenceBundle(
 async function readAndMatchCurrentEvidence(
   authority: ManagedGenerationPromotionEvidenceAuthorityPort,
   record: AiSearchGenerationRecord,
-): Promise<ManagedGenerationPromotionEvidenceV2> {
-  const stored = record.promotion_evidence_v2;
+): Promise<ManagedGenerationPromotionEvidence> {
+  const stored = getAiSearchGenerationPromotionEvidence(record);
   if (stored === undefined) {
     aiSearchGenerationRegistryFailure(
       "AI_SEARCH_REGISTRY_EVIDENCE_UNAVAILABLE",
@@ -265,7 +276,7 @@ async function registryOperationId(input: {
 
 function holdTarget(
   target: ManagedGenerationPromotionTarget,
-  evidence: ManagedGenerationPromotionEvidenceV2 | undefined,
+  evidence: ManagedGenerationPromotionEvidence | undefined,
 ): ManagedGenerationPromotionHoldRequest["targets"][number] {
   return Object.freeze({
     target,

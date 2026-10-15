@@ -1,3 +1,4 @@
+import { getAiSearchGenerationPromotionEvidence } from "./ai-search-generation-contract.js";
 import {
   type AiSearchGenerationRegistryCasCommand,
   type AiSearchGenerationRegistrySnapshot,
@@ -71,13 +72,15 @@ async function expectedHoldRequest(
       expectedRecords.push(displaced);
     }
   }
-  const targets = await Promise.all(expectedRecords.map(async (record, index) => ({
-    target: await targetForRecord(record),
-    ...(record.promotion_evidence_v2 === undefined ||
-      (command.operation === "PROMOTE" && index > 0)
-      ? {}
-      : { target_fence_sha256: record.promotion_evidence_v2.target_fence.digest }),
-  })));
+  const targets = await Promise.all(expectedRecords.map(async (record, index) => {
+    const evidence = getAiSearchGenerationPromotionEvidence(record);
+    return {
+      target: await targetForRecord(record),
+      ...(evidence === undefined || (command.operation === "PROMOTE" && index > 0)
+        ? {}
+        : { target_fence_sha256: evidence.target_fence.digest }),
+    };
+  }));
   return Object.freeze({
     operation_id: hold.operation_id,
     operation: command.operation as ManagedGenerationPromotionHoldRequest["operation"],
@@ -115,8 +118,8 @@ async function buildTransition(
       previous_record_sha256: oldRecord === undefined ? null : await generationRecordSha256(oldRecord),
       next_record_sha256: nextRecord === undefined ? null : await generationRecordSha256(nextRecord),
       profile_identity_sha256: await profileIdentitySha256(profile),
-      previous_evidence_sha256: oldRecord?.promotion_evidence_v2?.evidence_sha256 ?? null,
-      next_evidence_sha256: nextRecord?.promotion_evidence_v2?.evidence_sha256 ?? null,
+      previous_evidence_sha256: oldRecord === undefined ? null : getAiSearchGenerationPromotionEvidence(oldRecord)?.evidence_sha256 ?? null,
+      next_evidence_sha256: nextRecord === undefined ? null : getAiSearchGenerationPromotionEvidence(nextRecord)?.evidence_sha256 ?? null,
       ...(archived && oldRecord !== undefined && command.archive_authorization !== undefined
         ? {
           archived_record: oldRecord,

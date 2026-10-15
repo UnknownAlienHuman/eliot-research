@@ -1,5 +1,5 @@
 import { projectionDigest } from "./canonical.js";
-import { MANAGED_GENERATION_PROMOTION_EVIDENCE_PROTOCOL, MANAGED_TARGET_DESIRED_MANIFEST_PROTOCOL, type ManagedGenerationDesiredManifestReadback, type ManagedGenerationPromotionEvidenceV2, type ManagedGenerationPromotionTarget } from "./managed-generation-promotion-evidence-contract.js";
+import { MANAGED_GENERATION_PROMOTION_EVIDENCE_PROTOCOL, MANAGED_TARGET_DESIRED_MANIFEST_PROTOCOL, type ManagedGenerationDesiredManifestReadback, type ManagedGenerationPromotionEvidenceV2, type ManagedGenerationPromotionTarget, type ManagedGenerationTargetFenceValue } from "./managed-generation-promotion-evidence-contract.js";
 import { EVIDENCE_KEYS, EVIDENCE_MANIFEST_KEYS, ITEM_READBACK_KEYS, MANIFEST_KEYS, QUALIFICATION_KEYS, WRITER_DRAIN_KEYS, count, digest, exactObject, fail, fenceValue, reference, sameTarget, safeNullableRevision, targetValue, timestamp } from "./managed-generation-promotion-evidence-validation.js";
 
 export function validateManagedGenerationDesiredManifest(
@@ -67,7 +67,29 @@ export async function validateManagedGenerationPromotionEvidence(
     fail("MANAGED_GENERATION_EVIDENCE_STALE", "promotion evidence belongs to another target or immutable profile");
   }
 
-  const manifest = exactObject(value.manifest, EVIDENCE_MANIFEST_KEYS, "evidence.manifest");
+  const parts = validateManagedGenerationPromotionEvidenceParts(value, target, targetFence, value.manifest);
+  const base = Object.freeze({
+    protocol: MANAGED_GENERATION_PROMOTION_EVIDENCE_PROTOCOL,
+    target,
+    target_fence: targetFence,
+    manifest: parts.manifest,
+    item_readback: parts.item_readback,
+    writer_drain: parts.writer_drain,
+    qualification: parts.qualification,
+    built_at: parts.built_at,
+    verified_at: parts.verified_at,
+  });
+  const evidenceSha256 = await projectionDigest(base);
+  return Object.freeze({ ...base, evidence_sha256: evidenceSha256 });
+}
+
+export function validateManagedGenerationPromotionEvidenceParts(
+  value: Record<string, unknown>,
+  target: ManagedGenerationPromotionTarget,
+  targetFence: ManagedGenerationTargetFenceValue,
+  rawManifest: unknown,
+): Omit<ManagedGenerationPromotionEvidenceV2, "protocol" | "target" | "target_fence" | "evidence_sha256"> {
+  const manifest = exactObject(rawManifest, EVIDENCE_MANIFEST_KEYS, "evidence.manifest");
   const desiredItemCount = count(manifest.desired_item_count, "evidence.manifest.desired_item_count");
   const manifestValue = Object.freeze({
     ref: reference(manifest.ref, "evidence.manifest.ref"),
@@ -160,10 +182,7 @@ export async function validateManagedGenerationPromotionEvidence(
   if (Date.parse(verifiedAt) < Date.parse(builtAt)) {
     fail("MANAGED_GENERATION_EVIDENCE_INVALID", "evidence verification predates its build");
   }
-  const base = Object.freeze({
-    protocol: MANAGED_GENERATION_PROMOTION_EVIDENCE_PROTOCOL,
-    target,
-    target_fence: targetFence,
+  return Object.freeze({
     manifest: manifestValue,
     item_readback: itemReadbackValue,
     writer_drain: writerDrainValue,
@@ -171,8 +190,6 @@ export async function validateManagedGenerationPromotionEvidence(
     built_at: builtAt,
     verified_at: verifiedAt,
   });
-  const evidenceSha256 = await projectionDigest(base);
-  return Object.freeze({ ...base, evidence_sha256: evidenceSha256 });
 }
 
 export async function validateStoredManagedGenerationPromotionEvidence(

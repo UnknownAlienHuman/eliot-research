@@ -1,4 +1,5 @@
 import type { AiSearchGenerationRecord, AiSearchGenerationRegistry } from "./ai-search-generation-contract.js";
+import { getAiSearchGenerationPromotionEvidence } from "./ai-search-generation-contract.js";
 import { boundedIdentifier, generationFailure, MAX_AI_SEARCH_GENERATIONS, nonNegativeInteger, normalizedAiSearchProfile, profileFingerprint, validateObservationTimestamp } from "./ai-search-generation-support.js";
 
 function validateAiSearchGenerationRecord(record: AiSearchGenerationRecord): void {
@@ -45,13 +46,17 @@ function validateAiSearchGenerationRecord(record: AiSearchGenerationRecord): voi
       "complete generation lacks retained complete shadow evidence",
     );
   }
+  const evidence = getAiSearchGenerationPromotionEvidence(record);
+  const expectedProtocol = record.promotion_evidence_v3 === undefined
+    ? "eliotr.managed-generation-promotion-evidence.v2"
+    : "eliotr.managed-generation-promotion-evidence.v3";
   if (
-    record.promotion_evidence_v2 !== undefined &&
-    (record.promotion_evidence_v2.protocol !== "eliotr.managed-generation-promotion-evidence.v2" ||
-      record.promotion_evidence_v2.target.namespace !== record.namespace ||
-      record.promotion_evidence_v2.target.managed_generation !== record.generation ||
-      record.promotion_evidence_v2.target.managed_instance_id !== record.profile.id ||
-      record.promotion_evidence_v2.manifest.desired_item_count !== record.expected_item_count)
+    evidence !== undefined &&
+    (evidence.protocol !== expectedProtocol ||
+      evidence.target.namespace !== record.namespace ||
+      evidence.target.managed_generation !== record.generation ||
+      evidence.target.managed_instance_id !== record.profile.id ||
+      evidence.manifest.desired_item_count !== record.expected_item_count)
   ) {
     generationFailure(
       "AI_SEARCH_PROMOTION_EVIDENCE_REQUIRED",
@@ -60,16 +65,16 @@ function validateAiSearchGenerationRecord(record: AiSearchGenerationRecord): voi
   }
   if (
     record.state === "INACTIVE_QUALIFIED" &&
-    record.promotion_evidence_v2 === undefined
+    evidence === undefined
   ) {
     generationFailure(
       "AI_SEARCH_PROMOTION_EVIDENCE_REQUIRED",
-      "newly qualified generation lacks version 2 authoritative promotion evidence",
+      "newly qualified generation lacks versioned authoritative promotion evidence",
     );
   }
   if (
     record.state === "INACTIVE_UNQUALIFIED" &&
-    record.promotion_evidence_v2 !== undefined
+    evidence !== undefined
   ) {
     generationFailure(
       "AI_SEARCH_GENERATION_INVALID",
