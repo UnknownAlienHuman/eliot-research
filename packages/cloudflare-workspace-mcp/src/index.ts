@@ -71,7 +71,9 @@ export {
 
 export {
   MCP_RESEARCH_TOOLS,
+  isMcpComputerAgentDispatchToolName,
   type McpResearchToolName,
+  type McpComputerAgentDispatchToolName,
   type McpResearchToolCall,
 } from "./gemini-mcp-research-tools.js";
 export { createMcpResearchApplicationDispatch } from "./research-application-dispatch.js";
@@ -105,6 +107,7 @@ export type {
 export type {
   McpResearchServiceOperationPorts,
   McpResearchIngestCommand,
+  McpComputerAgentDispatchCommand,
   McpResearchSourceReadInput,
   McpFastSearchResponseShape,
 } from "./research-service-operations.js";

@@ -1,4 +1,9 @@
-import { VersionedRefSchema, type VersionedRef } from "@eliotr/contracts";
+import {
+  ComputerAgentDispatchDeclineSchema,
+  VersionedRefSchema,
+  type ComputerAgentDispatchDeclineReason,
+  type VersionedRef,
+} from "@eliotr/contracts";
 import { ExternalAgentTaskError } from "@eliotr/cloudflare-workflows";
 import { readResponseBodyWithinBytes, RuntimeLimitError } from "@eliotr/platform-cloudflare";
 import {
@@ -17,6 +22,14 @@ type IngestName = Extract<McpResearchToolName,
 type RunControlName = Extract<McpResearchToolName, "eliotr_recover" | "eliotr_cancel" | "eliotr_run_status">;
 type ExternalTaskName = Extract<McpResearchToolName,
   "eliotr_task_pull" | "eliotr_task_progress" | "eliotr_task_result" | "eliotr_task_status">;
+type ComputerAgentDispatchName = Extract<McpResearchToolName,
+  "eliotr_dispatch_pull" | "eliotr_dispatch_accept" | "eliotr_dispatch_decline">;
+
+export type McpComputerAgentDispatchCommand =
+  | { readonly kind: "pull" }
+  | { readonly kind: "accept"; readonly dispatch_id: string }
+  | { readonly kind: "decline"; readonly dispatch_id: string; readonly idempotency_key: string;
+      readonly request: { readonly reason: ComputerAgentDispatchDeclineReason; readonly note?: string | undefined } };
 
 export type McpResearchIngestCommand =
   | { readonly kind: "body"; readonly request: Request; readonly operation_id?: unknown }
@@ -63,6 +76,9 @@ export interface McpResearchServiceOperationPorts<Context, RunRequest, QueryRequ
   readonly require_run_project: (context: Context, workflowInstanceId: string, projectId: string) => Promise<void>;
   readonly execute_external_task: (
     context: Context, name: ExternalTaskName, args: Record<string, unknown>,
+  ) => Promise<unknown>;
+  readonly execute_computer_agent_dispatch: (
+    context: Context, command: McpComputerAgentDispatchCommand,
   ) => Promise<unknown>;
   readonly require_artifact_project: (
     context: Context, artifact: VersionedRef, projectId: string, operation: "report" | "evidence",
@@ -241,6 +257,29 @@ export function createMcpResearchServiceOperations<Context, RunRequest, QueryReq
     external_task: async (name, args, actor) => {
       if (!ports.is_external_agent_task_name(name)) invalid("External task tool identity is invalid");
       return prepared(() => ports.execute_external_task(actor.context, name, args));
+    },
+    computer_agent_dispatch: async (name: ComputerAgentDispatchName, args, actor) => {
+      if (name === "eliotr_dispatch_pull") {
+        return prepared(() => ports.execute_computer_agent_dispatch(actor.context, { kind: "pull" }));
+      }
+      const dispatchId = ports.input_identifier(args.dispatch_id, "dispatch_id");
+      if (name === "eliotr_dispatch_accept") {
+        return prepared(() => ports.execute_computer_agent_dispatch(actor.context, {
+          kind: "accept", dispatch_id: dispatchId,
+        }));
+      }
+      const key = args.idempotency_key;
+      if (typeof key !== "string" || !/^[A-Za-z0-9][A-Za-z0-9:._/-]{0,255}$/u.test(key)) {
+        invalid("A valid dispatch decline idempotency_key is required");
+      }
+      const parsed = ComputerAgentDispatchDeclineSchema.safeParse({
+        reason: args.reason,
+        ...(args.note === undefined ? {} : { note: args.note }),
+      });
+      if (!parsed.success) invalid("Dispatch decline request contains unknown or invalid fields");
+      return prepared(() => ports.execute_computer_agent_dispatch(actor.context, {
+        kind: "decline", dispatch_id: dispatchId, idempotency_key: key, request: parsed.data,
+      }));
     },
     report: async (_name, args, actor) => {
       const artifact = mcpResearchVersionedRef(args.artifact_ref);

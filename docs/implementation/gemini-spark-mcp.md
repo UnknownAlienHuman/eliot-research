@@ -380,6 +380,28 @@ not require a sponsor-template lookup. Apply the complete migration chain throug
 No behavioral or live provider acceptance is implied by tool discovery or compilation.
 
 
+### Owner-selected dispatch over service-token MCP
+
+`eliotr_dispatch_pull`, `eliotr_dispatch_accept` and `eliotr_dispatch_decline` expose the existing
+owner dispatch offer to its registered MCP service actor. All three require the exact
+`client_grant_id` and the current registered actor. Pull fixes the transport to `MCP_WRITE`; it
+returns the existing offer or `null` and never creates a run. Accept passes the original dispatch
+request to the existing `createComputerAgentDispatchService.accept` port. The dispatch ID remains
+the acceptance and Research-run idempotency identity, so an exact retry reads the same acceptance
+without starting another run. Decline uses the existing immutable decline receipt and requires a
+stable `idempotency_key`, reason and optional note.
+
+Pull and accept retain the existing exact project, grant revision, actor credential generation,
+route and qualification fences. The grant must still authorize `run`, `recover` and `evidence` and
+retain its approved spend sponsorship. Decline is bound to that same dispatch grant and project
+before the existing decline service runs. The tools are exposed only to the service-token contour;
+Managed OAuth neither lists them nor can call them directly. The existing HTTP API and Access
+audiences are unchanged. A local MCP adapter test covers an allowed service actor, owner
+OAuth denial, pull and same-identity accept replay through an idempotent run-start port fixture; it
+does not start a Workflow or qualify the D1 acceptance receipt. Live Codex MCP/Access qualification,
+D1 acceptance readback and a real owner-selected dispatch run remain operator acceptance steps.
+
+
 ### Append-only project attachment (S98)
 
 `eliotr_project_attach` and PUT `/api/v1/research/projects/:project_id` call the same Project

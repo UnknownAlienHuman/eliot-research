@@ -4,7 +4,7 @@ import { Button, EvidenceFeature, ReportFeature, REPORT_COPY, SafeMarkdown, Stat
 import { assembleResearchDraftMarkdown, type ArtifactRevisionRead, type ArtifactSectionResponse,
   type CitedEvidence, type DeclaredSection, type ResearchArtifactDraftReauthorizationView,
   type ReauthorizedCitedEvidence, type VerifiedEvidence, type VersionedRef } from '@eliotr/owner-api-client';
-import type { BoundWorkspaceApis } from './runtime';
+import { isWorkspaceRequestError, type BoundWorkspaceApis } from './runtime';
 import type { PrivacyController, SessionContext } from './privacy';
 import { reportQueryOptions } from '../query/reports';
 import { protectedQueryKey } from '../query/client';
@@ -49,6 +49,14 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
   const [exportError, setExportError] = useState(false);
   const [outlineOpen, setOutlineOpen] = useState(true);
   const [sectionActivation, setSectionActivation] = useState(0);
+  // Opening a saved report is already a read intent. Expired original grants
+  // are renewed through the server's historical reader without another click.
+  useEffect(() => {
+    if (mode !== 'author' || !author.isError || !privacy.isCurrent(context) ||
+        !isWorkspaceRequestError(author.error) ||
+        !['ARTIFACT_DRAFT_READ_STALE', 'ARTIFACT_DRAFT_READ_DENIED'].includes(author.error.code)) return;
+    setSelected(undefined); setPicked(undefined); setExportError(false); setMode('reauthorized');
+  }, [mode, author.isError, author.error, privacy, context]);
   const outlineSummary = useRef<HTMLElement>(null);
   const reportHeading = useRef<HTMLHeadingElement>(null);
   useLayoutEffect(() => { reportHeading.current?.focus(); }, [mode]);

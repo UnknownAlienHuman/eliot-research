@@ -1,6 +1,11 @@
 import { GeminiMcpToolError } from "./gemini-mcp-tool-common.js";
 import type { McpToolCallContext } from "./gemini-mcp-protocol.js";
-import { MCP_RESEARCH_TOOLS, type McpResearchToolCall, type McpResearchToolName } from "./gemini-mcp-research-tools.js";
+import {
+  MCP_RESEARCH_TOOLS,
+  type McpComputerAgentDispatchToolName,
+  type McpResearchToolCall,
+  type McpResearchToolName,
+} from "./gemini-mcp-research-tools.js";
 
 const MANAGED_OAUTH_TOOLS = new Set<McpResearchToolName>([
   "eliotr_query", "eliotr_run", "eliotr_run_status", "eliotr_report", "eliotr_section",
@@ -34,6 +39,7 @@ export interface McpResearchApplicationOperations<Context> {
     "eliotr_recover" | "eliotr_cancel" | "eliotr_run_status">>;
   readonly external_task: PrepareOperation<Context, Extract<McpResearchToolName,
     "eliotr_task_pull" | "eliotr_task_progress" | "eliotr_task_result" | "eliotr_task_status">>;
+  readonly computer_agent_dispatch: PrepareOperation<Context, McpComputerAgentDispatchToolName>;
   readonly report: PrepareOperation<Context, "eliotr_report">;
   readonly section: PrepareOperation<Context, "eliotr_section">;
   readonly citations: PrepareOperation<Context, "eliotr_citations">;
@@ -118,6 +124,10 @@ function prepareOperation<Context>(
     case "eliotr_task_result":
     case "eliotr_task_status":
       return operations.external_task(name, args, actor);
+    case "eliotr_dispatch_pull":
+    case "eliotr_dispatch_accept":
+    case "eliotr_dispatch_decline":
+      return operations.computer_agent_dispatch(name, args, actor);
     case "eliotr_report":
       return operations.report(name, args, actor);
     case "eliotr_section":

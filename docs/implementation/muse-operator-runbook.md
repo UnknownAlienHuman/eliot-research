@@ -223,9 +223,14 @@ a delegated run must still be the verified originating actor present in the acti
 1. Confirm the intended Muse/Spark/Dot connection and transport is READY in the route-readiness report.
 2. Create a dispatch naming that exact connection revision and exact project-grant revision, with the
    explicit v2 PROJECT Research request and a TTL of at most 3600 seconds.
-3. In the target agent's own authenticated contour, pull the dispatch using the exact grant locator.
-4. Accept it under that same credential generation. The returned workflow ID is the existing Research run,
-   not a wrapper job.
+3. In the target agent's authenticated service-token MCP contour, call `eliotr_dispatch_pull` with the
+   exact `client_grant_id`. MCP pull reads only `MCP_WRITE` offers and returns the original dispatch or
+   `null`; an empty pull is not permission to create a replacement.
+4. Call `eliotr_dispatch_accept` with that same grant and the returned `dispatch_id`. Acceptance starts the
+   original owner-approved Research request and returns its workflow ID. The dispatch ID is the stable
+   acceptance/run idempotency identity; replay the exact call after an uncertain response to read the same
+   acceptance without starting another run. These dispatch tools are service-token-only; owner OAuth
+   cannot list or call them.
 5. Pull the Stage 8 task only after the workflow publishes it and submit the callback. Core attempts the
    existing W2/W1 recovery automatically; preserve the deterministic recovery key for fallback reconciliation.
 
@@ -241,9 +246,10 @@ identity. Once accepted, use ordinary Research status/cancel/recover rather than
 
 ### Decline without transfer
 
-When the selected contour cannot execute an offered dispatch, use the exact decline operation rather than
-accepting and abandoning work later. A decline closes only that offer. It does not move the task, grant,
-lease, browser session, or credential authority to another contour.
+When the selected contour cannot execute an offered dispatch, call `eliotr_dispatch_decline` with the exact
+grant and dispatch IDs, a stable idempotency key, and the reason (plus a note only when needed). A decline
+closes only that offer. It does not move the task, grant, lease, browser session, or credential authority to
+another contour. Owner reassignment remains a separate explicit action after reading the terminal status.
 
 ### Explicit terminal reassignment
 

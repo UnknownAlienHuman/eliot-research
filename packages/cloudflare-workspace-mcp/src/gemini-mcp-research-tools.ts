@@ -1,4 +1,9 @@
-import { NormalizedBundleManifestSchema, ScopeExpressionSchema, VersionedRefSchema } from "@eliotr/contracts";
+import {
+  ComputerAgentDispatchDeclineReasonSchema,
+  NormalizedBundleManifestSchema,
+  ScopeExpressionSchema,
+  VersionedRefSchema,
+} from "@eliotr/contracts";
 import type { McpToolCallContext, McpToolDefinition } from "./gemini-mcp-protocol.js";
 
 const identifier = { type: "string", minLength: 1, maxLength: 256,
@@ -12,6 +17,8 @@ const scope = JSON.parse(JSON.stringify(ScopeExpressionSchema.toJSONSchema(), (k
 })) as Readonly<Record<string, unknown>>;
 const grant = { client_grant_id: { ...identifier,
   description: "Owner-issued project grant locator, never a credential." } };
+const actionKey = { type: "string", minLength: 1, maxLength: 256,
+  pattern: "^[A-Za-z0-9][A-Za-z0-9:._/-]{0,255}$" } as const;
 const annotations = (idempotent: boolean) => ({
   // Search persists its scope/result; reopening reports and evidence issues read authority/receipts.
   readOnlyHint: false, destructiveHint: false, idempotentHint: idempotent, openWorldHint: false,
@@ -236,6 +243,31 @@ export const MCP_RESEARCH_TOOLS = {
       properties: { ...grant, task_id: externalTaskId } },
     annotations: { ...annotations(true), readOnlyHint: true },
   },
+  eliotr_dispatch_pull: {
+    name: "eliotr_dispatch_pull",
+    description: "Read the current owner-selected MCP_WRITE dispatch offer for this exact project grant and verified service-token actor. Returns the original dispatch or null; it does not create a Research run or replace an empty offer.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["client_grant_id"],
+      properties: { ...grant } },
+    annotations: { ...annotations(true), readOnlyHint: true },
+  },
+  eliotr_dispatch_accept: {
+    name: "eliotr_dispatch_accept",
+    description: "Accept this exact MCP_WRITE owner dispatch under its selected grant and credential generation. Starts the original owner-approved Research request through the existing dispatch service. The dispatch ID supplies the stable acceptance/run idempotency identity; replay the same call after an uncertain response to recover the same run.",
+    inputSchema: { type: "object", additionalProperties: false,
+      required: ["client_grant_id", "dispatch_id"],
+      properties: { ...grant, dispatch_id: identifier } },
+    annotations: { ...annotations(true), openWorldHint: true },
+  },
+  eliotr_dispatch_decline: {
+    name: "eliotr_dispatch_decline",
+    description: "Decline this exact pending MCP_WRITE owner dispatch with a stable idempotency key and reason. The existing immutable decline receipt closes only this offer; it does not reassign work.",
+    inputSchema: { type: "object", additionalProperties: false,
+      required: ["client_grant_id", "dispatch_id", "idempotency_key", "reason"],
+      properties: { ...grant, dispatch_id: identifier, idempotency_key: actionKey,
+        reason: ComputerAgentDispatchDeclineReasonSchema.toJSONSchema(),
+        note: { type: "string", minLength: 1, maxLength: 2048 } } },
+    annotations: { ...annotations(true), destructiveHint: true },
+  },
   eliotr_report: {
     name: "eliotr_report",
     description: "Reopen a known grantor-authored project DRAFT or your own machine DRAFT under its original delegation revision. Requires report permission. Refreshing your token or expiry of execution does not require restarting the run; expired/revoked/regranted read authority is rejected. Returns the same versioned HTTP reauthorization envelope, preserving hashes, freshness and DRAFT status. Issues fresh read authority, no model or artifact mutation.",
@@ -275,9 +307,15 @@ export const MCP_RESEARCH_TOOLS = {
 } as const satisfies Readonly<Record<string, Omit<McpToolDefinition, "name"> & { readonly name: string }>>;
 
 export type McpResearchToolName = keyof typeof MCP_RESEARCH_TOOLS;
+export type McpComputerAgentDispatchToolName = Extract<McpResearchToolName,
+  "eliotr_dispatch_pull" | "eliotr_dispatch_accept" | "eliotr_dispatch_decline">;
 export const MCP_RESEARCH_TOOL_NAMES = Object.freeze(Object.keys(MCP_RESEARCH_TOOLS) as McpResearchToolName[]);
 export function isMcpResearchTool(name: string): name is McpResearchToolName {
   return Object.hasOwn(MCP_RESEARCH_TOOLS, name);
+}
+export function isMcpComputerAgentDispatchToolName(name: string): name is McpComputerAgentDispatchToolName {
+  return name === "eliotr_dispatch_pull" || name === "eliotr_dispatch_accept" ||
+    name === "eliotr_dispatch_decline";
 }
 export type McpResearchToolCall = (
   name: McpResearchToolName, input: unknown, context: McpToolCallContext,

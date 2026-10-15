@@ -7,7 +7,12 @@ import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { readCatalog } from "@eliotr/cloudflare-navigation";
 import { createProjectOwnerService } from "@eliotr/cloudflare-navigation";
 import { inputIdentifier, normalizeUpdate } from "./project-owner-contract.js";
-import { GeminiMcpToolError, type McpResearchToolCall, type McpToolCallContext } from "@eliotr/cloudflare-workspace-mcp";
+import {
+  GeminiMcpToolError,
+  isMcpComputerAgentDispatchToolName,
+  type McpResearchToolCall,
+  type McpToolCallContext,
+} from "@eliotr/cloudflare-workspace-mcp";
 import {
   createMcpResearchServiceOperations,
   mapMcpResearchServiceError,
@@ -30,6 +35,10 @@ import { readMcpSourcePage } from "./mcp-source-reader.js";
 import { cancelResearchRun, recoverResearchRun } from "./research-run-control.js";
 import { readReadiness } from "./readiness.js";
 import { callExternalAgentTaskTool, isExternalAgentTaskToolName } from "./mcp-external-agent-task.js";
+import {
+  callMcpComputerAgentDispatch,
+  type McpComputerAgentDispatchServiceFactory,
+} from "./mcp-computer-agent-dispatch.js";
 import type { Env } from "./env.js";
 
 function requiredManagedProjectId(projectId: string | undefined): string {
@@ -179,8 +188,12 @@ function mapError(request: Request, error: unknown): never {
   });
 }
 
-/** Only delegates to existing S11/S12 HTTP application services; no HTTP loopback or second engine. */
-export function createMcpResearchToolCall(env: Env, request: Request): McpResearchToolCall {
+/** Delegates MCP operations to existing Core application services; no HTTP loopback or second engine. */
+export function createMcpResearchToolCall(
+  env: Env,
+  request: Request,
+  dependencies: { readonly dispatch_service_factory?: McpComputerAgentDispatchServiceFactory } = {},
+): McpResearchToolCall {
   const projectMembership = createMcpResearchProjectMembership({
     database: env.CORE_DB,
     read_scope_authority: (scope) => loadScopeAuthority(env.CORE_DB, scope),
@@ -243,6 +256,9 @@ export function createMcpResearchToolCall(env: Env, request: Request): McpResear
         await grant.requireGrantCurrent();
         return result;
       },
+      execute_computer_agent_dispatch: (context, command) => callMcpComputerAgentDispatch(
+        env, context, command, dependencies.dispatch_service_factory,
+      ),
       require_artifact_project: (context, artifact, projectId, operation) =>
         requireArtifactProject(env, context, artifact, projectId, operation, projectMembership),
       execute_report: (context, artifact) => reopenOwnerArtifactDraft(env, context, artifact),
@@ -260,6 +276,11 @@ export function createMcpResearchToolCall(env: Env, request: Request): McpResear
       const { context, managed_oauth: managedOAuth, project_id: projectId } = actor;
       const execute = prepared.execute;
         if (isExternalAgentTaskToolName(name)) {
+          const result = await execute();
+          serviceContext(env, request, toolContext, args);
+          return result;
+        }
+        if (isMcpComputerAgentDispatchToolName(name)) {
           const result = await execute();
           serviceContext(env, request, toolContext, args);
           return result;
