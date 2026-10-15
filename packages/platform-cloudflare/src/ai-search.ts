@@ -187,7 +187,7 @@ function validateProjectCopyV2Scope(request: RetrievalRequest, options: AiSearch
         "PROJECT_COPY_V2 project_membership_generation");
       if (copy.stable_project_membership_id !== membership ||
           !/^project-membership-[a-f0-9]{48}$/u.test(membership) ||
-          !/^projection\/p-[a-f0-9]{48}\/$/u.test(folder) || generation > aggregateGeneration) {
+          !/^projection\/[A-Za-z0-9_-]{43}\/$/u.test(folder) || generation > aggregateGeneration) {
         fail("PROJECT_COPY_V2 stable row has an invalid Core membership identity, folder or currentness fence");
       }
     }

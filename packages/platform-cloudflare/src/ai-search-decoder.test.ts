@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { RetrievalRequest } from "@eliotr/retrieval";
+import { createManagedProjectProviderKeyV2 } from "../../cloudflare-projection/src/managed-project-path.js";
 import {
   AiSearchLocatorDecodeError,
   decodeAiSearchSearchResult,
@@ -10,16 +11,25 @@ import {
 
 const generationDigest = "a".repeat(64);
 const itemKey = `projection-${"b".repeat(48)}`;
-const stableCopy = {
+const stableIdentity = {
+  instance_id: "instance-2",
+  projection_generation: "managed-generation-2",
   source_revision_ref: "revision-stable",
-  source_owner_generation: "owner-stable",
   project_id: "project-stable",
-  project_membership_id: `project-membership-${"c".repeat(48)}`,
-  membership_generation: 3,
-  folder_prefix: `projection/p-${"d".repeat(48)}/`,
-  membership_identity_version: 2,
   stable_project_membership_id: `project-membership-${"c".repeat(48)}`,
   membership_revision: 2,
+} as const;
+const stableProviderKey = await createManagedProjectProviderKeyV2({ ...stableIdentity, item_key: itemKey });
+const stableCopy = {
+  source_revision_ref: stableIdentity.source_revision_ref,
+  source_owner_generation: "owner-stable",
+  project_id: stableIdentity.project_id,
+  project_membership_id: stableIdentity.stable_project_membership_id,
+  membership_generation: 3,
+  folder_prefix: stableProviderKey.folder_prefix,
+  membership_identity_version: 2,
+  stable_project_membership_id: stableIdentity.stable_project_membership_id,
+  membership_revision: stableIdentity.membership_revision,
   project_membership_generation: 9,
 } as const satisfies AiSearchExpectedProjectCopyV2;
 const v1Copy = {
@@ -85,6 +95,7 @@ function malformedCopies(copies: readonly unknown[]): AiSearchLocatorDecodeOptio
 
 describe("versioned AI Search provider locator decoder", () => {
   it("accepts one stable V2 and one retained V1 row in a V2 scope without deriving folders or IDs", () => {
+    expect(chunk(stableCopy).item.key).toBe(stableProviderKey.provider_key);
     const candidates = decodeAiSearchSearchResult(request(), result([
       chunk(stableCopy), chunk(legacyCopy, "chunk-legacy"),
     ]), options());
@@ -95,13 +106,28 @@ describe("versioned AI Search provider locator decoder", () => {
     expect(candidates.map(candidate => candidate.metadata.item_key)).toEqual([itemKey, itemKey]);
     expect(candidates.map(candidate => candidate.proof_state)).toEqual(["UNRESOLVED_LOCATOR", "UNRESOLVED_LOCATOR"]);
     expect(candidates[0]?.metadata.projection_generation).toBe("managed-generation-2");
-    const current = { ...stableCopy, membership_generation: 7, membership_revision: 11, project_membership_generation: 12 };
+    const current = { ...stableCopy, project_membership_generation: 12 };
     expect(decodeAiSearchSearchResult(request(), result(), options({ expected_project_copies: [current, legacyCopy] })))
       .toHaveLength(1);
   });
 
+  it("accepts the shared writer folder for a new membership revision", async () => {
+    const revisedKey = await createManagedProjectProviderKeyV2({
+      ...stableIdentity, membership_revision: 11, item_key: itemKey,
+    });
+    expect(revisedKey.folder_prefix).not.toBe(stableProviderKey.folder_prefix);
+    const revisedCopy = { ...stableCopy, membership_revision: 11, folder_prefix: revisedKey.folder_prefix };
+    const candidates = decodeAiSearchSearchResult(request(), result([chunk(revisedCopy)]), options({
+      expected_project_copies: [revisedCopy, legacyCopy],
+    }));
+    expect(candidates[0]?.metadata.provider_item_key).toBe(revisedKey.provider_key);
+    expect(() => decodeAiSearchSearchResult(request(), result(), options({
+      expected_project_copies: [revisedCopy, legacyCopy],
+    }))).toThrow(/scope/u);
+  });
+
   it.each([
-    `projection/p-${"f".repeat(48)}/${itemKey}.md`,
+    `projection/${"f".repeat(43)}/${itemKey}.md`,
     `${legacyCopy.folder_prefix}${itemKey}.md`,
     `${stableCopy.folder_prefix}nested/${itemKey}.md`,
     `${stableCopy.folder_prefix}${itemKey.toUpperCase()}.md`,
