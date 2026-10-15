@@ -38,6 +38,19 @@ A GitHub token in this Worker is therefore not a prerequisite for this path.
 The implementation must reuse the existing incident outbox and lease/receipt
 mechanism, remain independent of projects, and retain connection authorization.
 
+Source `332a9435dc6d9f54c4ae732f153465bb8498b2e0` implements
+`eliotr_doctor_delivery_pull` and `eliotr_doctor_delivery_receipt` over that
+outbox. The explicit deployment target `ELIOTR_DOCTOR_AGENT_CONNECTION_ID`
+authorizes the system task; current MCP_WRITE qualification proves transport.
+Current connection revision, owner, actor and enabled capability are guarded in
+the final lease/receipt SQL and readback. The direct GitHub adapter and token
+environment field are removed. Existing native diagnosis and sensitive-data
+negatives remain in the new native test file. Integrated checks passed: global
+typecheck, touched-source lint, package boundaries, 62 MCP cases and seven
+Worker/D1 cases, including revoke-during-lease and revoke-during-receipt races.
+Current-head CI, ordinary deployment and live doctor MCP acceptance remain
+separate from these local checks.
+
 Cloudflare documents browser authorization through self-managed OAuth clients
 (client creation updated August 20, integration updated June 3, 2026), with
 Authorization Code and PKCE for public clients. BYOK remains Cloudflare AI
