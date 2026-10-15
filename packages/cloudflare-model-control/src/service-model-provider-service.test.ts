@@ -47,11 +47,15 @@ function database(): { readonly d1: D1Database; readonly sqlite: DatabaseSync } 
       return {
         bind(...values: unknown[]) {
           const statement = sqlite.prepare(sql);
+          // D1 binds numbered placeholders positionally. Node 22's SQLite API
+          // needs their exact names; later Node versions also accept positions.
+          const names = [...new Set(sql.match(/\?[1-9][0-9]*/gu) ?? [])];
+          const params = names.length === 0 ? values : [Object.fromEntries(names.map(name => [name, values[Number(name.slice(1)) - 1]]))];
           return {
-            async first<T>() { return (statement.get(...values as never[]) ?? null) as T | null; },
-            async all<T>() { return { results: statement.all(...values as never[]) as T[] }; },
+            async first<T>() { return (statement.get(...params as never[]) ?? null) as T | null; },
+            async all<T>() { return { results: statement.all(...params as never[]) as T[] }; },
             async run() {
-              const result = statement.run(...values as never[]);
+              const result = statement.run(...params as never[]);
               return { success: true, meta: { changes: Number(result.changes) } } as D1Result<unknown>;
             },
           } as unknown as D1PreparedStatement;
