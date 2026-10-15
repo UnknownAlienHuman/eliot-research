@@ -5,6 +5,7 @@ import { expect, test } from "vitest";
 import {
   createD1ManagedSourceDependencies,
   managedManifestDependencyRoot,
+  readManagedRootDependencySet,
   type ManagedDependencySourceFence,
 } from "./managed-source-dependencies.js";
 import { projectionSha256Utf8 } from "./canonical.js";
@@ -54,28 +55,41 @@ function world() {
   const db = new DatabaseSync(":memory:");
   db.exec(`
     CREATE TABLE source(source_id TEXT PRIMARY KEY,source_namespace_id TEXT,source_owner_system_id TEXT,
-      source_owner_generation TEXT,source_class TEXT,head_rev TEXT);
+      source_owner_generation TEXT,source_class TEXT,head_rev TEXT,ownership_mode TEXT);
     CREATE TABLE source_revision(source_revision_ref TEXT PRIMARY KEY,source_id TEXT,
       source_owner_generation TEXT,object_residency_key_digest TEXT,content_sha256 TEXT,purge_state TEXT);
     CREATE TABLE source_namespace_ownership(source_namespace_id TEXT,owner_system_id TEXT,
       source_owner_generation TEXT,ownership_record_revision INTEGER,source_admission_policy_revision INTEGER,status TEXT);
-    CREATE TABLE source_admission_policy(source_namespace_id TEXT,source_class TEXT,revision INTEGER);
+    CREATE TABLE source_admission_policy(source_namespace_id TEXT,source_class TEXT,revision INTEGER,
+      allowed_use_json TEXT,allowed_ownership_modes_json TEXT);
     CREATE TABLE source_admission_decision(source_revision_ref TEXT,decision_receipt_ref TEXT,decision_sha256 TEXT,
       decision TEXT,source_owner_generation TEXT,owner_system_id TEXT,source_namespace_id TEXT,
-      source_class TEXT,expires_at TEXT,created_at TEXT);
+      source_class TEXT,expires_at TEXT,created_at TEXT,allowed_use_json TEXT,object_residency_key_digest TEXT);
   `);
   const registry = readFileSync(new URL("../../../infra/d1/core/migrations/0008_erasure_closure.sql", import.meta.url), "utf8");
   db.exec(registry.slice(registry.indexOf("CREATE TABLE erasure_dependency_registry"), registry.indexOf("CREATE TABLE erasure_hold")));
   db.exec(readFileSync(new URL("../../../infra/d1/core/migrations/0148_managed_manifest_dependency_roots.sql", import.meta.url), "utf8"));
   const lostAck = { next: false };
-  const port = createD1ManagedSourceDependencies(d1(db, lostAck));
+  const binding = d1(db, lostAck);
+  const expectedSet = { extra_count: 0, wrong_digest: false };
+  const port = createD1ManagedSourceDependencies(binding, {
+    async readExpected(root) {
+      const actual = await readManagedRootDependencySet(binding, root.root_ref);
+      return {
+        protocol: "eliotr.managed-root-dependency-set.v1", root_ref: root.root_ref,
+        manifest_ref: `${root.build_prefix}root.json`, manifest_sha256: "f".repeat(64),
+        dependency_count: actual.count + expectedSet.extra_count,
+        dependency_set_sha256: expectedSet.wrong_digest ? "0".repeat(64) : actual.sha256,
+      };
+    },
+  });
   function source(id: string): ManagedDependencySourceFence {
-    db.prepare("INSERT INTO source VALUES(?,?,?,?,?,?)").run(id, `namespace-${id}`, "system", "owner-1", "PUBLIC", `rev-${id}`);
+    db.prepare("INSERT INTO source VALUES(?,?,?,?,?,?,?)").run(id, `namespace-${id}`, "system", "owner-1", "PUBLIC", `rev-${id}`, "immutable_import");
     db.prepare("INSERT INTO source_revision VALUES(?,?,?,?,?,?)").run(`rev-${id}`, id, "owner-1", "a".repeat(64), "b".repeat(64), "LIVE");
     db.prepare("INSERT INTO source_namespace_ownership VALUES(?,?,?,?,?,?)").run(`namespace-${id}`, "system", "owner-1", 1, 1, "ACTIVE");
-    db.prepare("INSERT INTO source_admission_policy VALUES(?,?,?)").run(`namespace-${id}`, "PUBLIC", 1);
-    db.prepare("INSERT INTO source_admission_decision VALUES(?,?,?,?,?,?,?,?,?,?)").run(
-      `rev-${id}`, `admission-${id}`, "c".repeat(64), "ADMITTED", "owner-1", "system", `namespace-${id}`, "PUBLIC", null, "2026-10-14T00:00:00Z");
+    db.prepare("INSERT INTO source_admission_policy VALUES(?,?,?,?,?)").run(`namespace-${id}`, "PUBLIC", 1, '["research"]', '["immutable_import"]');
+    db.prepare("INSERT INTO source_admission_decision VALUES(?,?,?,?,?,?,?,?,?,?,?,?)").run(
+      `rev-${id}`, `admission-${id}`, "c".repeat(64), "ADMITTED", "owner-1", "system", `namespace-${id}`, "PUBLIC", null, "2026-10-14T00:00:00Z", '["research"]', "a".repeat(64));
     return {
       source_revision_ref: `rev-${id}`, source_id: id, source_namespace_id: `namespace-${id}`,
       source_owner_system_id: "system", source_owner_generation: "owner-1",
@@ -84,7 +98,7 @@ function world() {
       admission_decision_receipt_ref: `admission-${id}`, admission_decision_sha256: "c".repeat(64),
     };
   }
-  return { db, port, source, lostAck };
+  return { db, port, source, lostAck, expectedSet, binding };
 }
 
 const asOf = "2026-10-14T23:59:00Z";
@@ -155,6 +169,49 @@ test("root publication and read fail after owner or admission authority changes"
     w.db.prepare("UPDATE source_namespace_ownership SET status='ACTIVE'").run();
     w.db.prepare("UPDATE source_admission_decision SET expires_at='2020-01-01T00:00:00Z'").run();
     await expect(w.port.assertActiveRoot(root, 1, 1)).rejects.toThrow("no longer current");
+  } finally { w.db.close(); }
+});
+
+test("the current policy and admitted decision must still permit research and the current ownership mode", async () => {
+  const w = world();
+  try {
+    const root = await managedManifestDependencyRoot(prefix);
+    const input = { root, source: w.source("A"), as_of: asOf,
+      objects: [{ key: `${prefix}copies/A.json`, sha256: "d".repeat(64), kind: "COPY_REF" as const }] };
+    w.db.exec("UPDATE source_admission_policy SET allowed_ownership_modes_json='[]'");
+    await expect(w.port.register(input)).rejects.toThrow("source authority");
+    w.db.exec(`UPDATE source_admission_policy SET allowed_ownership_modes_json='["immutable_import"]',allowed_use_json='[]'`);
+    await expect(w.port.register(input)).rejects.toThrow("source authority");
+    w.db.exec(`UPDATE source_admission_policy SET allowed_use_json='["research"]'`);
+    w.db.exec("UPDATE source_admission_decision SET allowed_use_json='[]'");
+    await expect(w.port.register(input)).rejects.toThrow("source authority");
+    w.db.exec(`UPDATE source_admission_decision SET allowed_use_json='["research"]'`);
+    await w.port.register(input);
+    await w.port.activateRoot(root, 1, 1);
+    w.db.exec("UPDATE source_admission_policy SET allowed_use_json='[]'");
+    await expect(w.port.assertActiveRoot(root, 1, 1)).rejects.toThrow("no longer current");
+  } finally { w.db.close(); }
+});
+
+test("activation and active reads require the complete immutable Work dependency set, not just copy/source counts", async () => {
+  const w = world();
+  try {
+    const root = await managedManifestDependencyRoot(prefix);
+    await w.port.register({ root, source: w.source("A"), as_of: asOf,
+      objects: [{ key: `${prefix}copies/A.json`, sha256: "d".repeat(64), kind: "COPY_REF" }] });
+    // The trusted immutable receipt also includes a shared root ref that was
+    // omitted from registration. Source/copy counts alone still equal 1/1.
+    w.expectedSet.extra_count = 1;
+    await expect(w.port.activateRoot(root, 1, 1)).rejects.toThrow("complete immutable Work receipt");
+    w.expectedSet.extra_count = 0;
+    w.expectedSet.wrong_digest = true;
+    await expect(w.port.activateRoot(root, 1, 1)).rejects.toThrow("complete immutable Work receipt");
+    w.expectedSet.wrong_digest = false;
+    await w.port.activateRoot(root, 1, 1);
+    w.expectedSet.wrong_digest = true;
+    await expect(w.port.assertActiveRoot(root, 1, 1)).rejects.toThrow("complete immutable Work receipt");
+    await expect(createD1ManagedSourceDependencies(w.binding).activateRoot(root, 1, 1))
+      .rejects.toThrow("immutable root dependency authority is unavailable");
   } finally { w.db.close(); }
 });
 

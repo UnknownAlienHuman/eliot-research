@@ -67,6 +67,7 @@ export async function readRegisteredWorkEmptySnapshot(
   bucket: R2Bucket,
   sourceRevisionRef: string,
   subjectRef: string,
+  verifyRootDependencySet?: (rootRef: string) => Promise<void>,
 ): Promise<{ readonly keys: readonly string[]; readonly live_root_count: number; readonly generation: string; readonly digest: string }> {
   const result = await core.prepare(
     "SELECT canonical_ref,object_identity_digest,managed_root_ref,managed_root_state FROM erasure_dependency_registry " +
@@ -78,6 +79,7 @@ export async function readRegisteredWorkEmptySnapshot(
   }
   if (result.results.length > 10_000) erasureFail("ERASURE_CLOSURE_INCOMPLETE", "registered Work inventory exceeds its bound");
   const keys = new Set<string>();
+  const verifiedRoots = new Set<string>();
   let liveRootCount = 0;
   for (const row of result.results) {
     if (!row.canonical_ref.startsWith("r2-work:") ||
@@ -85,7 +87,14 @@ export async function readRegisteredWorkEmptySnapshot(
       erasureFail("ERASURE_IDENTITY_CONFLICT", "registered Work dependency is malformed");
     }
     const key = assertErasureText(row.canonical_ref.slice("r2-work:".length), "registered Work key", 1024);
-    if (row.managed_root_ref !== null && row.managed_root_state !== "BLOCKED") liveRootCount += 1;
+    if (row.managed_root_ref !== null) {
+      if (row.managed_root_state !== "BLOCKED" || verifyRootDependencySet === undefined) liveRootCount += 1;
+      else if (!verifiedRoots.has(row.managed_root_ref)) {
+        try { await verifyRootDependencySet(row.managed_root_ref); }
+        catch (cause) { erasureFail("ERASURE_CLOSURE_INCOMPLETE", "complete immutable root dependencies were not verified", false, cause); }
+        verifiedRoots.add(row.managed_root_ref);
+      }
+    }
     try { if (await bucket.head(key) !== null) keys.add(key); }
     catch (cause) { erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "registered Work absence readback failed", true, cause); }
   }
@@ -108,12 +117,13 @@ export async function makeR2WorkEmptyProofTarget(
   requestDigest: string,
   subjectRef: string,
   sourceRevisionRef: string,
+  verifyRootDependencySet?: (rootRef: string) => Promise<void>,
 ): Promise<{ readonly target: PurgeTarget | null; readonly prefix: string }> {
   const [root, authorityDigest, snapshot, registered] = await Promise.all([
     readErasureRootIdentity(core, sourceRevisionRef),
     readEmptyProofAuthorityDigest(core, sourceRevisionRef, subjectRef, "Projection"),
     readR2WorkEmptySnapshot(bucket, sourceRevisionRef),
-    readRegisteredWorkEmptySnapshot(core, bucket, sourceRevisionRef, subjectRef),
+    readRegisteredWorkEmptySnapshot(core, bucket, sourceRevisionRef, subjectRef, verifyRootDependencySet),
   ]);
   if (snapshot.keys.length > 0 || registered.keys.length > 0 || registered.live_root_count > 0) {
     return { target: null, prefix: snapshot.prefix };
@@ -140,6 +150,7 @@ export async function validateR2WorkEmptyProof(
   bucket: R2Bucket,
   request: ErasureRequest,
   target: PurgeTarget,
+  verifyRootDependencySet?: (rootRef: string) => Promise<void>,
 ): Promise<void> {
   const proof = await parseEmptyLocationProof(target);
   const normalized = validateErasureRequest(request);
@@ -153,7 +164,7 @@ export async function validateR2WorkEmptyProof(
     readErasureRootIdentity(core, sourceRevisionRef),
     readEmptyProofAuthorityDigest(core, sourceRevisionRef, proof.exact_subject_ref, "Projection"),
     readR2WorkEmptySnapshot(bucket, sourceRevisionRef),
-    readRegisteredWorkEmptySnapshot(core, bucket, sourceRevisionRef, proof.exact_subject_ref),
+    readRegisteredWorkEmptySnapshot(core, bucket, sourceRevisionRef, proof.exact_subject_ref, verifyRootDependencySet),
   ]);
   const namespaceDigest = registered.generation === "r2-work-prefix-list.v1" ? snapshot.namespaceDigest :
     await erasureDigest({ source_namespace_digest: snapshot.namespaceDigest, registered_digest: registered.digest });

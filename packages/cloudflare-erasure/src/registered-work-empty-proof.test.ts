@@ -37,9 +37,13 @@ test("an active root prevents emptiness even after its exact Work key disappears
   expect(before.keys).toEqual([]);
   expect(before.live_root_count).toBe(1);
   w.row.managed_root_state = "BLOCKED";
-  const after = await readRegisteredWorkEmptySnapshot(w.core, w.bucket, "rev-A", "source-revision:rev-A");
+  const verify = vi.fn(async () => undefined);
+  const after = await readRegisteredWorkEmptySnapshot(w.core, w.bucket, "rev-A", "source-revision:rev-A", verify);
   expect(after.live_root_count).toBe(0);
+  expect(verify).toHaveBeenCalledWith("managed-root:build");
   expect(after.digest).not.toBe(before.digest);
+  const unverified = await readRegisteredWorkEmptySnapshot(w.core, w.bucket, "rev-A", "source-revision:rev-A");
+  expect(unverified.live_root_count).toBe(1);
 });
 
 test("a failed registered Work head never becomes absence", async () => {

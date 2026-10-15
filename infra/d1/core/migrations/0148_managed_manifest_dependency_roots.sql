@@ -48,6 +48,11 @@ WHEN NEW.managed_root_ref IS NOT NULL AND EXISTS (
     AND d.managed_root_state IN ('ACTIVE','BLOCKED'))
 BEGIN SELECT RAISE(ABORT,'managed root is sealed or blocked'); END;
 
+CREATE TRIGGER erasure_dependency_managed_no_unfenced_delete
+BEFORE DELETE ON erasure_dependency_registry
+WHEN OLD.managed_object_kind IS NOT NULL AND OLD.managed_root_state IS NOT 'BLOCKED'
+BEGIN SELECT RAISE(ABORT,'managed dependency deletion requires a blocked root'); END;
+
 -- The existing erasure quarantine transaction changes source_revision. Its
 -- first purge transition blocks all roots that contain that exact revision,
 -- including shared roots, without deleting any other source's bytes.

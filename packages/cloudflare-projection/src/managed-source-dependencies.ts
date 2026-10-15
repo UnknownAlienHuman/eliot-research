@@ -36,6 +36,60 @@ export interface ManagedManifestDependencyRoot {
   readonly build_prefix: string;
 }
 
+export interface ManagedRootDependencySetReceipt {
+  readonly protocol: "eliotr.managed-root-dependency-set.v1";
+  readonly root_ref: string;
+  readonly manifest_ref: string;
+  readonly manifest_sha256: string;
+  readonly dependency_count: number;
+  readonly dependency_set_sha256: string;
+}
+
+export interface ManagedRootDependencySetAuthority {
+  /** Read and verify the full immutable Work receipt, including shared refs. */
+  readExpected(root: ManagedManifestDependencyRoot): Promise<ManagedRootDependencySetReceipt>;
+}
+
+export interface ManagedRootDependencySetEntry {
+  readonly dependency_id: string;
+  readonly exact_subject_ref: string;
+  readonly canonical_ref: string;
+  readonly object_identity_digest: string;
+  readonly shared_reference_key: string | null;
+  readonly managed_object_kind: string;
+  readonly managed_source_fence_json: string;
+}
+
+/** Ordered fold used by the immutable producer receipt and D1 readback alike. */
+export async function foldManagedRootDependencySet(rootRef: string, entries: readonly ManagedRootDependencySetEntry[]): Promise<string> {
+  let digest = await projectionDigest({ protocol: "eliotr.managed-root-dependency-set.v1", root_ref: rootRef });
+  for (const entry of entries) digest = await projectionDigest({ previous_sha256: digest, entry });
+  return digest;
+}
+
+/** Bounded pages, never a whole target/corpus array. CPU qualification is external. */
+export async function readManagedRootDependencySet(database: D1Database, rootRef: string): Promise<{ readonly count: number; readonly sha256: string }> {
+  let after: string | null = null;
+  let count = 0;
+  let digest = await foldManagedRootDependencySet(rootRef, []);
+  for (let page = 0; page < 4096; page += 1) {
+    const rows: readonly ManagedRootDependencySetEntry[] = complete(await database.prepare(
+      "SELECT dependency_id,exact_subject_ref,canonical_ref,object_identity_digest,shared_reference_key," +
+      "managed_object_kind,managed_source_fence_json FROM erasure_dependency_registry " +
+      "WHERE managed_root_ref=?1 AND (?2 IS NULL OR dependency_id>?2) ORDER BY dependency_id LIMIT 256"
+    ).bind(rootRef, after).all<ManagedRootDependencySetEntry>(), "root dependency set");
+    if (rows.length > 256) projectionFail("PROJECTION_AUTHORITY_CONFLICT", "root dependency page exceeds its bound");
+    for (const entry of rows) {
+      if (after !== null && entry.dependency_id <= after) projectionFail("PROJECTION_AUTHORITY_CONFLICT", "root dependency cursor did not advance");
+      digest = await projectionDigest({ previous_sha256: digest, entry });
+      after = entry.dependency_id;
+      count += 1;
+    }
+    if (rows.length < 256) return Object.freeze({ count, sha256: digest });
+  }
+  projectionFail("PROJECTION_AUTHORITY_CONFLICT", "root dependency inventory exceeds its bounded page envelope");
+}
+
 interface RegisteredRow {
   readonly dependency_id: string;
   readonly canonical_ref: string;
@@ -63,6 +117,12 @@ const SOURCE_FENCE_SQL =
   "AND sr.content_sha256=?7 AND own.ownership_record_revision=?8 " +
   "AND own.status='ACTIVE' AND sr.purge_state='LIVE' " +
   "AND own.source_admission_policy_revision=?9 AND s.source_class=?10 AND d.source_class=?10 " +
+  "AND json_type(ap.allowed_ownership_modes_json)='array' AND json_type(ap.allowed_use_json)='array' " +
+  "AND EXISTS (SELECT 1 FROM json_each(ap.allowed_ownership_modes_json) WHERE value=s.ownership_mode) " +
+  "AND EXISTS (SELECT 1 FROM json_each(ap.allowed_use_json) WHERE value='research') " +
+  "AND json_type(d.allowed_use_json)='array' " +
+  "AND EXISTS (SELECT 1 FROM json_each(d.allowed_use_json) WHERE value='research') " +
+  "AND d.object_residency_key_digest=sr.object_residency_key_digest " +
   "AND d.decision_receipt_ref=?11 AND d.decision_sha256=?12 AND d.decision='ADMITTED' " +
   "AND d.source_owner_generation=?5 AND d.owner_system_id=own.owner_system_id " +
   "AND d.source_namespace_id=s.source_namespace_id " +
@@ -126,7 +186,22 @@ function complete<T>(result: D1Result<T>, label: string): readonly T[] {
 }
 
 /** Called after immutable Work success, including on replay after a lost ACK. */
-export function createD1ManagedSourceDependencies(database: D1Database) {
+export function createD1ManagedSourceDependencies(database: D1Database, authority?: ManagedRootDependencySetAuthority) {
+  async function requireCompleteSet(root: ManagedManifestDependencyRoot): Promise<ManagedRootDependencySetReceipt> {
+    if (authority === undefined) projectionFail("PROJECTION_AUTHORITY_CONFLICT", "immutable root dependency authority is unavailable");
+    const expected = await authority.readExpected(root);
+    if (expected.protocol !== "eliotr.managed-root-dependency-set.v1" || expected.root_ref !== root.root_ref ||
+        !expected.manifest_ref.startsWith(root.build_prefix) || !Number.isSafeInteger(expected.dependency_count) || expected.dependency_count < 1) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "immutable root dependency receipt is invalid");
+    }
+    assertProjectionSha256(expected.manifest_sha256, "root manifest digest");
+    assertProjectionSha256(expected.dependency_set_sha256, "complete dependency set digest");
+    const actual = await readManagedRootDependencySet(database, root.root_ref);
+    if (actual.count !== expected.dependency_count || actual.sha256 !== expected.dependency_set_sha256) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "registered dependencies do not match the complete immutable Work receipt");
+    }
+    return expected;
+  }
   return Object.freeze({
     async register(input: {
       readonly root: ManagedManifestDependencyRoot;
@@ -196,22 +271,25 @@ export function createD1ManagedSourceDependencies(database: D1Database) {
     },
     async activateRoot(root: ManagedManifestDependencyRoot, expectedSourceCount: number, expectedCopyCount: number): Promise<void> {
       await validateRoot(root);
+      const dependencySet = await requireCompleteSet(root);
       if (![expectedSourceCount, expectedCopyCount].every((count) => Number.isSafeInteger(count) && count > 0)) {
         projectionFail("PROJECTION_INPUT_INVALID", "root membership counts are invalid");
       }
       await database.prepare(
         "UPDATE erasure_dependency_registry SET managed_root_state='ACTIVE' " +
         "WHERE managed_root_ref=?1 AND managed_root_state='BUILDING' AND state='ACTIVE' " +
+        "AND ?4=(SELECT COUNT(*) FROM erasure_dependency_registry WHERE managed_root_ref=?1) " +
         "AND ?2=(SELECT COUNT(DISTINCT exact_subject_ref) FROM erasure_dependency_registry WHERE managed_root_ref=?1 AND state='ACTIVE') " +
         "AND ?3=(SELECT COUNT(*) FROM erasure_dependency_registry WHERE managed_root_ref=?1 AND managed_object_kind='COPY_REF' AND state='ACTIVE') " +
         "AND NOT EXISTS (SELECT 1 FROM erasure_dependency_registry dep " +
         "WHERE dep.managed_root_ref=?1 AND (dep.managed_root_state='BLOCKED' OR dep.state<>'ACTIVE' " +
         `OR NOT EXISTS (${ROOT_SOURCE_CURRENT_SQL})))`
-      ).bind(root.root_ref, expectedSourceCount, expectedCopyCount).run();
+      ).bind(root.root_ref, expectedSourceCount, expectedCopyCount, dependencySet.dependency_count).run();
       await this.assertActiveRoot(root, expectedSourceCount, expectedCopyCount);
     },
     async assertActiveRoot(root: ManagedManifestDependencyRoot, expectedSourceCount: number, expectedCopyCount: number): Promise<void> {
       await validateRoot(root);
+      await requireCompleteSet(root);
       const rows = complete(await database.prepare(
         "SELECT COUNT(DISTINCT exact_subject_ref) AS sources," +
         "SUM(CASE WHEN managed_object_kind='COPY_REF' THEN 1 ELSE 0 END) AS copies," +
@@ -221,6 +299,10 @@ export function createD1ManagedSourceDependencies(database: D1Database) {
       if (rows.length !== 1 || rows[0]?.sources !== expectedSourceCount || rows[0]?.copies !== expectedCopyCount || rows[0]?.invalid !== 0) {
         projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed root is incomplete, blocked, or no longer current");
       }
+    },
+    async verifyRootDependencySet(root: ManagedManifestDependencyRoot): Promise<void> {
+      await validateRoot(root);
+      await requireCompleteSet(root);
     },
   });
 }
