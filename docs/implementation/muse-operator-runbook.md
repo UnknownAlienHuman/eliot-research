@@ -58,80 +58,63 @@ Managed OAuth remains a distinct profile and cannot be combined with service-tok
 MCP application, AUD and `/mcp` path remain separate from ordinary owner Access. Connection configuration
 is independent of Google transport selection.
 
-## First local Codex WEB_INBOX client
+## Connect Codex through the existing Managed OAuth MCP app
 
-This is a local client path for the existing task protocol, not a new scheduler or provider integration.
-As of 2026-10-15, owner approval for the short-lived token and README-project grant is still pending; no
-Access, token, grant, connection, route or provider change has been made by this helper work.
+Codex connects to the Worker directly as the authenticated owner over Streamable HTTP. This consumes the
+existing dedicated MCP Cloudflare Access application and its `managed-oauth` profile; it is not the
+`WEB_INBOX` task client. The human owner identity remains subject to the existing Access policy and project
+authorization. Delegated computer-agent task calls remain on the separate service-token/`MCP_WRITE` path
+described below.
 
-After approval, the root owner performs the remote setup and exact readbacks:
+Use the live `MCP_HOSTNAME` from the verified Worker and Access readback. The tracked Wrangler values are
+development placeholders and are not a live endpoint. The server URL is exactly
+`https://<MCP_HOSTNAME>/mcp`. The Worker requires `MCP_ACCESS_AUTH_PROFILE=managed-oauth`, the dedicated
+`MCP_ACCESS_TEAM_DOMAIN`, and an `MCP_ACCESS_AUDIENCE` distinct from ordinary `ACCESS_AUDIENCE`; service-token
+Client ID variables must be absent in this profile. Keep the ordinary owner Access application and the
+Google transport selection unchanged. ADR-0014 records the separate MCP application/audience and its
+owner-only policy as an existing configuration. Cloudflare Access supplies OAuth discovery and login; the
+Worker validates the Access identity and does not host a second OAuth authorization server.
 
-1. Create one Cloudflare Access service token named `eliotr-codex-local-20261015` with a 24-hour lifetime.
-   Add one `Service Auth` policy to the existing owner application identified by the live Worker
-   `ACCESS_AUDIENCE`, including only that returned
-   service-token ID. The current app has no service-token binding; keep the existing owner-email policy,
-   Worker managed-OAuth profile, and separate MCP application/AUD unchanged.
-2. Allowlist only the returned service token **Client ID** in the existing Worker verifier. Cloudflare's
-   service-token application JWT uses the Client ID as `common_name` and has an empty `sub`; the verifier
-   uses signed `common_name` as the service principal. The token name and token UUID are not that principal.
-   See [Cloudflare's application-token claims](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/application-token/)
-   and [service-token request headers](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/)
-   (docs checked 2026-10-15).
-3. Register one connection with display name `Codex local`, contour `OTHER`, computer scope `LOCAL`, and
-   only transport `WEB_INBOX` plus task kind `RESEARCH_BRANCH_ANALYSIS`. Bind it to the verified issuer
-   from the live Access application and the returned Client ID.
-4. Issue a 24-hour grant for the selected README verification project, using its actual returned project ID,
-   with exactly `run`, `recover` and `evidence`. Do not add ingest permission.
-5. Publish the `RESEARCH_BRANCH_ANALYSIS` route with strategy `ORIGINATING_MATCH` and only the exact
-   current Codex connection revision. Read back the connection, grant, route and readiness; then issue a
-   one-shot `WEB_INBOX` qualification challenge and create an owner-authorized dispatch for that same
-   project, grant, connection and task kind.
+Before login, make a public unauthenticated GET to the exact MCP URL without cookies or authorization
+headers. Cloudflare Managed OAuth should return `401` with `WWW-Authenticate`; follow the advertised
+protected-resource metadata URI, then only the authorization-server metadata it advertises. Do not guess
+well-known URLs. Confirm the live Access application has `oauth_configuration.enabled=true`. Codex chooses
+CIMD or DCR from the advertised metadata; if DCR is selected, read back
+`oauth_configuration.dynamic_client_registration.enabled` and its loopback/`allowed_uris` restrictions.
+The callback rules must accept Codex's loopback callback without a static port override. If the response is
+a redirect, lacks the discovery challenge, or registration fails, stop and reconcile the live Access
+application, hostname, audience and Worker profile. Do not create another Access app or use a service-token
+credential as a workaround.
 
-Store these values in a user-only local environment file outside the repository. Do not put the file in
-Git, print it, or pass its contents as command-line arguments:
-
-```text
-ELIOTR_WEB_INBOX_ISSUER=https://<verified-access-team>.cloudflareaccess.com
-ELIOTR_WEB_INBOX_ORIGIN=https://<deployed-worker-origin>
-ELIOTR_WEB_INBOX_PROJECT_ID=<returned README-project ID>
-ELIOTR_WEB_INBOX_CLIENT_ID=<returned Client ID>
-ELIOTR_WEB_INBOX_CLIENT_SECRET=<returned Client Secret>
-ELIOTR_WEB_INBOX_GRANT_ID=<returned project-grant locator>
-ELIOTR_WEB_INBOX_WORKER_SLOT=codex-local-20261015
-ELIOTR_WEB_INBOX_CHALLENGE_ID=<one-shot challenge ID, temporarily>
-ELIOTR_WEB_INBOX_CHALLENGE_TOKEN=<one-shot challenge token, temporarily>
-```
-
-From the checkout containing `scripts/codex-web-inbox.mjs`, run in PowerShell:
+Codex supports remote Streamable HTTP and OAuth. Its default OAuth registration mode is `auto` (CIMD when
+the authorization-server metadata supports it, otherwise DCR when available). Add the server only if it is
+not already configured, then let the owner complete the browser sign-in and consent:
 
 ```powershell
-$envFile = 'C:\Development\Research\.eliotr-private-inputs\codex-web-inbox.env'
-node "--env-file=$envFile" scripts/codex-web-inbox.mjs qualify
+$mcpUrl = 'https://<verified-MCP_HOSTNAME>/mcp'
+codex mcp add eliot-research --url $mcpUrl
+codex mcp list
+codex mcp login eliot-research
 ```
 
-Remove the two challenge entries from the private file after qualification. Once the owner has created a
-dispatch, run one task cycle with `node "--env-file=$envFile" scripts/codex-web-inbox.mjs run`. It pulls and
-accepts only a dispatch matching the exact project, task kind, transport and grant, then pulls one task,
-reads supplied evidence in verified ranges of at most 64 KiB, records progress, and submits the strict
-existing callback. It makes no ingest request. The callback wake/recovery remains Core-owned.
+Equivalent `config.toml` entry:
 
-The helper invokes the installed `codex exec` once, with stdin, a temporary output schema, an ephemeral
-session and a read-only sandbox. It sets no model or provider override, so the local Codex profile keeps the
-owner's native model selection (including Luna Max when selected). It strips the Access credential
-environment from the child while preserving the configured Codex provider environment. It runs in a
-temporary directory using only the supplied task/evidence, uses no browser/search, writes no checkout files, and records usage as
-`UNKNOWN` because the CLI does not provide a verified billing receipt.
-
-Use the `status <external-task-id>` command to reconcile a task. The `recover <external-task-id>` command
-first requires a status readback showing a durable result and an unsettled workflow, then uses the canonical
-`agent-recover-<first 24 request_sha256 hex>` key. After an uncertain result response, read status before
-retrying or recovering; never create a replacement task or reuse another actor's lease.
-
-```powershell
-$taskId = 'external-task:<64 lowercase hex characters>'
-node "--env-file=$envFile" scripts/codex-web-inbox.mjs status $taskId
-node "--env-file=$envFile" scripts/codex-web-inbox.mjs recover $taskId
+```toml
+[mcp_servers.eliot-research]
+url = "https://<verified-MCP_HOSTNAME>/mcp"
+auth = "oauth"
 ```
+
+Do not add bearer-token environment variables, static authorization headers, OAuth client secrets or
+callback overrides. Codex and Cloudflare perform OAuth discovery and registration from the live metadata.
+After owner consent, the native Codex connection must complete `initialize` and `tools/list`; record the
+returned protocol version, `serverInfo`, exact tool names, hostname and deployment generation from the
+live Codex connection/trace. The server currently negotiates MCP `2025-06-18` or `2025-03-26`. The existing
+protocol unit fixture is not live qualification, and this handshake check does not call any tools.
+
+Current official references: [Codex MCP](https://developers.openai.com/codex/extend/mcp) and
+[Cloudflare Managed OAuth](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/)
+(checked 2026-10-15).
 
 ## Pull tasks and return results
 
@@ -278,3 +261,4 @@ immutably records the first READY Spark, Muse, Dot or other route entry, then cr
 The agent still pulls and accepts under its own Access actor and exact project grant. Retry the same owner key
 and body after an uncertain response; selection cannot silently switch to another contour. Decline/abandon
 continues through explicit reassignment rather than automatic failover.
+
