@@ -20,6 +20,9 @@ export type { ComputerAgentDispatchCreateIntent, ComputerAgentDispatchTaskStatus
 export type { ComputerAgentConnectionMutationIntent } from './connections/computer-agent';
 export type { ComputerAgentConnection, ComputerAgentConnectionList } from '@eliotr/contracts';
 export { createProviderKeyApi } from './connections/provider';
+export { createServiceModelSettingsApi } from './connections/service-models';
+export type { ServiceModelSettings, ServiceModelProviderCreateRequest, ServiceModelProviderCreateReceipt,
+  ServiceModelProviderReadbackEnvelope, ServiceModelProviderConnection } from '@eliotr/contracts';
 export { createProviderModelUseApi } from './connections/provider-model-use';
 export { createGoogleOAuthApi } from './connections/google';
 export { createMcpDiagnosticApi } from './connections/diagnostic';

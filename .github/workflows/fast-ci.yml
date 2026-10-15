@@ -52,6 +52,8 @@ jobs:
           packages/cloudflare-model-control/src/research-model-gateway-binding.test.ts
           packages/cloudflare-model-control/src/research-model-catalog.test.ts
           packages/owner-api-client/src/research/configuration/models.test.ts
+          packages/contracts/src/service-model.test.ts
+          packages/owner-api-client/src/connections/service-models.test.ts
           packages/cloudflare-model-execution/src/model-route-failure.test.ts
           packages/cloudflare-workspace-mcp/src/gemini-mcp.test.ts
           apps/eliotr-core/test/research-model-gateway-runtime.test.ts

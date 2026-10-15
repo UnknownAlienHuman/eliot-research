@@ -1,0 +1,64 @@
+import { describe, expect, it, vi } from 'vitest';
+import { createSessionEpoch } from '../transport/session/epoch';
+import { createServiceModelSettingsApi } from './service-models';
+
+const operation = '6f06e11b-e2d0-4b16-8e84-44aa52d37533';
+const request = { protocol: 'eliotr.service-model-provider-create.v1' as const, operation_id: operation,
+  provider_id: 'opencode-go', display_name: 'OpenCode Go', base_url: 'https://provider.example/v1',
+  model_ids: ['step-5-preview-free'], api_key: 'synthetic-credential-test-only' };
+const wrap = (data: unknown) => ({ data, trace_id: 'trace-1', deployment_generation: 'deploy-1' });
+const errors = (value: { code: string }) => new Error(value.code);
+
+describe('global service model client', () => {
+  it('reads built-in Cloudflare settings without a project or external management', async () => {
+    const http = { requestApiWithStatuses: vi.fn(async () => wrap({ protocol: 'eliotr.service-model-settings.v1',
+      cloudflare: { provider_id: 'cloudflare-workers-ai', connection: 'builtin', binding_available: true,
+        default_model_id: '@cf/zai-org/glm-5.3-flash' }, indexing: { provider_id: 'cloudflare-ai-search', managed: true },
+      external: { state: 'unavailable', management_available: false, connections: [], truncated: false } })) };
+    const api = createServiceModelSettingsApi(http, errors, createSessionEpoch());
+
+    const result = await api.readServiceModelSettings('deploy-1');
+
+    expect(http.requestApiWithStatuses).toHaveBeenCalledExactlyOnceWith('/api/v1/system/model-settings', { method: 'GET' }, [200]);
+    expect(result.cloudflare.binding_available).toBe(true);
+    expect(result.external.management_available).toBe(false);
+  });
+
+  it('sends a key once in a global POST body and returns only validated metadata', async () => {
+    const http = { requestApiWithStatuses: vi.fn(async () => wrap({ protocol: request.protocol, operation_id: operation,
+      provider_id: request.provider_id, display_name: request.display_name, model_ids: request.model_ids,
+      base_url: request.base_url, alias: 'eliotr-global-test', provider_config_id: 'config-1',
+      provider_slug: 'custom-opencode-go', status: 'configured', created_at: '2026-10-15T14:00:00.000Z' })) };
+    const api = createServiceModelSettingsApi(http, errors, createSessionEpoch());
+
+    const result = await api.createServiceModelProvider(request, 'deploy-1');
+
+    expect(http.requestApiWithStatuses).toHaveBeenCalledExactlyOnceWith('/api/v1/system/model-providers', {
+      method: 'POST', body: JSON.stringify(request), headers: { 'content-type': 'application/json',
+        'x-eliotr-csrf': '1', 'idempotency-key': operation },
+    }, [200, 201]);
+    expect(result).not.toHaveProperty('api_key');
+    expect(result).not.toHaveProperty('project_id');
+  });
+
+  it('does not retry an uncertain write and reads only the original operation', async () => {
+    const http = { requestApiWithStatuses: vi.fn()
+      .mockRejectedValueOnce(new Error('lost acknowledgement'))
+      .mockResolvedValueOnce(wrap({ protocol: 'eliotr.service-model-settings.v1', connection: null, truncated: false })) };
+    const api = createServiceModelSettingsApi(http, errors, createSessionEpoch());
+
+    await expect(api.createServiceModelProvider(request, 'deploy-1')).rejects.toThrow('lost acknowledgement');
+    expect(http.requestApiWithStatuses).toHaveBeenCalledTimes(1);
+    await api.readServiceModelProviderOperation(operation, 'deploy-1');
+
+    expect(http.requestApiWithStatuses).toHaveBeenNthCalledWith(2,
+      `/api/v1/system/model-providers?operation_id=${operation}`, { method: 'GET' }, [200]);
+  });
+
+  it('discards an in-flight result after the owner epoch changes', async () => {
+    const epoch = createSessionEpoch();
+    const http = { requestApiWithStatuses: vi.fn(async () => { epoch.advance(); return wrap({}); }) };
+    const api = createServiceModelSettingsApi(http, errors, epoch);
+    await expect(api.readServiceModelSettings('deploy-1')).rejects.toThrow('API_SESSION_CLOSED');
+  });
+});
