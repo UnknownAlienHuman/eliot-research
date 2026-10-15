@@ -43,7 +43,7 @@ export async function configureProviderKeyOnceAndReadBack(input: {
     assertCurrent();
     const configuration = page.configurations.find(item => item.operation_id === input.operationId);
     if (configuration && receipt && (receipt.project_id !== input.projectId || receipt.operation_id !== input.operationId ||
-        receipt.provider_id !== configuration.provider_id || receipt.alias !== configuration.alias ||
+        receipt.provider_id !== page.provider_id || receipt.alias !== configuration.alias ||
         receipt.provider_config_id !== configuration.provider_config_id || configuration.status !== "configured_not_qualified")) {
       return undefined;
     }

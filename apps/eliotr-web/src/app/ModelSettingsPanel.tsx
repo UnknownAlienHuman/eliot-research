@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { skipToken, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
-import type { ProjectListView } from "@eliotr/owner-api-client";
+import { researchModelCatalogAdapterForRouteProvider, type ProjectListView } from "@eliotr/owner-api-client";
 import { Button, Field, Status } from "@eliotr/ui";
 import type { BoundWorkspaceApis } from "./runtime";
 import type { PrivacyController, SessionContext } from "./privacy";
@@ -180,7 +180,7 @@ function keyStatusText(locale: "en" | "ru", query: UseQueryResult<ProviderKeyPag
 }
 
 function hasExternalModel(revision: ModelRevision): boolean {
-  return revision.model_selections.some(selection => selection.transport_policy.billing.mode === "byok");
+  return revision.model_selections.some(selection => selection.provider_id !== WORKERS_AI_ROUTE_PROVIDER_ID);
 }
 
 function revisionsForSource(revisions: readonly ModelRevision[], source: ModelSource): readonly ModelRevision[] {
@@ -189,7 +189,8 @@ function revisionsForSource(revisions: readonly ModelRevision[], source: ModelSo
 
 function matchingRevisions(revisions: readonly ModelRevision[], entry: ModelCatalogEntry, source: ModelSource): readonly ModelRevision[] {
   return revisionsForSource(revisions, source).filter(revision =>
-    revision.model_selections.some(selection => selection.model_id === entry.model_id));
+    revision.model_selections.some(selection => selection.model_id === entry.model_id &&
+      researchModelCatalogAdapterForRouteProvider(selection.provider_id) === entry.provider_id));
 }
 
 export function ModelSettingsPanel({
@@ -261,7 +262,7 @@ export function ModelSettingsPanel({
     setSource(value);
     setCatalogRequested(false);
     setCatalogPage(1);
-    setSelectionFeedback({ kind: "idle" });
+    if (selectionFeedback.kind !== "unknown" && selectionFeedback.kind !== "saving") setSelectionFeedback({ kind: "idle" });
   }
 
   async function saveKey(event: FormEvent<HTMLFormElement>) {
@@ -330,7 +331,7 @@ export function ModelSettingsPanel({
   }
 
   async function selectConfiguration(revision: ModelRevision) {
-    if (!canAct || revision.qualification_state !== "qualified" || selectionController.current !== null ||
+    if (!canAct || revision.qualification_state !== "qualified" || selectionController.current !== null || selectionFeedback.kind === "unknown" ||
         (source === "external" && !configuredExternalKey)) return;
     const controller = new AbortController();
     const configurationRef = revision.configuration_ref;
@@ -378,6 +379,7 @@ export function ModelSettingsPanel({
 
   const selected = models.data?.selected;
   const catalogEntries = catalog.data?.models ?? [];
+  const nextCatalogPage = catalog.data?.pagination.next_page ?? null;
   const candidateHasQualifiedConfiguration = (entry: ModelCatalogEntry) => matchingRevisions(revisions, entry, source)
     .some(revision => revision.qualification_state === "qualified");
   const candidateHasUnqualifiedConfiguration = (entry: ModelCatalogEntry) => matchingRevisions(revisions, entry, source)
@@ -390,7 +392,7 @@ export function ModelSettingsPanel({
       <label className="er-field__label" htmlFor={`${sourceId}-source`}>{text.source}</label>
       <select id={`${sourceId}-source`} className="er-field__control" value={source} onChange={event => changeSource(event.target.value)}>
         <option value="workers-ai">{text.workers}</option>
-        <option value="external">{text.external} ({providerId})</option>
+        <option value="external">{text.external} (OpenRouter)</option>
       </select>
     </div>
 
@@ -428,7 +430,7 @@ export function ModelSettingsPanel({
             </li>;
           })}
         </ul>
-        {catalog.data.pagination.next_page !== null && <Button variant="text" onClick={() => setCatalogPage(catalog.data!.pagination.next_page!)} disabled={!canAct}>{text.moreModels}</Button>}
+        {nextCatalogPage !== null && <Button variant="text" onClick={() => setCatalogPage(nextCatalogPage)} disabled={!canAct}>{text.moreModels}</Button>}
       </>}
     </section>
 
@@ -448,7 +450,7 @@ export function ModelSettingsPanel({
           return <li key={revision.configuration_ref}>
             <Status announce={isSelected}>{isSelected ? text.selected : revision.qualification_state === "qualified" ? text.qualified : text.qualificationRequired}</Status>
             <p>{text.stages}: {configurationLabel(revision)}</p>
-            {canSelect && <Button variant="tonal" onClick={() => { void selectConfiguration(revision); }} loading={isBusy} disabled={!canAct || selectionController.current !== null}>{isBusy ? text.selecting : text.select}</Button>}
+            {canSelect && <Button variant="tonal" onClick={() => { void selectConfiguration(revision); }} loading={isBusy} disabled={!canAct || selectionController.current !== null || selectionFeedback.kind === "unknown"}>{isBusy ? text.selecting : text.select}</Button>}
             {source === "external" && !configuredExternalKey && revision.qualification_state === "qualified" && <p>{text.requiresKey}</p>}
           </li>;
         })}
