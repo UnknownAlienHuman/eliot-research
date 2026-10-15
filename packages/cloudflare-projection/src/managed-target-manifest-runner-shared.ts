@@ -9,7 +9,12 @@ import { aiSearchPhysicalProfileDigest } from "./ai-search-profile-identity-dige
 import { putCanonicalManifestObjectIfAbsent } from "./managed-target-manifest-fragments.js";
 import { canonicalProjectionJson } from "./canonical.js";
 import type { ManagedTargetManifestScanState } from "./managed-target-manifest-continuation.js";
-import type { CanonicalSourceProjectionReceipt, ManagedProjectCopyMapReceipt } from "./types.js";
+import type {
+  CanonicalSourceProjectionReceipt,
+  ManagedProjectCopyMapReceiptV1,
+  ManagedProjectCopyMapReceiptV2,
+  ManagedProjectCopyMapSetReceiptV2,
+} from "./types.js";
 import { MANAGED_TARGET_MANIFEST_MAX_PAGES } from "./managed-target-manifest-step-support.js";
 export const MANIFEST_PROTOCOL = "eliotr.managed-target-desired-items.v2" as const;
 export const MANIFEST_PROTOCOL_V3 = "eliotr.managed-target-desired-items.v3" as const;
@@ -47,8 +52,7 @@ export interface StoredCanonicalSourceIndex {
   readonly receipt: CanonicalSourceProjectionReceipt;
 }
 
-export interface StoredCopyFragment {
-  readonly protocol: typeof COPY_PROTOCOL | typeof COPY_PROTOCOL_V3;
+interface StoredCopyFragmentBase {
   readonly scan_identity_sha256: string;
   readonly copy_ordinal: number;
   readonly microstep_ordinal: number;
@@ -61,8 +65,22 @@ export interface StoredCopyFragment {
   readonly canonical_projection_generation: string;
   readonly canonical_section_count: number;
   readonly canonical_section_set_sha256: string;
-  readonly provider_copy_map: ManagedProjectCopyMapReceipt;
 }
+
+export interface StoredCopyFragmentV1 extends StoredCopyFragmentBase {
+  readonly protocol: typeof COPY_PROTOCOL;
+  readonly provider_copy_map: ManagedProjectCopyMapReceiptV1;
+}
+
+export interface StoredCopyFragmentV2 extends StoredCopyFragmentBase {
+  readonly protocol: typeof COPY_PROTOCOL_V3;
+  readonly copy_layout: "PROJECT_COPY_V2";
+  readonly target_selection: ManagedTargetSelectionV2;
+  readonly provider_copy_map_set: ManagedProjectCopyMapSetReceiptV2;
+  readonly provider_copy_map: ManagedProjectCopyMapReceiptV2;
+}
+
+export type StoredCopyFragment = StoredCopyFragmentV1 | StoredCopyFragmentV2;
 
 export function fail(
   code: ConstructorParameters<typeof ManagedTargetManifestError>[0],

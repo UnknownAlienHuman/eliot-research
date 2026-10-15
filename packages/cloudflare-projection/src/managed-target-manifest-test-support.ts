@@ -1,8 +1,9 @@
 import type { SourceRevision } from "@eliotr/contracts";
 import type { AiSearchInstanceProfile, EvidenceObjectStore, ImmutableObjectReceipt } from "@eliotr/platform-cloudflare";
-import { projectionSha256Utf8 } from "./canonical.js";
+import { canonicalProjectionJson, projectionSha256Utf8, stableProjectionId, utf8ProjectionBytes } from "./canonical.js";
 import { AI_SEARCH_PRIMARY_PROJECTION_PROFILE } from "./ai-search-primary-profile.js";
 import { aiSearchPhysicalProfileDigest } from "./ai-search-profile-identity-digest.js";
+import type { ManagedTargetSelectionV2 } from "./managed-target-assignment.js";
 import {
   advanceManagedTargetManifest,
   MANAGED_TARGET_MANIFEST_COPY_LAYOUT,
@@ -10,11 +11,19 @@ import {
   type ManagedTargetManifestProfile,
   type ManagedTargetManifestShadowFence,
 } from "./managed-target-manifest.js";
+import type { ManagedTargetManifestOperationBudgetReceipt } from "./managed-target-manifest-contract.js";
 import {
   MANAGED_TARGET_FREE_FILE_LIMIT,
   MANAGED_TARGET_HYBRID_FILE_LIMIT,
 } from "./managed-target-manifest-fragments.js";
 import type { ManagedRequiredProjectRevisionCopy } from "./managed-required-set.js";
+import type {
+  CanonicalSourceProjectionReceipt,
+  ManagedProjectCopyMapSetReceiptV1,
+  ManagedProjectCopyMapSetReceiptV2,
+  ManagedProjectCopyTargetReceipt,
+  ProjectCopyScopeV2,
+} from "./types.js";
 import { createR2CanonicalSourceProjectionWriter } from "./work-store.js";
 
 export const AS_OF = "2026-10-14T16:00:00.000Z";
@@ -108,6 +117,7 @@ function normalizedMarkdown(sourceId: string): string {
   return `# Title ${sourceId}\n\nCanonical source body for ${sourceId}.`;
 }
 
+/** Synthetic local adapter receipt for deterministic fixtures; not production CPU/cost qualification. */
 function operationBudget(subrequests = 1, inputBytes = 4_096) {
   return {
     protocol: "eliotr.managed-target-operation-budget.v1" as const,
@@ -171,13 +181,23 @@ export function shadowFence(overrides: Partial<ManagedTargetManifestShadowFence>
 }
 
 export async function setup(
-  sourceRows: readonly { readonly project_id: string; readonly source_id: string }[],
+  sourceRows: readonly {
+    readonly project_id: string;
+    readonly source_id: string;
+    readonly membership_identity_version?: 1 | 2;
+    readonly membership_generation?: number;
+    readonly membership_revision?: number;
+    readonly project_membership_generation?: number;
+  }[],
   options: {
     readonly accountTier?: "FREE" | "PAID";
     readonly maxFiles?: number;
     readonly shadow?: ManagedTargetManifestShadowFence;
     readonly unavailableCapacity?: boolean;
     readonly profileReadback?: AiSearchInstanceProfile;
+    readonly copyLayout?: "PROJECT_COPY_V1" | "PROJECT_COPY_V2";
+    readonly targetSelection?: Omit<ManagedTargetSelectionV2, "target">;
+    readonly logicalGeneration?: string;
   } = {},
 ) {
   const targetProfile = {
@@ -189,9 +209,12 @@ export async function setup(
   const target = {
     namespace: "eliot",
     managed_instance_id: targetProfile.id,
-    managed_generation: targetProfile.generation,
+    managed_generation: options.logicalGeneration ?? targetProfile.generation,
     target_profile_identity_sha256: targetProfileIdentity,
   };
+  const targetSelection: ManagedTargetSelectionV2 | undefined = options.targetSelection === undefined
+    ? undefined
+    : { ...options.targetSelection, target };
   const profile: ManagedTargetManifestProfile = {
     target_profile: targetProfile,
     projection_profile: {
@@ -206,7 +229,7 @@ export async function setup(
       managed_poll_interval_ms: 1000,
       managed_timeout_ms: 30000,
     },
-    copy_layout: MANAGED_TARGET_MANIFEST_COPY_LAYOUT,
+    copy_layout: options.copyLayout ?? MANAGED_TARGET_MANIFEST_COPY_LAYOUT,
   };
   const contentDigests = new Map<string, string>();
   for (const row of sourceRows) {
@@ -214,12 +237,41 @@ export async function setup(
       contentDigests.set(row.source_id, await projectionSha256Utf8(normalizedMarkdown(row.source_id)));
     }
   }
-  const rows = sourceRows.map((row) => ({
-    ...copy(row.project_id, row.source_id, target),
-    source_revision_content_sha256: contentDigests.get(row.source_id) ?? SHA_A,
+  const rows = await Promise.all(sourceRows.map(async (row) => {
+    const membershipGeneration = row.membership_generation ?? 1;
+    const legacyMembershipId = `project:${row.project_id}:generation:${membershipGeneration}`;
+    const stableMembershipId = await stableProjectionId(
+      "project-membership",
+      JSON.stringify([row.project_id, row.source_id]),
+    );
+    const base = {
+      ...copy(row.project_id, row.source_id, target),
+      project_membership_id: legacyMembershipId,
+      stable_project_membership_id: stableMembershipId,
+      legacy_project_membership_id: legacyMembershipId,
+      membership_generation: membershipGeneration,
+      source_revision_content_sha256: contentDigests.get(row.source_id) ?? SHA_A,
+      project_membership_generation: row.project_membership_generation ?? 1,
+    };
+    if (targetSelection === undefined || row.membership_identity_version === 1) return base;
+    return {
+      ...base,
+      assignment_decision_version: 2 as const,
+      assignment_selection_mode: "STABLE_PHYSICAL_PROFILE_V2" as const,
+      assignment_product_alias: "primary" as const,
+      assignment_managed_generation: "older-logical-generation",
+      assignment_target_profile_identity_sha256: target.target_profile_identity_sha256,
+      project_membership_id: stableMembershipId,
+      stable_project_membership_id: stableMembershipId,
+      legacy_project_membership_id: null,
+      project_membership_identity_version: 2 as const,
+      membership_id: JSON.stringify([row.project_id, row.source_id]),
+      membership_revision: row.membership_revision ?? 1,
+    };
   }));
   let pageReads = 0;
   let authorityReads = 0;
+  let normalizedReads = 0;
   let canonicalReads = 0;
   let copyMapReads = 0;
   const store = new MemoryImmutableStore();
@@ -227,6 +279,70 @@ export async function setup(
     work_bucket: {} as R2Bucket,
     object_store: store.store,
   });
+  interface LocalWriterBudgetFields {
+    readonly operation_budget_remaining: number;
+    readonly subrequest_budget_remaining: number;
+    readonly cpu_budget_remaining_ms: number;
+    readonly input_bytes_budget_remaining: number;
+  }
+  type V1MapInput = {
+    readonly canonical: CanonicalSourceProjectionReceipt;
+    readonly target: ManagedProjectCopyTargetReceipt;
+    readonly memberships: readonly {
+      readonly project_id: string;
+      readonly project_membership_id: string;
+      readonly membership_generation: number;
+    }[];
+  } & LocalWriterBudgetFields;
+  type V2MapInput = {
+    readonly canonical: CanonicalSourceProjectionReceipt;
+    readonly target: ManagedProjectCopyTargetReceipt;
+    readonly scope: ProjectCopyScopeV2;
+  } & LocalWriterBudgetFields;
+  type V1MapResult = {
+    readonly receipt: ManagedProjectCopyMapSetReceiptV1;
+    readonly budget: ManagedTargetManifestOperationBudgetReceipt;
+  };
+  type V2MapResult = {
+    readonly receipt: ManagedProjectCopyMapSetReceiptV2;
+    readonly budget: ManagedTargetManifestOperationBudgetReceipt;
+  };
+  async function mapProjectCopies(input: V1MapInput): Promise<V1MapResult>;
+  async function mapProjectCopies(input: V2MapInput): Promise<V2MapResult>;
+  async function mapProjectCopies(input: V1MapInput | V2MapInput): Promise<V1MapResult | V2MapResult> {
+    if ("scope" in input) {
+      copyMapReads += input.scope.copies.length;
+      const receipt = await writer.mapProjectCopies({ canonical: input.canonical, target: input.target, scope: input.scope });
+      const inputBytes = utf8ProjectionBytes(canonicalProjectionJson({
+        canonical: input.canonical,
+        target: input.target,
+        scope: input.scope,
+      })).byteLength;
+      return {
+        receipt,
+        budget: Object.freeze({
+          protocol: "eliotr.managed-target-operation-budget.v1",
+          subrequest_upper_bound: receipt.resource_bounds.copy_map_r2_subrequest_bound,
+          // Synthetic deterministic fixture envelope; never a production CPU measurement.
+          cpu_upper_bound_ms: 1,
+          input_bytes_upper_bound: inputBytes,
+        }),
+      };
+    }
+    copyMapReads += input.memberships.length;
+    const receipt = await writer.mapProjectCopies({
+      canonical: input.canonical,
+      target: input.target,
+      memberships: input.memberships,
+    });
+    return {
+      receipt,
+      budget: operationBudget(
+        receipt.resource_bounds.copy_map_r2_subrequest_bound,
+        input.memberships.length * 4 * 1024,
+      ),
+    };
+  }
   const readRowsAfter = (after: string | null, limit: number) => {
     const ordered = [...rows].sort((left, right) => left.project_id.localeCompare(right.project_id));
     const start = after === null ? 0 : ordered.findIndex((row) => row.project_id > after);
@@ -235,6 +351,7 @@ export async function setup(
   };
   const input: ManagedTargetManifestInput = {
     target,
+    ...(targetSelection === undefined ? {} : { target_selection: targetSelection }),
     execution_id: "manifest-test-execution",
     clock: () => Date.parse(AS_OF),
     as_of: AS_OF,
@@ -246,20 +363,20 @@ export async function setup(
           .filter((row) => after_project_id === null || row.project_id > after_project_id)
           .slice(0, limit)
           .map((row) => ({
-            assignment_revision: 1,
-            assignment_decision_version: 1 as const,
-            assignment_selection_mode: "EXACT_GENERATION_V1" as const,
-            assignment_product_alias: null,
-            assignment_managed_generation: target.managed_generation,
+            assignment_revision: row.assignment_revision,
+            assignment_decision_version: row.assignment_decision_version,
+            assignment_selection_mode: row.assignment_selection_mode,
+            assignment_product_alias: row.assignment_product_alias,
+            assignment_managed_generation: row.assignment_managed_generation,
             project_id: row.project_id,
-            project_membership_generation: 1,
+            project_membership_generation: row.project_membership_generation,
             project_owner_principal_ref: `owner-${row.project_id}`,
             current_project_owner_principal_ref: `owner-${row.project_id}`,
             project_owner_deployment_generation: "deployment-1",
-            namespace: target.namespace,
-            managed_instance_id: target.managed_instance_id,
-            managed_generation: target.managed_generation,
-            target_profile_identity_sha256: target.target_profile_identity_sha256,
+            namespace: row.namespace,
+            managed_instance_id: row.managed_instance_id,
+            managed_generation: row.managed_generation,
+            target_profile_identity_sha256: row.target_profile_identity_sha256,
             project_exists: true,
           }));
         const last = projects.at(-1);
@@ -282,7 +399,9 @@ export async function setup(
               ? {
                   project_id: last.project_id,
                   source_id: last.source_id,
-                  membership_generation: last.membership_generation,
+              ...(targetSelection === undefined
+                ? { membership_generation: last.membership_generation }
+                : { membership_revision: last.membership_revision }),
                   source_revision_ref: last.source_revision_ref,
                 }
               : null,
@@ -339,6 +458,7 @@ export async function setup(
         };
       },
       async readNormalizedContent({ copy: projectCopy, source_authority: sourceAuthority }) {
+        normalizedReads += 1;
         const markdown = normalizedMarkdown(projectCopy.source_id);
         const bytes = new TextEncoder().encode(markdown);
         return {
@@ -354,26 +474,20 @@ export async function setup(
       async projectCanonicalSource(input) {
         canonicalReads += 1;
         const receipt = await writer.projectCanonicalSource(input);
+        const inputBytes = utf8ProjectionBytes(canonicalProjectionJson({
+          source: input.source,
+          profile: input.profile,
+          normalized_markdown: input.normalized_markdown,
+        })).byteLength;
         return {
           receipt,
           budget: operationBudget(
             receipt.resource_bounds.canonical_r2_subrequest_bound - receipt.resource_bounds.source_content_r2_get_bound,
-            receipt.resource_bounds.input_utf8_bytes +
-              receipt.resource_bounds.section_count * receipt.resource_bounds.maximum_section_utf8_bytes + 64 * 1024,
+            inputBytes,
           ),
         };
       },
-      async mapProjectCopies(input) {
-        copyMapReads += input.memberships.length;
-        const receipt = await writer.mapProjectCopies(input);
-        return {
-          receipt,
-          budget: operationBudget(
-            receipt.resource_bounds.copy_map_r2_subrequest_bound,
-            receipt.resource_bounds.provider_copy_count * 4 * 1024 * 1024,
-          ),
-        };
-      },
+      mapProjectCopies,
     },
     work_store: store.store,
     work_index: {
@@ -388,7 +502,7 @@ export async function setup(
       async deleteKeys(keys) { for (const key of keys) store.objects.delete(key); },
     },
   };
-  return { input, store, counters: { get pageReads() { return pageReads; }, get authorityReads() { return authorityReads; }, get canonicalReads() { return canonicalReads; }, get copyMapReads() { return copyMapReads; } } };
+  return { input, store, counters: { get pageReads() { return pageReads; }, get authorityReads() { return authorityReads; }, get normalizedReads() { return normalizedReads; }, get canonicalReads() { return canonicalReads; }, get copyMapReads() { return copyMapReads; } } };
 }
 
 export async function runToReady(input: ManagedTargetManifestInput, maximumSteps = 100): Promise<Awaited<ReturnType<typeof advanceManagedTargetManifest>>> {

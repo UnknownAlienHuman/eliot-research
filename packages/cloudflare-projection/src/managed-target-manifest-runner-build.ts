@@ -59,6 +59,8 @@ import {
   sameInitialAndVerifiedReceipt,
   sourceAuthoritiesForCopies,
 } from "./managed-target-manifest-runner-sources.js";
+import { advanceManagedTargetManifestBuildV2 } from "./managed-target-manifest-runner-v2.js";
+import { MANAGED_TARGET_MANIFEST_COPY_LAYOUT_V2 } from "./managed-target-manifest-contract.js";
 export async function advanceBuildScan(
   input: ManagedTargetManifestInput,
   state: ManifestContinuationState,
@@ -97,6 +99,21 @@ export async function advanceBuildScan(
     if (progress.page_ref === null) page = null;
   }
 
+  if (input.profile.copy_layout === MANAGED_TARGET_MANIFEST_COPY_LAYOUT_V2) {
+    const next = await advanceManagedTargetManifestBuildV2({
+      manifest: input,
+      state,
+      store,
+      budget,
+      profileSha,
+      capacityReceipt,
+      progress,
+      batchCopies,
+    });
+    if (next.build_scan?.complete) return await completeBuildScan(next, input);
+    return next;
+  }
+
   if (batchCopies.length === 0) {
     if (progress.complete) return await completeBuildScan(Object.freeze({ ...state, build_scan: progress }), input);
     return Object.freeze({ ...state, build_scan: progress });
@@ -105,7 +122,7 @@ export async function advanceBuildScan(
   if (batchCopies.some((copy) => copy.project_membership_identity_version === 2)) {
     fail(
       "MANAGED_TARGET_MANIFEST_PROJECTION_INVALID",
-      "stable V2 project-copy mapping is blocked until the writer-owned membership_revision receipt contract is integrated",
+      "stable V2 membership rows require the explicit PROJECT_COPY_V2 writer layout",
     );
   }
 
@@ -169,6 +186,9 @@ export async function advanceBuildScan(
     let storedRef: ManagedTargetManifestObjectRef;
     if (existing !== null) {
       fragment = validateCopyFragment(existing.value, state, copy, ordinal, microstepOrdinal, copyDigest, authority.digest);
+      if (fragment.protocol !== COPY_PROTOCOL) {
+        fail("MANAGED_TARGET_MANIFEST_STAGE_INVALID", "V1 builder found a stored V2 project-copy fragment");
+      }
       if (fragment.source_identity_sha256 !== canonical.identity ||
           fragment.canonical_source_ref !== canonical.receipt.canonical_source_ref ||
           fragment.canonical_source_sha256 !== canonical.receipt.canonical_source_sha256) {
@@ -347,14 +367,18 @@ async function completeBuildScan(
     state.initial_fence,
     state.target_selection,
   );
+  const v2Selection = state.target_selection?.decision_version === 2 ? state.target_selection : undefined;
   return Object.freeze({
     ...state,
     phase: "VERIFY_SCAN",
     initial_required_set: receipt,
     verify_scan: emptyScanProgress(verifiedScan),
     post_source_authority_sha256: await projectionSha256Utf8(canonicalProjectionJson({
-      protocol: "eliotr.managed-target-source-fence.v1",
+      protocol: v2Selection === undefined
+        ? "eliotr.managed-target-source-fence.v1"
+        : "eliotr.managed-target-source-fence.v2",
       target: input.target,
+      ...(v2Selection === undefined ? {} : { target_selection: v2Selection }),
       copy_layout: input.profile.copy_layout,
       projection_profile_sha256: state.projection_profile_sha256,
     })),
@@ -421,9 +445,11 @@ export async function advanceVerifyScan(
       progress.scan,
       state.target_selection,
     );
-    if (!await sameInitialAndVerifiedReceipt(state.initial_required_set, verified) ||
-        postDigest !== state.source_authority_sha256) {
-      fail("MANAGED_TARGET_MANIFEST_SOURCE_FENCE_CHANGED", "resumable final required-set/source authority scan differs from its initial receipt");
+    if (!await sameInitialAndVerifiedReceipt(state.initial_required_set, verified)) {
+      fail("MANAGED_TARGET_MANIFEST_SOURCE_FENCE_CHANGED", "resumable final required-set scan differs from its initial receipt");
+    }
+    if (postDigest !== state.source_authority_sha256) {
+      fail("MANAGED_TARGET_MANIFEST_SOURCE_FENCE_CHANGED", "resumable final source authority scan differs from its initial digest");
     }
     return Object.freeze({
       ...state,

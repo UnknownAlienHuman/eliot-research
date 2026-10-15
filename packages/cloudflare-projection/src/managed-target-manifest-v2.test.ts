@@ -19,6 +19,8 @@ import {
   initialManagedTargetManifestScan,
   managedRequiredSetReceiptFromScan,
 } from "./managed-target-manifest-continuation.js";
+import { runToReady, setup } from "./managed-target-manifest-test-support.js";
+import { managedProjectFolderPrefix, managedProjectFolderPrefixV2 } from "./managed-project-path.js";
 const AS_OF = "2026-10-14T16:00:00.000Z";
 
 const target: ManagedTargetIdentity = Object.freeze({
@@ -258,5 +260,154 @@ describe("managed target manifest V2 required-set consumer", () => {
         source_revision_ref: row.source_revision_ref,
       },
     }, target, AS_OF, selection)).rejects.toBeInstanceOf(ManagedRequiredSetError);
+  });
+
+  it("builds a V2 ready candidate through the real R2 canonical/copy writer for stable A/B memberships", async () => {
+    const state = await setup([
+      {
+        project_id: "project-a",
+        source_id: "shared-source",
+        membership_identity_version: 1,
+        membership_generation: 3,
+        project_membership_generation: 12,
+      },
+      {
+        project_id: "project-b",
+        source_id: "shared-source",
+        membership_identity_version: 2,
+        membership_generation: 4,
+        membership_revision: 9,
+        project_membership_generation: 12,
+      },
+    ], {
+      accountTier: "PAID",
+      copyLayout: "PROJECT_COPY_V2",
+      logicalGeneration: "logical-generation-b",
+      targetSelection: {
+        protocol: selection.protocol,
+        domain: selection.domain,
+        decision_version: selection.decision_version,
+        selection_mode: selection.selection_mode,
+        product_alias: selection.product_alias,
+        purpose: "SHADOW",
+        registry_revision: selection.registry_revision,
+        registry_artifact_sha256: selection.registry_artifact_sha256,
+        v1_exact_profile_identity_sha256: selection.v1_exact_profile_identity_sha256,
+      },
+    });
+    const ready = await runToReady(state.input);
+
+    expect(state.input.profile.target_profile.generation).not.toBe(state.input.target.managed_generation);
+    expect(state.counters.normalizedReads).toBe(1);
+    expect(state.counters.canonicalReads).toBe(1);
+    expect(state.counters.copyMapReads).toBe(2);
+    expect(ready.candidate).toMatchObject({
+      protocol: "eliotr.managed-target-desired-items.v3",
+      candidate_protocol: "eliotr.managed-target-manifest-candidate.v2",
+      copy_layout: "PROJECT_COPY_V2",
+      target_selection: { purpose: "SHADOW", registry_revision: selection.registry_revision },
+      required_set: {
+        protocol: "eliotr.managed-required-project-revisions.v3",
+        target_fence: { protocol: "eliotr.managed-required-set-target-fence.v2" },
+      },
+      desired_item_count: 2,
+      canonical_source_summary: { canonical_projection_generation_count: 1, canonical_section_count: 1 },
+      provider_copy_summary: { provider_copy_count: 2, provider_item_count: 2 },
+      finalization_state: "REQUIRES_HELD_WRITER_DRAIN_AND_EXPECTED_HEAD_CAS",
+    });
+    const candidate = ready.candidate;
+    if (candidate === undefined || candidate.protocol !== "eliotr.managed-target-desired-items.v3") {
+      throw new Error("V2 ready candidate is missing or has the V1 protocol");
+    }
+    const storedCandidate = JSON.parse(state.store.objects.get(candidate.candidate_ref) ?? "null") as Record<string, unknown>;
+    expect(storedCandidate.protocol).toBe("eliotr.managed-target-manifest-candidate.v2");
+    expect(storedCandidate.manifest_protocol).toBe("eliotr.managed-target-desired-items.v3");
+    expect(storedCandidate.copy_layout).toBe("PROJECT_COPY_V2");
+    expect(storedCandidate.target_selection).toEqual(candidate.target_selection);
+
+    const fragments = [...state.store.objects.entries()]
+      .filter(([key]) => key.includes("/copies/"))
+      .map(([, json]) => JSON.parse(json) as {
+        readonly protocol: string;
+        readonly copy_layout?: string;
+      readonly provider_copy_map?: {
+        readonly membership_identity_version: 1 | 2;
+        readonly project_id: string;
+        readonly project_membership_id: string;
+        readonly membership_generation: number;
+        readonly project_membership_generation: number;
+        readonly membership_revision?: number;
+        readonly folder_prefix: string;
+        readonly items: readonly { readonly provider_key: string; readonly canonical_body_ref: string }[];
+      };
+        readonly provider_copy_map_set?: {
+          readonly protocol: string;
+          readonly provider_copy_count: number;
+          readonly provider_item_count: number;
+          readonly copy_map_index_ref: string;
+          readonly copy_map_index_sha256: string;
+          readonly resource_bounds: { readonly copy_map_index_put_count: number; readonly copy_map_r2_put_count: number; readonly copy_map_r2_subrequest_bound: number };
+        };
+      });
+    expect(fragments).toHaveLength(2);
+    expect(fragments.every((fragment) => fragment.protocol === "eliotr.managed-target-manifest-copy.v3" &&
+      fragment.copy_layout === "PROJECT_COPY_V2")).toBe(true);
+    const providerMaps = fragments.map((fragment) => fragment.provider_copy_map)
+      .filter((copy): copy is NonNullable<typeof copy> => copy !== undefined)
+      .sort((left, right) => left.project_id.localeCompare(right.project_id));
+    expect(providerMaps).toHaveLength(2);
+    expect(providerMaps.map((copy) => copy.membership_identity_version)).toEqual([1, 2]);
+    expect(providerMaps.every((copy) => copy.project_membership_generation === 12)).toBe(true);
+    const legacyCopy = providerMaps[0];
+    const stableCopy = providerMaps[1];
+    if (legacyCopy === undefined || stableCopy === undefined) throw new Error("V2 map lost a mixed-identity row");
+    const legacyFolder = await managedProjectFolderPrefix({
+      instance_id: state.input.target.managed_instance_id,
+      projection_generation: state.input.target.managed_generation,
+      source_revision_ref: "revision-shared-source",
+      project_id: "project-a",
+      project_membership_id: "project:project-a:generation:3",
+      membership_generation: 3,
+    });
+    const stableMembershipId = await stableProjectionId(
+      "project-membership",
+      JSON.stringify(["project-b", "shared-source"]),
+    );
+    const stableFolder = await managedProjectFolderPrefixV2({
+      instance_id: state.input.target.managed_instance_id,
+      projection_generation: state.input.target.managed_generation,
+      source_revision_ref: "revision-shared-source",
+      project_id: "project-b",
+      stable_project_membership_id: stableMembershipId,
+      membership_revision: 9,
+    });
+    expect(legacyCopy).toMatchObject({
+      project_membership_id: "project:project-a:generation:3",
+      membership_generation: 3,
+      project_membership_generation: 12,
+      folder_prefix: legacyFolder,
+    });
+    expect(stableCopy).toMatchObject({
+      project_membership_id: stableMembershipId,
+      membership_generation: 4,
+      membership_revision: 9,
+      project_membership_generation: 12,
+      folder_prefix: stableFolder,
+    });
+    expect(legacyCopy.items[0]?.provider_key.startsWith(legacyFolder)).toBe(true);
+    expect(stableCopy.items[0]?.provider_key.startsWith(stableFolder)).toBe(true);
+    expect(fragments.every((fragment) => fragment.provider_copy_map_set?.protocol === "eliotr.managed-project-copy-map-set.v2" &&
+      fragment.provider_copy_map_set.provider_copy_count === 1 &&
+      fragment.provider_copy_map_set.provider_item_count === 1 &&
+      fragment.provider_copy_map_set.resource_bounds.copy_map_index_put_count === 1 &&
+      fragment.provider_copy_map_set.resource_bounds.copy_map_r2_put_count === 2 &&
+      fragment.provider_copy_map_set.resource_bounds.copy_map_r2_subrequest_bound === 4)).toBe(true);
+    const indexKeys = [...state.store.objects.keys()].filter((key) => key.includes("/copy-maps/index/"));
+    const pageKeys = [...state.store.objects.keys()].filter((key) => key.includes("/copy-maps/") && key.includes("/pages/"));
+    expect(indexKeys).toHaveLength(2);
+    expect(pageKeys).toHaveLength(2);
+    expect(fragments.every((fragment) => indexKeys.includes(fragment.provider_copy_map_set?.copy_map_index_ref ?? ""))).toBe(true);
+    expect([...indexKeys, ...pageKeys].every((key) => !state.store.objects.get(key)?.includes("section_text"))).toBe(true);
+    expect(fragments.every((fragment) => !JSON.stringify(fragment.provider_copy_map).includes("section_text"))).toBe(true);
   });
 });

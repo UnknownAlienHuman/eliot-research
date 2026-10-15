@@ -8,6 +8,7 @@ import {
 } from "./managed-target-manifest-fragments.js";
 import { aiSearchPhysicalProfileDigest } from "./ai-search-profile-identity-digest.js";
 import { assertCloudflareAiSearchInstanceProfile } from "./ai-search-profile.js";
+import { MANAGED_TARGET_MANIFEST_COPY_LAYOUT_V2 } from "./managed-target-manifest-contract.js";
 import {
   type ManagedTargetManifestAdvanceReceipt,
   type ManagedTargetManifestInput,
@@ -59,6 +60,9 @@ export async function advanceManagedTargetManifestStep(
   const workStore = countedEvidenceStore(input.work_store, budget);
   await validateManagedTargetManifestInput(input);
   const selectionVersion = validateManagedTargetSelection(input.target, input.target_selection);
+  if ((input.profile.copy_layout === MANAGED_TARGET_MANIFEST_COPY_LAYOUT_V2) !== (selectionVersion === 2)) {
+    fail("MANAGED_TARGET_MANIFEST_PROFILE_MISMATCH", "PROJECT_COPY_V2 requires a captured V2 selection receipt and V1 requires the V1 layout");
+  }
   const profileDigests = await validateManifestProfile({ target: input.target, profile: input.profile });
   const storageScope = await buildStorageScope(input.target);
   let state: ManifestContinuationState;

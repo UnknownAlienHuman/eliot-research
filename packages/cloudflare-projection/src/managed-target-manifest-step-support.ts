@@ -23,7 +23,11 @@ import {
   profileIsValid,
   utf8ProjectionBytes,
 } from "./canonical.js";
-import { ManagedTargetManifestError, type ManagedTargetManifestErrorCode } from "./managed-target-manifest-contract.js";
+import {
+  MANAGED_TARGET_MANIFEST_COPY_LAYOUT_V2,
+  ManagedTargetManifestError,
+  type ManagedTargetManifestErrorCode,
+} from "./managed-target-manifest-contract.js";
 import { validateOperationBudgetReceipt } from "./managed-target-manifest-fragments.js";
 import {
   aiSearchPhysicalProfileDigest,
@@ -342,7 +346,8 @@ export async function validateManifestProfile(input: {
 }): Promise<{ readonly target_profile_sha256: string; readonly projection_profile_sha256: string }> {
   const { target, profile } = input;
   if (
-    profile.copy_layout !== "PROJECT_COPY_V1" ||
+    (profile.copy_layout !== "PROJECT_COPY_V1" &&
+      profile.copy_layout !== MANAGED_TARGET_MANIFEST_COPY_LAYOUT_V2) ||
     profile.target_profile.id !== target.managed_instance_id ||
     profile.projection_profile.managed_instance_id !== target.managed_instance_id ||
     profile.projection_profile.managed_generation !== target.managed_generation ||

@@ -270,7 +270,7 @@ export async function preflightManagedProjectCopies(
         readonly legacy_project_membership_id: string | null;
         readonly stable_project_membership_id: string | null;
         readonly membership_revision: number | null;
-        readonly project_membership_generation: number | null;
+        readonly project_membership_generation: number;
       };
       if (membership.membership_identity_version === 1) {
         const parsed = parseManagedProjectMembershipId(membership.legacy_project_membership_id);

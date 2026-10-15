@@ -12,9 +12,9 @@ import type {
 import type { ManagedRequiredProjectRevisionCopy } from "./managed-required-set.js";
 import type {
   CanonicalSourceProjectionReceipt,
-  ManagedProjectCopyMapPage,
-  ManagedProjectCopyMapReceipt,
-  ManagedProjectCopyMapSetReceipt,
+  ManagedProjectCopyMapPageV1,
+  ManagedProjectCopyMapReceiptV1,
+  ManagedProjectCopyMapSetReceiptV1,
   ManagedProjectCopyTargetReceipt,
 } from "./types.js";
 import { buildCanonicalProjectCopyMaps } from "./core-managed-item-intent.js";
@@ -287,11 +287,11 @@ export async function validateCanonicalSourceProjectionReceipt(input: {
 }
 
 export async function validateManagedProjectCopyMapReceipt(input: {
-  readonly receipt: ManagedProjectCopyMapReceipt;
+  readonly receipt: ManagedProjectCopyMapReceiptV1;
   readonly canonical_source: CanonicalSourceProjectionReceipt;
   readonly target: ManagedProjectCopyTargetReceipt;
   readonly copy: ManagedRequiredProjectRevisionCopy;
-}): Promise<ManagedProjectCopyMapReceipt> {
+}): Promise<ManagedProjectCopyMapReceiptV1> {
   const expected = await buildCanonicalProjectCopyMaps(
     input.canonical_source,
     input.target,
@@ -304,7 +304,7 @@ export async function validateManagedProjectCopyMapReceipt(input: {
   return input.receipt;
 }
 
-function providerCopySetDigest(copies: readonly ManagedProjectCopyMapReceipt[]): Promise<string> {
+function providerCopySetDigest(copies: readonly ManagedProjectCopyMapReceiptV1[]): Promise<string> {
   return projectionDigest(copies.map((copy) => ({
     project_id: copy.project_id,
     project_membership_id: copy.project_membership_id,
@@ -313,7 +313,7 @@ function providerCopySetDigest(copies: readonly ManagedProjectCopyMapReceipt[]):
   })));
 }
 
-function providerItemSetDigest(copies: readonly ManagedProjectCopyMapReceipt[]): Promise<string> {
+function providerItemSetDigest(copies: readonly ManagedProjectCopyMapReceiptV1[]): Promise<string> {
   return projectionDigest(copies.flatMap((copy) => copy.items.map((item) => ({
     item_key: item.item_key,
     canonical_section_id: item.canonical_section_id,
@@ -325,12 +325,12 @@ function providerItemSetDigest(copies: readonly ManagedProjectCopyMapReceipt[]):
 
 /** Read back and validate the writer-owned source/canonical/target page set. */
 export async function readManagedProjectCopyMapSet(input: {
-  readonly receipt: ManagedProjectCopyMapSetReceipt;
+  readonly receipt: ManagedProjectCopyMapSetReceiptV1;
   readonly canonical_source: CanonicalSourceProjectionReceipt;
   readonly target: ManagedProjectCopyTargetReceipt;
   readonly memberships: readonly { readonly project_id: string; readonly project_membership_id: string; readonly membership_generation: number }[];
   readonly store: EvidenceObjectStore;
-}): Promise<{ readonly copies: readonly ManagedProjectCopyMapReceipt[]; readonly page_object_bytes: number }> {
+}): Promise<{ readonly copies: readonly ManagedProjectCopyMapReceiptV1[]; readonly page_object_bytes: number }> {
   const { receipt, canonical_source: canonical, target, memberships, store } = input;
   if (!Array.isArray(receipt.pages) || !Array.isArray(memberships)) {
     throw new Error("MANAGED_TARGET_MANIFEST_PROJECTION_INVALID: copy-map page or membership list is malformed");
@@ -380,7 +380,7 @@ export async function readManagedProjectCopyMapSet(input: {
   if (!generationPrefix.startsWith(sourcePrefix)) {
     throw new Error("MANAGED_TARGET_MANIFEST_PROJECTION_INVALID: canonical manifest escaped its source-residency prefix");
   }
-  const copies: ManagedProjectCopyMapReceipt[] = [];
+  const copies: ManagedProjectCopyMapReceiptV1[] = [];
   let pageObjectBytes = 0;
   let previousPageSha256: string | null = null;
   for (let pageIndex = 0; pageIndex < receipt.pages.length; pageIndex += 1) {
@@ -395,7 +395,7 @@ export async function readManagedProjectCopyMapSet(input: {
     const stored = await readCanonicalManifestObject(store, pageRef.page_ref);
     if (stored === null) throw new Error("MANAGED_TARGET_MANIFEST_PROJECTION_INVALID: listed copy-map page is absent on exact readback");
     pageObjectBytes += stored.ref.size_bytes;
-    const page = stored.value as ManagedProjectCopyMapPage;
+    const page = stored.value as ManagedProjectCopyMapPageV1;
     const { page_sha256: pageSha256, ...payload } = page;
     const start = copies.length;
     const expectedPageCopies = expectedCopies.slice(start, start + pageRef.provider_copy_count);

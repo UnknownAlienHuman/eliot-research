@@ -271,14 +271,14 @@ async function materializeV2ProjectCopyMapPages(
       expected === undefined || seen.has(key) ||
       copy.source_owner_generation !== expected.source_owner_generation ||
       copy.membership_generation !== expected.membership_generation ||
+      copy.project_membership_generation !== expected.project_membership_generation ||
       copy.folder_prefix !== expected.folder_prefix ||
       copy.membership_identity_version !== expected.membership_identity_version ||
       (copy.membership_identity_version === 1 && expected.membership_identity_version === 1 &&
         copy.legacy_project_membership_id !== expected.legacy_project_membership_id) ||
       (copy.membership_identity_version === 2 && expected.membership_identity_version === 2 &&
         (copy.stable_project_membership_id !== expected.stable_project_membership_id ||
-          copy.membership_revision !== expected.membership_revision ||
-          copy.project_membership_generation !== expected.project_membership_generation))
+          copy.membership_revision !== expected.membership_revision))
     ) {
       throw new Error("PROJECT_COPY_V2 page membership differs from the frozen Core scope");
     }

@@ -15,7 +15,10 @@ import type {
 import type {
   CanonicalSourceProjectionReceipt,
   CanonicalSourceProjectionWriter,
-  ManagedProjectCopyMapSetReceipt,
+  ManagedProjectCopyMapSetReceiptV1,
+  ManagedProjectCopyMapSetReceiptV2,
+  ManagedProjectCopyTargetReceipt,
+  ProjectCopyScopeV2,
   ProjectionExecutionProfile,
 } from "./types.js";
 import type { ManagedTargetProviderCapacityAuthorityPort } from "./managed-target-manifest-fragments.js";
@@ -72,7 +75,8 @@ export interface ManagedTargetManifestProfile {
   readonly target_profile: AiSearchInstanceProfile;
   /** The projection profile remains bound to the selected logical target generation. */
   readonly projection_profile: ProjectionExecutionProfile;
-  readonly copy_layout: typeof MANAGED_TARGET_MANIFEST_COPY_LAYOUT;
+  /** V2 is admitted only with a captured stable-physical-profile selection. */
+  readonly copy_layout: typeof MANAGED_TARGET_MANIFEST_COPY_LAYOUT | typeof MANAGED_TARGET_MANIFEST_COPY_LAYOUT_V2;
 }
 
 export interface ManagedTargetManifestSourceAuthority {
@@ -125,13 +129,32 @@ export interface ManagedTargetManifestCanonicalProjectionPort {
     readonly receipt: CanonicalSourceProjectionReceipt;
     readonly budget: ManagedTargetManifestOperationBudgetReceipt;
   }>;
-  mapProjectCopies(input: Parameters<CanonicalSourceProjectionWriter["mapProjectCopies"]>[0] & {
+  mapProjectCopies(input: {
+    readonly canonical: CanonicalSourceProjectionReceipt;
+    readonly target: ManagedProjectCopyTargetReceipt;
+    readonly memberships: readonly {
+      readonly project_id: string;
+      readonly project_membership_id: string;
+      readonly membership_generation: number;
+    }[];
     readonly operation_budget_remaining: number;
     readonly subrequest_budget_remaining: number;
     readonly cpu_budget_remaining_ms: number;
     readonly input_bytes_budget_remaining: number;
   }): Promise<{
-    readonly receipt: ManagedProjectCopyMapSetReceipt;
+    readonly receipt: ManagedProjectCopyMapSetReceiptV1;
+    readonly budget: ManagedTargetManifestOperationBudgetReceipt;
+  }>;
+  mapProjectCopies(input: {
+    readonly canonical: CanonicalSourceProjectionReceipt;
+    readonly target: ManagedProjectCopyTargetReceipt;
+    readonly scope: ProjectCopyScopeV2;
+    readonly operation_budget_remaining: number;
+    readonly subrequest_budget_remaining: number;
+    readonly cpu_budget_remaining_ms: number;
+    readonly input_bytes_budget_remaining: number;
+  }): Promise<{
+    readonly receipt: ManagedProjectCopyMapSetReceiptV2;
     readonly budget: ManagedTargetManifestOperationBudgetReceipt;
   }>;
 }

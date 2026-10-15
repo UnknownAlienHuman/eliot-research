@@ -30,6 +30,8 @@ import {
 } from "@eliotr/cloudflare-projection";
 import { registryFence } from "./managed-target-manifest-registry-fence.js";
 
+const MANAGED_TARGET_MANIFEST_COPY_LAYOUT_V2 = "PROJECT_COPY_V2" as const;
+
 type ManagedTargetManifestEnvironment = {
   readonly CORE_DB: D1Database;
   readonly SEARCH_DB: D1Database;
@@ -41,7 +43,7 @@ export interface ManagedTargetManifestCompositionDependencies {
   readonly target_profile: AiSearchInstanceProfile;
   readonly projection_profile: ProjectionExecutionProfile;
   /** Required opt-in; no legacy/default item-key layout is accepted here. */
-  readonly copy_layout: typeof MANAGED_TARGET_MANIFEST_COPY_LAYOUT;
+  readonly copy_layout: typeof MANAGED_TARGET_MANIFEST_COPY_LAYOUT | typeof MANAGED_TARGET_MANIFEST_COPY_LAYOUT_V2;
   /** Must be backed by current trusted account-tier/profile capacity authority. */
   readonly provider_capacity_authority: ManagedTargetManifestInput["capacity_authority"];
   /** Existing canonical source and project-copy writer; no duplicate projector is created here. */
@@ -471,8 +473,9 @@ export function createManagedTargetManifestComposer(
   } catch (cause) {
     manifestFailure("MANAGED_TARGET_MANIFEST_PROFILE_MISMATCH", "supplied AI Search profile is not a valid immutable target profile", cause);
   }
-  if (dependencies.copy_layout !== MANAGED_TARGET_MANIFEST_COPY_LAYOUT) {
-    manifestFailure("MANAGED_TARGET_MANIFEST_PROFILE_MISMATCH", "PROJECT_COPY_V1 must be explicitly selected by the caller profile");
+  if (dependencies.copy_layout !== MANAGED_TARGET_MANIFEST_COPY_LAYOUT &&
+      dependencies.copy_layout !== MANAGED_TARGET_MANIFEST_COPY_LAYOUT_V2) {
+    manifestFailure("MANAGED_TARGET_MANIFEST_PROFILE_MISMATCH", "supported project-copy layout must be explicitly selected by the caller profile");
   }
   const targetProfile = Object.freeze({
     ...dependencies.target_profile,
@@ -551,6 +554,10 @@ export function createManagedTargetManifestComposer(
     ): Promise<Awaited<ReturnType<typeof buildManagedTargetManifest>>> {
       if (target.managed_instance_id !== targetProfile.id) {
         manifestFailure("MANAGED_TARGET_MANIFEST_PROFILE_MISMATCH", "selected Core target does not identify the supplied immutable profile");
+      }
+      const v2Selection = targetSelection?.decision_version === 2;
+      if ((dependencies.copy_layout === MANAGED_TARGET_MANIFEST_COPY_LAYOUT_V2) !== v2Selection) {
+        manifestFailure("MANAGED_TARGET_MANIFEST_PROFILE_MISMATCH", "PROJECT_COPY_V2 requires its captured V2 selection receipt; V1 selection requires the V1 layout");
       }
       const now = dependencies.now ?? Date.now;
       return buildManagedTargetManifest({
