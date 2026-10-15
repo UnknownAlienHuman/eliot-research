@@ -6,20 +6,11 @@ import {
   type HealthSnapshot,
 } from "@eliotr/platform-cloudflare";
 import type { Env } from "./env.js";
-import {
-  createDoctorGitHubIssue,
-  doctorGitHubIssueUrl,
-  parseDoctorGitHubConfig,
-  readDoctorIssueByMarker,
-  verifyDoctorGitHubRepository,
-  type DoctorGitHubConfig,
-} from "./doctor-github.js";
+import { readDoctorMcpSinkState } from "./doctor-delivery.js";
 import { readReadiness, REQUIRED_CORE_SCHEMA_GENERATION } from "./readiness.js";
 
 const DOCTOR_MODEL = "@cf/zai-org/glm-5.3-flash";
 const DOCTOR_MODEL_TIMEOUT_MS = 8_000;
-const DOCTOR_DELIVERY_LEASE_MS = 120_000;
-const DOCTOR_DELIVERY_LIMIT = 2;
 const DOCTOR_OPEN_INCIDENT_LIMIT = 32;
 const DOCTOR_HEALTH_SNAPSHOT_ID = "doctor-current";
 const DOCTOR_GITHUB_SINK = "github-issue";
@@ -34,8 +25,6 @@ const HEALTH_POLICY = {
 } as const;
 
 type DoctorHealthCode = HealthIncident["code"];
-type DeliveryState = "PENDING" | "UNKNOWN" | "DELIVERED" | "UNCONFIGURED" | "FAILED" | "SUPERSEDED";
-type DiagnosisState = "NOT_STARTED" | "UNKNOWN" | "COMPLETE" | "UNAVAILABLE";
 
 const DOCTOR_HEALTH_CODES = new Set<DoctorHealthCode>([
   "REQUIRED_CONNECTOR_UNAVAILABLE",
@@ -49,7 +38,6 @@ const DOCTOR_HEALTH_CODES = new Set<DoctorHealthCode>([
 ]);
 
 interface DoctorOptions {
-  readonly fetch?: typeof fetch;
   readonly now?: () => number;
 }
 
@@ -60,34 +48,6 @@ interface IncidentIdentity {
   readonly details_ref: string;
   readonly delivery_id: string;
   readonly marker: string;
-}
-
-interface DeliveryRow {
-  readonly delivery_id: unknown;
-  readonly incident_id: unknown;
-  readonly marker: unknown;
-  readonly state: unknown;
-  readonly diagnosis_state: unknown;
-  readonly diagnosis: unknown;
-  readonly created_at: unknown;
-  readonly lease_generation: unknown;
-  readonly incident_kind: unknown;
-  readonly incident_severity: unknown;
-  readonly incident_state: unknown;
-}
-
-interface ClaimedDelivery {
-  readonly delivery_id: string;
-  readonly incident_id: string;
-  readonly marker: string;
-  readonly state: "PENDING" | "UNKNOWN";
-  readonly diagnosis_state: DiagnosisState;
-  readonly diagnosis: string | null;
-  readonly created_at: string;
-  readonly lease_generation: number;
-  readonly health_code: DoctorHealthCode;
-  readonly incident_severity: "INFO" | "WARNING" | "CRITICAL";
-  readonly incident_state: "OPEN" | "ACKNOWLEDGED" | "RESOLVED";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -132,13 +92,13 @@ async function oldestDoctorDeliverySeconds(database: D1Database, nowMs: number):
   return Math.max(0, Math.floor((nowMs - oldestMs) / 1000));
 }
 
-async function hasUnsettledGitHubDelivery(database: D1Database): Promise<boolean> {
+async function hasUnsettledGitHubDelivery(database: D1Database, nowMs: number): Promise<boolean> {
   const row = await database.prepare(
     "SELECT 1 AS present FROM doctor_delivery_outbox d " +
     "LEFT JOIN incident i ON i.incident_id=d.incident_id " +
-    "WHERE d.sink_ref=?1 AND (d.state='UNKNOWN' OR " +
+    "WHERE d.sink_ref=?1 AND ((d.state='UNKNOWN' AND (d.lease_until IS NULL OR d.lease_until<=?2)) OR " +
     "(d.state='FAILED' AND i.state IN ('OPEN','ACKNOWLEDGED'))) LIMIT 1",
-  ).bind(DOCTOR_GITHUB_SINK).first<{ readonly present: number }>();
+  ).bind(DOCTOR_GITHUB_SINK, nowMs).first<{ readonly present: number }>();
   return row !== null;
 }
 
@@ -294,7 +254,7 @@ interface DiagnosisCandidate {
 async function claimDiagnosisCandidates(database: D1Database, now: string): Promise<readonly DiagnosisCandidate[]> {
   const result = await database.prepare(
     "UPDATE doctor_delivery_outbox SET diagnosis_state='UNKNOWN',updated_at=?1 " +
-    "WHERE sink_ref=?2 AND diagnosis_state='NOT_STARTED' AND state IN ('PENDING','UNCONFIGURED') " +
+    "WHERE sink_ref=?2 AND diagnosis_state='NOT_STARTED' AND state IN ('PENDING','UNCONFIGURED','UNKNOWN') " +
     "AND incident_id IN (" +
     "SELECT incident_id FROM incident WHERE kind LIKE ?3 AND state IN ('OPEN','ACKNOWLEDGED')) " +
     "RETURNING delivery_id,incident_id",
@@ -381,222 +341,12 @@ async function finishDiagnosis(
   ).bind(diagnosis, now, ...candidates.map((candidate) => candidate.delivery_id)).run();
 }
 
-function validDiagnosisState(value: unknown): value is DiagnosisState {
-  return value === "NOT_STARTED" || value === "UNKNOWN" || value === "COMPLETE" || value === "UNAVAILABLE";
-}
-
-function decodeDelivery(row: DeliveryRow): ClaimedDelivery | null {
-  const code = codeForKind(row.incident_kind);
-  if (typeof row.delivery_id !== "string" || !/^doctor-[a-f0-9]{64}$/u.test(row.delivery_id) ||
-      typeof row.incident_id !== "string" || !/^doctor-health-[a-f0-9]{64}$/u.test(row.incident_id) ||
-      typeof row.marker !== "string" || row.marker !== `[eliotr-doctor:${row.delivery_id.slice("doctor-".length)}]` ||
-      (row.state !== "PENDING" && row.state !== "UNKNOWN") || !validDiagnosisState(row.diagnosis_state) ||
-      typeof row.created_at !== "string" || typeof row.lease_generation !== "number" ||
-      !Number.isSafeInteger(row.lease_generation) || code === null ||
-      (row.incident_severity !== "INFO" && row.incident_severity !== "WARNING" && row.incident_severity !== "CRITICAL") ||
-      (row.incident_state !== "OPEN" && row.incident_state !== "ACKNOWLEDGED" && row.incident_state !== "RESOLVED")) return null;
-  return {
-    delivery_id: row.delivery_id,
-    incident_id: row.incident_id,
-    marker: row.marker,
-    state: row.state,
-    diagnosis_state: row.diagnosis_state,
-    diagnosis: typeof row.diagnosis === "string" ? row.diagnosis.slice(0, 320) : null,
-    created_at: row.created_at,
-    lease_generation: row.lease_generation,
-    health_code: code,
-    incident_severity: row.incident_severity,
-    incident_state: row.incident_state,
-  };
-}
-
-async function loadDeliveryCandidates(database: D1Database): Promise<readonly ClaimedDelivery[]> {
-  const result = await database.prepare(
-    "SELECT d.delivery_id,d.incident_id,d.marker,d.state,d.diagnosis_state,d.diagnosis,d.created_at, " +
-    "d.lease_generation,i.kind AS incident_kind,i.severity AS incident_severity,i.state AS incident_state " +
-    "FROM doctor_delivery_outbox d JOIN incident i ON i.incident_id=d.incident_id " +
-    "WHERE d.sink_ref=?1 AND (d.state='UNKNOWN' OR " +
-    "(d.state IN ('PENDING','UNCONFIGURED') AND i.state IN ('OPEN','ACKNOWLEDGED'))) " +
-    "ORDER BY CASE WHEN d.state='UNKNOWN' THEN 0 ELSE 1 END,d.created_at,d.delivery_id LIMIT ?2",
-  ).bind(DOCTOR_GITHUB_SINK, DOCTOR_DELIVERY_LIMIT * 4).all<DeliveryRow>();
-  return assertRows(result, "delivery candidate").flatMap((row) => {
-    const decoded = decodeDelivery(row);
-    return decoded === null ? [] : [decoded];
-  });
-}
-
-async function claimDelivery(
-  database: D1Database,
-  deliveryId: string,
-  workerId: string,
-  nowMs: number,
-): Promise<ClaimedDelivery | null> {
-  const now = new Date(nowMs).toISOString();
-  const row = await database.prepare(
-    "UPDATE doctor_delivery_outbox SET lease_owner=?1,lease_until=?2,lease_generation=lease_generation+1,updated_at=?3 " +
-    "WHERE delivery_id=?4 AND sink_ref=?5 AND state IN ('PENDING','UNKNOWN') " +
-    "AND (lease_until IS NULL OR lease_until<=?6) " +
-    "RETURNING delivery_id,incident_id,marker,state,diagnosis_state,diagnosis,created_at,lease_generation",
-  ).bind(workerId, nowMs + DOCTOR_DELIVERY_LEASE_MS, now, deliveryId, DOCTOR_GITHUB_SINK, nowMs)
-    .first<Omit<DeliveryRow, "incident_kind" | "incident_severity" | "incident_state">>();
-  if (row === null) return null;
-  const incident = await database.prepare("SELECT kind,severity,state FROM incident WHERE incident_id=?1 LIMIT 1")
-    .bind(row.incident_id).first<{ readonly kind: unknown; readonly severity: unknown; readonly state: unknown }>();
-  if (incident === null) return null;
-  return decodeDelivery({ ...row, incident_kind: incident.kind, incident_severity: incident.severity, incident_state: incident.state });
-}
-
-async function activeIncident(database: D1Database, incidentId: string): Promise<boolean> {
-  const row = await database.prepare("SELECT state FROM incident WHERE incident_id=?1 LIMIT 1")
-    .bind(incidentId).first<{ readonly state: unknown }>();
-  return row?.state === "OPEN" || row?.state === "ACKNOWLEDGED";
-}
-
-async function mutateClaim(
-  database: D1Database,
-  delivery: ClaimedDelivery,
-  workerId: string,
-  nowMs: number,
-  input: {
-    readonly state?: DeliveryState;
-    readonly issue_number?: number;
-    readonly issue_url?: string;
-    readonly error_code?: string | null;
-  },
-): Promise<boolean> {
-  const result = await database.prepare(
-    "UPDATE doctor_delivery_outbox SET " +
-    "state=COALESCE(?1,state),external_issue_number=COALESCE(?2,external_issue_number), " +
-    "external_issue_url=COALESCE(?3,external_issue_url),last_error_code=?4, " +
-    "lease_owner=NULL,lease_until=NULL,updated_at=?5 " +
-    "WHERE delivery_id=?6 AND lease_owner=?7 AND lease_generation=?8",
-  ).bind(
-    input.state ?? null,
-    input.issue_number ?? null,
-    input.issue_url ?? null,
-    input.error_code ?? null,
-    new Date(nowMs).toISOString(),
-    delivery.delivery_id,
-    workerId,
-    delivery.lease_generation,
-  ).run();
-  return result.success === true && result.meta.changes === 1;
-}
-
-async function prepareIssueAttempt(
-  database: D1Database,
-  delivery: ClaimedDelivery,
-  workerId: string,
-  nowMs: number,
-): Promise<boolean> {
-  const result = await database.prepare(
-    "UPDATE doctor_delivery_outbox SET state='UNKNOWN',last_error_code='GITHUB_CREATE_IN_FLIGHT',updated_at=?1 " +
-    "WHERE delivery_id=?2 AND state IN ('PENDING','UNKNOWN') AND lease_owner=?3 AND lease_generation=?4",
-  ).bind(new Date(nowMs).toISOString(), delivery.delivery_id, workerId, delivery.lease_generation).run();
-  return result.success === true && result.meta.changes === 1;
-}
-
-async function releaseClaim(
-  database: D1Database,
-  delivery: ClaimedDelivery,
-  workerId: string,
-  nowMs: number,
-  errorCode: string,
-): Promise<void> {
-  await database.prepare(
-    "UPDATE doctor_delivery_outbox SET lease_owner=NULL,lease_until=NULL,last_error_code=?1,updated_at=?2 " +
-    "WHERE delivery_id=?3 AND lease_owner=?4 AND lease_generation=?5",
-  ).bind(errorCode, new Date(nowMs).toISOString(), delivery.delivery_id, workerId, delivery.lease_generation).run();
-}
-
-async function processOneDelivery(
-  database: D1Database,
-  config: DoctorGitHubConfig,
-  candidate: ClaimedDelivery,
-  workerId: string,
-  nowMs: number,
-  fetchImpl: typeof fetch,
-): Promise<"DELIVERED" | "UNKNOWN" | "FAILED" | "SKIPPED"> {
-  const delivery = await claimDelivery(database, candidate.delivery_id, workerId, nowMs);
-  if (delivery === null) return "SKIPPED";
-  const readback = await readDoctorIssueByMarker(config, delivery.marker, fetchImpl);
-  if (readback.kind === "UNKNOWN") {
-    await releaseClaim(database, delivery, workerId, nowMs, "GITHUB_READBACK_UNAVAILABLE");
-    return "UNKNOWN";
-  }
-  if (readback.kind === "FOUND") {
-    const updated = await mutateClaim(database, delivery, workerId, nowMs, {
-      state: "DELIVERED",
-      issue_number: readback.issue_number,
-      issue_url: doctorGitHubIssueUrl(config, readback.issue_number),
-      error_code: null,
-    });
-    return updated ? "DELIVERED" : "UNKNOWN";
-  }
-
-  if (delivery.state === "UNKNOWN") {
-    await releaseClaim(database, delivery, workerId, nowMs, "GITHUB_MARKER_ABSENT_AFTER_UNKNOWN");
-    return "UNKNOWN";
-  }
-
-  const isActive = await activeIncident(database, delivery.incident_id);
-  if (!isActive) {
-    await mutateClaim(database, delivery, workerId, nowMs, {
-      state: "SUPERSEDED",
-      error_code: "INCIDENT_RESOLVED",
-    });
-    return "SKIPPED";
-  }
-  if (!await prepareIssueAttempt(database, delivery, workerId, nowMs)) return "UNKNOWN";
-
-  const created = await createDoctorGitHubIssue(config, {
-    marker: delivery.marker,
-    health_code: delivery.health_code,
-    severity: delivery.incident_severity,
-    ...(delivery.diagnosis === null ? {} : { diagnosis: delivery.diagnosis }),
-  }, fetchImpl);
-  if (created.kind === "CREATED") {
-    const updated = await mutateClaim(database, delivery, workerId, nowMs, {
-      state: "DELIVERED",
-      issue_number: created.issue_number,
-      issue_url: doctorGitHubIssueUrl(config, created.issue_number),
-      error_code: null,
-    });
-    return updated ? "DELIVERED" : "UNKNOWN";
-  }
-  if (created.kind === "REJECTED") {
-    await mutateClaim(database, delivery, workerId, nowMs, {
-      state: "FAILED",
-      error_code: "GITHUB_CREATE_REJECTED",
-    });
-    return "FAILED";
-  }
-  await mutateClaim(database, delivery, workerId, nowMs, {
-    state: "UNKNOWN",
-    error_code: "GITHUB_CREATE_OUTCOME_UNKNOWN",
-  });
-  return "UNKNOWN";
-}
-
 async function activateConfiguredDeliveries(database: D1Database, now: string): Promise<void> {
   await database.prepare(
     "UPDATE doctor_delivery_outbox SET state='PENDING',last_error_code=NULL,updated_at=?1 " +
     "WHERE sink_ref=?2 AND state='UNCONFIGURED' AND incident_id IN (" +
     "SELECT incident_id FROM incident WHERE state IN ('OPEN','ACKNOWLEDGED'))",
   ).bind(now, DOCTOR_GITHUB_SINK).run();
-}
-
-async function markGitHubState(
-  env: Env,
-  snapshot: HealthSnapshot,
-  state: "UNCONFIGURED" | "UNVERIFIED" | "READY" | "UNAVAILABLE",
-): Promise<{ readonly snapshot: HealthSnapshot; readonly evaluation: HealthEvaluation }> {
-  const next: HealthSnapshot = {
-    ...snapshot,
-    generated_at: new Date().toISOString(),
-    connector_states: { ...snapshot.connector_states, github_issue_sink: state },
-  };
-  return { snapshot: next, evaluation: await persistEvaluation(env.CORE_DB, next) };
 }
 
 export interface DoctorRunResult {
@@ -610,60 +360,36 @@ export interface DoctorRunResult {
 /** Production entry called from the existing scheduled Worker handler. */
 export async function runScheduledDoctor(env: Env, options: DoctorOptions = {}): Promise<DoctorRunResult> {
   const now = options.now ?? Date.now;
-  const fetchImpl = options.fetch ?? fetch;
   const nowMs = now();
-  const config = parseDoctorGitHubConfig(
-    env.ELIOTR_DOCTOR_GITHUB_REPOSITORY,
-    env.ELIOTR_DOCTOR_GITHUB_TOKEN,
-  );
-  const initialSinkState = config === null ? "UNCONFIGURED" : "UNVERIFIED";
-  let snapshot = await buildHealthSnapshot(env, nowMs, initialSinkState);
-  let evaluation = await persistEvaluation(env.CORE_DB, snapshot);
-  const previousUnsettled = await hasUnsettledGitHubDelivery(env.CORE_DB);
+  const mcpState = await readDoctorMcpSinkState({
+    database: env.CORE_DB,
+    deployment_generation: env.DEPLOYMENT_GENERATION,
+    repository: env.ELIOTR_DOCTOR_GITHUB_REPOSITORY,
+    agent_connection_id: env.ELIOTR_DOCTOR_AGENT_CONNECTION_ID,
+    mcp_auth_profile: env.MCP_ACCESS_AUTH_PROFILE,
+    mcp_service_client_id: env.MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID,
+    mcp_service_client_ids: env.MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS,
+    now_ms: nowMs,
+  });
+  const unsettled = await hasUnsettledGitHubDelivery(env.CORE_DB, nowMs);
+  const sinkState = mcpState === "UNCONFIGURED"
+    ? "UNCONFIGURED" : mcpState === "READY" && !unsettled ? "READY" : "UNAVAILABLE";
+  const snapshot = await buildHealthSnapshot(env, nowMs, sinkState);
+  const evaluation = await persistEvaluation(env.CORE_DB, snapshot);
 
-  let githubProbeSucceeded = false;
-  if (config !== null) {
-    githubProbeSucceeded = await verifyDoctorGitHubRepository(config, fetchImpl);
-    const githubState = githubProbeSucceeded && !previousUnsettled ? "READY" : "UNAVAILABLE";
-    const persisted = await markGitHubState(env, snapshot, githubState);
-    snapshot = persisted.snapshot;
-    evaluation = persisted.evaluation;
-  }
+  // Old token-only UNCONFIGURED incidents are resolved by the MCP readiness
+  // readback above; only other still-active incidents are promoted for MCP pull.
+  if (sinkState === "READY") await activateConfiguredDeliveries(env.CORE_DB, new Date(nowMs).toISOString());
 
   const diagnosisCandidates = await claimDiagnosisCandidates(env.CORE_DB, new Date(now()).toISOString());
   await finishDiagnosis(env, env.CORE_DB, diagnosisCandidates, new Date(now()).toISOString());
 
-  let deliveriesExamined = 0;
-  if (config !== null && githubProbeSucceeded) {
-    const currentlyUnsettled = await hasUnsettledGitHubDelivery(env.CORE_DB);
-    if (!currentlyUnsettled) await activateConfiguredDeliveries(env.CORE_DB, new Date(now()).toISOString());
-    const candidates = await loadDeliveryCandidates(env.CORE_DB);
-    const workerId = `doctor-${crypto.randomUUID()}`;
-    for (const candidate of candidates) {
-      if (deliveriesExamined >= DOCTOR_DELIVERY_LIMIT) break;
-      if (currentlyUnsettled && candidate.state !== "UNKNOWN") continue;
-      deliveriesExamined += 1;
-      const result = await processOneDelivery(env.CORE_DB, config, candidate, workerId, now(), fetchImpl);
-      if (result === "UNKNOWN" || result === "FAILED") break;
-    }
-  }
-
-  let finalSink: DoctorRunResult["github_sink"] = "UNCONFIGURED";
-  if (config !== null) {
-    const unresolved = await hasUnsettledGitHubDelivery(env.CORE_DB);
-    finalSink = githubProbeSucceeded && !unresolved ? "READY" : "UNAVAILABLE";
-    if (snapshot.connector_states.github_issue_sink !== finalSink) {
-      const persisted = await markGitHubState(env, snapshot, finalSink);
-      evaluation = persisted.evaluation;
-    }
-  }
-
   return {
     health_status: evaluation.status,
     incident_count: evaluation.incidents.length,
-    github_sink: finalSink,
+    github_sink: sinkState,
     diagnosis_attempted: diagnosisCandidates.length > 0 &&
       typeof (env.AI as unknown as Partial<Pick<Ai, "run">> | undefined)?.run === "function",
-    deliveries_examined: deliveriesExamined,
+    deliveries_examined: 0,
   };
 }

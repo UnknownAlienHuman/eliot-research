@@ -499,6 +499,39 @@ export async function requireCurrentComputerAgentQualification(input: {
   return status;
 }
 
+/** Qualification proves this actor can use the selected transport; it does not authorize a system task. */
+export async function requireCurrentComputerAgentTransportQualification(input: {
+  readonly database: D1Database;
+  readonly context: AuthenticatedRequestContext;
+  readonly connection: ComputerAgentConnection;
+  readonly transport: ComputerAgentQualificationTransport;
+  readonly deployment_generation: string;
+  readonly now?: () => number;
+}): Promise<ComputerAgentQualificationStatus> {
+  const now = input.now ?? Date.now;
+  await requireSchema(input.database);
+  const identity = serviceIdentity(input.context, now);
+  if (input.connection.state !== "ENABLED" ||
+      input.connection.actor.issuer !== identity.issuer || input.connection.actor.subject !== identity.subject ||
+      !input.connection.transport_capabilities.includes(input.transport)) {
+    fail("COMPUTER_AGENT_QUALIFICATION_DENIED", 403,
+      "Connection, verified actor and requested transport do not match");
+  }
+  const row = await latest(input.database, input.connection.connection_id,
+    input.connection.revision, input.transport);
+  if (row === null) fail("COMPUTER_AGENT_QUALIFICATION_NOT_FOUND", 403,
+    "Computer-agent connection has not been qualified for this transport");
+  const status = await statusFromRow(row, nowValue(now));
+  if (status.status !== "READY" || status.deployment_generation !== input.deployment_generation ||
+      status.verified_credential_generation !== identity.credential_generation) {
+    fail(status.status === "EXPIRED" ? "COMPUTER_AGENT_QUALIFICATION_EXPIRED" :
+      status.status === "ACTOR_MISMATCH" ? "COMPUTER_AGENT_QUALIFICATION_ACTOR_MISMATCH" :
+        "COMPUTER_AGENT_QUALIFICATION_STALE", 403,
+    "Computer-agent transport qualification is not current");
+  }
+  return status;
+}
+
 export async function confirmWebInboxComputerAgentQualification(input: {
   readonly database: D1Database;
   readonly context: AuthenticatedRequestContext;

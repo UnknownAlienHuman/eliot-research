@@ -395,12 +395,26 @@ describe("Gemini MCP managed-oauth profile", () => {
     });
     const ownerTools = (await body(ownerResponse)).result as { tools: readonly { name: string }[] };
     expect(ownerTools.tools.map((tool) => tool.name)).not.toContain("eliotr_task_pull");
+    expect(ownerTools.tools.map((tool) => tool.name)).not.toContain("eliotr_doctor_delivery_pull");
+    expect(ownerTools.tools.map((tool) => tool.name)).not.toContain("eliotr_doctor_delivery_receipt");
     const serviceResponse = await handleGeminiMcp(listRequest(2), runtime, {} as ExecutionContext, {
       accessVerifier: verifier(CLIENT_ID),
     });
-    const serviceTools = (await body(serviceResponse)).result as { tools: readonly { name: string }[] };
+    const serviceTools = (await body(serviceResponse)).result as {
+      tools: readonly { name: string; inputSchema: { required?: readonly string[] } }[];
+    };
     expect(serviceTools.tools.map((tool) => tool.name)).toContain("eliotr_task_pull");
     expect(serviceTools.tools.map((tool) => tool.name)).toContain("eliotr_task_result");
+    const doctorPull = serviceTools.tools.find((tool) => tool.name === "eliotr_doctor_delivery_pull");
+    const doctorReceipt = serviceTools.tools.find((tool) => tool.name === "eliotr_doctor_delivery_receipt");
+    expect(doctorPull?.inputSchema.required).toEqual(["worker_slot"]);
+    expect(doctorReceipt?.inputSchema.required).toEqual([
+      "delivery_id", "lease_generation", "worker_slot", "issue_number", "issue_url",
+    ]);
+    expect(doctorPull?.inputSchema).not.toHaveProperty("properties.client_grant_id");
+    expect(doctorPull?.inputSchema).not.toHaveProperty("properties.project_id");
+    expect(doctorReceipt?.inputSchema).not.toHaveProperty("properties.client_grant_id");
+    expect(doctorReceipt?.inputSchema).not.toHaveProperty("properties.project_id");
   });
 
   it("requires a dedicated managed audience distinct from ordinary Access", async () => {

@@ -35,6 +35,7 @@ import { readMcpSourcePage } from "./mcp-source-reader.js";
 import { cancelResearchRun, recoverResearchRun } from "./research-run-control.js";
 import { readReadiness } from "./readiness.js";
 import { callExternalAgentTaskTool, isExternalAgentTaskToolName } from "./mcp-external-agent-task.js";
+import { callMcpDoctorDelivery, isDoctorDeliveryToolName } from "./mcp-doctor-delivery.js";
 import {
   callMcpComputerAgentDispatch,
   type McpComputerAgentDispatchServiceFactory,
@@ -146,7 +147,7 @@ async function requireArtifactProject(env: Env, context: AuthenticatedRequestCon
 
 /** Internal bridge after dedicated MCP Access verification. No tool argument can supply an actor. */
 function serviceContext(env: Env, request: Request, tool: McpToolCallContext,
-  args: Record<string, unknown>): AuthenticatedRequestContext {
+  args: Record<string, unknown>, systemTask = false): AuthenticatedRequestContext {
   const identity = tool.verified_access;
   const verified = tool.verified_actor;
   if (!identity || !verified || verified.auth_profile !== "service-token" ||
@@ -158,15 +159,20 @@ function serviceContext(env: Env, request: Request, tool: McpToolCallContext,
       Date.parse(identity.expires_at) <= Date.now() || request.signal.aborted) {
     throw new GeminiMcpToolError("CLIENT_GRANT_IDENTITY_INVALID", "A current verified MCP service identity is required");
   }
-  if (typeof args.client_grant_id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u.test(args.client_grant_id)) {
+  if (systemTask && (Object.hasOwn(args, "client_grant_id") || Object.hasOwn(args, "project_id") ||
+      request.headers.has("x-eliotr-client-grant"))) {
+    invalid("System tasks do not accept project-scoped authorization");
+  }
+  if (!systemTask && (typeof args.client_grant_id !== "string" ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u.test(args.client_grant_id))) {
     invalid("client_grant_id must be an owner-issued project grant locator");
   }
   const headers = new Headers();
-  for (const name of ["idempotency-key", "x-eliotr-client-grant"]) {
+  for (const name of systemTask ? ["idempotency-key"] : ["idempotency-key", "x-eliotr-client-grant"]) {
     const value = request.headers.get(name);
     if (value !== null) headers.set(name, value);
   }
-  bindHeader(headers, "x-eliotr-client-grant", args.client_grant_id);
+  if (!systemTask) bindHeader(headers, "x-eliotr-client-grant", args.client_grant_id as string);
   if (args.idempotency_key !== undefined) {
     if (typeof args.idempotency_key !== "string" || args.idempotency_key.length < 1 || args.idempotency_key.length > 256 ||
         /[\u0000-\u0020\u007f]/u.test(args.idempotency_key)) invalid("idempotency_key is invalid");
@@ -203,7 +209,7 @@ export function createMcpResearchToolCall(
       const managedOAuth = toolContext.verified_actor?.auth_profile === "managed-oauth";
       const context = managedOAuth
         ? createManagedOAuthOwnerContext(env, request, toolContext, args)
-        : serviceContext(env, request, toolContext, args);
+        : serviceContext(env, request, toolContext, args, isDoctorDeliveryToolName(name));
       const projectId = managedOAuth ? inputIdentifier(args.project_id, "project_id") : undefined;
       return { context, managed_oauth: managedOAuth, ...(projectId === undefined ? {} : { project_id: projectId }) };
     },
@@ -256,6 +262,7 @@ export function createMcpResearchToolCall(
         await grant.requireGrantCurrent();
         return result;
       },
+      execute_doctor_delivery: (context, name, args) => callMcpDoctorDelivery(env, context, name, args),
       execute_computer_agent_dispatch: (context, command) => callMcpComputerAgentDispatch(
         env, context, command, dependencies.dispatch_service_factory,
       ),
@@ -275,6 +282,11 @@ export function createMcpResearchToolCall(
     execute_with_currentness: async (name, args, actor, prepared, toolContext) => {
       const { context, managed_oauth: managedOAuth, project_id: projectId } = actor;
       const execute = prepared.execute;
+        if (isDoctorDeliveryToolName(name)) {
+          const result = await execute();
+          serviceContext(env, request, toolContext, args, true);
+          return result;
+        }
         if (isExternalAgentTaskToolName(name)) {
           const result = await execute();
           serviceContext(env, request, toolContext, args);
