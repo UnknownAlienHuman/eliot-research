@@ -25,10 +25,9 @@ function fixture(options: { readonly logId?: string; readonly responseLogId?: st
   } satisfies AiGatewayLog));
   const run = vi.fn<ReturnType<ResearchModelGatewayBinding["gateway"]>["run"]>(async (request, options) => {
     expect(request).toEqual({ provider: "compat", endpoint: "chat/completions", headers: {}, query: JSON.parse(body) });
-    expect(options?.gateway).toEqual({ collectLog: true, skipCache: true, metadata });
-    expect(options?.extraHeaders?.["cf-aig-collect-log-payload"]).toBe("false");
-    expect(options?.extraHeaders?.["cf-aig-request-timeout"]).toBe("180000");
-    expect(options?.extraHeaders?.["cf-aig-max-attempts"]).toBe("1");
+    expect(options?.gateway).toEqual({ id: "eliotr-reasoning", collectLog: true, skipCache: true, metadata });
+    expect(options?.extraHeaders).toMatchObject({ "cf-aig-collect-log-payload": "false",
+      "cf-aig-request-timeout": "180000", "cf-aig-max-attempts": "1" });
     return new Response("{}", { headers: { "cf-aig-log-id": responseLogId } });
   });
   const binding: ResearchModelGatewayBinding = { gateway: () => ({ getUrl: async () => base, getLog, run }) };

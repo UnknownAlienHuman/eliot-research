@@ -1,4 +1,5 @@
-import type { ProjectListView } from "@eliotr/owner-api-client";
+import type { ProjectListView, ResearchModelCatalogPage } from "@eliotr/owner-api-client";
+import type { UseQueryOptions } from "@tanstack/react-query";
 import type { BoundWorkspaceApis } from "../app/runtime";
 import type { PrivacyController, SessionContext } from "../app/privacy";
 import { ProtectedReadClosedError, protectedQueryKey, runProtectedRead } from "./client";
@@ -27,7 +28,7 @@ export function modelCatalogQueryOptions(
   projectId: string,
   providerId: string,
   catalogPage: number,
-) {
+): UseQueryOptions<ResearchModelCatalogPage> {
   const queryKey = [...protectedQueryKey(context, "connections"), "model-catalog", projectId, providerId, catalogPage] as const;
   return {
     queryKey,

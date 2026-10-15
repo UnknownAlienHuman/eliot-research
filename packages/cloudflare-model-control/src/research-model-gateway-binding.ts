@@ -182,6 +182,7 @@ export function createResearchModelGatewayBindingFetch(
     // This is one Universal request to the existing compatibility route, not a fallback.
     const response = await gateway.run({ provider: "compat", endpoint: "chat/completions", headers: {}, query: inputs }, {
       gateway: {
+        id: "eliotr-reasoning",
         collectLog: true,
         skipCache: true,
         metadata,

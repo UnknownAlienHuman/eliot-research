@@ -399,7 +399,7 @@ export function ModelSettingsPanel({
     {source === "external" && <section aria-labelledby={`${sourceId}-key-title`}>
       <h3 id={`${sourceId}-key-title`}>{text.keyTitle}</h3>
       <p>{text.keyHint}</p>
-      <Status tone={keyFeedback.kind === "invalid" || providers.isError ? "error" : "neutral"} announce>{text.providerStatus}: {keyStatusText(locale, providers, keyFeedback)}</Status>
+      <Status tone={keyFeedback.kind === "invalid" || providers.isError ? "error" : "neutral"} announce>{`${text.providerStatus}: ${keyStatusText(locale, providers, keyFeedback)}`}</Status>
       {keyNeedsReadback && <Button variant="text" onClick={() => { void checkKeyStatus(); }} disabled={!canAct}>{text.checkKey}</Button>}
       <form ref={formRef} method="post" onSubmit={event => { void saveKey(event); }}>
         <Field label={text.keyLabel} type="password" name="provider_key" autoComplete="new-password" maxLength={4096}
