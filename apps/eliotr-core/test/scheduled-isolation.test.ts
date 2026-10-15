@@ -56,6 +56,8 @@ describe("scheduled housekeeping and outbox isolation", () => {
   it("sends a valid outbox item when the real OAuth cleanup SELECT fails, then surfaces maintenance failure", async () => {
     const send = vi.fn(async () => undefined);
     const writeDataPoint = vi.fn();
+    const doctor = vi.fn(async () => ({ health_status: "READY" as const, incident_count: 0,
+      github_sink: "UNCONFIGURED" as const, diagnosis_attempted: false, deliveries_examined: 0 }));
     let cleanupSelectReached = false;
     const database = observeDatabase(async (sql, phase) => {
       if (phase === "before" && sql.startsWith(
@@ -66,7 +68,7 @@ describe("scheduled housekeeping and outbox isolation", () => {
       }
     });
 
-    await expect(handleScheduled(event, scheduledEnv(database, send, writeDataPoint)))
+    await expect(handleScheduled(event, scheduledEnv(database, send, writeDataPoint), doctor))
       .rejects.toMatchObject({ message: "scheduled OAuth intent housekeeping failed" });
 
     expect(send).toHaveBeenCalledOnce();
@@ -76,6 +78,7 @@ describe("scheduled housekeeping and outbox isolation", () => {
       idempotency_key: "scheduled-isolation-idem",
     }));
     expect(cleanupSelectReached).toBe(true);
+    expect(doctor).toHaveBeenCalledOnce();
     const delivered = await db.prepare("SELECT state,queue_message_id FROM outbox WHERE outbox_id=?1")
       .bind(OUTBOX_ID).first<{ state: string; queue_message_id: string }>();
     expect(delivered).toEqual({ state: "SENT", queue_message_id: `${OUTBOX_ID}:1` });
@@ -90,14 +93,17 @@ describe("scheduled housekeeping and outbox isolation", () => {
   it("records dispatch failure as FAILED without emitting a PASS metric", async () => {
     const send = vi.fn(async () => undefined);
     const writeDataPoint = vi.fn();
+    const doctor = vi.fn(async () => ({ health_status: "READY" as const, incident_count: 0,
+      github_sink: "UNCONFIGURED" as const, diagnosis_attempted: false, deliveries_examined: 0 }));
     const database = observeDatabase(async (sql, phase) => {
       if (phase === "before" && sql.startsWith("SELECT outbox_id FROM outbox WHERE payload_sha256")) {
         throw new Error("injected outbox claim failure");
       }
     });
 
-    await expect(handleScheduled(event, scheduledEnv(database, send, writeDataPoint)))
+    await expect(handleScheduled(event, scheduledEnv(database, send, writeDataPoint), doctor))
       .rejects.toThrow("injected outbox claim failure");
+    expect(doctor).toHaveBeenCalledOnce();
 
     expect(send).not.toHaveBeenCalled();
     const point = writeDataPoint.mock.calls[0]?.[0] as { blobs: string[] } | undefined;

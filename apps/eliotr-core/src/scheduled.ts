@@ -9,6 +9,7 @@ import {
 import type { Env } from "./env.js";
 import { cleanupExpiredGoogleOAuthIntents } from "./google-oauth-store.js";
 import { readReadiness, REQUIRED_CORE_SCHEMA_GENERATION } from "./readiness.js";
+import { runScheduledDoctor } from "./doctor.js";
 
 const OUTBOX_BATCH_LIMIT = 50;
 
@@ -24,6 +25,7 @@ function metric(env: Env, input: ScheduledOutboxMetricInput): void {
 export async function handleScheduled(
   event: ScheduledController,
   env: Env,
+  doctor: typeof runScheduledDoctor = runScheduledDoctor,
 ): Promise<void> {
   // Housekeeping is bounded and independent of outbox delivery. Preserve its
   // outcome and surface failures after dispatch so maintenance cannot starve jobs.
@@ -89,6 +91,13 @@ export async function handleScheduled(
     summary, health, state, housekeeping, dispatch: dispatchState,
   });
 
+  let doctorFailed = false;
+  try {
+    await doctor(env);
+  } catch {
+    doctorFailed = true;
+  }
+
   if (dispatchState === "FAILED" && housekeeping === "FAILED") {
     throw new AggregateError(
       [dispatchError, housekeepingError],
@@ -104,4 +113,5 @@ export async function handleScheduled(
   if (housekeeping === "FAILED") {
     throw new Error("scheduled OAuth intent housekeeping failed", { cause: housekeepingError });
   }
+  if (doctorFailed) throw new Error("scheduled health doctor failed");
 }

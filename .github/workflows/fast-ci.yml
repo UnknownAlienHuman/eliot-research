@@ -70,6 +70,9 @@ jobs:
           test/service-model-settings-http.test.ts
           test/research-model-gateway-runtime.test.ts
           test/mcp-client-diagnostic-http.test.ts
+          test/mcp-client-diagnostic-roundtrip.test.ts
+          test/doctor.test.ts
+          test/scheduled-isolation.test.ts
           --reporter=verbose
       - name: Build served assets and owner web
         run: |

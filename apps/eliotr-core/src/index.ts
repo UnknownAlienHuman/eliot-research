@@ -78,6 +78,18 @@ function configuredMcpClientDiagnosticConsume(env: Env): McpClientDiagnosticCons
       throw new GeminiMcpToolError("MCP_CLIENT_DIAGNOSTIC_UNAVAILABLE",
         "Client diagnostic authentication profile is unavailable", true);
     }
+    if (profile === "service-token" && context.verified_access !== undefined &&
+        context.verified_actor !== undefined) {
+      // The ordinary MCP service context intentionally uses a domain-separated logical
+      // principal. Computer-agent qualification is different: its immutable actor binding
+      // is the verified Access service-token Client ID stored in the registry.
+      const accessPrincipal = context.verified_access.principal_ref;
+      return create(profile)(input, {
+        ...context,
+        principal_ref: accessPrincipal,
+        verified_actor: { ...context.verified_actor, actor_ref: accessPrincipal },
+      });
+    }
     return create(profile)(input, context);
   };
 }

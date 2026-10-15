@@ -87,6 +87,10 @@ export interface Env extends InstalledSemanticConfigurationEnvironment {
   readonly ELIOTR_BACKUP_OFFSITE_R2_ACCESS_KEY_ID?: string;
   readonly ELIOTR_BACKUP_OFFSITE_R2_SECRET_ACCESS_KEY?: string;
   readonly OWNER_NOTIFICATION_WEBHOOK?: string;
+  /** Optional fixed owner/repository locator for the scheduled doctor issue sink. */
+  readonly ELIOTR_DOCTOR_GITHUB_REPOSITORY?: string | undefined;
+  /** Optional repository-scoped credential used only by the doctor GitHub adapter. */
+  readonly ELIOTR_DOCTOR_GITHUB_TOKEN?: string | undefined;
 }
 
 export { readResearchSemanticConfiguration } from "@eliotr/cloudflare-research-configuration";
