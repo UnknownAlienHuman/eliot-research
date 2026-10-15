@@ -15,7 +15,11 @@ function headers() {
 }
 function fixture() {
   const getLog = vi.fn(async () => ({ id: "log-one", status_code: 200, cached: false,
-    provider: "workers-ai", model: "@cf/zai-org/glm-5.3-flash", metadata } as AiGatewayLog));
+    provider: "workers-ai", model: "@cf/zai-org/glm-5.3-flash", metadata,
+    path: "/compat/chat/completions", duration: 1, success: true, request_size: 0,
+    response_size: 2, request_head_complete: false, response_head_complete: false,
+    created_at: new Date("2026-10-15T00:00:00.000Z"),
+  } satisfies AiGatewayLog));
   const run = vi.fn<ResearchModelGatewayBinding["run"]>(async (_model, _inputs, options) => {
     // The official native SDK serializes gateway options separately from extraHeaders.
     expect(options.gateway).toEqual({ id: "eliotr-reasoning", collectLog: true, skipCache: true,
