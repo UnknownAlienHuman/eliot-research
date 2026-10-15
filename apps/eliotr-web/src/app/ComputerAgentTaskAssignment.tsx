@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, HandoffSheet, Status, type AgentSummary, type HandoffRequest, type TaskScope } from "@eliotr/ui";
-import type { ComputerAgentConnection, ComputerAgentDispatchCreateIntent } from "@eliotr/owner-api-client";
+import type { ComputerAgentConnection, ComputerAgentDispatchCreateIntent, ComputerAgentDispatchTaskStatus } from "@eliotr/owner-api-client";
 import { RESEARCH_DEFAULT_INQUIRY_PROTOCOL_REF, type ComputerAgentQualificationTransport } from "@eliotr/owner-api-client";
 import type { BoundWorkspaceApis } from "./runtime";
 import type { PrivacyController, SessionContext } from "./privacy";
@@ -114,7 +114,7 @@ export function ComputerAgentTaskAssignment({
   const statusOptions = visibleOperation?.phase === "created" && projectId !== undefined
     ? computerAgentTaskStatusOptions(apis, privacy, context, projectId, visibleOperation.dispatchId, isProjectCurrent)
     : undefined;
-  const taskStatus = useQuery(statusOptions ? {
+  const taskStatus = useQuery<ComputerAgentDispatchTaskStatus>(statusOptions ? {
     ...statusOptions,
     refetchInterval: query => query.state.data?.state === "PENDING" ? 5000 : false,
     refetchIntervalInBackground: false,
@@ -158,8 +158,9 @@ export function ComputerAgentTaskAssignment({
       setOpenScope(undefined);
       return;
     }
-    if (request.target === "eliot" || request.tool !== "request" || request.scope.length !== 1 || request.scope[0].kind !== "research" ||
-        request.scope[0].id !== projectId || !request.note.trim()) {
+    const requestedScope = request.scope[0];
+    if (request.target === "eliot" || request.tool !== "request" || request.scope.length !== 1 || requestedScope === undefined || requestedScope.kind !== "research" ||
+        requestedScope.id !== projectId || !request.note.trim()) {
       setError(text.unsupported);
       setOpenScope(undefined);
       return;
@@ -282,7 +283,7 @@ export function ComputerAgentTaskAssignment({
   function assignmentStatus(): string | undefined {
     if (visibleOperation?.phase !== "created") return undefined;
     if (taskStatus.isError) return text.statusUnavailable;
-    if (!taskStatus.data) return text.waiting(operation.agent);
+    if (!taskStatus.data) return text.waiting(visibleOperation.agent);
     switch (taskStatus.data.state) {
       case "PENDING": return text.pending;
       case "ACCEPTED": return text.accepted;
@@ -291,6 +292,7 @@ export function ComputerAgentTaskAssignment({
       case "EXPIRED": return text.expired;
       case "STALE": return text.stale;
     }
+    return text.statusUnavailable;
   }
 
   const statusMessage = assignmentStatus();
@@ -308,8 +310,7 @@ export function ComputerAgentTaskAssignment({
     {preparing && visibleOperation?.phase !== "sending" && <Status announce>{text.preparing}</Status>}
     {visibleOperation?.phase === "sending" && <Status announce>{text.sending(visibleOperation.agent)}</Status>}
     {visibleOperation?.phase === "created" && <div className="er-live-callout">
-      <Status announce>{statusMessage}</Status>
-      {taskStatus.data?.acceptance && <p>Workflow: <code>{taskStatus.data.acceptance.workflow_instance_id}</code></p>}
+      <Status announce>{statusMessage ?? text.statusUnavailable}</Status>
       {taskStatus.isError && <Button variant="text" disabled={taskStatus.isFetching || !currentProject}
         onClick={() => { void taskStatus.refetch(); }}>{text.readStatus}</Button>}
     </div>}

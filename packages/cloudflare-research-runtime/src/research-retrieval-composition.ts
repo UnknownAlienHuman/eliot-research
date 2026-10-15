@@ -11,7 +11,7 @@ import {
   type HeldResearchScope,
 } from "@eliotr/cloudflare-research";
 import { searchProject } from "@eliotr/cloudflare-ai/project-search";
-import { decodeAiSearchSearchResult } from "@eliotr/platform-cloudflare";
+import { decodeAiSearchSearchResult, type AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
 import {
   createD1SearchExactPort,
   createD1SearchIdentPort,
