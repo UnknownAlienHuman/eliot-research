@@ -92,8 +92,8 @@ const CONTOURS: readonly Exclude<ConnectionForm["contour"], "">[] = [
 
 const copy = {
   en: {
-    title: "Computer-agent connections",
-    explanation: "Manage the owner-scoped registry. Enabled describes saved configuration; it does not mean the agent is online.",
+    title: "Registered agents",
+    explanation: "Cloud agents that sign in with a service token. Enabled is a saved setting; it does not mean the agent is online.",
     loading: "Loading computer-agent connections.",
     loadFailed: "The current owner connection page could not be read.",
     retryPage: "Read this page again",
@@ -106,20 +106,20 @@ const copy = {
     enabled: "Enabled configuration",
     disabled: "Disabled configuration",
     technical: "Technical details",
-    id: "Logical connection ID",
+    id: "Connection ID",
     revision: "Saved revision",
-    createHeading: "Configure a computer agent",
+    createHeading: "Register an agent",
     editHeading: "Review computer-agent configuration",
     selectedUnavailable: "The selected connection is not present on the verified page. Read the page again or select a current row.",
     changed: "A newer saved revision was read. Review the refreshed fields before preparing another change.",
     loadLatest: "Load the latest saved fields",
     displayName: "Display name",
-    contour: "Provider contour",
-    chooseContour: "Choose a contour",
-    actor: "Service actor identity",
-    issuer: "Service actor issuer",
-    subject: "Service actor subject",
-    fixedAuth: "Authentication method: service_token. Secret values are never entered here.",
+    contour: "Agent type",
+    chooseContour: "Choose a type",
+    actor: "Service token identity",
+    issuer: "Service token issuer",
+    subject: "Service token client ID",
+    fixedAuth: "The agent signs in with a Cloudflare Access service token. Its secret stays with the agent and is never entered here.",
     immutableActor: "The saved service actor cannot be reassigned on an existing logical connection.",
     transport: "Transport capabilities",
     computer: "Computer capabilities",
@@ -189,8 +189,8 @@ const copy = {
     qualificationLabels: { MCP_WRITE: "MCP write", WEB_INBOX: "Web inbox" },
   },
   ru: {
-    title: "Подключения компьютерных агентов",
-    explanation: "Управляйте реестром владельца. «Включено» описывает сохранённую конфигурацию, но не означает, что агент в сети.",
+    title: "Зарегистрированные агенты",
+    explanation: "Облачные агенты, которые входят по сервисному токену. «Включено» — сохранённая настройка, а не признак того, что агент в сети.",
     loading: "Загружаются подключения компьютерных агентов.",
     loadFailed: "Не удалось прочитать текущую страницу подключений владельца.",
     retryPage: "Прочитать страницу ещё раз",
@@ -203,20 +203,20 @@ const copy = {
     enabled: "Конфигурация включена",
     disabled: "Конфигурация отключена",
     technical: "Технические сведения",
-    id: "Логический идентификатор подключения",
+    id: "ID подключения",
     revision: "Сохранённая ревизия",
-    createHeading: "Настроить компьютерного агента",
+    createHeading: "Зарегистрировать агента",
     editHeading: "Проверить конфигурацию компьютерного агента",
     selectedUnavailable: "Выбранного подключения нет на проверенной странице. Прочитайте страницу ещё раз или выберите текущую строку.",
     changed: "Прочитана более новая ревизия. Проверьте обновлённые поля перед подготовкой изменения.",
     loadLatest: "Загрузить последние сохранённые поля",
     displayName: "Отображаемое имя",
-    contour: "Контур провайдера",
-    chooseContour: "Выберите контур",
-    actor: "Идентификатор сервисного субъекта",
-    issuer: "Издатель сервисного субъекта",
-    subject: "Субъект сервисного аккаунта",
-    fixedAuth: "Метод аутентификации: service_token. Секретные значения здесь не вводятся.",
+    contour: "Тип агента",
+    chooseContour: "Выберите тип",
+    actor: "Удостоверение сервисного токена",
+    issuer: "Издатель сервисного токена",
+    subject: "Client ID сервисного токена",
+    fixedAuth: "Агент входит по сервисному токену Cloudflare Access. Его секрет остаётся у агента и здесь не вводится.",
     immutableActor: "Нельзя переназначить сохранённого сервисного субъекта для существующего логического подключения.",
     transport: "Возможности транспорта",
     computer: "Возможности компьютера",
@@ -298,6 +298,11 @@ function contextKey(context: SessionContext): string {
 function restoreOperation(operation: ConnectionOperation | undefined): ConnectionOperation | undefined {
   if (operation === undefined || Object.isFrozen(operation.intent)) return operation;
   return { ...operation, intent: Object.freeze({ ...operation.intent }) };
+}
+
+/** A readable, URL-safe connection ID from the agent's display name. */
+function connectionSlug(name: string): string {
+  return name.normalize("NFKD").toLowerCase().replace(/[^a-z0-9]+/gu, "-").replace(/^-+|-+$/gu, "").slice(0, 64);
 }
 
 function emptyForm(): ConnectionForm {
@@ -434,6 +439,9 @@ export function ComputerAgentConnectionsPanel({ locale, apis, privacy, context }
     contextKey: ownerContextKey, value: emptyForm(),
   }));
   const form = formState.contextKey === ownerContextKey ? formState.value : emptyForm();
+  // The create form opens when the owner asks for it; the ID follows the name until the owner edits it.
+  const [creatingKey, setCreatingKey] = useState<string>();
+  const idEdited = useRef(false);
   const [formError, setFormError] = useState<string>();
   const [preparing, setPreparing] = useState(false);
   const preparingRef = useRef(false);
@@ -562,6 +570,7 @@ export function ComputerAgentConnectionsPanel({ locale, apis, privacy, context }
 
   function startNewConnection(): void {
     if (!privacy.isCurrent(context) || operationLocked) return;
+    setCreatingKey(ownerContextKey); idEdited.current = false;
     setSelection(undefined);
     setQualificationTarget(undefined);
     setFormState({ contextKey: ownerContextKey, value: emptyForm() });
@@ -861,7 +870,7 @@ export function ComputerAgentConnectionsPanel({ locale, apis, privacy, context }
     <OperationAnnouncement>{preparing ? text.preparing : operation?.phase === "attempting" ? text.operationAttempting : ""}</OperationAnnouncement>
 
     <div aria-busy={pageQuery.isFetching}>
-      <p>{page ? text.pageCount(page.connections.length) : pageQuery.isPending ? text.loading : text.loadFailed}</p>
+      {page ? <p>{text.pageCount(page.connections.length)}</p> : pageQuery.isPending ? <p>{text.loading}</p> : null}
       {pageQuery.isError && <div>
         <Status tone="error">{text.loadFailed}</Status>
         <Button variant="tonal" onClick={retryPage}>{text.retryPage}</Button>
@@ -894,7 +903,7 @@ export function ComputerAgentConnectionsPanel({ locale, apis, privacy, context }
       <Button variant="tonal" onClick={loadLatestSelection} disabled={operationLocked}>{text.loadLatest}</Button>
     </div>}
 
-    {(!selection || selectedConnection) && <form onSubmit={event => { void prepareForm(event); }}>
+    {(selection ? selectedConnection : creatingKey === ownerContextKey) && <form onSubmit={event => { void prepareForm(event); }}>
       <fieldset disabled={operationLocked || preparing}>
         <legend>{selection ? text.editHeading : text.createHeading}</legend>
         {selection && selectedConnection
@@ -905,10 +914,14 @@ export function ComputerAgentConnectionsPanel({ locale, apis, privacy, context }
             <p>{text.immutableActor}</p>
           </>
           : <Field label={text.id} value={form.connectionId} maxLength={256} required
-            onChange={event => updateForm(current => ({ ...current, connectionId: event.target.value }))} />}
+            onChange={event => { idEdited.current = true; updateForm(current => ({ ...current, connectionId: event.target.value })); }} />}
 
         <Field label={text.displayName} value={form.displayName} maxLength={128} required
-          onChange={event => updateForm(current => ({ ...current, displayName: event.target.value }))} />
+          onChange={event => {
+            const displayName = event.target.value;
+            updateForm(current => ({ ...current, displayName,
+              ...(selection || idEdited.current ? {} : { connectionId: connectionSlug(displayName) }) }));
+          }} />
 
         <div className="er-field">
           <label className="er-field__label" htmlFor={`${idPrefix}-contour`}>{text.contour}</label>
@@ -920,7 +933,7 @@ export function ComputerAgentConnectionsPanel({ locale, apis, privacy, context }
         </div>
 
         {!selection && <>
-          <Field label={text.issuer} type="url" value={form.issuer} maxLength={256} required
+          <Field label={text.issuer} type="url" placeholder="https://<team>.cloudflareaccess.com" value={form.issuer} maxLength={256} required
             onChange={event => updateForm(current => ({ ...current, issuer: event.target.value }))} />
           <Field label={text.subject} value={form.subject} maxLength={256} required
             onChange={event => updateForm(current => ({ ...current, subject: event.target.value }))} />
