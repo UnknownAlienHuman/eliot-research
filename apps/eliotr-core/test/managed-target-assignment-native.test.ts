@@ -1,12 +1,18 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { reset } from "cloudflare:test";
 import type { AccessVerifier } from "@eliotr/cloudflare-access";
+import {
+  createAiSearchGenerationRegistryService,
+  createD1AiSearchGenerationRegistryStore,
+} from "@eliotr/cloudflare-ai";
 import { createProjectOwnerService } from "@eliotr/cloudflare-navigation";
 import { AI_SEARCH_PRIMARY_PROJECTION_PROFILE, MANAGED_TARGET_ASSIGNMENT_PROTOCOL,
-  aiSearchPhysicalProfileDigest, createD1ManagedTargetAssignmentPort, projectionDigest,
+  AI_SEARCH_PRIMARY_NAMESPACE, aiSearchPhysicalProfileDigest, createD1ManagedTargetAssignmentPort, projectionDigest,
   type ManagedTargetIdentity } from "@eliotr/cloudflare-projection";
 import type { ApplicationLifecycle, AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { handleHttp } from "../src/http.js";
+import { MANAGED_SEARCH_PRODUCT_OPT_IN_PROTOCOL } from "../src/managed-search-product-opt-in-http.js";
+import { resolveManagedTargetSelectionV2 } from "../src/managed-search-product-selection.js";
 import {
   db,
   insert,
@@ -47,6 +53,53 @@ async function createProject(): Promise<string> {
     source_ids: [],
   });
   return result.project_ref.id;
+}
+
+async function seedPrimaryRegistryWithShadow(): Promise<string> {
+  const registry = createAiSearchGenerationRegistryService(
+    createD1AiSearchGenerationRegistryStore(runtime.SEARCH_DB),
+  );
+  const startedAt = new Date().toISOString();
+  const activeGeneration = AI_SEARCH_PRIMARY_PROJECTION_PROFILE.generation;
+  await registry.declare({
+    namespace: AI_SEARCH_PRIMARY_NAMESPACE,
+    profile: AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
+    expected_item_count: 0,
+    declared_at: startedAt,
+  });
+  await registry.observe(AI_SEARCH_PRIMARY_NAMESPACE, {
+    generation: activeGeneration,
+    indexed_item_count: 0,
+    readback_item_count: 0,
+    failed_item_count: 0,
+    mismatch_count: 0,
+    golden_set_result_ref: "managed-search-primary-fixture",
+    observed_at: new Date(Date.parse(startedAt) + 1).toISOString(),
+  });
+  await registry.promote(AI_SEARCH_PRIMARY_NAMESPACE, {
+    expected_active_head_generation: null,
+    target_generation: activeGeneration,
+    promoted_at: new Date(Date.parse(startedAt) + 2).toISOString(),
+  });
+
+  const shadowGeneration = "managed-search-shadow-b";
+  const shadowDeclaredAt = new Date(Date.parse(startedAt) + 3).toISOString();
+  await registry.declare({
+    namespace: AI_SEARCH_PRIMARY_NAMESPACE,
+    profile: Object.freeze({ ...AI_SEARCH_PRIMARY_PROJECTION_PROFILE, generation: shadowGeneration }),
+    expected_item_count: 0,
+    declared_at: shadowDeclaredAt,
+  });
+  await registry.observe(AI_SEARCH_PRIMARY_NAMESPACE, {
+    generation: shadowGeneration,
+    indexed_item_count: 0,
+    readback_item_count: 0,
+    failed_item_count: 0,
+    mismatch_count: 0,
+    golden_set_result_ref: "managed-search-shadow-fixture",
+    observed_at: new Date(Date.parse(shadowDeclaredAt) + 1).toISOString(),
+  });
+  return shadowGeneration;
 }
 
 async function seedAssignableSource(sourceId: string): Promise<void> {
@@ -116,6 +169,29 @@ function request(
   );
 }
 
+function productRequest(
+  projectId: string,
+  method: "GET" | "PUT",
+  body?: unknown,
+): Request {
+  const headers = new Headers({
+    origin: "https://research.example",
+    "sec-fetch-site": "same-origin",
+  });
+  if (body !== undefined) {
+    headers.set("content-type", "application/json");
+    headers.set("x-eliotr-csrf", "1");
+  }
+  return new Request(
+    `https://research.example/api/v1/research/projects/${encodeURIComponent(projectId)}/managed-search`,
+    {
+      method,
+      headers,
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    },
+  );
+}
+
 async function call(
   req: Request,
   auth = verifier(),
@@ -161,6 +237,204 @@ async function eventCount(projectId: string): Promise<number> {
 }
 
 describe("Core managed target assignment on native D1", () => {
+  it("upgrades a compatible V1 primary assignment directly to explicit V2 opt-in", async () => {
+    await seedPrimaryRegistryWithShadow();
+    const projectId = await createProject();
+    const target = await configuredTarget(projectId);
+    const legacy = await call(request(projectId, "PUT", assignmentBody(target, 0)));
+    expect(legacy.status).toBe(200);
+    expect(await eventCount(projectId)).toBe(1);
+
+    const enabled = await call(productRequest(projectId, "PUT", {
+      protocol: MANAGED_SEARCH_PRODUCT_OPT_IN_PROTOCOL,
+      expected_head_revision: 1,
+      decision: "ENABLED",
+      product_alias: "primary",
+    }));
+    expect(enabled.status).toBe(200);
+    expect((await json(enabled)).data).toMatchObject({
+      decision: "ENABLED",
+      product_alias: "primary",
+      expected_head_revision: 2,
+    });
+    expect(await db.prepare(
+      "SELECT event_kind,decision_version,selection_mode,product_alias,managed_generation " +
+      "FROM managed_target_assignment_event WHERE project_id=?1 ORDER BY event_revision",
+    ).bind(projectId).all()).toMatchObject({
+      results: [
+        {
+          event_kind: "ASSIGN",
+          decision_version: 1,
+          selection_mode: "EXACT_GENERATION_V1",
+          product_alias: null,
+          managed_generation: target.managed_generation,
+        },
+        {
+          event_kind: "ASSIGN",
+          decision_version: 2,
+          selection_mode: "STABLE_PHYSICAL_PROFILE_V2",
+          product_alias: "primary",
+          managed_generation: target.managed_generation,
+        },
+      ],
+    });
+    expect(await eventCount(projectId)).toBe(2);
+  });
+
+  it("keeps the explicit primary product decision stable across compatible A-to-B selection", async () => {
+    const shadowGeneration = await seedPrimaryRegistryWithShadow();
+    const projectId = await createProject();
+    const legacyReadBeforeV2 = await call(request(projectId, "GET"));
+    expect(legacyReadBeforeV2.status).toBe(200);
+    expect((await json(legacyReadBeforeV2)).data).toMatchObject({
+      protocol: MANAGED_TARGET_ASSIGNMENT_PROTOCOL,
+      current_assignment: null,
+    });
+    const before = await call(productRequest(projectId, "GET"));
+    expect(before.status).toBe(200);
+    expect((await json(before)).data).toMatchObject({
+      protocol: MANAGED_SEARCH_PRODUCT_OPT_IN_PROTOCOL,
+      decision_version: 2,
+      decision: "DISABLED",
+      expected_head_revision: 0,
+    });
+
+    const active = await resolveManagedTargetSelectionV2(runtime.SEARCH_DB, "ACTIVE");
+    const shadow = await resolveManagedTargetSelectionV2(runtime.SEARCH_DB, "SHADOW", shadowGeneration);
+    expect(active.target.managed_generation).toBe(AI_SEARCH_PRIMARY_PROJECTION_PROFILE.generation);
+    expect(shadow.target.managed_generation).toBe(shadowGeneration);
+    expect(shadow.target.managed_instance_id).toBe(active.target.managed_instance_id);
+    expect(shadow.target.target_profile_identity_sha256).toBe(active.target.target_profile_identity_sha256);
+    expect(shadow.selection_mode).toBe("STABLE_PHYSICAL_PROFILE_V2");
+
+    const enable = {
+      protocol: MANAGED_SEARCH_PRODUCT_OPT_IN_PROTOCOL,
+      expected_head_revision: 0,
+      decision: "ENABLED",
+      product_alias: "primary",
+    };
+    const enabled = await call(productRequest(projectId, "PUT", enable));
+    expect(enabled.status).toBe(200);
+    const enabledData = (await json(enabled)).data as JsonObject;
+    expect(enabledData).toMatchObject({
+      decision: "ENABLED",
+      product_alias: "primary",
+      expected_head_revision: 1,
+    });
+    for (const providerField of [
+      "namespace",
+      "managed_instance_id",
+      "managed_generation",
+      "target_profile_identity_sha256",
+      "configured_target",
+      "target",
+    ]) expect(enabledData).not.toHaveProperty(providerField);
+    expect(await eventCount(projectId)).toBe(1);
+    expect(await db.prepare(
+      "SELECT decision_version,selection_mode,product_alias,managed_generation,target_profile_identity_sha256 " +
+      "FROM managed_target_assignment_event WHERE project_id=?1",
+    ).bind(projectId).first()).toEqual({
+      decision_version: 2,
+      selection_mode: "STABLE_PHYSICAL_PROFILE_V2",
+      product_alias: "primary",
+      managed_generation: active.target.managed_generation,
+      target_profile_identity_sha256: active.target.target_profile_identity_sha256,
+    });
+
+    const registry = createAiSearchGenerationRegistryService(
+      createD1AiSearchGenerationRegistryStore(runtime.SEARCH_DB),
+    );
+    await registry.promote(AI_SEARCH_PRIMARY_NAMESPACE, {
+      expected_active_head_generation: active.target.managed_generation,
+      target_generation: shadowGeneration,
+      promoted_at: new Date().toISOString(),
+    });
+    const activeAfterRotation = await resolveManagedTargetSelectionV2(runtime.SEARCH_DB, "ACTIVE");
+    expect(activeAfterRotation.target.managed_generation).toBe(shadowGeneration);
+    expect(activeAfterRotation.target.managed_instance_id).toBe(active.target.managed_instance_id);
+    expect(activeAfterRotation.target.target_profile_identity_sha256)
+      .toBe(active.target.target_profile_identity_sha256);
+    expect(await eventCount(projectId)).toBe(1);
+    const afterRotation = await call(productRequest(projectId, "GET"));
+    expect((await json(afterRotation)).data).toMatchObject({
+      decision: "ENABLED",
+      product_alias: "primary",
+      expected_head_revision: 1,
+    });
+
+    // The original expected head recovers a committed event after an unknown acknowledgement.
+    const recoveredEnable = await call(productRequest(projectId, "PUT", enable));
+    expect(recoveredEnable.status).toBe(200);
+    expect((await json(recoveredEnable)).data).toMatchObject({ decision: "ENABLED", expected_head_revision: 1 });
+    expect(await eventCount(projectId)).toBe(1);
+    const sameStateEnable = await call(productRequest(projectId, "PUT", {
+      ...enable,
+      expected_head_revision: 1,
+    }));
+    expect(sameStateEnable.status).toBe(200);
+    expect(await eventCount(projectId)).toBe(1);
+
+    const foreignDisable = await call(productRequest(projectId, "PUT", {
+      protocol: MANAGED_SEARCH_PRODUCT_OPT_IN_PROTOCOL,
+      expected_head_revision: 1,
+      decision: "DISABLED",
+    }), verifier("foreign-owner"));
+    expect(foreignDisable.status).toBe(404);
+
+    const disable = {
+      protocol: MANAGED_SEARCH_PRODUCT_OPT_IN_PROTOCOL,
+      expected_head_revision: 1,
+      decision: "DISABLED",
+    };
+    const disabled = await call(productRequest(projectId, "PUT", disable));
+    expect(disabled.status).toBe(200);
+    expect((await json(disabled)).data).toMatchObject({ decision: "DISABLED", expected_head_revision: 2 });
+    const recoveredDisable = await call(productRequest(projectId, "PUT", disable));
+    expect(recoveredDisable.status).toBe(200);
+    expect(await eventCount(projectId)).toBe(2);
+    const sameStateDisable = await call(productRequest(projectId, "PUT", {
+      ...disable,
+      expected_head_revision: 2,
+    }));
+    expect(sameStateDisable.status).toBe(200);
+    expect(await eventCount(projectId)).toBe(2);
+
+    const legacyRead = await call(request(projectId, "GET"));
+    expect(legacyRead.status).toBe(409);
+    expect((await json(legacyRead)).code).toBe("MANAGED_TARGET_ASSIGNMENT_VERSIONED_HEAD");
+
+    const registry = createAiSearchGenerationRegistryService(
+      createD1AiSearchGenerationRegistryStore(runtime.SEARCH_DB),
+    );
+    const unreviewedGeneration = "unreviewed-managed-search-shadow";
+    await registry.declare({
+      namespace: AI_SEARCH_PRIMARY_NAMESPACE,
+      profile: Object.freeze({
+        ...AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
+        id: "unreviewed-managed-search-instance",
+        generation: unreviewedGeneration,
+      }),
+      expected_item_count: 0,
+      declared_at: new Date().toISOString(),
+    });
+    await expect(resolveManagedTargetSelectionV2(runtime.SEARCH_DB, "SHADOW", unreviewedGeneration))
+      .rejects.toMatchObject({ code: "MANAGED_SEARCH_PRODUCT_PROFILE_MISMATCH" });
+
+    const incompatibleGeneration = "incompatible-managed-search-shadow";
+    await expect(registry.declare({
+      namespace: AI_SEARCH_PRIMARY_NAMESPACE,
+      profile: Object.freeze({
+        ...AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
+        generation: incompatibleGeneration,
+        embedding_model: "incompatible/embedding-profile",
+      }),
+      expected_item_count: 0,
+      declared_at: new Date().toISOString(),
+    })).rejects.toThrow();
+    await expect(resolveManagedTargetSelectionV2(runtime.SEARCH_DB, "SHADOW", incompatibleGeneration))
+      .rejects.toMatchObject({ code: "MANAGED_SEARCH_PRODUCT_GENERATION_NOT_FOUND" });
+  });
+
   it("produces the physical profile digest used by the generation registry", async () => {
     const target = await configuredTarget(await createProject());
     expect(target.target_profile_identity_sha256).toBe(

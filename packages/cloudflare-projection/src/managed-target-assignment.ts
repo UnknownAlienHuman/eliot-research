@@ -11,6 +11,34 @@ export interface ManagedTargetIdentity {
   readonly target_profile_identity_sha256: string;
 }
 
+/** Exact V1 assignment selection. Its generation and digest remain coupled. */
+export interface ManagedTargetSelectionV1 {
+  readonly protocol: "eliotr.managed-target-selection.v1";
+  readonly domain: "MANAGED_TARGET_ASSIGNMENT";
+  readonly decision_version: 1;
+  readonly selection_mode: "EXACT_GENERATION_V1";
+  readonly target: ManagedTargetIdentity;
+}
+
+/** V2 product selection is stable by physical profile but resolves one exact registry target. */
+export interface ManagedTargetSelectionV2 {
+  readonly protocol: "eliotr.managed-target-selection.v2";
+  readonly domain: "MANAGED_SEARCH_PRODUCT";
+  readonly decision_version: 2;
+  readonly selection_mode: "STABLE_PHYSICAL_PROFILE_V2";
+  readonly product_alias: "primary";
+  readonly purpose: "ACTIVE" | "SHADOW";
+  readonly registry_revision: number;
+  readonly registry_artifact_sha256: string;
+  /** Exact full-profile legacy V1 digest accepted only at this exact generation. */
+  readonly v1_exact_profile_identity_sha256: string;
+  readonly target: ManagedTargetIdentity;
+}
+
+export type ManagedTargetSelectionReceipt =
+  | ManagedTargetSelectionV1
+  | ManagedTargetSelectionV2;
+
 export interface ManagedTargetAssignmentActor {
   readonly kind: "OWNER" | "OPERATOR";
   readonly principal_ref: string;
@@ -55,7 +83,36 @@ export interface ManagedTargetAssignmentPort {
   append(
     command: ManagedTargetAssignmentCommand,
   ): Promise<ManagedTargetAssignmentEvent>;
+  /** Explicit V2 product decision on the same immutable event/current-head tables. */
+  appendProductDecisionV2?(
+    command: ManagedSearchProductDecisionCommandV2,
+    authorize: ManagedSearchProductDecisionAuthorizer,
+  ): Promise<ManagedSearchProductDecisionEventV2>;
 }
+
+type ManagedSearchProductDecisionCommandV2 =
+  | (ManagedTargetAssignmentCommandBase & {
+    readonly event_kind: "ASSIGN";
+    readonly decision_version: 2;
+    readonly selection_mode: "STABLE_PHYSICAL_PROFILE_V2";
+    readonly product_alias: "primary";
+    readonly target: ManagedTargetIdentity;
+  })
+  | (ManagedTargetAssignmentCommandBase & {
+    readonly event_kind: "RETIRE";
+    readonly decision_version: 2;
+    readonly selection_mode: "STABLE_PHYSICAL_PROFILE_V2";
+    readonly product_alias: "primary";
+    readonly previous_assignment_revision: number;
+  });
+
+type ManagedSearchProductDecisionEventV2 = ManagedSearchProductDecisionCommandV2 & {
+  readonly event_revision: number;
+};
+
+type ManagedSearchProductDecisionAuthorizer = (
+  command: ManagedSearchProductDecisionCommandV2,
+) => Promise<void>;
 
 export type ManagedTargetAssignmentErrorCode =
   | "MANAGED_TARGET_ASSIGNMENT_INVALID"
@@ -345,7 +402,162 @@ export function createD1ManagedTargetAssignmentPort(
       }
       return Object.freeze({ ...command, event_revision: row.event_revision });
     },
+    async appendProductDecisionV2(
+      input: ManagedSearchProductDecisionCommandV2,
+      authorize: ManagedSearchProductDecisionAuthorizer,
+    ): Promise<ManagedSearchProductDecisionEventV2> {
+      const command = parseManagedSearchProductDecisionCommandV2(input);
+      try {
+        await authorize(command);
+      } catch (cause) {
+        throw new ManagedTargetAssignmentError(
+          "MANAGED_TARGET_ASSIGNMENT_AUTHORIZATION_DENIED",
+          "owner authorization did not admit this product decision",
+          cause,
+        );
+      }
+
+      const target = command.event_kind === "ASSIGN" ? command.target : null;
+      const previous = command.event_kind === "RETIRE"
+        ? command.previous_assignment_revision
+        : null;
+      const insertPrefix =
+        "INSERT INTO managed_target_assignment_event(" +
+        "project_id,event_revision,expected_event_revision,event_kind,project_generation," +
+        "project_owner_principal_ref,target_namespace,managed_instance_id,managed_generation," +
+        "target_profile_identity_sha256,previous_assignment_revision,actor_kind,actor_principal_ref," +
+        "authorization_receipt_ref,created_at,decision_version,selection_mode,product_alias) ";
+      const insertValues = trustedAuthorizationExpiry === undefined
+        ? "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+        : "SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,? " +
+          "WHERE julianday(?)>julianday('now') ";
+      const insertReturning =
+        "RETURNING project_id,event_revision,expected_event_revision,event_kind,project_generation," +
+        "project_owner_principal_ref,target_namespace,managed_instance_id,managed_generation," +
+        "target_profile_identity_sha256,previous_assignment_revision,actor_kind,actor_principal_ref," +
+        "authorization_receipt_ref,created_at,decision_version,selection_mode,product_alias";
+      let row: ManagedSearchProductDecisionD1Row | null;
+      try {
+        const values = [
+          command.project_id,
+          command.expected_event_revision + 1,
+          command.expected_event_revision,
+          command.event_kind,
+          command.project_generation,
+          command.project_owner_principal_ref,
+          target?.namespace ?? null,
+          target?.managed_instance_id ?? null,
+          target?.managed_generation ?? null,
+          target?.target_profile_identity_sha256 ?? null,
+          previous,
+          command.actor.kind,
+          command.actor.principal_ref,
+          command.actor.authorization_receipt_ref,
+          command.created_at,
+          command.decision_version,
+          command.selection_mode,
+          command.product_alias,
+        ] as const;
+        const statement = database.prepare(insertPrefix + insertValues + insertReturning);
+        row = await (trustedAuthorizationExpiry === undefined
+          ? statement.bind(...values)
+          : statement.bind(...values, trustedAuthorizationExpiry)
+        ).first<ManagedSearchProductDecisionD1Row>();
+      } catch (cause) {
+        const message = cause instanceof Error ? cause.message : String(cause);
+        const knownCodes: readonly ManagedTargetAssignmentErrorCode[] = [
+          "MANAGED_TARGET_ASSIGNMENT_CAS_CONFLICT",
+          "MANAGED_TARGET_ASSIGNMENT_PROJECT_AUTHORITY_STALE",
+          "MANAGED_TARGET_ASSIGNMENT_OWNER_ACTOR_MISMATCH",
+          "MANAGED_TARGET_ASSIGNMENT_ACTIVE_REQUIRES_RETIREMENT",
+          "MANAGED_TARGET_ASSIGNMENT_RETIREMENT_STALE",
+        ];
+        const knownCode = knownCodes.find((code) => message.includes(code));
+        throw new ManagedTargetAssignmentError(
+          knownCode ?? "MANAGED_TARGET_ASSIGNMENT_OUTCOME_UNKNOWN",
+          knownCode === undefined
+            ? "product decision append outcome is unknown; reconcile the current head before retrying"
+            : message,
+          cause,
+        );
+      }
+
+      if (row === null && trustedAuthorizationExpiry !== undefined) {
+        throw new ManagedTargetAssignmentError(
+          "MANAGED_TARGET_ASSIGNMENT_AUTHORIZATION_DENIED",
+          "verified owner Access expired before the atomic product decision append",
+        );
+      }
+      if (row === null || !matchesProductDecisionV2(row, command, target, previous)) {
+        throw new ManagedTargetAssignmentError(
+          "MANAGED_TARGET_ASSIGNMENT_OUTCOME_UNKNOWN",
+          "product decision append readback differs from its authorized command",
+        );
+      }
+      return Object.freeze({ ...command, event_revision: row.event_revision });
+    },
   });
+}
+
+interface ManagedSearchProductDecisionD1Row extends ManagedTargetAssignmentD1Row {
+  readonly decision_version: number;
+  readonly selection_mode: string;
+  readonly product_alias: string;
+}
+
+function parseManagedSearchProductDecisionCommandV2(
+  input: unknown,
+): ManagedSearchProductDecisionCommandV2 {
+  const value = record(input, "product decision command");
+  exactKeys(value, [
+    "event_kind",
+    "project_id",
+    "project_generation",
+    "project_owner_principal_ref",
+    "expected_event_revision",
+    "actor",
+    "created_at",
+    "decision_version",
+    "selection_mode",
+    "product_alias",
+    ...(value.event_kind === "ASSIGN" ? ["target"] : ["previous_assignment_revision"]),
+  ], "product decision command");
+  if (value.decision_version !== 2 ||
+      value.selection_mode !== "STABLE_PHYSICAL_PROFILE_V2" ||
+      value.product_alias !== "primary") {
+    invalid("product decision must use the reviewed V2 primary profile selection");
+  }
+  const baseInput: Record<string, unknown> = {
+    event_kind: value.event_kind,
+    project_id: value.project_id,
+    project_generation: value.project_generation,
+    project_owner_principal_ref: value.project_owner_principal_ref,
+    expected_event_revision: value.expected_event_revision,
+    actor: value.actor,
+    created_at: value.created_at,
+    ...(value.event_kind === "ASSIGN"
+      ? { target: value.target }
+      : { previous_assignment_revision: value.previous_assignment_revision }),
+  };
+  const parsed = parseManagedTargetAssignmentCommand(baseInput);
+  return Object.freeze({
+    ...parsed,
+    decision_version: 2,
+    selection_mode: "STABLE_PHYSICAL_PROFILE_V2",
+    product_alias: "primary",
+  }) as ManagedSearchProductDecisionCommandV2;
+}
+
+function matchesProductDecisionV2(
+  row: ManagedSearchProductDecisionD1Row,
+  command: ManagedSearchProductDecisionCommandV2,
+  target: ManagedTargetIdentity | null,
+  previous: number | null,
+): boolean {
+  return matchesCommand(row, command, target, previous) &&
+    row.decision_version === 2 &&
+    row.selection_mode === "STABLE_PHYSICAL_PROFILE_V2" &&
+    row.product_alias === "primary";
 }
 
 function matchesCommand(
