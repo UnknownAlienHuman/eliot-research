@@ -82,6 +82,5 @@ export function ConnectionsPanel({ locale, apis, privacy, context, projects, pro
       key={`${context.cacheEpoch}:${context.principal}:${context.credentialGeneration}:${context.deploymentGeneration}:${projectId}`}
       locale={locale} apis={apis} privacy={privacy} context={context} projectPage={page} projectId={projectId}
       projectQueryKey={projectQueryKey} providers={providers} models={models} />}
-    <ComputerAgentConnectionsPanel locale={locale} apis={apis} privacy={privacy} context={context} />
   </>;
 }

@@ -276,6 +276,11 @@ export function ImportPanel({ apis, privacy, context, locale, onImportCommitted 
   // One step at a time: each runs only when the previous one is confirmed, and any uncertainty,
   // refusal or failure stops the chain and leaves that step's own recovery action to the owner.
   // A still-running conversion or admission is re-read with the same identity a bounded number of times.
+  //
+  // Conversion has no GET status route, so an uncertain or STARTED conversion is never re-POSTed by
+  // the chain: automatic progress stops there and leaves the owner's own same-id request to retry.
+  // Admission uncertainty is only re-read automatically once an admission operation id is known, so an
+  // automatic chain never mints a second admission POST. Both stops keep the owner's manual buttons.
   useEffect(() => {
     if (!auto || busy || running.current || view !== 'file') return undefined;
     if (error) { setAuto(false); return undefined; }
@@ -299,10 +304,13 @@ export function ImportPanel({ apis, privacy, context, locale, onImportCommitted 
     if (file.conversion?.state === 'FAILED') { setAuto(false); return undefined; }
     if (!file.conversion && current.request && !file.uncertain) { convert(current.request); return undefined; }
     if (file.uncertain === 'conversion' || file.conversion?.state === 'STARTED' || file.conversion?.state === 'UNKNOWN') {
-      return again(() => { const request = read().request; if (request) convert(request); });
+      setAuto(false); return undefined;
     }
     if (file.conversion?.state === 'COMPLETE' && !file.admission && !file.uncertain) { admit(); return undefined; }
-    if (file.uncertain === 'admission' || file.admission) return again(admit);
+    if (file.uncertain === 'admission' || file.admission) {
+      const operationId = file.admission?.admission_operation_id;
+      return operationId === undefined ? (setAuto(false), undefined) : again(admit);
+    }
     setAuto(false);
     return undefined;
   });
