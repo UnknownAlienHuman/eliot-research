@@ -693,15 +693,51 @@ try {
     INSERT INTO project (
       project_id, title, default_disclosure, retention_policy_ref, default_source_policy_ref,
       default_model_profile_ref, default_depth_profile_ref, generation, created_at, membership_generation
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 1)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 7)
   `).run(sourceProjectId, "copy fixture", "PRIVATE", "retention-fixture", "source-policy-fixture",
+    "model-profile-fixture", "depth-profile-fixture", now);
+  const insertMembershipSource = (membershipSourceId) => db.prepare(`
+    INSERT INTO source (
+      source_id, source_namespace_id, source_owner_system_id, source_owner_generation,
+      ownership_mode, kind, title, default_storage_policy, default_residency_profile_id,
+      source_class, license_policy_ref, default_retention_policy_id, head_rev, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
+  `).run(
+    membershipSourceId,
+    `namespace-${membershipSourceId}`,
+    "system-managed-item-protocol-fixture",
+    ownerGeneration,
+    "erc_owned",
+    "document",
+    `Membership churn fixture ${membershipSourceId}`,
+    "storage-policy-fixture",
+    "residency-profile-fixture",
+    "owner_document",
+    "license-policy-fixture",
+    "retention-policy-fixture",
+    now,
+  );
+  const insertFixtureMembership = (projectId, membershipSourceId, openingGeneration) => db.prepare(`
+    INSERT INTO project_source_membership (
+      project_id, source_id, role, valid_from, valid_to, membership_generation,
+      membership_id, membership_revision
+    ) VALUES (?, ?, 'member', ?, NULL, ?, json_array(?, ?), 1)
+  `).run(projectId, membershipSourceId, now, openingGeneration, projectId, membershipSourceId);
+  const legacyProjectId = "project-managed-copy-legacy-fixture";
+  db.prepare(`
+    INSERT INTO project (
+      project_id, title, default_disclosure, retention_policy_ref, default_source_policy_ref,
+      default_model_profile_ref, default_depth_profile_ref, generation, created_at, membership_generation
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, 3)
+  `).run(legacyProjectId, "legacy copy fixture", "PRIVATE", "retention-fixture", "source-policy-fixture",
     "model-profile-fixture", "depth-profile-fixture", now);
   db.prepare(`
     INSERT INTO project_source_membership (
       project_id, source_id, role, valid_from, valid_to, membership_generation,
       membership_id, membership_revision
-    ) VALUES (?, ?, 'member', ?, NULL, 1, json_array(?, ?), 1)
+    ) VALUES (?, ?, 'member', ?, NULL, 7, json_array(?, ?), 1)
   `).run(sourceProjectId, sourceId, now, sourceProjectId, sourceId);
+  insertFixtureMembership(legacyProjectId, sourceId, 3);
   const copyGeneration = "versioned-generation-copy-ready";
   insertCandidate(copyGeneration);
   db.prepare(`
@@ -742,7 +778,7 @@ try {
   `);
   const copyEffectValues = [
     sourceRevisionRef, copyGeneration, jobId, copyItemKey, canonicalGeneration, canonicalItemKey,
-    sourceProjectId, `project:${sourceProjectId}:generation:1`, 1, null, null, null, null, null,
+    sourceProjectId, `project:${sourceProjectId}:generation:7`, 7, null, null, null, null, null,
     "PROJECT_COPY_V1", metadataDigest,
     "projection/canonical/items/body.md", "a".repeat(64), 0, 0, 1, intentId, 1, attemptId,
     operationId, null, "items-instance-fixture", "items-generation-fixture", "builtin", copyProviderKey,
@@ -758,7 +794,7 @@ try {
     FROM projection_managed_item_effect WHERE source_revision_ref=? AND projection_generation=? AND item_key=?
   `).get(sourceRevisionRef, copyGeneration, copyItemKey);
   assert.equal(validCopyEffect.copy_layout, "PROJECT_COPY_V1");
-  assert.equal(validCopyEffect.project_membership_id, `project:${sourceProjectId}:generation:1`);
+  assert.equal(validCopyEffect.project_membership_id, `project:${sourceProjectId}:generation:7`);
   assert.equal(validCopyEffect.provider_key, copyProviderKey);
   assert.equal(validCopyEffect.canonical_projection_generation, canonicalGeneration);
 
@@ -791,9 +827,25 @@ try {
   assert.throws(() => insertCopyEffect.run(...targetMismatchCopyValues), undefined,
     "PROJECT_COPY_V1 metadata digest must match the immutable target receipt");
 
-  db.prepare(`
-    UPDATE project SET membership_generation=2 WHERE project_id=?
+  const sourceIdB = `${sourceId}-membership-b`;
+  insertMembershipSource(sourceIdB);
+  const firstAggregateBump = db.prepare(`
+    UPDATE project SET membership_generation=8
+    WHERE project_id=? AND membership_generation=7
   `).run(sourceProjectId);
+  assert.equal(firstAggregateBump.changes, 1, "adding project membership B advances the aggregate from 7 to 8");
+  insertFixtureMembership(sourceProjectId, sourceIdB, 8);
+  assert.deepEqual(
+    db.prepare(`
+      SELECT source_id, membership_generation FROM project_source_membership
+      WHERE project_id=? AND valid_to IS NULL ORDER BY source_id
+    `).all(sourceProjectId).map((row) => [row.source_id, row.membership_generation]),
+    [
+      [sourceId, 7],
+      [sourceIdB, 8],
+    ],
+    "B churn retains A's opening generation while the project aggregate advances",
+  );
 
   const v2CopyGeneration = "versioned-generation-copy-v2-ready";
   insertCandidate(v2CopyGeneration);
@@ -845,25 +897,37 @@ try {
 
   const v2StableMembershipId = `project-membership-${"9".repeat(48)}`;
   const v2FolderToken = "8".repeat(43);
-  const makeV2CopyValues = ({ identityVersion, desiredIndex, itemKey }) => {
+  const v2LegacyFolderToken = "7".repeat(43);
+  const makeV2CopyValues = ({
+    identityVersion,
+    desiredIndex,
+    itemKey,
+    projectId = sourceProjectId,
+    openingGeneration = 7,
+    aggregateGeneration = 8,
+    generation = v2CopyGeneration,
+  }) => {
     const values = [...copyEffectValues];
-    values[copyEffectColumnIndex.projection_generation] = v2CopyGeneration;
+    values[copyEffectColumnIndex.projection_generation] = generation;
     values[copyEffectColumnIndex.item_key] = itemKey;
     values[copyEffectColumnIndex.project_membership_id] = identityVersion === 1
-      ? `project:${sourceProjectId}:generation:1`
+      ? `project:${projectId}:generation:${openingGeneration}`
       : v2StableMembershipId;
+    values[copyEffectColumnIndex.project_id] = projectId;
+    values[copyEffectColumnIndex.membership_generation] = openingGeneration;
     values[copyEffectColumnIndex.membership_identity_version] = identityVersion;
     values[copyEffectColumnIndex.legacy_project_membership_id] = identityVersion === 1
-      ? `project:${sourceProjectId}:generation:1`
+      ? `project:${projectId}:generation:${openingGeneration}`
       : null;
     values[copyEffectColumnIndex.stable_project_membership_id] = identityVersion === 2
       ? v2StableMembershipId
       : null;
     values[copyEffectColumnIndex.membership_revision] = identityVersion === 2 ? 1 : null;
-    values[copyEffectColumnIndex.project_membership_generation] = 2;
+    values[copyEffectColumnIndex.project_membership_generation] = aggregateGeneration;
     values[copyEffectColumnIndex.copy_layout] = "PROJECT_COPY_V2";
     values[copyEffectColumnIndex.desired_index] = desiredIndex;
-    values[copyEffectColumnIndex.provider_key] = `projection/${v2FolderToken}/${itemKey}.md`;
+    const folderToken = identityVersion === 1 ? v2LegacyFolderToken : v2FolderToken;
+    values[copyEffectColumnIndex.provider_key] = `projection/${folderToken}/${itemKey}.md`;
     return values;
   };
   const v2StableCopyValues = makeV2CopyValues({
@@ -874,6 +938,9 @@ try {
   const v2LegacyCopyValues = makeV2CopyValues({
     identityVersion: 1,
     desiredIndex: 1,
+    projectId: legacyProjectId,
+    openingGeneration: 3,
+    aggregateGeneration: 3,
     itemKey: `projection-${"6".repeat(48)}`,
   });
   insertCopyEffect.run(...v2StableCopyValues);
@@ -890,13 +957,14 @@ try {
       effect.legacy_project_membership_id, effect.stable_project_membership_id, effect.membership_revision,
       effect.project_membership_generation, effect.project_membership_id]),
     [
-      [1, 2, null, v2StableMembershipId, 1, 2, v2StableMembershipId],
-      [1, 1, `project:${sourceProjectId}:generation:1`, null, null, 2,
-        `project:${sourceProjectId}:generation:1`],
+      [7, 2, null, v2StableMembershipId, 1, 8, v2StableMembershipId],
+      [3, 1, `project:${legacyProjectId}:generation:3`, null, null, 3,
+        `project:${legacyProjectId}:generation:3`],
     ],
     "V2 stores opening-row generation separately from aggregate currentness for both identity versions",
   );
-  assert.ok(v2Effects.every((effect) => effect.provider_key.startsWith(`projection/${v2FolderToken}/`)));
+  assert.ok(v2Effects[0]?.provider_key.startsWith(`projection/${v2FolderToken}/`));
+  assert.ok(v2Effects[1]?.provider_key.startsWith(`projection/${v2LegacyFolderToken}/`));
   assert.ok(v2Effects.every((effect) => JSON.parse(effect.metadata_json).projection_generation === metadataDigest));
 
   const rejectV2Effect = (mutate, reason) => {
@@ -913,7 +981,7 @@ try {
     "a V2 effect cannot substitute another per-pair membership revision",
   );
   rejectV2Effect(
-    (values) => { values[copyEffectColumnIndex.project_membership_generation] = 1; },
+    (values) => { values[copyEffectColumnIndex.project_membership_generation] = 7; },
     "a V2 effect must bind the current aggregate membership generation separately",
   );
   rejectV2Effect(
@@ -947,6 +1015,90 @@ try {
   v2EffectWithoutIndex[copyEffectColumnIndex.projection_generation] = "copy-identity-phase-valid";
   assert.throws(() => insertCopyEffect.run(...v2EffectWithoutIndex), undefined,
     "a PROJECT_COPY_V2 effect requires its exact materialized source-scoped map index receipt");
+
+  const sourceIdC = `${sourceId}-membership-c`;
+  insertMembershipSource(sourceIdC);
+  const secondAggregateBump = db.prepare(`
+    UPDATE project SET membership_generation=9
+    WHERE project_id=? AND membership_generation=8
+  `).run(sourceProjectId);
+  assert.equal(secondAggregateBump.changes, 1, "adding membership C advances the aggregate from 8 to 9");
+  insertFixtureMembership(sourceProjectId, sourceIdC, 9);
+  const staleV2CopyValues = makeV2CopyValues({
+    identityVersion: 2,
+    desiredIndex: 2,
+    itemKey: `projection-${"3".repeat(48)}`,
+    aggregateGeneration: 8,
+  });
+  assert.throws(() => insertCopyEffect.run(...staleV2CopyValues), undefined,
+    "a V2 writer fenced at aggregate 8 is rejected after the current project head advances to 9");
+
+  const staleExpectedCas = db.prepare(`
+    UPDATE project SET membership_generation=9
+    WHERE project_id=? AND membership_generation=8
+  `).run(sourceProjectId);
+  assert.equal(staleExpectedCas.changes, 0, "a stale expected-CAS 8-to-9 write changes no row");
+  const retriedCas = db.prepare(`
+    UPDATE project SET membership_generation=10
+    WHERE project_id=? AND membership_generation=9
+  `).run(sourceProjectId);
+  assert.equal(retriedCas.changes, 1, "the CAS retry with the current expected head 9 succeeds");
+  const sourceIdD = `${sourceId}-membership-d`;
+  insertMembershipSource(sourceIdD);
+  insertFixtureMembership(sourceProjectId, sourceIdD, 10);
+
+  const v2RetryGeneration = "versioned-generation-copy-v2-retry";
+  insertCandidate(v2RetryGeneration);
+  const v2RetryIndexRef = "projection/source-prefix/copy-maps/index/target/scope/retry/" +
+    `${"f".repeat(64)}.json`;
+  db.prepare(`
+    UPDATE projection_generation SET state='MATERIALIZED', item_count=1, item_set_digest=?,
+      work_manifest_ref='projection/v2-retry/manifest.json', work_manifest_sha256=?,
+      canonical_projection_generation=?, canonical_item_count=1, canonical_item_set_digest=?,
+      provider_copy_count=2, provider_copy_set_digest=?,
+      project_copy_map_index_protocol='eliotr.managed-project-copy-map-index.v2',
+      project_copy_map_index_ref=?, project_copy_map_index_sha256=?,
+      project_copy_scope_snapshot_id='scope-snapshot-copy-v2-retry',
+      project_copy_scope_snapshot_revision=4, project_copy_scope_snapshot_digest=?, updated_at=?
+    WHERE source_revision_ref=? AND projection_generation=? AND state='PREPARING'
+  `).run(
+    "a".repeat(64), "b".repeat(64), canonicalGeneration, "a".repeat(64),
+    "f".repeat(64), v2RetryIndexRef, "9".repeat(64), "8".repeat(64), now,
+    sourceRevisionRef, v2RetryGeneration,
+  );
+  const v2RetryStableValues = makeV2CopyValues({
+    identityVersion: 2,
+    desiredIndex: 0,
+    itemKey: `projection-${"7".repeat(48)}`,
+    aggregateGeneration: 10,
+    generation: v2RetryGeneration,
+  });
+  const v2RetryLegacyValues = makeV2CopyValues({
+    identityVersion: 1,
+    desiredIndex: 1,
+    itemKey: `projection-${"6".repeat(48)}`,
+    projectId: legacyProjectId,
+    openingGeneration: 3,
+    aggregateGeneration: 3,
+    generation: v2RetryGeneration,
+  });
+  insertCopyEffect.run(...v2RetryStableValues);
+  insertCopyEffect.run(...v2RetryLegacyValues);
+  const v2RetryStableReceipt = db.prepare(`
+    SELECT membership_generation, project_membership_generation, provider_key
+    FROM projection_managed_item_effect
+    WHERE source_revision_ref=? AND projection_generation=? AND item_key=?
+  `).get(sourceRevisionRef, v2RetryGeneration, `projection-${"7".repeat(48)}`);
+  assert.deepEqual(
+    [v2RetryStableReceipt.membership_generation, v2RetryStableReceipt.project_membership_generation],
+    [7, 10],
+    "retry rebinds the aggregate receipt while retaining A's opening generation",
+  );
+  assert.equal(
+    v2RetryStableReceipt.provider_key,
+    v2Effects[0]?.provider_key,
+    "B/C/D aggregate churn does not change the stable provider key for unchanged A",
+  );
 
   const targetPinGuards = db.prepare(`
     SELECT COUNT(*) AS count FROM sqlite_schema
@@ -1009,5 +1161,5 @@ try {
 }
 
 console.log(
-  "managed-item protocol native migration fixture: PASS (Core migrations through 0149, flat/readback and UNIQUE preservation, V1 target pin, V2 identity/index binding, aggregate-versus-opening generation, and invalid insert/phase/metadata negatives)",
+  "managed-item protocol native migration fixture: PASS (Core migrations through 0149, flat/readback and UNIQUE preservation, V1 target pin, mixed-row V2 opening 7/current aggregate 8 after B churn, stale 8-to-9 CAS rejection and retry, stable-key preservation, and V2 insert/phase/metadata negatives)",
 );
