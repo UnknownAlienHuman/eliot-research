@@ -27,6 +27,29 @@ export interface ManagedProjectProviderKey {
   readonly membership_generation: number;
 }
 
+export interface ManagedProjectProviderIdentityV2 {
+  readonly instance_id: string;
+  readonly projection_generation: string;
+  readonly source_revision_ref: string;
+  readonly project_id: string;
+  readonly stable_project_membership_id: string;
+  readonly membership_revision: number;
+}
+
+export interface ManagedProjectProviderKeyInputV2 extends ManagedProjectProviderIdentityV2 {
+  readonly item_key: string;
+}
+
+export interface ManagedProjectProviderKeyV2 {
+  readonly item_key: string;
+  readonly provider_key: string;
+  readonly folder_prefix: string;
+  readonly source_revision_ref: string;
+  readonly project_id: string;
+  readonly stable_project_membership_id: string;
+  readonly membership_revision: number;
+}
+
 export interface ManagedProjectMembershipIdentity {
   readonly project_id: string;
   readonly project_membership_id: string;
@@ -175,6 +198,65 @@ export async function createManagedProjectProviderKey(
     project_id: projectId,
     project_membership_id: membershipId,
     membership_generation: input.membership_generation,
+  });
+}
+
+function validatedIdentityV2(input: ManagedProjectProviderIdentityV2) {
+  const instanceId = identifier(input.instance_id, "instance_id");
+  const generation = identifier(input.projection_generation, "projection_generation");
+  const sourceRevision = identifier(input.source_revision_ref, "source_revision_ref");
+  const projectId = identifier(input.project_id, "project_id");
+  const stableMembershipId = identifier(input.stable_project_membership_id, "stable_project_membership_id");
+  if (!Number.isSafeInteger(input.membership_revision) || input.membership_revision < 1) {
+    invalid("membership_revision must be a positive safe integer");
+  }
+  return { instanceId, generation, sourceRevision, projectId, stableMembershipId };
+}
+
+/** Return the bounded V2 membership folder; V1 folder bytes remain owned by managedProjectFolderPrefix. */
+export async function managedProjectFolderPrefixV2(
+  input: ManagedProjectProviderIdentityV2,
+): Promise<string> {
+  const { instanceId, generation, sourceRevision, projectId, stableMembershipId } = validatedIdentityV2(input);
+  const identity = JSON.stringify([
+    "PROJECT_COPY_V2",
+    instanceId,
+    generation,
+    sourceRevision,
+    projectId,
+    stableMembershipId,
+    input.membership_revision,
+  ]);
+  const digest = base64Url(await sha256(new TextEncoder().encode(identity)));
+  const folderPrefix = `${PREFIX}${digest}/`;
+  if (new TextEncoder().encode(folderPrefix).byteLength >= MANAGED_PROJECT_FOLDER_FILTER_MAX_BYTES) {
+    invalid("PROJECT_COPY_V2 folder prefix exceeds the 64-byte filterable metadata prefix");
+  }
+  return folderPrefix;
+}
+
+/** Build a V2 provider key from the bounded membership ID and per-pair revision only. */
+export async function createManagedProjectProviderKeyV2(
+  input: ManagedProjectProviderKeyInputV2,
+): Promise<ManagedProjectProviderKeyV2> {
+  const { sourceRevision, projectId, stableMembershipId } = validatedIdentityV2(input);
+  if (typeof input.item_key !== "string" || !ITEM_KEY.test(input.item_key)) {
+    invalid("PROJECT_COPY_V2 item_key must retain its canonical 59-character projection hash");
+  }
+  const folderPrefix = await managedProjectFolderPrefixV2(input);
+  const providerKey = `${folderPrefix}${input.item_key}.md`;
+  const encoder = new TextEncoder();
+  if (encoder.encode(providerKey).byteLength > MANAGED_PROJECT_PROVIDER_KEY_MAX_BYTES) {
+    invalid("PROJECT_COPY_V2 provider key exceeds the 128-byte Items key limit");
+  }
+  return Object.freeze({
+    item_key: input.item_key,
+    provider_key: providerKey,
+    folder_prefix: folderPrefix,
+    source_revision_ref: sourceRevision,
+    project_id: projectId,
+    stable_project_membership_id: stableMembershipId,
+    membership_revision: input.membership_revision,
   });
 }
 
