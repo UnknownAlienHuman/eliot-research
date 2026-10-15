@@ -5,7 +5,7 @@ import type {
   ProjectOwnerListResult,
   UpdateProjectRequest,
 } from "@eliotr/interfaces";
-import { sha256Utf8 } from "@eliotr/platform-cloudflare";
+import { sha256Utf8, type PreparedIntentWithOutboxMutation } from "@eliotr/platform-cloudflare";
 import {
   CLIENT_CLASS,
   MAX_SOURCE_IDS,
@@ -102,11 +102,106 @@ export type {
   ProjectAttachmentBinding,
 } from "./project-owner-contract.js";
 
+export interface ProjectMembershipIndexMutationInput {
+  readonly operation: "CREATE" | "UPDATE";
+  readonly project_id: string;
+  readonly principal_ref: string;
+  readonly mutation_principal_ref: string;
+  readonly mutation_idempotency_key: string;
+  readonly request_sha256: string;
+  readonly project_revision: number;
+  readonly created_at: string;
+}
+
+export type ProjectMembershipIndexOutboxPlanner = (
+  input: ProjectMembershipIndexMutationInput,
+) => Promise<PreparedIntentWithOutboxMutation>;
+
 export interface ProjectOwnerCapabilityOptions {
   readonly database: D1Database;
   readonly deployment_generation: string;
   readonly now?: () => number;
   readonly source_authority: ProjectOwnerSourceAuthority;
+  readonly prepare_project_membership_index?: ProjectMembershipIndexOutboxPlanner;
+}
+
+async function mutationIntroducedMembership(
+  database: D1Database,
+  input: ProjectMembershipIndexMutationInput,
+): Promise<boolean> {
+  let row: { readonly membership_change: unknown } | null;
+  try {
+    row = await database.prepare(
+      "SELECT CASE " +
+      "WHEN ?5>1 AND NOT EXISTS (SELECT 1 FROM project_mutation_receipt previous " +
+      "WHERE previous.project_id=mutation_receipt.project_id AND previous.project_revision=mutation_receipt.project_revision-1) THEN -1 " +
+      "WHEN EXISTS (SELECT 1 FROM json_each(mutation_receipt.response_json,'$.source_ids') added " +
+      "WHERE NOT EXISTS (SELECT 1 FROM project_mutation_receipt previous, " +
+      "json_each(previous.response_json,'$.source_ids') prior " +
+      "WHERE previous.project_id=mutation_receipt.project_id AND previous.project_revision=mutation_receipt.project_revision-1 " +
+      "AND prior.value=added.value)) THEN 1 ELSE 0 END AS membership_change " +
+      "FROM project_mutation_receipt mutation_receipt WHERE mutation_receipt.principal_ref=?1 AND mutation_receipt.idempotency_key=?2 " +
+      "AND mutation_receipt.operation=?3 AND mutation_receipt.project_id=?4 AND mutation_receipt.request_sha256=?6 " +
+      "AND mutation_receipt.project_revision=?5 LIMIT 1",
+    ).bind(
+      input.mutation_principal_ref,
+      input.mutation_idempotency_key,
+      input.operation,
+      input.project_id,
+      input.project_revision,
+      input.request_sha256,
+    ).first<{ membership_change: unknown }>();
+  } catch (cause) {
+    fail("PROJECT_STORAGE_UNAVAILABLE", 503, "project membership-index receipt read is unavailable", true, cause);
+  }
+  if (row === null) {
+    fail("PROJECT_SETTLEMENT_UNCERTAIN", 503, "project membership-index mutation receipt is missing", true);
+  }
+  if (row.membership_change === -1) {
+    fail("PROJECT_SETTLEMENT_UNCERTAIN", 503, "prior project revision receipt is missing", true);
+  }
+  if (row.membership_change !== 0 && row.membership_change !== 1) {
+    fail("PROJECT_STORAGE_UNAVAILABLE", 503, "project membership-index receipt shape is invalid", true);
+  }
+  return row.membership_change === 1;
+}
+
+async function ensureMembershipIndexOutbox(
+  database: D1Database,
+  planner: ProjectMembershipIndexOutboxPlanner | undefined,
+  input: ProjectMembershipIndexMutationInput,
+  prepared?: PreparedIntentWithOutboxMutation,
+): Promise<void> {
+  if (planner === undefined || !await mutationIntroducedMembership(database, input)) return;
+  const plan = prepared ?? await planner(input);
+  let existing: Awaited<ReturnType<PreparedIntentWithOutboxMutation["readback"]>>;
+  try {
+    existing = await plan.readback();
+  } catch (cause) {
+    fail("PROJECT_SETTLEMENT_UNCERTAIN", 503, "project membership-index outbox readback is unavailable", true, cause);
+  }
+  if (existing !== null) return;
+
+  try {
+    const results = await database.batch([...plan.statements]);
+    plan.assertBatchResults(results);
+  } catch (cause) {
+    try {
+      if (await plan.readback() !== null) return;
+    } catch {
+      // Preserve the original uncertain append as the cause below.
+    }
+    fail("PROJECT_SETTLEMENT_UNCERTAIN", 503, "project membership-index outbox append is uncertain", true, cause);
+  }
+  let settled: Awaited<ReturnType<PreparedIntentWithOutboxMutation["readback"]>>;
+  try {
+    settled = await plan.readback();
+  } catch (cause) {
+    fail("PROJECT_SETTLEMENT_UNCERTAIN", 503, "project membership-index outbox readback is unavailable", true, cause);
+  }
+  if (settled === null) {
+    fail("PROJECT_SETTLEMENT_UNCERTAIN", 503, "project membership-index outbox readback is missing", true);
+  }
 }
 
 function mutationJson(operation: "CREATE" | "UPDATE", context: ProjectOwnerActor, projectId: string,
@@ -193,8 +288,21 @@ export function createProjectOwnerCapability(options: ProjectOwnerCapabilityOpti
     const derivedDigest = await sha256Utf8(mutationJson("CREATE", owner, "derived", key, input));
     const projectId = createProjectId(derivedDigest);
     const requestSha = await sha256Utf8(mutationJson("CREATE", owner, projectId, key, input));
-    const existing = checkExisting(await readReceipt(options.database, owner.principal_ref, key), "CREATE", projectId, requestSha);
-    if (existing !== null) return existing;
+    const existingMutation = await readReceipt(options.database, owner.principal_ref, key);
+    const existing = checkExisting(existingMutation, "CREATE", projectId, requestSha);
+    if (existing !== null && existingMutation !== null) {
+      await ensureMembershipIndexOutbox(options.database, options.prepare_project_membership_index, {
+        operation: "CREATE",
+        project_id: projectId,
+        principal_ref: owner.principal_ref,
+        mutation_principal_ref: owner.principal_ref,
+        mutation_idempotency_key: key,
+        request_sha256: requestSha,
+        project_revision: existing.revision,
+        created_at: existingMutation.created_at,
+      });
+      return existing;
+    }
 
     const clock = nowValue(now);
     const defaults = projectDefaults(projectId);
@@ -211,8 +319,21 @@ export function createProjectOwnerCapability(options: ProjectOwnerCapabilityOpti
     const responseSha = await sha256Utf8(responseJson);
     const sourceJson = JSON.stringify(input.source_ids);
     const cte = options.source_authority.eligibleSourceCte("?2", "?3", "?4", "?1");
+    const membershipIndexMutation: ProjectMembershipIndexMutationInput = {
+      operation: "CREATE",
+      project_id: projectId,
+      principal_ref: owner.principal_ref,
+      mutation_principal_ref: owner.principal_ref,
+      mutation_idempotency_key: key,
+      request_sha256: requestSha,
+      project_revision: 1,
+      created_at: clock.iso,
+    };
+    const membershipIndexPlan = input.source_ids.length === 0 || options.prepare_project_membership_index === undefined
+      ? undefined
+      : await options.prepare_project_membership_index(membershipIndexMutation);
     try {
-      const results = await options.database.batch([
+      const mutationStatements = [
         options.database.prepare(
           `${cte} INSERT INTO project(project_id,title,default_disclosure,retention_policy_ref,default_source_policy_ref,` +
           "default_model_profile_ref,default_depth_profile_ref,generation,created_at) " +
@@ -244,11 +365,26 @@ export function createProjectOwnerCapability(options: ProjectOwnerCapabilityOpti
         options.database.prepare(
           "DELETE FROM project_mutation_guard WHERE principal_ref=?1 AND idempotency_key=?2 AND project_id=?3",
         ).bind(owner.principal_ref, key, projectId),
+      ];
+      const results = await options.database.batch([
+        ...mutationStatements,
+        ...(membershipIndexPlan?.statements ?? []),
       ]);
-      exactBatchResults(results, [1, 1, 1, input.source_ids.length, 1, 1]);
+      exactBatchResults(results, [
+        1, 1, 1, input.source_ids.length, 1, 1,
+        ...(membershipIndexPlan === undefined ? [] : [1, 1]),
+      ]);
+      membershipIndexPlan?.assertBatchResults(results, mutationStatements.length);
     } catch (cause) {
-      const raced = checkExisting(await readReceipt(options.database, owner.principal_ref, key), "CREATE", projectId, requestSha);
-      if (raced !== null) return raced;
+      const racedMutation = await readReceipt(options.database, owner.principal_ref, key);
+      const raced = checkExisting(racedMutation, "CREATE", projectId, requestSha);
+      if (raced !== null && racedMutation !== null) {
+        await ensureMembershipIndexOutbox(options.database, options.prepare_project_membership_index, {
+          ...membershipIndexMutation,
+          created_at: racedMutation.created_at,
+        }, membershipIndexPlan);
+        return raced;
+      }
       const base = await readBase(options.database, owner.principal_ref, projectId);
       if (base !== null) fail("PROJECT_SETTLEMENT_UNCERTAIN", 503, "project creation settled without a receipt", true, cause);
       if (await options.source_authority.eligibleCount(options.database, input.source_ids, owner.principal_ref, clock.iso) !== input.source_ids.length) {
@@ -274,8 +410,21 @@ export function createProjectOwnerCapability(options: ProjectOwnerCapabilityOpti
     const requestSha = attachment?.request_sha256 ?? await sha256Utf8(mutationJson("UPDATE", actorContext, projectId, key, input));
     const receipt = () => readReceipt(options.database, actor, key, attachment?.binding);
     const disclose = (result: InternalProjectOwnerResult) => attachment?.disclose(result) ?? Promise.resolve(result);
-    const existing = checkExisting(await receipt(), "UPDATE", projectId, requestSha);
-    if (existing !== null) return disclose(existing);
+    const existingMutation = await receipt();
+    const existing = checkExisting(existingMutation, "UPDATE", projectId, requestSha);
+    if (existing !== null && existingMutation !== null) {
+      await ensureMembershipIndexOutbox(options.database, options.prepare_project_membership_index, {
+        operation: "UPDATE",
+        project_id: projectId,
+        principal_ref: owner.principal_ref,
+        mutation_principal_ref: actor,
+        mutation_idempotency_key: key,
+        request_sha256: requestSha,
+        project_revision: existing.revision,
+        created_at: existingMutation.created_at,
+      });
+      return disclose(existing);
+    }
     const before = await readBase(options.database, owner.principal_ref, projectId);
     if (before === null) fail("PROJECT_NOT_FOUND", 404, "project was not found");
     if (before.revision !== input.expected_revision) fail("PROJECT_REVISION_CONFLICT", 409, "project revision is stale");
@@ -319,8 +468,21 @@ export function createProjectOwnerCapability(options: ProjectOwnerCapabilityOpti
     const grantArgs = attachment?.guard_values() ?? [];
     const membershipGenerationParameter = "?" + String(9 + attachmentArgs.length);
     const previousMembershipGenerationParameter = "?" + String(10 + attachmentArgs.length);
+    const membershipIndexMutation: ProjectMembershipIndexMutationInput = {
+      operation: "UPDATE",
+      project_id: projectId,
+      principal_ref: owner.principal_ref,
+      mutation_principal_ref: actor,
+      mutation_idempotency_key: key,
+      request_sha256: requestSha,
+      project_revision: nextRevision,
+      created_at: clock.iso,
+    };
+    const membershipIndexPlan = insertMembershipIds.length === 0 || options.prepare_project_membership_index === undefined
+      ? undefined
+      : await options.prepare_project_membership_index(membershipIndexMutation);
     try {
-      const results = await options.database.batch([
+      const mutationStatements = [
         options.database.prepare(
           `${cte} UPDATE project SET title=?5,generation=?6,membership_generation=${membershipGenerationParameter} ` +
           `WHERE project_id=?1 AND generation=?7 AND membership_generation=${previousMembershipGenerationParameter} ` +
@@ -370,13 +532,26 @@ export function createProjectOwnerCapability(options: ProjectOwnerCapabilityOpti
         options.database.prepare(
           "DELETE FROM project_mutation_guard WHERE principal_ref=?1 AND idempotency_key=?2 AND project_id=?3",
         ).bind(actor, key, projectId),
+      ];
+      const results = await options.database.batch([
+        ...mutationStatements,
+        ...(membershipIndexPlan?.statements ?? []),
       ]);
       exactBatchResults(results, [
         1, 1, 1, closeMembershipIds.length, insertMembershipIds.length, 1, 1,
+        ...(membershipIndexPlan === undefined ? [] : [1, 1]),
       ]);
+      membershipIndexPlan?.assertBatchResults(results, mutationStatements.length);
     } catch (cause) {
-      const raced = checkExisting(await receipt(), "UPDATE", projectId, requestSha);
-      if (raced !== null) return disclose(raced);
+      const racedMutation = await receipt();
+      const raced = checkExisting(racedMutation, "UPDATE", projectId, requestSha);
+      if (raced !== null && racedMutation !== null) {
+        await ensureMembershipIndexOutbox(options.database, options.prepare_project_membership_index, {
+          ...membershipIndexMutation,
+          created_at: racedMutation.created_at,
+        }, membershipIndexPlan);
+        return disclose(raced);
+      }
       const errorName = cause instanceof Error && cause.name.length > 0 && cause.name.length <= 128
         ? cause.name : "UNCLASSIFIED";
       const errorMessage = cause instanceof Error && cause.message.length > 0
@@ -409,6 +584,7 @@ export interface ProjectOwnerServiceOptions {
   readonly database: D1Database;
   readonly deployment_generation: string;
   readonly now?: () => number;
+  readonly prepare_project_membership_index?: ProjectMembershipIndexOutboxPlanner;
 }
 
 /**
@@ -428,6 +604,9 @@ export function createProjectOwnerService(options: ProjectOwnerServiceOptions): 
     deployment_generation: options.deployment_generation,
     now,
     source_authority: sourceAuthority,
+    ...(options.prepare_project_membership_index === undefined
+      ? {}
+      : { prepare_project_membership_index: options.prepare_project_membership_index }),
   });
 
   return Object.freeze({

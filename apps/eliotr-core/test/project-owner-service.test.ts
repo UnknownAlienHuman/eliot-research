@@ -3,6 +3,7 @@ import { reset } from "cloudflare:test";
 import type { AuthenticatedRequestContext, ProjectOwnerListResult } from "@eliotr/interfaces";
 import { sha256Utf8 } from "@eliotr/platform-cloudflare";
 import { createProjectOwnerService } from "@eliotr/cloudflare-navigation";
+import { PROJECT_MEMBERSHIP_INDEX_TOPIC, prepareProjectMembershipIndexOutboxPlan } from "../src/project-membership-index-delivery.js";
 import { createProjectsApi, type ProjectsHttp } from "../../../packages/owner-api-client/src/sources/projects-library/projects.js";
 import { createSessionEpoch } from "../../../packages/owner-api-client/src/transport/session/epoch.js";
 import { db, insert, observeDatabase, principal, runtime, seedSource, setupOrientationDatabase } from "./orientation-fixture.js";
@@ -16,8 +17,15 @@ function context(key: string, who = principal): AuthenticatedRequestContext {
   }), principal_ref: who, client_class: "owner_pwa", credential_generation: "credential-v1", trace_id: `trace-${key}` };
 }
 
-function service(database = db) {
-  return createProjectOwnerService({ database, deployment_generation: runtime.DEPLOYMENT_GENERATION, now: () => clock });
+function service(database = db, withMembershipIndex = false) {
+  return createProjectOwnerService({
+    database,
+    deployment_generation: runtime.DEPLOYMENT_GENERATION,
+    now: () => clock,
+    ...(withMembershipIndex
+      ? { prepare_project_membership_index: (input) => prepareProjectMembershipIndexOutboxPlan(database, input) }
+      : {}),
+  });
 }
 
 async function source(id: string) {
@@ -194,8 +202,64 @@ describe("S04 project mutations on actual Workers D1", () => {
       .bind(id).first()).resolves.toEqual({ generation: 4, membership_generation: 3 });
     expect((await memberships(id)).every(({ valid_to }) => valid_to !== null)).toBe(true);
     expect(await db.prepare("SELECT count(*) AS n FROM project_mutation_guard").first<number>("n")).toBe(0);
-    // Projects do not currently emit an outbox event; do not invent one in a test.
+    // This direct service fixture omits the application membership-index hook.
     expect(await db.prepare("SELECT count(*) AS n FROM outbox").first<number>("n")).toBe(0);
+  });
+
+  it("commits membership-index intents only for added members and repairs an old replay", async () => {
+    await source("s04-index-a");
+    await source("s04-index-b");
+    const owner = service(db, true);
+    const jobs = async () => (await db.prepare(
+      "SELECT o.outbox_id,o.intent_id,o.payload_ref,o.topic FROM outbox o WHERE o.topic=?1 ORDER BY o.created_at,o.outbox_id",
+    ).bind(PROJECT_MEMBERSHIP_INDEX_TOPIC).all<{
+      outbox_id: string; intent_id: string; payload_ref: string; topic: string;
+    }>()).results;
+
+    const created = await owner.create(context("index-create"), {
+      idempotency_key: "index-create", title: "Indexed project", source_ids: ["s04-index-a"],
+    });
+    const projectId = created.project_ref.id;
+    const createRequestSha = (await receipt("index-create")).request_sha256;
+    expect((await jobs()).map((job) => job.payload_ref)).toEqual([
+      `project-membership-index-v1-${projectId}-1-${createRequestSha}`,
+    ]);
+
+    clock += 1000;
+    const titleOnly = await owner.update(context("index-title"), projectId, {
+      idempotency_key: "index-title", expected_revision: 1, title: "Renamed", source_ids: ["s04-index-a"],
+    });
+    expect(titleOnly.revision).toBe(2);
+    expect(await jobs()).toHaveLength(1);
+
+    const originalJob = (await jobs())[0]!;
+    await db.prepare("DELETE FROM outbox WHERE outbox_id=?1").bind(originalJob.outbox_id).run();
+    await db.prepare("DELETE FROM operation_intent WHERE intent_id=?1 AND revision=1")
+      .bind(originalJob.intent_id).run();
+    await expect(owner.create(context("index-create"), {
+      idempotency_key: "index-create", title: "Indexed project", source_ids: ["s04-index-a"],
+    })).resolves.toEqual(created);
+    expect((await jobs()).map((job) => job.payload_ref)).toEqual([
+      `project-membership-index-v1-${projectId}-1-${createRequestSha}`,
+    ]);
+
+    clock += 1000;
+    const addMember = { idempotency_key: "index-add", expected_revision: 2,
+      title: "Renamed", source_ids: ["s04-index-a", "s04-index-b"] };
+    const updated = await owner.update(context("index-add"), projectId, addMember);
+    const addRequestSha = (await receipt("index-add")).request_sha256;
+    expect((await jobs()).map((job) => job.payload_ref)).toEqual([
+      `project-membership-index-v1-${projectId}-1-${createRequestSha}`,
+      `project-membership-index-v1-${projectId}-3-${addRequestSha}`,
+    ]);
+    await expect(owner.update(context("index-add"), projectId, addMember)).resolves.toEqual(updated);
+    expect(await jobs()).toHaveLength(2);
+
+    clock += 1000;
+    await owner.update(context("index-remove"), projectId, {
+      idempotency_key: "index-remove", expected_revision: 3, title: "Renamed", source_ids: ["s04-index-b"],
+    });
+    expect(await jobs()).toHaveLength(2);
   });
 
   it("keeps a 256-member title-only edit O(1) and preserves membership identity", async () => {

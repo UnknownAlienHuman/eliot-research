@@ -35,6 +35,12 @@ export interface AppendOutboxIntentInput {
   readonly payload_sha256: string;
 }
 
+export interface OutboxMutationGuard {
+  /** Trusted application SQL predicate. Values belong in bindings, never in this string. */
+  readonly predicate_sql: string;
+  readonly bindings: readonly (string | number | null)[];
+}
+
 export interface AppendOutboxIntentResult {
   readonly intent_ref: VersionedRef;
   readonly outbox_id: string;
@@ -181,6 +187,7 @@ export interface PreparedIntentWithOutboxMutation {
 export async function prepareIntentWithOutboxMutation(
   database: D1Database,
   rawInput: AppendOutboxIntentInput,
+  options: { readonly insert_guard?: OutboxMutationGuard } = {},
 ): Promise<PreparedIntentWithOutboxMutation> {
   let intent: OperationIntent;
   try {
@@ -212,12 +219,25 @@ export async function prepareIntentWithOutboxMutation(
   if (!Number.isSafeInteger(nextAttemptAt) || nextAttemptAt < 0) {
     fail("DELIVERY_INPUT_INVALID", "intent created_at is invalid");
   }
-  const statements = Object.freeze([
-    database.prepare(
-      "INSERT INTO operation_intent(intent_id, revision, operation_kind, principal_ref, " +
+  const insertGuard = options.insert_guard;
+  const intentSql = insertGuard === undefined
+    ? "INSERT INTO operation_intent(intent_id, revision, operation_kind, principal_ref, " +
       "idempotency_key, payload_ref, policy_decision_ref, budget_reservation_ref, " +
-      "cancellation_ref, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-    ).bind(
+      "cancellation_ref, created_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)"
+    : "INSERT INTO operation_intent(intent_id, revision, operation_kind, principal_ref, " +
+      "idempotency_key, payload_ref, policy_decision_ref, budget_reservation_ref, " +
+      "cancellation_ref, created_at) SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10 WHERE " +
+      insertGuard.predicate_sql;
+  const outboxSql = insertGuard === undefined
+    ? "INSERT INTO outbox(outbox_id, intent_id, intent_revision, topic, payload_ref, " +
+      "payload_sha256, state, attempts, next_attempt_at, lease_generation, created_at, " +
+      "updated_at) VALUES (?1,?2,?3,?4,?5,?6,'PENDING',0,?7,0,?8,?8)"
+    : "INSERT INTO outbox(outbox_id, intent_id, intent_revision, topic, payload_ref, " +
+      "payload_sha256, state, attempts, next_attempt_at, lease_generation, created_at, " +
+      "updated_at) SELECT ?1,?2,?3,?4,?5,?6,'PENDING',0,?7,0,?8,?8 " +
+      "WHERE EXISTS (SELECT 1 FROM operation_intent WHERE intent_id=?2 AND revision=?3)";
+  const statements = Object.freeze([
+    database.prepare(intentSql).bind(
       intent.intent_ref.id,
       intent.intent_ref.revision,
       intent.operation_kind,
@@ -228,12 +248,9 @@ export async function prepareIntentWithOutboxMutation(
       intent.budget_reservation_ref ?? null,
       intent.cancellation_ref ?? null,
       intent.created_at,
+      ...(insertGuard?.bindings ?? []),
     ),
-    database.prepare(
-      "INSERT INTO outbox(outbox_id, intent_id, intent_revision, topic, payload_ref, " +
-      "payload_sha256, state, attempts, next_attempt_at, lease_generation, created_at, " +
-      "updated_at) VALUES (?1,?2,?3,?4,?5,?6,'PENDING',0,?7,0,?8,?8)",
-    ).bind(
+    database.prepare(outboxSql).bind(
       outboxId,
       intent.intent_ref.id,
       intent.intent_ref.revision,

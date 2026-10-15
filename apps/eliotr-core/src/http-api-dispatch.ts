@@ -1,5 +1,4 @@
 import { OrientationError, readOrientationRequest } from "@eliotr/cloudflare-navigation";
-import { indexProjectSources } from "@eliotr/cloudflare-ai/project-search";
 import type {
   ApplicationLifecycle,
   AuthenticatedRequestContext,
@@ -200,13 +199,6 @@ export async function dispatchHttpApiRoute(
       requireNoQuery(url);
       const input = await readCreateProjectRequest(request, match.route.maximum_request_bytes);
       const result = await application.services.owner.createProject(context, input);
-      await indexProjectSources({
-        namespace: env.AI_SEARCH,
-        core_database: env.CORE_DB,
-        search_database: env.SEARCH_DB,
-        project_id: result.project_ref.id,
-        source_ids: input.source_ids,
-      });
       return apiResult(request, env, result, 201);
     }
     case "research.projects.update": {
@@ -219,13 +211,6 @@ export async function dispatchHttpApiRoute(
         projectIdentifier(projectId, "project id"),
         input,
       );
-      await indexProjectSources({
-        namespace: env.AI_SEARCH,
-        core_database: env.CORE_DB,
-        search_database: env.SEARCH_DB,
-        project_id: result.project_ref.id,
-        source_ids: input.source_ids,
-      });
       return apiResult(request, env, result);
     }
     case "research.project-managed-target-assignment.read":

@@ -37,6 +37,7 @@ import type { Env } from "./env.js";
 import { createIngestApplication } from "./ingest-composition.js";
 import { readReadiness } from "./readiness.js";
 import { createProjectOwnerService } from "@eliotr/cloudflare-navigation";
+import { prepareProjectMembershipIndexOutboxPlan } from "./project-membership-index-delivery.js";
 import { readGoogleExternalTransport } from "@eliotr/cloudflare-workspace-mcp";
 import { createRawCaptureService } from "@eliotr/cloudflare-raw-ingest";
 import { createRawMarkdownOwnerConverter } from "@eliotr/cloudflare-markdown";
@@ -225,6 +226,8 @@ function ownerApi(env: Env): OwnerApi {
   const projects = createProjectOwnerService({
     database: env.CORE_DB,
     deployment_generation: env.DEPLOYMENT_GENERATION,
+    prepare_project_membership_index: (input) =>
+      prepareProjectMembershipIndexOutboxPlan(env.CORE_DB, input),
   });
   const convertRawMarkdown = createRawMarkdownOwnerConverter({
     database: env.CORE_DB, bucket: env.EVIDENCE_BUCKET, ...(env.AI === undefined ? {} : { ai: env.AI }), profile_generation: env.DEPLOYMENT_GENERATION,

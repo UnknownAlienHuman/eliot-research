@@ -159,6 +159,8 @@ export type {
   ProjectOwnerResult,
   ProjectOwnerErrorCode,
   ProjectOwnerSourceAuthority,
+  ProjectMembershipIndexMutationInput,
+  ProjectMembershipIndexOutboxPlanner,
   PreparedProjectAttachment,
   ProjectAttachmentBinding,
 } from "./project-owner-service.js";
