@@ -103,7 +103,7 @@ test("actual inventory forwards full-root verification without selecting the unr
       .run(id, `source-${id}`, "a".repeat(64), "b".repeat(64), at, `view-${id}`, at);
   }
   const key = "managed-target-manifests/target/builds/build/tree.json";
-  const expected = [];
+  const expected: Record<string, SQLInputValue>[] = [];
   for (const id of ["A", "B"]) {
     const subject = `source-revision:${id}`, ref = `r2-work:${key}`;
     const digest = await erasureDigest({ exact_subject_ref: subject, location: "Projection", canonical_ref: ref, provider_ref: null });
