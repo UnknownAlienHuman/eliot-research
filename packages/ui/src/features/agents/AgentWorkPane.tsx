@@ -25,8 +25,9 @@ export interface AgentWorkPaneProps {
 }
 
 /**
- * The right pane of a project, as NotebookLM's Studio: who is connected, the system's tools and the
- * tasks handed over. Presentation only — the owner of the workspace decides what each callback does.
+ * The right pane of a project, as NotebookLM's Studio: owner-enabled agent connections, the system's
+ * tools and handed-over tasks. Connection state and live presence remain separate observations.
+ * Presentation only — the owner of the workspace decides what each callback does.
  */
 export function AgentWorkPane({ locale, agents, agentsUnavailable = false, tools, tasks, tasksUnavailable = false, onTool, onTask, onManageAgents, onMoreAgents, onFirstAgents, onMoreTasks, onFirstTasks }: AgentWorkPaneProps) {
   const text = AGENT_WORK_COPY[locale];
@@ -38,11 +39,12 @@ export function AgentWorkPane({ locale, agents, agentsUnavailable = false, tools
         {onManageAgents ? <button type="button" className="er-agent-work__link" onClick={onManageAgents}>{text.manageAgents}</button> : null}
       </div>
       {agentsUnavailable || agents.length === 0 ? <p className="er-agent-work__empty">{agentsUnavailable ? text.agentsUnavailable : text.noAgents}</p> : null}
-      <ul className="er-agent-work__agents">{(agentsUnavailable ? [] : agents).map(agent => <li key={agent.id} className="er-agent-chip" data-presence={agent.presence}
-        title={`${agent.name} · ${text.transport[agent.transport]} · ${text.presence[agent.presence]}`}>
+      <ul className="er-agent-work__agents">{(agentsUnavailable ? [] : agents).map(agent => <li key={agent.id} className="er-agent-chip"
+        data-connection-state={agent.connectionState} data-presence={agent.presence}
+        title={`${agent.name} · ${text.connectionState[agent.connectionState]} · ${text.transport[agent.transport]} · ${text.presence[agent.presence]}`}>
         <span className="er-agent-chip__dot" aria-hidden="true" />
         <span className="er-agent-chip__name">{agent.name}</span>
-        <span className="er-agent-chip__meta">{agent.presence === "offline" || agent.presence === "unknown" || agent.presence === "disabled" ? text.presence[agent.presence] : text.transport[agent.transport]}</span>
+        <span className="er-agent-chip__meta">{text.connectionState[agent.connectionState]} · {text.presence[agent.presence]}</span>
       </li>)}</ul>
       {onMoreAgents || onFirstAgents ? <div className="er-agent-work__head">
         {onFirstAgents ? <button type="button" className="er-agent-work__link" onClick={onFirstAgents}>{text.firstAgents}</button> : null}

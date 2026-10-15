@@ -44,7 +44,8 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
   const agents: readonly AgentSummary[] = agentsReadable ? agentConnections.data.connections.map(connection => ({
     id: connection.connection_id, name: connection.display_name,
     transport: connection.transport_capabilities.some(transport => transport === "MCP_READ" || transport === "MCP_WRITE") ? "mcp" : "inbox",
-    presence: connection.state === "DISABLED" ? "disabled" : "unknown",
+    connectionState: connection.state === "ENABLED" ? "owner-enabled" : "disabled",
+    presence: "unknown",
   })) : [];
   const [projectPages, setProjectPages] = useState<readonly (string | undefined)[]>([undefined]);
   const [projectId, setProjectId] = useState<string>();

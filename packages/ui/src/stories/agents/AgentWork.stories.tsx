@@ -6,11 +6,11 @@ import { DecisionInbox } from "../../features/agents/DecisionInbox";
 import type { AgentSummary, AgentTaskSummary, DecisionItem, ResearchToolId, TaskScope } from "../../features/agents/agent-work-model";
 import "./agent-stories.css";
 
-/* Fixture shapes only; live data arrives through the workspace owner once the agent read API exists. */
+/* Fixture shapes only; the live workspace reads protected connections through the owner client. */
 const AGENTS: readonly AgentSummary[] = [
-  { id: "codex", name: "Codex", transport: "mcp", presence: "ready" },
-  { id: "claude-code", name: "Claude Code", transport: "local", presence: "busy" },
-  { id: "spark", name: "Gemini Spark", transport: "inbox", presence: "offline" },
+  { id: "codex", name: "Codex", transport: "mcp", connectionState: "owner-enabled", presence: "unknown" },
+  { id: "claude-code", name: "Claude Code", transport: "local", connectionState: "owner-enabled", presence: "unknown" },
+  { id: "spark", name: "Gemini Spark", transport: "inbox", connectionState: "disabled", presence: "unknown" },
 ];
 const TOOLS: readonly ResearchToolId[] = ["verify", "mentions", "search", "deep", "overview", "versions", "changes", "document", "wiki", "import", "erase"];
 const TASKS: readonly AgentTaskSummary[] = [
@@ -52,14 +52,13 @@ export const ControlPane: Story = {
 
 export const ConfiguredPresenceUnknown: Story = {
   render: () => <div className="er-agent-story-pane"><AgentWorkPane locale="en"
-    agents={[{ id: "configured", name: "Configured agent", transport: "mcp", presence: "unknown" },
-      { id: "disabled", name: "Disabled agent", transport: "inbox", presence: "disabled" },
-      { id: "observed", name: "Observed ready fixture", transport: "mcp", presence: "ready" }]}
+    agents={[{ id: "configured", name: "Configured agent", transport: "mcp", connectionState: "owner-enabled", presence: "unknown" },
+      { id: "disabled", name: "Disabled agent", transport: "inbox", connectionState: "disabled", presence: "unknown" }]}
     tools={["versions"]} tasks={[]} onTool={fn()} onMoreAgents={fn()} onManageAgents={fn()} /></div>,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(canvas.getByText("Presence not checked")).toBeVisible();
-    await expect(canvas.getByText("Disabled", { exact: true })).toBeVisible();
+    await expect(canvas.getByText("Enabled · Presence not checked")).toBeVisible();
+    await expect(canvas.getByText("Disabled · Presence not checked")).toBeVisible();
     await expect(canvas.queryByText("Ready", { exact: true })).not.toBeInTheDocument();
     await expect(canvas.getByRole("button", { name: "More connections" })).toBeVisible();
     const dot = canvasElement.querySelector<HTMLElement>('[data-presence="unknown"] .er-agent-chip__dot');
