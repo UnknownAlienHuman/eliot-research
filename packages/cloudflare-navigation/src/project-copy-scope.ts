@@ -537,9 +537,7 @@ export function createD1ProjectCopyScopeResolver(
       ...(selection === undefined ? {} : { selection }),
     });
   };
-  // The public AI Search scope type is Root-owned and still V1-only. Runtime V2
-  // receipts are explicit here; Root updates that public resolver contract.
-  return resolver as unknown as AiSearchManagedProjectCopyScopeResolver;
+  return resolver;
 }
 
 /** Shared Core composition for a frozen snapshot; callers never fabricate a retrieval request. */
