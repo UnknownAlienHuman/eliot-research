@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import {
   extractNormalizedMarkdownStructure,
   projectNormalizedMarkdown,
-  type MarkdownProjectCopyLayout,
 } from "./structural-projector.js";
 
 const A = "a".repeat(64);
