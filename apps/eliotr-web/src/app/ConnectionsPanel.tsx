@@ -52,6 +52,7 @@ export function ConnectionsPanel({ locale, apis, privacy, context, projects, pro
     : observed.some(query => query.isError) ? text.failed : health.data ? text.loaded : '');
   return <>
     <OperationAnnouncement>{announcement}</OperationAnnouncement>
+    <ComputerAgentConnectionsPanel locale={locale} apis={apis} privacy={privacy} context={context} />
     <div className="er-field"><label className="er-field__label" htmlFor={projectSelectId}>{text.project}</label>
       <select id={projectSelectId} className="er-field__control" value={projectId ?? ""} onChange={event => {
         if (page?.projects.some(project => project.project_id === event.target.value)) onProject(event.target.value);

@@ -850,13 +850,13 @@ export function ComputerAgentConnectionsPanel({ locale, apis, privacy, context }
                           ? text.qualificationStale
                           : text.qualificationNotCurrent;
 
-  if (!contextCurrent) return <section aria-labelledby={`${idPrefix}-title`}>
-    <h3 id={`${idPrefix}-title`}>{text.title}</h3>
+  if (!contextCurrent) return <section className="er-agent-connections" aria-labelledby={`${idPrefix}-title`}>
+    <h2 id={`${idPrefix}-title`}>{text.title}</h2>
     <ComputerAgentMutationNotice locale={locale} state={{ kind: "session-lost" }} />
   </section>;
 
-  return <section className="er-live-connection-operation" aria-labelledby={`${idPrefix}-title`}>
-    <h3 id={`${idPrefix}-title`}>{text.title}</h3>
+  return <section className="er-live-connection-operation er-agent-connections" aria-labelledby={`${idPrefix}-title`}>
+    <h2 id={`${idPrefix}-title`}>{text.title}</h2>
     <p>{text.explanation}</p>
     <OperationAnnouncement>{preparing ? text.preparing : operation?.phase === "attempting" ? text.operationAttempting : ""}</OperationAnnouncement>
 
@@ -1005,7 +1005,7 @@ export function ComputerAgentConnectionsPanel({ locale, apis, privacy, context }
     </div>}
 
     {operation && operation.phase === "review" && <section aria-labelledby={`${idPrefix}-review`}>
-      <h4 id={`${idPrefix}-review`}>{text.reviewTitle}</h4>
+      <h3 id={`${idPrefix}-review`}>{text.reviewTitle}</h3>
       <p>{operation.action.kind === "disable" ? text.actionDisable
         : operation.action.previous ? text.actionUpdate : text.actionCreate}</p>
       <p>{text.expectedRevision}: {operation.intent.expectedRevision}</p>

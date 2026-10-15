@@ -1,0 +1,137 @@
+/* Agents and models › Agents: the owner's registry of computer-agent connections, styled over the
+ * integrator's markup without touching its behaviour. One tonal list of agents, one form group whose
+ * capabilities read as filter chips, technical facts folded away. Semantic tokens only. */
+.er-agent-connections { display: grid; gap: var(--eliot-space-gutter); min-inline-size: 0; margin-block: 0 var(--eliot-space-section); }
+.er-agent-connections > h2 {
+  margin: 0;
+  font-family: var(--eliot-type-font-family-display);
+  font-size: var(--eliot-type-title-large-size);
+  line-height: var(--eliot-type-title-large-line-height);
+  font-weight: var(--eliot-type-font-weight-regular);
+}
+.er-agent-connections > p, .er-agent-connections > div > p, .er-agent-connections form p {
+  margin: 0;
+  max-inline-size: var(--eliot-type-reading-measure);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+}
+.er-agent-connections > div { display: grid; gap: var(--eliot-space-block-control); min-inline-size: 0; }
+.er-agent-connections > div > div:not(.er-live-pagination) { display: flex; flex-wrap: wrap; align-items: center; gap: var(--eliot-space-block-control); }
+.er-agent-connections .er-live-pagination { justify-content: flex-start; margin-block: 0; }
+
+/* The configured agents: tonal rows, the selected one in the selected role. */
+.er-agent-connections ul { display: grid; gap: var(--eliot-space-hairline); margin: 0; padding: 0; list-style: none; }
+.er-agent-connections ul .er-button {
+  justify-content: flex-start;
+  inline-size: 100%;
+  min-block-size: var(--eliot-size-list-row);
+  padding-inline: var(--eliot-space-group);
+  border-radius: var(--eliot-shape-large);
+  background-color: var(--eliot-color-group);
+  color: var(--md-sys-color-on-surface);
+  text-align: start;
+  text-wrap: pretty;
+}
+.er-agent-connections ul .er-button[aria-pressed="true"] { background-color: var(--eliot-color-selected); color: var(--eliot-color-on-selected); }
+
+/* The connection form: one tonal group, fields in a two-column grid where there is room. */
+.er-agent-connections form { max-inline-size: var(--eliot-layout-reading-max); margin: 0; }
+.er-agent-connections form > fieldset {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--eliot-space-panel);
+  min-inline-size: 0;
+  margin: 0;
+  padding: var(--eliot-space-group);
+  border: none;
+  border-radius: var(--eliot-shape-extra-large);
+  background: var(--eliot-color-group);
+}
+.er-agent-connections form > fieldset > legend {
+  float: left;
+  inline-size: 100%;
+  margin: 0 0 var(--eliot-space-block-control);
+  padding: 0;
+  font-size: var(--eliot-type-title-medium-size);
+  line-height: var(--eliot-type-title-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+.er-agent-connections form > fieldset > legend + * { clear: both; }
+.er-agent-connections form > fieldset > .er-button { justify-self: start; }
+.er-agent-connections .er-field__control { inline-size: 100%; background-color: var(--eliot-color-pane); }
+
+/* Capabilities: the native checkboxes read as M3 filter chips. */
+.er-agent-connections fieldset fieldset { display: flex; flex-wrap: wrap; gap: var(--eliot-space-block-control); min-inline-size: 0; margin: 0; padding: 0; border: none; }
+.er-agent-connections fieldset fieldset > legend {
+  float: left;
+  inline-size: 100%;
+  margin-block-end: var(--eliot-space-block-control);
+  padding: 0;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+.er-agent-connections fieldset fieldset > label {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--eliot-size-control-small);
+  padding-inline: var(--eliot-space-gutter) var(--eliot-space-panel);
+  border-radius: var(--eliot-shape-full);
+  box-shadow: inset 0 0 0 var(--eliot-divider-width) var(--md-sys-color-outline-variant);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  cursor: pointer;
+  transition: background-color var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
+}
+.er-agent-connections fieldset fieldset > label > input { position: absolute; inset: 0; margin: 0; opacity: 0; cursor: inherit; }
+.er-agent-connections fieldset fieldset > label:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 6%, transparent); }
+.er-agent-connections fieldset fieldset > label:has(input:checked) { box-shadow: none; background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+.er-agent-connections fieldset fieldset > label:has(input:focus-visible) { outline: var(--eliot-focus-width) solid var(--md-sys-color-primary); outline-offset: var(--eliot-focus-offset); }
+.er-agent-connections fieldset:disabled label { cursor: default; opacity: 0.6; }
+
+/* Plain confirmation checkbox and identifiers. */
+.er-agent-connections form > fieldset > label { display: flex; align-items: center; gap: var(--eliot-space-gutter); min-block-size: var(--eliot-size-touch-target); }
+.er-agent-connections code {
+  padding: 0 var(--eliot-space-tight);
+  border-radius: var(--eliot-shape-extra-small);
+  background: var(--md-sys-color-surface-container-highest);
+  font-family: var(--eliot-type-font-family-mono);
+  font-size: var(--eliot-type-body-small-size);
+  overflow-wrap: anywhere;
+}
+.er-agent-connections details > summary {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--eliot-size-control);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-large-size);
+  font-weight: var(--eliot-type-font-weight-medium);
+  cursor: pointer;
+}
+
+/* Review before saving: the one place the owner confirms, a primary tonal card. */
+.er-agent-connections > section {
+  display: grid;
+  gap: var(--eliot-space-block-control);
+  max-inline-size: var(--eliot-layout-reading-max);
+  padding: var(--eliot-space-group);
+  border-radius: var(--eliot-shape-extra-large);
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+}
+.er-agent-connections > section > h3 { margin: 0; font-size: var(--eliot-type-title-medium-size); line-height: var(--eliot-type-title-medium-line-height); font-weight: var(--eliot-type-font-weight-medium); }
+.er-agent-connections > section > p { margin: 0; color: inherit; }
+.er-agent-connections > section > .er-button { justify-self: start; }
+
+@media (min-width: 48rem) {
+  .er-agent-connections form > fieldset { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .er-agent-connections form > fieldset > :is(legend, fieldset, p, label, .er-button) { grid-column: 1 / -1; }
+}
+@media (forced-colors: active) {
+  .er-agent-connections fieldset fieldset > label, .er-agent-connections form > fieldset { border: var(--eliot-divider-width) solid CanvasText; }
+}

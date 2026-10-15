@@ -13,6 +13,7 @@ import { computerAgentQueryOptions } from "../query/computerAgents";
 import { computerAgentDispatchQueryOptions } from "../query/computerAgentDispatches";
 import type { destinations } from "../routes/location";
 import "./live-workspace.css";
+import "./agent-connections.css";
 import { ErasurePanel } from "./ErasurePanel";
 import { ConnectionsPanel } from "./ConnectionsPanel";
 import { ImportPanel } from "./ImportPanel";
