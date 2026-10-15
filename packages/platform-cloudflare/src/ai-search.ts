@@ -21,9 +21,9 @@ export type AiSearchExpectedProjectCopyV2 = AiSearchExpectedProjectCopy & (
   | {
     readonly membership_identity_version: 1;
     readonly legacy_project_membership_id: string;
+    readonly project_membership_generation: number;
     readonly stable_project_membership_id?: never;
     readonly membership_revision?: never;
-    readonly project_membership_generation?: never;
   }
   | {
     readonly membership_identity_version: 2;
@@ -145,7 +145,7 @@ function validateOptions(request: RetrievalRequest, options: AiSearchLocatorDeco
   previewLimit(options.max_preview_bytes);
 }
 const COPY_COMMON_KEYS = ["source_revision_ref", "source_owner_generation", "project_id", "project_membership_id", "membership_generation", "folder_prefix", "membership_identity_version"];
-const COPY_V2_LEGACY_KEYS = new Set([...COPY_COMMON_KEYS, "legacy_project_membership_id"]);
+const COPY_V2_LEGACY_KEYS = new Set([...COPY_COMMON_KEYS, "legacy_project_membership_id", "project_membership_generation"]);
 const COPY_V2_STABLE_KEYS = new Set([...COPY_COMMON_KEYS, "stable_project_membership_id", "membership_revision", "project_membership_generation"]);
 const COPY_V2_KEYS = new Set([...COPY_V2_LEGACY_KEYS, ...COPY_V2_STABLE_KEYS]);
 function validateProjectCopyV2Scope(request: RetrievalRequest, options: AiSearchLocatorDecodeOptions): void {
@@ -169,10 +169,11 @@ function validateProjectCopyV2Scope(request: RetrievalRequest, options: AiSearch
     const membership = nonemptyString(copy.project_membership_id, "PROJECT_COPY_V2 project_membership_id", 256);
     const folder = nonemptyString(copy.folder_prefix, "PROJECT_COPY_V2 folder_prefix", 64);
     const generation = positiveInteger(copy.membership_generation, "PROJECT_COPY_V2 membership_generation");
+    const aggregateGeneration = positiveInteger(copy.project_membership_generation, "PROJECT_COPY_V2 project_membership_generation");
     if (!request.scope_snapshot.member_source_revision_refs.includes(source) || revisions.has(source) ||
         folders.has(folder) || new TextEncoder().encode(source).byteLength > 64 ||
         owner !== request.scope_snapshot.source_owner_generations[source] ||
-        !IDENTIFIER.test(project) || !IDENTIFIER.test(membership)) {
+        !IDENTIFIER.test(project) || !IDENTIFIER.test(membership) || generation > aggregateGeneration) {
       fail("PROJECT_COPY_V2 expected copy map is not bound to the frozen Core scope");
     }
     if (copy.membership_identity_version === 1) {
@@ -183,8 +184,6 @@ function validateProjectCopyV2Scope(request: RetrievalRequest, options: AiSearch
       }
     } else {
       positiveInteger(copy.membership_revision, "PROJECT_COPY_V2 membership_revision");
-      const aggregateGeneration = positiveInteger(copy.project_membership_generation,
-        "PROJECT_COPY_V2 project_membership_generation");
       if (copy.stable_project_membership_id !== membership ||
           !/^project-membership-[a-f0-9]{48}$/u.test(membership) ||
           !/^projection\/[A-Za-z0-9_-]{43}\/$/u.test(folder) || generation > aggregateGeneration) {

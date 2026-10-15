@@ -44,6 +44,7 @@ const legacyCopy = {
   ...v1Copy,
   membership_identity_version: 1,
   legacy_project_membership_id: v1Copy.project_membership_id,
+  project_membership_generation: v1Copy.membership_generation + 1,
 } as const satisfies AiSearchExpectedProjectCopyV2;
 
 function request(copies: readonly AiSearchExpectedProjectCopy[] = [stableCopy, legacyCopy]): RetrievalRequest {
@@ -171,6 +172,9 @@ describe("versioned AI Search provider locator decoder", () => {
     { project_membership_id: stableCopy.project_membership_id, legacy_project_membership_id: stableCopy.project_membership_id },
     { stable_project_membership_id: stableCopy.project_membership_id },
     { membership_identity_version: 2 },
+    { project_membership_generation: undefined },
+    { project_membership_generation: 0 },
+    { project_membership_generation: v1Copy.membership_generation - 1 },
   ])("keeps legacy grammar strict inside V2 for row %j", patch => {
     expect(() => decodeAiSearchSearchResult(request(), result([]), malformedCopies([
       stableCopy, { ...legacyCopy, ...patch },

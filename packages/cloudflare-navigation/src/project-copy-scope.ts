@@ -51,7 +51,7 @@ type ProjectCopySelectionReceipt = ManagedTargetSelectionReceipt;
 
 type ProjectCopyV2Selection = Extract<ProjectCopySelectionReceipt, { readonly decision_version: 2 }>;
 
-type ProjectCopyV2MembershipCopy = AiSearchAuthorizedProjectCopy & (
+type ProjectCopyV2MembershipCopy = AiSearchAuthorizedProjectCopy & { readonly project_membership_generation: number } & (
   | {
     readonly membership_identity_version: 1;
     readonly legacy_project_membership_id: string;
@@ -466,6 +466,7 @@ export async function resolveProjectCopyScope(
       ? Object.freeze({
         ...base,
         membership_identity_version: copy.project_membership_identity_version,
+        project_membership_generation: copy.project_membership_generation,
         ...(isStableMembership
           ? {
             stable_project_membership_id: copy.stable_project_membership_id,

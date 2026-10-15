@@ -220,7 +220,7 @@ describe("managed AI Search query reader", () => {
         registry_revision: active.registry_revision, registry_artifact_sha256: active.registry_artifact_sha256,
         v1_exact_profile_identity_sha256: "e".repeat(64), target: legacy.target,
       },
-      copies: [{ ...base, membership_identity_version: 1, legacy_project_membership_id: base.project_membership_id }],
+      copies: [{ ...base, membership_identity_version: 1, legacy_project_membership_id: base.project_membership_id, project_membership_generation: base.membership_generation + 1 }],
     };
     const actual = await compileAiSearchManagedSearchRequest(request, ["SEM"], 0, active, scope);
     const old = await compileAiSearchManagedSearchRequest(request, ["SEM"], 0, active, legacy);

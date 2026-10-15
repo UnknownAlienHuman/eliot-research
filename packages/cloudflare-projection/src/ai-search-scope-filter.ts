@@ -26,13 +26,12 @@ export interface AiSearchProjectCopyScope {
   readonly copies: readonly AiSearchAuthorizedProjectCopy[];
 }
 
-export type AiSearchProjectCopyMembershipV2 = (
+export type AiSearchProjectCopyMembershipV2 = { readonly project_membership_generation: number } & (
   | { readonly membership_identity_version: 1; readonly legacy_project_membership_id: string }
   | {
     readonly membership_identity_version: 2;
     readonly stable_project_membership_id: string;
     readonly membership_revision: number;
-    readonly project_membership_generation: number;
   }
 );
 
@@ -165,7 +164,8 @@ export function createAiSearchScopeFilter(
       }
     } else if (copy.project_membership_id !== `project:${projectId}:generation:${copy.membership_generation}` ||
       ("membership_identity_version" in copy && (copy.membership_identity_version !== 1 ||
-        copy.legacy_project_membership_id !== copy.project_membership_id))) {
+        copy.legacy_project_membership_id !== copy.project_membership_id ||
+        !Number.isSafeInteger(copy.project_membership_generation) || copy.project_membership_generation < copy.membership_generation))) {
       invalid("AI Search project membership does not match its Core identity");
     }
     if (typeof copy.folder_prefix !== "string" || !PROJECT_FOLDER.test(copy.folder_prefix) ||

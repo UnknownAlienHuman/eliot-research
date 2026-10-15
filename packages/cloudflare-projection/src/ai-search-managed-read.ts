@@ -111,7 +111,7 @@ const PROJECT_COPY_SCOPE_KEYS = new Set(["copies", "generation_metadata_value", 
 const PROJECT_COPY_SCOPE_V2_KEYS = new Set([...PROJECT_COPY_SCOPE_KEYS, "target_selection"]);
 const PROJECT_COPY_TARGET_KEYS = new Set(["managed_generation", "managed_instance_id", "namespace", "target_profile_identity_sha256"]);
 const PROJECT_COPY_FACT_KEYS = new Set(["folder_prefix", "membership_generation", "project_id", "project_membership_id", "source_owner_generation", "source_revision_ref"]);
-const PROJECT_COPY_V2_LEGACY_FACT_KEYS = new Set([...PROJECT_COPY_FACT_KEYS, "membership_identity_version", "legacy_project_membership_id"]);
+const PROJECT_COPY_V2_LEGACY_FACT_KEYS = new Set([...PROJECT_COPY_FACT_KEYS, "membership_identity_version", "legacy_project_membership_id", "project_membership_generation"]);
 const PROJECT_COPY_V2_STABLE_FACT_KEYS = new Set([...PROJECT_COPY_FACT_KEYS, "membership_identity_version", "stable_project_membership_id", "membership_revision", "project_membership_generation"]);
 const TARGET_SELECTION_KEYS = new Set(["protocol", "domain", "decision_version", "selection_mode", "product_alias", "purpose", "registry_revision", "registry_artifact_sha256", "v1_exact_profile_identity_sha256", "target"]);
 const POLICY_KEYS = new Set(["expected_namespace", "match_threshold", "max_preview_bytes"]), INDEX_KEYS = new Set(["keyword", "vector"]);
@@ -276,7 +276,11 @@ async function authorizedProjectCopyScope(
         failure("AI_SEARCH_MANAGED_INPUT_INVALID", "Core project-copy membership identity is inconsistent");
       }
       folderPrefix = await managedProjectFolderPrefix(commonIdentity);
-      if (isV2) versionFields = { membership_identity_version: 1, legacy_project_membership_id: membershipId };
+      if (isV2) {
+        const aggregateGeneration = integer(copy.project_membership_generation, "aggregate membership generation", 1, Number.MAX_SAFE_INTEGER);
+        if (aggregateGeneration < membershipGeneration) failure("AI_SEARCH_MANAGED_INPUT_INVALID", "aggregate membership generation precedes its opening row");
+        versionFields = { membership_identity_version: 1, legacy_project_membership_id: membershipId, project_membership_generation: aggregateGeneration };
+      }
     }
     if (copy.folder_prefix !== folderPrefix) {
       failure("AI_SEARCH_MANAGED_INPUT_INVALID", "Core project folder hash does not match its frozen source and membership facts");
