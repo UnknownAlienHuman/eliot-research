@@ -31,6 +31,8 @@ jobs:
         run: pnpm install --frozen-lockfile
       - name: Typecheck
         run: pnpm typecheck
+      - name: Worker and browser dependency boundaries
+        run: node scripts/check-boundaries.mjs
       - name: Lint
         run: pnpm lint
       - name: Source sections, exact evidence and owner Research regressions
@@ -55,3 +57,11 @@ jobs:
           path: apps/eliotr-core/dist
           if-no-files-found: error
           retention-days: 7
+      - name: Save the checked owner web assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: owner-web-build-${{ github.sha }}
+          path: apps/eliotr-web/dist
+          if-no-files-found: error
+          retention-days: 7
+          include-hidden-files: true
