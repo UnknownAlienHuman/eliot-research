@@ -2,24 +2,7 @@ import { ModelGatewayExecutionError, resolveModelGatewayReasoningEndpoint } from
 
 /** Native Worker capability; acquisition and authentication stay inside Cloudflare. */
 export interface ResearchModelGatewayBinding {
-  gateway(gatewayId: string): Pick<AiGateway, "getUrl" | "getLog">;
-  run(
-    model: string,
-    inputs: Record<string, unknown>,
-    options: {
-      readonly gateway: {
-        readonly id: string;
-        readonly collectLog: true;
-        readonly skipCache: true;
-        readonly metadata: Record<string, string>;
-        readonly requestTimeoutMs: number;
-        readonly retries: { readonly maxAttempts: 1 };
-      };
-      readonly returnRawResponse: true;
-      readonly extraHeaders: Record<string, string>;
-      readonly signal?: AbortSignal;
-    },
-  ): Promise<unknown>;
+  gateway(gatewayId: string): Pick<AiGateway, "getUrl" | "getLog" | "run">;
 }
 
 const IDENTIFIER = /^[A-Za-z0-9._:@/-]{1,256}$/u;
@@ -156,11 +139,11 @@ export function createResearchModelGatewayBindingFetch(
   binding: ResearchModelGatewayBinding,
   endpoint: string,
 ): (url: string, init: RequestInit) => Promise<Response> {
-  if (binding === null || typeof binding !== "object" || typeof binding.gateway !== "function" || typeof binding.run !== "function") {
+  if (binding === null || typeof binding !== "object" || typeof binding.gateway !== "function") {
     invalid("reasoning gateway Worker binding is unavailable");
   }
   const gateway = binding.gateway("eliotr-reasoning");
-  if (gateway === null || typeof gateway !== "object" || typeof gateway.getUrl !== "function") {
+  if (gateway === null || typeof gateway !== "object" || typeof gateway.getUrl !== "function" || typeof gateway.run !== "function") {
     invalid("reasoning gateway Worker binding is invalid");
   }
   return async (url, init) => {
@@ -195,20 +178,18 @@ export function createResearchModelGatewayBindingFetch(
     const metadata = exactMetadata(headers.get("cf-aig-metadata"), "AI Gateway request metadata");
     // Preserve canonical cache/logging/timeout/single-attempt headers on the
     // gateway request. Provider headers contain no separate gateway credential.
-    const response = await binding.run(inputs.model, inputs, {
+    // Use the Gateway's HTTP transport so response-scoped routing/log headers survive.
+    // This is one Universal request to the existing compatibility route, not a fallback.
+    const response = await gateway.run({ provider: "compat", endpoint: "chat/completions", headers: {}, query: inputs }, {
       gateway: {
-        id: "eliotr-reasoning",
         collectLog: true,
         skipCache: true,
         metadata,
-        requestTimeoutMs: timeoutMs,
-        retries: { maxAttempts: 1 },
       },
-      returnRawResponse: true,
       extraHeaders: Object.fromEntries(headers),
       ...(init.signal == null ? {} : { signal: init.signal }),
     });
-    if (!(response instanceof Response)) invalid("native Workers AI binding did not return a Response");
+    if (!(response instanceof Response)) invalid("native AI Gateway binding did not return a Response");
     if (!response.ok) return response;
     try {
       // Native responses may omit routing headers. Their response-scoped,

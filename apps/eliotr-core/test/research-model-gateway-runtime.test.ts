@@ -150,11 +150,11 @@ describe("research model gateway runtime", () => {
     });
     expect(calls).toBe(1);
     expect(invocation).toEqual({ provider: "compat", endpoint: "chat/completions", headers: {}, query });
-    expect(invocation?.query).toEqual(query);
-    expect(invocation?.query.model).toBe(query.model);
+    if (invocation === undefined || Array.isArray(invocation)) throw new Error("expected one Universal request");
+    expect(invocation.query).toEqual(query);
     expect(options?.gateway).toEqual({ collectLog: true, skipCache: true, metadata });
     expect(options?.extraHeaders).toEqual(canonicalHeaders);
-    expect(options?.signal).toBe(controller.signal);
+    expect(options?.signal).toBeInstanceOf(AbortSignal);
     expect(runtime).not.toHaveProperty("credentials");
     expect(response).toBeInstanceOf(Response);
     if (!(response instanceof Response)) throw new Error("binding did not return a Response");

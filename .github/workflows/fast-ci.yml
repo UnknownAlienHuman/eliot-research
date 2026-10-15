@@ -44,6 +44,7 @@ jobs:
           packages/retrieval/src/retrieval.test.ts
           packages/retrieval/src/service-managed-admission.test.ts
           apps/eliotr-web/src/query/research.test.ts
+          apps/eliotr-web/src/query/modelSettings.test.ts
           packages/owner-api-client/src/research/runs/authority.test.ts
           packages/owner-api-client/src/evidence/citations/audit.test.ts
           packages/owner-api-client/src/evidence/citations/reauthorization.test.ts
@@ -51,6 +52,7 @@ jobs:
           packages/cloudflare-model-control/src/research-model-gateway-binding.test.ts
           packages/cloudflare-model-execution/src/model-route-failure.test.ts
           packages/cloudflare-workspace-mcp/src/gemini-mcp.test.ts
+          apps/eliotr-core/test/research-model-gateway-runtime.test.ts
           --reporter=verbose
       - name: Build served assets and owner web
         run: |

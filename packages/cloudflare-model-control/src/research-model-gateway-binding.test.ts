@@ -23,14 +23,15 @@ function fixture(options: { readonly logId?: string; readonly responseLogId?: st
     response_size: 2, request_head_complete: false, response_head_complete: false,
     created_at: new Date("2026-10-15T00:00:00.000Z"),
   } satisfies AiGatewayLog));
-  const run = vi.fn<ResearchModelGatewayBinding["run"]>(async (_model, _inputs, options) => {
-    // The official native SDK serializes gateway options separately from extraHeaders.
-    expect(options.gateway).toEqual({ id: "eliotr-reasoning", collectLog: true, skipCache: true,
-      metadata, requestTimeoutMs: 180000, retries: { maxAttempts: 1 } });
-    expect(options.extraHeaders["cf-aig-collect-log-payload"]).toBe("false");
+  const run = vi.fn<ReturnType<ResearchModelGatewayBinding["gateway"]>["run"]>(async (request, options) => {
+    expect(request).toEqual({ provider: "compat", endpoint: "chat/completions", headers: {}, query: JSON.parse(body) });
+    expect(options?.gateway).toEqual({ collectLog: true, skipCache: true, metadata });
+    expect(options?.extraHeaders?.["cf-aig-collect-log-payload"]).toBe("false");
+    expect(options?.extraHeaders?.["cf-aig-request-timeout"]).toBe("180000");
+    expect(options?.extraHeaders?.["cf-aig-max-attempts"]).toBe("1");
     return new Response("{}", { headers: { "cf-aig-log-id": responseLogId } });
   });
-  const binding: ResearchModelGatewayBinding = { gateway: () => ({ getUrl: async () => base, getLog }), run };
+  const binding: ResearchModelGatewayBinding = { gateway: () => ({ getUrl: async () => base, getLog, run }) };
   return { fetch: createResearchModelGatewayBindingFetch(binding, endpoint), run, getLog };
 }
 const body = JSON.stringify({ model: "dynamic/eliotr-balanced", messages: [{ role: "user", content: "test" }] });
