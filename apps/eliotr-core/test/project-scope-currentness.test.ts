@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createD1NavigationStore } from "@eliotr/cloudflare-evidence";
-import { createD1ScopeService, createOwnerScopeAuthority, reauthorizeOwnerHistoricalScope } from "@eliotr/cloudflare-navigation";
+import { createD1ScopeService, createOwnerScopeAuthority, reauthorizeOwnerArtifactScope,
+  reauthorizeOwnerHistoricalScope } from "@eliotr/cloudflare-navigation";
 import type { ScopeExpression, ScopeSnapshot } from "@eliotr/contracts";
 import { prepareOwnerScopeReauthorization } from "@eliotr/cloudflare-wiki/wiki-proposal-reauthorization";
 import { access, artifacts, clearDatabase, db, grant, NOW, seedSource, source, TIME } from "./navigation-fixture.js";
@@ -51,6 +52,30 @@ async function stored(snapshot: ScopeSnapshot): Promise<Record<string, unknown>>
     .bind(snapshot.snapshot_id, snapshot.revision).first<Record<string, unknown>>();
   if (!row) throw new Error("scope snapshot row is missing");
   return row;
+}
+
+async function seedOwnerReportBinding(snapshot: ScopeSnapshot): Promise<{ readonly id: string; readonly revision: number }> {
+  const artifactId = "report-scope-credential-refresh";
+  const intentId = "intent-scope-credential-refresh";
+  const manifestKey = `${artifactId}/manifest`;
+  await db.batch([
+    db.prepare("INSERT INTO operation_intent " +
+      "(intent_id,revision,operation_kind,principal_ref,idempotency_key,payload_ref,policy_decision_ref,created_at) " +
+      "VALUES (?1,1,'REPORT',?2,?3,?4,?5,?6)")
+      .bind(intentId, access.principal_ref, "idempotency-scope-credential-refresh", "payload-scope-credential-refresh",
+        "decision-scope-credential-refresh", TIME),
+    db.prepare("INSERT INTO artifact_revision " +
+      "(artifact_id,revision,kind,spec_digest,evidence_freeze_id,evidence_freeze_revision,manifest_r2_key," +
+      "dependency_manifest_ref,status,created_at) VALUES (?1,1,'report',?2,'freeze-test',1,?3,?4,'DRAFT',?5)")
+      .bind(artifactId, A, manifestKey, "dependency-test", TIME),
+    db.prepare("INSERT INTO artifact_draft_binding " +
+      "(artifact_id,revision,intent_id,intent_revision,expected_head_revision,principal_ref,spec_ref_id," +
+      "spec_ref_revision,scope_snapshot_id,scope_snapshot_revision,manifest_r2_key,manifest_sha256," +
+      "manifest_size_bytes,created_at) VALUES (?1,1,?2,1,NULL,?3,?4,1,?5,?6,?7,?8,0,?9)")
+      .bind(artifactId, intentId, access.principal_ref, "spec-scope-credential-refresh", snapshot.snapshot_id,
+        snapshot.revision, manifestKey, A, TIME),
+  ]);
+  return { id: artifactId, revision: 1 };
 }
 
 function canonicalBytes(row: Record<string, unknown>): string {
@@ -259,11 +284,21 @@ describe("project-scoped ScopeSnapshot invalidation in Core D1", () => {
     await db.prepare("UPDATE scope_snapshot SET invalidated_at=?3,invalidation_reason='SCOPE_INPUT_CHANGED' " +
       "WHERE snapshot_id=?1 AND revision=?2").bind(scopeA.snapshot_id, scopeA.revision, invalidatedAt).run();
     const originalRef = { id: scopeA.snapshot_id, revision: scopeA.revision };
-    const historical = await reauthorizeOwnerHistoricalScope({ database: db, access, original_ref: originalRef,
-      original: scopeA, now: () => NOW + 3_000 });
+    const refreshedAccess = { ...access, credential_generation: "credential-2" };
+    const reportRef = await seedOwnerReportBinding(scopeA);
+    const historical = await reauthorizeOwnerArtifactScope({ database: db, access: refreshedAccess,
+      original_ref: originalRef, original: scopeA, artifact_ref: reportRef,
+      original_principal_ref: access.principal_ref, now: () => NOW + 3_000 });
+    expect(historical.scope.client_fence_ref).toBe(refreshedAccess.credential_generation);
     expect(historical.scope.member_source_revision_refs).toEqual(scopeA.member_source_revision_refs);
+    await expect(db.prepare("SELECT credential_generation,state FROM scope_access_grant WHERE snapshot_id=?1 " +
+      "AND snapshot_revision=?2 AND principal_ref=?3 AND client_class='owner_pwa'")
+      .bind(historical.scope.snapshot_id, historical.scope.revision, refreshedAccess.principal_ref)
+      .first<{ readonly credential_generation: string; readonly state: string }>())
+      .resolves.toEqual({ credential_generation: refreshedAccess.credential_generation, state: "ACTIVE" });
+    await expect(historical.requireCurrent(historical.scope)).resolves.toEqual(historical.scope);
     await withWikiTime(async () => {
-      const wiki = await prepareOwnerScopeReauthorization({ database: db }, access, originalRef);
+      const wiki = await prepareOwnerScopeReauthorization({ database: db }, refreshedAccess, originalRef);
       await expect(wiki.requireCurrent()).resolves.toBeUndefined();
     });
     expect((await stored(scopeA)).invalidated_at).toBe(invalidatedAt);
@@ -276,10 +311,10 @@ describe("project-scoped ScopeSnapshot invalidation in Core D1", () => {
       "(project_id,source_id,role,valid_from,valid_to,membership_generation) VALUES (?1,?2,'member',?3,NULL,2)")
         .bind(PROJECT_A, source("revision-a2").source_id, TIME),
     ]);
-    await expect(reauthorizeOwnerHistoricalScope({ database: db, access, original_ref: originalRef,
+    await expect(reauthorizeOwnerHistoricalScope({ database: db, access: refreshedAccess, original_ref: originalRef,
       original: scopeA, now: () => NOW + 4_000 })).rejects.toMatchObject({ code: "SCOPE_SNAPSHOT_STALE" });
     await withWikiTime(async () => {
-      await expect(prepareOwnerScopeReauthorization({ database: db }, access, originalRef))
+      await expect(prepareOwnerScopeReauthorization({ database: db }, refreshedAccess, originalRef))
         .rejects.toMatchObject({ code: "WIKI_POLICY_DENIED" });
     });
 
@@ -288,12 +323,12 @@ describe("project-scoped ScopeSnapshot invalidation in Core D1", () => {
       "WHERE snapshot_id=?1 AND revision=?2").bind(scopeB.snapshot_id, scopeB.revision, invalidatedAt).run();
     await db.prepare("UPDATE scope_access_grant SET state='REVOKED' WHERE snapshot_id=?1 AND snapshot_revision=?2 " +
       "AND principal_ref=?3 AND client_class='owner_pwa'").bind(scopeB.snapshot_id, scopeB.revision, access.principal_ref).run();
-    await expect(reauthorizeOwnerHistoricalScope({ database: db, access, original_ref: originalRef,
+    await expect(reauthorizeOwnerHistoricalScope({ database: db, access: refreshedAccess, original_ref: originalRef,
       original: scopeA, now: () => NOW + 5_000 })).rejects.toMatchObject({ code: "SCOPE_SNAPSHOT_STALE" });
-    await expect(reauthorizeOwnerHistoricalScope({ database: db, access, original_ref: revokedRef,
+    await expect(reauthorizeOwnerHistoricalScope({ database: db, access: refreshedAccess, original_ref: revokedRef,
       original: scopeB, now: () => NOW + 5_000 })).rejects.toMatchObject({ code: "SCOPE_SNAPSHOT_STALE" });
     await withWikiTime(async () => {
-      await expect(prepareOwnerScopeReauthorization({ database: db }, access, revokedRef))
+      await expect(prepareOwnerScopeReauthorization({ database: db }, refreshedAccess, revokedRef))
         .rejects.toMatchObject({ code: "WIKI_POLICY_DENIED" });
     });
 
@@ -301,11 +336,11 @@ describe("project-scoped ScopeSnapshot invalidation in Core D1", () => {
       "WHERE snapshot_id=?1 AND revision=?2").bind(scopeC.snapshot_id, scopeC.revision, invalidatedAt).run();
     await db.prepare("UPDATE source SET head_rev='unadmitted-head' WHERE source_id=?1")
       .bind(source("revision-c1").source_id).run();
-    await expect(reauthorizeOwnerHistoricalScope({ database: db, access,
+    await expect(reauthorizeOwnerHistoricalScope({ database: db, access: refreshedAccess,
       original_ref: { id: scopeC.snapshot_id, revision: scopeC.revision }, original: scopeC,
       now: () => NOW + 6_000 })).rejects.toMatchObject({ code: "SCOPE_SNAPSHOT_STALE" });
     await withWikiTime(async () => {
-      await expect(prepareOwnerScopeReauthorization({ database: db }, access,
+      await expect(prepareOwnerScopeReauthorization({ database: db }, refreshedAccess,
         { id: scopeC.snapshot_id, revision: scopeC.revision })).rejects.toMatchObject({ code: "WIKI_POLICY_DENIED" });
     });
   });

@@ -14,7 +14,7 @@ import { issueClientResearchScopeGrant, issueClientQueryScopeGrant, requireClien
 import type { ScopeAuthorityRequest, ScopeRepository } from "./scope-service.js";
 import { ORIENTATION_MAX_SOURCES, orientationFail, orientationId } from "./orientation-input.js";
 import { historicalPolicyAuthorityRef, historicalPolicyClosureRef as computeHistoricalPolicyClosureRef,
-  type HistoricalPolicyRow } from "./owner-policy-lease-history.js";
+  type HistoricalOwnerAccess, type HistoricalPolicyRow } from "./owner-policy-lease-history.js";
 
 type Bind = string | number | null;
 interface PolicyRow {
@@ -25,6 +25,8 @@ export interface OwnerScopePolicyIdentityOverride {
   readonly rows: readonly HistoricalPolicyRow[];
   /** false reproduces the pre-scope policy fingerprint; true fingerprints only member namespaces. */
   readonly members_only: boolean;
+  /** Reconstructs a saved identity after lease history verifies its original grant. */
+  readonly historical_access?: HistoricalOwnerAccess;
 }
 interface SourceRow {
   source_revision_ref: string; source_id: string; source_namespace_id: string; source_owner_system_id: string;
@@ -275,6 +277,12 @@ function createReadPolicyAuthority(db: D1Database, context: EvidenceAccessContex
   ) {
     const loaded = await load(request.member_source_revision_refs);
     const policyRows = scopePolicyIdentityRows(loaded, policyIdentity);
+    const historicalAccess = policyIdentity?.historical_access;
+    const historicalIdentityMatches = historicalAccess !== undefined &&
+      historicalAccess.principal_ref === access.principal_ref &&
+      historicalAccess.client_class === access.client_class &&
+      historicalAccess.credential_generation === request.client_fence_ref;
+    const identityAccess = historicalIdentityMatches ? historicalAccess : access;
     if (loaded.some((source) => request.member_policy_closure_refs[source.revision.source_revision_ref] !== source.policy_closure_ref)) {
       orientationFail("ORIENTATION_POLICY_CHANGED", 409);
     }
@@ -282,11 +290,14 @@ function createReadPolicyAuthority(db: D1Database, context: EvidenceAccessContex
     if (ceilings.length > 1) orientationFail("ORIENTATION_MIXED_DISCLOSURE", 403);
     const purge = await db.prepare("SELECT COALESCE(MAX(ledger_revision),0) AS revision FROM purge_ledger").first<{ revision: number }>();
     if (!purge || !Number.isSafeInteger(purge.revision) || purge.revision < 0) orientationFail("ORIENTATION_PURGE_UNAVAILABLE", 503);
-    return { policy_authority_ref: await historicalPolicyAuthorityRef({ access, policies: policyRows,
+    return { policy_authority_ref: await historicalPolicyAuthorityRef({ access: identityAccess, policies: policyRows,
       members: loaded.map((source) => source.policy_closure_ref) }),
     disclosure_closure_digest: await evidenceSha256(loaded.map((source) => ({ ref: source.revision.source_revision_ref,
       disclosure: source.policy.disclosure_ceiling, allowed_use: source.policy_uses }))),
-    purge_ledger_revision: purge.revision, client_fence_valid: request.client_fence_ref === access.credential_generation,
+    purge_ledger_revision: purge.revision,
+    client_fence_valid: historicalAccess === undefined
+      ? request.client_fence_ref === access.credential_generation
+      : historicalIdentityMatches,
     denied_source_revision_refs: [] };
   }
   async function resolveAuthorityClosure(request: ScopeAuthorityRequest) {

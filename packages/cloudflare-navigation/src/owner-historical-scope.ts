@@ -29,7 +29,7 @@ import { issueClientArtifactScopeGrant, requireClientScopeProvenance, type Clien
 import { createD1ScopeProfilePort } from "@eliotr/retrieval";
 import { readOwnerScopeProfile, OWNER_RESEARCH_SCOPE_PROFILE } from "./owner-scope-profile.js";
 import { matchesHistoricalOwnerPolicyAuthority, readOwnerPolicyLeaseHistory,
-  type HistoricalPolicyRow, type OwnerPolicyLeaseHistoryProof } from "./owner-policy-lease-history.js";
+  type HistoricalOwnerAccess, type HistoricalPolicyRow, type OwnerPolicyLeaseHistoryProof } from "./owner-policy-lease-history.js";
 
 export interface OwnerHistoricalScopeInput {
   readonly database: D1Database;
@@ -184,10 +184,13 @@ async function provesOriginalScopeInputsCurrent(
   original: ScopeSnapshot,
   maximumMembers: number,
   baselinePolicies: readonly HistoricalPolicyRow[],
+  originalAccess: HistoricalOwnerAccess,
 ): Promise<OwnerScopePolicyIdentityOverride | null> {
   const snapshotStore = createD1ScopeSnapshotStore(database);
   for (const membersOnly of [false, true]) {
-    const policyIdentity: OwnerScopePolicyIdentityOverride = { rows: baselinePolicies, members_only: membersOnly };
+    const policyIdentity: OwnerScopePolicyIdentityOverride = {
+      rows: baselinePolicies, members_only: membersOnly, historical_access: originalAccess,
+    };
     const baselineScopes = createScopeService({
       resolveAtom: (atom, observedAt) => owner.exhaustiveResolveAtom(atom, observedAt, policyIdentity),
       resolveAuthorityClosure: (request) => owner.exhaustiveResolveAuthorityClosure(request, policyIdentity),
@@ -486,11 +489,14 @@ async function reauthorizeHistoricalScope(
   await requireHistoricalOrigin();
   if (exactCurrentRecovery) {
     const baselinePolicies = historicalRecord.lease_history?.baseline_policies;
-    if (baselinePolicies === undefined) stale();
-    exactPolicyIdentity = await provesOriginalScopeInputsCurrent(
-      input.database, currentOwner, original, maximumMembers, baselinePolicies,
-    ) ?? undefined;
-    if (exactPolicyIdentity === undefined) stale();
+    const originalAccess = historicalRecord.lease_history?.original_access;
+    if (baselinePolicies === undefined || originalAccess === null || originalAccess === undefined) stale();
+    const verifiedIdentity = await provesOriginalScopeInputsCurrent(
+      input.database, currentOwner, original, maximumMembers, baselinePolicies, originalAccess,
+    );
+    if (verifiedIdentity === null) stale();
+    // This identity proves the old snapshot only; fresh scope and grant use the authenticated caller.
+    exactPolicyIdentity = { rows: verifiedIdentity.rows, members_only: verifiedIdentity.members_only };
   }
   const historicalBySourceId = indexHistoricalSources(historicalSources, original);
   const resolveAtom = exactCurrentRecovery
