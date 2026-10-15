@@ -133,6 +133,7 @@ describe("Cloudflare service-model provider management", () => {
     expect(receipt.provider_slug).toBe("custom-opencode-go");
     expect(requests.map(({ init }) => init.method)).toEqual(["GET", "POST", "GET", "GET", "POST", "GET"]);
     expect(requests.filter(({ init }) => init.method === "POST")).toHaveLength(2);
+    expect(new Set(requests.map(({ init }) => init.signal)).size).toBe(1);
     expect(JSON.stringify(receipt)).not.toContain(API_KEY);
 
     const invalidRequests: RequestInit[] = [];
@@ -159,5 +160,36 @@ describe("Cloudflare service-model provider management", () => {
       api_key: API_KEY,
     })).rejects.toMatchObject({ code: "PROVIDER_CONFIG_INPUT_INVALID", effect: "NONE" });
     expect(invalidRequests).toHaveLength(0);
+  });
+
+  it("aborts custom-provider preflight before any provider-key POST", async () => {
+    const controller = new AbortController();
+    const requests: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+    const port = createCloudflareServiceModelProviderManagementPort({
+      account_id: ACCOUNT_ID,
+      gateway_id: GATEWAY_ID,
+      available: true,
+      credentials: { async readApiToken() { return TOKEN; } },
+      fetch: {
+        async fetch(url, init) {
+          requests.push({ url, init });
+          controller.abort();
+          return page([]);
+        },
+      },
+    });
+
+    await expect(port.create({
+      protocol: "eliotr.service-model-provider-create.v1",
+      operation_id: "c0a8012e-0f58-4e7b-8dd2-c8bfdf8b5ad4",
+      provider_id: "opencode-go",
+      display_name: "OpenCode Go",
+      base_url: "https://provider.example/v1",
+      model_ids: ["step-5-preview-free"],
+      alias: "eliotr-cccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      api_key: API_KEY,
+    }, { signal: controller.signal, deadline_ms: Date.now() + 10_000 })).rejects.toBeDefined();
+    expect(requests.map(({ init }) => init.method)).toEqual(["GET"]);
+    expect(requests.filter(({ init }) => init.method === "POST")).toHaveLength(0);
   });
 });

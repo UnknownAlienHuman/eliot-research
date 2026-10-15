@@ -83,6 +83,7 @@ export interface CloudflareServiceModelProviderManagementPort {
 
 interface LinkedExecution {
   readonly signal: AbortSignal;
+  readonly deadline_ms: number;
   dispose(): void;
 }
 
@@ -155,6 +156,7 @@ function linkedExecution(raw: {
   const timer = setTimeout(abort, Math.max(0, deadline - Date.now()));
   return Object.freeze({
     signal: controller.signal,
+    deadline_ms: deadline,
     dispose() {
       clearTimeout(timer);
       parent?.removeEventListener("abort", abort);
@@ -178,6 +180,24 @@ function waitForSignal<T>(operation: Promise<T>, signal: AbortSignal): Promise<T
       (value) => { cleanup(); resolve(value); },
       (error: unknown) => { cleanup(); reject(error); },
     );
+  });
+}
+
+function withExecution(
+  dependencies: CloudflareServiceModelProviderManagementDependencies,
+  execution: LinkedExecution,
+): CloudflareServiceModelProviderManagementDependencies {
+  return Object.freeze({
+    ...dependencies,
+    credentials: {
+      readApiToken: () => waitForSignal(dependencies.credentials.readApiToken(), execution.signal),
+    },
+    fetch: {
+      fetch: (url: string, init: RequestInit) => waitForSignal(
+        dependencies.fetch.fetch(url, { ...init, signal: execution.signal }),
+        execution.signal,
+      ),
+    },
   });
 }
 
@@ -344,10 +364,8 @@ async function createOneProviderConfig(
   providerSlug: string,
   alias: string,
   secret: string,
-  context: { readonly signal?: AbortSignal; readonly deadline_ms?: number } | undefined,
+  execution: LinkedExecution,
 ): Promise<string> {
-  const execution = linkedExecution(context);
-  try {
     let token: string;
     try {
       token = requireApiToken(await waitForSignal(dependencies.credentials.readApiToken(), execution.signal));
@@ -422,10 +440,7 @@ async function createOneProviderConfig(
         { effect: "CREATE" },
       );
     }
-    return acknowledgement.id;
-  } finally {
-    execution.dispose();
-  }
+  return acknowledgement.id;
 }
 
 async function readOneProviderConfig(
@@ -521,33 +536,39 @@ export function createCloudflareServiceModelProviderManagementPort(
           { effect: "NONE" },
         );
       }
-      if (useCustomProvider) {
-        const customBaseUrl = requireCustomBaseUrl(providerId, input.base_url);
-        await ensureCloudflareCustomProvider({
-          protocol: "eliotr.custom-provider.v1",
-          name: input.display_name,
-          slug: providerId,
-          base_url: customBaseUrl,
-          enable: true,
-          beta: false,
-        }, {
-          account_id: accountId,
-          credentials: dependencies.credentials,
-          fetch: dependencies.fetch,
-        } satisfies CloudflareCustomProviderDependencies);
+      const execution = linkedExecution(context);
+      try {
+        const boundedDependencies = withExecution(dependencies, execution);
+        if (useCustomProvider) {
+          const customBaseUrl = requireCustomBaseUrl(providerId, input.base_url);
+          await ensureCloudflareCustomProvider({
+            protocol: "eliotr.custom-provider.v1",
+            name: input.display_name,
+            slug: providerId,
+            base_url: customBaseUrl,
+            enable: true,
+            beta: false,
+          }, {
+            account_id: accountId,
+            credentials: boundedDependencies.credentials,
+            fetch: boundedDependencies.fetch,
+          } satisfies CloudflareCustomProviderDependencies);
+        }
+        const providerConfigId = await createOneProviderConfig(
+          boundedDependencies,
+          providerSlug,
+          alias,
+          secret,
+          execution,
+        );
+        return Object.freeze({
+          provider_config_id: providerConfigId,
+          provider_slug: providerSlug,
+          alias,
+        });
+      } finally {
+        execution.dispose();
       }
-      const providerConfigId = await createOneProviderConfig(
-        dependencies,
-        providerSlug,
-        alias,
-        secret,
-        context,
-      );
-      return Object.freeze({
-        provider_config_id: providerConfigId,
-        provider_slug: providerSlug,
-        alias,
-      });
     },
     async read(input: ManagementReadInput, context: ManagementReadContext) {
       return readOneProviderConfig(dependencies, input, context);
