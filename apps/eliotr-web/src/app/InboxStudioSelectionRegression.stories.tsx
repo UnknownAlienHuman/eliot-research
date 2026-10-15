@@ -21,6 +21,11 @@ const digest = async (bytes: Uint8Array) =>
     .map(value => value.toString(16).padStart(2, "0")).join("");
 
 interface RequestEvent { readonly method: string; readonly path: string }
+interface PublicationAttempt {
+  readonly proposalId: string;
+  readonly expectedHeadRevision: number;
+  readonly idempotencyKey: string;
+}
 interface StudioIntentFixture {
   readonly kind: "edit";
   readonly base: WikiProposalReadView;
@@ -40,6 +45,7 @@ interface InboxStudioEnvironment {
   requestEventsSince(index: number): readonly RequestEvent[];
   mintedKeyCount(): number;
   postCount(): number;
+  publicationAttempts(): readonly PublicationAttempt[];
   seedUnknownIntent(): void;
   readStudioMemory(): StudioMemoryFixture | undefined;
 }
@@ -58,7 +64,9 @@ function createInboxStudioEnvironment(): InboxStudioEnvironment {
   const timers = { setTimeout: () => 0, clearTimeout() {} };
   const events: RequestEvent[] = [];
   const proposalViews = new Map<string, WikiProposalReadView>();
+  const publicationAttempts: PublicationAttempt[] = [];
   let mintedKeys = 0, posts = 0;
+  let publishedProposalId: string | undefined;
 
   const json = (data: unknown) => new Response(JSON.stringify({
     data, trace_id: "inbox-studio-selection-trace", deployment_generation: generation,
@@ -81,7 +89,7 @@ function createInboxStudioEnvironment(): InboxStudioEnvironment {
       limitations: [],
       dependency_refs: [],
       generator_generation: "wiki-generator-inbox-selection",
-      status: "DRAFT",
+      status: publishedProposalId === id ? "PUBLISHED" : "DRAFT",
       supersedes_ref: { id: info.pageId, revision: 1 },
       publication_metadata: {},
       created_at: stamp,
@@ -97,7 +105,7 @@ function createInboxStudioEnvironment(): InboxStudioEnvironment {
       title: sharedTitle,
       page_type: "Topic",
       risk_class: "D2_ANALYTICAL",
-      state: "PROPOSED",
+      state: publishedProposalId === id ? "PUBLISHED" : "PROPOSED",
       created_at: stamp,
     };
   };
@@ -109,7 +117,7 @@ function createInboxStudioEnvironment(): InboxStudioEnvironment {
       proposal_ref: { id, revision: 1 },
       page: loadedPage,
       risk_class: "D2_ANALYTICAL",
-      state: "PROPOSED",
+      state: publishedProposalId === id ? "PUBLISHED" : "PROPOSED",
       source_freshness: { state: "CURRENT_REVISIONS", checked_at: stamp, changed_sources: [] },
     } satisfies Omit<WikiProposalReadView, "deployment_generation">;
     const view: WikiProposalReadView = { ...data, deployment_generation: generation };
@@ -137,7 +145,34 @@ function createInboxStudioEnvironment(): InboxStudioEnvironment {
     events.push({ method, path: url.pathname });
     if (method === "POST") {
       posts++;
-      throw new Error("Inbox Open and intent recovery must not dispatch a mutation");
+      if (url.pathname !== "/api/v1/research/wiki/publications") {
+        throw new Error(`Unexpected Inbox/Studio mutation: ${url.pathname}`);
+      }
+      const request = JSON.parse(String(init?.body ?? "")) as {
+        readonly proposal_ref?: { readonly id?: unknown; readonly revision?: unknown };
+        readonly expected_head_revision?: unknown;
+      };
+      const id = request.proposal_ref?.id;
+      const info = typeof id === "string" ? proposalInfo(id) : undefined;
+      const headers = new Headers(init?.headers);
+      const idempotencyKey = headers.get("idempotency-key");
+      if (!info || request.proposal_ref?.revision !== 1 || request.expected_head_revision !== 1 ||
+        headers.get("content-type") !== "application/json" || headers.get("x-eliotr-csrf") !== "1" ||
+        !idempotencyKey || publicationAttempts.length !== 0) {
+        throw new Error("Publish request lost its exact proposal, CAS, CSRF or idempotency identity");
+      }
+      publicationAttempts.push({
+        proposalId: id as string,
+        expectedHeadRevision: request.expected_head_revision as number,
+        idempotencyKey,
+      });
+      publishedProposalId = id as string;
+      return json({
+        protocol: "eliotr.wiki-publication.v1",
+        page_ref: { id: info.pageId, revision: 2 },
+        status: "PUBLISHED",
+        reviewer_ref: "inbox-story-owner",
+      });
     }
     if (url.pathname === "/api/v1/system/health") return json({
       ready: true, deployment_generation: generation, core_schema_generation: "schema-1",
@@ -206,6 +241,7 @@ function createInboxStudioEnvironment(): InboxStudioEnvironment {
     requestEventsSince(index) { return events.slice(index); },
     mintedKeyCount: () => mintedKeys,
     postCount: () => posts,
+    publicationAttempts() { return [...publicationAttempts]; },
     seedUnknownIntent() {
       const snapshot = privacy.getSnapshot();
       if (snapshot.phase !== "available" || !privacy.isCurrent(snapshot.context)) throw new Error("Owner session is not current");
@@ -309,6 +345,51 @@ async function playInboxStudioSelectionRegression({ canvas, userEvent }: {
   }
 }
 
+async function playInboxPublishDraftPathRegression({ canvas, userEvent }: {
+  readonly canvas: {
+    findAllByRole(role: string, options: { readonly name: string | RegExp; readonly exact?: boolean }): Promise<HTMLElement[]>;
+    findByRole(role: string, options: { readonly name: string; readonly exact?: boolean }): Promise<HTMLElement>;
+    findByText(text: string, options?: { readonly selector?: string }): Promise<HTMLElement>;
+    queryByRole(role: string, options: { readonly name: string; readonly exact?: boolean }): HTMLElement | null;
+  };
+  readonly userEvent: { click(element: HTMLElement): Promise<void> };
+}) {
+  const root = document.querySelector<HTMLElement>("[data-inbox-studio-selection-regression]");
+  const environment = root ? environments.get(root) : undefined;
+  if (!environment) throw new Error("Inbox/Studio composed runtime fixture is missing");
+
+  const inboxButtons = await canvas.findAllByRole("button", { name: "Open in Studio", exact: true });
+  const secondButton = inboxButtons[1];
+  if (inboxButtons.length !== 2 || !secondButton) throw new Error("Expected the two Inbox proposal rows");
+  const openStart = environment.requestEventCount();
+  await userEvent.click(secondButton);
+  await canvas.findByText(secondBody, { selector: ".er-studio-live__body" });
+  const opened = environment.requestEventsSince(openStart);
+  if (environment.postCount() !== 0 || environment.mintedKeyCount() !== 0 ||
+    !opened.some(event => event.method === "GET" && event.path === `/api/v1/research/wiki/proposals/${secondId}`) ||
+    opened.some(event => event.method === "POST" || event.path.includes(firstId))) {
+    throw new Error("Opening the selected draft must perform exact reads without publishing");
+  }
+
+  const publishStart = environment.requestEventCount();
+  await userEvent.click(await canvas.findByRole("button", { name: "Publish page", exact: true }));
+  await userEvent.click(await canvas.findByRole("button", { name: "Confirm publication", exact: true }));
+  await canvas.findByText("Publication confirmed for this Wiki page.", { selector: ".er-status > span" });
+  await canvas.findByText("Published", { selector: "dd" });
+
+  const attempts = environment.publicationAttempts();
+  const publishEvents = environment.requestEventsSince(publishStart);
+  if (attempts.length !== 1 || attempts[0]?.proposalId !== secondId ||
+    attempts[0]?.expectedHeadRevision !== 1 || !attempts[0]?.idempotencyKey ||
+    environment.postCount() !== 1 || environment.mintedKeyCount() !== 1 ||
+    publishEvents.filter(event => event.method === "POST" && event.path === "/api/v1/research/wiki/publications").length !== 1 ||
+    publishEvents.some(event => event.method === "POST" && event.path !== "/api/v1/research/wiki/publications") ||
+    canvas.queryByRole("button", { name: "Publish page", exact: true }) ||
+    canvas.queryByRole("button", { name: "Confirm publication", exact: true })) {
+    throw new Error("Inbox draft did not publish once through its exact owner API and read back as published");
+  }
+}
+
 export default {
   title: "Workspace/Inbox Studio selection regression",
   component: InboxStudioSelectionPreview,
@@ -319,4 +400,10 @@ export const InboxStudioSelectionRegression = {
   name: "Inbox Studio Selection Regression",
   render: () => <InboxStudioSelectionPreview />,
   play: playInboxStudioSelectionRegression,
+};
+
+export const InboxPublishDraftPathRegression = {
+  name: "Inbox Publish Draft Path Regression",
+  render: () => <InboxStudioSelectionPreview />,
+  play: playInboxPublishDraftPathRegression,
 };
