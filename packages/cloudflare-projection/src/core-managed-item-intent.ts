@@ -13,6 +13,9 @@ import {
 import {
   compareManagedProjectMemberships,
   createManagedProjectProviderKey,
+  createManagedProjectProviderKeyV2,
+  managedProjectFolderPrefix,
+  managedProjectFolderPrefixV2,
   managedProjectGenerationMetadataValue,
   parseManagedProjectMembershipId,
   type ManagedProjectMembershipIdentity,
@@ -24,9 +27,14 @@ import type {
   CanonicalProjectionResourceBounds,
   CanonicalProjectionSourceContext,
   ManagedProjectCopyMapReceipt,
+  ManagedProjectCopyMapReceiptV1,
+  ManagedProjectCopyMapReceiptV2,
   ManagedProjectCopyPlan,
   ManagedProjectCopyTargetReceipt,
   ManagedProjectionItemCopy,
+  ProjectCopyMembershipCopyV2,
+  ProjectCopyScopeV2,
+  ManagedTargetSelectionV2,
   ProjectionExecutionProfile,
   ProjectionSourceContext,
 } from "./types.js";
@@ -144,6 +152,11 @@ function membershipIdentities(values: readonly string[]): readonly ManagedProjec
 
 export interface ManagedProjectCopyPreflight {
   readonly metadata_generation_digest: string;
+  readonly layout?: "PROJECT_COPY_V2";
+  readonly target_selection?: ManagedTargetSelectionV2;
+  readonly scope_snapshot_id?: string;
+  readonly scope_snapshot_revision?: number;
+  readonly scope_snapshot_digest?: string;
   readonly provider_copy_count: number;
   readonly physical_item_count: number;
   readonly provider_copy_item_count: number;
@@ -159,7 +172,59 @@ export interface ManagedProjectCopyPreflight {
     readonly project_id: string | null;
     readonly project_membership_id: string | null;
     readonly membership_generation: number | null;
+    readonly membership_identity_version: 1 | 2 | null;
+    readonly legacy_project_membership_id: string | null;
+    readonly stable_project_membership_id: string | null;
+    readonly membership_revision: number | null;
+    readonly project_membership_generation: number | null;
   }[];
+}
+
+function v2ScopeForProfile(
+  context: ProjectionSourceContext,
+  profile: ProjectionExecutionProfile,
+): ProjectCopyScopeV2 | undefined {
+  const scopes = context.project_copy_scopes_v2;
+  if (scopes === undefined) return undefined;
+  if (!Array.isArray(scopes) || scopes.length < 1 || scopes.length > 2) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "Root V2 selection scope count is outside the ACTIVE/SHADOW bound");
+  }
+  const matching = scopes.filter((scope) =>
+    scope.target.managed_instance_id === profile.managed_instance_id &&
+    scope.target.managed_generation === profile.managed_generation &&
+    scope.target_selection.target.managed_instance_id === profile.managed_instance_id &&
+    scope.target_selection.target.managed_generation === profile.managed_generation
+  );
+  if (matching.length !== 1) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "Root V2 scope does not select exactly this physical target");
+  }
+  const scope = matching[0];
+  if (scope === undefined) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "Root V2 scope selection is missing");
+  }
+  if (
+    scope.layout !== "PROJECT_COPY_V2" ||
+    scope.representative_policy !== "ONE_CANONICAL_COPY_PER_SOURCE_REVISION" ||
+    scope.target.namespace !== scope.target_selection.target.namespace ||
+    scope.target.managed_instance_id !== scope.target_selection.target.managed_instance_id ||
+    scope.target.managed_generation !== scope.target_selection.target.managed_generation ||
+    scope.target.target_profile_identity_sha256 !== scope.target_selection.target.target_profile_identity_sha256 ||
+    scope.target_selection.protocol !== "eliotr.managed-target-selection.v2" ||
+    scope.target_selection.domain !== "MANAGED_SEARCH_PRODUCT" ||
+    scope.target_selection.decision_version !== 2 ||
+    scope.target_selection.selection_mode !== "STABLE_PHYSICAL_PROFILE_V2" ||
+    scope.target_selection.product_alias !== "primary"
+  ) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "Root V2 scope and stable target receipt do not match");
+  }
+  assertProjectionIdentifier(scope.scope_snapshot_id, "V2 scope snapshot ID");
+  assertProjectionInteger(scope.scope_snapshot_revision, "V2 scope snapshot revision", 1, Number.MAX_SAFE_INTEGER);
+  assertProjectionSha256(scope.scope_snapshot_digest, "V2 scope snapshot digest");
+  assertProjectionSha256(scope.target.target_profile_identity_sha256, "V2 target physical profile digest");
+  assertProjectionInteger(scope.target_selection.registry_revision, "V2 registry revision", 1, Number.MAX_SAFE_INTEGER);
+  assertProjectionSha256(scope.target_selection.registry_artifact_sha256, "V2 registry artifact digest");
+  assertProjectionSha256(scope.target_selection.v1_exact_profile_identity_sha256, "V2 exact V1 profile digest");
+  return scope;
 }
 
 /** Resolve every exact physical key and document bound before the first Work or provider write. */
@@ -168,9 +233,183 @@ export async function preflightManagedProjectCopies(
   profile: ProjectionExecutionProfile,
   canonicalItems: readonly ProjectionItem[],
 ): Promise<ManagedProjectCopyPreflight> {
-  const memberships = membershipIdentities(context.project_membership_ids);
+  const scope = v2ScopeForProfile(context, profile);
   const targetMetadataDigest = await managedProjectGenerationMetadataValue(profile.managed_generation);
   const items: ManagedProjectCopyPreflight["items"][number][] = [];
+  if (scope !== undefined) {
+    if (scope.generation_metadata_value !== targetMetadataDigest) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "Root V2 scope generation digest differs from its selected target");
+    }
+    const ordered = [...scope.copies].sort(compareCopyIdentityV2);
+    const seenCopies = new Set<string>();
+    for (const membership of ordered) {
+      const copyIdentity = copyIdentityV2(membership);
+      if (
+        seenCopies.has(copyIdentity) ||
+        membership.source_revision_ref !== context.source_revision.source_revision_ref ||
+        membership.source_owner_generation !== context.source_revision.source_owner_generation
+      ) {
+        projectionFail("PROJECTION_AUTHORITY_CONFLICT", "Root V2 copy scope repeats or changes source authority");
+      }
+      seenCopies.add(copyIdentity);
+      assertProjectionIdentifier(membership.project_id, "V2 scope project ID");
+      assertProjectionIdentifier(membership.project_membership_id, "V2 scope membership ID");
+      assertProjectionInteger(membership.membership_generation, "V2 opening membership generation", 1, Number.MAX_SAFE_INTEGER);
+
+      let folderPrefix: string;
+      let versionFields: {
+        readonly membership_identity_version: 1 | 2;
+        readonly legacy_project_membership_id: string | null;
+        readonly stable_project_membership_id: string | null;
+        readonly membership_revision: number | null;
+        readonly project_membership_generation: number | null;
+      };
+      if (membership.membership_identity_version === 1) {
+        const parsed = parseManagedProjectMembershipId(membership.legacy_project_membership_id);
+        if (
+          membership.project_membership_id !== membership.legacy_project_membership_id ||
+          parsed.project_id !== membership.project_id ||
+          parsed.membership_generation !== membership.membership_generation
+        ) {
+          projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V1 copy row inside V2 scope changed its original identity");
+        }
+        folderPrefix = await managedProjectFolderPrefix({
+          instance_id: profile.managed_instance_id,
+          projection_generation: profile.managed_generation,
+          source_revision_ref: context.source_revision.source_revision_ref,
+          project_id: membership.project_id,
+          project_membership_id: membership.legacy_project_membership_id,
+          membership_generation: membership.membership_generation,
+        });
+        versionFields = {
+          membership_identity_version: 1,
+          legacy_project_membership_id: membership.legacy_project_membership_id,
+          stable_project_membership_id: null,
+          membership_revision: null,
+          project_membership_generation: null,
+        };
+      } else {
+        const stableId = assertProjectionIdentifier(
+          membership.stable_project_membership_id,
+          "V2 stable project/source membership ID",
+        );
+        const membershipRevision = assertProjectionInteger(
+          membership.membership_revision,
+          "V2 per-pair membership revision",
+          1,
+          Number.MAX_SAFE_INTEGER,
+        );
+        const aggregateGeneration = assertProjectionInteger(
+          membership.project_membership_generation,
+          "V2 aggregate membership currentness generation",
+          1,
+          Number.MAX_SAFE_INTEGER,
+        );
+        if (
+          !/^project-membership-[a-f0-9]{48}$/u.test(stableId) ||
+          membership.project_membership_id !== stableId ||
+          membership.membership_generation > aggregateGeneration
+        ) {
+          projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V2 stable membership identity or currentness is invalid");
+        }
+        folderPrefix = await managedProjectFolderPrefixV2({
+          instance_id: profile.managed_instance_id,
+          projection_generation: profile.managed_generation,
+          source_revision_ref: context.source_revision.source_revision_ref,
+          project_id: membership.project_id,
+          stable_project_membership_id: stableId,
+          membership_revision: membershipRevision,
+        });
+        versionFields = {
+          membership_identity_version: 2,
+          legacy_project_membership_id: null,
+          stable_project_membership_id: stableId,
+          membership_revision: membershipRevision,
+          project_membership_generation: aggregateGeneration,
+        };
+      }
+      if (membership.folder_prefix !== folderPrefix) {
+        projectionFail("PROJECTION_AUTHORITY_CONFLICT", "Root V2 folder differs from the shared provider-key helper");
+      }
+      for (const item of canonicalItems) {
+        const span = canonicalSectionSpan(item);
+        const document = item.document_context_header.trim().length === 0
+          ? item.section_text
+          : `${item.document_context_header.trim()}\n\n${item.section_text}`;
+        const documentBytes = utf8ProjectionLength(document);
+        if (documentBytes < 1 || documentBytes > profile.maximum_item_utf8_bytes) {
+          projectionFail("PROJECTION_INPUT_INVALID", "V2 project-copy document exceeds the declared UTF-8 byte bound");
+        }
+        const keyIdentity = membership.membership_identity_version === 1
+          ? {
+            canonical_section_id: item.canonical_section_id,
+            projection_generation: profile.managed_generation,
+            project_membership_id: membership.legacy_project_membership_id,
+          }
+          : {
+            protocol: "eliotr.project-copy-item.v2",
+            canonical_section_id: item.canonical_section_id,
+            projection_generation: profile.managed_generation,
+            project_id: membership.project_id,
+            stable_project_membership_id: membership.stable_project_membership_id,
+            membership_revision: membership.membership_revision,
+          };
+        const itemKey = "projection-" + (await projectionDigest(keyIdentity)).slice(0, 48);
+        const providerKey = membership.membership_identity_version === 1
+          ? (await createManagedProjectProviderKey({
+            instance_id: profile.managed_instance_id,
+            projection_generation: profile.managed_generation,
+            source_revision_ref: context.source_revision.source_revision_ref,
+            project_id: membership.project_id,
+            project_membership_id: membership.legacy_project_membership_id,
+            membership_generation: membership.membership_generation,
+            item_key: itemKey,
+          })).provider_key
+          : (await createManagedProjectProviderKeyV2({
+            instance_id: profile.managed_instance_id,
+            projection_generation: profile.managed_generation,
+            source_revision_ref: context.source_revision.source_revision_ref,
+            project_id: membership.project_id,
+            stable_project_membership_id: membership.stable_project_membership_id,
+            membership_revision: membership.membership_revision,
+            item_key: itemKey,
+          })).provider_key;
+        items.push(Object.freeze({
+          item_key: itemKey,
+          canonical_item_key: item.item_key,
+          canonical_section_id: item.canonical_section_id,
+          content_sha256: item.content_sha256,
+          normalized_start_byte: span.normalized_start_byte,
+          normalized_end_byte: span.normalized_end_byte,
+          provider_key: providerKey,
+          project_id: membership.project_id,
+          project_membership_id: membership.project_membership_id,
+          membership_generation: membership.membership_generation,
+          ...versionFields,
+        }));
+      }
+    }
+    return Object.freeze({
+      metadata_generation_digest: targetMetadataDigest,
+      layout: "PROJECT_COPY_V2",
+      target_selection: scope.target_selection,
+      scope_snapshot_id: scope.scope_snapshot_id,
+      scope_snapshot_revision: scope.scope_snapshot_revision,
+      scope_snapshot_digest: scope.scope_snapshot_digest,
+      provider_copy_count: scope.copies.length,
+      physical_item_count: items.length,
+      provider_copy_item_count: items.length,
+      provider_copy_item_set_sha256: await projectionDigest(items.map((item) => ({
+        item_key: item.item_key,
+        canonical_section_id: item.canonical_section_id,
+        content_sha256: item.content_sha256,
+        start: item.normalized_start_byte,
+        end: item.normalized_end_byte,
+      }))),
+      items: Object.freeze(items),
+    });
+  }
+  const memberships = membershipIdentities(context.project_membership_ids);
   if (memberships.length === 0) {
     for (const item of canonicalItems) {
       const span = canonicalSectionSpan(item);
@@ -192,6 +431,11 @@ export async function preflightManagedProjectCopies(
         project_id: null,
         project_membership_id: null,
         membership_generation: null,
+        membership_identity_version: null,
+        legacy_project_membership_id: null,
+        stable_project_membership_id: null,
+        membership_revision: null,
+        project_membership_generation: null,
       }));
     }
     return Object.freeze({
@@ -240,6 +484,11 @@ export async function preflightManagedProjectCopies(
         project_id: membership.project_id,
         project_membership_id: membership.project_membership_id,
         membership_generation: membership.membership_generation,
+        membership_identity_version: 1,
+        legacy_project_membership_id: membership.project_membership_id,
+        stable_project_membership_id: null,
+        membership_revision: null,
+        project_membership_generation: null,
       }));
     }
   }
@@ -291,7 +540,7 @@ export async function buildCanonicalProjectCopyMaps(
   canonical: CanonicalSourceProjectionReceipt,
   target: ManagedProjectCopyTargetReceipt,
   rawMemberships: readonly string[],
-): Promise<readonly ManagedProjectCopyMapReceipt[]> {
+): Promise<readonly ManagedProjectCopyMapReceiptV1[]> {
   if (rawMemberships.length < 1 || rawMemberships.length > MAX_MANAGED_PROJECT_MEMBERSHIPS) {
     projectionFail("PROJECTION_INPUT_INVALID", "PROJECT_COPY_V1 requires 1 to 256 current Core memberships");
   }
@@ -311,7 +560,7 @@ export async function buildCanonicalProjectCopyMaps(
   }
 
   const memberships = membershipIdentities(rawMemberships);
-  const copies: ManagedProjectCopyMapReceipt[] = [];
+  const copies: ManagedProjectCopyMapReceiptV1[] = [];
   for (const membership of memberships) {
     const items: ManagedProjectCopyMapReceipt["items"][number][] = [];
     for (const section of canonical.sections) {
@@ -367,12 +616,241 @@ export async function buildCanonicalProjectCopyMaps(
   return Object.freeze(copies);
 }
 
+function copyIdentityV2(copy: ProjectCopyMembershipCopyV2): string {
+  return `${copy.membership_identity_version}:${copy.project_id}:${copy.project_membership_id}`;
+}
+
+function compareCopyIdentityV2(
+  left: ProjectCopyMembershipCopyV2,
+  right: ProjectCopyMembershipCopyV2,
+): number {
+  const projectOrder = left.project_id < right.project_id ? -1 : left.project_id > right.project_id ? 1 : 0;
+  return projectOrder !== 0
+    ? projectOrder
+    : left.project_membership_id < right.project_membership_id
+    ? -1
+    : left.project_membership_id > right.project_membership_id
+    ? 1
+    : 0;
+}
+
+/** Build versioned mapping receipts from one canonical source; V2 rows never contain section bodies. */
+export async function buildCanonicalProjectCopyMapsV2(
+  canonical: CanonicalSourceProjectionReceipt,
+  target: ManagedProjectCopyTargetReceipt,
+  scope: ProjectCopyScopeV2,
+): Promise<readonly ManagedProjectCopyMapReceiptV2[]> {
+  const expectedMetadataGeneration = await managedProjectGenerationMetadataValue(target.managed_generation);
+  if (
+    scope.layout !== "PROJECT_COPY_V2" ||
+    scope.representative_policy !== "ONE_CANONICAL_COPY_PER_SOURCE_REVISION" ||
+    scope.target.managed_instance_id !== target.managed_instance_id ||
+    scope.target.managed_generation !== target.managed_generation ||
+    scope.target_selection.target.managed_instance_id !== target.managed_instance_id ||
+    scope.target_selection.target.managed_generation !== target.managed_generation ||
+    scope.target_selection.target.namespace !== scope.target.namespace ||
+    scope.target_selection.target.target_profile_identity_sha256 !== scope.target.target_profile_identity_sha256 ||
+    scope.generation_metadata_value !== expectedMetadataGeneration ||
+    target.metadata_generation_digest !== expectedMetadataGeneration ||
+    !Array.isArray(scope.copies) ||
+    scope.copies.length > MAX_MANAGED_PROJECT_MEMBERSHIPS ||
+    canonical.sections.length !== canonical.canonical_section_count ||
+    canonical.source_revision_ref !== scope.copies[0]?.source_revision_ref && scope.copies.length > 0
+  ) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V2 copy scope differs from its canonical or target authority");
+  }
+  assertProjectionIdentifier(scope.scope_snapshot_id, "V2 copy scope snapshot ID");
+  assertProjectionInteger(scope.scope_snapshot_revision, "V2 copy scope snapshot revision", 1, Number.MAX_SAFE_INTEGER);
+  assertProjectionSha256(scope.scope_snapshot_digest, "V2 copy scope snapshot digest");
+  assertProjectionIdentifier(scope.target_selection.target.namespace, "V2 selected target namespace");
+  assertProjectionSha256(scope.target_selection.target.target_profile_identity_sha256, "V2 selected physical profile digest");
+  assertProjectionInteger(scope.target_selection.registry_revision, "V2 target registry revision", 1, Number.MAX_SAFE_INTEGER);
+  assertProjectionSha256(scope.target_selection.registry_artifact_sha256, "V2 target registry artifact digest");
+  assertProjectionSha256(scope.target_selection.v1_exact_profile_identity_sha256, "V2 exact V1 profile digest");
+  if (
+    scope.target_selection.protocol !== "eliotr.managed-target-selection.v2" ||
+    scope.target_selection.domain !== "MANAGED_SEARCH_PRODUCT" ||
+    scope.target_selection.decision_version !== 2 ||
+    scope.target_selection.selection_mode !== "STABLE_PHYSICAL_PROFILE_V2" ||
+    scope.target_selection.product_alias !== "primary"
+  ) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V2 target selection is not the exact supported product protocol");
+  }
+  assertProjectionSha256(canonical.complete_residency_key_sha256, "canonical residency digest");
+  assertProjectionSha256(canonical.projector_profile_sha256, "canonical projector profile digest");
+  assertProjectionSha256(canonical.canonical_source_sha256, "canonical source digest");
+  assertProjectionSha256(canonical.canonical_section_set_sha256, "canonical section set digest");
+  assertProjectionIdentifier(canonical.canonical_projection_generation, "canonical projection generation");
+
+  const ordered = [...scope.copies].sort(compareCopyIdentityV2);
+  const seen = new Set<string>();
+  const copies: ManagedProjectCopyMapReceiptV2[] = [];
+  for (const membership of ordered) {
+    const identity = copyIdentityV2(membership);
+    if (seen.has(identity) || membership.source_revision_ref !== canonical.source_revision_ref) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V2 copy scope repeats or changes a source membership identity");
+    }
+    seen.add(identity);
+    assertProjectionIdentifier(membership.source_owner_generation, "V2 copy source owner generation");
+    assertProjectionIdentifier(membership.project_id, "V2 copy project ID");
+    assertProjectionIdentifier(membership.project_membership_id, "V2 copy membership ID");
+    assertProjectionInteger(membership.membership_generation, "V2 copy opening membership generation", 1, Number.MAX_SAFE_INTEGER);
+
+    let expectedFolderPrefix: string;
+    let membershipFields: ProjectCopyMembershipCopyV2;
+    if (membership.membership_identity_version === 1) {
+      const legacy = parseManagedProjectMembershipId(membership.legacy_project_membership_id);
+      if (
+        membership.project_membership_id !== membership.legacy_project_membership_id ||
+        legacy.project_id !== membership.project_id ||
+        legacy.membership_generation !== membership.membership_generation
+      ) {
+        projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V1 row inside V2 scope changed its legacy identity");
+      }
+      expectedFolderPrefix = await managedProjectFolderPrefix({
+        instance_id: target.managed_instance_id,
+        projection_generation: target.managed_generation,
+        source_revision_ref: canonical.source_revision_ref,
+        project_id: membership.project_id,
+        project_membership_id: membership.legacy_project_membership_id,
+        membership_generation: membership.membership_generation,
+      });
+      membershipFields = membership;
+    } else {
+      const stableId = assertProjectionIdentifier(
+        membership.stable_project_membership_id,
+        "V2 stable project/source membership ID",
+      );
+      const membershipRevision = assertProjectionInteger(
+        membership.membership_revision,
+        "V2 per-pair membership revision",
+        1,
+        Number.MAX_SAFE_INTEGER,
+      );
+      const currentMembershipGeneration = assertProjectionInteger(
+        membership.project_membership_generation,
+        "V2 aggregate membership currentness generation",
+        1,
+        Number.MAX_SAFE_INTEGER,
+      );
+      if (
+        !/^project-membership-[a-f0-9]{48}$/u.test(stableId) ||
+        membership.project_membership_id !== stableId ||
+        membership.membership_generation > currentMembershipGeneration
+      ) {
+        projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V2 stable membership identity or currentness is invalid");
+      }
+      expectedFolderPrefix = await managedProjectFolderPrefixV2({
+        instance_id: target.managed_instance_id,
+        projection_generation: target.managed_generation,
+        source_revision_ref: canonical.source_revision_ref,
+        project_id: membership.project_id,
+        stable_project_membership_id: stableId,
+        membership_revision: membershipRevision,
+      });
+      membershipFields = membership;
+    }
+    if (membership.folder_prefix !== expectedFolderPrefix) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V2 scope folder does not match the shared provider-key helper");
+    }
+
+    const items: ManagedProjectCopyMapReceiptV2["items"][number][] = [];
+    for (const section of canonical.sections) {
+      assertProjectionIdentifier(section.canonical_item_key, "canonical item key");
+      assertProjectionIdentifier(section.canonical_section_id, "canonical section ID");
+      assertProjectionSha256(section.content_sha256, "canonical section content digest");
+      assertProjectionText(section.canonical_body_ref, "canonical body reference", 2048);
+      assertProjectionSha256(section.canonical_body_sha256, "canonical body digest");
+      if (section.canonical_body_sha256 !== section.content_sha256) {
+        projectionFail("PROJECTION_AUTHORITY_CONFLICT", "canonical body digest differs from section content digest");
+      }
+      const itemIdentity = membership.membership_identity_version === 1
+        ? {
+          canonical_section_id: section.canonical_section_id,
+          projection_generation: target.managed_generation,
+          project_membership_id: membership.legacy_project_membership_id,
+        }
+        : {
+          protocol: "eliotr.project-copy-item.v2",
+          canonical_section_id: section.canonical_section_id,
+          projection_generation: target.managed_generation,
+          project_id: membership.project_id,
+          stable_project_membership_id: membership.stable_project_membership_id,
+          membership_revision: membership.membership_revision,
+        };
+      const itemKey = "projection-" + (await projectionDigest(itemIdentity)).slice(0, 48);
+      const key = membership.membership_identity_version === 1
+        ? await createManagedProjectProviderKey({
+          instance_id: target.managed_instance_id,
+          projection_generation: target.managed_generation,
+          source_revision_ref: canonical.source_revision_ref,
+          project_id: membership.project_id,
+          project_membership_id: membership.legacy_project_membership_id,
+          membership_generation: membership.membership_generation,
+          item_key: itemKey,
+        })
+        : await createManagedProjectProviderKeyV2({
+          instance_id: target.managed_instance_id,
+          projection_generation: target.managed_generation,
+          source_revision_ref: canonical.source_revision_ref,
+          project_id: membership.project_id,
+          stable_project_membership_id: membership.stable_project_membership_id,
+          membership_revision: membership.membership_revision,
+          item_key: itemKey,
+        });
+      if (key.folder_prefix !== membership.folder_prefix) {
+        projectionFail("PROJECTION_AUTHORITY_CONFLICT", "provider path changed during V2 copy-map construction");
+      }
+      items.push(Object.freeze({
+        item_key: itemKey,
+        canonical_item_key: section.canonical_item_key,
+        canonical_section_id: section.canonical_section_id,
+        content_sha256: section.content_sha256,
+        normalized_start_byte: section.normalized_start_byte,
+        normalized_end_byte: section.normalized_end_byte,
+        provider_key: key.provider_key,
+        canonical_body_ref: section.canonical_body_ref,
+        canonical_body_sha256: section.canonical_body_sha256,
+      }));
+    }
+    const providerItemSetSha256 = await projectionDigest(items.map((item) => ({
+      item_key: item.item_key,
+      canonical_section_id: item.canonical_section_id,
+      content_sha256: item.content_sha256,
+      start: item.normalized_start_byte,
+      end: item.normalized_end_byte,
+    })));
+    const payload = {
+      ...membershipFields,
+      protocol: "eliotr.managed-project-copy-map.v2" as const,
+      layout: "PROJECT_COPY_V2" as const,
+      source_revision_ref: canonical.source_revision_ref,
+      complete_residency_key_sha256: canonical.complete_residency_key_sha256,
+      canonical_projection_generation: canonical.canonical_projection_generation,
+      target,
+      target_selection: scope.target_selection,
+      canonical_source_ref: canonical.canonical_source_ref,
+      canonical_source_sha256: canonical.canonical_source_sha256,
+      provider_copy_count: 1 as const,
+      provider_item_count: items.length,
+      provider_item_set_sha256: providerItemSetSha256,
+      items: Object.freeze(items),
+    };
+    copies.push(Object.freeze({
+      ...payload,
+      provider_copy_set_sha256: await projectionDigest(payload),
+    }));
+  }
+  return Object.freeze(copies);
+}
+
 /** Expand one canonical projector result into exact provider identities without re-projecting section text. */
 export async function buildManagedProjectCopyPlan(
   context: ProjectionSourceContext,
   profile: ProjectionExecutionProfile,
   canonical: CanonicalSourceProjectionReceipt,
   canonicalItems: readonly ProjectionItem[],
+  preflight?: ManagedProjectCopyPreflight,
 ): Promise<ManagedProjectCopyPlan> {
   if (
     canonical.source_revision_ref !== context.source_revision.source_revision_ref ||
@@ -405,6 +883,127 @@ export async function buildManagedProjectCopyPlan(
     managed_generation: profile.managed_generation,
     metadata_generation_digest: metadataGenerationDigest,
   });
+  const v2Scope = v2ScopeForProfile(context, profile);
+  if (v2Scope !== undefined) {
+    const resolvedPreflight = preflight ?? await preflightManagedProjectCopies(context, profile, canonicalItems);
+    if (
+      resolvedPreflight.layout !== "PROJECT_COPY_V2" ||
+      resolvedPreflight.target_selection === undefined ||
+      resolvedPreflight.target_selection.registry_artifact_sha256 !== v2Scope.target_selection.registry_artifact_sha256 ||
+      resolvedPreflight.scope_snapshot_id !== v2Scope.scope_snapshot_id ||
+      resolvedPreflight.scope_snapshot_revision !== v2Scope.scope_snapshot_revision ||
+      resolvedPreflight.scope_snapshot_digest !== v2Scope.scope_snapshot_digest ||
+      resolvedPreflight.metadata_generation_digest !== metadataGenerationDigest
+    ) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V2 provider plan differs from its complete Root preflight");
+    }
+    const copies = await buildCanonicalProjectCopyMapsV2(canonical, target, v2Scope);
+    if (copies.length !== resolvedPreflight.provider_copy_count) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V2 mapping copy count differs from its exact preflight");
+    }
+    const canonicalByKey = new Map(canonicalItems.map((item) => [item.item_key, item]));
+    const expectedByIdentity = new Map(resolvedPreflight.items.map((item) => [
+      `${item.membership_identity_version}:${item.project_id}:${item.project_membership_id}:${item.canonical_item_key}`,
+      item,
+    ]));
+    const copyItems: ManagedProjectionItemCopy[] = [];
+    for (const copy of copies) {
+      const publicMembershipId = copy.project_membership_id;
+      for (const mapped of copy.items) {
+        const item = canonicalByKey.get(mapped.canonical_item_key);
+        const identity = `${copy.membership_identity_version}:${copy.project_id}:${publicMembershipId}:${mapped.canonical_item_key}`;
+        const expected = expectedByIdentity.get(identity);
+        if (
+          item === undefined || expected === undefined ||
+          expected.item_key !== mapped.item_key || expected.provider_key !== mapped.provider_key ||
+          expected.content_sha256 !== mapped.content_sha256 ||
+          expected.normalized_start_byte !== mapped.normalized_start_byte ||
+          expected.normalized_end_byte !== mapped.normalized_end_byte
+        ) {
+          projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V2 copy map differs from the complete preflight key set");
+        }
+        const versionFields = copy.membership_identity_version === 1
+          ? {
+            membership_identity_version: 1 as const,
+            legacy_project_membership_id: copy.legacy_project_membership_id,
+            stable_project_membership_id: null,
+            membership_revision: null,
+            project_membership_generation: null,
+          }
+          : {
+            membership_identity_version: 2 as const,
+            legacy_project_membership_id: null,
+            stable_project_membership_id: copy.stable_project_membership_id,
+            membership_revision: copy.membership_revision,
+            project_membership_generation: copy.project_membership_generation,
+          };
+        copyItems.push(Object.freeze({
+          ...item,
+          normalized_start_byte: mapped.normalized_start_byte,
+          normalized_end_byte: mapped.normalized_end_byte,
+          item_key: mapped.item_key,
+          projection_generation: target.metadata_generation_digest,
+          project_membership_ids: [publicMembershipId],
+          copy_layout: "PROJECT_COPY_V2",
+          canonical_projection_generation: canonical.canonical_projection_generation,
+          canonical_item_key: mapped.canonical_item_key,
+          project_id: copy.project_id,
+          project_membership_id: publicMembershipId,
+          membership_generation: copy.membership_generation,
+          ...versionFields,
+          provider_key: mapped.provider_key,
+          metadata_generation_digest: target.metadata_generation_digest,
+          canonical_body_ref: mapped.canonical_body_ref,
+          canonical_body_sha256: mapped.canonical_body_sha256,
+        }));
+      }
+    }
+    if (copyItems.length !== resolvedPreflight.physical_item_count) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V2 physical item count differs from its complete preflight");
+    }
+    const providerItemSetSha256 = await projectionDigest(copyItems.map((item) => ({
+      item_key: item.item_key,
+      canonical_section_id: item.canonical_section_id,
+      content_sha256: item.content_sha256,
+      start: item.normalized_start_byte,
+      end: item.normalized_end_byte,
+    })));
+    if (providerItemSetSha256 !== resolvedPreflight.provider_copy_item_set_sha256) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V2 physical item set digest differs from its complete preflight");
+    }
+    const providerCopySetSha256 = await projectionDigest(copies.map((copy) => ({
+      project_id: copy.project_id,
+      project_membership_id: copy.project_membership_id,
+      membership_identity_version: copy.membership_identity_version,
+      legacy_project_membership_id: copy.membership_identity_version === 1
+        ? copy.legacy_project_membership_id
+        : null,
+      stable_project_membership_id: copy.membership_identity_version === 2
+        ? copy.stable_project_membership_id
+        : null,
+      membership_revision: copy.membership_identity_version === 2 ? copy.membership_revision : null,
+      membership_generation: copy.membership_generation,
+      project_membership_generation: copy.membership_identity_version === 2
+        ? copy.project_membership_generation
+        : null,
+      folder_prefix: copy.folder_prefix,
+      provider_copy_set_sha256: copy.provider_copy_set_sha256,
+    })));
+    return Object.freeze({
+      target,
+      layout: "PROJECT_COPY_V2",
+      target_selection: v2Scope.target_selection,
+      scope_snapshot_id: v2Scope.scope_snapshot_id,
+      scope_snapshot_revision: v2Scope.scope_snapshot_revision,
+      scope_snapshot_digest: v2Scope.scope_snapshot_digest,
+      items: Object.freeze(copyItems),
+      copies,
+      provider_copy_count: copies.length,
+      provider_copy_set_sha256: providerCopySetSha256,
+      provider_item_count: copyItems.length,
+      provider_item_set_sha256: providerItemSetSha256,
+    });
+  }
   const memberships = membershipIdentities(context.project_membership_ids);
   if (memberships.length === 0) {
     const canonicalByKey = new Map(canonical.sections.map((section) => [section.canonical_item_key, section]));
@@ -423,6 +1022,11 @@ export async function buildManagedProjectCopyPlan(
         project_id: null,
         project_membership_id: null,
         membership_generation: null,
+        membership_identity_version: null,
+        legacy_project_membership_id: null,
+        stable_project_membership_id: null,
+        membership_revision: null,
+        project_membership_generation: null,
         provider_key: item.item_key + ".md",
         metadata_generation_digest: null,
         canonical_body_ref: null,
@@ -466,6 +1070,11 @@ export async function buildManagedProjectCopyPlan(
         project_id: copy.project_id,
         project_membership_id: copy.project_membership_id,
         membership_generation: copy.membership_generation,
+        membership_identity_version: 1,
+        legacy_project_membership_id: copy.project_membership_id,
+        stable_project_membership_id: null,
+        membership_revision: null,
+        project_membership_generation: null,
         provider_key: mapped.provider_key,
         metadata_generation_digest: target.metadata_generation_digest,
         canonical_body_ref: mapped.canonical_body_ref,

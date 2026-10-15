@@ -12,6 +12,14 @@ import type {
 import type {
   MarkdownProjectionResult,
 } from "@eliotr/retrieval";
+import type {
+  ManagedTargetIdentity,
+  ManagedTargetSelectionV2,
+} from "./managed-target-assignment.js";
+export type {
+  ManagedTargetSelectionReceipt,
+  ManagedTargetSelectionV2,
+} from "./managed-target-assignment.js";
 
 export type ProjectionGenerationState =
   | "PREPARING"
@@ -52,7 +60,10 @@ export interface ProjectionSourceContext {
   readonly source_title: string;
   readonly source_class: string;
   readonly instruction_taint: ProjectionItem["instruction_taint"];
+  /** Legacy V1 copy identifiers; retained byte-for-byte for the existing path. */
   readonly project_membership_ids: readonly string[];
+  /** Root-authorized per-target V2 scopes; absent until the V2 scope consumer is composed. */
+  readonly project_copy_scopes_v2?: readonly ProjectCopyScopeV2[];
 }
 
 export interface CanonicalProjectionSourceContext {
@@ -112,7 +123,7 @@ export interface CanonicalProjectionResourceBounds {
   readonly maximum_subrequest_bound: 10_000;
 }
 
-export interface ManagedProjectCopyResourceBounds {
+export interface ManagedProjectCopyResourceBoundsV1 {
   readonly protocol: "eliotr.project-copy-resource-bounds.v1";
   readonly provider_copy_count: number;
   readonly provider_item_count: number;
@@ -122,6 +133,22 @@ export interface ManagedProjectCopyResourceBounds {
   readonly cpu_time_budget_ms: 30_000;
   readonly maximum_subrequest_bound: 10_000;
 }
+
+export interface ManagedProjectCopyResourceBoundsV2 {
+  readonly protocol: "eliotr.project-copy-resource-bounds.v2";
+  readonly provider_copy_count: number;
+  readonly provider_item_count: number;
+  readonly copy_map_page_count: number;
+  readonly copy_map_index_put_count: 1;
+  readonly copy_map_r2_put_count: number;
+  readonly copy_map_r2_subrequest_bound: number;
+  readonly cpu_time_budget_ms: 30_000;
+  readonly maximum_subrequest_bound: 10_000;
+}
+
+export type ManagedProjectCopyResourceBounds =
+  | ManagedProjectCopyResourceBoundsV1
+  | ManagedProjectCopyResourceBoundsV2;
 
 export interface CanonicalSourceProjectionReceipt {
   readonly protocol: "eliotr.canonical-source-projection.v1";
@@ -151,7 +178,22 @@ export interface ManagedProjectCopyTargetReceipt {
   readonly metadata_generation_digest: string;
 }
 
-export interface ManagedProjectCopyMapReceipt {
+export interface ManagedProjectCopyMapItem {
+  /** Project-specific provider item key, without path or .md suffix. */
+  readonly item_key: string;
+  readonly canonical_item_key: string;
+  readonly canonical_section_id: string;
+  readonly content_sha256: string;
+  readonly normalized_start_byte: number;
+  readonly normalized_end_byte: number;
+  /** Exact full Items key. Its path already contains the built-in folder. */
+  readonly provider_key: string;
+  readonly canonical_body_ref: string;
+  readonly canonical_body_sha256: string;
+}
+
+/** Immutable legacy V1 map bytes remain unchanged. */
+export interface ManagedProjectCopyMapReceiptV1 {
   readonly protocol: "eliotr.managed-project-copy-map.v1";
   readonly source_revision_ref: string;
   readonly complete_residency_key_sha256: string;
@@ -166,22 +208,31 @@ export interface ManagedProjectCopyMapReceipt {
   readonly provider_copy_set_sha256: string;
   readonly provider_item_count: number;
   readonly provider_item_set_sha256: string;
-  readonly items: readonly {
-    /** Project-specific provider item key, without path or .md suffix. */
-    readonly item_key: string;
-    readonly canonical_item_key: string;
-    readonly canonical_section_id: string;
-    readonly content_sha256: string;
-    readonly normalized_start_byte: number;
-    readonly normalized_end_byte: number;
-    /** Exact full Items key. Its path already contains the built-in folder. */
-    readonly provider_key: string;
-    readonly canonical_body_ref: string;
-    readonly canonical_body_sha256: string;
-  }[];
+  readonly items: readonly ManagedProjectCopyMapItem[];
 }
 
-export interface ManagedProjectCopyMapPage {
+export type ManagedProjectCopyMapReceiptV2 = ProjectCopyMembershipCopyV2 & {
+  readonly protocol: "eliotr.managed-project-copy-map.v2";
+  readonly layout: "PROJECT_COPY_V2";
+  readonly source_revision_ref: string;
+  readonly complete_residency_key_sha256: string;
+  readonly canonical_projection_generation: string;
+  readonly target: ManagedProjectCopyTargetReceipt;
+  readonly target_selection: ManagedTargetSelectionV2;
+  readonly canonical_source_ref: string;
+  readonly canonical_source_sha256: string;
+  readonly provider_copy_count: 1;
+  readonly provider_copy_set_sha256: string;
+  readonly provider_item_count: number;
+  readonly provider_item_set_sha256: string;
+  readonly items: readonly ManagedProjectCopyMapItem[];
+};
+
+export type ManagedProjectCopyMapReceipt =
+  | ManagedProjectCopyMapReceiptV1
+  | ManagedProjectCopyMapReceiptV2;
+
+export interface ManagedProjectCopyMapPageV1 {
   readonly protocol: "eliotr.managed-project-copy-map-page.v1";
   readonly source_revision_ref: string;
   readonly complete_residency_key_sha256: string;
@@ -199,10 +250,35 @@ export interface ManagedProjectCopyMapPage {
   readonly provider_item_count: number;
   readonly provider_item_set_sha256: string;
   /** At most 256 membership mappings; these entries contain refs and keys, never section_text. */
-  readonly copies: readonly ManagedProjectCopyMapReceipt[];
+  readonly copies: readonly ManagedProjectCopyMapReceiptV1[];
 }
 
-export interface ManagedProjectCopyMapSetReceipt {
+export interface ManagedProjectCopyMapPageV2 {
+  readonly protocol: "eliotr.managed-project-copy-map-page.v2";
+  readonly layout: "PROJECT_COPY_V2";
+  readonly source_revision_ref: string;
+  readonly complete_residency_key_sha256: string;
+  readonly canonical_projection_generation: string;
+  readonly canonical_source_ref: string;
+  readonly canonical_source_sha256: string;
+  readonly target: ManagedProjectCopyTargetReceipt;
+  readonly target_selection: ManagedTargetSelectionV2;
+  readonly scope_snapshot_id: string;
+  readonly scope_snapshot_revision: number;
+  readonly scope_snapshot_digest: string;
+  readonly page_index: number;
+  readonly cursor_start_copy_identity: string | null;
+  readonly cursor_end_copy_identity: string | null;
+  readonly previous_page_sha256: string | null;
+  readonly page_sha256: string;
+  readonly provider_copy_count: number;
+  readonly provider_copy_set_sha256: string;
+  readonly provider_item_count: number;
+  readonly provider_item_set_sha256: string;
+  readonly copies: readonly ManagedProjectCopyMapReceiptV2[];
+}
+
+export interface ManagedProjectCopyMapSetReceiptV1 {
   readonly protocol: "eliotr.managed-project-copy-map-set.v1";
   readonly source_revision_ref: string;
   readonly complete_residency_key_sha256: string;
@@ -216,7 +292,7 @@ export interface ManagedProjectCopyMapSetReceipt {
   readonly provider_copy_set_sha256: string;
   readonly provider_item_count: number;
   readonly provider_item_set_sha256: string;
-  readonly resource_bounds: ManagedProjectCopyResourceBounds;
+  readonly resource_bounds: ManagedProjectCopyResourceBoundsV1;
   readonly pages: readonly {
     readonly page_index: number;
     readonly page_ref: string;
@@ -226,15 +302,78 @@ export interface ManagedProjectCopyMapSetReceipt {
   }[];
 }
 
+export interface ManagedProjectCopyMapSetReceiptV2 {
+  readonly protocol: "eliotr.managed-project-copy-map-set.v2";
+  readonly layout: "PROJECT_COPY_V2";
+  readonly source_revision_ref: string;
+  readonly complete_residency_key_sha256: string;
+  readonly canonical_projection_generation: string;
+  readonly canonical_source_ref: string;
+  readonly canonical_source_sha256: string;
+  readonly target: ManagedProjectCopyTargetReceipt;
+  readonly target_selection: ManagedTargetSelectionV2;
+  readonly scope_snapshot_id: string;
+  readonly scope_snapshot_revision: number;
+  readonly scope_snapshot_digest: string;
+  readonly page_count: number;
+  readonly page_set_sha256: string;
+  readonly copy_map_index_ref: string;
+  readonly copy_map_index_sha256: string;
+  readonly provider_copy_count: number;
+  readonly provider_copy_set_sha256: string;
+  readonly provider_item_count: number;
+  readonly provider_item_set_sha256: string;
+  readonly resource_bounds: ManagedProjectCopyResourceBoundsV2;
+  readonly pages: readonly {
+    readonly page_index: number;
+    readonly page_ref: string;
+    readonly page_sha256: string;
+    readonly provider_copy_count: number;
+    readonly provider_item_count: number;
+  }[];
+}
+
+export interface ManagedProjectCopyMapIndexV2 {
+  readonly protocol: "eliotr.managed-project-copy-map-index.v2";
+  readonly layout: "PROJECT_COPY_V2";
+  readonly source_revision_ref: string;
+  readonly complete_residency_key_sha256: string;
+  readonly canonical_projection_generation: string;
+  readonly canonical_source_ref: string;
+  readonly canonical_source_sha256: string;
+  readonly target: ManagedProjectCopyTargetReceipt;
+  readonly target_selection: ManagedTargetSelectionV2;
+  readonly scope_snapshot_id: string;
+  readonly scope_snapshot_revision: number;
+  readonly scope_snapshot_digest: string;
+  readonly page_count: number;
+  readonly page_set_sha256: string;
+  readonly provider_copy_count: number;
+  readonly provider_copy_set_sha256: string;
+  readonly provider_item_count: number;
+  readonly provider_item_set_sha256: string;
+  readonly pages: ManagedProjectCopyMapSetReceiptV2["pages"];
+}
+
+export type ManagedProjectCopyMapPage = ManagedProjectCopyMapPageV1 | ManagedProjectCopyMapPageV2;
+export type ManagedProjectCopyMapSetReceipt =
+  | ManagedProjectCopyMapSetReceiptV1
+  | ManagedProjectCopyMapSetReceiptV2;
+
 export interface ManagedProjectionItemCopy extends ProjectionItem {
   readonly normalized_start_byte: number;
   readonly normalized_end_byte: number;
-  readonly copy_layout: "PROJECT_COPY_V1" | null;
+  readonly copy_layout: "PROJECT_COPY_V1" | "PROJECT_COPY_V2" | null;
   readonly canonical_projection_generation: string;
   readonly canonical_item_key: string | null;
   readonly project_id: string | null;
   readonly project_membership_id: string | null;
   readonly membership_generation: number | null;
+  readonly membership_identity_version: 1 | 2 | null;
+  readonly legacy_project_membership_id: string | null;
+  readonly stable_project_membership_id: string | null;
+  readonly membership_revision: number | null;
+  readonly project_membership_generation: number | null;
   readonly provider_key: string;
   readonly metadata_generation_digest: string | null;
   readonly canonical_body_ref: string | null;
@@ -243,6 +382,12 @@ export interface ManagedProjectionItemCopy extends ProjectionItem {
 
 export interface ManagedProjectCopyPlan {
   readonly target: ManagedProjectCopyTargetReceipt;
+  /** Omitted for historical V1 and flat plans; present only for explicit V2 scopes. */
+  readonly layout?: "PROJECT_COPY_V2";
+  readonly target_selection?: ManagedTargetSelectionV2;
+  readonly scope_snapshot_id?: string;
+  readonly scope_snapshot_revision?: number;
+  readonly scope_snapshot_digest?: string;
   readonly items: readonly ManagedProjectionItemCopy[];
   readonly copies: readonly ManagedProjectCopyMapReceipt[];
   readonly provider_copy_count: number;
@@ -272,7 +417,12 @@ export interface CanonicalSourceProjectionWriter {
       readonly project_membership_id: string;
       readonly membership_generation: number;
     }[];
-  }): Promise<ManagedProjectCopyMapSetReceipt>;
+  }): Promise<ManagedProjectCopyMapSetReceiptV1>;
+  mapProjectCopies(input: {
+    readonly canonical: CanonicalSourceProjectionReceipt;
+    readonly target: ManagedProjectCopyTargetReceipt;
+    readonly scope: ProjectCopyScopeV2;
+  }): Promise<ManagedProjectCopyMapSetReceiptV2>;
 }
 
 export interface ProjectionWorkReceipt {
@@ -318,6 +468,49 @@ export type ManagedProjectionReceipt =
 export interface ProjectionManagedItemGenerationTarget {
   readonly managed_instance_id: string;
   readonly managed_generation: string;
+}
+
+export interface ProjectCopyMembershipCopyV2Base {
+  readonly source_revision_ref: string;
+  readonly source_owner_generation: string;
+  readonly project_id: string;
+  /** V1 legacy membership ID or V2 bounded stable membership ID. */
+  readonly project_membership_id: string;
+  /** V1 opening row generation; V2 aggregate currentness/CAS fence only. */
+  readonly membership_generation: number;
+  /** Exact full provider path prefix, including the trailing slash. */
+  readonly folder_prefix: string;
+}
+
+export type ProjectCopyMembershipCopyV2 = ProjectCopyMembershipCopyV2Base & (
+  | {
+      readonly membership_identity_version: 1;
+      readonly legacy_project_membership_id: string;
+      readonly stable_project_membership_id?: never;
+      readonly membership_revision?: never;
+      readonly project_membership_generation?: never;
+    }
+  | {
+      readonly membership_identity_version: 2;
+      readonly legacy_project_membership_id?: never;
+      readonly stable_project_membership_id: string;
+      readonly membership_revision: number;
+      /** Aggregate membership generation; currentness/CAS only, never part of a V2 key. */
+      readonly project_membership_generation: number;
+    }
+);
+
+/** Internal Root-authorized scope receipt; the public V1 filter contract is unchanged. */
+export interface ProjectCopyScopeV2 {
+  readonly layout: "PROJECT_COPY_V2";
+  readonly scope_snapshot_id: string;
+  readonly scope_snapshot_revision: number;
+  readonly scope_snapshot_digest: string;
+  readonly target: ManagedTargetIdentity;
+  readonly generation_metadata_value: string;
+  readonly representative_policy: "ONE_CANONICAL_COPY_PER_SOURCE_REVISION";
+  readonly target_selection: ManagedTargetSelectionV2;
+  readonly copies: readonly ProjectCopyMembershipCopyV2[];
 }
 
 export interface ProjectionManagedItemGenerationProof {
@@ -387,12 +580,17 @@ export interface ProjectionAuthorityPort {
       readonly desired_index: number;
       readonly item_key: string;
       readonly provider_key: string;
-      readonly copy_layout: "PROJECT_COPY_V1" | null;
+      readonly copy_layout: "PROJECT_COPY_V1" | "PROJECT_COPY_V2" | null;
       readonly canonical_projection_generation: string | null;
       readonly canonical_item_key: string | null;
       readonly project_id: string | null;
       readonly project_membership_id: string | null;
       readonly membership_generation: number | null;
+      readonly membership_identity_version: 1 | 2 | null;
+      readonly legacy_project_membership_id: string | null;
+      readonly stable_project_membership_id: string | null;
+      readonly membership_revision: number | null;
+      readonly project_membership_generation: number | null;
       readonly metadata_generation_digest: string | null;
       readonly canonical_body_ref: string | null;
       readonly canonical_body_sha256: string | null;
@@ -493,6 +691,7 @@ export interface ProjectionWorkPort {
     canonical: CanonicalSourceProjectionReceipt,
     target: ManagedProjectCopyTargetReceipt,
     copies: readonly ManagedProjectCopyMapReceipt[],
+    scope?: ProjectCopyScopeV2,
   ): Promise<ManagedProjectCopyMapSetReceipt>;
 }
 

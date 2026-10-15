@@ -14,6 +14,7 @@ import {
 } from "./canonical.js";
 import {
   buildCanonicalProjectCopyMaps,
+  buildCanonicalProjectCopyMapsV2,
   canonicalSourceProjectionIdentity,
   canonicalSourceResourceBounds,
 } from "./core-managed-item-intent.js";
@@ -26,11 +27,20 @@ import type {
   CanonicalSourceProjectionReceipt,
   CanonicalSourceProjectionWriter,
   ManagedProjectCopyMapPage,
+  ManagedProjectCopyMapPageV1,
+  ManagedProjectCopyMapPageV2,
+  ManagedProjectCopyMapIndexV2,
   ManagedProjectCopyMapReceipt,
+  ManagedProjectCopyMapReceiptV1,
+  ManagedProjectCopyMapReceiptV2,
   ManagedProjectCopyMapSetReceipt,
-  ManagedProjectCopyResourceBounds,
+  ManagedProjectCopyMapSetReceiptV1,
+  ManagedProjectCopyMapSetReceiptV2,
+  ManagedProjectCopyResourceBoundsV1,
+  ManagedProjectCopyResourceBoundsV2,
   ManagedProjectCopyTargetReceipt,
   MaterializedProjectionItem,
+  ProjectCopyScopeV2,
   ProjectionWorkPort,
 } from "./types.js";
 
@@ -105,10 +115,10 @@ function workPrefixFromManifestRef(manifestRef: string): string {
 function copyPagePayload(
   canonical: CanonicalSourceProjectionReceipt,
   target: ManagedProjectCopyTargetReceipt,
-  copies: readonly ManagedProjectCopyMapReceipt[],
+  copies: readonly ManagedProjectCopyMapReceiptV1[],
   pageIndex: number,
   previousPageSha256: string | null,
-): Omit<ManagedProjectCopyMapPage, "page_sha256"> {
+): Omit<ManagedProjectCopyMapPageV1, "page_sha256"> {
   return {
     protocol: "eliotr.managed-project-copy-map-page.v1",
     source_revision_ref: canonical.source_revision_ref,
@@ -129,16 +139,74 @@ function copyPagePayload(
   };
 }
 
+function v2CopyIdentity(copy: ManagedProjectCopyMapReceiptV2): string {
+  return `${copy.membership_identity_version}:${copy.project_id}:${copy.project_membership_id}`;
+}
+
+function copyPagePayloadV2(
+  canonical: CanonicalSourceProjectionReceipt,
+  target: ManagedProjectCopyTargetReceipt,
+  scope: ProjectCopyScopeV2,
+  copies: readonly ManagedProjectCopyMapReceiptV2[],
+  pageIndex: number,
+  previousPageSha256: string | null,
+): Omit<ManagedProjectCopyMapPageV2, "page_sha256"> {
+  const firstCopy = copies[0];
+  const lastCopy = copies.at(-1);
+  return {
+    protocol: "eliotr.managed-project-copy-map-page.v2",
+    layout: "PROJECT_COPY_V2",
+    source_revision_ref: canonical.source_revision_ref,
+    complete_residency_key_sha256: canonical.complete_residency_key_sha256,
+    canonical_projection_generation: canonical.canonical_projection_generation,
+    canonical_source_ref: canonical.canonical_source_ref,
+    canonical_source_sha256: canonical.canonical_source_sha256,
+    target,
+    target_selection: scope.target_selection,
+    scope_snapshot_id: scope.scope_snapshot_id,
+    scope_snapshot_revision: scope.scope_snapshot_revision,
+    scope_snapshot_digest: scope.scope_snapshot_digest,
+    page_index: pageIndex,
+    cursor_start_copy_identity: firstCopy === undefined ? null : v2CopyIdentity(firstCopy),
+    cursor_end_copy_identity: lastCopy === undefined ? null : v2CopyIdentity(lastCopy),
+    previous_page_sha256: previousPageSha256,
+    provider_copy_count: copies.length,
+    provider_copy_set_sha256: "",
+    provider_item_count: copies.reduce((total, copy) => total + copy.provider_item_count, 0),
+    provider_item_set_sha256: "",
+    copies,
+  };
+}
+
 async function copyPageDigests(
   copies: readonly ManagedProjectCopyMapReceipt[],
 ): Promise<{ readonly copy_set: string; readonly item_set: string }> {
   return {
-    copy_set: await projectionDigest(copies.map((copy) => ({
-      project_id: copy.project_id,
-      project_membership_id: copy.project_membership_id,
-      membership_generation: copy.membership_generation,
-      provider_copy_set_sha256: copy.provider_copy_set_sha256,
-    }))),
+    copy_set: await projectionDigest(copies.map((copy) => copy.protocol === "eliotr.managed-project-copy-map.v1"
+      ? {
+        project_id: copy.project_id,
+        project_membership_id: copy.project_membership_id,
+        membership_generation: copy.membership_generation,
+        provider_copy_set_sha256: copy.provider_copy_set_sha256,
+      }
+      : {
+        membership_identity_version: copy.membership_identity_version,
+        project_id: copy.project_id,
+        project_membership_id: copy.project_membership_id,
+        legacy_project_membership_id: copy.membership_identity_version === 1
+          ? copy.legacy_project_membership_id
+          : null,
+        stable_project_membership_id: copy.membership_identity_version === 2
+          ? copy.stable_project_membership_id
+          : null,
+        membership_revision: copy.membership_identity_version === 2 ? copy.membership_revision : null,
+        membership_generation: copy.membership_generation,
+        project_membership_generation: copy.membership_identity_version === 2
+          ? copy.project_membership_generation
+          : null,
+        folder_prefix: copy.folder_prefix,
+        provider_copy_set_sha256: copy.provider_copy_set_sha256,
+      })),
     item_set: await projectionDigest(copies.flatMap((copy) =>
       copy.items.map((item) => ({
         item_key: item.item_key,
@@ -149,6 +217,238 @@ async function copyPageDigests(
       }))
     )),
   };
+}
+
+async function materializeV2ProjectCopyMapPages(
+  store: EvidenceObjectStore,
+  canonical: CanonicalSourceProjectionReceipt,
+  target: ManagedProjectCopyTargetReceipt,
+  rawCopies: readonly ManagedProjectCopyMapReceipt[],
+  scope: ProjectCopyScopeV2,
+): Promise<ManagedProjectCopyMapSetReceiptV2> {
+  const expectedMetadataGeneration = await managedProjectGenerationMetadataValue(target.managed_generation);
+  const copies: ManagedProjectCopyMapReceiptV2[] = [];
+  for (const copy of rawCopies) {
+    if (copy.protocol !== "eliotr.managed-project-copy-map.v2" || copy.layout !== "PROJECT_COPY_V2") {
+      throw new Error("PROJECT_COPY_V2 page input contains a V1 mapping receipt");
+    }
+    copies.push(copy);
+  }
+  if (
+    scope.layout !== "PROJECT_COPY_V2" ||
+    copies.length !== scope.copies.length ||
+    copies.length > MAX_COPY_MAPS_PER_PAGE ||
+    scope.representative_policy !== "ONE_CANONICAL_COPY_PER_SOURCE_REVISION" ||
+    scope.generation_metadata_value !== expectedMetadataGeneration ||
+    target.metadata_generation_digest !== expectedMetadataGeneration ||
+    scope.target.managed_instance_id !== target.managed_instance_id ||
+    scope.target.managed_generation !== target.managed_generation ||
+    canonicalProjectionJson(scope.target) !== canonicalProjectionJson(scope.target_selection.target) ||
+    scope.target_selection.target.managed_instance_id !== target.managed_instance_id ||
+    scope.target_selection.target.managed_generation !== target.managed_generation ||
+    copies.some((copy) =>
+      copy.source_revision_ref !== canonical.source_revision_ref ||
+      copy.complete_residency_key_sha256 !== canonical.complete_residency_key_sha256 ||
+      copy.canonical_projection_generation !== canonical.canonical_projection_generation ||
+      copy.canonical_source_ref !== canonical.canonical_source_ref ||
+      copy.canonical_source_sha256 !== canonical.canonical_source_sha256 ||
+      copy.target.managed_instance_id !== target.managed_instance_id ||
+      copy.target.managed_generation !== target.managed_generation ||
+      copy.target.metadata_generation_digest !== target.metadata_generation_digest ||
+      canonicalProjectionJson(copy.target_selection) !== canonicalProjectionJson(scope.target_selection) ||
+      copy.layout !== "PROJECT_COPY_V2"
+    )
+  ) {
+    throw new Error("PROJECT_COPY_V2 pages differ from the canonical, target, or Root scope authority");
+  }
+  const expectedByIdentity = new Map(scope.copies.map((copy) => [
+    `${copy.membership_identity_version}:${copy.project_id}:${copy.project_membership_id}`,
+    copy,
+  ]));
+  const seen = new Set<string>();
+  for (const copy of copies) {
+    const key = v2CopyIdentity(copy);
+    const expected = expectedByIdentity.get(key);
+    if (
+      expected === undefined || seen.has(key) ||
+      copy.source_owner_generation !== expected.source_owner_generation ||
+      copy.membership_generation !== expected.membership_generation ||
+      copy.folder_prefix !== expected.folder_prefix ||
+      copy.membership_identity_version !== expected.membership_identity_version ||
+      (copy.membership_identity_version === 1 && expected.membership_identity_version === 1 &&
+        copy.legacy_project_membership_id !== expected.legacy_project_membership_id) ||
+      (copy.membership_identity_version === 2 && expected.membership_identity_version === 2 &&
+        (copy.stable_project_membership_id !== expected.stable_project_membership_id ||
+          copy.membership_revision !== expected.membership_revision ||
+          copy.project_membership_generation !== expected.project_membership_generation))
+    ) {
+      throw new Error("PROJECT_COPY_V2 page membership differs from the frozen Core scope");
+    }
+    seen.add(key);
+  }
+  const allDigests = await copyPageDigests(copies);
+  const prefix = workPrefixFromManifestRef(canonical.canonical_source_ref);
+  const targetToken = (await stableProjectionId(
+    "copy-target",
+    target.managed_instance_id,
+    target.managed_generation,
+  )).slice("copy-target-".length);
+  const sourceScopedCopyPrefix = prefix + "/copy-maps/" + targetToken + "/" +
+    scope.scope_snapshot_digest + "/" + allDigests.copy_set + "/pages/";
+  const pages: ManagedProjectCopyMapSetReceiptV2["pages"][number][] = [];
+  const groups: ManagedProjectCopyMapReceiptV2[][] = [];
+  let group: ManagedProjectCopyMapReceiptV2[] = [];
+  for (const copy of copies) {
+    const candidate = [...group, copy];
+    const candidatePayload = copyPagePayloadV2(canonical, target, scope, candidate, groups.length, null);
+    const candidateSize = utf8ProjectionBytes(canonicalProjectionJson(candidatePayload)).byteLength;
+    if (group.length > 0 &&
+      (candidate.length > MAX_COPY_MAPS_PER_PAGE || candidateSize > MAX_COPY_MAP_PAGE_BYTES)) {
+      groups.push(group);
+      group = [copy];
+    } else {
+      group = candidate;
+    }
+    const singlePayload = copyPagePayloadV2(canonical, target, scope, [copy], groups.length, null);
+    if (utf8ProjectionBytes(canonicalProjectionJson(singlePayload)).byteLength > MAX_COPY_MAP_PAGE_BYTES) {
+      throw new Error("one PROJECT_COPY_V2 mapping exceeds the bounded Work page");
+    }
+  }
+  if (group.length > 0) groups.push(group);
+
+  let previousPageSha256: string | null = null;
+  for (const [pageIndex, pageCopies] of groups.entries()) {
+    const pageDigests = await copyPageDigests(pageCopies);
+    const payload = {
+      ...copyPagePayloadV2(canonical, target, scope, pageCopies, pageIndex, previousPageSha256),
+      provider_copy_set_sha256: pageDigests.copy_set,
+      provider_item_set_sha256: pageDigests.item_set,
+    };
+    const pageSha256 = await projectionSha256Utf8(canonicalProjectionJson(payload));
+    const page: ManagedProjectCopyMapPageV2 = Object.freeze({ ...payload, page_sha256: pageSha256 });
+    const pageJson = canonicalProjectionJson(page);
+    const bytes = utf8ProjectionBytes(pageJson);
+    if (bytes.byteLength > MAX_COPY_MAP_PAGE_BYTES) {
+      throw new Error("serialized PROJECT_COPY_V2 mapping page exceeds its Work byte bound");
+    }
+    const objectSha256 = await projectionSha256Utf8(pageJson);
+    const receipt = await store.putImmutable({
+      key: sourceScopedCopyPrefix + String(pageIndex).padStart(4, "0") + "-" + pageSha256 + ".json",
+      body: projectionByteStream(bytes),
+      expected_sha256: objectSha256,
+      expected_size_bytes: bytes.byteLength,
+      content_type: "application/json; charset=utf-8",
+      custom_metadata: {
+        source_revision_ref: canonical.source_revision_ref,
+        canonical_projection_generation: canonical.canonical_projection_generation,
+        managed_instance_id: target.managed_instance_id,
+        managed_generation: target.managed_generation,
+        page_sha256: pageSha256,
+      },
+    });
+    if (receipt.readback_sha256 !== objectSha256 || receipt.size_bytes !== bytes.byteLength) {
+      throw new Error("PROJECT_COPY_V2 page immutable readback differs from its serialized bytes");
+    }
+    pages.push({
+      page_index: pageIndex,
+      page_ref: receipt.key,
+      page_sha256: pageSha256,
+      provider_copy_count: pageCopies.length,
+      provider_item_count: page.provider_item_count,
+    });
+    previousPageSha256 = pageSha256;
+  }
+  const pageSetSha256 = await projectionDigest(pages);
+  const providerItemCount = copies.reduce((total, copy) => total + copy.provider_item_count, 0);
+  const copyMapSubrequestBound = 2 * (pages.length + 1);
+  if (copyMapSubrequestBound > 10_000) {
+    throw new Error("PROJECT_COPY_V2 pages and erasure index exceed the default Worker subrequest envelope");
+  }
+  const resourceBounds: ManagedProjectCopyResourceBoundsV2 = Object.freeze({
+    protocol: "eliotr.project-copy-resource-bounds.v2",
+    provider_copy_count: copies.length,
+    provider_item_count: providerItemCount,
+    copy_map_page_count: pages.length,
+    copy_map_index_put_count: 1,
+    copy_map_r2_put_count: pages.length + 1,
+    copy_map_r2_subrequest_bound: copyMapSubrequestBound,
+    cpu_time_budget_ms: 30_000,
+    maximum_subrequest_bound: 10_000,
+  });
+  const indexPayload: ManagedProjectCopyMapIndexV2 = Object.freeze({
+    protocol: "eliotr.managed-project-copy-map-index.v2",
+    layout: "PROJECT_COPY_V2",
+    source_revision_ref: canonical.source_revision_ref,
+    complete_residency_key_sha256: canonical.complete_residency_key_sha256,
+    canonical_projection_generation: canonical.canonical_projection_generation,
+    canonical_source_ref: canonical.canonical_source_ref,
+    canonical_source_sha256: canonical.canonical_source_sha256,
+    target,
+    target_selection: scope.target_selection,
+    scope_snapshot_id: scope.scope_snapshot_id,
+    scope_snapshot_revision: scope.scope_snapshot_revision,
+    scope_snapshot_digest: scope.scope_snapshot_digest,
+    page_count: pages.length,
+    page_set_sha256: pageSetSha256,
+    provider_copy_count: copies.length,
+    provider_copy_set_sha256: allDigests.copy_set,
+    provider_item_count: providerItemCount,
+    provider_item_set_sha256: allDigests.item_set,
+    pages: Object.freeze(pages),
+  });
+  const indexJson = canonicalProjectionJson(indexPayload);
+  const indexBytes = utf8ProjectionBytes(indexJson);
+  if (indexBytes.byteLength > MAX_COPY_MAP_PAGE_BYTES) {
+    throw new Error("PROJECT_COPY_V2 erasure index exceeds its Work page bound");
+  }
+  const indexSha256 = await projectionSha256Utf8(indexJson);
+  const indexRef = prefix + "/copy-maps/index/" + targetToken + "/" + scope.scope_snapshot_digest + "/" +
+    allDigests.copy_set + ".json";
+  const indexReceipt = await store.putImmutable({
+    key: indexRef,
+    body: projectionByteStream(indexBytes),
+    expected_sha256: indexSha256,
+    expected_size_bytes: indexBytes.byteLength,
+    content_type: "application/json; charset=utf-8",
+    custom_metadata: {
+      source_revision_ref: canonical.source_revision_ref,
+      canonical_projection_generation: canonical.canonical_projection_generation,
+      managed_instance_id: target.managed_instance_id,
+      managed_generation: target.managed_generation,
+      scope_snapshot_digest: scope.scope_snapshot_digest,
+      page_set_sha256: pageSetSha256,
+    },
+  });
+  if (
+    indexReceipt.key !== indexRef || indexReceipt.readback_sha256 !== indexSha256 ||
+    indexReceipt.size_bytes !== indexBytes.byteLength
+  ) {
+    throw new Error("PROJECT_COPY_V2 erasure index immutable readback differs from its serialized bytes");
+  }
+  return Object.freeze({
+    protocol: "eliotr.managed-project-copy-map-set.v2",
+    layout: "PROJECT_COPY_V2",
+    source_revision_ref: canonical.source_revision_ref,
+    complete_residency_key_sha256: canonical.complete_residency_key_sha256,
+    canonical_projection_generation: canonical.canonical_projection_generation,
+    canonical_source_ref: canonical.canonical_source_ref,
+    canonical_source_sha256: canonical.canonical_source_sha256,
+    target,
+    target_selection: scope.target_selection,
+    scope_snapshot_id: scope.scope_snapshot_id,
+    scope_snapshot_revision: scope.scope_snapshot_revision,
+    scope_snapshot_digest: scope.scope_snapshot_digest,
+    page_count: pages.length,
+    page_set_sha256: pageSetSha256,
+    copy_map_index_ref: indexRef,
+    copy_map_index_sha256: indexReceipt.readback_sha256,
+    provider_copy_count: copies.length,
+    provider_copy_set_sha256: allDigests.copy_set,
+    provider_item_count: providerItemCount,
+    provider_item_set_sha256: allDigests.item_set,
+    resource_bounds: resourceBounds,
+    pages: Object.freeze(pages),
+  });
 }
 
 export function createR2ProjectionWorkPort(
@@ -272,7 +572,7 @@ export function createR2ProjectionWorkPort(
       };
     },
 
-    async materializeProjectCopyMapPages(canonical, target, copies) {
+    async materializeProjectCopyMapPages(canonical, target, copies, scope) {
       if (
         !Array.isArray(copies) ||
         copies.length > 256 ||
@@ -289,7 +589,17 @@ export function createR2ProjectionWorkPort(
       ) {
         throw new Error("project-copy page inputs differ from canonical or target authority");
       }
-      const allDigests = await copyPageDigests(copies);
+      if (scope !== undefined) {
+        return materializeV2ProjectCopyMapPages(store, canonical, target, copies, scope);
+      }
+      const v1Copies: ManagedProjectCopyMapReceiptV1[] = [];
+      for (const copy of copies) {
+        if (copy.protocol !== "eliotr.managed-project-copy-map.v1") {
+          throw new Error("V1 project-copy page path cannot accept a V2 mapping receipt without its scope");
+        }
+        v1Copies.push(copy);
+      }
+      const allDigests = await copyPageDigests(v1Copies);
       const prefix = workPrefixFromManifestRef(canonical.canonical_source_ref);
       const targetToken = (await stableProjectionId(
         "copy-target",
@@ -297,10 +607,10 @@ export function createR2ProjectionWorkPort(
         target.managed_generation,
       )).slice("copy-target-".length);
       const sourceScopedCopyPrefix = prefix + "/copy-maps/" + targetToken + "/" + allDigests.copy_set + "/pages/";
-      const pages: ManagedProjectCopyMapSetReceipt["pages"][number][] = [];
-      const groups: ManagedProjectCopyMapReceipt[][] = [];
-      let group: ManagedProjectCopyMapReceipt[] = [];
-      for (const copy of copies) {
+      const pages: ManagedProjectCopyMapSetReceiptV1["pages"][number][] = [];
+      const groups: ManagedProjectCopyMapReceiptV1[][] = [];
+      let group: ManagedProjectCopyMapReceiptV1[] = [];
+      for (const copy of v1Copies) {
         const candidate = [...group, copy];
         const candidatePayload = copyPagePayload(canonical, target, candidate, groups.length, null);
         const candidateSize = utf8ProjectionBytes(canonicalProjectionJson(candidatePayload)).byteLength;
@@ -374,10 +684,10 @@ export function createR2ProjectionWorkPort(
       if (copyMapSubrequestBound > 10_000) {
         throw new Error("project-copy pages exceed the default Worker subrequest envelope");
       }
-      const resourceBounds: ManagedProjectCopyResourceBounds = Object.freeze({
+      const resourceBounds: ManagedProjectCopyResourceBoundsV1 = Object.freeze({
         protocol: "eliotr.project-copy-resource-bounds.v1",
-        provider_copy_count: copies.length,
-        provider_item_count: copies.reduce((total, copy) => total + copy.provider_item_count, 0),
+        provider_copy_count: v1Copies.length,
+        provider_item_count: v1Copies.reduce((total, copy) => total + copy.provider_item_count, 0),
         copy_map_page_count: pages.length,
         copy_map_r2_put_count: pages.length,
         copy_map_r2_subrequest_bound: copyMapSubrequestBound,
@@ -394,9 +704,9 @@ export function createR2ProjectionWorkPort(
         target,
         page_count: pages.length,
         page_set_sha256: pageSetSha256,
-        provider_copy_count: copies.length,
+        provider_copy_count: v1Copies.length,
         provider_copy_set_sha256: allDigests.copy_set,
-        provider_item_count: copies.reduce((total, copy) => total + copy.provider_item_count, 0),
+        provider_item_count: v1Copies.reduce((total, copy) => total + copy.provider_item_count, 0),
         provider_item_set_sha256: allDigests.item_set,
         resource_bounds: resourceBounds,
         pages: Object.freeze(pages),
@@ -410,6 +720,96 @@ export function createR2CanonicalSourceProjectionWriter(
   dependencies: R2ProjectionWorkDependencies,
 ): CanonicalSourceProjectionWriter {
   const work = createR2ProjectionWorkPort(dependencies);
+  async function mapProjectCopies(input: {
+    readonly canonical: CanonicalSourceProjectionReceipt;
+    readonly target: ManagedProjectCopyTargetReceipt;
+    readonly memberships: readonly {
+      readonly project_id: string;
+      readonly project_membership_id: string;
+      readonly membership_generation: number;
+    }[];
+  }): Promise<ManagedProjectCopyMapSetReceiptV1>;
+  async function mapProjectCopies(input: {
+    readonly canonical: CanonicalSourceProjectionReceipt;
+    readonly target: ManagedProjectCopyTargetReceipt;
+    readonly scope: ProjectCopyScopeV2;
+  }): Promise<ManagedProjectCopyMapSetReceiptV2>;
+  async function mapProjectCopies(input:
+    | {
+      readonly canonical: CanonicalSourceProjectionReceipt;
+      readonly target: ManagedProjectCopyTargetReceipt;
+      readonly memberships: readonly {
+        readonly project_id: string;
+        readonly project_membership_id: string;
+        readonly membership_generation: number;
+      }[];
+    }
+    | {
+      readonly canonical: CanonicalSourceProjectionReceipt;
+      readonly target: ManagedProjectCopyTargetReceipt;
+      readonly scope: ProjectCopyScopeV2;
+    }
+  ): Promise<ManagedProjectCopyMapSetReceipt> {
+    if ("scope" in input) {
+      if (!Array.isArray(input.scope.copies) || input.scope.copies.length > 256) {
+        throw new Error("canonical source V2 copy mapping exceeds 256 memberships");
+      }
+      const copies = await buildCanonicalProjectCopyMapsV2(input.canonical, input.target, input.scope);
+      const mapSet = await work.materializeProjectCopyMapPages(
+        input.canonical,
+        input.target,
+        copies,
+        input.scope,
+      );
+      if (
+        mapSet.protocol !== "eliotr.managed-project-copy-map-set.v2" ||
+        mapSet.layout !== "PROJECT_COPY_V2" ||
+        mapSet.provider_copy_count !== input.scope.copies.length ||
+        mapSet.target.metadata_generation_digest !==
+          await managedProjectGenerationMetadataValue(input.target.managed_generation) ||
+        mapSet.scope_snapshot_id !== input.scope.scope_snapshot_id ||
+        mapSet.scope_snapshot_revision !== input.scope.scope_snapshot_revision ||
+        mapSet.scope_snapshot_digest !== input.scope.scope_snapshot_digest ||
+        mapSet.target_selection.registry_revision !== input.scope.target_selection.registry_revision ||
+        mapSet.copy_map_index_ref.length === 0
+      ) {
+        throw new Error("canonical source V2 map receipt differs from its target or scope snapshot");
+      }
+      return mapSet;
+    }
+
+    const { canonical, target, memberships } = input;
+    if (!Array.isArray(memberships) || memberships.length > 256) {
+      throw new Error("canonical source copy mapping exceeds 256 memberships");
+    }
+    const seen = new Set<string>();
+    const membershipIds: string[] = [];
+    for (const membership of memberships) {
+      const parsed = parseManagedProjectMembershipId(membership.project_membership_id);
+      if (
+        parsed.project_id !== membership.project_id ||
+        parsed.membership_generation !== membership.membership_generation ||
+        seen.has(membership.project_membership_id)
+      ) {
+        throw new Error("canonical source copy mapping has inconsistent or duplicate Core membership identity");
+      }
+      seen.add(membership.project_membership_id);
+      membershipIds.push(membership.project_membership_id);
+    }
+    const copies = membershipIds.length === 0
+      ? []
+      : await buildCanonicalProjectCopyMaps(canonical, target, membershipIds);
+    const mapSet = await work.materializeProjectCopyMapPages(canonical, target, copies);
+    if (
+      mapSet.protocol !== "eliotr.managed-project-copy-map-set.v1" ||
+      mapSet.provider_copy_count !== memberships.length ||
+      mapSet.target.metadata_generation_digest !==
+        await managedProjectGenerationMetadataValue(target.managed_generation)
+    ) {
+      throw new Error("canonical source copy mapping receipt differs from its target or membership set");
+    }
+    return mapSet;
+  }
   return {
     async projectCanonicalSource({ source, profile, normalized_markdown }) {
       if (typeof normalized_markdown !== "string" || normalized_markdown.length === 0) {
@@ -449,36 +849,6 @@ export function createR2CanonicalSourceProjectionWriter(
       return receipt.canonical_source;
     },
 
-    async mapProjectCopies({ canonical, target, memberships }) {
-      if (!Array.isArray(memberships) || memberships.length > 256) {
-        throw new Error("canonical source copy mapping exceeds 256 memberships");
-      }
-      const seen = new Set<string>();
-      const membershipIds: string[] = [];
-      for (const membership of memberships) {
-        const parsed = parseManagedProjectMembershipId(membership.project_membership_id);
-        if (
-          parsed.project_id !== membership.project_id ||
-          parsed.membership_generation !== membership.membership_generation ||
-          seen.has(membership.project_membership_id)
-        ) {
-          throw new Error("canonical source copy mapping has inconsistent or duplicate Core membership identity");
-        }
-        seen.add(membership.project_membership_id);
-        membershipIds.push(membership.project_membership_id);
-      }
-      const copies = membershipIds.length === 0
-        ? []
-        : await buildCanonicalProjectCopyMaps(canonical, target, membershipIds);
-      const mapSet = await work.materializeProjectCopyMapPages(canonical, target, copies);
-      if (
-        mapSet.provider_copy_count !== memberships.length ||
-        mapSet.target.metadata_generation_digest !==
-          await managedProjectGenerationMetadataValue(target.managed_generation)
-      ) {
-        throw new Error("canonical source copy mapping receipt differs from its target or membership set");
-      }
-      return mapSet;
-    },
+    mapProjectCopies,
   };
 }
