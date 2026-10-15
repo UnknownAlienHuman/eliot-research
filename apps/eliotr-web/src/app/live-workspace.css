@@ -219,12 +219,19 @@
   line-height: var(--eliot-type-body-large-line-height);
   overflow-wrap: anywhere;
 }
+/* The verified section title is the section's heading; when the section text already opens with
+   its own heading it stays for assistive tech only, so the title is never shown twice. */
 .er-live-report-part-heading {
-  color: var(--md-sys-color-on-surface-variant);
-  font-size: var(--eliot-type-title-small-size);
-  line-height: var(--eliot-type-title-small-line-height);
-  margin-block-end: var(--eliot-space-panel);
+  margin: 0;
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--eliot-type-font-family-display);
+  font-size: var(--eliot-type-title-large-size);
+  line-height: var(--eliot-type-title-large-line-height);
+  font-weight: var(--eliot-type-font-weight-regular);
   overflow-wrap: anywhere;
+}
+.er-live-report-part:has(> .er-safe-markdown > :is(h1, h2, h3):first-child) > .er-live-report-part-heading {
+  position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
 }
 /* Each run says where it stands in one small tonal label beside its time. */
 .er-live-history .er-live-history-state {
