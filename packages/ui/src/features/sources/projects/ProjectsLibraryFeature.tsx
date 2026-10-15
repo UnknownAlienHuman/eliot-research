@@ -219,7 +219,7 @@ export function ProjectsLibraryFeature(props: ProjectsLibraryFeatureProps) {
   // One answer first — can this source be searched — and the per-channel facts one tap away.
   const channels = readiness === undefined ? [] : [readiness.exact, readiness.lexical, readiness.semantic].map(item => CHANNEL_LABEL[item]);
   const summary = readiness === undefined ? undefined
-    : channels.every(item => item === "ready") ? "ready" as const
+    : channels.some(item => item === "ready") ? "ready" as const
       : channels.some(item => item === "unavailable") ? "blocked" as const : "working" as const;
   const selectedSource = rows.find(row => row.sourceId === props.selectedSourceId);
   const versionDate = (iso: string): string => {
