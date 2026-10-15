@@ -58,12 +58,12 @@ export async function playMaterialReading({ canvas, userEvent }: Parameters<type
   await canvas.findByText('Research finished.');
   await userEvent.click(canvas.getAllByRole('button', { name: 'Open saved report' })[0] as HTMLElement);
   const close = await canvas.findByRole('button', { name: 'Close report' });
-  const reportTitle = await canvas.findByRole('heading', { name: 'Saved report', exact: true });
+  const reportTitle = await canvas.findByRole('heading', { name: 'Research findings', exact: true });
   if (document.activeElement !== reportTitle) throw new Error('Opening a report lost keyboard focus');
   await canvas.findByText('4 sections');
   // The report reads itself in order; its first section opens with its quotes.
-  await userEvent.click(await canvas.findByRole('button', { name: 'Open · Section 1' }));
-  await canvas.findByText('Evidence that remains in context');
+  await userEvent.click(await canvas.findByRole('button', { name: 'Open · Evidence that remains in context' }));
+  await canvas.findByRole('heading', { name: 'Evidence that remains in context', level: 2, exact: true });
   await userEvent.click(await canvas.findByRole('button', { name: 'Open cited excerpt 1' }));
   await canvas.findByText('The saved question keeps its original source scope.');
   if (canvas.queryByText('Supported')) throw new Error('One excerpt promoted semantic support');

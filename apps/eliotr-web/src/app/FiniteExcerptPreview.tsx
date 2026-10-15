@@ -2,7 +2,7 @@ import { paneAnnouncement, announcementUntil } from './announcementAssertions';
 import { useEffect, useRef, useState, useSyncExternalStore, type ComponentProps, type RefObject } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
-import type { ArtifactRevision, VerifiedEvidence } from '@eliotr/owner-api-client';
+import type { ArtifactRevisionRead, VerifiedEvidence } from '@eliotr/owner-api-client';
 import { Shell } from './Shell';
 import { ReportPanel } from './ReportPanel';
 import { createWorkspaceRuntime } from './runtime';
@@ -31,9 +31,10 @@ function createFixture(view: RefObject<HTMLDivElement | null>) {
   let verifications = 0, opened = 0, lateReturned = 0, armed = false;
   let heldSignal: AbortSignal | null | undefined, pendingRead: Promise<void> | undefined;
   const excerptHash = digest(encode(excerpt));
-  const readyManifest: Promise<ArtifactRevision> = digest(encode(sectionText)).then(hash => ({
+  const readyManifest: Promise<ArtifactRevisionRead> = digest(encode(sectionText)).then(hash => ({
     artifact_ref: artifactRef, spec_ref: { id: 'spec-fixture', revision: 1 }, spec_digest: 'a'.repeat(64),
-    evidence_freeze_ref: { id: 'freeze-fixture', revision: 1 }, sections: [{ section_ref: sectionRef, contract_id: 'contract-1',
+    evidence_freeze_ref: { id: 'freeze-fixture', revision: 1 }, title: 'Saved report', sections: [{ section_ref: sectionRef, contract_id: 'contract-1',
+      title: 'Saved draft',
       body_object_ref: 'body-1', body_sha256: hash, statement_labels: {}, evidence_ledger_ref: 'ledger-fixture', verification_receipt_ref: 'verification-section' }],
     dependency_manifest_ref: 'dependencies-fixture', deterministic_export_refs: {}, status: 'DRAFT', created_at: stamp,
   }));
@@ -147,7 +148,7 @@ function oldCacheCount(environment: Environment, context: SessionContext) {
 export async function playFiniteExcerptLifecycle(test: ExcerptPlayContext) {
   const host = test.canvasElement.querySelector<HTMLElement>('[data-finite-excerpt]'), environment = host && environments.get(host);
   assert(environment && host, 'Finite excerpt fixture was not registered');
-  await test.userEvent.click(await test.canvas.findByRole('button', { name: 'Open · Section 1', exact: true }));
+  await test.userEvent.click(await test.canvas.findByRole('button', { name: 'Open · Saved draft', exact: true }));
   const reportRoot = test.canvasElement.querySelector<HTMLElement>('.er-live-report');
   assert(reportRoot, 'Actual report root absent');
   const reportRegion = reportRoot.querySelector<HTMLElement>(':scope > .er-operation-announcement');

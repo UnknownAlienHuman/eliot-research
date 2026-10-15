@@ -98,6 +98,7 @@ export function ResearchPreview({ designReview = false, historyState, onProbe }:
       if (url.pathname === '/api/v1/research/runs') return json({ protocol: 'eliotr.research-runs.v5',
         runs: [...(historyState || designReview ? [{ created_at: stamp, query: historyQuestion, status: historyStatus }] : []), ...(starts ? [{ created_at: stamp, query: historyQuestion, status }] : [])],
         saved_drafts: starts || designReview || historyState ? [{ created_at: stamp, artifact_ref: artifactRef, workflow_instance_id: historyState || designReview ? historyLaunch.workflow_instance_id : launch.workflow_instance_id }] : [],
+        visibility_scan: { runs: 'SOURCE_EXHAUSTED', saved_drafts: 'SOURCE_EXHAUSTED' },
         configuration_state: 'INSTALLED', checked_at: stamp });
       if (url.pathname === '/api/v1/research/wiki/proposals') return json({ protocol: 'eliotr.wiki-proposals.v1', items: [], has_more: false });
       if (url.pathname === '/api/v1/research/run' && init?.method === 'POST') {
