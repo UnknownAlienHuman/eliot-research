@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  ProjectClientGrantSchema,
+  ResearchBranchAnalysisCheckpointSchema,
   ResearchBranchEvidenceItemSchema,
   ResearchBranchReconciliationCheckpointSchema,
   ResearchReadExtractCheckpointSchema,
 } from "@eliotr/contracts";
-import { StageRequestSchema } from "@eliotr/cloudflare-workflows";
+import { ExternalAgentTaskStore, StageRequestSchema, textDigest } from "@eliotr/cloudflare-workflows";
 import type * as CloudflareWorkflows from "@eliotr/cloudflare-workflows";
 import { INSTALLED_INQUIRY_PROTOCOL_REFS, installedInquiryProtocolDefinition } from "./research-inquiry-protocol.js";
 import { createResearchPlanningManifest } from "./research-planning-manifest.js";
@@ -17,6 +19,7 @@ import type { ResearchBranchRoleModelExecutor } from "./research-branch-role-mod
 import type { ProtocolScopeCheckpoint } from "./research-protocol-freeze.js";
 import type { EvidenceFreezeStageFiveLineage } from "./research-evidence-freeze-preparation.js";
 import { buildEvidenceFreezeLineage } from "./research-evidence-freeze-branch-lineage.js";
+import { createResearchExternalBranchAnalysisHandlers } from "./research-external-branch-analysis.js";
 
 const doubles = vi.hoisted(() => ({
   loadContext: vi.fn(),
@@ -35,6 +38,7 @@ vi.mock("@eliotr/cloudflare-workflows", async (importOriginal) => {
   return {
     ...actual,
     readCommittedStageLineage: doubles.readCommittedStageLineage,
+    readCommittedWorkflowStageLineage: doubles.readCommittedStageLineage,
     readWorkflowObject: doubles.readWorkflowObject,
   };
 });
@@ -369,5 +373,138 @@ describe("active V7 counter reconciliation through freeze lineage", () => {
     })).rejects.toThrow(/branch reconciliation lineage is inconsistent/u);
 
     expect(fabricated.unresolved_contradiction_refs).toEqual(["eliotr.research.contradiction-v7-negative"]);
+  });
+});
+
+describe("native external branch checkpoint identity", () => {
+  it("keeps the frozen READ_AND_EXTRACT revision when the stage-8 request has advanced", async () => {
+    const externalPrincipal = { ...PRINCIPAL, principal_ref: "principal-v8-external.access" };
+    const protocolRef = INSTALLED_INQUIRY_PROTOCOL_REFS.lookup;
+    const planning = await createResearchPlanningManifest({
+      investigation_id: INVESTIGATION_REF.id,
+      operation_id: OPERATION_ID,
+      question: "What does the admitted corpus contain?",
+      scope_snapshot_ref: SCOPE,
+      scope_created_at: "2026-09-18T00:00:00.000Z",
+      inquiry_protocol_ref: protocolRef,
+      definition: installedInquiryProtocolDefinition(protocolRef),
+      sources: [{
+        source_revision_ref: "revision-v8-external-branch",
+        source_id: "source-v8-external-branch",
+        source_class: "document",
+        source_namespace_id: "namespace-v8-external-branch",
+        source_owner_generation: "owner-generation-v8-external-branch",
+        origin_uri: "https://example.com/readme",
+      }],
+    });
+    expect(planning.required_branch_roles).toEqual([]);
+    const read = await withIdentity("eliotr.research.read-extract.v1", "eliotr.research.read-extract-", {
+      protocol: "eliotr.research.read-extract.v1",
+      operation_id: OPERATION_ID,
+      investigation_ref: { ...INVESTIGATION_REF, revision: 8 },
+      principal_ref: externalPrincipal.principal_ref,
+      scope_snapshot_ref: SCOPE,
+      inquiry_protocol_ref: protocolRef,
+      protocol_digest: SHA256,
+      planning_manifest_ref: planning.manifest_ref,
+      planning_manifest_digest: planning.identity_digest,
+      retrieval_request_digest: SHA256,
+      evidence: [],
+      omitted_candidate_refs: [],
+      created_at: "2026-09-18T00:00:00.000Z",
+    });
+    const readBytes = canonicalBytes(read);
+    const request = StageRequestSchema.parse({
+      ...stageRequest("ANALYZE_BRANCHES"),
+      investigation_ref: { ...INVESTIGATION_REF, revision: 9 },
+      handler_generation: "research-handlers.exploratory.external-wait.v1",
+    });
+    const requestSha = await textDigest(JSON.stringify(request));
+    const submittedAt = "2026-09-18T00:00:01.000Z";
+    const recorded = {
+      protocol: "eliotr.external-agent-result.v1",
+      task_id: `external-task:${requestSha}`,
+      operation_id: OPERATION_ID,
+      stage_index: 8,
+      stage: "ANALYZE_BRANCHES",
+      attempt_ref: "external-attempt-v8",
+      request_sha256: requestSha,
+      lease_id: "lease-v8",
+      idempotency_key: "result-v8",
+      disposition: "PARTIAL",
+      output: {
+        protocol: "eliotr.external-branch-analysis.v1",
+        task_kind: "RESEARCH_BRANCH_ANALYSIS",
+        task_id: `external-task:${requestSha}`,
+        operation_id: OPERATION_ID,
+        stage_index: 8,
+        stage: "ANALYZE_BRANCHES",
+        attempt_ref: "external-attempt-v8",
+        request_sha256: requestSha,
+        roles: [],
+        candidate_findings: [],
+        execution_observation: {
+          contour: "OTHER",
+          computer_scope: "UNKNOWN",
+          interfaces_used: [],
+          observed_at: submittedAt,
+        },
+      },
+      evidence_refs: [],
+      diagnostics: [],
+      usage: { accounting: "UNKNOWN" },
+      submitted_at: submittedAt,
+    } as const;
+    const w1Head = { revision: 9, principal_ref: PRINCIPAL.principal_ref };
+    doubles.loadContext.mockResolvedValue({
+      protocol: { scope_snapshot_ref: SCOPE, profile_definition_ref: protocolRef, protocol_digest: SHA256 },
+      planning,
+      stage_five: { retrieval_request_digest: SHA256, evidence_pack: { resolved_evidence: [] } },
+      w1: w1Head,
+    });
+    doubles.readWorkflowObject.mockResolvedValue(readBytes);
+    vi.spyOn(ExternalAgentTaskStore.prototype, "readRecordedResult").mockResolvedValue(recorded);
+    const grant = ProjectClientGrantSchema.parse({
+      protocol: "eliotr.project-client-grant.v1",
+      grant_id: "grant-v8-external",
+      project_id: "project-v8-external",
+      grantor_principal_ref: "owner-v8.access",
+      revision: 1,
+      state: "ACTIVE",
+      grantee: {
+        issuer: "https://example.cloudflareaccess.com",
+        authentication_method: "service_token",
+        subject: externalPrincipal.principal_ref,
+      },
+      allowed_operations: ["run", "recover", "evidence"],
+      ingest_namespace_ids: [],
+      expires_at: "2027-01-01T00:00:00.000Z",
+      created_at: submittedAt,
+      updated_at: submittedAt,
+    });
+    const handlers = createResearchExternalBranchAnalysisHandlers({
+      database: {},
+      work_bucket: {},
+      navigation: { access: externalPrincipal, current: async () => ({ stable: true }) },
+      ledger: { read: async () => ({ head: w1Head }) },
+      read_stage_five: async () => { throw new Error("context is mocked"); },
+      resolver: { resolveHandle: vi.fn() },
+      grant,
+      require_route_binding: async () => undefined,
+      now: () => Date.parse(submittedAt),
+    } as never);
+
+    const output = await handlers.handler({
+      request,
+      principal: externalPrincipal,
+      input_bytes: readBytes,
+      attempt_ref: "external-attempt-v8",
+      budget_receipt_ref: "budget-v8",
+    });
+    const analysis = ResearchBranchAnalysisCheckpointSchema.parse(JSON.parse(new TextDecoder().decode(output)));
+    expect(request.investigation_ref.revision).toBe(9);
+    expect(analysis.investigation_ref).toEqual(read.investigation_ref);
+    expect(analysis.required_roles).toEqual([]);
+    expect(analysis.branch_results).toEqual([]);
   });
 });

@@ -295,7 +295,7 @@ async function checkpointBytes(
   const value = {
     protocol: "eliotr.research.branch-analysis.v1" as const,
     operation_id: request.operation_id,
-    investigation_ref: { ...request.investigation_ref },
+    investigation_ref: { ...read.investigation_ref },
     principal_ref: principal.principal_ref,
     scope_snapshot_ref: { ...context.protocol.scope_snapshot_ref },
     inquiry_protocol_ref: { ...context.protocol.profile_definition_ref },

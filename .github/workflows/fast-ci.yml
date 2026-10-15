@@ -65,6 +65,7 @@ jobs:
           packages/cloudflare-workspace-mcp/src/gemini-mcp-client-diagnostics.test.ts
           packages/cloudflare-workspace-mcp/src/computer-agent-dispatch-mcp.test.ts
           packages/cloudflare-research-configuration/src/research-run-configuration-admission.test.ts
+          packages/cloudflare-research-branches/src/research-branch-v7-reconciliation-freeze.test.ts
           apps/eliotr-core/test/research-model-gateway-runtime.test.ts
           --reporter=verbose
       - name: Native Worker model settings and Gateway contracts

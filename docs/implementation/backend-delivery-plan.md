@@ -43,6 +43,19 @@ generation. The run was canceled through the owner API and read back as
 after the fix is required, rather than recovering across a changed backend
 fingerprint. Task analysis and result settlement remain pending.
 
+At `git-8703caf32a55`, CI `38794438707` and deployment passed. A new browser
+offer started `run-bc5410f4a4c78c5a7bb34653d1e8ffca7ff865f7985e6bff`.
+Codex pulled its real stage-8 task, reopened the admitted 1,036-byte evidence
+excerpt and matched its hash, then returned an idempotent `PARTIAL` result.
+The existing native result outbox settled stage 8 and execution reached stage 10.
+The corpus-lookup protocol required no branch roles; this is a transport and
+settlement proof, not proof of multi-branch research or complete README coverage.
+Stage 10 rejected the external writer's revision 9, where the shared lineage
+contract requires the READ_AND_EXTRACT revision 8. The run was canceled with a
+confirmed receipt at stage 10; committed checkpoints and the callback were
+preserved. The external writer is being aligned with the ordinary writer;
+delegated final-report acceptance remains pending.
+
 ## Owner model settings, October 15, 2026, 16:05 UTC
 
 Routine deployment of `0b017872cf18c3028cc63fa10a2dd510614d3829` is live as

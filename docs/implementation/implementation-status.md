@@ -7,7 +7,11 @@ and both native indexes, saved-report reopen with exact citations, and browser
 Inbox publication have live readbacks. Native doctor diagnosis completed without
 an external key. At `git-4bf01fafde1b`, Codex accepted a real browser assignment;
 the run then failed during v2 delegated spend-policy preparation before stage 0
-and was canceled with a confirmed receipt. Task settlement is not yet accepted.
+and was canceled with a confirmed receipt. At `git-8703caf32a55`, a fresh browser
+assignment reached Codex task pull, exact evidence read, idempotent `PARTIAL`
+callback and canonical stage-8 settlement. Stage 10 exposed the external writer's
+READ_AND_EXTRACT revision mismatch; that run was canceled. Delegated final-report
+acceptance remains pending, and the broader agent contour is not promoted.
 External key management and GitHub doctor
 delivery still lack their narrow server credentials. See the dated
 [delivery observation](backend-delivery-plan.md#owner-live-acceptance-october-15-2026-1910-utc)
