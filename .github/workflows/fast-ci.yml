@@ -83,6 +83,7 @@ jobs:
           src/research-run-configuration-admission.test.ts
           test/research-provider-key-model-use.test.ts
           test/research-client-execution.test.ts
+          test/delegated-report-reservation.test.ts
           --reporter=verbose
       - name: Build served assets and owner web
         run: |

@@ -12,6 +12,12 @@ assignment reached Codex task pull, exact evidence read, idempotent `PARTIAL`
 callback and canonical stage-8 settlement. Stage 10 exposed the external writer's
 READ_AND_EXTRACT revision mismatch; that run was canceled. Delegated final-report
 acceptance remains pending, and the broader agent contour is not promoted.
+At `git-5441e556b713`, a subsequent Codex assignment completed stages 0–16
+and both native model calls. Stage 17 exposed the delegated draft reservation's
+circular dependency on the later REPORT admission. No artifact reservation or
+admission was found, and the run was canceled with a readback receipt.
+Migration 0155 has a passing native D1 guard regression; remote application and
+the delegated final report remain pending.
 External key management and GitHub doctor
 delivery still lack their narrow server credentials. See the dated
 [delivery observation](backend-delivery-plan.md#owner-live-acceptance-october-15-2026-1910-utc)

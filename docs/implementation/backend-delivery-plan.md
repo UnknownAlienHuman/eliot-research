@@ -56,6 +56,23 @@ confirmed receipt at stage 10; committed checkpoints and the callback were
 preserved. The external writer is being aligned with the ordinary writer;
 delegated final-report acceptance remains pending.
 
+At `git-5441e556b713`, the next Codex assignment completed stages 0–16,
+including one native Cloudflare synthesis and one claim audit. Both immutable
+model outputs succeeded and their hashes were retained. Stage 17 encountered a
+reservation/admission ordering conflict: migration 0076 required a REPORT
+admission before reserving a delegated draft, while the existing writer inserts
+that admission in the final atomic batch. Canonical readback found one valid
+execution grant, no matching admission and no draft reservation. The run was
+canceled with an exact receipt; its model outputs and task result remain intact.
+
+Migration 0155 binds reservation to the exact current delegated MATERIALIZE
+attempt, scope, actor, idempotency key, intent and budget. It requires the
+persisted REPORT admission before `FINALIZED`, preserving the existing atomic
+publication boundary. Native D1 coverage reproduces the old abort and checks
+valid reservation, foreign/revoked authority, direct finalized insertion,
+missing admission and successful authorized finalization. This migration has
+not yet been applied remotely; delegated final-report acceptance remains open.
+
 ## Owner model settings, October 15, 2026, 16:05 UTC
 
 Routine deployment of `0b017872cf18c3028cc63fa10a2dd510614d3829` is live as
