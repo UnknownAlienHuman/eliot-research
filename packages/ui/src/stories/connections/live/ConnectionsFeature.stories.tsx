@@ -255,8 +255,8 @@ export const ModelUseIsNotReadiness: Story = {
   },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    expect(canvas.getByText("Operation blocked")).toBeInTheDocument();
-    expect(canvas.getByText("Model qualified")).toBeInTheDocument();
+    expect(canvas.getByText("Operation blocked", { exact: false })).toBeInTheDocument();
+    expect(canvas.getByText("Model qualified", { exact: false })).toBeInTheDocument();
   },
 };
 

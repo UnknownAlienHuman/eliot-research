@@ -43,7 +43,7 @@ function requireStatus(canvas: HTMLElement, text: string): HTMLElement {
   // Visible quiet Status element: static text keeps its meaning without announcing.
   const element = Array.from(canvas.getElementsByTagName("*"))
     .find(candidate => candidate.getAttribute("role") !== "status" && candidate.textContent?.includes(text)
-      && candidate.getElementsByTagName("*").length === 0);
+      && candidate.getElementsByTagName("*").length === 0 && candidate.tagName !== "OPTION");
   assert(element instanceof HTMLElement, "Missing visible status: " + text);
   return element;
 }

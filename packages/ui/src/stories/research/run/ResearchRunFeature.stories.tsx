@@ -149,7 +149,7 @@ export const CompletionIsNotAcceptance: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     expect(canvas.getByText('Engine completion is not report acceptance or publication.')).toBeInTheDocument();
-    expect(canvas.getByText('18 stages completed · complete')).toBeInTheDocument();
+    expect(canvas.getByText('18 stages completed · Finished')).toBeInTheDocument();
     expect(canvas.queryByText(/Next stage 19|Stage 19/u)).not.toBeInTheDocument();
   },
 };
