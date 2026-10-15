@@ -1,10 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { reset } from "cloudflare:test";
 import type { AccessVerifier } from "@eliotr/cloudflare-access";
-import {
-  createAiSearchGenerationRegistryService,
-  createD1AiSearchGenerationRegistryStore,
-} from "@eliotr/cloudflare-ai";
 import { createProjectOwnerService } from "@eliotr/cloudflare-navigation";
 import { AI_SEARCH_PRIMARY_PROJECTION_PROFILE, MANAGED_TARGET_ASSIGNMENT_PROTOCOL,
   AI_SEARCH_PRIMARY_NAMESPACE, aiSearchPhysicalProfileDigest, createD1ManagedTargetAssignmentPort, projectionDigest,
@@ -13,6 +9,7 @@ import type { ApplicationLifecycle, AuthenticatedRequestContext } from "@eliotr/
 import { handleHttp } from "../src/http.js";
 import { MANAGED_SEARCH_PRODUCT_OPT_IN_PROTOCOL } from "../src/managed-search-product-opt-in-http.js";
 import { resolveManagedTargetSelectionV2 } from "../src/managed-search-product-selection.js";
+import { createNativeTargetRegistryFixture } from "./managed-target-registry-fixture.js";
 import {
   db,
   insert,
@@ -55,51 +52,32 @@ async function createProject(): Promise<string> {
   return result.project_ref.id;
 }
 
-async function seedPrimaryRegistryWithShadow(): Promise<string> {
-  const registry = createAiSearchGenerationRegistryService(
-    createD1AiSearchGenerationRegistryStore(runtime.SEARCH_DB),
-  );
-  const startedAt = new Date().toISOString();
+async function seedPrimaryRegistryWithShadow() {
+  const fixture = createNativeTargetRegistryFixture(runtime.SEARCH_DB, runtime.WORK_BUCKET);
+  const { registry } = fixture;
   const activeGeneration = AI_SEARCH_PRIMARY_PROJECTION_PROFILE.generation;
-  await registry.declare({
-    namespace: AI_SEARCH_PRIMARY_NAMESPACE,
-    profile: AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
-    expected_item_count: 0,
-    declared_at: startedAt,
-  });
-  await registry.observe(AI_SEARCH_PRIMARY_NAMESPACE, {
-    generation: activeGeneration,
-    indexed_item_count: 0,
-    readback_item_count: 0,
-    failed_item_count: 0,
-    mismatch_count: 0,
-    golden_set_result_ref: "managed-search-primary-fixture",
-    observed_at: new Date(Date.parse(startedAt) + 1).toISOString(),
-  });
+  await fixture.declare(AI_SEARCH_PRIMARY_PROJECTION_PROFILE);
+  await registry.qualify(AI_SEARCH_PRIMARY_NAMESPACE, { generation: activeGeneration });
   await registry.promote(AI_SEARCH_PRIMARY_NAMESPACE, {
     expected_active_head_generation: null,
     target_generation: activeGeneration,
-    promoted_at: new Date(Date.parse(startedAt) + 2).toISOString(),
+    promoted_at: new Date().toISOString(),
   });
 
   const shadowGeneration = "managed-search-shadow-b";
-  const shadowDeclaredAt = new Date(Date.parse(startedAt) + 3).toISOString();
-  await registry.declare({
-    namespace: AI_SEARCH_PRIMARY_NAMESPACE,
-    profile: Object.freeze({ ...AI_SEARCH_PRIMARY_PROJECTION_PROFILE, generation: shadowGeneration }),
-    expected_item_count: 0,
-    declared_at: shadowDeclaredAt,
-  });
-  await registry.observe(AI_SEARCH_PRIMARY_NAMESPACE, {
-    generation: shadowGeneration,
-    indexed_item_count: 0,
-    readback_item_count: 0,
-    failed_item_count: 0,
-    mismatch_count: 0,
-    golden_set_result_ref: "managed-search-shadow-fixture",
-    observed_at: new Date(Date.parse(shadowDeclaredAt) + 1).toISOString(),
-  });
-  return shadowGeneration;
+  const shadow = await fixture.declare(Object.freeze({
+    ...AI_SEARCH_PRIMARY_PROJECTION_PROFILE, generation: shadowGeneration,
+  }));
+  await fixture.rejectForeignEvidence(shadow);
+  await registry.qualify(AI_SEARCH_PRIMARY_NAMESPACE, { generation: shadowGeneration });
+  const snapshot = await registry.read(AI_SEARCH_PRIMARY_NAMESPACE);
+  expect(snapshot?.artifact.registry.generations.map(record => ({
+    generation: record.generation, state: record.state, protocol: record.promotion_evidence_v2?.protocol,
+  }))).toEqual([
+    { generation: activeGeneration, state: "ACTIVE", protocol: "eliotr.managed-generation-promotion-evidence.v2" },
+    { generation: shadowGeneration, state: "SHADOW_COMPLETE", protocol: "eliotr.managed-generation-promotion-evidence.v2" },
+  ]);
+  return { shadowGeneration, registry, declare: fixture.declare };
 }
 
 async function seedAssignableSource(sourceId: string): Promise<void> {
@@ -282,7 +260,7 @@ describe("Core managed target assignment on native D1", () => {
   });
 
   it("keeps the explicit primary product decision stable across compatible A-to-B selection", async () => {
-    const shadowGeneration = await seedPrimaryRegistryWithShadow();
+    const { shadowGeneration, registry, declare } = await seedPrimaryRegistryWithShadow();
     const projectId = await createProject();
     const legacyReadBeforeV2 = await call(request(projectId, "GET"));
     expect(legacyReadBeforeV2.status).toBe(200);
@@ -341,9 +319,6 @@ describe("Core managed target assignment on native D1", () => {
       target_profile_identity_sha256: active.target.target_profile_identity_sha256,
     });
 
-    const registry = createAiSearchGenerationRegistryService(
-      createD1AiSearchGenerationRegistryStore(runtime.SEARCH_DB),
-    );
     await registry.promote(AI_SEARCH_PRIMARY_NAMESPACE, {
       expected_active_head_generation: active.target.managed_generation,
       target_generation: shadowGeneration,
@@ -404,30 +379,20 @@ describe("Core managed target assignment on native D1", () => {
     expect((await json(legacyRead)).code).toBe("MANAGED_TARGET_ASSIGNMENT_VERSIONED_HEAD");
 
     const unreviewedGeneration = "unreviewed-managed-search-shadow";
-    await registry.declare({
-      namespace: AI_SEARCH_PRIMARY_NAMESPACE,
-      profile: Object.freeze({
+    await declare(Object.freeze({
         ...AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
         id: "unreviewed-managed-search-instance",
         generation: unreviewedGeneration,
-      }),
-      expected_item_count: 0,
-      declared_at: new Date().toISOString(),
-    });
+    }));
     await expect(resolveManagedTargetSelectionV2(runtime.SEARCH_DB, "SHADOW", unreviewedGeneration))
       .rejects.toMatchObject({ code: "MANAGED_SEARCH_PRODUCT_PROFILE_MISMATCH" });
 
     const incompatibleGeneration = "incompatible-managed-search-shadow";
-    await expect(registry.declare({
-      namespace: AI_SEARCH_PRIMARY_NAMESPACE,
-      profile: Object.freeze({
+    await expect(declare(Object.freeze({
         ...AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
         generation: incompatibleGeneration,
         embedding_model: "incompatible/embedding-profile",
-      }),
-      expected_item_count: 0,
-      declared_at: new Date().toISOString(),
-    })).rejects.toThrow();
+    }))).rejects.toMatchObject({ code: "AI_SEARCH_PROFILE_IMMUTABLE_MISMATCH" });
     await expect(resolveManagedTargetSelectionV2(runtime.SEARCH_DB, "SHADOW", incompatibleGeneration))
       .rejects.toMatchObject({ code: "MANAGED_SEARCH_PRODUCT_GENERATION_NOT_FOUND" });
   });
