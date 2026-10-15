@@ -67,8 +67,8 @@ Access, token, grant, connection, route or provider change has been made by this
 After approval, the root owner performs the remote setup and exact readbacks:
 
 1. Create one Cloudflare Access service token named `eliotr-codex-local-20261015` with a 24-hour lifetime.
-   Add one `Service Auth` policy to the existing owner application `d49aec19-82ff-4f9d-90a1-e3d9f565f32a`
-   (AUD `5aa0a2bf091fd0ef57d5455bc86dc5e1b727979df2d42d2b1fb6827875e348f`), including only that returned
+   Add one `Service Auth` policy to the existing owner application identified by the live Worker
+   `ACCESS_AUDIENCE`, including only that returned
    service-token ID. The current app has no service-token binding; keep the existing owner-email policy,
    Worker managed-OAuth profile, and separate MCP application/AUD unchanged.
 2. Allowlist only the returned service token **Client ID** in the existing Worker verifier. Cloudflare's
@@ -79,9 +79,9 @@ After approval, the root owner performs the remote setup and exact readbacks:
    (docs checked 2026-10-15).
 3. Register one connection with display name `Codex local`, contour `OTHER`, computer scope `LOCAL`, and
    only transport `WEB_INBOX` plus task kind `RESEARCH_BRANCH_ANALYSIS`. Bind it to the verified issuer
-   `https://iuriilisenkov.cloudflareaccess.com` and the returned Client ID.
-4. Issue a 24-hour grant for project `idproject-280b8cf7e84c97b6308b09fef67de468927d3cf2776f1014`
-   (the README project), with exactly `run`, `recover` and `evidence`. Do not add ingest permission.
+   from the live Access application and the returned Client ID.
+4. Issue a 24-hour grant for the selected README verification project, using its actual returned project ID,
+   with exactly `run`, `recover` and `evidence`. Do not add ingest permission.
 5. Publish the `RESEARCH_BRANCH_ANALYSIS` route with strategy `ORIGINATING_MATCH` and only the exact
    current Codex connection revision. Read back the connection, grant, route and readiness; then issue a
    one-shot `WEB_INBOX` qualification challenge and create an owner-authorized dispatch for that same
@@ -91,8 +91,9 @@ Store these values in a user-only local environment file outside the repository.
 Git, print it, or pass its contents as command-line arguments:
 
 ```text
-ELIOTR_WEB_INBOX_ISSUER=https://iuriilisenkov.cloudflareaccess.com
-ELIOTR_WEB_INBOX_ORIGIN=https://eliotr-core.kleymor-metal.workers.dev
+ELIOTR_WEB_INBOX_ISSUER=https://<verified-access-team>.cloudflareaccess.com
+ELIOTR_WEB_INBOX_ORIGIN=https://<deployed-worker-origin>
+ELIOTR_WEB_INBOX_PROJECT_ID=<returned README-project ID>
 ELIOTR_WEB_INBOX_CLIENT_ID=<returned Client ID>
 ELIOTR_WEB_INBOX_CLIENT_SECRET=<returned Client Secret>
 ELIOTR_WEB_INBOX_GRANT_ID=<returned project-grant locator>
@@ -117,7 +118,8 @@ existing callback. It makes no ingest request. The callback wake/recovery remain
 The helper invokes the installed `codex exec` once, with stdin, a temporary output schema, an ephemeral
 session and a read-only sandbox. It sets no model or provider override, so the local Codex profile keeps the
 owner's native model selection (including Luna Max when selected). It strips the Access credential
-environment from the child, uses no browser/search, writes no checkout files, and records usage as
+environment from the child while preserving the configured Codex provider environment. It runs in a
+temporary directory using only the supplied task/evidence, uses no browser/search, writes no checkout files, and records usage as
 `UNKNOWN` because the CLI does not provide a verified billing receipt.
 
 Use the `status <external-task-id>` command to reconcile a task. The `recover <external-task-id>` command
