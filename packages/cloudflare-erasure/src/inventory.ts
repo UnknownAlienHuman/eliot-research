@@ -41,8 +41,8 @@ import { sealBackupPrimaryHandoff } from "./backup-primary-handoff.js";
 import { resolveBackupTargets, type BackupInventorySelection } from "./backup-recovery.js";
 import { enumerateRawIngestDependencies } from "./raw-ingest-inventory.js";
 import { createEmptyLocationProofTarget } from "./empty-location-proof.js";
-import { makeD1SearchEmptyProofFields } from "./empty-location-proof-authority.js";
-import { makeR2WorkEmptyProofTarget } from "./empty-location-proof-r2.js";
+import { makeD1SearchEmptyProofFields, readEmptyProofAuthorityDigest } from "./empty-location-proof-authority.js";
+import { makeR2WorkEmptyProofTarget, readR2WorkEmptySnapshot } from "./empty-location-proof-r2.js";
 import { verifyEvidenceHandleRoot, verifyScopeSnapshotRoots } from "./inventory-root-validation.js";
 import {
   applyPending,
@@ -62,16 +62,6 @@ import {
   sourceOwnerGeneration,
 } from "./inventory-readers.js";
 
-const MAX_CLOSURE_TARGETS = 100_000;
-const MAX_COPY_INDEX_PAGES = 256;
-
-function workPrefix(manifestRef: string): string {
-  const marker = "/manifests/";
-  const index = manifestRef.lastIndexOf(marker);
-  if (index < 1) erasureFail("ERASURE_IDENTITY_CONFLICT", "projection manifest ref has no generation prefix");
-  return manifestRef.slice(0, index);
-}
-
 interface ManagedProviderEffectRow {
   readonly source_revision_ref: unknown;
   readonly projection_generation: unknown;
@@ -87,6 +77,7 @@ interface ManagedProviderEffectRow {
   readonly managed_instance_id: unknown;
   readonly managed_generation: unknown;
   readonly provider_source: unknown;
+  readonly item_key: unknown;
   readonly provider_key: unknown;
   readonly normalized_start_byte: unknown;
   readonly normalized_end_byte: unknown;
@@ -108,6 +99,124 @@ interface ManagedProviderEffectRow {
   readonly canonical_item_count: unknown;
   readonly provider_copy_count: unknown;
   readonly provider_copy_set_digest: unknown;
+}
+
+const MAX_CLOSURE_TARGETS = 100_000;
+const MAX_COPY_INDEX_PAGES = 256;
+
+function workPrefix(manifestRef: string): string {
+  const marker = "/manifests/";
+  const index = manifestRef.lastIndexOf(marker);
+  if (index < 1) erasureFail("ERASURE_IDENTITY_CONFLICT", "projection manifest ref has no generation prefix");
+  return manifestRef.slice(0, index);
+}
+
+interface ManagedProviderEffectInventory {
+  readonly targets: readonly {
+    readonly instance_id: string;
+    readonly generation: string;
+    readonly key: string;
+    readonly provider_item_id: string;
+    readonly projection_generation: string;
+  }[];
+  readonly project_copy_generations: ReadonlySet<string>;
+}
+
+function hasSortedKeyPrefix(keys: readonly string[], prefix: string): boolean {
+  let low = 0;
+  let high = keys.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    const candidate = keys[middle];
+    if (candidate === undefined) return false;
+    if (candidate < prefix) low = middle + 1;
+    else high = middle;
+  }
+  return keys[low]?.startsWith(prefix) === true;
+}
+
+/** Exact durable item intent/readback keys; never widen to a target or folder prefix. */
+async function managedProviderEffects(
+  database: D1Database,
+  sourceRevisionRef: string,
+): Promise<ManagedProviderEffectInventory> {
+  let result: D1Result<ManagedProviderEffectRow>;
+  try {
+    result = await database.prepare(
+      "SELECT source_revision_ref,projection_generation,managed_instance_id,managed_generation,item_key,provider_key," +
+      "state,provider_item_id,readback_receipt_json,readback_sha256 " +
+      "FROM projection_managed_item_effect WHERE source_revision_ref=?1 " +
+      "ORDER BY managed_instance_id,managed_generation,provider_key LIMIT 10001",
+    ).bind(sourceRevisionRef).all<ManagedProviderEffectRow>();
+  } catch (cause) {
+    erasureFail("ERASURE_CLOSURE_INCOMPLETE", "exact managed provider-copy inventory is unavailable", false, cause);
+  }
+  if (!result.success || !Array.isArray(result.results)) {
+    erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "exact managed provider-copy inventory did not complete", true);
+  }
+  if (result.results.length > 10_000) {
+    erasureFail("ERASURE_CLOSURE_INCOMPLETE", "exact managed provider-copy inventory exceeds its 10000-row bound");
+  }
+  const targets: ManagedProviderEffectInventory["targets"][number][] = [];
+  const projectCopyGenerations = new Set<string>();
+  const seen = new Set<string>();
+  for (const row of result.results) {
+    const source = assertErasureIdentifier(row.source_revision_ref, "provider effect source revision");
+    if (source !== sourceRevisionRef) {
+      erasureFail("ERASURE_IDENTITY_CONFLICT", "provider effect escaped the selected source revision");
+    }
+    const projectionGeneration = assertErasureIdentifier(row.projection_generation, "provider effect projection generation");
+    const instanceId = assertErasureIdentifier(row.managed_instance_id, "provider effect instance");
+    const generation = assertErasureIdentifier(row.managed_generation, "provider effect generation");
+    const itemKey = assertErasureIdentifier(row.item_key, "provider effect item key");
+    const key = assertErasureText(row.provider_key, "exact provider key", 1024);
+    if (key.includes("//") || key.includes("\\") || /(^|\/)\.\.?($|\/)/u.test(key)) {
+      erasureFail("ERASURE_IDENTITY_CONFLICT", "provider effect key is not an exact canonical item key");
+    }
+    if (row.state !== "READBACK_VERIFIED") {
+      erasureFail("ERASURE_CLOSURE_INCOMPLETE", "managed provider effect lacks exact completed provider readback");
+    }
+    const providerItemId = assertErasureIdentifier(row.provider_item_id, "provider effect item ID");
+    const readbackSha256 = assertErasureSha256(row.readback_sha256, "provider effect readback digest");
+    if (typeof row.readback_receipt_json !== "string") {
+      erasureFail("ERASURE_CLOSURE_INCOMPLETE", "managed provider effect lacks its exact readback receipt");
+    }
+    let readback: Record<string, unknown>;
+    try {
+      const parsed: unknown = JSON.parse(row.readback_receipt_json);
+      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+        erasureFail("ERASURE_IDENTITY_CONFLICT", "managed provider readback receipt is not an object");
+      }
+      readback = parsed as Record<string, unknown>;
+    } catch (cause) {
+      erasureFail("ERASURE_IDENTITY_CONFLICT", "managed provider readback receipt is malformed", false, cause);
+    }
+    const readbackFields = [
+      "chunks_count", "content_sha256", "file_size", "item_key", "provider_item_id",
+      "provider_key", "readback_sha256",
+    ];
+    if (Object.keys(readback).sort().join("\n") !== readbackFields.sort().join("\n") ||
+        canonicalErasureJson(readback) !== row.readback_receipt_json ||
+        readback.item_key !== itemKey || readback.provider_key !== key ||
+        readback.provider_item_id !== providerItemId || readback.readback_sha256 !== readbackSha256 ||
+        !Number.isSafeInteger(readback.file_size) || (readback.file_size as number) < 1 ||
+        !Number.isSafeInteger(readback.chunks_count) || (readback.chunks_count as number) < 1) {
+      erasureFail("ERASURE_IDENTITY_CONFLICT", "managed provider effect and exact readback receipt differ");
+    }
+    assertErasureSha256(readback.content_sha256, "provider readback content digest");
+    const identity = `${instanceId}\u0000${generation}\u0000${key}`;
+    if (seen.has(identity)) erasureFail("ERASURE_IDENTITY_CONFLICT", "managed provider key/generation is ambiguous for this source");
+    seen.add(identity);
+    projectCopyGenerations.add(projectionGeneration);
+    targets.push(Object.freeze({
+      instance_id: instanceId,
+      generation,
+      key,
+      provider_item_id: providerItemId,
+      projection_generation: projectionGeneration,
+    }));
+  }
+  return Object.freeze({ targets: Object.freeze(targets), project_copy_generations: projectCopyGenerations });
 }
 
 const PROVIDER_METADATA_FIELDS = [
@@ -725,6 +834,36 @@ async function target(
   };
 }
 
+function appendVerifiedProviderTarget(
+  generated: PurgeTarget[],
+  byExactReference: Map<string, PurgeTarget>,
+  candidate: PurgeTarget,
+): void {
+  const reference = canonicalErasureJson({
+    exact_subject_ref: candidate.exact_subject_ref,
+    location: candidate.location,
+    canonical_ref: candidate.canonical_ref,
+  });
+  const existing = byExactReference.get(reference);
+  if (existing !== undefined) {
+    if (
+      existing.target_id !== candidate.target_id ||
+      existing.target_kind !== candidate.target_kind ||
+      existing.exact_subject_ref !== candidate.exact_subject_ref ||
+      existing.location !== candidate.location ||
+      existing.canonical_ref !== candidate.canonical_ref ||
+      existing.provider_ref !== candidate.provider_ref ||
+      existing.identity_digest !== candidate.identity_digest
+    ) {
+      erasureFail("ERASURE_IDENTITY_CONFLICT", "source-wide and per-projection provider targets disagree on exact identity");
+    }
+    return;
+  }
+  ensureClosureCapacity(generated.length, 1, "exact provider erasure targets");
+  byExactReference.set(reference, candidate);
+  generated.push(candidate);
+}
+
 export interface D1ErasureInventoryDependencies {
   readonly core_database: D1Database;
   readonly search_database: D1Database;
@@ -868,21 +1007,53 @@ export function createD1ErasureInventory(
         if (raw?.pending !== undefined) rawPendingBySubject.set(subject, earlierPending(rawPendingBySubject.get(subject), raw.pending));
       }
       const generated: PurgeTarget[] = [...directTargets];
+      const providerTargetsByReference = new Map<string, PurgeTarget>();
       if (request.required_locations.includes("Projection") && dependencies.work_bucket !== undefined) {
         for (const { subject, row } of revisions) {
-          const work = await makeR2WorkEmptyProofTarget(
+          const authorityBefore = await readEmptyProofAuthorityDigest(
             dependencies.core_database,
-            dependencies.work_bucket,
-            requestDigest,
-            subject,
             row.source_revision_ref,
+            subject,
+            "Projection",
           );
-          if (work.target === null) {
-            generated.push(await target(subject, "Projection", `r2-work-prefix:${work.prefix}`));
-          } else {
+          const snapshot = await readR2WorkEmptySnapshot(dependencies.work_bucket, row.source_revision_ref);
+          const authorityAfter = await readEmptyProofAuthorityDigest(
+            dependencies.core_database,
+            row.source_revision_ref,
+            subject,
+            "Projection",
+          );
+          if (authorityBefore !== authorityAfter) {
+            erasureFail("ERASURE_CLOSURE_INCOMPLETE", "source Work writer authority changed during exact dependency enumeration");
+          }
+          if (snapshot.keys.length === 0) {
+            const work = await makeR2WorkEmptyProofTarget(
+              dependencies.core_database,
+              dependencies.work_bucket,
+              requestDigest,
+              subject,
+              row.source_revision_ref,
+            );
+            if (work.target === null || work.prefix !== snapshot.prefix) {
+              erasureFail("ERASURE_CLOSURE_INCOMPLETE", "source Work inventory changed while creating its empty proof");
+            }
             generated.push(work.target);
+            continue;
+          }
+          const workKeys = [...snapshot.keys];
+          for (const key of workKeys) {
+            if (!key.startsWith(snapshot.prefix) || key.endsWith("/") ||
+                hasSortedKeyPrefix(workKeys, `${key}/`)) {
+              erasureFail("ERASURE_IDENTITY_CONFLICT", "source Work object inventory is not an exact, non-overlapping key set");
+            }
+          }
+          ensureClosureCapacity(generated.length, workKeys.length, "exact source-residency Work objects");
+          for (const key of workKeys) {
+            generated.push(await target(subject, "Projection", `r2-work-prefix:${key}`));
           }
         }
+      } else if (request.required_locations.includes("Projection") && revisions.length > 0) {
+        erasureFail("ERASURE_CLOSURE_INCOMPLETE", "exact source-residency Work inventory is unavailable");
       }
       if (requiresBackup) {
         const primaryInventory = dependencies.backup_primary_inventory;
@@ -934,6 +1105,17 @@ export function createD1ErasureInventory(
           }));
         }
         const projectionRows = await projections(dependencies.core_database, row.source_revision_ref);
+        const providerEffects = request.required_locations.includes("ProviderCopy")
+          ? await managedProviderEffects(dependencies.core_database, row.source_revision_ref)
+          : { targets: [], project_copy_generations: new Set<string>() };
+        for (const effect of providerEffects.targets) {
+          appendVerifiedProviderTarget(generated, providerTargetsByReference, await target(
+            subject,
+            "ProviderCopy",
+            `ai-search:${effect.instance_id}:${effect.key}`,
+            { ...rawPending, provider_ref: `${effect.generation}:${effect.provider_item_id}` },
+          ));
+        }
         if (request.required_locations.includes("Index") && projectionRows.length === 0) {
           const proof = await makeD1SearchEmptyProofFields(
             dependencies.core_database,
@@ -945,15 +1127,6 @@ export function createD1ErasureInventory(
           generated.push(await createEmptyLocationProofTarget(proof));
         }
         for (const projection of projectionRows) {
-          if (dependencies.work_bucket === undefined && projection.work_manifest_ref !== undefined) {
-            ensureClosureCapacity(generated.length, 1, "projection erasure targets");
-            generated.push(await target(
-              subject,
-              "Projection",
-              `r2-work-prefix:${workPrefix(projection.work_manifest_ref)}`,
-              rawPending,
-            ));
-          }
           if (request.required_locations.includes("Index")) {
             ensureClosureCapacity(generated.length, 1, "index erasure targets");
             generated.push(await target(
@@ -970,6 +1143,9 @@ export function createD1ErasureInventory(
             if (projection.semantic_generation === undefined) {
               erasureFail("ERASURE_CLOSURE_INCOMPLETE", "active semantic projection lacks an exact provider generation");
             }
+            if (!providerEffects.project_copy_generations.has(projection.projection_generation)) {
+              erasureFail("ERASURE_CLOSURE_INCOMPLETE", "semantic projection lacks exact durable provider-key/readback rows");
+            }
             const providerTargets = await exactManagedProviderTargets(
               dependencies.core_database,
               dependencies.work_bucket,
@@ -978,10 +1154,13 @@ export function createD1ErasureInventory(
               row.object_residency_key_digest,
               projection,
             );
-            ensureClosureCapacity(generated.length, providerTargets.length, "provider erasure targets");
-            generated.push(...providerTargets.map((providerTarget) => raw?.pending === undefined
-              ? providerTarget
-              : applyPending(providerTarget, raw.pending)));
+            for (const providerTarget of providerTargets) {
+              appendVerifiedProviderTarget(
+                generated,
+                providerTargetsByReference,
+                raw?.pending === undefined ? providerTarget : applyPending(providerTarget, raw.pending),
+              );
+            }
           }
         }
       }

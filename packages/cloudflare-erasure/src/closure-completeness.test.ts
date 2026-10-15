@@ -4,6 +4,10 @@ import { createD1ErasureAuthority } from "./authority.js";
 import { createCloudflareErasureBackend } from "./backend.js";
 import { createD1ErasureInventory } from "./inventory.js";
 import { createManagedSearchErasureLocationPort } from "./provider-location.js";
+import { canonicalErasureJson } from "./canonical.js";
+import { projectionWorkPrefix } from "./empty-location-proof-r2.js";
+import { readEmptyProofAuthorityDigest } from "./empty-location-proof-authority.js";
+import type * as EmptyProofAuthorityModule from "./empty-location-proof-authority.js";
 import type {
   ErasureAuthorityPort,
   ErasureInvalidationPort,
@@ -12,6 +16,14 @@ import type {
   ErasureLocationRegistry,
   ManagedSearchErasureNamespace,
 } from "./types.js";
+
+vi.mock("./empty-location-proof-authority.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof EmptyProofAuthorityModule>();
+  return {
+    ...actual,
+    readEmptyProofAuthorityDigest: vi.fn(async () => "c".repeat(64)),
+  };
+});
 
 vi.mock("./authority-fence-lifecycle.js", () => ({
   createD1ErasureAuthorityFenceLifecycle: () => ({
@@ -65,6 +77,56 @@ function emptyD1(): D1Database {
         first: vi.fn(async () => null),
       })),
     })),
+  } as unknown as D1Database;
+}
+
+function sourceRevisionInventoryD1(effectRows: readonly Record<string, unknown>[]): D1Database {
+  const contentSha = "a".repeat(64);
+  const sourceRow = {
+    source_revision_ref: "revision-1",
+    source_id: "source-1",
+    source_owner_generation: "owner-generation-1",
+    original_r2_key: null,
+    normalized_artifact_ref: null,
+    content_sha256: contentSha,
+    object_residency_key_digest: "b".repeat(64),
+    purge_state: "LIVE",
+  };
+  const rawSourceRow = {
+    source_revision_ref: "revision-1",
+    source_namespace_id: "namespace-1",
+    source_owner_system_id: "owner-system-1",
+    source_owner_generation: "owner-generation-1",
+    content_sha256: contentSha,
+  };
+  return {
+    prepare(sql: string) {
+      return {
+        bind(...values: unknown[]) {
+          return {
+            async first<T>() {
+              if (sql.includes("FROM source_revision sr JOIN source s")) return rawSourceRow as T;
+              if (sql.includes("FROM source_revision WHERE source_revision_ref=?1")) return sourceRow as T;
+              throw new Error(`unexpected first query: ${sql}`);
+            },
+            async all<T>() {
+              if (sql.includes("FROM raw_file_capture")) return { success: true, results: [] as T[] };
+              if (sql.includes("FROM raw_normalized_admission")) return { success: true, results: [] as T[] };
+              if (sql.includes("FROM projection_generation")) return { success: true, results: [] as T[] };
+              if (sql.includes("FROM projection_managed_item_effect")) {
+                const sourceRef = values[0];
+                return {
+                  success: true,
+                  results: effectRows.filter((row) => row.source_revision_ref === sourceRef) as T[],
+                };
+              }
+              if (sql.includes("FROM erasure_dependency_registry")) return { success: true, results: [] as T[] };
+              throw new Error(`unexpected all query: ${sql}`);
+            },
+          };
+        },
+      };
+    },
   } as unknown as D1Database;
 }
 
@@ -147,6 +209,108 @@ describe("erasure closure completeness", () => {
     const inventory = createD1ErasureInventory({ core_database: database, search_database: emptyD1() });
     await expect(inventory.enumerate(request(["source:source-1"], ["CanonicalPayload"])))
       .rejects.toMatchObject({ code: "ERASURE_CLOSURE_INCOMPLETE" });
+  });
+
+  it("enumerates only source-scoped Work keys and exact readback-verified provider keys", async () => {
+    const providerKey = "project-a/source/revision-1/item-1.md";
+    const readback = {
+      chunks_count: 1,
+      content_sha256: "d".repeat(64),
+      file_size: 17,
+      item_key: "item-1",
+      provider_item_id: "provider-item-1",
+      provider_key: providerKey,
+      readback_sha256: "e".repeat(64),
+    };
+    const effect = {
+      source_revision_ref: "revision-1",
+      projection_generation: "canonical-generation-1",
+      managed_instance_id: "index-1",
+      managed_generation: "target-generation-1",
+      item_key: "item-1",
+      provider_key: providerKey,
+      state: "READBACK_VERIFIED",
+      provider_item_id: "provider-item-1",
+      readback_receipt_json: canonicalErasureJson(readback),
+      readback_sha256: "e".repeat(64),
+    };
+    const prefix = await projectionWorkPrefix("revision-1");
+    const workKeys = [
+      `${prefix}canonical-generation-1/items/section-1.json`,
+      `${prefix}canonical-generation-1/maps/copy-page-0001.json`,
+    ];
+    const workBucket = {
+      async list(options: { readonly prefix?: string }) {
+        return {
+          objects: workKeys.filter((key) => key.startsWith(options.prefix ?? "")).map((key) => ({ key })),
+          truncated: false,
+        };
+      },
+    } as unknown as R2Bucket;
+    const inventory = createD1ErasureInventory({
+      core_database: sourceRevisionInventoryD1([effect]),
+      search_database: emptyD1(),
+      work_bucket: workBucket,
+    });
+
+    const closure = await inventory.enumerate(request(
+      ["source-revision:revision-1"],
+      ["Projection", "ProviderCopy"],
+    ));
+    const workTargets = closure.targets.filter((entry) => entry.location === "Projection");
+    const providerTargets = closure.targets.filter((entry) => entry.location === "ProviderCopy");
+    expect(workTargets.map((entry) => entry.canonical_ref).sort()).toEqual(
+      workKeys.map((key) => `r2-work-prefix:${key}`).sort(),
+    );
+    expect(workTargets).not.toContainEqual(expect.objectContaining({ canonical_ref: `r2-work-prefix:${prefix}` }));
+    expect(providerTargets).toHaveLength(1);
+    expect(providerTargets[0]).toMatchObject({
+      canonical_ref: `ai-search:index-1:${providerKey}`,
+      provider_ref: "target-generation-1",
+    });
+  });
+
+  it("blocks a source-scoped provider effect without exact provider readback", async () => {
+    const inventory = createD1ErasureInventory({
+      core_database: sourceRevisionInventoryD1([{
+        source_revision_ref: "revision-1",
+        projection_generation: "canonical-generation-1",
+        managed_instance_id: "index-1",
+        managed_generation: "target-generation-1",
+        item_key: "item-1",
+        provider_key: "project-a/source/revision-1/item-1.md",
+        state: "UNKNOWN",
+        provider_item_id: null,
+        readback_receipt_json: null,
+        readback_sha256: null,
+      }]),
+      search_database: emptyD1(),
+    });
+    await expect(inventory.enumerate(request(
+      ["source-revision:revision-1"],
+      ["ProviderCopy"],
+    ))).rejects.toMatchObject({ code: "ERASURE_CLOSURE_INCOMPLETE" });
+  });
+
+  it("blocks exact Work inventory when source writer authority changes during the scan", async () => {
+    vi.mocked(readEmptyProofAuthorityDigest)
+      .mockReset()
+      .mockResolvedValueOnce("c".repeat(64))
+      .mockResolvedValueOnce("d".repeat(64));
+    const prefix = await projectionWorkPrefix("revision-1");
+    const inventory = createD1ErasureInventory({
+      core_database: sourceRevisionInventoryD1([]),
+      search_database: emptyD1(),
+      work_bucket: {
+        async list() {
+          return { objects: [{ key: `${prefix}generation/item.json` }], truncated: false };
+        },
+      } as unknown as R2Bucket,
+    });
+    await expect(inventory.enumerate(request(
+      ["source-revision:revision-1"],
+      ["Projection"],
+    ))).rejects.toMatchObject({ code: "ERASURE_CLOSURE_INCOMPLETE" });
   });
 
   it("rejects cyclic managed-search cursors and performs no delete", async () => {

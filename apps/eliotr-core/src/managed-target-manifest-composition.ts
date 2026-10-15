@@ -12,27 +12,27 @@ import {
   createD1AiSearchGenerationRegistryStore,
   createD1ManagedRequiredSetPort,
   projectionDigest,
-  type AiSearchGenerationRegistrySnapshot,
+  projectionSha256Bytes,
   type ManagedRequiredProjectRevisionCopy,
   type ManagedTargetIdentity,
   type ProjectionExecutionProfile,
 } from "@eliotr/cloudflare-projection";
 import {
   buildManagedTargetManifest,
-  MANAGED_TARGET_MANIFEST_COPY_LAYOUT,
   ManagedTargetManifestError,
-  type ManagedTargetManifestDocument,
+  MANAGED_TARGET_MANIFEST_COPY_LAYOUT,
+  type ManagedTargetManifestInput,
   type ManagedTargetManifestProfile,
-  type ManagedTargetManifestReceipt,
   type ManagedTargetManifestShadowAuthorityPort,
   type ManagedTargetManifestShadowFence,
   type ManagedTargetManifestSourceAuthority,
 } from "@eliotr/cloudflare-projection";
 import type { Env } from "./env.js";
+import { registryFence } from "./managed-target-manifest-registry-fence.js";
 
 type ManagedTargetManifestEnvironment = Pick<
   Env,
-  "CORE_DB" | "SEARCH_DB" | "EVIDENCE_BUCKET" | "WORK_BUCKET"
+  "CORE_DB" | "SEARCH_DB" | "WORK_BUCKET" | "EVIDENCE_BUCKET"
 >;
 
 export interface ManagedTargetManifestCompositionDependencies {
@@ -40,12 +40,38 @@ export interface ManagedTargetManifestCompositionDependencies {
   readonly projection_profile: ProjectionExecutionProfile;
   /** Required opt-in; no legacy/default item-key layout is accepted here. */
   readonly copy_layout: typeof MANAGED_TARGET_MANIFEST_COPY_LAYOUT;
+  /** Must be backed by current trusted account-tier/profile capacity authority. */
+  readonly provider_capacity_authority: ManagedTargetManifestInput["capacity_authority"];
+  /** Existing canonical source and project-copy writer; no duplicate projector is created here. */
+  readonly canonical_projection: ManagedTargetManifestInput["canonical_projection"];
   readonly now?: () => number;
 }
 
 export interface ManagedTargetManifestComposer {
   /** Uses the current Core assignment set and creates no assignment or generation state. */
-  assemble(target: ManagedTargetIdentity): Promise<ManagedTargetManifestReceipt>;
+  advance(
+    target: ManagedTargetIdentity,
+    executionId: string,
+    continuation?: { readonly ref: string; readonly sha256: string },
+  ): Promise<Awaited<ReturnType<typeof buildManagedTargetManifest>>>;
+  /** Lists once and deletes at most 15 exact objects under one immutable build-scoped Work prefix. */
+  cleanupBuild(
+    target: ManagedTargetIdentity,
+    scanIdentitySha256: string,
+    cursor?: string,
+  ): Promise<{
+    readonly protocol: "eliotr.managed-target-manifest-cleanup.v1";
+    readonly deleted_count: number;
+    readonly complete: boolean;
+    readonly cursor: string | null;
+    readonly budget: {
+      readonly protocol: "eliotr.managed-target-manifest-cleanup-budget.v1";
+      readonly subrequest_upper_bound: number;
+      readonly cpu_upper_bound_ms: number;
+      readonly list_calls: number;
+      readonly exact_delete_calls: number;
+    };
+  }>;
 }
 
 interface SourceAuthorityRow {
@@ -159,22 +185,29 @@ function assertCurrentSourceAuthority(
   });
 }
 
-interface CoreSourceReadInput {
-  readonly target: ManagedTargetIdentity;
-  readonly profile: ManagedTargetManifestProfile;
-  readonly copy: ManagedRequiredProjectRevisionCopy;
-  readonly as_of: string;
+interface CoreAssignmentFenceRow {
+  readonly assignment_revision: unknown;
+  readonly project_id: unknown;
+  readonly project_membership_generation: unknown;
+  readonly project_owner_principal_ref: unknown;
+  readonly current_project_owner_principal_ref: unknown;
+  readonly project_owner_deployment_generation: unknown;
+  readonly namespace: unknown;
+  readonly managed_instance_id: unknown;
+  readonly managed_generation: unknown;
+  readonly target_profile_identity_sha256: unknown;
+  readonly project_exists: unknown;
 }
 
-interface CoreR2DocumentPort {
-  readDocument(input: CoreSourceReadInput): Promise<ManagedTargetManifestDocument>;
-  readAuthority(input: CoreSourceReadInput): Promise<ManagedTargetManifestSourceAuthority>;
-}
+const CURRENT_TARGET_ASSIGNMENT_FENCE_SQL =
+  "WITH assignments AS (" +
+  "SELECT e.* FROM managed_target_assignment_current h " +
+  "JOIN managed_target_assignment_event e " +
+  "ON e.project_id=h.project_id AND e.event_revision=h.event_revision " +
+  "WHERE h.event_kind='ASSIGN' AND h.target_namespace=?1 " +
+  "AND h.managed_instance_id=?2 AND h.managed_generation=?3) ";
 
-function createCoreR2DocumentPort(
-  environment: ManagedTargetManifestEnvironment,
-  evidenceStore: ReturnType<typeof createR2EvidenceObjectStore>,
-): CoreR2DocumentPort {
+function createCoreAuthorityPort(environment: ManagedTargetManifestEnvironment): ManagedTargetManifestInput["documents"] {
   const sourceQuery =
     "SELECT sr.source_revision_ref,sr.source_id,s.source_namespace_id,s.source_owner_system_id," +
     "sr.source_owner_generation,s.ownership_mode,sr.content_sha256,sr.object_residency_key_digest," +
@@ -197,118 +230,191 @@ function createCoreR2DocumentPort(
     "ORDER BY chosen.created_at DESC,chosen.decision_receipt_ref DESC LIMIT 1) " +
     "LIMIT 1";
 
-  async function readAuthority(input: CoreSourceReadInput): Promise<ManagedTargetManifestSourceAuthority> {
-    let row: SourceAuthorityRow | null;
+  async function readAuthorityBatch(
+    input: Parameters<ManagedTargetManifestInput["documents"]["readAuthorityBatch"]>[0],
+  ) {
+    if (input.copies.length < 1 || input.copies.length > 24) {
+      manifestFailure("MANAGED_TARGET_MANIFEST_BUDGET_EXCEEDED", "Core source-authority batch must contain one to 24 copies");
+    }
+    const statements = input.copies.map((copy) => environment.CORE_DB.prepare(sourceQuery).bind(
+      copy.source_revision_ref,
+      copy.source_id,
+      copy.admission_decision_receipt_ref,
+    ));
+    let rows: ManagedTargetManifestSourceAuthority[];
     try {
-      row = await environment.CORE_DB.prepare(sourceQuery)
-        .bind(input.copy.source_revision_ref, input.copy.source_id, input.copy.admission_decision_receipt_ref)
-        .first<SourceAuthorityRow>();
+      const results = await environment.CORE_DB.batch(statements);
+      if (!Array.isArray(results) || results.length !== input.copies.length) {
+        manifestFailure("MANAGED_TARGET_MANIFEST_SOURCE_INVALID", "Core source-authority batch returned an incomplete result set");
+      }
+      rows = results.map((result, index) => {
+        const copy = input.copies[index];
+        if (copy === undefined || result.success !== true || !Array.isArray(result.results) || result.results.length !== 1) {
+          manifestFailure("MANAGED_TARGET_MANIFEST_SOURCE_INVALID", "Core source-authority batch row is absent or ambiguous");
+        }
+        const row = result.results[0] as SourceAuthorityRow | undefined;
+        if (row === undefined) manifestFailure("MANAGED_TARGET_MANIFEST_SOURCE_INVALID", "Core source-authority batch row is absent");
+        return assertCurrentSourceAuthority(row, copy, input.as_of);
+      });
     } catch (cause) {
+      if (cause instanceof ManagedTargetManifestError) throw cause;
       manifestFailure("MANAGED_TARGET_MANIFEST_SOURCE_INVALID", "Core current source authority read failed", cause);
     }
-    if (row === null) {
-      manifestFailure("MANAGED_TARGET_MANIFEST_SOURCE_INVALID", "current Core source authority is absent");
+    return Object.freeze({
+      authorities: Object.freeze(rows),
+      budget: Object.freeze({
+        protocol: "eliotr.managed-target-operation-budget.v1" as const,
+        subrequest_upper_bound: 1,
+        cpu_upper_bound_ms: 5_000,
+        input_bytes_upper_bound: input.copies.length * 64 * 1024,
+      }),
+    });
+  }
+
+  async function readNormalizedContent(
+    input: Parameters<ManagedTargetManifestInput["documents"]["readNormalizedContent"]>[0],
+  ) {
+    const revision = input.source_authority.source_revision;
+    const storedRef = revision.normalized_artifact_ref;
+    if (typeof storedRef !== "string" || storedRef.length === 0 || storedRef !== input.copy.normalized_artifact_ref) {
+      manifestFailure("MANAGED_TARGET_MANIFEST_SOURCE_INVALID", "normalized source reference is absent or differs from the required-set authority");
     }
-    return assertCurrentSourceAuthority(row, input.copy, input.as_of);
+    const expectedKey = await canonicalNormalizedBundleKey(revision.object_residency_key_digest, {
+      owner_system_id: revision.source_owner_system_id,
+      source_namespace_id: revision.source_namespace_id,
+      source_owner_generation: revision.source_owner_generation,
+      source_logical_id: revision.source_id,
+      source_revision_ref: revision.source_revision_ref,
+    }, "content.md");
+    if (storedRef !== expectedKey) {
+      manifestFailure("MANAGED_TARGET_MANIFEST_SOURCE_INVALID", "normalized Evidence key differs from the canonical source residency key");
+    }
+    const maximumBytes = input.profile.projection_profile.maximum_markdown_bytes;
+    if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1) {
+      manifestFailure("MANAGED_TARGET_MANIFEST_PROFILE_MISMATCH", "canonical source byte bound is invalid");
+    }
+    const object = await environment.EVIDENCE_BUCKET.get(storedRef);
+    if (object === null) {
+      manifestFailure("MANAGED_TARGET_MANIFEST_SOURCE_INVALID", "normalized content is missing from immutable Evidence storage");
+    }
+    if (!Number.isSafeInteger(object.size) || object.size < 1 || object.size > maximumBytes) {
+      try { await object.body.cancel(); } catch { /* size authority already fails closed */ }
+      manifestFailure("MANAGED_TARGET_MANIFEST_SOURCE_INVALID", "normalized content exceeds its exact bounded source profile");
+    }
+    let bytes: Uint8Array;
+    try {
+      bytes = await bufferBounded(object.body, maximumBytes);
+    } catch (cause) {
+      manifestFailure("MANAGED_TARGET_MANIFEST_SOURCE_INVALID", "normalized content could not be read within its byte bound", cause);
+    }
+    if (bytes.byteLength !== object.size) {
+      manifestFailure("MANAGED_TARGET_MANIFEST_SOURCE_INVALID", "normalized content stream size differs from its R2 metadata");
+    }
+    const readbackSha256 = await projectionSha256Bytes(bytes);
+    if (readbackSha256 !== revision.content_sha256) {
+      manifestFailure("MANAGED_TARGET_MANIFEST_SOURCE_INVALID", "normalized content digest differs from its admitted SourceRevision");
+    }
+    let markdown: string;
+    try {
+      markdown = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    } catch (cause) {
+      manifestFailure("MANAGED_TARGET_MANIFEST_SOURCE_INVALID", "normalized content is not valid UTF-8", cause);
+    }
+    if (markdown.length === 0) {
+      manifestFailure("MANAGED_TARGET_MANIFEST_SOURCE_INVALID", "normalized source content is empty");
+    }
+    return Object.freeze({
+      normalized_markdown: markdown,
+      normalized_object_ref: storedRef,
+      readback_sha256: readbackSha256,
+      size_bytes: bytes.byteLength,
+      budget: Object.freeze({
+        protocol: "eliotr.managed-target-operation-budget.v1" as const,
+        subrequest_upper_bound: 1,
+        cpu_upper_bound_ms: 5_000,
+        input_bytes_upper_bound: bytes.byteLength,
+      }),
+    });
   }
 
   return Object.freeze({
-    readAuthority,
-    async readDocument(input: CoreSourceReadInput): Promise<ManagedTargetManifestDocument> {
-      const authority = await readAuthority(input);
-      const residencyKey = await canonicalNormalizedBundleKey(
-        authority.source_revision.object_residency_key_digest,
-        {
-          owner_system_id: authority.source_revision.source_owner_system_id,
-          source_namespace_id: authority.source_revision.source_namespace_id,
-          source_owner_generation: authority.source_revision.source_owner_generation,
-          source_logical_id: authority.source_revision.source_id,
-          source_revision_ref: authority.source_revision.source_revision_ref,
-        },
-        "content.md",
-      );
-      let object: R2ObjectBody | null;
-      try { object = await evidenceStore.open(residencyKey); }
-      catch (cause) {
-        manifestFailure("MANAGED_TARGET_MANIFEST_SOURCE_INVALID", "normalized R2 Evidence read failed", cause);
+    readAuthorityBatch,
+    readNormalizedContent,
+  });
+}
+
+function createBoundedAssignmentFencePort(
+  database: D1Database,
+): ManagedTargetManifestInput["assignment_fence"] {
+  return Object.freeze({
+    async readPage(input: Parameters<ManagedTargetManifestInput["assignment_fence"]["readPage"]>[0]) {
+      if (input.limit !== 256) {
+        manifestFailure("MANAGED_TARGET_MANIFEST_INPUT_INVALID", "assignment-fence page must use the fixed 256-row bound");
       }
-      if (object === null) {
-        manifestFailure("MANAGED_TARGET_MANIFEST_SOURCE_INVALID", "normalized R2 Evidence bytes are missing");
+      let result: D1Result<CoreAssignmentFenceRow>;
+      try {
+        result = await database.prepare(
+          CURRENT_TARGET_ASSIGNMENT_FENCE_SQL +
+          "SELECT a.event_revision AS assignment_revision,a.project_id," +
+          "p.membership_generation AS project_membership_generation," +
+          "a.project_owner_principal_ref,a.target_namespace AS namespace,a.managed_instance_id," +
+          "a.managed_generation,a.target_profile_identity_sha256," +
+          "(p.project_id IS NOT NULL) AS project_exists," +
+          "po.principal_ref AS current_project_owner_principal_ref," +
+          "po.deployment_generation AS project_owner_deployment_generation " +
+          "FROM assignments a LEFT JOIN project p ON p.project_id=a.project_id " +
+          "LEFT JOIN project_owner po ON po.project_id=a.project_id " +
+          "WHERE (?4 IS NULL OR a.project_id>?4) ORDER BY a.project_id LIMIT ?5",
+        ).bind(
+          input.target.namespace,
+          input.target.managed_instance_id,
+          input.target.managed_generation,
+          input.after_project_id,
+          input.limit,
+        ).all<CoreAssignmentFenceRow>();
+      } catch (cause) {
+        manifestFailure("MANAGED_TARGET_MANIFEST_AUTHORITY_CHANGED", "Core assignment-fence page read failed", cause);
       }
-      const maximumBytes = input.profile.projection_profile.maximum_markdown_bytes;
-      if (!Number.isSafeInteger(object.size) || object.size < 1 || object.size > maximumBytes) {
-        try { await object.body.cancel(); } catch { /* the stored size already fails closed */ }
-        manifestFailure("MANAGED_TARGET_MANIFEST_SOURCE_INVALID", "normalized R2 Evidence size is outside the immutable projection profile bound");
+      if (!result.success || !Array.isArray(result.results) || result.results.length > input.limit) {
+        manifestFailure("MANAGED_TARGET_MANIFEST_AUTHORITY_CHANGED", "Core assignment-fence page did not complete within its fixed bound");
       }
-      let bytes: Uint8Array;
-      try { bytes = await bufferBounded(object.body, maximumBytes); }
-      catch (cause) {
-        manifestFailure("MANAGED_TARGET_MANIFEST_SOURCE_INVALID", "normalized R2 Evidence stream is incomplete or unbounded", cause);
+      const rows = result.results.map((row) => Object.freeze({
+        assignment_revision: row.assignment_revision as number,
+        project_id: row.project_id as string,
+        project_membership_generation: row.project_membership_generation === null
+          ? null
+          : row.project_membership_generation as number,
+        project_owner_principal_ref: row.project_owner_principal_ref as string,
+        current_project_owner_principal_ref: row.current_project_owner_principal_ref === null
+          ? null
+          : row.current_project_owner_principal_ref as string,
+        project_owner_deployment_generation: row.project_owner_deployment_generation === null
+          ? null
+          : row.project_owner_deployment_generation as string,
+        namespace: row.namespace as string,
+        managed_instance_id: row.managed_instance_id as string,
+        managed_generation: row.managed_generation as string,
+        target_profile_identity_sha256: row.target_profile_identity_sha256 as string,
+        project_exists: row.project_exists === 1 || row.project_exists === true,
+      }));
+      const last = rows.at(-1);
+      if (rows.length === input.limit && (last === undefined || typeof last.project_id !== "string")) {
+        manifestFailure("MANAGED_TARGET_MANIFEST_AUTHORITY_CHANGED", "Core assignment-fence page has no terminal cursor row");
       }
-      if (bytes.byteLength !== object.size) {
-        manifestFailure("MANAGED_TARGET_MANIFEST_SOURCE_INVALID", "normalized R2 Evidence stream length differs from its stored size");
-      }
-      let markdown: string;
-      try { markdown = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
-      catch (cause) { manifestFailure("MANAGED_TARGET_MANIFEST_SOURCE_INVALID", "normalized R2 Evidence is not valid UTF-8", cause); }
-      if (markdown.length === 0) {
-        manifestFailure("MANAGED_TARGET_MANIFEST_SOURCE_INVALID", "normalized R2 Evidence is empty");
-      }
-      return Object.freeze({ ...authority, markdown });
+      return Object.freeze({
+        rows: Object.freeze(rows),
+        next_cursor: rows.length === input.limit ? last?.project_id ?? null : null,
+        budget: Object.freeze({
+          protocol: "eliotr.managed-target-operation-budget.v1" as const,
+          subrequest_upper_bound: 1,
+          cpu_upper_bound_ms: 5_000,
+          input_bytes_upper_bound: rows.length * 4_096,
+        }),
+      });
     },
   });
 }
 
-async function registryFence(
-  snapshot: AiSearchGenerationRegistrySnapshot | null,
-  target: ManagedTargetIdentity,
-): Promise<ManagedTargetManifestShadowFence> {
-  if (snapshot === null) {
-    return Object.freeze({
-      registry_revision: null,
-      registry_sha256: null,
-      active_head_generation: null,
-      generation_state: "UNDECLARED",
-      generation_profile_identity_sha256: null,
-      expected_item_count: null,
-    });
-  }
-  const registry = snapshot.artifact.registry;
-  const record = registry.generations.find((entry) => entry.generation === target.managed_generation);
-  if (record === undefined) {
-    return Object.freeze({
-      registry_revision: snapshot.artifact.revision,
-      registry_sha256: snapshot.artifact_sha256,
-      active_head_generation: registry.active_head_generation,
-      generation_state: "UNDECLARED",
-      generation_profile_identity_sha256: null,
-      expected_item_count: null,
-    });
-  }
-  if (record.profile.id !== target.managed_instance_id || record.profile.generation !== target.managed_generation) {
-    manifestFailure("MANAGED_TARGET_MANIFEST_PROFILE_MISMATCH", "SEARCH_DB generation record differs from the assigned instance and generation");
-  }
-  const recordProfileIdentity = await projectionDigest({
-    ...record.profile,
-    index_method: { ...record.profile.index_method },
-    metadata_fields: [...record.profile.metadata_fields].sort(),
-  });
-  return Object.freeze({
-    registry_revision: snapshot.artifact.revision,
-    registry_sha256: snapshot.artifact_sha256,
-    active_head_generation: registry.active_head_generation,
-    generation_state: record.state,
-    generation_profile_identity_sha256: recordProfileIdentity,
-    expected_item_count: record.expected_item_count,
-  });
-}
-
-/**
- * Core/R2 composition used by the future shared builder and promoter caller.
- * This entry point performs reads and immutable Work-R2 staging only. Search
- * registry CAS, item upload/readback, operator selection, and promotion remain
- * with their current owners.
- */
 export function createManagedTargetManifestComposer(
   environment: ManagedTargetManifestEnvironment,
   dependencies: ManagedTargetManifestCompositionDependencies,
@@ -327,21 +433,59 @@ export function createManagedTargetManifestComposer(
     index_method: Object.freeze({ ...dependencies.target_profile.index_method }),
     metadata_fields: Object.freeze([...dependencies.target_profile.metadata_fields].sort()),
   });
-  const evidenceStore = createR2EvidenceObjectStore(environment.EVIDENCE_BUCKET);
   const workStore = createR2EvidenceObjectStore(environment.WORK_BUCKET);
-  const documents = createCoreR2DocumentPort(environment, evidenceStore);
-  const requiredSet = createD1ManagedRequiredSetPort(environment.CORE_DB);
+  const workIndex: ManagedTargetManifestInput["work_index"] = Object.freeze({
+    async list(input: Parameters<ManagedTargetManifestInput["work_index"]["list"]>[0]) {
+      const listed = await environment.WORK_BUCKET.list({
+        prefix: input.prefix,
+        limit: input.limit,
+        ...(input.cursor === null ? {} : { cursor: input.cursor }),
+      });
+      return Object.freeze({
+        objects: Object.freeze(listed.objects.map((object) => Object.freeze({ key: object.key }))),
+        truncated: listed.truncated,
+        cursor: listed.truncated ? listed.cursor ?? null : null,
+      });
+    },
+    async deleteKeys(keys: Parameters<ManagedTargetManifestInput["work_index"]["deleteKeys"]>[0]) {
+      for (const key of keys) await environment.WORK_BUCKET.delete(key);
+    },
+  });
+  const coreAuthority = createCoreAuthorityPort(environment);
+  const assignmentFence = createBoundedAssignmentFencePort(environment.CORE_DB);
+  const requiredSetReader = createD1ManagedRequiredSetPort(environment.CORE_DB);
+  const requiredSet: ManagedTargetManifestInput["required_set"] = Object.freeze({
+    async readPage(input: Parameters<ManagedTargetManifestInput["required_set"]["readPage"]>[0]) {
+      const page = await requiredSetReader.readPage(input);
+      return Object.freeze({
+        page,
+        budget: Object.freeze({
+          protocol: "eliotr.managed-target-operation-budget.v1",
+          subrequest_upper_bound: 1,
+          cpu_upper_bound_ms: 5_000,
+          input_bytes_upper_bound: page.rows.length * 4_096,
+        }),
+      });
+    },
+  });
   const registry = createAiSearchGenerationRegistryService(
     createD1AiSearchGenerationRegistryStore(environment.SEARCH_DB),
   );
   const shadowAuthority: ManagedTargetManifestShadowAuthorityPort = Object.freeze({
-    async read(target: ManagedTargetIdentity): Promise<ManagedTargetManifestShadowFence> {
+    async read(target: ManagedTargetIdentity): Promise<{
+      readonly fence: ManagedTargetManifestShadowFence;
+      readonly budget: { readonly protocol: "eliotr.managed-target-operation-budget.v1"; readonly subrequest_upper_bound: number; readonly cpu_upper_bound_ms: number; readonly input_bytes_upper_bound: number };
+    }> {
       const snapshot = await registry.read(target.namespace);
-      const configuredProfileIdentity = await projectionDigest(targetProfile);
-      if (configuredProfileIdentity !== target.target_profile_identity_sha256) {
-        manifestFailure("MANAGED_TARGET_MANIFEST_PROFILE_MISMATCH", "Core target assignment differs from the supplied immutable AI Search profile");
-      }
-      return registryFence(snapshot, target);
+      return Object.freeze({
+        fence: await registryFence(snapshot, target, targetProfile),
+        budget: Object.freeze({
+          protocol: "eliotr.managed-target-operation-budget.v1",
+          subrequest_upper_bound: 1,
+          cpu_upper_bound_ms: 1_000,
+          input_bytes_upper_bound: 64 * 1024,
+        }),
+      });
     },
   });
   const profile: ManagedTargetManifestProfile = Object.freeze({
@@ -350,24 +494,74 @@ export function createManagedTargetManifestComposer(
     copy_layout: dependencies.copy_layout,
   });
 
+  const documents: ManagedTargetManifestInput["documents"] = coreAuthority;
+
   return Object.freeze({
-    async assemble(target: ManagedTargetIdentity): Promise<ManagedTargetManifestReceipt> {
-      if (target.managed_instance_id !== targetProfile.id || target.managed_generation !== targetProfile.generation) {
+    async advance(
+      target: ManagedTargetIdentity,
+      executionId: string,
+      continuation?: { readonly ref: string; readonly sha256: string },
+    ): Promise<Awaited<ReturnType<typeof buildManagedTargetManifest>>> {
+      if (target.managed_instance_id !== targetProfile.id) {
         manifestFailure("MANAGED_TARGET_MANIFEST_PROFILE_MISMATCH", "selected Core target does not identify the supplied immutable profile");
       }
-      if (await projectionDigest(targetProfile) !== target.target_profile_identity_sha256) {
-        manifestFailure("MANAGED_TARGET_MANIFEST_PROFILE_MISMATCH", "Core assignment profile digest differs from its exact configured profile");
-      }
       const now = dependencies.now ?? Date.now;
-      const asOf = new Date(now()).toISOString();
       return buildManagedTargetManifest({
         target,
+        execution_id: executionId,
+        clock: now,
+        ...(continuation === undefined ? {} : { continuation }),
         profile,
-        as_of: asOf,
+        assignment_fence: assignmentFence,
         required_set: requiredSet,
         shadow_authority: shadowAuthority,
+        capacity_authority: dependencies.provider_capacity_authority,
+        canonical_projection: dependencies.canonical_projection,
         documents,
         work_store: workStore,
+        work_index: workIndex,
+      });
+    },
+    async cleanupBuild(target: ManagedTargetIdentity, scanIdentitySha256: string, cursor?: string) {
+      if (target.managed_instance_id !== targetProfile.id || !/^[a-f0-9]{64}$/u.test(scanIdentitySha256)) {
+        manifestFailure("MANAGED_TARGET_MANIFEST_INPUT_INVALID", "cleanup identity is outside the exact managed build scope");
+      }
+      const scope = await projectionDigest({
+        protocol: "eliotr.managed-target-manifest-storage-scope.v1",
+        target,
+      });
+      const prefix = `managed-target-manifests/${scope}/builds/${scanIdentitySha256}/`;
+      const listed = await environment.WORK_BUCKET.list({
+        prefix,
+        limit: 15,
+        ...(cursor === undefined ? {} : { cursor }),
+      });
+      if (listed.objects.length > 15 || listed.objects.some((object) => !object.key.startsWith(prefix))) {
+        manifestFailure("MANAGED_TARGET_MANIFEST_STAGE_INVALID", "cleanup listing exceeded its exact 15-key build-scoped bound");
+      }
+      const listedKeys = listed.objects.map((object) => object.key);
+      if (new Set(listedKeys).size !== listedKeys.length ||
+          listedKeys.some((key, index) => index > 0 && key <= (listedKeys[index - 1] ?? ""))) {
+        manifestFailure("MANAGED_TARGET_MANIFEST_STAGE_INVALID", "cleanup listing is duplicated or not in strict key order");
+      }
+      for (const object of listed.objects) await environment.WORK_BUCKET.delete(object.key);
+      const deleted = listed.objects.length;
+      const next = listed.truncated ? listed.cursor ?? null : null;
+      if (listed.truncated && (next === null || next === cursor)) {
+        manifestFailure("MANAGED_TARGET_MANIFEST_STAGE_INVALID", "cleanup cursor did not advance");
+      }
+      return Object.freeze({
+        protocol: "eliotr.managed-target-manifest-cleanup.v1" as const,
+        deleted_count: deleted,
+        complete: !listed.truncated,
+        cursor: next,
+        budget: Object.freeze({
+          protocol: "eliotr.managed-target-manifest-cleanup-budget.v1" as const,
+          subrequest_upper_bound: 1 + deleted,
+          cpu_upper_bound_ms: 1_000,
+          list_calls: 1,
+          exact_delete_calls: deleted,
+        }),
       });
     },
   });

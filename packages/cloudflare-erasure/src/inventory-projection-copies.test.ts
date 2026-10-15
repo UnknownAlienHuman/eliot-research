@@ -32,6 +32,7 @@ function request(): ErasureRequest {
 }
 
 async function fixture(copyLayout: "PROJECT_COPY_V1" | null, state = "READBACK_VERIFIED") {
+  const effectReads = { sourceWide: 0, projectionScoped: 0 };
   const metadataGenerationDigest = await erasureSha256Utf8(
     `eliotr.project-copy-generation.v1\0${managedGeneration}`,
   );
@@ -168,6 +169,7 @@ async function fixture(copyLayout: "PROJECT_COPY_V1" | null, state = "READBACK_V
     managed_instance_id: instanceId,
     managed_generation: managedGeneration,
     provider_source: "builtin",
+    item_key: itemKey,
     provider_key: providerKey,
     normalized_start_byte: 0,
     normalized_end_byte: 1,
@@ -228,7 +230,14 @@ async function fixture(copyLayout: "PROJECT_COPY_V1" | null, state = "READBACK_V
             },
             async all() {
               if (sql.includes("FROM projection_generation")) return { success: true, results: [projection] };
-              if (sql.includes("FROM projection_managed_item_effect")) return { success: true, results: [effect] };
+              if (sql.includes("FROM projection_managed_item_effect")) {
+                if (sql.includes("JOIN projection_generation")) {
+                  effectReads.projectionScoped += 1;
+                } else {
+                  effectReads.sourceWide += 1;
+                }
+                return { success: true, results: [effect] };
+              }
               if (sql.includes("FROM erasure_dependency_registry")) return { success: true, results: [] };
               return { success: true, results: [] };
             },
@@ -237,32 +246,37 @@ async function fixture(copyLayout: "PROJECT_COPY_V1" | null, state = "READBACK_V
       };
     },
   } as unknown as D1Database;
-  return createD1ErasureInventory({
-    core_database: coreDatabase,
-    search_database: {} as D1Database,
-    ...(workBucket === undefined ? {} : { work_bucket: workBucket }),
-  });
+  return {
+    inventory: createD1ErasureInventory({
+      core_database: coreDatabase,
+      search_database: {} as D1Database,
+      ...(workBucket === undefined ? {} : { work_bucket: workBucket }),
+    }),
+    effectReads,
+  };
 }
 
 describe("source-scoped exact provider erasure inventory", () => {
   it("uses the persisted PROJECT_COPY_V1 key, item ID, generation, and readback receipt", async () => {
-    const inventory = await fixture("PROJECT_COPY_V1");
-    const closure = await inventory.enumerate(request());
+    const subject = await fixture("PROJECT_COPY_V1");
+    const closure = await subject.inventory.enumerate(request());
     expect(closure.targets).toHaveLength(1);
     expect(closure.targets[0]).toMatchObject({
       location: "ProviderCopy",
       canonical_ref: `ai-search:${instanceId}:projection/${"e".repeat(43)}/${providerItemKey}.md`,
       provider_ref: `${managedGeneration}:${providerItemId}`,
     });
+    expect(subject.effectReads).toEqual({ sourceWide: 1, projectionScoped: 1 });
   });
 
-  it("preserves historical flat provider keys and refuses non-readback effects", async () => {
+  it("preserves historical flat keys and blocks closure on pending source-wide effects", async () => {
     const flatInventory = await fixture(null);
-    const flat = await flatInventory.enumerate(request());
+    const flat = await flatInventory.inventory.enumerate(request());
     expect(flat.targets[0]?.canonical_ref).toBe(`ai-search:${instanceId}:historical-flat-item.md`);
 
-    const unknownInventory = await fixture("PROJECT_COPY_V1", "UNKNOWN");
-    await expect(unknownInventory.enumerate(request()))
+    const pendingInventory = await fixture("PROJECT_COPY_V1", "PENDING");
+    await expect(pendingInventory.inventory.enumerate(request()))
       .rejects.toMatchObject({ code: "ERASURE_CLOSURE_INCOMPLETE" });
+    expect(pendingInventory.effectReads).toEqual({ sourceWide: 1, projectionScoped: 0 });
   });
 });

@@ -1,427 +1,289 @@
-import type { ProjectionItem, SourceRevision } from "@eliotr/contracts";
-import type { AiSearchInstanceProfile, EvidenceObjectStore, ImmutableObjectReceipt } from "@eliotr/platform-cloudflare";
+import type { AiSearchInstanceProfile } from "@eliotr/platform-cloudflare";
 import { describe, expect, it } from "vitest";
-import {
-  projectionDigest,
-  projectionSha256Utf8,
-} from "./canonical.js";
-import type { ManagedRequiredProjectRevisionCopy, ManagedRequiredSetPort } from "./managed-required-set.js";
+import { projectionDigest } from "./canonical.js";
 import { AI_SEARCH_PRIMARY_PROJECTION_PROFILE } from "./ai-search-primary-profile.js";
+import { aiSearchPhysicalProfileDigest } from "./ai-search-profile-identity-digest.js";
 import {
-  buildManagedTargetManifest,
-  MANAGED_TARGET_MANIFEST_COPY_LAYOUT,
-  type ManagedTargetManifestDocument,
-  type ManagedTargetManifestDocumentPort,
-  type ManagedTargetManifestInput,
+  advanceManagedTargetManifest,
   type ManagedTargetManifestProfile,
-  type ManagedTargetManifestShadowAuthorityPort,
-  type ManagedTargetManifestSourceAuthority,
 } from "./managed-target-manifest.js";
+import {
+  MANAGED_TARGET_FREE_FILE_LIMIT,
+  MANAGED_TARGET_HYBRID_FILE_LIMIT,
+  assertManagedTargetProviderCapacity,
+  validateManagedTargetProviderCapacityReceipt,
+} from "./managed-target-manifest-fragments.js";
+import { foldManagedTargetManifestPage, initialManagedTargetManifestScan } from "./managed-target-manifest-continuation.js";
+import { validateManifestProfile, validateShadowFence } from "./managed-target-manifest-step-support.js";
+import { AS_OF, SHA_A, copy, runToReady, setup, shadowFence } from "./managed-target-manifest-test-support.js";
 
-const AS_OF = "2026-10-14T16:00:00.000Z";
-const OWNER_EXPIRY = "2027-01-01T00:00:00.000Z";
-const SHA_A = "a".repeat(64);
-const SHA_B = "b".repeat(64);
-const DOCUMENT_MARKDOWN = "# Canonical source\n\nRequired target copy.\n";
-const DOCUMENT_DIGEST = projectionSha256Utf8(DOCUMENT_MARKDOWN);
+describe("managed target manifest continuation", () => {
+  it("batches 24 durable microsteps inside one Workflow invocation and reuses readback on replay", async () => {
+    const state = await setup(Array.from({ length: 270 }, (_, index) => ({
+      project_id: `project-${String(index).padStart(2, "0")}`,
+      source_id: "source-shared",
+    })));
+    let step = await advanceManagedTargetManifest(state.input);
+    while (step.phase !== "BUILD_SCAN") {
+      if (step.continuation === null) throw new Error("manifest ended before its build scan");
+      step = await advanceManagedTargetManifest({ ...state.input, continuation: step.continuation });
+    }
+    if (step.continuation === null) throw new Error("build continuation is missing");
 
-function sourceRevision(sourceId: string, contentSha: string): SourceRevision {
-  return {
-    source_revision_ref: `revision-${sourceId}`,
-    source_id: sourceId,
-    source_namespace_id: `namespace-${sourceId}`,
-    source_owner_system_id: "owner-system",
-    source_owner_generation: "owner-generation-1",
-    ownership_mode: "immutable_import",
-    content_sha256: contentSha,
-    object_residency_key_digest: SHA_B,
-    normalized_artifact_ref: `normalized-${sourceId}`,
-    captured_at: "2026-10-01T00:00:00.000Z",
-    quality_state: "standard",
-    purge_state: "LIVE",
-  };
-}
+    const buildInput = { ...state.input, continuation: step.continuation };
+    const firstBatch = await advanceManagedTargetManifest(buildInput);
+    expect(firstBatch.status).toBe("CONTINUE");
+    expect(firstBatch.budget.maximums.copies_processed).toBe(24);
+    expect(firstBatch.budget.maximums.microsteps_processed).toBe(24);
+    expect(firstBatch.budget.invocation_index).toBe(3);
+    expect(firstBatch.budget.calls.core_d1).toBe(2);
+    expect(firstBatch.budget.calls.core_d1_statements).toBe(25);
+    expect(firstBatch.budget.calls.owner_authority_reads).toBe(24);
+    if (firstBatch.continuation === null) throw new Error("first batch continuation is missing");
+    const durable = JSON.parse(state.store.objects.get(firstBatch.continuation.ref) ?? "null") as {
+      readonly copy_ordinal?: number;
+      readonly budget_summary?: { readonly workflow_step_count?: number; readonly microstep_count?: number };
+    };
+    expect(durable.copy_ordinal).toBe(24);
+    expect(durable.budget_summary).toMatchObject({ workflow_step_count: 3, microstep_count: 26 });
 
-function copy(projectId: string, sourceId = "source-a"): ManagedRequiredProjectRevisionCopy {
-  return {
-    assignment_revision: 1,
-    project_id: projectId,
-    project_generation: 1,
-    project_owner_principal_ref: `owner-${projectId}`,
-    project_owner_deployment_generation: "deployment-1",
-    namespace: "eliot",
-    managed_instance_id: AI_SEARCH_PRIMARY_PROJECTION_PROFILE.id,
-    managed_generation: AI_SEARCH_PRIMARY_PROJECTION_PROFILE.generation,
-    target_profile_identity_sha256: "0".repeat(64),
-    project_membership_id: `project:${projectId}:generation:1`,
-    source_id: sourceId,
-    source_revision_ref: `revision-${sourceId}`,
-    source_head_revision_ref: `revision-${sourceId}`,
-    source_namespace_id: `namespace-${sourceId}`,
-    source_owner_system_id: "owner-system",
-    source_ownership_mode: "immutable_import",
-    source_owner_generation: "owner-generation-1",
-    source_ownership_record_revision: 1,
-    source_owner_status: "ACTIVE",
-    source_admission_policy_revision: 1,
-    source_admission_policy_source_class: "document",
-    source_admission_decision_source_class: "document",
-    source_class: "document",
-    source_revision_content_sha256: SHA_A,
-    normalized_artifact_ref: `normalized-${sourceId}`,
-    purge_state: "LIVE",
-    admission_decision: "ADMITTED",
-    admission_decision_receipt_ref: `decision-${sourceId}`,
-    admission_decision_sha256: SHA_B,
-    admission_decision_expires_at: null,
-    admission_disclosure_ceiling: "private",
-    project_owner_read_policy_ref: `read-${projectId}`,
-    project_owner_read_policy_generation: 1,
-    project_owner_read_policy_state: "ACTIVE",
-    project_owner_read_policy_disclosure_ceiling: "private",
-    project_owner_read_policy_expires_at: OWNER_EXPIRY,
-    membership_generation: 1,
-    membership_role: "selected",
-    membership_valid_from: "2026-01-01T00:00:00.000Z",
-    membership_valid_to: null,
-  };
-}
+    const writerMapCalls = state.counters.copyMapReads;
+    const canonicalProjectionCalls = state.counters.canonicalReads;
+    const copyPuts = state.store.putKeys.filter((key) => key.includes("/copies/")).length;
+    const pagePuts = state.store.putKeys.filter((key) => key.includes("/pages/")).length;
+    const replay = await advanceManagedTargetManifest(buildInput);
+    expect(replay.budget.invocation_index).toBe(firstBatch.budget.invocation_index);
+    expect(replay.budget.maximums.microsteps_processed).toBe(24);
+    expect(replay.budget.calls.core_d1).toBe(2);
+    expect(replay.budget.calls.core_d1_statements).toBe(25);
+    expect(state.counters.copyMapReads).toBe(writerMapCalls);
+    expect(state.counters.canonicalReads).toBe(canonicalProjectionCalls);
+    expect(state.store.putKeys.filter((key) => key.includes("/copies/")).length).toBe(copyPuts);
+    expect(state.store.putKeys.filter((key) => key.includes("/pages/")).length).toBe(pagePuts);
 
-async function authority(sourceId: string): Promise<ManagedTargetManifestDocument> {
-  return {
-    source_revision: sourceRevision(sourceId, await DOCUMENT_DIGEST),
-    source_title: `Title ${sourceId}`,
-    source_class: "document",
-    instruction_taint: "DATA_ONLY",
-    markdown: DOCUMENT_MARKDOWN,
-  };
-}
+    const budgets = [firstBatch.budget, replay.budget];
+    let beforeBoundary = replay;
+    const readCopyOrdinal = (receipt: typeof replay) => {
+      if (receipt.continuation === null) throw new Error("build continuation is missing");
+      const value = JSON.parse(state.store.objects.get(receipt.continuation.ref) ?? "null") as { readonly copy_ordinal?: number };
+      if (!Number.isSafeInteger(value.copy_ordinal)) throw new Error("durable copy ordinal is missing");
+      return value.copy_ordinal as number;
+    };
+    while (readCopyOrdinal(beforeBoundary) < 240) {
+      if (beforeBoundary.continuation === null) throw new Error("build continuation is missing");
+      beforeBoundary = await advanceManagedTargetManifest({ ...state.input, continuation: beforeBoundary.continuation });
+      budgets.push(beforeBoundary.budget);
+    }
+    expect(readCopyOrdinal(beforeBoundary)).toBe(240);
+    if (beforeBoundary.continuation === null) throw new Error("page-boundary continuation is missing");
+    const boundaryInput = { ...state.input, continuation: beforeBoundary.continuation };
+    const boundaryBatch = await advanceManagedTargetManifest(boundaryInput);
+    budgets.push(boundaryBatch.budget);
+    expect(boundaryBatch.budget.maximums.copies_processed).toBe(24);
+    expect(boundaryBatch.budget.calls.core_d1).toBe(2);
+    expect(boundaryBatch.budget.calls.core_d1_statements).toBe(25);
+    expect(readCopyOrdinal(boundaryBatch)).toBe(264);
+    const boundaryWriterCalls = state.counters.copyMapReads;
+    const boundaryReplay = await advanceManagedTargetManifest(boundaryInput);
+    budgets.push(boundaryReplay.budget);
+    expect(state.counters.copyMapReads).toBe(boundaryWriterCalls);
 
-class MemoryImmutableStore {
-  public readonly objects = new Map<string, string>();
-  public readonly store: EvidenceObjectStore;
-
-  public constructor() {
-    const objects = this.objects;
-    this.store = {
-      async putImmutable(write): Promise<ImmutableObjectReceipt> {
-        const bytes = new Uint8Array(await new Response(write.body).arrayBuffer());
-        const body = new TextDecoder().decode(bytes);
-        const digest = await projectionSha256Utf8(body);
-        if (digest !== write.expected_sha256 || bytes.byteLength !== write.expected_size_bytes) {
-          throw new Error("memory store received bytes outside the immutable write receipt");
-        }
-        const previous = objects.get(write.key);
-        if (previous !== undefined && previous !== body) throw new Error("immutable key collision");
-        objects.set(write.key, body);
-        return {
-          key: write.key,
-          expected_sha256: write.expected_sha256,
-          readback_sha256: digest,
-          size_bytes: bytes.byteLength,
-          etag: `etag-${digest.slice(0, 12)}`,
-          existed_identically: previous !== undefined,
-        };
-      },
-      async putResidencyObject() { throw new Error("manifest assembly must not write Evidence residency objects"); },
-      async open() { return null; },
-      async deleteForErasure() { throw new Error("manifest assembly must not delete R2 objects"); },
-    } as EvidenceObjectStore;
-  }
-}
-
-async function setup(rows: readonly ManagedRequiredProjectRevisionCopy[], options: {
-  readonly currentRows?: () => readonly ManagedRequiredProjectRevisionCopy[];
-  readonly readAuthority?: (copy: ManagedRequiredProjectRevisionCopy) => ManagedTargetManifestSourceAuthority;
-  readonly shadow?: ManagedTargetManifestShadowAuthorityPort;
-  readonly as_of?: string;
-} = {}) {
-  const targetProfile = {
-    ...AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
-    index_method: { ...AI_SEARCH_PRIMARY_PROJECTION_PROFILE.index_method },
-    metadata_fields: [...AI_SEARCH_PRIMARY_PROJECTION_PROFILE.metadata_fields].sort(),
-  } as AiSearchInstanceProfile;
-  const profileIdentity = await projectionDigest(targetProfile);
-  const target = {
-    namespace: "eliot",
-    managed_instance_id: targetProfile.id,
-    managed_generation: targetProfile.generation,
-    target_profile_identity_sha256: profileIdentity,
-  };
-  const profile: ManagedTargetManifestProfile = {
-    target_profile: targetProfile,
-    projection_profile: {
-      projector_profile: "structural-markdown-v1",
-      managed_instance_id: targetProfile.id,
-      managed_generation: targetProfile.generation,
-      managed_generation_active: false,
-      maximum_markdown_bytes: 4096,
-      maximum_synchronous_items: 64,
-      target_item_utf8_bytes: 1024,
-      maximum_item_utf8_bytes: 4096,
-      managed_poll_interval_ms: 1000,
-      managed_timeout_ms: 30000,
-    },
-    copy_layout: MANAGED_TARGET_MANIFEST_COPY_LAYOUT,
-  };
-  const store = new MemoryImmutableStore();
-  const documentDigest = await DOCUMENT_DIGEST;
-  const normalizeRows = (input: readonly ManagedRequiredProjectRevisionCopy[]) => input.map((row) => ({
-    ...row,
-    source_revision_content_sha256: documentDigest,
-    namespace: target.namespace,
-    managed_instance_id: target.managed_instance_id,
-    managed_generation: target.managed_generation,
-    target_profile_identity_sha256: profileIdentity,
-  }));
-  let currentRows = normalizeRows(options.currentRows?.() ?? rows);
-  const setPort: ManagedRequiredSetPort = {
-    async readFence() { return {
-      assignment_heads_sha256: SHA_A,
-      assigned_project_count: new Set(currentRows.map((row) => row.project_id)).size,
-      stale_assignment_count: 0,
-      profile_mismatch_count: 0,
-    }; },
-    async readPage() {
-      return { rows: normalizeRows(currentRows), next_cursor: null };
-    },
-  };
-  const documentPort: ManagedTargetManifestDocumentPort = {
-    async readDocument({ copy: projectCopy }) { return authority(projectCopy.source_id); },
-    async readAuthority({ copy: projectCopy }) { return options.readAuthority?.(projectCopy) ?? authority(projectCopy.source_id); },
-  };
-  const shadow: ManagedTargetManifestShadowAuthorityPort = options.shadow ?? {
-    async read() {
-      return {
-        registry_revision: null,
-        registry_sha256: null,
-        active_head_generation: null,
-        generation_state: "UNDECLARED",
-        generation_profile_identity_sha256: null,
-        expected_item_count: null,
-      };
-    },
-  };
-  const input: ManagedTargetManifestInput = {
-    target,
-    profile,
-    as_of: options.as_of ?? AS_OF,
-    required_set: setPort,
-    shadow_authority: shadow,
-    documents: documentPort,
-    work_store: store.store,
-  };
-  return {
-    input,
-    store,
-    setCurrentRows(value: readonly ManagedRequiredProjectRevisionCopy[]) { currentRows = normalizeRows(value); },
-  };
-}
-
-describe("managed target-wide desired-item manifest", () => {
-  it("counts required copies directly from Core authority, including a source with no projection job", async () => {
-    const projectCopies = [copy("project-a"), copy("project-b")];
-    const state = await setup(projectCopies);
-    const result = await buildManagedTargetManifest(state.input);
-    expect(result.project_revision_copy_count).toBe(2);
-    expect(result.desired_item_count).toBe(2);
-    expect(result.manifest_ref).toContain("managed-target-manifests/");
-    expect(state.store.objects.has(result.manifest_ref)).toBe(true);
+    let next = boundaryReplay;
+    while (next.status === "CONTINUE") {
+      if (next.continuation === null) throw new Error("continuation receipt is missing");
+      next = await advanceManagedTargetManifest({ ...state.input, continuation: next.continuation });
+      budgets.push(next.budget);
+    }
+    expect(next.status).toBe("READY_FOR_FINALIZATION");
+    expect(budgets.some((budget) => budget.maximums.copies_processed === 24)).toBe(true);
+    expect(budgets.every((budget) => budget.maximums.microsteps_processed <= 24 &&
+      budget.subrequest_upper_bound < 10_000 && budget.cpu_upper_bound_ms < 30_000)).toBe(true);
   });
 
-  it("binds same-source section keys to both assigned project memberships", async () => {
-    const state = await setup([copy("project-a"), copy("project-b")]);
-    const result = await buildManagedTargetManifest(state.input);
-    const copyManifests = [...state.store.objects.entries()]
+  it("resumes exact Work checkpoints and reuses a completed copy without reprojection", async () => {
+    const state = await setup([{ project_id: "project-a", source_id: "source-a" }]);
+    let step = await advanceManagedTargetManifest(state.input);
+    const seenBudgets = [step.budget];
+    while (step.phase !== "BUILD_SCAN") {
+      if (step.continuation === null) throw new Error("manifest ended before its build scan");
+      step = await advanceManagedTargetManifest({ ...state.input, continuation: step.continuation });
+      seenBudgets.push(step.budget);
+    }
+    if (step.continuation === null) throw new Error("build continuation is missing");
+    const buildInput = { ...state.input, continuation: step.continuation };
+    const firstBuild = await advanceManagedTargetManifest(buildInput);
+    seenBudgets.push(firstBuild.budget);
+    const copyReadCount = state.counters.copyMapReads;
+    const canonicalReadCount = state.counters.canonicalReads;
+    const copyObjectPuts = state.store.putKeys.filter((key) => key.includes("/copies/")).length;
+
+    const restartedBuild = await advanceManagedTargetManifest(buildInput);
+    seenBudgets.push(restartedBuild.budget);
+    expect(state.counters.copyMapReads).toBe(copyReadCount);
+    expect(state.counters.canonicalReads).toBe(canonicalReadCount);
+    expect(state.store.putKeys.filter((key) => key.includes("/copies/")).length).toBe(copyObjectPuts);
+
+    if (restartedBuild.continuation === null) throw new Error("replayed build continuation is missing");
+    const ready = await runToReady({ ...state.input, continuation: restartedBuild.continuation });
+    seenBudgets.push(ready.budget);
+    expect(ready.candidate).toMatchObject({
+      protocol: "eliotr.managed-target-desired-items.v2",
+      desired_item_count: 1,
+      finalization_state: "REQUIRES_HELD_WRITER_DRAIN_AND_EXPECTED_HEAD_CAS",
+    });
+    expect(seenBudgets.every((budget) => budget.operation_upper_bound <= 386 && budget.subrequest_upper_bound < 10_000 && budget.cpu_upper_bound_ms < 30_000)).toBe(true);
+  });
+
+  it("projects one source once and binds two project copies to the same canonical body refs", async () => {
+    const state = await setup([
+      { project_id: "project-a", source_id: "source-shared" },
+      { project_id: "project-b", source_id: "source-shared" },
+    ]);
+    const ready = await runToReady(state.input);
+
+    expect(state.counters.canonicalReads).toBe(1);
+    expect(state.counters.copyMapReads).toBe(2);
+    expect(ready.candidate?.canonical_source_summary).toMatchObject({
+      canonical_projection_generation_count: 1,
+      canonical_section_count: 1,
+    });
+    expect(ready.candidate?.provider_copy_summary).toMatchObject({
+      provider_copy_count: 2,
+      provider_item_count: 2,
+    });
+
+    const copyFragments = [...state.store.objects.entries()]
       .filter(([key]) => key.includes("/copies/"))
       .map(([, json]) => JSON.parse(json) as {
-        readonly required_copy: ManagedRequiredProjectRevisionCopy;
-        readonly items: readonly { readonly item: ProjectionItem }[];
+        readonly provider_copy_map: {
+          readonly items: readonly {
+            readonly canonical_item_key: string;
+            readonly canonical_body_ref: string;
+            readonly provider_key: string;
+          }[];
+        };
       });
-    expect(copyManifests).toHaveLength(2);
-    expect(copyManifests.map((manifest) => manifest.required_copy.project_id)).toEqual(["project-a", "project-b"]);
-    const left = copyManifests[0]?.items.map(({ item }) => item);
-    const right = copyManifests[1]?.items.map(({ item }) => item);
-    expect(left).toBeDefined();
-    expect(right).toBeDefined();
-    expect(left?.map((item) => [item.canonical_section_id, item.content_sha256]))
-      .toEqual(right?.map((item) => [item.canonical_section_id, item.content_sha256]));
-    expect(new Set([...(left ?? []), ...(right ?? [])].map((item) => item.item_key)).size)
-      .toBe((left?.length ?? 0) + (right?.length ?? 0));
-    expect(result.desired_item_count).toBe((left?.length ?? 0) + (right?.length ?? 0));
+    const mappedItems = copyFragments.flatMap((fragment) => fragment.provider_copy_map.items);
+    expect(copyFragments).toHaveLength(2);
+    expect(mappedItems).toHaveLength(2);
+    expect(new Set(mappedItems.map((item) => item.canonical_item_key)).size).toBe(1);
+    expect(new Set(mappedItems.map((item) => item.canonical_body_ref)).size).toBe(1);
+    expect(new Set(mappedItems.map((item) => item.provider_key)).size).toBe(2);
+    expect(copyFragments.every((fragment) => !JSON.stringify(fragment).includes("section_text"))).toBe(true);
   });
 
-  it("raises when an enumerated required copy has no normalized bytes", async () => {
-    const state = await setup([copy("project-a")]);
-    state.input.documents.readDocument = async () => {
-      throw new Error("normalized R2 bytes are absent");
+  it("fails closed on missing trusted capacity before required-set reads or Work writes", async () => {
+    const state = await setup([{ project_id: "project-a", source_id: "source-a" }], { unavailableCapacity: true });
+    await expect(advanceManagedTargetManifest(state.input)).rejects.toMatchObject({
+      code: "MANAGED_TARGET_MANIFEST_CAPACITY_AUTHORITY_UNAVAILABLE",
+    });
+    expect(state.counters.pageReads).toBe(0);
+    expect(state.store.objects.size).toBe(0);
+  });
+
+  it("rejects a fresh profile readback whose physical index method differs from assignment", async () => {
+    const targetProfile = {
+      ...AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
+      index_method: {
+        ...AI_SEARCH_PRIMARY_PROJECTION_PROFILE.index_method,
+        keyword: !AI_SEARCH_PRIMARY_PROJECTION_PROFILE.index_method.keyword,
+      },
+    } as AiSearchInstanceProfile;
+    const state = await setup([{ project_id: "project-a", source_id: "source-a" }], {
+      profileReadback: targetProfile,
+    });
+    await expect(advanceManagedTargetManifest(state.input)).rejects.toMatchObject({
+      code: "MANAGED_TARGET_MANIFEST_CAPACITY_AUTHORITY_INVALID",
+    });
+    expect(state.counters.pageReads).toBe(0);
+    expect(state.store.objects.size).toBe(0);
+  });
+
+  it("rejects the exact 102400-row ceiling without a terminal empty page proof", async () => {
+    const state = await setup([{ project_id: "project-a", source_id: "source-a" }]);
+    const fence = {
+      assignment_heads_sha256: SHA_A,
+      assigned_project_count: 102_400,
+      stale_assignment_count: 0,
+      profile_mismatch_count: 0,
     };
-    await expect(buildManagedTargetManifest(state.input)).rejects.toThrow("normalized R2 bytes are absent");
-    expect([...state.store.objects.keys()].some((key) => key.includes("/roots/"))).toBe(false);
-  });
-
-  it.each([
-    ["membership", (rows: readonly ManagedRequiredProjectRevisionCopy[]) => rows.slice(1)],
-    ["source", (rows: readonly ManagedRequiredProjectRevisionCopy[]) => rows.map((row) => ({ ...row, admission_decision_sha256: "c".repeat(64) }))],
-    ["owner", (rows: readonly ManagedRequiredProjectRevisionCopy[]) => rows.map((row) => ({ ...row, project_owner_principal_ref: "changed-owner" }))],
-    ["purge", (_rows: readonly ManagedRequiredProjectRevisionCopy[]) => []],
-  ] as const)("raises if %s authority drifts during staging", async (_name, mutate) => {
-    let current = [copy("project-a"), copy("project-b")];
-    const state = await setup(current, { currentRows: () => current });
-    const documentDigest = await DOCUMENT_DIGEST;
-    const bindCurrentProfile = (rows: readonly ManagedRequiredProjectRevisionCopy[]) => rows.map((row) => ({
-      ...row,
-      source_revision_content_sha256: documentDigest,
-      namespace: state.input.target.namespace,
-      managed_instance_id: state.input.target.managed_instance_id,
-      managed_generation: state.input.target.managed_generation,
-      target_profile_identity_sha256: state.input.target.target_profile_identity_sha256,
-    }));
-    current = bindCurrentProfile(current);
-    // The first scan projects both rows. The post-scan receives the changed Core view.
-    let pages = 0;
-    const driftPort: ManagedRequiredSetPort = {
-      async readFence() { return {
-        assignment_heads_sha256: SHA_A,
-        assigned_project_count: 2,
-        stale_assignment_count: 0,
-        profile_mismatch_count: 0,
-      }; },
-      async readPage() {
-        pages += 1;
-        if (pages === 1) current = [...mutate(current)];
-        return { rows: pages % 2 === 1
-          ? bindCurrentProfile([copy("project-a"), copy("project-b")])
-          : current, next_cursor: null };
+    const scan = await initialManagedTargetManifestScan(state.input.target, AS_OF, fence);
+    const atLimit = {
+      ...scan,
+      pages: 400,
+      count: 102_400,
+      after: {
+        project_id: "project-z",
+        source_id: "source-z",
+        membership_generation: 1,
+        source_revision_ref: "revision-z",
       },
     };
-    await expect(buildManagedTargetManifest({ ...state.input, required_set: driftPort })).rejects.toMatchObject({
-      code: "MANAGED_REQUIRED_SET_FENCE_CHANGED",
-    });
-    expect([...state.store.objects.keys()].some((key) => key.includes("/roots/"))).toBe(false);
+    const terminal = await foldManagedTargetManifestPage(
+      atLimit,
+      { rows: [], next_cursor: null },
+      state.input.target,
+      AS_OF,
+    );
+    expect(terminal.state.pages).toBe(401);
+    await expect(foldManagedTargetManifestPage(
+      atLimit,
+      { rows: [copy("project-z", "source-z", state.input.target)], next_cursor: null },
+      state.input.target,
+      AS_OF,
+    )).rejects.toMatchObject({ code: "MANAGED_REQUIRED_SET_BOUNDS_EXCEEDED" });
   });
 
-  it("keeps the desired-item digest stable while the as-of eligibility digest changes", async () => {
-    const rows = [copy("project-a")];
-    const first = await setup(rows, { as_of: AS_OF });
-    const second = await setup(rows, { as_of: "2026-10-14T16:01:00.000Z" });
-    const firstReceipt = await buildManagedTargetManifest(first.input);
-    const secondReceipt = await buildManagedTargetManifest(second.input);
-    expect(secondReceipt.desired_item_set_digest).toBe(firstReceipt.desired_item_set_digest);
-    expect(secondReceipt.eligibility_digest).not.toBe(firstReceipt.eligibility_digest);
-  });
-
-  it("keeps desired items and target currentness stable through a title-only project revision", async () => {
-    const original = copy("project-a");
-    const state = await setup([original]);
-    const readDocument = state.input.documents.readDocument;
-    state.input.documents.readDocument = async (input) => {
-      state.setCurrentRows([{ ...original, project_generation: 99 }]);
-      return readDocument(input);
+  it("distinguishes physical identity from exact legacy assignment hashes", async () => {
+    const state = await setup([]);
+    const profile = state.input.profile;
+    const logicalTarget = {
+      ...state.input.target,
+      managed_generation: "logical-generation-b",
+      target_profile_identity_sha256: await aiSearchPhysicalProfileDigest(profile.target_profile),
     };
-    const first = await buildManagedTargetManifest(state.input);
-    const secondState = await setup([{ ...original, project_generation: 99 }]);
-    const second = await buildManagedTargetManifest(secondState.input);
-    expect(second.desired_item_set_digest).toBe(first.desired_item_set_digest);
-    expect(second.target_fence).toEqual(first.target_fence);
-  });
-
-  it("rejects a target assignment change during staging before publishing a root", async () => {
-    const state = await setup([copy("project-a")]);
-    const readFence = state.input.required_set.readFence;
-    let fenceReads = 0;
-    state.input.required_set.readFence = async (target, asOf) => ({
-      ...await readFence(target, asOf),
-      assignment_heads_sha256: ++fenceReads === 1 ? SHA_A : SHA_B,
-    });
-    await expect(buildManagedTargetManifest(state.input)).rejects.toMatchObject({
-      code: "MANAGED_REQUIRED_SET_FENCE_CHANGED",
-    });
-    expect([...state.store.objects.keys()].some((key) => key.includes("/roots/"))).toBe(false);
-  });
-
-  it("reads and projects one required copy at a time in enumerator order", async () => {
-    const rows = [copy("project-a", "source-a"), copy("project-b", "source-b")];
-    const state = await setup(rows);
-    let inFlight = 0;
-    let maxInFlight = 0;
-    const order: string[] = [];
-    const readDocument = state.input.documents.readDocument.bind(state.input.documents);
-    state.input.documents.readDocument = async (input) => {
-        inFlight += 1;
-        maxInFlight = Math.max(maxInFlight, inFlight);
-        order.push(input.copy.project_id);
-        await Promise.resolve();
-        const result = await readDocument(input);
-        inFlight -= 1;
-        return result;
+    const logicalProfile: ManagedTargetManifestProfile = {
+      ...profile,
+      projection_profile: { ...profile.projection_profile, managed_generation: "logical-generation-b" },
     };
-    const result = await buildManagedTargetManifest(state.input);
-    expect(result.project_revision_copy_count).toBe(2);
-    expect(order).toEqual(["project-a", "project-b"]);
-    expect(maxInFlight).toBe(1);
+    const physical = await validateManifestProfile({ target: logicalTarget, profile: logicalProfile });
+    expect(physical.target_profile_sha256).toBe(logicalTarget.target_profile_identity_sha256);
+    expect(() => validateShadowFence(shadowFence({
+      registry_revision: 1,
+      registry_sha256: SHA_A,
+      generation_state: "SHADOW_BUILDING",
+      generation_profile_identity_sha256: physical.target_profile_sha256,
+      expected_item_count: 0,
+    }), logicalTarget, physical.target_profile_sha256)).not.toThrow();
+
+    const legacyHash = await projectionDigest(profile.target_profile);
+    const legacyTarget = { ...state.input.target, target_profile_identity_sha256: legacyHash };
+    await expect(validateManifestProfile({ target: legacyTarget, profile })).resolves.toMatchObject({
+      target_profile_sha256: await aiSearchPhysicalProfileDigest(profile.target_profile),
+    });
+    await expect(validateManifestProfile({
+      target: { ...legacyTarget, managed_generation: "logical-generation-b" },
+      profile: logicalProfile,
+    })).rejects.toMatchObject({ code: "MANAGED_TARGET_MANIFEST_PROFILE_MISMATCH" });
   });
 
-  it("rejects an active generation and a caller-provided expected-count mismatch", async () => {
-    const rows = [copy("project-a")];
-    const active = await setup(rows, {
-      shadow: { async read() { return {
-        registry_revision: 1,
-        registry_sha256: SHA_A,
-        active_head_generation: AI_SEARCH_PRIMARY_PROJECTION_PROFILE.generation,
-        generation_state: "ACTIVE",
-        generation_profile_identity_sha256: "0".repeat(64),
-        expected_item_count: 1,
-      }; } },
-    });
-    await expect(buildManagedTargetManifest(active.input)).rejects.toMatchObject({
-      code: "MANAGED_TARGET_MANIFEST_SHADOW_REQUIRED",
-    });
-
-    const mismatch = await setup(rows, {
-      shadow: { async read(_target, exactProfile) { return {
-        registry_revision: 1,
-        registry_sha256: SHA_A,
-        active_head_generation: "previous-generation",
-        generation_state: "SHADOW_BUILDING",
-        generation_profile_identity_sha256: await projectionDigest(exactProfile),
-        expected_item_count: 2,
-      }; } },
-    });
-    await expect(buildManagedTargetManifest(mismatch.input)).rejects.toMatchObject({
-      code: "MANAGED_TARGET_MANIFEST_EXPECTED_COUNT_MISMATCH",
-    });
-  });
-
-  it("rejects legacy copy layout and wrong target projection generation before enumerating", async () => {
-    const state = await setup([copy("project-a")]);
-    let reads = 0;
-    const unenumerated: ManagedRequiredSetPort = {
-      async readFence() {
-        reads += 1;
-        return { assignment_heads_sha256: SHA_A, assigned_project_count: 1, stale_assignment_count: 0, profile_mismatch_count: 0 };
-      },
-      async readPage() { throw new Error("invalid profile must be rejected before Core enumeration"); },
-    };
-    const legacy = {
-      ...state.input,
-      required_set: unenumerated,
-      profile: { ...state.input.profile, copy_layout: "LEGACY_DEFAULT" },
-    } as unknown as ManagedTargetManifestInput;
-    await expect(buildManagedTargetManifest(legacy)).rejects.toMatchObject({
-      code: "MANAGED_TARGET_MANIFEST_PROFILE_MISMATCH",
-    });
-    const wrongGeneration = {
-      ...state.input,
-      required_set: unenumerated,
-      profile: {
-        ...state.input.profile,
-        projection_profile: { ...state.input.profile.projection_profile, managed_generation: "wrong-generation" },
-      },
-    };
-    await expect(buildManagedTargetManifest(wrongGeneration)).rejects.toMatchObject({
-      code: "MANAGED_TARGET_MANIFEST_PROFILE_MISMATCH",
-    });
-    expect(reads).toBe(0);
+  it("keeps documented file ceilings separate from account tier authority", async () => {
+    const state = await setup([]);
+    const profile = state.input.profile.target_profile;
+    const free = await validateManagedTargetProviderCapacityReceipt({
+      protocol: "eliotr.managed-target-provider-capacity.v1",
+      account_tier: "FREE",
+      account_authority_ref: "fixture:verified-free-tier",
+      account_authority_sha256: SHA_A,
+      checked_at: AS_OF,
+      max_files_per_instance: MANAGED_TARGET_FREE_FILE_LIMIT,
+      documentation_modified_on: "2026-10-01",
+    }, profile);
+    expect(free.max_files_per_instance).toBe(100_000);
+    expect(() => assertManagedTargetProviderCapacity(free, profile, 100_000, 1)).toThrow("TARGET_CAPACITY_EXCEEDED");
+    await expect(validateManagedTargetProviderCapacityReceipt({
+      ...free,
+      max_files_per_instance: MANAGED_TARGET_HYBRID_FILE_LIMIT,
+    }, profile)).rejects.toThrow("CAPACITY_AUTHORITY_INVALID");
   });
 });
