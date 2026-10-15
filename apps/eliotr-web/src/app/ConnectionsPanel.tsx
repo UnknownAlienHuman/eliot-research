@@ -11,8 +11,8 @@ import { usePaneAnnouncement } from "./usePaneAnnouncement";
 import { WorkspaceLink } from "../routes/WorkspaceLink";
 
 const copy = {
-  en: { reading: 'Reading connection status.', failed: 'Some status checks failed. Review the affected rows.', loaded: 'Connection status checks updated.', choose: "Choose a project", project: "Project", next: "Next project page", previous: "Previous project page", modelSettings: "Model and provider settings are global; open Settings to connect an external provider.", openSettings: "Open settings" },
-  ru: { reading: 'Читается статус подключений.', failed: 'Некоторые проверки статуса завершились ошибкой. Проверьте соответствующие строки.', loaded: 'Проверки статуса подключений обновлены.', choose: "Выберите проект", project: "Проект", next: "Следующая страница проектов", previous: "Предыдущая страница проектов", modelSettings: "Настройки моделей и провайдеров общие; внешний провайдер подключается в Настройках", openSettings: "Открыть настройки" },
+  en: { reading: 'Reading connection status.', failed: 'Some status checks failed. Review the affected rows.', loaded: 'Connection status checks updated.', choose: "Choose a project", project: "Project source permissions", next: "Next project page", previous: "Previous project page", modelSettings: "Model and provider settings are global; open Settings to connect an external provider.", openSettings: "Open settings" },
+  ru: { reading: 'Читается статус подключений.', failed: 'Некоторые проверки статуса завершились ошибкой. Проверьте соответствующие строки.', loaded: 'Проверки статуса подключений обновлены.', choose: "Выберите проект", project: "Доступ к источникам проекта", next: "Следующая страница проектов", previous: "Предыдущая страница проектов", modelSettings: "Настройки моделей и провайдеров общие; внешний провайдер подключается в Настройках", openSettings: "Открыть настройки" },
 } as const;
 
 function rowState<T>(query: UseQueryResult<T, Error>, enabled = true): "idle" | "loading" | "loaded" | "failed" {
@@ -68,9 +68,10 @@ export function ConnectionsPanel({ locale, apis, privacy, context, projects, pro
     </div>
     <p>{text.modelSettings}</p>
     <WorkspaceLink className="er-shell-link" to="/settings">{text.openSettings}</WorkspaceLink>
-    <ConnectionsFeature locale={locale} queries={{ health: rowState(health), session: rowState(session), diagnostic: rowState(diagnostic),
+    <ConnectionsFeature locale={locale} visibleRows={["health", "session", "grant", "googleTransport", "diagnostic"]}
+      queries={{ health: rowState(health), session: rowState(session), diagnostic: rowState(diagnostic),
       grant: rowState(grants, active), providerConfig: "idle", projectModel: "idle", researchReadiness: "idle",
-      googleTransport: "idle", providerModelUse: "idle" }}
+      googleTransport: rowState(health), providerModelUse: "idle" }}
       health={health.data} session={session.data} grants={grants.data?.grants}
       diagnostic={diagnostic.data ?? undefined}
       pendingActions={{ refresh: observed.some(query => query.isFetching),
@@ -78,12 +79,8 @@ export function ConnectionsPanel({ locale, apis, privacy, context, projects, pro
         diagnostics: diagnostic.isFetching }}
       onRefresh={refresh} {...(observed.some(query => query.isError) ? { onRetry: retry } : {})} onRetryRow={row => {
         if (row === "providerModelUse") return;
-        const query = facts[row as keyof typeof facts];
+        const query = row === "googleTransport" ? health : facts[row as keyof typeof facts];
         if (privacy.isCurrent(context) && query.isError && !query.isFetching) void query.refetch();
       }} onOpenDiagnostics={() => { if (privacy.isCurrent(context)) void diagnostic.refetch(); }} />
   </>;
 }
-
-
-
-

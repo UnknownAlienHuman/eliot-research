@@ -120,7 +120,8 @@ export const ServiceModelProviderCreateRequestSchema = z.object({
   base_url: baseUrl.optional(),
   model_ids: z.array(modelIdentifier).min(1).max(64),
   api_key: z.string().min(16).max(4_096).regex(/^[\x21-\x7e]+$/u),
-}).strict();
+}).strict().refine((request) => ![request.provider_id, request.display_name, request.base_url ?? "", ...request.model_ids]
+  .some(value => value.includes(request.api_key)), "Credentials belong only in the write-only key field");
 export type ServiceModelProviderCreateRequest =
   z.infer<typeof ServiceModelProviderCreateRequestSchema>;
 

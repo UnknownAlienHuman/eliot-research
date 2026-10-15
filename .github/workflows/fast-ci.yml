@@ -45,6 +45,7 @@ jobs:
           packages/retrieval/src/service-managed-admission.test.ts
           apps/eliotr-web/src/query/research.test.ts
           apps/eliotr-web/src/query/modelSettings.test.ts
+          apps/eliotr-web/src/query/globalModelSettings.test.ts
           packages/owner-api-client/src/research/runs/authority.test.ts
           packages/owner-api-client/src/evidence/citations/audit.test.ts
           packages/owner-api-client/src/evidence/citations/reauthorization.test.ts
@@ -54,9 +55,17 @@ jobs:
           packages/owner-api-client/src/research/configuration/models.test.ts
           packages/contracts/src/service-model.test.ts
           packages/owner-api-client/src/connections/service-models.test.ts
+          packages/cloudflare-model-control/src/service-model-provider-service.test.ts
+          packages/cloudflare-ai/src/service-model-provider-management.test.ts
           packages/cloudflare-model-execution/src/model-route-failure.test.ts
           packages/cloudflare-workspace-mcp/src/gemini-mcp.test.ts
           apps/eliotr-core/test/research-model-gateway-runtime.test.ts
+          --reporter=verbose
+      - name: Native Worker model settings and Gateway contracts
+        run: >-
+          pnpm --dir apps/eliotr-core exec vitest run
+          test/service-model-settings-http.test.ts
+          test/research-model-gateway-runtime.test.ts
           --reporter=verbose
       - name: Build served assets and owner web
         run: |

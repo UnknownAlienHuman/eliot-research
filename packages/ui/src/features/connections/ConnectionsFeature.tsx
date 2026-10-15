@@ -83,6 +83,7 @@ export type ConnectionsRowQueries = Record<RowId, ConnectionsRowQuery>;
 
 export interface ConnectionsFeatureProps {
   readonly locale?: "en" | "ru";
+  readonly visibleRows?: readonly RowId[];
   readonly queries: ConnectionsRowQueries;
   readonly health?: ConnectionsHealth | undefined;
   readonly session?: ConnectionsSession | undefined;
@@ -452,6 +453,7 @@ const ACTION_ORDER: readonly FeatureAction[] = ["refresh", "signIn", "requestAcc
 
 export function ConnectionsFeature({
   locale = "en",
+  visibleRows,
   queries,
   health,
   session,
@@ -505,7 +507,7 @@ export function ConnectionsFeature({
       <h2 className="connections-feature__title" id={headingId}>{text.title}</h2>
       <p className="connections-feature__note">{text.note}</p>
       <ul className="connections-feature__rows">
-        {rows.map(function (entry) {
+        {rows.filter(entry => visibleRows === undefined || visibleRows.includes(entry.id)).map(function (entry) {
           return (
             <li className="connections-feature__row" key={entry.id}>
               <span className="connections-feature__label">{entry.label}</span>

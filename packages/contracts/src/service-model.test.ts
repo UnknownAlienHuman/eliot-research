@@ -22,6 +22,7 @@ describe("global service model settings", () => {
 
     expect(ServiceModelProviderCreateRequestSchema.safeParse({ ...request, base_url: "https://provider.example/v1" }).success).toBe(true);
     expect(ServiceModelProviderCreateRequestSchema.safeParse({ ...request, project_id: "project-1" }).success).toBe(false);
+    expect(ServiceModelProviderCreateRequestSchema.safeParse({ ...request, display_name: request.api_key }).success).toBe(false);
     for (const base_url of ["http://provider.example/v1", "https://user:password@provider.example/v1",
       "https://provider.example/v1?key=credential", "https://provider.example/v1#credential"]) {
       expect(ServiceModelProviderCreateRequestSchema.safeParse({ ...request, base_url }).success).toBe(false);

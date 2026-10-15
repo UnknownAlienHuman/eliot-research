@@ -18,6 +18,8 @@ import { readReadiness } from "./readiness.js";
 import { readOwnerResearchRuns } from "./research-run-list.js";
 import { handleResearchModelQualification } from "./research-model-qualification-http.js";
 import { handleResearchModelCatalog } from "./research-model-catalog-http.js";
+import { handleServiceModelSettings, handleServiceModelProviders } from "./service-model-settings-http.js";
+import { createServiceModelSettingsComposition } from "./service-model-settings-composition.js";
 import { handleResearchProjectModelConfiguration,
   handleResearchProjectModelConfigurationImport } from "./research-project-configuration-http.js";
 import { createOwnerResearchProjectConfigurationService } from "./research-project-configuration-composition.js";
@@ -98,8 +100,20 @@ export async function dispatchHttpSpecialRoute(input: {
     }
     case "system.research.models":
       return handleResearchModelCatalog(input.request, input.env, input.context);
-    case "project.provider-key-configuration.read":
-    case "project.provider-key-configuration.create": {
+    case "system.model-settings.read": {
+      const configured = createServiceModelSettingsComposition(input.env);
+      return handleServiceModelSettings(input.request, input.env, input.context, configured.service, configured.managementAvailable);
+    }
+    case "system.model-providers.read":
+    case "system.model-providers.create": {
+      const configured = createServiceModelSettingsComposition(input.env);
+      return handleServiceModelProviders(input.request, input.env, input.context, configured.service,
+        input.match.route.maximum_request_bytes);
+    }
+    case "project.provider-key-configuration.create":
+      throw new HttpRequestError("SERVICE_MODEL_SETTINGS_GLOBAL", 410,
+        "Provider connections are managed once in global model settings");
+    case "project.provider-key-configuration.read": {
       const projectId = input.match.params.project_id ?? "";
       const composition = createResearchProviderKeyConfigurationComposition(input.env);
       return handleResearchProviderKeyConfiguration(input.request, input.env, input.context, projectId,

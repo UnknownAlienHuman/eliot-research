@@ -72,10 +72,10 @@ export function Shell({ privacy, fixture, fixtureOutlet: FixtureOutlet, runtime 
           }
         }}>
           <summary aria-label={locale === "ru" ? "Настройки интерфейса" : "Workspace preferences"}>
-            <MaterialSymbol name={theme === "dark" ? "dark-mode" : "light-mode"} /><span>{locale === "ru" ? "Настройки" : "Preferences"}</span>
+            <MaterialSymbol name={theme === "dark" ? "dark-mode" : "light-mode"} /><span>{locale === "ru" ? "Оформление" : "Appearance"}</span>
           </summary>
           <div className="er-shell-preferences-panel">
-            <p className="er-shell-preferences-title">{locale === "ru" ? "Настройки" : "Preferences"}</p>
+            <p className="er-shell-preferences-title">{locale === "ru" ? "Оформление" : "Appearance"}</p>
             <label htmlFor={preferencesId + '-language'}>{text.language}<select id={preferencesId + '-language'} aria-label={text.language} value={locale} onChange={event => setLocale(event.target.value === "ru" ? "ru" : "en")}><option value="en">English</option><option value="ru">Русский</option></select></label>
             <label htmlFor={preferencesId + '-theme'}>{text.theme}<select id={preferencesId + '-theme'} aria-label={text.theme} value={theme} onChange={event => setTheme(event.target.value === "dark" ? "dark" : "light")}><option value="light">{text.light}</option><option value="dark">{text.dark}</option></select></label>
           </div>

@@ -8,6 +8,7 @@ import type { EpochPort } from '../transport/client';
 const SETTINGS = '/api/v1/system/model-settings';
 const PROVIDERS = '/api/v1/system/model-providers';
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
+const TRACE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
 
 /** Global owner settings. Keys are write-only request data, never returned or cached here. */
 export function createServiceModelSettingsApi(http: Pick<LegacyHttpAdapter, 'requestApiWithStatuses'>,
@@ -30,7 +31,7 @@ export function createServiceModelSettingsApi(http: Pick<LegacyHttpAdapter, 'req
     const envelope = raw as Record<string, unknown>;
     const keys = Object.keys(envelope);
     if (keys.length !== 3 || keys.some(key => !['data', 'trace_id', 'deployment_generation'].includes(key)) ||
-      typeof envelope.trace_id !== 'string' || envelope.trace_id.length > 128 || !IDENTIFIER.test(envelope.trace_id)) {
+      typeof envelope.trace_id !== 'string' || !TRACE_ID.test(envelope.trace_id)) {
       return fail('SERVICE_MODEL_RESPONSE_INVALID', 502, 'Model settings response is invalid.');
     }
     if (envelope.deployment_generation !== generation) {
@@ -39,7 +40,7 @@ export function createServiceModelSettingsApi(http: Pick<LegacyHttpAdapter, 'req
     return envelope.data;
   };
   const assertGeneration = (generation: string) => {
-    if (!IDENTIFIER.test(generation)) fail('SERVICE_MODEL_INPUT_INVALID', 400, 'Deployment generation is invalid.');
+    if (typeof generation !== 'string' || !IDENTIFIER.test(generation)) fail('SERVICE_MODEL_INPUT_INVALID', 400, 'Deployment generation is invalid.');
   };
 
   async function readServiceModelSettings(generation: string, signal?: AbortSignal): Promise<ServiceModelSettings> {
