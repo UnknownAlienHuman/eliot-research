@@ -3,6 +3,7 @@ import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import type {
   ErasurePrepareView,
   LibraryPage,
+  ProjectSummary,
   RawFileCaptureReceipt,
   RawMarkdownConversionResult,
   RawNormalizedAdmissionResult,
@@ -51,6 +52,7 @@ interface ImportMemoryProbe {
   };
   readonly submitted?: boolean;
   readonly bundleRejected?: boolean;
+  readonly attachment?: { readonly phase?: string };
 }
 
 interface ErasureIntentProbe {
@@ -67,6 +69,11 @@ interface MutableEvidence {
   readonly rawAdmissionKeys: string[];
   readonly rawAdmissionBodies: string[];
   readonly rawAdmissionStatusPaths: string[];
+  readonly projectUpdateBodies: string[];
+  readonly projectUpdateKeys: string[];
+  projectListReads: number;
+  importCommitReports: number;
+  readonly importCommitRefs: string[];
   readonly bundlePrepareKeys: string[];
   readonly bundlePartPaths: string[];
   readonly bundleCompletePaths: string[];
@@ -107,6 +114,7 @@ interface PanelEnvironment {
   readonly context: SessionContext;
   readonly apis: BoundWorkspaceApis;
   readonly page: LibraryPage;
+  readonly project?: ProjectSummary;
   readonly evidence: MutableEvidence;
   readonly probe: PanelRegressionProbe;
   dispose(): void;
@@ -217,7 +225,7 @@ function rawAdmissionResult(
   };
 }
 
-async function buildEnvironment(): Promise<PanelEnvironment> {
+async function buildEnvironment(projectSelected = false): Promise<PanelEnvironment> {
   const client = createWorkspaceQueryClient();
   const evidence: MutableEvidence = {
     rawCapturePostKeys: [],
@@ -227,6 +235,11 @@ async function buildEnvironment(): Promise<PanelEnvironment> {
     rawAdmissionKeys: [],
     rawAdmissionBodies: [],
     rawAdmissionStatusPaths: [],
+    projectUpdateBodies: [],
+    projectUpdateKeys: [],
+    projectListReads: 0,
+    importCommitReports: 0,
+    importCommitRefs: [],
     bundlePrepareKeys: [],
     bundlePartPaths: [],
     bundleCompletePaths: [],
@@ -251,6 +264,23 @@ async function buildEnvironment(): Promise<PanelEnvironment> {
     readonly captured_at: string;
   }>();
   let activeErasureRef: ErasureRef | undefined;
+  let projectRevision = 1;
+  let projectSourceIds: readonly string[] = [];
+  const projectId = "project-panel-target";
+  const projectTitle = "Panel import target";
+  const projectWire = () => ({
+    protocol: "eliotr.project-owner.v1",
+    project_ref: { id: projectId, revision: projectRevision },
+    title: projectTitle,
+    revision: projectRevision,
+    owner_principal_ref: "panel-owner",
+    deployment_generation: generation,
+    source_ids: projectSourceIds,
+    created_at: stamp,
+  });
+  const selectedProject: ProjectSummary | undefined = projectSelected ? {
+    project_id: projectId, title: projectTitle, revision: projectRevision, source_ids: projectSourceIds, created_at: stamp,
+  } : undefined;
   let admissionSnapshot: {
     readonly captureId: string;
     readonly conversionOperationId: string;
@@ -295,6 +325,22 @@ async function buildEnvironment(): Promise<PanelEnvironment> {
         client_class: "owner_pwa",
         expires_at: "2027-01-01T00:00:00.000Z",
       });
+    }
+    if (url.pathname === "/api/v1/research/projects" && method === "GET") {
+      evidence.projectListReads += 1;
+      return json({ protocol: "eliotr.project-owner-list.v1", projects: projectSelected ? [projectWire()] : [] });
+    }
+    if (url.pathname === `/api/v1/research/projects/${projectId}` && method === "PUT") {
+      if (!projectSelected) throw new Error("Project membership was updated without a selected project");
+      const request = JSON.parse(String(init?.body)) as { readonly title?: unknown; readonly source_ids?: unknown; readonly expected_revision?: unknown };
+      if (request.title !== projectTitle || request.expected_revision !== projectRevision || !Array.isArray(request.source_ids)) {
+        throw new Error("Project membership did not use the selected project snapshot");
+      }
+      evidence.projectUpdateBodies.push(String(init?.body));
+      evidence.projectUpdateKeys.push(new Headers(init?.headers).get("idempotency-key") ?? "");
+      projectSourceIds = [...request.source_ids as string[]].sort();
+      projectRevision += 1;
+      return json(projectWire());
     }
     if (url.pathname === "/api/v1/library/namespaces") {
       return json({
@@ -388,6 +434,17 @@ async function buildEnvironment(): Promise<PanelEnvironment> {
       return json(unknown);
     }
 
+    if (url.pathname.startsWith("/api/v1/ingest/raw/") && url.pathname.endsWith("/source-identity") && method === "GET") {
+      const segments = url.pathname.split("/");
+      const saved = admissionSnapshot;
+      const captureId = decodeURIComponent(segments[5] ?? "");
+      const operationId = decodeURIComponent(segments[7] ?? "");
+      if (segments.length !== 9 || segments[6] !== "admission" || !saved || saved.captureId !== captureId || saved.operationId !== operationId) {
+        throw new Error("Source identity read did not use the committed admission");
+      }
+      return json({ protocol: "eliotr.raw-source-identity.v1", admission_operation_id: operationId,
+        capture_id: captureId, source_revision_ref: "source-panel-revision-1", source_id: sourceId });
+    }
     if (url.pathname.startsWith("/api/v1/ingest/raw/") && url.pathname.includes("/admission/") && method === "GET") {
       const segments = url.pathname.split("/");
       const captureId = decodeURIComponent(segments[5] ?? "");
@@ -518,6 +575,7 @@ async function buildEnvironment(): Promise<PanelEnvironment> {
     context: verified.context,
     apis,
     page,
+    ...(selectedProject ? { project: selectedProject } : {}),
     evidence,
     probe,
     dispose() {
@@ -528,9 +586,10 @@ async function buildEnvironment(): Promise<PanelEnvironment> {
   };
 }
 
-export function ImportErasureRegressionFixture({ panel, onProbe }: {
+export function ImportErasureRegressionFixture({ panel, onProbe, projectSelected = false }: {
   readonly panel: "import" | "erasure";
   readonly onProbe?: (probe: PanelRegressionProbe) => void;
+  readonly projectSelected?: boolean;
 }) {
   const [environment, setEnvironment] = useState<PanelEnvironment>();
   const [mounted, setMounted] = useState(true);
@@ -538,7 +597,7 @@ export function ImportErasureRegressionFixture({ panel, onProbe }: {
   useEffect(() => {
     let live = true;
     let owned: PanelEnvironment | undefined;
-    void buildEnvironment().then(next => {
+    void buildEnvironment(projectSelected).then(next => {
       owned = next;
       if (live) setEnvironment(next);
       else next.dispose();
@@ -567,6 +626,12 @@ export function ImportErasureRegressionFixture({ panel, onProbe }: {
           privacy={environment.privacy}
           context={environment.context}
           locale="en"
+          {...(environment.project ? { project: environment.project } : {})}
+          projectSelected={projectSelected}
+          onImportCommitted={source => {
+            environment.evidence.importCommitReports += 1;
+            if (source) environment.evidence.importCommitRefs.push(`${source.sourceId}:${source.sourceRevisionRef}:${source.generation}`);
+          }}
         />
       : <ErasurePanel
           apis={environment.apis}

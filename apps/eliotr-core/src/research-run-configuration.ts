@@ -3,6 +3,8 @@ import {
   captureResearchRunConfiguration as captureSnapshot,
   reconcileResearchRunConfigurationBinding as reconcileSnapshot,
   readResearchRunConfiguration as readSnapshot,
+  readInstalledNativeResearchConfiguration,
+  type InstalledNativeResearchConfiguration,
   type CaptureResearchRunConfigurationInput,
   type ResolvedResearchRunConfiguration as PackageResolvedRunConfiguration,
   type ResearchRunConfigurationRuntimePort,
@@ -13,6 +15,8 @@ import {
 import type { ResearchRunConfigurationAssociation } from "@eliotr/cloudflare-research";
 import type { Env } from "./env.js";
 import { readResearchSemanticConfiguration } from "./env.js";
+import { resolveResearchSemanticConfig } from "./research-semantic-config-revision.js";
+import { researchConfigurationRuntimeValuesFromEnv } from "./research-configuration-status.js";
 import {
   ResearchRunProjectSelectionFailure,
   translateResearchProjectSelectionFailure,
@@ -69,6 +73,7 @@ function runtimePort(env: Env): ResearchRunConfigurationRuntimePort<Env> {
     model_transport_available: (runtime) =>
       (typeof runtime.ELIOTR_MODEL_GATEWAY_TOKEN === "string" && runtime.ELIOTR_MODEL_GATEWAY_TOKEN.trim() !== "") ||
       typeof (runtime.AI as Partial<Ai> | undefined)?.gateway === "function",
+    installed_native_configuration: readInstalledNativeResearchRunConfiguration,
     overlay_snapshot: (runtime, snapshot: ResearchRunConfigurationRuntimeSnapshot) => {
       const semanticEnv = snapshot.semantic.source === "revision"
         ? withSemanticRevision(runtime, snapshot.semantic.revision_ref ?? checkpointInvalid(), snapshot.semantic.config_sha256)
@@ -84,6 +89,21 @@ function runtimePort(env: Env): ResearchRunConfigurationRuntimePort<Env> {
     translate_project_selection_failure: translateResearchProjectSelectionFailure,
     is_project_selection_failure: (error) => error instanceof ResearchRunProjectSelectionFailure,
   };
+}
+
+/** Global native settings are captured only after admission has authorized the current project. */
+export async function readInstalledNativeResearchRunConfiguration(
+  env: Env, ownerRef: string, projectId?: string,
+): Promise<InstalledNativeResearchConfiguration> {
+  const values = researchConfigurationRuntimeValuesFromEnv(env);
+  const semantic = await resolveResearchSemanticConfig({ env, database: env.CORE_DB });
+  return readInstalledNativeResearchConfiguration({ database: env.CORE_DB,
+    configuration_fields: values.configuration_fields, semantic_json: semantic.config_json,
+    transport_policies_json: env.ELIOTR_RESEARCH_MODEL_TRANSPORT_POLICIES_JSON,
+    native_binding_available: values.native_model_gateway_available,
+    deployment_generation: env.DEPLOYMENT_GENERATION,
+    deployment_environment: env.ENVIRONMENT === "development" ? "TEST" : "PRODUCTION",
+  }, ownerRef, projectId);
 }
 
 function checkpointInvalid(): never {

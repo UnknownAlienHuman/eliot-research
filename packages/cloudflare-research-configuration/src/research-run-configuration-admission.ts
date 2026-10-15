@@ -15,6 +15,7 @@ export interface ResearchRunConfigurationAdmissionInputV1 {
   readonly selected_project_id?: string;
   /** Current verified grant lease used to select grantor-owned configuration for a service actor. */
   readonly project_configuration_read_authority?: ResearchProjectConfigurationGrantReadAuthority;
+  readonly require_current_configuration_scope?: () => Promise<void>;
 }
 
 export interface ResearchRunConfigurationAdmissionDependenciesV1<ResolvedConfiguration> {
@@ -74,6 +75,11 @@ export async function resolveResearchRunConfigurationAdmission<ResolvedConfigura
     }
     return dependencies.capture({
       ...input.actor,
+      configuration_project_id: selectedProjectId,
+      allow_installed_native_default: true,
+      ...(input.require_current_configuration_scope === undefined ? {} : {
+        require_current_configuration_scope: input.require_current_configuration_scope,
+      }),
       ...(authority === undefined ? {} : { project_configuration_read_authority: authority }),
       select_project_configuration: () => dependencies.select_current_project_configuration(selectedProjectId),
     });

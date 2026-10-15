@@ -379,3 +379,31 @@ export const ErasurePanelRefusalFreshReviewUnknownAndCanonicalCompletion = {
     assertLength(probe.counts().erasureExecuteBodies, 2, "Canonical completion retried erasure execution");
   },
 };
+
+export const ImportPanelAttachesCommittedFileToTheProjectSelectedAtUpload = {
+  render: () => {
+    importProbe = undefined;
+    return <ImportErasureRegressionFixture panel="import" projectSelected onProbe={observeImport} />;
+  },
+  play: async ({ canvas, userEvent }: Parameters<typeof ImportPanelRefusalRecoveryAndExplicitDismissal.play>[0]) => {
+    await until(() => importProbe !== undefined, "project upload fixture probe");
+    const probe = importProbe;
+    assert(probe !== undefined, "Project upload fixture probe was not supplied");
+    await userEvent.click(await canvas.findByRole("button", { name: "Import sources" }));
+    await canvas.findByRole("dialog", { name: "Import sources" });
+    await eventually(() => canvas.queryByLabelText("Choose a file") !== null, "project upload file picker");
+    await userEvent.upload(canvas.getByLabelText("Choose a file"),
+      new File(["# Project upload evidence\n"], "project-note.md", { type: "text/markdown" }));
+    await eventually(() => probe.importMemory()?.attachment?.phase === "confirmed", "committed project membership");
+    await canvas.findByText("The file was added to this project.");
+    assertLength(probe.counts().projectUpdateBodies, 1, "Project upload did not issue exactly one membership update");
+    assertLength(probe.counts().projectUpdateKeys, 1, "Project upload did not freeze one membership identity");
+    assertEqual(probe.counts().importCommitReports, 1, "Canonical import callback did not wait for membership confirmation");
+    assertDeepEqual(probe.counts().importCommitRefs, ["source-panel-1:source-panel-revision-1:" + "issue335-panel-regression"],
+      "Canonical import callback did not carry the committed source identity");
+    const body = probe.counts().projectUpdateBodies[0];
+    if (body === undefined) throw new Error("Project membership request body was not recorded");
+    assertDeepEqual(JSON.parse(body), { title: "Panel import target", source_ids: ["source-panel-1"], expected_revision: 1 },
+      "Project upload did not attach the canonical committed source to the selected project");
+  },
+};

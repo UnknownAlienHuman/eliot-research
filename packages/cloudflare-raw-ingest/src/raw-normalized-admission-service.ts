@@ -12,6 +12,7 @@ import type {
   CommitBundleUploadRequest,
   RawNormalizedAdmissionRequest,
   RawNormalizedAdmissionResult,
+  RawSourceIdentityReadback,
 } from "@eliotr/interfaces";
 import { createSnapshotViewWitness, verifySnapshotViewWitness } from "./raw-normalized-snapshot-view.js";
 import { prepareRawNormalizedAdmission } from "./raw-normalized-admission.js";
@@ -402,5 +403,27 @@ export function createRawNormalizedAdmissionService(input: {
     await assertRowCurrent(row, actor, ports);
     return storedResult(row, ports.owner);
   }
-  return { admit, getStatus };
+  async function getSourceIdentity(actor: RawNormalizedAdmissionActor, captureId: string, admissionOperationId: string, ports: RawNormalizedAdmissionRequestPorts): Promise<RawSourceIdentityReadback> {
+    const operationId = requireId(admissionOperationId, "admission_operation_id");
+    const cid = requireId(captureId, "capture_id");
+    const row = await load(operationId);
+    if (row === null || row.capture_id !== cid) throw new RawNormalizedAdmissionError("RAW_NORMALIZED_NOT_FOUND", 404, "raw normalized admission is not available");
+    const capture = await assertRowCurrent(row, actor, ports);
+    if (row.state !== "COMMITTED") throw new RawNormalizedAdmissionError("RAW_NORMALIZED_NOT_COMMITTED", 409, "source identity is available only after committed admission");
+    const admissionReceipt = receipt(row.receipt_json);
+    if (capture.source_revision_ref !== row.source_revision_ref || admissionReceipt === undefined ||
+        admissionReceipt.source_revision_ref !== row.source_revision_ref ||
+        (admissionReceipt.decision !== "ADMITTED" && admissionReceipt.decision !== "DUPLICATE")) {
+      throw new RawNormalizedAdmissionError("RAW_NORMALIZED_STATE_INVALID", 503, "committed source identity binding is invalid", true);
+    }
+    const sourceRevisionRef = requireId(row.source_revision_ref, "source_revision_ref");
+    return {
+      protocol: "eliotr.raw-source-identity.v1",
+      admission_operation_id: operationId,
+      capture_id: cid,
+      source_id: requireId(capture.source_logical_id, "source_id"),
+      source_revision_ref: sourceRevisionRef,
+    };
+  }
+  return { admit, getStatus, getSourceIdentity };
 }

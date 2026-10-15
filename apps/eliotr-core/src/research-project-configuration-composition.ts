@@ -11,6 +11,7 @@ import {
   ResearchProjectModelConfigurationAuthorityError,
 } from "./research-project-configuration.js";
 import { readResearchConfigurationReadiness } from "./research-configuration-readiness.js";
+import { readInstalledNativeResearchRunConfiguration } from "./research-run-configuration.js";
 import { createOwnerResearchProviderNativeModelAuthority } from "./research-provider-native-model-authority.js";
 import type { ResearchProviderKeyModelUseDbPhase } from "@eliotr/cloudflare-research-configuration/research-provider-key-model-use-store.js";
 
@@ -82,7 +83,7 @@ export function mapResearchProjectModelConfigurationError(error: unknown): never
   throw error;
 }
 
-/** Readiness uses the same selected immutable bundle that a new run captures. */
+/** Readiness uses the same explicit project bundle or installed native default that a new run captures. */
 export async function readOwnerProjectResearchReadiness(
   env: Env, context: AuthenticatedRequestContext, projectId: string | undefined,
 ) {
@@ -92,7 +93,19 @@ export async function readOwnerProjectResearchReadiness(
     run_readiness: "blocked" as const,
     readiness_reason: "CONFIGURATION_NOT_READY" as const,
   });
-  if (projectId === undefined) return unavailable();
+  const installedDefault = async () => {
+    try {
+      const installed = await readInstalledNativeResearchRunConfiguration(env, context.principal_ref, projectId);
+      return await readResearchConfigurationReadiness(env, context, {
+        selected_model_selections: installed.model_selections,
+      });
+    } catch {
+      const blocked = await unavailable();
+      return { ...blocked, readiness_reason: blocked.configuration === "present"
+        ? "QUALIFICATION_UNAVAILABLE" as const : "CONFIGURATION_NOT_READY" as const };
+    }
+  };
+  if (projectId === undefined) return installedDefault();
   const service = createOwnerResearchProjectConfigurationService(env, context, projectId);
   let selected: Awaited<ReturnType<typeof readSelectedResearchProjectConfiguration>>;
   try {
@@ -104,7 +117,11 @@ export async function readOwnerProjectResearchReadiness(
     }
     mapResearchProjectModelConfigurationError(error);
   }
-  if (selected === null) return unavailable();
+  if (selected === null) {
+    const readiness = await installedDefault();
+    if (await readSelectedResearchProjectConfiguration(service, context, projectId) !== null) return unavailable();
+    return readiness;
+  }
   const bundle = selected.configuration;
   const selectedEnv = composeSelectedProjectResearchReadinessEnv(env, bundle);
   return readResearchConfigurationReadiness(selectedEnv, context,

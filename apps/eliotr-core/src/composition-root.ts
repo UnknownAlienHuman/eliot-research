@@ -233,7 +233,7 @@ function ownerApi(env: Env): OwnerApi {
     database: env.CORE_DB, bucket: env.EVIDENCE_BUCKET, ...(env.AI === undefined ? {} : { ai: env.AI }), profile_generation: env.DEPLOYMENT_GENERATION,
     readCapture: (context, captureId) => rawCapture.readRawCaptureForServer(context, captureId),
   });
-  const ownerBase: Omit<OwnerApi, "admitRawFileToNormalized" | "getRawNormalizedAdmissionStatus" | "admitWorkspaceCandidate" | "workspaceCandidateStatus"> = {
+  const ownerBase: Omit<OwnerApi, "admitRawFileToNormalized" | "getRawNormalizedAdmissionStatus" | "getRawNormalizedAdmissionSourceIdentity" | "admitWorkspaceCandidate" | "workspaceCandidateStatus"> = {
     ...ingest,
     prepareErasure: (context, input) => prepareErasureForOwner(env, context, input),
     sourceNamespaces: sourceNamespaces.list,
@@ -287,6 +287,7 @@ function ownerApi(env: Env): OwnerApi {
     ...ownerBase,
     admitRawFileToNormalized: rawNormalized.admit,
     getRawNormalizedAdmissionStatus: rawNormalized.getStatus,
+    getRawNormalizedAdmissionSourceIdentity: rawNormalized.getSourceIdentity,
     admitWorkspaceCandidate: workspaceAdmission.admit,
     workspaceCandidateStatus: workspaceAdmission.getStatus,
   };

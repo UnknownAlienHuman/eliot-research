@@ -73,6 +73,40 @@ valid reservation, foreign/revoked authority, direct finalized insertion,
 missing admission and successful authorized finalization. This migration has
 not yet been applied remotely; delegated final-report acceptance remains open.
 
+At `git-85514a42b1f3`, CI `38801315334` and routine deployment passed.
+Migration 0155 was the sole pending migration and was applied with a fresh
+Time Travel bookmark. A real browser assignment to Codex completed all 18
+existing stages as `run-b2bf49f90537bdbc9efe103411bae93167af8da9470d8408`.
+The owner status API returned 200 with draft
+`eliotr.research.artifact-182e4621e06a733c54935de1806ccd8b60fc3ca0d37f267b2db41b0d74a7fb09:1`;
+the MCP task is durably recorded and settled. This bounded lookup used one
+admitted README excerpt and no required branch roles; its coverage is not full.
+
+Browser acceptance exposed three remaining product gaps. Recent history spent
+33 seconds reopening detailed results and exceeded the client's 30-second
+deadline. Raw import committed without attaching the new source to the selected
+project. Native readiness/capture still required a project model selection.
+Current source changes reuse current owner/grantor authorization and exact
+MATERIALIZE locators for history, the existing project membership PUT for import,
+and installed native settings/global qualified pins for the default run snapshot.
+Explicit invalid overrides remain failures; missing selection creates no project
+configuration. The canonical raw source-ID readback is owner-only and additive;
+v1 admission mutation/status bytes and their identities are unchanged.
+These source changes have focused client and native checks; live acceptance
+after the next deployment remains pending. External provider control and GitHub
+doctor delivery still require their dedicated server credentials.
+
+The frontend readiness reader now permits the global native read without a
+selected project; source selection still gates asking a question. The import
+attachment path also verifies current membership when a duplicate source was in
+the original project snapshot, rather than treating that old snapshot as a
+fresh receipt. Changed authority or a concurrently removed source is not
+silently re-added. Targeted verification passed: 30 client cases, six native
+Worker/D1 cases and the two actual Storybook browser scenarios for no project
+and importing into the selected project. Typecheck, touched-source lint and
+package boundaries passed. The relevant cases are included in push CI; no
+additional database migration is required for these changes.
+
 ## Owner model settings, October 15, 2026, 16:05 UTC
 
 Routine deployment of `0b017872cf18c3028cc63fa10a2dd510614d3829` is live as

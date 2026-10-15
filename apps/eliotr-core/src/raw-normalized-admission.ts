@@ -78,5 +78,9 @@ export function createRawNormalizedAdmissionService(input: {
       requireOwner(context);
       return capability.getStatus(actor(context), captureId, admissionOperationId, ports(context));
     },
+    getSourceIdentity(context: AuthenticatedRequestContext, captureId: string, admissionOperationId: string) {
+      requireOwner(context);
+      return capability.getSourceIdentity(actor(context), captureId, admissionOperationId, ports(context));
+    },
   };
 }

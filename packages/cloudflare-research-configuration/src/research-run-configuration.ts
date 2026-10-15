@@ -27,6 +27,9 @@ import {
   type SelectedResearchProjectConfigurationProvenance,
 } from "./research-branch-query-budget-selection.js";
 import type { ResearchProjectConfigurationGrantReadAuthority } from "./research-project-configuration.js";
+import type { InstalledNativeResearchConfiguration } from "./research-installed-native-configuration.js";
+export { readInstalledNativeResearchConfiguration } from "./research-installed-native-configuration.js";
+export type { InstalledNativeResearchConfiguration } from "./research-installed-native-configuration.js";
 
 export {
   RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON_KEY,
@@ -67,6 +70,9 @@ export interface CaptureResearchRunConfigurationInput extends ResearchRunConfigu
   readonly select_project_configuration?: () => Promise<SelectedResearchProjectConfiguration | null>;
   /** Current verified grant authority for grantor-owned project configuration. */
   readonly project_configuration_read_authority?: ResearchProjectConfigurationGrantReadAuthority;
+  readonly configuration_project_id?: string;
+  readonly allow_installed_native_default?: boolean;
+  readonly require_current_configuration_scope?: () => Promise<void>;
 }
 
 export interface ResearchRunConfigurationRuntimeSnapshot {
@@ -88,6 +94,8 @@ export interface ResearchRunConfigurationRuntimePort<RuntimeEnvironment> {
   readonly database: D1Database;
   readonly semantic_source: (environment: RuntimeEnvironment) => ResearchSemanticConfigInput;
   readonly model_transport_available: (environment: RuntimeEnvironment) => boolean;
+  readonly installed_native_configuration?: (environment: RuntimeEnvironment, ownerRef: string,
+    projectId: string) => Promise<InstalledNativeResearchConfiguration>;
   readonly overlay_snapshot: (
     environment: RuntimeEnvironment,
     snapshot: ResearchRunConfigurationRuntimeSnapshot,
@@ -491,9 +499,11 @@ async function composeSnapshot<RuntimeEnvironment>(
   selectedProject: SelectedResearchProjectConfiguration | undefined,
   port: ResearchRunConfigurationRuntimePort<RuntimeEnvironment>,
   projectConfigurationAuthority?: ResearchProjectConfigurationGrantReadAuthority,
+  installedNative?: InstalledNativeResearchConfiguration,
 ): Promise<{ readonly mode: ResearchRunConfigurationMode; readonly configuration_json: string }> {
-  let envelope: Record<string, unknown> | undefined;
-  let vars: Record<string, unknown> | undefined;
+  let envelope: Record<string, unknown> | undefined = installedNative === undefined
+    ? undefined : { model_selections: installedNative.model_selections };
+  let vars: Record<string, unknown> | undefined = installedNative === undefined ? undefined : { ...installedNative.vars };
   let nativeAcquisitionSelection: ResearchNativeAcquisitionSelection | undefined;
   let branchQueryBudgetSelection: ResearchBranchQueryBudgetSelection | undefined;
   let projectConfiguration: SnapshotEnvelope["project_configuration"] = null;
@@ -516,7 +526,7 @@ async function composeSnapshot<RuntimeEnvironment>(
       ...(selectedProject.project_id === undefined ? {} : { project_id: identifier(selectedProject.project_id) }) });
   }
   let projectSemantic: Record<string, unknown> | undefined;
-  if (envelope !== undefined && vars !== undefined) {
+  if (selectedProject !== undefined && envelope !== undefined && vars !== undefined) {
     const rawSemantic = envelope.semantic_revision;
     if (rawSemantic !== undefined) {
       const semanticRevision = object(rawSemantic, "project semantic config");
@@ -596,6 +606,7 @@ export async function captureResearchRunConfiguration<RuntimeEnvironment>(
     if (raw.select_project_configuration === undefined) checkpoint("WORKFLOW_CONFIGURATION_MISSING");
     const projectConfigurationAuthority = raw.project_configuration_read_authority;
     const requireCurrentProjectConfigurationAuthority = async () => {
+      await raw.require_current_configuration_scope?.();
       if (projectConfigurationAuthority === undefined) return;
       const grant = projectConfigurationAuthority.lease.grant;
       if (grant.state !== "ACTIVE" || !grant.allowed_operations.includes("run") ||
@@ -614,14 +625,35 @@ export async function captureResearchRunConfiguration<RuntimeEnvironment>(
       if (typed !== null) throw typed;
       throw error;
     }
-    if (selectedProject === null || selectedProject === undefined) checkpoint("WORKFLOW_CONFIGURATION_MISSING");
+    if (selectedProject === undefined) checkpoint("WORKFLOW_CONFIGURATION_MISSING");
+    let installedNative: InstalledNativeResearchConfiguration | undefined;
+    if (selectedProject === null) {
+      if (raw.allow_installed_native_default !== true || raw.configuration_project_id === undefined ||
+          port.installed_native_configuration === undefined) checkpoint("WORKFLOW_CONFIGURATION_MISSING");
+      if (raw.require_current_configuration_scope === undefined) checkpoint("WORKFLOW_AUTHORITY_STALE");
+      if (projectConfigurationAuthority !== undefined &&
+          raw.configuration_project_id !== projectConfigurationAuthority.lease.grant.project_id) {
+        checkpoint("WORKFLOW_AUTHORITY_STALE");
+      }
+      try {
+        installedNative = await port.installed_native_configuration(env,
+          projectConfigurationAuthority?.lease.grant.grantor_principal_ref ?? actor.principal_ref,
+          identifier(raw.configuration_project_id));
+        if (await raw.select_project_configuration() !== null) checkpoint("WORKFLOW_AUTHORITY_STALE");
+      } catch (error) {
+        const typed = port.translate_project_selection_failure?.(error) ?? null;
+        if (typed !== null) throw typed;
+        throw error;
+      }
+    }
     if (projectConfigurationAuthority !== undefined &&
-        (selectedProject.owner_ref !== projectConfigurationAuthority.lease.grant.grantor_principal_ref ||
+        selectedProject !== null && (selectedProject.owner_ref !== projectConfigurationAuthority.lease.grant.grantor_principal_ref ||
           selectedProject.project_id !== projectConfigurationAuthority.lease.grant.project_id)) {
       checkpoint("WORKFLOW_AUTHORITY_STALE");
     }
     await requireCurrentProjectConfigurationAuthority();
-    const snapshot = await composeSnapshot(env, actor, selectedProject, port, projectConfigurationAuthority);
+    const snapshot = await composeSnapshot(env, actor, selectedProject ?? undefined, port,
+      projectConfigurationAuthority, installedNative);
     await requireCurrentProjectConfigurationAuthority();
     await store.putImmutable({ ...actor, mode: snapshot.mode, configuration_json: snapshot.configuration_json });
     const persisted = await store.getByOperation(actor.operation_id);

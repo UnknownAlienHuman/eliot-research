@@ -188,6 +188,15 @@ export interface RawNormalizedAdmissionResult {
   readonly updated_at: string;
 }
 
+/** Exact source identity recovered from a committed raw admission. */
+export interface RawSourceIdentityReadback {
+  readonly protocol: "eliotr.raw-source-identity.v1";
+  readonly admission_operation_id: string;
+  readonly capture_id: string;
+  readonly source_id: string;
+  readonly source_revision_ref: string;
+}
+
 /** Owner UI metadata only; not a query, evidence grant or index validation receipt. */
 export interface SourceRevisionsRequest {
   readonly source_id: string;
@@ -305,6 +314,11 @@ export interface OwnerApi extends ErasureOwnerApi, WorkspaceOwnerApi, SourceName
     captureId: string,
     admissionOperationId: string,
   ): Promise<RawNormalizedAdmissionResult>;
+  getRawNormalizedAdmissionSourceIdentity(
+    context: AuthenticatedRequestContext,
+    captureId: string,
+    admissionOperationId: string,
+  ): Promise<RawSourceIdentityReadback>;
   systemHealth(context: AuthenticatedRequestContext): Promise<Record<string, unknown>>;
   systemCapabilities(context: AuthenticatedRequestContext): Promise<Record<string, unknown>>;
 }

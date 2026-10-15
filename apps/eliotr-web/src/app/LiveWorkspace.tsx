@@ -283,6 +283,7 @@ function ActiveSources({ locale, apis, privacy, context, projectId, projects, af
   const location = useLocation();
   const navigate = useNavigate();
   const cursor = libraryPages[libraryPages.length - 1];
+  const selectedProject = projects.data?.projects.find(project => project.project_id === projectId);
   const [revisionCursorStack, setRevisionCursorStack] = useState<RevisionCursorStack>();
   const routeState: unknown = location.state;
   const routeRevisionCursor = routeState !== null && typeof routeState === "object" &&
@@ -371,7 +372,11 @@ function ActiveSources({ locale, apis, privacy, context, projectId, projects, af
   return <>
     <OperationAnnouncement>{announcement}</OperationAnnouncement>
     <ProjectsLibraryFeature locale={locale} projectSelectRef={projectSelectRef} state={pending ? "loading" : error ? "error" : "useful"}
-      sourceActions={<ImportPanel locale={locale} apis={apis} privacy={privacy} context={context} />}
+      sourceActions={<ImportPanel locale={locale} apis={apis} privacy={privacy} context={context}
+        {...(selectedProject ? { project: selectedProject } : {})} projectSelected={projectId !== undefined}
+        onImportCommitted={() => {
+          if (privacy.isCurrent(context)) void client.invalidateQueries({ queryKey: key });
+        }} />}
       scopeActions={
         <NextQuestionScope locale={locale} page={library.data} projectSelected={projectId !== undefined} isLoading={pending} isError={error}
           selected={scope} selectionLimit={selectedSourceLimit} onToggle={onScope} onClear={onClearScope} />

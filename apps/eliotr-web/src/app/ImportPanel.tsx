@@ -1,7 +1,7 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { skipToken, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button, Dialog, ImportFlow, IMPORT_FLOW_COPY, type ImportFileState, type ImportBundleState, type ImportFlowBundleReview, type ImportFlowView } from '@eliotr/ui';
-import type { BrowserBundle, BrowserBundleImport, ImportIdentity, RawFileSelection, RawMarkdownConversionRequest, SourceNamespaceCatalog } from '@eliotr/owner-api-client';
+import type { BrowserBundle, BrowserBundleImport, ImportIdentity, ProjectSummary, RawFileSelection, RawMarkdownConversionRequest, RawNormalizedAdmissionResult, SourceNamespaceCatalog } from '@eliotr/owner-api-client';
 import { classifyMutationOutcome, RAW_MARKDOWN_MAX_OUTPUT_BYTES, RAW_MARKDOWN_MAX_TOKENS, RAW_MARKDOWN_TIMEOUT_MS } from '@eliotr/owner-api-client';
 import type { BoundWorkspaceApis } from './runtime';
 import { isWorkspaceRequestError } from './runtime';
@@ -10,6 +10,20 @@ import { OperationFeedback } from './OperationFeedback';
 import { importActions } from '../query/imports';
 import { protectedQueryKey, runProtectedRead } from '../query/client';
 import { useCanonicalCommitReport } from './canonicalCommit';
+import { createExistingProjectAttachmentController, freezeProjectAttachmentTarget, type ProjectAttachmentState, type ProjectAttachmentTarget } from '../query/projectAttachment';
+
+export interface CanonicalCommittedRawSource {
+  readonly sourceId: string;
+  readonly sourceRevisionRef: string;
+  readonly generation: string;
+}
+
+function committedRawSource(admission: RawNormalizedAdmissionResult | undefined, generation: string): CanonicalCommittedRawSource | undefined {
+  if (admission?.state !== 'COMMITTED' || !admission.admission_receipt ||
+      !['ADMITTED', 'DUPLICATE'].includes(admission.admission_receipt.decision) ||
+      typeof admission.source_id !== 'string' || admission.source_id.length === 0) return undefined;
+  return Object.freeze({ sourceId: admission.source_id, sourceRevisionRef: admission.source_revision_ref, generation });
+}
 
 /**
  * Terminality comes from the accepted status contract, never from COMMITTED alone.
@@ -47,17 +61,6 @@ function hasCanonicalBundleTerminal(memory: ImportMemory): boolean {
   return state === 'COMMITTED' ? confirmedBundleCommitKey(memory) !== undefined : isTerminalBundleState(state);
 }
 
-function bundleCommitKey(memory: ImportMemory): string | undefined {
-  const bundleKey = confirmedBundleCommitKey(memory);
-  if (bundleKey !== undefined) return bundleKey;
-  const admission = memory.file?.admission;
-  if (admission?.state === 'COMMITTED' && admission.admission_receipt &&
-    ['ADMITTED', 'DUPLICATE'].includes(admission.admission_receipt.decision)) {
-    return 'admission:' + admission.admission_operation_id;
-  }
-  return undefined;
-}
-
 interface ImportMemory {
   readonly selection?: RawFileSelection;
   readonly file?: ImportFileState;
@@ -67,13 +70,15 @@ interface ImportMemory {
   readonly review?: ImportFlowBundleReview;
   readonly identity?: ImportIdentity;
   readonly bundleState?: ImportBundleState;
+  readonly attachmentTarget?: ProjectAttachmentTarget | null;
+  readonly attachment?: ProjectAttachmentState;
   readonly submitted?: boolean;
   readonly admissionRejected?: boolean;
   readonly bundleRejected?: boolean;
 }
 const copy = {
-  en: { working: 'Checking the current import step.', prepared: 'The selected file is ready for capture.', captured: 'The exact file was captured.', converted: 'Processing finished. Review the captured file.', admitted: 'The source was added to the Library.', rejected: 'The source was not admitted. Review its saved status.', bundleReady: 'The exact bundle files are ready for review.', bundleCommitted: 'The import is committed with a verified receipt.', unknown: 'The import step is unresolved. Check the same request before continuing.', namespaces: 'Workspaces loaded.', namespaceError: 'Workspaces could not be loaded.', open: 'Import sources', close: 'Back to sources', workspace: 'Save the file in', choose: 'Choose a workspace', read: 'Refresh workspaces', error: 'The last step could not be verified. Check its saved status before starting again.', another: 'Add another file', resume: 'Continue' },
-  ru: { working: 'Работаем с файлом.', prepared: 'Файл выбран.', captured: 'Файл загружен.', converted: 'Файл переведён в текст.', admitted: 'Источник добавлен в библиотеку.', rejected: 'Источник не добавлен. Проверьте статус.', bundleReady: 'Файлы подборки готовы.', bundleCommitted: 'Импорт подтверждён.', unknown: 'Не удалось подтвердить последний шаг. Проверьте его, прежде чем продолжать.', namespaces: 'Рабочие области загружены.', namespaceError: 'Не удалось загрузить рабочие области.', open: 'Добавить источники', close: 'Готово', workspace: 'Сохранить файл в', choose: 'Выберите рабочую область', read: 'Обновить рабочие области', error: 'Не удалось подтвердить последний шаг. Проверьте его статус, прежде чем повторять.', another: 'Добавить ещё файл', resume: 'Продолжить' },
+  en: { working: 'Checking the current import step.', projectLoading: 'Loading the selected project.', prepared: 'The selected file is ready for capture.', captured: 'The exact file was captured.', converted: 'Processing finished. Review the captured file.', admitted: 'The source was added to the Library.', attached: 'The file was added to this project.', attaching: 'Adding the file to the selected project.', attachUnknown: 'The file is saved. Its project link is not confirmed.', attachConflict: 'The file is saved. The project changed before it could be updated.', attachAuthority: 'The file is saved. Sign in again before checking its project link.', sourceIdentity: 'The file is saved. Its project link could not be checked yet.', checkProject: 'Check project', checkIdentity: 'Check project link', rejected: 'The source was not admitted. Review its saved status.', bundleReady: 'The exact bundle files are ready for review.', bundleCommitted: 'The import is committed with a verified receipt.', unknown: 'The import step is unresolved. Check the same request before continuing.', namespaces: 'Workspaces loaded.', namespaceError: 'Workspaces could not be loaded.', open: 'Import sources', close: 'Back to sources', workspace: 'Save the file in', choose: 'Choose a workspace', read: 'Refresh workspaces', error: 'The last step could not be verified. Check its saved status before starting again.', another: 'Add another file', resume: 'Continue' },
+  ru: { working: 'Работаем с файлом.', projectLoading: 'Загружается выбранный проект.', prepared: 'Файл выбран.', captured: 'Файл загружен.', converted: 'Файл переведён в текст.', admitted: 'Источник добавлен в библиотеку.', attached: 'Файл добавлен в этот проект.', attaching: 'Добавляем файл в выбранный проект.', attachUnknown: 'Файл сохранён. Связь с проектом пока не подтверждена.', attachConflict: 'Файл сохранён. Проект изменился до обновления.', attachAuthority: 'Файл сохранён. Войдите снова, чтобы проверить связь с проектом.', sourceIdentity: 'Файл сохранён. Пока не удалось проверить связь с проектом.', checkProject: 'Проверить проект', checkIdentity: 'Проверить связь с проектом', rejected: 'Источник не добавлен. Проверьте статус.', bundleReady: 'Файлы подборки готовы.', bundleCommitted: 'Импорт подтверждён.', unknown: 'Не удалось подтвердить последний шаг. Проверьте его, прежде чем продолжать.', namespaces: 'Рабочие области загружены.', namespaceError: 'Не удалось загрузить рабочие области.', open: 'Добавить источники', close: 'Готово', workspace: 'Сохранить файл в', choose: 'Выберите рабочую область', read: 'Обновить рабочие области', error: 'Не удалось подтвердить последний шаг. Проверьте его статус, прежде чем повторять.', another: 'Добавить ещё файл', resume: 'Продолжить' },
 } as const;
 const withoutUncertainty = (file: ImportFileState | undefined) => {
   const { uncertain: _uncertain, ...rest } = file ?? { phase: 'useful' as const };
@@ -81,14 +86,17 @@ const withoutUncertainty = (file: ImportFileState | undefined) => {
 };
 
 /** Protected, memory-only recovery. Closing a sheet never creates a replacement operation. */
-export function ImportPanel({ apis, privacy, context, locale, onImportCommitted }: {
+export function ImportPanel({ apis, privacy, context, locale, project, projectSelected = project !== undefined, onImportCommitted }: {
   readonly apis: BoundWorkspaceApis; readonly privacy: PrivacyController; readonly context: SessionContext; readonly locale: 'en' | 'ru';
-  readonly onImportCommitted?: () => void;
+  readonly project?: ProjectSummary;
+  readonly projectSelected?: boolean;
+  readonly onImportCommitted?: (source?: CanonicalCommittedRawSource) => void;
 }) {
-  const client = useQueryClient(), key = [...protectedQueryKey(context, 'imports'), 'local-intent'];
+  const client = useQueryClient(), key = useMemo(() => [...protectedQueryKey(context, 'imports'), 'local-intent'], [context]);
   // One report is emitted per canonical committed identity, deduplicated by the original admission
   // operation or the bundle operation identity.
-  const commitReport = useCanonicalCommitReport(onImportCommitted);
+  const reportedSource = useRef<CanonicalCommittedRawSource | undefined>(undefined);
+  const commitReport = useCanonicalCommitReport(() => onImportCommitted?.(reportedSource.current));
   const memory = useQuery<ImportMemory>({ queryKey: key, queryFn: skipToken, gcTime: Infinity });
   const namespaceKey = [...protectedQueryKey(context, 'imports'), 'namespaces'];
   const actions = importActions(apis.sources, privacy, context, () => client.getQueryData<SourceNamespaceCatalog>(namespaceKey));
@@ -102,12 +110,13 @@ export function ImportPanel({ apis, privacy, context, locale, onImportCommitted 
   const resume = () => { polls.current = 0; setError(false); setAuto(true); };
   const [busy, setBusy] = useState(false), [error, setError] = useState(false);
   const operation = useRef<AbortController | undefined>(undefined), mounted = useRef(true), running = useRef(false);
+  const attachmentStarts = useRef<ReadonlySet<string>>(new Set());
   const selectId = useId(), text = copy[locale];
   const namespaces = useQuery({ ...actions.namespaces, enabled: open || auto });
-  const read = () => client.getQueryData<ImportMemory>(key) ?? {};
-  const write = (update: (old: ImportMemory) => ImportMemory) => {
+  const read = useCallback(() => client.getQueryData<ImportMemory>(key) ?? {}, [client, key]);
+  const write = useCallback((update: (old: ImportMemory) => ImportMemory) => {
     if (privacy.isCurrent(context)) client.setQueryData<ImportMemory>(key, old => update(old ?? {}));
-  };
+  }, [client, context, key, privacy]);
   useEffect(() => {
     mounted.current = true;
     return () => { mounted.current = false; operation.current?.abort(); };
@@ -219,19 +228,54 @@ export function ImportPanel({ apis, privacy, context, locale, onImportCommitted 
   // The report derives from the committed identity itself, so an admission reconciliation or a repeated
   // status read cannot report the same canonical commit twice. Nothing reports while the outcome is
   // uncertain, BLOCKED, rejected or quarantined.
-  const committedKey = bundleCommitKey(saved);
+  const bundleKey = confirmedBundleCommitKey(saved);
+  const admission = saved.file?.admission;
+  const rawSource = useMemo(() => committedRawSource(admission, context.deploymentGeneration), [admission, context.deploymentGeneration]);
+  const rawCommitKey = admission?.state === 'COMMITTED' && admission.admission_receipt &&
+    ['ADMITTED', 'DUPLICATE'].includes(admission.admission_receipt.decision)
+    ? `admission:${context.deploymentGeneration}:${admission.admission_operation_id}` : undefined;
+  const attachmentController = useCallback((target: ProjectAttachmentTarget | undefined) => createExistingProjectAttachmentController(
+    apis.sources, privacy, context, target, {
+      read: () => read().attachment,
+      write: attachment => write(old => ({ ...old, attachment })),
+    }), [apis.sources, context, privacy, read, write]);
   useEffect(() => {
-    if (committedKey !== undefined) commitReport(committedKey);
-  }, [commitReport, committedKey]);
+    if (bundleKey !== undefined) {
+      reportedSource.current = undefined;
+      commitReport(bundleKey);
+      return;
+    }
+    if (rawCommitKey === undefined) return;
+    const current = read(), target = current.attachmentTarget, attachment = current.attachment;
+    if (target == null) {
+      reportedSource.current = rawSource;
+      commitReport(rawCommitKey);
+      return;
+    }
+    if (target && rawSource !== undefined && (attachment === undefined || attachment.phase === 'dispatching')) {
+      if (attachmentStarts.current.has(rawCommitKey)) return;
+      attachmentStarts.current = new Set([...attachmentStarts.current, rawCommitKey]);
+      void attachmentController(target).attach(rawSource.sourceId, new AbortController().signal);
+      return;
+    }
+    if (target && attachment?.phase !== 'confirmed') return;
+    if (rawSource !== undefined) {
+      reportedSource.current = rawSource;
+      commitReport(rawCommitKey);
+    }
+  }, [attachmentController, bundleKey, commitReport, rawCommitKey, rawSource, read, saved.attachment?.phase]);
   const fileState = saved.file;
   const phase = busy ? 'loading' : fileState?.phase ?? 'useful';
+  const attachmentResolved = saved.attachmentTarget == null || saved.file?.admission?.state !== 'COMMITTED' || saved.attachment?.phase === 'confirmed';
   const canChooseAnotherFile = saved.selection !== undefined && saved.file?.uncertain === undefined &&
+    attachmentResolved &&
     (saved.file?.conversion === undefined || saved.file.conversion.state === 'FAILED' ||
       saved.admissionRejected === true || saved.file.admission?.state === 'COMMITTED' || saved.file.admission?.state === 'REJECTED' || saved.file.admission?.state === 'QUARANTINED');
   const clearFile = () => {
     if (running.current || !canChooseAnotherFile || !privacy.isCurrent(context)) return;
     write(old => {
-      const { selection: _selection, file: _file, request: _request, admissionRejected: _admissionRejected, ...rest } = old;
+      const { selection: _selection, file: _file, request: _request, admissionRejected: _admissionRejected,
+        attachmentTarget: _attachmentTarget, attachment: _attachment, ...rest } = old;
       return rest;
     });
     setSelectedFile(undefined); setAuto(false);
@@ -332,7 +376,15 @@ export function ImportPanel({ apis, privacy, context, locale, onImportCommitted 
   const refusedText = locale === 'ru'
     ? 'Запрос импорта отклонён до выполнения. Проверьте исходные данные и доступ перед продолжением.'
     : 'The import request was refused before execution. Review the input and access before continuing.';
-  const operationMessage = busy ? text.working : refused ? refusedText : error ? text.error
+  const attachmentMessage = view === 'file' && saved.file?.admission?.state === 'COMMITTED' && saved.attachmentTarget != null
+    ? saved.attachment?.phase === 'confirmed' ? text.attached
+      : saved.attachment?.phase === 'dispatching' ? text.attaching
+        : saved.attachment?.phase === 'conflict' ? text.attachConflict
+          : saved.attachment?.phase === 'authorization-lost' ? text.attachAuthority
+            : saved.attachment?.phase === 'unknown' ? text.attachUnknown
+              : rawSource === undefined ? text.sourceIdentity : text.attaching
+    : undefined;
+  const operationMessage = projectSelected && !project ? text.projectLoading : busy ? text.working : attachmentMessage ?? (refused ? refusedText : error ? text.error
     : view === 'bundle' ? saved.bundleState?.uncertain ? text.unknown
       : confirmedBundleCommitKey(saved) !== undefined ? text.bundleCommitted
       : saved.review ? text.bundleReady : ''
@@ -342,7 +394,7 @@ export function ImportPanel({ apis, privacy, context, locale, onImportCommitted 
     : fileState?.conversion?.state === 'COMPLETE' ? text.converted
     : fileState?.conversion?.state === 'FAILED' ? text.error
     : fileState?.receipt ? text.captured : saved.selection ? text.prepared
-    : namespaces.isFetching ? text.working : namespaces.isError ? text.namespaceError : namespaces.data ? text.namespaces : '';
+    : namespaces.isFetching ? text.working : namespaces.isError ? text.namespaceError : namespaces.data ? text.namespaces : '');
   return <>
     <Button variant="tonal" onClick={() => setOpen(true)}>{text.open}</Button>
     <Dialog open={open} title={text.open} onClose={() => setOpen(false)}>
@@ -360,7 +412,15 @@ export function ImportPanel({ apis, privacy, context, locale, onImportCommitted 
         fileState={{ ...fileState, phase }} bundleState={busy && view === 'bundle' ? { ...saved.bundleState, phase: 'loading' } : saved.bundleState}
         bundleReview={saved.review} conversionRequest={saved.request} selectionName={saved.selection?.original_file_name ?? selectedFile?.name}
         automatic working={auto}
-        onSelectFile={!saved.selection ? (file: File) => { setSelectedFile(file); resume(); } : undefined}
+        onSelectFile={!saved.selection ? (file: File) => {
+          if (!privacy.isCurrent(context)) return;
+          if (projectSelected && !project) return;
+          write(old => {
+            const { attachment: _attachment, ...rest } = old;
+            return { ...rest, attachmentTarget: project ? freezeProjectAttachmentTarget(project, context.deploymentGeneration) : null };
+          });
+          setSelectedFile(file); resume();
+        } : undefined}
         onRecoverCapture={!auto && saved.selection && saved.file?.uncertain === 'capture' ? () => { resume(); reconcileCapture(); } : undefined}
         onReconcileConversion={!auto && saved.request && saved.file?.uncertain === 'conversion' ? () => { resume(); const request = read().request; if (request) convert(request); } : undefined}
         onRetryConvert={saved.file?.conversion?.state === 'FAILED' && saved.request ? operationId => {
@@ -375,6 +435,13 @@ export function ImportPanel({ apis, privacy, context, locale, onImportCommitted 
         onInspectBundle={!saved.bundleRejected && (saved.identity || saved.bundle && saved.submitted) ? inspectBundle : undefined} onStopBundle={busy ? () => operation.current?.abort() : undefined}
         onDisposeBundle={canDismissBundle ? clearBundle : undefined}
       />
+      {view === 'file' && saved.attachmentTarget != null && saved.file?.admission?.state === 'COMMITTED' &&
+        rawSource === undefined && !busy && <Button variant="tonal" onClick={() => {
+          const current = read();
+          if (current.file?.admission?.state === 'COMMITTED' && current.file.conversion?.state === 'COMPLETE') admit();
+        }}>{text.checkIdentity}</Button>}
+      {view === 'file' && saved.attachmentTarget && saved.attachment?.phase === 'unknown' && !busy &&
+        <Button variant="tonal" onClick={() => { void attachmentController(saved.attachmentTarget ?? undefined).readStatus(new AbortController().signal); }}>{text.checkProject}</Button>}
       {view === 'file' && !auto && !busy && saved.selection && !saved.file?.uncertain && !saved.admissionRejected &&
         saved.file?.conversion?.state !== 'FAILED' && saved.file?.admission === undefined &&
         <Button variant="tonal" onClick={resume}>{text.resume}</Button>}

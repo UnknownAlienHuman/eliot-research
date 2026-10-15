@@ -140,6 +140,7 @@ export async function resolveResearchRunAdmissionConfiguration(
     actor: input.actor,
     scope_expression: input.scope_expression,
     new_run: input.new_run,
+    require_current_configuration_scope: input.require_current_scope,
     ...(input.configuration_required === undefined ? {} : { configuration_required: input.configuration_required }),
     ...(input.selected_project_id === undefined ? {} : { selected_project_id: input.selected_project_id }),
     ...(input.project_configuration_read_authority === undefined ? {} : {

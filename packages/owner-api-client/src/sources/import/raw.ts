@@ -84,6 +84,8 @@ export interface RawNormalizedAdmissionResult {
     readonly candidate_ref: string;
     readonly state: RawNormalizedAdmissionState;
     readonly source_revision_ref: string;
+    /** Canonical source identity read back after COMMITTED; absent for earlier states. */
+    readonly source_id?: string;
     readonly source_view_ref: string;
     readonly conversion_state: "COMPLETE";
     readonly admission_receipt?: BundleAdmissionReceipt;
@@ -518,6 +520,40 @@ function decodeRawNormalizedAdmissionEnvelope(value: unknown, expectedGeneration
     }
     return decodeRawNormalizedAdmissionResult(value.data, expected, conversion);
 }
+function decodeRawSourceIdentityEnvelope(value: unknown, expectedGeneration: string, admission: RawNormalizedAdmissionResult): string {
+    if (!record(value) || Object.keys(value).length !== 3 || !Object.hasOwn(value, "data") || !Object.hasOwn(value, "trace_id") || !Object.hasOwn(value, "deployment_generation")) {
+        throw fail({ status: 502, code: "RAW_SOURCE_IDENTITY_RESPONSE_INVALID", message: "Source identity response envelope is invalid" });
+    }
+    const generation = text(value.deployment_generation, 256, "deployment_generation");
+    const trace = text(value.trace_id, 128, "trace_id");
+    if (!SAFE_GENERATION.test(generation) || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u.test(trace) || generation !== expectedGeneration) {
+        throw fail({ status: 409, code: "API_GENERATION_MISMATCH", message: "Application changed; source identity readback was discarded", retryable: true });
+    }
+    const result = value.data;
+    if (!record(result) || Object.keys(result).length !== 5 ||
+        result.protocol !== "eliotr.raw-source-identity.v1" ||
+        result.admission_operation_id !== admission.admission_operation_id ||
+        result.capture_id !== admission.capture_id || result.source_revision_ref !== admission.source_revision_ref ||
+        typeof result.source_id !== "string" || !SAFE_GENERATION.test(result.source_id)) {
+        throw fail({ status: 502, code: "RAW_SOURCE_IDENTITY_RESPONSE_INVALID", message: "Source identity readback does not match the committed admission" });
+    }
+    return result.source_id;
+}
+async function attachCommittedSourceIdentity(result: RawNormalizedAdmissionResult, expectedGeneration: string, signal?: AbortSignal): Promise<RawNormalizedAdmissionResult> {
+    if (result.state !== "COMMITTED") return result;
+    const captured = currentCapture();
+    try {
+        const value = await guarded(captured, requestApi(`/api/v1/ingest/raw/${encodeURIComponent(result.capture_id)}/admission/${encodeURIComponent(result.admission_operation_id)}/source-identity`, {
+            method: "GET", ...(signal === undefined ? {} : { signal }),
+        }));
+        const sourceId = decodeRawSourceIdentityEnvelope(value, expectedGeneration, result);
+        return currentResult(captured, { ...result, source_id: sourceId });
+    } catch {
+        // Admission is already committed. Preserve that fact so a caller cannot
+        // mistake a readback failure for permission to replay the mutation.
+        return currentResult(captured, result);
+    }
+}
 async function admitRawFileToLibrary(capture: RawFileCaptureReceipt, conversion: RawMarkdownConversionResult, expectedGeneration: string, signal?: AbortSignal): Promise<RawNormalizedAdmissionResult> {
     const captured = currentCapture();
     if (conversion.state !== "COMPLETE")
@@ -529,7 +565,8 @@ async function admitRawFileToLibrary(capture: RawFileCaptureReceipt, conversion:
         method: "POST", body: JSON.stringify({ idempotency_key: key, conversion_operation_id: conversion.operation_id }),
         ...(signal === undefined ? {} : { signal }), headers: { "content-type": "application/json" },
     }));
-    return currentResult(captured, decodeRawNormalizedAdmissionEnvelope(value, expectedGeneration, capture, conversion));
+    const result = currentResult(captured, decodeRawNormalizedAdmissionEnvelope(value, expectedGeneration, capture, conversion));
+    return attachCommittedSourceIdentity(result, expectedGeneration, signal);
 }
 async function readRawFileAdmissionStatus(capture: RawFileCaptureReceipt, conversion: RawMarkdownConversionResult, admissionOperationId: string, expectedGeneration: string, signal?: AbortSignal): Promise<RawNormalizedAdmissionResult> {
     const captured = currentCapture();
@@ -542,7 +579,8 @@ async function readRawFileAdmissionStatus(capture: RawFileCaptureReceipt, conver
     const value = await guarded(captured, requestApi(`/api/v1/ingest/raw/${encodeURIComponent(capture.capture_id)}/admission/${encodeURIComponent(admissionOperationId)}`, {
         method: "GET", ...(signal === undefined ? {} : { signal }),
     }));
-    return currentResult(captured, decodeRawNormalizedAdmissionEnvelope(value, expectedGeneration, capture, conversion));
+    const result = currentResult(captured, decodeRawNormalizedAdmissionEnvelope(value, expectedGeneration, capture, conversion));
+    return attachCommittedSourceIdentity(result, expectedGeneration, signal);
 }
 return {createRawMarkdownIdempotencyKey,prepareRawFileSelection,decodeRawFileCaptureEnvelope,captureRawFile,readRawFileByIdempotency,decodeRawMarkdownConversionEnvelope,convertRawFileToMarkdown,decodeRawNormalizedAdmissionEnvelope,admitRawFileToLibrary,readRawFileAdmissionStatus};
 }

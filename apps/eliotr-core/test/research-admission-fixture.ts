@@ -173,7 +173,7 @@ function stageTransportSelections(
   return selections;
 }
 
-async function seedQualifiedSelection(
+export async function seedQualifiedSelection(
   database: D1Database,
   deployment: ModelRouteDeployment,
   transport: Readonly<{ provider: string; model: string }>,

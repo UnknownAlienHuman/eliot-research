@@ -25,6 +25,9 @@ function admissionRequest(captureId: string, idempotencyKey: string, conversionO
     ...(signal === undefined ? {} : { signal }),
   });
 }
+function sourceIdentityRequest(captureId: string, admissionOperationId: string): Request {
+  return new Request(`https://research.example/api/v1/ingest/raw/${captureId}/admission/${admissionOperationId}/source-identity`);
+}
 async function seedCompleteConversion(db: D1Database, bucket: R2Bucket, captureId: string, principal: string, contentSha: string, sizeBytes: number, operationId: string, output: Uint8Array): Promise<void> {
   const outputSha = await sha(output);
   const result = { protocol: "eliotr.raw-markdown-conversion.v1", state: "COMPLETE", operation_id: operationId, capture_id: captureId, content_sha256: contentSha, output_sha256: outputSha, output_bytes: output.byteLength, detected_mime: "text/markdown", format: "markdown", tokens: 3 };
@@ -58,6 +61,7 @@ describe("raw normalized admission actual Worker path", () => {
     const firstData = (await first.json() as { data: { admission_operation_id: string; state: string; status?: { state: string } } }).data;
     expect(firstData.state).toBe("COMMITTED");
     expect(firstData.status?.state).toBe("COMMITTED");
+    expect(firstData).not.toHaveProperty("source_id");
     const firstLedger = await runtime.CORE_DB.prepare(
       "SELECT reason_codes_json,receipt_json FROM raw_normalized_admission WHERE admission_operation_id=?1 LIMIT 1",
     ).bind(firstData.admission_operation_id).first<{ readonly reason_codes_json: string; readonly receipt_json: string }>();
@@ -67,6 +71,17 @@ describe("raw normalized admission actual Worker path", () => {
     const replay = await handleHttp(admissionRequest(capture.capture_id, "raw-admission-key-1", conversionId), runtime, {} as ExecutionContext, { ...ownerAccess(principal), applicationFactory: factory });
     expect(replay.status).toBe(200);
     expect((await replay.json() as { data: { admission_operation_id: string } }).data.admission_operation_id).toBe(firstData.admission_operation_id);
+    const expectedSource = await runtime.CORE_DB.prepare("SELECT source_logical_id,source_revision_ref FROM raw_file_capture WHERE capture_id=?1 LIMIT 1")
+      .bind(capture.capture_id).first<{ source_logical_id: string; source_revision_ref: string }>();
+    const identityResponse = await handleHttp(sourceIdentityRequest(capture.capture_id, firstData.admission_operation_id), runtime, {} as ExecutionContext, { ...ownerAccess(principal), applicationFactory: factory });
+    expect(identityResponse.status).toBe(200);
+    expect(await identityResponse.json()).toMatchObject({ data: {
+      protocol: "eliotr.raw-source-identity.v1", admission_operation_id: firstData.admission_operation_id,
+      capture_id: capture.capture_id, source_id: expectedSource?.source_logical_id,
+      source_revision_ref: expectedSource?.source_revision_ref,
+    } });
+    const foreignIdentity = await handleHttp(sourceIdentityRequest(capture.capture_id, firstData.admission_operation_id), runtime, {} as ExecutionContext, { ...ownerAccess(`${principal}-foreign`), applicationFactory: factory });
+    expect(foreignIdentity.status).toBe(404);
     const conflict = await handleHttp(admissionRequest(capture.capture_id, "raw-admission-key-1", "b".repeat(64)), runtime, {} as ExecutionContext, { ...ownerAccess(principal), applicationFactory: factory });
     expect(conflict.status).toBe(409);
 

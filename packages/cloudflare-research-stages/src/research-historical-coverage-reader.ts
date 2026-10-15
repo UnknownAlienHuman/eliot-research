@@ -188,7 +188,20 @@ export async function readHistoricalResearchArtifactLocator(input: HistoricalRes
       typeof input.require_current !== "function") fail("WORKFLOW_INPUT_INVALID");
   const artifactRef = VersionedRefSchema.parse(input.artifact_ref), originalScope = VersionedRefSchema.parse(input.original_scope_snapshot_ref);
   await input.require_current();
-  const completed = await readCompletedHistoricalRun(input.database, input.operation_id, input.owner.principal_ref);
+  // Authorship and the current owner reader are independent. Resolve the author
+  // through the exact run's owner/grantor origin; never impersonate the machine.
+  let origin: { readonly principal_ref: string } | null;
+  try {
+    origin = await input.database.prepare(
+      "SELECT r.principal_ref FROM research_workflow_run r WHERE r.operation_id=?1 " +
+      "AND (r.principal_ref=?2 OR EXISTS(SELECT 1 FROM owner_machine_run_origin o " +
+      "WHERE o.operation_id=r.operation_id AND o.reader_principal_ref=?2)) LIMIT 1",
+    ).bind(input.operation_id, input.owner.principal_ref)
+      .first<{ readonly principal_ref: string }>();
+  } catch { unavailable(); }
+  if (origin === null) return null;
+  if (!IDENTIFIER.test(origin.principal_ref)) corrupt();
+  const completed = await readCompletedHistoricalRun(input.database, input.operation_id, origin.principal_ref);
   if (completed === null) return null;
   const { operationId, investigationId, principalRef, scope, handlerGeneration, currentRevision } = completed;
   if (!sameRef(scope, originalScope)) corrupt();

@@ -26,6 +26,7 @@ export function dispatchIngestOperation(
   const operations: NormalizedIngestOperationPort = {
     admitRawFileToNormalized: (captureId, body) => owner.admitRawFileToNormalized(context, captureId, body),
     getRawNormalizedAdmissionStatus: (captureId, admissionId) => owner.getRawNormalizedAdmissionStatus(context, captureId, admissionId),
+    getRawNormalizedAdmissionSourceIdentity: (captureId, admissionId) => owner.getRawNormalizedAdmissionSourceIdentity(context, captureId, admissionId),
     prepareBundle: (body) => owner.prepareBundle(context, body),
     uploadBundlePart: (body) => owner.uploadBundlePart(context, body),
     completeBundleFile: (body) => owner.completeBundleFile(context, body),

@@ -6,6 +6,8 @@ import {
   readHistoricalResearchArtifactLocator,
 } from "@eliotr/cloudflare-research-stages";
 import { prepareReauthenticatedRunRead } from "./research-run-read-authorization.js";
+import { runControlStatus } from "./research-run-control.js";
+import { WorkflowCheckpointError } from "@eliotr/cloudflare-workflows";
 import type { ResearchRunReadEnvironment, ReopenedResearchRunDraft } from "./research-run-read-authorization.js";
 
 export interface ResearchArtifactReadAuthorization {
@@ -31,6 +33,7 @@ export interface ResearchRunListPorts {
 
 interface SavedDraftRow {
   readonly origin_client_class: unknown;
+  readonly principal_ref: unknown;
   readonly artifact_id: unknown;
   readonly revision: unknown;
   readonly scope_snapshot_id: unknown;
@@ -88,9 +91,9 @@ async function readHistoricalWorkflowId(
       "ON w.operation_id=r.operation_id AND w.principal_ref=r.principal_ref " +
       "AND w.scope_snapshot_id=r.scope_snapshot_id AND w.scope_snapshot_revision=r.scope_snapshot_revision " +
       "WHERE r.intent_id=?1 AND r.intent_revision=?2 AND r.principal_ref=?3 " +
-      "AND r.client_class='owner_pwa' AND r.scope_snapshot_id=?4 AND r.scope_snapshot_revision=?5 " +
+      "AND r.client_class=?6 AND r.scope_snapshot_id=?4 AND r.scope_snapshot_revision=?5 " +
       "LIMIT 2",
-    ).bind(draft.intent_id, draft.intent_revision, principalRef, scope.id, scope.revision)
+    ).bind(draft.intent_id, draft.intent_revision, principalRef, scope.id, scope.revision, draft.origin_client_class)
       .all<HistoricalWorkflowRow>();
   } catch {
     throw new CatalogInputError("RESEARCH_HISTORY_UNAVAILABLE", "Saved report history is temporarily unavailable", 503, true);
@@ -153,7 +156,7 @@ export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context
   ports.authorize_owner_read(context);
   type RunRow = { operation_id: string; created_at: string; query: unknown };
   type RunEntry = { created_at: string; query?: string; status: ResearchRunStatus };
-  const runs = await scanVisibleRecent<RunRow, RunEntry>(async (after, limit) => {
+  const runsRead = scanVisibleRecent<RunRow, RunEntry>(async (after, limit) => {
     try {
       const result = await ports.database.prepare(
         "SELECT r.operation_id, r.created_at, h.goal AS query FROM research_workflow_run r " +
@@ -175,26 +178,31 @@ export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context
     if (typeof row.operation_id !== "string" || row.operation_id.length < 1 || typeof row.created_at !== "string" ||
         !Number.isFinite(Date.parse(row.created_at))) invalidHistory("Stored research history is invalid");
     try {
-      const status = await ports.run_status(context, row.operation_id);
       const read = await prepareReauthenticatedRunRead(ports.run_read, context, row.operation_id);
+      if (read === null) return null;
+      // Recent is a locator projection. Opening a run still reads and verifies
+      // its complete coverage and report lineage through the detailed reader.
+      await read.requireCurrent();
+      const status = runControlStatus(read.status);
       let query: string | undefined;
       if (row.query !== null && row.query !== undefined) {
         try { query = ResearchRunHistoryQuerySchema.parse(row.query); }
         catch { invalidHistory("Stored research query is invalid"); }
       }
       return { entry: { created_at: row.created_at, ...(query === undefined ? {} : { query }), status },
-        ...(read === null ? {} : { require_current: read.requireCurrent }) };
+        require_current: read.requireCurrent };
     } catch (error) {
       if (error instanceof CatalogInputError && [403, 404, 409, 410].includes(error.status)) return null;
+      if (error instanceof WorkflowCheckpointError && error.code === "WORKFLOW_AUTHORITY_STALE") return null;
       throw error;
     }
   });
 
   type DraftEntry = { artifact_ref: VersionedRef; created_at: string; workflow_instance_id?: string };
-  const drafts = await scanVisibleRecent<SavedDraftRow, DraftEntry>(async (after, limit) => {
+  const draftsRead = scanVisibleRecent<SavedDraftRow, DraftEntry>(async (after, limit) => {
     try {
       const result = await ports.database.prepare(
-        "SELECT b.artifact_id,b.revision,b.intent_id,b.intent_revision,b.scope_snapshot_id,b.scope_snapshot_revision,b.created_at," +
+        "SELECT b.artifact_id,b.revision,b.intent_id,b.intent_revision,b.scope_snapshot_id,b.scope_snapshot_revision,b.created_at,b.principal_ref," +
         "o.origin_client_class FROM artifact_draft_binding b JOIN owner_artifact_read_origin o " +
         "ON o.artifact_id=b.artifact_id AND o.artifact_revision=b.revision " +
         "WHERE o.reader_principal_ref=?1 AND (?2 IS NULL OR b.created_at<?2 OR " +
@@ -214,22 +222,12 @@ export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context
     if (!["owner_pwa", "trusted_agent", "named_api_client"].includes(String(row.origin_client_class))) {
       invalidHistory("Saved report author class is invalid");
     }
-    if (row.origin_client_class !== "owner_pwa") {
-      try {
-        const read = await ports.prepare_artifact_read(context, ref, "report");
-        if (!sameRef(read.original_scope_snapshot_ref, originalRef)) invalidHistory("Saved report origin changed");
-        await read.requireCurrent();
-        return { entry: { artifact_ref: ref, created_at: row.created_at }, require_current: read.requireCurrent };
-      } catch (error) {
-        if (expectedSavedDraftDenial(error)) return null;
-        throw error;
-      }
-    }
+    if (typeof row.principal_ref !== "string" || row.principal_ref.length < 1) invalidHistory("Saved report author is invalid");
     try {
       const read = await ports.prepare_artifact_read(context, ref, "report");
       if (!sameRef(read.original_scope_snapshot_ref, originalRef)) invalidHistory("Saved report origin changed");
       await read.requireCurrent();
-      const operationId = await readHistoricalWorkflowId(ports, row, context.principal_ref, originalRef);
+      const operationId = await readHistoricalWorkflowId(ports, row, row.principal_ref, originalRef);
       let workflowInstanceId: string | undefined;
       if (operationId !== null) {
         const historical = await readHistoricalResearchArtifactLocator({
@@ -251,13 +249,26 @@ export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context
       throw error;
     }
   });
+  const [runs, drafts] = await Promise.all([runsRead, draftsRead]);
+  const reportsByRun = new Map<string, VersionedRef>();
+  for (const draft of drafts.entries) {
+    const operationId = draft.workflow_instance_id;
+    if (operationId === undefined) continue;
+    const prior = reportsByRun.get(operationId);
+    if (prior !== undefined && !sameRef(prior, draft.artifact_ref)) invalidHistory("Saved run has conflicting report locators");
+    reportsByRun.set(operationId, draft.artifact_ref);
+  }
   // A changed authority invalidates the whole response; it never silently turns
   // a previously selected locator into a complete short list.
-  for (const requireCurrent of runs.checks) await requireCurrent();
-  for (const requireCurrent of drafts.checks) await requireCurrent();
+  await Promise.all([...runs.checks, ...drafts.checks].map((requireCurrent) => requireCurrent()));
   return {
     protocol: "eliotr.research-runs.v5" as const,
-    runs: runs.entries, saved_drafts: drafts.entries,
+    runs: runs.entries.map((entry) => {
+      const artifact = reportsByRun.get(entry.status.workflow_instance_id);
+      return artifact === undefined || entry.status.execution_state !== "ENGINE_COMPLETED" ? entry : {
+        ...entry, status: { ...entry.status, answer: { availability: "draft" as const, artifact_ref: artifact } },
+      };
+    }), saved_drafts: drafts.entries,
     visibility_scan: { runs: runs.state, saved_drafts: drafts.state },
     configuration_state: ports.semantic_configuration_installed() ? "INSTALLED" as const : "MISSING" as const,
     checked_at: new Date().toISOString(),

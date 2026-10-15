@@ -57,9 +57,11 @@ export function researchQueryOptions(
         queryKey: [...key, "configuration", project?.id ?? null],
         refetchOnMount: false,
         queryFn: ({ signal }) => runProtectedRead(privacy, context, signal, async readSignal => {
-          if (!project?.isCurrent()) throw new Error("Research project is no longer current");
-          const result = await apis.configuration.readResearchConfiguration(generation, { projectId: project.id, signal: readSignal });
-          if (!project.isCurrent()) throw new Error("Research project is no longer current");
+          if (project !== undefined && !project.isCurrent()) throw new Error("Research project is no longer current");
+          const result = await apis.configuration.readResearchConfiguration(generation, {
+            ...(project === undefined ? {} : { projectId: project.id }), signal: readSignal,
+          });
+          if (project !== undefined && !project.isCurrent()) throw new Error("Research project is no longer current");
           return result;
         }),
       });

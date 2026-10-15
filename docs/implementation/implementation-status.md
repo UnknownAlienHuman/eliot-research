@@ -18,6 +18,12 @@ circular dependency on the later REPORT admission. No artifact reservation or
 admission was found, and the run was canceled with a readback receipt.
 Migration 0155 has a passing native D1 guard regression; remote application and
 the delegated final report remain pending.
+At `git-85514a42b1f3`, 0155 was applied and the real Codex assignment completed
+all 18 stages with a saved DRAFT and owner status readback. Recent-history UI
+still exceeded the transport deadline. Source changes now use narrow authorized
+history locators, attach a committed file to the project captured at upload,
+and snapshot installed global native defaults when no project override exists.
+Local focused checks passed; browser acceptance after deployment is pending.
 External key management and GitHub doctor
 delivery still lack their narrow server credentials. See the dated
 [delivery observation](backend-delivery-plan.md#owner-live-acceptance-october-15-2026-1910-utc)

@@ -129,4 +129,51 @@ describe('raw capture, explicit conversion and recovery through the real transpo
     await expect(api.admitRawFileToLibrary(capture, { protocol: 'eliotr.raw-markdown-conversion.v1', state: 'STARTED', operation_id: operationId, capture_id: captureId, content_sha256: capture.content_sha256 }, 'deploy-1')).rejects.toMatchObject({ code: 'RAW_MARKDOWN_NOT_COMPLETE' });
     expect(transport).not.toHaveBeenCalled();
   });
+  it('reads the canonical identity after a committed v1 admission and rejects a foreign binding', async () => {
+    const capture = await captureFor();
+    const admissionId = 'e'.repeat(64);
+    const revision = 'source-revision-actual';
+    const receipt = {
+      operation_id: 'bundle-operation-1', manifest_sha256: '1'.repeat(64), source_revision_ref: revision,
+      normalized_artifact_ref: 'artifact-1', object_residency_key_digest: '2'.repeat(64), decision: 'ADMITTED',
+      reason_codes: [], readback_sha256: '3'.repeat(64), committed_at: now,
+    };
+    const committed = {
+      protocol: 'eliotr.raw-normalized-admission.v1', admission_operation_id: admissionId,
+      capture_id: capture.capture_id, conversion_operation_id: operationId, candidate_ref: `raw-normalized-candidate:${'4'.repeat(64)}`,
+      state: 'COMMITTED', source_revision_ref: revision, source_view_ref: `snapshot-view:v1:${'5'.repeat(64)}`,
+      conversion_state: 'COMPLETE', admission_receipt: receipt, reason_codes: [], expires_at: now, updated_at: now,
+    };
+    let requestedBody: unknown;
+    const { api } = setup(async (path, init) => {
+      if (path.endsWith('/source-identity')) return response(envelope({
+        protocol: 'eliotr.raw-source-identity.v1', admission_operation_id: admissionId,
+        capture_id: capture.capture_id, source_id: 'source-canonical', source_revision_ref: revision,
+      }));
+      requestedBody = JSON.parse(String(init.body));
+      return response(envelope(committed));
+    });
+    const result = await api.admitRawFileToLibrary(capture, {
+      protocol: 'eliotr.raw-markdown-conversion.v1', state: 'COMPLETE', operation_id: operationId,
+      capture_id: capture.capture_id, content_sha256: capture.content_sha256, output_sha256: '6'.repeat(64),
+      output_bytes: 20, detected_mime: 'text/markdown', format: 'markdown', tokens: 4,
+    }, 'deploy-1');
+    expect(requestedBody).toMatchObject({ conversion_operation_id: operationId });
+    expect(Object.keys(requestedBody as Record<string, unknown>).sort()).toEqual(['conversion_operation_id', 'idempotency_key']);
+    expect(result.protocol).toBe('eliotr.raw-normalized-admission.v1');
+    expect(result.source_id).toBe('source-canonical');
+
+    const mismatch = setup(async (path) => response(envelope(path.endsWith('/source-identity') ? {
+      protocol: 'eliotr.raw-source-identity.v1', admission_operation_id: admissionId,
+      capture_id: capture.capture_id, source_id: 'foreign-source', source_revision_ref: 'other-revision',
+    } : committed)));
+    const committedWithoutIdentity = await mismatch.api.admitRawFileToLibrary(capture, {
+      protocol: 'eliotr.raw-markdown-conversion.v1', state: 'COMPLETE', operation_id: operationId,
+      capture_id: capture.capture_id, content_sha256: capture.content_sha256, output_sha256: '6'.repeat(64),
+      output_bytes: 20, detected_mime: 'text/markdown', format: 'markdown', tokens: 4,
+    }, 'deploy-1');
+    expect(committedWithoutIdentity.state).toBe('COMMITTED');
+    expect(committedWithoutIdentity.source_id).toBeUndefined();
+    expect(mismatch.transport).toHaveBeenCalledTimes(2); // One admission POST and one identity GET.
+  });
 });

@@ -43,9 +43,15 @@ describe("Research selected project readiness", () => {
     expect(other.configuration().queryKey).not.toEqual(options.configuration().queryKey);
     test.privacy.close(); test.client.clear();
   });
-  it("refuses an absent or stale project before any request", async () => {
+  it("reads global native readiness without selecting a project", async () => {
     const test = await fixture();
-    await expect(test.client.fetchQuery(researchQueryOptions(test.apis, test.privacy, test.context).configuration())).rejects.toThrow("project is no longer current");
+    const options = researchQueryOptions(test.apis, test.privacy, test.context);
+    expect((await test.client.fetchQuery(options.configuration())).run_readiness).toBe("ready");
+    expect(String(test.fetcher.mock.calls[0]?.[0])).toBe("/api/v1/system/research-configuration");
+    test.privacy.close(); test.client.clear();
+  });
+  it("refuses an explicitly stale project before any request", async () => {
+    const test = await fixture();
     await expect(test.client.fetchQuery(researchQueryOptions(test.apis, test.privacy, test.context, { id: "old-project", isCurrent: () => false }).configuration())).rejects.toThrow("project is no longer current");
     expect(test.fetcher).not.toHaveBeenCalled();
     test.privacy.close(); test.client.clear();

@@ -257,7 +257,7 @@ export function createResearchProjectModelConfigurationValidator(options: {
   readonly deployment_environment?: "TEST" | "PRODUCTION";
   readonly deployment_generation?: string;
   readonly now?: () => number;
-}): (raw: unknown, expectedOwner: string, project: string,
+}): (raw: unknown, expectedOwner: string, project: string | undefined,
   nativeAuthority?: ProviderNativeModelAuthorityPort) => Promise<ConfigurationValidation> {
   const now = options.now ?? (() => Date.now());
   const environment = options.deployment_environment ?? "PRODUCTION";
@@ -268,7 +268,7 @@ export function createResearchProjectModelConfigurationValidator(options: {
   async function validateConfiguration(
     raw: unknown,
     expectedOwner: string,
-    project: string,
+    project: string | undefined,
     nativeAuthority?: ProviderNativeModelAuthorityPort,
   ): Promise<ConfigurationValidation> {
     const storeDecoded = await decodeResearchProjectModelConfigurationBundle(raw);
@@ -406,7 +406,7 @@ export function createResearchProjectModelConfigurationValidator(options: {
         }
       }
       if (selection.candidate_kind === "provider-native-v1") {
-        if (version !== "v2" || nativeAuthority === undefined) {
+        if (version !== "v2" || nativeAuthority === undefined || project === undefined) {
           qualificationRequired(`${rule.stage} provider-native authority is unavailable for this configuration`);
         }
         let resolvedNative;

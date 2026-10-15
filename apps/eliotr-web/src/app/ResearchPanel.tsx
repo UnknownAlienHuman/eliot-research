@@ -173,7 +173,7 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     {!scopeCurrent && !saved?.intent && (projectId === undefined || scope.length > 0) && <p className="er-live-callout"><MaterialSymbol name="folder" /><span>{projectId === undefined ? text.noProject : text.scopeStale}</span> {projectId === undefined
       ? <WorkspaceLink className="er-shell-link" to="/projects">{text.projects}</WorkspaceLink>
       : <WorkspaceLink className="er-shell-link" to="/sources">{text.scope}</WorkspaceLink>}</p>}
-    {configuration.isError || !configuration.data || configuration.data.run_readiness === 'blocked' ? <div className="er-live-callout">
+    {configuration.isError || configuration.data?.run_readiness === 'blocked' ? <div className="er-live-callout">
       <Status>{text.blocked}</Status><div className="er-live-actions"><Button variant="tonal" disabled={configuration.isFetching} onClick={() => { void configuration.refetch(); }}>{text.check}</Button><WorkspaceLink className="er-shell-link" to="/connections">{text.connections}</WorkspaceLink></div>
     </div> : null}
     {inputError && <Status tone="error">{text.input}</Status>}

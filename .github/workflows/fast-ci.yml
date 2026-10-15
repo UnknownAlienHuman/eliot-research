@@ -44,6 +44,9 @@ jobs:
           packages/retrieval/src/retrieval.test.ts
           packages/retrieval/src/service-managed-admission.test.ts
           apps/eliotr-web/src/query/research.test.ts
+          apps/eliotr-web/src/query/projectAttachment.test.ts
+          packages/owner-api-client/src/sources/import/raw.test.ts
+          packages/cloudflare-research-runtime/src/research-run-list.test.ts
           apps/eliotr-web/src/query/modelSettings.test.ts
           apps/eliotr-web/src/query/globalModelSettings.test.ts
           packages/owner-api-client/src/research/runs/authority.test.ts
@@ -84,6 +87,8 @@ jobs:
           test/research-provider-key-model-use.test.ts
           test/research-client-execution.test.ts
           test/delegated-report-reservation.test.ts
+          test/raw-normalized-admission-http.test.ts
+          test/research-native-global-default.test.ts
           --reporter=verbose
       - name: Build served assets and owner web
         run: |

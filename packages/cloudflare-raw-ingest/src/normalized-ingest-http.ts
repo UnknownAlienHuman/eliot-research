@@ -12,6 +12,7 @@ import { readRequestBodyWithinBytes } from "@eliotr/platform-cloudflare";
 export interface NormalizedIngestOperationPort {
   admitRawFileToNormalized(captureId: string, request: RawNormalizedAdmissionRequest): Promise<unknown>;
   getRawNormalizedAdmissionStatus(captureId: string, admissionOperationId: string): Promise<unknown>;
+  getRawNormalizedAdmissionSourceIdentity(captureId: string, admissionOperationId: string): Promise<unknown>;
   prepareBundle(request: PrepareBundleUploadRequest): Promise<unknown>;
   uploadBundlePart(request: UploadBundlePartRequest): Promise<unknown>;
   completeBundleFile(request: CompleteBundleFileRequest): Promise<unknown>;
@@ -287,6 +288,12 @@ export async function dispatchIngestOperation(
     case "ingest.raw.normalized.status":
       exactQuery(url, []);
       return operations.getRawNormalizedAdmissionStatus(
+        rawNormalizedPathParam(params.capture_id, true),
+        rawNormalizedPathParam(params.admission_operation_id, true),
+      );
+    case "ingest.raw.normalized.source-identity":
+      exactQuery(url, []);
+      return operations.getRawNormalizedAdmissionSourceIdentity(
         rawNormalizedPathParam(params.capture_id, true),
         rawNormalizedPathParam(params.admission_operation_id, true),
       );
