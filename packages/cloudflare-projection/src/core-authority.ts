@@ -11,6 +11,7 @@ import {
 } from "./canonical.js";
 import { managedProjectGenerationMetadataValue } from "./managed-project-path.js";
 import { loadProjectionSourceContext } from "./core-load.js";
+import type { ProjectionProjectCopyScopesV2Resolver } from "./core-load.js";
 import {
   settleProjection,
   validateProjectionWorkReceipt,
@@ -42,6 +43,7 @@ import type { ProjectionManagedItemAuthorityPort } from "./types.js";
 export interface D1ProjectionAuthorityDependencies {
   readonly database: D1Database;
   readonly now?: () => number;
+  readonly resolve_project_copy_scopes_v2?: ProjectionProjectCopyScopesV2Resolver;
 }
 
 export function createD1ProjectionAuthority(
@@ -51,7 +53,7 @@ export function createD1ProjectionAuthority(
   const clock = dependencies.now ?? Date.now;
   const authority: ProjectionManagedItemAuthorityPort = {
     load(message: DeliveryMessage) {
-      return loadProjectionSourceContext(database, message);
+      return loadProjectionSourceContext(database, message, dependencies.resolve_project_copy_scopes_v2);
     },
 
     readTerminal(context, projectionGeneration, profile) {
