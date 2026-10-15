@@ -4,7 +4,7 @@ import { researchModelCatalogAdapterForRouteProvider, type ProjectListView } fro
 import { Button, Field, Status } from "@eliotr/ui";
 import type { BoundWorkspaceApis } from "./runtime";
 import type { PrivacyController, SessionContext } from "./privacy";
-import { bindModelSettingsSecretLifetime, configureProviderKeyOnceAndReadBack } from "../query/modelSettingsLifecycle";
+import { bindModelSettingsSecretLifetime, configureProviderKeyOnceAndReadBack, ModelSettingsProviderKeyUnavailableError } from "../query/modelSettingsLifecycle";
 import { modelCatalogQueryOptions } from "../query/modelSettings";
 
 type ProjectModelConfiguration = Awaited<ReturnType<BoundWorkspaceApis["connections"]["models"]["readResearchProjectModelConfiguration"]>>;
@@ -20,6 +20,7 @@ type KeyFeedback =
   | { readonly kind: "invalid" }
   | { readonly kind: "saving" }
   | { readonly kind: "unknown"; readonly operationId: string }
+  | { readonly kind: "unavailable" }
   | { readonly kind: "readback"; readonly configuration: ProviderKeyConfiguration };
 type SelectionFeedback =
   | { readonly kind: "idle" }
@@ -50,6 +51,7 @@ const copy = {
     keyReadFailed: "Provider key status could not be read; configuration is unknown.",
     keyPending: "Key setup is pending. Check its saved status before trying again.",
     keyUnknown: "Key setup outcome is unknown. Check the saved status; the write will not be repeated.",
+    keyUnavailable: "The server does not accept provider keys yet. Configure the server management connection, then save the key again.",
     keyInvalid: "The saved key was rejected. Check the key and submit it again.",
     keyPreflight: "The provider check did not confirm this key. The model remains unavailable.",
     keyAlias: "Key setup needs reconciliation. Check the saved status.",
@@ -104,6 +106,7 @@ const copy = {
     keyReadFailed: "Не удалось прочитать статус ключа провайдера; настройка неизвестна.",
     keyPending: "Настройка ключа ожидает завершения. Проверьте статус перед новой попыткой.",
     keyUnknown: "Результат настройки ключа неизвестен. Проверьте сохранённый статус; запись не будет повторена.",
+    keyUnavailable: "Сервер пока не принимает ключи провайдера. Настройте серверное подключение управления и сохраните ключ снова.",
     keyInvalid: "Сохранённый ключ отклонён. Проверьте его и отправьте снова.",
     keyPreflight: "Проверка провайдера не подтвердила ключ. Модель недоступна.",
     keyAlias: "Настройка ключа требует сверки. Проверьте сохранённый статус.",
@@ -150,6 +153,7 @@ function keyStatusText(locale: "en" | "ru", query: UseQueryResult<ProviderKeyPag
   const text = copy[locale];
   if (feedback.kind === "invalid") return text.keyInputInvalid;
   if (feedback.kind === "saving") return text.savingKey;
+  if (feedback.kind === "unavailable") return text.keyUnavailable;
   if (feedback.kind === "unknown") return text.keyUnknown;
   if (feedback.kind === "readback") {
     const { configuration } = feedback;
@@ -295,9 +299,9 @@ export function ModelSettingsPanel({
         setKeyFeedback(configuration === undefined ? { kind: "unknown", operationId } : { kind: "readback", configuration });
         await providers.refetch();
       }
-    } catch {
+    } catch (error) {
       if (!controller.signal.aborted && privacy.isCurrent(context) && currentProjects() === projectPage) {
-        setKeyFeedback({ kind: "unknown", operationId });
+        setKeyFeedback(error instanceof ModelSettingsProviderKeyUnavailableError ? { kind: "unavailable" } : { kind: "unknown", operationId });
       }
     } finally {
       if (keyController.current === controller) keyController.current = null;
@@ -399,7 +403,7 @@ export function ModelSettingsPanel({
     {source === "external" && <section aria-labelledby={`${sourceId}-key-title`}>
       <h3 id={`${sourceId}-key-title`}>{text.keyTitle}</h3>
       <p>{text.keyHint}</p>
-      <Status tone={keyFeedback.kind === "invalid" || providers.isError ? "error" : "neutral"} announce>{`${text.providerStatus}: ${keyStatusText(locale, providers, keyFeedback)}`}</Status>
+      <Status tone={keyFeedback.kind === "invalid" || keyFeedback.kind === "unavailable" || providers.isError ? "error" : "neutral"} announce>{`${text.providerStatus}: ${keyStatusText(locale, providers, keyFeedback)}`}</Status>
       {keyNeedsReadback && <Button variant="text" onClick={() => { void checkKeyStatus(); }} disabled={!canAct}>{text.checkKey}</Button>}
       <form ref={formRef} method="post" onSubmit={event => { void saveKey(event); }}>
         <Field label={text.keyLabel} type="password" name="provider_key" autoComplete="new-password" maxLength={4096}

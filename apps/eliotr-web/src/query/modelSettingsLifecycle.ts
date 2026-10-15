@@ -1,14 +1,39 @@
-import type { BoundWorkspaceApis } from "../app/runtime";
+import { isWorkspaceRequestError, type BoundWorkspaceApis } from "../app/runtime";
 import type { PrivacyController, SessionContext } from "../app/privacy";
 
 type ProviderApi = BoundWorkspaceApis["connections"]["providers"];
 type ProviderConfiguration = Awaited<ReturnType<ProviderApi["readResearchProviderKeyConfigurations"]>>["configurations"][number];
+
+/** Exact server code for a definite pre-effect denial: no key was written and no intent was recorded. */
+const PROVIDER_KEY_MANAGEMENT_UNAVAILABLE = "RESEARCH_PROVIDER_KEY_CONFIGURATION_MANAGEMENT_UNAVAILABLE";
 
 export class ModelSettingsRequestClosedError extends Error {
   public constructor() {
     super("Model settings request is no longer current");
     this.name = "ModelSettingsRequestClosedError";
   }
+}
+
+/**
+ * The server refused this write before any effect: no provider key was created and no operation
+ * intent was recorded, so nothing is uncertain. The owner may submit again after the server's
+ * management connection exists; this helper never resends the key on its own.
+ */
+export class ModelSettingsProviderKeyUnavailableError extends Error {
+  public constructor() {
+    super("Provider key management is unavailable on this server");
+    this.name = "ModelSettingsProviderKeyUnavailableError";
+  }
+}
+
+/**
+ * Only this exact typed denial is definite. Every other transport or server failure keeps its
+ * hidden identity and stays reconciled by readback, so an uncertain outcome is never reported as
+ * understood, and no raw error or key material is inspected or recorded here.
+ */
+function isProviderKeyManagementUnavailable(error: unknown): boolean {
+  return isWorkspaceRequestError(error) && error.status === 503 &&
+    error.code === PROVIDER_KEY_MANAGEMENT_UNAVAILABLE;
 }
 
 /**
@@ -29,13 +54,18 @@ export async function configureProviderKeyOnceAndReadBack(input: {
   };
   assertCurrent();
   let receipt: Awaited<ReturnType<ProviderApi["configureResearchProviderKey"]>> | undefined;
+  let writeFailure: unknown;
   try {
     receipt = await input.providers.configureResearchProviderKey(input.projectId, input.deploymentGeneration,
       input.operationId, input.providerKey, input.signal);
-  } catch {
+  } catch (error) {
     // A lost acknowledgement is reconciled below. It never causes another POST.
+    writeFailure = error;
     assertCurrent();
   }
+  // A pre-effect denial already is the whole answer: there is no hidden identity to reconcile, so
+  // no readback is issued and the key is never repeated automatically.
+  if (isProviderKeyManagementUnavailable(writeFailure)) throw new ModelSettingsProviderKeyUnavailableError();
   assertCurrent();
   try {
     const page = await input.providers.readResearchProviderKeyConfigurations(input.projectId,

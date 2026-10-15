@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { BoundWorkspaceApis } from "../app/runtime";
-import { bindModelSettingsSecretLifetime, configureProviderKeyOnceAndReadBack, ModelSettingsRequestClosedError } from "./modelSettingsLifecycle";
+import { WorkspaceRequestError } from "../app/runtime";
+import { bindModelSettingsSecretLifetime, configureProviderKeyOnceAndReadBack, ModelSettingsProviderKeyUnavailableError, ModelSettingsRequestClosedError } from "./modelSettingsLifecycle";
 
 type ProviderApi = BoundWorkspaceApis["connections"]["providers"];
 
@@ -25,6 +26,18 @@ const page = {
   configurations: [configuration],
   truncated: false,
 };
+
+/**
+ * The exact typed error workspace runtime raises for this denied POST. It is the only failure
+ * distinguished from a lost or hidden acknowledgement, so it must be a real instance of the runtime
+ * error class rather than a look-alike object.
+ */
+function managementUnavailable(): WorkspaceRequestError {
+  return new WorkspaceRequestError({
+    code: "RESEARCH_PROVIDER_KEY_CONFIGURATION_MANAGEMENT_UNAVAILABLE", status: 503,
+    message: "Provider key management is not configured", traceId: null, retryable: true,
+  });
+}
 
 describe("safe model-settings key lifecycle", () => {
   it("clears the form and aborts work synchronously when the privacy epoch closes", () => {
@@ -102,4 +115,48 @@ describe("safe model-settings key lifecycle", () => {
     expect(providers.configureResearchProviderKey).toHaveBeenCalledTimes(1);
     expect(providers.readResearchProviderKeyConfigurations).not.toHaveBeenCalled();
   });
+
+  it("distinguishes a pre-effect management denial from a lost acknowledgement", async () => {
+    const providers = {
+      configureResearchProviderKey: vi.fn().mockRejectedValue(managementUnavailable()),
+      readResearchProviderKeyConfigurations: vi.fn().mockResolvedValue(page),
+    } as unknown as ProviderApi;
+    await expect(configureProviderKeyOnceAndReadBack({
+      providers, projectId: "project-1", deploymentGeneration: "deployment-1",
+      operationId: configuration.operation_id, providerKey: "synthetic-test-key-not-real-123456",
+      signal: new AbortController().signal, isCurrent: () => true,
+    })).rejects.toBeInstanceOf(ModelSettingsProviderKeyUnavailableError);
+    // The denial happened before any effect, so no hidden identity is invented and no readback runs.
+    expect(providers.configureResearchProviderKey).toHaveBeenCalledTimes(1);
+    expect(providers.readResearchProviderKeyConfigurations).not.toHaveBeenCalled();
+  });
+
+  it("keeps a hidden-identity failure reconciled by readback, not treated as unavailable", async () => {
+    const providers = {
+      configureResearchProviderKey: vi.fn().mockRejectedValue(new Error("acknowledgement lost")),
+      readResearchProviderKeyConfigurations: vi.fn().mockResolvedValue(page),
+    } as unknown as ProviderApi;
+    const result = await configureProviderKeyOnceAndReadBack({
+      providers, projectId: "project-1", deploymentGeneration: "deployment-1",
+      operationId: configuration.operation_id, providerKey: "synthetic-test-key-not-real-123456",
+      signal: new AbortController().signal, isCurrent: () => true,
+    });
+    expect(result).toEqual(configuration);
+    expect(providers.readResearchProviderKeyConfigurations).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not treat a different typed 503 as a management unavailability", async () => {
+    const providers = {
+      configureResearchProviderKey: vi.fn().mockRejectedValue(new Error("Unreachable")),
+      readResearchProviderKeyConfigurations: vi.fn().mockResolvedValue(page),
+    } as unknown as ProviderApi;
+    const result = await configureProviderKeyOnceAndReadBack({
+      providers, projectId: "project-1", deploymentGeneration: "deployment-1",
+      operationId: configuration.operation_id, providerKey: "synthetic-test-key-not-real-123456",
+      signal: new AbortController().signal, isCurrent: () => true,
+    });
+    expect(result).toEqual(configuration);
+  });
 });
+
+
