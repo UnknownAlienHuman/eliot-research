@@ -10,7 +10,7 @@ import {
   ResearchHeldScopeError,
   type HeldResearchScope,
 } from "@eliotr/cloudflare-research";
-import { searchProject } from "@eliotr/cloudflare-ai";
+import { searchProject } from "@eliotr/cloudflare-ai/project-search";
 import { decodeAiSearchSearchResult } from "@eliotr/platform-cloudflare";
 import {
   createD1SearchExactPort,
@@ -189,12 +189,13 @@ async function createHeldScopeRetrievalQuery(
   const lexPort = createD1SearchLexPort({ search_database: env.SEARCH_DB, core_database: env.CORE_DB });
   const lex = createLexLaneExecutor(lexPort);
   const projectId = projectIdForScopeExpression(input.scope_snapshot.resolved_scope_expression);
-  const sem = env.AI_SEARCH === undefined || projectId === null
+  const aiSearch = env.AI_SEARCH;
+  const sem = aiSearch === undefined || projectId === null
     ? null
     : createSemLaneExecutor({
         async search(request) {
           const raw = await searchProject({
-            namespace: env.AI_SEARCH!,
+            namespace: aiSearch,
             core_database: env.CORE_DB,
             search_database: env.SEARCH_DB,
             project_id: projectId,
