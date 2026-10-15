@@ -713,17 +713,18 @@
     {
       "id": "implemented-sem-lane",
       "path": "packages/retrieval/src/lanes.ts",
-      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-04 SEM lane executor over the managed-search surface with pinned-generation translation and honest degradation; live AI Search readback/promotion receipts remain separate.",
+      "sentinel": "IMPLEMENTED_NOT_LIVE: ER-04 SEM lane uses project-scoped Cloudflare AI Search over the shared prose instance; canonical metadata and current membership are rechecked in D1 before existing locator/evidence validation.",
       "owner_packets": [
         "ER-04"
       ],
       "state": "IMPLEMENTED_NOT_LIVE",
-      "behavior": "RetrievalLaneExecutor for SEM over the injected ManagedSearchPort in the same shape as IDENT/LEX: plan-derived context expansion, unpromoted managed generation degrades to SEARCH_UNAVAILABLE (SKIPPED_UNAVAILABLE, never a fabricated lane), mid-read registry rotation fails as SEARCH_INCOMPLETE (visible FAILED, never served stale), other managed errors propagate with their original codes; drops the local-only proof_state envelope marker at the lane boundary so exact evidence-authority strict parsing succeeds; generation pinning itself stays inside the registry-backed managed port (D1 before/after reads plus promoted-generation and frozen-scope decode); coverage never exceeds SAMPLED with no exhaustive denominator",
+      "behavior": "RetrievalLaneExecutor for SEM uses the native Cloudflare AI Search project folder filter only for project-preserving held ScopeSnapshot expressions. INTERSECT extracts its unique project, EXCEPT uses its left scope, and UNION is accepted only when both sides resolve to the same project. The complete frozen source_revision_refs list is passed to the native adapter for its provider prefilter and D1 currentness recheck. The provider response is a locator; canonical metadata comes from active projection_item rows, then the existing locator decoder and evidence resolver enforce frozen-scope and canonical source authority. Source delivery still writes canonical Work and narrow D1 FTS. The bespoke S52 registry promotion/rollback, project-copy, target-assignment and required-set path is canceled; one configured embedding generation remains until an actual model change.",
       "completion_evidence": [
-        "packages/retrieval/src/lanes.test.ts: 5 pure cases (plan expansion with marker drop, wrong-lane refusal, NOT_PROMOTED mapped to SEARCH_UNAVAILABLE, REGISTRY_CHANGED mapped to SEARCH_INCOMPLETE, passthrough of other managed codes)",
-        "apps/eliotr-core/test/research-query-sem.test.ts: 3 cases over actual local D1 Core/Search and R2 through the production Q1 import/project pipeline with a controlled AI Search namespace and a real D1 generation-registry ACTIVE head (SEM recorded in lanes_used with a semantically-found candidate resolved to 28 pinned R2 bytes at SAMPLED, mid-read rotation caught as SEARCH_INCOMPLETE with zero resolutions, unpromoted registry degrades to LANE_UNAVAILABLE without provider contact)",
-        "apps/eliotr-core/src/research-session.ts: SEM composed alongside IDENT/LEX via createD1BackedAiSearchManagedSearchPort over SEARCH_DB with expected_namespace eliotr and explicit SEM fusion weight 1; RETRIEVAL slice stays disabled",
-        "workerd test env carries no live AI Search binding and the Q1 projector reports the managed index DEGRADED, so the provider transport is controlled in tests; live Cloudflare AI Search readback, managed-generation promotion, remote D1 receipts and live qualification NOT_EXECUTED"
+        "apps/eliotr-core/src/queue.ts and packages/cloudflare-projection/src/executor.ts preserve source.revision.admitted -> canonical Work -> D1 FTS activation; the execution handler does not wait for provider uploads",
+        "packages/cloudflare-research-runtime/src/research-retrieval-composition.ts routes PROJECT SEM queries through searchProject and the existing decodeAiSearchSearchResult/evidence resolver; non-project scopes do not use an unfiltered global provider search",
+        "packages/cloudflare-research-runtime/src/library-readiness.ts preserves the existing three-channel response without querying a registry or provider availability endpoint; semantic readiness is reported as not_requested",
+        "Cloudflare native instances are the existing private-prose-g2 and private-literal-g2; native folder filtering and Items APIs use the provider helper, with canonical metadata from D1",
+        "Owner directive 2026-10-15: S52 search-overlay sources are canceled. Core migration 0141 and Search migration 0004 are already applied remotely and remain in the remote ledgers; Core 0142-0151 are absent. Readiness accepts fresh Search v3 and the existing remote v4 schema marker without reading its registry table. No remote migration or drop was performed; live qualification NOT_EXECUTED"
       ]
     },
     {

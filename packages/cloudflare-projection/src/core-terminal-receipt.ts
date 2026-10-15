@@ -190,67 +190,16 @@ async function verifyManagedTerminalReadback(
       "managed terminal readback differs from its pinned semantic target",
     );
   }
-  const canonicalItemCount = assertProjectionInteger(
-    generation.canonical_item_count,
-    "managed terminal canonical item count",
+  const itemCount = assertProjectionInteger(
+    generation.item_count,
+    "managed terminal item count",
     1,
     1024,
   );
-  const canonicalItemSetDigest = assertProjectionSha256(
-    generation.canonical_item_set_digest,
-    "managed terminal canonical item-set digest",
+  const itemSetDigest = assertProjectionSha256(
+    generation.item_set_digest,
+    "managed terminal required-set digest",
   );
-  const providerCopyCount = assertProjectionInteger(
-    generation.provider_copy_count,
-    "managed terminal provider copy count",
-    0,
-    256,
-  );
-  const itemCount = canonicalItemCount * (providerCopyCount === 0 ? 1 : providerCopyCount);
-  const effectRows = await database.prepare(
-    "SELECT item_key, desired_index, normalized_start_byte, normalized_end_byte, " +
-    "metadata_json, section_content_sha256 FROM projection_managed_item_effect " +
-    "WHERE source_revision_ref=?1 AND projection_generation=?2 AND job_id=?3 " +
-    "ORDER BY desired_index ASC",
-  ).bind(
-    context.source_revision.source_revision_ref,
-    projectionGeneration,
-    context.job_id,
-  ).all<{
-    readonly item_key: unknown;
-    readonly desired_index: unknown;
-    readonly normalized_start_byte: unknown;
-    readonly normalized_end_byte: unknown;
-    readonly metadata_json: unknown;
-    readonly section_content_sha256: unknown;
-  }>();
-  if (!Array.isArray(effectRows.results) || effectRows.results.length !== itemCount) {
-    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed terminal physical item count differs from its copy set");
-  }
-  const itemSetDigest = await projectionDigest(effectRows.results.map((row, index) => {
-    if (row.desired_index !== index || typeof row.metadata_json !== "string") {
-      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed terminal item set is incomplete or unordered");
-    }
-    let parsed: unknown;
-    try { parsed = JSON.parse(row.metadata_json); }
-    catch (cause) {
-      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed terminal item metadata is malformed", false, cause);
-    }
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed terminal item metadata is not an object");
-    }
-    const metadata = parsed as Record<string, unknown>;
-    return {
-      item_key: assertProjectionIdentifier(row.item_key, "managed terminal item key"),
-      canonical_section_id: assertProjectionIdentifier(metadata.canonical_section_id, "managed terminal section ID"),
-      content_sha256: assertProjectionSha256(row.section_content_sha256, "managed terminal content digest"),
-      start: assertProjectionInteger(row.normalized_start_byte, "managed terminal span start", 0, Number.MAX_SAFE_INTEGER),
-      end: assertProjectionInteger(row.normalized_end_byte, "managed terminal span end", 1, Number.MAX_SAFE_INTEGER),
-    };
-  }));
-  if (providerCopyCount === 0 && itemSetDigest !== canonicalItemSetDigest) {
-    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "flat managed terminal item set differs from canonical Work");
-  }
   const itemReceipts = await readManagedItemReceipts(
     database,
     context,
@@ -295,7 +244,7 @@ export async function readTerminalReceipt(
   const generation = generationOverride ??
     await generationRow(database, context, projectionGeneration);
   if (generation === null) return null;
-  await validateGenerationIdentity(generation, context, profile);
+  validateGenerationIdentity(generation, context, profile);
   if (generation.state !== "COMPLETED" && generation.state !== "PARTIAL") return null;
   if (
     generation.managed_item_protocol === MANAGED_ITEM_PROTOCOL_VERSION &&

@@ -1,8 +1,12 @@
 import type { Env } from "./env.js";
 
 export const REQUIRED_CORE_SCHEMA_GENERATION = "core-v11-owner-orientation" as const;
-export const REQUIRED_SEARCH_SCHEMA_GENERATION =
-  "search-v4-ai-search-generation-registry" as const;
+// Fresh source databases stop at D1 FTS v3; existing accounts may retain the
+// already-applied v4 registry schema, whose extra table is dormant.
+const SUPPORTED_SEARCH_SCHEMA_GENERATIONS: ReadonlySet<string> = new Set([
+  "search-v3-erasure-invalidation",
+  "search-v4-ai-search-generation-registry",
+]);
 
 export interface ReadinessReport {
   readonly ready: boolean;
@@ -35,7 +39,7 @@ export async function readReadiness(env: Env): Promise<ReadinessReport> {
     blocking.push("CORE_SCHEMA_GENERATION_MISMATCH");
   }
   if (search === null) blocking.push("SEARCH_SCHEMA_NOT_APPLIED");
-  else if (search !== REQUIRED_SEARCH_SCHEMA_GENERATION) {
+  else if (!SUPPORTED_SEARCH_SCHEMA_GENERATIONS.has(search)) {
     blocking.push("SEARCH_SCHEMA_GENERATION_MISMATCH");
   }
   return {

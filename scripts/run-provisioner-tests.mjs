@@ -32,9 +32,6 @@ await import("./test-model-qualification-failure-summary-migration.mjs");
 await import("./test-managed-item-effect-migration.mjs");
 await import("./test-managed-item-protocol-migration.mjs");
 await import("./test-cloudflare-provisioners.mjs");
-await import("./test-ai-search-provisioning-readback.mjs");
-await import("./test-ai-search-provisioning-reconciliation.mjs");
-
 const build = spawnSync(
   "pnpm",
   [
@@ -55,7 +52,6 @@ const build = spawnSync(
 if (build.error !== undefined) throw build.error;
 if (build.status !== 0) process.exit(build.status ?? 1);
 
-await import("./test-ai-search-generation-operator.mjs");
 await import("./test-provisioner-exit-regression.mjs");
 await import("./test-cloudflare-usage-providers.mjs");
 await import("./test-usage-aggregation-trust.mjs");

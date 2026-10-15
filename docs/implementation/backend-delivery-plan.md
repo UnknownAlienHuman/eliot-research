@@ -2007,4 +2007,19 @@ with exact hash readback: 1,317 bytes in
 confirmed from the closed owner's tool calls. Active/owner-controlled frontend
 helpers and all seven protected worktrees are preserved. The latest bounded
 model trial records one accepted Go2 audit and two assignments without accepted
+
 results; it establishes no quality, speed or ranking superiority over Luna.
+
+## Owner cancellation and deferral — 2026-10-15
+
+The owner canceled the S52 bespoke AI Search overlay: copy-identity/digest
+variants, generation registry promotion/rollback, managed-target assignment,
+manifest V2/V3 and required-set machinery are removed from delivery. Keep the
+ordinary source-revision queue path that writes canonical Work under its existing
+source prefix and activates narrow D1 FTS; project-scoped Cloudflare AI Search
+uses the existing shared `private-prose-g2` and `private-literal-g2` instances,
+native folder filtering and Items APIs, with D1 canonical-metadata and project-
+currentness rechecks. Defer generation promotion until an actual embedding-model
+change. Core migration 0141 and Search migration 0004 are already applied
+remotely and remain recorded there; Core migrations 0142–0151 are absent. This
+work performs no remote migration or drop.

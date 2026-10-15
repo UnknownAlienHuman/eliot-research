@@ -1,23 +1,11 @@
 import { env } from "cloudflare:workers";
 import { applyD1Migrations } from "cloudflare:test";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { createProjectionDeliveryHandler } from "@eliotr/cloudflare-projection";
-import { createProjectionExecutionDeliveryHandler } from "@eliotr/cloudflare-ai";
 import { DELIVERY_MESSAGE_PROTOCOL, type DeliveryMessage } from "@eliotr/platform-cloudflare";
-import type * as ProjectionModule from "@eliotr/cloudflare-projection";
-import type * as AiModule from "@eliotr/cloudflare-ai";
 import { handleQueue } from "../src/queue.js";
 import type { Env } from "../src/env.js";
 import type { Q1Runtime } from "./retrieval-q1-fixture.js";
 
-vi.mock("@eliotr/cloudflare-projection", async importOriginal => ({
-  ...await importOriginal<typeof ProjectionModule>(),
-  createProjectionDeliveryHandler: vi.fn(() => vi.fn()),
-}));
-vi.mock("@eliotr/cloudflare-ai", async importOriginal => ({
-  ...await importOriginal<typeof AiModule>(),
-  createProjectionExecutionDeliveryHandler: vi.fn(() => vi.fn()),
-}));
 const runtime = env as unknown as Q1Runtime;
 
 beforeEach(async () => {
@@ -64,8 +52,6 @@ describe("Core DLQ composition with migrated Workerd D1", () => {
     expect(message.retry).not.toHaveBeenCalled();
     expect(await runtime.CORE_DB.prepare("SELECT * FROM delivery_inbox WHERE idempotency_key=?1").bind(body.idempotency_key).first()).toBeNull();
     expect(await runtime.CORE_DB.prepare("SELECT * FROM outbox WHERE outbox_id=?1").bind(body.outbox_id).first()).toEqual(before);
-    expect(createProjectionDeliveryHandler).not.toHaveBeenCalled();
-    expect(createProjectionExecutionDeliveryHandler).not.toHaveBeenCalled();
   });
 
   it("keeps an existing completed operation's original receipt on duplicate DLQ delivery", async () => {
@@ -81,7 +67,6 @@ describe("Core DLQ composition with migrated Workerd D1", () => {
     expect(message.ack).toHaveBeenCalledTimes(2);
     expect(message.retry).not.toHaveBeenCalled();
     expect(await runtime.CORE_DB.prepare("SELECT * FROM delivery_inbox WHERE idempotency_key=?1").bind(body.idempotency_key).first()).toEqual(before);
-    expect(createProjectionDeliveryHandler).not.toHaveBeenCalled();
   });
 
   it("writes a bounded terminal diagnostic before ACK and never constructs a business handler", async () => {
@@ -93,8 +78,6 @@ describe("Core DLQ composition with migrated Workerd D1", () => {
       .bind(message.id).first();
     expect(row).toMatchObject({ disposition: "MALFORMED", outbox_id: null, original_message_json: null, completed_receipt_ref: null });
     expect(JSON.stringify(row)).not.toContain("secret-");
-    expect(createProjectionDeliveryHandler).not.toHaveBeenCalled();
-    expect(createProjectionExecutionDeliveryHandler).not.toHaveBeenCalled();
   });
 
   it("marks only one native retry when durable observation is unavailable", async () => {
@@ -104,7 +87,6 @@ describe("Core DLQ composition with migrated Workerd D1", () => {
     expect(message.retry).toHaveBeenCalledOnce();
     expect(message.retry).toHaveBeenCalledWith({ delaySeconds: 30 });
     expect(message.ack).not.toHaveBeenCalled();
-    expect(createProjectionDeliveryHandler).not.toHaveBeenCalled();
   });
 
   it("rejects the batch with a bounded error when native retry throws, preventing auto-ACK", async () => {
@@ -128,8 +110,6 @@ describe("Core DLQ composition with migrated Workerd D1", () => {
     const message = delivery();
     await expect(handleQueue(batch("unconfigured-queue", message), environment())).rejects.toThrow("QUEUE_NAME_UNRECOGNIZED");
     expect(message.ack).not.toHaveBeenCalled();
-    expect(createProjectionDeliveryHandler).not.toHaveBeenCalled();
-    expect(createProjectionExecutionDeliveryHandler).not.toHaveBeenCalled();
     const row = await runtime.CORE_DB.prepare("SELECT * FROM queue_terminal_observation WHERE platform_message_id=?1")
       .bind(message.id).first();
     expect(row).toBeNull();

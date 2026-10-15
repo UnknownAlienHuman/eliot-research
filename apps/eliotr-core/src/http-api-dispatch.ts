@@ -36,7 +36,6 @@ import { HttpRequestError } from "./http-errors.js";
 import { readPrimaryWriterInventory } from "./backup-primary-composition.js";
 import { issuePrimaryWriterBootstrapAdmissionRoute } from "@eliotr/cloudflare-backup";
 import { readOwnerProjectResearchReadiness } from "./research-project-configuration-composition.js";
-import { handleManagedTargetAssignmentHttp } from "./managed-target-assignment-http.js";
 import { parseWikiProposalFromResearchRunRequest, parseWikiProposalRef } from "./wiki-service.js";
 import {
   reopenOwnerArtifactDraft,
@@ -212,23 +211,6 @@ export async function dispatchHttpApiRoute(
         input,
       );
       return apiResult(request, env, result);
-    }
-    case "research.project-managed-target-assignment.read":
-    case "research.project-managed-target-assignment.assign":
-    case "research.project-managed-target-assignment.retire": {
-      requireNoQuery(url);
-      const projectId = match.params.project_id;
-      if (projectId === undefined) {
-        throw new HttpRequestError("MANAGED_TARGET_ASSIGNMENT_INPUT_INVALID", 400,
-          "Project id is missing");
-      }
-      return handleManagedTargetAssignmentHttp(
-        request,
-        env,
-        context,
-        projectId,
-        match.route.maximum_request_bytes,
-      );
     }
     case "research.orient": {
       requireNoQuery(url);

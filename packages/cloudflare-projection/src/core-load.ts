@@ -11,12 +11,7 @@ import {
   assertProjectionText,
   projectionFail,
 } from "./canonical.js";
-import type { ProjectionSourceContext, ProjectCopyScopeV2 } from "./types.js";
-
-/** Core composition must supply real operation-owned scope authority. */
-export type ProjectionProjectCopyScopesV2Resolver = (
-  context: ProjectionSourceContext,
-) => Promise<readonly ProjectCopyScopeV2[]>;
+import type { ProjectionSourceContext } from "./types.js";
 
 interface ContextRow {
   readonly outbox_id: unknown;
@@ -194,7 +189,6 @@ async function membershipIds(
 export async function loadProjectionSourceContext(
   database: D1Database,
   message: DeliveryMessage,
-  resolveProjectCopyScopesV2?: ProjectionProjectCopyScopesV2Resolver,
 ): Promise<ProjectionSourceContext> {
   const row = await database.prepare(
     "SELECT o.outbox_id, o.topic, o.payload_ref, o.payload_sha256, o.attempts, " +
@@ -256,7 +250,7 @@ export async function loadProjectionSourceContext(
     );
   }
   const jobId = assertProjectionIdentifier(row.job_id, "projection job ID");
-  const context: ProjectionSourceContext = {
+  return {
     message,
     intent_ref: intent,
     job_id: jobId,
@@ -268,6 +262,4 @@ export async function loadProjectionSourceContext(
     instruction_taint: row.instruction_taint as ProjectionSourceContext["instruction_taint"],
     project_membership_ids: await membershipIds(database, revision.source_id),
   };
-  if (resolveProjectCopyScopesV2 === undefined) return context;
-  return { ...context, project_copy_scopes_v2: await resolveProjectCopyScopesV2(context) };
 }

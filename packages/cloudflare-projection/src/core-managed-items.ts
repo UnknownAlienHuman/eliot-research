@@ -2,7 +2,6 @@ import {
   assertProjectionIdentifier,
   assertProjectionInteger,
   assertProjectionSha256,
-  assertProjectionText,
   canonicalProjectionJson,
   projectionExecutionOperationId,
   projectionDigest,
@@ -21,14 +20,10 @@ import {
   type ManagedItemIntent,
   type ManagedItemReceipt,
 } from "./core-managed-item-intent.js";
-import { managedProjectGenerationMetadataValue } from "./managed-project-path.js";
 import type {
-  ManagedProjectCopyPlan,
   ProjectionExecutionProfile,
   ProjectionSourceContext,
 } from "./types.js";
-
-const MAX_MANAGED_PROJECT_MEMBERSHIPS = 256;
 
 interface ExecutionLeaseRow {
   readonly operation_id: unknown;
@@ -37,86 +32,6 @@ interface ExecutionLeaseRow {
   readonly lease_generation: unknown;
   readonly lease_until: unknown;
   readonly state: unknown;
-}
-
-function dispatchAuthorityPredicate(start: number): string {
-  const p = (offset: number) => `?${start + offset}`;
-  return "EXISTS (SELECT 1 FROM outbox o " +
-    "JOIN operation_intent i ON i.intent_id = o.intent_id AND i.revision = o.intent_revision " +
-    "JOIN job j ON j.intent_id = i.intent_id AND j.intent_revision = i.revision " +
-    "JOIN source_revision sr ON sr.source_revision_ref = i.payload_ref " +
-    "JOIN source s ON s.source_id = sr.source_id " +
-    "JOIN source_namespace_ownership own ON own.source_namespace_id = s.source_namespace_id " +
-    "AND own.owner_system_id = s.source_owner_system_id " +
-    "AND own.source_owner_generation = sr.source_owner_generation " +
-    "JOIN source_admission_decision decision ON decision.decision_receipt_ref = i.policy_decision_ref " +
-    "AND decision.source_revision_ref = sr.source_revision_ref " +
-    "AND decision.source_owner_generation = sr.source_owner_generation " +
-    "JOIN projection_generation g ON g.source_revision_ref = sr.source_revision_ref " +
-    `AND g.projection_generation = ${p(8)} AND g.job_id = j.job_id ` +
-    `WHERE o.outbox_id = ${p(0)} AND o.topic = ${p(1)} ` +
-    `AND o.payload_ref = ${p(2)} AND o.payload_sha256 = ${p(3)} ` +
-    `AND i.idempotency_key = ${p(4)} AND i.intent_id = ${p(5)} ` +
-    `AND i.revision = ${p(6)} AND i.operation_kind = 'PROJECTION' ` +
-    `AND j.job_id = ${p(7)} AND j.state = 'RUNNING' ` +
-    `AND sr.source_revision_ref = ${p(9)} AND sr.source_id = ${p(10)} ` +
-    `AND sr.source_owner_generation = ${p(13)} AND sr.content_sha256 = ${p(14)} ` +
-    `AND sr.object_residency_key_digest = ${p(15)} AND sr.purge_state = 'LIVE' ` +
-    `AND s.source_namespace_id = ${p(11)} AND s.source_owner_system_id = ${p(12)} ` +
-    `AND s.source_owner_generation = ${p(13)} AND s.ownership_mode = ${p(16)} ` +
-    "AND own.status = 'ACTIVE' " +
-    `AND decision.source_namespace_id = ${p(11)} ` +
-    `AND decision.owner_system_id = ${p(12)} ` +
-    `AND decision.object_residency_key_digest = ${p(15)} ` +
-    "AND decision.decision = 'ADMITTED' " +
-    "AND g.state = 'MATERIALIZED' " +
-    "AND (SELECT COUNT(*) FROM job sibling WHERE sibling.intent_id = i.intent_id " +
-    "AND sibling.intent_revision = i.revision) = 1 " +
-    "AND NOT EXISTS (SELECT 1 FROM projection_terminal_guard terminal " +
-    "WHERE terminal.source_revision_ref = sr.source_revision_ref " +
-    "AND terminal.projection_generation = g.projection_generation))";
-}
-
-function dispatchAuthorityBindings(
-  context: ProjectionSourceContext,
-  projectionGeneration: string,
-): readonly (string | number)[] {
-  return [
-    context.message.outbox_id,
-    context.message.topic,
-    context.message.payload_ref,
-    context.message.payload_sha256,
-    context.message.idempotency_key,
-    context.intent_ref.id,
-    context.intent_ref.revision,
-    context.job_id,
-    projectionGeneration,
-    context.source_revision.source_revision_ref,
-    context.source_revision.source_id,
-    context.source_revision.source_namespace_id,
-    context.source_revision.source_owner_system_id,
-    context.source_revision.source_owner_generation,
-    context.source_revision.content_sha256,
-    context.source_revision.object_residency_key_digest,
-    context.source_revision.ownership_mode,
-  ];
-}
-
-async function assertCurrentManagedDispatchAuthority(
-  database: D1Database,
-  context: ProjectionSourceContext,
-  projectionGeneration: string,
-): Promise<void> {
-  const row = await database.prepare(
-    `SELECT 1 AS current_authority WHERE ${dispatchAuthorityPredicate(1)}`,
-  ).bind(...dispatchAuthorityBindings(context, projectionGeneration))
-    .first<{ readonly current_authority: unknown }>();
-  if (row === null) {
-    projectionFail(
-      "PROJECTION_AUTHORITY_CONFLICT",
-      "pinned source or projection generation is no longer dispatchable",
-    );
-  }
 }
 
 function readClock(clock: () => number): number {
@@ -195,33 +110,21 @@ async function loadEffectRow(
   context: ProjectionSourceContext,
   projectionGeneration: string,
   itemKey: string,
-  expectedManifestItemCount?: number,
 ): Promise<ManagedItemEffectRow | null> {
-  const completeManifestPredicate = expectedManifestItemCount === undefined
-    ? ""
-    : "AND (SELECT COUNT(*) FROM projection_managed_item_effect complete " +
-      "WHERE complete.source_revision_ref = ?1 AND complete.projection_generation = ?2 " +
-      "AND complete.job_id = ?3) = ?5 ";
   return database.prepare(
     "SELECT source_revision_ref, projection_generation, job_id, item_key, desired_index, " +
-    "canonical_projection_generation, canonical_item_key, project_id, project_membership_id, " +
-    "membership_generation, membership_identity_version, legacy_project_membership_id, " +
-    "stable_project_membership_id, membership_revision, project_membership_generation, " +
-    "copy_layout, metadata_generation_digest, canonical_body_ref, " +
-    "canonical_body_sha256, normalized_start_byte, normalized_end_byte, " +
+    "normalized_start_byte, normalized_end_byte, " +
     "intent_id, intent_revision, attempt_id, execution_operation_id, dispatch_lease_generation, " +
     "managed_instance_id, managed_generation, provider_source, provider_key, " +
     "section_content_sha256, document_sha256, document_size_bytes, metadata_json, state, " +
     "provider_item_id, readback_receipt_json, readback_sha256 " +
     "FROM projection_managed_item_effect WHERE source_revision_ref = ?1 " +
-    "AND projection_generation = ?2 AND job_id = ?3 AND item_key = ?4 " +
-    completeManifestPredicate + "LIMIT 1",
+    "AND projection_generation = ?2 AND job_id = ?3 AND item_key = ?4 LIMIT 1",
   ).bind(
     context.source_revision.source_revision_ref,
     projectionGeneration,
     context.job_id,
     itemKey,
-    ...(expectedManifestItemCount === undefined ? [] : [expectedManifestItemCount]),
   ).first<ManagedItemEffectRow>();
 }
 
@@ -233,13 +136,9 @@ export async function prepareManagedItemEffects(
   profile: ProjectionExecutionProfile,
   items: readonly ManagedItemIntent[],
   callerFence: ExecutionFence,
-  copyPlan?: ManagedProjectCopyPlan,
 ): Promise<readonly ManagedItemEffect[]> {
-  const v2Plan = copyPlan?.layout === "PROJECT_COPY_V2";
-  const emptyV2Plan = v2Plan && copyPlan.provider_copy_count === 0 &&
-    copyPlan.provider_item_count === 0 && copyPlan.items.length === 0 && copyPlan.copies.length === 0;
   if (
-    (items.length < 1 && !emptyV2Plan) ||
+    items.length < 1 ||
     items.length > profile.maximum_synchronous_items ||
     new Set(items.map((item) => item.item_key)).size !== items.length
   ) {
@@ -249,13 +148,7 @@ export async function prepareManagedItemEffects(
   assertCallerFenceInput(operationId, callerFence);
   await assertCallerFence(database, operationId, callerFence, readClock(clock));
   const generation = await database.prepare(
-    "SELECT job_id, state, item_count, item_set_digest, canonical_projection_generation, " +
-    "canonical_item_count, canonical_item_set_digest, provider_copy_count, " +
-    "provider_copy_set_digest, managed_target_metadata_generation_digest, " +
-    "project_copy_map_index_protocol, project_copy_map_index_ref, project_copy_map_index_sha256, " +
-    "project_copy_scope_snapshot_id, project_copy_scope_snapshot_revision, " +
-    "project_copy_scope_snapshot_digest " +
-    "FROM projection_generation WHERE source_revision_ref = ?1 " +
+    "SELECT job_id, state, item_count, item_set_digest FROM projection_generation WHERE source_revision_ref = ?1 " +
     "AND projection_generation = ?2 LIMIT 1",
   ).bind(context.source_revision.source_revision_ref, projectionGeneration)
     .first<{
@@ -263,255 +156,24 @@ export async function prepareManagedItemEffects(
       readonly state: unknown;
       readonly item_count: unknown;
       readonly item_set_digest: unknown;
-      readonly canonical_projection_generation: unknown;
-      readonly canonical_item_count: unknown;
-      readonly canonical_item_set_digest: unknown;
-      readonly provider_copy_count: unknown;
-      readonly provider_copy_set_digest: unknown;
-      readonly managed_target_metadata_generation_digest: unknown;
-      readonly project_copy_map_index_protocol: unknown;
-      readonly project_copy_map_index_ref: unknown;
-      readonly project_copy_map_index_sha256: unknown;
-      readonly project_copy_scope_snapshot_id: unknown;
-      readonly project_copy_scope_snapshot_revision: unknown;
-      readonly project_copy_scope_snapshot_digest: unknown;
     }>();
   if (
     generation === null ||
     generation.job_id !== context.job_id ||
-    generation.state !== "MATERIALIZED"
+    generation.state !== "MATERIALIZED" ||
+    generation.item_count !== items.length
   ) {
     projectionFail(
       "PROJECTION_AUTHORITY_CONFLICT",
       "managed item intents require the exact materialized projection generation",
     );
   }
-  const canonicalItemCount = assertProjectionInteger(
-    generation.item_count,
-    "managed materialized item count",
-    1,
-    profile.maximum_synchronous_items,
-  );
-  const canonicalItemSetDigest = assertProjectionSha256(
+  const expectedItemSetDigest = assertProjectionSha256(
     generation.item_set_digest,
     "managed materialized item set digest",
   );
-  const canonicalProjectionGeneration = assertProjectionIdentifier(
-    generation.canonical_projection_generation,
-    "managed canonical projection generation",
-  );
-  const storedCanonicalItemCount = assertProjectionInteger(
-    generation.canonical_item_count,
-    "managed canonical item count",
-    1,
-    1024,
-  );
-  const storedCanonicalItemSetDigest = assertProjectionSha256(
-    generation.canonical_item_set_digest,
-    "managed canonical item set digest",
-  );
-  const providerCopyCount = assertProjectionInteger(
-    generation.provider_copy_count,
-    "managed provider copy count",
-    0,
-    MAX_MANAGED_PROJECT_MEMBERSHIPS,
-  );
-  const providerCopySetDigest = assertProjectionSha256(
-    generation.provider_copy_set_digest,
-    "managed provider copy set digest",
-  );
-  const targetMetadataGenerationDigest = await managedProjectGenerationMetadataValue(
-    profile.managed_generation,
-  );
-  const generationHasV2CopyIndex = generation.project_copy_map_index_protocol ===
-    "eliotr.managed-project-copy-map-index.v2";
-  if (generation.project_copy_map_index_protocol !== null && !generationHasV2CopyIndex) {
-    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed generation has an unknown copy-map index protocol");
-  }
-  if (generationHasV2CopyIndex) {
-    assertProjectionText(generation.project_copy_map_index_ref, "V2 copy-map index ref", 2048);
-    assertProjectionSha256(generation.project_copy_map_index_sha256, "V2 copy-map index digest");
-    assertProjectionIdentifier(generation.project_copy_scope_snapshot_id, "V2 copy scope snapshot ID");
-    assertProjectionInteger(
-      generation.project_copy_scope_snapshot_revision,
-      "V2 copy scope snapshot revision",
-      1,
-      Number.MAX_SAFE_INTEGER,
-    );
-    assertProjectionSha256(generation.project_copy_scope_snapshot_digest, "V2 copy scope snapshot digest");
-  } else if (
-    generation.project_copy_map_index_ref !== null ||
-    generation.project_copy_map_index_sha256 !== null ||
-    generation.project_copy_scope_snapshot_id !== null ||
-    generation.project_copy_scope_snapshot_revision !== null ||
-    generation.project_copy_scope_snapshot_digest !== null
-  ) {
-    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed generation has an incomplete V2 copy-map index receipt");
-  }
-  if (
-    storedCanonicalItemCount !== canonicalItemCount ||
-    storedCanonicalItemSetDigest !== canonicalItemSetDigest ||
-    generation.managed_target_metadata_generation_digest !== targetMetadataGenerationDigest ||
-    generationHasV2CopyIndex !== v2Plan ||
-    (v2Plan && copyPlan !== undefined && (
-      copyPlan.project_copy_map_index_protocol !== generation.project_copy_map_index_protocol ||
-      copyPlan.project_copy_map_index_ref !== generation.project_copy_map_index_ref ||
-      copyPlan.project_copy_map_index_sha256 !== generation.project_copy_map_index_sha256 ||
-      copyPlan.scope_snapshot_id !== generation.project_copy_scope_snapshot_id ||
-      copyPlan.scope_snapshot_revision !== generation.project_copy_scope_snapshot_revision ||
-      copyPlan.scope_snapshot_digest !== generation.project_copy_scope_snapshot_digest
-    ))
-  ) {
-    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed generation copy receipt differs from its Work and target pins");
-  }
-  const manifestItemCount = v2Plan
-    ? canonicalItemCount * providerCopyCount
-    : canonicalItemCount * (providerCopyCount === 0 ? 1 : providerCopyCount);
-  if (manifestItemCount > profile.maximum_synchronous_items) {
-    projectionFail("PROJECTION_INPUT_INVALID", "managed provider effect set exceeds the synchronous item bound");
-  }
-  if (
-    (providerCopyCount > 0 || generationHasV2CopyIndex) && copyPlan === undefined
-  ) {
-    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "project-copy intents require their complete durable map plan");
-  }
-  if (copyPlan !== undefined && (
-    copyPlan.target.managed_instance_id !== profile.managed_instance_id ||
-    copyPlan.target.managed_generation !== profile.managed_generation ||
-    copyPlan.target.metadata_generation_digest !== targetMetadataGenerationDigest ||
-    copyPlan.provider_copy_count !== providerCopyCount ||
-    copyPlan.provider_copy_set_sha256 !== providerCopySetDigest ||
-    (providerCopyCount > 0 && (
-      copyPlan.provider_item_count !== manifestItemCount ||
-      copyPlan.items.length !== manifestItemCount ||
-      copyPlan.copies.length !== providerCopyCount
-    )) ||
-    (providerCopyCount === 0 && !v2Plan && (
-      copyPlan.copies.length !== 0 ||
-      copyPlan.items.length !== canonicalItemCount
-    )) ||
-    (v2Plan && (copyPlan.provider_item_count !== manifestItemCount ||
-      copyPlan.items.length !== manifestItemCount || copyPlan.copies.length !== providerCopyCount))
-  )) {
-    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed project-copy plan differs from its immutable Core receipt");
-  }
-  if (providerCopyCount > 0 && copyPlan !== undefined) {
-    const plannedItemSetDigest = await projectionDigest(copyPlan.items.map((item) => ({
-      item_key: item.item_key,
-      canonical_section_id: item.canonical_section_id,
-      content_sha256: item.content_sha256,
-      start: item.normalized_start_byte,
-      end: item.normalized_end_byte,
-    })));
-    if (plannedItemSetDigest !== copyPlan.provider_item_set_sha256) {
-      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed project-copy item digest differs from the complete plan");
-    }
-  }
-  const expectedItemSetDigest = v2Plan
-    ? copyPlan.provider_item_set_sha256
-    : providerCopyCount === 0
-    ? canonicalItemSetDigest
-    : copyPlan?.provider_item_set_sha256;
-  let singleItemManifestDigest: string | undefined;
-  if (items.length === 1) {
-    const item = items[0];
-    if (item === undefined) {
-      projectionFail(
-        "PROJECTION_INPUT_INVALID",
-        "managed item refresh is missing its exact intent",
-      );
-    }
-    if (item.desired_index >= manifestItemCount) {
-      projectionFail(
-        "PROJECTION_AUTHORITY_CONFLICT",
-        "managed item refresh is outside the prepared manifest",
-      );
-    }
-    assertManagedItemIntent(
-      context,
-      projectionGeneration,
-      profile,
-      item,
-      item.desired_index,
-      canonicalProjectionGeneration,
-    );
-    if (manifestItemCount === 1) {
-      singleItemManifestDigest = await projectionDigest([{
-        item_key: item.item_key,
-        canonical_section_id: item.metadata.canonical_section_id,
-        content_sha256: item.section_content_sha256,
-        start: item.normalized_start_byte,
-        end: item.normalized_end_byte,
-      }]);
-      if (expectedItemSetDigest !== undefined && singleItemManifestDigest !== expectedItemSetDigest) {
-        projectionFail(
-          "PROJECTION_AUTHORITY_CONFLICT",
-          "managed item intent differs from the exact durable projection manifest item set",
-        );
-      }
-    }
-    const row = await loadEffectRow(
-      database,
-      context,
-      projectionGeneration,
-      item.item_key,
-      manifestItemCount,
-    );
-    if (items.length !== manifestItemCount || (row !== null && row.state !== "INTENT")) {
-      if (row === null) {
-        projectionFail(
-          "PROJECTION_SETTLEMENT_UNCERTAIN",
-          "managed item refresh has no durable intent from the complete manifest",
-          true,
-        );
-      }
-      if (row.state === "INTENT") {
-        projectionFail(
-          "PROJECTION_AUTHORITY_CONFLICT",
-          "managed item refresh requires a durable state transition after manifest preparation",
-        );
-      }
-      const effect = decodeEffectRow(row, context, projectionGeneration, profile, operationId, item);
-      await assertCallerFence(database, operationId, callerFence, readClock(clock));
-      return Object.freeze([effect]);
-    }
-  }
-  if (items.length !== manifestItemCount) {
-    projectionFail(
-      "PROJECTION_AUTHORITY_CONFLICT",
-      "managed item refresh must name one item from the prepared manifest",
-    );
-  }
-  if (copyPlan !== undefined && copyPlan.items.length !== items.length) {
-    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed effect set differs from its complete copy-plan size");
-  }
-  const actualItemSetDigest = singleItemManifestDigest ?? await projectionDigest(items.map((item, index) => {
-    assertManagedItemIntent(context, projectionGeneration, profile, item, index, canonicalProjectionGeneration);
-    const planned = copyPlan?.items[index];
-    if (copyPlan !== undefined && (
-      planned === undefined ||
-      planned.item_key !== item.item_key ||
-      (item.copy_layout === null ? null : planned.canonical_projection_generation) !==
-        item.canonical_projection_generation ||
-      planned.canonical_item_key !== item.canonical_item_key ||
-      planned.project_id !== item.project_id ||
-      planned.project_membership_id !== item.project_membership_id ||
-      planned.membership_generation !== item.membership_generation ||
-      planned.copy_layout !== item.copy_layout ||
-      planned.membership_identity_version !== item.membership_identity_version ||
-      planned.legacy_project_membership_id !== item.legacy_project_membership_id ||
-      planned.stable_project_membership_id !== item.stable_project_membership_id ||
-      planned.membership_revision !== item.membership_revision ||
-      planned.project_membership_generation !== item.project_membership_generation ||
-      planned.provider_key !== item.provider_key ||
-      planned.metadata_generation_digest !== item.metadata_generation_digest ||
-      planned.canonical_body_ref !== item.canonical_body_ref ||
-      planned.canonical_body_sha256 !== item.canonical_body_sha256 ||
-      planned.content_sha256 !== item.section_content_sha256 ||
-      planned.normalized_offset_map_ref !== `normalized-bytes:${item.normalized_start_byte}:${item.normalized_end_byte}`
-    )) {
-      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed effect intent differs from its copy-plan mapping");
-    }
+  const actualItemSetDigest = await projectionDigest(items.map((item, index) => {
+    assertManagedItemIntent(context, projectionGeneration, profile, item, index);
     return {
       item_key: item.item_key,
       canonical_section_id: item.metadata.canonical_section_id,
@@ -532,22 +194,17 @@ export async function prepareManagedItemEffects(
     const now = nowIso(() => mutationNowMs);
     await database.prepare(
       "INSERT INTO projection_managed_item_effect(" +
-      "source_revision_ref, projection_generation, job_id, item_key, " +
-      "canonical_projection_generation, canonical_item_key, project_id, project_membership_id, " +
-      "membership_generation, membership_identity_version, legacy_project_membership_id, " +
-      "stable_project_membership_id, membership_revision, project_membership_generation, " +
-      "copy_layout, metadata_generation_digest, canonical_body_ref, " +
-      "canonical_body_sha256, desired_index, normalized_start_byte, normalized_end_byte, " +
+      "source_revision_ref, projection_generation, job_id, item_key, desired_index, " +
+      "normalized_start_byte, normalized_end_byte, " +
       "intent_id, intent_revision, attempt_id, execution_operation_id, " +
       "dispatch_lease_generation, managed_instance_id, managed_generation, provider_source, " +
       "provider_key, section_content_sha256, document_sha256, document_size_bytes, metadata_json, " +
       "state, provider_item_id, readback_receipt_json, readback_sha256, created_at, updated_at) " +
-      "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20, " +
-      "?21,?22,?23,?24,?25,NULL,?26,?27,?28,?29,?30,?31,?32,?33,'INTENT',NULL,NULL,NULL,?34,?34 " +
-      "WHERE EXISTS (SELECT 1 FROM operation_execution_lease l " +
-      "WHERE l.operation_id = ?35 AND l.operation_kind = 'PROJECTION_EXECUTE' " +
-      "AND l.lease_owner = ?36 AND l.lease_generation = ?37 AND l.state = 'LEASED' " +
-      "AND l.lease_until > ?38 AND l.lease_until > " + D1_EXECUTION_LEASE_NOW_SQL +
+      "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,NULL,?12,?13,'builtin',?14,?15,?16,?17,?18, " +
+      "'INTENT',NULL,NULL,NULL,?19,?19 WHERE EXISTS (SELECT 1 FROM operation_execution_lease l " +
+      "WHERE l.operation_id = ?20 AND l.operation_kind = 'PROJECTION_EXECUTE' " +
+      "AND l.lease_owner = ?21 AND l.lease_generation = ?22 AND l.state = 'LEASED' " +
+      "AND l.lease_until > ?23 AND l.lease_until > " + D1_EXECUTION_LEASE_NOW_SQL +
       ") ON CONFLICT(source_revision_ref,projection_generation,item_key) " +
       "DO NOTHING",
     ).bind(
@@ -555,22 +212,6 @@ export async function prepareManagedItemEffects(
       projectionGeneration,
       context.job_id,
       item.item_key,
-      item.copy_layout === "PROJECT_COPY_V1" || item.copy_layout === "PROJECT_COPY_V2"
-        ? item.canonical_projection_generation
-        : null,
-      item.canonical_item_key,
-      item.project_id,
-      item.project_membership_id,
-      item.membership_generation,
-      item.membership_identity_version,
-      item.legacy_project_membership_id,
-      item.stable_project_membership_id,
-      item.membership_revision,
-      item.project_membership_generation,
-      item.copy_layout,
-      item.metadata_generation_digest,
-      item.canonical_body_ref,
-      item.canonical_body_sha256,
       item.desired_index,
       item.normalized_start_byte,
       item.normalized_end_byte,
@@ -578,16 +219,15 @@ export async function prepareManagedItemEffects(
       context.intent_ref.revision,
       context.acceptance_attempt_id,
       operationId,
-      item.managed_instance_id,
-      item.managed_generation,
-      item.provider_source,
+      profile.managed_instance_id,
+      profile.managed_generation,
       item.provider_key,
       item.section_content_sha256,
       item.document_sha256,
       item.document_size_bytes,
       canonicalProjectionJson(item.metadata),
       now,
-      operationId,
+      callerFence.operation_id,
       callerFence.lease_owner,
       callerFence.lease_generation,
       mutationNowMs,
@@ -630,8 +270,7 @@ export async function beginManagedItemDispatch(
     "AND execution_operation_id = ?7 AND EXISTS (SELECT 1 FROM operation_execution_lease l " +
     "WHERE l.operation_id = ?7 AND l.operation_kind = 'PROJECTION_EXECUTE' " +
     "AND l.lease_owner = ?9 AND l.lease_generation = ?5 AND l.state = 'LEASED' " +
-    "AND l.lease_until > ?8 AND l.lease_until > " + D1_EXECUTION_LEASE_NOW_SQL + ") " +
-    `AND ${dispatchAuthorityPredicate(10)}`,
+    "AND l.lease_until > ?8 AND l.lease_until > " + D1_EXECUTION_LEASE_NOW_SQL + ")",
   ).bind(
     context.source_revision.source_revision_ref,
     projectionGeneration,
@@ -642,7 +281,6 @@ export async function beginManagedItemDispatch(
     operationId,
     nowMs,
     callerFence.lease_owner,
-    ...dispatchAuthorityBindings(context, projectionGeneration),
   ).run();
   if (result.meta.changes === 1) {
     await assertCallerFence(database, operationId, callerFence, readClock(clock));
@@ -655,7 +293,6 @@ export async function beginManagedItemDispatch(
   }
   assertLineage(row, context, projectionGeneration, operationId);
   if (row.state === "INTENT") {
-    await assertCurrentManagedDispatchAuthority(database, context, projectionGeneration);
     projectionFail(
       "PROJECTION_SETTLEMENT_UNCERTAIN",
       "managed item dispatch was not fenced by the current execution lease",

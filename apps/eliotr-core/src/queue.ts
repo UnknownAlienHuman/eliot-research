@@ -9,7 +9,7 @@ import {
 } from "@eliotr/platform-cloudflare";
 import type { Env } from "./env.js";
 import { createProjectionDeliveryHandler } from "@eliotr/cloudflare-projection";
-import { createProjectionExecutionDeliveryHandler } from "@eliotr/cloudflare-ai";
+import { createProjectionExecutionDeliveryHandler } from "./projection-execution-handler.js";
 import { createExternalTaskResultDeliveryHandler, EXTERNAL_AGENT_RESULT_WAKE_TOPIC } from "@eliotr/cloudflare-workflows";
 import { createProjectMembershipIndexDeliveryHandler, PROJECT_MEMBERSHIP_INDEX_TOPIC } from "./project-membership-index-delivery.js";
 
@@ -25,23 +25,13 @@ function metric(env: Env, input: QueueDeliveryMetricInput): void {
   }
 }
 
-function projectionHandler(env: Env): DeliveryHandler {
+function deliveryHandler(env: Env): DeliveryHandler {
   const accept = createProjectionDeliveryHandler(env.CORE_DB);
-  const execute = createProjectionExecutionDeliveryHandler({
-    core_database: env.CORE_DB,
-    search_database: env.SEARCH_DB,
-    evidence_bucket: env.EVIDENCE_BUCKET,
-    work_bucket: env.WORK_BUCKET,
-    ai_search: env.AI_SEARCH,
-  });
-  return async (message, context) => {
+  const execute = createProjectionExecutionDeliveryHandler(env);
+  const projection: DeliveryHandler = async (message, context) => {
     await accept(message, context);
     return execute(message, context);
   };
-}
-
-function deliveryHandler(env: Env): DeliveryHandler {
-  const projection = projectionHandler(env);
   const membershipIndex = createProjectMembershipIndexDeliveryHandler(env);
   const externalResult = createExternalTaskResultDeliveryHandler({
     database: env.CORE_DB,
@@ -50,7 +40,8 @@ function deliveryHandler(env: Env): DeliveryHandler {
   return (message, context) => {
     if (message.topic === EXTERNAL_AGENT_RESULT_WAKE_TOPIC) return externalResult(message, context);
     if (message.topic === PROJECT_MEMBERSHIP_INDEX_TOPIC) return membershipIndex(message, context);
-    return projection(message, context);
+    if (message.topic === "source.revision.admitted") return projection(message, context);
+    throw new Error("QUEUE_TOPIC_UNSUPPORTED");
   };
 }
 

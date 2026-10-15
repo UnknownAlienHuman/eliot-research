@@ -1,7 +1,6 @@
 import type { ExecutionFence } from "@eliotr/platform-cloudflare";
 import { D1_EXECUTION_LEASE_NOW_SQL } from "@eliotr/platform-cloudflare";
 import { MANAGED_ITEM_PROTOCOL_VERSION } from "./core-managed-item-receipts.js";
-import { managedProjectGenerationMetadataValue } from "./managed-project-path.js";
 import {
   assertProjectionIdentifier,
   assertProjectionInteger,
@@ -30,18 +29,6 @@ export interface GenerationRow {
   readonly managed_item_protocol: unknown;
   readonly managed_target_instance_id: unknown;
   readonly managed_target_generation: unknown;
-  readonly managed_target_metadata_generation_digest: unknown;
-  readonly canonical_projection_generation: unknown;
-  readonly canonical_item_count: unknown;
-  readonly canonical_item_set_digest: unknown;
-  readonly provider_copy_count: unknown;
-  readonly provider_copy_set_digest: unknown;
-  readonly project_copy_map_index_protocol: unknown;
-  readonly project_copy_map_index_ref: unknown;
-  readonly project_copy_map_index_sha256: unknown;
-  readonly project_copy_scope_snapshot_id: unknown;
-  readonly project_copy_scope_snapshot_revision: unknown;
-  readonly project_copy_scope_snapshot_digest: unknown;
   readonly semantic_receipt_ref: unknown;
   readonly semantic_readback_digest: unknown;
   readonly reason_codes_json: unknown;
@@ -74,12 +61,7 @@ export async function generationRow(
     "projector_profile, state, item_count, item_set_digest, work_manifest_ref, " +
     "work_manifest_sha256, d1_search_receipt_ref, d1_search_readback_digest, " +
     "semantic_instance_id, semantic_generation, managed_item_protocol, " +
-    "managed_target_instance_id, managed_target_generation, " +
-    "managed_target_metadata_generation_digest, canonical_projection_generation, " +
-    "canonical_item_count, canonical_item_set_digest, provider_copy_count, " +
-    "provider_copy_set_digest, project_copy_map_index_protocol, project_copy_map_index_ref, " +
-    "project_copy_map_index_sha256, project_copy_scope_snapshot_id, " +
-    "project_copy_scope_snapshot_revision, project_copy_scope_snapshot_digest, semantic_receipt_ref, " +
+    "managed_target_instance_id, managed_target_generation, semantic_receipt_ref, " +
     "semantic_readback_digest, reason_codes_json FROM projection_generation " +
     "WHERE source_revision_ref = ?1 AND projection_generation = ?2 LIMIT 1",
   ).bind(
@@ -88,11 +70,11 @@ export async function generationRow(
   ).first<GenerationRow>();
 }
 
-export async function validateGenerationIdentity(
+export function validateGenerationIdentity(
   row: GenerationRow,
   context: ProjectionSourceContext,
   profile: ProjectionExecutionProfile,
-): Promise<void> {
+): void {
   if (
     row.job_id !== context.job_id ||
     row.source_owner_generation !== context.source_revision.source_owner_generation ||
@@ -118,13 +100,9 @@ export async function validateGenerationIdentity(
       );
     }
   } else if (row.managed_item_protocol === MANAGED_ITEM_PROTOCOL_VERSION) {
-    const metadataGenerationDigest = await managedProjectGenerationMetadataValue(
-      profile.managed_generation,
-    );
     if (
       row.managed_target_instance_id !== profile.managed_instance_id ||
-      row.managed_target_generation !== profile.managed_generation ||
-      row.managed_target_metadata_generation_digest !== metadataGenerationDigest
+      row.managed_target_generation !== profile.managed_generation
     ) {
       projectionFail(
         "PROJECTION_AUTHORITY_CONFLICT",
@@ -147,8 +125,7 @@ export async function assertManagedItemGenerationProtocol(
 ): Promise<void> {
   const row = await database.prepare(
     "SELECT job_id, managed_item_protocol, managed_target_instance_id, " +
-    "managed_target_generation, managed_target_metadata_generation_digest " +
-    "FROM projection_generation WHERE source_revision_ref = ?1 " +
+    "managed_target_generation FROM projection_generation WHERE source_revision_ref = ?1 " +
     "AND projection_generation = ?2 LIMIT 1",
   ).bind(
     context.source_revision.source_revision_ref,
@@ -158,7 +135,6 @@ export async function assertManagedItemGenerationProtocol(
     readonly managed_item_protocol: unknown;
     readonly managed_target_instance_id: unknown;
     readonly managed_target_generation: unknown;
-    readonly managed_target_metadata_generation_digest: unknown;
   }>();
   if (
     row === null ||
@@ -181,9 +157,7 @@ export async function assertManagedItemGenerationProtocol(
   if (
     profile !== undefined &&
     (instanceId !== profile.managed_instance_id ||
-      managedGeneration !== profile.managed_generation ||
-      row.managed_target_metadata_generation_digest !==
-        await managedProjectGenerationMetadataValue(profile.managed_generation))
+      managedGeneration !== profile.managed_generation)
   ) {
     projectionFail(
       "PROJECTION_AUTHORITY_CONFLICT",

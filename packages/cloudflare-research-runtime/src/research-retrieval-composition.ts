@@ -10,12 +10,12 @@ import {
   ResearchHeldScopeError,
   type HeldResearchScope,
 } from "@eliotr/cloudflare-research";
-import { AI_SEARCH_PRIMARY_NAMESPACE, createD1BackedAiSearchManagedSearchPort } from "@eliotr/cloudflare-ai";
+import { searchProject } from "@eliotr/cloudflare-ai";
+import { decodeAiSearchSearchResult } from "@eliotr/platform-cloudflare";
 import {
   createD1SearchExactPort,
   createD1SearchIdentPort,
   createD1SearchLexPort,
-  resolveManagedTargetSelectionV2,
 } from "@eliotr/cloudflare-projection";
 import {
   createD1RetrievalResultStore,
@@ -38,8 +38,6 @@ import {
 } from "@eliotr/retrieval";
 import type { LocatorCandidate, ResolvedEvidence, RetrievalLane, ScopeSnapshot } from "@eliotr/contracts";
 import type { RetrievalRequest, RetrievalResult } from "@eliotr/retrieval";
-import type { AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
-import { createD1ProjectCopyScopeResolver } from "@eliotr/cloudflare-navigation";
 import { createExactPhraseVerifier } from "./research-exact-search.js";
 import { createD1RetrievalQueryAdmissionPort } from "./research-retrieval-admission.js";
 import { createD1RetrievalSettlementOwnerPort } from "./research-retrieval-settlement-owner.js";
@@ -80,6 +78,29 @@ const STALE_AUTHORITY_CODES: ReadonlySet<string> = new Set([
 
 function fail(code: "RETRIEVAL_RESOLUTION_UNCERTAIN" | "RETRIEVAL_AUTHORITY_STALE", message: string): never {
   throw new RetrievalQueryError(code, message, code === "RETRIEVAL_RESOLUTION_UNCERTAIN");
+}
+
+function projectIdForScopeExpression(expression: unknown): string | null {
+  if (typeof expression !== "object" || expression === null || Array.isArray(expression)) return null;
+  const record = expression as Record<string, unknown>;
+  if (record.kind === "PROJECT") {
+    return typeof record.project_id === "string" && record.project_id.length > 0
+      ? record.project_id
+      : null;
+  }
+  if (record.kind === "EXCEPT") return projectIdForScopeExpression(record.left);
+  if (record.kind === "INTERSECT") {
+    const left = projectIdForScopeExpression(record.left);
+    const right = projectIdForScopeExpression(record.right);
+    if (left !== null && right !== null && left !== right) return null;
+    return left ?? right;
+  }
+  if (record.kind === "UNION") {
+    const left = projectIdForScopeExpression(record.left);
+    const right = projectIdForScopeExpression(record.right);
+    return left !== null && left === right ? left : null;
+  }
+  return null;
 }
 
 export type { HeldResearchScope } from "@eliotr/cloudflare-research";
@@ -167,20 +188,23 @@ async function createHeldScopeRetrievalQuery(
   const exact = createExactLaneExecutor(exactPort);
   const lexPort = createD1SearchLexPort({ search_database: env.SEARCH_DB, core_database: env.CORE_DB });
   const lex = createLexLaneExecutor(lexPort);
-  const projectCopyScopeResolver = createD1ProjectCopyScopeResolver({
-    database: env.CORE_DB,
-    access,
-    require_current_scope: scopePorts.requireCurrentScope,
-    resolve_selection: (authority) => resolveManagedTargetSelectionV2(
-      env.SEARCH_DB, "ACTIVE", undefined, authority,
-    ),
-  });
-  const sem = env.AI_SEARCH === undefined ? null : createSemLaneExecutor(createD1BackedAiSearchManagedSearchPort(
-    env.SEARCH_DB,
-    env.AI_SEARCH,
-    { expected_namespace: AI_SEARCH_PRIMARY_NAMESPACE, max_preview_bytes: 4096, match_threshold: 0 },
-    projectCopyScopeResolver,
-  ));
+  const projectId = projectIdForScopeExpression(input.scope_snapshot.resolved_scope_expression);
+  const sem = env.AI_SEARCH === undefined || projectId === null
+    ? null
+    : createSemLaneExecutor({
+        async search(request) {
+          const raw = await searchProject({
+            namespace: env.AI_SEARCH!,
+            core_database: env.CORE_DB,
+            search_database: env.SEARCH_DB,
+            project_id: projectId,
+            source_revision_refs: request.scope_snapshot.member_source_revision_refs,
+            lane: "prose",
+            query: request.raw_query,
+          });
+          return decodeAiSearchSearchResult(request, raw);
+        },
+      });
   const lanes = {
     executorFor(lane: RetrievalLane) {
       if (lane === "IDENT") return ident;

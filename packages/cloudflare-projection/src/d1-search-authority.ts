@@ -214,66 +214,6 @@ export interface D1SearchChannelReadback {
   readonly stale: readonly string[];
 }
 
-export interface D1ManagedSemanticReadback {
-  readonly state: "ready" | "degraded" | "not_requested";
-  readonly generation?: string;
-  readonly receipt_ref?: string;
-  readonly reason_codes: readonly string[];
-}
-
-interface ManagedSemanticRow {
-  readonly state: unknown;
-  readonly semantic_instance_id: unknown;
-  readonly semantic_generation: unknown;
-  readonly semantic_receipt_ref: unknown;
-  readonly semantic_readback_digest: unknown;
-  readonly reason_codes_json: unknown;
-}
-
-function storedReasonCodes(value: unknown): readonly string[] {
-  if (typeof value !== "string") return ["MANAGED_INDEX_READBACK_FAILED"];
-  try {
-    const parsed: unknown = JSON.parse(value);
-    if (!Array.isArray(parsed) || parsed.length > 64 || parsed.some((entry) => typeof entry !== "string" || !IDENTIFIER.test(entry))) {
-      return ["MANAGED_INDEX_READBACK_FAILED"];
-    }
-    return [...new Set(parsed)];
-  } catch {
-    return ["MANAGED_INDEX_READBACK_FAILED"];
-  }
-}
-
-/** Read durable managed-index settlement fields without probing the provider. */
-export async function readD1ManagedSemanticReadback(
-  core: D1Database,
-  sourceRevisionRef: string,
-  expectedInstanceId: string,
-  expectedManagedGeneration: string,
-): Promise<D1ManagedSemanticReadback> {
-  const row = await core.prepare(
-    "SELECT state, semantic_instance_id, semantic_generation, semantic_receipt_ref, " +
-      "semantic_readback_digest, reason_codes_json FROM projection_generation " +
-      "WHERE source_revision_ref=?1 ORDER BY updated_at DESC, projection_generation DESC LIMIT 1",
-  ).bind(sourceRevisionRef).first<ManagedSemanticRow>();
-  if (row === null) return { state: "not_requested", reason_codes: ["MANAGED_SEMANTIC_UNAVAILABLE"] };
-  const reasons = storedReasonCodes(row.reason_codes_json);
-  if (row.state !== "COMPLETED") {
-    return { state: reasons.length === 0 ? "not_requested" : "degraded", reason_codes: reasons.length === 0 ? ["MANAGED_INDEX_NOT_COMPLETED"] : reasons };
-  }
-  try {
-    const instance = assertIdentifier(row.semantic_instance_id, "stored semantic instance");
-    const generation = assertIdentifier(row.semantic_generation, "stored semantic generation");
-    const receipt = assertIdentifier(row.semantic_receipt_ref, "stored semantic receipt");
-    assertSha256(row.semantic_readback_digest, "stored semantic readback digest");
-    if (instance !== expectedInstanceId || generation !== expectedManagedGeneration) {
-      return { state: "degraded", reason_codes: ["MANAGED_INDEX_READBACK_FAILED"] };
-    }
-    return { state: "ready", generation, receipt_ref: receipt, reason_codes: [] };
-  } catch {
-    return { state: "degraded", reason_codes: ["MANAGED_INDEX_READBACK_FAILED"] };
-  }
-}
-
 function sameCoverage(
   left: Awaited<ReturnType<typeof pinReadyGenerations>>,
   right: Awaited<ReturnType<typeof pinReadyGenerations>>,

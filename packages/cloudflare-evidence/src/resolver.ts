@@ -24,7 +24,6 @@ import {
   evidenceHandleIdentityPayload,
 } from "./registry.js";
 import { citationOutcomeForError, citationRejectionForOutcome } from "./citation-outcomes.js";
-import { isManagedCopyLocatorCandidate } from "./managed-copy-locator.js";
 import {
   EvidenceRuntimeError,
   type CandidateAnchorAuthority,
@@ -370,35 +369,6 @@ async function resolveCandidate(
     authorization,
   );
   const anchorAuthority = await dependencies.authority.resolveCandidate(candidate, source, scope);
-  if (isManagedCopyLocatorCandidate(candidate)) {
-    const current = await loadAuthorizedScope(dependencies, scopeRef, access);
-    const currentSource = await loadSource(
-      dependencies,
-      candidate.source_revision_ref,
-      current.scope,
-      current.authorization,
-    );
-    if (
-      current.scope.snapshot.snapshot_id !== scope.snapshot.snapshot_id ||
-      current.scope.snapshot.revision !== scope.snapshot.revision ||
-      current.scope.snapshot.digest !== scope.snapshot.digest ||
-      current.scope.invalidated_at !== scope.invalidated_at ||
-      current.authorization.authorization_receipt_ref !== authorization.authorization_receipt_ref ||
-      canonicalEvidenceJson(current.authorization) !== canonicalEvidenceJson(authorization)
-    ) {
-      fail("EVIDENCE_SCOPE_INVALIDATED", "scope authority changed during project-copy mapping", {
-        invalidation_state: "STALE",
-      });
-    }
-    if (canonicalEvidenceJson(currentSource) !== canonicalEvidenceJson(source)) {
-      fail("EVIDENCE_OWNER_GENERATION_MISMATCH", "source authority changed during project-copy mapping", {
-        invalidation_state: "STALE",
-      });
-    }
-    scope = current.scope;
-    authorization = current.authorization;
-    source = currentSource;
-  }
   const materialized = await dependencies.content.materialize(source, anchorAuthority.anchor);
   requireMaterializedSourceBinding(materialized, source);
   requireCandidateExcerptBinding(candidate, anchorAuthority, materialized);

@@ -1,5 +1,3 @@
-export * from "@eliotr/cloudflare-projection/ai-search";
-export * from "./managed-index.js";
 export {
   ModelGatewayExecutionError,
   type CompiledModelGatewayPrompt,
@@ -84,9 +82,4 @@ export {
   type OpenRouterProviderKeyErrorCode,
   type OpenRouterProviderKeyExecutionContext,
 } from "./provider-key-rest-contract.js";
-export {
-  createProjectionExecutionDeliveryHandler,
-  projectionManagedGenerationIsActive,
-  PROJECTION_EXECUTION_PROFILE,
-} from "./projection-execution-delivery-handler.js";
-export type { ProjectionExecutionDeliveryBindings } from "./projection-execution-delivery-handler.js";
+export * from "./project-search.js";

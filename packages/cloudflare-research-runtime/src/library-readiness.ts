@@ -11,15 +11,8 @@ import {
   type SourceRevision,
 } from "@eliotr/contracts";
 import {
-  readD1ManagedSemanticReadback,
   readD1SearchChannelReadback,
 } from "@eliotr/cloudflare-projection";
-import {
-  AI_SEARCH_PRIMARY_NAMESPACE,
-  createAiSearchGenerationRegistryService,
-  createD1AiSearchGenerationRegistryStore,
-  resolveAiSearchManagedSearchAuthority,
-} from "@eliotr/cloudflare-ai";
 import type {
   AuthenticatedRequestContext,
   LibraryReadinessRequest,
@@ -224,39 +217,17 @@ async function activeProjection(
   }
 }
 
-async function managedSemantic(
-  search: D1Database,
-  core: D1Database,
+function semanticNotRequested(
   sourceRevisionRef: string,
   observedAt: string,
-): Promise<ChannelReadiness> {
-  try {
-    const registryService = createAiSearchGenerationRegistryService(
-      createD1AiSearchGenerationRegistryStore(search),
-    );
-    const registry = await registryService.read(AI_SEARCH_PRIMARY_NAMESPACE);
-    if (registry === null) {
-      return ChannelReadinessSchema.parse({ source_revision_ref: sourceRevisionRef, channel: "semantic_ready",
-        state: "not_requested", reason_codes: ["MANAGED_SEMANTIC_UNAVAILABLE"], observed_at: observedAt });
-    }
-    const authority = await resolveAiSearchManagedSearchAuthority(registry, {
-      expected_namespace: AI_SEARCH_PRIMARY_NAMESPACE, max_preview_bytes: 0, match_threshold: 0,
-    });
-    const readback = await readD1ManagedSemanticReadback(
-      core, sourceRevisionRef, authority.instance_id, authority.index_generation,
-    );
-    const finalRegistry = await registryService.read(AI_SEARCH_PRIMARY_NAMESPACE);
-    if (finalRegistry === null || finalRegistry.artifact_sha256 !== authority.registry_artifact_sha256) {
-      throw new Error("managed semantic registry changed during readiness read");
-    }
-    return ChannelReadinessSchema.parse({ source_revision_ref: sourceRevisionRef, channel: "semantic_ready",
-      state: readback.state, ...(readback.generation === undefined ? {} : { generation: readback.generation }),
-      ...(readback.receipt_ref === undefined ? {} : { receipt_ref: readback.receipt_ref }),
-      reason_codes: readback.reason_codes, observed_at: observedAt });
-  } catch {
-    return ChannelReadinessSchema.parse({ source_revision_ref: sourceRevisionRef, channel: "semantic_ready",
-      state: "degraded", reason_codes: ["MANAGED_INDEX_READBACK_FAILED"], observed_at: observedAt });
-  }
+): ChannelReadiness {
+  return ChannelReadinessSchema.parse({
+    source_revision_ref: sourceRevisionRef,
+    channel: "semantic_ready",
+    state: "not_requested",
+    reason_codes: [],
+    observed_at: observedAt,
+  });
 }
 
 // IMPLEMENTED_NOT_LIVE: ER-24 owner readiness composes active D1 projection and currentness readback; deployment qualification remains separate.
@@ -285,7 +256,7 @@ export async function readLibraryReadiness(
   ).bind(head).first<CurrentnessRow>();
   if (currentnessRow === null) invalid("source currentness row is missing");
   const currentnessObservation = await currentness(database, context, currentnessRow, head, authoritative);
-  const semantic = await managedSemantic(searchDatabase, database, head, observedAt);
+  const semantic = semanticNotRequested(head, observedAt);
   const [finalExact, finalLexical] = await Promise.all([
     activeProjection(searchDatabase, database, "exact", head, authoritative.revision.source_owner_generation),
     activeProjection(searchDatabase, database, "lexical", head, authoritative.revision.source_owner_generation),

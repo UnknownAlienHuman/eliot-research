@@ -6,14 +6,6 @@ const mocks = vi.hoisted(() => ({
   writeDataPoint: vi.fn(),
 }));
 
-vi.mock("@eliotr/cloudflare-projection", () => ({
-  createProjectionDeliveryHandler: vi.fn(() => vi.fn()),
-}));
-
-vi.mock("@eliotr/cloudflare-ai", () => ({
-  createProjectionExecutionDeliveryHandler: vi.fn(() => vi.fn()),
-}));
-
 function environment(): Env {
   return {
     CORE_DB: {} as D1Database,

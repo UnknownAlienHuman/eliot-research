@@ -36,7 +36,6 @@
     "@eliotr/cloudflare-research-configuration": "workspace:*",
     "@eliotr/cloudflare-research-runtime": "workspace:*",
     "@eliotr/cloudflare-research-stages": "workspace:*",
-    "@eliotr/cloudflare-search-probe": "workspace:*",
     "@eliotr/cloudflare-wiki": "workspace:*",
     "@eliotr/cloudflare-workflows": "workspace:*",
     "@eliotr/cloudflare-workspace-mcp": "workspace:*",

@@ -1,11 +1,5 @@
 import { AccessVerificationError, type AccessVerifier } from "@eliotr/cloudflare-access";
 import { describe, expect, it } from "vitest";
-import {
-  AI_SEARCH_PRIMARY_GENERATION,
-  AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
-  PROJECTION_EXECUTION_PROFILE,
-  projectionManagedGenerationIsActive,
-} from "@eliotr/cloudflare-ai";
 import { createApplication } from "../src/composition-root.js";
 import type { Env } from "../src/env.js";
 import { handleHttp } from "../src/http.js";
@@ -227,58 +221,6 @@ describe("HTTP authority boundary", () => {
   });
 });
 
-
-describe("managed projection generation authority", () => {
-  it("targets the primary g2 instance but keeps it shadow by default", () => {
-    expect(PROJECTION_EXECUTION_PROFILE).toMatchObject({
-      managed_instance_id: "private-prose-g2",
-      managed_generation: AI_SEARCH_PRIMARY_GENERATION,
-      managed_generation_active: false,
-    });
-  });
-
-  it("requires the exact ACTIVE registry record before semantic readiness", () => {
-    expect(projectionManagedGenerationIsActive(null)).toBe(false);
-    expect(projectionManagedGenerationIsActive({
-      artifact: {
-        registry: {
-          active_head_generation: "another-generation",
-          generations: [],
-        },
-      },
-    } as never)).toBe(false);
-    expect(projectionManagedGenerationIsActive({
-      artifact: {
-        registry: {
-          active_head_generation: AI_SEARCH_PRIMARY_GENERATION,
-          generations: [{
-            generation: AI_SEARCH_PRIMARY_GENERATION,
-            state: "ACTIVE",
-            profile: AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
-          }],
-        },
-      },
-    } as never)).toBe(true);
-  });
-
-  it("rejects an active-head record with a different immutable profile", () => {
-    expect(() => projectionManagedGenerationIsActive({
-      artifact: {
-        registry: {
-          active_head_generation: AI_SEARCH_PRIMARY_GENERATION,
-          generations: [{
-            generation: AI_SEARCH_PRIMARY_GENERATION,
-            state: "ACTIVE",
-            profile: {
-              ...AI_SEARCH_PRIMARY_PROJECTION_PROFILE,
-              embedding_model: "@cf/incompatible/model",
-            },
-          }],
-        },
-      },
-    } as never)).toThrow(/immutable desired profile/u);
-  });
-});
 
 describe("federation application contract", () => {
   it("exposes the complete V1 surface and keeps every operation fail-closed", async () => {

@@ -25,7 +25,6 @@ import { handleResearchProviderKeyConfiguration } from "./research-provider-key-
 import { createResearchProviderKeyConfigurationComposition } from "./research-provider-key-configuration-composition.js";
 import { createResearchProviderKeyModelUseComposition } from "./research-provider-key-model-use-composition.js";
 import { handleResearchProviderKeyModelUseHttp } from "./research-provider-key-model-use-http.js";
-import { handleAiSearchFunctionalProbeHttp } from "./ai-search-functional-probe-http.js";
 import {
   handleMcpClientDiagnosticIssue,
   handleMcpClientDiagnosticLatest,
@@ -87,14 +86,6 @@ export async function dispatchHttpSpecialRoute(input: {
   switch (input.match.route.operation) {
     case "research.session.transport":
       return handleResearchSessionTransport(input.request, input.env, input.context);
-    case "system.ai-search.functional-probe":
-      return handleAiSearchFunctionalProbeHttp({
-        request: input.request,
-        env: input.env,
-        url: input.url,
-        context: input.context,
-        maximum_request_bytes: input.match.route.maximum_request_bytes,
-      });
     case "research.project-model-configuration.read":
     case "research.project-model-configuration.select":
     case "research.project-model-configuration.import": {
