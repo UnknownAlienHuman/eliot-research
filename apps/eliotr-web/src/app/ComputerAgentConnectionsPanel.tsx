@@ -448,7 +448,7 @@ export function ComputerAgentConnectionsPanel({ locale, apis, privacy, context }
     () => computerAgentConnectionOperationKey(context),
     [context],
   );
-  const operationQuery = useQuery<ConnectionOperation | undefined>({
+  const operationQuery = useQuery<ConnectionOperation | null>({
     queryKey: operationKey,
     queryFn: skipToken,
     gcTime: Infinity,
@@ -457,7 +457,9 @@ export function ComputerAgentConnectionsPanel({ locale, apis, privacy, context }
   });
   const writeOperation = useCallback((update: (current: ConnectionOperation | undefined) => ConnectionOperation | undefined) => {
     if (!privacy.isCurrent(context)) return;
-    queryClient.setQueryData<ConnectionOperation | undefined>(operationKey, current => update(current));
+    // undefined means "do not update" to QueryClient; use an explicit empty
+    // value so canceling a review actually releases its protected intent.
+    queryClient.setQueryData<ConnectionOperation | null>(operationKey, current => update(current ?? undefined) ?? null);
   }, [context, operationKey, privacy, queryClient]);
   // On unmount, a mutation that was still attempting has an unknown outcome. Transition the held
   // operation to UNKNOWN rather than dropping it or leaving a stale "attempting" phase. A receipt
@@ -868,7 +870,7 @@ export function ComputerAgentConnectionsPanel({ locale, apis, privacy, context }
       {page && page.connections.length > 0 && <ul>
         {page.connections.map(connection => <li key={connection.connection_id}>
           <Button variant="text" aria-pressed={selected?.connection.connection_id === connection.connection_id}
-            aria-label={`${text.selectConnection}: ${connection.display_name}`} disabled={operationLocked}
+            aria-label={`${text.selectConnection}: ${connection.display_name} · ${connection.state === "ENABLED" ? text.enabled : text.disabled}`} disabled={operationLocked}
             onClick={() => selectConnection(connection)}>
             {connection.display_name} · {connection.state === "ENABLED" ? text.enabled : text.disabled}
           </Button>
