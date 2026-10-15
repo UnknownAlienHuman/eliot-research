@@ -148,9 +148,13 @@ async function historicalAtomResolver(
     const source = byRevision.get(currentMember.source_revision_ref);
     if (source === undefined) stale();
     const historical = historicalBySourceId.get(source.revision.source_id);
-    // A historical read may retain old revisions for existing source IDs, but
-    // it must not hide current membership additions from the exact-scope check.
-    if (historical === undefined) stale();
+    // Keep the complete atom until INTERSECT/EXCEPT have selected the final
+    // scope. A member outside the saved result may be removed by that algebra;
+    // an actual final addition is rejected by requireExactHistoricalIdentity.
+    if (historical === undefined) {
+      members.push(currentMember);
+      continue;
+    }
     if (historical.source_owner_generation !== source.revision.source_owner_generation) stale();
     members.push(historical);
   }

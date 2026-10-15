@@ -352,6 +352,29 @@ describe("project-scoped ScopeSnapshot invalidation in Core D1", () => {
     await expect(scopes.requireCurrent(snapshot)).rejects.toMatchObject({ code: "SCOPE_SNAPSHOT_STALE" });
   });
 
+  it("reauthorizes selected subsets after applying INTERSECT and EXCEPT to the whole project", async () => {
+    await seedSource(source("revision-filtered-a"));
+    await seedSource(source("revision-filtered-b"));
+    await seedProject(PROJECT_A, ["revision-filtered-a", "revision-filtered-b"]);
+    const { scopes } = scopeHarness();
+    for (const kind of ["INTERSECT", "EXCEPT"] as const) {
+      const snapshot = await scopes.freeze({ kind,
+        left: { kind: "PROJECT", project_id: PROJECT_A },
+        right: { kind: "SELECTED_SOURCES", source_ids: [source("revision-filtered-a").source_id] },
+      }, access.credential_generation);
+      await used(snapshot, `filtered-${kind}`);
+      await grant(snapshot);
+      const before = canonicalBytes(await stored(snapshot));
+      const historical = await reauthorizeOwnerHistoricalScope({ database: db, access,
+        original_ref: { id: snapshot.snapshot_id, revision: snapshot.revision }, original: snapshot,
+        now: () => NOW + 3_000 });
+      expect(historical.scope.member_source_revision_refs).toEqual(snapshot.member_source_revision_refs);
+      expect(historical.scope.member_source_revision_refs).toHaveLength(1);
+      await expect(historical.requireCurrent(historical.scope)).resolves.toEqual(historical.scope);
+      expect(canonicalBytes(await stored(snapshot))).toBe(before);
+    }
+  });
+
   it("retains source-head currentness denial", async () => {
     const { scopes, snapshot } = await singleProjectScope("revision-head");
     await db.prepare("UPDATE source SET head_rev='unadmitted-head' WHERE source_id=?1")
