@@ -40,13 +40,15 @@ export function AgentWorkPane({ locale, agents, agentsUnavailable = false, tools
         <h3 id={`${id}-agents`}>{text.agents}</h3>
         {onManageAgents ? <button type="button" className="er-agent-work__link" onClick={onManageAgents}>{text.manageAgents}</button> : null}
       </div>
-      {agentsUnavailable || agents.length === 0 ? <p className="er-agent-work__empty">{agentsUnavailable ? text.agentsUnavailable : text.noAgents}</p> : null}
+      {/* An unread list claims nothing; only a read, empty list invites connecting an agent. */}
+      {!agentsUnavailable && agents.length === 0 ? <p className="er-agent-work__empty">{text.noAgents}</p> : null}
       <ul className="er-agent-work__agents">{(agentsUnavailable ? [] : agents).map(agent => <li key={agent.id} className="er-agent-chip"
         data-connection-state={agent.connectionState} data-presence={agent.presence}
         title={`${agent.name} · ${text.connectionState[agent.connectionState]} · ${text.transport[agent.transport]} · ${text.presence[agent.presence]}`}>
         <span className="er-agent-chip__dot" aria-hidden="true" />
         <span className="er-agent-chip__name">{agent.name}</span>
-        <span className="er-agent-chip__meta">{text.connectionState[agent.connectionState]} · {text.presence[agent.presence]}</span>
+        <span className="er-agent-chip__meta">{agent.presence === "unknown" ? text.connectionState[agent.connectionState]
+          : `${text.connectionState[agent.connectionState]} · ${text.presence[agent.presence]}`}</span>
       </li>)}</ul>
       {onMoreAgents || onFirstAgents ? <div className="er-agent-work__head">
         {onFirstAgents ? <button type="button" className="er-agent-work__link" onClick={onFirstAgents}>{text.firstAgents}</button> : null}
@@ -55,7 +57,7 @@ export function AgentWorkPane({ locale, agents, agentsUnavailable = false, tools
       {assign}
     </section>
 
-    <section className="er-agent-work__section" aria-labelledby={`${id}-tools`}>
+    {tools.length === 0 ? null : <section className="er-agent-work__section" aria-labelledby={`${id}-tools`}>
       <h3 id={`${id}-tools`}>{text.tools}</h3>
       <ul className="er-agent-work__tools">{tools.map(tool => <li key={tool}>
         <button type="button" className="er-agent-tool" data-accent={TOOL_ACCENT[tool]} onClick={() => onTool(tool)}
@@ -67,9 +69,10 @@ export function AgentWorkPane({ locale, agents, agentsUnavailable = false, tools
           </span>
         </button>
       </li>)}</ul>
-    </section>
+    </section>}
 
-    <section className="er-agent-work__section" aria-labelledby={`${id}-tasks`}>
+    {/* Unread tasks claim nothing, so the section waits until tasks are read. */}
+    {tasksUnavailable ? null : <section className="er-agent-work__section" aria-labelledby={`${id}-tasks`}>
       <h3 id={`${id}-tasks`}>{text.tasks}</h3>
       {tasksUnavailable || tasks.length === 0 ? <p className="er-agent-work__empty">{tasksUnavailable ? text.tasksUnavailable : text.noTasks}</p> : <ul className="er-agent-work__tasks">
         {tasks.map(task => {
@@ -91,6 +94,6 @@ export function AgentWorkPane({ locale, agents, agentsUnavailable = false, tools
         {onFirstTasks ? <button type="button" className="er-agent-work__link" onClick={onFirstTasks}>{text.firstTasks}</button> : null}
         {onMoreTasks ? <button type="button" className="er-agent-work__link" onClick={onMoreTasks}>{text.moreTasks}</button> : null}
       </div> : null}
-    </section>
+    </section>}
   </div>;
 }
