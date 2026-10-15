@@ -5,7 +5,6 @@ import { assembleResearchDraftMarkdown, type ArtifactRevision, type ArtifactSect
   type CitedEvidence, type DeclaredSection, type ResearchArtifactDraftReauthorizationView,
   type ReauthorizedCitedEvidence, type VerifiedEvidence, type VersionedRef } from '@eliotr/owner-api-client';
 import type { BoundWorkspaceApis } from './runtime';
-import { isWorkspaceRequestError } from './runtime';
 import type { PrivacyController, SessionContext } from './privacy';
 import { reportQueryOptions } from '../query/reports';
 import { protectedQueryKey } from '../query/client';
@@ -130,8 +129,11 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
     <OperationFeedback message={operationMessage} />
     <div className="er-live-actions"><Button variant="text" onClick={onClose}>{text.back}</Button>
       <Button variant="tonal" disabled={manifest.isFetching} onClick={() => { void manifest.refetch(); }}>{text.read}</Button></div>
-    {mode === 'author' && isWorkspaceRequestError(author.error) && author.error.status === 404 && author.error.code === 'ARTIFACT_DRAFT_READ_NOT_FOUND' &&
-      <Button variant="tonal" onClick={() => { setSelected(undefined); setPicked(undefined); setMode('reauthorized'); }}>{text.reauthorize}</Button>}
+    {mode === 'author' && (author.isError || section.isError || citations.isError || evidence.isError) &&
+      <Button variant="tonal" disabled={manifest.isFetching || !privacy.isCurrent(context)} onClick={() => {
+        if (!privacy.isCurrent(context)) return;
+        setSelected(undefined); setPicked(undefined); setMode('reauthorized');
+      }}>{text.reauthorize}</Button>}
     {grant && <p>{text.access}</p>}
     <details className="er-live-report-outline" open={outlineOpen}
       onToggle={event => { if (event.target === event.currentTarget) setOutlineOpen(event.currentTarget.open); }}>
