@@ -3,6 +3,7 @@ export * from "./canonical.js";
 export * from "./executor.js";
 export * from "./content-store.js";
 export * from "./work-store.js";
+export * from "./managed-source-dependencies.js";
 export * from "./d1-search.js";
 export * from "./d1-search-read.js";
 export * from "./d1-search-exact.js";

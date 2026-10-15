@@ -47,6 +47,16 @@ function parseTarget(
       ),
     };
   }
+  if (target.canonical_ref.startsWith("r2-work:")) {
+    if (target.location !== "Projection" || target.provider_ref !== undefined) {
+      erasureFail("ERASURE_IDENTITY_CONFLICT", "exact Work dependency has an invalid location or provider identity");
+    }
+    return {
+      bucket: workBucket,
+      kind: "EXACT",
+      key: assertErasureText(target.canonical_ref.slice("r2-work:".length), "exact R2 Work key", 1024),
+    };
+  }
   erasureFail("ERASURE_INPUT_INVALID", `unsupported R2 erasure target ${target.canonical_ref}`);
 }
 

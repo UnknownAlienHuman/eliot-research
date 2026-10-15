@@ -54,6 +54,48 @@ export interface R2WorkEmptySnapshot {
   readonly namespaceDigest: string;
 }
 
+interface RegisteredWorkRow {
+  readonly canonical_ref: string;
+  readonly object_identity_digest: string;
+  readonly managed_root_ref: string | null;
+  readonly managed_root_state: "BUILDING" | "ACTIVE" | "BLOCKED" | null;
+}
+
+/** Registry lookup is source exact; target-wide R2 scans are never authorized. */
+export async function readRegisteredWorkEmptySnapshot(
+  core: D1Database,
+  bucket: R2Bucket,
+  sourceRevisionRef: string,
+  subjectRef: string,
+): Promise<{ readonly keys: readonly string[]; readonly live_root_count: number; readonly generation: string; readonly digest: string }> {
+  const result = await core.prepare(
+    "SELECT canonical_ref,object_identity_digest,managed_root_ref,managed_root_state FROM erasure_dependency_registry " +
+    "WHERE exact_subject_ref IN (?1,?2) AND location='Projection' AND state='ACTIVE' " +
+    "AND managed_object_kind IS NOT NULL ORDER BY dependency_id LIMIT 10001",
+  ).bind(subjectRef, `source-revision:${sourceRevisionRef}`).all<RegisteredWorkRow>();
+  if (result.success !== true || !Array.isArray(result.results)) {
+    erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "registered Work inventory is unavailable", true);
+  }
+  if (result.results.length > 10_000) erasureFail("ERASURE_CLOSURE_INCOMPLETE", "registered Work inventory exceeds its bound");
+  const keys = new Set<string>();
+  let liveRootCount = 0;
+  for (const row of result.results) {
+    if (!row.canonical_ref.startsWith("r2-work:") ||
+        ![null, "BUILDING", "ACTIVE", "BLOCKED"].includes(row.managed_root_state)) {
+      erasureFail("ERASURE_IDENTITY_CONFLICT", "registered Work dependency is malformed");
+    }
+    const key = assertErasureText(row.canonical_ref.slice("r2-work:".length), "registered Work key", 1024);
+    if (row.managed_root_ref !== null && row.managed_root_state !== "BLOCKED") liveRootCount += 1;
+    try { if (await bucket.head(key) !== null) keys.add(key); }
+    catch (cause) { erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "registered Work absence readback failed", true, cause); }
+  }
+  return {
+    keys: [...keys].sort(), live_root_count: liveRootCount,
+    generation: result.results.length === 0 ? "r2-work-prefix-list.v1" : "r2-work-source-dependencies.v2",
+    digest: await erasureDigest({ registered_dependencies: result.results, present_keys: [...keys].sort() }),
+  };
+}
+
 export async function readR2WorkEmptySnapshot(bucket: R2Bucket, sourceRevisionRef: string): Promise<R2WorkEmptySnapshot> {
   const prefix = await projectionWorkPrefix(sourceRevisionRef);
   const keys = await listR2WorkPrefix(bucket, prefix);
@@ -67,12 +109,15 @@ export async function makeR2WorkEmptyProofTarget(
   subjectRef: string,
   sourceRevisionRef: string,
 ): Promise<{ readonly target: PurgeTarget | null; readonly prefix: string }> {
-  const [root, authorityDigest, snapshot] = await Promise.all([
+  const [root, authorityDigest, snapshot, registered] = await Promise.all([
     readErasureRootIdentity(core, sourceRevisionRef),
     readEmptyProofAuthorityDigest(core, sourceRevisionRef, subjectRef, "Projection"),
     readR2WorkEmptySnapshot(bucket, sourceRevisionRef),
+    readRegisteredWorkEmptySnapshot(core, bucket, sourceRevisionRef, subjectRef),
   ]);
-  if (snapshot.keys.length > 0) return { target: null, prefix: snapshot.prefix };
+  if (snapshot.keys.length > 0 || registered.keys.length > 0 || registered.live_root_count > 0) {
+    return { target: null, prefix: snapshot.prefix };
+  }
   const body: EmptyLocationProofBody = {
     request_digest: requestDigest,
     exact_subject_ref: subjectRef,
@@ -80,8 +125,9 @@ export async function makeR2WorkEmptyProofTarget(
     root_identity: root,
     namespace_snapshot: {
       authority_digest: authorityDigest,
-      namespace_digest: snapshot.namespaceDigest,
-      namespace_generation: "r2-work-prefix-list.v1",
+      namespace_digest: registered.generation === "r2-work-prefix-list.v1" ? snapshot.namespaceDigest :
+        await erasureDigest({ source_namespace_digest: snapshot.namespaceDigest, registered_digest: registered.digest }),
+      namespace_generation: registered.generation,
       namespace_ref: snapshot.prefix,
       object_count: 0,
     },
@@ -103,16 +149,20 @@ export async function validateR2WorkEmptyProof(
   }
   assertEmptyProofSubjectRootBinding(proof);
   const sourceRevisionRef = proof.root_identity.source_revision_ref;
-  const [root, authorityDigest, snapshot] = await Promise.all([
+  const [root, authorityDigest, snapshot, registered] = await Promise.all([
     readErasureRootIdentity(core, sourceRevisionRef),
     readEmptyProofAuthorityDigest(core, sourceRevisionRef, proof.exact_subject_ref, "Projection"),
     readR2WorkEmptySnapshot(bucket, sourceRevisionRef),
+    readRegisteredWorkEmptySnapshot(core, bucket, sourceRevisionRef, proof.exact_subject_ref),
   ]);
+  const namespaceDigest = registered.generation === "r2-work-prefix-list.v1" ? snapshot.namespaceDigest :
+    await erasureDigest({ source_namespace_digest: snapshot.namespaceDigest, registered_digest: registered.digest });
   if (await erasureDigest(root) !== await erasureDigest(proof.root_identity) ||
-    proof.namespace_snapshot.namespace_generation !== "r2-work-prefix-list.v1" ||
+    proof.namespace_snapshot.namespace_generation !== registered.generation ||
     proof.namespace_snapshot.namespace_ref !== snapshot.prefix ||
     proof.namespace_snapshot.object_count !== 0 || snapshot.keys.length !== 0 ||
-    snapshot.namespaceDigest !== proof.namespace_snapshot.namespace_digest ||
+    registered.keys.length > 0 || registered.live_root_count > 0 ||
+    namespaceDigest !== proof.namespace_snapshot.namespace_digest ||
     authorityDigest !== proof.namespace_snapshot.authority_digest) {
     erasureFail("ERASURE_CLOSURE_INCOMPLETE", "R2 Work empty proof is stale or its source namespace is not empty");
   }

@@ -42,6 +42,22 @@ function target(canonicalRef: string): PurgeTarget {
 }
 
 describe("erasure location adapters", () => {
+  it("purges an exact registered Work copy while preserving the other source in the same target", async () => {
+    const prefix = "managed-target-manifests/target/build/";
+    const keys = new Set([`${prefix}copies/source-a.json`, `${prefix}copies/source-b.json`]);
+    const bucket = {
+      async head(key: string) { return keys.has(key) ? { key } : null; },
+      async delete(key: string) { keys.delete(key); },
+      list: vi.fn(),
+    } as unknown as R2Bucket;
+    const port = createR2ErasureLocationPort({ evidence_bucket: bucket, work_bucket: bucket });
+    const item = target(`r2-work:${prefix}copies/source-a.json`);
+    const deletion = await port.purge(request, fence, item);
+    await expect(port.verifyAbsent(request, fence, item, deletion)).resolves.toMatchObject({ absent: true });
+    expect([...keys]).toEqual([`${prefix}copies/source-b.json`]);
+    expect(bucket.list).not.toHaveBeenCalled();
+    await expect(port.purge(request, fence, { ...item, provider_ref: "foreign-provider" })).rejects.toMatchObject({ code: "ERASURE_IDENTITY_CONFLICT" });
+  });
   it("deletes one exact AI Search key and proves it is no longer listed", async () => {
     const items = new Map([["provider-1", "source-item-1.md"]]);
     const instance: ManagedSearchErasureInstance = {
