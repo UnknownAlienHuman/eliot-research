@@ -3,6 +3,7 @@ import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { readFileSync, readdirSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
+import type { ScopeExpression } from "@eliotr/contracts";
 import type { DeliveryMessage } from "@eliotr/platform-cloudflare";
 import { canonicalEvidenceJson, evidenceSha256 } from "@eliotr/cloudflare-evidence";
 import { createD1ScopeService, createOwnerScopeAuthority, createProjectOwnerService } from "@eliotr/cloudflare-navigation";
@@ -168,6 +169,25 @@ async function world() {
 }
 
 describe("projection operation owner scope composition", () => {
+  it.each(["SELECTED_SOURCES", "UNION"] as const)("rejects a real persisted %s snapshot as per-project upload authority", async kind => {
+    const w = await world();
+    const selected: ScopeExpression = { kind: "SELECTED_SOURCES", source_ids: ["one", "two"] };
+    const expression: ScopeExpression = kind === "SELECTED_SOURCES" ? selected : {
+      kind: "UNION", left: { kind: "PROJECT", project_id: w.project.project_ref.id }, right: selected,
+    };
+    const snapshot = await w.scopes.freeze(expression, w.owner.credential_generation);
+    const ownerAuthority = createOwnerScopeAuthority(w.db, {
+      principal_ref: w.owner.principal_ref, client_class: w.owner.client_class, credential_generation: w.owner.credential_generation,
+    });
+    await ownerAuthority.grant(snapshot);
+    expect(snapshot.member_source_revision_refs).toEqual(["revision-one", "revision-two"]);
+    await expect(bindProjectionOperationOwnerScope({ database: w.db, context: w.context, owner: w.owner,
+      scope_snapshot_ref: { id: snapshot.snapshot_id, revision: snapshot.revision } }))
+      .rejects.toMatchObject({ code: "PROJECTION_AUTHORITY_CONFLICT", message: expect.stringContaining("one explicit persisted PROJECT scope") });
+    expect(w.sql.prepare("SELECT progress_cursor FROM job WHERE job_id=?").get(w.context.job_id)?.progress_cursor).toBeNull();
+    expect(w.forbiddenEffect).not.toHaveBeenCalled();
+  });
+
   it("loads a real persisted operation-bound owner snapshot into source-specific ACTIVE and SHADOW copy scopes", async () => {
     const w = await world();
     expect(w.context).not.toHaveProperty("project_copy_scopes_v2");

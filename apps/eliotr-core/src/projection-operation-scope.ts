@@ -65,6 +65,9 @@ async function currentSnapshot(database: D1Database, context: ProjectionSourceCo
       snapshot.source_owner_generations[context.source_revision.source_revision_ref] !== context.source_revision.source_owner_generation) {
     projectionFail("PROJECTION_AUTHORITY_CONFLICT", "Projection operation has no matching persisted live owner ScopeSnapshot");
   }
+  if (snapshot.resolved_scope_expression.kind !== "PROJECT") {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "Projection copy authority requires one explicit persisted PROJECT scope; retrieval representatives cannot authorize source fanout");
+  }
   const now = () => Date.parse(row.checked_at);
   const owner = createOwnerScopeAuthority(database, binding.access, now);
   const scopes = createD1ScopeService(database, owner, { now });
@@ -87,7 +90,8 @@ function decodeBinding(value: string | null): Binding {
 }
 
 /**
- * Bind an existing owner snapshot/grant to this exact accepted projection job.
+ * Bind an existing single-PROJECT owner snapshot/grant to this exact accepted
+ * projection job. This is not generic source-ingestion fanout authority.
  * The owner admission caller must supply its verified context; ingestion
  * admission or a retained credential string cannot mint owner scope authority.
  * job.progress_cursor is unused by the legacy projection path. Its first V1
@@ -137,7 +141,13 @@ export async function bindProjectionOperationOwnerScope(input: {
   await currentSnapshot(database, context, binding, stored);
 }
 
-/** Core-only resolver for the optional projection-authority seam. */
+/**
+ * Core-only per-project resolver for the optional projection-authority seam.
+ * The retrieval helper selects one representative, so only an explicit PROJECT
+ * scope can identify that copy without dropping other admitted projects.
+ * The caller still needs a distinct per-project operation/generation identity;
+ * this binding cannot split a generic ingest job into independent project jobs.
+ */
 export function createProjectionOperationScopeResolver(input: {
   readonly database: D1Database;
   readonly search_database: D1Database;
@@ -149,6 +159,8 @@ export function createProjectionOperationScopeResolver(input: {
     const row = await operation(database, context);
     const binding = decodeBinding(row.progress_cursor);
     const snapshot = await currentSnapshot(database, context, binding, row);
+    const expression = snapshot.resolved_scope_expression;
+    if (expression.kind !== "PROJECT") projectionFail("PROJECTION_AUTHORITY_CONFLICT", "Projection scope must select one explicit project");
     const selections = await input.resolve_selections(context);
     if (!Array.isArray(selections) || selections.length < 1 || selections.length > 2 ||
         new Set(selections.map(selection => selection.purpose)).size !== selections.length ||
@@ -178,7 +190,8 @@ export function createProjectionOperationScopeResolver(input: {
       });
       if (scope.layout !== "PROJECT_COPY_V2") projectionFail("PROJECTION_AUTHORITY_CONFLICT", "Projection V2 selection resolved a legacy copy scope");
       const copies = scope.copies.filter(copy => copy.source_revision_ref === context.source_revision.source_revision_ref);
-      if (copies.length !== 1 || copies[0]?.source_owner_generation !== context.source_revision.source_owner_generation) {
+      if (copies.length !== 1 || copies[0]?.project_id !== expression.project_id ||
+          copies[0]?.source_owner_generation !== context.source_revision.source_owner_generation) {
         projectionFail("PROJECTION_AUTHORITY_CONFLICT", "Projection source lacks one exact owner-authorized project copy");
       }
       scopes.push(Object.freeze({ ...scope, copies: Object.freeze(copies) }));
