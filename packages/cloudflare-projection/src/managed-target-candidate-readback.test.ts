@@ -320,6 +320,95 @@ describe("managed target candidate tree readback V3", () => {
     throw new Error("resumable readback did not complete the 4096-copy tree");
   });
 
+  it("writes and resumes its durable cursor inside a custom prefix scope", async () => {
+    // The writer honours cursor_prefix, so the resume must be read back from that exact
+    // scope. A cursor produced under one prefix cannot be replayed under another.
+    const { store, candidate, candidate_sha256 } = await stageCandidate(120);
+    const first = await readManagedTargetManifestCandidateTreeV3({
+      store,
+      candidate,
+      candidate_sha256,
+      cursor_prefix: "custom-prefix",
+    });
+    expect(first.status).toBe("CONTINUE");
+    if (first.cursor === null) throw new Error("a CONTINUE step must persist a cursor");
+    expect(first.cursor.ref.startsWith("custom-prefix/" + candidate_sha256 + "/")).toBe(true);
+
+    const resumed = await readManagedTargetManifestCandidateTreeV3({
+      store,
+      candidate,
+      candidate_sha256,
+      cursor_prefix: "custom-prefix",
+      cursor: first.cursor,
+    });
+    expect(resumed.status).toBe("CONTINUE");
+    if (resumed.cursor === null) throw new Error("a CONTINUE step must persist a cursor");
+    expect(resumed.cursor.ref.startsWith("custom-prefix/" + candidate_sha256 + "/")).toBe(true);
+
+    // The same durable cursor is refused when the readback names a different prefix.
+    await expect(
+      readManagedTargetManifestCandidateTreeV3({
+        store,
+        candidate,
+        candidate_sha256,
+        cursor_prefix: "other-prefix",
+        cursor: first.cursor,
+      }),
+    ).rejects.toThrowError(ManagedTargetManifestError);
+  });
+
+  it("rejects an unary index chain whose actual depth exceeds its observed bound", async () => {
+    // A forged chain of unary INDEX nodes can all declare level 0, so the declared level
+    // cannot be the depth authority. The reader tracks its own descent depth and must
+    // fail closed at MAX_TREE_DEPTH even though every node claims level 0. The tree holds
+    // two copies so the root is an INDEX node rather than an inferred COPY leaf.
+    const { objects, store, candidate } = await stageCandidate(2);
+    const chainLength = 13;
+    const originalRootKey = rootKeyOf(candidate);
+    const original = JSON.parse(objects.get(originalRootKey) ?? "{}") as {
+      readonly children: readonly ManifestTreeObjectRef[];
+    };
+    const grandchild = original.children[0];
+    if (grandchild === undefined) throw new Error("fixture tree has no first child");
+
+    // Build the chain root -> n1 -> ... -> n13 -> grandchild, each declaring level 0.
+    let childRef = grandchild;
+    for (let depth = chainLength; depth >= 1; depth -= 1) {
+      const key = "scope/build/forged-chain/" + String(depth).padStart(2, "0") + ".json";
+      const value = {
+        protocol: "eliotr.managed-target-manifest-index.v1",
+        level: 0,
+        first_copy_ordinal: childRef.first_copy_ordinal,
+        last_copy_ordinal: childRef.last_copy_ordinal,
+        copy_count: childRef.copy_count,
+        item_count: childRef.item_count,
+        children: [childRef],
+      };
+      objects.set(key, canonicalProjectionJson(value));
+      childRef = {
+        kind: "INDEX",
+        key,
+        sha256: await projectionSha256Utf8(canonicalProjectionJson(value)),
+        size_bytes: 128,
+        first_copy_ordinal: value.first_copy_ordinal,
+        last_copy_ordinal: value.last_copy_ordinal,
+        copy_count: value.copy_count,
+        item_count: value.item_count,
+      };
+    }
+
+    // Repoint the candidate at the forged chain root.
+    const forgedCandidate = {
+      ...candidate,
+      tree: { key: childRef.key, sha256: childRef.sha256, copy_count: 2, item_count: candidate.desired_item_count },
+    } as unknown as ManagedTargetManifestCandidatePayloadV2;
+    const forgedSha = await projectionSha256Utf8(canonicalProjectionJson(forgedCandidate));
+
+    await expect(
+      readManagedTargetManifestCandidateTreeV3({ store, candidate: forgedCandidate, candidate_sha256: forgedSha }),
+    ).rejects.toThrowError(ManagedTargetManifestError);
+  });
+
   it("completes an empty tree without persisting a cursor", async () => {
     const { store, candidate, candidate_sha256 } = await stageCandidate(0);
     const step = await readManagedTargetManifestCandidateTreeV3({ store, candidate, candidate_sha256 });
@@ -464,3 +553,4 @@ describe("managed target candidate tree readback V3", () => {
     ).rejects.toMatchObject({ code: "MANAGED_TARGET_MANIFEST_PROJECTION_INVALID" });
   });
 });
+

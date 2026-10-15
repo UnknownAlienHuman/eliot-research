@@ -17,6 +17,7 @@ const MAX_TREE_FANOUT = 256;
 const MAX_TREE_DEPTH = 12;
 const MAX_CANDIDATE_OBJECT_BYTES = 4 * 1024 * 1024;
 const NODES_PER_STEP = 24;
+const DEFAULT_READBACK_CURSOR_PREFIX = "candidate-readback";
 /**
  * Depth-first pending-stack ceiling. A writer-built tree never needs more than one
  * fanout row per level, so this bound proves the stack stayed depth-first rather than
@@ -30,13 +31,29 @@ const SHA256 = /^[a-f0-9]{64}$/u;
  * Durable step cursor for the resumable candidate tree readback. The caller persists it
  * in Work and passes it back to resume; this module never holds the whole copy set.
  */
+/**
+ * One pending stack frame. The ref is the exact producer tree object identity; depth is
+ * the reader's own observed descent depth, never the node's declared level, so a forged
+ * chain of unary index nodes cannot bypass the depth ceiling.
+ */
+interface PendingTreeFrame {
+  readonly ref: ManifestTreeObjectRef;
+  readonly depth: number;
+}
+
+/** The wire form of one pending frame inside the durable cursor. */
+interface StoredPendingFrame {
+  readonly ref: ManifestTreeObjectRef;
+  readonly depth: number;
+}
+
 export interface ManagedTargetCandidateReadbackCursor {
   readonly protocol: "eliotr.managed-target-manifest-candidate-readback-cursor.v1";
   readonly candidate_sha256: string;
   readonly root_key: string;
   readonly root_sha256: string;
   readonly next_ordinal: number;
-  readonly pending: readonly ManifestTreeObjectRef[];
+  readonly pending: readonly StoredPendingFrame[];
   readonly nodes_visited: number;
 }
 
@@ -150,25 +167,28 @@ export async function readManagedTargetManifestCandidateTreeV3(
     item_count: candidate.desired_item_count,
   });
 
-  let pending: ManifestTreeObjectRef[];
+  let pending: PendingTreeFrame[];
   let nextOrdinal: number;
   let nodesVisited: number;
   if (input.cursor === undefined) {
-    pending = [rootNode];
+    pending = [{ ref: rootNode, depth: 0 }];
     nextOrdinal = 0;
     nodesVisited = 0;
   } else {
-    const storedCursor = await readCursorObject(store, input.cursor);
+    const prefix = input.cursor_prefix ?? DEFAULT_READBACK_CURSOR_PREFIX;
+    const storedCursor = await readCursorObject(store, input.cursor, prefix, candidateSha);
     if (storedCursor.candidate_sha256 !== candidateSha || storedCursor.root_key !== treeRef.key) {
       fail("readback cursor belongs to a different candidate");
     }
     if (storedCursor.pending.length === 0 && storedCursor.next_ordinal !== requiredCopyCount) {
       fail("readback cursor has no pending tree work but has not covered the required set");
     }
-    pending = storedCursor.pending.map((node) => {
-      if (!isTreeRef(node)) fail("readback cursor carries a malformed tree node");
-      return node;
-    });
+    const resumed: PendingTreeFrame[] = [];
+    for (const frame of storedCursor.pending) {
+      if (!isStoredFrame(frame)) fail("readback cursor carries a malformed pending frame");
+      resumed.push(frame);
+    }
+    pending = resumed;
     nextOrdinal = storedCursor.next_ordinal;
     nodesVisited = storedCursor.nodes_visited;
   }
@@ -177,9 +197,15 @@ export async function readManagedTargetManifestCandidateTreeV3(
   // One shared budget for every object this step opens, descent and leaf alike.
   let stepObjects = 0;
   while (pending.length > 0 && stepObjects < NODES_PER_STEP) {
-    const node = pending[0];
-    if (node === undefined) break;
+    const frame = pending[0];
+    if (frame === undefined) break;
     pending.shift();
+    // Reject a depth overflow before opening anything, so a forged unary index chain
+    // costs no provider work and never reaches the durable cursor.
+    if (!Number.isSafeInteger(frame.depth) || frame.depth < 0 || frame.depth > MAX_TREE_DEPTH) {
+      fail(`tree frame depth ${String(frame.depth)} is outside its observed bound`);
+    }
+    const node = frame.ref;
     stepObjects += 1;
     nodesVisited += 1;
     const stored = await openTreeObject(store, node);
@@ -211,8 +237,10 @@ export async function readManagedTargetManifestCandidateTreeV3(
         payload.copy_count !== node.copy_count || payload.item_count !== node.item_count) {
       fail(`tree node ${node.key} header differs from its parent receipt`);
     }
-    if (!Number.isSafeInteger(payload.level) || payload.level < 0 || payload.level > MAX_TREE_DEPTH) {
-      fail(`tree node ${node.key} level is outside its bound`);
+    // The declared level is not trusted as the depth authority; the reader tracks its
+    // own observed descent depth per frame. Only its basic shape is checked here.
+    if (!Number.isSafeInteger(payload.level) || payload.level < 0) {
+      fail(`tree node ${node.key} declared level is malformed`);
     }
     if (!Array.isArray(payload.children) || payload.children.length === 0 ||
         payload.children.length > MAX_TREE_FANOUT) {
@@ -247,7 +275,15 @@ export async function readManagedTargetManifestCandidateTreeV3(
     // Unshifting one child at a time would reverse the run. Pushing would turn this
     // stack into a breadth-first queue that inflates the whole corpus before any leaf,
     // which at 102400 copies overflows the durable cursor byte bound.
-    pending.unshift(...validatedChildren);
+    const childDepth = frame.depth + 1;
+    if (childDepth > MAX_TREE_DEPTH) {
+      fail(`tree descent depth ${childDepth} exceeds its observed bound at ${node.key}`);
+    }
+    const childFrames: PendingTreeFrame[] = validatedChildren.map((child) => ({
+      ref: child,
+      depth: childDepth,
+    }));
+    pending.unshift(...childFrames);
     if (pending.length > MAX_TREE_PENDING) {
       fail(`tree pending stack ${pending.length} exceeds its bounded depth-times-fanout ceiling`);
     }
@@ -262,10 +298,10 @@ export async function readManagedTargetManifestCandidateTreeV3(
       root_key: treeRef.key,
       root_sha256: treeRef.sha256,
       next_ordinal: nextOrdinal,
-      pending: Object.freeze([...pending]),
+      pending: Object.freeze(pending.map((frame) => Object.freeze({ ref: frame.ref, depth: frame.depth }))),
       nodes_visited: nodesVisited,
     });
-    const prefix = input.cursor_prefix ?? "candidate-readback";
+    const prefix = input.cursor_prefix ?? DEFAULT_READBACK_CURSOR_PREFIX;
     const digest = await projectionDigest(cursorState);
     const key = `${prefix}/${candidateSha}/${digest}.json`;
     const put = await putCanonicalManifestObjectIfAbsent(store, key, cursorState, {
@@ -299,9 +335,12 @@ function isSha256(value: unknown): value is string {
 async function readCursorObject(
   store: EvidenceObjectStore,
   resume: ManagedTargetCandidateReadbackResume,
+  prefix: string,
+  candidateSha: string,
 ): Promise<ManagedTargetCandidateReadbackCursor> {
-  const prefix = "candidate-readback";
-  if (typeof resume.ref !== "string" || !resume.ref.startsWith(`${prefix}/`) ||
+  // The cursor is only ever accepted inside its exact durable scope, so a cursor written
+  // under a different prefix or candidate cannot be replayed into this readback.
+  if (typeof resume.ref !== "string" || !resume.ref.startsWith(`${prefix}/${candidateSha}/`) ||
       !isSha256(resume.sha256)) {
     fail("readback cursor resume is not an exact immutable Work object receipt");
   }
@@ -329,6 +368,13 @@ async function readCursorObject(
     pending: value.pending,
     nodes_visited: value.nodes_visited,
   });
+}
+
+function isStoredFrame(value: unknown): value is StoredPendingFrame {
+  if (!isRecord(value)) return false;
+  return isTreeRef(value.ref) &&
+    Number.isSafeInteger(value.depth) && (value.depth as number) >= 0 &&
+    (value.depth as number) <= MAX_TREE_DEPTH;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
