@@ -4,7 +4,8 @@ import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdtemp, readFile, rmdir, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 const INBOX_PROTOCOL = "eliotr.agent-inbox.v1";
 const TASK_PROTOCOL = "eliotr.research.external-branch-analysis-task.v1";
@@ -354,10 +355,10 @@ function validateModelOutput(value, requiredRoles, evidence) {
   return { roles, candidateFindings: candidates, diagnostics: output.diagnostics, evidenceRefs: [...allRefs.values()] };
 }
 
-function codexEnvironment() {
-  const env = { ...process.env };
+export function codexEnvironment(source = process.env) {
+  const env = { ...source };
   for (const name of Object.keys(env)) {
-    if (/^(?:ELIOTR_WEB_INBOX_|CF_ACCESS_|MCP_ACCESS_|CLOUDFLARE_ACCESS_|CLOUDFLARE_API_TOKEN$)/u.test(name)) {
+    if (/^(?:ELIOTR_WEB_INBOX_|CF_ACCESS_|MCP_ACCESS_|CLOUDFLARE_ACCESS_|CLOUDFLARE_API_TOKEN$)/iu.test(name)) {
       delete env[name];
     }
   }
@@ -605,7 +606,12 @@ async function main() {
   return recover(cfg, taskId);
 }
 
-main().catch((error) => {
-  process.stderr.write(`codex-web-inbox: ${error instanceof Error ? error.message : "operation failed"}\n`);
-  process.exitCode = 1;
-});
+const invokedPath = process.argv[1] === undefined
+  ? undefined
+  : pathToFileURL(resolve(process.argv[1])).href;
+if (invokedPath === import.meta.url) {
+  main().catch((error) => {
+    process.stderr.write(`codex-web-inbox: ${error instanceof Error ? error.message : "operation failed"}\n`);
+    process.exitCode = 1;
+  });
+}
