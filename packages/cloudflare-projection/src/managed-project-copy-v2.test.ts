@@ -159,6 +159,7 @@ async function fixture(copiesEnabled = true) {
         project_id: projectA,
         project_membership_id: legacyMembershipId,
         membership_generation: 3,
+        project_membership_generation: 12,
         membership_identity_version: 1,
         legacy_project_membership_id: legacyMembershipId,
         folder_prefix: v1Folder,
@@ -208,7 +209,7 @@ describe("managed PROJECT_COPY_V2 producer plan", () => {
       legacy_project_membership_id: "project:project-legacy:generation:3",
       stable_project_membership_id: null,
       membership_revision: null,
-      project_membership_generation: null,
+      project_membership_generation: 12,
     });
     expect(v2).toMatchObject({
       copy_layout: "PROJECT_COPY_V2",

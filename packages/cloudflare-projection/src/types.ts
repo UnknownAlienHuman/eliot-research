@@ -388,6 +388,10 @@ export interface ManagedProjectCopyPlan {
   readonly scope_snapshot_id?: string;
   readonly scope_snapshot_revision?: number;
   readonly scope_snapshot_digest?: string;
+  /** Bound after the source-scoped V2 map index has been immutably stored/read back. */
+  readonly project_copy_map_index_protocol?: "eliotr.managed-project-copy-map-index.v2";
+  readonly project_copy_map_index_ref?: string;
+  readonly project_copy_map_index_sha256?: string;
   readonly items: readonly ManagedProjectionItemCopy[];
   readonly copies: readonly ManagedProjectCopyMapReceipt[];
   readonly provider_copy_count: number;
@@ -476,8 +480,10 @@ export interface ProjectCopyMembershipCopyV2Base {
   readonly project_id: string;
   /** V1 legacy membership ID or V2 bounded stable membership ID. */
   readonly project_membership_id: string;
-  /** V1 opening row generation; V2 aggregate currentness/CAS fence only. */
+  /** Opening generation of this temporal row; it does not change when other memberships change. */
   readonly membership_generation: number;
+  /** Current aggregate project membership generation used only as a scope/currentness fence. */
+  readonly project_membership_generation: number;
   /** Exact full provider path prefix, including the trailing slash. */
   readonly folder_prefix: string;
 }
@@ -488,15 +494,12 @@ export type ProjectCopyMembershipCopyV2 = ProjectCopyMembershipCopyV2Base & (
       readonly legacy_project_membership_id: string;
       readonly stable_project_membership_id?: never;
       readonly membership_revision?: never;
-      readonly project_membership_generation?: never;
     }
   | {
       readonly membership_identity_version: 2;
       readonly legacy_project_membership_id?: never;
       readonly stable_project_membership_id: string;
       readonly membership_revision: number;
-      /** Aggregate membership generation; currentness/CAS only, never part of a V2 key. */
-      readonly project_membership_generation: number;
     }
 );
 
@@ -526,6 +529,12 @@ export interface ProjectionManagedItemGenerationProof {
   readonly canonical_item_set_digest: string;
   readonly provider_copy_count: number;
   readonly provider_copy_set_digest: string;
+  readonly project_copy_map_index_protocol: "eliotr.managed-project-copy-map-index.v2" | null;
+  readonly project_copy_map_index_ref: string | null;
+  readonly project_copy_map_index_sha256: string | null;
+  readonly project_copy_scope_snapshot_id: string | null;
+  readonly project_copy_scope_snapshot_revision: number | null;
+  readonly project_copy_scope_snapshot_digest: string | null;
   /** Physical provider intent/readback count; canonical Work count remains separate above. */
   readonly item_count: number;
   readonly item_set_digest: string;

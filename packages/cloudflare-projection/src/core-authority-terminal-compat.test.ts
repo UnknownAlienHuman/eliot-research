@@ -100,6 +100,12 @@ interface GenerationFixture {
   readonly canonical_item_set_digest: unknown;
   readonly provider_copy_count: unknown;
   readonly provider_copy_set_digest: unknown;
+  readonly project_copy_map_index_protocol: unknown;
+  readonly project_copy_map_index_ref: unknown;
+  readonly project_copy_map_index_sha256: unknown;
+  readonly project_copy_scope_snapshot_id: unknown;
+  readonly project_copy_scope_snapshot_revision: unknown;
+  readonly project_copy_scope_snapshot_digest: unknown;
   readonly semantic_receipt_ref: unknown;
   readonly semantic_readback_digest: unknown;
   readonly reason_codes_json: unknown;
@@ -132,6 +138,12 @@ function terminalGeneration(
     canonical_item_set_digest: null,
     provider_copy_count: null,
     provider_copy_set_digest: null,
+    project_copy_map_index_protocol: null,
+    project_copy_map_index_ref: null,
+    project_copy_map_index_sha256: null,
+    project_copy_scope_snapshot_id: null,
+    project_copy_scope_snapshot_revision: null,
+    project_copy_scope_snapshot_digest: null,
     semantic_receipt_ref: "managed-receipt-1",
     semantic_readback_digest: A,
     reason_codes_json: "[]",
@@ -284,6 +296,12 @@ async function validManagedTerminalFixture(): Promise<{
     canonical_item_set_digest: itemSetDigest,
     provider_copy_count: 0,
     provider_copy_set_digest: emptyCopySetDigest,
+    project_copy_map_index_protocol: null,
+    project_copy_map_index_ref: null,
+    project_copy_map_index_sha256: null,
+    project_copy_scope_snapshot_id: null,
+    project_copy_scope_snapshot_revision: null,
+    project_copy_scope_snapshot_digest: null,
     item_set_digest: itemSetDigest,
     semantic_receipt_ref: managedReceiptRef,
     semantic_readback_digest: readbackDigest,
@@ -296,6 +314,11 @@ async function validManagedTerminalFixture(): Promise<{
     project_id: null,
     project_membership_id: null,
     membership_generation: null,
+    membership_identity_version: null,
+    legacy_project_membership_id: null,
+    stable_project_membership_id: null,
+    membership_revision: null,
+    project_membership_generation: null,
     copy_layout: null,
     metadata_generation_digest: null,
     canonical_body_ref: null,

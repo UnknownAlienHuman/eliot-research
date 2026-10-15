@@ -29,6 +29,7 @@ import type {
   ManagedProjectCopyMapReceipt,
   ManagedProjectCopyMapReceiptV1,
   ManagedProjectCopyMapReceiptV2,
+  ManagedProjectCopyMapSetReceipt,
   ManagedProjectCopyPlan,
   ManagedProjectCopyTargetReceipt,
   ManagedProjectionItemCopy,
@@ -227,6 +228,13 @@ function v2ScopeForProfile(
   return scope;
 }
 
+export function managedProjectCopyScopeForProfile(
+  context: ProjectionSourceContext,
+  profile: ProjectionExecutionProfile,
+): ProjectCopyScopeV2 | undefined {
+  return v2ScopeForProfile(context, profile);
+}
+
 /** Resolve every exact physical key and document bound before the first Work or provider write. */
 export async function preflightManagedProjectCopies(
   context: ProjectionSourceContext,
@@ -266,10 +274,17 @@ export async function preflightManagedProjectCopies(
       };
       if (membership.membership_identity_version === 1) {
         const parsed = parseManagedProjectMembershipId(membership.legacy_project_membership_id);
+        const aggregateGeneration = assertProjectionInteger(
+          membership.project_membership_generation,
+          "V2 aggregate membership currentness generation",
+          1,
+          Number.MAX_SAFE_INTEGER,
+        );
         if (
           membership.project_membership_id !== membership.legacy_project_membership_id ||
           parsed.project_id !== membership.project_id ||
-          parsed.membership_generation !== membership.membership_generation
+          parsed.membership_generation !== membership.membership_generation ||
+          membership.membership_generation > aggregateGeneration
         ) {
           projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V1 copy row inside V2 scope changed its original identity");
         }
@@ -286,7 +301,7 @@ export async function preflightManagedProjectCopies(
           legacy_project_membership_id: membership.legacy_project_membership_id,
           stable_project_membership_id: null,
           membership_revision: null,
-          project_membership_generation: null,
+          project_membership_generation: aggregateGeneration,
         };
       } else {
         const stableId = assertProjectionIdentifier(
@@ -484,8 +499,8 @@ export async function preflightManagedProjectCopies(
         project_id: membership.project_id,
         project_membership_id: membership.project_membership_id,
         membership_generation: membership.membership_generation,
-        membership_identity_version: 1,
-        legacy_project_membership_id: membership.project_membership_id,
+        membership_identity_version: null,
+        legacy_project_membership_id: null,
         stable_project_membership_id: null,
         membership_revision: null,
         project_membership_generation: null,
@@ -700,10 +715,17 @@ export async function buildCanonicalProjectCopyMapsV2(
     let membershipFields: ProjectCopyMembershipCopyV2;
     if (membership.membership_identity_version === 1) {
       const legacy = parseManagedProjectMembershipId(membership.legacy_project_membership_id);
+      const aggregateGeneration = assertProjectionInteger(
+        membership.project_membership_generation,
+        "V2 aggregate membership currentness generation",
+        1,
+        Number.MAX_SAFE_INTEGER,
+      );
       if (
         membership.project_membership_id !== membership.legacy_project_membership_id ||
         legacy.project_id !== membership.project_id ||
-        legacy.membership_generation !== membership.membership_generation
+        legacy.membership_generation !== membership.membership_generation ||
+        membership.membership_generation > aggregateGeneration
       ) {
         projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V1 row inside V2 scope changed its legacy identity");
       }
@@ -928,7 +950,7 @@ export async function buildManagedProjectCopyPlan(
             legacy_project_membership_id: copy.legacy_project_membership_id,
             stable_project_membership_id: null,
             membership_revision: null,
-            project_membership_generation: null,
+            project_membership_generation: copy.project_membership_generation,
           }
           : {
             membership_identity_version: 2 as const,
@@ -983,9 +1005,7 @@ export async function buildManagedProjectCopyPlan(
         : null,
       membership_revision: copy.membership_identity_version === 2 ? copy.membership_revision : null,
       membership_generation: copy.membership_generation,
-      project_membership_generation: copy.membership_identity_version === 2
-        ? copy.project_membership_generation
-        : null,
+      project_membership_generation: copy.project_membership_generation,
       folder_prefix: copy.folder_prefix,
       provider_copy_set_sha256: copy.provider_copy_set_sha256,
     })));
@@ -1070,8 +1090,8 @@ export async function buildManagedProjectCopyPlan(
         project_id: copy.project_id,
         project_membership_id: copy.project_membership_id,
         membership_generation: copy.membership_generation,
-        membership_identity_version: 1,
-        legacy_project_membership_id: copy.project_membership_id,
+        membership_identity_version: null,
+        legacy_project_membership_id: null,
         stable_project_membership_id: null,
         membership_revision: null,
         project_membership_generation: null,
@@ -1106,6 +1126,45 @@ export async function buildManagedProjectCopyPlan(
   });
 }
 
+/** Bind the immutable V2 map-index readback to the exact Core preparation plan. */
+export function bindProjectCopyMapIndex(
+  plan: ManagedProjectCopyPlan,
+  mapSet: ManagedProjectCopyMapSetReceipt,
+): ManagedProjectCopyPlan {
+  if (plan.layout !== "PROJECT_COPY_V2") {
+    if (mapSet.protocol === "eliotr.managed-project-copy-map-set.v2") {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V2 map index cannot be attached to a V1 or flat plan");
+    }
+    return plan;
+  }
+  if (
+    mapSet.protocol !== "eliotr.managed-project-copy-map-set.v2" ||
+    mapSet.layout !== "PROJECT_COPY_V2" ||
+    plan.target_selection === undefined ||
+    plan.scope_snapshot_id !== mapSet.scope_snapshot_id ||
+    plan.scope_snapshot_revision !== mapSet.scope_snapshot_revision ||
+    plan.scope_snapshot_digest !== mapSet.scope_snapshot_digest ||
+    plan.target.managed_instance_id !== mapSet.target.managed_instance_id ||
+    plan.target.managed_generation !== mapSet.target.managed_generation ||
+    plan.target.metadata_generation_digest !== mapSet.target.metadata_generation_digest ||
+    plan.provider_copy_count !== mapSet.provider_copy_count ||
+    plan.provider_copy_set_sha256 !== mapSet.provider_copy_set_sha256 ||
+    plan.provider_item_count !== mapSet.provider_item_count ||
+    plan.provider_item_set_sha256 !== mapSet.provider_item_set_sha256 ||
+    canonicalProjectionJson(plan.target_selection) !== canonicalProjectionJson(mapSet.target_selection)
+  ) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V2 map index differs from the exact prepared copy plan");
+  }
+  const indexRef = assertProjectionText(mapSet.copy_map_index_ref, "V2 copy-map index reference", 2048);
+  const indexSha256 = assertProjectionSha256(mapSet.copy_map_index_sha256, "V2 copy-map index digest");
+  return Object.freeze({
+    ...plan,
+    project_copy_map_index_protocol: "eliotr.managed-project-copy-map-index.v2",
+    project_copy_map_index_ref: indexRef,
+    project_copy_map_index_sha256: indexSha256,
+  });
+}
+
 export interface ManagedItemEffectRow {
   readonly source_revision_ref: unknown;
   readonly projection_generation: unknown;
@@ -1116,6 +1175,11 @@ export interface ManagedItemEffectRow {
   readonly project_id: unknown;
   readonly project_membership_id: unknown;
   readonly membership_generation: unknown;
+  readonly membership_identity_version: unknown;
+  readonly legacy_project_membership_id: unknown;
+  readonly stable_project_membership_id: unknown;
+  readonly membership_revision: unknown;
+  readonly project_membership_generation: unknown;
   readonly copy_layout: unknown;
   readonly metadata_generation_digest: unknown;
   readonly canonical_body_ref: unknown;
@@ -1185,15 +1249,16 @@ export function assertManagedItemIntent(
     Number.MAX_SAFE_INTEGER,
   );
   const metadataKeys = Object.keys(intent.metadata).sort();
-  const projectCopy = intent.copy_layout === "PROJECT_COPY_V1";
+  const projectCopyV1 = intent.copy_layout === "PROJECT_COPY_V1";
+  const projectCopyV2 = intent.copy_layout === "PROJECT_COPY_V2";
+  const projectCopy = projectCopyV1 || projectCopyV2;
   let copyIdentityValid: boolean;
-  if (projectCopy) {
+  if (projectCopyV1 || projectCopyV2) {
     const copyCanonicalGeneration = assertProjectionIdentifier(
       intent.canonical_projection_generation,
       "canonical projection generation",
     );
     const membershipId = assertProjectionIdentifier(intent.project_membership_id, "project membership ID");
-    const membership = parseManagedProjectMembershipId(membershipId);
     assertProjectionIdentifier(intent.canonical_item_key, "canonical item key");
     const projectId = assertProjectionIdentifier(intent.project_id, "project ID");
     const membershipGeneration = assertProjectionInteger(
@@ -1211,18 +1276,77 @@ export function assertManagedItemIntent(
       intent.canonical_body_sha256,
       "canonical body digest",
     );
-    copyIdentityValid =
-      membership.project_id === projectId &&
-      membership.membership_generation === membershipGeneration &&
+    const commonCopyIdentityValid =
       (canonicalProjectionGeneration === undefined ||
         copyCanonicalGeneration === canonicalProjectionGeneration) &&
       /^projection-[a-f0-9]{48}$/u.test(intent.item_key) &&
-      intent.provider_key.startsWith("projection/") &&
       intent.provider_key.endsWith(intent.item_key + ".md") &&
       intent.provider_key.length <= 128 &&
       intent.metadata_generation_digest === metadataGenerationDigest &&
       canonicalBodyRef.length > 0 &&
       canonicalBodySha256 === intent.section_content_sha256;
+    if (projectCopyV1) {
+      const membership = parseManagedProjectMembershipId(membershipId);
+      copyIdentityValid = commonCopyIdentityValid &&
+        intent.provider_key.startsWith("projection/") &&
+        membership.project_id === projectId &&
+        membership.membership_generation === membershipGeneration &&
+        intent.membership_identity_version === null &&
+        intent.legacy_project_membership_id === null &&
+        intent.stable_project_membership_id === null &&
+        intent.membership_revision === null &&
+        intent.project_membership_generation === null;
+    } else {
+      const identityVersion = assertProjectionInteger(
+        intent.membership_identity_version,
+        "V2 membership identity version",
+        1,
+        2,
+      );
+      const validProviderPath =
+        /^projection\/[A-Za-z0-9_-]{43}\/projection-[a-f0-9]{48}\.md$/u.test(intent.provider_key);
+      if (identityVersion === 1) {
+        const legacyId = assertProjectionIdentifier(
+          intent.legacy_project_membership_id,
+          "V2-scope legacy membership ID",
+        );
+        const membership = parseManagedProjectMembershipId(legacyId);
+        const aggregateGeneration = assertProjectionInteger(
+          intent.project_membership_generation,
+          "aggregate project membership generation",
+          1,
+          Number.MAX_SAFE_INTEGER,
+        );
+        copyIdentityValid = commonCopyIdentityValid && validProviderPath &&
+          membershipId === legacyId && membership.project_id === projectId &&
+          membership.membership_generation === membershipGeneration &&
+          intent.stable_project_membership_id === null &&
+          intent.membership_revision === null &&
+          membershipGeneration <= aggregateGeneration;
+      } else {
+        const stableId = assertProjectionIdentifier(
+          intent.stable_project_membership_id,
+          "stable project/source membership ID",
+        );
+        const membershipRevision = assertProjectionInteger(
+          intent.membership_revision,
+          "per-pair membership revision",
+          1,
+          Number.MAX_SAFE_INTEGER,
+        );
+        const aggregateGeneration = assertProjectionInteger(
+          intent.project_membership_generation,
+          "aggregate project membership generation",
+          1,
+          Number.MAX_SAFE_INTEGER,
+        );
+        copyIdentityValid = commonCopyIdentityValid && validProviderPath &&
+          /^project-membership-[a-f0-9]{48}$/u.test(stableId) &&
+          membershipId === stableId &&
+          intent.legacy_project_membership_id === null &&
+          membershipRevision > 0 && membershipGeneration <= aggregateGeneration;
+      }
+    }
   } else {
     copyIdentityValid =
       intent.copy_layout === null &&
@@ -1231,6 +1355,11 @@ export function assertManagedItemIntent(
       intent.project_id === null &&
       intent.project_membership_id === null &&
       intent.membership_generation === null &&
+      intent.membership_identity_version === null &&
+      intent.legacy_project_membership_id === null &&
+      intent.stable_project_membership_id === null &&
+      intent.membership_revision === null &&
+      intent.project_membership_generation === null &&
       intent.metadata_generation_digest === null &&
       intent.canonical_body_ref === null &&
       intent.canonical_body_sha256 === null &&
@@ -1280,12 +1409,19 @@ export function decodeEffectRow(
     row.job_id !== context.job_id ||
     row.item_key !== intent.item_key ||
     row.canonical_projection_generation !== (
-      intent.copy_layout === "PROJECT_COPY_V1" ? intent.canonical_projection_generation : null
+      intent.copy_layout === "PROJECT_COPY_V1" || intent.copy_layout === "PROJECT_COPY_V2"
+        ? intent.canonical_projection_generation
+        : null
     ) ||
     row.canonical_item_key !== intent.canonical_item_key ||
     row.project_id !== intent.project_id ||
     row.project_membership_id !== intent.project_membership_id ||
     row.membership_generation !== intent.membership_generation ||
+    row.membership_identity_version !== intent.membership_identity_version ||
+    row.legacy_project_membership_id !== intent.legacy_project_membership_id ||
+    row.stable_project_membership_id !== intent.stable_project_membership_id ||
+    row.membership_revision !== intent.membership_revision ||
+    row.project_membership_generation !== intent.project_membership_generation ||
     row.copy_layout !== intent.copy_layout ||
     row.metadata_generation_digest !== intent.metadata_generation_digest ||
     row.canonical_body_ref !== intent.canonical_body_ref ||

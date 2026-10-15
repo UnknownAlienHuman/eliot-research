@@ -129,6 +129,7 @@ describe("R2 canonical source writer", () => {
       project_id: "project-a",
       project_membership_id: "project:project-a:generation:1",
       membership_generation: 1,
+      project_membership_generation: 8,
       membership_identity_version: 1 as const,
       legacy_project_membership_id: "project:project-a:generation:1",
       folder_prefix: await managedProjectFolderPrefix({

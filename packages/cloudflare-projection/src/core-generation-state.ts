@@ -36,6 +36,12 @@ export interface GenerationRow {
   readonly canonical_item_set_digest: unknown;
   readonly provider_copy_count: unknown;
   readonly provider_copy_set_digest: unknown;
+  readonly project_copy_map_index_protocol: unknown;
+  readonly project_copy_map_index_ref: unknown;
+  readonly project_copy_map_index_sha256: unknown;
+  readonly project_copy_scope_snapshot_id: unknown;
+  readonly project_copy_scope_snapshot_revision: unknown;
+  readonly project_copy_scope_snapshot_digest: unknown;
   readonly semantic_receipt_ref: unknown;
   readonly semantic_readback_digest: unknown;
   readonly reason_codes_json: unknown;
@@ -71,7 +77,9 @@ export async function generationRow(
     "managed_target_instance_id, managed_target_generation, " +
     "managed_target_metadata_generation_digest, canonical_projection_generation, " +
     "canonical_item_count, canonical_item_set_digest, provider_copy_count, " +
-    "provider_copy_set_digest, semantic_receipt_ref, " +
+    "provider_copy_set_digest, project_copy_map_index_protocol, project_copy_map_index_ref, " +
+    "project_copy_map_index_sha256, project_copy_scope_snapshot_id, " +
+    "project_copy_scope_snapshot_revision, project_copy_scope_snapshot_digest, semantic_receipt_ref, " +
     "semantic_readback_digest, reason_codes_json FROM projection_generation " +
     "WHERE source_revision_ref = ?1 AND projection_generation = ?2 LIMIT 1",
   ).bind(

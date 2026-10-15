@@ -68,15 +68,31 @@ export function validateProjectionWorkReceipt(receipt: ProjectionWorkReceipt): v
     canonical.resource_bounds.canonical_body_put_count !== receipt.item_count ||
     canonical.resource_bounds.canonical_manifest_put_count !== 1 ||
     canonical.resource_bounds.canonical_r2_subrequest_bound > canonical.resource_bounds.maximum_subrequest_bound ||
-    copies.resource_bounds.protocol !== "eliotr.project-copy-resource-bounds.v1" ||
-    copies.resource_bounds.provider_copy_count !== copies.provider_copy_count ||
-    copies.resource_bounds.provider_item_count !== copies.provider_item_count ||
-    copies.resource_bounds.copy_map_page_count !== copies.page_count ||
-    copies.resource_bounds.copy_map_r2_put_count !== copies.page_count ||
-    copies.resource_bounds.copy_map_r2_subrequest_bound !== 2 * copies.page_count ||
-    copies.resource_bounds.copy_map_r2_subrequest_bound > copies.resource_bounds.maximum_subrequest_bound ||
-    copies.resource_bounds.cpu_time_budget_ms !== 30_000 ||
-    copies.resource_bounds.maximum_subrequest_bound !== 10_000
+    (copies.protocol === "eliotr.managed-project-copy-map-set.v1" && (
+      copies.resource_bounds.protocol !== "eliotr.project-copy-resource-bounds.v1" ||
+      copies.resource_bounds.provider_copy_count !== copies.provider_copy_count ||
+      copies.resource_bounds.provider_item_count !== copies.provider_item_count ||
+      copies.resource_bounds.copy_map_page_count !== copies.page_count ||
+      copies.resource_bounds.copy_map_r2_put_count !== copies.page_count ||
+      copies.resource_bounds.copy_map_r2_subrequest_bound !== 2 * copies.page_count ||
+      copies.resource_bounds.copy_map_r2_subrequest_bound > copies.resource_bounds.maximum_subrequest_bound ||
+      copies.resource_bounds.cpu_time_budget_ms !== 30_000 ||
+      copies.resource_bounds.maximum_subrequest_bound !== 10_000
+    )) ||
+    (copies.protocol === "eliotr.managed-project-copy-map-set.v2" && (
+      copies.layout !== "PROJECT_COPY_V2" ||
+      copies.resource_bounds.protocol !== "eliotr.project-copy-resource-bounds.v2" ||
+      copies.resource_bounds.provider_copy_count !== copies.provider_copy_count ||
+      copies.resource_bounds.provider_item_count !== copies.provider_item_count ||
+      copies.resource_bounds.copy_map_page_count !== copies.page_count ||
+      copies.resource_bounds.copy_map_index_put_count !== 1 ||
+      copies.resource_bounds.copy_map_r2_put_count !== copies.page_count + 1 ||
+      copies.resource_bounds.copy_map_r2_subrequest_bound !== 2 * (copies.page_count + 1) ||
+      copies.resource_bounds.copy_map_r2_subrequest_bound > copies.resource_bounds.maximum_subrequest_bound ||
+      copies.resource_bounds.cpu_time_budget_ms !== 30_000 ||
+      copies.resource_bounds.maximum_subrequest_bound !== 10_000 ||
+      copies.copy_map_index_ref.length === 0
+    ))
   ) {
     projectionFail("PROJECTION_INPUT_INVALID", "canonical or project-copy Work receipt is incomplete");
   }
@@ -86,6 +102,13 @@ export function validateProjectionWorkReceipt(receipt: ProjectionWorkReceipt): v
   assertProjectionSha256(copies.provider_copy_set_sha256, "project-copy set digest");
   assertProjectionSha256(copies.provider_item_set_sha256, "project-copy item digest");
   assertProjectionSha256(receipt.metadata_generation_digest, "target metadata generation digest");
+  if (copies.protocol === "eliotr.managed-project-copy-map-set.v2") {
+    assertProjectionIdentifier(copies.copy_map_index_ref, "V2 project-copy index ref");
+    assertProjectionSha256(copies.copy_map_index_sha256, "V2 project-copy index digest");
+    assertProjectionIdentifier(copies.scope_snapshot_id, "V2 project-copy scope snapshot ID");
+    assertProjectionInteger(copies.scope_snapshot_revision, "V2 project-copy scope revision", 1, Number.MAX_SAFE_INTEGER);
+    assertProjectionSha256(copies.scope_snapshot_digest, "V2 project-copy scope digest");
+  }
   const seen = new Set<string>();
   for (const item of receipt.item_receipts) {
     const key = assertProjectionIdentifier(item.item_key, "work item_key");
@@ -105,7 +128,9 @@ function managedEffectItemCount(work: ProjectionWorkReceipt): number {
   if (copies === undefined) {
     projectionFail("PROJECTION_INPUT_INVALID", "managed settlement is missing the project-copy receipt");
   }
-  return copies.provider_copy_count === 0 ? work.item_count : copies.provider_item_count;
+  return copies.protocol === "eliotr.managed-project-copy-map-set.v2"
+    ? copies.provider_item_count
+    : copies.provider_copy_count === 0 ? work.item_count : copies.provider_item_count;
 }
 
 function validateSettlement(
@@ -344,7 +369,9 @@ export async function settleProjection(
       input.context,
       input.projection_generation,
       input.settlement.managed.item_count,
-      input.settlement.work.project_copy_map_set?.provider_copy_count === 0
+      input.settlement.work.project_copy_map_set?.protocol === "eliotr.managed-project-copy-map-set.v2"
+        ? input.settlement.work.project_copy_map_set.provider_item_set_sha256
+        : input.settlement.work.project_copy_map_set?.provider_copy_count === 0
         ? input.settlement.work.item_set_digest
         : input.settlement.work.project_copy_map_set?.provider_item_set_sha256 ??
           input.settlement.work.item_set_digest,
@@ -503,7 +530,11 @@ export async function settleProjection(
       "AND g.work_manifest_ref IS ?37 AND g.work_manifest_sha256 IS ?38 " +
       "AND g.canonical_projection_generation IS ?40 " +
       "AND g.canonical_item_count IS ?41 AND g.canonical_item_set_digest IS ?42 " +
-      "AND g.provider_copy_count IS ?43 AND g.provider_copy_set_digest IS ?44) " +
+      "AND g.provider_copy_count IS ?43 AND g.provider_copy_set_digest IS ?44 " +
+      "AND g.project_copy_map_index_protocol IS ?45 AND g.project_copy_map_index_ref IS ?46 " +
+      "AND g.project_copy_map_index_sha256 IS ?47 AND g.project_copy_scope_snapshot_id IS ?48 " +
+      "AND g.project_copy_scope_snapshot_revision IS ?49 " +
+      "AND g.project_copy_scope_snapshot_digest IS ?50) " +
       "AND EXISTS (SELECT 1 FROM job j WHERE j.job_id=?3 AND j.state=?6 " +
       "AND j.terminal_receipt_ref=?11) " +
       "AND EXISTS (SELECT 1 FROM operation_execution_lease l " +
@@ -567,6 +598,24 @@ export async function settleProjection(
       input.settlement.work?.item_set_digest ?? null,
       input.settlement.work?.project_copy_map_set?.provider_copy_count ?? null,
       input.settlement.work?.project_copy_map_set?.provider_copy_set_sha256 ?? null,
+      input.settlement.work?.project_copy_map_set?.protocol === "eliotr.managed-project-copy-map-set.v2"
+        ? "eliotr.managed-project-copy-map-index.v2"
+        : null,
+      input.settlement.work?.project_copy_map_set?.protocol === "eliotr.managed-project-copy-map-set.v2"
+        ? input.settlement.work.project_copy_map_set.copy_map_index_ref
+        : null,
+      input.settlement.work?.project_copy_map_set?.protocol === "eliotr.managed-project-copy-map-set.v2"
+        ? input.settlement.work.project_copy_map_set.copy_map_index_sha256
+        : null,
+      input.settlement.work?.project_copy_map_set?.protocol === "eliotr.managed-project-copy-map-set.v2"
+        ? input.settlement.work.project_copy_map_set.scope_snapshot_id
+        : null,
+      input.settlement.work?.project_copy_map_set?.protocol === "eliotr.managed-project-copy-map-set.v2"
+        ? input.settlement.work.project_copy_map_set.scope_snapshot_revision
+        : null,
+      input.settlement.work?.project_copy_map_set?.protocol === "eliotr.managed-project-copy-map-set.v2"
+        ? input.settlement.work.project_copy_map_set.scope_snapshot_digest
+        : null,
     ),
   ]);
 

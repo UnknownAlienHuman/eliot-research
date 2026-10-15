@@ -6,6 +6,7 @@ import { D1_EXECUTION_LEASE_NOW_SQL } from "@eliotr/platform-cloudflare";
 import {
   assertProjectionIdentifier,
   assertProjectionSha256,
+  assertProjectionText,
   projectionFail,
 } from "./canonical.js";
 import { managedProjectGenerationMetadataValue } from "./managed-project-path.js";
@@ -212,6 +213,17 @@ export function createD1ProjectionAuthority(
       );
       const providerCopyCount = copyMapSet?.provider_copy_count;
       const providerCopySetDigest = copyMapSet?.provider_copy_set_sha256;
+      const v2CopyMapSet = copyMapSet?.protocol === "eliotr.managed-project-copy-map-set.v2"
+        ? copyMapSet
+        : null;
+      const copyMapIndexProtocol = v2CopyMapSet === null
+        ? null
+        : "eliotr.managed-project-copy-map-index.v2";
+      const copyMapIndexRef = v2CopyMapSet?.copy_map_index_ref ?? null;
+      const copyMapIndexSha256 = v2CopyMapSet?.copy_map_index_sha256 ?? null;
+      const copyScopeSnapshotId = v2CopyMapSet?.scope_snapshot_id ?? null;
+      const copyScopeSnapshotRevision = v2CopyMapSet?.scope_snapshot_revision ?? null;
+      const copyScopeSnapshotDigest = v2CopyMapSet?.scope_snapshot_digest ?? null;
       if (
         canonical === undefined ||
         copyMapSet === undefined ||
@@ -228,6 +240,14 @@ export function createD1ProjectionAuthority(
         copyMapSet.target.managed_instance_id !== existing.managed_target_instance_id ||
         copyMapSet.target.managed_generation !== existing.managed_target_generation ||
         copyMapSet.target.metadata_generation_digest !== existing.managed_target_metadata_generation_digest ||
+        (v2CopyMapSet !== null && (
+          v2CopyMapSet.layout !== "PROJECT_COPY_V2" ||
+          v2CopyMapSet.target_selection.target.managed_instance_id !== existing.managed_target_instance_id ||
+          v2CopyMapSet.target_selection.target.managed_generation !== existing.managed_target_generation ||
+          v2CopyMapSet.target_selection.target.target_profile_identity_sha256.length !== 64 ||
+          v2CopyMapSet.copy_map_index_ref.length === 0 ||
+          v2CopyMapSet.copy_map_index_sha256.length !== 64
+        )) ||
         metadataGenerationDigest !== existing.managed_target_metadata_generation_digest ||
         typeof providerCopyCount !== "number" ||
         !Number.isSafeInteger(providerCopyCount) ||
@@ -240,6 +260,19 @@ export function createD1ProjectionAuthority(
         );
       }
       assertProjectionSha256(providerCopySetDigest, "project-copy set digest");
+      if (v2CopyMapSet !== null) {
+        assertProjectionText(copyMapIndexRef, "V2 copy-map index ref", 2048);
+        assertProjectionSha256(copyMapIndexSha256, "V2 copy-map index digest");
+        assertProjectionIdentifier(copyScopeSnapshotId, "V2 copy scope snapshot ID");
+        assertProjectionSha256(copyScopeSnapshotDigest, "V2 copy scope snapshot digest");
+        if (
+          typeof copyScopeSnapshotRevision !== "number" ||
+          !Number.isSafeInteger(copyScopeSnapshotRevision) ||
+          copyScopeSnapshotRevision < 1
+        ) {
+          projectionFail("PROJECTION_INPUT_INVALID", "V2 copy scope snapshot revision is invalid");
+        }
+      }
       const manifestEmpty = existing.item_count === null &&
         existing.item_set_digest === null &&
         existing.work_manifest_ref === null &&
@@ -248,7 +281,13 @@ export function createD1ProjectionAuthority(
         existing.canonical_item_count === null &&
         existing.canonical_item_set_digest === null &&
         existing.provider_copy_count === null &&
-        existing.provider_copy_set_digest === null;
+        existing.provider_copy_set_digest === null &&
+        existing.project_copy_map_index_protocol === null &&
+        existing.project_copy_map_index_ref === null &&
+        existing.project_copy_map_index_sha256 === null &&
+        existing.project_copy_scope_snapshot_id === null &&
+        existing.project_copy_scope_snapshot_revision === null &&
+        existing.project_copy_scope_snapshot_digest === null;
       const manifestMatches = existing.item_count === receipt.item_count &&
         existing.item_set_digest === receipt.item_set_digest &&
         existing.work_manifest_ref === receipt.manifest_ref &&
@@ -257,7 +296,13 @@ export function createD1ProjectionAuthority(
         existing.canonical_item_count === receipt.item_count &&
         existing.canonical_item_set_digest === receipt.item_set_digest &&
         existing.provider_copy_count === providerCopyCount &&
-        existing.provider_copy_set_digest === providerCopySetDigest;
+        existing.provider_copy_set_digest === providerCopySetDigest &&
+        existing.project_copy_map_index_protocol === copyMapIndexProtocol &&
+        existing.project_copy_map_index_ref === copyMapIndexRef &&
+        existing.project_copy_map_index_sha256 === copyMapIndexSha256 &&
+        existing.project_copy_scope_snapshot_id === copyScopeSnapshotId &&
+        existing.project_copy_scope_snapshot_revision === copyScopeSnapshotRevision &&
+        existing.project_copy_scope_snapshot_digest === copyScopeSnapshotDigest;
       if (
         (existing.state !== "PREPARING" && existing.state !== "MATERIALIZED") ||
         (!manifestEmpty && !manifestMatches)
@@ -292,27 +337,36 @@ export function createD1ProjectionAuthority(
         "item_set_digest = ?4, work_manifest_ref = ?5, work_manifest_sha256 = ?6, " +
         "canonical_projection_generation=?7, canonical_item_count=?8, " +
         "canonical_item_set_digest=?9, provider_copy_count=?10, " +
-        "provider_copy_set_digest=?11, updated_at = ?12 " +
+        "provider_copy_set_digest=?11, project_copy_map_index_protocol=?12, " +
+        "project_copy_map_index_ref=?13, project_copy_map_index_sha256=?14, " +
+        "project_copy_scope_snapshot_id=?15, project_copy_scope_snapshot_revision=?16, " +
+        "project_copy_scope_snapshot_digest=?17, updated_at=?18 " +
         "WHERE source_revision_ref = ?1 AND projection_generation = ?2 " +
-        "AND state IN ('PREPARING','MATERIALIZED') AND job_id=?13 " +
-        "AND source_owner_generation=?14 AND content_sha256=?15 " +
-        "AND object_residency_key_digest=?16 AND projector_profile=?17 " +
-        "AND managed_item_protocol=?18 AND managed_target_instance_id=?19 " +
-        "AND managed_target_generation=?20 " +
-        "AND managed_target_metadata_generation_digest=?21 AND (" +
+        "AND state IN ('PREPARING','MATERIALIZED') AND job_id=?19 " +
+        "AND source_owner_generation=?20 AND content_sha256=?21 " +
+        "AND object_residency_key_digest=?22 AND projector_profile=?23 " +
+        "AND managed_item_protocol=?24 AND managed_target_instance_id=?25 " +
+        "AND managed_target_generation=?26 " +
+        "AND managed_target_metadata_generation_digest=?27 AND (" +
         "(item_count IS NULL AND item_set_digest IS NULL AND work_manifest_ref IS NULL " +
         "AND work_manifest_sha256 IS NULL AND canonical_projection_generation IS NULL " +
         "AND canonical_item_count IS NULL AND canonical_item_set_digest IS NULL " +
-        "AND provider_copy_count IS NULL AND provider_copy_set_digest IS NULL) " +
+        "AND provider_copy_count IS NULL AND provider_copy_set_digest IS NULL " +
+        "AND project_copy_map_index_protocol IS NULL AND project_copy_map_index_ref IS NULL " +
+        "AND project_copy_map_index_sha256 IS NULL AND project_copy_scope_snapshot_id IS NULL " +
+        "AND project_copy_scope_snapshot_revision IS NULL AND project_copy_scope_snapshot_digest IS NULL) " +
         "OR (item_count=?3 AND item_set_digest=?4 " +
         "AND work_manifest_ref=?5 AND work_manifest_sha256=?6 " +
         "AND canonical_projection_generation=?7 AND canonical_item_count=?8 " +
         "AND canonical_item_set_digest=?9 AND provider_copy_count=?10 " +
-        "AND provider_copy_set_digest=?11)) " +
+        "AND provider_copy_set_digest=?11 AND project_copy_map_index_protocol IS ?12 " +
+        "AND project_copy_map_index_ref IS ?13 AND project_copy_map_index_sha256 IS ?14 " +
+        "AND project_copy_scope_snapshot_id IS ?15 AND project_copy_scope_snapshot_revision IS ?16 " +
+        "AND project_copy_scope_snapshot_digest IS ?17)) " +
         "AND EXISTS (SELECT 1 FROM operation_execution_lease l " +
-        "WHERE l.operation_id=?22 AND l.operation_kind='PROJECTION_EXECUTE' " +
-        "AND l.lease_owner=?23 AND l.lease_generation=?24 AND l.state='LEASED' " +
-        `AND l.lease_until>?25 AND l.lease_until>${D1_EXECUTION_LEASE_NOW_SQL})`,
+        "WHERE l.operation_id=?28 AND l.operation_kind='PROJECTION_EXECUTE' " +
+        "AND l.lease_owner=?29 AND l.lease_generation=?30 AND l.state='LEASED' " +
+        `AND l.lease_until>?31 AND l.lease_until>${D1_EXECUTION_LEASE_NOW_SQL})`,
       ).bind(
         context.source_revision.source_revision_ref,
         projectionGeneration,
@@ -325,6 +379,12 @@ export function createD1ProjectionAuthority(
         receipt.item_set_digest,
         providerCopyCount,
         providerCopySetDigest,
+        copyMapIndexProtocol,
+        copyMapIndexRef,
+        copyMapIndexSha256,
+        copyScopeSnapshotId,
+        copyScopeSnapshotRevision,
+        copyScopeSnapshotDigest,
         now,
         context.job_id,
         context.source_revision.source_owner_generation,
@@ -368,7 +428,13 @@ export function createD1ProjectionAuthority(
         readback.canonical_item_count !== receipt.item_count ||
         readback.canonical_item_set_digest !== receipt.item_set_digest ||
         readback.provider_copy_count !== providerCopyCount ||
-        readback.provider_copy_set_digest !== providerCopySetDigest
+        readback.provider_copy_set_digest !== providerCopySetDigest ||
+        readback.project_copy_map_index_protocol !== copyMapIndexProtocol ||
+        readback.project_copy_map_index_ref !== copyMapIndexRef ||
+        readback.project_copy_map_index_sha256 !== copyMapIndexSha256 ||
+        readback.project_copy_scope_snapshot_id !== copyScopeSnapshotId ||
+        readback.project_copy_scope_snapshot_revision !== copyScopeSnapshotRevision ||
+        readback.project_copy_scope_snapshot_digest !== copyScopeSnapshotDigest
       ) {
         projectionFail(
           "PROJECTION_SETTLEMENT_UNCERTAIN",

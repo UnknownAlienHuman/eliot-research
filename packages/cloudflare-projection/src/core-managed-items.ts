@@ -2,6 +2,7 @@ import {
   assertProjectionIdentifier,
   assertProjectionInteger,
   assertProjectionSha256,
+  assertProjectionText,
   canonicalProjectionJson,
   projectionExecutionOperationId,
   projectionDigest,
@@ -204,7 +205,9 @@ async function loadEffectRow(
   return database.prepare(
     "SELECT source_revision_ref, projection_generation, job_id, item_key, desired_index, " +
     "canonical_projection_generation, canonical_item_key, project_id, project_membership_id, " +
-    "membership_generation, copy_layout, metadata_generation_digest, canonical_body_ref, " +
+    "membership_generation, membership_identity_version, legacy_project_membership_id, " +
+    "stable_project_membership_id, membership_revision, project_membership_generation, " +
+    "copy_layout, metadata_generation_digest, canonical_body_ref, " +
     "canonical_body_sha256, normalized_start_byte, normalized_end_byte, " +
     "intent_id, intent_revision, attempt_id, execution_operation_id, dispatch_lease_generation, " +
     "managed_instance_id, managed_generation, provider_source, provider_key, " +
@@ -232,8 +235,11 @@ export async function prepareManagedItemEffects(
   callerFence: ExecutionFence,
   copyPlan?: ManagedProjectCopyPlan,
 ): Promise<readonly ManagedItemEffect[]> {
+  const v2Plan = copyPlan?.layout === "PROJECT_COPY_V2";
+  const emptyV2Plan = v2Plan && copyPlan.provider_copy_count === 0 &&
+    copyPlan.provider_item_count === 0 && copyPlan.items.length === 0 && copyPlan.copies.length === 0;
   if (
-    items.length < 1 ||
+    (items.length < 1 && !emptyV2Plan) ||
     items.length > profile.maximum_synchronous_items ||
     new Set(items.map((item) => item.item_key)).size !== items.length
   ) {
@@ -245,7 +251,10 @@ export async function prepareManagedItemEffects(
   const generation = await database.prepare(
     "SELECT job_id, state, item_count, item_set_digest, canonical_projection_generation, " +
     "canonical_item_count, canonical_item_set_digest, provider_copy_count, " +
-    "provider_copy_set_digest, managed_target_metadata_generation_digest " +
+    "provider_copy_set_digest, managed_target_metadata_generation_digest, " +
+    "project_copy_map_index_protocol, project_copy_map_index_ref, project_copy_map_index_sha256, " +
+    "project_copy_scope_snapshot_id, project_copy_scope_snapshot_revision, " +
+    "project_copy_scope_snapshot_digest " +
     "FROM projection_generation WHERE source_revision_ref = ?1 " +
     "AND projection_generation = ?2 LIMIT 1",
   ).bind(context.source_revision.source_revision_ref, projectionGeneration)
@@ -260,6 +269,12 @@ export async function prepareManagedItemEffects(
       readonly provider_copy_count: unknown;
       readonly provider_copy_set_digest: unknown;
       readonly managed_target_metadata_generation_digest: unknown;
+      readonly project_copy_map_index_protocol: unknown;
+      readonly project_copy_map_index_ref: unknown;
+      readonly project_copy_map_index_sha256: unknown;
+      readonly project_copy_scope_snapshot_id: unknown;
+      readonly project_copy_scope_snapshot_revision: unknown;
+      readonly project_copy_scope_snapshot_digest: unknown;
     }>();
   if (
     generation === null ||
@@ -308,19 +323,55 @@ export async function prepareManagedItemEffects(
   const targetMetadataGenerationDigest = await managedProjectGenerationMetadataValue(
     profile.managed_generation,
   );
+  const generationHasV2CopyIndex = generation.project_copy_map_index_protocol ===
+    "eliotr.managed-project-copy-map-index.v2";
+  if (generation.project_copy_map_index_protocol !== null && !generationHasV2CopyIndex) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed generation has an unknown copy-map index protocol");
+  }
+  if (generationHasV2CopyIndex) {
+    assertProjectionText(generation.project_copy_map_index_ref, "V2 copy-map index ref", 2048);
+    assertProjectionSha256(generation.project_copy_map_index_sha256, "V2 copy-map index digest");
+    assertProjectionIdentifier(generation.project_copy_scope_snapshot_id, "V2 copy scope snapshot ID");
+    assertProjectionInteger(
+      generation.project_copy_scope_snapshot_revision,
+      "V2 copy scope snapshot revision",
+      1,
+      Number.MAX_SAFE_INTEGER,
+    );
+    assertProjectionSha256(generation.project_copy_scope_snapshot_digest, "V2 copy scope snapshot digest");
+  } else if (
+    generation.project_copy_map_index_ref !== null ||
+    generation.project_copy_map_index_sha256 !== null ||
+    generation.project_copy_scope_snapshot_id !== null ||
+    generation.project_copy_scope_snapshot_revision !== null ||
+    generation.project_copy_scope_snapshot_digest !== null
+  ) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed generation has an incomplete V2 copy-map index receipt");
+  }
   if (
     storedCanonicalItemCount !== canonicalItemCount ||
     storedCanonicalItemSetDigest !== canonicalItemSetDigest ||
-    generation.managed_target_metadata_generation_digest !== targetMetadataGenerationDigest
+    generation.managed_target_metadata_generation_digest !== targetMetadataGenerationDigest ||
+    generationHasV2CopyIndex !== v2Plan ||
+    (v2Plan && copyPlan !== undefined && (
+      copyPlan.project_copy_map_index_protocol !== generation.project_copy_map_index_protocol ||
+      copyPlan.project_copy_map_index_ref !== generation.project_copy_map_index_ref ||
+      copyPlan.project_copy_map_index_sha256 !== generation.project_copy_map_index_sha256 ||
+      copyPlan.scope_snapshot_id !== generation.project_copy_scope_snapshot_id ||
+      copyPlan.scope_snapshot_revision !== generation.project_copy_scope_snapshot_revision ||
+      copyPlan.scope_snapshot_digest !== generation.project_copy_scope_snapshot_digest
+    ))
   ) {
     projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed generation copy receipt differs from its Work and target pins");
   }
-  const manifestItemCount = canonicalItemCount * (providerCopyCount === 0 ? 1 : providerCopyCount);
+  const manifestItemCount = v2Plan
+    ? canonicalItemCount * providerCopyCount
+    : canonicalItemCount * (providerCopyCount === 0 ? 1 : providerCopyCount);
   if (manifestItemCount > profile.maximum_synchronous_items) {
     projectionFail("PROJECTION_INPUT_INVALID", "managed provider effect set exceeds the synchronous item bound");
   }
   if (
-    providerCopyCount > 0 && copyPlan === undefined
+    (providerCopyCount > 0 || generationHasV2CopyIndex) && copyPlan === undefined
   ) {
     projectionFail("PROJECTION_AUTHORITY_CONFLICT", "project-copy intents require their complete durable map plan");
   }
@@ -335,10 +386,12 @@ export async function prepareManagedItemEffects(
       copyPlan.items.length !== manifestItemCount ||
       copyPlan.copies.length !== providerCopyCount
     )) ||
-    (providerCopyCount === 0 && (
+    (providerCopyCount === 0 && !v2Plan && (
       copyPlan.copies.length !== 0 ||
       copyPlan.items.length !== canonicalItemCount
-    ))
+    )) ||
+    (v2Plan && (copyPlan.provider_item_count !== manifestItemCount ||
+      copyPlan.items.length !== manifestItemCount || copyPlan.copies.length !== providerCopyCount))
   )) {
     projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed project-copy plan differs from its immutable Core receipt");
   }
@@ -354,7 +407,9 @@ export async function prepareManagedItemEffects(
       projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed project-copy item digest differs from the complete plan");
     }
   }
-  const expectedItemSetDigest = providerCopyCount === 0
+  const expectedItemSetDigest = v2Plan
+    ? copyPlan.provider_item_set_sha256
+    : providerCopyCount === 0
     ? canonicalItemSetDigest
     : copyPlan?.provider_item_set_sha256;
   let singleItemManifestDigest: string | undefined;
@@ -436,11 +491,18 @@ export async function prepareManagedItemEffects(
     if (copyPlan !== undefined && (
       planned === undefined ||
       planned.item_key !== item.item_key ||
-      planned.canonical_projection_generation !== item.canonical_projection_generation ||
+      (item.copy_layout === null ? null : planned.canonical_projection_generation) !==
+        item.canonical_projection_generation ||
       planned.canonical_item_key !== item.canonical_item_key ||
       planned.project_id !== item.project_id ||
       planned.project_membership_id !== item.project_membership_id ||
       planned.membership_generation !== item.membership_generation ||
+      planned.copy_layout !== item.copy_layout ||
+      planned.membership_identity_version !== item.membership_identity_version ||
+      planned.legacy_project_membership_id !== item.legacy_project_membership_id ||
+      planned.stable_project_membership_id !== item.stable_project_membership_id ||
+      planned.membership_revision !== item.membership_revision ||
+      planned.project_membership_generation !== item.project_membership_generation ||
       planned.provider_key !== item.provider_key ||
       planned.metadata_generation_digest !== item.metadata_generation_digest ||
       planned.canonical_body_ref !== item.canonical_body_ref ||
@@ -472,18 +534,20 @@ export async function prepareManagedItemEffects(
       "INSERT INTO projection_managed_item_effect(" +
       "source_revision_ref, projection_generation, job_id, item_key, " +
       "canonical_projection_generation, canonical_item_key, project_id, project_membership_id, " +
-      "membership_generation, copy_layout, metadata_generation_digest, canonical_body_ref, " +
+      "membership_generation, membership_identity_version, legacy_project_membership_id, " +
+      "stable_project_membership_id, membership_revision, project_membership_generation, " +
+      "copy_layout, metadata_generation_digest, canonical_body_ref, " +
       "canonical_body_sha256, desired_index, normalized_start_byte, normalized_end_byte, " +
       "intent_id, intent_revision, attempt_id, execution_operation_id, " +
       "dispatch_lease_generation, managed_instance_id, managed_generation, provider_source, " +
       "provider_key, section_content_sha256, document_sha256, document_size_bytes, metadata_json, " +
       "state, provider_item_id, readback_receipt_json, readback_sha256, created_at, updated_at) " +
       "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20, " +
-      "NULL,?21,?22,?23,?24,?25,?26,?27,?28,'INTENT',NULL,NULL,NULL,?29,?29 " +
+      "?21,?22,?23,?24,?25,NULL,?26,?27,?28,?29,?30,?31,?32,?33,'INTENT',NULL,NULL,NULL,?34,?34 " +
       "WHERE EXISTS (SELECT 1 FROM operation_execution_lease l " +
-      "WHERE l.operation_id = ?30 AND l.operation_kind = 'PROJECTION_EXECUTE' " +
-      "AND l.lease_owner = ?31 AND l.lease_generation = ?32 AND l.state = 'LEASED' " +
-      "AND l.lease_until > ?33 AND l.lease_until > " + D1_EXECUTION_LEASE_NOW_SQL +
+      "WHERE l.operation_id = ?35 AND l.operation_kind = 'PROJECTION_EXECUTE' " +
+      "AND l.lease_owner = ?36 AND l.lease_generation = ?37 AND l.state = 'LEASED' " +
+      "AND l.lease_until > ?38 AND l.lease_until > " + D1_EXECUTION_LEASE_NOW_SQL +
       ") ON CONFLICT(source_revision_ref,projection_generation,item_key) " +
       "DO NOTHING",
     ).bind(
@@ -491,11 +555,18 @@ export async function prepareManagedItemEffects(
       projectionGeneration,
       context.job_id,
       item.item_key,
-      item.copy_layout === "PROJECT_COPY_V1" ? item.canonical_projection_generation : null,
+      item.copy_layout === "PROJECT_COPY_V1" || item.copy_layout === "PROJECT_COPY_V2"
+        ? item.canonical_projection_generation
+        : null,
       item.canonical_item_key,
       item.project_id,
       item.project_membership_id,
       item.membership_generation,
+      item.membership_identity_version,
+      item.legacy_project_membership_id,
+      item.stable_project_membership_id,
+      item.membership_revision,
+      item.project_membership_generation,
       item.copy_layout,
       item.metadata_generation_digest,
       item.canonical_body_ref,

@@ -11,7 +11,7 @@ const baselineFiles = (await readdir(migrationsDirectory))
   .sort();
 const postProtocolMigrations = (await readdir(migrationsDirectory))
   .filter((name) => /^\d{4}_[a-z0-9_-]+\.sql$/iu.test(name))
-  .filter((name) => Number(name.slice(0, 4)) > 129 && Number(name.slice(0, 4)) <= 145)
+  .filter((name) => Number(name.slice(0, 4)) > 129 && Number(name.slice(0, 4)) <= 149)
   .sort();
 
 assert.equal(
@@ -21,8 +21,8 @@ assert.equal(
 );
 assert.equal(
   postProtocolMigrations.at(-1),
-  "0145_project_scoped_scope_invalidation.sql",
-  "the migration fixture must apply the actual Core sequence through 0145",
+  "0149_managed_project_copy_v2.sql",
+  "the migration fixture must apply the actual Core sequence through 0149",
 );
 
 const db = new DatabaseSync(":memory:");
@@ -223,6 +223,35 @@ try {
     now,
   ];
   legacyEffectInsert.run(...legacyEffectValues);
+  const historicalProviderItemId = "provider-item-historical-readback";
+  const historicalReadbackSha256 = "d".repeat(64);
+  db.prepare(`
+    UPDATE projection_managed_item_effect
+    SET state='DISPATCHED', dispatch_lease_generation=1, updated_at=?
+    WHERE source_revision_ref=? AND projection_generation=? AND item_key=?
+  `).run(now, sourceRevisionRef, historicalV1Generation, historicalItemKey);
+  db.prepare(`
+    UPDATE projection_managed_item_effect
+    SET state='READBACK_VERIFIED', provider_item_id=?, readback_receipt_json=?,
+      readback_sha256=?, updated_at=?
+    WHERE source_revision_ref=? AND projection_generation=? AND item_key=?
+  `).run(
+    historicalProviderItemId,
+    JSON.stringify({
+      chunks_count: 1,
+      content_sha256: contentSha256,
+      file_size: 1,
+      item_key: historicalItemKey,
+      provider_item_id: historicalProviderItemId,
+      provider_key: `${historicalItemKey}.md`,
+      readback_sha256: historicalReadbackSha256,
+    }),
+    historicalReadbackSha256,
+    now,
+    sourceRevisionRef,
+    historicalV1Generation,
+    historicalItemKey,
+  );
   const historicalEffectBefore = db.prepare(`
     SELECT ${legacyEffectColumns.join(", ")} FROM projection_managed_item_effect
     WHERE source_revision_ref=? AND projection_generation=? AND item_key=?
@@ -251,6 +280,12 @@ try {
     "canonical_item_set_digest",
     "provider_copy_count",
     "provider_copy_set_digest",
+    "project_copy_map_index_protocol",
+    "project_copy_map_index_ref",
+    "project_copy_map_index_sha256",
+    "project_copy_scope_snapshot_id",
+    "project_copy_scope_snapshot_revision",
+    "project_copy_scope_snapshot_digest",
   ]) {
     const column = tableColumns.find((entry) => entry.name === name);
     assert.ok(column, `${name} is added by the production migration`);
@@ -261,7 +296,10 @@ try {
     SELECT ${generationColumns.join(", ")}, managed_item_protocol,
       managed_target_instance_id, managed_target_generation,
       managed_target_metadata_generation_digest, canonical_projection_generation,
-      canonical_item_count, canonical_item_set_digest, provider_copy_count, provider_copy_set_digest
+      canonical_item_count, canonical_item_set_digest, provider_copy_count, provider_copy_set_digest,
+      project_copy_map_index_protocol, project_copy_map_index_ref, project_copy_map_index_sha256,
+      project_copy_scope_snapshot_id, project_copy_scope_snapshot_revision,
+      project_copy_scope_snapshot_digest
     FROM projection_generation
     WHERE source_revision_ref = ? AND projection_generation = ?
   `).get(sourceRevisionRef, legacyGeneration);
@@ -281,15 +319,23 @@ try {
       legacyAfter.canonical_item_set_digest,
       legacyAfter.provider_copy_count,
       legacyAfter.provider_copy_set_digest,
+      legacyAfter.project_copy_map_index_protocol,
+      legacyAfter.project_copy_map_index_ref,
+      legacyAfter.project_copy_map_index_sha256,
+      legacyAfter.project_copy_scope_snapshot_id,
+      legacyAfter.project_copy_scope_snapshot_revision,
+      legacyAfter.project_copy_scope_snapshot_digest,
     ],
-    [null, null, null, null, null, null, null, null, null],
+    Array(15).fill(null),
     "the migration does not fabricate protocol, target metadata, or canonical copy authority for a historical generation",
   );
 
   const historicalEffectAfter = db.prepare(`
     SELECT ${legacyEffectColumns.join(", ")}, canonical_projection_generation,
       canonical_item_key, project_id, project_membership_id, membership_generation,
-      copy_layout, metadata_generation_digest, canonical_body_ref, canonical_body_sha256
+      copy_layout, metadata_generation_digest, canonical_body_ref, canonical_body_sha256,
+      membership_identity_version, legacy_project_membership_id, stable_project_membership_id,
+      membership_revision, project_membership_generation
     FROM projection_managed_item_effect
     WHERE source_revision_ref=? AND projection_generation=? AND item_key=?
   `).get(sourceRevisionRef, historicalV1Generation, historicalItemKey);
@@ -309,14 +355,22 @@ try {
       historicalEffectAfter.metadata_generation_digest,
       historicalEffectAfter.canonical_body_ref,
       historicalEffectAfter.canonical_body_sha256,
+      historicalEffectAfter.membership_identity_version,
+      historicalEffectAfter.legacy_project_membership_id,
+      historicalEffectAfter.stable_project_membership_id,
+      historicalEffectAfter.membership_revision,
+      historicalEffectAfter.project_membership_generation,
     ],
-    Array(9).fill(null),
+    Array(14).fill(null),
     "0144 leaves historical flat mapping fields NULL",
   );
   const historicalV1After = db.prepare(`
     SELECT managed_item_protocol, managed_target_instance_id, managed_target_generation,
       managed_target_metadata_generation_digest, canonical_projection_generation,
-      canonical_item_count, canonical_item_set_digest, provider_copy_count, provider_copy_set_digest
+      canonical_item_count, canonical_item_set_digest, provider_copy_count, provider_copy_set_digest,
+      project_copy_map_index_protocol, project_copy_map_index_ref, project_copy_map_index_sha256,
+      project_copy_scope_snapshot_id, project_copy_scope_snapshot_revision,
+      project_copy_scope_snapshot_digest
     FROM projection_generation WHERE source_revision_ref=? AND projection_generation=?
   `).get(sourceRevisionRef, historicalV1Generation);
   assert.deepEqual(
@@ -330,8 +384,15 @@ try {
       historicalV1After.canonical_item_set_digest,
       historicalV1After.provider_copy_count,
       historicalV1After.provider_copy_set_digest,
+      historicalV1After.project_copy_map_index_protocol,
+      historicalV1After.project_copy_map_index_ref,
+      historicalV1After.project_copy_map_index_sha256,
+      historicalV1After.project_copy_scope_snapshot_id,
+      historicalV1After.project_copy_scope_snapshot_revision,
+      historicalV1After.project_copy_scope_snapshot_digest,
     ],
-    ["eliotr.managed-item-effects.v1", historicalTargetInstance, historicalTargetGeneration, null, null, null, null, null, null],
+    ["eliotr.managed-item-effects.v1", historicalTargetInstance, historicalTargetGeneration,
+      null, null, null, null, null, null, null, null, null, null, null, null],
     "0144 preserves historical v1 raw target pins without fabricating metadata/copy digests",
   );
   assert.deepEqual(
@@ -420,6 +481,33 @@ try {
     const after = db.prepare("SELECT COUNT(*) AS count FROM projection_generation").get().count;
     assert.equal(after, before, `${reason}: rejected insert leaves no generation row`);
   };
+
+  const v2IndexInsertColumns = [
+    ...generationColumns,
+    "managed_item_protocol",
+    "managed_target_instance_id",
+    "managed_target_generation",
+    "managed_target_metadata_generation_digest",
+    "project_copy_map_index_protocol",
+  ];
+  const generationCountBeforeIndexInsert = db.prepare(
+    "SELECT COUNT(*) AS count FROM projection_generation",
+  ).get().count;
+  assert.throws(() => db.prepare(`
+    INSERT INTO projection_generation (${v2IndexInsertColumns.join(", ")})
+    VALUES (${v2IndexInsertColumns.map(() => "?").join(", ")})
+  `).run(
+    sourceRevisionRef, "copy-index-insert-denied", jobId, ownerGeneration,
+    contentSha256, residencyDigest, "projection-profile-fixture", "PREPARING", now, now,
+    protocol, "items-instance-fixture", "items-generation-fixture",
+    metadataGenerationDigest("items-generation-fixture"),
+    "eliotr.managed-project-copy-map-index.v2",
+  ), undefined, "a V2 map index cannot be supplied during generation INSERT");
+  assert.equal(
+    db.prepare("SELECT COUNT(*) AS count FROM projection_generation").get().count,
+    generationCountBeforeIndexInsert,
+    "a rejected map-index INSERT leaves no generation row",
+  );
 
   insertCandidate("versioned-generation-valid");
   const accepted = db.prepare(`
@@ -590,6 +678,15 @@ try {
     WHERE source_revision_ref=? AND projection_generation=?
   `).run("d".repeat(64), sourceRevisionRef, "copy-identity-phase-valid"), undefined,
   "canonical Work count/digest aliases cannot drift after copy identity materialization");
+  assert.throws(() => db.prepare(`
+    UPDATE projection_generation SET
+      project_copy_map_index_protocol='eliotr.managed-project-copy-map-index.v2',
+      project_copy_map_index_ref='projection/source/copy-maps/index/target/scope/copy.json',
+      project_copy_map_index_sha256=?, project_copy_scope_snapshot_id='scope-snapshot-fixture',
+      project_copy_scope_snapshot_revision=1, project_copy_scope_snapshot_digest=?
+    WHERE source_revision_ref=? AND projection_generation=?
+  `).run("d".repeat(64), "e".repeat(64), sourceRevisionRef, "copy-identity-phase-valid"), undefined,
+  "the complete V2 map-index receipt cannot be added after materialization");
 
   const sourceProjectId = "project-managed-copy-fixture";
   db.prepare(`
@@ -601,10 +698,10 @@ try {
     "model-profile-fixture", "depth-profile-fixture", now);
   db.prepare(`
     INSERT INTO project_source_membership (
-      project_id, source_id, role, valid_from, valid_to, membership_generation
-    ) VALUES (?, ?, 'member', ?, NULL, 1)
-  `).run(sourceProjectId, sourceId, now);
-
+      project_id, source_id, role, valid_from, valid_to, membership_generation,
+      membership_id, membership_revision
+    ) VALUES (?, ?, 'member', ?, NULL, 1, json_array(?, ?), 1)
+  `).run(sourceProjectId, sourceId, now, sourceProjectId, sourceId);
   const copyGeneration = "versioned-generation-copy-ready";
   insertCandidate(copyGeneration);
   db.prepare(`
@@ -630,7 +727,9 @@ try {
   const copyEffectColumns = [
     "source_revision_ref", "projection_generation", "job_id", "item_key",
     "canonical_projection_generation", "canonical_item_key", "project_id", "project_membership_id",
-    "membership_generation", "copy_layout", "metadata_generation_digest", "canonical_body_ref",
+    "membership_generation", "membership_identity_version", "legacy_project_membership_id",
+    "stable_project_membership_id", "membership_revision", "project_membership_generation",
+    "copy_layout", "metadata_generation_digest", "canonical_body_ref",
     "canonical_body_sha256", "desired_index", "normalized_start_byte", "normalized_end_byte",
     "intent_id", "intent_revision", "attempt_id", "execution_operation_id", "dispatch_lease_generation",
     "managed_instance_id", "managed_generation", "provider_source", "provider_key",
@@ -643,11 +742,15 @@ try {
   `);
   const copyEffectValues = [
     sourceRevisionRef, copyGeneration, jobId, copyItemKey, canonicalGeneration, canonicalItemKey,
-    sourceProjectId, `project:${sourceProjectId}:generation:1`, 1, "PROJECT_COPY_V1", metadataDigest,
+    sourceProjectId, `project:${sourceProjectId}:generation:1`, 1, null, null, null, null, null,
+    "PROJECT_COPY_V1", metadataDigest,
     "projection/canonical/items/body.md", "a".repeat(64), 0, 0, 1, intentId, 1, attemptId,
     operationId, null, "items-instance-fixture", "items-generation-fixture", "builtin", copyProviderKey,
     "a".repeat(64), "a".repeat(64), 1, copyMetadata, "INTENT", null, null, null, now, now,
   ];
+  const copyEffectColumnIndex = Object.fromEntries(
+    copyEffectColumns.map((name, index) => [name, index]),
+  );
   insertCopyEffect.run(...copyEffectValues);
   const validCopyEffect = db.prepare(`
     SELECT copy_layout, project_membership_id, provider_key, metadata_json,
@@ -660,9 +763,10 @@ try {
   assert.equal(validCopyEffect.canonical_projection_generation, canonicalGeneration);
 
   const unsafeCopyValues = [...copyEffectValues];
-  unsafeCopyValues[3] = `projection-${"f".repeat(48)}`;
-  unsafeCopyValues[24] = `projection/${folderToken}/${unsafeCopyValues[3]}.md`;
-  unsafeCopyValues[28] = JSON.stringify({
+  unsafeCopyValues[copyEffectColumnIndex.item_key] = `projection-${"f".repeat(48)}`;
+  unsafeCopyValues[copyEffectColumnIndex.provider_key] =
+    `projection/${folderToken}/${unsafeCopyValues[copyEffectColumnIndex.item_key]}.md`;
+  unsafeCopyValues[copyEffectColumnIndex.metadata_json] = JSON.stringify({
     canonical_section_id: "section-copy-fixture",
     content_sha256: "a".repeat(64),
     instruction_taint: "DATA_ONLY",
@@ -673,10 +777,11 @@ try {
     "PROJECT_COPY_V1 cannot write raw managed_generation into projection_generation metadata");
 
   const targetMismatchCopyValues = [...copyEffectValues];
-  targetMismatchCopyValues[3] = `projection-${"9".repeat(48)}`;
-  targetMismatchCopyValues[24] = `projection/${folderToken}/${targetMismatchCopyValues[3]}.md`;
-  targetMismatchCopyValues[10] = "f".repeat(64);
-  targetMismatchCopyValues[28] = JSON.stringify({
+  targetMismatchCopyValues[copyEffectColumnIndex.item_key] = `projection-${"9".repeat(48)}`;
+  targetMismatchCopyValues[copyEffectColumnIndex.provider_key] =
+    `projection/${folderToken}/${targetMismatchCopyValues[copyEffectColumnIndex.item_key]}.md`;
+  targetMismatchCopyValues[copyEffectColumnIndex.metadata_generation_digest] = "f".repeat(64);
+  targetMismatchCopyValues[copyEffectColumnIndex.metadata_json] = JSON.stringify({
     canonical_section_id: "section-copy-fixture",
     content_sha256: "a".repeat(64),
     instruction_taint: "DATA_ONLY",
@@ -686,11 +791,178 @@ try {
   assert.throws(() => insertCopyEffect.run(...targetMismatchCopyValues), undefined,
     "PROJECT_COPY_V1 metadata digest must match the immutable target receipt");
 
+  db.prepare(`
+    UPDATE project SET membership_generation=2 WHERE project_id=?
+  `).run(sourceProjectId);
+
+  const v2CopyGeneration = "versioned-generation-copy-v2-ready";
+  insertCandidate(v2CopyGeneration);
+  const v2IndexRef = "projection/source-prefix/copy-maps/index/target/scope/" +
+    `${"c".repeat(64)}.json`;
+  const v2IndexSha256 = "d".repeat(64);
+  const v2ScopeSnapshotId = "scope-snapshot-copy-v2-fixture";
+  const v2ScopeSnapshotRevision = 3;
+  const v2ScopeSnapshotDigest = "e".repeat(64);
+  db.prepare(`
+    UPDATE projection_generation SET state='MATERIALIZED', item_count=1, item_set_digest=?,
+      work_manifest_ref='projection/v2/manifest.json', work_manifest_sha256=?,
+      canonical_projection_generation=?, canonical_item_count=1, canonical_item_set_digest=?,
+      provider_copy_count=2, provider_copy_set_digest=?,
+      project_copy_map_index_protocol='eliotr.managed-project-copy-map-index.v2',
+      project_copy_map_index_ref=?, project_copy_map_index_sha256=?,
+      project_copy_scope_snapshot_id=?, project_copy_scope_snapshot_revision=?,
+      project_copy_scope_snapshot_digest=?, updated_at=?
+    WHERE source_revision_ref=? AND projection_generation=? AND state='PREPARING'
+  `).run(
+    "a".repeat(64), "b".repeat(64), canonicalGeneration, "a".repeat(64),
+    "c".repeat(64), v2IndexRef, v2IndexSha256, v2ScopeSnapshotId,
+    v2ScopeSnapshotRevision, v2ScopeSnapshotDigest, now, sourceRevisionRef, v2CopyGeneration,
+  );
+  const v2GenerationReceipt = db.prepare(`
+    SELECT state, item_count, item_set_digest, canonical_item_count, canonical_item_set_digest,
+      provider_copy_count, provider_copy_set_digest, project_copy_map_index_protocol,
+      project_copy_map_index_ref, project_copy_map_index_sha256, project_copy_scope_snapshot_id,
+      project_copy_scope_snapshot_revision, project_copy_scope_snapshot_digest
+    FROM projection_generation WHERE source_revision_ref=? AND projection_generation=?
+  `).get(sourceRevisionRef, v2CopyGeneration);
+  assert.deepEqual(
+    [v2GenerationReceipt.state, v2GenerationReceipt.item_count, v2GenerationReceipt.item_set_digest,
+      v2GenerationReceipt.canonical_item_count, v2GenerationReceipt.canonical_item_set_digest,
+      v2GenerationReceipt.provider_copy_count, v2GenerationReceipt.provider_copy_set_digest,
+      v2GenerationReceipt.project_copy_map_index_protocol, v2GenerationReceipt.project_copy_map_index_ref,
+      v2GenerationReceipt.project_copy_map_index_sha256, v2GenerationReceipt.project_copy_scope_snapshot_id,
+      v2GenerationReceipt.project_copy_scope_snapshot_revision, v2GenerationReceipt.project_copy_scope_snapshot_digest],
+    ["MATERIALIZED", 1, "a".repeat(64), 1, "a".repeat(64), 2, "c".repeat(64),
+      "eliotr.managed-project-copy-map-index.v2", v2IndexRef, v2IndexSha256, v2ScopeSnapshotId,
+      v2ScopeSnapshotRevision, v2ScopeSnapshotDigest],
+    "the V2 map index and scope bind with the existing canonical and provider receipt fields",
+  );
+  assert.throws(() => db.prepare(`
+    UPDATE projection_generation SET project_copy_map_index_sha256=?
+    WHERE source_revision_ref=? AND projection_generation=?
+  `).run("f".repeat(64), sourceRevisionRef, v2CopyGeneration), undefined,
+  "a materialized V2 map index receipt is immutable");
+
+  const v2StableMembershipId = `project-membership-${"9".repeat(48)}`;
+  const v2FolderToken = "8".repeat(43);
+  const makeV2CopyValues = ({ identityVersion, desiredIndex, itemKey }) => {
+    const values = [...copyEffectValues];
+    values[copyEffectColumnIndex.projection_generation] = v2CopyGeneration;
+    values[copyEffectColumnIndex.item_key] = itemKey;
+    values[copyEffectColumnIndex.project_membership_id] = identityVersion === 1
+      ? `project:${sourceProjectId}:generation:1`
+      : v2StableMembershipId;
+    values[copyEffectColumnIndex.membership_identity_version] = identityVersion;
+    values[copyEffectColumnIndex.legacy_project_membership_id] = identityVersion === 1
+      ? `project:${sourceProjectId}:generation:1`
+      : null;
+    values[copyEffectColumnIndex.stable_project_membership_id] = identityVersion === 2
+      ? v2StableMembershipId
+      : null;
+    values[copyEffectColumnIndex.membership_revision] = identityVersion === 2 ? 1 : null;
+    values[copyEffectColumnIndex.project_membership_generation] = 2;
+    values[copyEffectColumnIndex.copy_layout] = "PROJECT_COPY_V2";
+    values[copyEffectColumnIndex.desired_index] = desiredIndex;
+    values[copyEffectColumnIndex.provider_key] = `projection/${v2FolderToken}/${itemKey}.md`;
+    return values;
+  };
+  const v2StableCopyValues = makeV2CopyValues({
+    identityVersion: 2,
+    desiredIndex: 0,
+    itemKey: `projection-${"7".repeat(48)}`,
+  });
+  const v2LegacyCopyValues = makeV2CopyValues({
+    identityVersion: 1,
+    desiredIndex: 1,
+    itemKey: `projection-${"6".repeat(48)}`,
+  });
+  insertCopyEffect.run(...v2StableCopyValues);
+  insertCopyEffect.run(...v2LegacyCopyValues);
+  const v2Effects = db.prepare(`
+    SELECT item_key, membership_generation, membership_identity_version,
+      legacy_project_membership_id, stable_project_membership_id, membership_revision,
+      project_membership_generation, project_membership_id, provider_key, metadata_json
+    FROM projection_managed_item_effect
+    WHERE source_revision_ref=? AND projection_generation=? ORDER BY desired_index
+  `).all(sourceRevisionRef, v2CopyGeneration);
+  assert.deepEqual(
+    v2Effects.map((effect) => [effect.membership_generation, effect.membership_identity_version,
+      effect.legacy_project_membership_id, effect.stable_project_membership_id, effect.membership_revision,
+      effect.project_membership_generation, effect.project_membership_id]),
+    [
+      [1, 2, null, v2StableMembershipId, 1, 2, v2StableMembershipId],
+      [1, 1, `project:${sourceProjectId}:generation:1`, null, null, 2,
+        `project:${sourceProjectId}:generation:1`],
+    ],
+    "V2 stores opening-row generation separately from aggregate currentness for both identity versions",
+  );
+  assert.ok(v2Effects.every((effect) => effect.provider_key.startsWith(`projection/${v2FolderToken}/`)));
+  assert.ok(v2Effects.every((effect) => JSON.parse(effect.metadata_json).projection_generation === metadataDigest));
+
+  const rejectV2Effect = (mutate, reason) => {
+    const values = makeV2CopyValues({
+      identityVersion: 2,
+      desiredIndex: 2,
+      itemKey: `projection-${"5".repeat(48)}`,
+    });
+    mutate(values);
+    assert.throws(() => insertCopyEffect.run(...values), undefined, reason);
+  };
+  rejectV2Effect(
+    (values) => { values[copyEffectColumnIndex.membership_revision] = 2; },
+    "a V2 effect cannot substitute another per-pair membership revision",
+  );
+  rejectV2Effect(
+    (values) => { values[copyEffectColumnIndex.project_membership_generation] = 1; },
+    "a V2 effect must bind the current aggregate membership generation separately",
+  );
+  rejectV2Effect(
+    (values) => { values[copyEffectColumnIndex.membership_revision] = null; },
+    "a V2 stable identity requires its per-pair membership revision",
+  );
+  rejectV2Effect(
+    (values) => {
+      values[copyEffectColumnIndex.metadata_json] = JSON.stringify({
+        ...JSON.parse(values[copyEffectColumnIndex.metadata_json]),
+        projection_generation: "items-generation-fixture",
+      });
+    },
+    "PROJECT_COPY_V2 metadata cannot substitute the raw provider generation",
+  );
+  rejectV2Effect(
+    (values) => {
+      values[copyEffectColumnIndex.metadata_generation_digest] = "f".repeat(64);
+      values[copyEffectColumnIndex.metadata_json] = JSON.stringify({
+        ...JSON.parse(values[copyEffectColumnIndex.metadata_json]),
+        projection_generation: "f".repeat(64),
+      });
+    },
+    "PROJECT_COPY_V2 metadata digest must equal the immutable target receipt",
+  );
+  const v2EffectWithoutIndex = makeV2CopyValues({
+    identityVersion: 2,
+    desiredIndex: 0,
+    itemKey: `projection-${"4".repeat(48)}`,
+  });
+  v2EffectWithoutIndex[copyEffectColumnIndex.projection_generation] = "copy-identity-phase-valid";
+  assert.throws(() => insertCopyEffect.run(...v2EffectWithoutIndex), undefined,
+    "a PROJECT_COPY_V2 effect requires its exact materialized source-scoped map index receipt");
+
   const targetPinGuards = db.prepare(`
     SELECT COUNT(*) AS count FROM sqlite_schema
     WHERE type='trigger' AND name='projection_managed_item_effect_target_pin_insert_guard'
   `).get();
-  assert.equal(targetPinGuards.count, 1, "0144 recreates the historical target pin guard exactly once");
+  assert.equal(targetPinGuards.count, 1, "0149 preserves the historical target pin guard exactly once");
+  const preservedEffectIndexes = db.prepare("PRAGMA index_list('projection_managed_item_effect')")
+    .all().map((index) => index.name);
+  assert.ok(preservedEffectIndexes.includes("projection_managed_item_effect_state_idx"));
+  assert.ok(preservedEffectIndexes.includes("projection_managed_item_effect_copy_lookup_idx"));
+  assert.ok(preservedEffectIndexes.includes("projection_managed_item_effect_copy_v2_lookup_idx"));
+  assert.deepEqual(
+    db.prepare("PRAGMA foreign_key_check").all(),
+    [],
+    "the actual rebuilt tables and retained Core dependencies have no foreign-key violations",
+  );
 
   insertCandidate("versioned-generation-max-targets", {
     instance: "i".repeat(256),
@@ -737,5 +1009,5 @@ try {
 }
 
 console.log(
-  "managed-item protocol native migration fixture: PASS (Core migrations through 0145, flat-row and UNIQUE preservation, metadata target pin, five-field materialization phase, and project-copy insert/metadata negatives)",
+  "managed-item protocol native migration fixture: PASS (Core migrations through 0149, flat/readback and UNIQUE preservation, V1 target pin, V2 identity/index binding, aggregate-versus-opening generation, and invalid insert/phase/metadata negatives)",
 );

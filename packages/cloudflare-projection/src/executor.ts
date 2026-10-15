@@ -15,9 +15,11 @@ import {
   utf8ProjectionLength,
 } from "./canonical.js";
 import {
+  bindProjectCopyMapIndex,
   buildManagedProjectCopyPlan,
   canonicalSourceProjectionIdentity,
   canonicalSourceResourceBounds,
+  managedProjectCopyScopeForProfile,
   preflightManagedProjectCopies,
 } from "./core-managed-item-intent.js";
 import type {
@@ -418,6 +420,7 @@ export function createProjectionExecutionHandler(
           dependencies.profile,
           canonicalSource,
           projection.items,
+          copyPreflight,
         );
         if (
           copyPlan.provider_copy_count !== copyPreflight.provider_copy_count ||
@@ -435,17 +438,25 @@ export function createProjectionExecutionHandler(
               item.provider_key !== expected.provider_key ||
               item.project_id !== expected.project_id ||
               item.project_membership_id !== expected.project_membership_id ||
-              item.membership_generation !== expected.membership_generation;
+              item.membership_generation !== expected.membership_generation ||
+              item.membership_identity_version !== expected.membership_identity_version ||
+              item.legacy_project_membership_id !== expected.legacy_project_membership_id ||
+              item.stable_project_membership_id !== expected.stable_project_membership_id ||
+              item.membership_revision !== expected.membership_revision ||
+              item.project_membership_generation !== expected.project_membership_generation;
           })
         ) {
           projectionFail("PROJECTION_AUTHORITY_CONFLICT", "complete provider plan changed after preflight");
         }
+        const copyScope = managedProjectCopyScopeForProfile(context, dependencies.profile);
         const projectCopyMapSet = await dependencies.work.materializeProjectCopyMapPages(
           canonicalSource,
           copyPlan.target,
           copyPlan.copies,
+          copyScope,
         );
         verifyProjectCopyMapSet(projectCopyMapSet, canonicalSource, copyPlan);
+        const providerCopyPlan = bindProjectCopyMapIndex(copyPlan, projectCopyMapSet);
         const work: ProjectionWorkReceipt = {
           ...canonicalWork,
           canonical_projection_generation: canonicalIdentity.generation,
@@ -464,7 +475,7 @@ export function createProjectionExecutionHandler(
           context,
           generation,
           canonicalIdentity.generation,
-          copyPlan,
+          providerCopyPlan,
           fence,
         );
         const baseSettlement = managedSettlement(managed, []);

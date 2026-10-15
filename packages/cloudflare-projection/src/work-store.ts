@@ -201,9 +201,7 @@ async function copyPageDigests(
           : null,
         membership_revision: copy.membership_identity_version === 2 ? copy.membership_revision : null,
         membership_generation: copy.membership_generation,
-        project_membership_generation: copy.membership_identity_version === 2
-          ? copy.project_membership_generation
-          : null,
+        project_membership_generation: copy.project_membership_generation,
         folder_prefix: copy.folder_prefix,
         provider_copy_set_sha256: copy.provider_copy_set_sha256,
       })),

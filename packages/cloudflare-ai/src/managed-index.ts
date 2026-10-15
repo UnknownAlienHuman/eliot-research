@@ -16,6 +16,7 @@ import {
   type ManagedProjectionReceipt,
   type ManagedProjectCopyPlan,
   type ManagedProjectCopyTargetReceipt,
+  type ManagedTargetSelectionV2,
   type ProjectionAuthorityPort,
   type ProjectionExecutionProfile,
   type ProjectionManagedItemAuthorityPort,
@@ -163,7 +164,22 @@ function managedCopyItemIdentity(item: ManagedProjectCopyPlan["items"][number]) 
     project_id: item.project_id,
     project_membership_id: item.project_membership_id,
     membership_generation: item.membership_generation,
+    copy_layout: item.copy_layout,
+    membership_identity_version: item.membership_identity_version,
+    legacy_project_membership_id: item.legacy_project_membership_id,
+    stable_project_membership_id: item.stable_project_membership_id,
+    membership_revision: item.membership_revision,
+    project_membership_generation: item.project_membership_generation,
   };
+}
+
+function v2SelectionMatches(
+  copy: ManagedProjectCopyPlan["copies"][number],
+  selection: ManagedTargetSelectionV2 | undefined,
+): boolean {
+  return copy.protocol === "eliotr.managed-project-copy-map.v2" &&
+    selection !== undefined &&
+    canonicalProjectionJson(copy.target_selection) === canonicalProjectionJson(selection);
 }
 
 async function validateManagedProjectCopyPlan(
@@ -173,6 +189,7 @@ async function validateManagedProjectCopyPlan(
   copyPlan: ManagedProjectCopyPlan,
 ): Promise<void> {
   const target = copyPlan.target;
+  const v2Plan = copyPlan.layout === "PROJECT_COPY_V2";
   assertProjectionIdentifier(target.managed_instance_id, "managed copy target instance");
   assertProjectionIdentifier(target.managed_generation, "managed copy target generation");
   assertProjectionSha256(target.metadata_generation_digest, "managed copy target metadata digest");
@@ -192,13 +209,59 @@ async function validateManagedProjectCopyPlan(
   const physicalCount = assertProjectionInteger(
     copyPlan.items.length,
     "managed physical item count",
-    1,
+    v2Plan && copyCount === 0 ? 0 : 1,
     profile.maximum_synchronous_items,
   );
   assertProjectionSha256(copyPlan.provider_copy_set_sha256, "managed provider copy-set digest");
   assertProjectionSha256(copyPlan.provider_item_set_sha256, "managed provider item-set digest");
   const emptySetDigest = await projectionDigest([]);
-  if (copyCount === 0) {
+  if (v2Plan) {
+    const selection = copyPlan.target_selection;
+    if (
+      selection === undefined ||
+      selection.protocol !== "eliotr.managed-target-selection.v2" ||
+      selection.domain !== "MANAGED_SEARCH_PRODUCT" ||
+      selection.decision_version !== 2 ||
+      selection.selection_mode !== "STABLE_PHYSICAL_PROFILE_V2" ||
+      selection.product_alias !== "primary" ||
+      selection.target === undefined ||
+      selection.target === null ||
+      selection.target.managed_instance_id !== target.managed_instance_id ||
+      selection.target.managed_generation !== target.managed_generation ||
+      copyPlan.scope_snapshot_id === undefined ||
+      copyPlan.scope_snapshot_revision === undefined ||
+      copyPlan.scope_snapshot_digest === undefined ||
+      copyPlan.project_copy_map_index_protocol !== "eliotr.managed-project-copy-map-index.v2" ||
+      copyPlan.project_copy_map_index_ref === undefined ||
+      copyPlan.project_copy_map_index_sha256 === undefined
+    ) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "PROJECT_COPY_V2 plan has no exact selection or erasure index");
+    }
+    assertProjectionSha256(
+      selection.target.target_profile_identity_sha256,
+      "V2 target physical profile digest",
+    );
+    assertProjectionInteger(copyPlan.scope_snapshot_revision, "V2 scope snapshot revision", 1, Number.MAX_SAFE_INTEGER);
+    assertProjectionSha256(copyPlan.scope_snapshot_digest, "V2 scope snapshot digest");
+    assertProjectionText(copyPlan.scope_snapshot_id, "V2 scope snapshot ID", 256);
+    assertProjectionText(copyPlan.project_copy_map_index_ref, "V2 copy-map index ref", 2048);
+    assertProjectionSha256(copyPlan.project_copy_map_index_sha256, "V2 copy-map index digest");
+    assertProjectionInteger(selection.registry_revision, "V2 target registry revision", 1, Number.MAX_SAFE_INTEGER);
+    assertProjectionSha256(selection.registry_artifact_sha256, "V2 target registry artifact digest");
+    assertProjectionSha256(selection.v1_exact_profile_identity_sha256, "V2 exact V1 profile digest");
+  } else if (
+    copyPlan.target_selection !== undefined ||
+    copyPlan.scope_snapshot_id !== undefined ||
+    copyPlan.scope_snapshot_revision !== undefined ||
+    copyPlan.scope_snapshot_digest !== undefined ||
+    copyPlan.project_copy_map_index_protocol !== undefined ||
+    copyPlan.project_copy_map_index_ref !== undefined ||
+    copyPlan.project_copy_map_index_sha256 !== undefined
+  ) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "legacy V1/flat plan carries V2 selection or index fields");
+  }
+
+  if (copyCount === 0 && !v2Plan) {
     if (
       copyPlan.copies.length !== 0 ||
       copyPlan.provider_item_count !== 0 ||
@@ -206,6 +269,19 @@ async function validateManagedProjectCopyPlan(
       copyPlan.provider_item_set_sha256 !== emptySetDigest
     ) {
       projectionFail("PROJECTION_AUTHORITY_CONFLICT", "flat managed copy plan carries project-copy counts or digests");
+    }
+    return;
+  }
+
+  if (copyCount === 0 && v2Plan) {
+    if (
+      copyPlan.copies.length !== 0 ||
+      copyPlan.provider_item_count !== 0 ||
+      physicalCount !== 0 ||
+      copyPlan.provider_copy_set_sha256 !== emptySetDigest ||
+      copyPlan.provider_item_set_sha256 !== emptySetDigest
+    ) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "empty PROJECT_COPY_V2 plan carries provider items");
     }
     return;
   }
@@ -228,21 +304,20 @@ async function validateManagedProjectCopyPlan(
   }
 
   const mappedItems = [];
-  const copySetEntries: {
-    project_id: string;
-    project_membership_id: string;
-    membership_generation: number;
-    provider_copy_set_sha256: string;
-  }[] = [];
+  const copySetEntries: Record<string, unknown>[] = [];
   for (const [index, copy] of copyPlan.copies.entries()) {
+    const isV2Copy = copy.protocol === "eliotr.managed-project-copy-map.v2";
     if (
-      copy.protocol !== "eliotr.managed-project-copy-map.v1" ||
+      (v2Plan && (!isV2Copy || copy.layout !== "PROJECT_COPY_V2")) ||
+      (!v2Plan && copy.protocol !== "eliotr.managed-project-copy-map.v1") ||
       copy.source_revision_ref !== context.source_revision.source_revision_ref ||
+      (isV2Copy && copy.source_owner_generation !== context.source_revision.source_owner_generation) ||
       copy.complete_residency_key_sha256 !== context.source_revision.object_residency_key_digest ||
       copy.canonical_projection_generation !== canonicalProjectionGeneration ||
       copy.target.managed_instance_id !== target.managed_instance_id ||
       copy.target.managed_generation !== target.managed_generation ||
       copy.target.metadata_generation_digest !== target.metadata_generation_digest ||
+      (v2Plan && !v2SelectionMatches(copy, copyPlan.target_selection)) ||
       copy.provider_copy_count !== 1 ||
       copy.provider_item_count !== copy.items.length
     ) {
@@ -253,6 +328,40 @@ async function validateManagedProjectCopyPlan(
     assertProjectionIdentifier(copy.project_id, "managed project ID");
     assertProjectionIdentifier(copy.project_membership_id, "managed project membership ID");
     assertProjectionInteger(copy.membership_generation, "managed project membership generation", 1, Number.MAX_SAFE_INTEGER);
+    if (isV2Copy) {
+      if (
+        !/^projection\/[A-Za-z0-9_-]{43}\/$/u.test(copy.folder_prefix) ||
+        new TextEncoder().encode(copy.folder_prefix).byteLength > 64
+      ) {
+        projectionFail("PROJECTION_AUTHORITY_CONFLICT", `V2 project-copy mapping ${index} folder is invalid`);
+      }
+      if (copy.membership_identity_version === 1) {
+        const legacyId = assertProjectionIdentifier(copy.legacy_project_membership_id, "V2-scope legacy membership ID");
+        assertProjectionInteger(copy.project_membership_generation, "V2 aggregate membership generation", 1, Number.MAX_SAFE_INTEGER);
+        if (
+          copy.project_membership_id !== legacyId ||
+          legacyId !== `project:${copy.project_id}:generation:${copy.membership_generation}` ||
+          copy.membership_generation > copy.project_membership_generation ||
+          copy.stable_project_membership_id !== undefined || copy.membership_revision !== undefined
+        ) {
+          projectionFail("PROJECTION_AUTHORITY_CONFLICT", `V2 copy mapping ${index} legacy identity is invalid`);
+        }
+      } else if (copy.membership_identity_version === 2) {
+        const stableId = assertProjectionIdentifier(copy.stable_project_membership_id, "V2 stable membership ID");
+        assertProjectionInteger(copy.membership_revision, "V2 membership revision", 1, Number.MAX_SAFE_INTEGER);
+        assertProjectionInteger(copy.project_membership_generation, "V2 aggregate membership generation", 1, Number.MAX_SAFE_INTEGER);
+        if (
+          !/^project-membership-[a-f0-9]{48}$/u.test(stableId) ||
+          copy.project_membership_id !== stableId ||
+          copy.membership_generation > copy.project_membership_generation ||
+          copy.legacy_project_membership_id !== undefined
+        ) {
+          projectionFail("PROJECTION_AUTHORITY_CONFLICT", `V2 copy mapping ${index} stable identity is invalid`);
+        }
+      } else {
+        projectionFail("PROJECTION_AUTHORITY_CONFLICT", `V2 copy mapping ${index} identity version is invalid`);
+      }
+    }
     assertProjectionSha256(copy.provider_item_set_sha256, "managed project-copy item-set digest");
     assertProjectionSha256(copy.provider_copy_set_sha256, "managed project-copy receipt digest");
     const mapItemSetDigest = await projectionDigest(copy.items.map((item) => ({
@@ -265,16 +374,49 @@ async function validateManagedProjectCopyPlan(
     if (mapItemSetDigest !== copy.provider_item_set_sha256) {
       projectionFail("PROJECTION_AUTHORITY_CONFLICT", `project-copy mapping ${index} item digest differs`);
     }
+    if (isV2Copy) {
+      for (const mapped of copy.items) {
+        const itemKey = assertProjectionIdentifier(mapped.item_key, "V2 copy map provider item key");
+        const providerKey = assertProjectionText(mapped.provider_key, "V2 copy map provider key", 128);
+        if (
+          !/^projection-[a-f0-9]{48}$/u.test(itemKey) ||
+          !providerKey.startsWith(copy.folder_prefix) ||
+          !providerKey.endsWith(`${itemKey}.md`)
+        ) {
+          projectionFail("PROJECTION_AUTHORITY_CONFLICT", `V2 copy mapping ${index} provider key differs from its folder`);
+        }
+        assertProjectionIdentifier(mapped.canonical_item_key, "V2 canonical item key");
+        assertProjectionIdentifier(mapped.canonical_body_ref, "V2 canonical body ref");
+        assertProjectionSha256(mapped.canonical_body_sha256, "V2 canonical body digest");
+      }
+    }
     const { provider_copy_set_sha256: copyDigest, ...copyPayload } = copy;
     if (await projectionDigest(copyPayload) !== copyDigest) {
       projectionFail("PROJECTION_AUTHORITY_CONFLICT", `project-copy mapping ${index} receipt digest differs`);
     }
-    copySetEntries.push({
-      project_id: copy.project_id,
-      project_membership_id: copy.project_membership_id,
-      membership_generation: copy.membership_generation,
-      provider_copy_set_sha256: copy.provider_copy_set_sha256,
-    });
+    copySetEntries.push(isV2Copy
+      ? {
+        project_id: copy.project_id,
+        project_membership_id: copy.project_membership_id,
+        membership_identity_version: copy.membership_identity_version,
+        legacy_project_membership_id: copy.membership_identity_version === 1
+          ? copy.legacy_project_membership_id
+          : null,
+        stable_project_membership_id: copy.membership_identity_version === 2
+          ? copy.stable_project_membership_id
+          : null,
+        membership_revision: copy.membership_identity_version === 2 ? copy.membership_revision : null,
+        membership_generation: copy.membership_generation,
+        project_membership_generation: copy.project_membership_generation,
+        folder_prefix: copy.folder_prefix,
+        provider_copy_set_sha256: copy.provider_copy_set_sha256,
+      }
+      : {
+        project_id: copy.project_id,
+        project_membership_id: copy.project_membership_id,
+        membership_generation: copy.membership_generation,
+        provider_copy_set_sha256: copy.provider_copy_set_sha256,
+      });
     for (const item of copy.items) {
       mappedItems.push({
         item_key: item.item_key,
@@ -289,6 +431,18 @@ async function validateManagedProjectCopyPlan(
         project_id: copy.project_id,
         project_membership_id: copy.project_membership_id,
         membership_generation: copy.membership_generation,
+        copy_layout: isV2Copy ? "PROJECT_COPY_V2" : "PROJECT_COPY_V1",
+        membership_identity_version: isV2Copy ? copy.membership_identity_version : null,
+        legacy_project_membership_id: isV2Copy && copy.membership_identity_version === 1
+          ? copy.legacy_project_membership_id
+          : null,
+        stable_project_membership_id: isV2Copy && copy.membership_identity_version === 2
+          ? copy.stable_project_membership_id
+          : null,
+        membership_revision: isV2Copy && copy.membership_identity_version === 2
+          ? copy.membership_revision
+          : null,
+        project_membership_generation: isV2Copy ? copy.project_membership_generation : null,
       });
     }
   }
@@ -327,13 +481,16 @@ async function prepareManagedItems(
   copyPlan: ManagedProjectCopyPlan,
 ): Promise<readonly PreparedManagedItem[]> {
   const items = copyPlan.items;
+  const v2Plan = copyPlan.layout === "PROJECT_COPY_V2";
+  const emptyV2Plan = v2Plan && copyPlan.provider_copy_count === 0 &&
+    copyPlan.provider_item_count === 0 && copyPlan.items.length === 0;
   if (!Array.isArray(items)) {
     projectionFail("PROJECTION_INPUT_INVALID", "managed projection desired set is invalid");
   }
   assertProjectionInteger(
     items.length,
     "managed projection item count",
-    1,
+    emptyV2Plan ? 0 : 1,
     profile.maximum_synchronous_items,
   );
   const seenKeys = new Set<string>();
@@ -347,7 +504,8 @@ async function prepareManagedItems(
     const key = assertProjectionText(item.provider_key, `projection item ${index}.provider_key`, 128);
     if (
       (item.copy_layout === null && key !== filename) ||
-      (item.copy_layout === "PROJECT_COPY_V1" && !key.endsWith(`/${filename}`))
+      ((item.copy_layout === "PROJECT_COPY_V1" || item.copy_layout === "PROJECT_COPY_V2") &&
+        !key.endsWith(`/${filename}`))
     ) {
       projectionFail("PROJECTION_AUTHORITY_CONFLICT", "provider key differs from its complete managed copy plan");
     }
@@ -362,7 +520,7 @@ async function prepareManagedItems(
         "projection item source revision differs from the execution context",
       );
     }
-    const expectedProjectionGeneration = item.copy_layout === "PROJECT_COPY_V1"
+    const expectedProjectionGeneration = item.copy_layout === "PROJECT_COPY_V1" || item.copy_layout === "PROJECT_COPY_V2"
       ? copyPlan.target.metadata_generation_digest
       : canonicalProjectionGeneration;
     if (
@@ -409,7 +567,12 @@ async function prepareManagedItems(
         item.membership_generation === null ||
         item.metadata_generation_digest !== copyPlan.target.metadata_generation_digest ||
         item.canonical_body_ref === null ||
-        item.canonical_body_sha256 !== item.content_sha256
+        item.canonical_body_sha256 !== item.content_sha256 ||
+        item.membership_identity_version !== null ||
+        item.legacy_project_membership_id !== null ||
+        item.stable_project_membership_id !== null ||
+        item.membership_revision !== null ||
+        item.project_membership_generation !== null
       ) {
         projectionFail("PROJECTION_AUTHORITY_CONFLICT", "PROJECT_COPY_V1 item lacks its canonical mapping proof");
       }
@@ -425,12 +588,66 @@ async function prepareManagedItems(
       ) {
         projectionFail("PROJECTION_AUTHORITY_CONFLICT", "PROJECT_COPY_V1 item membership list differs from its copy mapping");
       }
+    } else if (item.copy_layout === "PROJECT_COPY_V2") {
+      if (
+        item.canonical_item_key === null ||
+        item.project_id === null ||
+        item.project_membership_id === null ||
+        item.membership_generation === null ||
+        item.metadata_generation_digest !== copyPlan.target.metadata_generation_digest ||
+        item.canonical_body_ref === null ||
+        item.canonical_body_sha256 !== item.content_sha256 ||
+        (item.membership_identity_version !== 1 && item.membership_identity_version !== 2)
+      ) {
+        projectionFail("PROJECTION_AUTHORITY_CONFLICT", "PROJECT_COPY_V2 item lacks its canonical identity proof");
+      }
+      assertProjectionIdentifier(item.canonical_item_key, "V2 managed canonical item key");
+      assertProjectionIdentifier(item.project_id, "V2 managed project ID");
+      assertProjectionIdentifier(item.project_membership_id, "V2 managed membership ID");
+      assertProjectionInteger(item.membership_generation, "V2 opening membership generation", 1, Number.MAX_SAFE_INTEGER);
+      if (item.membership_identity_version === 1) {
+        const legacyId = assertProjectionIdentifier(item.legacy_project_membership_id, "V2-scope legacy membership ID");
+        assertProjectionInteger(item.project_membership_generation, "V2 aggregate membership generation", 1, Number.MAX_SAFE_INTEGER);
+        if (
+          item.project_membership_id !== legacyId ||
+          legacyId !== `project:${item.project_id}:generation:${item.membership_generation}` ||
+          item.stable_project_membership_id !== null || item.membership_revision !== null ||
+          item.membership_generation > item.project_membership_generation
+        ) {
+          projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V2-scope legacy copy identity is invalid");
+        }
+      } else {
+        const stableId = assertProjectionIdentifier(item.stable_project_membership_id, "V2 stable membership ID");
+        assertProjectionInteger(item.membership_revision, "V2 membership revision", 1, Number.MAX_SAFE_INTEGER);
+        assertProjectionInteger(item.project_membership_generation, "V2 aggregate membership generation", 1, Number.MAX_SAFE_INTEGER);
+        if (
+          !/^project-membership-[a-f0-9]{48}$/u.test(stableId) ||
+          item.project_membership_id !== stableId ||
+          item.legacy_project_membership_id !== null ||
+          item.membership_generation > item.project_membership_generation
+        ) {
+          projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V2 stable copy identity is invalid");
+        }
+      }
+      assertProjectionText(item.canonical_body_ref, "V2 canonical body reference", 2048);
+      assertProjectionSha256(item.canonical_body_sha256, "V2 canonical body digest");
+      if (
+        item.project_membership_ids.length !== 1 ||
+        item.project_membership_ids[0] !== item.project_membership_id
+      ) {
+        projectionFail("PROJECTION_AUTHORITY_CONFLICT", "PROJECT_COPY_V2 membership list differs from its mapping");
+      }
     } else if (
       item.copy_layout !== null ||
       item.canonical_item_key !== null ||
       item.project_id !== null ||
       item.project_membership_id !== null ||
       item.membership_generation !== null ||
+      item.membership_identity_version !== null ||
+      item.legacy_project_membership_id !== null ||
+      item.stable_project_membership_id !== null ||
+      item.membership_revision !== null ||
+      item.project_membership_generation !== null ||
       item.metadata_generation_digest !== null ||
       item.canonical_body_ref !== null ||
       item.canonical_body_sha256 !== null
@@ -441,7 +658,7 @@ async function prepareManagedItems(
     // source-specific generation remains in the durable Eliot intent lineage.
     const metadata = Object.freeze({
       ...projectionMetadata(item),
-      projection_generation: item.copy_layout === "PROJECT_COPY_V1"
+      projection_generation: item.copy_layout === "PROJECT_COPY_V1" || item.copy_layout === "PROJECT_COPY_V2"
         ? copyPlan.target.metadata_generation_digest
         : profile.managed_generation,
     });
@@ -496,11 +713,18 @@ function managedItemIntents(
     item_key: item.item_key,
     provider_key: item.key,
     copy_layout: planned.copy_layout,
-    canonical_projection_generation: planned.canonical_projection_generation,
+    canonical_projection_generation: planned.copy_layout === null
+      ? null
+      : planned.canonical_projection_generation,
     canonical_item_key: planned.canonical_item_key,
     project_id: planned.project_id,
     project_membership_id: planned.project_membership_id,
     membership_generation: planned.membership_generation,
+    membership_identity_version: planned.membership_identity_version,
+    legacy_project_membership_id: planned.legacy_project_membership_id,
+    stable_project_membership_id: planned.stable_project_membership_id,
+    membership_revision: planned.membership_revision,
+    project_membership_generation: planned.project_membership_generation,
     metadata_generation_digest: planned.metadata_generation_digest,
     canonical_body_ref: planned.canonical_body_ref,
     canonical_body_sha256: planned.canonical_body_sha256,

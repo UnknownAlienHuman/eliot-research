@@ -36,6 +36,12 @@ interface ManagedItemGenerationRow {
   readonly canonical_item_set_digest: unknown;
   readonly provider_copy_count: unknown;
   readonly provider_copy_set_digest: unknown;
+  readonly project_copy_map_index_protocol: unknown;
+  readonly project_copy_map_index_ref: unknown;
+  readonly project_copy_map_index_sha256: unknown;
+  readonly project_copy_scope_snapshot_id: unknown;
+  readonly project_copy_scope_snapshot_revision: unknown;
+  readonly project_copy_scope_snapshot_digest: unknown;
   readonly managed_target_metadata_generation_digest: unknown;
   readonly managed_item_protocol: unknown;
   readonly managed_target_instance_id: unknown;
@@ -55,9 +61,19 @@ interface ManagedItemExecutionRow {
   readonly item_key: unknown;
   readonly canonical_projection_generation: unknown;
   readonly desired_index: unknown;
+  readonly project_id: unknown;
+  readonly project_membership_id: unknown;
+  readonly membership_generation: unknown;
+  readonly membership_identity_version: unknown;
+  readonly legacy_project_membership_id: unknown;
+  readonly stable_project_membership_id: unknown;
+  readonly membership_revision: unknown;
+  readonly project_membership_generation: unknown;
+  readonly copy_layout: unknown;
   readonly normalized_start_byte: unknown;
   readonly normalized_end_byte: unknown;
   readonly metadata_json: unknown;
+  readonly provider_key: unknown;
   readonly section_content_sha256: unknown;
   readonly execution_operation_id: unknown;
   readonly dispatch_lease_generation: unknown;
@@ -135,7 +151,7 @@ export async function readManagedItemReceipts(
   expectedItemSetDigest: string,
   expectedDigest: string | null,
 ): Promise<readonly ManagedItemReceipt[]> {
-  assertProjectionInteger(expectedCount, "managed expected item count", 1, 1024);
+  assertProjectionInteger(expectedCount, "managed expected item count", 0, 1024);
   assertProjectionSha256(expectedItemSetDigest, "managed expected item-set digest");
   if (expectedDigest !== null) {
     assertProjectionSha256(expectedDigest, "managed expected item digest");
@@ -143,7 +159,9 @@ export async function readManagedItemReceipts(
   const rows = await database.prepare(
     "SELECT item_key, desired_index, normalized_start_byte, normalized_end_byte, " +
     "canonical_projection_generation, canonical_item_key, project_id, project_membership_id, " +
-    "membership_generation, copy_layout, metadata_generation_digest, canonical_body_ref, " +
+    "membership_generation, membership_identity_version, legacy_project_membership_id, " +
+    "stable_project_membership_id, membership_revision, project_membership_generation, " +
+    "copy_layout, metadata_generation_digest, canonical_body_ref, " +
     "canonical_body_sha256, metadata_json, section_content_sha256, managed_generation, state, provider_item_id, " +
     "provider_key, document_sha256, document_size_bytes, readback_receipt_json, readback_sha256 " +
     "FROM projection_managed_item_effect WHERE source_revision_ref = ?1 " +
@@ -162,6 +180,11 @@ export async function readManagedItemReceipts(
     readonly project_id: unknown;
     readonly project_membership_id: unknown;
     readonly membership_generation: unknown;
+    readonly membership_identity_version: unknown;
+    readonly legacy_project_membership_id: unknown;
+    readonly stable_project_membership_id: unknown;
+    readonly membership_revision: unknown;
+    readonly project_membership_generation: unknown;
     readonly copy_layout: unknown;
     readonly metadata_generation_digest: unknown;
     readonly canonical_body_ref: unknown;
@@ -220,7 +243,7 @@ export async function readManagedItemReceipts(
       typeof metadata.content_sha256 !== "string" ||
       metadata.instruction_taint !== context.instruction_taint ||
       metadata.projection_generation !== (
-        row.copy_layout === "PROJECT_COPY_V1"
+        row.copy_layout === "PROJECT_COPY_V1" || row.copy_layout === "PROJECT_COPY_V2"
           ? row.metadata_generation_digest
           : row.managed_generation
       ) ||
@@ -250,6 +273,11 @@ export async function readManagedItemReceipts(
         row.project_id === null &&
         row.project_membership_id === null &&
         row.membership_generation === null &&
+        row.membership_identity_version === null &&
+        row.legacy_project_membership_id === null &&
+        row.stable_project_membership_id === null &&
+        row.membership_revision === null &&
+        row.project_membership_generation === null &&
         row.metadata_generation_digest === null &&
         row.canonical_body_ref === null &&
         row.canonical_body_sha256 === null &&
@@ -280,6 +308,11 @@ export async function readManagedItemReceipts(
       copyIdentityValid =
         membership.project_id === projectId &&
         membership.membership_generation === membershipGeneration &&
+        row.membership_identity_version === null &&
+        row.legacy_project_membership_id === null &&
+        row.stable_project_membership_id === null &&
+        row.membership_revision === null &&
+        row.project_membership_generation === null &&
         canonicalGeneration.length > 0 &&
         canonicalItemKey.length > 0 &&
         bodyRef.length > 0 &&
@@ -287,6 +320,79 @@ export async function readManagedItemReceipts(
         providerKey.startsWith("projection/") &&
         providerKey.endsWith(`${String(row.item_key)}.md`) &&
         providerKey.length <= 128 &&
+        targetDigest === await managedProjectGenerationMetadataValue(managedGeneration);
+    } else if (row.copy_layout === "PROJECT_COPY_V2") {
+      const membershipId = assertProjectionIdentifier(row.project_membership_id, "V2 managed membership ID");
+      const projectId = assertProjectionIdentifier(row.project_id, "V2 managed project ID");
+      const membershipGeneration = assertProjectionInteger(
+        row.membership_generation,
+        "V2 opening membership generation",
+        1,
+        Number.MAX_SAFE_INTEGER,
+      );
+      const identityVersion = assertProjectionInteger(
+        row.membership_identity_version,
+        "V2 membership identity version",
+        1,
+        2,
+      );
+      const targetDigest = assertProjectionSha256(
+        row.metadata_generation_digest,
+        "V2 managed metadata generation digest",
+      );
+      const canonicalGeneration = assertProjectionIdentifier(
+        row.canonical_projection_generation,
+        "V2 managed canonical projection generation",
+      );
+      const canonicalItemKey = assertProjectionIdentifier(row.canonical_item_key, "V2 managed canonical item key");
+      const bodyRef = assertProjectionIdentifier(row.canonical_body_ref, "V2 managed canonical body ref");
+      const bodyDigest = assertProjectionSha256(row.canonical_body_sha256, "V2 managed canonical body digest");
+      const providerKey = assertProjectionIdentifier(row.provider_key, "V2 managed provider key");
+      const managedGeneration = assertProjectionIdentifier(row.managed_generation, "V2 managed raw generation");
+      const providerPathValid = /^projection\/[A-Za-z0-9_-]{43}\/projection-[a-f0-9]{48}\.md$/u.test(providerKey);
+      let membershipIdentityValid: boolean;
+      if (identityVersion === 1) {
+        const legacyId = assertProjectionIdentifier(
+          row.legacy_project_membership_id,
+          "V2-scope legacy membership ID",
+        );
+        const legacyMembership = parseManagedProjectMembershipId(legacyId);
+        const aggregateGeneration = assertProjectionInteger(
+          row.project_membership_generation,
+          "V2 aggregate membership currentness generation",
+          1,
+          Number.MAX_SAFE_INTEGER,
+        );
+        membershipIdentityValid = membershipId === legacyId &&
+          legacyMembership.project_id === projectId &&
+          legacyMembership.membership_generation === membershipGeneration &&
+          row.stable_project_membership_id === null && row.membership_revision === null &&
+          membershipGeneration <= aggregateGeneration;
+      } else {
+        const stableId = assertProjectionIdentifier(
+          row.stable_project_membership_id,
+          "V2 stable project/source membership ID",
+        );
+        const membershipRevision = assertProjectionInteger(
+          row.membership_revision,
+          "V2 per-pair membership revision",
+          1,
+          Number.MAX_SAFE_INTEGER,
+        );
+        const aggregateGeneration = assertProjectionInteger(
+          row.project_membership_generation,
+          "V2 aggregate membership currentness generation",
+          1,
+          Number.MAX_SAFE_INTEGER,
+        );
+        membershipIdentityValid = /^project-membership-[a-f0-9]{48}$/u.test(stableId) &&
+          membershipId === stableId && row.legacy_project_membership_id === null &&
+          membershipRevision > 0 && membershipGeneration <= aggregateGeneration;
+      }
+      copyIdentityValid = membershipIdentityValid && providerPathValid &&
+        canonicalGeneration.length > 0 && canonicalItemKey.length > 0 && bodyRef.length > 0 &&
+        bodyDigest === row.section_content_sha256 &&
+        providerKey.endsWith(`${String(row.item_key)}.md`) && providerKey.length <= 128 &&
         targetDigest === await managedProjectGenerationMetadataValue(managedGeneration);
     }
     if (end <= start || !copyIdentityValid) {
@@ -359,7 +465,9 @@ export async function readManagedItemGenerationProof(
     "managed_target_instance_id, managed_target_generation, " +
     "managed_target_metadata_generation_digest, canonical_projection_generation, " +
     "canonical_item_count, canonical_item_set_digest, provider_copy_count, " +
-    "provider_copy_set_digest, semantic_instance_id, " +
+    "provider_copy_set_digest, project_copy_map_index_protocol, project_copy_map_index_ref, " +
+    "project_copy_map_index_sha256, project_copy_scope_snapshot_id, " +
+    "project_copy_scope_snapshot_revision, project_copy_scope_snapshot_digest, semantic_instance_id, " +
     "semantic_generation, semantic_receipt_ref, semantic_readback_digest " +
     "FROM projection_generation WHERE source_revision_ref = ?1 " +
     "AND projection_generation = ?2 LIMIT 1",
@@ -384,6 +492,31 @@ export async function readManagedItemGenerationProof(
       "PROJECTION_AUTHORITY_CONFLICT",
       "managed item proof is not bound to the exact terminal source and target generation",
     );
+  }
+  const v2CopyMapIndex = generation.project_copy_map_index_protocol ===
+    "eliotr.managed-project-copy-map-index.v2";
+  if (generation.project_copy_map_index_protocol !== null && !v2CopyMapIndex) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed proof has an unknown copy-map index protocol");
+  }
+  if (v2CopyMapIndex) {
+    assertProjectionIdentifier(generation.project_copy_map_index_ref, "managed proof copy-map index ref");
+    assertProjectionSha256(generation.project_copy_map_index_sha256, "managed proof copy-map index digest");
+    assertProjectionIdentifier(generation.project_copy_scope_snapshot_id, "managed proof V2 scope snapshot ID");
+    assertProjectionInteger(
+      generation.project_copy_scope_snapshot_revision,
+      "managed proof V2 scope snapshot revision",
+      1,
+      Number.MAX_SAFE_INTEGER,
+    );
+    assertProjectionSha256(generation.project_copy_scope_snapshot_digest, "managed proof V2 scope snapshot digest");
+  } else if (
+    generation.project_copy_map_index_ref !== null ||
+    generation.project_copy_map_index_sha256 !== null ||
+    generation.project_copy_scope_snapshot_id !== null ||
+    generation.project_copy_scope_snapshot_revision !== null ||
+    generation.project_copy_scope_snapshot_digest !== null
+  ) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed proof has an incomplete copy-map index receipt");
   }
   const canonicalItemCount = assertProjectionInteger(
     generation.item_count,
@@ -422,7 +555,9 @@ export async function readManagedItemGenerationProof(
   if (storedCanonicalCount !== canonicalItemCount || storedCanonicalDigest !== canonicalItemSetDigest) {
     projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed proof canonical receipt differs from Work authority");
   }
-  const itemCount = canonicalItemCount * (providerCopyCount === 0 ? 1 : providerCopyCount);
+  const itemCount = v2CopyMapIndex
+    ? canonicalItemCount * providerCopyCount
+    : canonicalItemCount * (providerCopyCount === 0 ? 1 : providerCopyCount);
   const persistedReadbackDigest = generation.semantic_readback_digest === null
     ? null
     : assertProjectionSha256(
@@ -464,8 +599,10 @@ export async function readManagedItemGenerationProof(
 
   const operationId = await projectionExecutionOperationId(context, projectionGeneration);
   const effectRows = await database.prepare(
-    "SELECT item_key, canonical_projection_generation, desired_index, normalized_start_byte, " +
-    "normalized_end_byte, metadata_json, " +
+    "SELECT item_key, canonical_projection_generation, desired_index, project_id, project_membership_id, " +
+    "membership_generation, membership_identity_version, legacy_project_membership_id, " +
+    "stable_project_membership_id, membership_revision, project_membership_generation, copy_layout, " +
+    "normalized_start_byte, normalized_end_byte, metadata_json, provider_key, " +
     "section_content_sha256, execution_operation_id, dispatch_lease_generation, " +
     "managed_instance_id, managed_generation, state " +
     "FROM projection_managed_item_effect WHERE source_revision_ref = ?1 " +
@@ -486,9 +623,10 @@ export async function readManagedItemGenerationProof(
     if (
       effect.desired_index !== index ||
       typeof effect.metadata_json !== "string" ||
-      effect.canonical_projection_generation !== (
-        providerCopyCount === 0 ? null : canonicalProjectionGeneration
-      )
+      effect.canonical_projection_generation !== (effect.copy_layout === null ? null : canonicalProjectionGeneration) ||
+      (v2CopyMapIndex && effect.copy_layout !== "PROJECT_COPY_V2") ||
+      (!v2CopyMapIndex && providerCopyCount === 0 && effect.copy_layout !== null) ||
+      (!v2CopyMapIndex && providerCopyCount > 0 && effect.copy_layout !== "PROJECT_COPY_V1")
     ) {
       projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed proof effect ordering or metadata is incomplete");
     }
@@ -502,6 +640,70 @@ export async function readManagedItemGenerationProof(
       projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed proof effect metadata is not an object");
     }
     const metadata = value as Record<string, unknown>;
+    if (effect.copy_layout === "PROJECT_COPY_V2") {
+      const projectId = assertProjectionIdentifier(effect.project_id, "managed proof V2 project ID");
+      const membershipId = assertProjectionIdentifier(effect.project_membership_id, "managed proof V2 membership ID");
+      const openingGeneration = assertProjectionInteger(
+        effect.membership_generation,
+        "managed proof V2 opening membership generation",
+        1,
+        Number.MAX_SAFE_INTEGER,
+      );
+      const identityVersion = assertProjectionInteger(
+        effect.membership_identity_version,
+        "managed proof V2 membership identity version",
+        1,
+        2,
+      );
+      if (identityVersion === 1) {
+        const legacyId = assertProjectionIdentifier(effect.legacy_project_membership_id, "managed proof V2 legacy membership ID");
+        const legacyMembership = parseManagedProjectMembershipId(legacyId);
+        const aggregateGeneration = assertProjectionInteger(
+          effect.project_membership_generation,
+          "managed proof V2 aggregate membership generation",
+          1,
+          Number.MAX_SAFE_INTEGER,
+        );
+        if (
+          membershipId !== legacyId || legacyMembership.project_id !== projectId ||
+          legacyMembership.membership_generation !== openingGeneration ||
+          effect.stable_project_membership_id !== null || effect.membership_revision !== null ||
+          openingGeneration > aggregateGeneration
+        ) {
+          projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed proof V2 legacy identity is inconsistent");
+        }
+      } else {
+        const stableId = assertProjectionIdentifier(effect.stable_project_membership_id, "managed proof V2 stable membership ID");
+        const membershipRevision = assertProjectionInteger(
+          effect.membership_revision,
+          "managed proof V2 per-pair membership revision",
+          1,
+          Number.MAX_SAFE_INTEGER,
+        );
+        const aggregateGeneration = assertProjectionInteger(
+          effect.project_membership_generation,
+          "managed proof V2 aggregate membership generation",
+          1,
+          Number.MAX_SAFE_INTEGER,
+        );
+        if (
+          !/^project-membership-[a-f0-9]{48}$/u.test(stableId) || membershipId !== stableId ||
+          effect.legacy_project_membership_id !== null || membershipRevision < 1 ||
+          openingGeneration > aggregateGeneration
+        ) {
+          projectionFail("PROJECTION_AUTHORITY_CONFLICT", "managed proof V2 stable identity is inconsistent");
+        }
+      }
+      assertProjectionIdentifier(effect.provider_key, "managed proof V2 provider key");
+    } else if (
+      effect.membership_identity_version !== null ||
+      effect.legacy_project_membership_id !== null ||
+      effect.stable_project_membership_id !== null ||
+      effect.membership_revision !== null ||
+      effect.project_membership_generation !== null
+    ) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V1/flat managed proof contains V2 identity fields");
+    }
     return {
       item_key: assertProjectionIdentifier(effect.item_key, "managed proof effect item key"),
       canonical_section_id: assertProjectionIdentifier(
@@ -514,8 +716,11 @@ export async function readManagedItemGenerationProof(
     };
   });
   const itemSetDigest = await projectionDigest(effectRequiredSet);
-  if (providerCopyCount === 0 && itemSetDigest !== canonicalItemSetDigest) {
+  if (!v2CopyMapIndex && providerCopyCount === 0 && itemSetDigest !== canonicalItemSetDigest) {
     projectionFail("PROJECTION_AUTHORITY_CONFLICT", "flat managed effect set differs from canonical Work receipt");
+  }
+  if (v2CopyMapIndex && providerCopyCount === 0 && itemSetDigest !== await projectionDigest([])) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "empty V2 copy scope has provider effects");
   }
   const dispatchLeaseGenerations = effects.map((effect) => {
     if (
@@ -606,6 +811,29 @@ export async function readManagedItemGenerationProof(
     canonical_item_set_digest: canonicalItemSetDigest,
     provider_copy_count: providerCopyCount,
     provider_copy_set_digest: providerCopySetDigest,
+    project_copy_map_index_protocol: v2CopyMapIndex
+      ? "eliotr.managed-project-copy-map-index.v2"
+      : null,
+    project_copy_map_index_ref: v2CopyMapIndex
+      ? assertProjectionIdentifier(generation.project_copy_map_index_ref, "managed proof copy-map index ref")
+      : null,
+    project_copy_map_index_sha256: v2CopyMapIndex
+      ? assertProjectionSha256(generation.project_copy_map_index_sha256, "managed proof copy-map index digest")
+      : null,
+    project_copy_scope_snapshot_id: v2CopyMapIndex
+      ? assertProjectionIdentifier(generation.project_copy_scope_snapshot_id, "managed proof V2 scope snapshot ID")
+      : null,
+    project_copy_scope_snapshot_revision: v2CopyMapIndex
+      ? assertProjectionInteger(
+        generation.project_copy_scope_snapshot_revision,
+        "managed proof V2 scope snapshot revision",
+        1,
+        Number.MAX_SAFE_INTEGER,
+      )
+      : null,
+    project_copy_scope_snapshot_digest: v2CopyMapIndex
+      ? assertProjectionSha256(generation.project_copy_scope_snapshot_digest, "managed proof V2 scope snapshot digest")
+      : null,
     item_count: itemCount,
     item_set_digest: itemSetDigest,
     readback_digest: computedReadbackDigest,
