@@ -36,6 +36,9 @@ const externalLeaseId = { type: "string",
 const externalWorkerSlot = { type: "string", minLength: 1, maxLength: 64,
   pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$",
   description: "Stable caller-chosen pull slot for lost-ack recovery and optional parallel workers; defaults to default." } as const;
+const doctorWorkerSlot = { type: "string", minLength: 1, maxLength: 64,
+  pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$",
+  description: "Stable slot for replaying the same unacknowledged doctor lease." } as const;
 const externalEvidenceRefs = { type: "array", maxItems: 64, uniqueItems: true, items: ref } as const;
 const externalUsage = { type: "object", additionalProperties: false, required: ["accounting"],
   properties: { accounting: { enum: ["SUBSCRIPTION", "API_METERED", "UNKNOWN"] },
@@ -242,6 +245,25 @@ export const MCP_RESEARCH_TOOLS = {
     inputSchema: { type: "object", additionalProperties: false, required: ["client_grant_id", "task_id"],
       properties: { ...grant, task_id: externalTaskId } },
     annotations: { ...annotations(true), readOnlyHint: true },
+  },
+  eliotr_doctor_delivery_pull: {
+    name: "eliotr_doctor_delivery_pull",
+    description: "Pull one system-level doctor incident from the existing D1 outbox only when this verified MCP_WRITE connection matches the owner-selected ELIOTR_DOCTOR_AGENT_CONNECTION_ID. No project grant or Research run is involved. Reuse worker_slot after an uncertain response. Before creating anything with your own GitHub MCP, search the target repository for the supplied marker; reuse a match, or create one Issue containing that marker. After an uncertain create, search again before retrying.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["worker_slot"],
+      properties: { worker_slot: doctorWorkerSlot } },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  eliotr_doctor_delivery_receipt: {
+    name: "eliotr_doctor_delivery_receipt",
+    description: "Settle the same doctor outbox item only from the owner-selected ELIOTR_DOCTOR_AGENT_CONNECTION_ID connection, after your GitHub MCP found or created its marker-bearing Issue. The receipt is bound to the current connection, worker_slot and exact lease_generation. An identical retry returns the stored receipt; stale leases or a changed Issue reference fail closed. This tool makes no GitHub request.",
+    inputSchema: { type: "object", additionalProperties: false,
+      required: ["delivery_id", "lease_generation", "worker_slot", "issue_number", "issue_url"],
+      properties: { delivery_id: { type: "string", pattern: "^doctor-[a-f0-9]{64}$" },
+        lease_generation: { type: "integer", minimum: 1, maximum: 2147483647 },
+        worker_slot: doctorWorkerSlot,
+        issue_number: { type: "integer", minimum: 1, maximum: 2147483647 },
+        issue_url: { type: "string", minLength: 1, maxLength: 2048, format: "uri" } } },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   eliotr_dispatch_pull: {
     name: "eliotr_dispatch_pull",

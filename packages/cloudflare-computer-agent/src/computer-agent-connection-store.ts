@@ -345,10 +345,9 @@ export async function readCurrentComputerAgentConnection(
   return row === null ? null : decode(row);
 }
 
-export async function requireEnabledComputerAgentConnectionForTask(
+async function currentEnabledServiceActorConnection(
   database: D1Database,
   context: AuthenticatedRequestContext,
-  taskKind: ComputerAgentTaskKind,
   now: () => number = Date.now,
 ): Promise<ComputerAgentConnection> {
   await requireSchema(database);
@@ -377,9 +376,23 @@ export async function requireEnabledComputerAgentConnectionForTask(
       "The service actor resolves to multiple computer-agent connections");
   }
   const connection = await decode(row);
-  if (connection.state !== "ENABLED" || !connection.task_kinds.includes(taskKind)) {
+  if (connection.state !== "ENABLED") {
     fail("COMPUTER_AGENT_CONNECTION_DENIED", 403,
-      "The computer-agent connection is disabled or lacks the required task capability");
+      "The computer-agent connection is disabled");
+  }
+  return connection;
+}
+
+export async function requireEnabledComputerAgentConnectionForTask(
+  database: D1Database,
+  context: AuthenticatedRequestContext,
+  taskKind: ComputerAgentTaskKind,
+  now: () => number = Date.now,
+): Promise<ComputerAgentConnection> {
+  const connection = await currentEnabledServiceActorConnection(database, context, now);
+  if (!connection.task_kinds.includes(taskKind)) {
+    fail("COMPUTER_AGENT_CONNECTION_DENIED", 403,
+      "The computer-agent connection lacks the required task capability");
   }
   return connection;
 }
@@ -392,6 +405,21 @@ export async function requireComputerAgentConnectionForTask(
   now: () => number = Date.now,
 ): Promise<ComputerAgentConnection> {
   const connection = await requireEnabledComputerAgentConnectionForTask(database, context, taskKind, now);
+  if (!connection.transport_capabilities.includes(transport)) {
+    fail("COMPUTER_AGENT_CONNECTION_DENIED", 403,
+      "The computer-agent connection lacks the required transport capability");
+  }
+  return connection;
+}
+
+/** Resolve an owner-enabled service actor connection for a transport-only system task. */
+export async function requireComputerAgentConnectionForTransport(
+  database: D1Database,
+  context: AuthenticatedRequestContext,
+  transport: ComputerAgentTransportCapability,
+  now: () => number = Date.now,
+): Promise<ComputerAgentConnection> {
+  const connection = await currentEnabledServiceActorConnection(database, context, now);
   if (!connection.transport_capabilities.includes(transport)) {
     fail("COMPUTER_AGENT_CONNECTION_DENIED", 403,
       "The computer-agent connection lacks the required transport capability");

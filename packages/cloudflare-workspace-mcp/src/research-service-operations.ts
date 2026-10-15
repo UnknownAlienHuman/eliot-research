@@ -22,6 +22,8 @@ type IngestName = Extract<McpResearchToolName,
 type RunControlName = Extract<McpResearchToolName, "eliotr_recover" | "eliotr_cancel" | "eliotr_run_status">;
 type ExternalTaskName = Extract<McpResearchToolName,
   "eliotr_task_pull" | "eliotr_task_progress" | "eliotr_task_result" | "eliotr_task_status">;
+type DoctorDeliveryName = Extract<McpResearchToolName,
+  "eliotr_doctor_delivery_pull" | "eliotr_doctor_delivery_receipt">;
 type ComputerAgentDispatchName = Extract<McpResearchToolName,
   "eliotr_dispatch_pull" | "eliotr_dispatch_accept" | "eliotr_dispatch_decline">;
 
@@ -76,6 +78,9 @@ export interface McpResearchServiceOperationPorts<Context, RunRequest, QueryRequ
   readonly require_run_project: (context: Context, workflowInstanceId: string, projectId: string) => Promise<void>;
   readonly execute_external_task: (
     context: Context, name: ExternalTaskName, args: Record<string, unknown>,
+  ) => Promise<unknown>;
+  readonly execute_doctor_delivery: (
+    context: Context, name: DoctorDeliveryName, args: Record<string, unknown>,
   ) => Promise<unknown>;
   readonly execute_computer_agent_dispatch: (
     context: Context, command: McpComputerAgentDispatchCommand,
@@ -257,6 +262,32 @@ export function createMcpResearchServiceOperations<Context, RunRequest, QueryReq
     external_task: async (name, args, actor) => {
       if (!ports.is_external_agent_task_name(name)) invalid("External task tool identity is invalid");
       return prepared(() => ports.execute_external_task(actor.context, name, args));
+    },
+    doctor_delivery: async (name, args, actor) => {
+      const workerSlot = args.worker_slot;
+      if (typeof workerSlot !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/u.test(workerSlot)) {
+        invalid("A stable doctor delivery worker_slot is required");
+      }
+      if (name === "eliotr_doctor_delivery_pull") {
+        if (Object.keys(args).length !== 1) invalid("Doctor delivery pull contains unknown fields");
+        return prepared(() => ports.execute_doctor_delivery(actor.context, name, { worker_slot: workerSlot }));
+      }
+      if (Object.keys(args).length !== 5 || typeof args.delivery_id !== "string" ||
+          !/^doctor-[a-f0-9]{64}$/u.test(args.delivery_id) ||
+          typeof args.issue_url !== "string" || args.issue_url.length < 1 || args.issue_url.length > 2048 ||
+          !Number.isSafeInteger(args.lease_generation) || (args.lease_generation as number) < 1 ||
+          (args.lease_generation as number) > 2_147_483_647 ||
+          !Number.isSafeInteger(args.issue_number) || (args.issue_number as number) < 1 ||
+          (args.issue_number as number) > 2_147_483_647) {
+        invalid("Doctor delivery receipt contains unknown or invalid fields");
+      }
+      return prepared(() => ports.execute_doctor_delivery(actor.context, name, {
+        delivery_id: args.delivery_id as string,
+        lease_generation: args.lease_generation as number,
+        worker_slot: workerSlot,
+        issue_number: args.issue_number as number,
+        issue_url: args.issue_url as string,
+      }));
     },
     computer_agent_dispatch: async (name: ComputerAgentDispatchName, args, actor) => {
       if (name === "eliotr_dispatch_pull") {

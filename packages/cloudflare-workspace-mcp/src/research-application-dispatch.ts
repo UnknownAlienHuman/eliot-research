@@ -39,6 +39,8 @@ export interface McpResearchApplicationOperations<Context> {
     "eliotr_recover" | "eliotr_cancel" | "eliotr_run_status">>;
   readonly external_task: PrepareOperation<Context, Extract<McpResearchToolName,
     "eliotr_task_pull" | "eliotr_task_progress" | "eliotr_task_result" | "eliotr_task_status">>;
+  readonly doctor_delivery: PrepareOperation<Context, Extract<McpResearchToolName,
+    "eliotr_doctor_delivery_pull" | "eliotr_doctor_delivery_receipt">>;
   readonly computer_agent_dispatch: PrepareOperation<Context, McpComputerAgentDispatchToolName>;
   readonly report: PrepareOperation<Context, "eliotr_report">;
   readonly section: PrepareOperation<Context, "eliotr_section">;
@@ -124,6 +126,9 @@ function prepareOperation<Context>(
     case "eliotr_task_result":
     case "eliotr_task_status":
       return operations.external_task(name, args, actor);
+    case "eliotr_doctor_delivery_pull":
+    case "eliotr_doctor_delivery_receipt":
+      return operations.doctor_delivery(name, args, actor);
     case "eliotr_dispatch_pull":
     case "eliotr_dispatch_accept":
     case "eliotr_dispatch_decline":
