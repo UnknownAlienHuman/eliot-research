@@ -9,8 +9,9 @@ import {
   type AiSearchManagedSearchRequest,
 } from "./ai-search-managed-read.js";
 import { AI_SEARCH_RERANKING_MODEL } from "./ai-search-profile.js";
-import { createManagedProjectProviderKey } from "./managed-project-path.js";
-import type { AiSearchProjectCopyScope } from "./ai-search-scope-filter.js";
+import { createManagedProjectProviderKey, managedProjectFolderPrefixV2 } from "./managed-project-path.js";
+import { stableProjectionId } from "./canonical.js";
+import type { AiSearchProjectCopyScope, AiSearchProjectCopyScopeV2 } from "./ai-search-scope-filter.js";
 
 const FIXED_AT = "2026-09-08T00:00:00.000Z";
 
@@ -165,6 +166,70 @@ function providerKey(folderPrefix: string, ordinal: number): string {
 }
 
 describe("managed AI Search query reader", () => {
+  it("V2 stable scope keeps its provider filter across aggregate membership churn", async () => {
+    const request = retrievalRequest();
+    const active = authority();
+    const legacy = await projectCopyScopeFor(request, active);
+    const base = required(legacy.copies[0], "project copy");
+    const stableId = await stableProjectionId("project-membership", JSON.stringify([base.project_id, "source-1"]));
+    const folder = await managedProjectFolderPrefixV2({
+      instance_id: active.instance_id, projection_generation: active.index_generation,
+      source_revision_ref: base.source_revision_ref, project_id: base.project_id,
+      stable_project_membership_id: stableId, membership_revision: 7,
+    });
+    const scope: AiSearchProjectCopyScopeV2 = {
+      ...legacy, layout: "PROJECT_COPY_V2",
+      target_selection: {
+        protocol: "eliotr.managed-target-selection.v2", domain: "MANAGED_SEARCH_PRODUCT",
+        decision_version: 2, selection_mode: "STABLE_PHYSICAL_PROFILE_V2", product_alias: "primary", purpose: "ACTIVE",
+        registry_revision: active.registry_revision, registry_artifact_sha256: active.registry_artifact_sha256,
+        v1_exact_profile_identity_sha256: "e".repeat(64), target: legacy.target,
+      },
+      copies: [{ ...base, project_membership_id: stableId, stable_project_membership_id: stableId,
+        membership_identity_version: 2, membership_revision: 7, project_membership_generation: 8, folder_prefix: folder }],
+    };
+    const stableCopy = required(scope.copies[0], "stable copy");
+    if (stableCopy.membership_identity_version !== 2) throw new Error("fixture requires stable copy");
+    const first = await compileAiSearchManagedSearchRequest(request, ["SEM", "LEX"], 0, active, scope);
+    const next = await compileAiSearchManagedSearchRequest(request, ["SEM", "LEX"], 0, active, {
+      ...scope, copies: [{ ...stableCopy, project_membership_generation: 900 }],
+    });
+    expect(next.ai_search_options.retrieval.filters).toEqual(first.ai_search_options.retrieval.filters);
+    expect(first.ai_search_options.retrieval.filters.folder.$in).toEqual([folder]);
+    await expect(compileAiSearchManagedSearchRequest(request, ["SEM"], 0, active, {
+      ...scope, target_selection: { ...scope.target_selection, purpose: "SHADOW" },
+    })).rejects.toMatchObject({ code: "AI_SEARCH_MANAGED_INPUT_INVALID" });
+    await expect(compileAiSearchManagedSearchRequest(request, ["SEM"], 0, active, {
+      ...scope, target_selection: { ...scope.target_selection, registry_revision: active.registry_revision + 1 },
+    })).rejects.toMatchObject({ code: "AI_SEARCH_MANAGED_INPUT_INVALID" });
+    await expect(compileAiSearchManagedSearchRequest(request, ["SEM"], 0, active, {
+      ...scope, copies: [{ ...stableCopy, folder_prefix: base.folder_prefix }],
+    })).rejects.toMatchObject({ code: "AI_SEARCH_MANAGED_INPUT_INVALID" });
+  });
+
+  it("V2 target selection retains an exact V1 row and rejects an unknown row identity version", async () => {
+    const request = retrievalRequest();
+    const active = authority();
+    const legacy = await projectCopyScopeFor(request, active);
+    const base = required(legacy.copies[0], "project copy");
+    const scope: AiSearchProjectCopyScopeV2 = {
+      ...legacy, layout: "PROJECT_COPY_V2",
+      target_selection: {
+        protocol: "eliotr.managed-target-selection.v2", domain: "MANAGED_SEARCH_PRODUCT",
+        decision_version: 2, selection_mode: "STABLE_PHYSICAL_PROFILE_V2", product_alias: "primary", purpose: "ACTIVE",
+        registry_revision: active.registry_revision, registry_artifact_sha256: active.registry_artifact_sha256,
+        v1_exact_profile_identity_sha256: "e".repeat(64), target: legacy.target,
+      },
+      copies: [{ ...base, membership_identity_version: 1, legacy_project_membership_id: base.project_membership_id }],
+    };
+    const actual = await compileAiSearchManagedSearchRequest(request, ["SEM"], 0, active, scope);
+    const old = await compileAiSearchManagedSearchRequest(request, ["SEM"], 0, active, legacy);
+    expect(actual.ai_search_options.retrieval.filters).toEqual(old.ai_search_options.retrieval.filters);
+    await expect(compileAiSearchManagedSearchRequest(request, ["SEM"], 0, active, {
+      ...scope, copies: [{ ...base, membership_identity_version: 3 }],
+    } as unknown as AiSearchProjectCopyScopeV2)).rejects.toMatchObject({ code: "AI_SEARCH_MANAGED_INPUT_INVALID" });
+  });
+
   it("requests one hybrid list with an independent provider cap and plan-gated reranking", async () => {
     const request = retrievalRequest();
     const active = authority();

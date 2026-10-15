@@ -12,6 +12,7 @@ import {
   enumerateManagedRequiredSet,
   MANAGED_PROJECT_FOLDER_FILTER_MAX_BYTES,
   managedProjectFolderPrefix,
+  managedProjectFolderPrefixV2,
   managedProjectGenerationMetadataValue,
   projectionDigest,
   stableProjectionId,
@@ -243,17 +244,14 @@ async function stableMembershipFolderPrefix(
   target: ManagedTargetIdentity,
   copy: ProjectCopyMembershipFact,
 ): Promise<string> {
-  const token = await stableProjectionId(
-    "p",
-    "PROJECT_COPY_V2",
-    target.managed_instance_id,
-    target.managed_generation,
-    copy.source_revision_ref,
-    copy.project_id,
-    copy.stable_project_membership_id,
-    String(copy.membership_revision),
-  );
-  const prefix = `projection/${token}/`;
+  const prefix = await managedProjectFolderPrefixV2({
+    instance_id: target.managed_instance_id,
+    projection_generation: target.managed_generation,
+    source_revision_ref: copy.source_revision_ref,
+    project_id: copy.project_id,
+    stable_project_membership_id: copy.stable_project_membership_id,
+    membership_revision: copy.membership_revision,
+  });
   if (new TextEncoder().encode(prefix).byteLength >= MANAGED_PROJECT_FOLDER_FILTER_MAX_BYTES) {
     fail("PROJECT_COPY_SCOPE_REQUIRED_SET_INVALID", "stable membership folder prefix exceeds the provider filter bound");
   }
@@ -566,6 +564,7 @@ export async function resolveD1ProjectCopyScope(
         on_copy(copy) {
           if (!selectedRefs.has(copy.source_revision_ref)) return;
           copies.push({
+            source_id: copy.source_id,
             source_revision_ref: copy.source_revision_ref,
             source_owner_generation: copy.source_owner_generation,
             project_id: copy.project_id,

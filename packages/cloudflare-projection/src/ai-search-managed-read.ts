@@ -6,8 +6,8 @@ import {
   type RetrievalQueryAdmissionReceiptV1,
 } from "@eliotr/retrieval";
 import { createAiSearchScopeFilter, type AiSearchScopeFilter } from "./ai-search-scope-filter.js";
-import type { AiSearchProjectCopyScope } from "./ai-search-scope-filter.js";
-import { managedProjectFolderPrefix, managedProjectGenerationMetadataValue } from "./managed-project-path.js";
+import type { AiSearchProjectCopyScope, AiSearchProjectCopyScopeV2, AiSearchResolvedProjectCopyScope, AiSearchAuthorizedProjectCopyV2, AiSearchProjectCopyMembershipV2 } from "./ai-search-scope-filter.js";
+import { managedProjectFolderPrefix, managedProjectFolderPrefixV2, managedProjectGenerationMetadataValue } from "./managed-project-path.js";
 import { projectionDigest } from "./canonical.js";
 import { AI_SEARCH_RERANKING_MODEL } from "./ai-search-profile.js";
 import { decodeAiSearchGenerationRegistrySnapshot } from "./ai-search-generation-registry-codec.js";
@@ -99,7 +99,7 @@ export interface AiSearchManagedSearchPort {
 export type AiSearchManagedProjectCopyScopeResolver = (
   request: ManagedRequest,
   authority: AiSearchManagedSearchAuthority,
-) => Promise<AiSearchProjectCopyScope>;
+) => Promise<AiSearchResolvedProjectCopyScope>;
 
 const MAX_RESULTS = 50, MAX_PREVIEW_BYTES = 64 * 1024;
 const MAX_PROVIDER_QUERY_CHARS = 100_000;
@@ -108,8 +108,12 @@ const EMPTY_MANAGED_CANDIDATES: ManagedCandidates = Object.freeze([]);
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u, INSTANCE_ID = /^[a-z0-9_]+(?:-[a-z0-9_]+)*$/u, SHA256 = /^[a-f0-9]{64}$/u;
 const AUTHORITY_KEYS = new Set(["active", "fusion_method", "generation_metadata_value", "index_generation", "index_method", "instance_id", "keyword_match_mode", "match_threshold", "max_preview_bytes", "max_results", "namespace", "registry_artifact_sha256", "registry_revision", "reranking", "target_profile_identity_sha256"]);
 const PROJECT_COPY_SCOPE_KEYS = new Set(["copies", "generation_metadata_value", "layout", "representative_policy", "scope_snapshot_digest", "scope_snapshot_id", "scope_snapshot_revision", "target"]);
+const PROJECT_COPY_SCOPE_V2_KEYS = new Set([...PROJECT_COPY_SCOPE_KEYS, "target_selection"]);
 const PROJECT_COPY_TARGET_KEYS = new Set(["managed_generation", "managed_instance_id", "namespace", "target_profile_identity_sha256"]);
 const PROJECT_COPY_FACT_KEYS = new Set(["folder_prefix", "membership_generation", "project_id", "project_membership_id", "source_owner_generation", "source_revision_ref"]);
+const PROJECT_COPY_V2_LEGACY_FACT_KEYS = new Set([...PROJECT_COPY_FACT_KEYS, "membership_identity_version", "legacy_project_membership_id"]);
+const PROJECT_COPY_V2_STABLE_FACT_KEYS = new Set([...PROJECT_COPY_FACT_KEYS, "membership_identity_version", "stable_project_membership_id", "membership_revision", "project_membership_generation"]);
+const TARGET_SELECTION_KEYS = new Set(["protocol", "domain", "decision_version", "selection_mode", "product_alias", "purpose", "registry_revision", "registry_artifact_sha256", "v1_exact_profile_identity_sha256", "target"]);
 const POLICY_KEYS = new Set(["expected_namespace", "match_threshold", "max_preview_bytes"]), INDEX_KEYS = new Set(["keyword", "vector"]);
 const RETRIEVAL_BUDGET_KEYS = new Set(["candidate_limit", "evidence_limit", "max_evidence_bytes", "scan_limit"]);
 
@@ -187,12 +191,13 @@ function requestQuery(request: ManagedRequest): string {
 }
 
 async function authorizedProjectCopyScope(
-  raw: AiSearchProjectCopyScope,
+  raw: AiSearchResolvedProjectCopyScope,
   request: ManagedRequest,
   active: AiSearchManagedSearchAuthority,
-): Promise<AiSearchProjectCopyScope> {
-  const value = object(raw, "Core project-copy scope", PROJECT_COPY_SCOPE_KEYS);
-  if (value.layout !== "PROJECT_COPY_V1" ||
+): Promise<AiSearchResolvedProjectCopyScope> {
+  const isV2 = typeof raw === "object" && raw !== null && raw.layout === "PROJECT_COPY_V2";
+  const value = object(raw, "Core project-copy scope", isV2 ? PROJECT_COPY_SCOPE_V2_KEYS : PROJECT_COPY_SCOPE_KEYS);
+  if ((value.layout !== "PROJECT_COPY_V1" && value.layout !== "PROJECT_COPY_V2") ||
       value.scope_snapshot_id !== request.scope_snapshot.snapshot_id ||
       value.scope_snapshot_revision !== request.scope_snapshot.revision ||
       value.scope_snapshot_digest !== request.scope_snapshot.digest ||
@@ -206,6 +211,20 @@ async function authorizedProjectCopyScope(
       target.target_profile_identity_sha256 !== active.target_profile_identity_sha256) {
     failure("AI_SEARCH_MANAGED_INPUT_INVALID", "Core project-copy scope targets another managed generation");
   }
+  if (isV2) {
+    const selection = object(value.target_selection, "Core product target selection", TARGET_SELECTION_KEYS);
+    const selectedTarget = object(selection.target, "selected Core product target", PROJECT_COPY_TARGET_KEYS);
+    if (selection.protocol !== "eliotr.managed-target-selection.v2" || selection.domain !== "MANAGED_SEARCH_PRODUCT" ||
+        selection.decision_version !== 2 || selection.selection_mode !== "STABLE_PHYSICAL_PROFILE_V2" ||
+        selection.product_alias !== "primary" || selection.purpose !== "ACTIVE" ||
+        selection.registry_revision !== active.registry_revision || selection.registry_artifact_sha256 !== active.registry_artifact_sha256 ||
+        typeof selection.v1_exact_profile_identity_sha256 !== "string" || !SHA256.test(selection.v1_exact_profile_identity_sha256) ||
+        selectedTarget.namespace !== target.namespace || selectedTarget.managed_instance_id !== target.managed_instance_id ||
+        selectedTarget.managed_generation !== target.managed_generation ||
+        selectedTarget.target_profile_identity_sha256 !== target.target_profile_identity_sha256) {
+      failure("AI_SEARCH_MANAGED_INPUT_INVALID", "Core product selection is stale or is not the active registry target");
+    }
+  }
   const expectedGenerationMetadata = await managedProjectGenerationMetadataValue(active.index_generation);
   if (expectedGenerationMetadata !== active.generation_metadata_value) {
     failure("AI_SEARCH_MANAGED_REGISTRY_INVALID", "managed generation metadata digest does not match its full identity");
@@ -216,9 +235,12 @@ async function authorizedProjectCopyScope(
   const rawCopies = value.copies as unknown[];
   const sourceRefs = [...request.scope_snapshot.member_source_revision_refs].sort();
   const observedRefs: string[] = [];
-  const copies: AiSearchProjectCopyScope["copies"][number][] = [];
+  const copies: (AiSearchProjectCopyScope["copies"][number] | AiSearchAuthorizedProjectCopyV2)[] = [];
   for (const rawCopy of rawCopies) {
-    const copy = object(rawCopy, "Core project-copy membership", PROJECT_COPY_FACT_KEYS);
+    const stableCopy = isV2 && typeof rawCopy === "object" && rawCopy !== null &&
+      "membership_identity_version" in rawCopy && rawCopy.membership_identity_version === 2;
+    const copy = object(rawCopy, "Core project-copy membership", !isV2 ? PROJECT_COPY_FACT_KEYS :
+      stableCopy ? PROJECT_COPY_V2_STABLE_FACT_KEYS : PROJECT_COPY_V2_LEGACY_FACT_KEYS);
     const sourceRevision = identifier(copy.source_revision_ref, "project copy source_revision_ref");
     const sourceOwnerGeneration = identifier(copy.source_owner_generation, "project copy source_owner_generation");
     if (request.scope_snapshot.source_owner_generations[sourceRevision] !== sourceOwnerGeneration) {
@@ -227,17 +249,35 @@ async function authorizedProjectCopyScope(
     const projectId = identifier(copy.project_id, "project copy project_id");
     const membershipId = identifier(copy.project_membership_id, "project copy project_membership_id");
     const membershipGeneration = integer(copy.membership_generation, "project copy membership_generation", 1, Number.MAX_SAFE_INTEGER);
-    if (membershipId !== `project:${projectId}:generation:${membershipGeneration}`) {
-      failure("AI_SEARCH_MANAGED_INPUT_INVALID", "Core project-copy membership identity is inconsistent");
-    }
-    const folderPrefix = await managedProjectFolderPrefix({
+    const commonIdentity = {
       instance_id: active.instance_id,
       projection_generation: active.index_generation,
       source_revision_ref: sourceRevision,
       project_id: projectId,
       project_membership_id: membershipId,
       membership_generation: membershipGeneration,
-    });
+    };
+    let folderPrefix: string;
+    let versionFields: AiSearchProjectCopyMembershipV2 | undefined;
+    if (stableCopy) {
+      const stableId = identifier(copy.stable_project_membership_id, "stable project membership id");
+      if (stableId !== membershipId || !/^project-membership-[a-f0-9]{48}$/u.test(stableId)) {
+        failure("AI_SEARCH_MANAGED_INPUT_INVALID", "Core stable membership identity is inconsistent");
+      }
+      const membershipRevision = integer(copy.membership_revision, "membership revision", 1, Number.MAX_SAFE_INTEGER);
+      const aggregateGeneration = integer(copy.project_membership_generation, "aggregate membership generation", 1, Number.MAX_SAFE_INTEGER);
+      folderPrefix = await managedProjectFolderPrefixV2({ ...commonIdentity,
+        stable_project_membership_id: stableId, membership_revision: membershipRevision });
+      versionFields = { membership_identity_version: 2, stable_project_membership_id: stableId,
+        membership_revision: membershipRevision, project_membership_generation: aggregateGeneration };
+    } else {
+      if (membershipId !== `project:${projectId}:generation:${membershipGeneration}` ||
+          (isV2 && (copy.membership_identity_version !== 1 || copy.legacy_project_membership_id !== membershipId))) {
+        failure("AI_SEARCH_MANAGED_INPUT_INVALID", "Core project-copy membership identity is inconsistent");
+      }
+      folderPrefix = await managedProjectFolderPrefix(commonIdentity);
+      if (isV2) versionFields = { membership_identity_version: 1, legacy_project_membership_id: membershipId };
+    }
     if (copy.folder_prefix !== folderPrefix) {
       failure("AI_SEARCH_MANAGED_INPUT_INVALID", "Core project folder hash does not match its frozen source and membership facts");
     }
@@ -248,6 +288,7 @@ async function authorizedProjectCopyScope(
       project_membership_id: membershipId,
       membership_generation: membershipGeneration,
       folder_prefix: folderPrefix,
+      ...versionFields,
     }));
     observedRefs.push(sourceRevision);
   }
@@ -256,7 +297,8 @@ async function authorizedProjectCopyScope(
       new Set(observedRefs).size !== observedRefs.length) {
     failure("AI_SEARCH_MANAGED_INPUT_INVALID", "Core project-copy scope does not exactly cover the frozen source revisions");
   }
-  return Object.freeze({ ...raw, copies: Object.freeze(copies) });
+  return isV2 ? Object.freeze({ ...raw, layout: "PROJECT_COPY_V2", copies: Object.freeze(copies) }) as AiSearchProjectCopyScopeV2 :
+    Object.freeze({ ...raw, layout: "PROJECT_COPY_V1", copies: Object.freeze(copies) }) as AiSearchProjectCopyScope;
 }
 function requestCandidateLimit(request: ManagedRequest): number | undefined {
   if (request.budgets === undefined) return undefined;
@@ -439,9 +481,9 @@ async function compileAiSearchManagedSearchRequestWithScope(
   lanes: ManagedLanes,
   contextExpansion: ManagedExpansion,
   inputAuthority: AiSearchManagedSearchAuthority,
-  inputProjectCopyScope: AiSearchProjectCopyScope,
+  inputProjectCopyScope: AiSearchResolvedProjectCopyScope,
   executionContext?: ManagedSearchExecutionContextV1,
-): Promise<{ readonly request: AiSearchManagedSearchRequest; readonly project_copy_scope: AiSearchProjectCopyScope }> {
+): Promise<{ readonly request: AiSearchManagedSearchRequest; readonly project_copy_scope: AiSearchResolvedProjectCopyScope }> {
   const active = authority(inputAuthority);
   if (!active.active) failure("AI_SEARCH_MANAGED_NOT_PROMOTED", "managed generation is not promoted");
   const projectCopyScope = await authorizedProjectCopyScope(inputProjectCopyScope, request, active);
@@ -502,7 +544,7 @@ export async function compileAiSearchManagedSearchRequest(
   lanes: ManagedLanes,
   contextExpansion: ManagedExpansion,
   inputAuthority: AiSearchManagedSearchAuthority,
-  inputProjectCopyScope: AiSearchProjectCopyScope,
+  inputProjectCopyScope: AiSearchResolvedProjectCopyScope,
   executionContext?: ManagedSearchExecutionContextV1,
 ): Promise<AiSearchManagedSearchRequest> {
   return (await compileAiSearchManagedSearchRequestWithScope(
@@ -516,7 +558,7 @@ export function createAiSearchManagedSearchPort(
 ): AiSearchManagedSearchPort {
   namespaceBinding(namespace); const active = authority(inputAuthority);
   if (typeof resolveProjectCopyScope !== "function") failure("AI_SEARCH_MANAGED_INPUT_INVALID", "Core project-copy scope resolver is required");
-  const readProjectCopyScope = async (request: ManagedRequest): Promise<AiSearchProjectCopyScope> => {
+  const readProjectCopyScope = async (request: ManagedRequest): Promise<AiSearchResolvedProjectCopyScope> => {
     return resolveProjectCopyScope(request, active);
   };
   const preflightSearchManaged = async (
@@ -564,11 +606,13 @@ export function createAiSearchManagedSearchPort(
       const decodeRequest = request.requested_limit < providerCandidateLimit
         ? { ...request, requested_limit: providerCandidateLimit }
         : request;
+      const scope = compiledResult.project_copy_scope;
+      const copyOptions = scope.layout === "PROJECT_COPY_V2"
+        ? { project_copy_layout: scope.layout, expected_generation_metadata_value: scope.generation_metadata_value, expected_project_copies: scope.copies }
+        : { project_copy_layout: scope.layout, expected_generation_metadata_value: scope.generation_metadata_value, expected_project_copies: scope.copies };
       const decodedCandidates = decodeAiSearchSearchResult(decodeRequest, raw, {
         expected_index_generation: active.index_generation, requested_lanes: lanes,
-        project_copy_layout: compiledResult.project_copy_scope.layout,
-        expected_generation_metadata_value: compiledResult.project_copy_scope.generation_metadata_value,
-        expected_project_copies: compiledResult.project_copy_scope.copies,
+        ...copyOptions,
         max_results: providerCandidateLimit,
         max_preview_bytes: active.max_preview_bytes,
       });

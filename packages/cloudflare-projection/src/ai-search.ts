@@ -30,7 +30,10 @@ export {
   assertAiSearchScopeFilterBudget,
   createAiSearchScopeFilter,
   type AiSearchAuthorizedProjectCopy,
+  type AiSearchAuthorizedProjectCopyV2,
   type AiSearchProjectCopyScope,
+  type AiSearchProjectCopyScopeV2,
+  type AiSearchResolvedProjectCopyScope,
   type AiSearchScopeFilter,
 } from "./ai-search-scope-filter.js";
 export * from "./managed-project-path.js";

@@ -219,6 +219,10 @@ describe("Core-backed project-copy scope", () => {
                     default_disclosure: "private",
                     default_source_policy_ref: "source-policy-1",
                     retention_policy_ref: "retention-1",
+                    default_model_profile_ref: "model-1",
+                    default_depth_profile_ref: "depth-1",
+                    owner_principal_ref: "owner-1",
+                    owner_deployment_generation: "deployment-1",
                   };
                 }
                 throw new Error(`unexpected authority read: ${sql}`);
@@ -246,10 +250,10 @@ describe("Core-backed project-copy scope", () => {
     expect(afterEmptyMembershipChange.atom_generation_ref).not.toBe(initial.atom_generation_ref);
 
     const sourceResolution = statements.filter(({ sql }) => sql.includes("FROM source s JOIN source_revision r")).at(-1);
-    expect(sourceResolution?.sql).toContain("m.membership_generation=?4");
-    expect(sourceResolution?.sql).toContain("p.membership_generation=?4");
-    expect(sourceResolution?.values.at(-3)).toBe("project-empty");
-    expect(sourceResolution?.values.at(-2)).toBe(9);
+    expect(sourceResolution?.sql).toContain("julianday(m.valid_from)<=julianday(?2)");
+    expect(sourceResolution?.sql).toContain("m.valid_to IS NULL OR julianday(m.valid_to)>julianday(?2)");
+    expect(sourceResolution?.sql).not.toContain("m.membership_generation=");
+    expect(sourceResolution?.values.at(-2)).toBe("project-empty");
   });
 
   it("chooses one canonical representative for a source-only query spanning project copies", async () => {
@@ -384,7 +388,7 @@ describe("Core-backed project-copy scope", () => {
       project_membership_generation: 8,
       membership_identity_version: 2,
     });
-    expect(versioned.copies[0]?.folder_prefix).toMatch(/^projection\/p-[a-f0-9]{48}\/$/u);
+    expect(versioned.copies[0]?.folder_prefix).toMatch(/^projection\/[A-Za-z0-9_-]{43}\/$/u);
     expect(new TextEncoder().encode(versioned.copies[0]?.folder_prefix ?? "").byteLength).toBeLessThan(64);
   });
 

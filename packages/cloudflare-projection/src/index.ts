@@ -53,6 +53,9 @@ export type {
   ManagedTargetAssignmentEvent,
   ManagedTargetAssignmentPort,
   ManagedTargetIdentity,
+  ManagedTargetSelectionV1,
+  ManagedTargetSelectionReceipt,
+  ManagedTargetSelectionV2,
   RetireManagedTargetCommand,
 } from "./managed-target-assignment.js";
 export {
@@ -68,4 +71,6 @@ export type {
   ManagedRequiredSetPage,
   ManagedRequiredSetPort,
   ManagedRequiredSetReceipt,
+  ManagedRequiredSetReceiptV1,
+  ManagedRequiredSetReceiptV2,
 } from "./managed-required-set.js";

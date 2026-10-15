@@ -1,3 +1,5 @@
+import type { ManagedTargetSelectionV2 } from "./managed-target-assignment.js";
+
 /** One Core-authorized project membership selected for this source revision. */
 export interface AiSearchAuthorizedProjectCopy {
   readonly source_revision_ref: string;
@@ -23,6 +25,26 @@ export interface AiSearchProjectCopyScope {
   readonly representative_policy: "ONE_CANONICAL_COPY_PER_SOURCE_REVISION";
   readonly copies: readonly AiSearchAuthorizedProjectCopy[];
 }
+
+export type AiSearchProjectCopyMembershipV2 = (
+  | { readonly membership_identity_version: 1; readonly legacy_project_membership_id: string }
+  | {
+    readonly membership_identity_version: 2;
+    readonly stable_project_membership_id: string;
+    readonly membership_revision: number;
+    readonly project_membership_generation: number;
+  }
+);
+
+export type AiSearchAuthorizedProjectCopyV2 = AiSearchAuthorizedProjectCopy & AiSearchProjectCopyMembershipV2;
+
+export interface AiSearchProjectCopyScopeV2 extends Omit<AiSearchProjectCopyScope, "layout" | "copies"> {
+  readonly layout: "PROJECT_COPY_V2";
+  readonly target_selection: ManagedTargetSelectionV2;
+  readonly copies: readonly AiSearchAuthorizedProjectCopyV2[];
+}
+
+export type AiSearchResolvedProjectCopyScope = AiSearchProjectCopyScope | AiSearchProjectCopyScopeV2;
 
 /** All filters are applied by AI Search before the provider top-K boundary. */
 export interface AiSearchScopeFilter {
@@ -102,7 +124,7 @@ export function assertAiSearchScopeFilterBudget(
 export function createAiSearchScopeFilter(
   sourceRevisionRefs: readonly string[],
   projectionGenerationMetadataValue: string,
-  authorizedCopies: readonly AiSearchAuthorizedProjectCopy[],
+  authorizedCopies: readonly (AiSearchAuthorizedProjectCopy | AiSearchAuthorizedProjectCopyV2)[],
 ): AiSearchScopeFilter {
   if (!Array.isArray(sourceRevisionRefs) || !Array.isArray(authorizedCopies)) {
     invalid("AI Search scope members and project copies must be arrays");
@@ -131,8 +153,19 @@ export function createAiSearchScopeFilter(
     const projectId = canonicalIdentifier(copy.project_id, "project copy project_id");
     if (!memberSet.has(sourceRevision)) invalid("project copy is outside the frozen source-revision set");
     if (selectedSources.has(sourceRevision)) invalid("AI Search project scope selected multiple copies for one source revision");
-    if (!Number.isSafeInteger(copy.membership_generation) || copy.membership_generation < 1 ||
-        copy.project_membership_id !== `project:${projectId}:generation:${copy.membership_generation}`) {
+    if (!Number.isSafeInteger(copy.membership_generation) || copy.membership_generation < 1) {
+      invalid("AI Search project membership does not match its Core identity");
+    }
+    if ("membership_identity_version" in copy && copy.membership_identity_version === 2) {
+      if (copy.stable_project_membership_id !== copy.project_membership_id ||
+          !/^project-membership-[a-f0-9]{48}$/u.test(copy.project_membership_id) ||
+          !Number.isSafeInteger(copy.membership_revision) || copy.membership_revision < 1 ||
+          !Number.isSafeInteger(copy.project_membership_generation) || copy.project_membership_generation < 1) {
+        invalid("AI Search stable membership does not match its Core identity");
+      }
+    } else if (copy.project_membership_id !== `project:${projectId}:generation:${copy.membership_generation}` ||
+      ("membership_identity_version" in copy && (copy.membership_identity_version !== 1 ||
+        copy.legacy_project_membership_id !== copy.project_membership_id))) {
       invalid("AI Search project membership does not match its Core identity");
     }
     if (typeof copy.folder_prefix !== "string" || !PROJECT_FOLDER.test(copy.folder_prefix) ||

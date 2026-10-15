@@ -162,7 +162,7 @@ export async function handleAiSearchFunctionalProbeHttp(input: {
         index_method: Object.freeze({ ...resolved.target.profile.index_method }),
         metadata_fields: Object.freeze([...resolved.target.profile.metadata_fields].sort()),
       });
-      return resolveD1ProjectCopyScope({
+      const scope = await resolveD1ProjectCopyScope({
         database: input.env.CORE_DB,
         access,
         scope_snapshot: resolved.scope_snapshot,
@@ -175,6 +175,11 @@ export async function handleAiSearchFunctionalProbeHttp(input: {
         },
         require_current_scope: (scope) => scopePorts.requireCurrentScope(scope),
       });
+      if (scope.layout !== "PROJECT_COPY_V1") {
+        throw new HttpRequestError("AI_SEARCH_FUNCTIONAL_PROBE_LAYOUT_UNSUPPORTED", 503,
+          "The V1 functional probe requires an exact V1 copy scope");
+      }
+      return scope;
     },
     resolve_candidate: async (probeAccess, scope, candidate) => {
       if (!sameAccess(probeAccess, access)) throw new Error("functional probe evidence context changed");
