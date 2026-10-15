@@ -6,7 +6,7 @@ import {
   createComputerAgentConnectionApi,
   createComputerAgentDispatchReadApi,
   createComputerAgentTaskApi,
-  createMcpDiagnosticApi, createResearchModelConfigurationApi, createResearchConfigurationApi,
+  createMcpDiagnosticApi, createResearchModelConfigurationApi, createResearchConfigurationApi, createServiceModelSettingsApi,
   createNamespacesApi, createRawFileApi, createBundleInputApi, createBundleWireApi, createBundleImportApi,
   createResearchRunWire, createResearchRunsApi, createRunHistoryApi, createResearchSessionProjectionAdapter,
   createManifestApi, createSectionApi, createCitationAuditHelpers, createCitationApi, createReauthorizationApi, createEvidenceBytesApi,
@@ -74,6 +74,10 @@ export interface BoundWorkspaceApis {
     readonly models: ReturnType<typeof createResearchModelConfigurationApi>;
     readonly configuration: ReturnType<typeof createResearchConfigurationApi>;
   };
+  /** Global owner settings. No project identity, selected project or project grant participates. */
+  readonly settings: {
+    readonly models: ReturnType<typeof createServiceModelSettingsApi>;
+  };
   readonly sources: {
     readonly namespaces: ReturnType<typeof createNamespacesApi>;
     readonly imports: {
@@ -101,6 +105,7 @@ function createBoundApis(ports: WorkspaceRuntimePorts, epoch: ReturnType<typeof 
   const http = createLegacyHttpAdapter(clientPorts, errorFactory);
   const binary = createOwnerApiClient(clientPorts);
   const models = createResearchModelConfigurationApi(http, errorFactory, epoch);
+  const serviceModels = createServiceModelSettingsApi(http, errorFactory, epoch);
   const bundleWire = createBundleWireApi(http, binary, errorFactory, epoch, { now: ports.now });
   const researchPorts = { request: http.requestApiWithStatuses, errors: errorFactory, epoch };
   const wire = createResearchRunWire(errorFactory), runs = createResearchRunsApi(researchPorts);
@@ -143,6 +148,7 @@ function createBoundApis(ports: WorkspaceRuntimePorts, epoch: ReturnType<typeof 
       diagnostic: createMcpDiagnosticApi(http, errorFactory, epoch, isWorkspaceRequestError),
       models, configuration: createResearchConfigurationApi(http, errorFactory, epoch),
     },
+    settings: { models: serviceModels },
     sources: {
       namespaces: createNamespacesApi({ request: http.requestApiWithStatuses, errors: errorFactory, epoch }),
       imports: {
@@ -205,3 +211,5 @@ export function createWorkspaceRuntime(ports: WorkspaceRuntimePorts) {
   };
 }
 export type WorkspaceRuntime = ReturnType<typeof createWorkspaceRuntime>;
+
+
