@@ -188,6 +188,11 @@ export const Error: StoryObj<typeof ProjectsLibraryFeature> = {
 
 export const ReadinessBlocked: StoryObj<typeof ProjectsLibraryFeature> = {
   args: base({ readiness: blockedReadiness }),
+  play: ({ canvasElement }) => {
+    const summary = requireText(canvasElement, "Ready for search");
+    assert(summary.closest(".er-projects-library__summary")?.getAttribute("data-state") === "ready",
+      "A failed channel must not hide that another channel can search this source.");
+  },
 };
 
 export const LongRussian: StoryObj<typeof ProjectsLibraryFeature> = {
