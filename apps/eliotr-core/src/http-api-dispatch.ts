@@ -1,4 +1,5 @@
 import { OrientationError, readOrientationRequest } from "@eliotr/cloudflare-navigation";
+import { indexProjectSources } from "@eliotr/cloudflare-ai/project-search";
 import type {
   ApplicationLifecycle,
   AuthenticatedRequestContext,
@@ -197,20 +198,37 @@ export async function dispatchHttpApiRoute(
     }
     case "research.projects.create": {
       requireNoQuery(url);
-      return apiResult(request, env, await application.services.owner.createProject(
-        context,
-        await readCreateProjectRequest(request, match.route.maximum_request_bytes),
-      ), 201);
+      const input = await readCreateProjectRequest(request, match.route.maximum_request_bytes);
+      const result = await application.services.owner.createProject(context, input);
+      await indexProjectSources({
+        namespace: env.AI_SEARCH,
+        core_database: env.CORE_DB,
+        search_database: env.SEARCH_DB,
+        work_bucket: env.WORK_BUCKET,
+        project_id: result.project_ref.id,
+        source_ids: input.source_ids,
+      });
+      return apiResult(request, env, result, 201);
     }
     case "research.projects.update": {
       requireNoQuery(url);
       const projectId = match.params.project_id;
       if (projectId === undefined) throw new HttpRequestError("PROJECT_INPUT_INVALID", 400, "project id is missing");
-      return apiResult(request, env, await application.services.owner.updateProject(
+      const input = await readUpdateProjectRequest(request, match.route.maximum_request_bytes);
+      const result = await application.services.owner.updateProject(
         context,
         projectIdentifier(projectId, "project id"),
-        await readUpdateProjectRequest(request, match.route.maximum_request_bytes),
-      ));
+        input,
+      );
+      await indexProjectSources({
+        namespace: env.AI_SEARCH,
+        core_database: env.CORE_DB,
+        search_database: env.SEARCH_DB,
+        work_bucket: env.WORK_BUCKET,
+        project_id: result.project_ref.id,
+        source_ids: input.source_ids,
+      });
+      return apiResult(request, env, result);
     }
     case "research.project-managed-target-assignment.read":
     case "research.project-managed-target-assignment.assign":
