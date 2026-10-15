@@ -53,7 +53,8 @@ export const ControlPane: Story = {
 export const ConfiguredPresenceUnknown: Story = {
   render: () => <div className="er-agent-story-pane"><AgentWorkPane locale="en"
     agents={[{ id: "configured", name: "Configured agent", transport: "mcp", connectionState: "owner-enabled", presence: "unknown" },
-      { id: "disabled", name: "Disabled agent", transport: "inbox", connectionState: "disabled", presence: "unknown" }]}
+      { id: "disabled", name: "Disabled agent", transport: "inbox", connectionState: "disabled", presence: "unknown" },
+      { id: "observed", name: "Observed ready fixture", transport: "mcp", connectionState: "owner-enabled", presence: "ready" }]}
     tools={["versions"]} tasks={[]} onTool={fn()} onMoreAgents={fn()} onManageAgents={fn()} /></div>,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
