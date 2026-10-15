@@ -33,6 +33,7 @@ export interface ResearchWorkflowServerPortInput {
     stage: ResearchWorkflowStage,
   ) => Promise<number | null>;
   readonly recover_started_attempt?: WorkflowExecutionPorts["recoverStartedAttempt"];
+  readonly settle_stage_failure?: WorkflowExecutionPorts["settleStageFailure"];
 }
 
 /** Builds the shared residency/budget ports while Core supplies live admission and lease policy callbacks. */
@@ -73,6 +74,9 @@ export function createResearchWorkflowServerPorts(input: ResearchWorkflowServerP
     ...(input.recover_started_attempt === undefined
       ? {}
       : { recoverStartedAttempt: input.recover_started_attempt }),
+    ...(input.settle_stage_failure === undefined
+      ? {}
+      : { settleStageFailure: input.settle_stage_failure }),
   };
 }
 

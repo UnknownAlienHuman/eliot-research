@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   WorkflowFailureCompatibleSchema,
   type WorkflowFailureCompatible,
+  type WorkflowFailureOutcome,
 } from "./workflow-failure-protocol.js";
 import { ObjectResidencyKeySchema, ResearchWorkflowStageSchema, Sha256Schema } from "@eliotr/contracts";
 
@@ -124,6 +125,12 @@ export interface WorkflowAttemptRecoveryInput {
 export type WorkflowStartedAttemptRecovery = (
   input: WorkflowAttemptRecoveryInput,
 ) => Promise<Uint8Array | null>;
+/** Optional read-only settlement that can prove a failed stage never dispatched its external effect. */
+export type WorkflowStageFailureSettlement = (input: {
+  readonly request: StageRequest;
+  readonly principal: WorkflowPrincipal;
+  readonly error: unknown;
+}) => Promise<WorkflowFailureOutcome | null>;
 export interface WorkflowExecutionPorts {
   /** Server-owned policy readback; never accept residency authority from a browser DTO. */
   authorizeResidency(request: StageRequest, principal: WorkflowPrincipal): Promise<void>;
@@ -131,6 +138,8 @@ export interface WorkflowExecutionPorts {
   checkBudget(request: StageRequest, principal: WorkflowPrincipal): Promise<WorkflowBudgetGrant>;
   /** Optional W3 readback for a started attempt; it must never invoke the paid handler. */
   readonly recoverStartedAttempt?: WorkflowStartedAttemptRecovery;
+  /** Read-only stage-specific evidence; absence/failure leaves the default unknown-effect fence intact. */
+  readonly settleStageFailure?: WorkflowStageFailureSettlement;
 }
 export type WorkflowStageHandler = (input: {
   readonly request: StageRequest;

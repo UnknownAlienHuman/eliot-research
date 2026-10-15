@@ -11,13 +11,14 @@ import {
   MAX_WORKFLOW_RECEIPT_BYTES,
   parseWorkflowCheckpointErrorMessage,
   retainWorkflowFailure,
+  textDigest,
   WorkflowCheckpointError,
   workflowFailure,
   type WorkflowFailureOutcome,
   type ResearchWorkflowRunParams,
   type WorkflowPrincipal,
 } from "@eliotr/cloudflare-workflows";
-import { createD1ScopePorts } from "@eliotr/retrieval";
+import { createD1ScopePorts, managedRetrievalInvocationIdsV1, RetrievalQueryError } from "@eliotr/retrieval";
 import {
   createD1InvestigationLedgerStore,
   type InvestigationLedgerStore,
@@ -108,6 +109,7 @@ export async function executeResearchWorkflowApplication<QualificationRenewalMar
   };
   let activeStage: ResearchWorkflowStage | undefined;
   let nativeStepPending = false;
+  let stageFailureAccess: EvidenceAccessContext | undefined;
   try {
     await callbacks.assert_deployment_compatible();
     const database = environment.CORE_DB;
@@ -138,6 +140,7 @@ export async function executeResearchWorkflowApplication<QualificationRenewalMar
       });
       if (scopeAuthority === null) failWorkflow("WORKFLOW_AUTHORITY_STALE");
       const access = await callbacks.load_execution_access(params.operation_id, principal);
+      stageFailureAccess = access;
       const scopePorts = createD1ScopePorts(environment.CORE_DB, access);
       const navigation = createNavigationReadAuthority({
         database: environment.CORE_DB,
@@ -206,6 +209,7 @@ export async function executeResearchWorkflowApplication<QualificationRenewalMar
       failWorkflow("WORKFLOW_AUTHORITY_STALE");
     }
 
+    const workflowAccessForSettlement = stageFailureAccess;
     const ports = createResearchWorkflowServerPorts({
       database,
       operation_id: params.operation_id,
@@ -218,6 +222,44 @@ export async function executeResearchWorkflowApplication<QualificationRenewalMar
       ...(handlers.recoverStartedAttempt === undefined
         ? {}
         : { recover_started_attempt: handlers.recoverStartedAttempt }),
+      ...(workflowAccessForSettlement === undefined
+        ? {}
+        : {
+          settle_stage_failure: async ({ request, principal: failedPrincipal, error }) => {
+            if (request.operation_id !== params.operation_id || request.handler_generation !== params.handler_generation ||
+                request.stage !== "RETRIEVE_BRANCHES" || !(error instanceof RetrievalQueryError) ||
+                error.code !== "RETRIEVAL_RESOLUTION_UNCERTAIN" ||
+                failedPrincipal.principal_ref !== workflowAccessForSettlement.principal_ref ||
+                failedPrincipal.credential_generation !== workflowAccessForSettlement.credential_generation ||
+                failedPrincipal.deployment_generation !== principal.deployment_generation) return null;
+            const idempotencyKey = `retrieve-branches:${await textDigest(JSON.stringify(request))}`;
+            const invocation = await managedRetrievalInvocationIdsV1(
+              workflowAccessForSettlement.principal_ref,
+              workflowAccessForSettlement.client_class,
+              idempotencyKey,
+            );
+            const admission = await database.prepare(
+              "SELECT CASE WHEN " +
+              "EXISTS (SELECT 1 FROM retrieval_query_result WHERE operation_id = ?1) OR " +
+              "EXISTS (SELECT 1 FROM operation_intent WHERE intent_id = ?1 AND revision = 1 AND operation_kind = 'QUERY') OR " +
+              "EXISTS (SELECT 1 FROM operation_attempt WHERE intent_id = ?1 AND intent_revision = 1 AND attempt_number = 1) OR " +
+              "EXISTS (SELECT 1 FROM operation_execution_lease WHERE operation_id = ?2 AND operation_kind = 'QUERY') " +
+              "THEN 1 ELSE 0 END AS admitted",
+            ).bind(invocation.retrieval_operation_id, invocation.execution_id)
+              .first<{ readonly admitted: unknown }>();
+            if (admission === null || admission.admitted !== 0) return null;
+            return {
+              protocol: "eliotr.workflow-failure-outcome.v1",
+              code: "WORKFLOW_EFFECT_UNCERTAIN",
+              phase: "STAGE",
+              stage: request.stage,
+              retryable: false,
+              dispatch_state: "NOT_STARTED",
+              references_intact: "INTACT",
+              recovery_action: "NONE",
+            };
+          },
+        }),
     });
     const executor = createWorkflowCheckpointExecutor(database, environment.WORK_BUCKET, ports);
     const externalTask = params.handler_generation === NATIVE_EXTERNAL_TASK_HANDLER_GENERATION
