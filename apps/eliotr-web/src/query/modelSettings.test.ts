@@ -103,4 +103,3 @@ describe("safe model-settings key lifecycle", () => {
     expect(providers.readResearchProviderKeyConfigurations).not.toHaveBeenCalled();
   });
 });
-
