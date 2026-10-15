@@ -86,6 +86,20 @@ describe("history decoder boundaries", () => {
       .toMatchObject({ protocol: "eliotr.research-runs.v3", configuration_state: "INSTALLED" });
   });
 
+  it("keeps v5 run rows when a historical ledger query is absent and preserves present questions", () => {
+    const visibility_scan = { runs: "BUDGET_STOPPED", saved_drafts: "SOURCE_EXHAUSTED" };
+    const query = "How did the saved source revisions change this evidence?";
+    const withQuestion = historyFor(baseData({ protocol: "eliotr.research-runs.v5", visibility_scan,
+      runs: [{ ...runEntry("run-question", "2026-10-09T12:00:00.000Z"), query }] }));
+    expect(decodeOnly().decodeResearchRunHistory(withQuestion, "deployment-1").runs[0]?.query).toBe(query);
+
+    const withoutLedger = historyFor(baseData({ protocol: "eliotr.research-runs.v5", visibility_scan,
+      runs: [runEntry("run-without-ledger", "2026-10-09T12:00:00.000Z")] }));
+    const decoded = decodeOnly().decodeResearchRunHistory(withoutLedger, "deployment-1");
+    expect(decoded.runs).toHaveLength(1);
+    expect(decoded.runs[0]).not.toHaveProperty("query");
+  });
+
   it("caps runs and rejects a duplicate run id", () => {
     const api = decodeOnly();
     const many = historyFor(baseData({ runs: Array.from({ length: 9 }, (_unused, index) =>

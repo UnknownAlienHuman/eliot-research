@@ -1,5 +1,5 @@
 import { ArtifactReadNotFoundError, type AuthenticatedRequestContext, type ResearchRunStatus } from "@eliotr/interfaces";
-import { VersionedRefSchema, type VersionedRef, type ResearchRunHistoryVisibilityState } from "@eliotr/contracts";
+import { ResearchRunHistoryQuerySchema, VersionedRefSchema, type VersionedRef, type ResearchRunHistoryVisibilityState } from "@eliotr/contracts";
 import { CatalogInputError, OrientationError, ScopeServiceError } from "@eliotr/cloudflare-navigation";
 import { ArtifactDraftReadError } from "@eliotr/cloudflare-research";
 import {
@@ -151,12 +151,14 @@ async function scanVisibleRecent<Row, Entry>(
 /** Recent locators use the same current read authority as an opened run/report. */
 export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context: AuthenticatedRequestContext) {
   ports.authorize_owner_read(context);
-  type RunRow = { operation_id: string; created_at: string };
-  type RunEntry = { created_at: string; status: ResearchRunStatus };
+  type RunRow = { operation_id: string; created_at: string; query: unknown };
+  type RunEntry = { created_at: string; query?: string; status: ResearchRunStatus };
   const runs = await scanVisibleRecent<RunRow, RunEntry>(async (after, limit) => {
     try {
       const result = await ports.database.prepare(
-        "SELECT r.operation_id, r.created_at FROM research_workflow_run r " +
+        "SELECT r.operation_id, r.created_at, h.goal AS query FROM research_workflow_run r " +
+        "LEFT JOIN investigation_ledger_head h ON h.investigation_id=r.investigation_id " +
+        "AND h.principal_ref=r.principal_ref " +
         "JOIN research_deployment_compatible c ON c.origin_deployment_generation=r.deployment_generation " +
         "AND c.active_deployment_generation=?2 WHERE (r.principal_ref=?1 OR EXISTS " +
         "(SELECT 1 FROM owner_machine_run_origin o WHERE o.operation_id=r.operation_id AND o.reader_principal_ref=?1)) " +
@@ -175,7 +177,12 @@ export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context
     try {
       const status = await ports.run_status(context, row.operation_id);
       const read = await prepareReauthenticatedRunRead(ports.run_read, context, row.operation_id);
-      return { entry: { created_at: row.created_at, status },
+      let query: string | undefined;
+      if (row.query !== null && row.query !== undefined) {
+        try { query = ResearchRunHistoryQuerySchema.parse(row.query); }
+        catch { invalidHistory("Stored research query is invalid"); }
+      }
+      return { entry: { created_at: row.created_at, ...(query === undefined ? {} : { query }), status },
         ...(read === null ? {} : { require_current: read.requireCurrent }) };
     } catch (error) {
       if (error instanceof CatalogInputError && [403, 404, 409, 410].includes(error.status)) return null;
@@ -249,7 +256,7 @@ export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context
   for (const requireCurrent of runs.checks) await requireCurrent();
   for (const requireCurrent of drafts.checks) await requireCurrent();
   return {
-    protocol: "eliotr.research-runs.v4" as const,
+    protocol: "eliotr.research-runs.v5" as const,
     runs: runs.entries, saved_drafts: drafts.entries,
     visibility_scan: { runs: runs.state, saved_drafts: drafts.state },
     configuration_state: ports.semantic_configuration_installed() ? "INSTALLED" as const : "MISSING" as const,

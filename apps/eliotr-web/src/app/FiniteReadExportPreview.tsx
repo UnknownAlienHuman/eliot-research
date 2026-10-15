@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { QueryClientProvider, focusManager, onlineManager } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
 import type {
-  ArtifactRevision, ArtifactSectionResponse, OwnerSession, ResearchConfigurationView,
+  ArtifactRevisionRead, ArtifactSectionResponse, OwnerSession, ResearchConfigurationView,
   ResearchRunHistoryView, ResearchRunLaunchView, ResearchRunStatusView,
   SectionCitationsView, SystemHealth, TimerPort, VersionedRef,
 } from '@eliotr/owner-api-client';
@@ -62,12 +62,13 @@ function createEnvironment(scenario: Scenario) {
     setTimeout: (callback, milliseconds) => window.setTimeout(callback, milliseconds),
     clearTimeout(handle) { if (typeof handle === 'number') window.clearTimeout(handle); },
   };
-  const manifest: Promise<ArtifactRevision> = Promise.all(bodyTexts.map(text => digest(encode(text)))).then(hashes => ({
+  const manifest: Promise<ArtifactRevisionRead> = Promise.all(bodyTexts.map(text => digest(encode(text)))).then(hashes => ({
     artifact_ref: artifactRef, spec_ref: { id: 'finite-spec', revision: 1 }, spec_digest: 'a'.repeat(64),
     evidence_freeze_ref: { id: 'finite-freeze', revision: 1 },
+    title: 'Finite readback report',
     sections: hashes.map((hash, index) => ({
       section_ref: { id: index === 0 ? 'required-alpha' : 'required-beta', revision: 1 },
-      contract_id: `finite-contract-${index + 1}`, body_object_ref: `finite-body-${index + 1}`,
+      contract_id: `finite-contract-${index + 1}`, title: index === 0 ? 'Required alpha' : 'Required beta', body_object_ref: `finite-body-${index + 1}`,
       body_sha256: hash, statement_labels: {}, evidence_ledger_ref: 'finite-ledger',
       verification_receipt_ref: `finite-verification-${index + 1}`,
     })),
@@ -172,7 +173,7 @@ function createEnvironment(scenario: Scenario) {
     let manifestKey: readonly (string | number)[] = [];
     const current = () => client.getQueryState(manifestKey)?.status === 'success' &&
       client.getQueryState(manifestKey)?.fetchStatus !== 'fetching'
-      ? client.getQueryData<ArtifactRevision>(manifestKey) : undefined;
+      ? client.getQueryData<ArtifactRevisionRead>(manifestKey) : undefined;
     const options = reportQueryOptions(apis, privacy, context, current);
     manifestKey = options.manifest(artifactRef).queryKey;
     const artifact = current();

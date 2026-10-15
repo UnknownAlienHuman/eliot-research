@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ArtifactRevision, VersionedRef } from '@eliotr/contracts';
+import type { ArtifactRevision, ArtifactRevisionRead, VersionedRef } from '@eliotr/contracts';
 import type { ManifestApi, ResearchArtifactDraftReauthorizationView } from '../evidence/report/manifest';
 
 import { createSessionEpoch } from '../transport/session/epoch';
@@ -304,25 +304,28 @@ const draft = (): ArtifactRevision => ({
   status: 'DRAFT',
   created_at: '2026-10-03T12:00:00.000Z',
 } as ArtifactRevision);
+const readDraft = (): ArtifactRevisionRead => ({ ...draft(), title: 'Studio report', sections: [] });
 
+type LegacyReauthorizationView = Extract<ResearchArtifactDraftReauthorizationView,
+  { readonly protocol: 'eliotr.artifact-draft-reauthorization.v2' }>;
 const reauthorization = (
-  overrides: Partial<ResearchArtifactDraftReauthorizationView> = {},
-): ResearchArtifactDraftReauthorizationView => ({
+  overrides: Partial<Omit<LegacyReauthorizationView, 'protocol'>> = {},
+): LegacyReauthorizationView => ({
+  ...overrides,
   protocol: 'eliotr.artifact-draft-reauthorization.v2',
-  artifact_ref: REF,
-  artifact: draft(),
-  original_scope_snapshot_ref: { id: 'scope-1', revision: 1 },
-  authorization_scope_snapshot_ref: { id: 'scope-2', revision: 1 },
-  authorization: {
+  artifact_ref: overrides.artifact_ref ?? REF,
+  artifact: overrides.artifact ?? draft(),
+  original_scope_snapshot_ref: overrides.original_scope_snapshot_ref ?? { id: 'scope-1', revision: 1 },
+  authorization_scope_snapshot_ref: overrides.authorization_scope_snapshot_ref ?? { id: 'scope-2', revision: 1 },
+  authorization: overrides.authorization ?? {
     authorization_receipt_ref: 'auth-receipt-1',
     policy_authority_ref: 'policy-1',
     allowed_use: ['wiki'],
     disclosure_ceiling: 'internal',
     expires_at: '2026-10-04T12:00:00.000Z',
   },
-  source_freshness: { state: 'UNKNOWN', changed_sources: [] },
-  deployment_generation: GENERATION,
-  ...overrides,
+  source_freshness: overrides.source_freshness ?? { state: 'UNKNOWN', changed_sources: [] },
+  deployment_generation: overrides.deployment_generation ?? GENERATION,
 });
 
 const publicationEnvelope = (overrides: Record<string, unknown> = {}) => ({
@@ -355,7 +358,7 @@ interface Calls {
 }
 
 function apiFor(behaviour: {
-  readonly author?: (ref: VersionedRef) => Promise<ArtifactRevision>;
+  readonly author?: (ref: VersionedRef) => Promise<ArtifactRevisionRead>;
   readonly reauthorized?: (ref: VersionedRef) => Promise<ResearchArtifactDraftReauthorizationView>;
 }): { readonly open: ReturnType<typeof createArtifactApi>['openRunArtifact']; readonly calls: Calls } {
   let author = 0;
@@ -363,7 +366,7 @@ function apiFor(behaviour: {
   const manifest: ManifestApi = {
     readResearchArtifact: (ref: VersionedRef) => {
       author += 1;
-      return behaviour.author ? behaviour.author(ref) : Promise.resolve(draft());
+      return behaviour.author ? behaviour.author(ref) : Promise.resolve(readDraft());
     },
     readReauthorizedResearchArtifact: (ref: VersionedRef) => {
       reauthorized += 1;
@@ -459,7 +462,7 @@ describe('studio openRunArtifact legacy two-tier read', () => {
     const manifest: ManifestApi = {
       readResearchArtifact: () => {
         author += 1;
-        return Promise.resolve(draft());
+        return Promise.resolve(readDraft());
       },
       readReauthorizedResearchArtifact: () => Promise.resolve(reauthorization()),
     };

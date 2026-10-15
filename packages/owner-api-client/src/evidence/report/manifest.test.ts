@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ArtifactRevision } from '@eliotr/contracts';
+import type { ArtifactRevision, ArtifactRevisionRead } from '@eliotr/contracts';
 import { createManifestApi, type ManifestPorts } from './manifest';
 
 /** Characterization of the legacy artifact manifest read and decoder, frozen before the move. */
@@ -39,6 +39,11 @@ const artifact: ArtifactRevision = {
   deterministic_export_refs: { markdown: 'export-one' },
   status: 'DRAFT',
   created_at: createdAt,
+};
+const artifactRead: ArtifactRevisionRead = {
+  ...artifact,
+  title: 'Research report',
+  sections: artifact.sections.map(section => ({ ...section, title: 'Evidence summary' })),
 };
 
 // The envelope is a typed wire shape, so the helper builds a concrete record instead of spreading an
@@ -94,9 +99,9 @@ const failureOf = async (promise: Promise<unknown>): Promise<{ code: string; sta
 
 describe('readResearchArtifact', () => {
   it('returns the artifact when the envelope identity matches', async () => {
-    const { api, calls } = harness(envelopeOf(artifact));
+    const { api, calls } = harness(envelopeOf(artifactRead));
     const result = await api.readResearchArtifact(artifactRef);
-    expect(result).toEqual(artifact);
+    expect(result).toEqual(artifactRead);
     expect(calls).toEqual([{
       path: `/api/v1/research/artifact/${artifactRef.id}%3A${artifactRef.revision}`,
       method: 'GET',
@@ -104,27 +109,34 @@ describe('readResearchArtifact', () => {
   });
 
   it('rejects an identity that does not match the requested ref', async () => {
-    const other = { ...artifact, artifact_ref: { id: 'art-other', revision: 9 } };
+    const other = { ...artifactRead, artifact_ref: { id: 'art-other', revision: 9 } };
     const { api } = harness(envelopeOf(other));
     expect(await failureOf(api.readResearchArtifact(artifactRef)))
       .toMatchObject({ code: 'RESEARCH_RUN_RESPONSE_INVALID', status: 502 });
   });
 
   it('rejects a generation change as a retryable conflict', async () => {
-    const { api } = harness(envelopeOf(artifact));
+    const { api } = harness(envelopeOf(artifactRead));
     expect(await failureOf(api.readResearchArtifact(artifactRef, { expectedDeploymentGeneration: 'dep-2' })))
       .toMatchObject({ code: 'RESEARCH_RUN_DEPLOYMENT_CHANGED', status: 409 });
   });
 
   it('rejects an envelope with an unknown field', async () => {
-    const { api } = harness(envelopeWith(artifact, { extra: 'x' }));
+    const { api } = harness(envelopeWith(artifactRead, { extra: 'x' }));
     expect(await failureOf(api.readResearchArtifact(artifactRef)))
       .toMatchObject({ code: 'RESEARCH_RUN_RESPONSE_INVALID', status: 502 });
   });
 
   it('rejects an artifact row the strict schema does not accept', async () => {
-    const broken = { ...artifact, status: 'ARCHIVED' };
+    const broken = { ...artifactRead, status: 'ARCHIVED' };
     const { api } = harness(envelopeOf(broken));
+    expect(await failureOf(api.readResearchArtifact(artifactRef)))
+      .toMatchObject({ code: 'RESEARCH_RUN_RESPONSE_INVALID', status: 502 });
+  });
+
+  it('rejects a readback that omits the real report title', async () => {
+    const { title: _title, ...missingTitle } = artifactRead;
+    const { api } = harness(envelopeOf(missingTitle));
     expect(await failureOf(api.readResearchArtifact(artifactRef)))
       .toMatchObject({ code: 'RESEARCH_RUN_RESPONSE_INVALID', status: 502 });
   });
@@ -167,6 +179,36 @@ describe('readReauthorizedResearchArtifact', () => {
     const result = await api.readReauthorizedResearchArtifact(artifactRef);
     expect(result.protocol).toBe('eliotr.artifact-draft-reauthorization.v2');
     expect(result.source_freshness.state).toBe('CURRENT_REVISIONS');
+  });
+
+  it('uses v3 for titled readbacks and keeps v1/v2 on their exact canonical shape', async () => {
+    const v3 = {
+      ...reauthorizedBase,
+      protocol: 'eliotr.artifact-draft-reauthorization.v3',
+      artifact: artifactRead,
+      source_freshness: { state: 'CURRENT_REVISIONS', checked_at: createdAt, changed_sources: [] },
+    };
+    const { api } = harness(envelopeOf(v3));
+    const result = await api.readReauthorizedResearchArtifact(artifactRef);
+    if (result.protocol !== 'eliotr.artifact-draft-reauthorization.v3') throw new Error('expected v3 title projection');
+    expect(result.artifact.title).toBe('Research report');
+    expect(result.artifact.sections[0]?.title).toBe('Evidence summary');
+
+    const wrongV2 = { ...v3, protocol: 'eliotr.artifact-draft-reauthorization.v2' };
+    const legacyApi = harness(envelopeOf(wrongV2)).api;
+    expect(await failureOf(legacyApi.readReauthorizedResearchArtifact(artifactRef)))
+      .toMatchObject({ code: 'RESEARCH_RUN_RESPONSE_INVALID', status: 502 });
+  });
+
+  it('rejects a v3 readback with missing title metadata', async () => {
+    const v3 = {
+      ...reauthorizedBase,
+      protocol: 'eliotr.artifact-draft-reauthorization.v3',
+      source_freshness: { state: 'CURRENT_REVISIONS', checked_at: createdAt, changed_sources: [] },
+    };
+    const { api } = harness(envelopeOf(v3));
+    expect(await failureOf(api.readReauthorizedResearchArtifact(artifactRef)))
+      .toMatchObject({ code: 'RESEARCH_RUN_RESPONSE_INVALID', status: 502 });
   });
 
   it('rejects v1 that carries source freshness', async () => {

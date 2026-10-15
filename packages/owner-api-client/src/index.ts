@@ -34,7 +34,7 @@ export { createWikiCreateApi } from './studio/wiki-create';
 export { createWikiPublishApi } from './studio/publish';
 export type { StudioCollaborators } from './studio/collaborators';
 export type { WikiProposalListView, WikiProposalReadView, WikiProposalBodyView, WikiProposalFromRunView, WikiPublicationView, ArtifactPublicationView, ArtifactSectionRevisionView } from './studio/wiki-types';
-export type { ArtifactRevision, VersionedRef, EvidenceHandle } from '@eliotr/contracts';
+export type { ArtifactRevision, ArtifactRevisionRead, VersionedRef, EvidenceHandle } from '@eliotr/contracts';
 export type { RawMarkdownConversionRequest, MarkdownConversionOptions } from '@eliotr/contracts';
 export * from './research/index';
 export * from './mutations/index';

@@ -3,7 +3,13 @@
 // Wire/value implementation moves here; only the transport, error and epoch seams are injected.
 // The decoder is strict about protocol, generation, identity and DRAFT status, so a caller can never
 // build an export from a manifest it did not verify.
-import { ArtifactRevisionSchema, type ArtifactRevision, type VersionedRef } from '@eliotr/contracts';
+import {
+  ArtifactRevisionReadSchema,
+  ArtifactRevisionSchema,
+  type ArtifactRevision,
+  type ArtifactRevisionRead,
+  type VersionedRef,
+} from '@eliotr/contracts';
 import type { LegacyErrorFactory, LegacyHttpAdapter } from '../../legacy/http.js';
 import type { EpochPort } from '../../transport/client.js';
 
@@ -38,16 +44,28 @@ export interface ResearchScopeAuthorizationView {
   readonly expires_at: string;
 }
 
-export interface ResearchArtifactDraftReauthorizationView {
-  readonly protocol: 'eliotr.artifact-draft-reauthorization.v1' | 'eliotr.artifact-draft-reauthorization.v2';
+interface ResearchArtifactDraftReauthorizationBase {
   readonly artifact_ref: VersionedRef;
-  readonly artifact: ArtifactRevision;
   readonly original_scope_snapshot_ref: VersionedRef;
   readonly authorization_scope_snapshot_ref: VersionedRef;
   readonly authorization: ResearchScopeAuthorizationView;
   readonly source_freshness: ResearchSourceFreshness;
   readonly deployment_generation: string;
 }
+
+export type ResearchArtifactDraftReauthorizationView =
+  | (ResearchArtifactDraftReauthorizationBase & {
+      readonly protocol: 'eliotr.artifact-draft-reauthorization.v1';
+      readonly artifact: ArtifactRevision;
+    })
+  | (ResearchArtifactDraftReauthorizationBase & {
+      readonly protocol: 'eliotr.artifact-draft-reauthorization.v2';
+      readonly artifact: ArtifactRevision;
+    })
+  | (ResearchArtifactDraftReauthorizationBase & {
+      readonly protocol: 'eliotr.artifact-draft-reauthorization.v3';
+      readonly artifact: ArtifactRevisionRead;
+    });
 
 export interface ManifestReadOptions {
   readonly expectedDeploymentGeneration?: string;
@@ -58,7 +76,7 @@ export interface ManifestApi {
   readonly readResearchArtifact: (
     artifactRef: { readonly id: string; readonly revision: number },
     options?: ManifestReadOptions,
-  ) => Promise<ArtifactRevision>;
+  ) => Promise<ArtifactRevisionRead>;
   readonly readReauthorizedResearchArtifact: (
     artifactRef: { readonly id: string; readonly revision: number },
     options?: ManifestReadOptions,
@@ -152,11 +170,19 @@ export function createManifestApi(ports: ManifestPorts): ManifestApi {
     }
   };
 
-  const artifactRevision = (value: unknown): ArtifactRevision => {
+  const artifactRevision = (value: unknown): ArtifactRevisionRead => {
+    try {
+      return ArtifactRevisionReadSchema.parse(value);
+    } catch {
+      invalid('research artifact response is invalid');
+    }
+    throw new Error('unreachable');
+  };
+  const canonicalArtifactRevision = (value: unknown): ArtifactRevision => {
     try {
       return ArtifactRevisionSchema.parse(value);
     } catch {
-      invalid('research artifact response is invalid');
+      invalid('artifact reauthorization response is invalid');
     }
     throw new Error('unreachable');
   };
@@ -228,10 +254,11 @@ export function createManifestApi(ports: ManifestPorts): ManifestApi {
       'authorization_scope_snapshot_ref', 'authorization', 'deployment_generation',
     ], ['source_freshness']);
     if (data.protocol !== 'eliotr.artifact-draft-reauthorization.v1' &&
-        data.protocol !== 'eliotr.artifact-draft-reauthorization.v2') {
+        data.protocol !== 'eliotr.artifact-draft-reauthorization.v2' &&
+        data.protocol !== 'eliotr.artifact-draft-reauthorization.v3') {
       invalid('artifact reauthorization protocol is invalid');
     }
-    const freshness = data.protocol === 'eliotr.artifact-draft-reauthorization.v2'
+    const freshness = data.protocol !== 'eliotr.artifact-draft-reauthorization.v1'
       ? sourceFreshness(data.source_freshness)
       : Object.hasOwn(data, 'source_freshness')
         ? invalid('v1 artifact reauthorization cannot include source freshness')
@@ -242,14 +269,13 @@ export function createManifestApi(ports: ManifestPorts): ManifestApi {
     if (!sameRef(artifactRef, expectedArtifact)) {
       invalid('artifact reauthorization identity does not match the request');
     }
-    const artifact = artifactRevision(data.artifact);
+    const isReadbackV3 = data.protocol === 'eliotr.artifact-draft-reauthorization.v3';
+    const artifact = isReadbackV3 ? artifactRevision(data.artifact) : canonicalArtifactRevision(data.artifact);
     if (!sameRef(artifact.artifact_ref, artifactRef) || artifact.status !== 'DRAFT') {
       invalid('artifact reauthorization returned an invalid draft');
     }
-    return {
-      protocol: data.protocol as ResearchArtifactDraftReauthorizationView['protocol'],
+    const common = {
       artifact_ref: artifactRef,
-      artifact,
       original_scope_snapshot_ref: versionedRef(data.original_scope_snapshot_ref, 'original_scope_snapshot_ref'),
       authorization_scope_snapshot_ref: versionedRef(
         data.authorization_scope_snapshot_ref, 'authorization_scope_snapshot_ref'),
@@ -257,12 +283,15 @@ export function createManifestApi(ports: ManifestPorts): ManifestApi {
       source_freshness: freshness,
       deployment_generation: generation,
     };
+    return isReadbackV3
+      ? { ...common, protocol: 'eliotr.artifact-draft-reauthorization.v3', artifact: artifact as ArtifactRevisionRead }
+      : { ...common, protocol: data.protocol as 'eliotr.artifact-draft-reauthorization.v1' | 'eliotr.artifact-draft-reauthorization.v2', artifact: artifact as ArtifactRevision };
   };
 
   const readResearchArtifact = async (
     artifactRef: { readonly id: string; readonly revision: number },
     options: ManifestReadOptions = {},
-  ): Promise<ArtifactRevision> => {
+  ): Promise<ArtifactRevisionRead> => {
     const ref = versionedRef(artifactRef, 'artifact_ref');
     const capture = epoch.capture();
     // Preflight fence. A session that is already closed must never reach the network at all.

@@ -210,6 +210,22 @@
   font-variant-numeric: var(--eliot-type-numerals);
 }
 .er-live-history span { color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
+.er-live-history .er-live-history-question {
+  flex: 1 0 100%;
+  min-inline-size: 0;
+  margin: 0;
+  color: var(--md-sys-color-on-surface);
+  font-size: var(--eliot-type-body-large-size);
+  line-height: var(--eliot-type-body-large-line-height);
+  overflow-wrap: anywhere;
+}
+.er-live-report-part-heading {
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-title-small-size);
+  line-height: var(--eliot-type-title-small-line-height);
+  margin-block-end: var(--eliot-space-panel);
+  overflow-wrap: anywhere;
+}
 /* Each run says where it stands in one small tonal label beside its time. */
 .er-live-history .er-live-history-state {
   padding: var(--eliot-space-hairline) var(--eliot-space-block-control);

@@ -7,6 +7,7 @@ import type { BoundWorkspaceApis } from "./runtime";
 import { protectedQueryKey, runProtectedRead } from "../query/client";
 import { serviceModelSettingsQueryOptions, configureGlobalModelProviderOnce, readGlobalModelProviderOperation,
   GlobalModelSettingsClosedError, GlobalModelProviderRefusedError } from "../query/globalModelSettings";
+import "./model-settings.css";
 
 const copy = {
   en: { title: "Settings", intro: "Provider connections apply throughout Eliot Research.", cloudflare: "Cloudflare",
@@ -126,10 +127,10 @@ export function SettingsPanel({ locale, apis, privacy, context }: { readonly loc
 
   const canConnect = privacy.isCurrent(context) && data?.external.management_available === true && data.external.state === "ready" &&
     !busy && heldOperation === undefined;
-  return <section aria-labelledby={`${id}-title`}>
-    <h2 id={`${id}-title`}>{text.title}</h2><p>{text.intro}</p>
-    <section aria-labelledby={`${id}-cloudflare`}>
-      <h3 id={`${id}-cloudflare`}>{text.cloudflare}</h3><p>{text.builtin}</p><p>{text.indexing}</p>
+  return <section className="er-model-settings" aria-label={text.title}>
+    <p>{text.intro}</p>
+    <section className="er-model-settings__section" aria-labelledby={`${id}-cloudflare`}>
+      <h2 id={`${id}-cloudflare`}>{text.cloudflare}</h2><p className="er-model-settings__builtin">{text.builtin}</p><p>{text.indexing}</p>
       {data && <p>{text.defaultModel}: <code>{data.cloudflare.default_model_id}</code></p>}
       {data && !data.cloudflare.binding_available && <Status tone="error">{text.bindingMissing}</Status>}
       {settings.isPending && <Status announce>{text.reading}</Status>}
@@ -140,8 +141,8 @@ export function SettingsPanel({ locale, apis, privacy, context }: { readonly loc
         {catalog.data && <ul>{catalog.data.models.map(model => <li key={model.model_id}>{model.name} · <code>{model.model_id}</code></li>)}</ul>}
       </details>
     </section>
-    <section aria-labelledby={`${id}-external`}>
-      <h3 id={`${id}-external`}>{text.external}</h3>
+    <section className="er-model-settings__section" aria-labelledby={`${id}-external`}>
+      <h2 id={`${id}-external`}>{text.external}</h2>
       {data && (!data.external.management_available || data.external.state === "unavailable") && <Status>{text.unavailable}</Status>}
       {data?.external.truncated && <p>{text.truncated}</p>}
       {data?.external.state === "ready" && data.external.connections.length === 0 && <p>{text.noConnections}</p>}

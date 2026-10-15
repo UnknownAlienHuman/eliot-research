@@ -67,6 +67,18 @@ export const ArtifactRevisionSchema = z.object({
 }).strict();
 export type ArtifactRevision = z.infer<typeof ArtifactRevisionSchema>;
 
+/**
+ * Readback-only projection of a report manifest. The canonical stored revision
+ * stays unchanged; titles come from the already verified ArtifactSpec manifest.
+ */
+export const ArtifactRevisionReadSchema = ArtifactRevisionSchema.extend({
+  title: z.string().min(1),
+  sections: z.array(ArtifactSectionRevisionSchema.extend({
+    title: z.string().min(1),
+  }).strict()),
+}).strict();
+export type ArtifactRevisionRead = z.infer<typeof ArtifactRevisionReadSchema>;
+
 export const WikiPageTypeSchema = z.enum([
   "Project", "Topic", "Source", "Method", "Hypothesis", "Comparison", "Audit", "Contradiction",
   "Timeline", "Report", "FailedPath", "OpenQuestion", "Glossary",

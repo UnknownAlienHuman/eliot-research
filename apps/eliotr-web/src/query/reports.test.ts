@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { ArtifactRevision, ArtifactSectionResponse, ResearchArtifactDraftReauthorizationView,
+import type { ArtifactRevisionRead, ArtifactSectionResponse, ResearchArtifactDraftReauthorizationView,
   ReauthorizedSectionCitationsView, VerifiedEvidence } from '@eliotr/owner-api-client';
 import { createPrivacyController } from '../app/privacy';
 import { createWorkspaceRuntime } from '../app/runtime';
@@ -7,16 +7,16 @@ import { createWorkspaceQueryClient } from './client';
 import { reportQueryOptions } from './reports';
 
 const stamp = '2026-10-09T12:00:00.000Z', digest = 'a'.repeat(64);
-const section = { section_ref: { id: 'section-1', revision: 1 }, contract_id: 'summary',
+const section = { section_ref: { id: 'section-1', revision: 1 }, contract_id: 'summary', title: 'Evidence summary',
   body_object_ref: 'body-1', body_sha256: digest, statement_labels: {},
   evidence_ledger_ref: 'ledger', verification_receipt_ref: 'verified-section' };
-const artifact: ArtifactRevision = { artifact_ref: { id: 'report', revision: 1 },
+const artifact: ArtifactRevisionRead = { artifact_ref: { id: 'report', revision: 1 }, title: 'Research report',
   spec_ref: { id: 'spec', revision: 1 }, spec_digest: digest, evidence_freeze_ref: { id: 'freeze', revision: 1 },
   sections: [section], dependency_manifest_ref: 'dependencies', deterministic_export_refs: {}, status: 'DRAFT', created_at: stamp };
 const savedScope = { id: 'saved-scope', revision: 1 };
 const grant = { authorization_receipt_ref: 'grant-1', policy_authority_ref: 'policy',
   allowed_use: ['research'], disclosure_ceiling: 'PRIVATE', expires_at: '2027-01-01T00:00:00.000Z' };
-const view: ResearchArtifactDraftReauthorizationView = { protocol: 'eliotr.artifact-draft-reauthorization.v2',
+const view: ResearchArtifactDraftReauthorizationView = { protocol: 'eliotr.artifact-draft-reauthorization.v3',
   artifact_ref: artifact.artifact_ref, artifact, original_scope_snapshot_ref: savedScope,
   authorization_scope_snapshot_ref: { id: 'scope-grant-1', revision: 1 }, authorization: grant,
   source_freshness: { state: 'UNKNOWN', changed_sources: [] }, deployment_generation: 'deployment' };

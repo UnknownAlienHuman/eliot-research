@@ -20,6 +20,7 @@ const bodyBytes = new TextEncoder().encode(body);
 
 const declared: DeclaredSection = {
   section_ref: sectionRef,
+  title: 'Evidence summary',
   body_object_ref: objectRef,
   body_sha256: digest,
 };

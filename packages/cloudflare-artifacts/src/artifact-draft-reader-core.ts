@@ -1,9 +1,12 @@
 import {
   OperationIntentSchema,
   ObjectResidencyKeySchema,
+  ArtifactRevisionReadSchema,
   ScopeSnapshotSchema,
   VersionedRefSchema,
   type ArtifactRevision,
+  type ArtifactRevisionRead,
+  type ArtifactSpec,
   type ObjectResidencyKey,
   type OperationIntent,
   type ScopeSnapshot,
@@ -77,6 +80,28 @@ function optionalPositive(value: unknown, label: string): number | null {
   return positive(value, label);
 }
 
+/**
+ * Add only readback metadata from the verified immutable ArtifactSpec. The
+ * persisted ArtifactRevision and its digest remain the canonical stored shape.
+ */
+function readbackArtifactRevision(spec: ArtifactSpec, revision: ArtifactRevision): ArtifactRevisionRead {
+  const contracts = new Map(spec.section_contracts.map((contract) => [contract.section_id, contract]));
+  if (contracts.size !== spec.section_contracts.length) {
+    fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft section contracts are duplicated");
+  }
+  return ArtifactRevisionReadSchema.parse({
+    ...revision,
+    title: spec.title,
+    sections: revision.sections.map((section) => {
+      const contract = contracts.get(section.contract_id);
+      if (contract === undefined) {
+        fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "draft section contract is missing");
+      }
+      return { ...section, title: contract.title };
+    }),
+  });
+}
+
 export function mapAuthorityFailure(error: unknown): never {
   if (error instanceof ArtifactDraftReadError) throw error;
   const code = typeof error === "object" && error !== null && "code" in error ? (error as { readonly code?: unknown }).code : undefined;
@@ -142,7 +167,7 @@ type ArtifactDraftCoreInput =
   | ArtifactDraftReauthorizationCoreInput
   | ArtifactDraftReauthorizationSectionReadInput;
 
-type ArtifactDraftCoreValue = ArtifactRevision | ArtifactDraftSectionRead | ArtifactDraftSectionCitationsRead | ArtifactDraftCowSnapshot;
+type ArtifactDraftCoreValue = ArtifactRevisionRead | ArtifactDraftSectionRead | ArtifactDraftSectionCitationsRead | ArtifactDraftCowSnapshot;
 
 async function readArtifactDraftCore(
   input: ArtifactDraftCoreInput,
@@ -572,5 +597,5 @@ async function readArtifactDraftCore(
       manifest_residency: ObjectResidencyKeySchema.parse(manifestObject.residency),
     });
   }
-  return wrapResult(parsedManifest.revision);
+  return wrapResult(readbackArtifactRevision(parsedManifest.spec, parsedManifest.revision));
 }

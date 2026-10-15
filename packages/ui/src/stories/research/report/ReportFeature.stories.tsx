@@ -19,9 +19,10 @@ type Story = StoryObj<typeof meta>;
 
 const ARTIFACT_REF = { id: "report-1", revision: 3 };
 
-function section(id: string, objectRef: string): DeclaredSection {
+function section(id: string, objectRef: string, title: string): DeclaredSection {
   return {
     section_ref: { id, revision: 1 },
+    title,
     body_object_ref: objectRef,
     body_sha256: "0".repeat(64),
   };
@@ -38,8 +39,8 @@ function readBack(row: DeclaredSection): ArtifactSectionResponse {
   };
 }
 
-const DECLARED_A = section("sec-1", "sections/overview.md");
-const DECLARED_B = section("sec-2", "sections/claims.md");
+const DECLARED_A = section("sec-1", "sections/overview.md", "Evidence scope and baseline");
+const DECLARED_B = section("sec-2", "sections/claims.md", "Claims supported by source versions");
 function manifestFor(declared: readonly DeclaredSection[]) {
   return {
     artifact_ref: ARTIFACT_REF,
@@ -105,6 +106,7 @@ const RU_LONG_SECTIONS: readonly ReportSectionRow[] = [
     section: section(
       "sec-long-1",
       "sections/очень-длинный-идентификатор-тела-раздела-для-проверки-переноса-0001.json",
+      "Сопоставление редакций источников и сохранение подтверждённых фактов",
     ),
     read: undefined,
   },
@@ -112,6 +114,7 @@ const RU_LONG_SECTIONS: readonly ReportSectionRow[] = [
     section: section(
       "sec-long-2",
       "sections/ещё-один-очень-длинный-идентификатор-тела-раздела-для-проверки-переноса-0002.json",
+      "Ограничения доказательств и неразрешённые вопросы исследования",
     ),
     read: undefined,
   },
@@ -180,15 +183,15 @@ export const CompleteAfterReadback: Story = {
   render: () => <CompleteReportHarness />,
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const readName = (ordinal: number) => `${REPORT_COPY.en.readSection} · ${REPORT_COPY.en.sectionOrdinal(ordinal)}`;
-    const unreadButtons = () => [1, 2].flatMap((ordinal) => canvas.queryAllByRole("button", { name: readName(ordinal) }));
+    const readName = (title: string) => `${REPORT_COPY.en.readSection} · ${title}`;
+    const unreadButtons = () => [DECLARED_A, DECLARED_B].flatMap(row => canvas.queryAllByRole("button", { name: readName(row.title) }));
     readSpy.mockClear(); exportSpy.mockClear();
     await expect(canvas.getByRole("button", { name: "Export report" })).toBeDisabled();
-    const first = canvas.getByRole("button", { name: readName(1) });
+    const first = canvas.getByRole("button", { name: readName(DECLARED_A.title) });
     if (!first) throw new globalThis.Error("First declared section is missing");
     await userEvent.click(first);
     await waitFor(() => expect(unreadButtons().length).toBe(1));
-    const second = canvas.getByRole("button", { name: readName(2) });
+    const second = canvas.getByRole("button", { name: readName(DECLARED_B.title) });
     if (!second) throw new globalThis.Error("Second declared section is missing");
     await userEvent.click(second);
     await waitFor(() => expect(unreadButtons().length).toBe(0));
@@ -258,7 +261,7 @@ function SectionActionsTargetHarness({ locale }: Pick<ReportFeatureProps, "local
   </>;
 }
 
-/** Visible ordinal labels select the exact declared section for both Read and Open. */
+/** Real section titles identify the exact declared section for both Read and Open. */
 export const SectionActionsIdentifyExactTarget: Story = {
   args: buildProps({
     manifest: manifestFor(SECTION_ACTION_ROWS.map((row) => row.section)),
@@ -272,11 +275,14 @@ export const SectionActionsIdentifyExactTarget: Story = {
     const canvas = within(canvasElement);
     const copy = REPORT_COPY[args.locale];
     const report = within(canvas.getByRole("region", { name: copy.title }));
-    const readName = (ordinal: number) => `${copy.readSection} · ${copy.sectionOrdinal(ordinal)}`;
+    const targetTitle = DECLARED_B.title;
+    const otherTitles = SECTION_ACTION_ROWS.filter(row => row.section.title !== targetTitle).map(row => row.section.title);
+    const readName = (title: string) => `${copy.readSection} · ${title}`;
     await expect(report.getByText(copy.sectionsCount(3))).toBeVisible();
-    const second = report.getByRole("button", { name: readName(2) });
+    await expect(report.getByText("Research report draft")).toBeVisible();
+    const second = report.getByRole("button", { name: readName(targetTitle) });
     await expect(second).toBeVisible();
-    await expect(second).toHaveTextContent(copy.sectionOrdinal(2));
+    await expect(second).toHaveTextContent(targetTitle);
     await expect(second).toBeEnabled();
     await expect(sectionActionReadSpy).not.toHaveBeenCalled();
 
@@ -284,11 +290,11 @@ export const SectionActionsIdentifyExactTarget: Story = {
     await expect(second).toHaveFocus();
     await userEvent.keyboard("{Enter}");
     const readingSecond = await report.findByRole("button", {
-      name: `${copy.readingSection} · ${copy.sectionOrdinal(2)}`,
+      name: `${copy.readingSection} · ${targetTitle}`,
     });
     await expect(readingSecond).toBeDisabled();
-    for (const ordinal of [1, 3]) {
-      await expect(report.getByRole("button", { name: readName(ordinal) })).toBeEnabled();
+    for (const title of otherTitles) {
+      await expect(report.getByRole("button", { name: readName(title) })).toBeEnabled();
     }
     await expect(sectionActionReadSpy.mock.calls).toEqual([[DECLARED_B]]);
     await expect(report.getByRole("button", { name: copy.export })).toBeDisabled();
@@ -297,14 +303,14 @@ export const SectionActionsIdentifyExactTarget: Story = {
       name: "Fixture: supply second-section readback",
     }));
     const openSecond = await report.findByRole("button", {
-      name: `${copy.openSection} · ${copy.sectionOrdinal(2)}`,
+      name: `${copy.openSection} · ${targetTitle}`,
     });
     await expect(openSecond).toBeVisible();
-    await expect(openSecond).toHaveTextContent(copy.sectionOrdinal(2));
+    await expect(openSecond).toHaveTextContent(targetTitle);
     await expect(openSecond).toBeEnabled();
     await expect(sectionActionReadSpy.mock.calls).toEqual([[DECLARED_B]]);
-    for (const ordinal of [1, 3]) {
-      await expect(report.getByRole("button", { name: readName(ordinal) })).toBeEnabled();
+    for (const title of otherTitles) {
+      await expect(report.getByRole("button", { name: readName(title) })).toBeEnabled();
     }
     await expect(report.getByRole("button", { name: copy.export })).toBeDisabled();
 

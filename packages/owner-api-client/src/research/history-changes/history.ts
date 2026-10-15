@@ -1,4 +1,8 @@
-import { ResearchRunHistoryVisibilitySchema, type ResearchRunHistoryVisibility } from "@eliotr/contracts";
+import {
+  ResearchRunHistoryQuerySchema,
+  ResearchRunHistoryVisibilitySchema,
+  type ResearchRunHistoryVisibility,
+} from "@eliotr/contracts";
 // C3-RH run history: moved mechanically from packages/pwa-research-workspace/src/research-run-api.ts.
 // Envelope, record, generation and identifier policy come from the accepted shared research-run wire.
 // The nested run status is the injected RR decoder, so history never carries a second copy of it.
@@ -25,11 +29,13 @@ export interface ResearchRunSavedDraft {
 
 export interface ResearchRunHistoryEntry {
   readonly created_at: string;
+  /** Omitted for historical runs without a matching ledger row; never synthesized. */
+  readonly query?: string;
   readonly status: ResearchRunStatusView;
 }
 
 export interface ResearchRunHistoryView {
-  readonly protocol: "eliotr.research-runs.v1" | "eliotr.research-runs.v2" | "eliotr.research-runs.v3" | "eliotr.research-runs.v4";
+  readonly protocol: "eliotr.research-runs.v1" | "eliotr.research-runs.v2" | "eliotr.research-runs.v3" | "eliotr.research-runs.v4" | "eliotr.research-runs.v5";
   readonly visibility_scan?: ResearchRunHistoryVisibility;
   readonly runs: readonly ResearchRunHistoryEntry[];
   readonly saved_drafts: readonly ResearchRunSavedDraft[];
@@ -84,11 +90,12 @@ export function createRunHistoryDecoder(
       ["protocol", "runs", "configuration_state", "checked_at"], ["saved_drafts", "visibility_scan"]);
     const protocol: ResearchRunHistoryView["protocol"] = data.protocol as ResearchRunHistoryView["protocol"];
     if (protocol !== "eliotr.research-runs.v1" && protocol !== "eliotr.research-runs.v2" &&
-        protocol !== "eliotr.research-runs.v3" && protocol !== "eliotr.research-runs.v4") {
+        protocol !== "eliotr.research-runs.v3" && protocol !== "eliotr.research-runs.v4" &&
+        protocol !== "eliotr.research-runs.v5") {
       wire.invalid("research run history protocol is invalid");
     }
     let visibilityScan: ResearchRunHistoryVisibility | undefined;
-    if (protocol === "eliotr.research-runs.v4") {
+    if (protocol === "eliotr.research-runs.v4" || protocol === "eliotr.research-runs.v5") {
       const result = ResearchRunHistoryVisibilitySchema.safeParse(data.visibility_scan);
       if (!result.success) wire.invalid("research run visibility scan is invalid");
       visibilityScan = result.data;
@@ -104,15 +111,22 @@ export function createRunHistoryDecoder(
     if (!Array.isArray(data.runs) || (data.runs as unknown[]).length > MAX_RUNS) wire.invalid("research run history is invalid");
     const seen = new Set<string>();
     const runEntries = (data.runs as unknown[]).map((value: unknown, index: number) => {
-      const entry = wire.record(value, ["created_at", "status"]);
+      const entry = wire.record(value, ["created_at", "status"],
+        protocol === "eliotr.research-runs.v5" ? ["query"] : []);
       const createdAt = wire.isoTimestamp(entry.created_at, `runs[${index}].created_at`);
+      let query: string | undefined;
+      if (protocol === "eliotr.research-runs.v5" && Object.hasOwn(entry, "query")) {
+        const parsedQuery = ResearchRunHistoryQuerySchema.safeParse(entry.query);
+        if (!parsedQuery.success) wire.invalid(`runs[${index}].query is invalid`);
+        query = parsedQuery.data;
+      }
       const status = decodeStatus(
         { data: entry.status, trace_id: "research-history", deployment_generation: parsed.deployment_generation },
         parsed.deployment_generation,
       );
       if (seen.has(status.workflow_instance_id)) wire.invalid("research run history contains a duplicate run");
       seen.add(status.workflow_instance_id);
-      return { created_at: createdAt, status };
+      return { created_at: createdAt, ...(query === undefined ? {} : { query }), status };
     });
     const savedDrafts: DraftEntry[] = [];
     if (Object.hasOwn(data, "saved_drafts")) {
@@ -134,7 +148,7 @@ export function createRunHistoryDecoder(
           ...(workflowInstanceId === undefined ? {} : { workflow_instance_id: workflowInstanceId }) });
       });
     }
-    if ((protocol === "eliotr.research-runs.v2" || protocol === "eliotr.research-runs.v3" || protocol === "eliotr.research-runs.v4") &&
+    if ((protocol === "eliotr.research-runs.v2" || protocol === "eliotr.research-runs.v3" || protocol === "eliotr.research-runs.v4" || protocol === "eliotr.research-runs.v5") &&
         !Object.hasOwn(data, "saved_drafts")) {
       wire.invalid("research run history is missing saved drafts");
     }

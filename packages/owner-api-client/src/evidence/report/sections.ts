@@ -18,6 +18,7 @@ const DECIMAL = /^(0|[1-9][0-9]*)$/u;
 /** A declared section row, the only manifest facts this module is allowed to compare against. */
 export interface DeclaredSection {
   readonly section_ref: VersionedRef;
+  readonly title: string;
   readonly body_object_ref: string;
   readonly body_sha256: string;
 }

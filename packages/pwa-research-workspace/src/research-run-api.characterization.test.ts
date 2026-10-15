@@ -136,6 +136,15 @@ describe("C0.3 draft reauthorization identity", () => {
       decodeResearchArtifactDraftReauthorization(raw, expected as { readonly id: string; readonly revision: number }, generationValue);
     expect(decode({ data: draft, trace_id: "trace-1", deployment_generation: generation }, artifactRef, generation))
       .toMatchObject({ artifact_ref: artifactRef });
+    const titledArtifact = { ...artifact, title: "Research report", sections: artifact.sections.map(section => ({
+      ...section, title: "Evidence summary",
+    })) };
+    const v3 = { ...draft, protocol: "eliotr.artifact-draft-reauthorization.v3", artifact: titledArtifact };
+    expect(decode({ data: v3, trace_id: "trace-1", deployment_generation: generation }, artifactRef, generation))
+      .toMatchObject({ protocol: "eliotr.artifact-draft-reauthorization.v3", artifact: titledArtifact });
+    const titledV2 = { ...v3, protocol: "eliotr.artifact-draft-reauthorization.v2" };
+    expect(() => decode({ data: titledV2, trace_id: "trace-1", deployment_generation: generation }, artifactRef, generation))
+      .toThrow(ApiRequestError);
     const drifted = { ...draft, artifact_ref: { id: "artifact-report-2", revision: 1 } };
     expect(() => decode({ data: drifted, trace_id: "trace-1", deployment_generation: generation }, artifactRef, generation))
       .toThrow(ApiRequestError);

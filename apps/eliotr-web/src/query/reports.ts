@@ -15,7 +15,7 @@
 
 import type { QueryFunction } from "@tanstack/react-query";
 import type {
-  ArtifactRevision,
+  ArtifactRevisionRead,
   CitedEvidence,
   DeclaredSection,
   EvidenceBytesApi,
@@ -50,7 +50,7 @@ const refKey = (ref: VersionedRef): string => `${ref.id}:${ref.revision}`;
 const sameRef = (left: VersionedRef, right: VersionedRef): boolean =>
   left.id === right.id && left.revision === right.revision;
 
-const sameSection = (declared: DeclaredSection, artifact: ArtifactRevision): boolean => {
+const sameSection = (declared: DeclaredSection, artifact: ArtifactRevisionRead): boolean => {
   const row = artifact.sections.find(section => sameRef(section.section_ref, declared.section_ref));
   return row !== undefined && row.body_object_ref === declared.body_object_ref && row.body_sha256 === declared.body_sha256;
 };
@@ -59,14 +59,14 @@ export function reportQueryOptions(
   apis: BoundWorkspaceApis,
   privacy: PrivacyController,
   context: SessionContext,
-  currentManifest: () => ArtifactRevision | undefined,
+  currentManifest: () => ArtifactRevisionRead | undefined,
 ) {
   const { manifest: manifestApi, sections: sectionApi, citations: citationApi, reauthorization, bytes } = apis.evidence;
   const generation = context.deploymentGeneration;
   const key = protectedQueryKey(context, "reports");
 
   /** Reference equality, not value equality, so a refetched twin is refused as stale. */
-  const current = (artifact: ArtifactRevision): void => {
+  const current = (artifact: ArtifactRevisionRead): void => {
     if (currentManifest() !== artifact) throw new Error("Artifact manifest is no longer the current manifest");
   };
 
@@ -80,7 +80,7 @@ export function reportQueryOptions(
 
   function artifactScoped<T>(
     mode: string,
-    artifact: ArtifactRevision,
+    artifact: ArtifactRevisionRead,
     parts: readonly (string | number)[],
     read: (signal: AbortSignal) => Promise<T>,
   ): ReadQuery<T> {
@@ -107,7 +107,7 @@ export function reportQueryOptions(
         manifestApi.readReauthorizedResearchArtifact(artifactRef, { expectedDeploymentGeneration: generation, signal }));
     },
 
-    section(artifact: ArtifactRevision, declared: DeclaredSection): ReadQuery<SectionResponse> {
+    section(artifact: ArtifactRevisionRead, declared: DeclaredSection): ReadQuery<SectionResponse> {
       if (!sameSection(declared, artifact)) throw new Error("Declared section is not part of this artifact");
       return artifactScoped("author", artifact, [
         "section", refKey(declared.section_ref), declared.body_object_ref, declared.body_sha256,
@@ -116,7 +116,7 @@ export function reportQueryOptions(
       }));
     },
 
-    citations(artifact: ArtifactRevision, declared: DeclaredSection): ReadQuery<SectionCitationsView> {
+    citations(artifact: ArtifactRevisionRead, declared: DeclaredSection): ReadQuery<SectionCitationsView> {
       if (!sameSection(declared, artifact)) throw new Error("Declared section is not part of this artifact");
       return artifactScoped("author", artifact, [
         "citations", refKey(declared.section_ref), declared.body_object_ref, declared.body_sha256,
@@ -138,6 +138,9 @@ export function reportQueryOptions(
       view: ResearchArtifactDraftReauthorizationView,
       declared: DeclaredSection,
     ): ReadQuery<SectionResponse> {
+      if (view.protocol !== 'eliotr.artifact-draft-reauthorization.v3') {
+        throw new Error("Reauthorized report response has no readback titles");
+      }
       const artifact = view.artifact;
       if (!sameSection(declared, artifact)) throw new Error("Declared section is not part of this artifact");
       return artifactScoped("reauthorized", artifact, [
@@ -162,6 +165,9 @@ export function reportQueryOptions(
       view: ResearchArtifactDraftReauthorizationView,
       declared: DeclaredSection,
     ): ReadQuery<ReauthorizedCitations> {
+      if (view.protocol !== 'eliotr.artifact-draft-reauthorization.v3') {
+        throw new Error("Reauthorized report response has no readback titles");
+      }
       const artifact = view.artifact;
       if (!sameSection(declared, artifact)) throw new Error("Declared section is not part of this artifact");
       const receipt = artifact.sections.find(section => sameRef(section.section_ref, declared.section_ref))

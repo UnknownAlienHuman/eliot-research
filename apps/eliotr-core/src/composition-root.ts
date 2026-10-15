@@ -13,7 +13,7 @@ import { createResearchChangesService } from "./research-changes.js";
 import { reconcileExpiredOutboxLeases } from "./outbox-reconciler.js";
 import { createD1ScopeService, createOrientationApi, createOwnerScopeAuthority, ORIENTATION_PROFILE, OrientationError } from "@eliotr/cloudflare-navigation";
 import { createNavigationExpandService } from "@eliotr/cloudflare-navigation";
-import { ArtifactRevisionSchema, type ScopeSnapshot, type VersionedRef } from "@eliotr/contracts";
+import { ArtifactRevisionReadSchema, type ScopeSnapshot, type VersionedRef } from "@eliotr/contracts";
 import type {
   ApplicationLifecycle,
   AuthenticatedRequestContext,
@@ -129,10 +129,10 @@ function semanticApi(env: Env): SemanticApi {
     verify: (context, request) => evidence.verify(context, request),
     run: (context, request) => researchRun.run(context, request),
     artifact: async (context, artifactRef) => {
-      if (context.client_class !== "owner_pwa") return ArtifactRevisionSchema.parse((await reopenOwnerArtifactDraft(env, context, artifactRef)).artifact);
+      if (context.client_class !== "owner_pwa") return ArtifactRevisionReadSchema.parse((await reopenOwnerArtifactDraft(env, context, artifactRef)).artifact);
       const revision = await readArtifactDraft(artifactInput(context, artifactRef));
       if (revision === null) throw new ArtifactReadNotFoundError();
-      return revision;
+      return ArtifactRevisionReadSchema.parse(revision);
     },
     artifactSection: async (context, artifactRef, sectionRef) => {
       if (context.client_class !== "owner_pwa") return reopenOwnerArtifactSection(env, context, artifactRef, sectionRef);

@@ -208,6 +208,7 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
           {history.isError ? <Status>{text.unavailable}</Status> : history.data?.runs.length === 0 && history.data.saved_drafts.length === 0 ? <p>{text.noRuns}</p> : null}
           <ul>{!history.isError && history.data?.runs.map(entry => <li key={entry.status.workflow_instance_id}>
             <time dateTime={entry.created_at}>{displayTime(entry.created_at)}</time>
+            {entry.query !== undefined && <p className="er-live-history-question">{entry.query}</p>}
             <span className="er-live-history-state" data-status={entry.status.engine_status}>{researchEngineLabel(locale, entry.status.engine_status)}</span>
             <Button variant="text" disabled={saved?.intent !== undefined} onClick={() => {
               const observed = entry.status; write(old => ({ ...old, observedLaunch: { workflow_instance_id: observed.workflow_instance_id, investigation_ref: observed.investigation_ref, deployment_generation: observed.deployment_generation } }));

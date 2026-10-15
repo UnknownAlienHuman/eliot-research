@@ -6,7 +6,7 @@ function markVisualReady(shell: HTMLElement | null | undefined): void {
 import { useEffect, useState } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { MemoryRouter } from 'react-router';
-import type { ArtifactRevision, ResearchRunStatusView } from '@eliotr/owner-api-client';
+import type { ArtifactRevisionRead, ResearchRunStatusView } from '@eliotr/owner-api-client';
 import { Shell } from './Shell';
 import { paneAnnouncement, announcementUntil, unchangedChannel } from './announcementAssertions';
 import { createWorkspaceRuntime } from './runtime';
@@ -15,6 +15,7 @@ import { clearWorkspaceQueries, createWorkspaceQueryClient, protectedQueryKey } 
 import { materialSources, materialReading, materialSections } from './materialReviewData';
 
 const stamp = '2026-10-09T12:00:00.000Z', generation = 'research-fixture';
+const historyQuestion = 'How do the saved source revisions change this evidence?';
 const artifactRef = { id: 'report-fixture', revision: 1 }, scopeRef = { id: 'scope-fixture', revision: 1 }, handleRef = { id: 'handle-fixture', revision: 1 };
 const excerpt = 'The saved question keeps its original source scope.';
 const encode = (value: string) => new TextEncoder().encode(value);
@@ -41,15 +42,20 @@ export function ResearchPreview({ designReview = false, historyState, onProbe }:
     let admissionPosts = 0, cancellations = 0, otherMutations = 0;
     let originalBody: string | undefined, originalKey: string | undefined;
     const sectionTexts = designReview ? materialSections : Array.from({ length: 40 }, (_, index) => `## Section ${index + 1}\n\nA saved draft keeps the question and its evidence together.\n`);
+    const sectionTitles = sectionTexts.map(value => /^## ([^\r\n]+)/u.exec(value)?.[1] ?? '');
     const sourceRows = (designReview ? [...materialSources] : [{ id: 'source-fixture', title: 'How source versions preserve evidence' }]).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
     const readingHash = digest(encode(materialReading));
-    const readyManifest: Promise<ArtifactRevision> = Promise.all(sectionTexts.map(text => digest(encode(text)))).then(hashes => ({
+    const readyManifest: Promise<ArtifactRevisionRead> = Promise.all(sectionTexts.map(text => digest(encode(text)))).then(hashes => ({
       artifact_ref: artifactRef, spec_ref: { id: 'spec-fixture', revision: 1 }, spec_digest: 'a'.repeat(64),
-      evidence_freeze_ref: { id: 'freeze-fixture', revision: 1 }, sections: hashes.map((hash, index) => ({
-        section_ref: { id: `section-${index + 1}`, revision: 1 }, contract_id: `contract-${index + 1}`,
-        body_object_ref: `body-${index + 1}`, body_sha256: hash, statement_labels: {},
-        evidence_ledger_ref: 'ledger-fixture', verification_receipt_ref: 'verification-section',
-      })), dependency_manifest_ref: 'dependencies-fixture', deterministic_export_refs: {}, status: 'DRAFT', created_at: stamp,
+      evidence_freeze_ref: { id: 'freeze-fixture', revision: 1 }, title: 'Research findings', sections: hashes.map((hash, index) => {
+        const title = sectionTitles[index];
+        if (title === undefined || title.length === 0) throw new Error(`Report section ${index + 1} has no fixture title`);
+        return {
+          section_ref: { id: `section-${index + 1}`, revision: 1 }, contract_id: `contract-${index + 1}`, title,
+          body_object_ref: `body-${index + 1}`, body_sha256: hash, statement_labels: {},
+          evidence_ledger_ref: 'ledger-fixture', verification_receipt_ref: 'verification-section',
+        };
+      }), dependency_manifest_ref: 'dependencies-fixture', deterministic_export_refs: {}, status: 'DRAFT', created_at: stamp,
     }));
     const excerptHash = digest(encode(excerpt));
     const json = (data: unknown) => new Response(JSON.stringify({ data, trace_id: 'research-trace', deployment_generation: generation }), { headers: { 'content-type': 'application/json' } });
@@ -89,8 +95,8 @@ export function ResearchPreview({ designReview = false, historyState, onProbe }:
       if (designReview && url.pathname.endsWith('/model-provider-key')) return json({ protocol: 'eliotr.research-provider-key-configuration.v1', project_id: 'project-fixture', provider_id: 'openrouter', configurations: [], truncated: false });
       if (designReview && url.pathname.endsWith('/model-configuration')) return json({ protocol: 'eliotr.research-project-model-configuration.v1', project_id: 'project-fixture', selection_revision: null, selected: null, revisions: [], next_cursor: null });
       if (url.pathname === '/api/v1/system/research-configuration') return json({ protocol: 'eliotr.research-configuration-readiness.v1', configuration: 'present', model_transport: 'available', qualification_state: 'current', run_readiness: 'ready', readiness_reason: 'QUALIFICATION_PROOFS_CURRENT', model_route: 'research-route', qualification_expires_at: '2027-01-01T00:00:00.000Z', missing_fields: [], invalid_fields: [], checked_at: stamp });
-      if (url.pathname === '/api/v1/research/runs') return json({ protocol: 'eliotr.research-runs.v3',
-        runs: [...(historyState || designReview ? [{ created_at: stamp, status: historyStatus }] : []), ...(starts ? [{ created_at: stamp, status }] : [])],
+      if (url.pathname === '/api/v1/research/runs') return json({ protocol: 'eliotr.research-runs.v5',
+        runs: [...(historyState || designReview ? [{ created_at: stamp, query: historyQuestion, status: historyStatus }] : []), ...(starts ? [{ created_at: stamp, query: historyQuestion, status }] : [])],
         saved_drafts: starts || designReview || historyState ? [{ created_at: stamp, artifact_ref: artifactRef, workflow_instance_id: historyState || designReview ? historyLaunch.workflow_instance_id : launch.workflow_instance_id }] : [],
         configuration_state: 'INSTALLED', checked_at: stamp });
       if (url.pathname === '/api/v1/research/wiki/proposals') return json({ protocol: 'eliotr.wiki-proposals.v1', items: [], has_more: false });
@@ -246,6 +252,7 @@ export async function playResearchHistoryReturn({ canvas, userEvent }: Parameter
   await userEvent.click(await canvas.findByText('Sources for your next question'));
   await userEvent.click(await canvas.findByRole('checkbox', { name: sourceName }));
   await userEvent.click(canvas.getByRole('link', { name: 'Research', exact: true }));
+  await canvas.findByText(historyQuestion);
   const read = await canvas.findByRole('button', { name: 'Read this run' });
   probe.assertNoIntent(); probe.assertEffects(0, 0);
   await userEvent.click(read);

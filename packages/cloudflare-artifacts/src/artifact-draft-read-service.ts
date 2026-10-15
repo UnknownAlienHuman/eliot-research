@@ -163,7 +163,7 @@ export function createArtifactDraftReadService(dependencies: ArtifactDraftReadSe
     });
     return {
       ...result,
-      protocol: "eliotr.artifact-draft-reauthorization.v2" as const,
+      protocol: "eliotr.artifact-draft-reauthorization.v3" as const,
       source_freshness: sourceFreshness,
     };
   }

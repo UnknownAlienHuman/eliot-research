@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { skipToken, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button, EvidenceFeature, ReportFeature, REPORT_COPY, SafeMarkdown, Status } from '@eliotr/ui';
-import { assembleResearchDraftMarkdown, type ArtifactRevision, type ArtifactSectionResponse,
+import { assembleResearchDraftMarkdown, type ArtifactRevisionRead, type ArtifactSectionResponse,
   type CitedEvidence, type DeclaredSection, type ResearchArtifactDraftReauthorizationView,
   type ReauthorizedCitedEvidence, type VerifiedEvidence, type VersionedRef } from '@eliotr/owner-api-client';
 import type { BoundWorkspaceApis } from './runtime';
@@ -14,8 +14,8 @@ import { ArtifactActions } from './ArtifactActions';
 const refKey = (ref: VersionedRef) => `${ref.id}:${ref.revision}`;
 const sameRef = (left: VersionedRef, right: VersionedRef) => left.id === right.id && left.revision === right.revision;
 const copy = {
-  en: { readingCitations: 'Reading citations for this section.', readingReport: 'Reading the saved report.', reportReady: 'Saved report loaded.', sectionReady: 'The selected section was read and verified.', readingEvidence: 'Reading the selected cited excerpt.', evidenceReady: 'The selected cited excerpt was verified.', title: 'Saved report', back: 'Close report', outline: 'Contents', backToSections: 'Back to the report', read: 'Refresh', reauthorize: 'Read with current access', access: 'Read with your current access. The report keeps its original sources.', section: (index: number) => `Section ${index + 1}`, evidence: 'Evidence for this section', quotes: 'Quotes and sources', document: 'Report text', pending: 'Reading this section…', noAudit: 'Claims in this section were not checked against the sources.', unknown: 'This section could not be read or verified.', exportError: 'The export could not be prepared. Read all sections again.', reading: 'Reading the selected section.', noEvidence: 'No citations are declared for this section.', evidenceError: 'This quote could not be verified against its source.' },
-  ru: { readingCitations: 'Читаем цитаты для этого раздела.', readingReport: 'Читаем сохранённый отчёт.', reportReady: 'Сохранённый отчёт прочитан.', sectionReady: 'Выбранный раздел прочитан и проверен.', readingEvidence: 'Читаем цитату.', evidenceReady: 'Цитата сверена с источником.', title: 'Сохранённый отчёт', back: 'Закрыть отчёт', outline: 'Содержание', backToSections: 'Назад к отчёту', read: 'Обновить', reauthorize: 'Прочитать с текущим доступом', access: 'Чтение с вашим текущим доступом. Источники отчёта остаются прежними.', section: (index: number) => `Раздел ${index + 1}`, evidence: 'Доказательства этого раздела', quotes: 'Цитаты и источники', document: 'Текст отчёта', pending: 'Читаем раздел…', noAudit: 'Утверждения этого раздела не проверялись по источникам.', unknown: 'Не удалось прочитать или проверить этот раздел.', exportError: 'Не удалось подготовить экспорт. Прочитайте все разделы ещё раз.', reading: 'Читаем выбранный раздел.', noEvidence: 'Для этого раздела не объявлены цитаты.', evidenceError: 'Не удалось сверить эту цитату с источником.' },
+  en: { readingCitations: 'Reading citations for this section.', readingReport: 'Reading the saved report.', reportReady: 'Saved report loaded.', sectionReady: 'The selected section was read and verified.', readingEvidence: 'Reading the selected cited excerpt.', evidenceReady: 'The selected cited excerpt was verified.', title: 'Saved report', back: 'Close report', outline: 'Contents', backToSections: 'Back to the report', read: 'Refresh', reauthorize: 'Read with current access', access: 'Read with your current access. The report keeps its original sources.', evidence: 'Evidence for this section', quotes: 'Quotes and sources', document: 'Report text', pending: 'Reading this section…', noAudit: 'Claims in this section were not checked against the sources.', unknown: 'This section could not be read or verified.', legacyRead: 'This report response has no section titles. Refresh after the application updates.', exportError: 'The export could not be prepared. Read all sections again.', reading: 'Reading the selected section.', noEvidence: 'No citations are declared for this section.', evidenceError: 'This quote could not be verified against its source.' },
+  ru: { readingCitations: 'Читаем цитаты для этого раздела.', readingReport: 'Читаем сохранённый отчёт.', reportReady: 'Сохранённый отчёт прочитан.', sectionReady: 'Выбранный раздел прочитан и проверен.', readingEvidence: 'Читаем цитату.', evidenceReady: 'Цитата сверена с источником.', title: 'Сохранённый отчёт', back: 'Закрыть отчёт', outline: 'Содержание', backToSections: 'Назад к отчёту', read: 'Обновить', reauthorize: 'Прочитать с текущим доступом', access: 'Чтение с вашим текущим доступом. Источники отчёта остаются прежними.', evidence: 'Доказательства этого раздела', quotes: 'Цитаты и источники', document: 'Текст отчёта', pending: 'Читаем раздел…', noAudit: 'Утверждения этого раздела не проверялись по источникам.', unknown: 'Не удалось прочитать или проверить этот раздел.', legacyRead: 'В этом ответе нет названий разделов. Обновите приложение и повторите чтение.', exportError: 'Не удалось подготовить экспорт. Прочитайте все разделы ещё раз.', reading: 'Читаем выбранный раздел.', noEvidence: 'Для этого раздела не объявлены цитаты.', evidenceError: 'Не удалось сверить эту цитату с источником.' },
 } as const;
 
 /** One requested section at a time. Exact verified bytes remain in protected memory-only Query. */
@@ -30,8 +30,9 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
   const currentArtifact = () => {
     if (!privacy.isCurrent(context) || client.getQueryState(manifestKey)?.status !== 'success' ||
       client.getQueryState(manifestKey)?.fetchStatus === 'fetching') return undefined;
-    return mode === 'author' ? client.getQueryData<ArtifactRevision>(manifestKey)
-      : client.getQueryData<ResearchArtifactDraftReauthorizationView>(manifestKey)?.artifact;
+    if (mode === 'author') return client.getQueryData<ArtifactRevisionRead>(manifestKey);
+    const reauthorized = client.getQueryData<ResearchArtifactDraftReauthorizationView>(manifestKey);
+    return reauthorized?.protocol === 'eliotr.artifact-draft-reauthorization.v3' ? reauthorized.artifact : undefined;
   };
   const options = reportQueryOptions(apis, privacy, context, currentArtifact);
   const authorOptions = options.manifest(artifactRef), grantedOptions = options.reauthorizedManifest(artifactRef);
@@ -39,7 +40,9 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
   const author = useQuery(mode === 'author' ? authorOptions : { queryKey: authorOptions.queryKey, queryFn: skipToken });
   const granted = useQuery(mode === 'reauthorized' ? grantedOptions : { queryKey: grantedOptions.queryKey, queryFn: skipToken });
   const manifest = mode === 'author' ? author : granted;
-  const grant = mode === 'reauthorized' && !granted.isError ? granted.data : undefined;
+  const grant = mode === 'reauthorized' && !granted.isError &&
+    granted.data?.protocol === 'eliotr.artifact-draft-reauthorization.v3' ? granted.data : undefined;
+  const unsupportedLegacyRead = mode === 'reauthorized' && granted.data !== undefined && grant === undefined;
   const artifact = mode === 'author' ? author.isError ? undefined : author.data : grant?.artifact;
   const [selected, setSelected] = useState<DeclaredSection>();
   const [picked, setPicked] = useState<CitedEvidence | ReauthorizedCitedEvidence>();
@@ -57,7 +60,7 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
   useEffect(() => {
     if (activeRef === undefined) setOutlineOpen(true);
   }, [activeRef, manifest.status, manifest.isFetching]);
-  const sectionOptions = (held: ArtifactRevision, declared: DeclaredSection) => grant
+  const sectionOptions = (held: ArtifactRevisionRead, declared: DeclaredSection) => grant
     ? options.reauthorizedSection(grant, declared) : options.section(held, declared);
   // Verified bytes of an admitted revision never go stale; only an explicit refetch reads them again.
   const section = useQuery(artifact && active ? { ...sectionOptions(artifact, active), gcTime: Infinity, staleTime: Infinity }
@@ -130,6 +133,7 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
   }) ?? [];
   const operationMessage = exportError ? text.exportError
     : manifest.isFetching ? text.readingReport : manifest.isError ? text.unknown
+    : unsupportedLegacyRead ? text.legacyRead
     : active && section.isFetching ? text.reading
     : active && (section.isError || body === undefined) ? text.unknown
     : active && citations.isFetching ? text.readingCitations
@@ -139,7 +143,7 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
     : currentCitation && evidenceRows.some(row => row.state === 'loaded' && sameRef(row.citation.handle_ref, currentCitation.handle_ref)) ? text.evidenceReady
     : active && body !== undefined ? text.sectionReady : artifact ? text.reportReady : '';
   return <section className="er-live-report" aria-label={text.title}>
-    <h2 className="er-live-report-title" ref={reportHeading} tabIndex={-1}>{text.title}</h2>
+    <h2 className="er-live-report-title" ref={reportHeading} tabIndex={-1}>{artifact?.title ?? text.title}</h2>
     <OperationFeedback message={operationMessage} />
     <div className="er-live-actions er-live-report-toolbar"><Button variant="text" onClick={onClose}>{text.back}</Button>
       <Button variant="text" disabled={manifest.isFetching} onClick={() => { void manifest.refetch(); }}>{text.read}</Button></div>
@@ -153,8 +157,9 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
     {!active && artifact && <section className="er-live-report-document" aria-label={text.document}>
       {declaredSections.map((declared, index) => {
         const body = documentText(declared, index), failed = documentReads[index]?.isError === true;
-        return <article key={refKey(declared.section_ref)} className="er-live-report-part" aria-label={text.section(index)}
+        return <article key={refKey(declared.section_ref)} className="er-live-report-part" aria-label={declared.title}
           data-state={body !== undefined ? 'read' : failed ? 'failed' : 'pending'}>
+          <h2 className="er-live-report-part-heading">{declared.title}</h2>
           {body !== undefined ? <SafeMarkdown text={body} />
             : failed ? <Status tone="error">{text.unknown}</Status>
               : <p className="er-live-report-pending"><span>{text.pending}</span></p>}
@@ -165,14 +170,14 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
     <details className="er-live-report-outline" open={outlineOpen}
       onToggle={event => { if (event.target === event.currentTarget) setOutlineOpen(event.currentTarget.open); }}>
     <summary ref={outlineSummary}>{text.outline}</summary>
-    <ReportFeature locale={locale} copy={REPORT_COPY[locale]} state={manifest.isPending ? 'loading' : manifest.isError ? 'error' : artifact ? 'useful' : 'empty'}
-      {...(artifact ? { manifest: { artifact_ref: artifact.artifact_ref, title: text.title, created_at: artifact.created_at, sections: artifact.sections } } : {})}
+    <ReportFeature locale={locale} copy={REPORT_COPY[locale]} state={manifest.isPending ? 'loading' : manifest.isError || unsupportedLegacyRead ? 'error' : artifact ? 'useful' : 'empty'}
+      {...(artifact ? { manifest: { artifact_ref: artifact.artifact_ref, title: artifact.title, created_at: artifact.created_at, sections: artifact.sections } } : {})}
       sections={rows} freshness={grant?.source_freshness.state ?? 'UNKNOWN'} onReadSection={readSection} onOpenManifest={() => { void manifest.refetch(); }} onExport={exportReport}
       {...(section.isFetching && active ? { readingRef: refKey(active.section_ref) } : {})}
       {...(section.isError && active ? { rejectedSectionRef: refKey(active.section_ref) } : {})} />
     </details>
-    {active && <section className="er-live-report-section" aria-label={text.section(artifact?.sections.findIndex(row => sameRef(row.section_ref, active.section_ref)) ?? 0)}>
-      <h2 ref={sectionHeading} tabIndex={-1}>{text.section(artifact?.sections.findIndex(row => sameRef(row.section_ref, active.section_ref)) ?? 0)}</h2>
+    {active && <section className="er-live-report-section" aria-label={active.title}>
+      <h2 ref={sectionHeading} tabIndex={-1}>{active.title}</h2>
       <div className="er-live-report-layout"><div className="er-live-report-body">
       {section.isFetching ? <Status>{text.reading}</Status> : section.isError || body === undefined ? <Status tone="error">{text.unknown}</Status> : <SafeMarkdown text={body} />}
       {citations.data?.semantic_verification === 'NOT_EXECUTED' && <p className="er-shell-note">{text.noAudit}</p>}

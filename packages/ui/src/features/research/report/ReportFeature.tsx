@@ -39,7 +39,6 @@ export interface ReportFeatureCopy {
   readonly createdLabel: string;
   readonly sectionsLabel: string;
   readonly sectionsCount: (count: number) => string;
-  readonly sectionOrdinal: (ordinal: number) => string;
   readonly openSection: string;
   readonly technicalDetails: string;
   readonly technicalObject: string;
@@ -91,7 +90,6 @@ const EN_COPY: ReportFeatureCopy = {
   createdLabel: "Created",
   sectionsLabel: "Sections",
   sectionsCount: (count: number) => count === 1 ? "1 section" : `${count} sections`,
-  sectionOrdinal: (ordinal: number) => `Section ${ordinal}`,
   openSection: "Open",
   technicalDetails: "Technical details",
   technicalObject: "Body object",
@@ -128,7 +126,6 @@ const RU_COPY: ReportFeatureCopy = {
   createdLabel: "Создан",
   sectionsLabel: "Разделы",
   sectionsCount: (count: number) => { const tail = count % 10, hundred = count % 100; return `${count} ${tail === 1 && hundred !== 11 ? "раздел" : tail >= 2 && tail <= 4 && (hundred < 12 || hundred > 14) ? "раздела" : "разделов"}`; },
-  sectionOrdinal: (ordinal: number) => `Раздел ${ordinal}`,
   openSection: "Открыть",
   technicalDetails: "Технические сведения",
   technicalObject: "Объект тела",
@@ -215,6 +212,7 @@ export function ReportFeature(props: ReportFeatureProps) {
         {/* One line instead of a facts table: what it is, when it was made, how many sections. */}
         {state === "useful" && manifest !== undefined ? <p className="er-report__meta">
           <span>{copy.manifestLabel}</span>
+          <span>{manifest.title}</span>
           {created ? <time dateTime={manifest.created_at} title={manifest.created_at}>{created}</time> : null}
           <span data-report-sections>{copy.sectionsCount(declaredCount)}</span>
         </p> : null}
@@ -245,7 +243,7 @@ export function ReportFeature(props: ReportFeatureProps) {
             const key = `${row.section.section_ref.id}:${row.section.section_ref.revision}`;
             const isReading = readingRef === key;
             const isRead = matchesDeclared(row);
-            const label = copy.sectionOrdinal(index + 1);
+            const label = row.section.title;
             return (
               <li key={`${key}:${index}`} className="er-report__section" data-report-section={key} data-read={isRead ? "true" : "false"}>
                 <span className="er-report__section-glyph" aria-hidden="true"><MaterialSymbol name={isRead ? "check" : "document"} /></span>

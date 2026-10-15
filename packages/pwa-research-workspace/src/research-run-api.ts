@@ -3,7 +3,7 @@ export { invalid, record, boundedString, identifier, versionedRef, sameRef, enve
 import { engineStatus, researchRunFailure } from "./research-run-failure-api.js";
 export type { ResearchEngineStatus, ResearchRunFailureCode, ResearchRunFailureContext, ResearchRunFailureView } from "./research-run-failure-api.js";
 import { isResearchQuestionText, RESEARCH_REQUEST_MAX_BYTES } from "@eliotr/contracts";
-import { ArtifactRevisionSchema, IdentifierSchema, ScopeExpressionSchema, Sha256Schema, type ArtifactRevision, type VersionedRef } from "@eliotr/contracts";
+import { ArtifactRevisionReadSchema, ArtifactRevisionSchema, IdentifierSchema, ScopeExpressionSchema, Sha256Schema, type ArtifactRevision, type ArtifactRevisionRead, type VersionedRef } from "@eliotr/contracts";
 import { ApiRequestError, requestApi, requestApiBytes, requestApiWithStatuses, type ApiBytesResponse } from "@eliotr/pwa-http-client";
 import {
   createResearchRunWire,
@@ -53,9 +53,9 @@ export interface ResearchSourceFreshness {
 }
 
 export interface ResearchArtifactDraftReauthorizationView {
-  readonly protocol: "eliotr.artifact-draft-reauthorization.v1" | "eliotr.artifact-draft-reauthorization.v2";
+  readonly protocol: "eliotr.artifact-draft-reauthorization.v1" | "eliotr.artifact-draft-reauthorization.v2" | "eliotr.artifact-draft-reauthorization.v3";
   readonly artifact_ref: VersionedRef;
-  readonly artifact: ArtifactRevision;
+  readonly artifact: ArtifactRevision | ArtifactRevisionRead;
   readonly original_scope_snapshot_ref: VersionedRef;
   readonly authorization_scope_snapshot_ref: VersionedRef;
   readonly authorization: ResearchScopeAuthorizationView;
@@ -213,6 +213,19 @@ function artifactRevision(value: unknown): ArtifactRevision {
   catch { invalid("research artifact response is invalid"); }
 }
 
+function artifactRevisionRead(value: unknown): ArtifactRevisionRead {
+  try { return ArtifactRevisionReadSchema.parse(value); }
+  catch { invalid("research artifact readback is invalid"); }
+}
+
+function artifactRevisionReadback(value: unknown): ArtifactRevision {
+  try { return ArtifactRevisionReadSchema.parse(value); }
+  catch {
+    try { return ArtifactRevisionSchema.parse(value); }
+    catch { invalid("research artifact response is invalid"); }
+  }
+}
+
 export function scopeAuthorization(value: unknown): ResearchScopeAuthorizationView {
   const authorization = record(value, ["authorization_receipt_ref", "policy_authority_ref", "allowed_use", "disclosure_ceiling", "expires_at"]);
   if (!Array.isArray(authorization.allowed_use) || authorization.allowed_use.length > 32) invalid("authorization allowed_use is invalid");
@@ -257,8 +270,8 @@ export function decodeResearchArtifactDraftReauthorization(
   const expected = versionedRef(expectedArtifact, "artifact_ref");
   const parsed = envelope(raw); checkGeneration(parsed.deployment_generation, expectedDeploymentGeneration);
   const data = record(parsed.data, ["protocol", "artifact_ref", "artifact", "original_scope_snapshot_ref", "authorization_scope_snapshot_ref", "authorization", "deployment_generation"], ["source_freshness"]);
-  if (data.protocol !== "eliotr.artifact-draft-reauthorization.v1" && data.protocol !== "eliotr.artifact-draft-reauthorization.v2") invalid("artifact reauthorization protocol is invalid");
-  const freshness = data.protocol === "eliotr.artifact-draft-reauthorization.v2"
+  if (data.protocol !== "eliotr.artifact-draft-reauthorization.v1" && data.protocol !== "eliotr.artifact-draft-reauthorization.v2" && data.protocol !== "eliotr.artifact-draft-reauthorization.v3") invalid("artifact reauthorization protocol is invalid");
+  const freshness = data.protocol !== "eliotr.artifact-draft-reauthorization.v1"
     ? sourceFreshness(data.source_freshness)
     : Object.hasOwn(data, "source_freshness")
       ? invalid("v1 artifact reauthorization cannot include source freshness")
@@ -267,7 +280,9 @@ export function decodeResearchArtifactDraftReauthorization(
   if (generation !== parsed.deployment_generation) invalid("artifact reauthorization generations differ");
   const artifactRef = versionedRef(data.artifact_ref, "artifact_ref");
   if (!sameRef(artifactRef, expected)) invalid("artifact reauthorization identity does not match the request");
-  const artifact = artifactRevision(data.artifact);
+  const artifact = data.protocol === "eliotr.artifact-draft-reauthorization.v3"
+    ? artifactRevisionRead(data.artifact)
+    : artifactRevision(data.artifact);
   if (!sameRef(artifact.artifact_ref, artifactRef) || artifact.status !== "DRAFT") invalid("artifact reauthorization returned an invalid draft");
   return {
     protocol: data.protocol,
@@ -395,7 +410,7 @@ export async function readResearchArtifact(artifactRef: { readonly id: string; r
   const raw = await requestApi(`/api/v1/research/artifact/${encodeURIComponent(`${ref.id}:${ref.revision}`)}`, signal ? { signal } : {});
   const parsed = envelope(raw);
   checkGeneration(parsed.deployment_generation, expectedDeploymentGeneration);
-  const artifact = artifactRevision(parsed.data);
+  const artifact = artifactRevisionReadback(parsed.data);
   if (artifact.artifact_ref.id !== ref.id || artifact.artifact_ref.revision !== ref.revision) invalid("research artifact identity does not match the requested ref");
   return artifact;
 }
