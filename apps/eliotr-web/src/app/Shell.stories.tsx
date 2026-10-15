@@ -31,8 +31,8 @@ import { Shell } from "./Shell";
 import { FixtureWorkspace } from "./FixtureWorkspace";
 import { createPrivacyController } from "./privacy";
 import { BundlePreview, playBundleJourney } from "./ImportBundlePreview";
-import { ResearchPreview, playResearchJourney, playResearchAnnouncements, playResearchHistoryReturn,
-  type ResearchHistoryState, type ResearchPreviewProbe } from "./ResearchPreview";
+import { ResearchPreview, playResearchJourney, playResearchAnnouncements, playResearchHistoryReturn, playResearchScopeJourney,
+  type ResearchHistoryState, type ResearchPreviewProbe, type ResearchScopeMode } from "./ResearchPreview";
 import { StudioPreview, playStudioJourney, playStudioAnnouncements, playStudioHistoryRecovery } from "./StudioPreview";
 import { ArtifactActionsPreview, playArtifactActionsJourney } from "./ArtifactActionsPreview";
 import { WorkspaceLinkPreview, playWorkspaceLinkJourney } from "./WorkspaceLinkJourney";
@@ -64,6 +64,21 @@ function researchJourneyStory(historyState?: ResearchHistoryState) {
 export const LiveResearchJourney = researchJourneyStory();
 export const HistoryCompletedResearchReturn = researchJourneyStory('ENGINE_COMPLETED');
 export const HistoryCancelledResearchReturn = researchJourneyStory('CANCELLED');
+function researchScopeStory(mode: ResearchScopeMode, stale = false) {
+  let probe: ResearchPreviewProbe | undefined;
+  return {
+    render: () => <ResearchPreview scopeMode={mode} onProbe={value => { probe = value; }} />,
+    play: async (context: Parameters<typeof playResearchScopeJourney>[0]) => {
+      await announcementUntil(() => probe !== undefined);
+      if (!probe) throw new Error('Research scope fixture probe is missing');
+      await playResearchScopeJourney(context, probe, mode, stale);
+    },
+  };
+}
+export const ProjectWideScopeUsesCurrentProject = researchScopeStory('project');
+export const ProjectWideScopeRejectsUnavailableProject = researchScopeStory('project', true);
+export const SelectedScopeStaysNarrow = researchScopeStory('selected');
+export const SelectedScopeRejectsStaleSourcePage = researchScopeStory('selected', true);
 export const MaterialWorkspace = { render: () => <ResearchPreview designReview /> };
 export const MaterialPreferencesJourney = { render: () => <ResearchPreview designReview />, play: playMaterialPreferences };
 export const MaterialReadingJourney = { render: () => <ResearchPreview designReview />, play: playMaterialReading };
