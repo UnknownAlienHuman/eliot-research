@@ -312,9 +312,10 @@ export function createComputerAgentQualificationService(options: {
     await requireSchema(db);
     const ownerIdentity = owner(context, now);
     const selectedTransport = transport(transportValue);
-    if (selectedTransport === "MCP_WRITE" && options.mcp_auth_profile !== "service-token") {
+    if (selectedTransport === "MCP_WRITE" && options.mcp_auth_profile !== "service-token" &&
+        options.mcp_auth_profile !== "hybrid") {
       fail("COMPUTER_AGENT_QUALIFICATION_DENIED", 409,
-        "MCP_WRITE qualification requires the service-token MCP profile");
+        "MCP_WRITE qualification requires a service-token-capable MCP profile");
     }
     const connection = await readCurrentComputerAgentConnection(db, connectionId).catch(mapConnection);
     if (connection === null) fail("COMPUTER_AGENT_QUALIFICATION_NOT_FOUND", 404,

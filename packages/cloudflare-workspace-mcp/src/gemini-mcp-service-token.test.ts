@@ -378,6 +378,31 @@ describe("Gemini MCP managed-oauth profile", () => {
     expect(await body(unknown)).toMatchObject({ code: "MCP_CONFIGURATION_UNAVAILABLE" });
   });
 
+  it("keeps owner OAuth read tools and exposes task tools only to the verified hybrid service actor", async () => {
+    const runtime: WorkspaceMcpRuntime = {
+      ...managedEnvironment(),
+      MCP_ACCESS_AUTH_PROFILE: "hybrid",
+      MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID: CLIENT_ID,
+      research: async () => ({ ok: true }),
+    };
+    const listRequest = (id: number) => new Request("https://mcp.example/mcp", {
+      method: "POST",
+      headers: { "content-type": "application/json", "mcp-protocol-version": "2025-06-18" },
+      body: JSON.stringify({ jsonrpc: "2.0", id, method: "tools/list" }),
+    });
+    const ownerResponse = await handleGeminiMcp(listRequest(1), runtime, {} as ExecutionContext, {
+      accessVerifier: managedVerifier("alice@example.com"),
+    });
+    const ownerTools = (await body(ownerResponse)).result as { tools: readonly { name: string }[] };
+    expect(ownerTools.tools.map((tool) => tool.name)).not.toContain("eliotr_task_pull");
+    const serviceResponse = await handleGeminiMcp(listRequest(2), runtime, {} as ExecutionContext, {
+      accessVerifier: verifier(CLIENT_ID),
+    });
+    const serviceTools = (await body(serviceResponse)).result as { tools: readonly { name: string }[] };
+    expect(serviceTools.tools.map((tool) => tool.name)).toContain("eliotr_task_pull");
+    expect(serviceTools.tools.map((tool) => tool.name)).toContain("eliotr_task_result");
+  });
+
   it("requires a dedicated managed audience distinct from ordinary Access", async () => {
     const response = await handleGeminiMcp(request(), managedEnvironment("ordinary-api-audience"), {} as ExecutionContext, {
       accessVerifier: managedVerifier("alice"),

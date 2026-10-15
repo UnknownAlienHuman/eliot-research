@@ -129,8 +129,11 @@ export async function callGeminiMcpTool(
   context: McpToolCallContext,
 ): Promise<McpToolCallResult> {
   try {
+    const profile = context.verified_actor?.auth_profile ?? dependencies.mcp_auth_profile;
+    const scopedDependencies = profile === undefined || profile === dependencies.mcp_auth_profile
+      ? dependencies
+      : { ...dependencies, mcp_auth_profile: profile };
     if (isMcpResearchTool(name)) {
-      const profile = dependencies.mcp_auth_profile;
       const method = profile === "managed-oauth" ? "cloudflare_access" : "service_token";
       if ((profile !== "service-token" && profile !== "managed-oauth") || !dependencies.research ||
           context.verified_actor?.auth_profile !== profile || !context.verified_access ||
@@ -148,15 +151,15 @@ export async function callGeminiMcpTool(
       case "eliotr_catalog":
         return { structuredContent: await dependencies.catalog(decodeCatalogInput(input), context) };
       case MCP_CLIENT_DIAGNOSTIC_TOOL_NAME:
-        return { structuredContent: await confirmClientDiagnostic(dependencies, input, context) };
+        return { structuredContent: await confirmClientDiagnostic(scopedDependencies, input, context) };
       case "eliotr_create_google_sync_plan":
         return { structuredContent: await (typeof input === "object" && input !== null && (input as Record<string, unknown>).protocol === "eliotr.google-sync.plan.v2"
-          ? createWorkspacePlan(input, dependencies, context)
-          : createPlan(input, dependencies, context)) };
+          ? createWorkspacePlan(input, scopedDependencies, context)
+          : createPlan(input, scopedDependencies, context)) };
       case "eliotr_validate_google_sync_receipt":
         return { structuredContent: await (typeof input === "object" && input !== null && typeof (input as Record<string, unknown>).plan === "object" && (input as { plan: Record<string, unknown> }).plan?.protocol === "eliotr.google-sync.plan.v2"
-          ? validateWorkspaceReceipt(input, dependencies, context)
-          : validateReceipt(input, dependencies, context)) };
+          ? validateWorkspaceReceipt(input, scopedDependencies, context)
+          : validateReceipt(input, scopedDependencies, context)) };
     }
   } catch (error) {
     if (error instanceof GeminiMcpToolError) {

@@ -34,7 +34,7 @@ export interface WorkspaceMcpEnvironmentSource<
   readonly ACCESS_AUDIENCE?: string | undefined;
   readonly GOOGLE_EXTERNAL_TRANSPORT?: "disabled" | "gemini-mcp" | "drive-exchange" | undefined;
   readonly MCP_HOSTNAME?: string | undefined;
-  readonly MCP_ACCESS_AUTH_PROFILE?: "service-token" | "managed-oauth" | undefined;
+  readonly MCP_ACCESS_AUTH_PROFILE?: "service-token" | "managed-oauth" | "hybrid" | undefined;
   readonly MCP_ACCESS_TEAM_DOMAIN?: string | undefined;
   readonly MCP_ACCESS_AUDIENCE?: string | undefined;
   readonly MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID?: string | undefined;
@@ -75,7 +75,7 @@ export interface WorkspaceMcpEnvironmentProjection<
   readonly ACCESS_AUDIENCE: string | undefined;
   readonly GOOGLE_EXTERNAL_TRANSPORT: "disabled" | "gemini-mcp" | "drive-exchange" | undefined;
   readonly MCP_HOSTNAME: string | undefined;
-  readonly MCP_ACCESS_AUTH_PROFILE: "service-token" | "managed-oauth" | undefined;
+  readonly MCP_ACCESS_AUTH_PROFILE: "service-token" | "managed-oauth" | "hybrid" | undefined;
   readonly MCP_ACCESS_TEAM_DOMAIN: string | undefined;
   readonly MCP_ACCESS_AUDIENCE: string | undefined;
   readonly MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID: string | undefined;

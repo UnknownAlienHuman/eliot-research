@@ -44,6 +44,8 @@ export interface McpToolDefinition {
 }
 
 export type McpAccessAuthProfile = "service-token" | "managed-oauth";
+/** Deployment mode that preserves the owner OAuth contour and adds an exact service-token contour. */
+export type McpAccessAuthMode = McpAccessAuthProfile | "hybrid";
 
 /**
  * Internal evidence of the Access verification that produced a tool context.
@@ -81,7 +83,7 @@ export interface GeminiMcpServerDependencies {
     input: unknown,
     context: McpToolCallContext,
   ) => Promise<McpToolCallResult>;
-  readonly listTools: () => readonly McpToolDefinition[];
+  readonly listTools: (context: McpToolCallContext) => readonly McpToolDefinition[];
 }
 
 export class McpProtocolError extends Error {
@@ -387,7 +389,7 @@ export async function handleGeminiMcpProtocol(
     }
     if (message.method === "tools/list") {
       requireEmptyParams(message, "tools/list");
-      return rpcResult(message.id, { tools: dependencies.listTools() }, version);
+      return rpcResult(message.id, { tools: dependencies.listTools(context) }, version);
     }
     if (message.method === "resources/list") {
       requireEmptyParams(message, "resources/list");

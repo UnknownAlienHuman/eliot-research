@@ -153,7 +153,7 @@ describe("owner MCP client diagnostic HTTP routes", () => {
     expect(await diagnosticCount(owner)).toBe(0);
   });
 
-  it("requires an explicit selected MCP profile and keeps latest empty as typed 404", async () => {
+  it("requires an explicit selected MCP profile and keeps hybrid owner diagnostics on managed OAuth", async () => {
     await prepareDatabase();
     const owner = `http-config-${crypto.randomUUID()}`;
     const missingEnvironment = { ...environment() } as { -readonly [Key in keyof Env]?: Env[Key] } & Record<string, unknown>;
@@ -163,9 +163,9 @@ describe("owner MCP client diagnostic HTTP routes", () => {
     expect(missing.document).toMatchObject({ code: "MCP_DIAGNOSTIC_CONFIG_INVALID", retryable: true });
     expect(await diagnosticCount(owner)).toBe(0);
 
-    const malformed = await call("GET", owner, { csrf: "1" }, environment({ MCP_ACCESS_AUTH_PROFILE: "hybrid" as never }));
-    expect(malformed.response.status).toBe(503);
-    expect(malformed.document).toMatchObject({ code: "MCP_DIAGNOSTIC_CONFIG_INVALID", retryable: true });
+    const hybrid = await call("GET", owner, { csrf: "1" }, environment({ MCP_ACCESS_AUTH_PROFILE: "hybrid" as never }));
+    expect(hybrid.response.status).toBe(404);
+    expect(hybrid.document).toMatchObject({ code: "MCP_DIAGNOSTIC_CHALLENGE_NOT_FOUND" });
     expect(await diagnosticCount(owner)).toBe(0);
 
     const empty = await call("GET", `http-empty-${crypto.randomUUID()}`, { csrf: "1" });

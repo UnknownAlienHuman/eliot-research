@@ -276,7 +276,11 @@ function ownerApi(env: Env): OwnerApi {
     rawNormalized,
     readCapture: (context, captureId) => rawCapture.readRawCaptureForServer(context, captureId),
     expectedDeploymentGeneration: env.DEPLOYMENT_GENERATION,
-    expectedAuthProfile: env.MCP_ACCESS_AUTH_PROFILE ?? "service-token",
+    // Hybrid keeps the owner candidate ledger on its existing managed-OAuth authority;
+    // the verified service actor uses the separate computer-agent qualification/task path.
+    expectedAuthProfile: env.MCP_ACCESS_AUTH_PROFILE === "hybrid"
+      ? "managed-oauth"
+      : env.MCP_ACCESS_AUTH_PROFILE ?? "service-token",
     ...(workspaceOwnerAuthorization === undefined ? {} : { ownerAuthorization: workspaceOwnerAuthorization }),
   });
   return {

@@ -57,8 +57,10 @@ jobs:
           packages/owner-api-client/src/connections/service-models.test.ts
           packages/cloudflare-model-control/src/service-model-provider-service.test.ts
           packages/cloudflare-ai/src/service-model-provider-management.test.ts
+          packages/cloudflare-ai/src/project-search-item.test.ts
           packages/cloudflare-model-execution/src/model-route-failure.test.ts
           packages/cloudflare-workspace-mcp/src/gemini-mcp.test.ts
+          packages/cloudflare-workspace-mcp/src/gemini-mcp-service-token.test.ts
           apps/eliotr-core/test/research-model-gateway-runtime.test.ts
           --reporter=verbose
       - name: Native Worker model settings and Gateway contracts
@@ -66,6 +68,7 @@ jobs:
           pnpm --dir apps/eliotr-core exec vitest run
           test/service-model-settings-http.test.ts
           test/research-model-gateway-runtime.test.ts
+          test/mcp-client-diagnostic-http.test.ts
           --reporter=verbose
       - name: Build served assets and owner web
         run: |

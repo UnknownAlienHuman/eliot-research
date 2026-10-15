@@ -81,6 +81,25 @@ it does not forward the dedicated JWT or bypass either Access audience.
 For managed-oauth, `MCP_ACCESS_AUDIENCE` must differ from `ACCESS_AUDIENCE`, service-token credentials
 are rejected, and the dedicated host/team/audience configuration is validated before JSON-RPC dispatch.
 
+### Hybrid owner OAuth plus Codex machine transport
+
+The bounded `hybrid` transport mode preserves the existing managed-OAuth owner contour and adds an
+exact allow-list of Access service-token Client IDs on the same `/mcp` hostname. It is a transport
+mode, not a persisted actor profile: every verified request resolves to either `managed-oauth` or
+`service-token`, and only that resolved profile is carried into tool dispatch and diagnostic
+qualification. Owner OAuth keeps its existing project-scoped read tools; the service-token client
+gets the existing delegated task tools and their existing grant/connection/qualification checks.
+
+This delta does not relax actor checks, accept a caller-supplied profile, or expose task tools to the
+owner contour. `MCP_WRITE` qualification still records `auth_profile="service-token"`, and registry,
+grant, route, lease and result records retain the existing service actor identity. Access provisioning
+must add one Service Auth policy for the exact Codex service token while retaining the existing owner
+policy. The first live target is one README QA project with `run`, `recover` and `evidence` only.
+
+The source adapter and focused hybrid test are implemented; live Access policy, service-token
+issuance, deployment and Codex consumer qualification remain separate live steps. No normative ADR
+change or second task ledger is introduced.
+
 Supported protocol revisions:
 
 ```text

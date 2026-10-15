@@ -29,40 +29,57 @@ function computerAgentQualificationError(error: ComputerAgentQualificationError)
 }
 
 function configuredMcpClientDiagnosticConsume(env: Env): McpClientDiagnosticConsume | undefined {
-  const profile = env.MCP_ACCESS_AUTH_PROFILE;
-  if (profile !== "service-token" && profile !== "managed-oauth") return undefined;
+  const mode = env.MCP_ACCESS_AUTH_PROFILE;
+  if (mode !== "service-token" && mode !== "managed-oauth" && mode !== "hybrid") return undefined;
   const database = env.CORE_DB;
   const deploymentGeneration = env.DEPLOYMENT_GENERATION;
-  return createWorkspaceMcpDiagnosticConsume({
-    database,
-    auth_profile: profile,
-    deployment_generation: deploymentGeneration,
-    preflight_computer_agent_qualification: async (input, context) => {
-      if (context.verified_actor === undefined) return false;
-      const access = context.verified_access;
-      return preflightComputerAgentQualificationChallenge({
-        database,
-        challenge_id: input.challenge_id,
-        transport: "MCP_WRITE",
-        issuer: access?.issuer,
-        subject: context.principal_ref,
-        deployment_generation: deploymentGeneration,
-      });
-    },
-    require_computer_agent_qualification_current: async (input, context) => {
-      const actor = context.verified_actor;
-      if (actor === undefined) return;
-      await requireComputerAgentQualificationChallengeReady({
-        database,
-        challenge_id: input.challenge_id,
-        transport: "MCP_WRITE",
-        credential_generation: actor.credential_generation,
-        deployment_generation: deploymentGeneration,
-      });
-    },
-    translate_computer_agent_qualification_error: (error) =>
-      error instanceof ComputerAgentQualificationError ? computerAgentQualificationError(error) : undefined,
-  });
+  const consumers = new Map<"service-token" | "managed-oauth", McpClientDiagnosticConsume>();
+  const create = (profile: "service-token" | "managed-oauth"): McpClientDiagnosticConsume => {
+    const existing = consumers.get(profile);
+    if (existing !== undefined) return existing;
+    const consumer = createWorkspaceMcpDiagnosticConsume({
+      database,
+      auth_profile: profile,
+      deployment_generation: deploymentGeneration,
+      preflight_computer_agent_qualification: async (input, context) => {
+        if (context.verified_actor === undefined) return false;
+        const access = context.verified_access;
+        return preflightComputerAgentQualificationChallenge({
+          database,
+          challenge_id: input.challenge_id,
+          transport: "MCP_WRITE",
+          issuer: access?.issuer,
+          subject: context.principal_ref,
+          deployment_generation: deploymentGeneration,
+        });
+      },
+      require_computer_agent_qualification_current: async (input, context) => {
+        const actor = context.verified_actor;
+        if (actor === undefined) return;
+        await requireComputerAgentQualificationChallengeReady({
+          database,
+          challenge_id: input.challenge_id,
+          transport: "MCP_WRITE",
+          credential_generation: actor.credential_generation,
+          deployment_generation: deploymentGeneration,
+        });
+      },
+      translate_computer_agent_qualification_error: (error) =>
+        error instanceof ComputerAgentQualificationError ? computerAgentQualificationError(error) : undefined,
+    });
+    consumers.set(profile, consumer);
+    return consumer;
+  };
+  return (input, context) => {
+    const profile = mode === "hybrid"
+      ? context.verified_actor?.auth_profile
+      : mode;
+    if (profile !== "service-token" && profile !== "managed-oauth") {
+      throw new GeminiMcpToolError("MCP_CLIENT_DIAGNOSTIC_UNAVAILABLE",
+        "Client diagnostic authentication profile is unavailable", true);
+    }
+    return create(profile)(input, context);
+  };
 }
 
 function workspaceMcpRuntime(env: WorkspaceMcpEnvironmentProjection<Env["AI"]>, request: Request): WorkspaceMcpRuntime {

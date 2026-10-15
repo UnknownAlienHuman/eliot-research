@@ -44,6 +44,7 @@ export function requiredMcpDiagnosticAuthProfile(
 ): McpDiagnosticAuthProfile {
   const profile = env.MCP_ACCESS_AUTH_PROFILE;
   if (profile === "service-token" || profile === "managed-oauth") return profile;
+  if (profile === "hybrid") return "managed-oauth";
   throw new HttpRequestError(
     "MCP_DIAGNOSTIC_CONFIG_INVALID",
     503,

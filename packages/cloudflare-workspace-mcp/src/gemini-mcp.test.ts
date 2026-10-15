@@ -233,6 +233,7 @@ describe("Gemini Spark MCP HTTP boundary", () => {
     ENVIRONMENT: "development",
     GOOGLE_EXTERNAL_TRANSPORT: "gemini-mcp",
     MCP_HOSTNAME: "mcp.example",
+    MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID: "00000000000000000000000000000000.access",
     readReadiness: async () => ({ ready: true, blocking_reason_codes: [] }),
   } satisfies WorkspaceMcpRuntime;
   const executionContext = {} as ExecutionContext;

@@ -62,7 +62,7 @@ export interface Env extends InstalledSemanticConfigurationEnvironment {
   readonly MCP_ACCESS_TEAM_DOMAIN?: string | undefined;
   readonly MCP_ACCESS_AUDIENCE?: string | undefined;
   /** Dedicated MCP authentication profile; omitted means the legacy service-token profile. */
-  readonly MCP_ACCESS_AUTH_PROFILE?: "service-token" | "managed-oauth" | undefined;
+  readonly MCP_ACCESS_AUTH_PROFILE?: "service-token" | "managed-oauth" | "hybrid" | undefined;
   readonly MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID?: string | undefined;
   /** Additional independent MCP clients; array binding or JSON-encoded array, no secrets. */
   readonly MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS?: readonly string[] | string | undefined;
