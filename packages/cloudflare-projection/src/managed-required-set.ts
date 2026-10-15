@@ -179,6 +179,36 @@ export interface ManagedRequiredSetReceiptV2 {
 
 export type ManagedRequiredSetReceipt = ManagedRequiredSetReceiptV1 | ManagedRequiredSetReceiptV2;
 
+/** One preimage definition for producer and V3 promotion readback. */
+export async function createManagedRequiredSetTargetFenceV2(input: {
+  readonly target: ManagedTargetIdentity;
+  readonly target_selection: ManagedRequiredSetReceiptV2["target_selection"];
+  readonly as_of: string;
+  readonly assignment_heads_sha256: string;
+  readonly required_set_sha256: string;
+  readonly page_provenance_sha256: string;
+  readonly assigned_project_count: number;
+  readonly project_revision_copy_count: number;
+  readonly page_count: number;
+}): Promise<ManagedRequiredSetReceiptV2["target_fence"]> {
+  const selectionDigest = await projectionSha256Utf8(canonicalProjectionJson(input.target_selection));
+  const targetFenceDigest = await projectionSha256Utf8(canonicalProjectionJson({
+    protocol: "eliotr.managed-required-set-target-fence.v2",
+    target: input.target, target_selection: input.target_selection, target_selection_sha256: selectionDigest,
+    as_of: input.as_of, assignment_heads_sha256: input.assignment_heads_sha256,
+    required_set_sha256: input.required_set_sha256, page_provenance_sha256: input.page_provenance_sha256,
+    assigned_project_count: input.assigned_project_count, project_revision_copy_count: input.project_revision_copy_count,
+    page_count: input.page_count,
+  }));
+  return Object.freeze({
+    protocol: "eliotr.managed-required-set-target-fence.v2", digest: targetFenceDigest,
+    target_selection_sha256: selectionDigest, assignment_heads_sha256: input.assignment_heads_sha256,
+    required_set_sha256: input.required_set_sha256, page_provenance_sha256: input.page_provenance_sha256,
+    assigned_project_count: input.assigned_project_count, project_revision_copy_count: input.project_revision_copy_count,
+    page_count: input.page_count,
+  });
+}
+
 export class ManagedRequiredSetError extends Error {
   public constructor(
     public readonly code:
@@ -780,12 +810,9 @@ export async function enumerateManagedRequiredSet(
   }
 
   const targetSelection = selection as Extract<ManagedTargetSelectionReceipt, { readonly decision_version: 2 }>;
-  const selectionDigest = await projectionSha256Utf8(canonicalProjectionJson(targetSelection));
-  const targetFenceDigest = await projectionSha256Utf8(canonicalProjectionJson({
-    protocol: "eliotr.managed-required-set-target-fence.v2",
+  const targetFence = await createManagedRequiredSetTargetFenceV2({
     target: input.target,
     target_selection: targetSelection,
-    target_selection_sha256: selectionDigest,
     as_of: input.as_of,
     assignment_heads_sha256: before.assignment_heads_sha256,
     required_set_sha256: observed.digest,
@@ -793,24 +820,14 @@ export async function enumerateManagedRequiredSet(
     assigned_project_count: before.assigned_project_count,
     project_revision_copy_count: observed.count,
     page_count: observed.pages,
-  }));
+  });
 
   return Object.freeze({
     protocol: "eliotr.managed-required-project-revisions.v3",
     target: input.target,
     target_selection: targetSelection,
     as_of: input.as_of,
-    target_fence: Object.freeze({
-      protocol: "eliotr.managed-required-set-target-fence.v2",
-      digest: targetFenceDigest,
-      target_selection_sha256: selectionDigest,
-      assignment_heads_sha256: before.assignment_heads_sha256,
-      required_set_sha256: observed.digest,
-      page_provenance_sha256: observed.page_provenance_digest,
-      assigned_project_count: before.assigned_project_count,
-      project_revision_copy_count: observed.count,
-      page_count: observed.pages,
-    }),
+    target_fence: targetFence,
     assigned_project_count: before.assigned_project_count,
     project_revision_copy_count: observed.count,
     page_count: observed.pages,

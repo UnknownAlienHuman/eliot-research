@@ -1,4 +1,5 @@
 import { projectionDigest } from "./canonical.js";
+import { createManagedRequiredSetTargetFenceV2 } from "./managed-required-set.js";
 import type { ManagedTargetSelectionV2 } from "./managed-target-assignment.js";
 import type { ManagedTargetManifestCanonicalSourceSummary, ManagedTargetManifestProviderCopySummary } from "./managed-target-manifest-contract.js";
 import {
@@ -25,7 +26,7 @@ const CANONICAL_KEYS = new Set(["protocol", "canonical_projection_generation_cou
 const COPY_KEYS = new Set(["protocol", "provider_copy_count", "provider_copy_set_sha256", "provider_item_count", "provider_item_set_sha256"]);
 const MANIFEST_V3_KEYS = new Set([...MANIFEST_KEYS, "target_selection", "canonical_source_summary", "provider_copy_summary"]);
 const EVIDENCE_V3_KEYS = new Set([...EVIDENCE_KEYS, "target_selection"]);
-const EVIDENCE_MANIFEST_V3_KEYS = new Set([...EVIDENCE_MANIFEST_KEYS, "canonical_source_summary", "provider_copy_summary"]);
+const EVIDENCE_MANIFEST_V3_KEYS = new Set([...EVIDENCE_MANIFEST_KEYS, "as_of", "canonical_source_summary", "provider_copy_summary"]);
 
 function selectionValue(raw: unknown, target: ManagedGenerationPromotionTarget): ManagedTargetSelectionV2 {
   const value = exactObject(raw, SELECTION_KEYS, "V3 captured selection");
@@ -46,7 +47,7 @@ function selectionValue(raw: unknown, target: ManagedGenerationPromotionTarget):
   });
 }
 
-async function headValue(value: Record<string, unknown>, expected: ManagedGenerationPromotionTarget) {
+async function headValue(value: Record<string, unknown>, expected: ManagedGenerationPromotionTarget, asOf: string) {
   const target = targetValue(value.target, "V3 target");
   if (!sameTarget(target, expected)) fail("MANAGED_GENERATION_EVIDENCE_STALE", "V3 evidence belongs to another target");
   const selection = selectionValue(value.target_selection, target);
@@ -64,8 +65,11 @@ async function headValue(value: Record<string, unknown>, expected: ManagedGenera
     page_count: count(rawFence.page_count, "fence.page_count", 1),
     target_selection_sha256: digest(rawFence.target_selection_sha256, "fence.target_selection_sha256"),
   });
-  if (fence.target_selection_sha256 !== await projectionDigest(selection)) {
-    fail("MANAGED_GENERATION_EVIDENCE_INVALID", "target fence does not bind the complete captured selection");
+  const expectedFence = await createManagedRequiredSetTargetFenceV2({
+    ...fence, target, target_selection: selection, as_of: asOf,
+  });
+  if (fence.target_selection_sha256 !== expectedFence.target_selection_sha256 || fence.digest !== expectedFence.digest) {
+    fail("MANAGED_GENERATION_EVIDENCE_INVALID", "target fence digest does not bind its complete V2 preimage");
   }
   return { target, selection, fence };
 }
@@ -93,7 +97,8 @@ function summaries(rawCanonical: unknown, rawCopies: unknown, copyCount: number,
   });
   if (copyValue.provider_copy_count !== copyCount || copyValue.provider_item_count !== itemCount ||
       canonicalValue.canonical_projection_generation_count > copyCount || canonicalValue.canonical_section_count > itemCount ||
-      (copyCount === 0 && (canonicalValue.canonical_projection_generation_count !== 0 || canonicalValue.canonical_section_count !== 0))) {
+      (copyCount === 0 && (itemCount !== 0 || canonicalValue.canonical_projection_generation_count !== 0 || canonicalValue.canonical_section_count !== 0)) ||
+      (copyCount > 0 && (canonicalValue.canonical_projection_generation_count < 1 || canonicalValue.canonical_section_count < canonicalValue.canonical_projection_generation_count || itemCount < copyCount))) {
     fail("MANAGED_GENERATION_EVIDENCE_INVALID", "V3 canonical and physical denominators do not match the complete manifest");
   }
   return { canonical: canonicalValue, copies: copyValue };
@@ -107,7 +112,8 @@ export async function validateManagedGenerationDesiredManifestV3(
   if (value.protocol !== MANAGED_TARGET_DESIRED_MANIFEST_PROTOCOL_V3 || value.copy_layout !== "PROJECT_COPY_V2") {
     fail("MANAGED_GENERATION_EVIDENCE_INVALID", "V3 desired manifest protocol or layout is unsupported");
   }
-  const { target, selection, fence } = await headValue(value, expectedTarget);
+  const asOf = timestamp(value.as_of, "manifest.as_of");
+  const { target, selection, fence } = await headValue(value, expectedTarget, asOf);
   const copyCount = count(value.project_revision_copy_count, "manifest.project_revision_copy_count");
   const assignedCount = count(value.assigned_project_count, "manifest.assigned_project_count", 1);
   const desiredCount = count(value.desired_item_count, "manifest.desired_item_count");
@@ -120,7 +126,7 @@ export async function validateManagedGenerationDesiredManifestV3(
   const summary = summaries(value.canonical_source_summary, value.provider_copy_summary, copyCount, desiredCount);
   return Object.freeze({
     protocol: MANAGED_TARGET_DESIRED_MANIFEST_PROTOCOL_V3, target, copy_layout: "PROJECT_COPY_V2",
-    as_of: timestamp(value.as_of, "manifest.as_of"), target_fence: fence, target_selection: selection,
+    as_of: asOf, target_fence: fence, target_selection: selection,
     registry_revision_before: before, registry_revision_after: after, assigned_project_count: assignedCount,
     project_revision_copy_count: copyCount, desired_item_count: desiredCount,
     desired_item_set_digest: digest(value.desired_item_set_digest, "manifest.desired_item_set_digest"),
@@ -143,11 +149,13 @@ export async function validateManagedGenerationPromotionEvidenceV3(
   if (value.protocol !== MANAGED_GENERATION_PROMOTION_EVIDENCE_PROTOCOL_V3) {
     fail("MANAGED_GENERATION_EVIDENCE_INVALID", "V3 promotion evidence protocol is unsupported");
   }
-  const { target, selection, fence } = await headValue(value, expectedTarget);
   const manifest = exactObject(value.manifest, EVIDENCE_MANIFEST_V3_KEYS, "V3 evidence manifest");
+  const asOf = timestamp(manifest.as_of, "manifest.as_of");
+  const { target, selection, fence } = await headValue(value, expectedTarget, asOf);
   const summary = summaries(manifest.canonical_source_summary, manifest.provider_copy_summary,
     fence.project_revision_copy_count, count(manifest.desired_item_count, "manifest.desired_item_count"));
-  const { canonical_source_summary: _canonical, provider_copy_summary: _copies, ...commonManifest } = manifest;
+  const { as_of: _asOf, canonical_source_summary: _canonical, provider_copy_summary: _copies, ...commonManifest } = manifest;
+  void _asOf;
   void _canonical;
   void _copies;
   // These parts have identical meanings in V2/V3; no protocol or fence is
@@ -155,7 +163,7 @@ export async function validateManagedGenerationPromotionEvidenceV3(
   const parts = validateManagedGenerationPromotionEvidenceParts(value, target, fence, commonManifest);
   const base = Object.freeze({
     protocol: MANAGED_GENERATION_PROMOTION_EVIDENCE_PROTOCOL_V3, target, target_fence: fence, target_selection: selection,
-    manifest: Object.freeze({ ...parts.manifest, canonical_source_summary: summary.canonical, provider_copy_summary: summary.copies }),
+    manifest: Object.freeze({ ...parts.manifest, as_of: asOf, canonical_source_summary: summary.canonical, provider_copy_summary: summary.copies }),
     item_readback: parts.item_readback, writer_drain: parts.writer_drain, qualification: parts.qualification,
     built_at: parts.built_at, verified_at: parts.verified_at,
   });

@@ -224,6 +224,7 @@ async function readCurrentEvidenceBundle(
   }
   if (current.protocol === "eliotr.managed-generation-promotion-evidence.v3") {
     if (desired.protocol !== "eliotr.managed-target-desired-items.v3" ||
+        current.manifest.as_of !== desired.as_of ||
         canonicalProjectionJson(current.target_selection) !== canonicalProjectionJson(desired.target_selection) ||
         canonicalProjectionJson(current.manifest.canonical_source_summary) !== canonicalProjectionJson(desired.canonical_source_summary) ||
         canonicalProjectionJson(current.manifest.provider_copy_summary) !== canonicalProjectionJson(desired.provider_copy_summary)) {

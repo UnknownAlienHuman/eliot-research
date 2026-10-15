@@ -136,6 +136,8 @@ export interface ManagedGenerationPromotionEvidenceV3 extends Omit<ManagedGenera
   readonly target_fence: ManagedGenerationTargetFenceV2;
   readonly target_selection: ManagedTargetSelectionV2;
   readonly manifest: ManagedGenerationPromotionEvidenceV2["manifest"] & {
+    /** Original immutable builder observation time, used in the complete fence preimage. */
+    readonly as_of: string;
     readonly canonical_source_summary: ManagedTargetManifestCanonicalSourceSummary;
     readonly provider_copy_summary: ManagedTargetManifestProviderCopySummary;
   };

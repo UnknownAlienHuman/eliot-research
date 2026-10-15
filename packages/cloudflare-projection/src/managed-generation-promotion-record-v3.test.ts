@@ -14,11 +14,11 @@ import {
 import {
   MANAGED_GENERATION_PROMOTION_EVIDENCE_PROTOCOL_V3,
   MANAGED_TARGET_DESIRED_MANIFEST_PROTOCOL_V3,
-  MANAGED_TARGET_FENCE_PROTOCOL_V2,
 } from "./managed-generation-promotion-evidence-contract.js";
 import { validateManagedGenerationDesiredManifestV3, validateManagedGenerationPromotionEvidenceV3, validateStoredManagedGenerationPromotionEvidenceV3 } from "./managed-generation-promotion-evidence-v3.js";
 import { validateManagedGenerationPromotionEvidence } from "./managed-generation-promotion-evidence-manifest.js";
 import { canonicalProjectionJson, projectionDigest } from "./canonical.js";
+import { createManagedRequiredSetTargetFenceV2 } from "./managed-required-set.js";
 import { desiredManifest, evidence, profileFor, targetForProfile } from "./managed-generation-promotion-evidence.test-support.js";
 
 async function fixture() {
@@ -37,8 +37,8 @@ async function fixture() {
     v1_exact_profile_identity_sha256: "b".repeat(64),
     target,
   };
-  const fence = { ...legacy.target_fence, protocol: MANAGED_TARGET_FENCE_PROTOCOL_V2,
-    target_selection_sha256: await projectionDigest(selection) };
+  const fence = await createManagedRequiredSetTargetFenceV2({ ...legacy.target_fence,
+    target, target_selection: selection, as_of: legacy.as_of });
   const canonical = {
     protocol: "eliotr.managed-target-canonical-source-summary.v1" as const,
     canonical_projection_generation_count: 0, canonical_section_count: 0,
@@ -53,7 +53,10 @@ async function fixture() {
   const proof = await validateManagedGenerationPromotionEvidenceV3({
     ...raw, protocol: MANAGED_GENERATION_PROMOTION_EVIDENCE_PROTOCOL_V3,
     target_fence: fence, target_selection: selection,
-    manifest: { ...raw.manifest, canonical_source_summary: canonical, provider_copy_summary: copies },
+    manifest: { ...raw.manifest, as_of: legacy.as_of, watermark_sha256: fence.digest,
+      canonical_source_summary: canonical, provider_copy_summary: copies },
+    writer_drain: { ...raw.writer_drain, watermark_sha256: fence.digest },
+    qualification: { ...raw.qualification, current_target_fence_sha256: fence.digest },
   }, target);
   const declared = declareAiSearchGeneration([], {
     namespace: target.namespace, generation: target.managed_generation, profile,
@@ -148,12 +151,16 @@ test("V3 distinguishes one canonical section from two provider project copies", 
   const { proof, target } = await fixture();
   const { evidence_sha256: _oldDigest, ...body } = proof;
   void _oldDigest;
+  const fence = await createManagedRequiredSetTargetFenceV2({ ...body.target_fence,
+    target, target_selection: body.target_selection, as_of: body.manifest.as_of, project_revision_copy_count: 2 });
   const raw = { ...body,
-    target_fence: { ...body.target_fence, project_revision_copy_count: 2 },
-    manifest: { ...body.manifest, desired_item_count: 2,
+    target_fence: fence,
+    manifest: { ...body.manifest, desired_item_count: 2, watermark_sha256: fence.digest,
       canonical_source_summary: { ...body.manifest.canonical_source_summary, canonical_projection_generation_count: 1, canonical_section_count: 1 },
       provider_copy_summary: { ...body.manifest.provider_copy_summary, provider_copy_count: 2, provider_item_count: 2 } },
     item_readback: { ...body.item_readback, item_effect_count: 2, exact_readback_count: 2, provider_inventory_count: 2 },
+    writer_drain: { ...body.writer_drain, watermark_sha256: fence.digest },
+    qualification: { ...body.qualification, current_target_fence_sha256: fence.digest },
   };
   const parsed = await validateManagedGenerationPromotionEvidenceV3(raw, target);
   expect(parsed.manifest.canonical_source_summary.canonical_section_count).toBe(1);
@@ -161,4 +168,21 @@ test("V3 distinguishes one canonical section from two provider project copies", 
   await expect(validateManagedGenerationPromotionEvidenceV3({ ...raw, manifest: { ...raw.manifest,
     provider_copy_summary: { ...raw.manifest.provider_copy_summary, provider_item_count: 1 } } }, target))
     .rejects.toMatchObject({ code: "MANAGED_GENERATION_EVIDENCE_INVALID" });
+});
+
+test("V3 rejects an old fence relabeled with only a new selection hash and rejects omitted contributing copies", async () => {
+  const { proof, legacy, target } = await fixture();
+  const { evidence_sha256: _oldDigest, ...body } = proof;
+  void _oldDigest;
+  await expect(validateManagedGenerationPromotionEvidenceV3({ ...body,
+    target_fence: { ...body.target_fence, digest: legacy.target_fence.digest } }, target))
+    .rejects.toMatchObject({ code: "MANAGED_GENERATION_EVIDENCE_INVALID" });
+  await expect(validateManagedGenerationPromotionEvidenceV3({ ...body, manifest: { ...body.manifest,
+    as_of: "2026-10-14T18:00:01.000Z" } }, target))
+    .rejects.toMatchObject({ code: "MANAGED_GENERATION_EVIDENCE_INVALID" });
+  await expect(validateManagedGenerationPromotionEvidenceV3({ ...body,
+    manifest: { ...body.manifest, desired_item_count: 1,
+      provider_copy_summary: { ...body.manifest.provider_copy_summary, provider_item_count: 1 } },
+    item_readback: { ...body.item_readback, item_effect_count: 1, exact_readback_count: 1, provider_inventory_count: 1 },
+  }, target)).rejects.toMatchObject({ code: "MANAGED_GENERATION_EVIDENCE_INVALID" });
 });
