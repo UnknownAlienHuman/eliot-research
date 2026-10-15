@@ -194,7 +194,7 @@ const EvidenceExcerptBlock = (props: {
   if (opened === undefined) {
     return (
       <p className="evidence__excerpt evidence__excerpt--absent">
-        {russian ? "Фрагмент ещё не открыт для этого сеанса." : "Excerpt not opened for this session."}
+        {russian ? "Цитата ещё не открыта." : "Quote not opened yet."}
       </p>
     );
   }
@@ -339,8 +339,8 @@ export const EvidenceFeature = (props: EvidenceFeatureProps): React.ReactElement
       </h2>
       {operationAnnouncement === undefined ? null : <OperationAnnouncement>{operationAnnouncement}</OperationAnnouncement>}
       <p className="evidence__hint">
-        {russian ? "Чтение цитаты проверяет её точные байты для этого сеанса. Оценка утверждения выполняется отдельно."
-          : "Reading a citation confirms its bytes for this session. It never states whether a claim holds."}
+        {russian ? "Открытая цитата сверяется с текстом источника. Верно ли утверждение, проверяется отдельно."
+          : "An opened quote is checked against the source text. Whether the claim holds is checked separately."}
       </p>
       <ul className="evidence__list">
         {citations.map((row, index) => {

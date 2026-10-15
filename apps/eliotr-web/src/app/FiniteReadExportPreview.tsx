@@ -346,7 +346,7 @@ function exportButton(canvas: PlayContext['canvas']) {
 export async function playFailedRequiredSectionNoExport({ canvasElement, canvas, userEvent }: PlayContext) {
   const { root, environment } = environmentFor(canvasElement, 'failed-required-section-no-export'), { trace, client } = environment;
   await userEvent.click(await canvas.findByRole('button', { name: 'Open saved report', exact: true }));
-  await canvas.findByText('2 declared');
+  await canvas.findByText('2 sections');
   check(trace.sectionReads.length === 0 && exportButton(canvas).disabled, 'Manifest read eagerly completed required sections');
   for (const section of ['required-beta:1', 'required-alpha:1']) {
     await openOutline(root, userEvent); await userEvent.click(rowButton(root, section));

@@ -1,15 +1,14 @@
 /* U4-M Report feature styles. Semantic tokens only; no raw visual values.
  *
- * Direction: the pane is the surface. The report is a set of soft tonal groups (manifest facts,
- * source freshness, declared sections, completeness) rather than a card around the whole feature.
- * Declared sections share one group: label, state chip, the read/open action and the technical
- * disclosure line up on fixed rows. Cautions use tertiary-container, failures use error-container.
- * Technical identifiers wrap inside their own disclosure and never widen the reading column.
+ * Direction: a document's contents page, not a manifest. One meta line under the title, one
+ * freshness line (a tertiary caution while freshness is unknown or older), the sections as an M3
+ * list — a glyph, the section and its state, one action — and a single export row. Technical
+ * identifiers stay in a recessive disclosure and never widen the reading column.
  */
 
 .er-report {
   display: grid;
-  gap: var(--eliot-space-group);
+  gap: var(--eliot-space-panel);
   min-width: 0;
   color: var(--md-sys-color-on-surface);
   font-family: var(--eliot-type-font-family);
@@ -17,14 +16,7 @@
   line-height: var(--eliot-type-body-medium-line-height);
 }
 
-.er-report__head {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--eliot-space-panel);
-  min-height: var(--eliot-size-control);
-}
+.er-report__head { display: grid; gap: var(--eliot-space-tight); min-width: 0; }
 
 .er-report__title {
   margin: 0;
@@ -36,134 +28,91 @@
   letter-spacing: var(--eliot-type-letter-spacing-headline);
 }
 
-.er-report__head > button {
-  margin-inline-start: auto;
-}
-
-/* Shared tonal group for every block of the report body. */
-.er-report__facts,
-.er-report__freshness,
-.er-report__export,
-.er-report__sections {
-  min-width: 0;
-  margin: 0;
-  border-radius: var(--eliot-shape-large-increased);
-  background: var(--eliot-color-group);
-}
-
-/* Manifest facts: three label-over-value columns on one shared baseline. */
-.er-report__facts {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--eliot-space-panel);
-  padding: var(--eliot-space-panel) var(--eliot-space-group);
-}
-
-.er-report__fact {
-  display: grid;
-  gap: var(--eliot-space-tight);
-  align-content: start;
-  min-width: 0;
-}
-
-.er-report__fact dt {
+/* "Draft · 9 Oct 2026, 12:00 · 40 sections", as a notebook shows its source count. */
+.er-report__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--eliot-space-tight) var(--eliot-space-block-control);
   margin: 0;
   color: var(--md-sys-color-on-surface-variant);
-  font-size: var(--eliot-type-label-medium-size);
-  line-height: var(--eliot-type-label-medium-line-height);
-  font-weight: var(--eliot-type-font-weight-medium);
-  letter-spacing: var(--eliot-type-letter-spacing-label);
-}
-
-.er-report__fact dd {
-  margin: 0;
-  color: var(--md-sys-color-on-surface);
-  font-size: var(--eliot-type-body-large-size);
-  line-height: var(--eliot-type-body-large-line-height);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
   font-weight: var(--eliot-type-font-weight-medium);
   font-variant-numeric: var(--eliot-type-numerals);
-  overflow-wrap: anywhere;
 }
 
-/* Freshness and completeness: a heading, a value line and optional notes or actions. */
-.er-report__freshness,
-.er-report__export {
-  display: grid;
-  gap: var(--eliot-space-tight);
-  padding: var(--eliot-space-panel) var(--eliot-space-group);
-}
+.er-report__meta > * + *::before { content: "·"; margin-inline-end: var(--eliot-space-block-control); }
 
-.er-report__freshness h3,
-.er-report__export h3 {
+/* Freshness: quiet when current; an informative caution while unknown or older, never a proof. */
+.er-report__freshness {
   margin: 0;
-  color: var(--md-sys-color-on-surface);
-  font-size: var(--eliot-type-title-small-size);
-  line-height: var(--eliot-type-title-small-line-height);
-  font-weight: var(--eliot-type-font-weight-medium);
-  letter-spacing: var(--eliot-type-letter-spacing-label);
-}
-
-.er-report__freshness > p,
-.er-report__export > p {
-  margin: 0;
-  color: var(--md-sys-color-on-surface-variant);
-  font-size: var(--eliot-type-body-medium-size);
-  line-height: var(--eliot-type-body-medium-line-height);
-  overflow-wrap: anywhere;
-}
-
-.er-report__freshness > p:first-of-type,
-.er-report__export > p:first-of-type {
-  color: var(--md-sys-color-on-surface);
-}
-
-/* Unknown or unresolved freshness is an informative caution, never proof that sources are current. */
-.er-report__freshness > p + p {
   padding: var(--eliot-space-gutter) var(--eliot-space-panel);
   border-radius: var(--eliot-shape-medium);
   background: var(--md-sys-color-tertiary-container);
   color: var(--md-sys-color-on-tertiary-container);
-}
-
-.er-report__export > button {
-  justify-self: start;
-}
-
-.er-report__export > .er-report__gate-note {
-  color: var(--md-sys-color-on-surface-variant);
-  font-size: var(--eliot-type-body-small-size);
-  line-height: var(--eliot-type-body-small-line-height);
   overflow-wrap: anywhere;
 }
 
-/* Declared sections: one group, one row per section, rows divided by outline-variant rules. */
+.er-report__freshness[data-freshness="CURRENT_REVISIONS"] { padding: 0; background: none; color: var(--md-sys-color-on-surface-variant); }
+.er-report__freshness-label {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Sections: an M3 list in one tonal group — glyph, label over state, one action, details. */
 .er-report__sections {
   display: grid;
-  gap: 0;
-  padding: var(--eliot-space-tight) var(--eliot-space-group);
+  gap: var(--eliot-space-hairline);
+  min-width: 0;
+  margin: 0;
+  padding: var(--eliot-space-tight);
+  border-radius: var(--eliot-shape-large-increased);
+  background: var(--eliot-color-group);
   list-style: none;
 }
 
-/* Two-row grid: label and state on row 1; action and disclosure on row 2. An open disclosure
- * takes row 3 at full width so long technical identifiers never widen the action row. */
 .er-report__section {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  grid-auto-rows: minmax(var(--eliot-size-control), auto);
+  grid-template-columns: var(--eliot-size-control) minmax(0, 1fr) auto auto;
   align-items: center;
-  column-gap: var(--eliot-space-block-control);
+  column-gap: var(--eliot-space-gutter);
   min-height: var(--eliot-size-list-row);
-  padding-block: var(--eliot-space-tight);
-  overflow-wrap: anywhere;
+  padding: var(--eliot-space-tight) var(--eliot-space-tight) var(--eliot-space-tight) var(--eliot-space-block-control);
+  border-radius: var(--eliot-shape-large);
+  transition: background-color var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
 }
 
-.er-report__section + .er-report__section {
-  border-block-start: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
+.er-report__section:hover { background: var(--eliot-color-field-hover); }
+
+.er-report__section-glyph {
+  display: grid;
+  place-items: center;
+  inline-size: var(--eliot-size-control);
+  block-size: var(--eliot-size-control);
+  border-radius: var(--eliot-shape-medium);
+  background: var(--md-sys-color-surface-container-high);
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.er-report__section[data-read="true"] .er-report__section-glyph { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+
+.er-report__section-text { display: grid; min-width: 0; }
+
+/* The row already names its section; the action keeps that name for assistive tech and voice. */
+.er-report__sr {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .er-report__section-label {
-  grid-column: 1;
-  grid-row: 1;
   min-width: 0;
   color: var(--md-sys-color-on-surface);
   font-size: var(--eliot-type-title-small-size);
@@ -173,54 +122,33 @@
 }
 
 .er-report__section-state {
-  grid-column: 2;
-  grid-row: 1;
-  justify-self: end;
-  padding: var(--eliot-space-hairline) var(--eliot-space-block-control);
-  border-radius: var(--eliot-shape-full);
-  background: var(--md-sys-color-secondary-container);
-  color: var(--md-sys-color-on-secondary-container);
-  font-size: var(--eliot-type-label-medium-size);
-  line-height: var(--eliot-type-label-medium-line-height);
-  font-weight: var(--eliot-type-font-weight-medium);
-  font-variant-numeric: var(--eliot-type-numerals);
-  white-space: nowrap;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-body-small-size);
+  line-height: var(--eliot-type-body-small-line-height);
 }
 
-.er-report__section > button {
-  grid-column: 1;
-  grid-row: 2;
-  justify-self: start;
-}
-
-/* Diagnostics stay recessive: small type, no box. The disclosure sits beside the action. */
+/* Diagnostics stay recessive: a small disclosure after the action; open, it spans the row. */
 .er-report__section-details {
-  grid-column: 2;
-  grid-row: 2;
-  justify-self: end;
-  display: grid;
-  gap: var(--eliot-space-block-control);
   min-width: 0;
   color: var(--md-sys-color-on-surface-variant);
   font-size: var(--eliot-type-body-small-size);
   line-height: var(--eliot-type-body-small-line-height);
 }
 
-.er-report__section-details[open] {
-  grid-column: 1 / -1;
-  grid-row: 3;
-  justify-self: stretch;
-}
+.er-report__section-details[open] { grid-column: 2 / -1; grid-row: 2; padding-block-end: var(--eliot-space-block-control); }
 
 .er-report__section-details summary {
   display: flex;
   align-items: center;
   min-height: var(--eliot-size-control);
+  padding-inline: var(--eliot-space-block-control);
+  border-radius: var(--eliot-shape-full);
   cursor: pointer;
   color: var(--md-sys-color-on-surface-variant);
-  font-size: var(--eliot-type-label-large-size);
-  line-height: var(--eliot-type-label-large-line-height);
+  font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
   font-weight: var(--eliot-type-font-weight-medium);
+  white-space: nowrap;
 }
 
 .er-report__section-technical {
@@ -230,20 +158,30 @@
   margin: 0;
 }
 
-.er-report__section-technical > div {
-  display: grid;
-  gap: var(--eliot-space-tight);
-}
-
-.er-report__section-technical dt {
-  font-weight: var(--eliot-type-font-weight-medium);
-}
+.er-report__section-technical > div { display: grid; gap: var(--eliot-space-tight); }
+.er-report__section-technical dt { font-weight: var(--eliot-type-font-weight-medium); }
 
 .er-report__section-technical dd {
   margin: 0;
   font-family: var(--eliot-type-font-family-mono);
   font-size: var(--eliot-type-body-small-size);
   line-height: var(--eliot-type-body-small-line-height);
+  overflow-wrap: anywhere;
+}
+
+/* Export: how far reading has come, then the one action — disabled until everything is verified. */
+.er-report__export {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--eliot-space-block-control) var(--eliot-space-panel);
+}
+
+.er-report__export > p {
+  flex: 1 1 auto;
+  margin: 0;
+  color: var(--md-sys-color-on-surface-variant);
   overflow-wrap: anywhere;
 }
 
@@ -287,32 +225,14 @@
 }
 
 @media (max-width: 48rem) {
-  .er-report__facts {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .er-report__section > button {
-    grid-column: 1 / -1;
-  }
-
-  .er-report__section-details {
-    grid-column: 1 / -1;
-    grid-row: 3;
-    justify-self: start;
-  }
-
-  .er-report__section-details[open] {
-    justify-self: stretch;
-  }
+  .er-report__section { grid-template-columns: var(--eliot-size-control) minmax(0, 1fr) auto; }
+  .er-report__section-details { grid-column: 2 / -1; grid-row: 2; justify-self: start; }
 }
 
 @media (forced-colors: active) {
-  .er-report__facts,
-  .er-report__freshness,
-  .er-report__export,
   .er-report__sections,
-  .er-report__freshness > p + p,
+  .er-report__freshness,
   .er-report__degraded,
   .er-report__error,
-  .er-report__section-state { border: var(--eliot-divider-width) solid CanvasText; }
+  .er-report__section-glyph { border: var(--eliot-divider-width) solid CanvasText; }
 }

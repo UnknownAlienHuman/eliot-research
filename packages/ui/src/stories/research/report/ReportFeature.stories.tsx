@@ -141,8 +141,8 @@ export const ExportBlockedByUnreadSection: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     // Completeness is honest about what is missing, and UNKNOWN freshness stays visible.
-    await expect(canvas.getByText("Some declared sections are not read back yet.")).toBeVisible();
-    await expect(canvas.getByText("Unknown")).toBeVisible();
+    await expect(canvas.getByText("Read 0 of 2. Export opens once every section is read.")).toBeVisible();
+    await expect(canvas.getByText(REPORT_COPY.en.freshnessUnresolved)).toBeVisible();
     // The blocked export is disabled, so no partial report can leave the panel.
     await expect(canvas.getByRole("button", { name: "Export report" })).toBeDisabled();
     await userEvent.click(canvas.getByRole("button", { name: "Export report" }), { pointerEventsCheck: 0 });
@@ -204,7 +204,7 @@ export const PartialRowsCannotComplete: Story = {
   args: buildProps({ manifest: manifestFor([DECLARED_A, DECLARED_B]), sections: [{ section: DECLARED_A, read: readBack(DECLARED_A) }] }),
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    await expect(canvas.getByText("2 declared")).toBeVisible();
+    await expect(canvas.getByText("2 sections")).toBeVisible();
     await expect(canvas.getByRole("button", { name: "Export report" })).toBeDisabled();
   },
 };

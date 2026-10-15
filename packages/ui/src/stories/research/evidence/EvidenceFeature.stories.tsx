@@ -261,7 +261,7 @@ export const OpenRequestsCurrentExcerpt: Story = {
     const canvas = within(canvasElement);
 
     // Nothing is opened on render. The rail opens no connection by itself.
-    await expect(canvas.getByText('Excerpt not opened for this session.')).toBeVisible();
+    await expect(canvas.getByText('Quote not opened yet.')).toBeVisible();
     await expect(canvas.queryByText("Opened handle excerpt-one:4")).toBeNull();
 
     const open = canvas.getByRole('button', { name: 'Open cited excerpt 1' });

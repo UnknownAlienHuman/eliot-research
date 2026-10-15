@@ -7,6 +7,7 @@
  * accepted manifest and section proofs and hands the verified responses to the root sink.
  */
 import { Button, Status } from "../../../primitives/primitives";
+import { MaterialSymbol } from "../../../catalog/MaterialSymbol";
 import type { ArtifactSectionResponse } from "@eliotr/owner-api-client";
 import type { DeclaredSection, VersionedRef } from "@eliotr/owner-api-client";
 import "./report.css";
@@ -56,6 +57,7 @@ export interface ReportFeatureCopy {
   readonly completenessLabel: string;
   readonly completenessPending: string;
   readonly completenessComplete: string;
+  readonly completenessProgress: (read: number, total: number) => string;
   readonly export: string;
   readonly exportBlocked: string;
   readonly exportDisabledReason: string;
@@ -85,10 +87,10 @@ export interface ReportFeatureProps {
 
 const EN_COPY: ReportFeatureCopy = {
   title: "Report",
-  manifestLabel: "Saved draft",
+  manifestLabel: "Draft",
   createdLabel: "Created",
-  sectionsLabel: "Declared sections",
-  sectionsCount: (count: number) => `${count} declared`,
+  sectionsLabel: "Sections",
+  sectionsCount: (count: number) => count === 1 ? "1 section" : `${count} sections`,
   sectionOrdinal: (ordinal: number) => `Section ${ordinal}`,
   openSection: "Open",
   technicalDetails: "Technical details",
@@ -96,21 +98,22 @@ const EN_COPY: ReportFeatureCopy = {
   technicalSectionRef: "Section reference",
   technicalDigest: "Body digest",
   freshnessLabel: "Source freshness",
-  freshnessCurrent: "Current revisions",
-  freshnessPrevious: "Previous revisions",
+  freshnessCurrent: "Built on the current versions of its sources.",
+  freshnessPrevious: "Built on earlier versions of its sources; they have changed since.",
   freshnessUnknown: "Unknown",
-  freshnessUnresolved: "Freshness is unresolved. It is not evidence that the sources are current.",
+  freshnessUnresolved: "Not checked whether its sources are still current — they may have changed since.",
   readSection: "Read",
   readingSection: "Reading",
-  sectionRead: "Read back",
-  sectionUnread: "Not read back",
+  sectionRead: "Read",
+  sectionUnread: "Not read yet",
   completenessLabel: "Completeness",
-  completenessPending: "Some declared sections are not read back yet.",
-  completenessComplete: "Every declared section is read back and verified.",
+  completenessPending: "Some sections are not read yet.",
+  completenessComplete: "Every section is read and verified.",
+  completenessProgress: (read: number, total: number) => `Read ${read} of ${total}. Export opens once every section is read.`,
   export: "Export report",
   exportBlocked: "Export is blocked until every declared section is read back.",
   exportDisabledReason: "A complete export needs every declared section verified. No partial export is offered.",
-  openReport: "Open manifest",
+  openReport: "Refresh",
   loading: "Reading the report manifest.",
   empty: "No saved draft exists for this run yet.",
   rejectedRead: "A section read was rejected. Nothing was shown for it.",
@@ -121,10 +124,10 @@ const EN_COPY: ReportFeatureCopy = {
 
 const RU_COPY: ReportFeatureCopy = {
   title: "Отчёт",
-  manifestLabel: "Сохранённый черновик",
+  manifestLabel: "Черновик",
   createdLabel: "Создан",
-  sectionsLabel: "Объявленные разделы",
-  sectionsCount: (count: number) => `Объявлено: ${count}`,
+  sectionsLabel: "Разделы",
+  sectionsCount: (count: number) => { const tail = count % 10, hundred = count % 100; return `${count} ${tail === 1 && hundred !== 11 ? "раздел" : tail >= 2 && tail <= 4 && (hundred < 12 || hundred > 14) ? "раздела" : "разделов"}`; },
   sectionOrdinal: (ordinal: number) => `Раздел ${ordinal}`,
   openSection: "Открыть",
   technicalDetails: "Технические сведения",
@@ -132,21 +135,22 @@ const RU_COPY: ReportFeatureCopy = {
   technicalSectionRef: "Ссылка на раздел",
   technicalDigest: "Дайджест тела",
   freshnessLabel: "Актуальность источников",
-  freshnessCurrent: "Текущие ревизии",
-  freshnessPrevious: "Предыдущие ревизии",
+  freshnessCurrent: "Построен на текущих версиях источников.",
+  freshnessPrevious: "Построен на прежних версиях источников; с тех пор они изменились.",
   freshnessUnknown: "Неизвестно",
-  freshnessUnresolved: "Актуальность не определена. Это не доказательство того, что источники текущие.",
+  freshnessUnresolved: "Не проверено, актуальны ли источники: они могли измениться после отчёта.",
   readSection: "Прочитать",
   readingSection: "Чтение",
   sectionRead: "Прочитан",
-  sectionUnread: "Не прочитан",
+  sectionUnread: "Ещё не прочитан",
   completenessLabel: "Полнота",
-  completenessPending: "Не все объявленные разделы прочитаны.",
-  completenessComplete: "Все объявленные разделы прочитаны и проверены.",
+  completenessPending: "Не все разделы прочитаны.",
+  completenessComplete: "Все разделы прочитаны и проверены.",
+  completenessProgress: (read: number, total: number) => `Прочитано ${read} из ${total}. Экспорт откроется, когда будут прочитаны все разделы.`,
   export: "Экспортировать отчёт",
   exportBlocked: "Экспорт заблокирован, пока не прочитаны все объявленные разделы.",
   exportDisabledReason: "Полный экспорт требует проверки каждого объявленного раздела. Частичный экспорт не предлагается.",
-  openReport: "Открыть манифест",
+  openReport: "Обновить",
   loading: "Чтение манифеста отчёта.",
   empty: "Для этого запуска сохранённого черновика пока нет.",
   rejectedRead: "Чтение раздела было отклонено. Для него ничего не показано.",
@@ -162,7 +166,8 @@ function freshnessText(copy: ReportFeatureCopy, freshness: ReportFreshness): str
 }
 
 export function ReportFeature(props: ReportFeatureProps) {
-  const { copy, state, manifest, sections, freshness, readingRef, rejectedSectionRef, onReadSection, onOpenManifest, onExport } = props;
+  // onOpenManifest stays in the contract; the workspace's own refresh action re-reads the manifest.
+  const { copy, state, manifest, sections, freshness, readingRef, rejectedSectionRef, onReadSection, onExport } = props;
   const declaredCount = manifest?.sections.length ?? 0;
   // Completeness compares the manifest-declared set against the rows, and every readback must
   // echo its declared identity. A subset of rows, or a readback that differs from its declared
@@ -201,11 +206,18 @@ export function ReportFeature(props: ReportFeatureProps) {
     sections.length === declaredSet.size &&
     new Set(sections.map(row => `${row.section.section_ref.id}:${row.section.section_ref.revision}`)).size === declaredSet.size &&
     sections.every((row) => matchesDeclared(row));
+  const readCount = sections.filter(row => matchesDeclared(row)).length;
+  const created = formatCreated(props.locale, manifest?.created_at);
   return (
     <section className="er-report" lang={props.locale} aria-label={copy.title}>
       <header className="er-report__head">
         <h2 className="er-report__title">{copy.title}</h2>
-        <Button variant="text" icon="folder" onClick={onOpenManifest}>{copy.openReport}</Button>
+        {/* One line instead of a facts table: what it is, when it was made, how many sections. */}
+        {state === "useful" && manifest !== undefined ? <p className="er-report__meta">
+          <span>{copy.manifestLabel}</span>
+          {created ? <time dateTime={manifest.created_at} title={manifest.created_at}>{created}</time> : null}
+          <span data-report-sections>{copy.sectionsCount(declaredCount)}</span>
+        </p> : null}
       </header>
       {state === "loading" ? <Status tone="neutral" icon="search">{copy.loading}</Status> : null}
       {state === "empty" ? <Status tone="neutral" icon="folder">{copy.empty}</Status> : null}
@@ -221,59 +233,35 @@ export function ReportFeature(props: ReportFeatureProps) {
           {rejectedSectionRef !== undefined ? <p>{copy.unverifiedBytes}</p> : null}
         </div>
       ) : null}
-      {state === "useful" && manifest !== undefined ? (
-        <div className="er-report__manifest">
-          <dl className="er-report__facts">
-            <div className="er-report__fact">
-              <dt>{copy.manifestLabel}</dt>
-              <dd data-report-title>{manifest.title}</dd>
-            </div>
-            <div className="er-report__fact">
-              <dt>{copy.createdLabel}</dt>
-              <dd>{manifest.created_at}</dd>
-            </div>
-            <div className="er-report__fact">
-              <dt>{copy.sectionsLabel}</dt>
-              <dd data-report-sections>{copy.sectionsCount(declaredCount)}</dd>
-            </div>
-          </dl>
-        </div>
+      {state === "useful" ? (
+        <p className="er-report__freshness" data-freshness={freshness} data-report-freshness={freshnessText(copy, freshness)}>
+          <span className="er-report__freshness-label">{copy.freshnessLabel}: </span>
+          {freshness === "UNKNOWN" ? copy.freshnessUnresolved : freshnessText(copy, freshness)}
+        </p>
       ) : null}
       {state === "useful" ? (
-        <div className="er-report__freshness">
-          <h3>{copy.freshnessLabel}</h3>
-          <p data-report-freshness>{freshnessText(copy, freshness)}</p>
-          {freshness === "UNKNOWN" ? <p>{copy.freshnessUnresolved}</p> : null}
-        </div>
-      ) : null}
-      {state === "useful" ? (
-        <ul className="er-report__sections">
+        <ul className="er-report__sections" aria-label={copy.sectionsLabel}>
           {sections.map((row, index) => {
             const key = `${row.section.section_ref.id}:${row.section.section_ref.revision}`;
             const isReading = readingRef === key;
+            const isRead = matchesDeclared(row);
+            const label = copy.sectionOrdinal(index + 1);
             return (
-              <li key={`${key}:${index}`} className="er-report__section" data-report-section={key}>
-                <span className="er-report__section-label" data-report-section-label>
-                  {copy.sectionOrdinal(index + 1)}
+              <li key={`${key}:${index}`} className="er-report__section" data-report-section={key} data-read={isRead ? "true" : "false"}>
+                <span className="er-report__section-glyph" aria-hidden="true"><MaterialSymbol name={isRead ? "check" : "document"} /></span>
+                <span className="er-report__section-text">
+                  <span className="er-report__section-label" data-report-section-label>{label}</span>
+                  <span className="er-report__section-state">{isRead ? copy.sectionRead : copy.sectionUnread}</span>
                 </span>
-                <span className="er-report__section-state">
-                  {matchesDeclared(row) ? copy.sectionRead : copy.sectionUnread}
-                </span>
-                {!matchesDeclared(row) ? (
-                  <Button
-                    variant="tonal"
-                    icon="file"
-                    disabled={isReading}
-                    onClick={() => onReadSection(row.section)}
-                  >
-                    {isReading ? copy.readingSection : copy.readSection} · {copy.sectionOrdinal(index + 1)}
+                {isRead ? (
+                  <Button variant="text" onClick={() => onReadSection(row.section)}>
+                    {copy.openSection}<span className="er-report__sr"> · {label}</span>
                   </Button>
-                ) : null}
-                {matchesDeclared(row) ? (
-                  <Button variant="text" icon="file" onClick={() => onReadSection(row.section)}>
-                    {copy.openSection} · {copy.sectionOrdinal(index + 1)}
+                ) : (
+                  <Button variant="tonal" disabled={isReading} onClick={() => onReadSection(row.section)}>
+                    {isReading ? copy.readingSection : copy.readSection}<span className="er-report__sr"> · {label}</span>
                   </Button>
-                ) : null}
+                )}
                 <details className="er-report__section-details">
                   <summary>{copy.technicalDetails}</summary>
                   <dl className="er-report__section-technical">
@@ -304,23 +292,25 @@ export function ReportFeature(props: ReportFeatureProps) {
       ) : null}
       {state === "useful" ? (
         <div className="er-report__export">
-          <h3>{copy.completenessLabel}</h3>
           <p data-report-completeness>
-            {complete ? copy.completenessComplete : copy.completenessPending}
+            {complete ? copy.completenessComplete : copy.completenessProgress(readCount, declaredCount)}
           </p>
-          {complete ? (
-            <Button variant="primary" icon="send" onClick={onExport}>{copy.export}</Button>
-          ) : (
-            <>
-              <Button variant="primary" icon="send" disabled>{copy.export}</Button>
-              <p>{copy.exportBlocked}</p>
-            </>
-          )}
-          <p className="er-report__gate-note">{copy.exportDisabledReason}</p>
+          {/* No partial export: the action stays disabled until every declared section is verified. */}
+          <Button variant={complete ? "primary" : "tonal"} icon="send" disabled={!complete}
+            {...(complete ? { onClick: onExport } : { title: copy.exportDisabledReason })}>
+            {copy.export}
+          </Button>
         </div>
       ) : null}
     </section>
   );
+}
+
+function formatCreated(locale: "en" | "ru", value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(date);
 }
 
 export const REPORT_COPY = { en: EN_COPY, ru: RU_COPY } as const;

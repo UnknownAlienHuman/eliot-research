@@ -60,7 +60,7 @@ export async function playMaterialReading({ canvas, userEvent }: Parameters<type
   const close = await canvas.findByRole('button', { name: 'Close report' });
   const reportTitle = await canvas.findByRole('heading', { name: 'Saved report', exact: true });
   if (document.activeElement !== reportTitle) throw new Error('Opening a report lost keyboard focus');
-  await canvas.findByText('4 declared');
+  await canvas.findByText('4 sections');
   const exportButton = canvas.getByRole('button', { name: 'Export report' });
   if (!(exportButton instanceof HTMLButtonElement) || !exportButton.disabled) throw new Error('Unread sections permitted export');
   await userEvent.click(canvas.getByRole('button', { name: 'Read · Section 1' }));

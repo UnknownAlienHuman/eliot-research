@@ -227,7 +227,7 @@ export const playResearchJourney = async ({ canvas, userEvent }: {
   await userEvent.click(await canvas.findByRole('button', { name: 'Reconcile this question' }));
   await canvas.findByText('Research finished.');
   await userEvent.click(canvas.getAllByRole('button', { name: 'Open saved report' })[0] as HTMLElement);
-  await canvas.findByText('40 declared');
+  await canvas.findByText('40 sections');
   const exportButton = canvas.getByRole('button', { name: 'Export report' });
   if (!(exportButton instanceof HTMLButtonElement) || !exportButton.disabled) throw new Error('Unread required sections permitted export');
   await userEvent.click(canvas.getByRole('button', { name: 'Read · Section 1' }));
@@ -262,7 +262,7 @@ export async function playResearchHistoryReturn({ canvas, userEvent }: Parameter
   await canvas.findByRole('button', { name: 'Ask another question', exact: true });
   probe.assertHistorySelected(); probe.assertEffects(0, 0);
   await userEvent.click(canvas.getAllByRole('button', { name: 'Open saved report' })[0] as HTMLElement);
-  await canvas.findByText('40 declared');
+  await canvas.findByText('40 sections');
   probe.assertHistorySelected(); probe.assertEffects(0, 0);
   await userEvent.click(canvas.getByRole('button', { name: 'Close report', exact: true }));
   const held = await canvas.findByRole('textbox', { name: 'Next question', exact: true });

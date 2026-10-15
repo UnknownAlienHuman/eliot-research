@@ -43,13 +43,16 @@
   text-overflow: ellipsis;
 }
 
+/* The section decides its own columns: evidence sits beside the text only when the reading pane
+   itself is wide enough, never because the window is (three panes leave the centre narrow). */
+.er-live-report-section { container-type: inline-size; }
 .er-live-report-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--eliot-space-section); }
 .er-live-report-body { min-width: 0; max-inline-size: var(--eliot-type-reading-measure); }
 .er-live-report-body > .er-shell-note { margin-block-start: var(--eliot-space-panel); }
 .er-live-report-evidence { min-width: 0; }
 .er-live-report-evidence .evidence { padding: var(--eliot-space-group); border-radius: var(--eliot-shape-large-increased); }
 .er-live-report-evidence .evidence__title { font-size: var(--eliot-type-title-medium-size); line-height: var(--eliot-type-title-medium-line-height); }
-@media (min-width: 90rem) {
+@container (min-width: 56rem) {
   .er-live-report-layout { grid-template-columns: minmax(0, 1fr) var(--eliot-layout-context-width); gap: var(--eliot-space-panel); }
 }
 
@@ -420,3 +423,13 @@
 .er-live-agent-assignment > .er-button { inline-size: 100%; }
 .er-live-agent-assignment__state { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--eliot-space-block-control); min-inline-size: 0; }
 .er-live-agent-assignment__state[data-tone="attention"] { padding: var(--eliot-space-block-control) var(--eliot-space-gutter); border-radius: var(--eliot-shape-medium); background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
+
+/* Saved report header: the title and its two quiet actions share one row; everything else spans. */
+.er-live-report { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: var(--eliot-space-panel); }
+.er-live-report > * { grid-column: 1 / -1; }
+.er-live-report > .er-live-report-title { grid-column: 1; grid-row: 1; margin: 0; }
+.er-live-report > .er-live-report-toolbar { grid-column: 2; grid-row: 1; margin-block: 0; }
+/* A section whose text opens with its own heading keeps the focus heading for assistive tech only. */
+.er-live-report-section:has(.er-live-report-body > .er-safe-markdown > :is(h1, h2, h3):first-child) > h2 {
+  position: absolute; inline-size: 1px; block-size: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}
