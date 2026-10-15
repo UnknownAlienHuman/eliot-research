@@ -18,8 +18,11 @@ import type {
   ManagedProjectCopyMapSetReceiptV1,
   ManagedProjectCopyMapSetReceiptV2,
   ManagedProjectCopyTargetReceipt,
+  ManagedTargetRequiredSetCopyMapSetReceiptV3,
+  ProjectCopyMembershipCopyV2,
   ProjectCopyScopeV2,
   ProjectionExecutionProfile,
+  TargetRequiredSetCopyAuthorityV3,
 } from "./types.js";
 import type { ManagedTargetProviderCapacityAuthorityPort } from "./managed-target-manifest-fragments.js";
 import type {
@@ -155,6 +158,19 @@ export interface ManagedTargetManifestCanonicalProjectionPort {
     readonly input_bytes_budget_remaining: number;
   }): Promise<{
     readonly receipt: ManagedProjectCopyMapSetReceiptV2;
+    readonly budget: ManagedTargetManifestOperationBudgetReceipt;
+  }>;
+  mapTargetRequiredSetCopies(input: {
+    readonly canonical: CanonicalSourceProjectionReceipt;
+    readonly target: ManagedProjectCopyTargetReceipt;
+    readonly authority: TargetRequiredSetCopyAuthorityV3;
+    readonly copies: readonly ProjectCopyMembershipCopyV2[];
+    readonly operation_budget_remaining: number;
+    readonly subrequest_budget_remaining: number;
+    readonly cpu_budget_remaining_ms: number;
+    readonly input_bytes_budget_remaining: number;
+  }): Promise<{
+    readonly receipt: ManagedTargetRequiredSetCopyMapSetReceiptV3;
     readonly budget: ManagedTargetManifestOperationBudgetReceipt;
   }>;
 }

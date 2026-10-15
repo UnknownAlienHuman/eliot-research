@@ -5,7 +5,9 @@ import type {
   ManagedTargetSelectionReceipt,
   ManagedTargetSelectionV2,
 } from "./managed-target-assignment.js";
+import { hasValidManagedTargetRegistryCaptureV2 } from "./managed-target-assignment.js";
 import {
+  createManagedRequiredSetTargetFenceV2,
   ManagedRequiredSetError,
   enumerateManagedRequiredSet,
   type ManagedRequiredProjectRevisionCopy,
@@ -18,7 +20,9 @@ import {
   foldManagedTargetManifestPage,
   initialManagedTargetManifestScan,
   managedRequiredSetReceiptFromScan,
+  validateManagedTargetSelection,
 } from "./managed-target-manifest-continuation.js";
+import { advanceManagedTargetManifest } from "./managed-target-manifest.js";
 import { runToReady, setup } from "./managed-target-manifest-test-support.js";
 import { managedProjectFolderPrefix, managedProjectFolderPrefixV2 } from "./managed-project-path.js";
 const AS_OF = "2026-10-14T16:00:00.000Z";
@@ -262,7 +266,147 @@ describe("managed target manifest V2 required-set consumer", () => {
     }, target, AS_OF, selection)).rejects.toBeInstanceOf(ManagedRequiredSetError);
   });
 
-  it("builds a V2 ready candidate through the real R2 canonical/copy writer for stable A/B memberships", async () => {
+  it("accepts only the paired-null registry capture for SHADOW and hashes it with the shared V2 fence helper", async () => {
+    const absentSelection: ManagedTargetSelectionV2 = {
+      ...selection,
+      purpose: "SHADOW",
+      registry_revision: null,
+      registry_artifact_sha256: null,
+    };
+    expect(hasValidManagedTargetRegistryCaptureV2(absentSelection)).toBe(true);
+    expect(validateManagedTargetSelection(target, absentSelection)).toBe(2);
+
+    const activeAbsent = { ...absentSelection, purpose: "ACTIVE" as const };
+    const mixedAbsent = { ...absentSelection, registry_artifact_sha256: "d".repeat(64) };
+    expect(hasValidManagedTargetRegistryCaptureV2(activeAbsent)).toBe(false);
+    expect(hasValidManagedTargetRegistryCaptureV2(mixedAbsent)).toBe(false);
+    expect(() => validateManagedTargetSelection(target, activeAbsent)).toThrow(ManagedRequiredSetError);
+    expect(() => validateManagedTargetSelection(target, mixedAbsent)).toThrow(ManagedRequiredSetError);
+
+    const fence: ManagedRequiredSetFence = {
+      assignment_heads_sha256: "e".repeat(64),
+      assigned_project_count: 1,
+      stale_assignment_count: 0,
+      profile_mismatch_count: 0,
+    };
+    const scan = await initialManagedTargetManifestScan(target, AS_OF, fence, absentSelection);
+    const folded = await foldManagedTargetManifestPage(
+      scan,
+      { rows: [], next_cursor: null },
+      target,
+      AS_OF,
+      absentSelection,
+    );
+    const receipt = await managedRequiredSetReceiptFromScan(target, AS_OF, fence, folded.state, absentSelection);
+    const expectedFence = await createManagedRequiredSetTargetFenceV2({
+      target,
+      target_selection: absentSelection,
+      as_of: AS_OF,
+      assignment_heads_sha256: fence.assignment_heads_sha256,
+      required_set_sha256: folded.state.digest,
+      page_provenance_sha256: folded.state.page_provenance_digest,
+      assigned_project_count: fence.assigned_project_count,
+      project_revision_copy_count: folded.state.count,
+      page_count: folded.state.pages,
+    });
+    if (!("target_selection" in receipt)) throw new Error("V2 receipt lost its frozen selection");
+    expect(receipt.target_selection).toMatchObject({ registry_revision: null, registry_artifact_sha256: null });
+    expect(receipt.target_fence).toEqual(expectedFence);
+    expect(receipt.as_of).toBe(AS_OF);
+  });
+
+  it("freezes a successful UNDECLARED null capture across continuation and keeps registry-read failure fatal", async () => {
+    const state = await setup([
+      { project_id: "project-bootstrap", source_id: "source-bootstrap" },
+    ], {
+      accountTier: "PAID",
+      copyLayout: "PROJECT_COPY_V2",
+      logicalGeneration: "logical-generation-bootstrap",
+      targetSelection: {
+        protocol: selection.protocol,
+        domain: selection.domain,
+        decision_version: selection.decision_version,
+        selection_mode: selection.selection_mode,
+        product_alias: selection.product_alias,
+        purpose: "SHADOW",
+        registry_revision: null,
+        registry_artifact_sha256: null,
+        v1_exact_profile_identity_sha256: selection.v1_exact_profile_identity_sha256,
+      },
+    });
+    const first = await advanceManagedTargetManifest(state.input);
+    if (first.continuation === null) throw new Error("null-capture bootstrap did not persist its first continuation");
+    const stored = JSON.parse(state.store.objects.get(first.continuation.ref) ?? "null") as {
+      readonly target_selection: ManagedTargetSelectionV2;
+      readonly initial_shadow_fence: { readonly registry_revision: number | null; readonly registry_sha256: string | null; readonly generation_state: string };
+    };
+    expect(stored.target_selection).toMatchObject({ registry_revision: null, registry_artifact_sha256: null, purpose: "SHADOW" });
+    expect(stored.initial_shadow_fence).toMatchObject({ registry_revision: null, registry_sha256: null, generation_state: "UNDECLARED" });
+
+    const resumed = await advanceManagedTargetManifest({ ...state.input, continuation: first.continuation });
+    expect(resumed.status).toBe("CONTINUE");
+    const frozenSelection = state.input.target_selection;
+    if (frozenSelection === undefined) throw new Error("V2 bootstrap input lost its frozen selection");
+    const changedSelectionInput = {
+      ...state.input,
+      target_selection: {
+        ...frozenSelection,
+        registry_revision: 1,
+        registry_artifact_sha256: "f".repeat(64),
+      },
+      continuation: first.continuation,
+    };
+    await expect(advanceManagedTargetManifest(changedSelectionInput))
+      .rejects.toThrow("continuation identity differs from the selected execution/target/profile");
+
+    const failedRegistryRead = {
+      ...state.input,
+      shadow_authority: {
+        async read() { throw new Error("registry database unavailable"); },
+      },
+    };
+    await expect(advanceManagedTargetManifest(failedRegistryRead))
+      .rejects.toThrow("SEARCH_DB shadow authority did not provide a bounded read receipt");
+    expect(state.counters.normalizedReads).toBe(0);
+    expect(state.counters.canonicalReads).toBe(0);
+    expect(state.counters.copyMapReads).toBe(0);
+  });
+
+  it("freezes the complete V3 required-set fence before the first target-map write", async () => {
+    const state = await setup([
+      { project_id: "project-fence", source_id: "source-fence" },
+    ], {
+      accountTier: "PAID",
+      copyLayout: "PROJECT_COPY_V2",
+      logicalGeneration: "logical-generation-fence",
+      targetSelection: selection,
+    });
+    let step = await advanceManagedTargetManifest(state.input);
+    while (step.status === "CONTINUE" && step.phase !== "VERIFY_SCAN") {
+      expect(state.counters.copyMapReads).toBe(0);
+      if (step.continuation === null) throw new Error("initial target-fence continuation is missing");
+      step = await advanceManagedTargetManifest({ ...state.input, continuation: step.continuation });
+    }
+    expect(step.status).toBe("CONTINUE");
+    expect(step.phase).toBe("VERIFY_SCAN");
+    expect(state.counters.copyMapReads).toBe(0);
+    if (step.continuation === null) throw new Error("frozen required-set continuation is missing");
+    const stored = JSON.parse(state.store.objects.get(step.continuation.ref) ?? "null") as {
+      readonly initial_required_set: {
+        readonly protocol: string;
+        readonly target_fence: { readonly protocol: string; readonly digest: string };
+      } | null;
+    };
+    expect(stored.initial_required_set).toMatchObject({
+      protocol: "eliotr.managed-required-project-revisions.v3",
+      target_fence: { protocol: "eliotr.managed-required-set-target-fence.v2" },
+    });
+    const firstMapStep = await advanceManagedTargetManifest({ ...state.input, continuation: step.continuation });
+    expect(firstMapStep.status).toBe("CONTINUE");
+    expect(state.counters.copyMapReads).toBe(1);
+  });
+
+  it("builds a V3 target-authority candidate through the real R2 canonical/copy writer for stable A/B memberships", async () => {
     const state = await setup([
       {
         project_id: "project-a",
@@ -342,6 +486,16 @@ describe("managed target manifest V2 required-set consumer", () => {
       };
         readonly provider_copy_map_set?: {
           readonly protocol: string;
+          readonly authority_kind: string;
+          readonly authority_sha256: string;
+          readonly authority: {
+            readonly protocol: string;
+            readonly authority_kind: string;
+            readonly target_selection: ManagedTargetSelectionV2;
+            readonly as_of: string;
+            readonly required_set_fence: unknown;
+            readonly authority_sha256: string;
+          };
           readonly provider_copy_count: number;
           readonly provider_item_count: number;
           readonly copy_map_index_ref: string;
@@ -350,7 +504,7 @@ describe("managed target manifest V2 required-set consumer", () => {
         };
       });
     expect(fragments).toHaveLength(2);
-    expect(fragments.every((fragment) => fragment.protocol === "eliotr.managed-target-manifest-copy.v3" &&
+    expect(fragments.every((fragment) => fragment.protocol === "eliotr.managed-target-manifest-copy.v4" &&
       fragment.copy_layout === "PROJECT_COPY_V2")).toBe(true);
     const providerMaps = fragments.map((fragment) => fragment.provider_copy_map)
       .filter((copy): copy is NonNullable<typeof copy> => copy !== undefined)
@@ -396,17 +550,27 @@ describe("managed target manifest V2 required-set consumer", () => {
     });
     expect(legacyCopy.items[0]?.provider_key.startsWith(legacyFolder)).toBe(true);
     expect(stableCopy.items[0]?.provider_key.startsWith(stableFolder)).toBe(true);
-    expect(fragments.every((fragment) => fragment.provider_copy_map_set?.protocol === "eliotr.managed-project-copy-map-set.v2" &&
-      fragment.provider_copy_map_set.provider_copy_count === 1 &&
-      fragment.provider_copy_map_set.provider_item_count === 1 &&
+    expect(fragments.every((fragment) => fragment.provider_copy_map_set?.protocol === "eliotr.managed-project-copy-map-set.v3" &&
+      fragment.provider_copy_map_set.authority_kind === "TARGET_REQUIRED_SET_V3" &&
+      fragment.provider_copy_map_set.authority.protocol === "eliotr.target-required-set-copy-authority.v3" &&
+      fragment.provider_copy_map_set.authority.authority_kind === "TARGET_REQUIRED_SET_V3" &&
+      fragment.provider_copy_map_set.authority.authority_sha256 === fragment.provider_copy_map_set.authority_sha256 &&
+      fragment.provider_copy_map_set.authority.as_of === candidate.as_of &&
+      JSON.stringify(fragment.provider_copy_map_set.authority.required_set_fence) === JSON.stringify(candidate.required_set.target_fence) &&
+      fragment.provider_copy_map_set.provider_copy_count === 2 &&
+      fragment.provider_copy_map_set.provider_item_count === 2 &&
       fragment.provider_copy_map_set.resource_bounds.copy_map_index_put_count === 1 &&
       fragment.provider_copy_map_set.resource_bounds.copy_map_r2_put_count === 2 &&
       fragment.provider_copy_map_set.resource_bounds.copy_map_r2_subrequest_bound === 4)).toBe(true);
-    const indexKeys = [...state.store.objects.keys()].filter((key) => key.includes("/copy-maps/index/"));
-    const pageKeys = [...state.store.objects.keys()].filter((key) => key.includes("/copy-maps/") && key.includes("/pages/"));
-    expect(indexKeys).toHaveLength(2);
-    expect(pageKeys).toHaveLength(2);
+    const indexKeys = [...state.store.objects.keys()].filter((key) => key.includes("/target-required-set-copy-maps/index/"));
+    const pageKeys = [...state.store.objects.keys()].filter((key) => key.includes("/target-required-set-copy-maps/") && key.includes("/pages/"));
+    expect(indexKeys).toHaveLength(1);
+    expect(pageKeys).toHaveLength(1);
     expect(fragments.every((fragment) => indexKeys.includes(fragment.provider_copy_map_set?.copy_map_index_ref ?? ""))).toBe(true);
+    expect(fragments.every((fragment) => fragment.provider_copy_map_set !== undefined &&
+      !Object.hasOwn(fragment.provider_copy_map_set, "scope_snapshot_id") &&
+      !Object.hasOwn(fragment.provider_copy_map_set, "scope_snapshot_revision") &&
+      !Object.hasOwn(fragment.provider_copy_map_set, "scope_snapshot_digest"))).toBe(true);
     expect([...indexKeys, ...pageKeys].every((key) => !state.store.objects.get(key)?.includes("section_text"))).toBe(true);
     expect(fragments.every((fragment) => !JSON.stringify(fragment.provider_copy_map).includes("section_text"))).toBe(true);
   });

@@ -22,7 +22,10 @@ import type {
   ManagedProjectCopyMapSetReceiptV1,
   ManagedProjectCopyMapSetReceiptV2,
   ManagedProjectCopyTargetReceipt,
+  ManagedTargetRequiredSetCopyMapSetReceiptV3,
+  ProjectCopyMembershipCopyV2,
   ProjectCopyScopeV2,
+  TargetRequiredSetCopyAuthorityV3,
 } from "./types.js";
 import { createR2CanonicalSourceProjectionWriter } from "./work-store.js";
 
@@ -299,12 +302,22 @@ export async function setup(
     readonly target: ManagedProjectCopyTargetReceipt;
     readonly scope: ProjectCopyScopeV2;
   } & LocalWriterBudgetFields;
+  type V3MapInput = {
+    readonly canonical: CanonicalSourceProjectionReceipt;
+    readonly target: ManagedProjectCopyTargetReceipt;
+    readonly authority: TargetRequiredSetCopyAuthorityV3;
+    readonly copies: readonly ProjectCopyMembershipCopyV2[];
+  } & LocalWriterBudgetFields;
   type V1MapResult = {
     readonly receipt: ManagedProjectCopyMapSetReceiptV1;
     readonly budget: ManagedTargetManifestOperationBudgetReceipt;
   };
   type V2MapResult = {
     readonly receipt: ManagedProjectCopyMapSetReceiptV2;
+    readonly budget: ManagedTargetManifestOperationBudgetReceipt;
+  };
+  type V3MapResult = {
+    readonly receipt: ManagedTargetRequiredSetCopyMapSetReceiptV3;
     readonly budget: ManagedTargetManifestOperationBudgetReceipt;
   };
   async function mapProjectCopies(input: V1MapInput): Promise<V1MapResult>;
@@ -341,6 +354,31 @@ export async function setup(
         receipt.resource_bounds.copy_map_r2_subrequest_bound,
         input.memberships.length * 4 * 1024,
       ),
+    };
+  }
+  async function mapTargetRequiredSetCopies(input: V3MapInput): Promise<V3MapResult> {
+    copyMapReads += input.copies.length;
+    const receipt = await writer.mapTargetRequiredSetCopies({
+      canonical: input.canonical,
+      target: input.target,
+      authority: input.authority,
+      copies: input.copies,
+    });
+    const inputBytes = utf8ProjectionBytes(canonicalProjectionJson({
+      canonical: input.canonical,
+      target: input.target,
+      authority: input.authority,
+      copies: input.copies,
+    })).byteLength;
+    return {
+      receipt,
+      budget: Object.freeze({
+        protocol: "eliotr.managed-target-operation-budget.v1",
+        subrequest_upper_bound: receipt.resource_bounds.copy_map_r2_subrequest_bound,
+        // Synthetic deterministic fixture envelope; never a production CPU measurement.
+        cpu_upper_bound_ms: 1,
+        input_bytes_upper_bound: inputBytes,
+      }),
     };
   }
   const readRowsAfter = (after: string | null, limit: number) => {
@@ -488,6 +526,7 @@ export async function setup(
         };
       },
       mapProjectCopies,
+      mapTargetRequiredSetCopies,
     },
     work_store: store.store,
     work_index: {

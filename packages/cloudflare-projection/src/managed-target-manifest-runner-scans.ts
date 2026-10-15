@@ -43,11 +43,13 @@ import { canonicalProjectionJson, projectionDigest, projectionSha256Utf8, utf8Pr
 import {
   CONTINUATION_PROTOCOL,
   CONTINUATION_PROTOCOL_V3,
+  CONTINUATION_PROTOCOL_V4,
   IDENTIFIER,
   MAX_ASSIGNMENT_FENCE_PAGES,
   MAX_MANIFEST_PAGE_BYTES,
   PAGE_PROTOCOL,
   PAGE_PROTOCOL_V3,
+  PAGE_PROTOCOL_V4,
   SOURCE_INDEX_PROTOCOL,
   SHA256,
   fail,
@@ -359,7 +361,8 @@ function validateContinuationShape(value: unknown): ManifestContinuationState {
     fail("MANAGED_TARGET_MANIFEST_CONTINUATION_INVALID", "continuation is not a strict object");
   }
   const state = value as ManifestContinuationState;
-  const v2SelectionContinuation = state.protocol === CONTINUATION_PROTOCOL_V3;
+  const v2SelectionContinuation = state.protocol === CONTINUATION_PROTOCOL_V3 ||
+    state.protocol === CONTINUATION_PROTOCOL_V4;
   if (
     (state.protocol !== CONTINUATION_PROTOCOL && !v2SelectionContinuation) ||
     (v2SelectionContinuation
@@ -425,7 +428,7 @@ export async function loadContinuation(input: {
     state.projection_profile_sha256 !== input.projection_profile_sha256 ||
     (input.target_selection === undefined
       ? state.protocol !== CONTINUATION_PROTOCOL || state.target_selection !== undefined
-      : state.protocol !== CONTINUATION_PROTOCOL_V3 || !sameJson(state.target_selection, input.target_selection)) ||
+      : state.protocol !== CONTINUATION_PROTOCOL_V4 || !sameJson(state.target_selection, input.target_selection)) ||
     (input.as_of !== undefined && input.as_of !== state.as_of) ||
     !input.ref.startsWith(`${state.build_prefix}continuations/`)
   ) fail("MANAGED_TARGET_MANIFEST_CONTINUATION_INVALID", "continuation identity differs from the selected execution/target/profile");
@@ -499,9 +502,14 @@ export async function readOrStagePage(input: {
       fail("MANAGED_TARGET_MANIFEST_CONTINUATION_INVALID", "pending required-set page is absent or changed");
     }
     const pageRecord = stored.value as StoredRequiredPage;
+    const expectedPageProtocol = state.protocol === CONTINUATION_PROTOCOL_V4
+      ? PAGE_PROTOCOL_V4
+      : state.protocol === CONTINUATION_PROTOCOL_V3 ? PAGE_PROTOCOL_V3 : PAGE_PROTOCOL;
+    const hasV2Selection = state.protocol === CONTINUATION_PROTOCOL_V3 ||
+      state.protocol === CONTINUATION_PROTOCOL_V4;
     if (
-      pageRecord.protocol !== (state.protocol === CONTINUATION_PROTOCOL_V3 ? PAGE_PROTOCOL_V3 : PAGE_PROTOCOL) ||
-      (state.protocol === CONTINUATION_PROTOCOL_V3
+      pageRecord.protocol !== expectedPageProtocol ||
+      (hasV2Selection
         ? !sameJson(pageRecord.target_selection, state.target_selection)
         : pageRecord.target_selection !== undefined) ||
       pageRecord.scan_identity_sha256 !== state.scan_identity_sha256 ||
@@ -545,7 +553,9 @@ export async function readOrStagePage(input: {
     state.target_selection,
   );
   const pagePayload: StoredRequiredPage = Object.freeze({
-    protocol: state.protocol === CONTINUATION_PROTOCOL_V3 ? PAGE_PROTOCOL_V3 : PAGE_PROTOCOL,
+    protocol: state.protocol === CONTINUATION_PROTOCOL_V4
+      ? PAGE_PROTOCOL_V4
+      : state.protocol === CONTINUATION_PROTOCOL_V3 ? PAGE_PROTOCOL_V3 : PAGE_PROTOCOL,
     ...(state.target_selection === undefined ? {} : { target_selection: state.target_selection }),
     scan_identity_sha256: state.scan_identity_sha256,
     phase,

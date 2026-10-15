@@ -31,7 +31,7 @@ import { projectionDigest, projectionSha256Utf8 } from "./canonical.js";
 import {
   assertFreshAuthorityTimestamp,
   CONTINUATION_PROTOCOL,
-  CONTINUATION_PROTOCOL_V3,
+  CONTINUATION_PROTOCOL_V4,
   IDENTIFIER,
   SHA256,
   capacityIdentity,
@@ -90,7 +90,7 @@ export async function advanceManagedTargetManifestStep(
     const fresh = await readCurrentAuthority(input, profileDigests.target_profile_sha256, nowMs, budget);
     const provisionalIdentity = await projectionDigest(selectionVersion === 2
       ? {
-        protocol: "eliotr.managed-target-manifest-run-identity.v3",
+        protocol: "eliotr.managed-target-manifest-run-identity.v4",
         execution_id: input.execution_id,
         target: input.target,
         target_selection: input.target_selection,
@@ -110,7 +110,7 @@ export async function advanceManagedTargetManifestStep(
     const digests = await seedBuildDigests(input, profileDigests.projection_profile_sha256);
     const zero = await projectionSha256Utf8("eliotr.manifest-source-index-set.v1");
     state = Object.freeze({
-      protocol: selectionVersion === 2 ? CONTINUATION_PROTOCOL_V3 : CONTINUATION_PROTOCOL,
+      protocol: selectionVersion === 2 ? CONTINUATION_PROTOCOL_V4 : CONTINUATION_PROTOCOL,
       execution_id: input.execution_id,
       target: input.target,
       ...(selectionVersion === 2 && input.target_selection?.decision_version === 2
@@ -192,7 +192,7 @@ export async function advanceManagedTargetManifestStep(
       const initialFence = assignmentFenceReceipt(progress);
       const scanIdentity = await projectionDigest(selectionVersion === 2
         ? {
-          protocol: "eliotr.managed-target-manifest-scan-identity.v3",
+          protocol: "eliotr.managed-target-manifest-scan-identity.v4",
           execution_id: input.execution_id,
           target: input.target,
           target_selection: state.target_selection,
@@ -232,7 +232,14 @@ export async function advanceManagedTargetManifestStep(
     nextState = await advanceBuildScan(input, state, workStore, budget, profileDigests.projection_profile_sha256, currentCapacity.capacity_receipt);
     nextPhase = nextState.phase;
   } else if (state.phase === "VERIFY_SCAN") {
-    nextState = await advanceVerifyScan(input, state, workStore, budget);
+    nextState = await advanceVerifyScan(
+      input,
+      state,
+      workStore,
+      budget,
+      profileDigests.projection_profile_sha256,
+      currentCapacity.capacity_receipt,
+    );
     nextPhase = nextState.phase;
   } else if (state.phase === "SOURCE_SUMMARY") {
     const sourceSummary = await sourceIndexSummaryPage({ state, input, store: workStore, budget });

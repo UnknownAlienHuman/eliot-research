@@ -1,6 +1,6 @@
 import { bufferBounded, type EvidenceObjectStore } from "@eliotr/platform-cloudflare";
-import type { ManagedTargetIdentity, ManagedTargetSelectionV2 } from "./managed-target-assignment.js";
-import type { ManagedRequiredProjectRevisionCopy, ManagedRequiredSetFence } from "./managed-required-set.js";
+import type { ManagedTargetIdentity } from "./managed-target-assignment.js";
+import type { ManagedRequiredProjectRevisionCopy } from "./managed-required-set.js";
 import { ManagedTargetManifestError } from "./managed-target-manifest-contract.js";
 import {
   type CanonicalSourceProjectionReceipt,
@@ -16,7 +16,6 @@ import { buildCanonicalProjectCopyMapsV2 } from "./core-managed-item-intent.js";
 import {
   managedProjectFolderPrefix,
   managedProjectFolderPrefixV2,
-  managedProjectGenerationMetadataValue,
 } from "./managed-project-path.js";
 import { projectionDigest, projectionSha256Utf8, canonicalProjectionJson, stableProjectionId } from "./canonical.js";
 import {
@@ -25,11 +24,11 @@ import {
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
-const MAX_COPY_MAP_PAGES = 256;
-const MAX_COPY_MAPS_PER_PAGE = 256;
-const MAX_COPY_MAP_SUBREQUESTS = 10_000;
-const MAX_COPY_MAP_OBJECT_BYTES = 4 * 1024 * 1024;
-const DEFAULT_CPU_LIMIT_MS = 30_000;
+export const MAX_COPY_MAP_PAGES = 256;
+export const MAX_COPY_MAPS_PER_PAGE = 256;
+export const MAX_COPY_MAP_SUBREQUESTS = 10_000;
+export const MAX_COPY_MAP_OBJECT_BYTES = 4 * 1024 * 1024;
+export const DEFAULT_CPU_LIMIT_MS = 30_000;
 
 export interface ManagedTargetManifestV2MapReadback {
   readonly copies: readonly ManagedProjectCopyMapReceiptV2[];
@@ -37,35 +36,23 @@ export interface ManagedTargetManifestV2MapReadback {
   readonly index_object_bytes: number;
 }
 
-/**
- * Freeze one exact required-set row into the writer-owned V2 scope. The
- * registry artifact identity/revision names the captured selection snapshot;
- * the digest binds that selection to the assignment-head fence and row facts.
- */
-export async function managedTargetManifestProjectCopyScopeV2(input: {
+/** Derive the V2 provider membership row without manufacturing an owner scope snapshot. */
+export async function managedTargetManifestProjectCopyMembershipV2(input: {
   readonly target: ManagedTargetIdentity;
-  readonly selection: ManagedTargetSelectionV2;
-  readonly as_of: string;
-  readonly assignment_fence: ManagedRequiredSetFence;
   readonly copy: ManagedRequiredProjectRevisionCopy;
-}): Promise<ProjectCopyScopeV2> {
-  const { target, selection, as_of: asOf, assignment_fence: fence, copy } = input;
+}): Promise<ProjectCopyMembershipCopyV2> {
+  const { target, copy } = input;
   if (
-    selection.protocol !== "eliotr.managed-target-selection.v2" ||
-    selection.domain !== "MANAGED_SEARCH_PRODUCT" ||
-    selection.decision_version !== 2 ||
-    selection.selection_mode !== "STABLE_PHYSICAL_PROFILE_V2" ||
-    selection.product_alias !== "primary" ||
-    !Number.isSafeInteger(selection.registry_revision) || selection.registry_revision < 1 ||
-    !SHA256.test(selection.registry_artifact_sha256) ||
-    !sameJson(selection.target, target) ||
-    !SHA256.test(fence.assignment_heads_sha256) ||
+    !IDENTIFIER.test(target.namespace) ||
+    !IDENTIFIER.test(target.managed_instance_id) ||
+    !IDENTIFIER.test(target.managed_generation) ||
+    !SHA256.test(target.target_profile_identity_sha256) ||
     !IDENTIFIER.test(copy.project_id) ||
     !IDENTIFIER.test(copy.source_revision_ref) ||
     !IDENTIFIER.test(copy.source_owner_generation) ||
     copy.project_membership_identity_version !== 1 && copy.project_membership_identity_version !== 2
   ) {
-    fail("managed-target manifest V2 scope input is malformed");
+    fail("managed-target manifest V2 membership input is malformed");
   }
 
   let membership: ProjectCopyMembershipCopyV2;
@@ -127,37 +114,7 @@ export async function managedTargetManifestProjectCopyScopeV2(input: {
       folder_prefix: folderPrefix,
     });
   }
-
-  const scopeDigest = await projectionDigest({
-    protocol: "eliotr.managed-target-manifest-project-copy-scope.v1",
-    target,
-    target_selection: selection,
-    as_of: asOf,
-    assignment_heads_sha256: fence.assignment_heads_sha256,
-    assigned_project_count: fence.assigned_project_count,
-    membership: {
-      source_revision_ref: copy.source_revision_ref,
-      project_id: copy.project_id,
-      project_membership_id: copy.project_membership_id,
-      membership_identity_version: copy.project_membership_identity_version,
-      legacy_project_membership_id: copy.legacy_project_membership_id,
-      stable_project_membership_id: copy.stable_project_membership_id,
-      membership_revision: copy.membership_revision,
-      membership_generation: copy.membership_generation,
-      project_membership_generation: copy.project_membership_generation,
-    },
-  });
-  return Object.freeze({
-    layout: "PROJECT_COPY_V2",
-    scope_snapshot_id: selection.registry_artifact_sha256,
-    scope_snapshot_revision: selection.registry_revision,
-    scope_snapshot_digest: scopeDigest,
-    target,
-    generation_metadata_value: await managedProjectGenerationMetadataValue(target.managed_generation),
-    representative_policy: "ONE_CANONICAL_COPY_PER_SOURCE_REVISION",
-    target_selection: selection,
-    copies: Object.freeze([membership]),
-  });
+  return membership;
 }
 
 export async function readManagedProjectCopyMapSetV2(input: {
@@ -226,7 +183,7 @@ export async function readManagedProjectCopyMapSetV2(input: {
     fail("V2 copy-map resource receipt omits the index PUT/readback or exceeds its fixed ceiling");
   }
   const expectedCopySetDigest = await providerCopySetDigestV2(expectedCopies);
-  const expectedItemSetDigest = await providerItemSetDigest(expectedCopies);
+  const expectedItemSetDigest = await providerItemSetDigestV2(expectedCopies);
   if (
     receipt.provider_copy_set_sha256 !== expectedCopySetDigest ||
     receipt.provider_item_set_sha256 !== expectedItemSetDigest ||
@@ -296,7 +253,7 @@ export async function readManagedProjectCopyMapSetV2(input: {
     const expectedPageCopies = expectedCopies.slice(copies.length, copies.length + pageRef.provider_copy_count);
     if (expectedPageCopies.length !== pageRef.provider_copy_count) fail("V2 copy-map page count exceeds its scope");
     const pageCopyDigests = await providerCopySetDigestV2(expectedPageCopies);
-    const pageItemDigest = await providerItemSetDigest(expectedPageCopies);
+    const pageItemDigest = await providerItemSetDigestV2(expectedPageCopies);
     const pageBase = {
       protocol: "eliotr.managed-project-copy-map-page.v2" as const,
       layout: "PROJECT_COPY_V2" as const,
@@ -311,8 +268,8 @@ export async function readManagedProjectCopyMapSetV2(input: {
       scope_snapshot_revision: scope.scope_snapshot_revision,
       scope_snapshot_digest: scope.scope_snapshot_digest,
       page_index: pageIndex,
-      cursor_start_copy_identity: copyIdentity(expectedPageCopies[0] ?? null),
-      cursor_end_copy_identity: copyIdentity(expectedPageCopies.at(-1) ?? null),
+      cursor_start_copy_identity: projectCopyIdentityV2(expectedPageCopies[0] ?? null),
+      cursor_end_copy_identity: projectCopyIdentityV2(expectedPageCopies.at(-1) ?? null),
       previous_page_sha256: previousPageSha256,
       provider_copy_count: expectedPageCopies.length,
       provider_copy_set_sha256: pageCopyDigests,
@@ -340,19 +297,19 @@ export async function validateManagedProjectCopyMapReceiptV2(input: {
   readonly scope: ProjectCopyScopeV2;
 }): Promise<ManagedProjectCopyMapReceiptV2> {
   const expected = await buildCanonicalProjectCopyMapsV2(input.canonical_source, input.target, input.scope);
-  const key = copyIdentity(input.receipt);
-  const expectedCopy = expected.find((copy) => copyIdentity(copy) === key);
+  const key = projectCopyIdentityV2(input.receipt);
+  const expectedCopy = expected.find((copy) => projectCopyIdentityV2(copy) === key);
   if (expectedCopy === undefined || !sameJson(input.receipt, expectedCopy)) {
     fail("V2 provider-copy map differs from its writer-owned frozen membership derivation");
   }
   return input.receipt;
 }
 
-function copyIdentity(copy: ManagedProjectCopyMapReceiptV2 | null): string | null {
+export function projectCopyIdentityV2(copy: ManagedProjectCopyMapReceiptV2 | null): string | null {
   return copy === null ? null : `${copy.membership_identity_version}:${copy.project_id}:${copy.project_membership_id}`;
 }
 
-async function providerCopySetDigestV2(copies: readonly ManagedProjectCopyMapReceiptV2[]): Promise<string> {
+export async function providerCopySetDigestV2(copies: readonly ManagedProjectCopyMapReceiptV2[]): Promise<string> {
   return projectionDigest(copies.map((copy) => ({
     membership_identity_version: copy.membership_identity_version,
     project_id: copy.project_id,
@@ -367,7 +324,7 @@ async function providerCopySetDigestV2(copies: readonly ManagedProjectCopyMapRec
   })));
 }
 
-async function providerItemSetDigest(copies: readonly ManagedProjectCopyMapReceiptV2[]): Promise<string> {
+export async function providerItemSetDigestV2(copies: readonly ManagedProjectCopyMapReceiptV2[]): Promise<string> {
   return projectionDigest(copies.flatMap((copy) => copy.items.map((item) => ({
     item_key: item.item_key,
     canonical_section_id: item.canonical_section_id,
@@ -381,14 +338,14 @@ function sameJson(left: unknown, right: unknown): boolean {
   return canonicalProjectionJson(left) === canonicalProjectionJson(right);
 }
 
-function hasExactKeys(value: unknown, expected: readonly string[]): boolean {
+export function hasExactKeys(value: unknown, expected: readonly string[]): boolean {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
   const keys = Object.keys(value).sort();
   const orderedExpected = [...expected].sort();
   return keys.length === orderedExpected.length && keys.every((key, index) => key === orderedExpected[index]);
 }
 
-async function readBoundedV2WorkObject(
+export async function readBoundedV2WorkObject(
   store: EvidenceObjectStore,
   key: string,
 ): Promise<{ readonly value: unknown; readonly ref: { readonly key: string; readonly sha256: string; readonly size_bytes: number } } | null> {

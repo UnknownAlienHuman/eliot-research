@@ -27,6 +27,7 @@ import {
   MANAGED_TARGET_MANIFEST_COPY_BATCH_SIZE,
   MANAGED_TARGET_MANIFEST_MAX_COPIES,
   MANAGED_TARGET_MANIFEST_MAX_TREE_NODES_PER_STEP,
+  MANAGED_TARGET_MANIFEST_REQUIRED_PAGES_PER_STEP,
   type ManifestContinuationState,
   type ManifestTreeRef,
   type ScanProgress,
@@ -72,6 +73,9 @@ export async function advanceBuildScan(
   if (state.build_scan === null) {
     fail("MANAGED_TARGET_MANIFEST_CONTINUATION_INVALID", "build scan state is absent in BUILD_SCAN phase");
   }
+  if (input.profile.copy_layout === MANAGED_TARGET_MANIFEST_COPY_LAYOUT_V2) {
+    return advanceInitialRequiredSetScanV2(input, state, store, budget);
+  }
   let progress: ScanProgress = state.build_scan;
   let page: ManagedRequiredSetPage | null = null;
   const batchCopies: ManagedRequiredProjectRevisionCopy[] = [];
@@ -97,21 +101,6 @@ export async function advanceBuildScan(
     batchCopies.push(...page.rows.slice(progress.page_offset, progress.page_offset + take));
     progress = await processedScanProgress(progress, page, take);
     if (progress.page_ref === null) page = null;
-  }
-
-  if (input.profile.copy_layout === MANAGED_TARGET_MANIFEST_COPY_LAYOUT_V2) {
-    const next = await advanceManagedTargetManifestBuildV2({
-      manifest: input,
-      state,
-      store,
-      budget,
-      profileSha,
-      capacityReceipt,
-      progress,
-      batchCopies,
-    });
-    if (next.build_scan?.complete) return await completeBuildScan(next, input);
-    return next;
   }
 
   if (batchCopies.length === 0) {
@@ -344,6 +333,67 @@ export async function advanceBuildScan(
   return next;
 }
 
+async function advanceInitialRequiredSetScanV2(
+  input: ManagedTargetManifestInput,
+  state: ManifestContinuationState,
+  store: EvidenceObjectStore,
+  budget: ManifestInvocationBudget,
+): Promise<ManifestContinuationState> {
+  if (state.build_scan === null || state.initial_fence === null || state.target_selection?.decision_version !== 2) {
+    fail("MANAGED_TARGET_MANIFEST_CONTINUATION_INVALID", "V2 initial required-set scan lacks its frozen selection or assignment fence");
+  }
+  if (state.initial_required_set !== null) {
+    fail("MANAGED_TARGET_MANIFEST_CONTINUATION_INVALID", "V2 build scan cannot restart after its complete target fence was frozen");
+  }
+  let progress = state.build_scan;
+  let pagesRead = 0;
+  while (!progress.complete && pagesRead < MANAGED_TARGET_MANIFEST_REQUIRED_PAGES_PER_STEP) {
+    const read = await readOrStagePage({
+      state,
+      phase: "BUILD_SCAN",
+      progress,
+      target: input.target,
+      requiredSet: input.required_set,
+      as_of: state.as_of,
+      store,
+      budget,
+    });
+    progress = read.progress;
+    const page = read.page;
+    if (page === null) {
+      if (!progress.complete) fail("MANAGED_TARGET_MANIFEST_STAGE_INVALID", "V2 initial required-set page is absent before scan completion");
+      break;
+    }
+    progress = await processedScanProgress(progress, page, page.rows.length);
+    pagesRead += 1;
+    budget.addMicrosteps();
+    budget.snapshot(true);
+  }
+  if (!progress.complete) return Object.freeze({ ...state, build_scan: progress });
+
+  const requiredSet = await managedRequiredSetReceiptFromScan(
+    input.target,
+    state.as_of,
+    state.initial_fence,
+    progress.scan,
+    state.target_selection,
+  );
+  const verifyScan = await initialManagedTargetManifestScan(
+    input.target,
+    state.as_of,
+    state.initial_fence,
+    state.target_selection,
+  );
+  return Object.freeze({
+    ...state,
+    phase: "VERIFY_SCAN",
+    build_scan: progress,
+    verify_scan: emptyScanProgress(verifyScan),
+    initial_required_set: requiredSet,
+    post_source_authority_sha256: state.source_authority_sha256,
+  });
+}
+
 async function completeBuildScan(
   state: ManifestContinuationState,
   input: ManagedTargetManifestInput,
@@ -390,6 +440,8 @@ export async function advanceVerifyScan(
   state: ManifestContinuationState,
   store: EvidenceObjectStore,
   budget: ManifestInvocationBudget,
+  profileSha: string,
+  capacityReceipt: ManagedTargetProviderCapacityReceipt,
 ): Promise<ManifestContinuationState> {
   if (state.verify_scan === null || state.initial_required_set === null || state.post_source_authority_sha256 === null ||
       state.initial_fence === null) {
@@ -422,6 +474,29 @@ export async function advanceVerifyScan(
     if (progress.page_ref === null) page = null;
   }
 
+  const v2TargetStaging = input.profile.copy_layout === MANAGED_TARGET_MANIFEST_COPY_LAYOUT_V2;
+  let stageState = state;
+  if (v2TargetStaging && batchCopies.length > 0) {
+    if (!SHA256.test(profileSha) || state.initial_required_set?.protocol !== "eliotr.managed-required-project-revisions.v3") {
+      fail("MANAGED_TARGET_MANIFEST_STAGE_INVALID", "V2 map staging lacks its full target-fence receipt or projection profile identity");
+    }
+    const staged = await advanceManagedTargetManifestBuildV2({
+      manifest: input,
+      state,
+      store,
+      budget,
+      profileSha,
+      capacityReceipt,
+      progress,
+      batchCopies,
+    });
+    stageState = Object.freeze({
+      ...staged,
+      build_scan: state.build_scan,
+      verify_scan: progress,
+    });
+  }
+
   let postDigest = state.post_source_authority_sha256;
   if (batchCopies.length > 0) {
     const authorityBatch = await sourceAuthoritiesForCopies(input, batchCopies, state.as_of, budget);
@@ -432,8 +507,10 @@ export async function advanceVerifyScan(
         fail("MANAGED_TARGET_MANIFEST_SOURCE_INVALID", "post-fence source authority batch lost the required-set row order");
       }
       postDigest = await projectionSha256Utf8(`${postDigest}\n${authority.digest}`);
-      budget.addCopy();
-      budget.addMicrosteps();
+      if (!v2TargetStaging) {
+        budget.addCopy();
+        budget.addMicrosteps();
+      }
       budget.snapshot(true);
     }
   }
@@ -448,18 +525,18 @@ export async function advanceVerifyScan(
     if (!await sameInitialAndVerifiedReceipt(state.initial_required_set, verified)) {
       fail("MANAGED_TARGET_MANIFEST_SOURCE_FENCE_CHANGED", "resumable final required-set scan differs from its initial receipt");
     }
-    if (postDigest !== state.source_authority_sha256) {
+    if (postDigest !== stageState.source_authority_sha256) {
       fail("MANAGED_TARGET_MANIFEST_SOURCE_FENCE_CHANGED", "resumable final source authority scan differs from its initial digest");
     }
     return Object.freeze({
-      ...state,
+      ...stageState,
       phase: "SOURCE_SUMMARY",
       verify_scan: progress,
       verified_required_set: verified,
       post_source_authority_sha256: postDigest,
     });
   }
-  return Object.freeze({ ...state, verify_scan: progress, post_source_authority_sha256: postDigest });
+  return Object.freeze({ ...stageState, verify_scan: progress, post_source_authority_sha256: postDigest });
 }
 
 function validateCopyFragment(

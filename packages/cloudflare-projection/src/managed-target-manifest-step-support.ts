@@ -38,6 +38,7 @@ export const MANAGED_TARGET_MANIFEST_COPY_BATCH_SIZE = 24;
 export const MANAGED_TARGET_MANIFEST_SUMMARY_PAGE_SIZE = 256;
 export const MANAGED_TARGET_MANIFEST_FENCE_PAGE_SIZE = 256;
 export const MANAGED_TARGET_MANIFEST_FENCE_PAGES_PER_STEP = 3;
+export const MANAGED_TARGET_MANIFEST_REQUIRED_PAGES_PER_STEP = 3;
 export const MANAGED_TARGET_MANIFEST_CHECKPOINT_SUBREQUEST_RESERVE = 2;
 export const MANAGED_TARGET_MANIFEST_MAX_OPERATIONS_PER_STEP =
   MANAGED_TARGET_MANIFEST_COPY_BATCH_SIZE * 16 + MANAGED_TARGET_MANIFEST_CHECKPOINT_SUBREQUEST_RESERVE;
@@ -103,7 +104,10 @@ export interface FenceScanProgress {
 }
 
 export interface ManifestContinuationState {
-  readonly protocol: "eliotr.managed-target-manifest-continuation.v2" | "eliotr.managed-target-manifest-continuation.v3";
+  readonly protocol:
+    | "eliotr.managed-target-manifest-continuation.v2"
+    | "eliotr.managed-target-manifest-continuation.v3"
+    | "eliotr.managed-target-manifest-continuation.v4";
   readonly execution_id: string;
   readonly target: ManagedTargetIdentity;
   /** Present only for the versioned stable-physical-profile V2 selection. */

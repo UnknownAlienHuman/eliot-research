@@ -6,7 +6,9 @@ import type {
   ManagedTargetIdentity,
   ManagedTargetSelectionReceipt,
 } from "./managed-target-assignment.js";
+import { hasValidManagedTargetRegistryCaptureV2 } from "./managed-target-assignment.js";
 import {
+  createManagedRequiredSetTargetFenceV2,
   ManagedRequiredSetError,
   type ManagedRequiredProjectRevisionCopy,
   type ManagedRequiredSetCursor,
@@ -272,12 +274,9 @@ export async function managedRequiredSetReceiptFromScan(
       throw new ManagedRequiredSetError("MANAGED_REQUIRED_SET_INPUT_INVALID", "V2 scan has no exact target-selection receipt");
     }
     const targetSelection = selection;
-    const targetSelectionSha256 = await projectionSha256Utf8(canonicalProjectionJson(targetSelection));
-    const targetFenceDigest = await projectionSha256Utf8(canonicalProjectionJson({
-      protocol: "eliotr.managed-required-set-target-fence.v2",
+    const targetFence = await createManagedRequiredSetTargetFenceV2({
       target,
       target_selection: targetSelection,
-      target_selection_sha256: targetSelectionSha256,
       as_of: asOf,
       assignment_heads_sha256: validFence.assignment_heads_sha256,
       required_set_sha256: scan.digest,
@@ -285,23 +284,13 @@ export async function managedRequiredSetReceiptFromScan(
       assigned_project_count: validFence.assigned_project_count,
       project_revision_copy_count: scan.count,
       page_count: scan.pages,
-    }));
+    });
     const receipt: ManagedRequiredSetReceiptV2 = Object.freeze({
       protocol: "eliotr.managed-required-project-revisions.v3",
       target,
       target_selection: targetSelection,
       as_of: asOf,
-      target_fence: Object.freeze({
-        protocol: "eliotr.managed-required-set-target-fence.v2",
-        digest: targetFenceDigest,
-        target_selection_sha256: targetSelectionSha256,
-        assignment_heads_sha256: validFence.assignment_heads_sha256,
-        required_set_sha256: scan.digest,
-        page_provenance_sha256: scan.page_provenance_digest,
-        assigned_project_count: validFence.assigned_project_count,
-        project_revision_copy_count: scan.count,
-        page_count: scan.pages,
-      }),
+      target_fence: targetFence,
       assigned_project_count: validFence.assigned_project_count,
       project_revision_copy_count: scan.count,
       page_count: scan.pages,
@@ -366,8 +355,7 @@ export function validateManagedTargetSelection(
       selection.selection_mode !== "STABLE_PHYSICAL_PROFILE_V2" ||
       selection.product_alias !== "primary" ||
       (selection.purpose !== "ACTIVE" && selection.purpose !== "SHADOW") ||
-      !Number.isSafeInteger(selection.registry_revision) || selection.registry_revision < 1 ||
-      !SHA256.test(selection.registry_artifact_sha256) ||
+      !hasValidManagedTargetRegistryCaptureV2(selection) ||
       !SHA256.test(selection.v1_exact_profile_identity_sha256)) {
     throw new ManagedRequiredSetError("MANAGED_REQUIRED_SET_INPUT_INVALID", "V2 physical-profile selection receipt is invalid");
   }
