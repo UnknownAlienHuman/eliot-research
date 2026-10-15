@@ -1,5 +1,47 @@
 # Backend delivery plan
 
+## Current owner checkpoint, October 15, 2026, 22:15 UTC
+
+Main `a154880e744b37bcb762bb23fd98d4b86557fd35` is deployed as
+`git-a154880e744b`, Worker `5359331f-5c69-432d-b749-bfad9a838c66`.
+Fast CI `38811981507`, frontend CI `38811981574`, ordinary Wrangler dry-run,
+deployment and D1 authority readback passed. Migrations 0152–0155 are applied;
+canceled S52 migrations remain excluded from deployment.
+
+The real Codex assignment completed all 18 stages and its saved draft reopened
+in the browser after this deployment. Its new citation returned the original
+1,036 bytes with SHA-256
+`0eaea342f2c55d9ee10b6196f776b5d77a1ee59017e9cfb6540b6951367128ab`.
+This remains a bounded corpus lookup with one admitted excerpt and incomplete
+coverage. Inbox publication and the earlier owner report also have live receipts.
+Global native readiness, with and without a project, returned 200/ready/current
+at 22:00 UTC. Existing qualified native route pins were activated through the
+existing registry/proof stores; no project configuration or new proof was made.
+Actual browser upload through the new project-attachment path is still pending.
+
+The owner's latest instruction replaces direct doctor-to-GitHub delivery with
+native Cloudflare diagnosis → a connected MCP agent → that agent's GitHub MCP.
+A GitHub token in this Worker is therefore not a prerequisite for this path.
+The implementation must reuse the existing incident outbox and lease/receipt
+mechanism, remain independent of projects, and retain connection authorization.
+
+Cloudflare documents browser authorization through self-managed OAuth clients
+(client creation updated August 20, integration updated June 3, 2026), with
+Authorization Code and PKCE for public clients. BYOK remains Cloudflare AI
+Gateway/Secrets Store functionality, not a new Eliot secret service. The live
+scope catalog lists `aig.write`, `secrets-store.read` and `secrets-store.write`.
+Current connectors cannot list OAuth clients (10000); both available browser
+automation runtimes fail before starting with kernel-assets error 3. Browser
+authorization and external-key acceptance are not yet verified. Do not copy
+Wrangler's broad OAuth credential into the Worker or claim that a manually
+provided API token is the only supported authorization route.
+
+References: [Cloudflare OAuth clients](https://developers.cloudflare.com/fundamentals/oauth/create-an-oauth-client/),
+[OAuth integration](https://developers.cloudflare.com/fundamentals/oauth/integrate-with-cloudflare/),
+[BYOK](https://developers.cloudflare.com/ai-gateway/configuration/bring-your-own-keys/).
+Later historical entries below retain their original observations; this current
+checkpoint supersedes their unresolved blockers where explicitly stated.
+
 ## Owner live acceptance, October 15, 2026, 19:10 UTC
 
 Source `ac60029457b06ff6469147e6e42e6d3c109bf3fd` is deployed as
