@@ -102,7 +102,6 @@ Equivalent `config.toml` entry:
 ```toml
 [mcp_servers.eliot-research]
 url = "https://<verified-MCP_HOSTNAME>/mcp"
-auth = "oauth"
 ```
 
 Do not add bearer-token environment variables, static authorization headers, OAuth client secrets or
