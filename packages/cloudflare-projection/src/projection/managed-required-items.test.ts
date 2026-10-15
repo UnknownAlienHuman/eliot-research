@@ -4,6 +4,7 @@ import * as structuralProjector from "@eliotr/retrieval";
 import {
   projectionDigest,
   projectionSha256Bytes,
+  stableProjectionId,
 } from "../canonical.js";
 import type { ManagedRequiredProjectRevisionCopy } from "../managed-required-set.js";
 import type { ProjectionExecutionProfile } from "../types.js";
@@ -49,10 +50,17 @@ function sourceRevision(contentSha256: string): SourceRevision {
   };
 }
 
-function requiredCopy(projectId: string, contentSha256: string): ManagedRequiredProjectRevisionCopy {
+async function requiredCopy(projectId: string, contentSha256: string): Promise<ManagedRequiredProjectRevisionCopy> {
   const membershipGeneration = 7;
+  const membershipId = JSON.stringify([projectId, "source-1"]);
+  const stableMembershipId = await stableProjectionId("project-membership", membershipId);
   return {
     assignment_revision: 1,
+    assignment_decision_version: 1,
+    assignment_selection_mode: "EXACT_GENERATION_V1",
+    assignment_product_alias: null,
+    assignment_managed_generation: PROFILE.managed_generation,
+    assignment_target_profile_identity_sha256: "a".repeat(64),
     project_id: projectId,
     project_generation: 3,
     project_owner_principal_ref: "principal-1",
@@ -61,6 +69,9 @@ function requiredCopy(projectId: string, contentSha256: string): ManagedRequired
     managed_generation: PROFILE.managed_generation,
     target_profile_identity_sha256: "a".repeat(64),
     project_membership_id: `project:${projectId}:generation:${membershipGeneration}`,
+    stable_project_membership_id: stableMembershipId,
+    legacy_project_membership_id: `project:${projectId}:generation:${membershipGeneration}`,
+    project_membership_identity_version: 1,
     source_id: "source-1",
     source_revision_ref: "revision-1",
     source_head_revision_ref: "revision-1",
@@ -87,7 +98,15 @@ function requiredCopy(projectId: string, contentSha256: string): ManagedRequired
     project_owner_read_policy_state: "ACTIVE",
     project_owner_read_policy_disclosure_ceiling: "project",
     project_owner_read_policy_expires_at: "2026-10-15T00:00:00.000Z",
+    project_default_disclosure: "project",
+    project_retention_policy_ref: "retention:project-1",
+    project_default_source_policy_ref: "source-policy-1",
+    project_default_model_profile_ref: "model-profile-1",
+    project_default_depth_profile_ref: "depth-profile-1",
+    membership_id: membershipId,
+    membership_revision: 1,
     membership_generation: membershipGeneration,
+    project_membership_generation: membershipGeneration + 1,
     membership_valid_from: "2026-10-01T00:00:00.000Z",
     membership_valid_to: null,
   };
@@ -99,7 +118,7 @@ async function copyInput(
   markdown = MARKDOWN,
 ): Promise<ManagedRequiredItemCopyInput> {
   const contentSha256 = await digest(markdown);
-  const copy = requiredCopy(projectId, contentSha256);
+  const copy = await requiredCopy(projectId, contentSha256);
   const projection: ManagedRequiredItemMarkdownProjectionInput = {
     source_revision: sourceRevision(contentSha256),
     title: "Required Items",

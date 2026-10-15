@@ -32,6 +32,7 @@ type ScopeSetExpression = Extract<
 
 export interface ProjectCopyMembershipFact {
   readonly source_revision_ref: string;
+  readonly source_id: string;
   readonly source_owner_generation: string;
   readonly project_id: string;
   readonly project_membership_id: string;
@@ -323,7 +324,7 @@ export async function resolveProjectCopyScope(
         target_profile_identity_sha256: input.target.target_profile_identity_sha256,
       }),
       generation_metadata_value: await managedProjectGenerationMetadataValue(input.target.managed_generation),
-      representative_policy: "ONE_CANONICAL_COPY_PER_SOURCE_REVISION",
+      representative_policy: "ONE_CANONICAL_COPY_PER_SOURCE_REVISION" as const,
       copies: Object.freeze([]) as readonly [],
     };
     return selection.decision_version === 2
@@ -488,7 +489,7 @@ export async function resolveProjectCopyScope(
       target_profile_identity_sha256: input.target.target_profile_identity_sha256,
     }),
     generation_metadata_value: generationMetadataValue,
-    representative_policy: "ONE_CANONICAL_COPY_PER_SOURCE_REVISION",
+    representative_policy: "ONE_CANONICAL_COPY_PER_SOURCE_REVISION" as const,
   };
   return selection.decision_version === 2
     ? Object.freeze({

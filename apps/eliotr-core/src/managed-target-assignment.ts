@@ -313,6 +313,9 @@ function decodeManagedSearchProductEvent(
     return Object.freeze({
       ...command,
       event_revision: row.event_revision as number,
+      actor_kind: command.actor.kind,
+      actor_principal_ref: command.actor.principal_ref,
+      authorization_receipt_ref: command.actor.authorization_receipt_ref,
       decision_version: decisionVersion as 1 | 2,
       selection_mode: selectionMode as ManagedSearchProductEvent["selection_mode"],
       product_alias: productAlias as "primary" | null,
@@ -819,14 +822,6 @@ export function createManagedSearchProductOptInService(
     selection: ManagedTargetSelectionV2 | null,
   ): Promise<void> {
     const head = current.head_event;
-    if (decision === "ENABLED" && selection === null) {
-      fail("MANAGED_TARGET_ASSIGNMENT_PROFILE_UNAVAILABLE", 503,
-        "The reviewed primary registry target was not resolved", true);
-    }
-    if (decision === "DISABLED" && (head === null || head.event_kind !== "ASSIGN")) {
-      fail("MANAGED_TARGET_ASSIGNMENT_RETIREMENT_STALE", 409,
-        "A product disable append requires the current assigned event");
-    }
     const accessReceiptRef = await ownerAccessReceiptReference(access);
     const common = {
       project_id: projectId,
@@ -843,17 +838,30 @@ export function createManagedSearchProductOptInService(
       selection_mode: "STABLE_PHYSICAL_PROFILE_V2" as const,
       product_alias: "primary" as const,
     };
-    const command = decision === "ENABLED"
-      ? {
+    let command:
+      | (typeof common & { readonly event_kind: "ASSIGN"; readonly target: ManagedTargetIdentity })
+      | (typeof common & { readonly event_kind: "RETIRE"; readonly previous_assignment_revision: number });
+    if (decision === "ENABLED") {
+      if (selection === null) {
+        fail("MANAGED_TARGET_ASSIGNMENT_PROFILE_UNAVAILABLE", 503,
+          "The reviewed primary registry target was not resolved", true);
+      }
+      command = {
         ...common,
         event_kind: "ASSIGN" as const,
         target: selection.target,
+      };
+    } else {
+      if (head === null || head.event_kind !== "ASSIGN") {
+        fail("MANAGED_TARGET_ASSIGNMENT_RETIREMENT_STALE", 409,
+          "A product disable append requires the current assigned event");
       }
-      : {
+      command = {
         ...common,
         event_kind: "RETIRE" as const,
         previous_assignment_revision: head.event_revision,
       };
+    }
     const port = createD1ManagedTargetAssignmentPort(env.CORE_DB, async () => undefined, access.expires_at);
     const appendProductDecisionV2 = port.appendProductDecisionV2;
     if (appendProductDecisionV2 === undefined) {

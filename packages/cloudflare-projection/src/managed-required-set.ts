@@ -47,7 +47,6 @@ export interface ManagedRequiredProjectRevisionCopy {
   readonly managed_instance_id: string;
   readonly managed_generation: string;
   readonly target_profile_identity_sha256: string;
-  readonly project_membership_id: string;
   readonly source_id: string;
   readonly source_revision_ref: string;
   readonly source_head_revision_ref: string;
