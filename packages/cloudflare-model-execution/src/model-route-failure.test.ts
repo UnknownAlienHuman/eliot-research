@@ -36,8 +36,7 @@ describe("model route failure diagnostics", () => {
     expect(JSON.parse(String(log.mock.calls[0]?.[0]))).toEqual({ event: "research_model_route_failed",
       code: "MODEL_GATEWAY_RESPONSE_INVALID", stage: "SYNTHESIZE", http_status: 403,
       safe_response_reason: "LOG_CORRELATION_INVALID" });
-    expect(error.failure?.dispatch_state).toBe("OUTCOME_UNKNOWN");
-    expect(error.failure?.retryable).toBe(false);
+    expect(error.failure).toMatchObject({ dispatch_state: "OUTCOME_UNKNOWN", retryable: false });
     let getterRead = false;
     Object.defineProperty(cause, "safe_response_reason", { get() { getterRead = true; return "secret"; } });
     Object.defineProperty(cause, "http_status", { get() { getterRead = true; return 401; } });
