@@ -17,6 +17,7 @@ import { createD1WorkspaceMcpCandidateStore } from "@eliotr/cloudflare-workspace
 import { handleScheduled } from "./scheduled.js";
 import {
   ComputerAgentQualificationError,
+  isComputerAgentQualificationChallenge,
   preflightComputerAgentQualificationChallenge,
   requireComputerAgentQualificationChallengeReady,
 } from "./computer-agent-qualification-store.js";
@@ -70,7 +71,7 @@ function configuredMcpClientDiagnosticConsume(env: Env): McpClientDiagnosticCons
     consumers.set(profile, consumer);
     return consumer;
   };
-  return (input, context) => {
+  return async (input, context) => {
     const profile = mode === "hybrid"
       ? context.verified_actor?.auth_profile
       : mode;
@@ -79,7 +80,8 @@ function configuredMcpClientDiagnosticConsume(env: Env): McpClientDiagnosticCons
         "Client diagnostic authentication profile is unavailable", true);
     }
     if (profile === "service-token" && context.verified_access !== undefined &&
-        context.verified_actor !== undefined) {
+        context.verified_actor !== undefined &&
+        await isComputerAgentQualificationChallenge(database, input.challenge_id)) {
       // The ordinary MCP service context intentionally uses a domain-separated logical
       // principal. Computer-agent qualification is different: its immutable actor binding
       // is the verified Access service-token Client ID stored in the registry.

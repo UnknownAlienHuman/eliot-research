@@ -21,6 +21,8 @@ export type { AgentWorkPaneProps } from "./features/agents/AgentWorkPane";
 export { HandoffSheet } from "./features/agents/HandoffSheet";
 export type { HandoffSheetProps } from "./features/agents/HandoffSheet";
 export { DecisionInbox } from "./features/agents/DecisionInbox";
+export { AgentConnectGuide } from "./features/agents/AgentConnectGuide";
+export type { AgentConnectGuideProps, AgentClientId } from "./features/agents/AgentConnectGuide";
 export type { DecisionInboxProps } from "./features/agents/DecisionInbox";
 export { AGENT_WORK_COPY } from "./features/agents/agent-work-model";
 export type { AgentSummary, AgentTaskSummary, AgentTaskState, DecisionItem, DecisionRisk, HandoffRequest, ResearchToolId, TaskScope } from "./features/agents/agent-work-model";

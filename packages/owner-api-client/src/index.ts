@@ -9,7 +9,7 @@ export * from './sources/index';
 export { createHealthApi } from './connections/health';
 export type { SystemHealth, GoogleExternalTransport } from './connections/health';
 export { createOwnerSessionApi } from './connections/session';
-export type { OwnerSession } from './connections/session';
+export type { OwnerMcpServiceInfo, OwnerSession } from './connections/session';
 export { createClientGrantApi } from './connections/grant';
 export type { ClientGrantMutation } from './connections/grant';
 export { createComputerAgentConnectionApi } from './connections/computer-agent';

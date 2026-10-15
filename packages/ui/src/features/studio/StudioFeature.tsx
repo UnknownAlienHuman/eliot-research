@@ -9,6 +9,7 @@
  */
 import { useId, useState, type Ref } from "react";
 import { Button, IconButton, Status } from "../../primitives/primitives";
+import { MaterialSymbol } from "../../catalog/MaterialSymbol";
 import type {
   ArtifactPublicationView,
   ArtifactSectionRevisionView,
@@ -293,6 +294,7 @@ export function StudioFeature({
             <Status>{state === "degraded" ? copy.degraded : copy.loading}</Status>
           ) : state === "error" ? null : proposals === undefined || proposals.items.length === 0 ? (
             <div className="er-studio-live__empty">
+              <span className="er-studio-live__empty-glyph" aria-hidden="true"><MaterialSymbol name="document" /></span>
               <p className="er-studio-live__empty-text">{copy.empty_list ?? copy.empty}</p>
             </div>
           ) : (
@@ -307,7 +309,9 @@ export function StudioFeature({
                   >
                     <strong className="er-studio-live__item-title">{item.title}</strong>
                     <span className="er-studio-live__item-meta">
-                      <span className="er-studio-live__item-dot" aria-hidden="true" />
+                      <span className="er-studio-live__item-dot" aria-hidden="true" data-state={item.state}>
+                        <MaterialSymbol name={item.state === "PUBLISHED" ? "task-done" : "document"} />
+                      </span>
                       {PROPOSAL_LABEL[locale][item.state]}
                     </span>
                   </button>
@@ -463,7 +467,7 @@ export function StudioFeature({
 }
 const EN_COPY: StudioFeatureCopy = {
   title: "Studio",
-  intro: "Saved drafts and Wiki proposals, with their acceptance and publication stated separately.",
+  intro: "Wiki pages proposed by your agents and research. Publish the ones you accept.",
   list_label: "Saved proposals",
   reader_label: "Selected proposal",
   open_proposal: "Open the selected proposal",
@@ -514,7 +518,7 @@ const EN_COPY: StudioFeatureCopy = {
 };
 const RU_COPY: StudioFeatureCopy = {
   title: "Студия",
-  intro: "Сохранённые черновики и предложения Wiki, с принятием и публикацией отдельно.",
+  intro: "Страницы Wiki, которые предлагают агенты и исследования. Опубликуйте те, что принимаете.",
   list_label: "Сохранённые предложения",
   reader_label: "Выбранное предложение",
   open_proposal: "Открыть выбранное предложение",

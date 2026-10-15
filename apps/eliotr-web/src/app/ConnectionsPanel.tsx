@@ -1,11 +1,11 @@
 import { useId } from "react";
 import { skipToken, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
-import { Button, ConnectionsFeature, OperationAnnouncement } from "@eliotr/ui";
+import { AgentConnectGuide, Button, ConnectionsFeature, OperationAnnouncement } from "@eliotr/ui";
 import type { ProjectListView } from "@eliotr/owner-api-client";
 import type { PrivacyController, SessionContext } from "./privacy";
 import type { BoundWorkspaceApis } from "./runtime";
 import { connectionsQueryOptions } from "../query/connections";
-import { protectedQueryKey } from "../query/client";
+import { protectedQueryKey, runProtectedRead } from "../query/client";
 import { ComputerAgentConnectionsPanel } from "./ComputerAgentConnectionsPanel";
 import { usePaneAnnouncement } from "./usePaneAnnouncement";
 import { WorkspaceLink } from "../routes/WorkspaceLink";
@@ -35,6 +35,12 @@ export function ConnectionsPanel({ locale, apis, privacy, context, projects, pro
   const key = protectedQueryKey(context, "connections");
   const active = page !== undefined && projectId !== undefined && page.projects.some(project => project.project_id === projectId);
   const health = useQuery(options.health()), session = useQuery(options.session()), diagnostic = useQuery(options.diagnostic());
+  const mcpInfo = useQuery({
+    queryKey: [...key, "mcp-service-info"],
+    enabled: privacy.isCurrent(context),
+    queryFn: ({ signal }) => runProtectedRead(privacy, context, signal,
+      readSignal => apis.session.readMcpServiceInfo(context.deploymentGeneration, readSignal)),
+  });
   const grants = useQuery(active ? options.grants(page, projectId) : { queryKey: [...key, "grants-unselected"], queryFn: skipToken });
   const refresh = () => {
     if (privacy.isCurrent(context)) void client.invalidateQueries({ queryKey: key });
@@ -53,6 +59,8 @@ export function ConnectionsPanel({ locale, apis, privacy, context, projects, pro
     : observed.some(query => query.isError) ? text.failed : health.data ? text.loaded : '');
   return <>
     <OperationAnnouncement>{announcement}</OperationAnnouncement>
+    {/* How an agent joins comes first; the address arrives once the server publishes its MCP endpoint. */}
+    <AgentConnectGuide locale={locale} mcpUrl={mcpInfo.data?.mcp_url ?? undefined} />
     <ComputerAgentConnectionsPanel locale={locale} apis={apis} privacy={privacy} context={context} />
     <div className="er-field"><label className="er-field__label" htmlFor={projectSelectId}>{text.project}</label>
       <select id={projectSelectId} className="er-field__control" value={projectId ?? ""} onChange={event => {

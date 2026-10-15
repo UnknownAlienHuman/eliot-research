@@ -58,12 +58,15 @@ export function Shell({ privacy, fixture, fixtureOutlet: FixtureOutlet, runtime 
           <span className="er-shell-brand-name">Eliot Research</span>
         </WorkspaceLink>
         {fixture && <p className="er-shell-preview">{text.preview}</p>}
-        {/* Compact windows keep four primary destinations in the bottom bar; Inbox and Agents live here. */}
+        {/* Compact windows keep four primary destinations in the bottom bar; Inbox, Agents and Settings live here. */}
         <WorkspaceLink className="er-shell-header-destination" to={workspacePath("inbox")} aria-label={text.inbox} title={text.inbox}>
           <MaterialSymbol name={icons.inbox} />{apis ? <InboxCount apis={apis} privacy={privacy} context={snapshot.context} /> : null}
         </WorkspaceLink>
         <WorkspaceLink className="er-shell-header-destination" to={workspacePath("connections")} aria-label={text.connections} title={text.connections}>
           <MaterialSymbol name={icons.connections} />
+        </WorkspaceLink>
+        <WorkspaceLink className="er-shell-header-destination" to={workspacePath("settings")} aria-label={text.settings} title={text.settings}>
+          <MaterialSymbol name={icons.settings} />
         </WorkspaceLink>
         <details ref={preferences} className="er-shell-preferences" onKeyDown={event => {
           if (event.key === "Escape" && preferences.current?.open) {

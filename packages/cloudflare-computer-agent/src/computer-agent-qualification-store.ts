@@ -408,6 +408,12 @@ export function createComputerAgentQualificationService(options: {
   return { issue, latestStatus };
 }
 
+/** Routing lookup only; the existing consumer still validates actor, state and expiry. */
+export async function isComputerAgentQualificationChallenge(database: D1Database, challengeId: string): Promise<boolean> {
+  await requireSchema(database);
+  return await byChallenge(database, challengeId) !== null;
+}
+
 export async function preflightComputerAgentQualificationChallenge(input: {
   readonly database: D1Database;
   readonly challenge_id: string;

@@ -273,3 +273,80 @@ button.er-agent-task__open:focus-visible { outline: var(--eliot-focus-width) sol
 @media (prefers-reduced-motion: reduce) {
   .er-agent-chip[data-presence="busy"] .er-agent-chip__dot { animation: none; }
 }
+
+/* ---- Connect an agent: one address, one command, both one tap from the clipboard ---- */
+.er-agent-connect {
+  display: grid;
+  gap: var(--eliot-space-gutter);
+  min-inline-size: 0;
+  padding: var(--eliot-space-group);
+  border-radius: var(--eliot-shape-extra-large);
+  background: color-mix(in srgb, var(--md-sys-color-primary-container) 45%, var(--eliot-color-group));
+}
+.er-agent-connect__head { display: flex; align-items: center; gap: var(--eliot-space-gutter); }
+.er-agent-connect__head h2 {
+  margin: 0;
+  color: var(--md-sys-color-on-surface);
+  font-size: var(--eliot-type-title-large-size);
+  line-height: var(--eliot-type-title-large-line-height);
+  font-weight: var(--eliot-type-font-weight-regular);
+}
+.er-agent-connect__glyph {
+  display: grid;
+  place-items: center;
+  inline-size: var(--eliot-size-touch-target);
+  block-size: var(--eliot-size-touch-target);
+  border-radius: var(--eliot-shape-large);
+  background: var(--md-sys-color-primary);
+  color: var(--md-sys-color-on-primary);
+}
+.er-agent-connect__lead, .er-agent-connect__step { margin: 0; max-inline-size: var(--eliot-type-reading-measure); color: var(--md-sys-color-on-surface-variant); }
+.er-agent-connect__field { display: grid; gap: var(--eliot-space-tight); min-inline-size: 0; }
+.er-agent-connect__label { color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-label-large-size); font-weight: var(--eliot-type-font-weight-medium); }
+.er-agent-connect__value {
+  display: flex;
+  align-items: center;
+  gap: var(--eliot-space-block-control);
+  min-inline-size: 0;
+  padding: var(--eliot-space-tight) var(--eliot-space-tight) var(--eliot-space-tight) var(--eliot-space-gutter);
+  border-radius: var(--eliot-shape-large);
+  background: var(--eliot-color-pane);
+}
+.er-agent-connect__value > code, .er-agent-connect__value > pre {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  margin: 0;
+  overflow-x: auto;
+  color: var(--md-sys-color-on-surface);
+  font-family: var(--eliot-type-font-family-mono);
+  font-size: var(--eliot-type-body-medium-size);
+  line-height: var(--eliot-type-body-medium-line-height);
+  white-space: pre;
+}
+.er-agent-connect__value[data-pending="true"] > :is(code, pre) { color: var(--md-sys-color-on-surface-variant); }
+.er-agent-connect__value--command { align-items: flex-start; }
+.er-agent-connect__copy {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: var(--eliot-space-tight);
+  min-block-size: var(--eliot-size-control);
+  padding-inline: var(--eliot-space-gutter);
+  border: none;
+  border-radius: var(--eliot-shape-full);
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  font: inherit;
+  font-size: var(--eliot-type-label-large-size);
+  font-weight: var(--eliot-type-font-weight-medium);
+  cursor: pointer;
+  transition: border-radius var(--eliot-motion-spatial) var(--eliot-motion-expressive-easing);
+}
+.er-agent-connect__copy:active { border-radius: var(--eliot-shape-medium); }
+.er-agent-connect__copy:disabled { opacity: var(--eliot-state-disabled-opacity); cursor: default; }
+.er-agent-connect__copy:focus-visible { outline: var(--eliot-focus-width) solid var(--md-sys-color-primary); outline-offset: var(--eliot-focus-offset); }
+.er-agent-connect__copy > .er-symbol { inline-size: var(--eliot-icon-small-size); block-size: var(--eliot-icon-small-size); }
+.er-agent-connect__note { margin: 0; color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-body-small-size); }
+.er-agent-connect__clients { display: grid; gap: var(--eliot-space-tight); min-inline-size: 0; margin: 0; padding: 0; border: none; }
+.er-agent-connect__clients > legend { padding: 0; color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-label-large-size); font-weight: var(--eliot-type-font-weight-medium); }
+@media (forced-colors: active) { .er-agent-connect, .er-agent-connect__value { border: var(--eliot-divider-width) solid CanvasText; } }

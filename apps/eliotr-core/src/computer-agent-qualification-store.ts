@@ -12,6 +12,7 @@ import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 
 export {
   ComputerAgentQualificationError,
+  isComputerAgentQualificationChallenge,
   preflightComputerAgentQualificationChallenge,
   requireComputerAgentQualificationChallengeReady,
   requireCurrentComputerAgentQualification,

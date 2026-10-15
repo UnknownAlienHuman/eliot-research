@@ -1,0 +1,150 @@
+/* Settings: two tonal groups in the NotebookLM register — the built-in Cloudflare service and external
+ * providers — each led by a glyph, a title and one status chip. Facts read as label-over-value rows;
+ * the provider form is a two-column grid on wide panes and one column on narrow ones. */
+
+.er-settings { display: grid; gap: var(--eliot-space-group); min-inline-size: 0; container-type: inline-size; }
+
+/* The page heading already says Settings; this section heading stays for assistive tech. */
+.er-settings__title {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.er-settings__lead {
+  margin: 0;
+  max-inline-size: var(--eliot-type-reading-measure);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-body-large-size);
+  line-height: var(--eliot-type-body-large-line-height);
+}
+
+.er-settings__group {
+  display: grid;
+  gap: var(--eliot-space-gutter);
+  min-inline-size: 0;
+  padding: var(--eliot-space-group);
+  border-radius: var(--eliot-shape-extra-large);
+  background: var(--eliot-color-group);
+}
+
+.er-settings__head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--eliot-space-gutter); min-inline-size: 0; }
+
+.er-settings__head h3 {
+  margin: 0;
+  color: var(--md-sys-color-on-surface);
+  font-size: var(--eliot-type-title-medium-size);
+  line-height: var(--eliot-type-title-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+
+.er-settings__glyph {
+  display: grid;
+  place-items: center;
+  inline-size: var(--eliot-size-control);
+  block-size: var(--eliot-size-control);
+  border-radius: var(--eliot-shape-medium);
+  background: var(--md-sys-color-tertiary-container);
+  color: var(--md-sys-color-on-tertiary-container);
+}
+
+.er-settings__glyph[data-tone="secondary"] { background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+
+.er-settings__chip {
+  padding: var(--eliot-space-hairline) var(--eliot-space-block-control);
+  border-radius: var(--eliot-shape-full);
+  background: var(--md-sys-color-primary-container);
+  color: var(--md-sys-color-on-primary-container);
+  font-size: var(--eliot-type-label-medium-size);
+  line-height: var(--eliot-type-label-medium-line-height);
+  font-weight: var(--eliot-type-font-weight-medium);
+  white-space: nowrap;
+}
+
+.er-settings__chip[data-status="uncertain"] { background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
+.er-settings__chip[data-status="failed_no_effect"] { background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); }
+
+.er-settings__facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: var(--eliot-space-block-control) var(--eliot-space-panel); margin: 0; }
+.er-settings__facts > div { display: grid; grid-column: 1 / -1; grid-template-columns: subgrid; }
+.er-settings__facts dt { color: var(--md-sys-color-on-surface-variant); }
+.er-settings__facts dd { margin: 0; min-inline-size: 0; color: var(--md-sys-color-on-surface); overflow-wrap: anywhere; }
+.er-settings code {
+  padding: var(--eliot-space-hairline) var(--eliot-space-tight);
+  border-radius: var(--eliot-shape-extra-small);
+  background: var(--eliot-color-pane);
+  font-family: var(--eliot-type-font-family-mono);
+  font-size: var(--eliot-type-body-small-size);
+  overflow-wrap: anywhere;
+}
+
+.er-settings__more > summary {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--eliot-size-control-small);
+  color: var(--md-sys-color-primary);
+  font-size: var(--eliot-type-label-large-size);
+  font-weight: var(--eliot-type-font-weight-medium);
+  cursor: pointer;
+}
+
+.er-settings__catalog {
+  display: grid;
+  gap: var(--eliot-space-hairline);
+  max-block-size: calc(var(--eliot-size-list-row) * 8);
+  margin: var(--eliot-space-block-control) 0 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.er-settings__catalog > li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--eliot-space-block-control); padding-block: var(--eliot-space-tight); }
+
+.er-settings__note { margin: 0; color: var(--md-sys-color-on-surface-variant); }
+
+.er-settings__providers { display: grid; gap: var(--eliot-space-hairline); margin: 0; padding: 0; list-style: none; }
+
+.er-settings__providers > li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--eliot-space-block-control) var(--eliot-space-gutter);
+  min-block-size: var(--eliot-size-list-row);
+  padding: var(--eliot-space-block-control) var(--eliot-space-gutter);
+  border-radius: var(--eliot-shape-large);
+  background: var(--eliot-color-pane);
+}
+
+.er-settings__provider-text { display: grid; flex: 1 1 auto; min-inline-size: 0; }
+.er-settings__provider-text > span { color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-body-small-size); overflow-wrap: anywhere; }
+
+.er-settings__form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--eliot-space-gutter) var(--eliot-space-panel);
+  margin-block-start: var(--eliot-space-block-control);
+}
+
+.er-settings__form > h4 {
+  margin: 0;
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-large-size);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+
+.er-settings__form > :is(h4, .er-settings__actions) { grid-column: 1 / -1; }
+.er-settings__actions { display: flex; justify-content: flex-end; }
+
+@container (min-width: 40rem) {
+  .er-settings__form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@container (max-width: 30rem) {
+  .er-settings__facts { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (forced-colors: active) {
+  .er-settings__group, .er-settings__chip, .er-settings__providers > li { border: var(--eliot-divider-width) solid CanvasText; }
+}

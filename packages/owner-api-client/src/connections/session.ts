@@ -10,6 +10,9 @@ export interface OwnerSession {
     readonly expires_at: string;
     readonly client_class: string;
 }
+export interface OwnerMcpServiceInfo {
+    readonly mcp_url: string | null;
+}
 export function createOwnerSessionApi(http: Pick<LegacyHttpAdapter, 'requestApi'>, errors: LegacyErrorFactory, epoch: EpochPort, clock: { readonly now: () => number }) {
 const { requestApi } = http;
 
@@ -74,9 +77,42 @@ function decodeOwnerSessionEnvelope(value: unknown, expectedGeneration: string):
         client_class: clientClass,
     };
 }
+function decodeOwnerMcpServiceInfoEnvelope(value: unknown, expectedGeneration: string): OwnerMcpServiceInfo {
+    if (!isRecord(value))
+        schemaError("MCP service info envelope is not an object");
+    exactKeys(value, ["data", "trace_id", "deployment_generation"], "MCP service info envelope");
+    if (identifier(value.deployment_generation, "envelope deployment generation") !== expectedGeneration) {
+        throw fail({ status: 409, code: "API_GENERATION_MISMATCH", message: "MCP service info belongs to another deployment" });
+    }
+    identifier(value.trace_id, "envelope trace id", SAFE_TRACE_ID);
+    if (!isRecord(value.data))
+        schemaError("MCP service info data is not an object");
+    exactKeys(value.data, ["protocol", "mcp_url"], "MCP service info data");
+    if (value.data.protocol !== "eliotr.mcp-service-info.v1")
+        schemaError("MCP service info protocol is invalid");
+    if (value.data.mcp_url === null)
+        return { mcp_url: null };
+    if (typeof value.data.mcp_url !== "string")
+        schemaError("MCP service URL is invalid");
+    let parsed: URL;
+    try { parsed = new URL(value.data.mcp_url); }
+    catch { return schemaError("MCP service URL is invalid"); }
+    if (parsed.protocol !== "https:" || parsed.username !== "" || parsed.password !== "" ||
+        parsed.pathname !== "/mcp" || parsed.search !== "" || parsed.hash !== "" ||
+        parsed.href !== value.data.mcp_url)
+        schemaError("MCP service URL is invalid");
+    return { mcp_url: value.data.mcp_url };
+}
 async function readOwnerSession(generation: string, signal?: AbortSignal): Promise<OwnerSession> {
     const captured = currentCapture();
     return currentResult(captured, decodeOwnerSessionEnvelope(await guarded(captured, requestApi("/api/v1/system/session", signal === undefined ? {} : { signal })), generation));
 }
-return { isOwnerSessionUnexpired, decodeOwnerSessionEnvelope, readOwnerSession };
+async function readMcpServiceInfo(generation: string, signal?: AbortSignal): Promise<OwnerMcpServiceInfo> {
+    const captured = currentCapture();
+    return currentResult(captured, decodeOwnerMcpServiceInfoEnvelope(
+        await guarded(captured, requestApi("/api/v1/system/mcp-info", signal === undefined ? {} : { signal })),
+        generation,
+    ));
+}
+return { isOwnerSessionUnexpired, decodeOwnerSessionEnvelope, readOwnerSession, readMcpServiceInfo };
 }

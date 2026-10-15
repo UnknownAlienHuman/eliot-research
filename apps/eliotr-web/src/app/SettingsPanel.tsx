@@ -1,13 +1,13 @@
 import { useLayoutEffect, useId, useRef, useState, type FormEvent } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Button, Field, Status } from "@eliotr/ui";
+import { Button, Field, MaterialSymbol, Status } from "@eliotr/ui";
 import type { ServiceModelProviderConnection, ServiceModelProviderCreateRequest, ServiceModelCatalogPage } from "@eliotr/owner-api-client";
 import type { PrivacyController, SessionContext } from "./privacy";
 import type { BoundWorkspaceApis } from "./runtime";
 import { protectedQueryKey, runProtectedRead } from "../query/client";
+import "./settings.css";
 import { serviceModelSettingsQueryOptions, configureGlobalModelProviderOnce, readGlobalModelProviderOperation,
   GlobalModelSettingsClosedError, GlobalModelProviderRefusedError } from "../query/globalModelSettings";
-import "./model-settings.css";
 
 const copy = {
   en: { title: "Settings", intro: "Provider connections apply throughout Eliot Research.", cloudflare: "Cloudflare",
@@ -15,7 +15,8 @@ const copy = {
     unavailable: "External provider setup is unavailable on this server. Cloudflare remains built in.",
     bindingMissing: "Workers AI is unavailable in this deployment.", catalog: "Cloudflare model catalog",
     external: "External providers", connect: "Connect provider", name: "Connection name", provider: "Provider",
-    compatible: "OpenAI-compatible provider", base: "API base URL", model: "Models (comma-separated IDs)", key: "API key",
+    compatible: "OpenAI-compatible provider", base: "API base URL", model: "Models", modelHint: "Model IDs, separated by commas", key: "API key", keyHint: "Stored in Cloudflare; it is never shown again.",
+    indexingLabel: "Source indexing", indexingValue: "Cloudflare AI Search", models: "Models", connected: "Connected", pending: "Not confirmed", failedState: "Not connected", newProvider: "Connect a provider",
     reading: "Reading settings…", failed: "Settings could not be read.", noConnections: "No external provider is connected.",
     configured: "Key stored in Cloudflare. Model availability has not been checked.", unknown: "The connection outcome is unknown. Read its saved status before submitting again.",
     invalid: "Check the provider, URL, model and key fields.", rejected: "Provider setup was rejected before a key was saved.",
@@ -26,7 +27,8 @@ const copy = {
     unavailable: "Подключение внешних провайдеров на сервере пока недоступно. Встроенные Cloudflare-модели остаются подключены.",
     bindingMissing: "В этом развёртывании Workers AI недоступен.", catalog: "Каталог моделей Cloudflare",
     external: "Внешние провайдеры", connect: "Подключить провайдера", name: "Название подключения", provider: "Провайдер",
-    compatible: "Совместимый с OpenAI", base: "Базовый URL API", model: "Модели (идентификаторы через запятую)", key: "Ключ API",
+    compatible: "Совместимый с OpenAI", base: "Базовый URL API", model: "Модели", modelHint: "Идентификаторы моделей через запятую", key: "Ключ API", keyHint: "Хранится в Cloudflare и больше не показывается.",
+    indexingLabel: "Индексация источников", indexingValue: "Cloudflare AI Search", models: "Модели", connected: "Подключён", pending: "Не подтверждён", failedState: "Не подключён", newProvider: "Подключить провайдера",
     reading: "Читаем настройки…", failed: "Не удалось прочитать настройки.", noConnections: "Внешние провайдеры не подключены.",
     configured: "Ключ сохранён в Cloudflare. Доступность моделей пока не проверена.", unknown: "Результат подключения неизвестен. Проверьте сохранённый статус перед новой отправкой.",
     invalid: "Проверьте провайдера, URL, модели и ключ.", rejected: "Настройка отклонена до сохранения ключа.",
@@ -127,31 +129,48 @@ export function SettingsPanel({ locale, apis, privacy, context }: { readonly loc
 
   const canConnect = privacy.isCurrent(context) && data?.external.management_available === true && data.external.state === "ready" &&
     !busy && heldOperation === undefined;
-  return <section className="er-model-settings" aria-label={text.title}>
-    <p>{text.intro}</p>
-    <section className="er-model-settings__section" aria-labelledby={`${id}-cloudflare`}>
-      <h2 id={`${id}-cloudflare`}>{text.cloudflare}</h2><p className="er-model-settings__builtin">{text.builtin}</p><p>{text.indexing}</p>
-      {data && <p>{text.defaultModel}: <code>{data.cloudflare.default_model_id}</code></p>}
+  return <section className="er-settings" aria-labelledby={`${id}-title`}>
+    <h2 id={`${id}-title`} className="er-settings__title">{text.title}</h2>
+    <p className="er-settings__lead">{text.intro}</p>
+    {settings.isPending && <Status announce>{text.reading}</Status>}
+    {settings.isError && <Status tone="error" announce>{text.failed}</Status>}
+    <section className="er-settings__group" aria-labelledby={`${id}-cloudflare`}>
+      <header className="er-settings__head">
+        <span className="er-settings__glyph" aria-hidden="true"><MaterialSymbol name="spark" /></span>
+        <h3 id={`${id}-cloudflare`}>{text.cloudflare}</h3>
+        <span className="er-settings__chip">{text.builtin}</span>
+      </header>
+      <dl className="er-settings__facts">
+        {data && <div><dt>{text.defaultModel}</dt><dd><code>{data.cloudflare.default_model_id}</code></dd></div>}
+        <div><dt>{text.indexingLabel}</dt><dd>{text.indexingValue}</dd></div>
+      </dl>
       {data && !data.cloudflare.binding_available && <Status tone="error">{text.bindingMissing}</Status>}
-      {settings.isPending && <Status announce>{text.reading}</Status>}
-      {settings.isError && <Status tone="error" announce>{text.failed}</Status>}
-      <details onToggle={event => setShowCatalog(event.currentTarget.open)}><summary>{text.catalog}</summary>
+      <details className="er-settings__more" onToggle={event => setShowCatalog(event.currentTarget.open)}><summary>{text.catalog}</summary>
         {catalog.isFetching && <Status announce>{text.reading}</Status>}
         {catalog.isError && <Status tone="error" announce>{text.failed}</Status>}
-        {catalog.data && <ul>{catalog.data.models.map(model => <li key={model.model_id}>{model.name} · <code>{model.model_id}</code></li>)}</ul>}
+        {catalog.data && <ul className="er-settings__catalog">{catalog.data.models.map(model => <li key={model.model_id}>
+          <span>{model.name}</span><code>{model.model_id}</code></li>)}</ul>}
       </details>
     </section>
-    <section className="er-model-settings__section" aria-labelledby={`${id}-external`}>
-      <h2 id={`${id}-external`}>{text.external}</h2>
+    <section className="er-settings__group" aria-labelledby={`${id}-external`}>
+      <header className="er-settings__head">
+        <span className="er-settings__glyph" data-tone="secondary" aria-hidden="true"><MaterialSymbol name="link" /></span>
+        <h3 id={`${id}-external`}>{text.external}</h3>
+      </header>
       {data && (!data.external.management_available || data.external.state === "unavailable") && <Status>{text.unavailable}</Status>}
-      {data?.external.truncated && <p>{text.truncated}</p>}
-      {data?.external.state === "ready" && data.external.connections.length === 0 && <p>{text.noConnections}</p>}
-      {data && <ul>{data.external.connections.map(connection => <li key={connection.operation_id}>
-        <strong>{connection.display_name}</strong><p>{connection.model_ids.join(", ")}</p>
-        <Status>{connection.status === "configured" ? text.configured : connection.status === "uncertain" ? text.unknown : text.rejected}</Status>
+      {data?.external.truncated && <p className="er-settings__note">{text.truncated}</p>}
+      {data?.external.state === "ready" && data.external.connections.length === 0 && <p className="er-settings__note">{text.noConnections}</p>}
+      {data && data.external.connections.length > 0 && <ul className="er-settings__providers">{data.external.connections.map(connection => <li key={connection.operation_id} data-status={connection.status}>
+        <span className="er-settings__provider-text">
+          <strong>{connection.display_name}</strong>
+          <span>{text.models}: {connection.model_ids.join(", ")}</span>
+        </span>
+        <span className="er-settings__chip" data-status={connection.status} title={connection.status === "configured" ? text.configured : connection.status === "uncertain" ? text.unknown : text.rejected}>
+          {connection.status === "configured" ? text.connected : connection.status === "uncertain" ? text.pending : text.failedState}</span>
         {connection.status === "uncertain" && <Button variant="text" disabled={busy} onClick={() => { void check(connection.operation_id); }}>{text.check}</Button>}
       </li>)}</ul>}
-      <form ref={formRef} method="post" onSubmit={event => { void connect(event); }}>
+      <form ref={formRef} className="er-settings__form" method="post" aria-label={text.newProvider} onSubmit={event => { void connect(event); }}>
+        <h4>{text.newProvider}</h4>
         <div className="er-field"><label className="er-field__label" htmlFor={`${id}-provider`}>{text.provider}</label>
           <select id={`${id}-provider`} className="er-field__control" value={providerKind} disabled={!canConnect}
             onChange={event => setProviderKind(event.target.value as ProviderKind)}>
@@ -160,9 +179,11 @@ export function SettingsPanel({ locale, apis, privacy, context }: { readonly loc
           </select></div>
         <Field label={text.name} name="display_name" maxLength={128} required={providerKind === "compatible"} disabled={!canConnect} />
         {providerKind === "compatible" && <Field label={text.base} type="url" name="base_url" maxLength={2048} required disabled={!canConnect} />}
-        <Field label={text.model} name="model_ids" maxLength={4096} required disabled={!canConnect} />
-        <Field label={text.key} type="password" name="api_key" autoComplete="new-password" maxLength={4096} required disabled={!canConnect} />
-        <Button variant="tonal" type="submit" disabled={!canConnect} loading={feedback === "saving"}>{feedback === "saving" ? text.saving : text.connect}</Button>
+        <Field label={text.model} placeholder={text.modelHint} name="model_ids" maxLength={4096} required disabled={!canConnect} />
+        <Field label={text.key} placeholder={text.keyHint} type="password" name="api_key" autoComplete="new-password" maxLength={4096} required disabled={!canConnect} />
+        <div className="er-settings__actions">
+          <Button variant="primary" icon="add" type="submit" disabled={!canConnect} loading={feedback === "saving"}>{feedback === "saving" ? text.saving : text.connect}</Button>
+        </div>
       </form>
       {feedback !== "idle" && feedback !== "saving" && <Status announce tone={feedback === "configured" ? "neutral" : "error"}>
         {feedback === "checking" ? text.checking : feedback === "configured" ? text.configured : feedback === "unknown" ? text.unknown

@@ -135,3 +135,6 @@
 @media (forced-colors: active) {
   .er-agent-connections fieldset fieldset > label, .er-agent-connections form > fieldset { border: var(--eliot-divider-width) solid CanvasText; }
 }
+
+/* The connect guide leads the Agents page; the registry follows after a section break. */
+.er-shell-reading > .er-agent-connect { margin-block-end: var(--eliot-space-section); }

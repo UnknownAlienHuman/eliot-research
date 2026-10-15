@@ -3,6 +3,7 @@ import { expect, fn, userEvent, within } from "storybook/test";
 import { AgentWorkPane } from "../../features/agents/AgentWorkPane";
 import { HandoffSheet } from "../../features/agents/HandoffSheet";
 import { DecisionInbox } from "../../features/agents/DecisionInbox";
+import { AgentConnectGuide } from "../../features/agents/AgentConnectGuide";
 import { Button } from "../../primitives/primitives";
 import type { AgentSummary, AgentTaskSummary, DecisionItem, ResearchToolId, TaskScope } from "../../features/agents/agent-work-model";
 import "./agent-stories.css";
@@ -164,6 +165,30 @@ export const AskAnAgentAboutTheProject: Story = {
     await userEvent.click(sheet.getByRole("button", { name: "Отправить" }));
     await expect(asked).toHaveBeenCalledWith({ target: "codex", tool: "request",
       scope: [{ id: "project", kind: "research", label: "Перевал Дятлова" }], note: "Сверь даты с протоколом" });
+  },
+};
+
+/* An agent joins with one address and one command; nothing secret is shown or typed. */
+export const ConnectAnAgent: Story = {
+  render: () => <div className="er-agent-story-wide"><AgentConnectGuide locale="en" mcpUrl="https://mcp.example.workers.dev/mcp" /></div>,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByText("https://mcp.example.workers.dev/mcp")).toBeVisible();
+    await expect(canvas.getByText(/codex mcp add eliot-research --url https:\/\/mcp\.example\.workers\.dev\/mcp/u)).toBeVisible();
+    await userEvent.click(canvas.getByRole("radio", { name: /Claude Code/u }));
+    await expect(canvas.getByText("claude mcp add --transport http eliot-research https://mcp.example.workers.dev/mcp")).toBeVisible();
+    await userEvent.click(canvas.getByRole("radio", { name: /Other agent/u }));
+    await expect(canvas.queryByText(/mcp add/u)).toBeNull();
+  },
+};
+
+/* Until the server publishes its address the guide says so and offers nothing to copy. */
+export const ConnectAnAgentAddressPending: Story = {
+  render: () => <div className="er-agent-story-wide" data-theme="dark"><AgentConnectGuide locale="ru" /></div>,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByText("Сервер ещё не опубликовал свой MCP-адрес.")).toBeVisible();
+    for (const button of canvas.getAllByRole("button")) await expect(button).toBeDisabled();
   },
 };
 

@@ -237,6 +237,18 @@ export async function dispatchHttpSpecialRoute(input: {
         credential_generation: input.context.credential_generation,
         expires_at: input.identity.expires_at,
       });
+    case "system.mcp-info": {
+      requireNoQuery(input.url);
+      const hostname = input.env.MCP_HOSTNAME;
+      const validHostname = typeof hostname === "string" &&
+        hostname.length <= 253 &&
+        /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))*$/u.test(hostname) &&
+        !hostname.endsWith(".example") && !hostname.includes("replace-me");
+      return apiResult(input.request, input.env, {
+        protocol: "eliotr.mcp-service-info.v1",
+        mcp_url: validHostname ? `https://${hostname}/mcp` : null,
+      });
+    }
     default:
       return null;
   }

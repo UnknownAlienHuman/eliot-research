@@ -125,31 +125,36 @@
   outline-offset: var(--eliot-focus-offset);
 }
 
-/* Selection reads through the selected surface; the underlined title carries it as text as well. */
+/* Selection reads through the selected surface; forced colours add an underline below. */
 .er-studio-live__item[aria-current="true"] {
   background: var(--eliot-color-selected);
   color: var(--eliot-color-on-selected);
 }
 
-.er-studio-live__item[aria-current="true"] .er-studio-live__item-title {
-  text-decoration: underline;
-  text-decoration-thickness: var(--eliot-divider-width);
-  text-underline-offset: var(--eliot-focus-offset);
+@media (forced-colors: active) {
+  .er-studio-live__item[aria-current="true"] .er-studio-live__item-title {
+    text-decoration: underline;
+    text-decoration-thickness: var(--eliot-divider-width);
+    text-underline-offset: var(--eliot-focus-offset);
+  }
 }
 
-/* Leading accent glyph area: a pink container tile with a centred glyph, spanning the title and state rows.
- * The decorative span is aria-hidden; the state word is the readable text. */
+/* Leading glyph tile spanning the title and state rows: a page while it is a draft (tertiary), a done
+ * page once published (primary). Decorative; the state word is the readable text. */
 .er-studio-live__item-dot {
+  display: grid;
+  place-items: center;
   grid-column: 1;
   grid-row: 1 / span 2;
   box-sizing: border-box;
   inline-size: var(--eliot-size-control);
   block-size: var(--eliot-size-control);
   border-radius: var(--eliot-shape-medium);
-  background:
-    radial-gradient(circle, var(--eliot-accent-on-pink-container) 0 45%, transparent 50%) center / var(--eliot-icon-small-size) var(--eliot-icon-small-size) no-repeat,
-    var(--eliot-accent-pink-container);
+  background: var(--md-sys-color-tertiary-container);
+  color: var(--md-sys-color-on-tertiary-container);
 }
+
+.er-studio-live__item-dot[data-state="PUBLISHED"] { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
 
 .er-studio-live__item-title {
   grid-column: 2;
@@ -185,15 +190,14 @@
   text-align: center;
 }
 
-.er-studio-live__empty::before {
-  content: "";
-  box-sizing: border-box;
+.er-studio-live__empty-glyph {
+  display: grid;
+  place-items: center;
   inline-size: var(--eliot-size-touch-target);
   block-size: var(--eliot-size-touch-target);
   border-radius: var(--eliot-shape-large);
-  background:
-    radial-gradient(circle, var(--eliot-accent-on-pink-container) 0 45%, transparent 50%) center / var(--eliot-icon-standard-size) var(--eliot-icon-standard-size) no-repeat,
-    var(--eliot-accent-pink-container);
+  background: var(--md-sys-color-tertiary-container);
+  color: var(--md-sys-color-on-tertiary-container);
 }
 
 .er-studio-live__empty-text {
