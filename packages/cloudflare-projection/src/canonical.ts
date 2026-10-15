@@ -151,6 +151,38 @@ export async function projectionGeneration(
   context: ProjectionSourceContext,
   profile: ProjectionExecutionProfile,
 ): Promise<string> {
+  if (context.project_copy_scopes_v2 !== undefined) {
+    const matches = context.project_copy_scopes_v2.filter(scope =>
+      scope.target.managed_instance_id === profile.managed_instance_id &&
+      scope.target.managed_generation === profile.managed_generation);
+    const scope = matches[0];
+    if (matches.length !== 1 || scope === undefined || scope.copies.length > 256) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V2 execution identity requires one bounded exact target scope");
+    }
+    assertProjectionIdentifier(context.intent_ref.id, "V2 projection intent");
+    assertProjectionInteger(context.intent_ref.revision, "V2 projection intent revision", 1, Number.MAX_SAFE_INTEGER);
+    const copies = scope.copies.map(copy => ({
+      source_revision_ref: copy.source_revision_ref,
+      source_owner_generation: copy.source_owner_generation,
+      project_id: copy.project_id,
+      project_membership_id: copy.project_membership_id,
+      membership_identity_version: copy.membership_identity_version,
+      membership_generation: copy.membership_generation,
+      membership_revision: copy.membership_identity_version === 2 ? copy.membership_revision : null,
+    })).sort((left, right) => {
+      const a = canonicalProjectionJson(left), b = canonicalProjectionJson(right);
+      return a < b ? -1 : a > b ? 1 : 0;
+    });
+    return stableProjectionId("projection", "managed-items.v4", profile.projector_profile,
+      profile.managed_instance_id, profile.managed_generation,
+      context.source_revision.source_revision_ref, context.source_revision.content_sha256,
+      context.source_revision.object_residency_key_digest,
+      canonicalProjectionJson({ intent_ref: context.intent_ref, copies,
+        source_title: context.source_title, source_class: context.source_class,
+        instruction_taint: context.instruction_taint,
+        target_item_utf8_bytes: profile.target_item_utf8_bytes,
+        maximum_item_utf8_bytes: profile.maximum_item_utf8_bytes }));
+  }
   const projectMembershipIds = [...new Set(context.project_membership_ids)].sort();
   return stableProjectionId(
     "projection",
