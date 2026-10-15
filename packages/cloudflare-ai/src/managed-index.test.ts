@@ -102,6 +102,118 @@ describe("managed AI Search projection adapter", () => {
     )?.state).toBe("READBACK_VERIFIED");
   });
 
+  it("allows paired-null registry absence only for a SHADOW V2 copy", async () => {
+    let key = "";
+    let content = "";
+    let metadata: Readonly<Record<string, string>> = {};
+    const uploadAndPoll = vi.fn(async (
+      uploadedKey: string,
+      uploadedContent: string,
+      options?: { readonly metadata?: Readonly<Record<string, string>> },
+    ) => {
+      key = uploadedKey;
+      content = uploadedContent;
+      metadata = options?.metadata ?? {};
+      return {
+        id: "provider-bootstrap-shadow-v2",
+        key,
+        status: "completed",
+        chunks_count: 1,
+        file_size: new TextEncoder().encode(content).byteLength,
+        metadata: {
+          ...metadata,
+          filename: key.slice(key.lastIndexOf("/") + 1),
+          folder: key.slice(0, key.lastIndexOf("/") + 1),
+        },
+      };
+    });
+    const authority = createMemoryManagedItemAuthority();
+    const shadowProfile = { ...profile, managed_generation_active: false };
+    const copyPlan = await managedProjectCopyPlanV2("SHADOW", shadowProfile, "ABSENT");
+    const plannedItem = copyPlan.items[0];
+    if (plannedItem === undefined) throw new Error("V2 fixture has no provider item");
+    const port = createManagedProjectionTestWriter({
+      authority,
+      profile: shadowProfile,
+      namespace: {
+        get() {
+          return {
+            items: {
+              uploadAndPoll,
+              get() {
+                return {
+                  async info() {
+                    return {
+                      id: "provider-bootstrap-shadow-v2",
+                      key,
+                      status: "completed",
+                      chunks_count: 1,
+                      file_size: new TextEncoder().encode(content).byteLength,
+                      metadata: {
+                        ...metadata,
+                        filename: key.slice(key.lastIndexOf("/") + 1),
+                        folder: key.slice(0, key.lastIndexOf("/") + 1),
+                      },
+                    };
+                  },
+                  async download() { return downloaded(key.slice(key.lastIndexOf("/") + 1), content); },
+                };
+              },
+            },
+          };
+        },
+      },
+    });
+
+    const receipt = await port.index(
+      context,
+      "execution-bootstrap-shadow-v2",
+      plannedItem.canonical_projection_generation,
+      copyPlan,
+      TEST_EXECUTION_FENCE,
+    );
+    expect(uploadAndPoll).toHaveBeenCalledOnce();
+    expect(receipt).toMatchObject({
+      state: "DEGRADED",
+      item_count: 1,
+      instance_id: shadowProfile.managed_instance_id,
+      managed_generation: shadowProfile.managed_generation,
+      reason_codes: ["MANAGED_GENERATION_NOT_PROMOTED"],
+    });
+    expect(authority.readManagedItemEffect(
+      context,
+      "execution-bootstrap-shadow-v2",
+      plannedItem.item_key,
+    )?.state).toBe("READBACK_VERIFIED");
+  });
+
+  it("rejects paired-null registry absence on ACTIVE before provider access", async () => {
+    const activeProfile = { ...profile, managed_generation_active: true };
+    const copyPlan = await managedProjectCopyPlanV2("ACTIVE", activeProfile, "ABSENT");
+    const getInstance = vi.fn(() => ({
+      items: {
+        uploadAndPoll: vi.fn(),
+        get() { throw new Error("ACTIVE null capture must stop before item access"); },
+      },
+    }));
+    const port = createManagedProjectionTestWriter({
+      authority: createMemoryManagedItemAuthority(),
+      profile: activeProfile,
+      namespace: { get: getInstance },
+    });
+    const plannedItem = copyPlan.items[0];
+    if (plannedItem === undefined) throw new Error("V2 fixture has no provider item");
+
+    await expect(port.index(
+      context,
+      "execution-active-null-capture",
+      plannedItem.canonical_projection_generation,
+      copyPlan,
+      TEST_EXECUTION_FENCE,
+    )).resolves.toMatchObject({ state: "DEGRADED" });
+    expect(getInstance).not.toHaveBeenCalled();
+  });
+
   it("keeps legacy flat ACTIVE writes refused before provider upload", async () => {
     const uploadAndPoll = vi.fn();
     const activeProfile = { ...profile, managed_generation_active: true };

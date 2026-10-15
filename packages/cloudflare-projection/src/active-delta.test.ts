@@ -21,7 +21,12 @@ const baseProfile: ProjectionExecutionProfile = {
   managed_timeout_ms: 1_000,
 };
 
-function selection(purpose: "ACTIVE" | "SHADOW", generation: string): ManagedTargetSelectionV2 {
+function selection(
+  purpose: "ACTIVE" | "SHADOW",
+  generation: string,
+  registryRevision: number | null = 7,
+  registryArtifactSha256: string | null = A,
+): ManagedTargetSelectionV2 {
   return {
     protocol: "eliotr.managed-target-selection.v2",
     domain: "MANAGED_SEARCH_PRODUCT",
@@ -29,8 +34,8 @@ function selection(purpose: "ACTIVE" | "SHADOW", generation: string): ManagedTar
     selection_mode: "STABLE_PHYSICAL_PROFILE_V2",
     product_alias: "primary",
     purpose,
-    registry_revision: 7,
-    registry_artifact_sha256: A,
+    registry_revision: registryRevision,
+    registry_artifact_sha256: registryArtifactSha256,
     v1_exact_profile_identity_sha256: generation === "generation-a" ? D : E,
     target: {
       namespace: "ai-search-primary",
@@ -42,6 +47,31 @@ function selection(purpose: "ACTIVE" | "SHADOW", generation: string): ManagedTar
 }
 
 describe("Root-resolved ACTIVE delta selections", () => {
+  it("accepts only a sole SHADOW with Root's paired-null initial registry absence", () => {
+    const shadow = selection("SHADOW", "generation-b", null, null);
+    const targets = validateRootSelectedProjectionTargets([shadow], baseProfile);
+
+    expect(targets).toHaveLength(1);
+    expect(targets[0]).toMatchObject({ role: "SHADOW", profile: { managed_generation_active: false } });
+  });
+
+  it("rejects ACTIVE/mixed null captures and a bootstrap SHADOW beside ACTIVE", () => {
+    const active = selection("ACTIVE", "generation-a");
+    expect(() => validateRootSelectedProjectionTargets([
+      selection("ACTIVE", "generation-a", null, null),
+    ], baseProfile)).toThrow(/registry capture/u);
+    expect(() => validateRootSelectedProjectionTargets([
+      selection("SHADOW", "generation-b", null, A),
+    ], baseProfile)).toThrow();
+    expect(() => validateRootSelectedProjectionTargets([
+      selection("SHADOW", "generation-b", 7, null),
+    ], baseProfile)).toThrow();
+    expect(() => validateRootSelectedProjectionTargets([
+      active,
+      selection("SHADOW", "generation-b", null, null),
+    ], baseProfile)).toThrow(/registry snapshot/u);
+  });
+
   it("accepts Root's exact V2 ACTIVE and SHADOW receipts on one physical target", () => {
     const active = selection("ACTIVE", "generation-a");
     const shadow = selection("SHADOW", "generation-b");

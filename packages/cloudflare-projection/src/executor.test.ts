@@ -431,6 +431,12 @@ function rootSelectedSelections(): readonly ManagedTargetSelectionV2[] {
   ];
 }
 
+function rootSelectedBootstrapShadowSelection(): ManagedTargetSelectionV2 {
+  const shadow = rootSelectedSelections()[1];
+  if (shadow === undefined) throw new Error("Root-selected shadow fixture is missing");
+  return { ...shadow, registry_revision: null, registry_artifact_sha256: null };
+}
+
 async function rootSelectedProjectCopyScopes(
   selections: readonly ManagedTargetSelectionV2[],
 ): Promise<readonly ProjectCopyScopeV2[]> {
@@ -480,8 +486,8 @@ async function withServingTargetPorts(
   f: ReturnType<typeof fixture>,
   apply?: (input: Parameters<ProjectionServingTargetDeltaPort["apply"]>[0]) => Promise<ManagedProjectionReceipt>,
   copyScopes?: readonly ProjectCopyScopeV2[],
+  selections: readonly ManagedTargetSelectionV2[] = rootSelectedSelections(),
 ) {
-  const selections = rootSelectedSelections();
   const scopes = copyScopes ?? await rootSelectedProjectCopyScopes(selections);
   const originalLoad = f.dependencies.authority.load.bind(f.dependencies.authority);
   f.dependencies.authority.load = vi.fn(async (deliveryMessage) => ({
@@ -579,6 +585,42 @@ describe("projection execution coordinator", () => {
     expect(f.dependencies.authority.settle).toHaveBeenCalledTimes(2);
   });
 
+  it("builds a sole Root-planned SHADOW from paired-null first-use registry absence", async () => {
+    const f = fixture({ project_membership_ids: [] });
+    const bootstrapSelection = rootSelectedBootstrapShadowSelection();
+    const selections = [bootstrapSelection];
+    const selected = await withServingTargetPorts(
+      f,
+      async (input) => ({
+        state: "DEGRADED",
+        item_count: input.copy_plan.items.length,
+        instance_id: input.profile.managed_instance_id,
+        managed_generation: input.profile.managed_generation,
+        shadow_receipt_ref: "managed-bootstrap-shadow",
+        shadow_readback_digest: A,
+        reason_codes: ["MANAGED_GENERATION_NOT_PROMOTED"],
+      }),
+      undefined,
+      selections,
+    );
+
+    const result = await createProjectionExecutionHandler(selected.dependencies).execute(message, selections);
+
+    expect(result.receipt_ref).toBe("receipt:receipt-partial:1");
+    expect(selected.applyMock).toHaveBeenCalledOnce();
+    expect(selected.applyMock.mock.calls[0]?.[0]).toMatchObject({
+      selection: { purpose: "SHADOW", registry_revision: null, registry_artifact_sha256: null },
+      profile: { managed_generation_active: false },
+    });
+    expect(f.events.filter((event) => event.startsWith("delta-"))).toEqual(["delta-SHADOW"]);
+    expect(f.dependencies.content.read).toHaveBeenCalledOnce();
+    expect(f.dependencies.work.materialize).toHaveBeenCalledOnce();
+    expect(f.dependencies.work.materializeProjectCopyMapPages).toHaveBeenCalledOnce();
+    expect(f.dependencies.search.activate).toHaveBeenCalledOnce();
+    expect(f.dependencies.authority.settle).toHaveBeenCalledOnce();
+    expect(f.settlement).toMatchObject({ outcome: "PARTIAL", reason_codes: ["MANAGED_GENERATION_NOT_PROMOTED"] });
+  });
+
   it("rejects a mismatched Root V2 copy scope before Core, Work, Search, or provider writes", async () => {
     const f = fixture({ project_membership_ids: [] });
     const validScopes = await rootSelectedProjectCopyScopes(rootSelectedSelections());
@@ -591,6 +633,31 @@ describe("projection execution coordinator", () => {
     const selected = await withServingTargetPorts(f, undefined, malformedScopes);
 
     await expect(createProjectionExecutionHandler(selected.dependencies).execute(message, selected.selections)).rejects.toThrow();
+
+    expect(f.dependencies.authority.begin).not.toHaveBeenCalled();
+    expect(f.dependencies.work.materialize).not.toHaveBeenCalled();
+    expect(f.dependencies.work.materializeProjectCopyMapPages).not.toHaveBeenCalled();
+    expect(f.dependencies.search.activate).not.toHaveBeenCalled();
+    expect(selected.applyMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a copy scope whose registry capture differs from Root's selection before effects", async () => {
+    const f = fixture({ project_membership_ids: [] });
+    const selections = rootSelectedSelections();
+    const validScopes = await rootSelectedProjectCopyScopes(selections);
+    const mismatchedScopes = validScopes.map((scope, index) => index === 1
+      ? {
+          ...scope,
+          target_selection: {
+            ...scope.target_selection,
+            registry_revision: null,
+            registry_artifact_sha256: null,
+          },
+        }
+      : scope);
+    const selected = await withServingTargetPorts(f, undefined, mismatchedScopes, selections);
+
+    await expect(createProjectionExecutionHandler(selected.dependencies).execute(message, selections)).rejects.toThrow();
 
     expect(f.dependencies.authority.begin).not.toHaveBeenCalled();
     expect(f.dependencies.work.materialize).not.toHaveBeenCalled();

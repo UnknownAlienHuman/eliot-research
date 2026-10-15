@@ -14,7 +14,10 @@ import {
   projectionGeneration,
   utf8ProjectionLength,
 } from "./canonical.js";
-import { preflightManagedProjectCopies } from "./core-managed-item-intent.js";
+import {
+  managedProjectCopyScopeForProfile,
+  preflightManagedProjectCopies,
+} from "./core-managed-item-intent.js";
 import type {
   CanonicalProjectionResourceBounds,
   CanonicalSourceProjectionReceipt,
@@ -31,6 +34,7 @@ import type {
   ProjectionTerminalReceipt,
   ProjectionWorkReceipt,
 } from "./types.js";
+import { hasValidManagedTargetRegistryCaptureV2 } from "./managed-target-assignment.js";
 
 export interface PreparedProjectionDeltaTarget {
   readonly selection: ManagedTargetSelectionV2;
@@ -104,8 +108,9 @@ function sameProjectorBounds(
 }
 
 /**
- * Validate Root's existing internal V2 target receipts. This module does not
- * read SEARCH_DB or define a second selection protocol.
+ * Validate Root's internal V2 target receipts. This module does not read
+ * SEARCH_DB or define a second selection protocol. A sole SHADOW with Root's
+ * paired-null registry capture represents first-use namespace absence.
  */
 export function validateRootSelectedProjectionTargets(
   selections: readonly ManagedTargetSelectionV2[],
@@ -119,9 +124,14 @@ export function validateRootSelectedProjectionTargets(
     projectionFail("PROJECTION_AUTHORITY_CONFLICT", "Root must supply one ACTIVE and at most one SHADOW selection");
   }
   profileIsValid(baseProfile);
-  const active = selections[0];
-  if (active === undefined || active.purpose !== "ACTIVE") {
-    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "Root-selected target list must begin with its current ACTIVE selection");
+  const first = selections[0];
+  const bootstrapShadow = selections.length === 1 && first?.purpose === "SHADOW" &&
+    first.registry_revision === null && first.registry_artifact_sha256 === null;
+  if (first === undefined || (!bootstrapShadow && first.purpose !== "ACTIVE")) {
+    projectionFail(
+      "PROJECTION_AUTHORITY_CONFLICT",
+      "Root-selected targets must begin with ACTIVE or contain only the paired-null first-use SHADOW",
+    );
   }
   const targets: {
     readonly selection: ManagedTargetSelectionV2;
@@ -134,7 +144,7 @@ export function validateRootSelectedProjectionTargets(
   for (const [index, selection] of selections.entries()) {
     exactObjectKeys(selection, SELECTION_KEYS, `Root target selection ${index}`);
     exactObjectKeys(selection.target, TARGET_IDENTITY_KEYS, `Root target identity ${index}`);
-    const role = index === 0 ? "ACTIVE" : "SHADOW";
+    const role = bootstrapShadow ? "SHADOW" : index === 0 ? "ACTIVE" : "SHADOW";
     if (
       selection.protocol !== "eliotr.managed-target-selection.v2" ||
       selection.domain !== "MANAGED_SEARCH_PRODUCT" ||
@@ -145,8 +155,12 @@ export function validateRootSelectedProjectionTargets(
     ) {
       projectionFail("PROJECTION_AUTHORITY_CONFLICT", "Root target selection is not the exact V2 ACTIVE/SHADOW receipt");
     }
-    assertProjectionInteger(selection.registry_revision, "Root selection registry revision", 1, Number.MAX_SAFE_INTEGER);
-    assertProjectionSha256(selection.registry_artifact_sha256, "Root selection registry artifact digest");
+    if (!hasValidManagedTargetRegistryCaptureV2(selection)) {
+      projectionFail(
+        "PROJECTION_AUTHORITY_CONFLICT",
+        "Root registry capture must be a positive revision/digest pair or paired-null SHADOW absence",
+      );
+    }
     assertProjectionSha256(
       selection.v1_exact_profile_identity_sha256,
       "Root selection V1 exact registry profile digest",
@@ -195,6 +209,13 @@ export async function prepareRootSelectedProjectionTargets(input: {
   const selected = validateRootSelectedProjectionTargets(input.selections, input.base_profile);
   const targets: PreparedProjectionDeltaTarget[] = [];
   for (const target of selected) {
+    const scope = managedProjectCopyScopeForProfile(input.context, target.profile);
+    if (
+      scope === undefined ||
+      canonicalProjectionJson(scope.target_selection) !== canonicalProjectionJson(target.selection)
+    ) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "Root V2 copy scope differs from the exact selected target receipt");
+    }
     const executionGeneration = await projectionGeneration(input.context, target.profile);
     const priorTerminal = await input.authority.readTerminal(
       input.context,

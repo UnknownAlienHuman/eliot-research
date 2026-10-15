@@ -426,6 +426,7 @@ export const profile: ProjectionExecutionProfile = {
 export async function managedProjectCopyPlanV2(
   purpose: "ACTIVE" | "SHADOW",
   targetProfile: ProjectionExecutionProfile = profile,
+  registryCapture: "CURRENT" | "ABSENT" = "CURRENT",
 ): Promise<ManagedProjectCopyPlan> {
   const canonicalProjectionGeneration = "canonical-projection-1";
   const metadataGenerationDigest = await projectionSha256Utf8(
@@ -443,8 +444,8 @@ export async function managedProjectCopyPlanV2(
     selection_mode: "STABLE_PHYSICAL_PROFILE_V2",
     product_alias: "primary",
     purpose,
-    registry_revision: 1,
-    registry_artifact_sha256: "c".repeat(64),
+    registry_revision: registryCapture === "ABSENT" ? null : 1,
+    registry_artifact_sha256: registryCapture === "ABSENT" ? null : "c".repeat(64),
     v1_exact_profile_identity_sha256: "d".repeat(64),
     target: {
       namespace: "ai-search-primary",

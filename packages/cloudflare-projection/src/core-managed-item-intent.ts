@@ -21,6 +21,7 @@ import {
   type ManagedProjectMembershipIdentity,
 } from "./managed-project-path.js";
 import { parseManagedItemReceipt } from "./core-managed-item-receipts.js";
+import { hasValidManagedTargetRegistryCaptureV2 } from "./managed-target-assignment.js";
 import type { ProjectionAuthorityPort } from "./types.js";
 import type {
   CanonicalSourceProjectionReceipt,
@@ -214,7 +215,8 @@ function v2ScopeForProfile(
     scope.target_selection.domain !== "MANAGED_SEARCH_PRODUCT" ||
     scope.target_selection.decision_version !== 2 ||
     scope.target_selection.selection_mode !== "STABLE_PHYSICAL_PROFILE_V2" ||
-    scope.target_selection.product_alias !== "primary"
+    scope.target_selection.product_alias !== "primary" ||
+    scope.target_selection.purpose !== (profile.managed_generation_active ? "ACTIVE" : "SHADOW")
   ) {
     projectionFail("PROJECTION_AUTHORITY_CONFLICT", "Root V2 scope and stable target receipt do not match");
   }
@@ -222,8 +224,9 @@ function v2ScopeForProfile(
   assertProjectionInteger(scope.scope_snapshot_revision, "V2 scope snapshot revision", 1, Number.MAX_SAFE_INTEGER);
   assertProjectionSha256(scope.scope_snapshot_digest, "V2 scope snapshot digest");
   assertProjectionSha256(scope.target.target_profile_identity_sha256, "V2 target physical profile digest");
-  assertProjectionInteger(scope.target_selection.registry_revision, "V2 registry revision", 1, Number.MAX_SAFE_INTEGER);
-  assertProjectionSha256(scope.target_selection.registry_artifact_sha256, "V2 registry artifact digest");
+  if (!hasValidManagedTargetRegistryCaptureV2(scope.target_selection)) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V2 registry capture must be positive or paired-null SHADOW absence");
+  }
   assertProjectionSha256(scope.target_selection.v1_exact_profile_identity_sha256, "V2 exact V1 profile digest");
   return scope;
 }
@@ -679,8 +682,9 @@ export async function buildCanonicalProjectCopyMapsV2(
   assertProjectionSha256(scope.scope_snapshot_digest, "V2 copy scope snapshot digest");
   assertProjectionIdentifier(scope.target_selection.target.namespace, "V2 selected target namespace");
   assertProjectionSha256(scope.target_selection.target.target_profile_identity_sha256, "V2 selected physical profile digest");
-  assertProjectionInteger(scope.target_selection.registry_revision, "V2 target registry revision", 1, Number.MAX_SAFE_INTEGER);
-  assertProjectionSha256(scope.target_selection.registry_artifact_sha256, "V2 target registry artifact digest");
+  if (!hasValidManagedTargetRegistryCaptureV2(scope.target_selection)) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V2 target registry capture must be positive or paired-null SHADOW absence");
+  }
   assertProjectionSha256(scope.target_selection.v1_exact_profile_identity_sha256, "V2 exact V1 profile digest");
   if (
     scope.target_selection.protocol !== "eliotr.managed-target-selection.v2" ||
@@ -911,7 +915,8 @@ export async function buildManagedProjectCopyPlan(
     if (
       resolvedPreflight.layout !== "PROJECT_COPY_V2" ||
       resolvedPreflight.target_selection === undefined ||
-      resolvedPreflight.target_selection.registry_artifact_sha256 !== v2Scope.target_selection.registry_artifact_sha256 ||
+      canonicalProjectionJson(resolvedPreflight.target_selection) !==
+        canonicalProjectionJson(v2Scope.target_selection) ||
       resolvedPreflight.scope_snapshot_id !== v2Scope.scope_snapshot_id ||
       resolvedPreflight.scope_snapshot_revision !== v2Scope.scope_snapshot_revision ||
       resolvedPreflight.scope_snapshot_digest !== v2Scope.scope_snapshot_digest ||

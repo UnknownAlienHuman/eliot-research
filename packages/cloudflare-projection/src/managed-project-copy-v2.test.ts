@@ -115,7 +115,7 @@ async function fixture(copiesEnabled = true) {
     decision_version: 2 as const,
     selection_mode: "STABLE_PHYSICAL_PROFILE_V2" as const,
     product_alias: "primary" as const,
-    purpose: "ACTIVE" as const,
+    purpose: "SHADOW" as const,
     registry_revision: 11,
     registry_artifact_sha256: "e".repeat(64),
     v1_exact_profile_identity_sha256: "f".repeat(64),

@@ -6,6 +6,7 @@ import {
   assertProjectionSha256,
   assertProjectionText,
   canonicalProjectionJson,
+  hasValidManagedTargetRegistryCaptureV2,
   profileIsValid,
   projectionDigest,
   projectionSha256Utf8,
@@ -247,8 +248,9 @@ async function validateManagedProjectCopyPlan(
     assertProjectionText(copyPlan.scope_snapshot_id, "V2 scope snapshot ID", 256);
     assertProjectionText(copyPlan.project_copy_map_index_ref, "V2 copy-map index ref", 2048);
     assertProjectionSha256(copyPlan.project_copy_map_index_sha256, "V2 copy-map index digest");
-    assertProjectionInteger(selection.registry_revision, "V2 target registry revision", 1, Number.MAX_SAFE_INTEGER);
-    assertProjectionSha256(selection.registry_artifact_sha256, "V2 target registry artifact digest");
+    if (!hasValidManagedTargetRegistryCaptureV2(selection)) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "V2 registry capture must be positive or paired-null SHADOW absence");
+    }
     assertProjectionSha256(selection.v1_exact_profile_identity_sha256, "V2 exact V1 profile digest");
   } else if (
     copyPlan.target_selection !== undefined ||

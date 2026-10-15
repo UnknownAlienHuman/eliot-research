@@ -49,8 +49,12 @@ interface ServingTargetExecutionState {
 function copyPlanMatchesPreflight(
   copyPlan: ManagedProjectCopyPlan,
   preflight: NonNullable<PreparedProjectionDeltaTarget["preflight"]>,
+  selection: ManagedTargetSelectionV2,
 ): boolean {
   if (
+    copyPlan.layout !== "PROJECT_COPY_V2" ||
+    copyPlan.target_selection === undefined ||
+    canonicalProjectionJson(copyPlan.target_selection) !== canonicalProjectionJson(selection) ||
     copyPlan.provider_copy_count !== preflight.provider_copy_count ||
     copyPlan.items.length !== preflight.physical_item_count ||
     copyPlan.target.metadata_generation_digest !== preflight.metadata_generation_digest
@@ -217,9 +221,9 @@ export async function executeRootSelectedProjectionDeltas(
     base_profile: dependencies.profile,
     authority: dependencies.authority,
   });
-  const active = initial.targets[0];
-  if (active === undefined || active.role !== "ACTIVE") {
-    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "Root-selected target list has no ACTIVE profile");
+  const sourceProfileTarget = initial.targets.find((target) => target.role === "ACTIVE") ?? initial.targets[0];
+  if (sourceProfileTarget === undefined) {
+    projectionFail("PROJECTION_AUTHORITY_CONFLICT", "Root-selected target list has no source profile");
   }
 
   let states: ServingTargetExecutionState[] = initial.targets.map((prepared) => ({
@@ -232,11 +236,12 @@ export async function executeRootSelectedProjectionDeltas(
     if (states.some((state) => state.failure !== null || state.terminal === null)) {
       servingTargetDeliveryFailure(states);
     }
-    const activeTerminal = states[0]?.terminal;
-    if (activeTerminal === null || activeTerminal === undefined) {
-      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "active serving-target terminal receipt is missing");
+    const resultState = states.find((state) => state.prepared.role === "ACTIVE") ?? states[0];
+    const resultTerminal = resultState?.terminal;
+    if (resultTerminal === null || resultTerminal === undefined) {
+      projectionFail("PROJECTION_AUTHORITY_CONFLICT", "selected serving-target terminal receipt is missing");
     }
-    return { receipt_ref: activeTerminal.receipt_ref };
+    return { receipt_ref: resultTerminal.receipt_ref };
   };
   if (states.every((state) => state.terminal !== null)) return finish();
 
@@ -316,12 +321,12 @@ export async function executeRootSelectedProjectionDeltas(
     return finish();
   };
 
-  const content = await dependencies.content.read(context, active.profile.maximum_markdown_bytes);
+  const content = await dependencies.content.read(context, sourceProfileTarget.profile.maximum_markdown_bytes);
   if (content.disposition === "SHARDED_WORKFLOW_REQUIRED") {
     return settleShardedTargets(states);
   }
 
-  const canonicalIdentity = await canonicalSourceProjectionIdentity(context, active.profile);
+  const canonicalIdentity = await canonicalSourceProjectionIdentity(context, sourceProfileTarget.profile);
   for (const selected of initial.targets) {
     const identity = await canonicalSourceProjectionIdentity(context, selected.profile);
     if (
@@ -339,8 +344,8 @@ export async function executeRootSelectedProjectionDeltas(
     instruction_taint: context.instruction_taint,
     project_membership_ids: [],
     projection_generation: canonicalIdentity.generation,
-    target_item_utf8_bytes: active.profile.target_item_utf8_bytes,
-    max_item_utf8_bytes: active.profile.maximum_item_utf8_bytes,
+    target_item_utf8_bytes: sourceProfileTarget.profile.target_item_utf8_bytes,
+    max_item_utf8_bytes: sourceProfileTarget.profile.maximum_item_utf8_bytes,
   });
   if (projection.markdown_sha256 !== context.source_revision.content_sha256) {
     projectionFail("PROJECTION_AUTHORITY_CONFLICT", "projector readback digest differs from the admitted SourceRevision");
@@ -381,7 +386,7 @@ export async function executeRootSelectedProjectionDeltas(
   } | undefined;
   try {
     const resourceBounds = canonicalSourceResourceBounds(
-      active.profile,
+      sourceProfileTarget.profile,
       content.size_bytes,
       projection.items,
     );
@@ -438,7 +443,7 @@ export async function executeRootSelectedProjectionDeltas(
         projection.items,
         preflight,
       );
-      if (!copyPlanMatchesPreflight(copyPlan, preflight)) {
+      if (!copyPlanMatchesPreflight(copyPlan, preflight, state.prepared.selection)) {
         projectionFail("PROJECTION_AUTHORITY_CONFLICT", "complete Root-selected target effect set changed after preflight");
       }
       const copyScope = managedProjectCopyScopeForProfile(context, state.prepared.profile);
