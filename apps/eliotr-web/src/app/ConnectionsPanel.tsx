@@ -1,17 +1,18 @@
-import { useId, useState } from "react";
+import { useId } from "react";
 import { skipToken, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
-import { Button, ConnectionsFeature, Field, OperationAnnouncement } from "@eliotr/ui";
+import { Button, ConnectionsFeature, OperationAnnouncement } from "@eliotr/ui";
 import type { ProjectListView } from "@eliotr/owner-api-client";
 import type { PrivacyController, SessionContext } from "./privacy";
 import type { BoundWorkspaceApis } from "./runtime";
 import { connectionsQueryOptions } from "../query/connections";
 import { protectedQueryKey } from "../query/client";
 import { ComputerAgentConnectionsPanel } from "./ComputerAgentConnectionsPanel";
+import { ModelSettingsPanel } from "./ModelSettingsPanel";
 import { usePaneAnnouncement } from "./usePaneAnnouncement";
 
 const copy = {
-  en: { reading: 'Reading connection status.', failed: 'Some status checks failed. Review the affected rows.', loaded: 'Connection status checks updated.', choose: "Choose a project", project: "Project", next: "Next project page", previous: "Previous project page", operation: "Read a saved model operation", key: "Provider key operation", use: "Model operation", read: "Read saved status", hint: "Use the two references from your saved request. Reading status does not start another operation." },
-  ru: { reading: 'Читается статус подключений.', failed: 'Некоторые проверки статуса завершились ошибкой. Проверьте соответствующие строки.', loaded: 'Проверки статуса подключений обновлены.', choose: "Выберите проект", project: "Проект", next: "Следующая страница проектов", previous: "Предыдущая страница проектов", operation: "Прочитать сохранённую операцию модели", key: "Операция ключа провайдера", use: "Операция модели", read: "Прочитать сохранённый статус", hint: "Введите две ссылки из сохранённого запроса. Чтение статуса не запускает новую операцию." },
+  en: { reading: 'Reading connection status.', failed: 'Some status checks failed. Review the affected rows.', loaded: 'Connection status checks updated.', choose: "Choose a project", project: "Project", next: "Next project page", previous: "Previous project page" },
+  ru: { reading: 'Читается статус подключений.', failed: 'Некоторые проверки статуса завершились ошибкой. Проверьте соответствующие строки.', loaded: 'Проверки статуса подключений обновлены.', choose: "Выберите проект", project: "Проект", next: "Следующая страница проектов", previous: "Предыдущая страница проектов" },
 } as const;
 
 function rowState<T>(query: UseQueryResult<T, Error>, enabled = true): "idle" | "loading" | "loaded" | "failed" {
@@ -35,16 +36,11 @@ export function ConnectionsPanel({ locale, apis, privacy, context, projects, pro
   const providers = useQuery(active ? options.providers(page, projectId) : { queryKey: [...key, "providers-unselected"], queryFn: skipToken });
   const models = useQuery(active ? options.models(page, projectId) : { queryKey: [...key, "models-unselected"], queryFn: skipToken });
   const readiness = useQuery(active ? options.readiness(page, projectId) : { queryKey: [...key, "readiness-unselected"], queryFn: skipToken });
-  const [keyInput, setKeyInput] = useState(""), [operationInput, setOperationInput] = useState("");
-  const [saved, setSaved] = useState<{ readonly projectId: string; readonly key: string; readonly operation: string }>();
-  const operationActive = active && saved?.projectId === projectId;
-  const operation = useQuery(operationActive ? options.modelUse(page, projectId, saved.key, saved.operation)
-    : { queryKey: [...key, "operation-unselected"], queryFn: skipToken });
   const refresh = () => {
     if (privacy.isCurrent(context)) void client.invalidateQueries({ queryKey: key });
   };
   const facts = { health, session, diagnostic, googleTransport: health, grant: grants, providerConfig: providers,
-    projectModel: models, researchReadiness: readiness, providerModelUse: operation };
+    projectModel: models, researchReadiness: readiness };
   const retry = () => {
     if (!privacy.isCurrent(context)) return;
     for (const query of new Set(Object.values(facts))) if (query.isError && !query.isFetching) void query.refetch();
@@ -70,27 +66,21 @@ export function ConnectionsPanel({ locale, apis, privacy, context, projects, pro
     </div>
     <ConnectionsFeature locale={locale} queries={{ health: rowState(health), session: rowState(session), diagnostic: rowState(diagnostic),
       googleTransport: rowState(health), grant: rowState(grants, active), providerConfig: rowState(providers, active),
-      projectModel: rowState(models, active), researchReadiness: rowState(readiness, active), providerModelUse: rowState(operation, operationActive) }}
+      projectModel: rowState(models, active), researchReadiness: rowState(readiness, active), providerModelUse: "idle" }}
       health={health.data} session={session.data} grants={grants.data?.grants} providerConfigurations={providers.data?.configurations}
-      projectModel={models.data} readiness={readiness.data} diagnostic={diagnostic.data ?? undefined} providerModelUse={operation.data}
+      projectModel={models.data} readiness={readiness.data} diagnostic={diagnostic.data ?? undefined}
       pendingActions={{ refresh: [...new Set(Object.values(facts))].some(query => query.isFetching),
         retry: [...new Set(Object.values(facts))].some(query => query.isError && query.isFetching),
         diagnostics: diagnostic.isFetching }}
       onRefresh={refresh} {...(Object.values(facts).some(query => query.isError) ? { onRetry: retry } : {})} onRetryRow={row => {
+        if (row === "providerModelUse") return;
         const query = facts[row];
         if (privacy.isCurrent(context) && query.isError && !query.isFetching) void query.refetch();
       }} onOpenDiagnostics={() => { if (privacy.isCurrent(context)) void diagnostic.refetch(); }} />
-    {active && <details className="er-live-connection-operation"><summary>{text.operation}</summary>
-      <p>{text.hint}</p>
-      <form onSubmit={event => {
-        event.preventDefault();
-        if (privacy.isCurrent(context) && keyInput.trim() && operationInput.trim()) setSaved({ projectId, key: keyInput.trim(), operation: operationInput.trim() });
-      }}>
-        <Field label={text.key} value={keyInput} maxLength={36} required onChange={event => setKeyInput(event.target.value)} />
-        <Field label={text.use} value={operationInput} maxLength={36} required onChange={event => setOperationInput(event.target.value)} />
-        <Button variant="tonal" type="submit">{text.read}</Button>
-      </form>
-    </details>}
+    {active && page !== undefined && projectId !== undefined && <ModelSettingsPanel
+      key={`${context.cacheEpoch}:${context.principal}:${context.credentialGeneration}:${context.deploymentGeneration}:${projectId}`}
+      locale={locale} apis={apis} privacy={privacy} context={context} projectPage={page} projectId={projectId}
+      projectQueryKey={projectQueryKey} providers={providers} models={models} />}
     <ComputerAgentConnectionsPanel locale={locale} apis={apis} privacy={privacy} context={context} />
   </>;
 }
