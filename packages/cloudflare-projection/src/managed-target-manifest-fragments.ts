@@ -91,6 +91,15 @@ export async function canonicalSourceIdentityDigest(input: {
 }
 
 export function managedRequiredCopyIdentity(copy: ManagedRequiredProjectRevisionCopy): Readonly<Record<string, unknown>> {
+  if (copy.project_membership_identity_version === 2) {
+    return Object.freeze({
+      project_id: copy.project_id,
+      project_membership_id: copy.stable_project_membership_id,
+      membership_revision: copy.membership_revision,
+      source_id: copy.source_id,
+      source_revision_ref: copy.source_revision_ref,
+    });
+  }
   return Object.freeze({
     project_id: copy.project_id,
     project_membership_id: copy.project_membership_id,

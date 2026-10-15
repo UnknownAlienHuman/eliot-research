@@ -131,6 +131,34 @@ describe("managed target manifest continuation", () => {
       desired_item_count: 1,
       finalization_state: "REQUIRES_HELD_WRITER_DRAIN_AND_EXPECTED_HEAD_CAS",
     });
+    if (ready.candidate === undefined) throw new Error("ready candidate is missing");
+    const storedCandidate = JSON.parse(state.store.objects.get(ready.candidate.candidate_ref) ?? "null") as Record<string, unknown>;
+    expect(storedCandidate.protocol).toBe("eliotr.managed-target-manifest-candidate.v1");
+    expect(storedCandidate.manifest_protocol).toBe("eliotr.managed-target-desired-items.v2");
+    expect(storedCandidate.copy_layout).toBe("PROJECT_COPY_V1");
+    expect(Object.keys(storedCandidate).sort()).toEqual([
+      "as_of",
+      "authority_sha256",
+      "canonical_source_summary",
+      "copy_layout",
+      "desired_item_count",
+      "desired_item_set_sha256",
+      "empty_provider_readback",
+      "finalization_state",
+      "manifest_protocol",
+      "post_source_authority_sha256",
+      "protocol",
+      "projection_profile_sha256",
+      "provider_capacity_policy",
+      "provider_capacity_receipt_sha256",
+      "provider_copy_summary",
+      "required_set",
+      "shadow_fence_sha256",
+      "source_authority_sha256",
+      "target",
+      "target_profile_sha256",
+      "tree",
+    ].sort());
     expect(seenBudgets.every((budget) => budget.operation_upper_bound <= 386 && budget.subrequest_upper_bound < 10_000 && budget.cpu_upper_bound_ms < 30_000)).toBe(true);
   });
 

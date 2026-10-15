@@ -1,5 +1,8 @@
 import type { EvidenceObjectStore, ImmutableObjectReceipt } from "@eliotr/platform-cloudflare";
-import type { ManagedTargetIdentity } from "./managed-target-assignment.js";
+import type {
+  ManagedTargetIdentity,
+  ManagedTargetSelectionV2,
+} from "./managed-target-assignment.js";
 import type {
   ManagedTargetManifestInvocationBudget,
   ManagedTargetManifestOperationBudgetReceipt,
@@ -96,9 +99,11 @@ export interface FenceScanProgress {
 }
 
 export interface ManifestContinuationState {
-  readonly protocol: "eliotr.managed-target-manifest-continuation.v2";
+  readonly protocol: "eliotr.managed-target-manifest-continuation.v2" | "eliotr.managed-target-manifest-continuation.v3";
   readonly execution_id: string;
   readonly target: ManagedTargetIdentity;
+  /** Present only for the versioned stable-physical-profile V2 selection. */
+  readonly target_selection?: ManagedTargetSelectionV2;
   readonly target_profile_sha256: string;
   readonly projection_profile_sha256: string;
   readonly as_of: string;
@@ -405,7 +410,7 @@ export function validateShadowFence(
   if (fence.active_head_generation === target.managed_generation || fence.generation_state === "ACTIVE" ||
       fence.generation_state === "INACTIVE_QUALIFIED" || fence.generation_state === "INACTIVE_UNQUALIFIED" ||
       fence.generation_state === "RETIRED" || fence.generation_state === "BLOCKED") {
-    throw new ManagedTargetManifestError("MANAGED_TARGET_MANIFEST_SHADOW_REQUIRED", "only a fresh declared/shadow registry generation may be built");
+    throw new ManagedTargetManifestError("MANAGED_TARGET_MANIFEST_SHADOW_REQUIRED", "active, retired, blocked, or previously qualified generations cannot be rebuilt as a shadow");
   }
   if (fence.generation_state === "UNDECLARED") {
     if (fence.generation_profile_identity_sha256 !== null || fence.expected_item_count !== null) {

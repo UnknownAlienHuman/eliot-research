@@ -4,7 +4,10 @@ import {
   type ManagedRequiredSetFence,
   type ManagedRequiredSetPage,
 } from "./managed-required-set.js";
-import type { ManagedTargetIdentity } from "./managed-target-assignment.js";
+import type {
+  ManagedTargetIdentity,
+  ManagedTargetSelectionReceipt,
+} from "./managed-target-assignment.js";
 import type { ManagedTargetAssignmentFenceRow } from "./managed-target-manifest-contract.js";
 import type {
   ManagedTargetManifestInput,
@@ -12,6 +15,7 @@ import type {
 } from "./managed-target-manifest-contract.js";
 import {
   foldManagedTargetManifestPage,
+  validateManagedTargetSelection,
   MANAGED_TARGET_MANIFEST_REQUIRED_COPY_LIMIT,
   MANAGED_TARGET_MANIFEST_REQUIRED_PAGE_LIMIT,
   MANAGED_TARGET_MANIFEST_REQUIRED_PAGE_SIZE,
@@ -38,10 +42,12 @@ import {
 import { canonicalProjectionJson, projectionDigest, projectionSha256Utf8, utf8ProjectionBytes } from "./canonical.js";
 import {
   CONTINUATION_PROTOCOL,
+  CONTINUATION_PROTOCOL_V3,
   IDENTIFIER,
   MAX_ASSIGNMENT_FENCE_PAGES,
   MAX_MANIFEST_PAGE_BYTES,
   PAGE_PROTOCOL,
+  PAGE_PROTOCOL_V3,
   SOURCE_INDEX_PROTOCOL,
   SHA256,
   fail,
@@ -51,17 +57,28 @@ import {
   type StoredRequiredPage,
   type StoredCanonicalSourceIndex,
 } from "./managed-target-manifest-runner-shared.js";
-export async function initialAssignmentFenceScan(target: ManagedTargetIdentity, asOf: string): Promise<FenceScanProgress> {
+export async function initialAssignmentFenceScan(
+  target: ManagedTargetIdentity,
+  asOf: string,
+  selection?: ManagedTargetSelectionReceipt,
+): Promise<FenceScanProgress> {
+  const selectionVersion = validateManagedTargetSelection(target, selection);
   return Object.freeze({
-    digest: await projectionSha256Utf8(canonicalProjectionJson({
-      protocol: "eliotr.managed-target-assignment-heads.v1",
-      target,
-    })),
-    page_provenance_digest: await projectionSha256Utf8(canonicalProjectionJson({
-      protocol: "eliotr.managed-target-assignment-page-provenance.v1",
-      target,
-      as_of: asOf,
-    })),
+    digest: await projectionSha256Utf8(canonicalProjectionJson(selectionVersion === 2
+      ? { protocol: "eliotr.managed-target-assignment-heads.v2", target, target_selection: selection }
+      : { protocol: "eliotr.managed-target-assignment-heads.v1", target })),
+    page_provenance_digest: await projectionSha256Utf8(canonicalProjectionJson(selectionVersion === 2
+      ? {
+        protocol: "eliotr.managed-target-assignment-page-provenance.v2",
+        target,
+        target_selection: selection,
+        as_of: asOf,
+      }
+      : {
+        protocol: "eliotr.managed-target-assignment-page-provenance.v1",
+        target,
+        as_of: asOf,
+      })),
     assigned_project_count: 0,
     stale_assignment_count: 0,
     profile_mismatch_count: 0,
@@ -72,7 +89,12 @@ export async function initialAssignmentFenceScan(target: ManagedTargetIdentity, 
   });
 }
 
-function validateAssignmentFenceRow(row: ManagedTargetAssignmentFenceRow, target: ManagedTargetIdentity): void {
+function validateAssignmentFenceRow(
+  row: ManagedTargetAssignmentFenceRow,
+  target: ManagedTargetIdentity,
+  selection?: ManagedTargetSelectionReceipt,
+): void {
+  const selectionVersion = validateManagedTargetSelection(target, selection);
   if (
     !Number.isSafeInteger(row.assignment_revision) || row.assignment_revision < 1 ||
     !IDENTIFIER.test(row.project_id) ||
@@ -83,10 +105,34 @@ function validateAssignmentFenceRow(row: ManagedTargetAssignmentFenceRow, target
     (row.project_owner_deployment_generation !== null && !IDENTIFIER.test(row.project_owner_deployment_generation)) ||
     row.namespace !== target.namespace || row.managed_instance_id !== target.managed_instance_id ||
     row.managed_generation !== target.managed_generation || !SHA256.test(row.target_profile_identity_sha256) ||
+    ![1, 2].includes(row.assignment_decision_version) ||
+    (row.assignment_selection_mode !== "EXACT_GENERATION_V1" &&
+      row.assignment_selection_mode !== "STABLE_PHYSICAL_PROFILE_V2") ||
+    (row.assignment_product_alias !== null && row.assignment_product_alias !== "primary") ||
+    !IDENTIFIER.test(row.assignment_managed_generation) ||
     typeof row.project_exists !== "boolean" ||
     (row.project_exists && row.project_membership_generation === null) ||
     (!row.project_exists && row.project_membership_generation !== null)
   ) fail("MANAGED_TARGET_MANIFEST_AUTHORITY_CHANGED", "assignment-head page row is malformed or outside the exact target");
+  const versionMatches = selectionVersion === 1
+    ? row.assignment_decision_version === 1 &&
+      row.assignment_selection_mode === "EXACT_GENERATION_V1" &&
+      row.assignment_product_alias === null &&
+      row.assignment_managed_generation === target.managed_generation
+    : row.assignment_decision_version === 1
+      ? row.assignment_selection_mode === "EXACT_GENERATION_V1" &&
+        row.assignment_product_alias === null &&
+        row.assignment_managed_generation === target.managed_generation &&
+        (row.target_profile_identity_sha256 === target.target_profile_identity_sha256 ||
+          (selection?.decision_version === 2 &&
+            row.target_profile_identity_sha256 === selection.v1_exact_profile_identity_sha256))
+      : row.assignment_decision_version === 2 &&
+        row.assignment_selection_mode === "STABLE_PHYSICAL_PROFILE_V2" &&
+        row.assignment_product_alias === "primary" &&
+        row.target_profile_identity_sha256 === target.target_profile_identity_sha256;
+  if (!versionMatches) {
+    fail("MANAGED_TARGET_MANIFEST_AUTHORITY_CHANGED", "assignment-head row is outside the pinned selection receipt");
+  }
 }
 
 async function foldAssignmentFencePage(input: {
@@ -94,8 +140,10 @@ async function foldAssignmentFencePage(input: {
   readonly rows: readonly ManagedTargetAssignmentFenceRow[];
   readonly next_cursor: string | null;
   readonly target: ManagedTargetIdentity;
+  readonly target_selection?: ManagedTargetSelectionReceipt;
 }): Promise<FenceScanProgress> {
-  const { progress, rows, next_cursor: next, target } = input;
+  const { progress, rows, next_cursor: next, target, target_selection: selection } = input;
+  const selectionVersion = validateManagedTargetSelection(target, selection);
   if (progress.pages >= MAX_ASSIGNMENT_FENCE_PAGES || rows.length > MANAGED_TARGET_MANIFEST_FENCE_PAGE_SIZE) {
     fail("MANAGED_TARGET_MANIFEST_BUDGET_EXCEEDED", "assignment-head fence exceeded its 400 data-page/one terminal-probe bound");
   }
@@ -108,20 +156,31 @@ async function foldAssignmentFencePage(input: {
   let stale = progress.stale_assignment_count;
   let profileMismatch = progress.profile_mismatch_count;
   let last = progress.last_project_id;
-  let pageDigest = await projectionSha256Utf8(canonicalProjectionJson({
-    protocol: "eliotr.managed-target-assignment-page.v1",
-    page_index: progress.pages,
-    after_project_id: progress.after_project_id,
-  }));
+  let pageDigest = await projectionSha256Utf8(canonicalProjectionJson(selectionVersion === 2
+    ? {
+      protocol: "eliotr.managed-target-assignment-page.v2",
+      target_selection: selection,
+      page_index: progress.pages,
+      after_project_id: progress.after_project_id,
+    }
+    : {
+      protocol: "eliotr.managed-target-assignment-page.v1",
+      page_index: progress.pages,
+      after_project_id: progress.after_project_id,
+    }));
   for (const row of rows) {
-    validateAssignmentFenceRow(row, target);
+    validateAssignmentFenceRow(row, target, selection);
     if (last !== null && row.project_id <= last) {
       fail("MANAGED_TARGET_MANIFEST_AUTHORITY_CHANGED", "assignment-head cursor rows are not in strict project order");
     }
     if (!row.project_exists || row.current_project_owner_principal_ref !== row.project_owner_principal_ref ||
         typeof row.project_owner_deployment_generation !== "string") stale += 1;
-    if (row.target_profile_identity_sha256 !== target.target_profile_identity_sha256) profileMismatch += 1;
-    const canonicalRow = canonicalProjectionJson({
+    const profileMatches = row.target_profile_identity_sha256 === target.target_profile_identity_sha256 ||
+      (selectionVersion === 2 && row.assignment_decision_version === 1 &&
+        selection?.decision_version === 2 &&
+        row.target_profile_identity_sha256 === selection.v1_exact_profile_identity_sha256);
+    if (!profileMatches) profileMismatch += 1;
+    const rowValue = {
       assignment_revision: row.assignment_revision,
       project_id: row.project_id,
       project_membership_generation: row.project_membership_generation,
@@ -133,7 +192,14 @@ async function foldAssignmentFencePage(input: {
       managed_instance_id: row.managed_instance_id,
       managed_generation: row.managed_generation,
       target_profile_identity_sha256: row.target_profile_identity_sha256,
-    });
+      ...(selectionVersion === 2 ? {
+        assignment_decision_version: row.assignment_decision_version,
+        assignment_selection_mode: row.assignment_selection_mode,
+        assignment_product_alias: row.assignment_product_alias,
+        assignment_managed_generation: row.assignment_managed_generation,
+      } : {}),
+    };
+    const canonicalRow = canonicalProjectionJson(rowValue);
     digest = await projectionSha256Utf8(`${digest}\n${canonicalRow}`);
     pageDigest = await projectionSha256Utf8(`${pageDigest}\n${canonicalRow}`);
     last = row.project_id;
@@ -190,6 +256,9 @@ export async function advanceAssignmentFenceScan(
     budget.reserveOperations(1);
     const page = await input.assignment_fence.readPage({
       target: input.target,
+      ...(input.target_selection?.decision_version === 2
+        ? { target_selection: input.target_selection }
+        : {}),
       as_of: asOf,
       after_project_id: current.after_project_id,
       limit: MANAGED_TARGET_MANIFEST_FENCE_PAGE_SIZE,
@@ -207,6 +276,9 @@ export async function advanceAssignmentFenceScan(
       rows: page.rows,
       next_cursor: page.next_cursor,
       target: input.target,
+      ...(input.target_selection?.decision_version === 2
+        ? { target_selection: input.target_selection }
+        : {}),
     });
     budget.addMicrosteps();
     budget.snapshot(true);
@@ -222,27 +294,33 @@ export async function buildStorageScope(target: ManagedTargetIdentity): Promise<
 }
 
 export async function seedBuildDigests(input: ManagedTargetManifestInput, profileSha: string) {
+  const v2Selection = input.target_selection?.decision_version === 2 ? input.target_selection : undefined;
+  const selectedV2 = v2Selection !== undefined;
   return {
     source_authority_sha256: await projectionSha256Utf8(canonicalProjectionJson({
-      protocol: "eliotr.managed-target-source-fence.v1",
+      protocol: selectedV2 ? "eliotr.managed-target-source-fence.v2" : "eliotr.managed-target-source-fence.v1",
       target: input.target,
+      ...(v2Selection === undefined ? {} : { target_selection: v2Selection }),
       copy_layout: input.profile.copy_layout,
       projection_profile_sha256: profileSha,
     })),
     desired_item_set_sha256: await projectionSha256Utf8(canonicalProjectionJson({
-      protocol: "eliotr.managed-target-item-set.v1",
+      protocol: selectedV2 ? "eliotr.managed-target-item-set.v2" : "eliotr.managed-target-item-set.v1",
       target: input.target,
+      ...(v2Selection === undefined ? {} : { target_selection: v2Selection }),
       target_profile_sha256: await profileDigest(input.profile.target_profile),
       copy_layout: input.profile.copy_layout,
       projection_profile_sha256: profileSha,
     })),
     provider_copy_set_sha256: await projectionSha256Utf8(canonicalProjectionJson({
-      protocol: "eliotr.managed-target-provider-copy-set.v1",
+      protocol: selectedV2 ? "eliotr.managed-target-provider-copy-set.v2" : "eliotr.managed-target-provider-copy-set.v1",
       target: input.target,
+      ...(v2Selection === undefined ? {} : { target_selection: v2Selection }),
     })),
     provider_item_set_sha256: await projectionSha256Utf8(canonicalProjectionJson({
-      protocol: "eliotr.managed-target-provider-item-set.v1",
+      protocol: selectedV2 ? "eliotr.managed-target-provider-item-set.v2" : "eliotr.managed-target-provider-item-set.v1",
       target: input.target,
+      ...(v2Selection === undefined ? {} : { target_selection: v2Selection }),
     })),
   };
 }
@@ -281,8 +359,14 @@ function validateContinuationShape(value: unknown): ManifestContinuationState {
     fail("MANAGED_TARGET_MANIFEST_CONTINUATION_INVALID", "continuation is not a strict object");
   }
   const state = value as ManifestContinuationState;
+  const v2SelectionContinuation = state.protocol === CONTINUATION_PROTOCOL_V3;
   if (
-    state.protocol !== CONTINUATION_PROTOCOL || !IDENTIFIER.test(state.execution_id) ||
+    (state.protocol !== CONTINUATION_PROTOCOL && !v2SelectionContinuation) ||
+    (v2SelectionContinuation
+      ? state.target_selection?.decision_version !== 2 ||
+        validateManagedTargetSelection(state.target, state.target_selection) !== 2
+      : state.target_selection !== undefined) ||
+    !IDENTIFIER.test(state.execution_id) ||
     !SHA256.test(state.target_profile_sha256) || !SHA256.test(state.projection_profile_sha256) ||
     !SHA256.test(state.scan_identity_sha256) ||
     (state.build_identity_sha256 !== null && !SHA256.test(state.build_identity_sha256)) ||
@@ -322,6 +406,7 @@ export async function loadContinuation(input: {
   readonly execution_id: string;
   readonly target_profile_sha256: string;
   readonly projection_profile_sha256: string;
+  readonly target_selection?: Extract<ManagedTargetSelectionReceipt, { readonly decision_version: 2 }>;
   readonly as_of?: string;
   readonly storage_scope: string;
   readonly store: EvidenceObjectStore;
@@ -338,6 +423,9 @@ export async function loadContinuation(input: {
     state.execution_id !== input.execution_id || !sameJson(state.target, input.target) ||
     state.target_profile_sha256 !== input.target_profile_sha256 ||
     state.projection_profile_sha256 !== input.projection_profile_sha256 ||
+    (input.target_selection === undefined
+      ? state.protocol !== CONTINUATION_PROTOCOL || state.target_selection !== undefined
+      : state.protocol !== CONTINUATION_PROTOCOL_V3 || !sameJson(state.target_selection, input.target_selection)) ||
     (input.as_of !== undefined && input.as_of !== state.as_of) ||
     !input.ref.startsWith(`${state.build_prefix}continuations/`)
   ) fail("MANAGED_TARGET_MANIFEST_CONTINUATION_INVALID", "continuation identity differs from the selected execution/target/profile");
@@ -412,7 +500,11 @@ export async function readOrStagePage(input: {
     }
     const pageRecord = stored.value as StoredRequiredPage;
     if (
-      pageRecord.protocol !== PAGE_PROTOCOL || pageRecord.scan_identity_sha256 !== state.scan_identity_sha256 ||
+      pageRecord.protocol !== (state.protocol === CONTINUATION_PROTOCOL_V3 ? PAGE_PROTOCOL_V3 : PAGE_PROTOCOL) ||
+      (state.protocol === CONTINUATION_PROTOCOL_V3
+        ? !sameJson(pageRecord.target_selection, state.target_selection)
+        : pageRecord.target_selection !== undefined) ||
+      pageRecord.scan_identity_sha256 !== state.scan_identity_sha256 ||
       pageRecord.phase !== phase || pageRecord.page_index !== progress.scan.pages - 1 ||
       !Array.isArray(pageRecord.rows) || pageRecord.rows.length !== progress.page_row_count ||
       pageRecord.page_sha256 !== progress.page_sha256
@@ -428,6 +520,7 @@ export async function readOrStagePage(input: {
   budget.reserveOperations(1);
   const read = await input.requiredSet.readPage({
     target: input.target,
+    ...(state.target_selection === undefined ? {} : { selection: state.target_selection }),
     as_of: input.as_of,
     after: progress.scan.after,
     limit: MANAGED_TARGET_MANIFEST_REQUIRED_PAGE_SIZE,
@@ -444,9 +537,16 @@ export async function readOrStagePage(input: {
   if (!Array.isArray(page.rows) || page.rows.length > MANAGED_TARGET_MANIFEST_REQUIRED_PAGE_SIZE) {
     throw new ManagedRequiredSetError("MANAGED_REQUIRED_SET_PAGE_INVALID", "required-set D1 page exceeded its fixed 256-row bound");
   }
-  const folded = await foldManagedTargetManifestPage(progress.scan, page, input.target, input.as_of);
+  const folded = await foldManagedTargetManifestPage(
+    progress.scan,
+    page,
+    input.target,
+    input.as_of,
+    state.target_selection,
+  );
   const pagePayload: StoredRequiredPage = Object.freeze({
-    protocol: PAGE_PROTOCOL,
+    protocol: state.protocol === CONTINUATION_PROTOCOL_V3 ? PAGE_PROTOCOL_V3 : PAGE_PROTOCOL,
+    ...(state.target_selection === undefined ? {} : { target_selection: state.target_selection }),
     scan_identity_sha256: state.scan_identity_sha256,
     phase,
     page_index: folded.summary.page_index,

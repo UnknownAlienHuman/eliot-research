@@ -15,6 +15,7 @@ import {
   projectionSha256Bytes,
   type ManagedRequiredProjectRevisionCopy,
   type ManagedTargetIdentity,
+  type ManagedTargetSelectionReceipt,
   type ProjectionExecutionProfile,
 } from "@eliotr/cloudflare-projection";
 import {
@@ -27,13 +28,14 @@ import {
   type ManagedTargetManifestShadowFence,
   type ManagedTargetManifestSourceAuthority,
 } from "@eliotr/cloudflare-projection";
-import type { Env } from "./env.js";
 import { registryFence } from "./managed-target-manifest-registry-fence.js";
 
-type ManagedTargetManifestEnvironment = Pick<
-  Env,
-  "CORE_DB" | "SEARCH_DB" | "WORK_BUCKET" | "EVIDENCE_BUCKET"
->;
+type ManagedTargetManifestEnvironment = {
+  readonly CORE_DB: D1Database;
+  readonly SEARCH_DB: D1Database;
+  readonly WORK_BUCKET: R2Bucket;
+  readonly EVIDENCE_BUCKET: R2Bucket;
+};
 
 export interface ManagedTargetManifestCompositionDependencies {
   readonly target_profile: AiSearchInstanceProfile;
@@ -53,6 +55,7 @@ export interface ManagedTargetManifestComposer {
     target: ManagedTargetIdentity,
     executionId: string,
     continuation?: { readonly ref: string; readonly sha256: string },
+    targetSelection?: ManagedTargetSelectionReceipt,
   ): Promise<Awaited<ReturnType<typeof buildManagedTargetManifest>>>;
   /** Lists once and deletes at most 15 exact objects under one immutable build-scoped Work prefix. */
   cleanupBuild(
@@ -187,6 +190,10 @@ function assertCurrentSourceAuthority(
 
 interface CoreAssignmentFenceRow {
   readonly assignment_revision: unknown;
+  readonly assignment_decision_version: unknown;
+  readonly assignment_selection_mode: unknown;
+  readonly assignment_product_alias: unknown;
+  readonly assignment_managed_generation: unknown;
   readonly project_id: unknown;
   readonly project_membership_generation: unknown;
   readonly project_owner_principal_ref: unknown;
@@ -206,6 +213,19 @@ const CURRENT_TARGET_ASSIGNMENT_FENCE_SQL =
   "ON e.project_id=h.project_id AND e.event_revision=h.event_revision " +
   "WHERE h.event_kind='ASSIGN' AND h.target_namespace=?1 " +
   "AND h.managed_instance_id=?2 AND h.managed_generation=?3) ";
+
+const V2_TARGET_ASSIGNMENT_FENCE_SQL =
+  "WITH assignments AS (" +
+  "SELECT e.* FROM managed_target_assignment_current h " +
+  "JOIN managed_target_assignment_event e " +
+  "ON e.project_id=h.project_id AND e.event_revision=h.event_revision " +
+  "WHERE h.event_kind='ASSIGN' AND h.target_namespace=?1 " +
+  "AND h.managed_instance_id=?2 AND ((h.decision_version=1 " +
+  "AND h.selection_mode='EXACT_GENERATION_V1' AND h.product_alias IS NULL " +
+  "AND h.managed_generation=?3 AND (h.target_profile_identity_sha256=?4 " +
+  "OR h.target_profile_identity_sha256=?5)) OR (h.decision_version=2 " +
+  "AND h.selection_mode=?6 AND h.product_alias IS ?7 " +
+  "AND h.target_profile_identity_sha256=?4))) ";
 
 function createCoreAuthorityPort(environment: ManagedTargetManifestEnvironment): ManagedTargetManifestInput["documents"] {
   const sourceQuery =
@@ -351,27 +371,49 @@ function createBoundedAssignmentFencePort(
       if (input.limit !== 256) {
         manifestFailure("MANAGED_TARGET_MANIFEST_INPUT_INVALID", "assignment-fence page must use the fixed 256-row bound");
       }
+      const selection = input.target_selection?.decision_version === 2 ? input.target_selection : null;
+      const selectedV2 = selection !== null;
+      const fencePrefix = selectedV2 ? V2_TARGET_ASSIGNMENT_FENCE_SQL : CURRENT_TARGET_ASSIGNMENT_FENCE_SQL;
       let result: D1Result<CoreAssignmentFenceRow>;
       try {
-        result = await database.prepare(
-          CURRENT_TARGET_ASSIGNMENT_FENCE_SQL +
-          "SELECT a.event_revision AS assignment_revision,a.project_id," +
+        const statement = database.prepare(
+          fencePrefix +
+          "SELECT a.event_revision AS assignment_revision,a.decision_version AS assignment_decision_version," +
+          "a.selection_mode AS assignment_selection_mode,a.product_alias AS assignment_product_alias," +
+          "a.managed_generation AS assignment_managed_generation,a.project_id," +
           "p.membership_generation AS project_membership_generation," +
           "a.project_owner_principal_ref,a.target_namespace AS namespace,a.managed_instance_id," +
-          "a.managed_generation,a.target_profile_identity_sha256," +
+          "?3 AS managed_generation,a.target_profile_identity_sha256," +
           "(p.project_id IS NOT NULL) AS project_exists," +
           "po.principal_ref AS current_project_owner_principal_ref," +
           "po.deployment_generation AS project_owner_deployment_generation " +
           "FROM assignments a LEFT JOIN project p ON p.project_id=a.project_id " +
           "LEFT JOIN project_owner po ON po.project_id=a.project_id " +
-          "WHERE (?4 IS NULL OR a.project_id>?4) ORDER BY a.project_id LIMIT ?5",
-        ).bind(
-          input.target.namespace,
-          input.target.managed_instance_id,
-          input.target.managed_generation,
-          input.after_project_id,
-          input.limit,
-        ).all<CoreAssignmentFenceRow>();
+          (selectedV2
+            ? "WHERE (?8 IS NULL OR a.project_id>?8) ORDER BY a.project_id LIMIT ?9"
+            : "WHERE (?4 IS NULL OR a.project_id>?4) ORDER BY a.project_id LIMIT ?5"),
+        );
+        if (selection !== null) {
+          result = await statement.bind(
+            input.target.namespace,
+            input.target.managed_instance_id,
+            input.target.managed_generation,
+            input.target.target_profile_identity_sha256,
+            selection.v1_exact_profile_identity_sha256,
+            selection.selection_mode,
+            selection.product_alias,
+            input.after_project_id,
+            input.limit,
+          ).all<CoreAssignmentFenceRow>();
+        } else {
+          result = await statement.bind(
+            input.target.namespace,
+            input.target.managed_instance_id,
+            input.target.managed_generation,
+            input.after_project_id,
+            input.limit,
+          ).all<CoreAssignmentFenceRow>();
+        }
       } catch (cause) {
         manifestFailure("MANAGED_TARGET_MANIFEST_AUTHORITY_CHANGED", "Core assignment-fence page read failed", cause);
       }
@@ -380,6 +422,10 @@ function createBoundedAssignmentFencePort(
       }
       const rows = result.results.map((row) => Object.freeze({
         assignment_revision: row.assignment_revision as number,
+        assignment_decision_version: row.assignment_decision_version as 1 | 2,
+        assignment_selection_mode: row.assignment_selection_mode as "EXACT_GENERATION_V1" | "STABLE_PHYSICAL_PROFILE_V2",
+        assignment_product_alias: row.assignment_product_alias as "primary" | null,
+        assignment_managed_generation: row.assignment_managed_generation as string,
         project_id: row.project_id as string,
         project_membership_generation: row.project_membership_generation === null
           ? null
@@ -501,6 +547,7 @@ export function createManagedTargetManifestComposer(
       target: ManagedTargetIdentity,
       executionId: string,
       continuation?: { readonly ref: string; readonly sha256: string },
+      targetSelection?: ManagedTargetSelectionReceipt,
     ): Promise<Awaited<ReturnType<typeof buildManagedTargetManifest>>> {
       if (target.managed_instance_id !== targetProfile.id) {
         manifestFailure("MANAGED_TARGET_MANIFEST_PROFILE_MISMATCH", "selected Core target does not identify the supplied immutable profile");
@@ -511,6 +558,7 @@ export function createManagedTargetManifestComposer(
         execution_id: executionId,
         clock: now,
         ...(continuation === undefined ? {} : { continuation }),
+        ...(targetSelection === undefined ? {} : { target_selection: targetSelection }),
         profile,
         assignment_fence: assignmentFence,
         required_set: requiredSet,

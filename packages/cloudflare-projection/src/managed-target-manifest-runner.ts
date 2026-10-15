@@ -1,5 +1,6 @@
 import {
   initialManagedTargetManifestScan,
+  validateManagedTargetSelection,
 } from "./managed-target-manifest-continuation.js";
 import {
   validateManagedTargetProviderCapacityReceipt,
@@ -29,6 +30,7 @@ import { projectionDigest, projectionSha256Utf8 } from "./canonical.js";
 import {
   assertFreshAuthorityTimestamp,
   CONTINUATION_PROTOCOL,
+  CONTINUATION_PROTOCOL_V3,
   IDENTIFIER,
   SHA256,
   capacityIdentity,
@@ -56,6 +58,7 @@ export async function advanceManagedTargetManifestStep(
   const budget = new ManifestInvocationBudget(0, 1, 1);
   const workStore = countedEvidenceStore(input.work_store, budget);
   await validateManagedTargetManifestInput(input);
+  const selectionVersion = validateManagedTargetSelection(input.target, input.target_selection);
   const profileDigests = await validateManifestProfile({ target: input.target, profile: input.profile });
   const storageScope = await buildStorageScope(input.target);
   let state: ManifestContinuationState;
@@ -69,6 +72,9 @@ export async function advanceManagedTargetManifestStep(
       target_profile_sha256: profileDigests.target_profile_sha256,
       projection_profile_sha256: profileDigests.projection_profile_sha256,
       ...(input.as_of === undefined ? {} : { as_of: input.as_of }),
+      ...(selectionVersion === 2 && input.target_selection?.decision_version === 2
+        ? { target_selection: input.target_selection }
+        : {}),
       storage_scope: storageScope,
       store: workStore,
     });
@@ -78,21 +84,34 @@ export async function advanceManagedTargetManifestStep(
     const asOf = input.as_of ?? new Date(nowMs).toISOString();
     validateCanonicalTimestamp(asOf);
     const fresh = await readCurrentAuthority(input, profileDigests.target_profile_sha256, nowMs, budget);
-    const provisionalIdentity = await projectionDigest({
-      protocol: "eliotr.managed-target-manifest-run-identity.v2",
-      execution_id: input.execution_id,
-      target: input.target,
-      target_profile_sha256: profileDigests.target_profile_sha256,
-      projection_profile_sha256: profileDigests.projection_profile_sha256,
-      as_of: asOf,
-    });
+    const provisionalIdentity = await projectionDigest(selectionVersion === 2
+      ? {
+        protocol: "eliotr.managed-target-manifest-run-identity.v3",
+        execution_id: input.execution_id,
+        target: input.target,
+        target_selection: input.target_selection,
+        target_profile_sha256: profileDigests.target_profile_sha256,
+        projection_profile_sha256: profileDigests.projection_profile_sha256,
+        as_of: asOf,
+      }
+      : {
+        protocol: "eliotr.managed-target-manifest-run-identity.v2",
+        execution_id: input.execution_id,
+        target: input.target,
+        target_profile_sha256: profileDigests.target_profile_sha256,
+        projection_profile_sha256: profileDigests.projection_profile_sha256,
+        as_of: asOf,
+      });
     const buildPrefix = `${storageScope}/builds/${provisionalIdentity}/`;
     const digests = await seedBuildDigests(input, profileDigests.projection_profile_sha256);
     const zero = await projectionSha256Utf8("eliotr.manifest-source-index-set.v1");
     state = Object.freeze({
-      protocol: CONTINUATION_PROTOCOL,
+      protocol: selectionVersion === 2 ? CONTINUATION_PROTOCOL_V3 : CONTINUATION_PROTOCOL,
       execution_id: input.execution_id,
       target: input.target,
+      ...(selectionVersion === 2 && input.target_selection?.decision_version === 2
+        ? { target_selection: input.target_selection }
+        : {}),
       target_profile_sha256: profileDigests.target_profile_sha256,
       projection_profile_sha256: profileDigests.projection_profile_sha256,
       as_of: asOf,
@@ -100,7 +119,7 @@ export async function advanceManagedTargetManifestStep(
       build_identity_sha256: null,
       build_prefix: buildPrefix,
       phase: "INITIAL_FENCE_SCAN",
-      initial_fence_scan: await initialAssignmentFenceScan(input.target, asOf),
+      initial_fence_scan: await initialAssignmentFenceScan(input.target, asOf, input.target_selection),
       final_fence_scan: null,
       initial_fence: null,
       initial_shadow_fence: fresh.shadow_fence,
@@ -167,16 +186,32 @@ export async function advanceManagedTargetManifestStep(
     const progress = await advanceAssignmentFenceScan(input, state.initial_fence_scan, state.as_of, budget);
     if (progress.complete) {
       const initialFence = assignmentFenceReceipt(progress);
-      const scanIdentity = await projectionDigest({
-        protocol: "eliotr.managed-target-manifest-scan-identity.v2",
-        execution_id: input.execution_id,
-        target: input.target,
-        target_profile_sha256: state.target_profile_sha256,
-        projection_profile_sha256: state.projection_profile_sha256,
-        as_of: state.as_of,
-        assignment_heads_sha256: initialFence.assignment_heads_sha256,
-      });
-      const requiredScan = await initialManagedTargetManifestScan(input.target, state.as_of, initialFence);
+      const scanIdentity = await projectionDigest(selectionVersion === 2
+        ? {
+          protocol: "eliotr.managed-target-manifest-scan-identity.v3",
+          execution_id: input.execution_id,
+          target: input.target,
+          target_selection: state.target_selection,
+          target_profile_sha256: state.target_profile_sha256,
+          projection_profile_sha256: state.projection_profile_sha256,
+          as_of: state.as_of,
+          assignment_heads_sha256: initialFence.assignment_heads_sha256,
+        }
+        : {
+          protocol: "eliotr.managed-target-manifest-scan-identity.v2",
+          execution_id: input.execution_id,
+          target: input.target,
+          target_profile_sha256: state.target_profile_sha256,
+          projection_profile_sha256: state.projection_profile_sha256,
+          as_of: state.as_of,
+          assignment_heads_sha256: initialFence.assignment_heads_sha256,
+        });
+      const requiredScan = await initialManagedTargetManifestScan(
+        input.target,
+        state.as_of,
+        initialFence,
+        state.target_selection,
+      );
       nextState = Object.freeze({
         ...state,
         phase: "BUILD_SCAN",
@@ -203,7 +238,7 @@ export async function advanceManagedTargetManifestStep(
       ...state,
       source_summary: sourceSummary,
       ...(sourceSummary.complete
-        ? { final_fence_scan: await initialAssignmentFenceScan(input.target, state.as_of) }
+        ? { final_fence_scan: await initialAssignmentFenceScan(input.target, state.as_of, state.target_selection) }
         : {}),
       phase: sourceSummary.complete ? "FINAL_FENCE_SCAN" : "SOURCE_SUMMARY",
     });

@@ -1,13 +1,21 @@
 import type { EvidenceObjectStore } from "@eliotr/platform-cloudflare";
 import type {
   ManagedRequiredProjectRevisionCopy,
+  ManagedRequiredSetReceiptV1,
+  ManagedRequiredSetReceiptV2,
   ManagedRequiredSetReceipt,
 } from "./managed-required-set.js";
 import type {
   ManagedTargetManifestInput,
+  ManagedTargetManifestCandidatePayloadV2,
+  ManagedTargetManifestProviderEmptyReadback,
   ManagedTargetManifestReadyCandidate,
   ManagedTargetManifestShadowFence,
   ManagedTargetManifestSourceAuthority,
+} from "./managed-target-manifest-contract.js";
+import {
+  MANAGED_TARGET_MANIFEST_CANDIDATE_PROTOCOL_V2,
+  MANAGED_TARGET_MANIFEST_COPY_LAYOUT_V2,
 } from "./managed-target-manifest-contract.js";
 import {
   assertManagedTargetProviderCapacity,
@@ -40,6 +48,7 @@ import {
   CANDIDATE_PROTOCOL,
   IDENTIFIER,
   MANIFEST_PROTOCOL,
+  MANIFEST_PROTOCOL_V3,
   SHA256,
   SOURCE_INDEX_PROTOCOL,
   fail,
@@ -275,7 +284,12 @@ export async function sameInitialAndVerifiedReceipt(
   initial: ManagedRequiredSetReceipt,
   verified: ManagedRequiredSetReceipt,
 ): Promise<boolean> {
-  return initial.required_set_digest === verified.required_set_digest &&
+  const selectionMatches = "target_selection" in initial
+    ? "target_selection" in verified && sameJson(initial.target_selection, verified.target_selection) &&
+      initial.target_fence.target_selection_sha256 === verified.target_fence.target_selection_sha256
+    : !("target_selection" in verified);
+  return selectionMatches && initial.protocol === verified.protocol &&
+    initial.required_set_digest === verified.required_set_digest &&
     initial.project_revision_copy_count === verified.project_revision_copy_count &&
     initial.assigned_project_count === verified.assigned_project_count &&
     initial.page_count === verified.page_count &&
@@ -296,8 +310,23 @@ export async function readyCandidate(input: {
 }): Promise<ManagedTargetManifestReadyCandidate> {
   const { state, manifest, store, budget, capacityReceipt, capacityReceiptSha256, shadowFence, profileSha, nowMs } = input;
   const requiredSet = state.verified_required_set;
-  if (requiredSet === null || !state.source_summary.complete) {
+  if (requiredSet === null || !state.source_summary.complete || state.post_source_authority_sha256 === null) {
     fail("MANAGED_TARGET_MANIFEST_STAGE_INVALID", "candidate requested before ordered coverage and source summary completed");
+  }
+  const targetSelection = state.target_selection;
+  if (targetSelection !== undefined) {
+    const layout = manifest.profile.copy_layout as string;
+    if (layout !== MANAGED_TARGET_MANIFEST_COPY_LAYOUT_V2) {
+      fail("MANAGED_TARGET_MANIFEST_PROFILE_MISMATCH", "V2 selection requires the V2 canonical project-copy writer layout");
+    }
+    if (!("target_selection" in requiredSet) ||
+        !sameJson(requiredSet.target_selection, targetSelection) ||
+        !sameJson(targetSelection.target, manifest.target) ||
+        !sameJson(requiredSet.target, manifest.target)) {
+      fail("MANAGED_TARGET_MANIFEST_AUTHORITY_CHANGED", "V2 candidate selection, required-set receipt, and target differ");
+    }
+  } else if ("target_selection" in requiredSet) {
+    fail("MANAGED_TARGET_MANIFEST_AUTHORITY_CHANGED", "V1 candidate cannot carry a V2 required-set receipt");
   }
   const treeWriter = new ManagedTargetManifestTreeWriter(
     store,
@@ -316,7 +345,7 @@ export async function readyCandidate(input: {
       state.desired_item_count > state.capacity_limit) {
     fail("MANAGED_TARGET_MANIFEST_STAGE_INVALID", "candidate counts differ from the exact required set or verified capacity");
   }
-  let emptyReadback: unknown = null;
+  let emptyReadback: ManagedTargetManifestProviderEmptyReadback | null = null;
   if (state.copy_ordinal === 0) {
     if (manifest.empty_provider_readback === undefined) {
       fail("MANAGED_TARGET_MANIFEST_EMPTY_PROVIDER_READBACK_REQUIRED", "an exact empty manifest requires stale-provider removal and absence readback authority");
@@ -376,29 +405,54 @@ export async function readyCandidate(input: {
     capacity_receipt_sha256: capacitySha,
     empty_provider_readback: emptyReadback,
   });
-  const candidatePayload = {
-    protocol: CANDIDATE_PROTOCOL,
-    manifest_protocol: MANIFEST_PROTOCOL,
-    target: manifest.target,
-    target_profile_sha256: state.target_profile_sha256,
-    projection_profile_sha256: profileSha,
-    copy_layout: manifest.profile.copy_layout,
-    as_of: state.as_of,
-    required_set: requiredSet,
-    desired_item_count: state.desired_item_count,
-    desired_item_set_sha256: state.desired_item_set_sha256,
-    canonical_source_summary: canonicalSourceSummary,
-    provider_copy_summary: providerCopySummary,
-    source_authority_sha256: state.source_authority_sha256,
-    post_source_authority_sha256: state.post_source_authority_sha256,
-    shadow_fence_sha256: shadowSha,
-    provider_capacity_policy: MANAGED_TARGET_MANIFEST_PROVIDER_CAPACITY_POLICY,
-    provider_capacity_receipt_sha256: capacitySha,
-    empty_provider_readback: emptyReadback,
-    tree,
-    authority_sha256: authoritySha,
-    finalization_state: "REQUIRES_HELD_WRITER_DRAIN_AND_EXPECTED_HEAD_CAS" as const,
-  };
+  const candidatePayload = targetSelection === undefined
+    ? {
+      protocol: CANDIDATE_PROTOCOL,
+      manifest_protocol: MANIFEST_PROTOCOL,
+      target: manifest.target,
+      target_profile_sha256: state.target_profile_sha256,
+      projection_profile_sha256: profileSha,
+      copy_layout: manifest.profile.copy_layout,
+      as_of: state.as_of,
+      required_set: requiredSet as ManagedRequiredSetReceiptV1,
+      desired_item_count: state.desired_item_count,
+      desired_item_set_sha256: state.desired_item_set_sha256,
+      canonical_source_summary: canonicalSourceSummary,
+      provider_copy_summary: providerCopySummary,
+      source_authority_sha256: state.source_authority_sha256,
+      post_source_authority_sha256: state.post_source_authority_sha256,
+      shadow_fence_sha256: shadowSha,
+      provider_capacity_policy: MANAGED_TARGET_MANIFEST_PROVIDER_CAPACITY_POLICY,
+      provider_capacity_receipt_sha256: capacitySha,
+      empty_provider_readback: emptyReadback,
+      tree,
+      authority_sha256: authoritySha,
+      finalization_state: "REQUIRES_HELD_WRITER_DRAIN_AND_EXPECTED_HEAD_CAS" as const,
+    }
+    : {
+      protocol: MANAGED_TARGET_MANIFEST_CANDIDATE_PROTOCOL_V2,
+      manifest_protocol: MANIFEST_PROTOCOL_V3,
+      target: manifest.target,
+      target_profile_sha256: state.target_profile_sha256,
+      projection_profile_sha256: profileSha,
+      copy_layout: MANAGED_TARGET_MANIFEST_COPY_LAYOUT_V2,
+      target_selection: targetSelection,
+      as_of: state.as_of,
+      required_set: requiredSet as ManagedRequiredSetReceiptV2,
+      desired_item_count: state.desired_item_count,
+      desired_item_set_sha256: state.desired_item_set_sha256,
+      canonical_source_summary: canonicalSourceSummary,
+      provider_copy_summary: providerCopySummary,
+      source_authority_sha256: state.source_authority_sha256,
+      post_source_authority_sha256: state.post_source_authority_sha256,
+      shadow_fence_sha256: shadowSha,
+      provider_capacity_policy: MANAGED_TARGET_MANIFEST_PROVIDER_CAPACITY_POLICY,
+      provider_capacity_receipt_sha256: capacitySha,
+      empty_provider_readback: emptyReadback,
+      tree,
+      authority_sha256: authoritySha,
+      finalization_state: "REQUIRES_HELD_WRITER_DRAIN_AND_EXPECTED_HEAD_CAS" as const,
+    } satisfies ManagedTargetManifestCandidatePayloadV2;
   const digest = await projectionDigest(candidatePayload);
   const stored = await putBuildObject(
     store,
@@ -406,10 +460,42 @@ export async function readyCandidate(input: {
     candidatePayload,
     { manifest_kind: "managed-target-manifest-non-authoritative-candidate", candidate_sha256: digest },
   );
+  if (targetSelection === undefined) {
+    if ("target_selection" in requiredSet) {
+      fail("MANAGED_TARGET_MANIFEST_AUTHORITY_CHANGED", "V1 candidate receipt cannot carry a V2 required-set receipt");
+    }
+    return Object.freeze({
+      protocol: MANIFEST_PROTOCOL,
+      target: manifest.target,
+      as_of: state.as_of,
+      required_set: requiredSet as ManagedRequiredSetReceiptV1,
+      desired_item_count: state.desired_item_count,
+      desired_item_set_sha256: state.desired_item_set_sha256,
+      canonical_source_summary: canonicalSourceSummary,
+      provider_copy_summary: providerCopySummary,
+      tree: tree === null ? null : Object.freeze({
+        key: tree.key,
+        sha256: tree.sha256,
+        copy_count: tree.copy_count,
+        item_count: tree.item_count,
+      }),
+      authority_sha256: authoritySha,
+      candidate_ref: stored.key,
+      candidate_sha256: stored.sha256,
+      candidate_size_bytes: stored.size_bytes,
+      finalization_state: "REQUIRES_HELD_WRITER_DRAIN_AND_EXPECTED_HEAD_CAS",
+    });
+  }
+  if (!("target_selection" in requiredSet)) {
+    fail("MANAGED_TARGET_MANIFEST_AUTHORITY_CHANGED", "V2 candidate lost its V2 required-set receipt");
+  }
   return Object.freeze({
-    protocol: MANIFEST_PROTOCOL,
+    protocol: MANIFEST_PROTOCOL_V3,
+    candidate_protocol: MANAGED_TARGET_MANIFEST_CANDIDATE_PROTOCOL_V2,
+    copy_layout: MANAGED_TARGET_MANIFEST_COPY_LAYOUT_V2,
     target: manifest.target,
     as_of: state.as_of,
+    target_selection: targetSelection,
     required_set: requiredSet,
     desired_item_count: state.desired_item_count,
     desired_item_set_sha256: state.desired_item_set_sha256,

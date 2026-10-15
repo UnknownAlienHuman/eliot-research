@@ -2,7 +2,10 @@ import {
   canonicalProjectionJson,
   projectionSha256Utf8,
 } from "./canonical.js";
-import type { ManagedTargetIdentity } from "./managed-target-assignment.js";
+import type {
+  ManagedTargetIdentity,
+  ManagedTargetSelectionReceipt,
+} from "./managed-target-assignment.js";
 import {
   ManagedRequiredSetError,
   type ManagedRequiredProjectRevisionCopy,
@@ -10,6 +13,7 @@ import {
   type ManagedRequiredSetFence,
   type ManagedRequiredSetPage,
   type ManagedRequiredSetReceipt,
+  type ManagedRequiredSetReceiptV2,
 } from "./managed-required-set.js";
 
 export const MANAGED_TARGET_MANIFEST_SCAN_PROTOCOL =
@@ -63,21 +67,40 @@ export async function initialManagedTargetManifestScan(
   target: ManagedTargetIdentity,
   asOf: string,
   fence: ManagedRequiredSetFence,
+  selection?: ManagedTargetSelectionReceipt,
 ): Promise<ManagedTargetManifestScanState> {
   const validFence = validateManagedRequiredSetFence(fence);
-  const digest = await projectionSha256Utf8(canonicalProjectionJson({
-    protocol: "eliotr.managed-required-project-revisions.v2",
-    target,
-    as_of: asOf,
-    assignment_heads_sha256: validFence.assignment_heads_sha256,
-    assigned_project_count: validFence.assigned_project_count,
-  }));
-  const pageProvenanceDigest = await projectionSha256Utf8(canonicalProjectionJson({
-    protocol: "eliotr.managed-required-set-page-provenance.v1",
-    target,
-    as_of: asOf,
-    assignment_heads_sha256: validFence.assignment_heads_sha256,
-  }));
+  const selectionVersion = validateManagedTargetSelection(target, selection);
+  const digest = await projectionSha256Utf8(canonicalProjectionJson(selectionVersion === 2
+    ? {
+      protocol: "eliotr.managed-required-project-revisions.v3",
+      target,
+      target_selection: selection,
+      as_of: asOf,
+      assignment_heads_sha256: validFence.assignment_heads_sha256,
+      assigned_project_count: validFence.assigned_project_count,
+    }
+    : {
+      protocol: "eliotr.managed-required-project-revisions.v2",
+      target,
+      as_of: asOf,
+      assignment_heads_sha256: validFence.assignment_heads_sha256,
+      assigned_project_count: validFence.assigned_project_count,
+    }));
+  const pageProvenanceDigest = await projectionSha256Utf8(canonicalProjectionJson(selectionVersion === 2
+    ? {
+      protocol: "eliotr.managed-required-set-page-provenance.v2",
+      target,
+      target_selection: selection,
+      as_of: asOf,
+      assignment_heads_sha256: validFence.assignment_heads_sha256,
+    }
+    : {
+      protocol: "eliotr.managed-required-set-page-provenance.v1",
+      target,
+      as_of: asOf,
+      assignment_heads_sha256: validFence.assignment_heads_sha256,
+    }));
   return Object.freeze({
     digest,
     page_provenance_digest: pageProvenanceDigest,
@@ -91,6 +114,57 @@ export async function initialManagedTargetManifestScan(
 export function canonicalManagedRequiredCopy(
   copy: ManagedRequiredProjectRevisionCopy,
 ): string {
+  if (copy.assignment_decision_version === undefined) {
+    const legacy = { ...copy };
+    delete legacy.project_generation;
+    return canonicalProjectionJson(legacy);
+  }
+  if (copy.assignment_decision_version === 1) {
+    return canonicalProjectionJson({
+      assignment_revision: copy.assignment_revision,
+      project_id: copy.project_id,
+      project_owner_principal_ref: copy.project_owner_principal_ref,
+      project_owner_deployment_generation: copy.project_owner_deployment_generation,
+      namespace: copy.namespace,
+      managed_instance_id: copy.managed_instance_id,
+      managed_generation: copy.managed_generation,
+      target_profile_identity_sha256: copy.target_profile_identity_sha256,
+      project_membership_id: copy.project_membership_id,
+      source_id: copy.source_id,
+      source_revision_ref: copy.source_revision_ref,
+      source_head_revision_ref: copy.source_head_revision_ref,
+      source_namespace_id: copy.source_namespace_id,
+      source_owner_system_id: copy.source_owner_system_id,
+      source_ownership_mode: copy.source_ownership_mode,
+      source_owner_generation: copy.source_owner_generation,
+      source_ownership_record_revision: copy.source_ownership_record_revision,
+      source_owner_status: copy.source_owner_status,
+      source_admission_policy_revision: copy.source_admission_policy_revision,
+      source_admission_policy_source_class: copy.source_admission_policy_source_class,
+      source_admission_decision_source_class: copy.source_admission_decision_source_class,
+      source_class: copy.source_class,
+      source_revision_content_sha256: copy.source_revision_content_sha256,
+      normalized_artifact_ref: copy.normalized_artifact_ref,
+      purge_state: copy.purge_state,
+      admission_decision: copy.admission_decision,
+      admission_decision_receipt_ref: copy.admission_decision_receipt_ref,
+      admission_decision_sha256: copy.admission_decision_sha256,
+      admission_decision_expires_at: copy.admission_decision_expires_at,
+      admission_disclosure_ceiling: copy.admission_disclosure_ceiling,
+      project_owner_read_policy_ref: copy.project_owner_read_policy_ref,
+      project_owner_read_policy_generation: copy.project_owner_read_policy_generation,
+      project_owner_read_policy_state: copy.project_owner_read_policy_state,
+      project_owner_read_policy_disclosure_ceiling: copy.project_owner_read_policy_disclosure_ceiling,
+      project_owner_read_policy_expires_at: copy.project_owner_read_policy_expires_at,
+      membership_role: copy.membership_role,
+      membership_generation: copy.membership_generation,
+      membership_valid_from: copy.membership_valid_from,
+      membership_valid_to: copy.membership_valid_to,
+    });
+  }
+  if (copy.assignment_decision_version !== 2) {
+    throw new ManagedRequiredSetError("MANAGED_REQUIRED_SET_PAGE_INVALID", "required-set row version is unknown");
+  }
   const current = { ...copy };
   delete current.project_generation;
   return canonicalProjectionJson(current);
@@ -101,7 +175,9 @@ export async function foldManagedTargetManifestPage(
   page: ManagedRequiredSetPage,
   target: ManagedTargetIdentity,
   asOf: string,
+  selection?: ManagedTargetSelectionReceipt,
 ): Promise<{ readonly state: ManagedTargetManifestScanState; readonly summary: ManagedTargetManifestPageSummary }> {
+  const selectionVersion = validateManagedTargetSelection(target, selection);
   if (!Array.isArray(page.rows) || page.rows.length > MANAGED_TARGET_MANIFEST_REQUIRED_PAGE_SIZE) {
     throw new ManagedRequiredSetError("MANAGED_REQUIRED_SET_PAGE_INVALID", "required-set page exceeded its fixed row bound");
   }
@@ -114,17 +190,24 @@ export async function foldManagedTargetManifestPage(
   let digest = state.digest;
   const pageIndex = state.pages;
   const pageAfter = state.after;
-  let pageDigest = await projectionSha256Utf8(canonicalProjectionJson({
-    protocol: "eliotr.managed-required-set-page.v1",
-    page_index: pageIndex,
-    after: pageAfter,
-  }));
+  let pageDigest = await projectionSha256Utf8(canonicalProjectionJson(selectionVersion === 2
+    ? {
+      protocol: "eliotr.managed-required-set-page.v2",
+      target_selection: selection,
+      page_index: pageIndex,
+      after: pageAfter,
+    }
+    : {
+      protocol: "eliotr.managed-required-set-page.v1",
+      page_index: pageIndex,
+      after: pageAfter,
+    }));
   let count = state.count;
   let previous = state.last_copy;
   for (const copy of page.rows) {
-    validateManagedRequiredCopy(copy, target, asOf);
+    validateManagedRequiredCopy(copy, target, asOf, selection);
     if (previous !== null) {
-      const order = compareManagedRequiredCopies(previous, copy);
+      const order = compareManagedRequiredCopies(previous, copy, selectionVersion);
       if (previous.project_id === copy.project_id && previous.source_id === copy.source_id) {
         throw new ManagedRequiredSetError("MANAGED_REQUIRED_SET_MEMBERSHIP_AMBIGUOUS", "project/source pair has more than one current membership");
       }
@@ -144,7 +227,8 @@ export async function foldManagedTargetManifestPage(
   if (
     (page.rows.length === MANAGED_TARGET_MANIFEST_REQUIRED_PAGE_SIZE && page.next_cursor === null) ||
     page.next_cursor !== null &&
-    (page.rows.length === 0 || previous === null || compareManagedRequiredCursors(page.next_cursor, cursorFor(previous)) !== 0)
+    (page.rows.length === 0 || previous === null ||
+      compareManagedRequiredCursors(page.next_cursor, cursorFor(previous, selectionVersion)) !== 0)
   ) {
     throw new ManagedRequiredSetError("MANAGED_REQUIRED_SET_PAGE_INVALID", "required-set cursor does not identify the last page row");
   }
@@ -179,8 +263,52 @@ export async function managedRequiredSetReceiptFromScan(
   asOf: string,
   fence: ManagedRequiredSetFence,
   scan: ManagedTargetManifestScanState,
+  selection?: ManagedTargetSelectionReceipt,
 ): Promise<ManagedRequiredSetReceipt> {
   const validFence = validateManagedRequiredSetFence(fence);
+  const selectionVersion = validateManagedTargetSelection(target, selection);
+  if (selectionVersion === 2) {
+    if (selection === undefined || selection.decision_version !== 2) {
+      throw new ManagedRequiredSetError("MANAGED_REQUIRED_SET_INPUT_INVALID", "V2 scan has no exact target-selection receipt");
+    }
+    const targetSelection = selection;
+    const targetSelectionSha256 = await projectionSha256Utf8(canonicalProjectionJson(targetSelection));
+    const targetFenceDigest = await projectionSha256Utf8(canonicalProjectionJson({
+      protocol: "eliotr.managed-required-set-target-fence.v2",
+      target,
+      target_selection: targetSelection,
+      target_selection_sha256: targetSelectionSha256,
+      as_of: asOf,
+      assignment_heads_sha256: validFence.assignment_heads_sha256,
+      required_set_sha256: scan.digest,
+      page_provenance_sha256: scan.page_provenance_digest,
+      assigned_project_count: validFence.assigned_project_count,
+      project_revision_copy_count: scan.count,
+      page_count: scan.pages,
+    }));
+    const receipt: ManagedRequiredSetReceiptV2 = Object.freeze({
+      protocol: "eliotr.managed-required-project-revisions.v3",
+      target,
+      target_selection: targetSelection,
+      as_of: asOf,
+      target_fence: Object.freeze({
+        protocol: "eliotr.managed-required-set-target-fence.v2",
+        digest: targetFenceDigest,
+        target_selection_sha256: targetSelectionSha256,
+        assignment_heads_sha256: validFence.assignment_heads_sha256,
+        required_set_sha256: scan.digest,
+        page_provenance_sha256: scan.page_provenance_digest,
+        assigned_project_count: validFence.assigned_project_count,
+        project_revision_copy_count: scan.count,
+        page_count: scan.pages,
+      }),
+      assigned_project_count: validFence.assigned_project_count,
+      project_revision_copy_count: scan.count,
+      page_count: scan.pages,
+      required_set_digest: scan.digest,
+    });
+    return receipt;
+  }
   const targetFenceDigest = await projectionSha256Utf8(canonicalProjectionJson({
     protocol: "eliotr.managed-required-set-target-fence.v1",
     target,
@@ -213,14 +341,50 @@ export async function managedRequiredSetReceiptFromScan(
   });
 }
 
+export function validateManagedTargetSelection(
+  target: ManagedTargetIdentity,
+  selection?: ManagedTargetSelectionReceipt,
+): 1 | 2 {
+  if (selection === undefined) return 1;
+  const selectedTarget = selection.target;
+  if (selectedTarget.namespace !== target.namespace ||
+      selectedTarget.managed_instance_id !== target.managed_instance_id ||
+      selectedTarget.managed_generation !== target.managed_generation ||
+      selectedTarget.target_profile_identity_sha256 !== target.target_profile_identity_sha256) {
+    throw new ManagedRequiredSetError("MANAGED_REQUIRED_SET_INPUT_INVALID", "target selection differs from the exact manifest target");
+  }
+  if (selection.decision_version === 1) {
+    if (selection.protocol !== "eliotr.managed-target-selection.v1" ||
+        selection.domain !== "MANAGED_TARGET_ASSIGNMENT" ||
+        selection.selection_mode !== "EXACT_GENERATION_V1") {
+      throw new ManagedRequiredSetError("MANAGED_REQUIRED_SET_INPUT_INVALID", "V1 target selection marker is invalid");
+    }
+    return 1;
+  }
+  if (selection.protocol !== "eliotr.managed-target-selection.v2" ||
+      selection.domain !== "MANAGED_SEARCH_PRODUCT" ||
+      selection.selection_mode !== "STABLE_PHYSICAL_PROFILE_V2" ||
+      selection.product_alias !== "primary" ||
+      (selection.purpose !== "ACTIVE" && selection.purpose !== "SHADOW") ||
+      !Number.isSafeInteger(selection.registry_revision) || selection.registry_revision < 1 ||
+      !SHA256.test(selection.registry_artifact_sha256) ||
+      !SHA256.test(selection.v1_exact_profile_identity_sha256)) {
+    throw new ManagedRequiredSetError("MANAGED_REQUIRED_SET_INPUT_INVALID", "V2 physical-profile selection receipt is invalid");
+  }
+  return 2;
+}
+
 function validateManagedRequiredCopy(
   copy: ManagedRequiredProjectRevisionCopy,
   target: ManagedTargetIdentity,
   asOf: string,
+  selection?: ManagedTargetSelectionReceipt,
 ): void {
   if (typeof copy !== "object" || copy === null || Array.isArray(copy)) {
     throw new ManagedRequiredSetError("MANAGED_REQUIRED_SET_PAGE_INVALID", "required-set row is not an object");
   }
+  const selectionVersion = validateManagedTargetSelection(target, selection);
+  const legacyPersistedV1 = copy.assignment_decision_version === undefined && selectionVersion === 1;
   const identifiers = [
     copy.project_id, copy.project_owner_principal_ref, copy.project_owner_deployment_generation,
     copy.namespace, copy.managed_instance_id, copy.managed_generation, copy.project_membership_id,
@@ -247,6 +411,18 @@ function validateManagedRequiredCopy(
   ];
   if (integers.some((value) => !Number.isSafeInteger(value) || value < 1)) {
     throw new ManagedRequiredSetError("MANAGED_REQUIRED_SET_PAGE_INVALID", "required-set row contains an invalid authority revision");
+  }
+  if (!legacyPersistedV1 &&
+      (!Number.isSafeInteger(copy.assignment_decision_version) ||
+       (copy.assignment_decision_version !== 1 && copy.assignment_decision_version !== 2) ||
+       (copy.project_membership_identity_version !== 1 && copy.project_membership_identity_version !== 2) ||
+       !Number.isSafeInteger(copy.membership_revision) || copy.membership_revision < 1 ||
+       !Number.isSafeInteger(copy.project_membership_generation) || copy.project_membership_generation < 1 ||
+       copy.membership_generation > copy.project_membership_generation ||
+       !IDENTIFIER.test(copy.assignment_managed_generation) ||
+       !SHA256.test(copy.assignment_target_profile_identity_sha256) ||
+       !IDENTIFIER.test(copy.stable_project_membership_id))) {
+    throw new ManagedRequiredSetError("MANAGED_REQUIRED_SET_PAGE_INVALID", "versioned membership row identity is malformed");
   }
   if (
     copy.namespace !== target.namespace ||
@@ -283,32 +459,80 @@ function validateManagedRequiredCopy(
   if (copy.membership_valid_to !== null && (typeof copy.membership_valid_to !== "string" || !Number.isFinite(to))) {
     throw new ManagedRequiredSetError("MANAGED_REQUIRED_SET_PAGE_INVALID", "membership expiry is invalid");
   }
+  const legacyMembershipId = `project:${copy.project_id}:generation:${copy.membership_generation}`;
+  if (legacyPersistedV1) {
+    if (!(from <= Date.parse(asOf) && Date.parse(asOf) < to) || copy.project_membership_id !== legacyMembershipId) {
+      throw new ManagedRequiredSetError("MANAGED_REQUIRED_SET_PAGE_INVALID", "legacy V1 membership is invalid at the build time");
+    }
+    return;
+  }
+  const assignmentMatchesSelection = selectionVersion === 1
+    ? copy.assignment_decision_version === 1 &&
+      copy.assignment_selection_mode === "EXACT_GENERATION_V1" &&
+      copy.assignment_product_alias === null &&
+      copy.assignment_managed_generation === target.managed_generation &&
+      copy.assignment_target_profile_identity_sha256 === target.target_profile_identity_sha256
+    : copy.assignment_decision_version === 1
+      ? copy.assignment_selection_mode === "EXACT_GENERATION_V1" &&
+        copy.assignment_product_alias === null &&
+        copy.assignment_managed_generation === target.managed_generation &&
+        (copy.assignment_target_profile_identity_sha256 === target.target_profile_identity_sha256 ||
+          (selection?.decision_version === 2 &&
+            copy.assignment_target_profile_identity_sha256 === selection.v1_exact_profile_identity_sha256))
+      : copy.assignment_decision_version === 2 &&
+        copy.assignment_selection_mode === "STABLE_PHYSICAL_PROFILE_V2" &&
+        copy.assignment_product_alias === "primary" &&
+        copy.assignment_target_profile_identity_sha256 === target.target_profile_identity_sha256;
+  const membershipIdentityMatches = copy.assignment_decision_version === 1
+    ? copy.project_membership_identity_version === 1 &&
+      copy.project_membership_id === legacyMembershipId &&
+      copy.legacy_project_membership_id === legacyMembershipId
+    : copy.assignment_decision_version === 2 &&
+      copy.project_membership_identity_version === 2 &&
+      copy.project_membership_id === copy.stable_project_membership_id &&
+      copy.legacy_project_membership_id === null;
   if (!(from <= Date.parse(asOf) && Date.parse(asOf) < to) ||
-      copy.project_membership_id !== `project:${copy.project_id}:generation:${copy.membership_generation}`) {
+      !assignmentMatchesSelection || !membershipIdentityMatches) {
     throw new ManagedRequiredSetError("MANAGED_REQUIRED_SET_PAGE_INVALID", "membership is invalid at the build time");
   }
 }
 
-function cursorFor(copy: ManagedRequiredProjectRevisionCopy): ManagedRequiredSetCursor {
-  return {
+function cursorFor(copy: ManagedRequiredProjectRevisionCopy, selectionVersion: 1 | 2): ManagedRequiredSetCursor {
+  const cursorBase = {
     project_id: copy.project_id,
     source_id: copy.source_id,
-    membership_generation: copy.membership_generation,
     source_revision_ref: copy.source_revision_ref,
   };
+  if (selectionVersion === 2) {
+    if (!Number.isSafeInteger(copy.membership_revision) || copy.membership_revision < 1) {
+      throw new ManagedRequiredSetError("MANAGED_REQUIRED_SET_PAGE_INVALID", "V2 cursor row has no positive membership_revision");
+    }
+    return { ...cursorBase, membership_revision: copy.membership_revision };
+  }
+  return { ...cursorBase, membership_generation: copy.membership_generation };
 }
 
-function compareManagedRequiredCopies(left: ManagedRequiredProjectRevisionCopy, right: ManagedRequiredProjectRevisionCopy): number {
+function compareManagedRequiredCopies(
+  left: ManagedRequiredProjectRevisionCopy,
+  right: ManagedRequiredProjectRevisionCopy,
+  selectionVersion: 1 | 2,
+): number {
   return compareString(left.project_id, right.project_id) ||
     compareString(left.source_id, right.source_id) ||
-    left.membership_generation - right.membership_generation ||
+    (selectionVersion === 2
+      ? left.membership_revision - right.membership_revision
+      : left.membership_generation - right.membership_generation) ||
     compareString(left.source_revision_ref, right.source_revision_ref);
 }
 
 function compareManagedRequiredCursors(left: ManagedRequiredSetCursor, right: ManagedRequiredSetCursor): number {
+  if (("membership_revision" in left) !== ("membership_revision" in right)) return -1;
+  const membershipOrder = "membership_revision" in left
+    ? left.membership_revision - ("membership_revision" in right ? right.membership_revision : 0)
+    : left.membership_generation - ("membership_generation" in right ? right.membership_generation : 0);
   return compareString(left.project_id, right.project_id) ||
     compareString(left.source_id, right.source_id) ||
-    left.membership_generation - right.membership_generation ||
+    membershipOrder ||
     compareString(left.source_revision_ref, right.source_revision_ref);
 }
 

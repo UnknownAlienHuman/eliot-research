@@ -1,11 +1,16 @@
 import type { SourceRevision } from "@eliotr/contracts";
 import type { AiSearchInstanceProfile, EvidenceObjectStore } from "@eliotr/platform-cloudflare";
-import type { ManagedTargetIdentity } from "./managed-target-assignment.js";
+import type {
+  ManagedTargetIdentity,
+  ManagedTargetSelectionReceipt,
+  ManagedTargetSelectionV2,
+} from "./managed-target-assignment.js";
 import type {
   ManagedRequiredProjectRevisionCopy,
   ManagedRequiredSetPage,
   ManagedRequiredSetPort,
-  ManagedRequiredSetReceipt,
+  ManagedRequiredSetReceiptV1,
+  ManagedRequiredSetReceiptV2,
 } from "./managed-required-set.js";
 import type {
   CanonicalSourceProjectionReceipt,
@@ -14,7 +19,15 @@ import type {
   ProjectionExecutionProfile,
 } from "./types.js";
 import type { ManagedTargetProviderCapacityAuthorityPort } from "./managed-target-manifest-fragments.js";
-import type { MANAGED_TARGET_MANIFEST_PROTOCOL, MANAGED_TARGET_MANIFEST_COPY_LAYOUT } from "./managed-target-manifest.js";
+import type {
+  MANAGED_TARGET_MANIFEST_PROTOCOL,
+  MANAGED_TARGET_MANIFEST_PROTOCOL_V3,
+  MANAGED_TARGET_MANIFEST_COPY_LAYOUT,
+} from "./managed-target-manifest.js";
+
+export const MANAGED_TARGET_MANIFEST_CANDIDATE_PROTOCOL_V2 =
+  "eliotr.managed-target-manifest-candidate.v2" as const;
+export const MANAGED_TARGET_MANIFEST_COPY_LAYOUT_V2 = "PROJECT_COPY_V2" as const;
 
 export type ManagedTargetManifestShadowState =
   | "UNDECLARED"
@@ -132,6 +145,10 @@ export interface ManagedTargetManifestRequiredSetPort {
 
 export interface ManagedTargetAssignmentFenceRow {
   readonly assignment_revision: number;
+  readonly assignment_decision_version: 1 | 2;
+  readonly assignment_selection_mode: "EXACT_GENERATION_V1" | "STABLE_PHYSICAL_PROFILE_V2";
+  readonly assignment_product_alias: "primary" | null;
+  readonly assignment_managed_generation: string;
   readonly project_id: string;
   readonly project_membership_generation: number | null;
   readonly project_owner_principal_ref: string;
@@ -148,6 +165,7 @@ export interface ManagedTargetAssignmentFencePort {
   /** One current-head page; the continuation bounds this read to eight pages per invocation. */
   readPage(input: {
     readonly target: ManagedTargetIdentity;
+    readonly target_selection?: ManagedTargetSelectionReceipt;
     readonly as_of: string;
     readonly after_project_id: string | null;
     readonly limit: number;
@@ -196,6 +214,8 @@ export interface ManagedTargetManifestWorkIndexPort {
 
 export interface ManagedTargetManifestInput {
   readonly target: ManagedTargetIdentity;
+  /** V2 pins the reviewed stable product selection; omission preserves exact-generation V1 bytes. */
+  readonly target_selection?: ManagedTargetSelectionReceipt;
   /** Stable identity of the existing Workflow/Queue execution, reused on every retry. */
   readonly execution_id: string;
   readonly clock: () => number;
@@ -276,11 +296,11 @@ export type ManagedTargetManifestPhase =
   | "READY_FOR_FINALIZATION"
   | "READY_FOR_FINALIZATION";
 
-export interface ManagedTargetManifestReadyCandidate {
+export interface ManagedTargetManifestReadyCandidateV1 {
   readonly protocol: typeof MANAGED_TARGET_MANIFEST_PROTOCOL;
   readonly target: ManagedTargetIdentity;
   readonly as_of: string;
-  readonly required_set: ManagedRequiredSetReceipt;
+  readonly required_set: ManagedRequiredSetReceiptV1;
   readonly desired_item_count: number;
   readonly desired_item_set_sha256: string;
   readonly canonical_source_summary: ManagedTargetManifestCanonicalSourceSummary;
@@ -295,6 +315,67 @@ export interface ManagedTargetManifestReadyCandidate {
   readonly candidate_ref: string;
   readonly candidate_sha256: string;
   readonly candidate_size_bytes: number;
+  readonly finalization_state: "REQUIRES_HELD_WRITER_DRAIN_AND_EXPECTED_HEAD_CAS";
+}
+
+/** V2 candidate receipt; never accepted through the historical V1 readback protocol. */
+export interface ManagedTargetManifestReadyCandidateV2 {
+  readonly protocol: typeof MANAGED_TARGET_MANIFEST_PROTOCOL_V3;
+  readonly candidate_protocol: typeof MANAGED_TARGET_MANIFEST_CANDIDATE_PROTOCOL_V2;
+  readonly copy_layout: typeof MANAGED_TARGET_MANIFEST_COPY_LAYOUT_V2;
+  readonly target: ManagedTargetIdentity;
+  readonly target_selection: ManagedTargetSelectionV2;
+  readonly as_of: string;
+  readonly required_set: ManagedRequiredSetReceiptV2;
+  readonly desired_item_count: number;
+  readonly desired_item_set_sha256: string;
+  readonly canonical_source_summary: ManagedTargetManifestCanonicalSourceSummary;
+  readonly provider_copy_summary: ManagedTargetManifestProviderCopySummary;
+  readonly tree: {
+    readonly key: string;
+    readonly sha256: string;
+    readonly copy_count: number;
+    readonly item_count: number;
+  } | null;
+  readonly authority_sha256: string;
+  readonly candidate_ref: string;
+  readonly candidate_sha256: string;
+  readonly candidate_size_bytes: number;
+  readonly finalization_state: "REQUIRES_HELD_WRITER_DRAIN_AND_EXPECTED_HEAD_CAS";
+}
+
+export type ManagedTargetManifestReadyCandidate =
+  | ManagedTargetManifestReadyCandidateV1
+  | ManagedTargetManifestReadyCandidateV2;
+
+/** Exact source object written before Root's held-drain/head-CAS finalizer. */
+export interface ManagedTargetManifestCandidatePayloadV2 {
+  readonly protocol: typeof MANAGED_TARGET_MANIFEST_CANDIDATE_PROTOCOL_V2;
+  readonly manifest_protocol: typeof MANAGED_TARGET_MANIFEST_PROTOCOL_V3;
+  readonly target: ManagedTargetIdentity;
+  readonly target_profile_sha256: string;
+  readonly projection_profile_sha256: string;
+  readonly copy_layout: typeof MANAGED_TARGET_MANIFEST_COPY_LAYOUT_V2;
+  readonly target_selection: ManagedTargetSelectionV2;
+  readonly as_of: string;
+  readonly required_set: ManagedRequiredSetReceiptV2;
+  readonly desired_item_count: number;
+  readonly desired_item_set_sha256: string;
+  readonly canonical_source_summary: ManagedTargetManifestCanonicalSourceSummary;
+  readonly provider_copy_summary: ManagedTargetManifestProviderCopySummary;
+  readonly source_authority_sha256: string;
+  readonly post_source_authority_sha256: string;
+  readonly shadow_fence_sha256: string;
+  readonly provider_capacity_policy: "eliotr.ai-search-file-capacity-cloudflare-2026-10-01.v1";
+  readonly provider_capacity_receipt_sha256: string;
+  readonly empty_provider_readback: ManagedTargetManifestProviderEmptyReadback | null;
+  readonly tree: {
+    readonly key: string;
+    readonly sha256: string;
+    readonly copy_count: number;
+    readonly item_count: number;
+  } | null;
+  readonly authority_sha256: string;
   readonly finalization_state: "REQUIRES_HELD_WRITER_DRAIN_AND_EXPECTED_HEAD_CAS";
 }
 

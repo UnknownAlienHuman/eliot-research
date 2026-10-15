@@ -1,6 +1,10 @@
 import type { AiSearchInstanceProfile, EvidenceObjectStore } from "@eliotr/platform-cloudflare";
+import type { ManagedTargetSelectionV2 } from "./managed-target-assignment.js";
 import type { ManagedRequiredProjectRevisionCopy } from "./managed-required-set.js";
-import { ManagedTargetManifestError } from "./managed-target-manifest-contract.js";
+import {
+  MANAGED_TARGET_MANIFEST_CANDIDATE_PROTOCOL_V2,
+  ManagedTargetManifestError,
+} from "./managed-target-manifest-contract.js";
 import { aiSearchPhysicalProfileDigest } from "./ai-search-profile-identity-digest.js";
 import { putCanonicalManifestObjectIfAbsent } from "./managed-target-manifest-fragments.js";
 import { canonicalProjectionJson } from "./canonical.js";
@@ -8,10 +12,15 @@ import type { ManagedTargetManifestScanState } from "./managed-target-manifest-c
 import type { CanonicalSourceProjectionReceipt, ManagedProjectCopyMapReceipt } from "./types.js";
 import { MANAGED_TARGET_MANIFEST_MAX_PAGES } from "./managed-target-manifest-step-support.js";
 export const MANIFEST_PROTOCOL = "eliotr.managed-target-desired-items.v2" as const;
+export const MANIFEST_PROTOCOL_V3 = "eliotr.managed-target-desired-items.v3" as const;
 export const CANDIDATE_PROTOCOL = "eliotr.managed-target-manifest-candidate.v1" as const;
+export const CANDIDATE_PROTOCOL_V2 = MANAGED_TARGET_MANIFEST_CANDIDATE_PROTOCOL_V2;
 export const CONTINUATION_PROTOCOL = "eliotr.managed-target-manifest-continuation.v2" as const;
+export const CONTINUATION_PROTOCOL_V3 = "eliotr.managed-target-manifest-continuation.v3" as const;
 export const PAGE_PROTOCOL = "eliotr.managed-target-manifest-required-page.v2" as const;
+export const PAGE_PROTOCOL_V3 = "eliotr.managed-target-manifest-required-page.v3" as const;
 export const COPY_PROTOCOL = "eliotr.managed-target-manifest-copy.v2" as const;
+export const COPY_PROTOCOL_V3 = "eliotr.managed-target-manifest-copy.v3" as const;
 export const SOURCE_INDEX_PROTOCOL = "eliotr.managed-target-manifest-source-index.v1" as const;
 export const SHA256 = /^[a-f0-9]{64}$/u;
 export const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
@@ -21,7 +30,8 @@ export const MAX_MANIFEST_PAGE_BYTES = 2 * 1024 * 1024;
 export const MAX_ASSIGNMENT_FENCE_PAGES = MANAGED_TARGET_MANIFEST_MAX_PAGES + 1;
 
 export interface StoredRequiredPage {
-  readonly protocol: typeof PAGE_PROTOCOL;
+  readonly protocol: typeof PAGE_PROTOCOL | typeof PAGE_PROTOCOL_V3;
+  readonly target_selection?: ManagedTargetSelectionV2;
   readonly scan_identity_sha256: string;
   readonly phase: "BUILD_SCAN" | "VERIFY_SCAN";
   readonly page_index: number;
@@ -38,7 +48,7 @@ export interface StoredCanonicalSourceIndex {
 }
 
 export interface StoredCopyFragment {
-  readonly protocol: typeof COPY_PROTOCOL;
+  readonly protocol: typeof COPY_PROTOCOL | typeof COPY_PROTOCOL_V3;
   readonly scan_identity_sha256: string;
   readonly copy_ordinal: number;
   readonly microstep_ordinal: number;

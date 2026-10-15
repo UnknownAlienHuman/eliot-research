@@ -102,6 +102,13 @@ export async function advanceBuildScan(
     return Object.freeze({ ...state, build_scan: progress });
   }
 
+  if (batchCopies.some((copy) => copy.project_membership_identity_version === 2)) {
+    fail(
+      "MANAGED_TARGET_MANIFEST_PROJECTION_INVALID",
+      "stable V2 project-copy mapping is blocked until the writer-owned membership_revision receipt contract is integrated",
+    );
+  }
+
   const authorityBatch = await sourceAuthoritiesForCopies(input, batchCopies, state.as_of, budget);
   const targetReceipt: ManagedProjectCopyTargetReceipt = Object.freeze({
     managed_instance_id: input.target.managed_instance_id,
@@ -327,8 +334,19 @@ async function completeBuildScan(
   if (state.copy_ordinal !== state.build_scan.scan.count || state.copy_ordinal > MANAGED_TARGET_MANIFEST_MAX_COPIES) {
     fail("MANAGED_TARGET_MANIFEST_STAGE_INVALID", "staged copy count differs from the complete initial required-set scan");
   }
-  const receipt = await managedRequiredSetReceiptFromScan(input.target, state.as_of, state.initial_fence, state.build_scan.scan);
-  const verifiedScan = await initialManagedTargetManifestScan(input.target, state.as_of, state.initial_fence);
+  const receipt = await managedRequiredSetReceiptFromScan(
+    input.target,
+    state.as_of,
+    state.initial_fence,
+    state.build_scan.scan,
+    state.target_selection,
+  );
+  const verifiedScan = await initialManagedTargetManifestScan(
+    input.target,
+    state.as_of,
+    state.initial_fence,
+    state.target_selection,
+  );
   return Object.freeze({
     ...state,
     phase: "VERIFY_SCAN",
@@ -396,7 +414,13 @@ export async function advanceVerifyScan(
     }
   }
   if (progress.complete) {
-    const verified = await managedRequiredSetReceiptFromScan(input.target, state.as_of, state.initial_fence, progress.scan);
+    const verified = await managedRequiredSetReceiptFromScan(
+      input.target,
+      state.as_of,
+      state.initial_fence,
+      progress.scan,
+      state.target_selection,
+    );
     if (!await sameInitialAndVerifiedReceipt(state.initial_required_set, verified) ||
         postDigest !== state.source_authority_sha256) {
       fail("MANAGED_TARGET_MANIFEST_SOURCE_FENCE_CHANGED", "resumable final required-set/source authority scan differs from its initial receipt");
