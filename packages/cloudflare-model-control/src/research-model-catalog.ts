@@ -1,6 +1,7 @@
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 
 export const RESEARCH_MODEL_CATALOG_PROTOCOL = "eliotr.research-model-catalog.v1" as const;
+export const SERVICE_MODEL_CATALOG_PROTOCOL = "eliotr.service-model-catalog.v1" as const;
 export const RESEARCH_MODEL_CATALOG_TASK = "text-generation" as const;
 const WORKERS_AI_TASK = "Text Generation";
 
@@ -75,6 +76,10 @@ export interface ResearchModelCatalogPage {
   };
 }
 
+export type ServiceModelCatalogPage = Omit<ResearchModelCatalogPage, "protocol" | "project_id"> & {
+  readonly protocol: typeof SERVICE_MODEL_CATALOG_PROTOCOL;
+};
+
 /**
  * An optional adapter around an official provider catalog/package. The core
  * service deliberately does not invent a Cloudflare-wide third-party endpoint.
@@ -138,6 +143,9 @@ export interface ResearchModelCatalogServiceOptions {
 }
 
 export interface ResearchModelCatalogService {
+  listWorkersAiForService(context: AuthenticatedRequestContext, query?: ResearchModelCatalogQuery): Promise<ServiceModelCatalogPage>;
+  listExternalProviderForService(context: AuthenticatedRequestContext, providerId: string,
+    query?: ResearchModelCatalogQuery): Promise<ServiceModelCatalogPage>;
   listWorkersAi(
     context: AuthenticatedRequestContext,
     projectId: string,
@@ -222,7 +230,7 @@ function normalizeContext(context: AuthenticatedRequestContext): string {
       (context.access !== undefined && (context.access.principal_ref !== context.principal_ref ||
         context.access.credential_generation !== context.credential_generation))) {
     throw new ResearchModelCatalogError("MODEL_CATALOG_OWNER_REQUIRED", 403,
-      "an authenticated project owner context is required");
+      "an authenticated owner context is required");
   }
   return context.principal_ref;
 }
@@ -428,20 +436,18 @@ function externalProviderModel(
 }
 
 function pageResult(
-  projectId: string,
   providerId: string,
   scope: ResearchModelCatalogPage["catalog_scope"],
   query: NormalizedQuery,
   models: readonly ResearchModelCatalogEntry[],
   hasMore: boolean | null,
   probe: ResearchModelCatalogPage["pagination"]["probe"],
-): ResearchModelCatalogPage {
+): ServiceModelCatalogPage {
   const coverage: ResearchModelCatalogPage["pagination"]["coverage"] = hasMore === null
     ? "unknown"
     : hasMore || query.page !== 1 ? "partial" : "complete";
-  const result: ResearchModelCatalogPage = Object.freeze({
-    protocol: RESEARCH_MODEL_CATALOG_PROTOCOL,
-    project_id: projectId,
+  const result: ServiceModelCatalogPage = Object.freeze({
+    protocol: SERVICE_MODEL_CATALOG_PROTOCOL,
     task: RESEARCH_MODEL_CATALOG_TASK,
     catalog_scope: scope,
     provider_id: providerId,
@@ -460,6 +466,21 @@ function pageResult(
       "model catalog page exceeds its response byte bound");
   }
   return result;
+}
+
+function projectPage(projectId: string, page: ServiceModelCatalogPage): ResearchModelCatalogPage {
+  const result = Object.freeze({ ...page, protocol: RESEARCH_MODEL_CATALOG_PROTOCOL, project_id: projectId });
+  if (utf8Bytes(JSON.stringify(result)) > MAX_RESPONSE_BYTES) {
+    throw new ResearchModelCatalogError("MODEL_CATALOG_RESPONSE_INVALID", 502, "model catalog page exceeds its response byte bound");
+  }
+  return result;
+}
+
+function requireServiceOwner(context: AuthenticatedRequestContext): void {
+  normalizeContext(context);
+  if (context.request.signal.aborted) {
+    throw new ResearchModelCatalogError("MODEL_CATALOG_CANCELLED", 499, "model catalog request was cancelled");
+  }
 }
 
 function normalizeUpstreamModels(value: unknown, source: "workers_ai" | "external_provider",
@@ -488,12 +509,11 @@ function validateProviderPage(value: unknown, perPage: number): ExternalProvider
 export function createResearchModelCatalogService(
   options: ResearchModelCatalogServiceOptions,
 ): ResearchModelCatalogService {
-  async function listWorkersAi(
+  async function listWorkersAiForService(
     context: AuthenticatedRequestContext,
-    projectIdRaw: string,
     input?: ResearchModelCatalogQuery,
-  ): Promise<ResearchModelCatalogPage> {
-    const owner = await authorize(options.database, context, projectIdRaw);
+  ): Promise<ServiceModelCatalogPage> {
+    requireServiceOwner(context);
     const query = normalizeQuery(input);
     const models = options.workersAi?.models;
     if (typeof models !== "function") {
@@ -541,17 +561,16 @@ export function createResearchModelCatalogService(
       hasMore = null;
       probe = "next_page_unavailable";
     }
-    return pageResult(owner.project_id, "cloudflare-workers-ai", "workers_ai", query,
+    return pageResult("cloudflare-workers-ai", "workers_ai", query,
       pageModels, hasMore, probe);
   }
 
-  async function listExternalProvider(
+  async function listExternalProviderForService(
     context: AuthenticatedRequestContext,
-    projectIdRaw: string,
     providerIdRaw: string,
     input?: ResearchModelCatalogQuery,
-  ): Promise<ResearchModelCatalogPage> {
-    const owner = await authorize(options.database, context, projectIdRaw);
+  ): Promise<ServiceModelCatalogPage> {
+    requireServiceOwner(context);
     const query = normalizeQuery(input);
     let providerId: string;
     try {
@@ -591,9 +610,20 @@ export function createResearchModelCatalogService(
     }
     const probe: ResearchModelCatalogPage["pagination"]["probe"] = raw.has_more === null
       ? "next_page_unavailable" : "provider_reported";
-    return pageResult(owner.project_id, providerId, "external_provider", query, models,
+    return pageResult(providerId, "external_provider", query, models,
       raw.has_more, probe);
   }
 
-  return Object.freeze({ listWorkersAi, listExternalProvider });
+  // Preserve the old versioned reads for existing clients. Global Settings uses
+  // the service methods above and never consults project ownership or storage.
+  async function listWorkersAi(context: AuthenticatedRequestContext, projectId: string, query?: ResearchModelCatalogQuery) {
+    const owner = await authorize(options.database, context, projectId);
+    return projectPage(owner.project_id, await listWorkersAiForService(context, query));
+  }
+  async function listExternalProvider(context: AuthenticatedRequestContext, projectId: string, providerId: string,
+    query?: ResearchModelCatalogQuery) {
+    const owner = await authorize(options.database, context, projectId);
+    return projectPage(owner.project_id, await listExternalProviderForService(context, providerId, query));
+  }
+  return Object.freeze({ listWorkersAi, listExternalProvider, listWorkersAiForService, listExternalProviderForService });
 }

@@ -4,6 +4,7 @@ import {
   createResearchModelCatalogService,
   ResearchModelCatalogError,
   RESEARCH_MODEL_CATALOG_PROTOCOL,
+  SERVICE_MODEL_CATALOG_PROTOCOL,
   type ExternalProviderCatalogTransport,
   type ResearchModelCatalogQuery,
   type WorkersAiModelCatalogBinding,
@@ -52,6 +53,29 @@ function binding(models: ReturnType<typeof vi.fn>): WorkersAiModelCatalogBinding
 }
 
 describe("research model catalog", () => {
+  it("lists built-in models for global Settings without consulting any project or D1", async () => {
+    const db = database(false);
+    const aiModels = vi.fn(async ({ page }: AiModelsSearchParams) => page === 1 ? [workersModel("@cf/zai-org/glm-5.3-flash")] : []);
+    const service = createResearchModelCatalogService({ database: db, workersAi: binding(aiModels) });
+
+    const result = await service.listWorkersAiForService(ownerContext());
+
+    expect(result.protocol).toBe(SERVICE_MODEL_CATALOG_PROTOCOL);
+    expect(result).not.toHaveProperty("project_id");
+    expect(result.models[0]?.model_id).toBe("@cf/zai-org/glm-5.3-flash");
+    expect(db.prepare).not.toHaveBeenCalled();
+  });
+
+  it("requires an authenticated owner for global catalogs before database or provider calls", async () => {
+    const db = database(false), aiModels = vi.fn(async () => []);
+    const service = createResearchModelCatalogService({ database: db, workersAi: binding(aiModels) });
+
+    await expect(service.listWorkersAiForService(ownerContext({ client_class: "trusted_agent" })))
+      .rejects.toMatchObject({ code: "MODEL_CATALOG_OWNER_REQUIRED", status: 403 });
+    expect(db.prepare).not.toHaveBeenCalled();
+    expect(aiModels).not.toHaveBeenCalled();
+  });
+
   it("lists a bounded Workers AI text-generation page and confirms the next page", async () => {
     const aiModels = vi.fn(async (input: { page?: number } = {}) =>
       input.page === 1 ? [workersModel("@cf/example/alpha")] : [workersModel("@cf/example/beta")]);

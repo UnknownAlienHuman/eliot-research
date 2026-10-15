@@ -16,7 +16,7 @@ export async function handleResearchModelCatalog(
     }
   }
   const projectId = query.get("project_id");
-  if (!projectId) throw new HttpRequestError("MODEL_CATALOG_PROJECT_INVALID", 400, "Select a project for model configuration");
+  if (projectId === "") throw new HttpRequestError("MODEL_CATALOG_PROJECT_INVALID", 400, "Project id is invalid");
   const task = query.get("task");
   if (task !== null && task !== "text-generation") {
     throw new HttpRequestError("MODEL_CATALOG_REQUEST_INVALID", 400, "Only the text generation catalog is supported");
@@ -50,8 +50,13 @@ export async function handleResearchModelCatalog(
   });
   const providerId = query.get("provider_id");
   try {
-    const result = providerId === null || providerId === "cloudflare-workers-ai"
-      ? await service.listWorkersAi(context, projectId, input)
+    const workersAiProvider = providerId === null || providerId === "cloudflare-workers-ai";
+    if (projectId === null) {
+      const result = workersAiProvider ? await service.listWorkersAiForService(context, input)
+        : await service.listExternalProviderForService(context, providerId, input);
+      return apiResult(request, env, result);
+    }
+    const result = workersAiProvider ? await service.listWorkersAi(context, projectId, input)
       : await service.listExternalProvider(context, projectId, providerId, input);
     return apiResult(request, env, result);
   } catch (error) {

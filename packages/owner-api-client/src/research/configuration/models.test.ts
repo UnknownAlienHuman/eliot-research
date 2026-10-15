@@ -126,6 +126,32 @@ describe('research model catalog request shape', () => {
     expect(page.models).toEqual([]);
   });
 
+  it('reads the global model catalog without a project selector', async () => {
+    const { http, calls } = recorder(envelope({
+      protocol: 'eliotr.service-model-catalog.v1', task: 'text-generation', catalog_scope: 'workers_ai',
+      provider_id: 'cloudflare-workers-ai', models: [],
+      pagination: { page: 1, per_page: 20, has_more: false, next_page: null, coverage: 'complete', probe: 'next_page_empty' },
+    }));
+    const api = createResearchModelConfigurationApi(http, errors, createSessionEpoch());
+
+    const result = await api.readServiceModelCatalog(generation, { providerId: 'workers-ai' });
+
+    expect(calls[0]?.path).toBe('/api/v1/system/research-models?page=1&per_page=20&task=text-generation&provider_id=cloudflare-workers-ai');
+    expect(calls[0]?.init?.method).toBe('GET');
+    expect(result.protocol).toBe('eliotr.service-model-catalog.v1');
+    expect(result).not.toHaveProperty('project_id');
+  });
+
+  it('rejects project-specific fields on the global catalog instead of inventing a global project', async () => {
+    const { http } = recorder(envelope({
+      protocol: 'eliotr.service-model-catalog.v1', project_id: 'project-1', task: 'text-generation',
+      catalog_scope: 'workers_ai', provider_id: 'cloudflare-workers-ai', models: [],
+      pagination: { page: 1, per_page: 20, has_more: false, next_page: null, coverage: 'complete', probe: 'next_page_empty' },
+    }));
+    const api = createResearchModelConfigurationApi(http, errors, createSessionEpoch());
+    await expect(api.readServiceModelCatalog(generation)).rejects.toThrow(/SCHEMA_MISMATCH/u);
+  });
+
   it('decodes catalog availability, capability and billing as separate facts', async () => {
     const body = {
       protocol: 'eliotr.research-model-catalog.v1',

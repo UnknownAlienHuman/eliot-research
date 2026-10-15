@@ -9,7 +9,7 @@ export { createChangesApi } from './history-changes/changes';
 export { createResearchSessionProjectionAdapter } from './session-projection/adapter';
 export { PROJECTION_METHOD } from './session-projection/session';
 
-export type { ResearchModelCatalogPage, ResearchProjectModelConfiguration, ResearchModelConfigurationRevision } from './configuration/models';
+export type { ResearchModelCatalogPage, ServiceModelCatalogPage, ResearchProjectModelConfiguration, ResearchModelConfigurationRevision } from './configuration/models';
 export type { ResearchConfigurationView, ResearchRunReadiness, ResearchConfigurationState } from './configuration/readiness';
 export type { ResearchRunRequest, ResearchRunsApi, ResearchRunStatusView, ResearchRunLaunchView, ResearchRunStatusDecoder } from './runs/authority';
 export type { ResearchRunWire } from './runs/wire';

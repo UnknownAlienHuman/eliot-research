@@ -23,6 +23,7 @@ export {
 } from './transport-policy';
 
 export const RESEARCH_MODEL_CATALOG_PROTOCOL = 'eliotr.research-model-catalog.v1' as const;
+export const SERVICE_MODEL_CATALOG_PROTOCOL = 'eliotr.service-model-catalog.v1' as const;
 export const RESEARCH_PROJECT_MODEL_CONFIGURATION_PROTOCOL =
   'eliotr.research-project-model-configuration.v1' as const;
 export const WORKERS_AI_ROUTE_PROVIDER_ID = 'workers-ai' as const;
@@ -85,6 +86,10 @@ export type ResearchModelCatalogPage = Readonly<{
     coverage: 'complete' | 'partial' | 'unknown';
     probe: 'next_page_empty' | 'next_page_non_empty' | 'next_page_unavailable' | 'provider_reported';
   }>;
+}>;
+
+export type ServiceModelCatalogPage = Omit<ResearchModelCatalogPage, 'protocol' | 'project_id'> & Readonly<{
+  protocol: typeof SERVICE_MODEL_CATALOG_PROTOCOL;
 }>;
 
 export type ResearchModelSelectionSummary = Readonly<{
@@ -344,17 +349,19 @@ export function createResearchModelConfigurationApi(
   }
 
   /** Preflight for the catalog request is the caller's epoch check; decode stays pure. */
-  function decodeCatalog(value: unknown, expectedGeneration: string, expectedProject: string,
-    request: ResearchModelCatalogRequest): ResearchModelCatalogPage {
+  function decodeCatalog(value: unknown, expectedGeneration: string, expectedProject: string | undefined,
+    request: ResearchModelCatalogRequest): ResearchModelCatalogPage | ServiceModelCatalogPage {
     const envelope = exactRecord(value, ['data', 'trace_id', 'deployment_generation'], 'catalog envelope');
     if (typeof envelope.trace_id !== 'string' || !TRACE_ID.test(envelope.trace_id)) schemaMismatch('catalog trace_id is invalid');
     if (generation(envelope.deployment_generation) !== expectedGeneration) {
       generationMismatch('Deployment changed. Refresh the model catalog.');
     }
-    const data = exactRecord(envelope.data, ['protocol', 'project_id', 'task', 'catalog_scope', 'provider_id', 'models', 'pagination'], 'catalog response');
-    const projectId = readIdentifier(data.project_id, 'project_id');
+    const data = exactRecord(envelope.data, ['protocol', ...(expectedProject === undefined ? [] : ['project_id']),
+      'task', 'catalog_scope', 'provider_id', 'models', 'pagination'], 'catalog response');
+    const projectId = expectedProject === undefined ? undefined : readIdentifier(data.project_id, 'project_id');
     const providerId = boundedText(data.provider_id, 'provider_id', 64);
-    if (data.protocol !== RESEARCH_MODEL_CATALOG_PROTOCOL || projectId !== expectedProject ||
+    const protocol = expectedProject === undefined ? SERVICE_MODEL_CATALOG_PROTOCOL : RESEARCH_MODEL_CATALOG_PROTOCOL;
+    if (data.protocol !== protocol || projectId !== expectedProject ||
         data.task !== 'text-generation' || !PROVIDER_IDENTIFIER.test(providerId) ||
         (data.catalog_scope !== 'workers_ai' && data.catalog_scope !== 'external_provider') ||
         (request.providerId !== undefined && request.providerId !== providerId) ||
@@ -391,10 +398,12 @@ export function createResearchModelConfigurationApi(
         pagination.next_page !== (pagination.has_more === true ? page + 1 : null) || pagination.probe !== expectedProbe) {
       schemaMismatch('catalog pagination is inconsistent with the requested page');
     }
-    return Object.freeze({ protocol: RESEARCH_MODEL_CATALOG_PROTOCOL, project_id: projectId, task: 'text-generation',
+    const body: Omit<ResearchModelCatalogPage, 'protocol' | 'project_id'> = Object.freeze({ task: 'text-generation',
       catalog_scope: data.catalog_scope, provider_id: providerId, models: Object.freeze(models),
       pagination: Object.freeze({ page, per_page: perPage, has_more: pagination.has_more,
         next_page: pagination.next_page as number | null, coverage: pagination.coverage, probe: pagination.probe }) });
+    return expectedProject === undefined ? Object.freeze({ protocol: SERVICE_MODEL_CATALOG_PROTOCOL, ...body })
+      : Object.freeze({ protocol: RESEARCH_MODEL_CATALOG_PROTOCOL, project_id: expectedProject, ...body });
   }
   function decodeModelSelection(value: unknown): ResearchModelSelectionSummary {
     if (!isRecord(value)) schemaMismatch('model selection is invalid');
@@ -507,10 +516,10 @@ export function createResearchModelConfigurationApi(
     return `${CONFIGURATION_PATH}/${encodeURIComponent(assertId(projectId, 'Project id'))}/model-configuration`;
   }
 
-  async function readResearchModelCatalog(projectId: string, expectedGeneration: string,
-    request: ResearchModelCatalogRequest = {}, signal?: AbortSignal): Promise<ResearchModelCatalogPage> {
+  async function readCatalog(projectId: string | undefined, expectedGeneration: string,
+    request: ResearchModelCatalogRequest = {}, signal?: AbortSignal): Promise<ResearchModelCatalogPage | ServiceModelCatalogPage> {
     const captured = currentOrStale();
-    assertId(projectId, 'Project id');
+    if (projectId !== undefined) assertId(projectId, 'Project id');
     assertId(expectedGeneration, 'Deployment generation');
     if (request.providerId !== undefined && (typeof request.providerId !== 'string' || !PROVIDER_IDENTIFIER.test(request.providerId))) {
       throw errors({
@@ -532,7 +541,8 @@ export function createResearchModelConfigurationApi(
         retryable: false,
       });
     }
-    const params = new URLSearchParams({ project_id: projectId, page: String(page), per_page: String(perPage), task: 'text-generation' });
+    const params = new URLSearchParams({ ...(projectId === undefined ? {} : { project_id: projectId }),
+      page: String(page), per_page: String(perPage), task: 'text-generation' });
     if (catalogAdapterId !== undefined) params.set('provider_id', catalogAdapterId);
     if (request.search !== undefined) {
       if (typeof request.search !== 'string' || new TextEncoder().encode(request.search).byteLength > 512 ||
@@ -553,6 +563,20 @@ export function createResearchModelConfigurationApi(
     const normalized = { ...request, ...(catalogAdapterId === undefined ? {} : { providerId: catalogAdapterId }), page, perPage };
     const result = decodeCatalog(raw, expectedGeneration, projectId, normalized);
     if (!epoch.isCurrent(captured)) stale();
+    return result;
+  }
+
+  async function readResearchModelCatalog(projectId: string, expectedGeneration: string,
+    request: ResearchModelCatalogRequest = {}, signal?: AbortSignal): Promise<ResearchModelCatalogPage> {
+    const result = await readCatalog(projectId, expectedGeneration, request, signal);
+    if (result.protocol !== RESEARCH_MODEL_CATALOG_PROTOCOL) schemaMismatch('Expected a project catalog response.');
+    return result;
+  }
+
+  async function readServiceModelCatalog(expectedGeneration: string, request: ResearchModelCatalogRequest = {},
+    signal?: AbortSignal): Promise<ServiceModelCatalogPage> {
+    const result = await readCatalog(undefined, expectedGeneration, request, signal);
+    if (result.protocol !== SERVICE_MODEL_CATALOG_PROTOCOL) schemaMismatch('Expected a service catalog response.');
     return result;
   }
 
@@ -622,6 +646,7 @@ export function createResearchModelConfigurationApi(
 
   return {
     readResearchModelCatalog,
+    readServiceModelCatalog,
     readResearchProjectModelConfiguration,
     selectResearchProjectModelConfiguration,
   };
