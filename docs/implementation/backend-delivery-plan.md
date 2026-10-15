@@ -17,7 +17,20 @@ coverage. Inbox publication and the earlier owner report also have live receipts
 Global native readiness, with and without a project, returned 200/ready/current
 at 22:00 UTC. Existing qualified native route pins were activated through the
 existing registry/proof stores; no project configuration or new proof was made.
-Actual browser upload through the new project-attachment path is still pending.
+At 22:38 UTC the new project-attachment path passed an actual browser upload.
+Capture, toMarkdown, admission, source-identity and project PUT each returned 200
+once; fresh owner GET and Sources UI confirmed the committed source and project
+revision 2. By 22:39 both native AI Search Items were completed in the expected
+shared-instance project folder, with metadata matching D1. No manual membership
+write or repeated compound upload was used.
+
+A new browser question on that uploaded source was accepted as
+`run-c15e9f3d05c71fedc75c0f01762586e65fcc03ae8183f707`. D1 confirms zero explicit
+project model selections and an immutable snapshot-v2 on the two global routes.
+After synthesis, stage 13 VERIFY reported `WORKFLOW_OUTPUT_CORRUPT` with an
+unknown outcome requiring reconciliation. The existing outputs are retained;
+no second question or repeated model call is used to conceal this failure.
+New-source-to-report acceptance remains open pending its bounded diagnosis.
 
 The owner's latest instruction replaces direct doctor-to-GitHub delivery with
 native Cloudflare diagnosis → a connected MCP agent → that agent's GitHub MCP.

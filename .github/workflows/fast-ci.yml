@@ -78,7 +78,7 @@ jobs:
           test/research-model-gateway-runtime.test.ts
           test/mcp-client-diagnostic-http.test.ts
           test/mcp-client-diagnostic-roundtrip.test.ts
-          test/doctor.test.ts
+          test/doctor-mcp-delivery.test.ts
           test/scheduled-isolation.test.ts
           test/project-scope-currentness.test.ts
           test/mcp-computer-agent-dispatch-adapter.test.ts
