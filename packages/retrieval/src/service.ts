@@ -446,9 +446,6 @@ export function createRetrievalQueryService(ports: RetrievalQueryPorts): Retriev
         ? ports.lanes.executorFor("SEM")
         : null;
       const managedOutcomeRequired = semanticExecutor?.managed_outcome_capable === true;
-      if (initialPlan.lanes.includes("SEM") && semanticExecutor?.managed_outcome_capable === false) {
-        failQuery("RETRIEVAL_AUTHORITY_STALE", "managed semantic dispatch requires the single-call outcome adapter");
-      }
       if (managedOutcomeRequired && (
         ports.admission === undefined ||
         ports.results.loadPending === undefined ||

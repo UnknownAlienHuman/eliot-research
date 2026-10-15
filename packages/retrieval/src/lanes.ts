@@ -231,34 +231,20 @@ function semanticExpansion(request: RetrievalRequest): 0 | 1 | 2 | 3 {
   }
 }
 
-// IMPLEMENTED_NOT_LIVE: ER-04 SEM lane executor over the managed-search surface with pinned-generation translation and honest degradation; live AI Search readback/promotion receipts remain separate.
 /**
- * Q1 governed SEM executor over the managed-search surface.
+ * SEM adapter for the ordinary search port and optional durable managed-outcome port.
  *
- * Generation pinning is inherited from the managed port, never reimplemented
- * here: the registry-backed port reads the D1 AI Search generation registry
- * before provider access, decodes every chunk against the promoted
- * `index_generation` plus the frozen ScopeSnapshot membership, and re-reads
- * the registry after retrieval, discarding the provider output with
- * `AI_SEARCH_MANAGED_REGISTRY_CHANGED` when the active head rotated
- * mid-read. This executor only translates that discipline into the lane
- * contract `executePlannedLanes` and the Q3 service already understand:
- * `AI_SEARCH_MANAGED_NOT_PROMOTED` becomes `SEARCH_UNAVAILABLE` (honest
- * `SKIPPED_UNAVAILABLE`, never a fabricated lane), while a mid-read rotation
- * becomes `SEARCH_INCOMPLETE` (visible `FAILED`, never served stale).
- * Context expansion follows the compiled query plan so SEM uses the same
- * per-product expansion as the planner that ordered it after direct lanes.
+ * Ordinary semantic retrieval calls `search` and returns its candidates through
+ * the standard lane pipeline. Callers that explicitly provide durable managed
+ * admission hooks use `searchManaged`, which couples the provider-ordered list
+ * to its invocation outcome. Context expansion follows the compiled query plan
+ * so SEM uses the same per-product expansion as the planner that ordered it
+ * after direct lanes.
  *
- * Envelope translation (disclosed): the managed port decodes provider rows
- * into unresolved locators carrying a local `proof_state` marker
- * (`locator/strict-decoder.ts`). Nothing downstream reads that marker, and
- * the exact evidence authority strict-parses `LocatorCandidate`, so a marker
- * left in place fails resolution with `EVIDENCE_INPUT_INVALID` for every
- * managed candidate. The executor therefore drops the local-only marker at
- * this layer boundary and returns plain `LocatorCandidate`s, exactly the
- * `ManagedSearchPort` contract type. Strict validation is not weakened:
- * provider bytes were already strictly decoded inside the managed port, and
- * the evidence authority re-validates every field that remains.
+ * Managed adapters may mark unresolved locators with a local-only `proof_state`
+ * marker (`locator/strict-decoder.ts`). Drop that marker at this boundary so
+ * downstream strict evidence validation receives only `LocatorCandidate`
+ * fields; the exact evidence authority still validates every remaining field.
  */
 export function createSemLaneExecutor(managed: ManagedSearchPort): RetrievalLaneExecutor {
   const preflightManagedCall = async (

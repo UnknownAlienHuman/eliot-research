@@ -14,6 +14,7 @@ import {
   reciprocalRankFuse,
   RetrievalQueryError,
 } from "./index.js";
+import { createSemLaneExecutor } from "./lanes.js";
 
 describe("retrieval planning", () => {
   it("does not rerank exhaustive operations", () => {
@@ -309,6 +310,58 @@ describe("Q3 query orchestration", () => {
     expect(result.evidence_pack.scope_snapshot_ref).toEqual({ id: frozen.snapshot_id, revision: frozen.revision });
     expect(result.trace.scope_snapshot).toEqual(frozen);
     expect(result.coverage_claim).toBe("SAMPLED");
+  });
+
+  it("runs ordinary semantic search through the query service without managed-outcome admission", async () => {
+    const scope = q3Scope();
+    const candidate = q3Candidate({ candidate_id: "c-native-sem", lane: "SEM" });
+    let providerCalls = 0;
+    let observed: {
+      readonly raw_query: string;
+      readonly lanes: readonly ("SEM" | "LEX" | "LITERAL")[];
+      readonly scope_snapshot_id: string;
+    } | null = null;
+    const semantic = createSemLaneExecutor({
+      async search(request, lanes) {
+        providerCalls += 1;
+        observed = {
+          raw_query: request.raw_query,
+          lanes,
+          scope_snapshot_id: request.scope_snapshot.snapshot_id,
+        };
+        return [candidate];
+      },
+    });
+    expect(semantic.managed_outcome_capable).toBe(false);
+
+    const harness = q3Harness({ scope });
+    expect(harness.ports.admission).toBeUndefined();
+    expect(harness.ports.results.loadPending).toBeUndefined();
+    expect(harness.ports.results.settle).toBeUndefined();
+    const ports: RetrievalQueryPorts = {
+      ...harness.ports,
+      lanes: {
+        executorFor(lane) {
+          return lane === "SEM" ? semantic : harness.ports.lanes.executorFor(lane);
+        },
+      },
+    };
+
+    const result = await createRetrievalQueryService(ports).query({
+      request: q3Request({ scope_snapshot: scope }),
+      idempotency_key: "native-sem-search",
+    });
+
+    expect(providerCalls).toBe(1);
+    expect(observed).toEqual({
+      raw_query: "needle",
+      lanes: ["SEM"],
+      scope_snapshot_id: scope.snapshot_id,
+    });
+    expect(result.trace.lanes_used).toContain("SEM");
+    expect(result.trace.candidates_by_lane["SEM"]).toBe(1);
+    expect(result.evidence_pack.resolved_evidence.map((item) => item.handle.source_revision_ref)).toEqual(["rev-1"]);
+    expect(harness.store.has("native-sem-search")).toBe(true);
   });
 
   it("degrades a failed semantic lane visibly while keeping exact results", async () => {
