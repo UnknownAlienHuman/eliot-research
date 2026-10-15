@@ -4,6 +4,7 @@ import type {
   CaptureResearchRunConfigurationInput,
   SelectedResearchProjectConfiguration,
 } from "./research-run-configuration.js";
+import type { ResearchProjectConfigurationGrantReadAuthority } from "./research-project-configuration.js";
 
 export interface ResearchRunConfigurationAdmissionInputV1 {
   readonly actor: ResearchRunConfigurationAssociation;
@@ -12,6 +13,8 @@ export interface ResearchRunConfigurationAdmissionInputV1 {
   readonly configuration_required?: number;
   /** Explicit owner-selected configuration project from the additive v3 run transport. */
   readonly selected_project_id?: string;
+  /** Current verified grant lease used to select grantor-owned configuration for a service actor. */
+  readonly project_configuration_read_authority?: ResearchProjectConfigurationGrantReadAuthority;
 }
 
 export interface ResearchRunConfigurationAdmissionDependenciesV1<ResolvedConfiguration> {
@@ -51,11 +54,27 @@ export async function resolveResearchRunConfigurationAdmission<ResolvedConfigura
   dependencies: ResearchRunConfigurationAdmissionDependenciesV1<ResolvedConfiguration>,
 ): Promise<ResolvedConfiguration> {
   if (input.new_run) {
-    const selectedProjectId = input.selected_project_id === undefined
-      ? uniqueProjectScopeId(input.scope_expression, dependencies.require_single_owned_project)
-      : input.selected_project_id;
+    const authority = input.project_configuration_read_authority;
+    let selectedProjectId: string;
+    if (authority === undefined) {
+      selectedProjectId = input.selected_project_id === undefined
+        ? uniqueProjectScopeId(input.scope_expression, dependencies.require_single_owned_project)
+        : input.selected_project_id;
+    } else {
+      const grant = authority.lease.grant;
+      const scopedProjectId = uniqueProjectScopeId(input.scope_expression, dependencies.require_single_owned_project);
+      if (grant.state !== "ACTIVE" || !grant.allowed_operations.includes("run") ||
+          scopedProjectId !== grant.project_id ||
+          (input.selected_project_id !== undefined && input.selected_project_id !== grant.project_id)) {
+        dependencies.require_valid_configuration_marker();
+      }
+      await authority.lease.requireGrantCurrent();
+      await authority.require_current_scope();
+      selectedProjectId = grant.project_id;
+    }
     return dependencies.capture({
       ...input.actor,
+      ...(authority === undefined ? {} : { project_configuration_read_authority: authority }),
       select_project_configuration: () => dependencies.select_current_project_configuration(selectedProjectId),
     });
   }

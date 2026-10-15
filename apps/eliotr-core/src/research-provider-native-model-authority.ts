@@ -14,6 +14,8 @@ import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { createResearchProviderKeyConfigurationService } from "./research-provider-key-configuration-service.js";
 import { readResearchProviderKeyModelUseNativeScope } from "@eliotr/cloudflare-research-configuration/research-provider-key-model-use-current-scope.js";
 import type { ResearchProviderKeyModelUseDbPhase } from "@eliotr/cloudflare-research-configuration/research-provider-key-model-use-store.js";
+import type { ResearchProjectConfigurationGrantReadAuthority } from
+  "@eliotr/cloudflare-research-configuration/research-project-configuration.js";
 
 export type ResearchProviderNativeModelCurrentScopeV1 = ProviderNativeModelCurrentScopeV1;
 export type ReadResearchProviderNativeModelCurrentScope = ReadProviderNativeModelCurrentScope;
@@ -71,5 +73,32 @@ export function createOwnerResearchProviderNativeModelAuthority(
       readResearchProviderKeyModelUseNativeScope(env.CORE_DB, request, { allowed_phases: allowedPhases }),
     readConfiguredOperation: (request) => keyConfiguration.readConfiguredOperation(
       context, projectId, request.operation_id),
+  });
+}
+
+/** Delegated reads use the grantor's existing completed qualification and the shared sanitized D1 key reader. */
+export function createGrantorResearchProviderNativeModelAuthority(
+  env: Env,
+  context: AuthenticatedRequestContext,
+  authority: ResearchProjectConfigurationGrantReadAuthority,
+  projectId: string,
+  allowedPhases: readonly ResearchProviderKeyModelUseDbPhase[],
+): ProviderNativeModelAuthorityPort {
+  const grant = authority.lease.grant;
+  if ((context.client_class !== "trusted_agent" && context.client_class !== "named_api_client") ||
+      context.request.signal.aborted || context.principal_ref !== grant.grantee.subject ||
+      grant.grantee.authentication_method !== "service_token" || grant.project_id !== projectId ||
+      grant.state !== "ACTIVE" || !grant.allowed_operations.includes("run")) {
+    providerNativeModelFailure("PROVIDER_NATIVE_MODEL_AUTHORITY_STALE",
+      "current project grant does not authorize this native-model read");
+  }
+  return createResearchProviderNativeModelAuthority({
+    env,
+    current_scope: async (request) => {
+      if (request.owner_ref !== grant.grantor_principal_ref || request.project_id !== projectId) return null;
+      await authority.lease.requireGrantCurrent();
+      await authority.require_current_scope();
+      return readResearchProviderKeyModelUseNativeScope(env.CORE_DB, request, { allowed_phases: allowedPhases });
+    },
   });
 }

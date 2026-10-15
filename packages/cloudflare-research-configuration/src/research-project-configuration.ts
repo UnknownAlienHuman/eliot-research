@@ -10,6 +10,7 @@ import {
   type ResearchProjectModelSelection,
 } from "@eliotr/cloudflare-research";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
+import type { ProjectClientGrant } from "@eliotr/contracts";
 import type { ProviderNativeModelAuthorityPort } from "@eliotr/cloudflare-native-models";
 import { parseResearchSemanticConfiguration } from "./research-semantic-configuration-schema.js";
 import {
@@ -76,6 +77,19 @@ export type ResearchProjectNativeModelAuthorityFactory = (
   projectId: string,
 ) => ProviderNativeModelAuthorityPort;
 
+/** The current D1-backed lease returned by delegated project admission. */
+export interface ResearchProjectConfigurationGrantLease {
+  readonly grant: ProjectClientGrant;
+  readonly project_generation: number;
+  requireGrantCurrent(): Promise<void>;
+}
+
+/** Read-only project configuration authority carried by a verified run grant. */
+export interface ResearchProjectConfigurationGrantReadAuthority {
+  readonly lease: ResearchProjectConfigurationGrantLease;
+  readonly require_current_scope: () => Promise<void>;
+}
+
 interface CurrentResearchProjectAuthority {
   readonly owner_id: string;
   readonly project_generation: number;
@@ -87,6 +101,8 @@ export interface ResearchProjectModelConfigurationService {
     readonly after?: string;
   }): Promise<ResearchProjectModelConfigurationPage>;
   readSelected(context: AuthenticatedRequestContext, projectId: string): Promise<SelectedResearchProjectConfiguration | null>;
+  readSelectedForGrant(context: AuthenticatedRequestContext,
+    authority: ResearchProjectConfigurationGrantReadAuthority): Promise<SelectedResearchProjectConfiguration | null>;
   selectExisting(context: AuthenticatedRequestContext, projectId: string, input: {
     readonly expected_revision: number | null;
     readonly configuration_ref: string;
@@ -230,6 +246,43 @@ export function createResearchProjectModelConfigurationService(options: {
     return result;
   }
 
+  async function assertGrantAuthority(context: AuthenticatedRequestContext,
+    authority: ResearchProjectConfigurationGrantReadAuthority): Promise<CurrentResearchProjectAuthority> {
+    const { lease } = authority;
+    const grant = lease.grant;
+    const project = projectId(grant.project_id);
+    if ((context.client_class !== "trusted_agent" && context.client_class !== "named_api_client") ||
+        !IDENTIFIER.test(context.principal_ref) || !IDENTIFIER.test(context.credential_generation) ||
+        context.request.signal.aborted || grant.grantee.authentication_method !== "service_token" ||
+        grant.grantee.subject !== context.principal_ref || grant.state !== "ACTIVE" ||
+        !grant.allowed_operations.includes("run") || !IDENTIFIER.test(grant.grantor_principal_ref) ||
+        !Number.isSafeInteger(lease.project_generation) || lease.project_generation < 1) {
+      fail("RESEARCH_PROJECT_MODEL_CONFIGURATION_AUTHORITY_CHANGED", 409,
+        "Current project grant does not authorize this configuration read");
+    }
+    await lease.requireGrantCurrent();
+    await authority.require_current_scope();
+    let row: { readonly project_generation: number } | null;
+    try {
+      row = await options.database.prepare(
+        "SELECT p.generation AS project_generation FROM project p JOIN project_owner o " +
+        "ON o.project_id=p.project_id WHERE p.project_id=?1 AND o.principal_ref=?2 LIMIT 1",
+      ).bind(project, grant.grantor_principal_ref).first<{ readonly project_generation: number }>();
+    } catch (cause) {
+      fail("RESEARCH_PROJECT_MODEL_CONFIGURATION_STORAGE_UNAVAILABLE", 503,
+        "Current grantor project authority is unavailable", cause);
+    }
+    if (row === null || !Number.isSafeInteger(row.project_generation) || row.project_generation < 1 ||
+        row.project_generation !== lease.project_generation) {
+      fail("RESEARCH_PROJECT_MODEL_CONFIGURATION_AUTHORITY_CHANGED", 409,
+        "Grantor project authority changed during the configuration read");
+    }
+    if (options.assertCurrentProjectAuthority !== undefined) {
+      await options.assertCurrentProjectAuthority(context, project);
+    }
+    return Object.freeze({ owner_id: grant.grantor_principal_ref, project_generation: row.project_generation });
+  }
+
   return Object.freeze({
     async readPage(context: AuthenticatedRequestContext, projectRaw: string,
       input: { readonly limit?: number; readonly after?: string } = {}) {
@@ -263,6 +316,29 @@ export function createResearchProjectModelConfigurationService(options: {
           configuration_json: selection.revision.configuration_json,
           configuration: selection.revision.configuration });
       });
+    },
+
+    async readSelectedForGrant(context: AuthenticatedRequestContext,
+      authority: ResearchProjectConfigurationGrantReadAuthority) {
+      const before = await assertGrantAuthority(context, authority);
+      const project = authority.lease.grant.project_id;
+      const selection = await store.readSelected(before.owner_id, project);
+      let selected: SelectedResearchProjectConfiguration | null = null;
+      if (selection !== null) {
+        await validateConfiguration(selection.revision.configuration, before.owner_id, project,
+          nativeAuthorityFor(selection.revision.configuration, context, project));
+        selected = Object.freeze({ protocol: RESEARCH_PROJECT_MODEL_CONFIGURATION_PROTOCOL,
+          owner_id: before.owner_id, project_id: project, selection_revision: selection.selection_revision,
+          configuration_ref: selection.configuration_ref, configuration_sha256: selection.configuration_sha256,
+          configuration_json: selection.revision.configuration_json,
+          configuration: selection.revision.configuration });
+      }
+      const after = await assertGrantAuthority(context, authority);
+      if (after.owner_id !== before.owner_id || after.project_generation !== before.project_generation) {
+        fail("RESEARCH_PROJECT_MODEL_CONFIGURATION_AUTHORITY_CHANGED", 409,
+          "Grantor project authority changed during the configuration read");
+      }
+      return selected;
     },
 
     async selectExisting(context: AuthenticatedRequestContext, projectRaw: string, input: {
@@ -332,4 +408,13 @@ export async function readSelectedResearchProjectConfiguration(
   projectIdValue: string,
 ): Promise<SelectedResearchProjectConfiguration | null> {
   return service.readSelected(context, projectIdValue);
+}
+
+/** Internal run-admission read under the current project grant; owner HTTP reads remain owner-only. */
+export async function readSelectedResearchProjectConfigurationForGrant(
+  service: ResearchProjectModelConfigurationService,
+  context: AuthenticatedRequestContext,
+  authority: ResearchProjectConfigurationGrantReadAuthority,
+): Promise<SelectedResearchProjectConfiguration | null> {
+  return service.readSelectedForGrant(context, authority);
 }

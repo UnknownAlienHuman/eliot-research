@@ -335,16 +335,24 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       if (scopeAuthority === null) fail("RESEARCH_AUTHORITY_STALE", "scope snapshot is unavailable", 409);
       const runConfigurationActor = Object.freeze({ operation_id, investigation_id,
         principal_ref: context.principal_ref, deployment_generation: admittedDeploymentGeneration });
+      const requireCurrentConfigurationScope = async () => {
+        const scopePorts = createD1ScopePorts(db, { principal_ref: context.principal_ref,
+          client_class: context.client_class, credential_generation: context.credential_generation });
+        await scopePorts.requireCurrentScope(scopeAuthority.snapshot).catch(mapRetrievalError);
+        await delegated?.requireScopeCurrent(scopeAuthority.snapshot);
+      };
+      const projectConfigurationReadAuthority = delegated === undefined ? undefined : {
+        lease: delegated.lease,
+        require_current_scope: requireCurrentConfigurationScope,
+      };
       const admissionConfiguration = await resolveResearchRunAdmissionConfiguration(env, {
         actor: runConfigurationActor, context, scope_expression: request.scope_expression, new_run: pre === null,
         ...(parsed.selection === null ? {} : { selected_project_id: parsed.selection.configuration_project_id }),
         ...(priorWorkflow === null ? {} : { configuration_required: priorWorkflow.configuration_required }),
-        require_current_scope: async () => {
-          const scopePorts = createD1ScopePorts(db, { principal_ref: context.principal_ref,
-            client_class: context.client_class, credential_generation: context.credential_generation });
-          await scopePorts.requireCurrentScope(scopeAuthority.snapshot).catch(mapRetrievalError);
-          await delegated?.requireScopeCurrent(scopeAuthority.snapshot);
-        },
+        ...(projectConfigurationReadAuthority === undefined ? {} : {
+          project_configuration_read_authority: projectConfigurationReadAuthority,
+        }),
+        require_current_scope: requireCurrentConfigurationScope,
       });
       const lane = pre === null ? installedProtocol?.lane ?? "exploratory" :
         pre.head.lane === "confirmatory" || pre.head.lane === "exploratory" || pre.head.lane === "mixed_with_declared_split" ? pre.head.lane : null;

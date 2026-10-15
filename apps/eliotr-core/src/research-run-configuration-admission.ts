@@ -15,7 +15,11 @@ import { ResearchRunProjectSelectionFailure } from "@eliotr/cloudflare-research-
 import {
   createResearchProjectModelConfigurationServiceFromEnv,
   readSelectedResearchProjectConfiguration,
+  readSelectedResearchProjectConfigurationForGrant,
 } from "./research-project-configuration.js";
+import { createGrantorResearchProviderNativeModelAuthority } from "./research-provider-native-model-authority.js";
+import type { ResearchProviderKeyModelUseDbPhase } from
+  "@eliotr/cloudflare-research-configuration/research-provider-key-model-use-store.js";
 import type { Env } from "./env.js";
 import { ResearchServiceError, failResearch } from "./research-service-error.js";
 
@@ -70,6 +74,40 @@ function requireSingleOwnedProject(): never {
 
 function projectSelectionPort(input: ResearchRunConfigurationAdmissionInput, env: Env) {
   return async (projectId: string): Promise<SelectedResearchProjectConfiguration | null> => {
+    const delegatedAuthority = input.project_configuration_read_authority;
+    if (delegatedAuthority !== undefined) {
+      const grant = delegatedAuthority.lease.grant;
+      if (input.context.client_class === "owner_pwa" || grant.project_id !== projectId ||
+          grant.grantee.subject !== input.context.principal_ref ||
+          grant.grantee.authentication_method !== "service_token") {
+        failResearch("RESEARCH_AUTHORITY_STALE", "current project grant does not match the run configuration", 409);
+      }
+      const service = createResearchProjectModelConfigurationServiceFromEnv(env,
+        async (actor, authorizedProjectId) => {
+          if (actor.principal_ref !== input.context.principal_ref ||
+              actor.credential_generation !== input.context.credential_generation || authorizedProjectId !== projectId) {
+            failResearch("RESEARCH_AUTHORITY_STALE", "project configuration authority changed", 409);
+          }
+          await input.require_current_scope();
+          await delegatedAuthority.lease.requireGrantCurrent();
+          await delegatedAuthority.require_current_scope();
+        },
+        (actor, authorizedProjectId) => createGrantorResearchProviderNativeModelAuthority(env, actor,
+          delegatedAuthority, authorizedProjectId,
+          ["CONFIGURATION_IMPORT", "SELECTION_READBACK", "COMPLETE"] satisfies readonly ResearchProviderKeyModelUseDbPhase[]));
+      const selected = await readSelectedResearchProjectConfigurationForGrant(
+        service, input.context, delegatedAuthority,
+      );
+      if (selected === null) return null;
+      return {
+        owner_ref: selected.owner_id,
+        project_id: selected.project_id,
+        configuration_ref: selected.configuration_ref,
+        configuration_sha256: selected.configuration_sha256,
+        selection_revision: selected.selection_revision,
+        configuration_json: selected.configuration_json,
+      };
+    }
     // The explicit v3 selector and the scope-derived v1/v2 project both re-enter
     // this port, so principal, credential generation, the named project and the
     // current-scope fence stay identical for every admitted configuration.
@@ -104,6 +142,9 @@ export async function resolveResearchRunAdmissionConfiguration(
     new_run: input.new_run,
     ...(input.configuration_required === undefined ? {} : { configuration_required: input.configuration_required }),
     ...(input.selected_project_id === undefined ? {} : { selected_project_id: input.selected_project_id }),
+    ...(input.project_configuration_read_authority === undefined ? {} : {
+      project_configuration_read_authority: input.project_configuration_read_authority,
+    }),
   };
   const ports: ResearchRunConfigurationAdmissionDependenciesV1<ResolvedResearchRunConfiguration> = {
     capture: (capture: CaptureResearchRunConfigurationInput) => dependencies.capture(env, capture),

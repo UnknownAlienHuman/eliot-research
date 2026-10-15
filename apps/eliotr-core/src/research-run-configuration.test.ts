@@ -2,9 +2,19 @@
 import { describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
 import { canonicalJson } from "@eliotr/platform-cloudflare";
+import type { ProjectClientGrant } from "@eliotr/contracts";
+import { WorkflowCheckpointError } from "@eliotr/cloudflare-workflows";
+import {
+  resolveResearchRunConfigurationAdmission,
+  type ResearchRunConfigurationAdmissionDependenciesV1,
+  type ResearchRunConfigurationAdmissionInputV1,
+} from "@eliotr/cloudflare-research-configuration/research-run-configuration-admission.js";
+import type { ResearchProjectConfigurationGrantReadAuthority } from
+  "@eliotr/cloudflare-research-configuration/research-project-configuration.js";
 import {
   createD1ResearchRunConfigurationStore,
   RESEARCH_RUN_CONFIGURATION_PROTOCOL,
+  type ResearchRunConfigurationAssociation,
 } from "@eliotr/cloudflare-research";
 import type { Env } from "./env.js";
 import {
@@ -92,6 +102,7 @@ function selectedProjectConfiguration(input: {
   readonly profile_json: string;
   readonly owner_ref: string;
   readonly selection_revision: number;
+  readonly spend_policy_json?: string;
 }): SelectedResearchProjectConfiguration {
   const modelSelection = (stage: string, route: string) => ({ stage, route_ref: route, route_version: "version-1",
     candidate_ref: `candidate-${stage.toLowerCase()}`, candidate_sha256: "b".repeat(64),
@@ -108,7 +119,8 @@ function selectedProjectConfiguration(input: {
       ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON: semantic,
       ELIOTR_MODEL_PROFILE_DEFINITION_JSON: canonicalJson({ profile: "selected" }),
       ELIOTR_MODEL_PROFILE_PROVENANCE_REF: "profile-provenance-1",
-      ELIOTR_MODEL_SPEND_POLICY_JSON: canonicalJson({ protocol: "eliotr.research-owner-spend-template.v2" }),
+      ELIOTR_MODEL_SPEND_POLICY_JSON: input.spend_policy_json ??
+        canonicalJson({ protocol: "eliotr.research-owner-spend-template.v2" }),
       ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF: "spend-provenance-1",
       ELIOTR_RESEARCH_REPORT_CONFIG_JSON: canonicalJson({ report: "selected" }),
       ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF: "report-provenance-1",
@@ -159,7 +171,7 @@ type MemoryConfiguration = MemoryAssociation & {
   readonly created_at: string;
 };
 
-function memoryDatabase(requiredRun?: 0 | 1): {
+function memoryDatabase(requiredRun?: 0 | 1, semanticOwnerRef: string = actor.principal_ref): {
   readonly database: D1Database;
   readonly runs: Map<string, MemoryRun>;
   readonly configurations: Map<string, MemoryConfiguration>;
@@ -182,7 +194,7 @@ function memoryDatabase(requiredRun?: 0 | 1): {
                   byte_length: new TextEncoder().encode(semantic).byteLength,
                   protocol: "eliotr.research-semantic-config.v1",
                   created_at: "2026-10-14T00:00:00.000Z",
-                  created_by_principal_ref: actor.principal_ref,
+                  created_by_principal_ref: semanticOwnerRef,
                 } : null) as T | null;
               }
               if (query.includes("FROM research_workflow_run")) {
@@ -308,6 +320,101 @@ describe("research run configuration binding", () => {
     expect(initial.branch_query_budget_selection?.profile_id).toBe("profile-captured");
     expect(initial.branch_query_budget_selection?.budgets.candidate_limit).toBe(7);
     expect(replay.branch_query_budget_selection).toEqual(initial.branch_query_budget_selection);
+  });
+
+  it("captures grantor configuration and spend under the service actor, denying foreign or revoked grants", async () => {
+    const grantor = "owner-grantor-config-1";
+    let grantCurrent = true;
+    const grant: ProjectClientGrant = {
+      protocol: "eliotr.project-client-grant.v1",
+      grant_id: "grant-config-admission-1",
+      project_id: "project-1",
+      grantor_principal_ref: grantor,
+      revision: 4,
+      state: "ACTIVE",
+      grantee: { issuer: "https://test.cloudflareaccess.com", authentication_method: "service_token",
+        subject: "service-config-1.access" },
+      allowed_operations: ["run"],
+      ingest_namespace_ids: [],
+      expires_at: "2026-12-01T00:00:00.000Z",
+      created_at: "2026-10-15T00:00:00.000Z",
+      updated_at: "2026-10-15T00:00:00.000Z",
+    };
+    const authority: ResearchProjectConfigurationGrantReadAuthority = {
+      lease: {
+        grant,
+        project_generation: 3,
+        requireGrantCurrent: async () => {
+          if (!grantCurrent) throw new WorkflowCheckpointError("WORKFLOW_AUTHORITY_STALE");
+        },
+      },
+      require_current_scope: async () => {
+        if (!grantCurrent) throw new WorkflowCheckpointError("WORKFLOW_AUTHORITY_STALE");
+      },
+    };
+    const spendPolicy = canonicalJson({ protocol: "eliotr.research-owner-spend-template.v2",
+      principal_ref: grantor, policy_ref: "grantor-spend-policy-1" });
+    const selection = selectedProjectConfiguration({ profile_json: ownerProfileJson({
+      profile_id: "grantor-profile-1", profile_generation: 8, candidate_limit: 6,
+    }), owner_ref: grantor, selection_revision: 3, spend_policy_json: spendPolicy });
+
+    const startRun = (runActor: ResearchRunConfigurationAssociation, selected: SelectedResearchProjectConfiguration) => {
+      const { database, configurations } = memoryDatabase(undefined, grantor);
+      const env = { ...testEnv(database), AI: { gateway: () => undefined } } as unknown as Env;
+      let selectedReads = 0;
+      const dependencies: ResearchRunConfigurationAdmissionDependenciesV1<
+        Awaited<ReturnType<typeof captureResearchRunConfiguration>>
+      > = {
+        capture: (input) => captureResearchRunConfiguration(env, input),
+        read: (input) => readResearchRunConfiguration(env, input),
+        select_current_project_configuration: async (projectId) => {
+          selectedReads += 1;
+          expect(projectId).toBe(grant.project_id);
+          return selected;
+        },
+        require_single_owned_project: (): never => { throw new Error("SINGLE_PROJECT_REQUIRED"); },
+        require_valid_configuration_marker: (): never => { throw new WorkflowCheckpointError("WORKFLOW_AUTHORITY_STALE"); },
+      };
+      const input: ResearchRunConfigurationAdmissionInputV1 = {
+        actor: runActor,
+        scope_expression: { kind: "PROJECT", project_id: "project-1" },
+        new_run: true,
+        project_configuration_read_authority: authority,
+      };
+      const outcome = resolveResearchRunConfigurationAdmission(input, dependencies);
+      return { outcome, configurations, selectedReads: () => selectedReads };
+    };
+
+    const serviceActor = { ...actor, operation_id: "run-config-service-1",
+      investigation_id: "research-config-service-1", principal_ref: "service-config-1" };
+    const acceptedState = startRun(serviceActor, selection);
+    const accepted = await acceptedState.outcome;
+    expect(accepted).toMatchObject({ mode: "snapshot-v2", project_owner_ref: grantor, project_id: "project-1" });
+    expect(accepted.env.ELIOTR_MODEL_SPEND_POLICY_JSON).toBe(spendPolicy);
+    const snapshot = JSON.parse([...acceptedState.configurations.values()][0]?.configuration_json ?? "{}") as {
+      readonly association: { readonly principal_ref: string };
+      readonly project_configuration: { readonly owner_ref: string; readonly project_id: string };
+    };
+    expect(snapshot.association.principal_ref).toBe(serviceActor.principal_ref);
+    expect(snapshot.project_configuration).toEqual({
+      configuration_ref: selection.configuration_ref,
+      configuration_sha256: selection.configuration_sha256,
+      selection_revision: selection.selection_revision,
+      owner_ref: grantor,
+      project_id: grant.project_id,
+    });
+
+    const foreign = startRun({ ...serviceActor, operation_id: "run-config-foreign-1",
+      investigation_id: "research-config-foreign-1" }, { ...selection, owner_ref: "foreign-owner-1" });
+    await expect(foreign.outcome).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+    expect(foreign.configurations.size).toBe(0);
+
+    grantCurrent = false;
+    const revoked = startRun({ ...serviceActor, operation_id: "run-config-revoked-1",
+      investigation_id: "research-config-revoked-1" }, selection);
+    await expect(revoked.outcome).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+    expect(revoked.selectedReads()).toBe(0);
+    expect(revoked.configurations.size).toBe(0);
   });
 
   it("rejects foreign-owner and malformed declared profiles before persisting a run snapshot", async () => {

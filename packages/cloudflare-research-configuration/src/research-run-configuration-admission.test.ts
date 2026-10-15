@@ -3,6 +3,8 @@ import type { QueryRequest } from "@eliotr/interfaces";
 import type { ResearchRunConfigurationAssociation } from "@eliotr/cloudflare-research";
 import { WorkflowCheckpointError } from "@eliotr/cloudflare-workflows";
 import type { CaptureResearchRunConfigurationInput } from "./research-run-configuration.js";
+import type { ResearchProjectConfigurationGrantReadAuthority } from "./research-project-configuration.js";
+import type { ProjectClientGrant } from "@eliotr/contracts";
 import {
   resolveResearchRunConfigurationAdmission,
   type ResearchRunConfigurationAdmissionInputV1,
@@ -30,11 +32,14 @@ function harness(options: {
   readonly scope: QueryRequest["scope_expression"];
   readonly new_run: boolean;
   readonly selected_project_id?: string;
+  readonly principal_ref?: string;
+  readonly project_configuration_read_authority?: ResearchProjectConfigurationGrantReadAuthority;
   /** Mirrors captureResearchRunConfiguration checkpointing a null selection. */
   readonly available_projects?: readonly string[];
 }) {
   const requested: string[] = [];
   const captured: CaptureResearchRunConfigurationInput[] = [];
+  const runActor = options.principal_ref === undefined ? actor : { ...actor, principal_ref: options.principal_ref };
   // captureResearchRunConfiguration raises WORKFLOW_CONFIGURATION_MISSING when the
   // authorized selection resolves to null; the replica below keeps that contract.
   const missing = new WorkflowCheckpointError("WORKFLOW_CONFIGURATION_MISSING");
@@ -50,17 +55,43 @@ function harness(options: {
     read: async () => ({ mode: "legacy-installed", configuration_ref: null, configuration_sha256: null } as ResolvedFixture),
     select_current_project_configuration: async (project_id: string) => {
       requested.push(project_id);
-      return { owner_ref: actor.principal_ref, project_id, configuration_ref: "rpmc-v3",
+      return { owner_ref: options.project_configuration_read_authority?.lease.grant.grantor_principal_ref ?? runActor.principal_ref,
+        project_id, configuration_ref: "rpmc-v3",
         configuration_sha256: "b".repeat(64), selection_revision: 3, configuration_json: "{}" };
     },
     require_single_owned_project: (): never => { throw new Error("SINGLE_OWNED_PROJECT_REQUIRED"); },
     require_valid_configuration_marker: (): never => { throw new Error("INVALID_CONFIGURATION_MARKER"); },
   };
   const input: ResearchRunConfigurationAdmissionInputV1 = {
-    actor, scope_expression: options.scope, new_run: options.new_run,
+    actor: runActor, scope_expression: options.scope, new_run: options.new_run,
     ...(options.selected_project_id === undefined ? {} : { selected_project_id: options.selected_project_id }),
+    ...(options.project_configuration_read_authority === undefined ? {} : {
+      project_configuration_read_authority: options.project_configuration_read_authority,
+    }),
   };
   return { requested, captured, input, dependencies };
+}
+
+function grantAuthority(project_id: string, requireGrantCurrent: () => Promise<void> = async () => {}) {
+  const grant: ProjectClientGrant = {
+    protocol: "eliotr.project-client-grant.v1",
+    grant_id: "grant-admission-v3-1",
+    project_id,
+    grantor_principal_ref: "owner-grantor-v3-1",
+    revision: 2,
+    state: "ACTIVE",
+    grantee: { issuer: "https://test.cloudflareaccess.com", authentication_method: "service_token",
+      subject: "service-admission-v3-1.access" },
+    allowed_operations: ["run"],
+    ingest_namespace_ids: [],
+    expires_at: "2026-12-01T00:00:00.000Z",
+    created_at: "2026-10-15T00:00:00.000Z",
+    updated_at: "2026-10-15T00:00:00.000Z",
+  };
+  return {
+    lease: { grant, project_generation: 7, requireGrantCurrent },
+    require_current_scope: async () => {},
+  } satisfies ResearchProjectConfigurationGrantReadAuthority;
 }
 
 function resolve(input: ResearchRunConfigurationAdmissionInputV1,
@@ -113,6 +144,34 @@ describe("research run configuration admission selection project", () => {
     await expect(resolve(h.input, dependencies)).rejects.toMatchObject({
       code: "WORKFLOW_CONFIGURATION_MISSING",
     });
+  });
+
+  it("pins delegated selection to the verified grant project and keeps the service actor", async () => {
+    const authority = grantAuthority("project-granted-v3");
+    const h = harness({ scope: project("project-granted-v3"), new_run: true,
+      principal_ref: "service-admission-v3-1", project_configuration_read_authority: authority });
+    await resolve(h.input, h.dependencies);
+    expect(h.requested).toEqual(["project-granted-v3"]);
+    expect(h.captured[0]?.principal_ref).toBe("service-admission-v3-1");
+    expect(h.captured[0]?.project_configuration_read_authority).toBe(authority);
+  });
+
+  it("rejects a foreign selected project or revoked grant before configuration read", async () => {
+    const foreignAuthority = grantAuthority("project-granted-v3");
+    const foreign = harness({ scope: project("project-granted-v3"), new_run: true,
+      selected_project_id: "project-foreign-v3", principal_ref: "service-admission-v3-1",
+      project_configuration_read_authority: foreignAuthority });
+    await expect(resolve(foreign.input, foreign.dependencies))
+      .rejects.toThrow("INVALID_CONFIGURATION_MARKER");
+    expect(foreign.requested).toEqual([]);
+
+    const revokedAuthority = grantAuthority("project-granted-v3", async () => {
+      throw new Error("REVOKED_GRANT");
+    });
+    const revoked = harness({ scope: project("project-granted-v3"), new_run: true,
+      principal_ref: "service-admission-v3-1", project_configuration_read_authority: revokedAuthority });
+    await expect(resolve(revoked.input, revoked.dependencies)).rejects.toThrow("REVOKED_GRANT");
+    expect(revoked.requested).toEqual([]);
   });
 });
 

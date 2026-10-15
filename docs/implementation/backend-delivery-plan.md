@@ -1,5 +1,37 @@
 # Backend delivery plan
 
+## Owner live acceptance, October 15, 2026, 19:10 UTC
+
+Source `ac60029457b06ff6469147e6e42e6d3c109bf3fd` is deployed as
+`git-ac60029457b0`, Worker `63db2a36-5c8c-42f3-ae20-599a6a1bc1e9`.
+Fast CI `38787500046`, frontend CI `38787500032`, ordinary Wrangler dry-run,
+deployment and active D1 authority readback passed. Migrations 0152–0154 were
+applied with Time Travel bookmarks; canceled S52 migrations were not applied.
+
+Global `/settings` and the model catalog work without a project, including when
+the project list fails. Cloudflare GLM 5.3 Flash is built in and default.
+A native run completed all 18 existing Workflow stages at `5afff877`; the same
+saved report now reopens through owner HTTP and MCP with unchanged section bytes.
+All four citations matched their original hashes; the browser also opened a
+1,036-byte citation with SHA-256
+`0eaea342f2c55d9ee10b6196f776b5d77a1ee59017e9cfb6540b6951367128ab`.
+The report remains a draft with its original incomplete coverage.
+
+A separate owner QA upload completed toMarkdown, canonical section admission and
+both shared native AI Search Items. Inbox publication was executed in the browser:
+the exact revision-2 publication receipt returned 200 and a fresh readback was
+`PUBLISHED`. Codex is visible on the Agents page with the actual MCP address;
+the existing owner OAuth connection and a separate qualified service actor work.
+
+The remaining live task blocker is delegated run configuration admission: service
+execution reaches an owner-only configuration reader. The prior offer expired
+without acceptance or a run, verified in the owner API and D1; no replacement run
+was launched to conceal the failure. Native doctor diagnosis completed through
+Cloudflare without external credentials. External key management still needs its
+narrow AI Gateway control credential, and GitHub delivery needs its dedicated
+repository credential. These bounded observations do not qualify the whole
+research, recovery or agent-delivery contours; the project Goal remains active.
+
 ## Owner model settings, October 15, 2026, 16:05 UTC
 
 Routine deployment of `0b017872cf18c3028cc63fa10a2dd510614d3829` is live as

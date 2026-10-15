@@ -26,6 +26,7 @@ import {
   type ResearchBranchQueryBudgetSelection,
   type SelectedResearchProjectConfigurationProvenance,
 } from "./research-branch-query-budget-selection.js";
+import type { ResearchProjectConfigurationGrantReadAuthority } from "./research-project-configuration.js";
 
 export {
   RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON_KEY,
@@ -64,6 +65,8 @@ export interface ResolvedResearchRunConfiguration<RuntimeEnvironment = unknown> 
 export interface CaptureResearchRunConfigurationInput extends ResearchRunConfigurationAssociation {
   /** Called lazily after the per-run snapshot lookup; retries never read current project selection. */
   readonly select_project_configuration?: () => Promise<SelectedResearchProjectConfiguration | null>;
+  /** Current verified grant authority for grantor-owned project configuration. */
+  readonly project_configuration_read_authority?: ResearchProjectConfigurationGrantReadAuthority;
 }
 
 export interface ResearchRunConfigurationRuntimeSnapshot {
@@ -277,7 +280,7 @@ async function parseSnapshotRecord(record: ResearchRunConfigurationRecord): Prom
         };
     if (!branchQueryBudgetSelectionMatchesRun({
       selection: branchQueryBudgetSelection,
-      owner_ref: record.principal_ref,
+      owner_ref: projectConfiguration?.owner_ref ?? record.principal_ref,
       project_configuration: selectedConfiguration,
     })) checkpoint("WORKFLOW_CONFIGURATION_INVALID");
   }
@@ -487,6 +490,7 @@ async function composeSnapshot<RuntimeEnvironment>(
   actor: ResearchRunConfigurationAssociation,
   selectedProject: SelectedResearchProjectConfiguration | undefined,
   port: ResearchRunConfigurationRuntimePort<RuntimeEnvironment>,
+  projectConfigurationAuthority?: ResearchProjectConfigurationGrantReadAuthority,
 ): Promise<{ readonly mode: ResearchRunConfigurationMode; readonly configuration_json: string }> {
   let envelope: Record<string, unknown> | undefined;
   let vars: Record<string, unknown> | undefined;
@@ -494,8 +498,14 @@ async function composeSnapshot<RuntimeEnvironment>(
   let branchQueryBudgetSelection: ResearchBranchQueryBudgetSelection | undefined;
   let projectConfiguration: SnapshotEnvelope["project_configuration"] = null;
   if (selectedProject !== undefined) {
+    const expectedOwner = projectConfigurationAuthority?.lease.grant.grantor_principal_ref ?? actor.principal_ref;
+    if (projectConfigurationAuthority !== undefined &&
+        (selectedProject.owner_ref !== expectedOwner ||
+          selectedProject.project_id !== projectConfigurationAuthority.lease.grant.project_id)) {
+      checkpoint("WORKFLOW_AUTHORITY_STALE");
+    }
     await projectConfigurationDigest(selectedProject);
-    const source = selectedProjectSources(selectedProject, actor.principal_ref);
+    const source = selectedProjectSources(selectedProject, expectedOwner);
     envelope = source.envelope;
     vars = source.vars;
     nativeAcquisitionSelection = source.native_acquisition_selection;
@@ -584,6 +594,18 @@ export async function captureResearchRunConfiguration<RuntimeEnvironment>(
       return await resolved(env, existing, port);
     }
     if (raw.select_project_configuration === undefined) checkpoint("WORKFLOW_CONFIGURATION_MISSING");
+    const projectConfigurationAuthority = raw.project_configuration_read_authority;
+    const requireCurrentProjectConfigurationAuthority = async () => {
+      if (projectConfigurationAuthority === undefined) return;
+      const grant = projectConfigurationAuthority.lease.grant;
+      if (grant.state !== "ACTIVE" || !grant.allowed_operations.includes("run") ||
+          !ID_RE.test(grant.grantor_principal_ref) || !ID_RE.test(grant.project_id)) {
+        checkpoint("WORKFLOW_AUTHORITY_STALE");
+      }
+      await projectConfigurationAuthority.lease.requireGrantCurrent();
+      await projectConfigurationAuthority.require_current_scope();
+    };
+    await requireCurrentProjectConfigurationAuthority();
     let selectedProject: SelectedResearchProjectConfiguration | null;
     try {
       selectedProject = await raw.select_project_configuration();
@@ -593,7 +615,14 @@ export async function captureResearchRunConfiguration<RuntimeEnvironment>(
       throw error;
     }
     if (selectedProject === null || selectedProject === undefined) checkpoint("WORKFLOW_CONFIGURATION_MISSING");
-    const snapshot = await composeSnapshot(env, actor, selectedProject, port);
+    if (projectConfigurationAuthority !== undefined &&
+        (selectedProject.owner_ref !== projectConfigurationAuthority.lease.grant.grantor_principal_ref ||
+          selectedProject.project_id !== projectConfigurationAuthority.lease.grant.project_id)) {
+      checkpoint("WORKFLOW_AUTHORITY_STALE");
+    }
+    await requireCurrentProjectConfigurationAuthority();
+    const snapshot = await composeSnapshot(env, actor, selectedProject, port, projectConfigurationAuthority);
+    await requireCurrentProjectConfigurationAuthority();
     await store.putImmutable({ ...actor, mode: snapshot.mode, configuration_json: snapshot.configuration_json });
     const persisted = await store.getByOperation(actor.operation_id);
     if (persisted === null || !sameAssociation(persisted, actor) || persisted.configuration_json !== snapshot.configuration_json) {

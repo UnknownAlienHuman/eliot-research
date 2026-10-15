@@ -64,6 +64,7 @@ jobs:
           packages/cloudflare-workspace-mcp/src/gemini-mcp-service-token.test.ts
           packages/cloudflare-workspace-mcp/src/gemini-mcp-client-diagnostics.test.ts
           packages/cloudflare-workspace-mcp/src/computer-agent-dispatch-mcp.test.ts
+          packages/cloudflare-research-configuration/src/research-run-configuration-admission.test.ts
           apps/eliotr-core/test/research-model-gateway-runtime.test.ts
           --reporter=verbose
       - name: Native Worker model settings and Gateway contracts
@@ -77,6 +78,9 @@ jobs:
           test/scheduled-isolation.test.ts
           test/project-scope-currentness.test.ts
           test/mcp-computer-agent-dispatch-adapter.test.ts
+          src/research-run-configuration.test.ts
+          src/research-run-configuration-admission.test.ts
+          test/research-provider-key-model-use.test.ts
           --reporter=verbose
       - name: Build served assets and owner web
         run: |

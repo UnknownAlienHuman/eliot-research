@@ -2,11 +2,13 @@
 
 October 15 owner correction: provider/key/model registration is global in
 `/settings`, independently of project selection. Cloudflare Workers AI is built
-in and selected by default. The deployed owner settings and global catalog were
-read back at `git-0b017872cf18`; external key management still lacks its narrow
-Cloudflare control credential. Doctor escalation, Codex task handoff, current
-saved-report reopen and Wiki publication are not accepted. See the dated
-[delivery observation](backend-delivery-plan.md#owner-model-settings-october-15-2026-1605-utc)
+in and selected by default. At `git-ac60029457b0`, global settings, a fresh upload
+and both native indexes, saved-report reopen with exact citations, and browser
+Inbox publication have live readbacks. Native doctor diagnosis completed without
+an external key. Codex is connected and visible, but service-run configuration
+admission still blocks task acceptance. External key management and GitHub doctor
+delivery still lack their narrow server credentials. See the dated
+[delivery observation](backend-delivery-plan.md#owner-live-acceptance-october-15-2026-1910-utc)
 for exact deployment and verification boundaries. These observations do not
 promote the registry's broader contours to `LIVE_QUALIFIED`.
 

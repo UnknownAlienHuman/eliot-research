@@ -1,6 +1,7 @@
 import { applyD1Migrations, env as generatedEnv } from "cloudflare:test";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { validateModelGatewayTransportPolicy } from "@eliotr/cloudflare-ai";
+import { authorizeProjectClientGrant, createProjectClientGrantService } from "@eliotr/cloudflare-navigation";
 import { createResearchProviderKeyConfigurationService } from "../src/research-provider-key-configuration-service.js";
 import { createOwnerResearchProjectConfigurationService } from "../src/research-project-configuration-composition.js";
 import { resolveResearchRunAdmissionConfiguration } from "../src/research-run-configuration-admission.js";
@@ -475,6 +476,72 @@ describe("owner OpenRouter model-key check and use", () => {
     expect(capturedRun.project_id).toBe(project);
     expect(capturedRun.project_owner_ref).toBe(owner);
     expect(capturedRun.model_selections).toHaveLength(2);
+
+    const serviceIssuer = "https://team.cloudflareaccess.com";
+    const servicePrincipal = `native-config-reader-${crypto.randomUUID()}.access`;
+    const serviceCredential = `credential-${crypto.randomUUID()}`;
+    const grantId = `native-config-grant-${crypto.randomUUID()}`;
+    const grantExpiry = new Date(Date.now() + 60 * 60 * 1_000).toISOString();
+    const grantOwnerContext: AuthenticatedRequestContext = {
+      ...projectContext,
+      request: new Request(`https://core.example/api/v1/projects/${project}/client-grants/${grantId}`, {
+        method: "PUT", headers: { "Idempotency-Key": `native-config-grant-create-${crypto.randomUUID()}` },
+      }),
+    };
+    const grantService = createProjectClientGrantService({ database: env.CORE_DB, trusted_issuers: [serviceIssuer] });
+    await grantService.put(grantOwnerContext, project, grantId, {
+      expected_revision: 0,
+      grantee: { issuer: serviceIssuer, authentication_method: "service_token", subject: servicePrincipal },
+      allowed_operations: ["run"], ingest_namespace_ids: [], expires_at: grantExpiry,
+    });
+    const serviceContext: AuthenticatedRequestContext = {
+      request: new Request("https://core.example/api/v1/research/run", {
+        headers: { "X-Eliotr-Client-Grant": grantId },
+      }),
+      principal_ref: servicePrincipal,
+      client_class: "trusted_agent",
+      credential_generation: serviceCredential,
+      trace_id: crypto.randomUUID(),
+      access: { principal_ref: servicePrincipal, credential_generation: serviceCredential,
+        expires_at: new Date(Date.now() + 60 * 60 * 1_000).toISOString(),
+        issuer: serviceIssuer, authentication_method: "service_token" },
+    };
+    const lease = await authorizeProjectClientGrant(env.CORE_DB, serviceContext,
+      { operation: "run", project_id: project });
+    const requireCurrentDelegatedScope = async () => {
+      await lease.requireCurrent();
+      const current = await env.CORE_DB.prepare("SELECT p.generation FROM project p JOIN project_owner o " +
+        "ON o.project_id=p.project_id WHERE p.project_id=?1 AND o.principal_ref=?2 LIMIT 1")
+        .bind(project, owner).first<{ readonly generation: number }>();
+      if (current?.generation !== lease.project_generation) throw new Error("Delegated project generation changed");
+    };
+    const delegatedActor: ResearchRunConfigurationAssociation = {
+      operation_id: crypto.randomUUID(), investigation_id: `model-use-delegated-${crypto.randomUUID()}`,
+      principal_ref: servicePrincipal, deployment_generation: runtimeEnv.DEPLOYMENT_GENERATION,
+    };
+    const modelCallsBeforeDelegatedRead = modelRequests.length;
+    const delegatedRun = await resolveResearchRunAdmissionConfiguration(runtimeEnv, {
+      actor: delegatedActor,
+      context: serviceContext,
+      scope_expression: { kind: "PROJECT", project_id: project },
+      new_run: true,
+      project_configuration_read_authority: { lease, require_current_scope: requireCurrentDelegatedScope },
+      require_current_scope: requireCurrentDelegatedScope,
+    });
+    expect(delegatedRun).toMatchObject({ project_owner_ref: owner, project_id: project, mode: "snapshot-v2" });
+    expect(delegatedRun.model_selections).toHaveLength(2);
+    expect(modelRequests).toHaveLength(modelCallsBeforeDelegatedRead);
+    const delegatedSnapshot = await env.CORE_DB.prepare(
+      "SELECT principal_ref,configuration_json FROM research_run_configuration WHERE operation_id=?1 LIMIT 1",
+    ).bind(delegatedActor.operation_id).first<{ readonly principal_ref: string; readonly configuration_json: string }>();
+    expect(delegatedSnapshot?.principal_ref).toBe(servicePrincipal);
+    const delegatedSnapshotJson = JSON.parse(delegatedSnapshot?.configuration_json ?? "{}") as {
+      readonly association: { readonly principal_ref: string };
+      readonly project_configuration: { readonly owner_ref: string; readonly project_id: string };
+    };
+    expect(delegatedSnapshotJson.association.principal_ref).toBe(servicePrincipal);
+    expect(delegatedSnapshotJson.project_configuration).toMatchObject({ owner_ref: owner, project_id: project });
+
     expect(capturedRun.model_selections).toEqual(expect.arrayContaining([
       expect.objectContaining({
         candidate_kind: "provider-native-v1",

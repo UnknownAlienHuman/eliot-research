@@ -1,6 +1,7 @@
 import {
   createResearchProjectModelConfigurationService as createConfigurationService,
   readSelectedResearchProjectConfiguration,
+  readSelectedResearchProjectConfigurationForGrant,
   RESEARCH_PROJECT_MODEL_CONFIGURATION_PROTOCOL,
   ResearchProjectModelConfigurationAuthorityError,
   type AssertCurrentResearchProjectAuthority,
@@ -14,6 +15,7 @@ import type { ResearchProviderKeyModelUseDbPhase } from "@eliotr/cloudflare-rese
 
 export {
   readSelectedResearchProjectConfiguration,
+  readSelectedResearchProjectConfigurationForGrant,
   RESEARCH_PROJECT_MODEL_CONFIGURATION_PROTOCOL,
   ResearchProjectModelConfigurationAuthorityError,
 };
@@ -25,6 +27,7 @@ export type {
   ResearchProjectModelConfigurationSummary,
   ResearchProjectModelConfigurationPage,
   ResearchProjectModelConfigurationSelectionReceipt,
+  ResearchProjectConfigurationGrantReadAuthority,
 } from "@eliotr/cloudflare-research-configuration/research-project-configuration.js";
 export type { ResearchProjectModelConfigurationBundle, ResearchProjectModelConfigurationSelection,
   ResearchProjectModelSelection } from "@eliotr/cloudflare-research";
@@ -46,6 +49,7 @@ export function createResearchProjectModelConfigurationService(options: {
 export function createResearchProjectModelConfigurationServiceFromEnv(
   env: Env,
   assertCurrentProjectAuthority?: AssertCurrentResearchProjectAuthority,
+  nativeModelAuthority?: ResearchProjectNativeModelAuthorityFactory,
 ): ResearchProjectModelConfigurationService {
   if (env?.CORE_DB === undefined) {
     fail("RESEARCH_PROJECT_MODEL_CONFIGURATION_STORAGE_UNAVAILABLE", 503, "Core D1 binding is unavailable");
@@ -53,8 +57,10 @@ export function createResearchProjectModelConfigurationServiceFromEnv(
   return createResearchProjectModelConfigurationService({
     database: env.CORE_DB,
     env,
-    native_model_authority: (context, projectId) => createOwnerResearchProviderNativeModelAuthority(env, context,
-      projectId, ["CONFIGURATION_IMPORT", "SELECTION_READBACK", "COMPLETE"] satisfies readonly ResearchProviderKeyModelUseDbPhase[]),
+    native_model_authority: nativeModelAuthority ?? ((context, projectId) => createOwnerResearchProviderNativeModelAuthority(
+      env, context, projectId,
+      ["CONFIGURATION_IMPORT", "SELECTION_READBACK", "COMPLETE"] satisfies readonly ResearchProviderKeyModelUseDbPhase[],
+    )),
     ...(assertCurrentProjectAuthority === undefined ? {} : { assertCurrentProjectAuthority }),
     deployment_environment: env.ENVIRONMENT === "development" ? "TEST" : "PRODUCTION",
     deployment_generation: env.DEPLOYMENT_GENERATION,
