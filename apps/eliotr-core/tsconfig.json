@@ -98,9 +98,6 @@
       "path": "../../packages/cloudflare-research-runtime"
     },
     {
-      "path": "../../packages/cloudflare-search-probe"
-    },
-    {
       "path": "../../packages/cloudflare-model-transport"
     },
     {
