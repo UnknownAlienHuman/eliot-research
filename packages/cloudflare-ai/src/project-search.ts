@@ -1,4 +1,5 @@
 import type { AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
+import { ensureProjectSearchItem } from "./project-search-item.js";
 
 export const PROJECT_SEARCH_GENERATION = "v1" as const;
 export const PROJECT_SEARCH_INSTANCES = Object.freeze({
@@ -200,10 +201,11 @@ async function uploadOne(
   item: { readonly item_key: string; readonly document: string; readonly metadata: CanonicalMetadata },
 ): Promise<void> {
   const key = await providerKey(projectId, lane, item.item_key);
-  await input.namespace.get(PROJECT_SEARCH_INSTANCES[lane]).items.uploadAndPoll(
+  await ensureProjectSearchItem(
+    input.namespace.get(PROJECT_SEARCH_INSTANCES[lane]).items,
     key,
-    new Blob([item.document], { type: "text/markdown" }),
-    { metadata: item.metadata },
+    item.document,
+    item.metadata,
   );
 }
 

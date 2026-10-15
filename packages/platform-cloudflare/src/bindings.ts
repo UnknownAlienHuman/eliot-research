@@ -5,12 +5,7 @@ export interface AiSearchItemHandleLike {
 
 export interface AiSearchInstanceLike {
   search(input: unknown): Promise<unknown>;
-  readonly items: {
-    createOrUpdate(key: string, body: unknown): Promise<unknown>;
-    uploadAndPoll(key: string, body: Blob, options?: Pick<AiSearchUploadItemOptions, "metadata">): Promise<unknown>;
-    delete(key: string): Promise<unknown>;
-    get(key: string): Promise<unknown>;
-  };
+  readonly items: Pick<AiSearchItems, "list" | "get" | "uploadAndPoll">;
 }
 
 export interface AiSearchNamespaceLike {
