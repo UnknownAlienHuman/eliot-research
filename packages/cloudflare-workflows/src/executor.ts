@@ -9,7 +9,7 @@ import {
   type WorkflowObject, type WorkflowPrincipal, type WorkflowStageHandler, type WorkflowAttemptRecoveryInput,
 } from "./types.js";
 import type { ResearchWorkflowStage } from "@eliotr/contracts";
-import { workflowFailure, retainWorkflowFailure, type WorkflowFailure } from "./failures.js";
+import { workflowFailure, retainWorkflowFailure, WorkflowFailureOutcomeSchema, type WorkflowFailure } from "./failures.js";
 import { ExternalAgentTaskStore } from "./external-agent-task-store.js";
 
 /** Internal same-task publication port. It must not invoke an external computer/model effect. */
@@ -358,7 +358,19 @@ export function createWorkflowCheckpointExecutor(
             if (error instanceof WorkflowCheckpointError && error.code === "WORKFLOW_OUTPUT_CORRUPT") {
               throw error;
             }
-            throw new WorkflowCheckpointError("WORKFLOW_EFFECT_UNCERTAIN", originalFailure);
+            let settledFailure = originalFailure;
+            try {
+              const candidate = await ports.settleStageFailure?.({ request, principal, error });
+              const parsed = WorkflowFailureOutcomeSchema.safeParse(candidate);
+              if (parsed.success && parsed.data.phase === "STAGE" && parsed.data.stage === request.stage &&
+                  parsed.data.retryable === false && parsed.data.dispatch_state === "NOT_STARTED" &&
+                  parsed.data.references_intact === "INTACT" && parsed.data.recovery_action === "NONE") {
+                settledFailure = parsed.data;
+              }
+            } catch {
+              // A failed readback must retain the existing unknown-effect outcome.
+            }
+            throw new WorkflowCheckpointError("WORKFLOW_EFFECT_UNCERTAIN", settledFailure);
           }
           if (!(bytes instanceof Uint8Array) || bytes.byteLength > MAX_WORKFLOW_OUTPUT_BYTES) fail("WORKFLOW_INPUT_INVALID");
           bytes = new Uint8Array(bytes);
