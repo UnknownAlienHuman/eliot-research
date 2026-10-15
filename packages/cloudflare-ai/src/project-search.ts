@@ -39,7 +39,7 @@ interface ProjectSourceRow {
   readonly source_revision_ref: unknown;
 }
 
-interface ProjectionItemRow {
+interface ProjectionItemRow extends CanonicalItemRow {
   readonly item_key: unknown;
   readonly source_revision_ref: unknown;
   readonly title: unknown;
@@ -158,9 +158,11 @@ async function projectionItems(
   readonly item_key: string;
   readonly source_revision_ref: string;
   readonly document: string;
+  readonly metadata: CanonicalMetadata;
 }[]> {
   const result = await database.prepare(
-    "SELECT item_key,source_revision_ref,title,document_context_header,section_text " +
+    "SELECT item_key,source_revision_ref,title,document_context_header,section_text," +
+    "canonical_section_id,content_sha256,instruction_taint,projection_generation " +
     "FROM projection_item WHERE source_revision_ref=?1 AND active=1 ORDER BY item_key LIMIT ?2",
   ).bind(sourceRevisionRef, MAX_ITEMS_PER_SOURCE + 1).all<ProjectionItemRow>();
   if (!result.success || !Array.isArray(result.results)) {
@@ -185,6 +187,7 @@ async function projectionItems(
       item_key: itemKey,
       source_revision_ref: sourceRevisionRef,
       document: `${context || title}\n\n${section}`,
+      metadata: decodeCanonicalMetadata(row),
     });
   }));
 }
@@ -193,12 +196,13 @@ async function uploadOne(
   input: ProjectSearchBindings,
   projectId: string,
   lane: ProjectSearchLane,
-  item: { readonly item_key: string; readonly document: string },
+  item: { readonly item_key: string; readonly document: string; readonly metadata: CanonicalMetadata },
 ): Promise<void> {
   const key = await providerKey(projectId, lane, item.item_key);
   await input.namespace.get(PROJECT_SEARCH_INSTANCES[lane]).items.uploadAndPoll(
     key,
     new Blob([item.document], { type: "text/markdown" }),
+    { metadata: item.metadata },
   );
 }
 
@@ -260,6 +264,19 @@ type CanonicalMetadata = Readonly<{
   projection_generation: string;
 }>;
 
+function decodeCanonicalMetadata(row: CanonicalItemRow): CanonicalMetadata {
+  if (typeof row.content_sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(row.content_sha256)) {
+    fail("PROJECT_SEARCH_STORAGE_UNAVAILABLE", "D1 Search item content identity is invalid");
+  }
+  return Object.freeze({
+    source_revision_ref: identifier(row.source_revision_ref, "stored source_revision_ref"),
+    canonical_section_id: identifier(row.canonical_section_id, "stored canonical_section_id"),
+    content_sha256: row.content_sha256,
+    instruction_taint: stringValue(row.instruction_taint, "stored instruction taint"),
+    projection_generation: identifier(row.projection_generation, "stored projection generation"),
+  });
+}
+
 async function canonicalItemMetadata(
   database: D1Database,
   itemKeys: readonly string[],
@@ -274,17 +291,10 @@ async function canonicalItemMetadata(
   const metadata = new Map<string, CanonicalMetadata>();
   for (const row of result.results) {
     const key = stringValue(row.item_key, "stored item key");
-    if (!itemKeys.includes(key) || metadata.has(key) ||
-        typeof row.content_sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(row.content_sha256)) {
+    if (!itemKeys.includes(key) || metadata.has(key)) {
       fail("PROJECT_SEARCH_STORAGE_UNAVAILABLE", "D1 Search item metadata is inconsistent");
     }
-    metadata.set(key, Object.freeze({
-      source_revision_ref: identifier(row.source_revision_ref, "stored source_revision_ref"),
-      canonical_section_id: identifier(row.canonical_section_id, "stored canonical_section_id"),
-      content_sha256: row.content_sha256,
-      instruction_taint: stringValue(row.instruction_taint, "stored instruction taint"),
-      projection_generation: identifier(row.projection_generation, "stored projection generation"),
-    }));
+    metadata.set(key, decodeCanonicalMetadata(row));
   }
   return metadata;
 }
