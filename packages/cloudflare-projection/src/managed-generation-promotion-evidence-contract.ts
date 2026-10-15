@@ -1,9 +1,18 @@
+import type { ManagedTargetSelectionV2 } from "./managed-target-assignment.js";
+import type { ManagedTargetManifestCanonicalSourceSummary, ManagedTargetManifestProviderCopySummary } from "./managed-target-manifest-contract.js";
+
 export const MANAGED_GENERATION_PROMOTION_EVIDENCE_PROTOCOL =
   "eliotr.managed-generation-promotion-evidence.v2" as const;
 export const MANAGED_TARGET_DESIRED_MANIFEST_PROTOCOL =
   "eliotr.managed-target-desired-items.v2" as const;
 export const MANAGED_TARGET_FENCE_PROTOCOL =
   "eliotr.managed-required-set-target-fence.v1" as const;
+export const MANAGED_GENERATION_PROMOTION_EVIDENCE_PROTOCOL_V3 =
+  "eliotr.managed-generation-promotion-evidence.v3" as const;
+export const MANAGED_TARGET_DESIRED_MANIFEST_PROTOCOL_V3 =
+  "eliotr.managed-target-desired-items.v3" as const;
+export const MANAGED_TARGET_FENCE_PROTOCOL_V2 =
+  "eliotr.managed-required-set-target-fence.v2" as const;
 
 export interface ManagedGenerationPromotionTarget {
   readonly namespace: string;
@@ -22,6 +31,13 @@ export interface ManagedGenerationTargetFence {
   readonly project_revision_copy_count: number;
   readonly page_count: number;
 }
+
+export interface ManagedGenerationTargetFenceV2 extends Omit<ManagedGenerationTargetFence, "protocol"> {
+  readonly protocol: typeof MANAGED_TARGET_FENCE_PROTOCOL_V2;
+  readonly target_selection_sha256: string;
+}
+
+export type ManagedGenerationTargetFenceValue = ManagedGenerationTargetFence | ManagedGenerationTargetFenceV2;
 
 /**
  * Exact v2 builder receipt plus fields recovered from its dereferenced immutable
@@ -48,6 +64,17 @@ export interface ManagedGenerationDesiredManifestReadback {
   readonly manifest_tree_ref: string;
   readonly manifest_tree_sha256: string;
 }
+
+export interface ManagedGenerationDesiredManifestReadbackV3 extends Omit<ManagedGenerationDesiredManifestReadback, "protocol" | "copy_layout" | "target_fence"> {
+  readonly protocol: typeof MANAGED_TARGET_DESIRED_MANIFEST_PROTOCOL_V3;
+  readonly copy_layout: "PROJECT_COPY_V2";
+  readonly target_fence: ManagedGenerationTargetFenceV2;
+  readonly target_selection: ManagedTargetSelectionV2;
+  readonly canonical_source_summary: ManagedTargetManifestCanonicalSourceSummary;
+  readonly provider_copy_summary: ManagedTargetManifestProviderCopySummary;
+}
+
+export type ManagedGenerationDesiredManifestReadbackValue = ManagedGenerationDesiredManifestReadback | ManagedGenerationDesiredManifestReadbackV3;
 
 export interface ManagedGenerationPromotionEvidenceV2 {
   readonly protocol: typeof MANAGED_GENERATION_PROMOTION_EVIDENCE_PROTOCOL;
@@ -103,6 +130,18 @@ export interface ManagedGenerationPromotionEvidenceV2 {
   /** Digest is calculated locally from the evidence above; it is never an input. */
   readonly evidence_sha256: string;
 }
+
+export interface ManagedGenerationPromotionEvidenceV3 extends Omit<ManagedGenerationPromotionEvidenceV2, "protocol" | "target_fence" | "manifest"> {
+  readonly protocol: typeof MANAGED_GENERATION_PROMOTION_EVIDENCE_PROTOCOL_V3;
+  readonly target_fence: ManagedGenerationTargetFenceV2;
+  readonly target_selection: ManagedTargetSelectionV2;
+  readonly manifest: ManagedGenerationPromotionEvidenceV2["manifest"] & {
+    readonly canonical_source_summary: ManagedTargetManifestCanonicalSourceSummary;
+    readonly provider_copy_summary: ManagedTargetManifestProviderCopySummary;
+  };
+}
+
+export type ManagedGenerationPromotionEvidence = ManagedGenerationPromotionEvidenceV2 | ManagedGenerationPromotionEvidenceV3;
 
 export const MANAGED_GENERATION_CURRENT_AUTHORITY_PROTOCOL =
   "eliotr.managed-generation-current-authority.v1" as const;
@@ -204,7 +243,7 @@ export interface ManagedGenerationPromotionEvidenceAuthorityPort {
   /** Rechecks time-sensitive Core authority at the point of this call. */
   readFreshCurrentAuthority(
     target: ManagedGenerationPromotionTarget,
-    evidence: ManagedGenerationPromotionEvidenceV2,
+    evidence: ManagedGenerationPromotionEvidence,
   ): Promise<unknown>;
   /**
    * Acquires or resumes a durable target-specific writer hold, invokes commit,

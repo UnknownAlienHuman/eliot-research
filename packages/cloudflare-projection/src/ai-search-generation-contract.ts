@@ -1,5 +1,5 @@
 import type { AiSearchInstanceProfile } from "@eliotr/platform-cloudflare";
-import type { ManagedGenerationPromotionEvidenceV2 } from "./managed-generation-promotion-evidence.js";
+import type { ManagedGenerationPromotionEvidence, ManagedGenerationPromotionEvidenceV2, ManagedGenerationPromotionEvidenceV3 } from "./managed-generation-promotion-evidence-contract.js";
 
 export type AiSearchGenerationState =
   | "DECLARED"
@@ -55,11 +55,20 @@ export interface AiSearchGenerationRecord {
   readonly mismatch_count: number;
   readonly golden_set_result_ref?: string;
   readonly promotion_evidence_v2?: ManagedGenerationPromotionEvidenceV2;
+  readonly promotion_evidence_v3?: ManagedGenerationPromotionEvidenceV3;
   readonly declared_at: string;
   readonly observed_at?: string;
   readonly activated_at?: string;
   readonly inactive_at?: string;
   readonly retired_at?: string;
+}
+
+/** A record carries one explicit evidence version; never reinterpret a V3 body as V2. */
+export function getAiSearchGenerationPromotionEvidence(record: AiSearchGenerationRecord): ManagedGenerationPromotionEvidence | undefined {
+  if (record.promotion_evidence_v2 !== undefined && record.promotion_evidence_v3 !== undefined) {
+    generationFailure("AI_SEARCH_PROMOTION_EVIDENCE_REQUIRED", "generation record contains conflicting evidence versions");
+  }
+  return record.promotion_evidence_v3 ?? record.promotion_evidence_v2;
 }
 
 export interface AiSearchShadowObservation {
