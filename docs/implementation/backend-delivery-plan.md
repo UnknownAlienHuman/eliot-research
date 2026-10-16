@@ -1,5 +1,33 @@
 # Backend delivery plan
 
+## Durable model choices and live owner cycle, October 16, 2026, 09:14 UTC
+
+On `deea75bf9d26eb83541619dab09c867d6ef28603`, the real global OpenRouter
+check-and-use operation completed both native stages and selected project
+configuration revision 3. Canonical readback found two COMPLETED attempts,
+two exact-model zero-cost receipts and zero project credential copies.
+A separate project with no model selection completed a fresh 18-stage browser
+question, reopened its saved report and verified the exact admitted 263-byte
+citation. A wiki proposal created from that run was opened from Inbox and
+published through the served interface with a PUBLISHED readback. The actual
+Codex MCP catalog returned the granted README project/source; current-generation
+client qualification and the Agents page were also verified.
+
+The final idle read exposed an ADR-0010 mismatch: retained native V2 owner
+settings were incorrectly blocked when the ten-minute activation/probe window
+ended. The existing historical V2 resolution path now applies to configuration
+validation and readiness, matching the already-supported V2 execution path.
+The activation deadline is unchanged. Exact candidate/proof hashes, LIVE tier,
+explicit revocation, current owner/project/key binding and every execution's
+permission/budget checks remain mandatory. Non-free pricing freshness is not
+waived. A native regression advances time by eleven minutes without new model
+or catalog calls, then proves explicit revocation still blocks readiness.
+Read-only validation against the actual retained selected revision also passed.
+Production readback of that lifetime correction remains the final deployment check.
+
+These are bounded E0/QA receipts. Large corpora, other providers and later
+Corpus Lens/investigation slices are not qualified by this acceptance.
+
 ## Exact response interoperability repair, October 16, 2026, 07:31 UTC
 
 A separate, bounded gateway/decoder diagnostic identified the actual wire issues

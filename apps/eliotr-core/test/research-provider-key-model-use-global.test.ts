@@ -113,6 +113,7 @@ describe("registered global model check-and-use", () => {
     const modelCallsBeforeExpiryRead = requests.length;
     const catalogCallsBeforeExpiryRead = pricing.mock.calls.length;
     vi.setSystemTime(Date.now() + 11 * 60_000);
+    expect((await fixture.configuration.readPage(fixture.context, fixture.project)).selected?.qualification_state).toBe("qualified");
     expect(await readOwnerProjectResearchReadiness(fixture.runtimeEnv, fixture.context, fixture.project))
       .toMatchObject({ run_readiness: "ready", qualification_state: "current" });
     expect(requests).toHaveLength(modelCallsBeforeExpiryRead);
@@ -132,6 +133,7 @@ describe("registered global model check-and-use", () => {
     });
     expect(await readOwnerProjectResearchReadiness(fixture.runtimeEnv, fixture.context, fixture.project))
       .toMatchObject({ run_readiness: "blocked", readiness_reason: "QUALIFICATION_UNAVAILABLE" });
+    expect((await fixture.configuration.readPage(fixture.context, fixture.project)).selected?.qualification_state).toBe("qualification_required");
     expect(requests).toHaveLength(modelCallsBeforeExpiryRead);
     expect(pricing).toHaveBeenCalledTimes(catalogCallsBeforeExpiryRead);
     expect(await readConfiguredProviderKeyOperation(env.CORE_DB, fixture.owner, fixture.project, fixture.keyId))

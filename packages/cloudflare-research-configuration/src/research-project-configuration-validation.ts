@@ -412,7 +412,7 @@ export function createResearchProjectModelConfigurationValidator(options: {
         let resolvedNative;
         try {
           resolvedNative = await nativeAuthority.resolvePinned({ selection, owner_ref: expectedOwner,
-            project_id: project, allow_expired_snapshot_v2: false });
+            project_id: project, allow_expired_snapshot_v2: true });
         } catch (cause) {
           qualificationRequired(`${rule.stage} exact provider-native qualification is missing, revoked, stale, or mismatched`, cause);
         }

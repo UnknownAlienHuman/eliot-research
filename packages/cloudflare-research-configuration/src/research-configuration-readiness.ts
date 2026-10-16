@@ -267,7 +267,7 @@ export async function readResearchConfigurationReadiness(
           }
           const resolvedNative = await options.native_model_authority.resolvePinned({ selection,
             owner_ref: options.project_owner_ref, project_id: options.project_id,
-            allow_expired_snapshot_v2: false });
+            allow_expired_snapshot_v2: true });
           const preparation = resolvedNative.candidate.candidate.preparation;
           if (resolvedNative.selection.stage !== stage || preparation.owner_ref !== options.project_owner_ref ||
               preparation.project_id !== options.project_id || preparation.stage !== stage ||
@@ -276,8 +276,8 @@ export async function readResearchConfigurationReadiness(
           }
           const expiresAt = resolvedNative.proof.qualification.qualification.expires_at;
           const expires = Date.parse(expiresAt);
-          if (!Number.isFinite(expires) || expires <= Date.now()) failure(`selected ${stage} provider-native proof has expired`);
-          return Object.freeze({ qualification_state: expires > Date.now() + RENEWAL_WINDOW_MS
+          if (!Number.isFinite(expires) || (mode !== "snapshot-v2" && expires <= Date.now())) failure(`selected ${stage} provider-native proof has expired`);
+          return Object.freeze({ qualification_state: mode === "snapshot-v2" || expires > Date.now() + RENEWAL_WINDOW_MS
             ? "current" : "renewal_required", expires_at: expiresAt });
         }
         const proof = await proofStore.readPinned({ route_ref: selection.route_ref, route_version: selection.route_version,

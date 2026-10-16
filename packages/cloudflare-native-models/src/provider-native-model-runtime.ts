@@ -71,7 +71,7 @@ export interface ProviderNativeModelAuthorityPort {
     selection: unknown;
     owner_ref: string;
     project_id: string;
-    /** True only when the persisted run configuration is snapshot-v2. */
+    /** ADR-0010: retained v2 owner settings or a persisted snapshot-v2 run; not fresh probe admission. */
     allow_expired_snapshot_v2: boolean;
   }>): Promise<ResolvedProviderNativeModelSelectionV1>;
   revoke(input: ProviderNativeModelRevocationInputV1): Promise<void>;
