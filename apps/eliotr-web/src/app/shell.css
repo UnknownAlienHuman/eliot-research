@@ -50,6 +50,9 @@ html, body { background: var(--eliot-color-canvas); }
 
 .er-shell {
   box-sizing: border-box;
+  inline-size: 100%;
+  max-inline-size: var(--eliot-layout-shell-max);
+  margin-inline: auto;
   height: 100dvh;
   display: grid;
   grid-template-columns: var(--eliot-layout-rail-size) var(--eliot-layout-source-width) minmax(0, 1fr);

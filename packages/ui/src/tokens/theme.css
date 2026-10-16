@@ -497,6 +497,8 @@
   --eliot-layout-menu-width: 280px;
   --eliot-layout-reading-max: 760px;
   --eliot-layout-wide-max: 1120px;
+  /* Very wide monitors keep the workspace one readable frame instead of stretching the panes apart. */
+  --eliot-layout-shell-max: 2400px;
   --eliot-layout-breakpoint-medium: 768px;
   --eliot-layout-breakpoint-expanded: 1024px;
   color-scheme: light;
