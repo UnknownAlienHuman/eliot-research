@@ -596,16 +596,17 @@ export function createServiceModelProviderService(options: {
       fail("SERVICE_MODEL_PROVIDER_OPERATION_CONFLICT", 409,
         "More than one global provider connection matches this selection", false);
     }
-    if (configured.length === 0) {
-      if (failed.length > 0) {
-        const failure = failed[0]!.connection;
+    const configuredConnection = configured[0];
+    if (configuredConnection === undefined) {
+      const failure = failed[0]?.connection;
+      if (failure !== undefined) {
         fail("SERVICE_MODEL_PROVIDER_PROVIDER_REJECTED", 502,
           "The matching global provider connection was rejected", false, "NONE",
           failure.failure_code ?? undefined, failure.provider_http_status ?? undefined);
       }
       return null;
     }
-    return configuredBinding(configured[0]!.row, owner);
+    return configuredBinding(configuredConnection.row, owner);
   }
 
   async function resolveExisting(

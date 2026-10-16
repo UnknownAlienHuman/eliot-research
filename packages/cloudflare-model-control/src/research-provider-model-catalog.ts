@@ -367,7 +367,7 @@ async function requestedProviderConfig(
   if (options.resolve_service_provider !== undefined) {
     try {
       serviceProvider = await options.resolve_service_provider(provider);
-    } catch (cause) {
+    } catch {
       throw unavailable("global service provider status is unavailable");
     }
   }

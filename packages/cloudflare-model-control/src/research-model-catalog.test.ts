@@ -211,7 +211,7 @@ describe("research model catalog", () => {
       metadata_sha256: "b".repeat(64),
       created_at: "2026-10-15T14:00:00.000Z",
     });
-    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => new Response(JSON.stringify({
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
       data: [
         { id: modelId, architecture: { output_modalities: ["text"] } },
         { id: "another/model:free", architecture: { output_modalities: ["text"] } },

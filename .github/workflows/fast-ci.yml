@@ -82,6 +82,8 @@ jobs:
           pnpm --dir apps/eliotr-core exec vitest run
           test/service-model-settings-http.test.ts
           test/research-model-gateway-runtime.test.ts
+          test/research-model-qualification-gateway.test.ts
+          test/research-semantic-run-configuration-bindings.test.ts
           test/mcp-client-diagnostic-http.test.ts
           test/mcp-client-diagnostic-roundtrip.test.ts
           test/doctor-mcp-delivery.test.ts
