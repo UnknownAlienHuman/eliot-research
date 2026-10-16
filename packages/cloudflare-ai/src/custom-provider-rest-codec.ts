@@ -30,6 +30,7 @@ import {
 } from "./custom-provider-rest-values.js";
 
 const ACCOUNT_ID = /^[a-f0-9]{32}$/u;
+const INTERNAL_ACCOUNT_ID = /^[1-9][0-9]{0,19}$/u;
 const MAX_PAGE_SIZE = 100;
 const MAX_PAGES = 100;
 const MAX_PROVIDERS = MAX_PAGE_SIZE * MAX_PAGES;
@@ -156,15 +157,24 @@ export function decodeCustomProvider(
     "CUSTOM_PROVIDER_RESPONSE_INVALID",
     effect,
   );
-  if (value.account_id !== undefined && value.account_id !== expectedAccountId) {
+  if (value.account_tag !== undefined && value.account_tag !== expectedAccountId) {
     customProviderRestFailure(
       "CUSTOM_PROVIDER_READBACK_MISMATCH",
       "Custom provider readback belongs to another account",
       { effect },
     );
   }
-  if (value.account_tag !== undefined) {
-    responseText(value.account_tag, "custom provider account tag", 256, effect);
+  if (value.account_id !== undefined && value.account_id !== expectedAccountId) {
+    // Native account_id is an internal decimal row ID; account_tag identifies the account.
+    // A contradictory public hex ID must still fail, even with a matching tag.
+    if (typeof value.account_id !== "string" || !INTERNAL_ACCOUNT_ID.test(value.account_id) ||
+        value.account_tag !== expectedAccountId) {
+      customProviderRestFailure(
+        "CUSTOM_PROVIDER_READBACK_MISMATCH",
+        "Custom provider readback belongs to another account",
+        { effect },
+      );
+    }
   }
   optionalResponseOpaqueText(value.logo, "custom provider logo", MAX_LOGO_BYTES, effect);
   optionalResponseOpaqueText(
@@ -187,7 +197,7 @@ export function decodeCustomProvider(
       { effect },
     );
   }
-  if (value.position !== undefined) {
+  if (value.position !== undefined && value.position !== null) {
     responseInteger(value.position, "custom provider position", effect);
   }
   const inlineHeadersConfigured = responseHeadersConfigured(value.headers, effect);

@@ -6,6 +6,8 @@ import {
 const PROVIDER_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/u;
 const PROVIDER_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 const MODEL_ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
+const MAX_TIMESTAMP_SECONDS = 253_402_300_799;
+const MAX_TIMESTAMP_MILLISECONDS = 253_402_300_799_999;
 export const MAX_NAME_BYTES = 256;
 export const MAX_DESCRIPTION_BYTES = 4 * 1024;
 export const MAX_LINK_BYTES = 2 * 1024;
@@ -276,8 +278,12 @@ export function responseTimestamp(
   effect: CustomProviderRestEffect,
 ): string {
   if (typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 0) {
-    const milliseconds = raw * 1000;
-    if (Number.isSafeInteger(milliseconds)) return new Date(milliseconds).toISOString();
+    // Keep legacy seconds within the four-digit-year range. Native values beyond
+    // that seconds range are milliseconds, bounded to the same calendar range.
+    const milliseconds = raw <= MAX_TIMESTAMP_SECONDS ? raw * 1000 : raw;
+    if (milliseconds <= MAX_TIMESTAMP_MILLISECONDS) {
+      return new Date(milliseconds).toISOString();
+    }
   }
   if (typeof raw === "string" &&
       /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/u.test(raw) &&
