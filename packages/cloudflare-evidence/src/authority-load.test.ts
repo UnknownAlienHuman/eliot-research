@@ -68,6 +68,21 @@ function searchWorld(spanSource: string, spanGeneration: string): DatabaseSync {
 
 describe("projection authority tuple binding", () => {
   it.each([
+    "UPDATE projection_generation_receipt SET state='BUILDING'",
+    "UPDATE projection_activation_guard SET verified=0",
+    "UPDATE projection_span SET projection_generation='projection-old'",
+    "UPDATE projection_item SET projection_generation='projection-old'",
+  ])("rejects a native exact preview when projection authority changes: %s", async (mutation) => {
+    const database = searchWorld("revision-1", "projection-1");
+    database.exec(mutation);
+    const native: LocatorCandidate = { ...candidate, lane: "SEM", preview: "alpha",
+      metadata: { ...candidate.metadata, provider: "cloudflare_ai_search", provider_chunk_type: "text" } };
+    await expect(resolveCandidateAuthority(d1(database), native))
+      .rejects.toMatchObject({ code: "EVIDENCE_LOCATOR_NOT_RESOLVABLE" });
+    database.close();
+  });
+
+  it.each([
     ["foreign source revision", "revision-foreign", "projection-1"],
     ["foreign projection generation", "revision-1", "projection-foreign"],
   ])("rejects a span with a %s", async (_label, spanSource, spanGeneration) => {

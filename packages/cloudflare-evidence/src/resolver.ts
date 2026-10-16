@@ -24,6 +24,7 @@ import {
   evidenceHandleIdentityPayload,
 } from "./registry.js";
 import { citationOutcomeForError, citationRejectionForOutcome } from "./citation-outcomes.js";
+import { narrowNativeSemExcerpt } from "./native-sem-excerpt.js";
 import {
   EvidenceRuntimeError,
   type CandidateAnchorAuthority,
@@ -372,13 +373,14 @@ async function resolveCandidate(
   const materialized = await dependencies.content.materialize(source, anchorAuthority.anchor);
   requireMaterializedSourceBinding(materialized, source);
   requireCandidateExcerptBinding(candidate, anchorAuthority, materialized);
+  const selected = await narrowNativeSemExcerpt(candidate, anchorAuthority, materialized);
   return buildAndPersist(dependencies, {
     source,
     scope,
     authorization,
     access,
-    anchorAuthority,
-    materialized,
+    anchorAuthority: selected.anchorAuthority,
+    materialized: selected.materialized,
   });
 }
 
