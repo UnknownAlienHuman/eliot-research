@@ -211,14 +211,23 @@ export async function buildAllowedReferenceManifest(input: BuildReferenceManifes
   }
   const initialSources = await input.navigation.sources(refs, initialGrant);
   const authoritative: ResolvedEvidence[] = [];
-  for (const evidence of requested) {
-    const value = await input.resolver.resolveHandle({
-      handle_ref: evidence.handle.handle_ref,
-      expected_scope_snapshot_ref: input.evidence_pack.scope_snapshot_ref,
-      access: input.navigation.access,
-    });
-    compareAuthoritativeEvidence(evidence, value);
-    authoritative.push(value);
+  // Every handle still performs its exact authoritative read. Overlap bounded
+  // independent I/O; join the whole batch before failing or reading final fences.
+  // Input order, failure order and the compiled manifest remain deterministic.
+  for (let offset = 0; offset < requested.length; offset += 4) {
+    const batch = await Promise.allSettled(requested.slice(offset, offset + 4).map(async (evidence) => {
+      const value = await input.resolver.resolveHandle({
+        handle_ref: evidence.handle.handle_ref,
+        expected_scope_snapshot_ref: input.evidence_pack.scope_snapshot_ref,
+        access: input.navigation.access,
+      });
+      compareAuthoritativeEvidence(evidence, value);
+      return value;
+    }));
+    for (const outcome of batch) {
+      if (outcome.status === "rejected") throw outcome.reason;
+      authoritative.push(outcome.value);
+    }
   }
   const finalGrant = await input.navigation.current();
   const finalSources = await input.navigation.sources(refs, finalGrant);

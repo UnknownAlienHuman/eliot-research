@@ -205,6 +205,65 @@ describe("research reference manifest over real D1/R2", () => {
     });
   }, 30_000);
 
+  it("overlaps exact handle reads and joins them before the final authority fence", async () => {
+    const first = evidencePack.resolved_evidence[0];
+    if (first === undefined) throw new Error("Missing first evidence");
+    const evidence = [first, secondEvidence];
+    let active = 0, peak = 0, started = 0;
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const built = await buildAllowedReferenceManifest({
+      evidence_pack: { ...evidencePack, resolved_evidence: evidence,
+        total_utf8_bytes: evidence.reduce((sum, item) => sum + new TextEncoder().encode(item.exact_excerpt).byteLength, 0) },
+      navigation: { ...navigation, current: async requested => {
+        if (started > 0) expect(active).toBe(0);
+        return navigation.current(requested);
+      } },
+      resolver: { ...resolver, resolveHandle: async request => {
+        active += 1; started += 1; peak = Math.max(peak, active);
+        if (started === 2) release();
+        await gate;
+        try { return await resolver.resolveHandle(request); }
+        finally { active -= 1; }
+      } },
+      policy, manifest_ref: { id: "reference-manifest-overlapped", revision: 1 },
+      model_route_ref: "model-route-reference", max_context_bytes: 64 * 1024,
+    });
+    expect(peak).toBe(2);
+    expect(built.resolved_evidence.map(item => item.handle.handle_ref)).toEqual(evidence.map(item => item.handle.handle_ref));
+    expect(built.manifest.allowed_evidence_handle_refs).toHaveLength(2);
+  });
+
+  it("joins an in-flight exact read before propagating a failed readback", async () => {
+    const first = evidencePack.resolved_evidence[0];
+    if (first === undefined) throw new Error("Missing first evidence");
+    const evidence = [first, secondEvidence];
+    const failed = new Error("controlled authoritative readback failure");
+    let release!: () => void, announceSecond!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const secondStarted = new Promise<void>(resolve => { announceSecond = resolve; });
+    let settled = false, active = 0;
+    const result = buildAllowedReferenceManifest({
+      evidence_pack: { ...evidencePack, resolved_evidence: evidence }, navigation,
+      resolver: { ...resolver, resolveHandle: async request => {
+        if (request.handle_ref.id === first.handle.handle_ref.id) throw failed;
+        active += 1; announceSecond();
+        await gate;
+        try { return await resolver.resolveHandle(request); }
+        finally { active -= 1; }
+      } },
+      policy, manifest_ref: { id: "reference-manifest-joined-failure", revision: 1 },
+      model_route_ref: "model-route-reference", max_context_bytes: 64 * 1024,
+    }).then(value => { settled = true; return value; }, error => { settled = true; return error as unknown; });
+    try {
+      await secondStarted;
+      expect(settled).toBe(false);
+      expect(active).toBe(1);
+    } finally { release(); }
+    expect(await result).toBe(failed);
+    expect(active).toBe(0);
+  });
+
   it("builds a deduplicated-source manifest from exact evidence and replays immutable D1/R2 bytes", async () => {
     const firstEvidence = evidencePack.resolved_evidence[0];
     if (firstEvidence === undefined) throw new Error("Missing first evidence");

@@ -505,14 +505,28 @@ export function createCloudflareEvidenceResolver(
       }[] = [];
       const rejected: { handle_ref: VersionedRef; reason_code: string }[] = [];
       const outcomes: CitationResolutionOutcome[] = [];
-      for (const handleRef of ordered) {
-        try {
-          const evidence = await resolveHandle(
-            dependencies,
-            handleRef,
-            input.scope_snapshot_ref,
-            input.access,
-          );
+      // Resolve independent handles together without weakening any per-handle
+      // checks. Join every in-flight read and retain the original sorted outcome
+      // order, including unavailable/unknown verification dispositions.
+      for (let offset = 0; offset < ordered.length; offset += 4) {
+        const batch = await Promise.all(ordered.slice(offset, offset + 4).map(async (handleRef) => {
+          try {
+            return { status: "fulfilled" as const, handleRef, evidence: await resolveHandle(
+              dependencies, handleRef, input.scope_snapshot_ref, input.access,
+            ) };
+          } catch (error) {
+            return { status: "rejected" as const, handleRef, error };
+          }
+        }));
+        for (const result of batch) {
+          if (result.status === "rejected") {
+            const outcome = citationOutcomeForError(result.handleRef, result.error);
+            outcomes.push(outcome);
+            const rejection = citationRejectionForOutcome(outcome);
+            if (rejection !== null) rejected.push(rejection);
+            continue;
+          }
+          const evidence = result.evidence;
           resolvedEvidence.push(evidence);
           resolved.push({
             handle_ref: evidence.handle.handle_ref,
@@ -525,11 +539,6 @@ export function createCloudflareEvidenceResolver(
             excerpt_sha256: evidence.handle.excerpt_sha256,
             verification_receipt_ref: evidence.verification_receipt_ref,
           });
-        } catch (error) {
-          const outcome = citationOutcomeForError(handleRef, error);
-          outcomes.push(outcome);
-          const rejection = citationRejectionForOutcome(outcome);
-          if (rejection !== null) rejected.push(rejection);
         }
       }
       const time = observedAt(dependencies.now ?? Date.now);
