@@ -409,10 +409,17 @@ export function createResearchProviderKeyModelUseStore(database: D1Database) {
         "source_configuration_ref,source_configuration_sha256,planned_stage_set_sha256,plan_sha256,state,phase,created_at,updated_at) " +
         "SELECT ?1,?2,'openrouter',?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20,'ACCEPTED','INTENT',?21,?21 " +
         "FROM project p JOIN project_owner o ON o.project_id=p.project_id " +
-        "JOIN research_provider_key_configuration_operation k ON k.owner_id=?1 AND k.project_id=?2 " +
-        "AND k.provider_id='openrouter' AND k.operation_id=?4 " +
-        "WHERE p.project_id=?2 AND o.principal_ref=?1 AND p.generation=?13 AND k.state='CONFIGURED' " +
-        "AND k.account_id=?5 AND k.gateway_id=?6 AND k.alias=?7 AND k.provider_config_id=?8 AND k.metadata_sha256=?9 " +
+        "WHERE p.project_id=?2 AND o.principal_ref=?1 AND p.generation=?13 AND (" +
+        "EXISTS (SELECT 1 FROM research_provider_key_configuration_operation k " +
+        "WHERE k.owner_id=?1 AND k.project_id=?2 AND k.provider_id='openrouter' AND k.operation_id=?4 " +
+        "AND k.state='CONFIGURED' AND k.account_id=?5 AND k.gateway_id=?6 AND k.alias=?7 " +
+        "AND k.provider_config_id=?8 AND k.metadata_sha256=?9) OR (" +
+        "NOT EXISTS (SELECT 1 FROM research_provider_key_configuration_operation k " +
+        "WHERE k.owner_id=?1 AND k.project_id=?2 AND k.provider_id='openrouter' AND k.operation_id=?4) " +
+        "AND EXISTS (SELECT 1 FROM service_model_provider_operation g WHERE g.owner_id=?1 AND g.operation_id=?4 " +
+        "AND g.provider_id='openrouter' AND g.provider_slug='openrouter' AND g.base_url IS NULL " +
+        "AND g.state='CONFIGURED' AND g.failure_code IS NULL AND g.provider_http_status IS NULL " +
+        "AND g.alias=?7 AND g.provider_config_id=?8 AND g.metadata_sha256=?9))) " +
         "ON CONFLICT(owner_id,project_id,operation_id) DO NOTHING",
       ).bind(input.owner_id, input.project_id, input.operation_id, input.key_operation_id,
         input.account_id, input.gateway_id, input.alias, input.provider_config_id, input.configuration_metadata_sha256,

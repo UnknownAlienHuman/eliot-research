@@ -91,6 +91,9 @@ it("preserves populated Native children and retains an unpriced BLOCKED stage wi
   await reset();
   const database = env.CORE_DB;
   await applyD1Migrations(database, migrations.slice(0, blockedMigrationIndex));
+  // Today's intent writer can resolve global registrations; this independent
+  // table does not change the legacy model-use guards under migration test.
+  await applyD1Migrations(database, [serviceProviderMigration]);
 
   const owner = `model-use-migration-owner-${crypto.randomUUID()}`;
   const project = await insertOwnerProject(database, owner);
@@ -367,7 +370,7 @@ it("preserves populated Native children and retains an unpriced BLOCKED stage wi
   expect(nativeCalls).toBe(2);
   const legacyCompletedBeforeGlobal = await readOperationRows(successfulOperationId);
   const legacyBlockedBeforeGlobal = await readOperationRows(failedOperationId);
-  await applyD1Migrations(database, [serviceProviderMigration, globalUseMigration]);
+  await applyD1Migrations(database, [globalUseMigration]);
   expect(await readOperationRows(successfulOperationId)).toEqual(legacyCompletedBeforeGlobal);
   expect(await readOperationRows(failedOperationId)).toEqual(legacyBlockedBeforeGlobal);
   expect((await database.prepare("PRAGMA foreign_key_check").all()).results).toEqual([]);

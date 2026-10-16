@@ -66,6 +66,7 @@ jobs:
           packages/cloudflare-ai/src/project-search-item.test.ts
           packages/cloudflare-ai/src/project-search.test.ts
           packages/cloudflare-model-execution/src/model-route-failure.test.ts
+          packages/cloudflare-research-configuration/src/research-provider-key-model-pricing-catalog.test.ts
           packages/cloudflare-workspace-mcp/src/gemini-mcp.test.ts
           packages/cloudflare-workspace-mcp/src/workspace-mcp-env.test.ts
           packages/cloudflare-workspace-mcp/src/gemini-mcp-service-token.test.ts
@@ -93,6 +94,9 @@ jobs:
           src/research-run-configuration.test.ts
           src/research-run-configuration-admission.test.ts
           test/research-provider-key-model-use.test.ts
+          test/research-provider-key-model-use-global.test.ts
+          test/research-provider-key-model-pricing-authority.test.ts
+          test/research-provider-key-model-use-failure-contract.test.ts
           test/research-provider-key-configuration.test.ts
           test/research-prepared-model-transport.test.ts
           test/research-client-execution.test.ts
@@ -100,6 +104,8 @@ jobs:
           test/raw-normalized-admission-http.test.ts
           test/research-native-global-default.test.ts
           --reporter=verbose
+      - name: Preserve existing model use data when enabling global provider models
+        run: node scripts/test-global-provider-model-use-migration.mjs
       - name: Native owner report byte headers
         run: pnpm --dir apps/eliotr-core exec vitest run test/artifact-draft-reader.test.ts --testNamePattern 'reads one historical section body' --reporter=dot
       - name: Build served assets and owner web

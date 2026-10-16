@@ -135,7 +135,7 @@ export function freeOnlyCatalogResponse(modelId: string = MODEL_ID): Response {
         quantization: "fp8",
         max_completion_tokens: 1_024,
         max_prompt_tokens: 32_768,
-        supported_parameters: ["max_tokens", "reasoning_effort", "response_format"],
+        supported_parameters: ["max_tokens", "reasoning", "response_format"],
         supports_tool_choice: false,
         status: 1,
         uptime_last_30m: 100,

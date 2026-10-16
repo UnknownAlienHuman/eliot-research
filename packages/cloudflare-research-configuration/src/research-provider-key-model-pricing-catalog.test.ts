@@ -55,16 +55,16 @@ function bytes(endpointOverrides: Record<string, unknown> = {}, modelId = MODEL_
 
 describe("OpenRouter zero-price catalog interoperability", () => {
   it("accepts the exact free model and current endpoint metadata with native reasoning support", () => {
-    expect(() => assertVerifiedZeroPriceCatalogBytes(bytes())).not.toThrow();
+    expect(() => assertVerifiedZeroPriceCatalogBytes(bytes(), MODEL_ID)).not.toThrow();
   });
 
   it("rejects nonzero pricing, a different model identity, and missing native request capabilities", () => {
-    expect(() => assertVerifiedZeroPriceCatalogBytes(bytes({ pricing: { prompt: "0.01", completion: "0", discount: 0 } })))
+    expect(() => assertVerifiedZeroPriceCatalogBytes(bytes({ pricing: { prompt: "0.01", completion: "0", discount: 0 } }), MODEL_ID))
       .toThrow(expect.objectContaining({ code: "FREE_PRICE_NOT_ZERO" }));
     expect(() => assertVerifiedZeroPriceCatalogBytes(bytes(), "stealth/space-bunny-alpha"))
       .toThrow(expect.objectContaining({ code: "FREE_PRICE_NOT_PROVEN" }));
     expect(() => assertVerifiedZeroPriceCatalogBytes(bytes({
       supported_parameters: ["max_tokens", "reasoning_effort", "response_format"],
-    }))).toThrow(expect.objectContaining({ code: "FREE_PRICE_NOT_PROVEN" }));
+    }), MODEL_ID)).toThrow(expect.objectContaining({ code: "FREE_PRICE_NOT_PROVEN" }));
   });
 });
