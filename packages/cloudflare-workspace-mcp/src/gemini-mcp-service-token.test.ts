@@ -409,8 +409,15 @@ describe("Gemini MCP managed-oauth profile", () => {
     const doctorReceipt = serviceTools.tools.find((tool) => tool.name === "eliotr_doctor_delivery_receipt");
     expect(doctorPull?.inputSchema.required).toEqual(["worker_slot"]);
     expect(doctorReceipt?.inputSchema.required).toEqual([
-      "delivery_id", "lease_generation", "worker_slot", "issue_number", "issue_url",
+      "delivery_id", "lease_generation", "worker_slot",
     ]);
+    expect(doctorReceipt?.inputSchema).toHaveProperty("oneOf", expect.arrayContaining([
+      expect.objectContaining({ additionalProperties: false,
+        required: ["delivery_id", "lease_generation", "worker_slot", "issue_number", "issue_url"] }),
+      expect.objectContaining({ additionalProperties: false,
+        required: ["delivery_id", "lease_generation", "worker_slot", "result"],
+        properties: expect.objectContaining({ result: { const: "INCIDENT_RESOLVED_NO_ISSUE" } }) }),
+    ]));
     expect(doctorPull?.inputSchema).not.toHaveProperty("properties.client_grant_id");
     expect(doctorPull?.inputSchema).not.toHaveProperty("properties.project_id");
     expect(doctorReceipt?.inputSchema).not.toHaveProperty("properties.client_grant_id");

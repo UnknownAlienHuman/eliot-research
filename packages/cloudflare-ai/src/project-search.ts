@@ -344,7 +344,9 @@ export async function searchProject(
   if (allowedRevisions?.size === 0) return { chunks: [] };
   const raw = await input.namespace.get(PROJECT_SEARCH_INSTANCES[input.lane]).search({
     messages: [{ role: "user", content: input.query }],
-    ai_search_options: { retrieval: { filters: {
+    // Baseline scoped retrieval must not inherit a global rewrite/rerank opt-in.
+    // QueryPlanner owns visible decomposition and any qualified reranking (§6.8–6.9).
+    ai_search_options: { query_rewrite: { enabled: false }, reranking: { enabled: false }, retrieval: { filters: {
       folder: { $gte: folder, $lt: folderEnd },
       // Native text filters index the first 64 UTF-8 bytes. IDs are ASCII; D1 checks full identities below.
       ...(allowedRevisions === undefined ? {} : {

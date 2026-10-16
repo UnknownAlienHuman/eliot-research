@@ -62,6 +62,7 @@ jobs:
           packages/cloudflare-model-control/src/service-model-provider-service.test.ts
           packages/cloudflare-ai/src/service-model-provider-management.test.ts
           packages/cloudflare-ai/src/project-search-item.test.ts
+          packages/cloudflare-ai/src/project-search.test.ts
           packages/cloudflare-model-execution/src/model-route-failure.test.ts
           packages/cloudflare-workspace-mcp/src/gemini-mcp.test.ts
           packages/cloudflare-workspace-mcp/src/workspace-mcp-env.test.ts

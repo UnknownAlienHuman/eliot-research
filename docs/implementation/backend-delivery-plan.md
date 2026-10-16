@@ -1,35 +1,46 @@
 # Backend delivery plan
 
-## Current owner checkpoint, October 15, 2026, 23:28 UTC
+## Current owner checkpoint, October 16, 2026, 00:14 UTC
 
-Main `6e11fc278c1308743360dbd770cdb86923e12fce` is live as
-`git-6e11fc278c13`, Worker `1db30578-e4cd-4491-b6c4-ac73a25c5e6b`.
-Fast CI `38822300026`, routine dry-run/deploy and active D1 authority readback
-passed. The unchanged owner UI has frontend CI `38820008750` on its source
-ancestor `aab5a2b5`; the current fast CI rebuilt the exact release assets.
+Source `cf670161ae221f1e65e98db7f1cd1b6072a193cc` is live as
+`git-cf670161ae22`, Worker `34fd785b-d35b-4a8e-9c7f-d418f2b7e47f`.
+Fast CI `38823756889`, routine dry-run/deploy and active D1 authority readback
+passed. Later owner UI source `3fbb13c8` has passing frontend CI `38826270294`
+and fast CI `38826270351`; that UI is integrated for the next release.
 No new migration was applied. The selected Codex target and repository are
 installed, and actual MCP discovery/qualification passed after deployment.
 
 Live doctor pull exposed a missing configuration projection: the Worker had
 the two target settings, but `projectWorkspaceMcpEnvironment` discarded them.
-The bounded fix forwards only those non-secret settings. The native lease and
-receipt suite now runs through that same projection; its five cases, the
-explicit-field-set check, global typecheck and touched lint passed.
+The bounded fix forwards only those non-secret settings. Actual MCP discovery,
+qualification and one exact outbox lease passed on live `cf670161`.
+Source `c155898a` adds a strictly guarded resolved-without-Issue receipt over
+the same outbox and removes circular delivery-alarm health dependencies.
+Eight native D1/MCP cases passed, including old Issue compatibility, resolved
+expired-lease reconciliation and rejection of mixed/foreign/revoked requests.
 
 The new-source run's stored retrieval result was `NONE`/`NO_HIT`, with zero
 evidence and zero bytes before prose indexing completed. Source `de8c4d6b`
 rejects that input before model preparation and classifies strict VERIFY
 candidate rejection as a known no-dispatch failure. Sixteen focused cases
-passed; no model output was repaired or replayed. The source is integrated for
-the next checked release, not yet live.
+passed; no model output was repaired or replayed. This guard is live on
+`cf670161`. A later native query also proved that the instance's enabled
+reranker suppressed existing vector hits after indexing finished. With the
+documented per-request rewrite/rerank opt-outs, Cloudflare returned two native
+hits (scores 0.6063 and 0.5473); the Qwen3 embedding model and indexes were not
+changed. The baseline request now explicitly follows architecture sections
+6.8–6.9 rather than inheriting the instance's unqualified opt-in. Native folder
+filtering and authoritative D1 membership/metadata checks remain mandatory.
 
 Run `c15e9f3d...` remains canonically ACTIVE with its original failure and no
 cancellation receipt. Cloudflare independently confirms its native instance
 errored at 22:38:36 UTC with 14 steps; no model work remains active. The owner
 cancel returned 403. The filtered-project historical-scope defect was reproduced
-and fixed with ten native positive/negative cases; a remaining control
-authorization refusal is still under bounded read-only investigation. Do not
-claim this run was canceled or rewrite its immutable outputs.
+and fixed with ten native positive/negative cases. Later operator diagnostics
+used cached environment generation metadata, so their denial does not establish
+a Worker/D1 authority mismatch. The actual deployed generation and active D1
+fingerprint match; no retired generation was reactivated. Do not claim this
+run was canceled or rewrite its immutable outputs.
 
 ## Current owner checkpoint, October 15, 2026, 22:15 UTC
 
