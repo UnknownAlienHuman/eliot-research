@@ -79,12 +79,8 @@ export async function callMcpDoctorDelivery(
       database: env.CORE_DB,
       connection,
       target_repository: env.ELIOTR_DOCTOR_GITHUB_REPOSITORY,
-      delivery_id: args.delivery_id,
-      lease_generation: args.lease_generation,
-      worker_slot: args.worker_slot,
-      issue_number: args.issue_number,
-      issue_url: args.issue_url,
-    });
+      ...args,
+    } as Parameters<typeof recordDoctorDeliveryReceipt>[0]);
   } catch (error) {
     return translate(error);
   }

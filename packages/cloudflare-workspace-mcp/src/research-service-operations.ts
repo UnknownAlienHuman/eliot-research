@@ -272,14 +272,27 @@ export function createMcpResearchServiceOperations<Context, RunRequest, QueryReq
         if (Object.keys(args).length !== 1) invalid("Doctor delivery pull contains unknown fields");
         return prepared(() => ports.execute_doctor_delivery(actor.context, name, { worker_slot: workerSlot }));
       }
-      if (Object.keys(args).length !== 5 || typeof args.delivery_id !== "string" ||
-          !/^doctor-[a-f0-9]{64}$/u.test(args.delivery_id) ||
-          typeof args.issue_url !== "string" || args.issue_url.length < 1 || args.issue_url.length > 2048 ||
+      if (typeof args.delivery_id !== "string" || !/^doctor-[a-f0-9]{64}$/u.test(args.delivery_id) ||
           !Number.isSafeInteger(args.lease_generation) || (args.lease_generation as number) < 1 ||
-          (args.lease_generation as number) > 2_147_483_647 ||
+          (args.lease_generation as number) > 2_147_483_647) {
+        invalid("Doctor delivery receipt contains unknown or invalid fields");
+      }
+      if (Object.hasOwn(args, "result")) {
+        if (Object.keys(args).length !== 4 || args.result !== "INCIDENT_RESOLVED_NO_ISSUE") {
+          invalid("Doctor no-Issue receipt contains unknown or invalid fields");
+        }
+        return prepared(() => ports.execute_doctor_delivery(actor.context, name, {
+          delivery_id: args.delivery_id as string,
+          lease_generation: args.lease_generation as number,
+          worker_slot: workerSlot,
+          result: "INCIDENT_RESOLVED_NO_ISSUE",
+        }));
+      }
+      if (Object.keys(args).length !== 5 || typeof args.issue_url !== "string" ||
+          args.issue_url.length < 1 || args.issue_url.length > 2048 ||
           !Number.isSafeInteger(args.issue_number) || (args.issue_number as number) < 1 ||
           (args.issue_number as number) > 2_147_483_647) {
-        invalid("Doctor delivery receipt contains unknown or invalid fields");
+        invalid("Doctor Issue receipt contains unknown or invalid fields");
       }
       return prepared(() => ports.execute_doctor_delivery(actor.context, name, {
         delivery_id: args.delivery_id as string,

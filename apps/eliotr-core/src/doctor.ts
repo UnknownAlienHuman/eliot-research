@@ -82,7 +82,7 @@ async function oldestDoctorDeliverySeconds(database: D1Database, nowMs: number):
     "SELECT MIN(d.created_at) AS oldest_created_at FROM doctor_delivery_outbox d " +
     "JOIN incident i ON i.incident_id=d.incident_id " +
     "WHERE d.sink_ref=?1 AND d.state IN ('PENDING','UNKNOWN') " +
-    "AND i.state IN ('OPEN','ACKNOWLEDGED')",
+    "AND i.state IN ('OPEN','ACKNOWLEDGED') AND i.kind<>'DOCTOR_HEALTH_OUTBOX_STALLED'",
   ).bind(DOCTOR_GITHUB_SINK).first<{ readonly oldest_created_at: unknown }>();
   if (row === null) throw new Error("scheduled doctor delivery age read returned no row");
   if (row.oldest_created_at === null) return 0;
@@ -90,16 +90,6 @@ async function oldestDoctorDeliverySeconds(database: D1Database, nowMs: number):
   const oldestMs = Date.parse(row.oldest_created_at);
   if (!Number.isFinite(oldestMs)) throw new Error("scheduled doctor delivery timestamp is invalid");
   return Math.max(0, Math.floor((nowMs - oldestMs) / 1000));
-}
-
-async function hasUnsettledGitHubDelivery(database: D1Database, nowMs: number): Promise<boolean> {
-  const row = await database.prepare(
-    "SELECT 1 AS present FROM doctor_delivery_outbox d " +
-    "LEFT JOIN incident i ON i.incident_id=d.incident_id " +
-    "WHERE d.sink_ref=?1 AND ((d.state='UNKNOWN' AND (d.lease_until IS NULL OR d.lease_until<=?2)) OR " +
-    "(d.state='FAILED' AND i.state IN ('OPEN','ACKNOWLEDGED'))) LIMIT 1",
-  ).bind(DOCTOR_GITHUB_SINK, nowMs).first<{ readonly present: number }>();
-  return row !== null;
 }
 
 function codeForKind(value: unknown): DoctorHealthCode | null {
@@ -371,9 +361,7 @@ export async function runScheduledDoctor(env: Env, options: DoctorOptions = {}):
     mcp_service_client_ids: env.MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS,
     now_ms: nowMs,
   });
-  const unsettled = await hasUnsettledGitHubDelivery(env.CORE_DB, nowMs);
-  const sinkState = mcpState === "UNCONFIGURED"
-    ? "UNCONFIGURED" : mcpState === "READY" && !unsettled ? "READY" : "UNAVAILABLE";
+  const sinkState = mcpState;
   const snapshot = await buildHealthSnapshot(env, nowMs, sinkState);
   const evaluation = await persistEvaluation(env.CORE_DB, snapshot);
 

@@ -43,14 +43,17 @@ export type DoctorDeliveryPullResult =
       };
     };
 
-export interface DoctorDeliveryReceiptResult {
-  readonly protocol: "eliotr.doctor-delivery-receipt.v1";
-  readonly state: "DELIVERED" | "ALREADY_DELIVERED";
-  readonly delivery_id: string;
-  readonly issue_number: number;
-  readonly issue_url: string;
-  readonly lease: Omit<DoctorDeliveryLeaseIdentity, "expires_at">;
-}
+export type DoctorDeliveryReceiptInput = { readonly delivery_id: unknown; readonly lease_generation: unknown;
+  readonly worker_slot: unknown } & (
+  | { readonly result: "INCIDENT_RESOLVED_NO_ISSUE"; readonly issue_number?: never; readonly issue_url?: never }
+  | { readonly result?: never; readonly issue_number: unknown; readonly issue_url: unknown });
+export type DoctorDeliveryReceiptResult =
+  | { readonly protocol: "eliotr.doctor-delivery-receipt.v1"; readonly state: "DELIVERED" | "ALREADY_DELIVERED";
+      readonly delivery_id: string; readonly issue_number: number; readonly issue_url: string;
+      readonly lease: Omit<DoctorDeliveryLeaseIdentity, "expires_at"> }
+  | { readonly protocol: "eliotr.doctor-delivery-receipt.v1"; readonly state: "SUPERSEDED" | "ALREADY_SUPERSEDED";
+      readonly result: "INCIDENT_RESOLVED_NO_ISSUE"; readonly delivery_id: string;
+      readonly lease: Omit<DoctorDeliveryLeaseIdentity, "expires_at"> };
 
 export type DoctorDeliveryErrorCode =
   | "DOCTOR_DELIVERY_INPUT_INVALID"
@@ -199,7 +202,7 @@ interface DecodedDelivery {
   readonly delivery_id: string;
   readonly incident_id: string;
   readonly marker: string;
-  readonly state: "PENDING" | "UNKNOWN" | "DELIVERED";
+  readonly state: "PENDING" | "UNKNOWN" | "DELIVERED" | "SUPERSEDED";
   readonly diagnosis: string | null;
   readonly created_at: string;
   readonly lease_owner: string | null;
@@ -225,7 +228,8 @@ function decodeDelivery(row: DeliveryRow): DecodedDelivery {
       typeof row.incident_id !== "string" || !/^doctor-health-[a-f0-9]{64}$/u.test(row.incident_id) ||
       row.incident_id !== `doctor-health-${row.delivery_id.slice("doctor-".length)}` ||
       typeof row.marker !== "string" || row.marker !== `[eliotr-doctor:${row.delivery_id.slice("doctor-".length)}]` ||
-      (row.state !== "PENDING" && row.state !== "UNKNOWN" && row.state !== "DELIVERED") ||
+      (row.state !== "PENDING" && row.state !== "UNKNOWN" && row.state !== "DELIVERED" &&
+        row.state !== "SUPERSEDED") ||
       typeof row.created_at !== "string" || !Number.isFinite(Date.parse(row.created_at)) ||
       !Number.isSafeInteger(row.lease_generation) || (row.lease_generation as number) < 0 ||
       (row.lease_owner !== null && typeof row.lease_owner !== "string") ||
@@ -437,27 +441,35 @@ export async function recordDoctorDeliveryReceipt(input: {
   readonly database: D1Database;
   readonly connection: ComputerAgentConnection;
   readonly target_repository: unknown;
-  readonly delivery_id: unknown;
-  readonly lease_generation: unknown;
-  readonly worker_slot: unknown;
-  readonly issue_number: unknown;
-  readonly issue_url: unknown;
   readonly now?: () => number;
-}): Promise<DoctorDeliveryReceiptResult> {
+} & DoctorDeliveryReceiptInput): Promise<DoctorDeliveryReceiptResult> {
   const connection = input.connection;
   validLeaseConnection(connection);
   const target = repository(input.target_repository);
   if (target === null) return fail("DOCTOR_DELIVERY_TARGET_UNAVAILABLE", 503, "Doctor issue target is not configured");
   const workerSlot = validateWorkerSlot(input.worker_slot);
+  const hasOwn = (key: string): boolean => Object.prototype.hasOwnProperty.call(input, key);
+  const noIssue = hasOwn("result");
+  const hasIssueNumber = hasOwn("issue_number");
+  const hasIssueUrl = hasOwn("issue_url");
+  const receiptKeysValid = Object.keys(input).every((key) =>
+    ["database", "connection", "target_repository", "now", "delivery_id", "lease_generation", "worker_slot"].includes(key) ||
+    (noIssue ? key === "result" : key === "issue_number" || key === "issue_url"));
+  if (!receiptKeysValid || (noIssue
+    ? input.result !== "INCIDENT_RESOLVED_NO_ISSUE" || hasIssueNumber || hasIssueUrl
+    : input.result !== undefined || !hasIssueNumber || !hasIssueUrl)) {
+    return fail("DOCTOR_DELIVERY_INPUT_INVALID", 400, "Doctor delivery receipt result is invalid");
+  }
   if (typeof input.delivery_id !== "string" || !/^doctor-[a-f0-9]{64}$/u.test(input.delivery_id) ||
       !Number.isSafeInteger(input.lease_generation) || (input.lease_generation as number) < 1 ||
-      (input.lease_generation as number) > 2_147_483_647 || !Number.isSafeInteger(input.issue_number) ||
-      (input.issue_number as number) < 1 || (input.issue_number as number) > 2_147_483_647) {
+      (input.lease_generation as number) > 2_147_483_647 || (!noIssue &&
+        (!Number.isSafeInteger(input.issue_number) || (input.issue_number as number) < 1 ||
+          (input.issue_number as number) > 2_147_483_647))) {
     return fail("DOCTOR_DELIVERY_INPUT_INVALID", 400, "Doctor delivery receipt identity is invalid");
   }
-  const issueNumber = input.issue_number as number;
+  const issueNumber = noIssue ? null : input.issue_number as number;
   const generation = input.lease_generation as number;
-  const issueUrl = validateIssueUrl(input.issue_url, target, issueNumber);
+  const issueUrl = noIssue ? null : validateIssueUrl(input.issue_url, target, issueNumber as number);
   const owner = leaseOwner(connection, workerSlot);
   const nowMs = (input.now ?? Date.now)();
   if (!Number.isSafeInteger(nowMs) || nowMs < 0) {
@@ -473,49 +485,80 @@ export async function recordDoctorDeliveryReceipt(input: {
   }
   if (row === null) return fail("DOCTOR_DELIVERY_LEASE_STALE", 409, "Doctor delivery item is no longer available");
   const current = decodeDelivery(row);
-  const receipt = (state: DoctorDeliveryReceiptResult["state"]): DoctorDeliveryReceiptResult => ({
-    protocol: "eliotr.doctor-delivery-receipt.v1",
-    state,
-    delivery_id: current.delivery_id,
-    issue_number: issueNumber,
-    issue_url: issueUrl,
-    lease: {
-      connection_id: connection.connection_id,
-      connection_revision: connection.revision,
-      worker_slot: workerSlot,
-      generation,
-    },
-  });
-  if (current.state === "DELIVERED") {
+  const lease = {
+    connection_id: connection.connection_id,
+    connection_revision: connection.revision,
+    worker_slot: workerSlot,
+    generation,
+  };
+  const receipt = (already: boolean): DoctorDeliveryReceiptResult => noIssue
+    ? {
+        protocol: "eliotr.doctor-delivery-receipt.v1",
+        state: already ? "ALREADY_SUPERSEDED" : "SUPERSEDED",
+        result: "INCIDENT_RESOLVED_NO_ISSUE",
+        delivery_id: current.delivery_id,
+        lease,
+      }
+    : {
+        protocol: "eliotr.doctor-delivery-receipt.v1",
+        state: already ? "ALREADY_DELIVERED" : "DELIVERED",
+        delivery_id: current.delivery_id,
+        issue_number: issueNumber as number,
+        issue_url: issueUrl as string,
+        lease,
+      };
+  if (noIssue && current.state === "SUPERSEDED") {
+    if (current.lease_owner === owner && current.lease_generation === generation &&
+        current.lease_until !== null && current.incident_state === "RESOLVED" &&
+        current.external_issue_number === null && current.external_issue_url === null) return receipt(true);
+    return fail("DOCTOR_DELIVERY_IDEMPOTENCY_CONFLICT", 409,
+      "Doctor delivery was superseded by a different or unbound result");
+  }
+  if (!noIssue && current.state === "DELIVERED") {
     if (current.lease_owner === owner && current.lease_generation === generation &&
         current.external_issue_number === issueNumber && current.external_issue_url === issueUrl) {
-      return receipt("ALREADY_DELIVERED");
+      return receipt(true);
     }
     return fail("DOCTOR_DELIVERY_IDEMPOTENCY_CONFLICT", 409,
       "Doctor delivery already has a different committed receipt");
   }
   if (current.state !== "UNKNOWN" || current.lease_owner !== owner ||
-      current.lease_generation !== generation || current.lease_until === null || current.lease_until <= nowMs) {
+      current.lease_generation !== generation || current.lease_until === null ||
+      (!noIssue && current.lease_until <= nowMs) ||
+      (noIssue && (current.incident_state !== "RESOLVED" || current.external_issue_number !== null ||
+        current.external_issue_url !== null))) {
     return fail("DOCTOR_DELIVERY_LEASE_STALE", 409, "Doctor delivery lease is stale or belongs to another agent");
   }
   let update: D1Result;
   try {
-    // DELIVERED closes the lease; retain its owner and generation as the receipt replay identity.
-    update = await input.database.prepare(
-      "UPDATE doctor_delivery_outbox SET state='DELIVERED',external_issue_number=?1," +
-      "external_issue_url=?2,last_error_code=NULL,updated_at=?3 " +
-      "WHERE delivery_id=?4 AND sink_ref=?5 AND state='UNKNOWN' AND lease_owner=?6 " +
-      "AND lease_generation=?7 AND lease_until>?8 AND external_issue_number IS NULL AND external_issue_url IS NULL " +
-      `AND ${currentMcpConnectionExists(9)}`,
-    ).bind(issueNumber, issueUrl, new Date(nowMs).toISOString(), input.delivery_id, SINK_REF,
-      owner, generation, nowMs, ...currentMcpConnectionValues(connection)).run();
+    if (noIssue) {
+      // Keep the expired lease identity for replay; this branch has no external side effect.
+      update = await input.database.prepare(
+        "UPDATE doctor_delivery_outbox SET state='SUPERSEDED',last_error_code='INCIDENT_RESOLVED',updated_at=?1 " +
+        "WHERE delivery_id=?2 AND sink_ref=?3 AND state='UNKNOWN' AND lease_owner=?4 AND lease_generation=?5 " +
+        "AND lease_until IS NOT NULL AND external_issue_number IS NULL AND external_issue_url IS NULL " +
+        "AND incident_id IN (SELECT incident_id FROM incident WHERE state='RESOLVED') " +
+        `AND ${currentMcpConnectionExists(6)}`,
+      ).bind(new Date(nowMs).toISOString(), input.delivery_id, SINK_REF, owner, generation,
+        ...currentMcpConnectionValues(connection)).run();
+    } else {
+      // DELIVERED closes the lease; retain its owner and generation as the receipt replay identity.
+      update = await input.database.prepare(
+        "UPDATE doctor_delivery_outbox SET state='DELIVERED',external_issue_number=?1," +
+        "external_issue_url=?2,last_error_code=NULL,updated_at=?3 " +
+        "WHERE delivery_id=?4 AND sink_ref=?5 AND state='UNKNOWN' AND lease_owner=?6 " +
+        "AND lease_generation=?7 AND lease_until>?8 AND external_issue_number IS NULL AND external_issue_url IS NULL " +
+        `AND ${currentMcpConnectionExists(9)}`,
+      ).bind(issueNumber, issueUrl, new Date(nowMs).toISOString(), input.delivery_id, SINK_REF,
+        owner, generation, nowMs, ...currentMcpConnectionValues(connection)).run();
+    }
   } catch {
     return fail("DOCTOR_DELIVERY_STORAGE_UNAVAILABLE", 503, "Doctor delivery receipt could not be committed", true);
   }
   if (update.success !== true) {
     return fail("DOCTOR_DELIVERY_STORAGE_UNAVAILABLE", 503, "Doctor delivery receipt could not be committed", true);
   }
-  if (update.meta.changes === 1) return receipt("DELIVERED");
+  if (update.meta.changes === 1) return receipt(false);
 
   let readback: DeliveryRow | null;
   try {
@@ -529,9 +572,13 @@ export async function recordDoctorDeliveryReceipt(input: {
   if (readback === null) return fail("DOCTOR_DELIVERY_LEASE_STALE", 409,
     "Current owner-selected MCP connection changed before receipt readback");
   const settled = decodeDelivery(readback);
+  if (noIssue && settled.state === "SUPERSEDED" && settled.lease_owner === owner &&
+      settled.lease_generation === generation && settled.lease_until !== null &&
+      settled.incident_state === "RESOLVED" && settled.external_issue_number === null &&
+      settled.external_issue_url === null) return receipt(true);
   if (settled.state === "DELIVERED" && settled.lease_owner === owner &&
       settled.lease_generation === generation && settled.external_issue_number === issueNumber &&
-      settled.external_issue_url === issueUrl) return receipt("ALREADY_DELIVERED");
+      settled.external_issue_url === issueUrl) return receipt(true);
   if (settled.state === "DELIVERED") return fail("DOCTOR_DELIVERY_IDEMPOTENCY_CONFLICT", 409,
     "Doctor delivery already has a different committed receipt");
   return fail("DOCTOR_DELIVERY_LEASE_STALE", 409, "Doctor delivery lease changed before receipt commit");
