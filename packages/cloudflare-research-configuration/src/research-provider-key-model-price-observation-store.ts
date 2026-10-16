@@ -1,12 +1,11 @@
 import { canonicalJson, decodeCanonicalBase64Bytes, encodeCanonicalBase64Bytes } from "@eliotr/platform-cloudflare";
 import type { ResearchProviderKeyModelUseStage, ResearchProviderKeyModelUseRow } from "./research-provider-key-model-use-store.js";
+import { researchProviderKeyModelPricingSourceUrl } from "./research-provider-key-model-pricing-catalog.js";
 
 const SHA256 = /^[0-9a-f]{64}$/u;
 const OPERATION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const ROUTE_VERSION = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const MAX_RESPONSE_BYTES = 32_768;
-const MODEL_ID = "stealth/space-bunny-alpha" as const;
-const SOURCE_URL = "https://openrouter.ai/api/v1/models/stealth/space-bunny-alpha/endpoints" as const;
 
 export interface ResearchProviderKeyModelPriceObservationIdentity {
   readonly observation_ref: string;
@@ -30,8 +29,8 @@ export interface ResearchProviderKeyModelPriceObservationReceipt extends Researc
   readonly provider_config_id: string;
   readonly configuration_metadata_sha256: string;
   readonly provider: "openrouter";
-  readonly exact_model_id: typeof MODEL_ID;
-  readonly source_url: typeof SOURCE_URL;
+  readonly exact_model_id: string;
+  readonly source_url: string;
   readonly source_response_sha256: string;
   readonly readback_sha256: string;
   readonly byte_length: number;
@@ -47,8 +46,8 @@ export interface ResearchProviderKeyModelPriceObservationWrite {
   readonly route_ref: string;
   readonly route_version: string;
   readonly provider: "openrouter";
-  readonly exact_model_id: typeof MODEL_ID;
-  readonly source_url: typeof SOURCE_URL;
+  readonly exact_model_id: string;
+  readonly source_url: string;
   readonly response_bytes: Uint8Array;
   readonly source_response_sha256: string;
   readonly observed_at: string;
@@ -233,12 +232,12 @@ export function createD1ResearchProviderKeyModelPriceObservationStore(database: 
     const projectGeneration = row.project_generation;
     if (responseBytes.byteLength !== byteLength || await sha256(responseBytes) !== readbackSha || sourceSha !== readbackSha ||
         typeof projectGeneration !== "number" || !Number.isSafeInteger(projectGeneration) || projectGeneration < 1 ||
-        row.provider_id !== "openrouter" || row.exact_model_id !== MODEL_ID ||
+        row.provider_id !== "openrouter" || typeof row.exact_model_id !== "string" ||
         typeof row.observation_ref !== "string" || !/^rkpo-[0-9a-f]{64}$/u.test(row.observation_ref)) {
       fail("READBACK_CORRUPT", "stored price observation bytes or fixed provider identity are corrupt");
     }
     const sourceUrl = identifier(row.source_url, "source_url", /^https:\/\/openrouter\.ai\//u);
-    if (sourceUrl !== SOURCE_URL) fail("READBACK_CORRUPT", "price observation source URL is not the fixed endpoint");
+    if (sourceUrl !== researchProviderKeyModelPricingSourceUrl(row.exact_model_id)) fail("READBACK_CORRUPT", "price observation source URL is not the exact model endpoint");
     const receipt: ResearchProviderKeyModelPriceObservationReceipt = Object.freeze({
       observation_ref: row.observation_ref,
       owner_id: ownerId,
@@ -258,8 +257,8 @@ export function createD1ResearchProviderKeyModelPriceObservationStore(database: 
       provider_config_id: identifier(row.provider_config_id, "provider_config_id", /^[A-Za-z0-9._:-]{1,128}$/u),
       configuration_metadata_sha256: identifier(row.configuration_metadata_sha256, "configuration_metadata_sha256", SHA256),
       provider: "openrouter",
-      exact_model_id: MODEL_ID,
-      source_url: SOURCE_URL,
+      exact_model_id: row.exact_model_id,
+      source_url: sourceUrl,
       source_response_sha256: sourceSha,
       readback_sha256: readbackSha,
       byte_length: byteLength,
@@ -267,7 +266,7 @@ export function createD1ResearchProviderKeyModelPriceObservationStore(database: 
       expires_at: canonicalTimestamp(row.expires_at, "expires_at"),
       approval_receipt_ref: identifier(row.approval_receipt_ref, "approval_receipt_ref", OPERATION_ID),
     });
-    if (receipt.approval_receipt_ref !== operationId || receipt.source_url !== SOURCE_URL ||
+    if (receipt.approval_receipt_ref !== operationId ||
         Date.parse(receipt.expires_at) <= Date.parse(receipt.observed_at)) {
       fail("READBACK_CORRUPT", "price observation authority or validity is corrupt");
     }
@@ -302,18 +301,22 @@ export function createD1ResearchProviderKeyModelPriceObservationStore(database: 
         fail("INPUT_INVALID", "official price response exceeds its byte bound");
       }
       const sourceSha = identifier(input.source_response_sha256, "source_response_sha256", SHA256);
-      if (await sha256(responseBytes) !== sourceSha || input.provider !== "openrouter" || input.exact_model_id !== MODEL_ID ||
+      if (await sha256(responseBytes) !== sourceSha || input.provider !== "openrouter" ||
           input.approval_receipt_ref !== operation.operation_id ||
           input.expires_at !== operation.deadline_at ||
           operation.state !== "PREPARING" || operation.phase !== "FREE_PRICE_CHECK" || operation.active_stage !== input.stage) {
         fail("INPUT_INVALID", "price observation does not match the authorized current owner check/use operation");
       }
       const stageRow = await database.prepare(
-        "SELECT stage,route_ref,route_version FROM research_provider_key_model_use_stage_operation " +
-        "WHERE owner_id=?1 AND project_id=?2 AND operation_id=?3 AND stage=?4 LIMIT 1",
+        "SELECT s.stage,s.route_ref,s.route_version,json_extract(u.configuration_basis_json," +
+        "'$.stages[' || s.sequence_number || '].transport_policy.model') AS exact_model_id " +
+        "FROM research_provider_key_model_use_stage_operation s JOIN research_provider_key_model_use_operation u " +
+        "ON u.owner_id=s.owner_id AND u.project_id=s.project_id AND u.operation_id=s.operation_id " +
+        "WHERE s.owner_id=?1 AND s.project_id=?2 AND s.operation_id=?3 AND s.stage=?4 LIMIT 1",
       ).bind(operation.owner_id, operation.project_id, operation.operation_id, input.stage)
-        .first<{ stage: unknown; route_ref: unknown; route_version: unknown }>();
-      if (stageRow === null || stageRow.stage !== input.stage || stageRow.route_ref !== input.route_ref || stageRow.route_version !== input.route_version) {
+        .first<{ stage: unknown; route_ref: unknown; route_version: unknown; exact_model_id: unknown }>();
+      if (stageRow === null || stageRow.stage !== input.stage || stageRow.route_ref !== input.route_ref ||
+          stageRow.route_version !== input.route_version || stageRow.exact_model_id !== input.exact_model_id) {
         fail("IDENTITY_CONFLICT", "price observation route does not match its durable stage plan");
       }
       const observedAt = canonicalTimestamp(input.observed_at, "observed_at");
@@ -323,7 +326,7 @@ export function createD1ResearchProviderKeyModelPriceObservationStore(database: 
         fail("INPUT_INVALID", "price observation must use the finite operation deadline as its expiry");
       }
       const sourceUrl = identifier(input.source_url, "source_url", /^https:\/\/openrouter\.ai\//u);
-      if (sourceUrl !== SOURCE_URL) fail("INPUT_INVALID", "official price source URL is not the fixed endpoint");
+      if (sourceUrl !== researchProviderKeyModelPricingSourceUrl(input.exact_model_id)) fail("INPUT_INVALID", "official price source URL is not the exact model endpoint");
       const computedObservationRef = await createResearchProviderKeyModelPriceObservationRef({
         owner_id: operation.owner_id, project_id: operation.project_id, operation_id: operation.operation_id,
         stage: input.stage, route_ref: input.route_ref, route_version: input.route_version,
@@ -345,7 +348,7 @@ export function createD1ResearchProviderKeyModelPriceObservationStore(database: 
             existing.owner_credential_generation !== operation.owner_credential_generation ||
             existing.project_generation !== operation.project_generation ||
             existing.deployment_generation !== operation.deployment_generation ||
-            existing.source_url !== sourceUrl || existing.stage !== input.stage) {
+            existing.source_url !== sourceUrl || existing.exact_model_id !== input.exact_model_id || existing.stage !== input.stage) {
           fail("IDENTITY_CONFLICT", "existing price observation differs from exact operation metadata");
         }
         const existingRow = await readRaw(observationRef);

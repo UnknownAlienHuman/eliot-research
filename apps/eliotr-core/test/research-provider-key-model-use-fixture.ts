@@ -116,22 +116,22 @@ export async function createNativeUseEnvironment(owner: string, database: D1Data
   } as unknown as Env;
 }
 
-export function freeOnlyCatalogResponse(): Response {
+export function freeOnlyCatalogResponse(modelId: string = MODEL_ID): Response {
   return new Response(JSON.stringify({
     data: {
-      id: MODEL_ID,
-      name: "Stealth Space Bunny Alpha",
+      id: modelId,
+      name: modelId === MODEL_ID ? "Stealth Space Bunny Alpha" : "Registered OpenRouter model",
       created: 1_759_000_000,
-      description: "Local test metadata for the exact stealth endpoint",
+      description: "Local test metadata for the exact registered endpoint",
       architecture: { modality: "text->text", input_modalities: ["text"], output_modalities: ["text"], tokenizer: "test" },
       endpoints: [{
         name: "Stealth",
-        model_id: MODEL_ID,
-        model_name: MODEL_ID,
+        model_id: modelId,
+        model_name: modelId,
         context_length: 32_768,
         pricing: { prompt: "0", completion: "0", discount: 0 },
-        provider_name: "Stealth",
-        tag: "stealth",
+        provider_name: modelId === MODEL_ID ? "Stealth" : "Dots Studio",
+        tag: modelId === MODEL_ID ? "stealth" : "dots-studio",
         quantization: "fp8",
         max_completion_tokens: 1_024,
         max_prompt_tokens: 32_768,

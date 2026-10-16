@@ -10,7 +10,7 @@ import {
   assertVerifiedZeroPriceCatalogBytes,
   readVerifiedZeroPriceCatalog,
   ResearchProviderKeyModelPricingCatalogError,
-  RESEARCH_PROVIDER_KEY_MODEL_PRICING_SOURCE_URL,
+  researchProviderKeyModelPricingSourceUrl,
 } from "./research-provider-key-model-pricing-catalog.js";
 import type {
   ResearchProviderKeyModelUseRow,
@@ -22,8 +22,6 @@ import {
 } from "./research-provider-key-model-price-observation-store.js";
 
 const PROVIDER = "openrouter" as const;
-const EXACT_MODEL_ID = "stealth/space-bunny-alpha" as const;
-const SOURCE_URL = RESEARCH_PROVIDER_KEY_MODEL_PRICING_SOURCE_URL;
 const PRICING_PROTOCOL = "eliotr.research-model-pricing.v1" as const;
 const PRICING_BASIS = "EXACT_TOKEN_RATES_V1" as const;
 const ROUTE_KEYS = new Set(["stage", "route_ref", "route_version", "provider", "exact_model_id"]);
@@ -77,7 +75,7 @@ export interface ResearchProviderKeyModelPricingRouteAuthority {
   readonly route_ref: string;
   readonly route_version: string;
   readonly provider: typeof PROVIDER;
-  readonly exact_model_id: typeof EXACT_MODEL_ID;
+  readonly exact_model_id: string;
 }
 
 /**
@@ -106,8 +104,8 @@ export interface ResearchProviderKeyModelPricingObservationWrite {
   readonly route_ref: string;
   readonly route_version: string;
   readonly provider: typeof PROVIDER;
-  readonly exact_model_id: typeof EXACT_MODEL_ID;
-  readonly source_url: typeof SOURCE_URL;
+  readonly exact_model_id: string;
+  readonly source_url: string;
   readonly response_bytes: Uint8Array;
   readonly source_response_sha256: string;
   readonly observed_at: string;
@@ -128,8 +126,8 @@ export interface ResearchProviderKeyModelPricingObservationReceipt
   readonly project_generation: number;
   readonly deployment_generation: string;
   readonly provider: typeof PROVIDER;
-  readonly exact_model_id: typeof EXACT_MODEL_ID;
-  readonly source_url: typeof SOURCE_URL;
+  readonly exact_model_id: string;
+  readonly source_url: string;
   readonly source_response_sha256: string;
   readonly readback_sha256: string;
   readonly byte_length: number;
@@ -158,7 +156,7 @@ export interface ResearchProviderKeyModelPricingReceipt {
   readonly route_ref: string;
   readonly route_version: string;
   readonly provider: typeof PROVIDER;
-  readonly exact_model_id: typeof EXACT_MODEL_ID;
+  readonly exact_model_id: string;
   readonly effective_at: string;
   readonly expires_at: string;
 }
@@ -237,15 +235,17 @@ function routeIdentity(value: unknown, request: ObserveResearchProviderKeyModelF
       typeof route.route_ref !== "string" || !IDENTIFIER.test(route.route_ref) ||
       typeof route.route_version !== "string" || !IDENTIFIER.test(route.route_version) ||
       route.route_ref !== request.route_ref || route.route_version !== request.route_version ||
-      route.provider !== PROVIDER || route.exact_model_id !== EXACT_MODEL_ID) {
+      route.provider !== PROVIDER || typeof route.exact_model_id !== "string") {
     fail("AUTHORITY_CHANGED", "current selected route does not match the approved pricing request");
   }
+  try { researchProviderKeyModelPricingSourceUrl(route.exact_model_id); }
+  catch (cause) { fail("AUTHORITY_CHANGED", "current exact model has no canonical pricing endpoint", false, cause); }
   return Object.freeze({
     stage: route.stage as ResearchProviderKeyModelUseStage,
     route_ref: route.route_ref,
     route_version: route.route_version,
     provider: PROVIDER,
-    exact_model_id: EXACT_MODEL_ID,
+    exact_model_id: route.exact_model_id,
   });
 }
 
@@ -305,7 +305,7 @@ function sameObservationReceipt(
     receipt.deployment_generation === operation.deployment_generation &&
     receipt.stage === route.stage && receipt.route_ref === route.route_ref &&
     receipt.route_version === route.route_version && receipt.provider === PROVIDER &&
-    receipt.exact_model_id === EXACT_MODEL_ID && receipt.source_url === SOURCE_URL &&
+    receipt.exact_model_id === route.exact_model_id && receipt.source_url === researchProviderKeyModelPricingSourceUrl(route.exact_model_id) &&
     receipt.source_response_sha256 === sourceResponseSha256 &&
     receipt.readback_sha256 === sourceResponseSha256 &&
     receipt.byte_length === responseBytes.byteLength &&
@@ -322,7 +322,7 @@ function snapshotMatches(
 ): void {
   if (snapshot.pricing_snapshot_ref !== identity.pricing_snapshot_ref ||
       snapshot.route_ref !== identity.route_ref || snapshot.route_version !== identity.route_version ||
-      snapshot.provider !== PROVIDER || snapshot.exact_model_id !== EXACT_MODEL_ID ||
+      snapshot.provider !== PROVIDER || snapshot.exact_model_id !== identity.exact_model_id ||
       snapshot.pricing_basis !== PRICING_BASIS || snapshot.input_rate_usd_per_1k_tokens !== "0" ||
       snapshot.output_rate_usd_per_1k_tokens !== "0" || snapshot.provenance_ref !== document.provenance_ref ||
       snapshot.approval_receipt_ref !== document.approval_receipt_ref ||
@@ -417,7 +417,7 @@ export function createResearchProviderKeyModelPricingObserver(input: ResearchPro
     if (!sameObservationReceipt(receipt, authority, responseBytes, sourceResponseSha256, observationRef)) {
       fail("STORAGE_UNAVAILABLE", "stored pricing observation is not bound to the current owner-use authority");
     }
-    try { assertVerifiedZeroPriceCatalogBytes(responseBytes); }
+    try { assertVerifiedZeroPriceCatalogBytes(responseBytes, route.exact_model_id); }
     catch (cause) {
       if (cause instanceof ResearchProviderKeyModelPricingCatalogError) {
         fail(cause.code, cause.message, false, cause);
@@ -452,7 +452,7 @@ export function createResearchProviderKeyModelPricingObserver(input: ResearchPro
       }
       let bytes: Uint8Array;
       try {
-        bytes = await readVerifiedZeroPriceCatalog();
+        bytes = await readVerifiedZeroPriceCatalog(beforeFetch.route.exact_model_id);
       } catch (cause) {
         if (cause instanceof ResearchProviderKeyModelPricingError) throw cause;
         if (cause instanceof ResearchProviderKeyModelPricingCatalogError) {
@@ -479,8 +479,8 @@ export function createResearchProviderKeyModelPricingObserver(input: ResearchPro
           route_ref: afterFetch.route.route_ref,
           route_version: afterFetch.route.route_version,
           provider: PROVIDER,
-          exact_model_id: EXACT_MODEL_ID,
-          source_url: SOURCE_URL,
+          exact_model_id: afterFetch.route.exact_model_id,
+          source_url: researchProviderKeyModelPricingSourceUrl(afterFetch.route.exact_model_id),
           response_bytes: bytes,
           source_response_sha256: sourceResponseSha256,
           observed_at: effectiveAt,
@@ -508,14 +508,14 @@ export function createResearchProviderKeyModelPricingObserver(input: ResearchPro
       route_ref: before.route.route_ref,
       route_version: before.route.route_version,
       provider: PROVIDER,
-      exact_model_id: EXACT_MODEL_ID,
+      exact_model_id: before.route.exact_model_id,
     }))}`;
     const identity: ResearchModelPricingSnapshotIdentity = Object.freeze({
       pricing_snapshot_ref: pricingSnapshotRef,
       route_ref: before.route.route_ref,
       route_version: before.route.route_version,
       provider: PROVIDER,
-      exact_model_id: EXACT_MODEL_ID,
+      exact_model_id: before.route.exact_model_id,
     });
     const document: ResearchModelPricingSnapshotDocument = Object.freeze({
       protocol: PRICING_PROTOCOL,
@@ -560,7 +560,7 @@ export function createResearchProviderKeyModelPricingObserver(input: ResearchPro
       route_ref: readback.route_ref,
       route_version: readback.route_version,
       provider: PROVIDER,
-      exact_model_id: EXACT_MODEL_ID,
+      exact_model_id: readback.exact_model_id,
       effective_at: readback.effective_at,
       expires_at: readback.expires_at,
     });

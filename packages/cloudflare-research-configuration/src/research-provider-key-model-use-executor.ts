@@ -8,6 +8,7 @@ import { canonicalModelGatewayJson, modelGatewaySha256 } from "@eliotr/cloudflar
 import { prepareNativeQualificationHttpRequest } from "@eliotr/cloudflare-model-transport/model-gateway-http-request.js";
 import { decodeModelGatewayProviderNativeResponse } from "@eliotr/cloudflare-model-transport/model-gateway-provider-native-response.js";
 import type { ResearchProviderKeyModelUseRow, ResearchProviderKeyModelUseStageRow } from "./research-provider-key-model-use-store.js";
+import { parseResearchProviderKeyModelUseBasis } from "./research-provider-key-model-use-plan.js";
 
 const MAX_REQUEST_BYTES = 32_768;
 const MAX_PROBE_TIMEOUT_MS = 30_000;
@@ -47,7 +48,6 @@ export function createResearchProviderKeyModelNativeProbeExecutor(input: {
         input.signal.aborted || typeof input.gateway_base_url !== "string" ||
         preparation.transport_policy.api !== "openrouter-chat-completions" ||
         preparation.transport_policy.provider !== "openrouter" ||
-        preparation.transport_policy.model !== "stealth/space-bunny-alpha" ||
         preparation.transport_policy.billing.mode !== "byok" ||
         preparation.transport_policy.billing.free_only !== true ||
         preparation.transport_policy.billing.alias !== preparation.key_binding.alias) {
@@ -96,6 +96,8 @@ export function createResearchProviderKeyModelNativeProbeExecutor(input: {
     // The native authority has already made its durable one-shot claim. Re-read
     // owner, project, key and stage immediately before the one allowed fetch.
     const current = await input.readCurrentAuthority(preparation);
+    const planned = current === null ? undefined : parseResearchProviderKeyModelUseBasis(current.operation.configuration_basis_json)
+      .stages.find((stage) => stage.stage === preparation.stage);
     if (current === null || current.operation.owner_id !== preparation.owner_ref ||
         current.operation.project_id !== preparation.project_id ||
         current.operation.operation_id !== preparation.owner_operation_id ||
@@ -108,7 +110,9 @@ export function createResearchProviderKeyModelNativeProbeExecutor(input: {
         current.operation.state !== "QUALIFYING" || current.operation.phase !== "NATIVE_QUALIFY" ||
         current.operation.active_stage !== preparation.stage || current.stage.stage !== preparation.stage ||
         current.stage.state !== "QUALIFYING" || current.stage.preparation_ref !== args.preparation_ref ||
-        current.stage.preparation_sha256 !== args.preparation_sha256 || input.signal.aborted) {
+        current.stage.preparation_sha256 !== args.preparation_sha256 || planned === undefined ||
+        canonicalModelGatewayJson(planned.transport_policy) !== canonicalModelGatewayJson(preparation.transport_policy) ||
+        input.signal.aborted) {
       throw new ResearchProviderKeyModelProbeExecutorError("PROVIDER_KEY_MODEL_USE_AUTHORITY_CHANGED",
         "Owner, project, key or native qualification stage changed before the provider call");
     }
@@ -139,9 +143,9 @@ export function createResearchProviderKeyModelNativeProbeExecutor(input: {
         headers: prepared.headers,
         body: prepared.body,
         signal: controller.signal,
-        redirect: "error",
+        redirect: "manual",
       });
-      if (response.status !== 200) {
+      if (response.status !== 200 || response.redirected || (response.url !== "" && response.url !== prepared.url)) {
         throw new ResearchProviderKeyModelProbeExecutorError("PROVIDER_KEY_MODEL_USE_PROBE_NO_EFFECT",
           "OpenRouter Gateway did not acknowledge the connectivity probe with HTTP 200");
       }
