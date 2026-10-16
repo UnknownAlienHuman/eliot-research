@@ -1,5 +1,29 @@
 # Backend delivery plan
 
+## Global model setup checkpoint, October 16, 2026, 06:05 UTC
+
+The narrow Cloudflare control token and a separate AI Gateway Run-only token
+are installed as Worker secrets after official Cloudflare CLI browser OAuth.
+The former provisioning blocker below is resolved. No GitHub token is needed:
+Doctor delivers work to the connected Codex MCP client, which uses its own GitHub MCP.
+
+The existing global OpenRouter connection is configured in Secrets Store/AI Gateway
+and visible in Settings with an empty password field and no credential in browser
+storage or owner responses. Completing its original uncertain intent externally
+does not establish a successful first submission through the corrected form.
+The adapter now uses the documented named-secret creation followed by provider
+configuration with `secret_id`; current Cloudflare pagination/authentication and
+OpenRouter metadata are accepted without relaxing identity or zero-price checks.
+
+Global model use extends the existing operation/qualification/selection flow.
+Migration 0156 preserves existing rows and child references, admits exact global
+model pins and retains project ownership checks without copying credentials into
+projects. Native D1, legacy-data preservation, focused type/lint/unit checks and
+read-only Cloudflare preflights passed. Remote 0156, fresh UI submission and service
+inference remain pending this checkpoint's normal CI/deployment and live checks.
+Cloudflare remains built in and selected by default. No S52 or generation-promotion
+machinery, backup system or custom OAuth framework is part of this change.
+
 ## Current owner acceptance, October 16, 2026, 01:05 UTC
 
 Product source `a484b5b672e528e4385f32f8923db934bc54d00f` is deployed as

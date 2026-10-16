@@ -61,6 +61,7 @@ jobs:
           packages/owner-api-client/src/connections/service-models.test.ts
           packages/cloudflare-model-control/src/service-model-provider-service.test.ts
           packages/cloudflare-ai/src/service-model-provider-management.test.ts
+          packages/cloudflare-ai/src/custom-provider-rest-codec.test.ts
           packages/cloudflare-ai/src/provider-key-rest-codec.test.ts
           packages/cloudflare-ai/src/provider-key-rest.test.ts
           packages/cloudflare-ai/src/project-search-item.test.ts
