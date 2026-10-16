@@ -12,6 +12,8 @@ import { protectedQueryKey, runProtectedRead } from '../query/client';
 import { useCanonicalCommitReport } from './canonicalCommit';
 import { createExistingProjectAttachmentController, freezeProjectAttachmentTarget, type ProjectAttachmentState, type ProjectAttachmentTarget } from '../query/projectAttachment';
 import { useWorkspaceNotice } from './WorkspaceNotifications';
+import { claimImportAttachment, confirmImportAttachment, finishImportQueueJob, startImportQueue,
+  type ImportQueue, type ImportQueueWorker } from './importQueue';
 
 export interface CanonicalCommittedRawSource {
   readonly sourceId: string;
@@ -87,13 +89,29 @@ const withoutUncertainty = (file: ImportFileState | undefined) => {
 };
 
 /** Protected, memory-only recovery. Closing a sheet never creates a replacement operation. */
-export function ImportPanel({ apis, privacy, context, locale, project, projectSelected = project !== undefined, onImportCommitted }: {
+export function ImportPanel({ apis, privacy, context, locale, project, projectSelected = project !== undefined, onImportCommitted, worker }: {
   readonly apis: BoundWorkspaceApis; readonly privacy: PrivacyController; readonly context: SessionContext; readonly locale: 'en' | 'ru';
   readonly project?: ProjectSummary;
   readonly projectSelected?: boolean;
   readonly onImportCommitted?: (source?: CanonicalCommittedRawSource) => void;
+  /** Internal queue worker: identical pipeline, independent protected intent, no nested sheet. */
+  readonly worker?: ImportQueueWorker;
 }) {
-  const client = useQueryClient(), key = useMemo(() => [...protectedQueryKey(context, 'imports'), 'local-intent'], [context]);
+  const client = useQueryClient(), key = useMemo(() => [...protectedQueryKey(context, 'imports'), 'local-intent',
+    ...(worker ? [worker.memoryId] : [])], [context, worker?.memoryId]);
+  const queueKey = useMemo(() => [...protectedQueryKey(context, 'imports'), 'file-queue'], [context]);
+  const queueMemory = useQuery<ImportQueue>({ queryKey: queueKey, queryFn: skipToken, gcTime: Infinity });
+  const batch = worker ? undefined : queueMemory.data;
+  const readQueue = () => client.getQueryData<ImportQueue>(queueKey);
+  const writeQueue = (update: (queue: ImportQueue) => ImportQueue) => {
+    if (!privacy.isCurrent(context)) return;
+    const current = readQueue();
+    if (!current) return;
+    const next = update(current);
+    // Query also notifies observers on same-data writes. Completed workers must
+    // not create a render/effect loop by reporting the same completion again.
+    if (next !== current) client.setQueryData<ImportQueue>(queueKey, next);
+  };
   // One report is emitted per canonical committed identity, deduplicated by the original admission
   // operation or the bundle operation identity.
   const reportedSource = useRef<CanonicalCommittedRawSource | undefined>(undefined);
@@ -101,14 +119,13 @@ export function ImportPanel({ apis, privacy, context, locale, project, projectSe
   const memory = useQuery<ImportMemory>({ queryKey: key, queryFn: skipToken, gcTime: Infinity });
   const namespaceKey = [...protectedQueryKey(context, 'imports'), 'namespaces'];
   const actions = importActions(apis.sources, privacy, context, () => client.getQueryData<SourceNamespaceCatalog>(namespaceKey));
-  const [open, setOpen] = useState(false), [view, setView] = useState<ImportFlowView>('file');
-  const [namespace, setNamespace] = useState(''), [selectedFile, setSelectedFile] = useState<File>();
+  const [open, setOpen] = useState(worker !== undefined), [view, setView] = useState<ImportFlowView>('file');
+  const [namespace, setNamespace] = useState(worker?.namespace ?? ''), [selectedFile, setSelectedFile] = useState<File | undefined>(worker?.file);
   const [files, setFiles] = useState<readonly File[]>([]);
-  const [batch, setBatch] = useState<{ readonly files: readonly File[]; readonly names: readonly string[]; readonly finished: number; readonly cancelled?: boolean }>();
-  const batchCommits = useRef(new Set<string>());
   const notify = useWorkspaceNotice();
   // The owner only picks a file; the chain below advances capture, processing and admission itself.
   const [auto, setAuto] = useState(false), [autoBundle, setAutoBundle] = useState(false);
+  useEffect(() => { if (worker) setAuto(true); }, [worker?.memoryId]);
   const polls = useRef(0), pending = useRef<ReturnType<typeof setTimeout> | undefined>(undefined), autoNow = useRef(false);
   autoNow.current = auto;
   const resume = () => { polls.current = 0; setError(false); setAuto(true); };
@@ -249,11 +266,20 @@ export function ImportPanel({ apis, privacy, context, locale, project, projectSe
       commitReport(bundleKey);
       return;
     }
-    if (rawCommitKey === undefined) return;
+    if (rawCommitKey === undefined || saved.file?.uncertain !== undefined) return;
     const current = read(), target = current.attachmentTarget, attachment = current.attachment;
+    // A failed read may retain an older COMMITTED receipt. Uncertainty wins
+    // over that historical receipt for both attachment dispatch and completion.
+    if (current.file?.uncertain !== undefined) return;
+    if (worker?.needsAttachment && target === undefined) {
+      const permitted = worker.attachmentPermit();
+      if (permitted) write(old => ({ ...old, attachmentTarget: permitted }));
+      return;
+    }
     if (target == null) {
       reportedSource.current = rawSource;
       commitReport(rawCommitKey);
+      if (rawSource) worker?.finished();
       return;
     }
     if (target && rawSource !== undefined && (attachment === undefined || attachment.phase === 'dispatching')) {
@@ -264,10 +290,13 @@ export function ImportPanel({ apis, privacy, context, locale, project, projectSe
     }
     if (target && attachment?.phase !== 'confirmed') return;
     if (rawSource !== undefined) {
+      if (worker?.needsAttachment && (!attachment?.project || !worker.confirmedProject(attachment.project))) return;
       reportedSource.current = rawSource;
       commitReport(rawCommitKey);
+      worker?.finished();
     }
-  }, [attachmentController, bundleKey, commitReport, rawCommitKey, rawSource, read, saved.attachment?.phase]);
+  }, [attachmentController, bundleKey, commitReport, rawCommitKey, rawSource, read, saved.attachment?.phase,
+    saved.attachmentTarget, saved.file?.uncertain, worker, write]);
   const fileState = saved.file;
   const phase = busy ? 'loading' : fileState?.phase ?? 'useful';
   const attachmentResolved = saved.attachmentTarget == null || saved.file?.admission?.state !== 'COMMITTED' || saved.attachment?.phase === 'confirmed';
@@ -282,7 +311,7 @@ export function ImportPanel({ apis, privacy, context, locale, project, projectSe
         attachmentTarget: _attachmentTarget, attachment: _attachment, ...rest } = old;
       return rest;
     });
-    setSelectedFile(undefined); setAuto(false); setBatch(undefined);
+    setSelectedFile(undefined); setAuto(false);
   };
   // Terminality follows the accepted status contract, not COMMITTED alone. An unsaved bundle is still
   // freely replaceable. Once submitted, the attempt is released only by the owner's explicit
@@ -377,30 +406,6 @@ export function ImportPanel({ apis, privacy, context, locale, project, projectSe
       ?? namespaces.data?.namespaces[0])?.source_namespace_id;
     if (namespace === '' && first !== undefined) setNamespace(first);
   }, [namespace, namespaces.data]);
-  // Advance only a fully committed file whose project attachment is confirmed.
-  // An uncertain request keeps its identity and blocks the queue until readback.
-  useEffect(() => {
-    if (!batch || batch.cancelled || batch.finished >= batch.names.length || !rawCommitKey ||
-        busy || running.current || saved.file?.uncertain !== undefined || !privacy.isCurrent(context) ||
-        (saved.attachmentTarget != null && saved.attachment?.phase !== 'confirmed') ||
-        batchCommits.current.has(rawCommitKey)) return;
-    batchCommits.current.add(rawCommitKey);
-    const finished = batch.finished + 1, next = batch.files[finished];
-    setBatch({ ...batch, finished, ...(next === undefined ? { files: [] } : {}) });
-    if (next === undefined) {
-      setAuto(false);
-      notify(locale === 'ru' ? `Добавлено файлов: ${finished}.` : `${finished} files added.`);
-      return;
-    }
-    const nextTarget = saved.attachment?.project
-      ? freezeProjectAttachmentTarget(saved.attachment.project, context.deploymentGeneration) : saved.attachmentTarget;
-    write(old => {
-      const { selection: _selection, file: _file, request: _request, admissionRejected: _rejected,
-        attachment: _attachment, attachmentTarget: _target, ...rest } = old;
-      return { ...rest, ...(nextTarget === undefined ? {} : { attachmentTarget: nextTarget }) };
-    });
-    setSelectedFile(next); resume();
-  });
   const refused = view === 'bundle' ? saved.bundleRejected : saved.admissionRejected;
   const refusedText = locale === 'ru'
     ? 'Запрос импорта отклонён до выполнения. Проверьте исходные данные и доступ перед продолжением.'
@@ -413,7 +418,10 @@ export function ImportPanel({ apis, privacy, context, locale, project, projectSe
             : saved.attachment?.phase === 'unknown' ? text.attachUnknown
               : rawSource === undefined ? text.sourceIdentity : text.attaching
     : undefined;
-  const operationMessage = projectSelected && !project ? text.projectLoading : busy ? text.working : attachmentMessage ?? (refused ? refusedText : error ? text.error
+  const operationMessage = projectSelected && !project ? text.projectLoading : busy ? text.working
+    : worker?.needsAttachment && rawSource && saved.attachmentTarget === undefined
+      ? locale === 'ru' ? 'Ожидает добавления в проект.' : 'Waiting to add this file to the project.'
+      : attachmentMessage ?? (refused ? refusedText : error ? text.error
     : view === 'bundle' ? saved.bundleState?.uncertain ? text.unknown
       : confirmedBundleCommitKey(saved) !== undefined ? text.bundleCommitted
       : saved.review ? text.bundleReady : ''
@@ -424,9 +432,7 @@ export function ImportPanel({ apis, privacy, context, locale, project, projectSe
     : fileState?.conversion?.state === 'FAILED' ? text.error
     : fileState?.receipt ? text.captured : saved.selection ? text.prepared
     : namespaces.isFetching ? text.working : namespaces.isError ? text.namespaceError : namespaces.data ? text.namespaces : '');
-  return <>
-    <Button variant="tonal" onClick={() => setOpen(true)}>{text.open}</Button>
-    <Dialog open={open} title={text.open} onClose={() => setOpen(false)}>
+  const controls = <>
       {open && <OperationFeedback key={view} message={operationMessage} />}
       {view === 'file' && !saved.selection && (namespaces.isError || (namespaces.data?.namespaces.length ?? 0) > 1) && <div className="er-live-import-settings">
         <label className="er-field__label" htmlFor={selectId}>{text.workspace}</label>
@@ -437,34 +443,36 @@ export function ImportPanel({ apis, privacy, context, locale, project, projectSe
         {namespaces.isError && <Button variant="text" onClick={() => { void namespaces.refetch(); }}>{text.read}</Button>}
       </div>}
       {error && <p>{refused ? refusedText : text.error}</p>}
-      {batch && <section aria-label={locale === 'ru' ? 'Загрузка файлов' : 'File uploads'}>
-        <p>{locale === 'ru' ? `Добавлено: ${batch.finished} из ${batch.names.length}` : `Added ${batch.finished} of ${batch.names.length}`}</p>
-        <ol>{batch.names.map((name, index) => <li key={`${index}:${name}`}>
-          {name} · {index < batch.finished ? locale === 'ru' ? 'Добавлен' : 'Added'
-            : batch.cancelled ? locale === 'ru' ? 'В очереди отменён' : 'Queue cancelled'
-              : index === batch.finished ? locale === 'ru' ? 'Текущий файл' : 'Current file'
-                : locale === 'ru' ? 'Ожидает' : 'Waiting'}
-        </li>)}</ol>
-        {!batch.cancelled && batch.finished < batch.names.length && <Button variant="text"
-          onClick={() => setBatch({ ...batch, files: [], cancelled: true })}>{locale === 'ru' ? 'Отменить очередь' : 'Cancel queue'}</Button>}
-      </section>}
-      <ImportFlow locale={locale} copy={IMPORT_FLOW_COPY[locale]} view={view} active={open} onViewChange={busy ? undefined : setView}
+      <ImportFlow locale={locale} copy={IMPORT_FLOW_COPY[locale]} view={view} active={open} onViewChange={busy || worker ? undefined : setView}
+        accessibleName={worker ? `${locale === 'ru' ? 'Файл' : 'File'} ${worker.position}: ${worker.file.name}` : undefined}
         fileState={{ ...fileState, phase }} bundleState={busy && view === 'bundle' ? { ...saved.bundleState, phase: 'loading' } : saved.bundleState}
         bundleReview={saved.review} conversionRequest={saved.request} selectionName={saved.selection?.original_file_name ?? selectedFile?.name}
         automatic working={auto}
-        onSelectFiles={!saved.selection ? (selected: readonly File[]) => {
+        onSelectFiles={!worker && !saved.selection ? (selected: readonly File[]) => {
           const first = selected[0];
           if (!first || !privacy.isCurrent(context) || (projectSelected && !project)) return;
+          if (selected.length > 1) {
+            const id = crypto.randomUUID();
+            const queue: ImportQueue = { id, namespace, cancelled: false,
+              jobs: selected.map((file, index) => ({ id: `${id}:${index}`, file, phase: 'waiting' })),
+              ...(project ? { project: { ...project, source_ids: [...project.source_ids] } } : {}) };
+            client.setQueryData(queueKey, startImportQueue(queue));
+            return;
+          }
           write(old => {
             const { attachment: _attachment, ...rest } = old;
             return { ...rest, attachmentTarget: project ? freezeProjectAttachmentTarget(project, context.deploymentGeneration) : null };
           });
-          setBatch({ files: [...selected], names: selected.map(file => file.name), finished: 0 });
           setSelectedFile(first); resume();
         } : undefined}
-        onSelectFile={!saved.selection ? (file: File) => {
+        onSelectFile={!saved.selection && (!worker || worker.allowReplacement) ? (file: File) => {
           if (!privacy.isCurrent(context)) return;
           if (projectSelected && !project) return;
+          if (worker) {
+            if (!worker.replaceFile(file)) return;
+            setSelectedFile(file); resume();
+            return;
+          }
           write(old => {
             const { attachment: _attachment, ...rest } = old;
             return { ...rest, attachmentTarget: project ? freezeProjectAttachmentTarget(project, context.deploymentGeneration) : null };
@@ -495,7 +503,64 @@ export function ImportPanel({ apis, privacy, context, locale, project, projectSe
       {view === 'file' && !auto && !busy && saved.selection && !saved.file?.uncertain && !saved.admissionRejected &&
         saved.file?.conversion?.state !== 'FAILED' && saved.file?.admission === undefined &&
         <Button variant="tonal" onClick={resume}>{text.resume}</Button>}
-      {view === 'file' && canChooseAnotherFile && !busy && <Button variant="text" onClick={clearFile}>{saved.file?.admission?.state === 'COMMITTED' ? text.another : locale === 'ru' ? 'Выбрать другой файл' : 'Choose another file'}</Button>}
+      {(!worker || worker.allowReplacement && saved.file?.admission?.state !== 'COMMITTED') && view === 'file' && canChooseAnotherFile && !busy && <Button variant="text" onClick={clearFile}>{saved.file?.admission?.state === 'COMMITTED' ? text.another : locale === 'ru' ? 'Выбрать другой файл' : 'Choose another file'}</Button>}
+  </>;
+  if (worker) return <div data-import-file={worker.memoryId}>{controls}</div>;
+  return <>
+    <Button variant="tonal" onClick={() => setOpen(true)}>{text.open}</Button>
+    <Dialog open={open} title={text.open} onClose={() => setOpen(false)}>
+      {batch ? <section aria-label={locale === 'ru' ? 'Загрузка файлов' : 'File uploads'}>
+        <p>{locale === 'ru' ? `Добавлено: ${batch.jobs.filter(job => job.phase === 'complete').length} из ${batch.jobs.length}`
+          : `Added ${batch.jobs.filter(job => job.phase === 'complete').length} of ${batch.jobs.length}`}</p>
+        <ol>{batch.jobs.map(job => <li key={job.id}>{job.file.name} · {job.phase === 'complete'
+          ? locale === 'ru' ? 'Добавлен' : 'Added' : job.phase === 'running'
+            ? locale === 'ru' ? 'Текущий файл' : 'Current file' : batch.cancelled
+              ? locale === 'ru' ? 'В очереди отменён' : 'Queue cancelled' : locale === 'ru' ? 'Ожидает' : 'Waiting'}</li>)}</ol>
+        {batch.jobs.filter(job => job.phase !== 'waiting').map(job => <ImportPanel key={job.id}
+          apis={apis} privacy={privacy} context={context} locale={locale}
+          {...(batch.project ? { project: batch.project } : {})} projectSelected={batch.project !== undefined}
+          {...(onImportCommitted ? { onImportCommitted } : {})}
+          worker={{ file: job.file, namespace: batch.namespace, memoryId: job.id, position: batch.jobs.indexOf(job) + 1,
+            needsAttachment: batch.project !== undefined,
+            allowReplacement: !batch.cancelled && job.phase === 'running',
+            replaceFile: file => {
+              const current = readQueue();
+              if (!current || current.id !== batch.id || current.cancelled || current.attachment?.owner === job.id ||
+                  current.jobs.find(item => item.id === job.id)?.phase !== 'running' || !privacy.isCurrent(context)) return false;
+              writeQueue(queue => queue === current
+                ? { ...queue, jobs: queue.jobs.map(item => item.id === job.id ? { ...item, file } : item) } : queue);
+              return true;
+            },
+            attachmentPermit: () => {
+              const current = readQueue();
+              if (!current || current.id !== batch.id || !privacy.isCurrent(context)) return undefined;
+              writeQueue(queue => queue.id === batch.id ? claimImportAttachment(queue, job.id, context.deploymentGeneration) : queue);
+              const held = readQueue()?.attachment;
+              return held?.owner === job.id ? held.target : undefined;
+            },
+            confirmedProject: confirmed => {
+              const current = readQueue();
+              if (!current || current.id !== batch.id || !privacy.isCurrent(context)) return false;
+              if (current.jobs.find(item => item.id === job.id)?.phase === 'complete') return true;
+              const next = confirmImportAttachment(current, job.id, confirmed);
+              if (next === current) return false;
+              writeQueue(queue => queue === current ? next : queue);
+              const after = readQueue();
+              return after?.id === batch.id && after.attachment === undefined && after.project?.revision === confirmed.revision;
+            },
+            finished: () => writeQueue(queue => {
+              if (queue.id !== batch.id) return queue;
+              const next = finishImportQueueJob(queue, job.id);
+              if (next !== queue && next.jobs.every(item => item.phase === 'complete'))
+                notify(locale === 'ru' ? `Добавлено файлов: ${next.jobs.length}.` : `${next.jobs.length} files added.`);
+              return startImportQueue(next);
+            }),
+          }} />)}
+        {!batch.cancelled && batch.jobs.some(job => job.phase !== 'complete') && <Button variant="text"
+          onClick={() => writeQueue(queue => ({ ...queue, cancelled: true }))}>{locale === 'ru' ? 'Отменить очередь' : 'Cancel queue'}</Button>}
+        {batch.jobs.every(job => job.phase === 'complete' || batch.cancelled && job.phase === 'waiting') &&
+          <Button variant="text" onClick={() => { if (privacy.isCurrent(context)) client.removeQueries({ queryKey: queueKey, exact: true }); }}>{text.another}</Button>}
+      </section> : controls}
       <Button variant="text" onClick={() => setOpen(false)}>{text.close}</Button>
     </Dialog>
   </>;

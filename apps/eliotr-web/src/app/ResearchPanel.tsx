@@ -51,7 +51,7 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
       },
     } : undefined);
   const configuration = useQuery(options.configuration());
-  const history = useQuery(options.history());
+  const history = useQuery({ ...options.history(), enabled: projectId !== undefined && isProjectCurrent() });
   const saved = memory.data, launch = saved?.intent?.launch ?? saved?.observedLaunch;
   const historyHeading = useRef<HTMLHeadingElement>(null), returningFromReport = useRef(false);
   const composer = useRef<HTMLDivElement>(null), returningToComposer = useRef(false);
@@ -141,6 +141,15 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     });
   };
   const progress = status.isError ? undefined : status.data;
+  const historyRefreshes = useRef(new Set<string>());
+  const terminalObservation = progress && ['complete', 'errored', 'terminated'].includes(progress.engine_status)
+    ? `${progress.workflow_instance_id}:${progress.engine_status}` : undefined;
+  const refreshHistory = history.refetch;
+  useEffect(() => {
+    if (terminalObservation === undefined || !privacy.isCurrent(context) || historyRefreshes.current.has(terminalObservation)) return;
+    historyRefreshes.current.add(terminalObservation);
+    void refreshHistory();
+  }, [terminalObservation, privacy, context, refreshHistory]);
   const displayedWholeScope = saved?.intent?.wholeScope ?? wholeScope;
   const failedActiveRun = launch !== undefined && progress?.execution_state === 'ACTIVE' &&
     ['errored', 'terminated'].includes(progress.engine_status) && !status.isFetching;

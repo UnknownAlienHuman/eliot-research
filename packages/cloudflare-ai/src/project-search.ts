@@ -1,5 +1,5 @@
 import type { AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
-import { ensureProjectSearchItem } from "./project-search-item.js";
+import { ensureProjectSearchItem, ProjectSearchItemError } from "./project-search-item.js";
 
 export const PROJECT_SEARCH_GENERATION = "v1" as const;
 export const PROJECT_SEARCH_INSTANCES = Object.freeze({
@@ -223,6 +223,7 @@ export async function indexProjectSources(input: ProjectSearchBindings & {
   if (sourceIds.length === 0) return 0;
   const sources = await projectSources(input.core_database, projectId, sourceIds);
   let uploadedItems = 0;
+  let indexingPending = false;
   for (const source of sources) {
     const items = await projectionItems(input.search_database, source.source_revision_ref);
     const observedAt = new Date().toISOString();
@@ -231,16 +232,26 @@ export async function indexProjectSources(input: ProjectSearchBindings & {
     }
     for (let offset = 0; offset < items.length; offset += UPLOAD_BATCH_SIZE) {
       const batch = items.slice(offset, offset + UPLOAD_BATCH_SIZE);
-      await Promise.all(batch.flatMap((item) => ([
+      const outcomes = await Promise.allSettled(batch.flatMap((item) => ([
         uploadOne(input, projectId, "prose", item),
         uploadOne(input, projectId, "literal", item),
       ])));
+      // A queued item is already submitted to Cloudflare. Finish submitting the
+      // remaining canonical sections instead of starving every batch after the
+      // first pending item. A later delivery only reads those existing keys.
+      for (const outcome of outcomes) {
+        if (outcome.status === "fulfilled") continue;
+        if (outcome.reason instanceof ProjectSearchItemError && outcome.reason.code === "PROJECT_SEARCH_INDEX_PENDING") {
+          indexingPending = true;
+        } else throw outcome.reason;
+      }
     }
     if (!await currentProjectRevision(input.core_database, projectId, source.source_revision_ref, new Date().toISOString())) {
       fail("PROJECT_SEARCH_MEMBERSHIP_STALE", "project membership changed during AI Search upload");
     }
     uploadedItems += items.length;
   }
+  if (indexingPending) throw new ProjectSearchItemError("PROJECT_SEARCH_INDEX_PENDING");
   return uploadedItems;
 }
 

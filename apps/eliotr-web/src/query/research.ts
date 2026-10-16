@@ -70,7 +70,7 @@ export function researchQueryOptions(
     history() {
       return queryOptions({
         queryKey: [...key, "history", project?.id ?? null],
-        enabled: project !== undefined && project.isCurrent(),
+        enabled: project === undefined || project.isCurrent(),
         refetchOnMount: false,
         queryFn: ({ signal }) => readResearchRunHistoryWithDiagnostic({
           privacy,

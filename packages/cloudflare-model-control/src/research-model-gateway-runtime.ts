@@ -222,7 +222,6 @@ async function bufferResponseBody(
       chunks.push(next.value);
     }
     assertLifecycleActive(lifecycle);
-    lifecycle.finish();
     lifecycle.signal.removeEventListener("abort", onLifecycleAbort);
     releaseReader(reader);
     const bytes = new Uint8Array(length);
@@ -276,7 +275,6 @@ async function readResponseWithDeadline(
     throw error;
   }
   if (response.body === null) {
-    lifecycle.finish();
     return response;
   }
   const bytes = await bufferResponseBody(response, lifecycle);
@@ -311,9 +309,7 @@ export function createResearchModelGatewayRuntime(
     requestInvalid("Worker gateway binding cannot be combined with a token or HTTP transport");
   }
   const token = binding === undefined ? validateModelGatewayToken(input.gateway_token) : undefined;
-  const fetchImpl = binding === undefined
-    ? input.fetch ?? globalThis.fetch.bind(globalThis)
-    : createResearchModelGatewayBindingFetch(binding, endpoint, transportPolicy);
+  const httpFetch = input.fetch ?? globalThis.fetch.bind(globalThis);
   const bindingBase = binding === undefined ? undefined : endpoint.slice(0, -modelGatewayProviderNativePath(api).length);
   const transport: ModelGatewayFetchPort = Object.freeze({
     async fetch(url: string, init: RequestInit): Promise<Response> {
@@ -329,6 +325,10 @@ export function createResearchModelGatewayRuntime(
       const lifecycle = createRequestLifecycle(timeoutMs, parents);
       const fetchPromise = Promise.resolve().then(() => {
         assertLifecycleActive(lifecycle);
+        const fetchImpl = binding === undefined ? httpFetch : createResearchModelGatewayBindingFetch(
+          binding, endpoint, transportPolicy,
+          response => readResponseWithDeadline(response, lifecycle, endpoint, bindingBase),
+        );
         return fetchImpl(url, {
           ...init,
           redirect: binding === undefined ? "manual" : "error",
@@ -343,7 +343,9 @@ export function createResearchModelGatewayRuntime(
       try {
         const response = await Promise.race([fetchPromise, lifecycle.abortPromise]);
         if (!(response instanceof Response)) requestInvalid("model gateway transport returned a non-Response value");
-        return await readResponseWithDeadline(response, lifecycle, endpoint, bindingBase);
+        const completed = await readResponseWithDeadline(response, lifecycle, endpoint, bindingBase);
+        lifecycle.finish();
+        return completed;
       } catch (cause) {
         lifecycle.abort(cause instanceof Error ? cause : abortError("model gateway transport failed"));
         throw cause;

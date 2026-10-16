@@ -1,6 +1,6 @@
 /** Native Items are upserts. Reconcile their immutable identity before a Queue replay. */
 export async function ensureProjectSearchItem(
-  items: Pick<AiSearchItems, "list" | "uploadAndPoll">,
+  items: Pick<AiSearchItems, "list" | "upload">,
   key: string,
   document: string,
   metadata: Readonly<Record<string, string>>,
@@ -13,8 +13,8 @@ export async function ensureProjectSearchItem(
   const existing = page.result[0];
   // No second upload after a lost acknowledgement: the native collection is
   // the readback authority. It also owns indexing progress and retries.
-  const item = existing ?? await items.uploadAndPoll(key, new Blob([document], { type: "text/markdown" }), {
-    metadata: { ...metadata }, timeoutMs: 5_000,
+  const item = existing ?? await items.upload(key, new Blob([document], { type: "text/markdown" }), {
+    metadata: { ...metadata },
   });
   if (typeof item.id !== "string" || item.id.length === 0 || item.key !== key ||
       item.metadata === null || typeof item.metadata !== "object" ||

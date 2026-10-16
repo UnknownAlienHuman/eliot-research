@@ -90,6 +90,8 @@ export function ResearchPreview({ designReview = false, historyState, scopeMode,
       if (url.pathname === '/api/v1/research/catalog') return json({ projects: [{ id: 'project-fixture', title: 'Evidence in context', generation }], sources: sourceRows.map(source => ({ ...source, readiness_ref: `readiness:${source.id}:observation-1` })) });
       if (designReview && url.pathname === '/api/v1/library/readiness') {
         const source = url.searchParams.get('source_id'), revision = `${source}-revision-1`;
+        if (url.searchParams.get('project_id') !== 'project-fixture' || !sourceRows.some(row => row.id === source))
+          throw new Error('Readiness escaped the selected fixture project/source');
         return json({ protocol: 'eliotr.library-readiness.v1', source_id: source, source_revision_ref: revision,
           deployment_generation: generation, catalog_generation: '1', observed_at: stamp, quality_state: 'high_fidelity', readiness_basis: 'ACTIVE_VERIFIED',
           currentness: { verification: 'VERIFIED', value: { source_revision_ref: revision, owner_system_id: 'review-owner-system', source_owner_generation: 'review-owner-generation', source_view_ref: 'review-source-view', observation_freshness: 'current_confirmed', observed_at: stamp, gap_refs: [] } },
@@ -105,11 +107,17 @@ export function ResearchPreview({ designReview = false, historyState, scopeMode,
       if (designReview && url.pathname.endsWith('/model-provider-key')) return json({ protocol: 'eliotr.research-provider-key-configuration.v1', project_id: 'project-fixture', provider_id: 'openrouter', configurations: [], truncated: false });
       if (designReview && url.pathname.endsWith('/model-configuration')) return json({ protocol: 'eliotr.research-project-model-configuration.v1', project_id: 'project-fixture', selection_revision: null, selected: null, revisions: [], next_cursor: null });
       if (url.pathname === '/api/v1/system/research-configuration') return json({ protocol: 'eliotr.research-configuration-readiness.v1', configuration: 'present', model_transport: 'available', qualification_state: 'current', run_readiness: 'ready', readiness_reason: 'QUALIFICATION_PROOFS_CURRENT', model_route: 'research-route', qualification_expires_at: '2027-01-01T00:00:00.000Z', missing_fields: [], invalid_fields: [], checked_at: stamp });
-      if (url.pathname === '/api/v1/research/runs') return json({ protocol: 'eliotr.research-runs.v5',
+      if (url.pathname === '/api/v1/research/runs') {
+        // Studio uses owner-wide history; explicit Research queries stay project-bound.
+        const historyProject = url.searchParams.get('project_id');
+        if (historyProject !== null && historyProject !== 'project-fixture')
+          throw new Error('History escaped the selected fixture project');
+        return json({ protocol: 'eliotr.research-runs.v5',
         runs: [...(historyState || designReview ? [{ created_at: stamp, query: historyQuestion, status: historyStatus }] : []), ...(starts ? [{ created_at: stamp, query: historyQuestion, status }] : [])],
         saved_drafts: starts || designReview || historyState ? [{ created_at: stamp, artifact_ref: artifactRef, workflow_instance_id: historyState || designReview ? historyLaunch.workflow_instance_id : launch.workflow_instance_id }] : [],
         visibility_scan: { runs: 'SOURCE_EXHAUSTED', saved_drafts: 'SOURCE_EXHAUSTED' },
         configuration_state: 'INSTALLED', checked_at: stamp });
+      }
       if (url.pathname === '/api/v1/research/wiki/proposals') return json({ protocol: 'eliotr.wiki-proposals.v1', items: [], has_more: false });
       if (url.pathname === '/api/v1/research/run' && init?.method === 'POST') {
         const headers = new Headers(init.headers), body = String(init.body), key = headers.get('idempotency-key');
@@ -164,7 +172,10 @@ export function ResearchPreview({ designReview = false, historyState, scopeMode,
     const memory = () => {
       const snapshot = privacy.getSnapshot();
       if (snapshot.phase !== 'available') throw new Error('Research fixture context is unavailable');
-      return client.getQueryData<Record<string, unknown>>([...protectedQueryKey(snapshot.context, 'research'), 'local-intent']);
+      const key = [...protectedQueryKey(snapshot.context, 'research'), 'local-intent'];
+      if (client.getQueryData(key) !== undefined || client.getQueryData([...key, 'foreign-project']) !== undefined)
+        throw new Error('Research intent leaked outside its selected fixture project');
+      return client.getQueryData<Record<string, unknown>>([...key, 'project-fixture']);
     };
     const probe: ResearchPreviewProbe = {
       assertEffects(admissions, intents) {

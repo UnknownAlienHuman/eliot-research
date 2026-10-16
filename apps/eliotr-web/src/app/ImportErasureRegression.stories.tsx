@@ -1,4 +1,9 @@
 import { ImportErasureRegressionFixture, type PanelRegressionProbe } from "./ImportErasureRegressionFixture";
+import { ParallelImportPreview, playParallelImport } from './ParallelImportPreview';
+
+export const ParallelPdfImport = { render: () => <ParallelImportPreview />, play: playParallelImport };
+export const ParallelPdfImportUnknownAttachment = { render: () => <ParallelImportPreview unknownAttachment />,
+  play: (context: Parameters<typeof playParallelImport>[0]) => playParallelImport(context, true) };
 
 export default {
   title: "Workspace/Issue 335 composed panel regressions",

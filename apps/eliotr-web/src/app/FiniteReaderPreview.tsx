@@ -45,6 +45,8 @@ function createFixture(readFailure?: ReadFailure) {
     if (url.pathname === '/api/v1/research/projects') return json({ protocol: 'eliotr.project-owner-list.v1', projects: [{ protocol: 'eliotr.project-owner.v1', project_ref: { id: project, revision: 1 }, title: 'Evidence in context', revision: 1, owner_principal_ref: 'live-owner', deployment_generation: generation, source_ids: [source], created_at: stamp }] });
     if (url.pathname === '/api/v1/research/catalog') return json({ projects: [{ id: project, title: 'Evidence in context', generation }], sources: [{ id: source, title: sourceTitle, readiness_ref: 'readiness:source-live-1:observation-1' }] });
     if (url.pathname === '/api/v1/library/readiness') {
+      if (url.searchParams.get('project_id') !== project || url.searchParams.get('source_id') !== source)
+        throw new Error('Readiness escaped the selected fixture project/source');
       readinessCalls++;
       if (readFailure === 'readiness' || readFailure === 'both') {
         if (readinessCalls === 1) throw new TypeError('Synthetic readiness-only read failure');
@@ -219,6 +221,14 @@ export const playSameEpochForeignProject = (test: ReaderPlayContext) => foreignR
 export const playSameEpochForeignSource = (test: ReaderPlayContext) => foreignRoute(test, 'sourceId');
 
 /** Actual root/query retries: only the failed panel refetches, with the same source/project. */
+function sourceAnnouncementRoot(test: ReaderPlayContext): HTMLElement {
+  // The workspace snackbar is a separate operation surface outside this pane.
+  // Keep the one-channel assertion on the pane that owns readiness/versions.
+  const root = test.canvasElement.querySelector<HTMLElement>('.er-live-workspace');
+  assert(root, 'Actual source operation pane is missing');
+  return root;
+}
+
 export async function playSourceStatusRetry(test: ReaderPlayContext) {
   const environment = environmentFor(test.canvasElement), mode = environment.readFailure;
   assert(mode === 'readiness' || mode === 'revisions', 'Retry story must own one failed panel');
@@ -229,18 +239,18 @@ export async function playSourceStatusRetry(test: ReaderPlayContext) {
   const panel = test.canvasElement.querySelectorAll<HTMLElement>('.er-projects-library__panel')[mode === 'readiness' ? 0 : 1];
   assert(panel, 'Owning source panel missing');
   await until(() => environment.metrics().readinessCalls === 1 && environment.metrics().revisionsCalls === 1 && !!panel.querySelector('button.er-button--text'), 'owning panel error');
-  const region = paneAnnouncement(test.canvasElement);
+  const root = sourceAnnouncementRoot(test), region = paneAnnouncement(root);
   const failure = mode === 'readiness' ? 'Search readiness could not be read.' : 'Saved versions could not be read.';
   await announcementUntil(() => region.textContent?.includes(failure) === true);
   const retry = panel.querySelector<HTMLButtonElement>('button.er-button--text'); assert(retry, 'Targeted retry missing');
   await test.userEvent.click(retry);
   const loading = mode === 'readiness' ? 'Reading search readiness.' : 'Reading saved versions.';
   await announcementUntil(() => region.textContent?.includes(loading) === true);
-  assert(paneAnnouncement(test.canvasElement) === region, 'Retry replaced the operation region');
+  assert(paneAnnouncement(root) === region, 'Retry replaced the operation region');
   const pending = environment.metrics();
   assert(pending.readinessCalls === (mode === 'readiness' ? 2 : 1) && pending.revisionsCalls === (mode === 'revisions' ? 2 : 1), 'Retry refreshed the unrelated panel');
   if (mode === 'readiness') environment.readinessGate.release(); else environment.revisionsGate.release();
-  await announcementUntil(() => unchangedChannel(test.canvasElement, region, 'Search readiness loaded. Saved versions loaded.'));
+  await announcementUntil(() => unchangedChannel(root, region, 'Search readiness loaded. Saved versions loaded.'));
   const currentSelect = await test.canvas.findByRole('combobox', { name: 'Project', exact: true });
   const currentSource = await test.canvas.findByRole('button', { name: sourceTitle, exact: true });
   assert(currentSelect instanceof HTMLSelectElement && currentSelect.value === project && currentSource.getAttribute('aria-pressed') === 'true', 'Retry changed project/source identity');
@@ -252,8 +262,8 @@ export async function playSourceStatusPrivacy(test: ReaderPlayContext, waitFor: 
   const environment = environmentFor(test.canvasElement);
   await test.userEvent.selectOptions(await test.canvas.findByRole('combobox', { name: 'Project', exact: true }), project);
   await test.userEvent.click(await test.canvas.findByRole('button', { name: sourceTitle, exact: true }));
-  const region = paneAnnouncement(test.canvasElement);
-  await announcementUntil(() => unchangedChannel(test.canvasElement, region, 'Search readiness could not be read. Saved versions could not be read.'));
+  const root = sourceAnnouncementRoot(test), region = paneAnnouncement(root);
+  await announcementUntil(() => unchangedChannel(root, region, 'Search readiness could not be read. Saved versions could not be read.'));
   const retry = test.canvasElement.querySelector<HTMLButtonElement>('.er-projects-library__panel button.er-button--text'); assert(retry, 'Readiness retry absent');
   await test.userEvent.click(retry);
   await announcementUntil(() => region.textContent?.includes('Reading search readiness.') === true);

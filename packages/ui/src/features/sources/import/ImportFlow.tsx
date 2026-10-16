@@ -113,6 +113,7 @@ export interface ImportFlowCopy {
 }
 
 export interface ImportFlowProps {
+  readonly accessibleName?: string | undefined;
   readonly locale?: ImportFlowLocale;
   readonly copy: ImportFlowCopy;
   readonly view?: ImportFlowView;
@@ -307,7 +308,7 @@ export function ImportFlow(props: ImportFlowProps) {
     FAILED: locale === "ru" ? "Обработка не завершилась" : "Processing failed",
     UNKNOWN: locale === "ru" ? "Результат пока неизвестен" : "Outcome not yet known",
   })[state];
-  return <section className="er-import" lang={locale} aria-label={copy.title}>
+  return <section className="er-import" lang={locale} aria-label={props.accessibleName ?? copy.title}>
     <header className="er-import__head"><h2 className="er-import__title">{copy.title}</h2>
       {props.onViewChange && <div className="er-import__tabs">
         <Button variant={view === "file" ? "tonal" : "text"} onClick={() => props.onViewChange?.("file")}>{copy.file_tab}</Button>
@@ -319,8 +320,13 @@ export function ImportFlow(props: ImportFlowProps) {
     {view === "file" ? <div className="er-import__review">
       {automatic && !uncertain && !capture && !props.selectionName && props.onSelectFile ? <label className="er-import__drop" htmlFor={fileInputId}>
         <span className="er-import__drop-glyph" aria-hidden="true"><MaterialSymbol name="upload" /></span>
-        <span className="er-import__drop-title">{copy.drop_title}</span>
-        <span className="er-import__drop-hint">{copy.auto_hint}</span>
+        <span className="er-import__drop-title">{props.onSelectFiles
+          ? locale === 'ru' ? 'Выберите файлы или перетащите их сюда' : 'Choose files or drop them here'
+          : copy.drop_title}</span>
+        <span className="er-import__drop-hint">{props.onSelectFiles
+          ? locale === 'ru' ? 'Eliot обрабатывает до двух файлов одновременно. Для каждого сохраняется свой результат.'
+            : 'Eliot processes up to two files at a time and keeps each file’s outcome.'
+          : copy.auto_hint}</span>
         <input id={fileInputId} type="file" multiple={props.onSelectFiles !== undefined} disabled={busy} aria-label={copy.choose_file}
           onChange={event => { const selected = Array.from(event.target.files ?? []); if (selected.length > 0 && props.onSelectFiles) props.onSelectFiles(selected); else if (selected[0]) props.onSelectFile?.(selected[0]); event.target.value = ""; }} />
       </label> : null}

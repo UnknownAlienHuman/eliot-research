@@ -140,6 +140,7 @@ export function createResearchModelGatewayBindingFetch(
   binding: ResearchModelGatewayBinding,
   endpoint: string,
   transportPolicy?: ModelGatewayTransportPolicyV1,
+  consumeResponse?: (response: Response) => Promise<Response>,
 ): (url: string, init: RequestInit) => Promise<Response> {
   if (binding === null || typeof binding !== "object" || typeof binding.gateway !== "function") {
     invalid("reasoning gateway Worker binding is unavailable");
@@ -210,10 +211,14 @@ export function createResearchModelGatewayBindingFetch(
     }
     if (!(response instanceof Response)) invalid("native AI Gateway binding did not return a Response");
     if (!response.ok) return response;
+    // Gateway log publication can depend on completion of the response stream.
+    // The runtime drains it under its existing byte/deadline/cancellation bounds
+    // before asking for that same response's log; inference is never repeated.
+    const completedResponse = consumeResponse === undefined ? response : await consumeResponse(response);
     try {
       // Native responses may omit routing headers. Their response-scoped,
       // authenticated Gateway log supplies observed identity, never a default.
-      return await normalizeFingerprintHeaders(response, gateway, headers);
+      return await normalizeFingerprintHeaders(completedResponse, gateway, headers);
     } catch (cause) {
       const typedCause = safeResponseCause(cause);
       throw new ModelGatewayExecutionError("MODEL_GATEWAY_RESPONSE_INVALID",

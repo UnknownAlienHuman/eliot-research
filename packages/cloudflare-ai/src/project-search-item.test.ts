@@ -10,32 +10,32 @@ describe("native project Items delivery", () => {
     let stored: AiSearchItemInfo | undefined;
     const items = {
       list: vi.fn(async () => ({ result: stored ? [stored] : [] })),
-      uploadAndPoll: vi.fn(async () => { stored = info("completed"); throw new Error("lost acknowledgement"); }),
+      upload: vi.fn(async () => { stored = info("completed"); throw new Error("lost acknowledgement"); }),
     };
     await expect(ensureProjectSearchItem(items, key, "document", metadata)).rejects.toThrow("lost acknowledgement");
     await expect(ensureProjectSearchItem(items, key, "document", metadata)).resolves.toBeUndefined();
-    expect(items.uploadAndPoll).toHaveBeenCalledTimes(1);
+    expect(items.upload).toHaveBeenCalledTimes(1);
     expect(items.list).toHaveBeenLastCalledWith({ key, source: "builtin", per_page: 5 });
   });
 
   it("leaves in-progress indexing with Cloudflare and only reads on redelivery", async () => {
-    const items = { list: vi.fn(async () => ({ result: [info("running")] })), uploadAndPoll: vi.fn() };
+    const items = { list: vi.fn(async () => ({ result: [info("running")] })), upload: vi.fn() };
     await expect(ensureProjectSearchItem(items, key, "document", metadata)).rejects.toMatchObject({ code: "PROJECT_SEARCH_INDEX_PENDING" });
     items.list.mockResolvedValue({ result: [info("completed")] });
     await expect(ensureProjectSearchItem(items, key, "document", metadata)).resolves.toBeUndefined();
-    expect(items.uploadAndPoll).not.toHaveBeenCalled();
+    expect(items.upload).not.toHaveBeenCalled();
   });
 
   it("does not overwrite an existing key with another canonical identity", async () => {
-    const items = { list: vi.fn(async () => ({ result: [{ ...info("completed"), metadata: { ...metadata, source_revision_ref: "foreign" } }] })), uploadAndPoll: vi.fn() };
+    const items = { list: vi.fn(async () => ({ result: [{ ...info("completed"), metadata: { ...metadata, source_revision_ref: "foreign" } }] })), upload: vi.fn() };
     await expect(ensureProjectSearchItem(items, key, "document", metadata)).rejects.toMatchObject({ code: "PROJECT_SEARCH_PROVIDER_RESPONSE_INVALID" });
-    expect(items.uploadAndPoll).not.toHaveBeenCalled();
+    expect(items.upload).not.toHaveBeenCalled();
   });
 
   it("does not report a native timeout or terminal failure as completed", async () => {
-    const items = { list: vi.fn(async () => ({ result: [] })), uploadAndPoll: vi.fn(async () => info("queued")) };
+    const items = { list: vi.fn(async () => ({ result: [] })), upload: vi.fn(async () => info("queued")) };
     await expect(ensureProjectSearchItem(items, key, "document", metadata)).rejects.toMatchObject({ code: "PROJECT_SEARCH_INDEX_PENDING" });
-    items.uploadAndPoll.mockResolvedValue(info("error"));
+    items.upload.mockResolvedValue(info("error"));
     await expect(ensureProjectSearchItem(items, key, "document", metadata)).rejects.toMatchObject({ code: "PROJECT_SEARCH_INDEX_FAILED" });
   });
 });

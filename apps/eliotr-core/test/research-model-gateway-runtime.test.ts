@@ -67,6 +67,57 @@ function requestInit(): RequestInit {
 }
 
 describe("research model gateway runtime", () => {
+  it("drains native response bytes before reading a log published only at stream completion", async () => {
+    const metadata = { budget_reservation_ref: "budget-one", evidence_pack_ref: "pack-one:1",
+      output_object_ref: "output-one", prompt_generation: "prompt-one", schema_generation: "schema-one" };
+    let finished = false, pulls = 0;
+    const stream = new ReadableStream<Uint8Array>({ pull(controller) {
+      if (pulls++ === 0) controller.enqueue(new TextEncoder().encode("complete"));
+      else { finished = true; controller.close(); }
+    } });
+    const nativeRun = vi.fn(async () => new Response(stream, { headers: { "cf-aig-log-id": GATEWAY_LOG.id } }));
+    const getLog = vi.fn(async () => {
+      if (!finished) throw new Error("Gateway cannot publish this log until the response stream finishes");
+      return { ...GATEWAY_LOG, metadata };
+    });
+    const runtime = createResearchModelGatewayRuntime({ reasoning_gateway_base_url: BASE_URL,
+      transport_policy: WORKERS_AI_POLICY, ai_gateway_binding: {
+        run: nativeRun, gateway: () => ({ ...gateway(BASE_URL), getLog }),
+      } });
+    const response = await runtime.binding_transport.fetch(ENDPOINT, { ...requestInit(), body: JSON.stringify({ model: "dynamic/eliotr-balanced" }), headers: {
+      "cf-aig-request-timeout": "1000", "cf-aig-collect-log": "true", "cf-aig-collect-log-payload": "false",
+      "cf-aig-skip-cache": "true", "cf-aig-max-attempts": "1", "cf-aig-metadata": JSON.stringify(metadata),
+    } });
+    expect(await response.text()).toBe("complete");
+    expect(nativeRun).toHaveBeenCalledTimes(1);
+    expect(getLog).toHaveBeenCalledTimes(1);
+    expect(response.headers.get("cf-aig-model")).toBe(WORKERS_AI_POLICY.model);
+  });
+
+  it("keeps cancellation active while native log readback is pending after the body was drained", async () => {
+    const controller = new AbortController();
+    let announceLog!: () => void;
+    const logStarted = new Promise<void>(resolve => { announceLog = resolve; });
+    const nativeRun = vi.fn(async () => new Response("complete", { headers: { "cf-aig-log-id": GATEWAY_LOG.id } }));
+    const runtime = createResearchModelGatewayRuntime({ reasoning_gateway_base_url: BASE_URL,
+      transport_policy: WORKERS_AI_POLICY, signal: controller.signal, ai_gateway_binding: {
+        run: nativeRun, gateway: () => ({ ...gateway(BASE_URL), getLog: async () => {
+          announceLog(); return new Promise<AiGatewayLog>(() => {});
+        } }),
+      } });
+    const pending = runtime.binding_transport.fetch(ENDPOINT, { ...requestInit(), body: JSON.stringify({ model: "dynamic/eliotr-balanced" }), headers: {
+      "cf-aig-request-timeout": "1000", "cf-aig-collect-log": "true", "cf-aig-collect-log-payload": "false",
+      "cf-aig-skip-cache": "true", "cf-aig-max-attempts": "1", "cf-aig-metadata": JSON.stringify({
+        budget_reservation_ref: "budget-one", evidence_pack_ref: "pack-one:1", output_object_ref: "output-one",
+        prompt_generation: "prompt-one", schema_generation: "schema-one",
+      }),
+    } });
+    await logStarted;
+    controller.abort();
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+    expect(nativeRun).toHaveBeenCalledTimes(1);
+  });
+
   it.each(["server-held-external-token", " bearer"])(
     "prefers the native binding for builtin calls regardless of external credential %s", (token) => {
       const native = { gateway: vi.fn() };
