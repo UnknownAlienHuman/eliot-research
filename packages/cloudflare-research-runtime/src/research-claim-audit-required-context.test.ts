@@ -7,6 +7,7 @@ import type { ModelCallInput } from "@eliotr/research";
 import type { ModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import { readWorkflowObject, type StageRequest } from "@eliotr/cloudflare-workflows";
 import { readStartedResearchStageAttempt } from "./research-synthesis-prompt.js";
+import { createResearchModelPromptCompiler } from "@eliotr/cloudflare-model-control";
 import { createResearchClaimAuditPromptDependencies, type ResearchClaimAuditPromptDependenciesInput } from "./research-claim-audit-prompt.js";
 
 vi.mock("@eliotr/cloudflare-workflows", async (original) => ({
@@ -74,7 +75,10 @@ async function fixture(maxBytes = 4000) {
       freeze: { freeze_ref: freezeRef, scope_snapshot_ref: scopeRef } },
     verify: { operation_id: request.operation_id, synthesis, normalization, freeze_ref: freezeRef, scope_snapshot_ref: scopeRef,
       manifest_ref: manifest.manifest_ref, source_verification: { resolved: cited.map((item) => ({ handle_ref: item.handle.handle_ref })) } },
-    synthesis, normalization, claims: { section_ref: normalization.section_ref, claims: [] }, evidence: cited,
+    synthesis, normalization, claims: { section_ref: normalization.section_ref, claims: [] },
+    evidence: cited.map(item => ({ ...item, source_class: "owner_document" })),
+    audit_policy: { required_dimensions: ["method_artifact_alignment"], source_requirement_applicable: true,
+      excerpt_requirement_applicable: true, coverage_limitations: [], unsupported_precision: [] },
     verifier: { qualified: true, current: true, deployment_generation: principal.deployment_generation,
       verifier_ref: "verifier-1", verifier_schema_generation: "verifier-schema-1", deployment },
     evidence_input_sha256: "b".repeat(64), max_context_bytes: maxBytes,
@@ -97,6 +101,37 @@ async function fixture(maxBytes = 4000) {
 beforeEach(() => vi.resetAllMocks());
 
 describe("required verified evidence in audit prompt context", () => {
+  it("fits cited evidence in the actual request without duplicating private authorization metadata", async () => {
+    const f = await fixture(8000);
+    const original = canonicalEvidenceJson(f.audit);
+    let admitted: readonly string[] = [];
+    const compiler = createResearchModelPromptCompiler({
+      build_manifest_input: f.dependencies.build_manifest_input,
+      resolve_trusted_parameters: (call, deployment) => f.dependencies.resolve_trusted_parameters(call, deployment, f.audit),
+      manifest_service: { ...f.dependencies.manifest_service, async buildAndPersist(input) {
+        if (input.serialize_request_body === undefined) throw new Error("Missing request serializer");
+        const compiled = await createEvidenceContextCompiler({ now: () => NOW }).compile({
+          manifest: f.manifest, evidence: f.evidence, modelRouteRef: input.model_route_ref,
+          maxBytes: input.max_context_bytes, serializeRequestBody: input.serialize_request_body,
+          requiredHandleRefs: input.required_handle_refs ?? [],
+        });
+        admitted = compiled.selection_receipt.admitted_candidate_refs;
+        return { manifest: f.manifest, compiled, resolved_evidence: f.evidence,
+          source_authorities: [], manifest_ref: f.manifest.manifest_ref };
+      } },
+      request_timeout_ms: 1000,
+    });
+    const result = await compiler.compile(f.modelInput, f.deployment);
+    if (result === null || typeof result !== "object" || !("request_body" in result)) throw new Error("Missing compiled request");
+    expect(encoder.encode(canonicalEvidenceJson(result.request_body)).byteLength).toBeLessThanOrEqual(8000);
+    expect(f.cited.every(item => admitted.includes(key(item.handle.handle_ref)))).toBe(true);
+    const parameters = await f.dependencies.resolve_trusted_parameters(f.modelInput, f.deployment, f.audit);
+    expect(parameters.prompt).not.toContain("object_residency_key_digest");
+    expect(parameters.prompt).not.toContain("scope_snapshot_digest");
+    expect(parameters.prompt).toContain(f.cited[0]?.handle.excerpt_sha256);
+    expect(canonicalEvidenceJson(f.audit)).toBe(original);
+  });
+
   it("requires exactly the fresh verified cited set while retaining the full frozen pack and bounds", async () => {
     const f = await fixture();
     const input = await f.dependencies.build_manifest_input(f.modelInput, f.deployment);

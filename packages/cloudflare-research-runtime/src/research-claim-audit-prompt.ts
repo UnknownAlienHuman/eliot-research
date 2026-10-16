@@ -204,11 +204,9 @@ function assertAuditBinding(
 function renderAuditPrompt(installedPrompt: string, audit: ResearchClaimAuditInputSnapshot): string {
   const verifiedAudit = {
     evidence_input_sha256: audit.evidence_input_sha256,
-    synthesis: audit.synthesis,
     verifier: {
       verifier_ref: audit.verifier.verifier_ref,
       verifier_schema_generation: audit.verifier.verifier_schema_generation,
-      deployment: audit.verifier.deployment,
     },
     claims: audit.claims.claims.map((claim, index) => ({
       claim_ref: { id: `claim_${index + 1}`, revision: claim.claim_ref.revision },
@@ -222,18 +220,23 @@ function renderAuditPrompt(installedPrompt: string, audit: ResearchClaimAuditInp
       counterevidence_handle_refs: claim.counterevidence_handle_refs,
     })),
     evidence: audit.evidence.map((item) => ({
-      handle: item.handle,
-      source_revision_content_sha256: item.source_revision_content_sha256,
-      scope_snapshot_digest: item.scope_snapshot_digest,
+      handle_ref: item.handle.handle_ref,
+      source_revision_ref: item.handle.source_revision_ref,
+      anchor: item.handle.anchor,
+      excerpt_sha256: item.handle.excerpt_sha256,
+      source_assurance_ceiling: item.handle.source_assurance_ceiling,
+      materializer_assurance_ceiling: item.handle.materializer_assurance_ceiling,
       source_class: item.source_class,
       ...(item.source_title === undefined ? {} : { source_title: item.source_title }),
       instruction_taint: item.instruction_taint,
       allowed_effects: item.allowed_effects,
     })),
-    source_verification: audit.verify.source_verification.resolved,
+    // Full authorization receipts stay in the immutable audit input. The model
+    // needs the verified reference set, not duplicate scope/credential records.
+    source_verification: audit.verify.source_verification.resolved.map((item) => ({ handle_ref: item.handle_ref })),
     audit_policy: audit.audit_policy,
   };
-  return `${installedPrompt}\n\nVerified claims and evidence for this audit:\n${canonicalEvidenceJson(verifiedAudit)}\n\nFor each output observation, copy the request-local claim_ref object shown above (claim_1 through claim_N and its supplied revision). Never reproduce or guess the canonical claim identifier; the server resolves each alias against the expected claim set. Copy verifier identity, evidence_input_sha256, and claim_text_digest exactly. Exact evidence excerpts are supplied once in the outer quoted evidence blocks; use their evidence_handle_ref values when applying the verified claim bindings.`;
+  return `${installedPrompt}\n\nA bibliography entry or title alone does not establish method adoption, endorsement, mechanisms or experimental results. Require substantive cited prose for those assertions, and retain unresolved status when it is absent.\n\nVerified claims and evidence for this audit:\n${canonicalEvidenceJson(verifiedAudit)}\n\nFor each output observation, copy the request-local claim_ref object shown above (claim_1 through claim_N and its supplied revision). Never reproduce or guess the canonical claim identifier; the server resolves each alias against the expected claim set. Copy verifier identity, evidence_input_sha256, and claim_text_digest exactly. Exact evidence excerpts are supplied once in the outer quoted evidence blocks; use their evidence_handle_ref values when applying the verified claim bindings.`;
 }
 
 function stableAuditInput(audit: ResearchClaimAuditInputSnapshot): Record<string, unknown> {
