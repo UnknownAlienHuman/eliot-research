@@ -16,15 +16,20 @@ export async function ensureProjectSearchItem(
   const item = existing ?? await items.upload(key, new Blob([document], { type: "text/markdown" }), {
     metadata: { ...metadata },
   });
-  if (typeof item.id !== "string" || item.id.length === 0 || item.key !== key ||
-      item.metadata === null || typeof item.metadata !== "object" ||
-      Object.entries(metadata).some(([field, value]) => item.metadata?.[field] !== value)) {
+  if (typeof item.id !== "string" || item.id.length === 0 || item.key !== key) {
     throw new ProjectSearchItemError("PROJECT_SEARCH_PROVIDER_RESPONSE_INVALID");
   }
-  if (item.status === "queued" || item.status === "running") {
+  // Upload acknowledgements may omit retained metadata while indexing is in
+  // progress. This is not a successful readback: submit the remaining pages and
+  // verify all canonical metadata only after the native item is completed.
+  if (item.status === "queued" || item.status === "running" || item.status === "outdated") {
     throw new ProjectSearchItemError("PROJECT_SEARCH_INDEX_PENDING");
   }
   if (item.status !== "completed") throw new ProjectSearchItemError("PROJECT_SEARCH_INDEX_FAILED");
+  if (item.metadata === null || typeof item.metadata !== "object" ||
+      Object.entries(metadata).some(([field, value]) => item.metadata?.[field] !== value)) {
+    throw new ProjectSearchItemError("PROJECT_SEARCH_PROVIDER_RESPONSE_INVALID");
+  }
 }
 
 export class ProjectSearchItemError extends Error {

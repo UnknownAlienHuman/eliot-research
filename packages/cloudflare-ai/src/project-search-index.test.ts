@@ -15,7 +15,8 @@ function fixture() {
   const upload = vi.fn(async (key: string, _document: Blob, options: { metadata?: Record<string, string> }) => {
     const item: AiSearchItemInfo = { id: `native-${stored.size}`, key, metadata: options.metadata ?? {}, status: "queued" };
     stored.set(key, item);
-    return item;
+    const { metadata: _metadata, ...ack } = item;
+    return ack;
   });
   const items = { list: vi.fn(async ({ key }: { key: string }) => ({ result: stored.has(key) ? [stored.get(key)] : [] })), upload: upload };
   const input = { namespace: { get: () => ({ items }) } as unknown as AiSearchNamespaceLike,

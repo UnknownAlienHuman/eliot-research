@@ -32,6 +32,19 @@ describe("native project Items delivery", () => {
     expect(items.upload).not.toHaveBeenCalled();
   });
 
+  it("keeps an acknowledgement without metadata pending and requires exact completed readback", async () => {
+    const items = { list: vi.fn(async () => ({ result: [] as AiSearchItemInfo[] })),
+      upload: vi.fn(async () => { const { metadata: _metadata, ...ack } = info("queued"); return ack; }) };
+    await expect(ensureProjectSearchItem(items, key, "document", metadata))
+      .rejects.toMatchObject({ code: "PROJECT_SEARCH_INDEX_PENDING" });
+    items.list.mockResolvedValue({ result: [{ ...info("completed"), metadata: { ...metadata, content_sha256: "b".repeat(64) } }] });
+    await expect(ensureProjectSearchItem(items, key, "document", metadata))
+      .rejects.toMatchObject({ code: "PROJECT_SEARCH_PROVIDER_RESPONSE_INVALID" });
+    items.list.mockResolvedValue({ result: [info("completed")] });
+    await expect(ensureProjectSearchItem(items, key, "document", metadata)).resolves.toBeUndefined();
+    expect(items.upload).toHaveBeenCalledTimes(1);
+  });
+
   it("does not report a native timeout or terminal failure as completed", async () => {
     const items = { list: vi.fn(async () => ({ result: [] })), upload: vi.fn(async () => info("queued")) };
     await expect(ensureProjectSearchItem(items, key, "document", metadata)).rejects.toMatchObject({ code: "PROJECT_SEARCH_INDEX_PENDING" });
