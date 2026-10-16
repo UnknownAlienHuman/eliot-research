@@ -150,12 +150,13 @@ async function revalidatorCase(tag: string, pricingOptions: {
 }
 
 function makeRevalidator(value: RevalidatorCase, overrides: {
+  readonly database?: D1Database;
   readonly now?: () => number;
   readonly read?: (request: SpendAuthorizationReadRequest) => Promise<SpendAuthorizationReadback | null>;
   readonly resolve?: (routeRef: string) => Promise<unknown | null>;
 } = {}) {
   return createD1ResearchModelAttemptRevalidator({
-    database: runtime.CORE_DB,
+    database: overrides.database ?? runtime.CORE_DB,
     spendAuthorization: { read: overrides.read ?? value.read },
     routeAuthority: { resolve: overrides.resolve ?? value.routeAuthority.resolve },
     now: overrides.now ?? (() => Date.parse("2026-09-10T12:00:00.000Z")),
@@ -264,10 +265,18 @@ describe("research model attempt revalidation over actual D1", () => {
         "UPDATE investigation_current_policy SET state = 'RETIRED' WHERE policy_generation = 'workflow-policy'",
       ).run();
     }],
-    ["retired deployment", async (_value: RevalidatorCase) => {
+    ["retired deployment", async (value: RevalidatorCase) => {
+      const deployment = value.prepared.authority.deployment_generation;
+      expect(await runtime.CORE_DB.prepare(
+        "SELECT state FROM investigation_current_deployment WHERE deployment_generation=?1",
+      ).bind(deployment).first("state")).toBe("ACTIVE");
       await runtime.CORE_DB.prepare(
-        "UPDATE investigation_current_deployment SET state = 'RETIRED' WHERE deployment_generation = 'workflow-deployment'",
-      ).run();
+        "UPDATE investigation_current_deployment SET state = 'RETIRED' WHERE deployment_generation = ?1 AND state='ACTIVE'",
+      ).bind(deployment).run();
+      // D1 meta.changes includes trigger effects; assert the exact authority row.
+      expect(await runtime.CORE_DB.prepare(
+        "SELECT state FROM investigation_current_deployment WHERE deployment_generation=?1",
+      ).bind(deployment).first("state")).toBe("RETIRED");
     }],
   ] as const)("rejects %s without a new attempt or route call", async (label, mutate) => {
     const value = await revalidatorCase(`negative-${label.replaceAll(" ", "-")}`);
@@ -302,22 +311,18 @@ describe("research model attempt revalidation over actual D1", () => {
     expect(value.fixture.calls()).toBe(0);
   });
 
-  it("rejects missing and mismatched trusted spend authorization", async () => {
-    const missing = await revalidatorCase("missing-spend");
-    await expect(assertNoNewAttempt(missing, () => makeRevalidator(missing, {
-      read: async () => null,
-    })(missing.context, missing.prepared))).rejects.toMatchObject({ code: "MODEL_ATTEMPT_AUTHORITY_STALE" });
-
-    const mismatched = await revalidatorCase("mismatched-spend");
-    await expect(assertNoNewAttempt(mismatched, () => makeRevalidator(mismatched, {
-      read: async (request) => {
-        const authorization = await mismatched.read(request);
-        if (authorization === null) throw new Error("controlled trusted authorization unexpectedly missing");
-        return { ...authorization, reservation_id: "foreign-reservation" };
-      },
-    })(mismatched.context, mismatched.prepared))).rejects.toMatchObject({ code: "MODEL_ATTEMPT_AUTHORITY_STALE" });
-    expect(missing.fixture.calls()).toBe(0);
-    expect(mismatched.fixture.calls()).toBe(0);
+  it.each(["missing", "mismatched"] as const)("rejects %s trusted spend authorization", async (kind) => {
+    // Each independent negative gets its own unchanged deadline and native fixture.
+    const value = await revalidatorCase(`${kind}-spend`);
+    const read = async (request: SpendAuthorizationReadRequest): Promise<SpendAuthorizationReadback | null> => {
+      if (kind === "missing") return null;
+      const authorization = await value.read(request);
+      if (authorization === null) throw new Error("controlled trusted authorization unexpectedly missing");
+      return { ...authorization, reservation_id: "foreign-reservation" };
+    };
+    await expect(assertNoNewAttempt(value, () => makeRevalidator(value, { read })(value.context, value.prepared)))
+      .rejects.toMatchObject({ code: "MODEL_ATTEMPT_AUTHORITY_STALE" });
+    expect(value.fixture.calls()).toBe(0);
   });
 
   it("rejects prepared request limits changed from the durable model request", async () => {
@@ -364,24 +369,47 @@ describe("research model attempt revalidation over actual D1", () => {
     expect(value.fixture.calls()).toBe(0);
   });
 
-  it("catches budget expiry crossed during the final route authority read", async () => {
-    const value = await revalidatorCase("budget-expires-during-final-route-read");
+  it("catches budget expiry after pricing when final workflow authority is read", async () => {
+    const value = await revalidatorCase("budget-expires-during-final-workflow-read");
     const row = await runtime.CORE_DB.prepare(
       "SELECT budget_expires_at_ms FROM research_workflow_attempt WHERE attempt_ref = ?1",
     ).bind(value.fixture.stageAttemptRef).first<{ readonly budget_expires_at_ms: number }>();
     if (row === null) throw new Error("revalidator fixture is missing its persisted W2 budget");
     let resolves = 0;
     let clockMs = Date.parse("2026-09-10T12:00:00.000Z");
+    let workflowReads = 0;
+    // Advance only after pricing has succeeded, at the actual second W2 read.
+    // Moving time in resolve() also expires pricing and tests a different guard.
+    const database = new Proxy(runtime.CORE_DB, { get(target, property) {
+      if (property === "prepare") return (sql: string) => {
+        const wrap = (statement: D1PreparedStatement): D1PreparedStatement => new Proxy(statement, { get(current, field) {
+          if (field === "bind") return (...args: unknown[]) => wrap(current.bind(...args));
+          if (field === "first" && sql.startsWith("SELECT r.operation_id, r.state AS workflow_state")) {
+            return async (...args: Parameters<D1PreparedStatement["first"]>) => {
+              const result = await current.first(...args);
+              if (++workflowReads === 2) clockMs = Number(row.budget_expires_at_ms) + 1;
+              return result;
+            };
+          }
+          const member = Reflect.get(current, field, current);
+          return typeof member === "function" ? member.bind(current) : member;
+        } });
+        return wrap(target.prepare(sql));
+      };
+      const member = Reflect.get(target, property, target);
+      return typeof member === "function" ? member.bind(target) : member;
+    } });
     const resolve = async () => {
       resolves += 1;
-      if (resolves === 1) clockMs = Number(row.budget_expires_at_ms) + 1;
       return value.deployment;
     };
     await expect(assertNoNewAttempt(value, () => makeRevalidator(value, {
+      database,
       now: () => clockMs,
       resolve,
     })(value.context, value.prepared))).rejects.toMatchObject({ code: "MODEL_ATTEMPT_BUDGET_EXPIRED" });
     expect(resolves).toBe(1);
+    expect(workflowReads).toBe(2);
     expect(value.fixture.calls()).toBe(0);
   });
 });

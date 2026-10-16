@@ -41,7 +41,7 @@ import { Shell } from "./Shell";
 import { FixtureWorkspace } from "./FixtureWorkspace";
 import { createPrivacyController } from "./privacy";
 import { BundlePreview, playBundleJourney } from "./ImportBundlePreview";
-import { ResearchPreview, playResearchJourney, playResearchAnnouncements, playResearchHistoryReturn, playResearchScopeJourney,
+import { ResearchPreview, playResearchJourney, playResearchAnnouncements, playResearchHistoryReturn, playResearchHistoryLabels, playResearchScopeJourney,
   type ResearchHistoryState, type ResearchPreviewProbe, type ResearchScopeMode } from "./ResearchPreview";
 import { StudioPreview, playStudioJourney, playStudioAnnouncements, playStudioHistoryRecovery } from "./StudioPreview";
 import { ArtifactActionsPreview, playArtifactActionsJourney } from "./ArtifactActionsPreview";
@@ -80,6 +80,17 @@ function researchJourneyStory(historyState?: ResearchHistoryState) {
 export const LiveResearchJourney = researchJourneyStory();
 export const HistoryCompletedResearchReturn = researchJourneyStory('ENGINE_COMPLETED');
 export const HistoryCancelledResearchReturn = researchJourneyStory('CANCELLED');
+export const RecentResearchPublicStatusLabels = (() => {
+  let probe: ResearchPreviewProbe | undefined;
+  return {
+    render: () => <ResearchPreview historyLabels onProbe={value => { probe = value; }} />,
+    play: async (context: Parameters<typeof playResearchHistoryLabels>[0]) => {
+      await announcementUntil(() => probe !== undefined);
+      if (!probe) throw new Error('Research history label fixture probe is missing');
+      await playResearchHistoryLabels(context, probe);
+    },
+  };
+})();
 function researchScopeStory(mode: ResearchScopeMode, stale = false) {
   let probe: ResearchPreviewProbe | undefined;
   return {

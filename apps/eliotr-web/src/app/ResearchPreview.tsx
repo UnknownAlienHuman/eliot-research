@@ -18,6 +18,29 @@ import { researchPreviewModelRead } from './researchModelPreview';
 const stamp = '2026-10-09T12:00:00.000Z', generation = 'research-fixture';
 const historyQuestion = 'How do the saved source revisions change this evidence?';
 const artifactRef = { id: 'report-fixture', revision: 1 }, scopeRef = { id: 'scope-fixture', revision: 1 }, handleRef = { id: 'handle-fixture', revision: 1 };
+// Historical wire responses can omit engine_status; the real client supplies "unknown".
+const persistedHistoryStatus = (id: string, execution_state: ResearchRunStatusView['execution_state']) => ({
+  protocol: 'eliotr.research-run-status.v1', workflow_instance_id: `workflow-label-${id}`,
+  investigation_ref: { id: `investigation-label-${id}`, revision: 1 }, execution_state,
+  next_stage_index: execution_state === 'ENGINE_COMPLETED' ? 18 : 3, answer: { availability: 'unavailable' },
+});
+const historyLabelCases = [
+  { query: 'Completed run with a saved draft', expected: 'Draft report available', status: {
+    ...persistedHistoryStatus('draft', 'ENGINE_COMPLETED'), answer: { availability: 'draft', artifact_ref: artifactRef },
+  } },
+  { query: 'Completed run without a readable report', expected: 'Engine finished; report unavailable',
+    status: persistedHistoryStatus('unavailable', 'ENGINE_COMPLETED') },
+  { query: 'Confirmed cancelled run', expected: 'Cancelled', status: {
+    ...persistedHistoryStatus('cancelled', 'CANCELLED'), cancellation_receipt_ref: 'workflow-cancelled:workflow-label-cancelled',
+  } },
+  { query: 'Reported failed run', expected: 'Failed', status: { ...persistedHistoryStatus('failed', 'ACTIVE'),
+    protocol: 'eliotr.research-run-status.v2', engine_status: 'errored', failure: { code: 'WORKFLOW_OUTPUT_UNAVAILABLE' },
+  } },
+  { query: 'Engine finished before saved status confirmed', expected: 'Engine finished; saved status pending',
+    status: { ...persistedHistoryStatus('pending', 'ACTIVE'), engine_status: 'complete' } },
+  { query: 'Historical run without an engine observation', expected: 'Status unknown',
+    status: persistedHistoryStatus('unknown', 'ACTIVE') },
+];
 const excerpt = 'The saved question keeps its original source scope.';
 const encode = (value: string) => new TextEncoder().encode(value);
 const digest = async (bytes: Uint8Array) => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new Uint8Array(bytes).buffer))].map(value => value.toString(16).padStart(2, '0')).join('');
@@ -36,9 +59,10 @@ export interface ResearchPreviewProbe {
 }
 
 /** Actual runtime/Query/components; only the default recovery mode loses a durable ack. */
-export function ResearchPreview({ designReview = false, historyState, scopeMode, onProbe }: {
+export function ResearchPreview({ designReview = false, historyState, historyLabels = false, scopeMode, onProbe }: {
   readonly designReview?: boolean;
   readonly historyState?: ResearchHistoryState;
+  readonly historyLabels?: boolean;
   readonly scopeMode?: ResearchScopeMode;
   readonly onProbe?: (probe: ResearchPreviewProbe) => void;
 } = {}) {
@@ -117,8 +141,12 @@ export function ResearchPreview({ designReview = false, historyState, scopeMode,
         if (historyProject !== null && historyProject !== 'project-fixture')
           throw new Error('History escaped the selected fixture project');
         return json({ protocol: 'eliotr.research-runs.v5',
-        runs: [...(historyState || designReview ? [{ created_at: stamp, query: historyQuestion, status: historyStatus }] : []), ...(starts ? [{ created_at: stamp, query: historyQuestion, status }] : [])],
-        saved_drafts: starts || designReview || historyState ? [{ created_at: stamp, artifact_ref: artifactRef, workflow_instance_id: historyState || designReview ? historyLaunch.workflow_instance_id : launch.workflow_instance_id }] : [],
+        runs: historyLabels ? historyLabelCases.map(entry => ({ created_at: stamp, query: entry.query, status: entry.status }))
+          : [...(historyState || designReview ? [{ created_at: stamp, query: historyQuestion, status: historyStatus }] : []), ...(starts ? [{ created_at: stamp, query: historyQuestion, status }] : [])],
+        saved_drafts: historyLabels ? [
+          { created_at: stamp, artifact_ref: artifactRef, workflow_instance_id: 'workflow-label-draft' },
+          { created_at: stamp, artifact_ref: { id: 'report-legacy-fixture', revision: 1 }, workflow_instance_id: 'workflow-label-unknown' },
+        ] : starts || designReview || historyState ? [{ created_at: stamp, artifact_ref: artifactRef, workflow_instance_id: historyState || designReview ? historyLaunch.workflow_instance_id : launch.workflow_instance_id }] : [],
         visibility_scan: { runs: 'SOURCE_EXHAUSTED', saved_drafts: 'SOURCE_EXHAUSTED' },
         configuration_state: 'INSTALLED', checked_at: stamp });
       }
@@ -264,6 +292,20 @@ export function ResearchPreview({ designReview = false, historyState, scopeMode,
   }, [environment]);
   return <QueryClientProvider client={environment.client}><MemoryRouter initialEntries={['/sources']}><Shell privacy={environment.privacy} runtime={environment.runtime} fixture={designReview} /></MemoryRouter></QueryClientProvider>;
 }
+export async function playResearchHistoryLabels({ canvas, userEvent }: Parameters<typeof playResearchJourney>[0], probe: ResearchPreviewProbe) {
+  await userEvent.selectOptions(await canvas.findByRole('combobox', { name: 'Project', exact: true }), 'project-fixture');
+  await userEvent.click(canvas.getByRole('link', { name: 'Research', exact: true }));
+  for (const entry of historyLabelCases) {
+    const row = (await canvas.findByText(entry.query)).closest('li');
+    if (row?.querySelector('.er-live-history-state')?.textContent !== entry.expected)
+      throw new Error('Recent research discarded public execution or answer availability: ' + entry.query);
+    const hasReportAction = Array.from(row.querySelectorAll('button')).some(button => button.textContent === 'Open saved report');
+    if (hasReportAction !== (entry.status.answer.availability === 'draft'))
+      throw new Error('History label promoted report availability without the public draft answer');
+  }
+  probe.assertEffects(0, 0); probe.assertNoIntent();
+}
+
 export const playResearchJourney = async ({ canvas, userEvent }: {
   readonly canvas: { findByRole(role: string, options: { readonly name: string; readonly exact?: boolean; readonly level?: number }): Promise<HTMLElement>;
     getByRole(role: string, options: { readonly name: string; readonly exact?: boolean }): HTMLElement;

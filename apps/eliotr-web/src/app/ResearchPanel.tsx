@@ -1,7 +1,7 @@
 import { useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { skipToken, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { WorkspaceLink } from '../routes/WorkspaceLink';
-import { Button, MaterialSymbol, OperationAnnouncement, ResearchRunFeature, Status, researchEngineLabel } from '@eliotr/ui';
+import { Button, MaterialSymbol, OperationAnnouncement, ResearchRunFeature, Status } from '@eliotr/ui';
 import type { ResearchCatalogModelUseReceipt, ResearchProjectModelConfiguration, ResearchRunLaunchView, ResearchRunProjectConfigurationPinV4, ResearchRunV4Request, VersionedRef } from '@eliotr/owner-api-client';
 import { chatCatalogProviderForRouteProvider } from '../query/chatModelProviderIdentity';
 import type { BoundWorkspaceApis } from './runtime';
@@ -28,6 +28,7 @@ import { researchLaunchFailureMessage, submitResearchLaunchOnce, type ResearchLa
 import { ReportPanel } from './ReportPanel';
 import { ProjectOverview } from './ProjectOverview';
 import { usePaneAnnouncement } from './usePaneAnnouncement';
+import { researchHistoryLabel } from './researchHistoryLabel';
 import { canRequestResearchRecovery, recoverExistingResearchRun, researchRecoveryCopy, researchRecoveryFirstCause,
   type ResearchRunRecoveryMemory } from '../query/researchRunRecovery';
 
@@ -717,7 +718,7 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
           <ul>{!history.isError && history.data?.runs.map(entry => <li key={entry.status.workflow_instance_id}>
             <time dateTime={entry.created_at}>{displayTime(entry.created_at)}</time>
             {entry.query !== undefined && <p className="er-live-history-question">{entry.query}</p>}
-            <span className="er-live-history-state" data-status={entry.status.engine_status}>{researchEngineLabel(locale, entry.status.engine_status)}</span>
+            <span className="er-live-history-state" data-status={entry.status.engine_status}>{researchHistoryLabel(locale, entry.status)}</span>
             <Button variant="text" disabled={saved?.intent !== undefined || busy} onClick={() => {
               if (running.current || !privacy.isCurrent(context) || !isProjectCurrent()) return;
               const observed = entry.status; write(old => ({ ...old, observedLaunch: { workflow_instance_id: observed.workflow_instance_id, investigation_ref: observed.investigation_ref, deployment_generation: observed.deployment_generation } }));
