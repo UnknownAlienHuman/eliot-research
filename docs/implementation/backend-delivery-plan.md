@@ -1,5 +1,49 @@
 # Backend delivery plan
 
+## Current owner acceptance, October 16, 2026, 01:05 UTC
+
+Product source `a484b5b672e528e4385f32f8923db934bc54d00f` is deployed as
+`git-a484b5b672e5`, Worker `7827af5f-0ec9-4df1-b4f0-f1faf1b723b8`.
+Fast CI `38831660318`, routine dry-run/deploy and active D1 authority readback
+passed. The unchanged owner UI has frontend CI `38828479853` at its source
+ancestor `636f5934`. No additional migration or index/model generation was made.
+
+The owner opened the QA project and submitted a real browser question with no
+source boxes checked. The request used PROJECT scope. Run
+`run-c33bd02f4d81eb16a1fd921cb9ddbb71982183b82580dbd1` completed all 18 stages;
+D1 confirms zero project model selections, an immutable snapshot-v2 and two
+successful native `@cf/zai-org/glm-5.3-flash` calls for synthesis and claim audit.
+Its draft `eliotr.research.artifact-ffaba0152d913acf8cccdbafed9d9f5360d40d17b46d65eac42049625638d268:1`
+reopened in the actual browser after the subsequent deployment. The section
+contains 851 verified bytes; opening its citation returned the exact admitted
+263-byte QA source with SHA-256
+`2b2b41fc6a29dea45460ddaa2abaf44a7e708843d0d49b51a5ae42f38654b529`.
+This is bounded E0/short-document acceptance, not full-corpus or multi-branch qualification.
+
+The real Codex MCP client discovered the doctor tools, qualified on the current
+deployment and pulled an actual outbox lease. After the underlying incident was
+resolved, its exact expired lease was reconciled through the no-Issue receipt;
+D1 confirmed SUPERSEDED without a GitHub Issue. Fresh scheduled health reports
+READY, zero incidents and zero outbox age; the subsequent actual MCP pull was EMPTY.
+
+The final browser read found a missing transport-generation header on ordinary
+owner section GETs. The server now supplies that required header; SDK identity,
+length and SHA checks remain strict. A native HTTP regression passed, followed
+by successful direct SDK and real browser section/citation reads. No model output
+was rewritten and no completed research was rerun for this transport repair.
+
+External key management is the remaining operational blocker. The global Settings
+flow and its secret-handling checks are implemented; the supplied OpenRouter key
+and free DOTS model passed direct upstream authentication/inference. Service-side
+storage through Settings is not live-qualified: it needs the existing encrypted
+Worker Secret `ELIOTR_MODEL_PROVIDER_CONTROL_TOKEN`, with AI Gateway Edit and
+Account Secrets Store Edit. The current connector cannot access token provisioning
+(fresh 9109); browser automation fails before starting (kernel-assets error 3),
+and Wrangler 4.143.1 exposes neither token-provisioning nor gateway-edit scopes.
+No broad Wrangler credential, custom OAuth framework or GitHub token was installed
+in the Worker. The Goal remains active until this configuration and its live UI
+storage/connection check are completed. All completed leaf agents are closed and archived.
+
 ## Current owner checkpoint, October 16, 2026, 00:14 UTC
 
 Source `cf670161ae221f1e65e98db7f1cd1b6072a193cc` is live as
