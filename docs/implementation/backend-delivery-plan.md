@@ -1,5 +1,33 @@
 # Backend delivery plan
 
+## Verified global Settings, October 16, 2026, 06:43 UTC
+
+Source `39dbd96c7976643b91695f2905a5c46cdafd0df0` is live as
+`git-39dbd96c7976`, Worker `eed0baf0-9a71-4c74-8d87-b58b555c91cf`.
+CI `38860742485`, routine dry-run/deploy, D1 authority readback and actual
+Codex MCP qualification passed. Migration 0156 was applied alone with a fresh
+Time Travel bookmark; existing row hashes were preserved and foreign-key checks
+were empty. The existing immutable semantic revision replaced identical legacy
+inline configuration bytes; no model, prompt or spend-policy value was changed.
+
+A fresh OpenAI-compatible connection was saved from the served Settings form in
+one POST (201), then read after reload. The password field was empty and the key
+was absent from local/session storage and owner responses. Cloudflare GLM 5.3
+remained the built-in default. The saved report and its exact 263-byte admitted
+citation reopened on this deployment. Earlier failed/uncertain setup attempts
+remain historical records; they were not relabeled as successful submissions.
+
+The first external service call also reached OpenRouter through AI Gateway:
+exact operation `640871aa-6c08-4620-b23c-bc55a0481b9c`, gateway log
+`01a14364-5ba6-73b3-80ad-7dc02d98deb5`, HTTP 200, cache miss and observed cost 0.
+Its application qualification remains UNCERTAIN with no admitted observation;
+it was not replayed or promoted. Response-body logging remains disabled.
+The response decoder is being aligned with the official OpenRouter TypeScript
+SDK 1.4.25 at `7bfa806ca7a53ca4cca1871999739c7a41fae0ab` (checked October 16):
+documented nullable metadata and usage details are accepted while exact model,
+token-total, truncation/refusal and unrequested-tool billing checks remain.
+Focused response regressions pass; complete post-fix qualification remains pending.
+
 ## Global model setup checkpoint, October 16, 2026, 06:05 UTC
 
 The narrow Cloudflare control token and a separate AI Gateway Run-only token

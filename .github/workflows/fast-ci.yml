@@ -68,6 +68,7 @@ jobs:
           packages/cloudflare-ai/src/project-search.test.ts
           packages/cloudflare-model-execution/src/model-route-failure.test.ts
           packages/cloudflare-research-configuration/src/research-provider-key-model-pricing-catalog.test.ts
+          packages/cloudflare-model-transport/src/model-gateway-http-request.test.ts
           packages/cloudflare-workspace-mcp/src/gemini-mcp.test.ts
           packages/cloudflare-workspace-mcp/src/workspace-mcp-env.test.ts
           packages/cloudflare-workspace-mcp/src/gemini-mcp-service-token.test.ts
