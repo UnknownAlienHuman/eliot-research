@@ -35,8 +35,10 @@ const CONFIG_KEYS = new Set([
   "alias", "default_config", "gateway_id", "id", "modified_at", "provider_slug",
   "rate_limit", "rate_limit_period", "secret_id", "secret_preview",
 ]);
-const PAGINATION_KEYS = new Set(["page", "per_page", "total_count", "total_pages"]);
+const PAGINATION_KEYS = new Set(["count", "page", "per_page", "total_count", "total_pages"]);
 const PREVIEW_MAX_BYTES = 512;
+const RFC3339_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(Z|[+-](\d{2}):(\d{2}))$/u;
+const CLOUDFLARE_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/u;
 const encoder = new TextEncoder();
 
 export function decodeObservedConfig(
@@ -88,10 +90,7 @@ export function decodePagination(
   count: number,
   phase: ListPhase,
 ): Pagination {
-  if (raw === undefined || raw === null) {
-    if (page !== 1 || count === MAX_PAGE_SIZE) invalidList(phase);
-    return { total_pages: 1, total_count: count };
-  }
+  if (raw === undefined || raw === null) invalidList(phase);
   if (typeof raw !== "object" || raw === null || Array.isArray(raw) ||
       ![Object.prototype, null].includes(Object.getPrototypeOf(raw))) invalidList(phase);
   const info = raw as Record<string, unknown>;
@@ -99,9 +98,18 @@ export function decodePagination(
   const observedPage = paginationInteger(info.page, phase, true);
   const perPage = paginationInteger(info.per_page, phase, false);
   const totalCount = paginationInteger(info.total_count, phase, true);
-  const totalPages = paginationInteger(info.total_pages, phase, true);
+  const observedCount = Object.hasOwn(info, "count")
+    ? paginationInteger(info.count, phase, true)
+    : undefined;
+  const derivedPages = totalCount === 0 ? 0 : Math.ceil(totalCount / perPage);
+  const totalPages = Object.hasOwn(info, "total_pages")
+    ? paginationInteger(info.total_pages, phase, true)
+    : derivedPages;
   const empty = totalPages === 0 && totalCount === 0 && page === 1 && count === 0;
-  if (observedPage !== page || perPage > MAX_PAGE_SIZE || totalPages > MAX_PAGES ||
+  const emptySinglePage = totalCount === 0 && totalPages === 1;
+  if (observedPage !== page || perPage > MAX_PAGE_SIZE || count > perPage ||
+      (observedCount !== undefined && (observedCount !== count || observedCount > perPage)) ||
+      totalPages > MAX_PAGES || (totalPages !== derivedPages && !emptySinglePage) ||
       totalCount > MAX_CONFIGS || (!empty && (totalPages < 1 || totalPages < page))) {
     invalidList(phase);
   }
@@ -134,10 +142,40 @@ function responseAlias(raw: unknown, phase: Phase): string {
 }
 
 function responseTimestamp(raw: unknown, phase: Phase): string {
-  if (typeof raw !== "string" ||
-      !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/u.test(raw) ||
-      !Number.isFinite(Date.parse(raw))) invalidResponse(phase);
-  return new Date(raw).toISOString();
+  if (typeof raw !== "string") invalidResponse(phase);
+  const rfc3339 = RFC3339_TIMESTAMP.exec(raw);
+  if (rfc3339 !== null) {
+    const offsetHour = rfc3339[8] === undefined ? 0 : Number(rfc3339[8]);
+    const offsetMinute = rfc3339[9] === undefined ? 0 : Number(rfc3339[9]);
+    if (!validCalendarTime(
+      Number(rfc3339[1]), Number(rfc3339[2]), Number(rfc3339[3]),
+      Number(rfc3339[4]), Number(rfc3339[5]), Number(rfc3339[6]),
+    ) || offsetHour > 23 || offsetMinute > 59) invalidResponse(phase);
+    const date = new Date(raw);
+    if (!Number.isFinite(date.getTime())) invalidResponse(phase);
+    return date.toISOString();
+  }
+  const native = CLOUDFLARE_TIMESTAMP.exec(raw);
+  if (native === null || !validCalendarTime(
+    Number(native[1]), Number(native[2]), Number(native[3]),
+    Number(native[4]), Number(native[5]), Number(native[6]),
+  )) invalidResponse(phase);
+  // Cloudflare's observed wire value has no timezone. Preserve it without assigning one.
+  return raw;
+}
+
+function validCalendarTime(
+  year: number,
+  month: number,
+  day: number,
+  hour: number,
+  minute: number,
+  second: number,
+): boolean {
+  if (month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59 || day < 1) return false;
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysByMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day <= (daysByMonth[month - 1] ?? 0);
 }
 
 function responseOptionalInteger(raw: unknown, phase: Phase): number | null {
