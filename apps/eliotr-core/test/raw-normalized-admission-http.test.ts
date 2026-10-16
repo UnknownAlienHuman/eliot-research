@@ -4,6 +4,7 @@ import { createApplication } from "../src/composition-root.js";
 import { handleHttp } from "../src/http.js";
 import type { Env } from "../src/env.js";
 import { prepareQ1Namespace, type Q1Runtime } from "./retrieval-q1-fixture.js";
+import { canonicalDigest } from '@eliotr/platform-cloudflare';
 
 const runtime = env as unknown as Q1Runtime & Env;
 const ownerAccess = (principal: string) => ({ accessVerifier: { async verify() {
@@ -33,9 +34,11 @@ async function seedCompleteConversion(db: D1Database, bucket: R2Bucket, captureI
   const result = { protocol: "eliotr.raw-markdown-conversion.v1", state: "COMPLETE", operation_id: operationId, capture_id: captureId, content_sha256: contentSha, output_sha256: outputSha, output_bytes: output.byteLength, detected_mime: "text/markdown", format: "markdown", tokens: 3 };
   const resultJson = JSON.stringify(result);
   const outputKey = `raw-markdown/${operationId}/output.md`;
+  const requestJson = JSON.stringify({ idempotency_key: `raw-markdown-${operationId}`,
+    max_output_bytes: 8 * 1024 * 1024, max_tokens: 4096, timeout_ms: 120000 });
   await bucket.put(outputKey, output);
   await db.prepare("INSERT INTO raw_markdown_conversion(operation_id,principal_ref,capture_id,content_sha256,size_bytes,request_sha256,request_json,authority_sha256,attempt_id,state,result_json,result_sha256,output_object_key,receipt_object_key,created_at,updated_at) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,'COMPLETE',?10,?11,?12,?13,?14,?14)")
-    .bind(operationId, principal, captureId, contentSha, sizeBytes, "1".repeat(64), "{}", "2".repeat(64), `attempt-${operationId}`, resultJson, await sha(new TextEncoder().encode(resultJson)), outputKey, `raw-markdown/${operationId}/receipt.json`, new Date().toISOString()).run();
+    .bind(operationId, principal, captureId, contentSha, sizeBytes, await sha(new TextEncoder().encode(requestJson)), requestJson, "2".repeat(64), `attempt-${operationId}`, resultJson, await sha(new TextEncoder().encode(resultJson)), outputKey, `raw-markdown/${operationId}/receipt.json`, new Date().toISOString()).run();
 }
 
 describe("raw normalized admission actual Worker path", () => {
@@ -46,6 +49,90 @@ describe("raw normalized admission actual Worker path", () => {
     const namespace = await prepareQ1Namespace(runtime, runtime.CORE_DB, runtime.SEARCH_DB, principal);
     await runtime.CORE_DB.prepare("UPDATE source_admission_policy SET minimum_quality_state='degraded' WHERE source_namespace_id=?1").bind(namespace.namespace).run();
   });
+  it("reuses an exact committed source for a new conversion and reconciles an unbound UNKNOWN without another ingest", async () => {
+    const bytes = new TextEncoder().encode('%PDF duplicate-source reuse fixture');
+    const contentSha = await sha(bytes), normalized = new TextEncoder().encode('# Exact reusable output\n');
+    const response = await handleHttp(captureRequest(bytes, contentSha, 'reuse-capture'), runtime, {} as ExecutionContext, ownerAccess(principal));
+    expect(response.status).toBe(200);
+    const capture = (await response.json() as { data: { capture_id: string } }).data;
+    const factory = () => createApplication({ env: runtime, executionContext: {} as ExecutionContext });
+    const access = { ...ownerAccess(principal), applicationFactory: factory };
+    const post = (key: string, conversion: string) => handleHttp(admissionRequest(capture.capture_id, key, conversion), runtime, {} as ExecutionContext, access);
+    const originalConversion = '4'.repeat(64), nextConversion = '5'.repeat(64), unknownConversion = '6'.repeat(64);
+    for (const conversion of [originalConversion, nextConversion, unknownConversion]) {
+      await seedCompleteConversion(runtime.CORE_DB, runtime.EVIDENCE_BUCKET, capture.capture_id, principal, contentSha, bytes.byteLength, conversion, normalized);
+    }
+    const first = await post('reuse-original', originalConversion);
+    expect(first.status).toBe(200);
+    const original = (await first.json() as { data: { admission_operation_id: string; source_revision_ref: string; admission_receipt: unknown } }).data;
+    const canonical = () => runtime.CORE_DB.prepare('SELECT operation_id,manifest_sha256,bundle_receipt_json,bundle_receipt_sha256,updated_at FROM bundle_ingest_operation WHERE source_revision_ref=?1')
+      .bind(original.source_revision_ref).all();
+    const before = (await canonical()).results;
+    expect(before).toHaveLength(1);
+    const reused = await post('reuse-next', nextConversion);
+    expect(reused.status, await reused.clone().text()).toBe(200);
+    const reusedData = (await reused.json() as { data: { admission_operation_id: string; admission_receipt: unknown } }).data;
+    expect(reusedData).toMatchObject({ state: 'COMMITTED', conversion_operation_id: nextConversion, admission_receipt: original.admission_receipt });
+    expect(reusedData.admission_operation_id).not.toBe(original.admission_operation_id);
+    const sourceIdentity = await handleHttp(sourceIdentityRequest(capture.capture_id, reusedData.admission_operation_id), runtime, {} as ExecutionContext, access);
+    expect(sourceIdentity.status).toBe(200);
+    expect(await sourceIdentity.json()).toMatchObject({ data: { source_revision_ref: original.source_revision_ref } });
+
+    // Reproduce the live ledger after bundle prepare hit the unique SourceRevision fence.
+    const prior = await runtime.CORE_DB.prepare('SELECT source_view_ref,policy_snapshot_sha256 FROM raw_normalized_admission WHERE admission_operation_id=?1')
+      .bind(original.admission_operation_id).first<{ source_view_ref: string; policy_snapshot_sha256: string }>();
+    if (prior === null) throw new Error('Missing original source witness');
+    const unknownId = await canonicalDigest(['eliotr.raw-normalized-admission.v1', principal, 'reuse-unknown']);
+    const candidate = 'raw-normalized-candidate:' + await canonicalDigest(['eliotr.raw-normalized-candidate.v1', capture.capture_id,
+      unknownConversion, prior.source_view_ref, await sha(normalized)]);
+    const fingerprint = await canonicalDigest([candidate, prior.source_view_ref, prior.policy_snapshot_sha256, contentSha, unknownConversion]);
+    await runtime.CORE_DB.prepare(`INSERT INTO raw_normalized_admission SELECT ?1,principal_ref,capture_id,?2,?3,?4,?5,
+      source_revision_ref,source_view_ref,snapshot_view_json,snapshot_view_sha256,policy_snapshot_json,policy_snapshot_sha256,
+      policy_revision,NULL,'UNKNOWN','["ADMISSION_OUTCOME_UNKNOWN"]',NULL,created_at,updated_at,expires_at
+      FROM raw_normalized_admission WHERE admission_operation_id=?6`)
+      .bind(unknownId, unknownConversion, 'reuse-unknown', fingerprint, candidate, original.admission_operation_id).run();
+    const read = () => handleHttp(new Request(`https://research.example/api/v1/ingest/raw/${capture.capture_id}/admission/${unknownId}`), runtime, {} as ExecutionContext, access);
+    const reconciled = await read();
+    expect(reconciled.status, await reconciled.clone().text()).toBe(200);
+    expect(await reconciled.json()).toMatchObject({ data: { state: 'COMMITTED', conversion_operation_id: unknownConversion,
+      admission_receipt: original.admission_receipt } });
+    const replay = await read();
+    expect(replay.status).toBe(200);
+    expect((await canonical()).results).toEqual(before);
+    const linked = await runtime.CORE_DB.prepare('SELECT admission_operation_id,ingest_operation_id,state FROM raw_normalized_admission WHERE capture_id=?1 ORDER BY created_at')
+      .bind(capture.capture_id).all<{ admission_operation_id: string; ingest_operation_id: string | null; state: string }>();
+    expect(linked.results).toHaveLength(3);
+    expect(linked.results.filter(row => row.ingest_operation_id !== null)).toHaveLength(1);
+    expect(linked.results.every(row => row.state === 'COMMITTED')).toBe(true);
+
+    const differentConversion = '7'.repeat(64);
+    await seedCompleteConversion(runtime.CORE_DB, runtime.EVIDENCE_BUCKET, capture.capture_id, principal, contentSha, bytes.byteLength,
+      differentConversion, new TextEncoder().encode('# Different normalization\n'));
+    expect((await post('reuse-different-output', differentConversion)).status).toBe(409);
+    const foreign = await handleHttp(new Request(`https://research.example/api/v1/ingest/raw/${capture.capture_id}/admission/${unknownId}`),
+      runtime, {} as ExecutionContext, { ...ownerAccess(principal + '-foreign'), applicationFactory: factory });
+    expect(foreign.status).toBe(404);
+    expect((await canonical()).results).toEqual(before);
+    const policy = await runtime.CORE_DB.prepare(`SELECT p.source_namespace_id,p.revision,p.allowed_use_json
+      FROM source_admission_policy p JOIN bundle_ingest_operation b ON b.source_namespace_id=p.source_namespace_id
+      AND b.policy_revision=p.revision WHERE b.source_revision_ref=?1`).bind(original.source_revision_ref)
+      .first<{ source_namespace_id: string; revision: number; allowed_use_json: string }>();
+    if (policy === null) throw new Error('Missing current admission policy');
+    try {
+      await runtime.CORE_DB.prepare('UPDATE source_admission_policy SET allowed_use_json=?1 WHERE source_namespace_id=?2 AND revision=?3')
+        .bind('["catalog_only"]', policy.source_namespace_id, policy.revision).run();
+      expect((await read()).status).toBe(409);
+    } finally {
+      await runtime.CORE_DB.prepare('UPDATE source_admission_policy SET allowed_use_json=?1 WHERE source_namespace_id=?2 AND revision=?3')
+        .bind(policy.allowed_use_json, policy.source_namespace_id, policy.revision).run();
+    }
+    await runtime.CORE_DB.prepare("UPDATE source_revision SET purge_state='QUARANTINED' WHERE source_revision_ref=?1")
+      .bind(original.source_revision_ref).run();
+    expect((await read()).status).toBe(403);
+    const purgedIdentity = await handleHttp(sourceIdentityRequest(capture.capture_id, unknownId), runtime, {} as ExecutionContext, access);
+    expect(purgedIdentity.status).toBe(403);
+    expect((await canonical()).results).toEqual(before);
+  }, 30_000);
   it("reads one durable COMPLETE candidate, commits through D1/R2, replays, and fails closed on witness deletion", async () => {
     const sourceBytes = new TextEncoder().encode("%PDF source bytes are not the normalized output");
     const sourceSha = await sha(sourceBytes);

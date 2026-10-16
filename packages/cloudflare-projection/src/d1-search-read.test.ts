@@ -6,6 +6,20 @@ import { isCandidateRead, isWatermarkRead, withSearchWorld, type SearchWorld } f
 
 const incomplete = { code: "SEARCH_INCOMPLETE" };
 const invalid = { code: "SEARCH_INPUT_INVALID" };
+test("LEX finds question words and ranks across the pinned scope without admitting a foreign best match", async () => {
+  await withSearchWorld(async w => {
+    const request = w.request("How many attention heads does the base Transformer use? Give a citation.", 1);
+    Object.assign(mutableScope(request), { member_source_revision_refs: ["rev-a", "rev-b"],
+      source_owner_generations: { "rev-a": "owner-1", "rev-b": "owner-1" } });
+    const hits = await w.lex.search(request, "LEX");
+    assert.equal(hits.length, 1);
+    assert.equal(hits[0]?.source_revision_ref, "rev-b");
+  }, ["rev-a", "rev-b", "rev-foreign"], {
+    "rev-a": "The author gives generic background notes.",
+    "rev-b": "The base Transformer has eight attention heads with d_model = 512.",
+    "rev-foreign": "How many attention heads does the base Transformer use? Give a citation.",
+  });
+});
 type Lane = "IDENT" | "LEX";
 function read(world: SearchWorld, lane: Lane, request: RetrievalRequest) {
   return lane === "IDENT" ? world.ident.lookupIdentifiers(request) : world.lex.search(request, "LEX");
@@ -41,7 +55,7 @@ for (const lane of ["IDENT", "LEX"] as const) {
   test(`${lane}: all scope members are settled even when the result limit is reached`, async () => {
     await withSearchWorld(async (w) => {
       w.hooks.afterRead = (observation) => {
-        if (isCandidateRead(observation) && observation.args[0] === "rev-a") w.stale("rev-b");
+        if (isCandidateRead(observation)) w.stale("rev-b");
       };
       await assert.rejects(read(w, lane, w.request(lane === "IDENT" ? "item-rev-a" : "Pinned", 1)), incomplete);
     }, ["rev-a", "rev-b"]);
@@ -137,9 +151,9 @@ test("IDENT: nonidentifier fast-empty cannot outlive its scope", async () => {
 });
 test("LEX: query operators remain literal and read-only", async () => {
   await withSearchWorld(async (w) => {
-    for (const query of ['Pinned" OR "1"="1', "OR *"]) {
-      assert.deepEqual(await w.lex.search(w.request(query), "LEX"), []);
-    }
+    const quotedWords = await w.lex.search(w.request('Pinned" OR "1"="1'), "LEX");
+    assert.deepEqual(quotedWords.map(hit => hit.source_revision_ref), ["rev-a"]);
+    assert.deepEqual(await w.lex.search(w.request("OR *"), "LEX"), []);
     assert.equal(w.search.prepare("SELECT COUNT(*) AS n FROM projection_item").get()?.n, 1);
   });
 });
@@ -227,7 +241,7 @@ for (const lane of ["IDENT", "LEX"] as const) {
   test(`${lane}: unrelated member owner change cannot hide behind another member's hit`, async () => {
     await withSearchWorld(async (w) => {
       w.hooks.afterRead = (observation) => {
-        if (isCandidateRead(observation) && observation.args[0] === "rev-a") w.rotateOwner("rev-b");
+        if (isCandidateRead(observation)) w.rotateOwner("rev-b");
       };
       await assert.rejects(read(w, lane, w.request(lane === "IDENT" ? "item-rev-a" : "Pinned", 1)), incomplete);
     }, ["rev-a", "rev-b"]);

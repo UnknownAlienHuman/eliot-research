@@ -1,5 +1,5 @@
 import { canonicalJson, canonicalDigest, activeOwner, policySnapshot } from "@eliotr/platform-cloudflare";
-import { BundleAdmissionReceiptSchema } from "@eliotr/contracts";
+import { BundleAdmissionReceiptSchema, NormalizedBundleManifestSchema } from "@eliotr/contracts";
 import type { IngestAdmissionPolicySnapshot } from "@eliotr/platform-cloudflare";
 import type {
   BundleIngestRecovery,
@@ -21,6 +21,7 @@ import type {
   RawNormalizedCandidatePolicy,
   RawNormalizedConversion,
   RawNormalizedOutputReadback,
+  RawNormalizedAdmissionPreparation,
   SnapshotViewWitness,
 } from "./raw-normalized-types.js";
 import type { RawCaptureReceipt } from "./raw-ingest-types.js";
@@ -224,8 +225,15 @@ export function createRawNormalizedAdmissionService(input: {
     return input.database.prepare(`${SELECT}WHERE admission_operation_id=?1 LIMIT 1`).bind(operationId).first<AdmissionRow>();
   }
   async function statusFor(row: AdmissionRow, owner: RawNormalizedAdmissionBundlePort): Promise<BundleIngestStatus | undefined> {
-    if (typeof row.ingest_operation_id !== "string") return undefined;
-    return owner.getBundleStatus(row.ingest_operation_id);
+    const reused = row.ingest_operation_id === null && row.state === "COMMITTED" ? receipt(row.receipt_json) : undefined;
+    const operationId = typeof row.ingest_operation_id === "string" ? row.ingest_operation_id : reused?.operation_id;
+    if (operationId === undefined) return undefined;
+    const status = await owner.getBundleStatus(operationId);
+    if (reused && (status.state !== "COMMITTED" || status.source_revision_ref !== row.source_revision_ref ||
+        canonicalJson(status.receipt) !== canonicalJson(reused))) {
+      throw new RawNormalizedAdmissionError("RAW_NORMALIZED_STATE_INVALID", 503, "reused canonical receipt no longer matches its source", true);
+    }
+    return status;
   }
   async function storedResult(row: AdmissionRow, owner: RawNormalizedAdmissionBundlePort): Promise<RawNormalizedAdmissionResult> {
     const status = await statusFor(row, owner);
@@ -275,6 +283,96 @@ export function createRawNormalizedAdmissionService(input: {
     if (fields.receipt_json !== undefined) { sets.push(`receipt_json=?${values.length + 1}`); values.push(fields.receipt_json); }
     await input.database.prepare(`UPDATE raw_normalized_admission SET ${sets.join(",")} WHERE admission_operation_id=?1 AND state NOT IN ('COMMITTED','QUARANTINED','REJECTED')`).bind(...values).run();
     await assertCurrent();
+  }
+  /** Reconcile only an exact prior commit. The original ingest/witness/receipt stay immutable. */
+  async function reuseCommitted(row: AdmissionRow, actor: RawNormalizedAdmissionActor,
+    ports: RawNormalizedAdmissionRequestPorts, ready?: RawNormalizedAdmissionPreparation): Promise<boolean> {
+    if (row.ingest_operation_id !== null || terminal(row)) return false;
+    const original = await input.database.prepare(`${SELECT}WHERE capture_id=?1 AND principal_ref=?2
+      AND state='COMMITTED' AND ingest_operation_id IS NOT NULL AND admission_operation_id<>?3
+      ORDER BY created_at LIMIT 1`).bind(row.capture_id, actor.principal_ref, row.admission_operation_id).first<AdmissionRow>();
+    if (original === null) return false;
+    const capture = await assertRowCurrent(row, actor, ports);
+    await assertRowCurrent(original, actor, ports);
+    if (row.source_revision_ref !== original.source_revision_ref || row.source_view_ref !== original.source_view_ref ||
+        row.snapshot_view_sha256 !== original.snapshot_view_sha256 || row.policy_snapshot_sha256 !== original.policy_snapshot_sha256) {
+      throw new RawNormalizedAdmissionError("RAW_NORMALIZED_AUTHORITY_STALE", 409, "prior source has different capture or policy authority");
+    }
+    const assertCurrent = async () => { await assertRowCurrent(row, actor, ports); await assertRowCurrent(original, actor, ports); };
+    let prepared = ready;
+    if (prepared === undefined) {
+      const conversion = await ports.readConversion(capture, requireId(row.conversion_operation_id, "conversion_operation_id"), assertCurrent, actor.signal);
+      if (conversion === null) throw new RawNormalizedAdmissionError("RAW_NORMALIZED_CONVERSION_UNAVAILABLE", 409, "complete conversion candidate is unavailable");
+      const policy = json<IngestAdmissionPolicySnapshot>(row.policy_snapshot_json, "policy snapshot");
+      prepared = await prepareRawNormalizedAdmission({ capture: captureInput(capture), conversion: conversion.conversion,
+        output: conversion.output, snapshot_view: json<SnapshotViewWitness>(row.snapshot_view_json, "snapshot view"),
+        policy: policyInput(policy, actor.principal_ref, requireId(row.policy_snapshot_sha256, "policy snapshot digest")) },
+      `raw-normalized:${requireId(row.admission_operation_id, "admission_operation_id")}`);
+    }
+    if (prepared.candidate.candidate_ref !== row.candidate_ref ||
+        await canonicalDigest([prepared.candidate.candidate_ref, row.source_view_ref, row.policy_snapshot_sha256,
+          capture.content_sha256, row.conversion_operation_id]) !== row.input_fingerprint) {
+      throw new RawNormalizedAdmissionError("RAW_NORMALIZED_STATE_INVALID", 503, "stored candidate identity changed", true);
+    }
+    const priorReceipt = receipt(original.receipt_json);
+    const status = await statusFor(original, ports.owner);
+    if (!priorReceipt || status?.state !== "COMMITTED" || canonicalJson(status.receipt) !== canonicalJson(priorReceipt) ||
+        priorReceipt.source_revision_ref !== capture.source_revision_ref || !["ADMITTED", "DUPLICATE"].includes(priorReceipt.decision)) {
+      throw new RawNormalizedAdmissionError("RAW_NORMALIZED_STATE_INVALID", 503, "prior canonical admission receipt is inconsistent", true);
+    }
+    const source = await input.database.prepare(`SELECT b.manifest_json FROM bundle_ingest_operation b
+      JOIN source_revision sr ON sr.source_revision_ref=b.source_revision_ref JOIN source s ON s.source_id=sr.source_id
+      WHERE b.operation_id=?1 AND b.principal_ref=?2 AND b.state='COMMITTED' AND b.source_revision_ref=?3
+      AND b.manifest_sha256=?4 AND b.residency_key_digest=?5 AND sr.object_residency_key_digest=?5
+      AND sr.normalized_artifact_ref=?6 AND sr.content_sha256=?7 AND sr.purge_state='LIVE'
+      AND s.head_rev=sr.source_revision_ref AND s.source_id=?8 AND s.source_namespace_id=?9
+      AND s.source_owner_system_id=?10 AND s.source_owner_generation=?11 AND sr.source_owner_generation=?11`)
+      .bind(original.ingest_operation_id, actor.principal_ref, capture.source_revision_ref, priorReceipt.manifest_sha256,
+        priorReceipt.object_residency_key_digest, priorReceipt.normalized_artifact_ref,
+        prepared.request.manifest.content.markdown_sha256, capture.source_logical_id, capture.source_namespace_id,
+        capture.owner_system_id, capture.source_owner_generation).first<{ readonly manifest_json: string }>();
+    if (source === null) throw new RawNormalizedAdmissionError("RAW_NORMALIZED_AUTHORITY_STALE", 409, "prior source is not the exact live canonical head");
+    const manifest = NormalizedBundleManifestSchema.parse(json<unknown>(source.manifest_json, "prior canonical manifest"));
+    const comparable = { ...prepared.request.manifest, export: { ...prepared.request.manifest.export, receipt_ref: manifest.export.receipt_ref } };
+    if (manifest.export.receipt_ref !== `raw-conversion:${String(original.conversion_operation_id)}` ||
+        await canonicalDigest(manifest) !== priorReceipt.manifest_sha256 || await canonicalDigest(comparable) !== priorReceipt.manifest_sha256) {
+      throw new RawNormalizedAdmissionError("RAW_NORMALIZED_IDEMPOTENCY_CONFLICT", 409, "prior source has different normalized content or manifest authority");
+    }
+    await assertCurrent();
+    // ingest_operation_id is UNIQUE and belongs to the original witness. A reuse row
+    // owns no second ingest operation; its unchanged receipt identifies canonical readback.
+    await input.database.prepare(`UPDATE raw_normalized_admission SET state='COMMITTED',receipt_json=?2,
+      reason_codes_json=?3,updated_at=?4 WHERE admission_operation_id=?1 AND ingest_operation_id IS NULL
+      AND state IN ('PREPARING','UNKNOWN') AND receipt_json IS NULL AND principal_ref=?9
+      AND input_fingerprint=?10 AND candidate_ref=?11 AND snapshot_view_json=?12 AND snapshot_view_sha256=?13
+      AND policy_snapshot_json=?14 AND policy_snapshot_sha256=?15 AND capture_id=?16 AND conversion_operation_id=?17
+      AND EXISTS (
+        SELECT 1 FROM source_revision sr JOIN source s ON s.source_id=sr.source_id
+        JOIN bundle_ingest_operation b ON b.source_revision_ref=sr.source_revision_ref
+        JOIN raw_normalized_admission original ON original.ingest_operation_id=b.operation_id
+        WHERE sr.source_revision_ref=raw_normalized_admission.source_revision_ref AND sr.purge_state='LIVE'
+        AND s.head_rev=sr.source_revision_ref AND sr.content_sha256=?5 AND sr.object_residency_key_digest=?6
+        AND s.source_id=?18 AND s.source_namespace_id=?19 AND s.source_owner_system_id=?20
+        AND s.source_owner_generation=?21 AND sr.source_owner_generation=?21
+        AND b.operation_id=?7 AND b.state='COMMITTED' AND b.manifest_sha256=?8 AND b.principal_ref=?9
+        AND original.state='COMMITTED' AND original.receipt_json=?2 AND original.capture_id=raw_normalized_admission.capture_id
+        AND original.policy_snapshot_sha256=raw_normalized_admission.policy_snapshot_sha256
+        AND original.snapshot_view_sha256=raw_normalized_admission.snapshot_view_sha256
+        AND original.snapshot_view_json=raw_normalized_admission.snapshot_view_json)`)
+      .bind(row.admission_operation_id, original.receipt_json, canonicalJson(priorReceipt.reason_codes), new Date(now()).toISOString(),
+        prepared.request.manifest.content.markdown_sha256, priorReceipt.object_residency_key_digest,
+        original.ingest_operation_id, priorReceipt.manifest_sha256, actor.principal_ref,
+        row.input_fingerprint, row.candidate_ref, row.snapshot_view_json, row.snapshot_view_sha256,
+        row.policy_snapshot_json, row.policy_snapshot_sha256, row.capture_id, row.conversion_operation_id,
+        capture.source_logical_id, capture.source_namespace_id, capture.owner_system_id, capture.source_owner_generation)
+      .run().catch(() => { /* Exact readback decides a lost ACK. */ });
+    const after = await load(requireId(row.admission_operation_id, "admission_operation_id"));
+    await assertCurrent();
+    if (!after || after.state !== "COMMITTED" || after.receipt_json !== original.receipt_json) {
+      throw new RawNormalizedAdmissionError("RAW_NORMALIZED_OUTCOME_UNKNOWN", 503, "reuse receipt was not confirmed", true);
+    }
+    await assertRowCurrent(after, actor, ports);
+    return true;
   }
   async function admit(actor: RawNormalizedAdmissionActor, captureId: string, request: RawNormalizedAdmissionRequest, ports: RawNormalizedAdmissionRequestPorts): Promise<RawNormalizedAdmissionResult> {
     const ownerPort = ports.owner;
@@ -349,6 +447,12 @@ export function createRawNormalizedAdmissionService(input: {
       await assertCurrent();
     }
     try {
+      const reserved = await load(stableAdmissionId);
+      if (reserved !== null && await reuseCommitted(reserved, actor, ports, prepared)) {
+        const reused = await load(stableAdmissionId);
+        if (reused === null) throw new RawNormalizedAdmissionError("RAW_NORMALIZED_STATE_INVALID", 503, "reuse readback is missing", true);
+        return storedResult(reused, ownerPort);
+      }
       let preparedBundle: PrepareBundleUploadResult;
       if (prior !== null && typeof prior.ingest_operation_id === "string") {
         const recovery = await ownerPort.getBundleRecovery(prior.ingest_operation_id);
@@ -401,6 +505,11 @@ export function createRawNormalizedAdmissionService(input: {
     const row = await load(requireId(admissionOperationId, "admission_operation_id"));
     if (row === null || row.capture_id !== requireId(captureId, "capture_id")) throw new RawNormalizedAdmissionError("RAW_NORMALIZED_NOT_FOUND", 404, "raw normalized admission is not available");
     await assertRowCurrent(row, actor, ports);
+    if (await reuseCommitted(row, actor, ports)) {
+      const reconciled = await load(requireId(row.admission_operation_id, "admission_operation_id"));
+      if (reconciled === null) throw new RawNormalizedAdmissionError("RAW_NORMALIZED_STATE_INVALID", 503, "reuse readback is missing", true);
+      return storedResult(reconciled, ports.owner);
+    }
     return storedResult(row, ports.owner);
   }
   async function getSourceIdentity(actor: RawNormalizedAdmissionActor, captureId: string, admissionOperationId: string, ports: RawNormalizedAdmissionRequestPorts): Promise<RawSourceIdentityReadback> {
@@ -410,6 +519,7 @@ export function createRawNormalizedAdmissionService(input: {
     if (row === null || row.capture_id !== cid) throw new RawNormalizedAdmissionError("RAW_NORMALIZED_NOT_FOUND", 404, "raw normalized admission is not available");
     const capture = await assertRowCurrent(row, actor, ports);
     if (row.state !== "COMMITTED") throw new RawNormalizedAdmissionError("RAW_NORMALIZED_NOT_COMMITTED", 409, "source identity is available only after committed admission");
+    if (row.ingest_operation_id === null) await storedResult(row, ports.owner);
     const admissionReceipt = receipt(row.receipt_json);
     if (capture.source_revision_ref !== row.source_revision_ref || admissionReceipt === undefined ||
         admissionReceipt.source_revision_ref !== row.source_revision_ref ||

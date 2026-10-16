@@ -35,7 +35,7 @@ describe("complete native project source delivery", () => {
     expect(test.upload).toHaveBeenCalledTimes(18);
   });
 
-  it("stops later batches on a terminal native error while awaiting every started upload", async () => {
+  it("submits healthy pages despite a native processing failure without reporting the source complete", async () => {
     const test = fixture();
     const original = test.upload.getMockImplementation();
     if (original === undefined) throw new Error("Native upload fixture is missing");
@@ -45,8 +45,20 @@ describe("complete native project source delivery", () => {
       return item;
     });
     await expect(indexProjectSources(test.input)).rejects.toMatchObject({ code: "PROJECT_SEARCH_INDEX_FAILED" });
+    expect(test.upload).toHaveBeenCalledTimes(18);
+    expect(test.stored.size).toBe(18);
+  });
+
+  it("stops later batches when completed native metadata conflicts with the canonical identity", async () => {
+    const test = fixture();
+    const original = test.upload.getMockImplementation();
+    if (original === undefined) throw new Error("Native upload fixture is missing");
+    test.upload.mockImplementation(async (key, document, options) => {
+      const ack = await original(key, document, options);
+      return { ...ack, status: "completed", metadata: { ...options.metadata, content_sha256: "b".repeat(64) } };
+    });
+    await expect(indexProjectSources(test.input)).rejects.toMatchObject({ code: "PROJECT_SEARCH_PROVIDER_RESPONSE_INVALID" });
     expect(test.upload).toHaveBeenCalledTimes(8);
-    expect(test.stored.size).toBe(8);
   });
 
   it("rechecks current membership after submission even while Cloudflare indexing is pending", async () => {

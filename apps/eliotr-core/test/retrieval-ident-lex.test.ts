@@ -147,7 +147,9 @@ describe("Q1 import-fed D1 IDENT/LEX lane", () => {
       laneRequest('Pinned" OR "1"="1', scope, 10),
       "LEX",
     );
-    expect(injected).toEqual([]);
+    // Input operators are words, never executable FTS syntax; ordinary word
+    // matches remain limited to the pinned source and cannot alter its index.
+    expect(injected.map(hit => hit.source_revision_ref)).toEqual(lexHits.map(hit => hit.source_revision_ref));
     const star = await lex.search(laneRequest("OR *", scope, 10), "LEX");
     expect(star).toEqual([]);
     const watermarkAfter = await searchDb

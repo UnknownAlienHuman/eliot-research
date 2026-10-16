@@ -39,12 +39,12 @@ function readBinding(
 }
 export function isCandidateRead(read: ReadObservation): boolean {
   return read.database === "search" &&
-    (read.sql.includes("AND (item_key = ?3") || read.sql.includes("section_fts MATCH ?3"));
+    (read.sql.includes("AND (item_key = ?3") || read.sql.includes("section_fts MATCH"));
 }
 export function isWatermarkRead(read: ReadObservation): boolean {
   return read.database === "search" && read.sql.includes("FROM projection_watermark");
 }
-export async function searchWorld(revisions: readonly string[] = ["rev-a"]) {
+export async function searchWorld(revisions: readonly string[] = ["rev-a"], contents: Readonly<Record<string, string>> = {}) {
   const core = new DatabaseSync(":memory:");
   const search = new DatabaseSync(":memory:");
   core.exec(`
@@ -74,7 +74,7 @@ export async function searchWorld(revisions: readonly string[] = ["rev-a"]) {
     const section = `section-${revision}`;
     const generation = `generation-${revision}`;
     const receipt = `receipt-${revision}`;
-    const content = `Pinned source ${revision}`;
+    const content = contents[revision] ?? `Pinned source ${revision}`;
     const digest = await projectionSha256Utf8(content);
     const end = new TextEncoder().encode(content).length;
     const itemSet = await projectionDigest([
@@ -137,8 +137,8 @@ export async function searchWorld(revisions: readonly string[] = ["rev-a"]) {
 }
 export type SearchWorld = Awaited<ReturnType<typeof searchWorld>>;
 export async function withSearchWorld(
-  run: (world: SearchWorld) => Promise<void>, revisions?: readonly string[],
+  run: (world: SearchWorld) => Promise<void>, revisions?: readonly string[], contents?: Readonly<Record<string, string>>,
 ): Promise<void> {
-  const world = await searchWorld(revisions);
+  const world = await searchWorld(revisions, contents);
   try { await run(world); } finally { world.close(); }
 }

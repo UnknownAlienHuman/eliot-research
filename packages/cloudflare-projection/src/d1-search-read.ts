@@ -39,6 +39,12 @@ export function sanitizeFts5Phrase(trimmedQuery: string): string {
   return `"${trimmedQuery.replace(/"/gu, '""')}"`;
 }
 
+/** Natural questions match their words; FTS operators from input remain quoted data. */
+export function lexicalFts5Query(query: string): string | null {
+  const words = [...new Set(query.match(/[\p{L}\p{N}\p{M}_]+/gu) ?? [])];
+  return words.length === 0 ? null : words.map(sanitizeFts5Phrase).join(" OR ");
+}
+
 function decodeItemRow(row: ItemRow): {
   readonly item_key: string;
   readonly canonical_section_id: string;
@@ -166,29 +172,31 @@ export function createD1SearchLexPort(
       requirePinnedCoverage(pinned, missing, stale);
       const fences = await captureSourceFences(core, pinned, input);
       assertSearchCurrent(input, now);
-      const phrase = sanitizeFts5Phrase(trimmed);
+      const phrase = lexicalFts5Query(trimmed);
       const candidates: LocatorCandidate[] = [];
-      for (const pin of pinned) {
-        if (fences.get(pin.source_revision_ref) === "purged") continue;
-        const remaining = limit - candidates.length;
-        if (remaining <= 0) break;
+      if (phrase !== null) {
+        const allowed = pinned.filter(pin => fences.get(pin.source_revision_ref) !== "purged");
+        const generations = new Map(allowed.map(pin => [pin.source_revision_ref, pin.projection_generation]));
         const result = await search
           .prepare(
-            "SELECT p.item_key, p.canonical_section_id, p.content_sha256, p.projection_generation " +
+            "SELECT p.item_key, p.canonical_section_id, p.content_sha256, p.projection_generation,p.source_revision_ref " +
               "FROM section_fts JOIN projection_item p ON p.item_key = section_fts.item_key " +
-              "WHERE p.source_revision_ref = ?1 AND p.projection_generation = ?2 AND p.active = 1 " +
-              "AND section_fts MATCH ?3 ORDER BY p.item_key LIMIT ?4",
+              "JOIN json_each(?1) scope ON p.source_revision_ref=json_extract(scope.value,'$.source_revision_ref') " +
+              "AND p.projection_generation=json_extract(scope.value,'$.projection_generation') " +
+              "WHERE p.active = 1 AND section_fts MATCH ?2 ORDER BY bm25(section_fts),p.item_key LIMIT ?3",
           )
-          .bind(pin.source_revision_ref, pin.projection_generation, phrase, remaining)
-          .all<ItemRow>();
+          .bind(JSON.stringify(allowed.map(pin => ({ source_revision_ref: pin.source_revision_ref,
+            projection_generation: pin.projection_generation }))), phrase, limit)
+          .all<ItemRow & { readonly source_revision_ref: unknown }>();
         for (const row of result.results ?? []) {
           const item = decodeItemRow(row);
-          if (item.projection_generation !== pin.projection_generation) {
+          const sourceRevision = row.source_revision_ref;
+          if (typeof sourceRevision !== "string" || generations.get(sourceRevision) !== item.projection_generation) {
             laneFail("SEARCH_INCOMPLETE", "projection generation drifted during LEX read");
           }
-          if ((await checkCandidateFence(core, ownerGenerations, pin.source_revision_ref)) === "purged") continue;
+          if ((await checkCandidateFence(core, ownerGenerations, sourceRevision)) === "purged") continue;
           candidates.push(
-            toCandidate("LEX", item, pin.source_revision_ref, candidates.length + 1),
+            toCandidate("LEX", item, sourceRevision, candidates.length + 1),
           );
           if (candidates.length >= limit) break;
         }

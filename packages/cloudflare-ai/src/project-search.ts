@@ -224,6 +224,7 @@ export async function indexProjectSources(input: ProjectSearchBindings & {
   const sources = await projectSources(input.core_database, projectId, sourceIds);
   let uploadedItems = 0;
   let indexingPending = false;
+  let indexingFailed = false;
   for (const source of sources) {
     const items = await projectionItems(input.search_database, source.source_revision_ref);
     const observedAt = new Date().toISOString();
@@ -243,6 +244,11 @@ export async function indexProjectSources(input: ProjectSearchBindings & {
         if (outcome.status === "fulfilled") continue;
         if (outcome.reason instanceof ProjectSearchItemError && outcome.reason.code === "PROJECT_SEARCH_INDEX_PENDING") {
           indexingPending = true;
+        } else if (outcome.reason instanceof ProjectSearchItemError && outcome.reason.code === "PROJECT_SEARCH_INDEX_FAILED") {
+          // A native processing failure is terminal for that item, not a reason
+          // to withhold all other canonical pages. Keep the source failed after
+          // submitting its healthy pages; identity conflicts still stop now.
+          indexingFailed = true;
         } else throw outcome.reason;
       }
     }
@@ -251,6 +257,7 @@ export async function indexProjectSources(input: ProjectSearchBindings & {
     }
     uploadedItems += items.length;
   }
+  if (indexingFailed) throw new ProjectSearchItemError("PROJECT_SEARCH_INDEX_FAILED");
   if (indexingPending) throw new ProjectSearchItemError("PROJECT_SEARCH_INDEX_PENDING");
   return uploadedItems;
 }
@@ -370,6 +377,7 @@ export async function searchProject(
     fail("PROJECT_SEARCH_PROVIDER_RESPONSE_INVALID", "AI Search returned an invalid chunk list");
   }
   const candidates: { chunk: Record<string, unknown>; item: Record<string, unknown>; itemKey: string }[] = [];
+  const providerCount = response.chunks.length;
   for (const rawChunk of response.chunks) {
     const chunk = record(rawChunk);
     const item = chunk === null ? null : record(chunk.item);
@@ -379,17 +387,24 @@ export async function searchProject(
     if (!ITEM_KEY.test(itemKey)) continue;
     if (chunk !== null && item !== null) candidates.push({ chunk, item, itemKey });
   }
-  if (candidates.length === 0) return { ...response, chunks: [] };
+  const observe = (canonicalItems: number, currentRevisions: number, returnedChunks: number): void => {
+    if (returnedChunks !== 0) return;
+    console.warn(JSON.stringify({ event: "project_search_empty_readback", project_id: projectId, lane: input.lane,
+      provider_chunks: providerCount, scoped_items: candidates.length, canonical_items: canonicalItems,
+      current_revisions: currentRevisions, returned_chunks: returnedChunks }));
+  };
+  if (candidates.length === 0) { observe(0, 0, 0); return { ...response, chunks: [] }; }
   // Provider results are locators. Revision, section and content identity come from D1.
   const metadata = await canonicalItemMetadata(input.search_database, [...new Set(candidates.map((entry) => entry.itemKey))]);
   const revisions = [...new Set([...metadata.values()].map((entry) => entry.source_revision_ref))]
     .filter((ref) => allowedRevisions === undefined || allowedRevisions.has(ref));
-  if (revisions.length === 0) return { ...response, chunks: [] };
+  if (revisions.length === 0) { observe(metadata.size, 0, 0); return { ...response, chunks: [] }; }
   const current = await currentProjectRevisions(input.core_database, projectId, revisions);
   const chunks = candidates.flatMap(({ chunk, item, itemKey }) => {
     const canonical = metadata.get(itemKey);
     return canonical !== undefined && current.has(canonical.source_revision_ref)
       ? [{ ...chunk, item: { ...item, metadata: canonical } }] : [];
   });
+  observe(metadata.size, current.size, chunks.length);
   return { ...response, chunks };
 }
