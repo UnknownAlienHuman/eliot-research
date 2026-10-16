@@ -6,10 +6,9 @@ import {
   type ProviderNativeModelPreparationV1,
   type ProviderNativeModelProbeExecutionV1,
 } from "@eliotr/cloudflare-native-models";
-import { canonicalModelGatewayJson, modelGatewaySha256 } from "@eliotr/cloudflare-ai";
+import { canonicalModelGatewayJson, modelGatewaySha256, ModelGatewayExecutionError } from "@eliotr/cloudflare-ai";
 import { prepareNativeQualificationHttpRequest } from "@eliotr/cloudflare-model-transport/model-gateway-http-request.js";
 import { decodeModelGatewayProviderNativeResponse } from "@eliotr/cloudflare-model-transport/model-gateway-provider-native-response.js";
-import { ModelGatewayExecutionError } from "@eliotr/cloudflare-model-transport/model-gateway-execution-contract.js";
 import type { ResearchProviderKeyModelUseRow, ResearchProviderKeyModelUseStageRow } from "./research-provider-key-model-use-store.js";
 import { parseResearchProviderKeyModelUseBasis } from "./research-provider-key-model-use-plan.js";
 
