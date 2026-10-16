@@ -161,7 +161,7 @@ async function fetchCatalogJson(
     response = await fetcher(url, {
       method: "GET",
       headers,
-      redirect: "error",
+      redirect: "manual",
       cache: "no-store",
       ...(signal === undefined ? {} : { signal }),
     });

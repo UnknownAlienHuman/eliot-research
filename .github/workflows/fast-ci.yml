@@ -62,6 +62,7 @@ jobs:
           packages/cloudflare-model-control/src/service-model-provider-service.test.ts
           packages/cloudflare-ai/src/service-model-provider-management.test.ts
           packages/cloudflare-ai/src/provider-key-rest-codec.test.ts
+          packages/cloudflare-ai/src/provider-key-rest.test.ts
           packages/cloudflare-ai/src/project-search-item.test.ts
           packages/cloudflare-ai/src/project-search.test.ts
           packages/cloudflare-model-execution/src/model-route-failure.test.ts
@@ -90,6 +91,8 @@ jobs:
           src/research-run-configuration.test.ts
           src/research-run-configuration-admission.test.ts
           test/research-provider-key-model-use.test.ts
+          test/research-provider-key-configuration.test.ts
+          test/research-prepared-model-transport.test.ts
           test/research-client-execution.test.ts
           test/delegated-report-reservation.test.ts
           test/raw-normalized-admission-http.test.ts

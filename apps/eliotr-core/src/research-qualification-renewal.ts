@@ -109,7 +109,7 @@ async function controlPlaneFor(
     ): Promise<DynamicRouteRestResponse> {
       let response: Response;
       try {
-        response = await globalThis.fetch(url, { ...init, redirect: "error" });
+        response = await globalThis.fetch(url, { ...init, redirect: "manual" });
       } catch (cause) {
         fail("RESEARCH_QUALIFICATION_RENEWAL_ROUTE_UNAVAILABLE", "dynamic route readback transport failed", true, cause);
       }
