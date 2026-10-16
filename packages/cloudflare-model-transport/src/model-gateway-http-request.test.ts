@@ -432,6 +432,69 @@ describe("model gateway transport policy", () => {
     expect(new TextDecoder().decode(stored.body_bytes)).toBe(body);
   });
 
+  it("accepts current OpenRouter SDK nullable usage fields without weakening identity or billing guards", async () => {
+    const body = {
+      id: "openrouter-sdk-nullable-usage",
+      object: "chat.completion",
+      created: 1,
+      model: OPENROUTER_POLICY.model,
+      service_tier: null,
+      system_fingerprint: null,
+      choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "ok" } }],
+      usage: {
+        prompt_tokens: 34,
+        completion_tokens: 74,
+        total_tokens: 108,
+        prompt_tokens_details: null,
+        completion_tokens_details: {
+          accepted_prediction_tokens: null,
+          audio_tokens: null,
+          image_tokens: 0,
+          reasoning_tokens: null,
+          rejected_prediction_tokens: null,
+        },
+        cost: null,
+        cost_details: null,
+        is_byok: true,
+        server_tool_use_details: {
+          tool_calls_executed: null,
+          tool_calls_requested: 0,
+          web_search_requests: null,
+        },
+      },
+    };
+    const bytes = new TextEncoder().encode(JSON.stringify(body));
+    const stored = await decodeModelGatewayProviderBody(bytes, "openrouter-chat-completions");
+    expect(stored.assistant_content).toBe("ok");
+    expect(stored.response_model).toBe(OPENROUTER_POLICY.model);
+    expect(stored.usage).toEqual({ input_tokens: 34, output_tokens: 74, total_tokens: 108 });
+
+    await expect(decodeModelGatewayProviderBody(new TextEncoder().encode(JSON.stringify({
+      ...body, usage: { ...body.usage, total_tokens: 107 },
+    })), "openrouter-chat-completions")).rejects.toMatchObject({ code: "MODEL_GATEWAY_RESPONSE_INVALID" });
+    await expect(decodeModelGatewayProviderBody(new TextEncoder().encode(JSON.stringify({
+      ...body, usage: { ...body.usage, server_tool_use_details: { web_search_requests: 1 } },
+    })), "openrouter-chat-completions")).rejects.toMatchObject({ code: "MODEL_GATEWAY_RESPONSE_INVALID" });
+    await expect(decodeModelGatewayProviderBody(new TextEncoder().encode(JSON.stringify({
+      ...body, usage: { ...body.usage, cost_details: {
+        upstream_inference_prompt_cost: 0,
+        upstream_inference_completions_cost: 0,
+        server_tool_cost: 0.01,
+      } },
+    })), "openrouter-chat-completions")).rejects.toMatchObject({ code: "MODEL_GATEWAY_RESPONSE_INVALID" });
+    await expect(decodeModelGatewayProviderBody(new TextEncoder().encode(JSON.stringify({
+      ...body, provider: "unverified-provider-field",
+    })), "openrouter-chat-completions")).rejects.toMatchObject({ code: "MODEL_GATEWAY_RESPONSE_INVALID" });
+    const { deployment } = await fixture(OPENROUTER_POLICY);
+    const wrongModel = new Response(JSON.stringify({ ...body, model: "another/model" }), {
+      status: 200,
+      headers: { "content-type": "application/json", "cf-aig-log-id": "openrouter-wrong-model" },
+    });
+    await expect(decodeModelGatewayProviderNativeResponse(
+      wrongModel, deployment, 4096, OPENROUTER_POLICY,
+    )).rejects.toMatchObject({ code: "MODEL_GATEWAY_RESPONSE_INVALID" });
+  });
+
   it("preserves schema bytes when the optional normalizer is omitted and rejects it on schema-only APIs", async () => {
     const noNormalization: ModelGatewayTransportPolicyV1 = {
       ...OPENROUTER_POLICY,

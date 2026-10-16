@@ -5,12 +5,12 @@ import {
   type ModelGatewayUsageObservation,
 } from "./model-gateway-execution-contract.js";
 
-const ROOT_KEYS = new Set(["choices", "created", "id", "model", "object", "system_fingerprint", "usage"]);
+const ROOT_KEYS = new Set(["choices", "created", "id", "model", "object", "service_tier", "system_fingerprint", "usage"]);
 const CHOICE_KEYS = new Set(["error", "finish_reason", "index", "logprobs", "message", "native_finish_reason"]);
 const MESSAGE_KEYS = new Set(["content", "reasoning", "reasoning_content", "reasoning_details", "refusal", "role", "tool_calls"]);
 const USAGE_KEYS = new Set([
   "completion_tokens", "completion_tokens_details", "cost", "cost_details", "is_byok",
-  "prompt_tokens", "prompt_tokens_details", "server_tool_use", "total_tokens",
+  "prompt_tokens", "prompt_tokens_details", "server_tool_use", "server_tool_use_details", "total_tokens",
 ]);
 const IDENTIFIER = /^[A-Za-z0-9._:@/-]{1,256}$/u;
 const MAX_BODY_BYTES = 256 * 1024;
@@ -79,10 +79,13 @@ function boundedJson(value: unknown, depth = 0, state = { members: 0 }): void {
   for (const [, item] of entries) boundedJson(item, depth + 1, state);
 }
 
-function tokenDetails(value: unknown, keys: ReadonlySet<string>, label: string): void {
-  if (value === undefined) return;
+function tokenDetails(value: unknown, keys: ReadonlySet<string>, label: string, nullableCounts = new Set<string>()): void {
+  if (value === undefined || value === null) return;
   const details = exactObject(value, keys, label);
-  for (const [key, count] of Object.entries(details)) tokenCount(count, `${label}.${key}`);
+  for (const [key, count] of Object.entries(details)) {
+    if (count === null && nullableCounts.has(key)) continue;
+    tokenCount(count, `${label}.${key}`);
+  }
 }
 
 function usage(raw: unknown): ModelGatewayUsageObservation {
@@ -94,10 +97,11 @@ function usage(raw: unknown): ModelGatewayUsageObservation {
   tokenDetails(value.prompt_tokens_details,
     new Set(["audio_tokens", "cache_write_tokens", "cached_tokens", "video_tokens"]), "OpenRouter prompt token details");
   tokenDetails(value.completion_tokens_details,
-    new Set(["audio_tokens", "image_tokens", "reasoning_tokens"]), "OpenRouter completion token details");
-  if (value.cost !== undefined) cost(value.cost, "OpenRouter usage cost");
+    new Set(["accepted_prediction_tokens", "audio_tokens", "image_tokens", "reasoning_tokens", "rejected_prediction_tokens"]),
+    "OpenRouter completion token details", new Set(["accepted_prediction_tokens", "audio_tokens", "reasoning_tokens", "rejected_prediction_tokens"]));
+  if (value.cost !== undefined) cost(value.cost, "OpenRouter usage cost", true);
   if (value.is_byok !== undefined && typeof value.is_byok !== "boolean") invalid("OpenRouter is_byok is invalid");
-  if (value.cost_details !== undefined) {
+  if (value.cost_details !== undefined && value.cost_details !== null) {
     const details = exactObject(value.cost_details,
       new Set(["server_tool_cost", "upstream_inference_completions_cost", "upstream_inference_cost", "upstream_inference_prompt_cost"]),
       "OpenRouter cost details");
@@ -118,6 +122,16 @@ function usage(raw: unknown): ModelGatewayUsageObservation {
       if (tokenCount(count, `OpenRouter server tool usage.${key}`) !== 0) invalid("OpenRouter reports unrequested server-tool usage");
     }
   }
+  if (value.server_tool_use_details !== undefined && value.server_tool_use_details !== null) {
+    const tools = exactObject(value.server_tool_use_details,
+      new Set(["tool_calls_executed", "tool_calls_requested", "web_search_requests"]),
+      "OpenRouter server tool usage details");
+    for (const [key, count] of Object.entries(tools)) {
+      if (count !== null && tokenCount(count, `OpenRouter server tool usage details.${key}`) !== 0) {
+        invalid("OpenRouter reports unrequested server-tool usage");
+      }
+    }
+  }
   return Object.freeze({ input_tokens: input, output_tokens: output, total_tokens: total });
 }
 
@@ -135,7 +149,8 @@ export function decodeModelGatewayOpenRouterBody(
   if (typeof body.created !== "number" || !Number.isSafeInteger(body.created) || body.created < 0) invalid("OpenRouter created is invalid");
   const responseModel = string(body.model, "OpenRouter response model", 8192, "MODEL_ID_INVALID");
   if (!IDENTIFIER.test(responseModel)) invalid("OpenRouter response model is not a bounded identifier", "MODEL_ID_INVALID");
-  if (body.system_fingerprint !== undefined) string(body.system_fingerprint, "OpenRouter system fingerprint");
+  if (body.system_fingerprint !== undefined && body.system_fingerprint !== null) string(body.system_fingerprint, "OpenRouter system fingerprint");
+  if (body.service_tier !== undefined && body.service_tier !== null) string(body.service_tier, "OpenRouter service tier");
   if (!Array.isArray(body.choices) || body.choices.length !== 1) invalid("OpenRouter response must contain exactly one choice");
   const choice = exactObject(body.choices[0], CHOICE_KEYS, "OpenRouter response choice");
   if (choice.index !== 0) invalid("OpenRouter response choice index must be zero");
