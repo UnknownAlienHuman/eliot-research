@@ -3,19 +3,20 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { RESEARCH_PROVIDER_KEY_MODEL_USE_PROTOCOL, SERVICE_MODEL_PROVIDER_CREATE_PROTOCOL } from "@eliotr/contracts";
 import { createServiceModelProviderService, type ServiceModelProviderManagementPort } from "@eliotr/cloudflare-model-control/service-model-provider-service.js";
 import { readConfiguredProviderKeyOperation } from "@eliotr/cloudflare-model-control";
+import { createD1ProviderNativeModelStore } from "@eliotr/cloudflare-native-models";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import type { Env } from "../src/env.js";
 import { createGlobalServiceProviderKeyConfiguration } from "../src/research-provider-key-model-use-composition.js";
 import { createResearchProviderKeyConfigurationService } from "../src/research-provider-key-configuration-service.js";
 import { createResearchProviderKeyModelUseService } from "../src/research-provider-key-model-use-service.js";
 import { createResearchProviderKeyModelUseBasis } from "../src/research-provider-key-model-use-plan.js";
-import { createOwnerResearchProjectConfigurationService } from "../src/research-project-configuration-composition.js";
+import { createOwnerResearchProjectConfigurationService, readOwnerProjectResearchReadiness } from "../src/research-project-configuration-composition.js";
 import { createNativeUseEnvironment, freeOnlyCatalogResponse, MODEL_ID } from "./research-provider-key-model-use-fixture.js";
 
 const DOTS = "dots-studio/dots-3-note-preview:free";
 const env = generatedEnv as unknown as Env & { CORE_MIGRATIONS: Parameters<typeof applyD1Migrations>[1] };
 beforeAll(async () => { await applyD1Migrations(env.CORE_DB, env.CORE_MIGRATIONS); });
-afterEach(() => { vi.unstubAllGlobals(); });
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 async function setup(modelIds: readonly string[]) {
   const owner = `global-dots-owner-${crypto.randomUUID()}`;
@@ -76,6 +77,7 @@ describe("registered global model check-and-use", () => {
   });
 
   it("uses real price/qualification/selection services with mocked I/O for exact global Dots pins", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
     const fixture = await setup([DOTS]);
     const pricing = vi.fn(async (_resource: RequestInfo | URL) => freeOnlyCatalogResponse(DOTS));
     vi.stubGlobal("fetch", pricing);
@@ -107,6 +109,31 @@ describe("registered global model check-and-use", () => {
       "https://openrouter.ai/api/v1/models/dots-studio/dots-3-note-preview%3Afree/endpoints")).toBe(true);
     const selected = await fixture.configuration.readSelected(fixture.context, fixture.project);
     expect(selected?.configuration.model_selections.every((entry) => entry.transport_policy.model === DOTS)).toBe(true);
+    if (selected === null) throw new Error("Expected the selected native v2 project configuration");
+    const modelCallsBeforeExpiryRead = requests.length;
+    const catalogCallsBeforeExpiryRead = pricing.mock.calls.length;
+    vi.setSystemTime(Date.now() + 11 * 60_000);
+    expect(await readOwnerProjectResearchReadiness(fixture.runtimeEnv, fixture.context, fixture.project))
+      .toMatchObject({ run_readiness: "ready", qualification_state: "current" });
+    expect(requests).toHaveLength(modelCallsBeforeExpiryRead);
+    expect(pricing).toHaveBeenCalledTimes(catalogCallsBeforeExpiryRead);
+    const revokedPin = selected.configuration.model_selections.find((entry) =>
+      entry.candidate_kind === "provider-native-v1");
+    if (revokedPin === undefined || revokedPin.candidate_kind !== "provider-native-v1") {
+      throw new Error("Expected a provider-native v2 qualification pin");
+    }
+    await createD1ProviderNativeModelStore(env.CORE_DB).revoke({
+      owner_ref: fixture.owner,
+      project_id: fixture.project,
+      qualification_ref: revokedPin.qualification_ref,
+      qualification_sha256: revokedPin.qualification_sha256,
+      revoked_by: fixture.owner,
+      reason: "Regression test confirms explicit revocation remains authoritative",
+    });
+    expect(await readOwnerProjectResearchReadiness(fixture.runtimeEnv, fixture.context, fixture.project))
+      .toMatchObject({ run_readiness: "blocked", readiness_reason: "QUALIFICATION_UNAVAILABLE" });
+    expect(requests).toHaveLength(modelCallsBeforeExpiryRead);
+    expect(pricing).toHaveBeenCalledTimes(catalogCallsBeforeExpiryRead);
     expect(await readConfiguredProviderKeyOperation(env.CORE_DB, fixture.owner, fixture.project, fixture.keyId))
       .toMatchObject({ status: "configured", operation: { model_registry: { operation_id: fixture.keyId, model_ids: [DOTS] } } });
     expect(await env.CORE_DB.prepare("SELECT count(*) AS n FROM research_provider_key_configuration_operation WHERE project_id=?1")
