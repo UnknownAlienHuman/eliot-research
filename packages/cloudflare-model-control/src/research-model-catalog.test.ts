@@ -56,7 +56,8 @@ function binding(models: ReturnType<typeof vi.fn>): WorkersAiModelCatalogBinding
 
 describe("research model catalog", () => {
   it("uses the callable native name rather than the catalog-record UUID", async () => {
-    const raw = { ...workersModel("95666467-f984-4211-b48a-7c246dd4adb7"), name: "@cf/zai-org/glm-5.3-flash" };
+    const raw = { ...workersModel("95666467-f984-4211-b48a-7c246dd4adb7"),
+      id: "95666467-f984-4211-b48a-7c246dd4adb7", name: "@cf/zai-org/glm-5.3-flash" };
     const models = vi.fn(async ({ page }: AiModelsSearchParams) => page === 1 ? [raw] : []);
     const service = createResearchModelCatalogService({ database: database(false), workersAi: binding(models) });
     const result = await service.listWorkersAiForService(ownerContext());
