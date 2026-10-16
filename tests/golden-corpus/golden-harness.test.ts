@@ -11,6 +11,7 @@ import {
   validateGoldenCases,
   adjudicateGoldenCase,
 } from "../../packages/testkit/src/golden.js";
+import { goldenRunDiagnosticsFor } from "../../packages/testkit/src/golden-run-diagnostics.js";
 
 const corpusDir = dirname(fileURLToPath(import.meta.url));
 
@@ -94,11 +95,13 @@ describe("golden corpus harness", () => {
     for (const result of collapsed) {
       const golden = targets.find((entry) => entry.case_id === result.case_id);
       if (golden === undefined) throw new Error("missing golden case");
+      const diagnostics = goldenRunDiagnosticsFor(result);
+      if (diagnostics === undefined) throw new Error("missing golden diagnostics");
       const verdict = adjudicateGoldenCase(golden, {
         atoms: [...result.observed_atoms],
         forbidden: [...result.observed_forbidden_collapses],
         handles: [...result.resolved_handle_refs],
-        unknowns: [...result.observed_unknowns],
+        unknowns: [...diagnostics.observed_unknowns],
         coverage: result.coverage_kind,
       });
       expect(verdict.passed).toBe(false);

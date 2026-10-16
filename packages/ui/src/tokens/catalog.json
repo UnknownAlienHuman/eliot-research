@@ -2,8 +2,8 @@
   "protocol": "eliotr.ui-token-catalog.v1",
   "checkpoint": "U1.2",
   "source_css": "packages/ui/src/tokens/theme.css",
-  "source_sha256": "3040a6247709ab322c223ac41cb8c0333604b72fcc735738f3fabf3117dad5bd",
-  "source_bytes": 25772,
+  "source_sha256": "c1aa1d1715f066d255108e4332d73de7b177baf6507f3ce089f904bca06bdbf3",
+  "source_bytes": 25912,
   "design_reference": {
     "artifact": "packages/ui/src/tokens/theme.css",
     "basis": "Google Material 3 baseline roles as observed in live NotebookLM (2026-10-13), violet tertiary for expressive moments",

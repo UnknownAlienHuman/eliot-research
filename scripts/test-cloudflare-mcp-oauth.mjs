@@ -7,6 +7,7 @@ import { runInNewContext } from "node:vm";
 import { readConfiguredTransport } from "./check-launch-code.mjs";
 import { createCloudflareMcpTransport } from "./lib/cloudflare-mcp-oauth.mjs";
 import { readActiveDeploymentIdentity, selectDeploymentGoogleTransport } from "./lib/deployment-maintenance.mjs";
+import { parseDeploymentJsonc } from "./lib/deployment-jsonc.mjs";
 
 const ACCOUNT_ID = "00000000000000000000000000000000";
 const DYNAMIC_ROUTE_TEST_ACCOUNT_ID = "11111111111111111111111111111111";
@@ -321,7 +322,7 @@ try {
       return { googleTransport, activeTransport }; })`, {
       process: { env: {} }, token: undefined, accountId: ACCOUNT_ID,
       apiBase: "https://api.cloudflare.com/client/v4", mcpTransport: maintenanceTransport, request,
-      repositoryRoot: root, readFile, resolve, readConfiguredTransport, selectDeploymentGoogleTransport,
+      repositoryRoot: root, readFile, resolve, parseDeploymentJsonc, readConfiguredTransport, selectDeploymentGoogleTransport,
       preserveGoogleTransport: "disabled",
       readActiveDeploymentIdentity: (options) => readActiveDeploymentIdentity({ ...options, fetchImpl: rawFetch }),
       checkOnly: !verifyExisting, verifyExisting,
