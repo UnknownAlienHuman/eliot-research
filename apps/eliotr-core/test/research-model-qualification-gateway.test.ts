@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { DynamicRouteQualificationProbeInput } from "@eliotr/cloudflare-ai";
+import { canonicalModelGatewayJson, type DynamicRouteQualificationProbeInput } from "@eliotr/cloudflare-ai";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import type { Env } from "../src/env.js";
 import { qualificationModelGatewayConfiguration } from "../src/research-model-qualification-http.js";
@@ -25,7 +25,7 @@ function fixture(provider: "workers-ai" | "openrouter") {
   };
   // This unit exercises gateway assembly after the route's separately-tested strict probe decoder.
   const probe = { expected_provider: provider, expected_model: model, provisioning: { deployment } } as unknown as DynamicRouteQualificationProbeInput;
-  return { model, probe, policies: JSON.stringify({
+  return { model, probe, policies: canonicalModelGatewayJson({
     protocol: RESEARCH_PREPARED_MODEL_TRANSPORT_PROTOCOL,
     model_selections: [{ stage: "SYNTHESIZE", route_ref: deployment.route_ref, route_version: deployment.route_version,
       provider, model, transport_policy: policy }],
