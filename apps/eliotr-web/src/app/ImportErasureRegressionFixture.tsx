@@ -346,7 +346,11 @@ async function buildEnvironment(projectSelected = false): Promise<PanelEnvironme
       return json({
         protocol: "eliotr.owner-namespaces.v1",
         profiles: [],
-        namespaces: [{ source_namespace_id: "workspace-panel-1", title: "Panel imports" }],
+        namespaces: [{
+          source_namespace_id: "workspace-panel-1", title: "Panel imports",
+          read_policy_generation: 1, read_expires_at: "2027-01-01T00:00:00.000Z", read_access: "ACTIVE",
+          minimum_quality_state: "degraded",
+        }],
       });
     }
 

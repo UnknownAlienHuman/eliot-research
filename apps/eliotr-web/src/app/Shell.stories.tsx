@@ -118,7 +118,7 @@ function LiveSourcesPreview({ erasureJourney = false, importJourney = false, era
     const json = (data: unknown) => new Response(JSON.stringify({ data, trace_id: "live-trace-1", deployment_generation: generation }), { headers: { "content-type": "application/json" } });
     const fetchFixture: typeof fetch = async (input, init) => {
       const url = new URL(String(input), "https://fixture.invalid");
-      if (importJourney && url.pathname === '/api/v1/library/namespaces') return json({ protocol: 'eliotr.owner-namespaces.v1', profiles: [], namespaces: [{ source_namespace_id: 'workspace-live-1', title: 'Imported research' }] });
+      if (importJourney && url.pathname === '/api/v1/library/namespaces') return json({ protocol: 'eliotr.owner-namespaces.v1', profiles: [], namespaces: [{ source_namespace_id: 'workspace-live-1', title: 'Imported research', read_policy_generation: 1, read_expires_at: '2027-01-01T00:00:00.000Z', read_access: 'ACTIVE', minimum_quality_state: 'degraded' }] });
       if (importJourney && url.pathname === '/api/v1/ingest/raw') {
         if (init?.method === 'POST') {
           captureCalls++; const headers = new Headers(init.headers);
