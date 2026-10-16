@@ -20,6 +20,10 @@ import {
   ensureCloudflareCustomProvider,
 } from "./custom-provider-rest.js";
 import type { CloudflareCustomProviderDependencies } from "./custom-provider-rest-contract.js";
+import {
+  preparePrivateSecretsStore,
+  type PrivateSecretsStoreRequest,
+} from "./private-secrets-store.js";
 
 const API_ORIGIN = "https://api.cloudflare.com";
 const ACCOUNT_ID = /^[a-f0-9]{32}$/u;
@@ -351,49 +355,82 @@ function exactConfig(
   providerSlug: string,
   alias: string,
   gatewayId: string,
+  secretId: string,
 ): observed is ObservedConfig {
-  return observed !== undefined && observed.id === expected.id &&
-    observed.provider_slug === providerSlug && observed.alias === alias &&
-    observed.default_config === false && observed.gateway_id === gatewayId &&
-    observed.secret_id === expected.secret_id && observed.modified_at !== undefined &&
-    observed.rate_limit === null && observed.rate_limit_period === null;
+  const expectedMatchesRequest = expected.provider_slug === providerSlug &&
+    expected.alias === alias && expected.default_config === false &&
+    expected.gateway_id === gatewayId && expected.secret_id === secretId &&
+    expected.modified_at !== undefined && expected.rate_limit === null &&
+    expected.rate_limit_period === null;
+  return expectedMatchesRequest && observed !== undefined &&
+    observed.id === expected.id && observed.provider_slug === providerSlug &&
+    observed.alias === alias && observed.default_config === false &&
+    observed.gateway_id === gatewayId && observed.secret_id === secretId &&
+    observed.modified_at !== undefined && observed.rate_limit === null &&
+    observed.rate_limit_period === null;
+}
+
+async function readManagementToken(
+  dependencies: CloudflareServiceModelProviderManagementDependencies,
+  execution: LinkedExecution,
+): Promise<string> {
+  try {
+    return requireApiToken(
+      await waitForSignal(dependencies.credentials.readApiToken(), execution.signal),
+    );
+  } catch (error) {
+    if (error instanceof ProviderConfigRestError) throw error;
+    providerConfigRestFailure(
+      "PROVIDER_CONFIG_CREDENTIAL_INVALID",
+      "Cloudflare provider-config credential is unavailable or invalid",
+      { effect: "NONE" },
+    );
+  }
+}
+
+function providerConfigsUrl(accountId: string, gatewayId: string): string {
+  return API_ORIGIN + "/client/v4/accounts/" + accountId +
+    "/ai-gateway/gateways/" + encodeURIComponent(gatewayId) + "/provider_configs";
+}
+
+async function requireProviderConfigAliasAbsent(
+  dependencies: CloudflareServiceModelProviderManagementDependencies,
+  token: string,
+  baseUrl: string,
+  gatewayId: string,
+  alias: string,
+  signal: AbortSignal,
+): Promise<void> {
+  const before = await listConfigs(
+    dependencies,
+    token,
+    baseUrl,
+    gatewayId,
+    "PREFLIGHT",
+    signal,
+  );
+  if (before.some((config) => config.alias === alias)) {
+    providerConfigRestFailure(
+      "PROVIDER_CONFIG_EXISTING_CONFLICT",
+      "Provider-config alias already exists; existing configuration was not adopted",
+      { effect: "NONE" },
+    );
+  }
 }
 
 async function createOneProviderConfig(
   dependencies: CloudflareServiceModelProviderManagementDependencies,
+  token: string,
   providerSlug: string,
   alias: string,
-  secret: string,
+  secretId: string,
   execution: LinkedExecution,
 ): Promise<string> {
-    let token: string;
-    try {
-      token = requireApiToken(await waitForSignal(dependencies.credentials.readApiToken(), execution.signal));
-    } catch (error) {
-      if (error instanceof ProviderConfigRestError) throw error;
-      providerConfigRestFailure(
-        "PROVIDER_CONFIG_CREDENTIAL_INVALID",
-        "Cloudflare provider-config credential is unavailable or invalid",
-        { effect: "NONE", cause: error },
-      );
-    }
-    const baseUrl = `${API_ORIGIN}/client/v4/accounts/${requireAccount(dependencies.account_id)}/ai-gateway/gateways/${encodeURIComponent(requireGateway(dependencies.gateway_id))}/provider_configs`;
+    const baseUrl = providerConfigsUrl(
+      requireAccount(dependencies.account_id),
+      requireGateway(dependencies.gateway_id),
+    );
     const gatewayId = requireGateway(dependencies.gateway_id);
-    const before = await listConfigs(dependencies, token, baseUrl, gatewayId, "PREFLIGHT", execution.signal);
-    if (before.some((config) => config.alias === alias)) {
-      providerConfigRestFailure(
-        "PROVIDER_CONFIG_EXISTING_CONFLICT",
-        "Provider-config alias already exists; existing configuration was not adopted",
-        { effect: "NONE" },
-      );
-    }
-    if (execution.signal.aborted) {
-      providerConfigRestFailure(
-        "PROVIDER_CONFIG_TRANSPORT_FAILED",
-        "Provider-config operation was cancelled before any secret write",
-        { effect: "NONE" },
-      );
-    }
 
     let acknowledgement: ObservedConfig | undefined;
     let originalError: unknown;
@@ -403,7 +440,7 @@ async function createOneProviderConfig(
         token,
         "POST",
         baseUrl,
-        { alias, default_config: false, provider_slug: providerSlug, secret },
+        { alias, default_config: false, provider_slug: providerSlug, secret_id: secretId },
         "CREATE",
         execution.signal,
       );
@@ -424,7 +461,14 @@ async function createOneProviderConfig(
     }
     const match = after.find((config) => config.alias === alias);
     if (originalError !== undefined) {
-      if (acknowledgement !== undefined && exactConfig(match, acknowledgement, providerSlug, alias, gatewayId)) {
+      if (acknowledgement !== undefined && exactConfig(
+        match,
+        acknowledgement,
+        providerSlug,
+        alias,
+        gatewayId,
+        secretId,
+      )) {
         return acknowledgement.id;
       }
       providerConfigRestFailure(
@@ -433,14 +477,21 @@ async function createOneProviderConfig(
         { effect: "CREATE", cause: originalError },
       );
     }
-    if (acknowledgement === undefined || !exactConfig(match, acknowledgement, providerSlug, alias, gatewayId)) {
+    if (acknowledgement === undefined || !exactConfig(
+      match,
+      acknowledgement,
+      providerSlug,
+      alias,
+      gatewayId,
+      secretId,
+    )) {
       providerConfigRestFailure(
         "PROVIDER_CONFIG_READBACK_MISMATCH",
         "Provider-config readback did not match the one create attempt",
         { effect: "CREATE" },
       );
     }
-  return acknowledgement.id;
+    return acknowledgement.id;
 }
 
 async function readOneProviderConfig(
@@ -554,13 +605,67 @@ export function createCloudflareServiceModelProviderManagementPort(
             fetch: boundedDependencies.fetch,
           } satisfies CloudflareCustomProviderDependencies);
         }
-        const providerConfigId = await createOneProviderConfig(
-          boundedDependencies,
-          providerSlug,
+        const token = await readManagementToken(boundedDependencies, execution);
+        const gatewayId = requireGateway(dependencies.gateway_id);
+        const configsUrl = providerConfigsUrl(accountId, gatewayId);
+        const request: PrivateSecretsStoreRequest = (method, url, body, effect, signal) =>
+          requestEnvelope(
+            boundedDependencies,
+            token,
+            method,
+            url,
+            body,
+            effect,
+            signal,
+          );
+        const secretStore = await preparePrivateSecretsStore({
+          account_id: accountId,
+          gateway_id: gatewayId,
+          provider_slug: providerSlug,
           alias,
-          secret,
-          execution,
+          request,
+          signal: execution.signal,
+        });
+        await requireProviderConfigAliasAbsent(
+          boundedDependencies,
+          token,
+          configsUrl,
+          gatewayId,
+          alias,
+          execution.signal,
         );
+        if (execution.signal.aborted) {
+          providerConfigRestFailure(
+            "PROVIDER_CONFIG_TRANSPORT_FAILED",
+            "Cloudflare BYOK operation was cancelled before any secret write",
+            { effect: "NONE" },
+          );
+        }
+        const secretId = await secretStore.createSecret(secret);
+        let providerConfigId: string;
+        try {
+          providerConfigId = await createOneProviderConfig(
+            boundedDependencies,
+            token,
+            providerSlug,
+            alias,
+            secretId,
+            execution,
+          );
+        } catch (error) {
+          if (error instanceof ProviderConfigRestError && error.effect === "CREATE") throw error;
+          const httpStatus = error instanceof ProviderConfigRestError
+            ? error.http_status
+            : undefined;
+          providerConfigRestFailure(
+            "PROVIDER_CONFIG_CREATE_UNCERTAIN",
+            "Provider-config outcome is unknown after creating the BYOK secret",
+            {
+              effect: "CREATE",
+              ...(httpStatus === undefined ? {} : { http_status: httpStatus }),
+            },
+          );
+        }
         return Object.freeze({
           provider_config_id: providerConfigId,
           provider_slug: providerSlug,
