@@ -14,14 +14,27 @@ function matches(object: R2Object, expected: WorkflowObject, immutable: boolean)
     (!immutable || (object.customMetadata?.immutable === "true" &&
       object.customMetadata.residency === serializeObjectResidencyKey(expected.residency)));
 }
+function readUnavailable(expected: WorkflowObject, phase: "HEAD" | "GET" | "BODY", cause?: unknown): never {
+  let reason = cause === undefined ? "OBJECT_MISSING" : "READ_FAILED";
+  try {
+    const message = cause instanceof Error ? cause.message : "";
+    if (/too many subrequests|subrequest.*(?:limit|exceed)/iu.test(message)) reason = "SUBREQUEST_LIMIT";
+    else if (/request context|I\/O context|different request|context has ended/iu.test(message)) reason = "REQUEST_CONTEXT";
+    else if (/network|connection|timeout|timed out|temporarily unavailable/iu.test(message)) reason = "UPSTREAM_UNAVAILABLE";
+  } catch { /* Diagnostic classification never changes the original read failure. */ }
+  // Do not log raw exceptions, source bytes, object keys, or credentials.
+  console.warn(JSON.stringify({ event: "workflow_object_read_unavailable", phase, reason,
+    content_sha256: expected.sha256, expected_bytes: expected.byte_length }));
+  return fail("WORKFLOW_OUTPUT_UNAVAILABLE");
+}
 export async function readWorkflowObject(bucket: R2Bucket, expected: WorkflowObject, immutable = false): Promise<Uint8Array> {
   if (!WorkflowObjectSchema.safeParse(expected).success) fail("WORKFLOW_INPUT_INVALID");
-  const head = await bucket.head(expected.object_ref).catch(() => fail("WORKFLOW_OUTPUT_UNAVAILABLE"));
-  if (head === null) fail("WORKFLOW_OUTPUT_UNAVAILABLE");
+  const head = await bucket.head(expected.object_ref).catch((cause: unknown) => readUnavailable(expected, "HEAD", cause));
+  if (head === null) readUnavailable(expected, "HEAD");
   if (!matches(head, expected, immutable)) fail("WORKFLOW_OUTPUT_CORRUPT");
   const object = await bucket.get(expected.object_ref, { onlyIf: { etagMatches: head.etag } })
-    .catch(() => fail("WORKFLOW_OUTPUT_UNAVAILABLE"));
-  if (object === null) fail("WORKFLOW_OUTPUT_UNAVAILABLE");
+    .catch((cause: unknown) => readUnavailable(expected, "GET", cause));
+  if (object === null) readUnavailable(expected, "GET");
   if (!("body" in object) || !matches(object, expected, immutable)) fail("WORKFLOW_OUTPUT_CORRUPT");
   let bytes: Uint8Array;
   try {
@@ -40,7 +53,7 @@ export async function readWorkflowObject(bucket: R2Bucket, expected: WorkflowObj
       }
     }
     if (error instanceof WorkflowCheckpointError) throw error;
-    fail("WORKFLOW_OUTPUT_UNAVAILABLE");
+    readUnavailable(expected, "BODY", error);
   }
   if (bytes.byteLength !== expected.byte_length) fail("WORKFLOW_OUTPUT_CORRUPT");
   if (await digest(bytes) !== expected.sha256) fail("WORKFLOW_OUTPUT_CORRUPT");

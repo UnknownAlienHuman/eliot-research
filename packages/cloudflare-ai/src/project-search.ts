@@ -362,9 +362,12 @@ export async function searchProject(
   if (allowedRevisions?.size === 0) return { chunks: [] };
   const raw = await input.namespace.get(PROJECT_SEARCH_INSTANCES[input.lane]).search({
     messages: [{ role: "user", content: input.query }],
-    // Baseline scoped retrieval must not inherit a global rewrite/rerank opt-in.
-    // QueryPlanner owns visible decomposition and any qualified reranking (§6.8–6.9).
-    ai_search_options: { query_rewrite: { enabled: false }, reranking: { enabled: false }, retrieval: { filters: {
+    // Use native prose relevance ordering without its implicit 0.4 rerank floor:
+    // low-scored multilingual hits must retain the existing zero retrieval floor.
+    // Literal lookup stays unrewritten and unreranked. D1 remains the authority.
+    ai_search_options: { query_rewrite: { enabled: false },
+      reranking: input.lane === "prose" ? { enabled: true, match_threshold: 0 } : { enabled: false },
+      retrieval: { filters: {
       folder: { $gte: folder, $lt: folderEnd },
       // Native text filters index the first 64 UTF-8 bytes. IDs are ASCII; D1 checks full identities below.
       ...(allowedRevisions === undefined ? {} : {

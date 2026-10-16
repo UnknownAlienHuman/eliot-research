@@ -11,6 +11,8 @@ import { protectedQueryKey, runProtectedRead } from '../query/client';
 import { ReportPanel } from './ReportPanel';
 import { ProjectOverview } from './ProjectOverview';
 import { usePaneAnnouncement } from './usePaneAnnouncement';
+import { canRequestResearchRecovery, recoverExistingResearchRun, researchRecoveryCopy, researchRecoveryFirstCause,
+  type ResearchRunRecoveryMemory } from '../query/researchRunRecovery';
 
 interface ResearchIntent {
   readonly body: string; readonly key: string; readonly question: string;
@@ -20,6 +22,7 @@ interface ResearchIntent {
   readonly launch?: ResearchRunLaunchView;
 }
 interface ResearchMemory {
+  readonly recovery?: ResearchRunRecoveryMemory;
   readonly intent?: ResearchIntent;
   readonly observedLaunch?: ResearchRunLaunchView;
   readonly artifact?: VersionedRef;
@@ -80,6 +83,7 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
   const nextQuestionDraft = heldDraft !== undefined && heldDraft.context === context && privacy.isCurrent(context)
     ? heldDraft.text : '';
   const running = useRef(false), mounted = useRef(true), controller = useRef<AbortController | undefined>(undefined);
+  const recoveryInFlight = useRef(false);
   const read = () => client.getQueryData<ResearchMemory>(memoryKey) ?? {};
   const write = (update: (old: ResearchMemory) => ResearchMemory) => {
     if (privacy.isCurrent(context)) client.setQueryData<ResearchMemory>(memoryKey, old => update(old ?? {}));
@@ -95,15 +99,17 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
       unsubscribe();
       mounted.current = false; controller.current?.abort();
       if (running.current && privacy.isCurrent(context)) client.setQueryData<ResearchMemory>(memoryKey, old =>
-        old?.intent ? { ...old, intent: { ...old.intent, phase: 'unknown' } } : old);
+        recoveryInFlight.current ? old?.recovery ? { ...old, recovery: { ...old.recovery, phase: 'unknown' } } : old
+          : old?.intent ? { ...old, intent: { ...old.intent, phase: 'unknown' } } : old);
     };
-  }, [client, context, privacy]);
-  const run = (action: (signal: AbortSignal) => Promise<void>) => {
+  }, [client, context, privacy, projectId]);
+  const run = (action: (signal: AbortSignal) => Promise<void>, recovering = false) => {
     if (running.current || !privacy.isCurrent(context)) return;
+    recoveryInFlight.current = recovering;
     running.current = true; controller.current = new AbortController(); setBusy(true);
     const signal = controller.current.signal;
     void action(signal).catch(() => {
-      write(old => old.intent ? { ...old, intent: { ...old.intent, phase: 'unknown' } } : old);
+      if (!recovering) write(old => old.intent ? { ...old, intent: { ...old.intent, phase: 'unknown' } } : old);
     }).finally(() => { running.current = false; if (mounted.current) setBusy(false); });
   };
   const admit = async (intent: ResearchIntent, signal: AbortSignal) => {
@@ -141,6 +147,34 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     });
   };
   const progress = status.isError ? undefined : status.data;
+  const recovery = saved?.recovery?.workflowInstanceId === launch?.workflow_instance_id ? saved?.recovery : undefined;
+  const recoveryText = researchRecoveryCopy[locale];
+  const displayedFailure = researchRecoveryFirstCause(recovery, progress);
+  const recoveryHeld = recovery?.phase === 'unknown' || recovery?.phase === 'recovering' || recovery?.phase === 'reading';
+  const recoveryMessage = recovery && recovery.phase !== 'observed' &&
+    (recoveryHeld || launch && canRequestResearchRecovery(status.data, launch)) ? recoveryText[recovery.phase] : '';
+  const recoverResearch = (action: 'recover' | 'readback') => {
+    const selected = launch, currentStatus = status.data;
+    if (!selected || !currentStatus || running.current || projectId === undefined || !isProjectCurrent() ||
+        !privacy.isCurrent(context) || (action === 'recover' && (status.isFetching || status.isError ||
+          !canRequestResearchRecovery(currentStatus, selected)))) return;
+    const isRecoveryCurrent = () => {
+      const current = read().intent?.launch ?? read().observedLaunch;
+      return mounted.current && privacy.isCurrent(context) && isProjectCurrent() && current !== undefined &&
+        current.workflow_instance_id === selected.workflow_instance_id &&
+        current.investigation_ref.id === selected.investigation_ref.id;
+    };
+    run(async signal => {
+      await recoverExistingResearchRun({ runs: apis.research.runs, privacy, context, launch: selected, status: currentStatus,
+        action, signal, isCurrent: isRecoveryCurrent, readMemory: () => read().recovery,
+        writeMemory: next => write(old => ({ ...old, recovery: next })),
+        onStatus: async view => {
+          await client.cancelQueries({ queryKey: options.status(selected).queryKey, exact: true });
+          if (!signal.aborted && isRecoveryCurrent()) client.setQueryData(options.status(selected).queryKey, view);
+        },
+      });
+    }, true);
+  };
   const historyRefreshes = useRef(new Set<string>());
   const terminalObservation = progress && ['complete', 'errored', 'terminated'].includes(progress.engine_status)
     ? `${progress.workflow_instance_id}:${progress.engine_status}` : undefined;
@@ -155,7 +189,7 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     ['errored', 'terminated'].includes(progress.engine_status) && !status.isFetching;
   const finishFailedRun = (retry: boolean) => {
     const original = read().intent;
-    if (!launch || !failedActiveRun || running.current || !privacy.isCurrent(context)) return;
+    if (!launch || !failedActiveRun || running.current || recoveryHeld || !privacy.isCurrent(context)) return;
     const selected = launch;
     run(async signal => {
       await runProtectedRead(privacy, context, signal, readSignal =>
@@ -195,18 +229,18 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
       const { observedLaunch: _launch, ...rest } = old; return rest;
     });
   };
-  const state = saved?.intent?.phase === 'unknown' || status.isError ? 'degraded'
+  const state = saved?.intent?.phase === 'unknown' || status.isError || recovery?.phase === 'unknown' ? 'degraded'
     : progress?.execution_state === 'CANCELLED' ? 'cancelled'
     : progress?.failure ? 'error' : progress?.execution_state === 'ENGINE_COMPLETED' ? 'useful'
     : launch || busy ? 'loading' : 'empty';
-  const announcement = usePaneAnnouncement(busy ? text.working
+  const announcement = usePaneAnnouncement(recoveryMessage || (busy ? text.working
     : inputError ? text.input
     : saved?.intent?.phase === 'unknown' ? text.unknown
     : status.isError ? text.statusUnavailable
     : progress?.failure ? text.runFailed
     : progress?.execution_state === 'CANCELLED' ? text.cancelled
     : progress?.execution_state === 'ENGINE_COMPLETED' ? text.runComplete
-    : progress ? text.runRead : history.isError ? text.unavailable : history.data ? text.historyLoaded : '');
+    : progress ? text.runRead : history.isError ? text.unavailable : history.data ? text.historyLoaded : ''));
   if (saved?.artifact) return <ReportPanel key={`${saved.artifact.id}:${saved.artifact.revision}`} locale={locale} apis={apis} privacy={privacy} context={context} artifactRef={saved.artifact}
     onOpenDraft={artifact => write(old => ({ ...old, artifact }))}
     onClose={() => { if (privacy.isCurrent(context)) { returningFromReport.current = true; write(old => { const { artifact: _artifact, ...rest } = old; return rest; }); } }} />;
@@ -221,9 +255,16 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
       <Status>{text.blocked}</Status><div className="er-live-actions"><Button variant="tonal" disabled={configuration.isFetching} onClick={() => { void configuration.refetch(); }}>{text.check}</Button><WorkspaceLink className="er-shell-link" to="/connections">{text.connections}</WorkspaceLink></div>
     </div> : null}
     {inputError && <Status tone="error">{text.input}</Status>}
+    {launch && (recoveryHeld || canRequestResearchRecovery(progress, launch)) && <div className="er-live-actions">
+      {recovery?.phase === 'unknown'
+        ? <Button variant="tonal" disabled={busy} onClick={() => recoverResearch('readback')}>{recoveryText.check}</Button>
+        : <Button variant="tonal" disabled={busy || status.isFetching || recovery?.phase === 'blocked'}
+          onClick={() => recoverResearch('recover')}>{recoveryText.recover}</Button>}
+      {recoveryMessage && <p>{recoveryMessage}</p>}
+    </div>}
     {failedActiveRun && <div className="er-live-actions">
-      {saved?.intent && <Button variant="tonal" disabled={busy} onClick={() => finishFailedRun(true)}>{locale === 'ru' ? 'Повторить вопрос' : 'Retry question'}</Button>}
-      <Button variant="text" disabled={busy} onClick={() => finishFailedRun(false)}>{text.next}</Button>
+      {saved?.intent && <Button variant="tonal" disabled={busy || recoveryHeld} onClick={() => finishFailedRun(true)}>{locale === 'ru' ? 'Повторить вопрос' : 'Retry question'}</Button>}
+      <Button variant="text" disabled={busy || recoveryHeld} onClick={() => finishFailedRun(false)}>{text.next}</Button>
     </div>}
     <div ref={composer} className="er-live-research"><ResearchRunFeature key={saved?.intent?.key ?? 'next-question'} locale={locale} state={state}
       {...(cover ? { cover } : {})}
@@ -235,8 +276,8 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
       {...(projectId !== undefined && displayedWholeScope !== undefined ? { wholeScope: displayedWholeScope } : {})}
       canSubmit={!saved?.intent && !saved?.observedLaunch && projectId !== undefined && (scope.length === 0 || scopeCurrent) && !configuration.isError && !configuration.isFetching && configuration.data !== undefined && configuration.data.run_readiness !== 'blocked'}
       {...(saved?.intent ? { question: saved.intent.question } : {})}
-      {...(progress ? { progress, ...(progress.failure ? { firstCause: progress.failure } : {}) } : {})}
-      onAsk={ask} {...(launch ? { onReadStatus: () => { void status.refetch(); } } : {})}
+      {...(progress ? { progress, ...(displayedFailure ? { firstCause: displayedFailure } : {}) } : {})}
+      onAsk={ask} {...(launch ? { onReadStatus: () => { if (recoveryHeld) recoverResearch('readback'); else void status.refetch(); } } : {})}
       {...(saved?.intent?.phase === 'unknown' ? { onRecover: reconcile } : {})}
       answerActions={(terminal || historyTerminal || progress?.answer.availability === 'draft') ? <div className="er-live-actions">
         {progress?.answer.availability === 'draft' && <><Button variant="primary" onClick={() => { if (privacy.isCurrent(context) && progress.answer.availability === 'draft') { const artifact = progress.answer.artifact_ref; write(old => ({ ...old, artifact })); } }}>{text.report}</Button></>}
@@ -262,7 +303,8 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
             <time dateTime={entry.created_at}>{displayTime(entry.created_at)}</time>
             {entry.query !== undefined && <p className="er-live-history-question">{entry.query}</p>}
             <span className="er-live-history-state" data-status={entry.status.engine_status}>{researchEngineLabel(locale, entry.status.engine_status)}</span>
-            <Button variant="text" disabled={saved?.intent !== undefined} onClick={() => {
+            <Button variant="text" disabled={saved?.intent !== undefined || busy} onClick={() => {
+              if (running.current || !privacy.isCurrent(context) || !isProjectCurrent()) return;
               const observed = entry.status; write(old => ({ ...old, observedLaunch: { workflow_instance_id: observed.workflow_instance_id, investigation_ref: observed.investigation_ref, deployment_generation: observed.deployment_generation } }));
             }}>{text.openRun}</Button>
             {entry.status.answer.availability === 'draft' && <Button variant="tonal" onClick={() => {
