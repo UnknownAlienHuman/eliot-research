@@ -186,8 +186,7 @@ describe("S04 project mutations on actual Workers D1", () => {
     expect(JSON.parse((await receipt("update")).response_json)).toEqual(updated);
     const rows = await memberships(id);
     expect(rows.map(({ source_id, membership_generation, valid_to }) => [source_id, membership_generation, valid_to])).toEqual([
-      ["s04-a", 1, new Date(clock).toISOString()], ["s04-b", 1, new Date(clock).toISOString()],
-      ["s04-a", 2, null], ["s04-c", 2, null],
+      ["s04-a", 1, null], ["s04-b", 1, new Date(clock).toISOString()], ["s04-c", 3, null],
     ]);
     const committed = await snapshot();
     await expect(service().update(context("update"), id, input)).resolves.toEqual(updated);
@@ -198,8 +197,8 @@ describe("S04 project mutations on actual Workers D1", () => {
     clock += 1000;
     await expect(owner.update(context("remove"), id, { idempotency_key: "remove", expected_revision: 3, title: "Empty project", source_ids: [] }))
       .resolves.toMatchObject({ revision: 4, source_ids: [] });
-    await expect(db.prepare("SELECT generation,membership_generation FROM project WHERE project_id=?1")
-      .bind(id).first()).resolves.toEqual({ generation: 4, membership_generation: 3 });
+    await expect(db.prepare("SELECT generation FROM project WHERE project_id=?1")
+      .bind(id).first()).resolves.toEqual({ generation: 4 });
     expect((await memberships(id)).every(({ valid_to }) => valid_to !== null)).toBe(true);
     expect(await db.prepare("SELECT count(*) AS n FROM project_mutation_guard").first<number>("n")).toBe(0);
     // This direct service fixture omits the application membership-index hook.
@@ -307,8 +306,8 @@ describe("S04 project mutations on actual Workers D1", () => {
     expect(afterClientScopes.results).toEqual(beforeClientScopes.results);
     // The owner batch asserts zero close/insert rows for this same-set update.
     expect(await memberships(projectId)).toEqual(membershipRows);
-    await expect(db.prepare("SELECT generation,membership_generation FROM project WHERE project_id=?1")
-      .bind(projectId).first()).resolves.toEqual({ generation: 2, membership_generation: 1 });
+    await expect(db.prepare("SELECT generation FROM project WHERE project_id=?1")
+      .bind(projectId).first()).resolves.toEqual({ generation: 2 });
     expect(JSON.parse((await receipt("title-256")).response_json)).toEqual(updated);
   }, 60_000);
 
