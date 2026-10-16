@@ -25,6 +25,13 @@ export async function readProviderConfigRestEnvelope(
   response: Response,
   effect: ProviderConfigRestEffect,
 ): Promise<ProviderConfigRestEnvelope> {
+  if (response.status >= 300 && response.status < 400) {
+    providerConfigRestFailure(
+      "PROVIDER_CONFIG_HTTP_FAILED",
+      "Cloudflare provider-config redirects are not permitted",
+      { effect, http_status: response.status },
+    );
+  }
   const raw = await readJson(response, effect);
   const envelope = exactObject(raw, effect);
   if (typeof envelope.success !== "boolean") {

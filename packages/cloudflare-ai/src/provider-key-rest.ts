@@ -367,7 +367,7 @@ async function requestEnvelope(
     if (signal.aborted) requestFailure(phase);
     const pending = dependencies.fetch.fetch(url, {
       method,
-      redirect: "error",
+      redirect: "manual",
       signal,
       headers: {
         Accept: "application/json",

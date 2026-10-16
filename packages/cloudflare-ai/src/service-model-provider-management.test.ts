@@ -53,6 +53,9 @@ describe("Cloudflare service-model provider management", () => {
       fetch: {
         async fetch(url, init) {
           requests.push({ url, init });
+          if (init.redirect === "error") {
+            throw new TypeError("Invalid redirect value, must be follow or manual");
+          }
           const response = queue.shift();
           if (response === undefined) throw new Error("fixture response queue exhausted");
           return response;
@@ -79,9 +82,67 @@ describe("Cloudflare service-model provider management", () => {
       alias,
     });
     expect(requests.map(({ init }) => init.method)).toEqual(["GET", "POST", "GET"]);
+    expect(requests.every(({ init }) => init.redirect === "manual")).toBe(true);
     expect(requests.filter(({ init }) => init.method === "POST")).toHaveLength(1);
     expect(postBody).toMatchObject({ provider_slug: "openrouter", default_config: false, secret: API_KEY });
     expect(JSON.stringify(receipt)).not.toContain(API_KEY);
+  });
+
+  it.each(["PREFLIGHT", "CREATE"] as const)("rejects a native %s redirect without following its Location or adopting a receipt", async (phase) => {
+    const requests: Array<{ readonly url: string; readonly init: RequestInit }> = [];
+    const alias = "eliotr-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const redirect = Response.redirect(`https://redirect.invalid/${API_KEY}`, 302);
+    const queue = phase === "PREFLIGHT" ? [redirect] : [page([]), redirect, page([config(alias)])];
+    const port = createCloudflareServiceModelProviderManagementPort({
+      account_id: ACCOUNT_ID,
+      gateway_id: GATEWAY_ID,
+      available: true,
+      credentials: { async readApiToken() { return TOKEN; } },
+      fetch: {
+        async fetch(url, init) {
+          requests.push({ url, init });
+          if (init.redirect === "error") {
+            throw new TypeError("Invalid redirect value, must be follow or manual");
+          }
+          const response = queue.shift();
+          if (response === undefined) throw new Error("unexpected redirect follow-up");
+          return response;
+        },
+      },
+    });
+
+    const error = await port.create({
+      protocol: "eliotr.service-model-provider-create.v1",
+      operation_id: "c0a8012e-0f58-4e7b-8dd2-c8bfdf8b5ad4",
+      provider_id: "openrouter",
+      display_name: "OpenRouter",
+      base_url: null,
+      model_ids: ["model:free"],
+      alias,
+      api_key: API_KEY,
+    }).then(() => null, (cause: unknown) => cause);
+
+    const redirectFailure = {
+      code: "PROVIDER_CONFIG_HTTP_FAILED",
+      effect: phase === "PREFLIGHT" ? "NONE" : "CREATE",
+      http_status: 302,
+      retryable: false,
+    };
+    if (phase === "PREFLIGHT") {
+      expect(error).toMatchObject(redirectFailure);
+      expect((error as Error).cause).toBeUndefined();
+    } else {
+      expect(error).toMatchObject({
+        code: "PROVIDER_CONFIG_CREATE_UNCERTAIN",
+        effect: "CREATE",
+        cause: redirectFailure,
+      });
+    }
+    expect((error as Error).message).not.toContain(API_KEY);
+    expect(requests).toHaveLength(phase === "PREFLIGHT" ? 1 : 3);
+    expect(requests.filter(({ init }) => init.method === "POST")).toHaveLength(phase === "PREFLIGHT" ? 0 : 1);
+    expect(requests.every(({ init }) => init.redirect === "manual")).toBe(true);
+    expect(requests.every(({ url }) => new URL(url).hostname === "api.cloudflare.com")).toBe(true);
   });
 
   it("returns the actual custom slug and rejects an overlong custom slug before any CF effect", async () => {

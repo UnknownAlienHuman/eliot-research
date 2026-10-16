@@ -233,7 +233,7 @@ async function requestEnvelope(
     if (signal.aborted) throw new Error("operation aborted");
     response = await waitForSignal(dependencies.fetch.fetch(url, {
       method,
-      redirect: "error",
+      redirect: "manual",
       signal,
       headers: {
         Accept: "application/json",
