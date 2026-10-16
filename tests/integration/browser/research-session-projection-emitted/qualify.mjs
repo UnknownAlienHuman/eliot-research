@@ -113,7 +113,7 @@ function collectIdentity(token) {
   const [encodedHeader, encodedPayload] = token.split(".");
   const header = JSON.parse(Buffer.from(encodedHeader, "base64url").toString("utf8"));
   const payload = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8"));
-  assert.equal(payload.iss, "https://owner-e2e.cloudflareaccess.com");
+  assert.equal(payload.iss, "https://owner-e2e-example.cloudflareaccess.com");
   assert.deepEqual(payload.aud, ["owner-e2e-audience"]);
   assert.equal(payload.type, "app");
   assert.equal(typeof payload.sub, "string");

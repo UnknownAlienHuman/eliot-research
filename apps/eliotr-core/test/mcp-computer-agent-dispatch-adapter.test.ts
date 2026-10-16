@@ -39,7 +39,7 @@ function serviceContext(): AuthenticatedRequestContext {
       principal_ref: principal,
       credential_generation: credentialGeneration,
       authentication_method: "service_token",
-      issuer: "https://adapter-test.cloudflareaccess.com",
+      issuer: "https://adapter-test-example.cloudflareaccess.com",
       expires_at: expiresAt,
     },
   };
@@ -83,7 +83,7 @@ describe("Core MCP computer-agent dispatch adapter", () => {
           connection_revision: 1,
           client_grant_id: GRANT_ID,
           client_grant_revision: 1,
-          actor: { issuer: "https://adapter-test.cloudflareaccess.com",
+          actor: { issuer: "https://adapter-test-example.cloudflareaccess.com",
             authentication_method: "service_token", subject: "codex-adapter-test.access" },
           credential_generation: "codex-adapter-credential-7",
           accepted_at: "2026-10-15T00:00:00.000Z",

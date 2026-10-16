@@ -483,7 +483,7 @@ describe("owner OpenRouter model-key check and use", () => {
     expect(capturedRun.project_owner_ref).toBe(owner);
     expect(capturedRun.model_selections).toHaveLength(2);
 
-    const serviceIssuer = "https://team.cloudflareaccess.com";
+    const serviceIssuer = "https://team-example.cloudflareaccess.com";
     const servicePrincipal = `native-config-reader-${crypto.randomUUID()}.access`;
     const serviceCredential = `credential-${crypto.randomUUID()}`;
     const grantId = `native-config-grant-${crypto.randomUUID()}`;

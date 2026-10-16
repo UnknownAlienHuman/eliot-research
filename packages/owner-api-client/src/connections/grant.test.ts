@@ -167,7 +167,7 @@ describe("createClientGrantApi", () => {
     });
     it("rejects a receipt that changes the grantee", async () => {
         const { api } = makeApi(envelope(receiptGrant({
-            grantee: { issuer: "https://other.cloudflareaccess.com", authentication_method: "service_token", subject: "other.access" },
+            grantee: { issuer: "https://other-example.cloudflareaccess.com", authentication_method: "service_token", subject: "other.access" },
         })));
         const attempt = api.prepareClientGrantMutation("proj-1", "deploy-1", putInput);
         await expect(api.sendClientGrantMutation(attempt)).rejects.toThrow(/receipt rights do not match/);

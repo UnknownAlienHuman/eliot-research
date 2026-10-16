@@ -7,7 +7,7 @@ import { authorizeProjectClientGrant, createD1ScopeService, createOwnerScopeAuth
   createProjectClientGrantService, createProjectClientScopeAuthority, createProjectOwnerService } from "@eliotr/cloudflare-navigation";
 import { db, insert, observeDatabase, principal, runtime, seedSource, setupOrientationDatabase } from "./orientation-fixture.js";
 
-const issuer = "https://team.cloudflareaccess.com";
+const issuer = "https://team-example.cloudflareaccess.com";
 const credential = "credential-v1";
 let clock: number;
 beforeEach(async () => { await reset(); await setupOrientationDatabase(); clock = Date.now(); });
@@ -145,7 +145,7 @@ describe("S91.1 project-client grants on actual Workers D1", () => {
       { key: "unknown", actor: context("unknown"), value: { ...input(1), forged_authority: true }, code: "CLIENT_GRANT_INPUT_INVALID", status: 400 },
       { key: "duplicate", actor: context("duplicate"), value: { ...input(1), allowed_operations: ["catalog", "catalog"] }, code: "CLIENT_GRANT_INPUT_INVALID", status: 400 },
       { key: "grant-create", actor: context("grant-create"), value: { ...initialInput, allowed_operations: ["query"] }, code: "CLIENT_GRANT_IDEMPOTENCY_CONFLICT", status: 409 },
-      { key: "issuer", actor: context("issuer"), value: { ...input(1), grantee: { ...input(1).grantee, issuer: "https://foreign.cloudflareaccess.com" } }, code: "CLIENT_GRANT_ISSUER_DENIED", status: 403 },
+      { key: "issuer", actor: context("issuer"), value: { ...input(1), grantee: { ...input(1).grantee, issuer: "https://foreign-example.cloudflareaccess.com" } }, code: "CLIENT_GRANT_ISSUER_DENIED", status: 403 },
       { key: "expired", actor: context("expired"), value: { ...input(1), expires_at: new Date(clock - 1).toISOString() }, code: "CLIENT_GRANT_INPUT_INVALID", status: 400 },
     ];
     for (const denied of refused) {

@@ -4,7 +4,7 @@ import { ROUTES } from "@eliotr/interfaces";
 import { isAgentTaskHttpOperation } from "@eliotr/cloudflare-http-protocol/agent-task-inbox-input.js";
 import { authorize } from "../src/http-request-auth.js";
 
-const issuer = "https://agent-task-fixture.cloudflareaccess.com";
+const issuer = "https://agent-task-fixture-example.cloudflareaccess.com";
 const audience = "agent-task-fixture";
 const principal = "agent-task-fixture.access";
 const routes = ROUTES.filter(route => isAgentTaskHttpOperation(route.operation));

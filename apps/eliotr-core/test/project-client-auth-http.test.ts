@@ -7,7 +7,7 @@ import { handleHttp } from "../src/http.js";
 import { db, runtime, setupOrientationDatabase } from "./orientation-fixture.js";
 
 const origin = "https://research.example";
-const issuer = "https://grant-http-test.cloudflareaccess.com";
+const issuer = "https://grant-http-test-example.cloudflareaccess.com";
 const audience = "project-client-grant-http-test";
 const owner = "grant-http-owner";
 const client = "grant-http-client.access";
@@ -171,7 +171,7 @@ describe("S91.1 signed project-client HTTP authorization on actual Workers D1", 
     const parts = token.split(".");
     parts[2] = `${parts[2]?.startsWith("A") ? "B" : "A"}${parts[2]?.slice(1)}`;
     for (const invalid of ["forged.token.signature", parts.join("."), await signed({ aud: ["foreign"] }),
-      await signed({ iss: "https://foreign-test.cloudflareaccess.com" }), await signed({ iat: now - 120, exp: now - 60 })]) {
+      await signed({ iss: "https://foreign-test-example.cloudflareaccess.com" }), await signed({ iat: now - 120, exp: now - 60 })]) {
       await denied(await put(id, grantInput(), "invalid-token", invalid), 401);
       expect(await state()).toEqual(baseline);
     }
@@ -208,7 +208,7 @@ describe("S91.1 signed project-client HTTP authorization on actual Workers D1", 
     const id = await project(), baseline = await state();
     const invalid: Array<{ input: unknown; status: number }> = [
       { input: { ...grantInput(), allowed_operations: ["unknown"] }, status: 400 },
-      { input: { ...grantInput(), grantee: { ...grantInput().grantee, issuer: "https://foreign-test.cloudflareaccess.com" } }, status: 403 },
+      { input: { ...grantInput(), grantee: { ...grantInput().grantee, issuer: "https://foreign-test-example.cloudflareaccess.com" } }, status: 403 },
       { input: { ...grantInput(), allowed_operations: ["ingest.bundle"], ingest_namespace_ids: ["foreign-namespace"] }, status: 403 },
       { input: { ...grantInput(), allowed_operations: ["run"], spend_policy_ref: "uninstalled-spend" }, status: 403 },
       { input: { ...grantInput(), expected_revision: 1 }, status: 409 },

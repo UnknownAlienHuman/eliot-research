@@ -11,7 +11,7 @@ const json = (data: unknown) => new Response(JSON.stringify({ data, trace_id: "t
 const connection = {
   protocol: "eliotr.computer-agent-connection.v1", connection_id: "agent-a", revision: 1,
   owner_principal_ref: "owner-1", state: "ENABLED", display_name: "Research agent", contour: "OTHER",
-  actor: { issuer: "https://owner.cloudflareaccess.com", authentication_method: "service_token", subject: "agent.access" },
+  actor: { issuer: "https://owner-example.cloudflareaccess.com", authentication_method: "service_token", subject: "agent.access" },
   transport_capabilities: ["MCP_WRITE"], computer_capabilities: [], task_kinds: ["RESEARCH_BRANCH_ANALYSIS"],
   created_at: stamp, updated_at: stamp,
 };

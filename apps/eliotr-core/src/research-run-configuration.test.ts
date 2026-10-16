@@ -495,7 +495,7 @@ describe("research run configuration binding", () => {
       grantor_principal_ref: grantor,
       revision: 4,
       state: "ACTIVE",
-      grantee: { issuer: "https://test.cloudflareaccess.com", authentication_method: "service_token",
+      grantee: { issuer: "https://test-example.cloudflareaccess.com", authentication_method: "service_token",
         subject: "service-config-1.access" },
       allowed_operations: ["run"],
       ingest_namespace_ids: [],

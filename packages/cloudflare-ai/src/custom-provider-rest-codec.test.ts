@@ -7,7 +7,7 @@ import {
   decodeCustomProviderListPage,
 } from "./custom-provider-rest-codec.js";
 
-const ACCOUNT_ID = "bc10e9f02aa57f4adc5a7a48ad1bacff";
+const ACCOUNT_ID = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
 function provider(overrides: Readonly<Record<string, unknown>> = {}) {
   return {

@@ -58,7 +58,7 @@ function actor(overrides: Partial<PrimaryWriterBootstrapAdmissionActor> = {}): P
       principal_ref: "owner-subject-17",
       credential_generation: "cf-access-jwt:kid-test:1798761600",
       expires_at: EXPIRY,
-      issuer: "https://research.cloudflareaccess.com",
+      issuer: "https://research-example.cloudflareaccess.com",
       authentication_method: "cloudflare_access" as const,
     },
   };
@@ -87,7 +87,7 @@ describe("primary writer bootstrap admission", () => {
         principal_ref: "owner-subject-17",
         client_class: "owner_pwa",
         credential_generation: "cf-access-jwt:kid-test:1798761600",
-        issuer: "https://research.cloudflareaccess.com",
+        issuer: "https://research-example.cloudflareaccess.com",
         authentication_method: "cloudflare_access",
         access_expires_at: EXPIRY,
         deployment_generation: "git-bootstrap-test",
@@ -113,13 +113,13 @@ describe("primary writer bootstrap admission", () => {
 
       const refreshed = actor({ credential_generation: "cf-access-jwt:new-kid:1798761700", access: {
         principal_ref: "owner-subject-17", credential_generation: "cf-access-jwt:new-kid:1798761700",
-        expires_at: "2099-01-01T00:05:00.000Z", issuer: "https://research.cloudflareaccess.com", authentication_method: "cloudflare_access",
+        expires_at: "2099-01-01T00:05:00.000Z", issuer: "https://research-example.cloudflareaccess.com", authentication_method: "cloudflare_access",
       } });
       await expect(issuePrimaryWriterBootstrapAdmission({ ...input, actor: refreshed }))
         .rejects.toMatchObject({ code: "BACKUP_INTENT_CONFLICT" });
       const expiredActor = actor({ credential_generation: "cf-access-jwt:expired:1704067200", access: {
         principal_ref: "owner-subject-17", credential_generation: "cf-access-jwt:expired:1704067200",
-        expires_at: "2000-01-01T00:00:00.000Z", issuer: "https://research.cloudflareaccess.com", authentication_method: "cloudflare_access",
+        expires_at: "2000-01-01T00:00:00.000Z", issuer: "https://research-example.cloudflareaccess.com", authentication_method: "cloudflare_access",
       } });
       await expect(issuePrimaryWriterBootstrapAdmission({ ...input, actor: expiredActor, deployment_generation: "git-expired-test" }))
         .rejects.toMatchObject({ code: "BACKUP_INPUT_INVALID" });
@@ -137,7 +137,7 @@ describe("primary writer bootstrap admission", () => {
     await expect(issuePrimaryWriterBootstrapAdmission(issueInput(noAccess, {
       actor: actor({ access: {
         principal_ref: "different-subject", credential_generation: "cf-access-jwt:kid-test:1798761600",
-        expires_at: EXPIRY, issuer: "https://research.cloudflareaccess.com", authentication_method: "cloudflare_access",
+        expires_at: EXPIRY, issuer: "https://research-example.cloudflareaccess.com", authentication_method: "cloudflare_access",
       } }),
     }))).rejects.toMatchObject({ code: "BACKUP_INPUT_INVALID" });
   });

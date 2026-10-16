@@ -60,7 +60,7 @@ async function sponsoredFixture(version: "v1" | "v2") {
   const grant: ProjectClientGrant = {
     protocol: "eliotr.project-client-grant.v1", grant_id: "spend-grant", revision: 2, project_id: "spend-project",
     grantor_principal_ref: owner, state: "ACTIVE",
-    grantee: { issuer: "https://team.cloudflareaccess.com", authentication_method: "service_token", subject: service },
+    grantee: { issuer: "https://team-example.cloudflareaccess.com", authentication_method: "service_token", subject: service },
     allowed_operations: ["run", "recover", "evidence"], ingest_namespace_ids: [], spend_policy_ref: template.policy_ref,
     expires_at: expires, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
   };

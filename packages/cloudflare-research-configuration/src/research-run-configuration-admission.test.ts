@@ -80,7 +80,7 @@ function grantAuthority(project_id: string, requireGrantCurrent: () => Promise<v
     grantor_principal_ref: "owner-grantor-v3-1",
     revision: 2,
     state: "ACTIVE",
-    grantee: { issuer: "https://test.cloudflareaccess.com", authentication_method: "service_token",
+    grantee: { issuer: "https://test-example.cloudflareaccess.com", authentication_method: "service_token",
       subject: "service-admission-v3-1.access" },
     allowed_operations: ["run"],
     ingest_namespace_ids: [],

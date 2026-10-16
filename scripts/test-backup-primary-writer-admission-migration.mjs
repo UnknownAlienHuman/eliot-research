@@ -34,7 +34,7 @@ function admission(ref, options = {}) {
     principal_ref: options.principal_ref ?? "owner-subject",
     client_class: "owner_pwa",
     credential_generation: options.credential_generation ?? "cf-access-jwt:kid:1798761600",
-    issuer: "https://research.cloudflareaccess.com",
+    issuer: "https://research-example.cloudflareaccess.com",
     authentication_method: "cloudflare_access",
     access_expires_at: options.access_expires_at ?? "2099-01-01T00:00:00.000Z",
     deployment_generation: options.deployment_generation ?? "git-bootstrap-test",

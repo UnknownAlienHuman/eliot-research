@@ -10,7 +10,7 @@ const runtime = env as unknown as Env & {
 };
 const ORIGIN = "https://research.example";
 const PATH = "/api/v1/system/backup-primary/bootstrap-admissions";
-const ACCESS_ISSUER = "https://eliotr-test.cloudflareaccess.com";
+const ACCESS_ISSUER = "https://eliotr-test-example.cloudflareaccess.com";
 
 type EnvironmentOverrides = Omit<Partial<Env>, "BACKUP_PARTS_BUCKET" | "VERSION_METADATA"> & {
   readonly BACKUP_PARTS_BUCKET?: Env["BACKUP_PARTS_BUCKET"] | undefined;

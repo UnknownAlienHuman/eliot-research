@@ -16,7 +16,7 @@ import { readDeploymentMigrationEntries } from "./lib/deployment-migrations.mjs"
 import { WRANGLER } from "./lib/local-launch.mjs";
 import { parseDeploymentJsonc } from "./lib/deployment-jsonc.mjs";
 
-const ACCOUNT_ID = "0123456789abcdef0123456789abcdef";
+const ACCOUNT_ID = "cccccccccccccccccccccccccccccccc";
 const CORE_ASSETS = parseDeploymentJsonc(await readFile(new URL("../apps/eliotr-core/wrangler.jsonc", import.meta.url), "utf8"),
   "canonical Worker configuration").assets;
 const CORE_ID = "11111111-1111-4111-8111-111111111111";

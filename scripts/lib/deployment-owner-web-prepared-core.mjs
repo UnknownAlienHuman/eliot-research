@@ -9,7 +9,7 @@ import {readD1Migrations} from '@cloudflare/vitest-plugin';
 
 const WORKER='apps/eliotr-web/dist/eliotr_core',CLIENT='apps/eliotr-web/dist/client';
 // Exact existing development-only Core profile; all production auth guards remain active.
-const ISSUER='https://owner-e2e.cloudflareaccess.com',AUDIENCE='owner-e2e-audience';
+const ISSUER='https://owner-e2e-example.cloudflareaccess.com',AUDIENCE='owner-e2e-audience';
 const GETS=new Set(['/api/v1/system/health','/api/v1/system/session','/api/v1/research/projects','/api/v1/system/research-configuration','/api/v1/research/runs']);
 const sha=b=>createHash('sha256').update(b).digest('hex');
 

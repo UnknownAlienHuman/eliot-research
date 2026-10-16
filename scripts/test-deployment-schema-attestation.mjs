@@ -10,7 +10,7 @@ import {
   readDeploymentApplicationSchemaCatalogue,
 } from "./lib/deployment-schema-attestation.mjs";
 
-const ACCOUNT_ID = "0123456789abcdef0123456789abcdef";
+const ACCOUNT_ID = "cccccccccccccccccccccccccccccccc";
 const CORE_ID = "11111111-1111-4111-8111-111111111111";
 const SEARCH_ID = "22222222-2222-4222-8222-222222222222";
 const TOKEN = "test-token-not-used-remotely";

@@ -41,7 +41,7 @@ describe("projectWorkspaceMcpEnvironment", () => {
       GOOGLE_EXTERNAL_TRANSPORT: "disabled" as const,
       MCP_HOSTNAME: "mcp.example",
       MCP_ACCESS_AUTH_PROFILE: "managed-oauth" as const,
-      MCP_ACCESS_TEAM_DOMAIN: "https://team.cloudflareaccess.com",
+      MCP_ACCESS_TEAM_DOMAIN: "https://team-example.cloudflareaccess.com",
       MCP_ACCESS_AUDIENCE: undefined,
       MCP_ACCESS_SERVICE_TOKEN_CLIENT_ID: undefined,
       MCP_ACCESS_SERVICE_TOKEN_CLIENT_IDS: ["client-a"],

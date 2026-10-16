@@ -33,7 +33,7 @@ try {
     migrations: [{ binding: "CORE_DB", count: 1, files: ["0001.sql"] }, { binding: "SEARCH_DB", count: 1, files: ["0001.sql"] }],
     auth: { missing: 401, invalid_signature: 401, jwks_requests: 1 }, run_and_draft_tables_empty: true,
     local_overlay: { ENVIRONMENT: "development", DEPLOYMENT_GENERATION: "local-prepared-startup-" + randomUUID(),
-      ACCESS_TEAM_DOMAIN: "https://owner-e2e.cloudflareaccess.com", ACCESS_AUDIENCE: "owner-e2e-audience",
+      ACCESS_TEAM_DOMAIN: "https://owner-e2e-example.cloudflareaccess.com", ACCESS_AUDIENCE: "owner-e2e-audience",
       ACCESS_SERVICE_PRINCIPALS: "", ACCESS_TEST_JWKS_URL: "http://127.0.0.1:1234/cdn-cgi/access/certs",
       AI_GATEWAY_REASONING_URL: "https://provider-disabled.invalid/reasoning", AI_GATEWAY_RETRIEVAL_URL: "https://provider-disabled.invalid/retrieval" },
     provider_execution: "NOT_RUN", remote_mutations: 0 };

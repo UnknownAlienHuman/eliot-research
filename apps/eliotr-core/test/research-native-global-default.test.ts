@@ -24,7 +24,7 @@ const db = bindings.CORE_DB;
 const owner = "native-global-owner";
 const deployment = "native-global-deployment";
 const model = "@cf/zai-org/glm-5.3-flash";
-const issuer = "https://team.cloudflareaccess.com";
+const issuer = "https://team-example.cloudflareaccess.com";
 const gateway = vi.fn(() => { throw new Error("A configuration read must not invoke a model"); });
 let globalEnv: Env;
 let legacyEnv: Env;

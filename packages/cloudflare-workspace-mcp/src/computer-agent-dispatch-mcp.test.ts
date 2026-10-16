@@ -44,7 +44,7 @@ function context(profile: "service-token" | "managed-oauth"): McpToolCallContext
       principal_ref: actorRef,
       credential_generation: `${profile}-credential-7`,
       authentication_method: authenticationMethod,
-      issuer: "https://mcp-test.cloudflareaccess.com",
+      issuer: "https://mcp-test-example.cloudflareaccess.com",
       expires_at: expiresAt,
     },
   };

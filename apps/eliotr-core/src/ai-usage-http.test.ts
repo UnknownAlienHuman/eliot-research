@@ -4,7 +4,7 @@ import { createAiUsageObservation } from "./ai-usage-http.js";
 describe("createAiUsageObservation", () => {
   it("returns unavailable when analytics token is not configured", async () => {
     const observation = await createAiUsageObservation({
-      gatewayUrl: "https://gateway.ai.cloudflare.com/v1/bc10e9f02aa57f4adc5a7a48ad1bacff/eliotr-reasoning",
+      gatewayUrl: "https://gateway.ai.cloudflare.com/v1/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/eliotr-reasoning",
       analyticsToken: undefined,
     });
 
@@ -44,7 +44,7 @@ describe("createAiUsageObservation", () => {
       const body = JSON.parse(init?.body as string);
       expect(body.query).toContain("Time!");
       expect(body.query).not.toContain("DateTime!");
-      expect(body.variables.account).toBe("bc10e9f02aa57f4adc5a7a48ad1bacff");
+      expect(body.variables.account).toBe("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb");
       return new Response(
         JSON.stringify({
           data: {
@@ -62,7 +62,7 @@ describe("createAiUsageObservation", () => {
     };
     try {
       const observation = await createAiUsageObservation({
-        gatewayUrl: "https://gateway.ai.cloudflare.com/v1/bc10e9f02aa57f4adc5a7a48ad1bacff/eliotr-reasoning",
+        gatewayUrl: "https://gateway.ai.cloudflare.com/v1/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/eliotr-reasoning",
         analyticsToken: "test-token",
       });
       expect(observation.status).toBe("available");
@@ -87,7 +87,7 @@ describe("createAiUsageObservation", () => {
     };
     try {
       const observation = await createAiUsageObservation({
-        gatewayUrl: "https://gateway.ai.cloudflare.com/v1/bc10e9f02aa57f4adc5a7a48ad1bacff/eliotr-reasoning",
+        gatewayUrl: "https://gateway.ai.cloudflare.com/v1/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/eliotr-reasoning",
         analyticsToken: "bad-token",
       });
       expect(observation.status).toBe("unavailable");
@@ -106,7 +106,7 @@ describe("createAiUsageObservation", () => {
     };
     try {
       const observation = await createAiUsageObservation({
-        gatewayUrl: "https://gateway.ai.cloudflare.com/v1/bc10e9f02aa57f4adc5a7a48ad1bacff/eliotr-reasoning",
+        gatewayUrl: "https://gateway.ai.cloudflare.com/v1/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/eliotr-reasoning",
         analyticsToken: "bad-token",
       });
       expect(observation.status).toBe("unavailable");
@@ -134,7 +134,7 @@ describe("createAiUsageObservation", () => {
     };
     try {
       const observation = await createAiUsageObservation({
-        gatewayUrl: "https://gateway.ai.cloudflare.com/v1/bc10e9f02aa57f4adc5a7a48ad1bacff/eliotr-reasoning",
+        gatewayUrl: "https://gateway.ai.cloudflare.com/v1/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/eliotr-reasoning",
         analyticsToken: "test-token",
       });
       expect(observation.status).toBe("available");

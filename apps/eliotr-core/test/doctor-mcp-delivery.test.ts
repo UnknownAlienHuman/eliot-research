@@ -30,7 +30,7 @@ import type { Env } from "../src/env.js";
 import { db, principal, runtime, setupOrientationDatabase } from "./orientation-fixture.js";
 
 const CONNECTION_ID = "codex";
-const ISSUER = "https://doctor-mcp.cloudflareaccess.com";
+const ISSUER = "https://doctor-mcp-example.cloudflareaccess.com";
 const AGENT = "codex-agent.access";
 const AGENT_CREDENTIAL = "doctor-mcp-codex-credential-v1";
 const REPOSITORY = "owner/repo";
@@ -404,12 +404,12 @@ describe("doctor MCP system delivery", () => {
 
   it("keeps path- and credential-bearing incident details out of native diagnosis and rejects unsafe output", async () => {
     const sourceIncidentId = `doctor-test-${crypto.randomUUID()}`;
-    const privateDetail = "C:\\Users\\private\\credential-marker Bearer ghp_DOCTOR_TEST_SECRET";
+    const privateDetail = "C:\\Users\\private\\credential-marker Bearer ghp_DOCTOR_TEST_SECRET"; // privacy-allowlist: synthetic token fixture
     await db.prepare(
       "INSERT INTO incident(incident_id,severity,kind,state,details_ref,created_at,resolved_at) " +
       "VALUES(?1,'WARNING','operator-seed','OPEN',?2,?3,NULL)",
     ).bind(sourceIncidentId, privateDetail, new Date(nowMs).toISOString()).run();
-    const ai = fakeAI("Unsafe answer C:\\Users\\private\\secret Bearer ghp_DOCTOR_TEST_SECRET");
+    const ai = fakeAI("Unsafe answer C:\\Users\\private\\secret Bearer ghp_DOCTOR_TEST_SECRET"); // privacy-allowlist: synthetic token fixture
     const env = doctorEnv({
       AI: ai as unknown as Env["AI"],
       ELIOTR_DOCTOR_AGENT_CONNECTION_ID: undefined,

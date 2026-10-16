@@ -17,13 +17,13 @@ const stamp = "2026-10-14T12:00:00.000Z";
 const generation = "computer-agent-connections-regression";
 const connectionId = "agent.private.01";
 const privateName = "Private Research Agent";
-const privateIssuer = "https://owner.cloudflareaccess.com";
+const privateIssuer = "https://owner-example.cloudflareaccess.com";
 const privateSubject = "private-research-agent.access";
 const lateConnectionId = "agent.late.03";
 const latePrivateName = "Late Completion Replacement Agent";
 const foreignConnectionId = "agent.foreign.02";
 const foreignPrivateName = "Foreign Private Agent";
-const foreignIssuer = "https://foreign-owner.cloudflareaccess.com";
+const foreignIssuer = "https://foreign-owner-example.cloudflareaccess.com";
 const foreignSubject = "foreign-agent.access";
 const traceId = "computer-agent-connections-regression-trace";
 

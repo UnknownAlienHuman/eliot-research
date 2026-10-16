@@ -145,7 +145,7 @@ describe("ER-34 O2 offsite copy (policy + hardened crypto)", () => {
       revision: 1,
       state: "ACTIVE",
       grantee: {
-        issuer: "https://test.cloudflareaccess.com",
+        issuer: "https://test-example.cloudflareaccess.com",
         authentication_method: "service_token",
         subject: "fixture-agent.access",
       },
@@ -160,7 +160,7 @@ describe("ER-34 O2 offsite copy (policy + hardened crypto)", () => {
       grant_id,revision,project_id,grantor_principal_ref,grantee_issuer,grantee_method,grantee_subject,
       state,expires_at,idempotency_key,request_sha256,record_json,record_sha256
     ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)`)
-      .run("client-grant-1", 1, "project-1", "grantor-1", "https://test.cloudflareaccess.com", "service_token",
+      .run("client-grant-1", 1, "project-1", "grantor-1", "https://test-example.cloudflareaccess.com", "service_token",
         "fixture-agent.access", "ACTIVE", "2027-01-01T00:00:00.000Z", "idempotency-1", HEX("a"), recordJson, recordSha);
     expect(db.prepare("SELECT grant_id,grantor_principal_ref,state,event_kind FROM historical_project_client_grant").all())
       .toEqual([{ grant_id: "client-grant-1", grantor_principal_ref: "grantor-1", state: "ACTIVE", event_kind: "INSERT" }]);

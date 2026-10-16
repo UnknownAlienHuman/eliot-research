@@ -143,7 +143,7 @@ async function createFixture() {
 }
 
 function createSchemaManifestResult({ config, generatedConfigPin, migrationFiles }) {
-  const accountId = "0123456789abcdef0123456789abcdef";
+  const accountId = "cccccccccccccccccccccccccccccccc";
   const streams = [];
   const provenanceStreams = [];
   for (const database of config.d1_databases) {
