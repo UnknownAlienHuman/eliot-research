@@ -67,6 +67,9 @@ function harness(steps: readonly ResponseStep[]) {
     fetch: {
       async fetch(url, init) {
         requests.push({ url, init });
+        if (init.redirect === "error") {
+          throw new TypeError("Invalid redirect value, must be follow or manual");
+        }
         const next = queue.shift();
         if (next === undefined) throw new Error("fixture response queue exhausted");
         if (next instanceof Error) throw next;
@@ -109,6 +112,7 @@ describe("native OpenRouter provider-key config", () => {
     expect(run.requests).toHaveLength(3);
     expect(run.requests.map(({ init }) => init.method)).toEqual(["GET", "POST", "GET"]);
     expect(run.requests.every(({ url }) => url.includes("/provider_configs"))).toBe(true);
+    expect(run.requests.every(({ init }) => init.redirect === "manual")).toBe(true);
     expect(run.requests.some(({ url }) => url.includes("custom_providers"))).toBe(false);
     expect(new Set(run.requests.map(({ init }) => init.signal)).size).toBe(1);
     const postBody = JSON.parse(run.requests[1]?.init.body as string) as Record<string, unknown>;
@@ -134,6 +138,24 @@ describe("native OpenRouter provider-key config", () => {
     expect(JSON.stringify(receipt)).not.toContain(TEST_SECRET);
     expect(JSON.stringify(receipt)).not.toContain("••••");
     expect(run.remaining()).toBe(0);
+  });
+
+  it.each(["PREFLIGHT", "CREATE"] as const)("rejects a %s redirect without following or adopting it", async (phase) => {
+    const redirect = Response.redirect(`https://redirect.invalid/${TEST_SECRET}`, 302);
+    const run = harness(phase === "PREFLIGHT" ? [redirect] : [page([]), redirect]);
+
+    const error = await captureError(run.port.create(request()));
+
+    expect(error.code).toBe(phase === "PREFLIGHT"
+      ? "OPENROUTER_PROVIDER_KEY_PREFLIGHT_FAILED"
+      : "OPENROUTER_PROVIDER_KEY_CREATE_UNKNOWN");
+    expect(error.effect).toBe(phase === "PREFLIGHT" ? "NONE" : "UNKNOWN");
+    expect(error.http_status).toBe(302);
+    expect(error.cause).toBeUndefined();
+    expect(error.message).not.toContain(TEST_SECRET);
+    expect(run.requests).toHaveLength(phase === "PREFLIGHT" ? 1 : 2);
+    expect(run.requests.every(({ init }) => init.redirect === "manual")).toBe(true);
+    expect(run.requests.every(({ url }) => new URL(url).hostname === "api.cloudflare.com")).toBe(true);
   });
 
   it("rejects any pre-existing alias without adopting it or posting the key", async () => {
