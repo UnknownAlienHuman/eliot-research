@@ -14,8 +14,8 @@ function providerConfig(overrides: Readonly<Record<string, unknown>> = {}) {
     modified_at: NATIVE_MODIFIED_AT,
     provider_slug: "openrouter",
     secret_id: "secret-id-fixture",
-    rate_limit: 0,
-    rate_limit_period: 0,
+    rate_limit: null,
+    rate_limit_period: 60,
     ...overrides,
   };
 }
@@ -49,16 +49,41 @@ describe("provider-key REST response codec", () => {
       modified_at: NATIVE_MODIFIED_AT,
       provider_slug: "openrouter",
       secret_id: "secret-id-fixture",
+      rate_limit: null,
+      rate_limit_period: null,
     });
   });
 
-  it("rejects absent or unknown pagination metadata, including a full page without metadata", () => {
-    for (const [metadata, pageCount] of [
-      [undefined, 2],
-      [null, 2],
-      [undefined, 100],
-      [{ count: 2, page: 1, per_page: 50, total_count: 2, cursor: "unexpected" }, 2],
+  it("accepts a short unpaginated first page", () => {
+    expect(decodePagination(undefined, 1, 2, "PREFLIGHT"))
+      .toEqual({ total_pages: 1, total_count: 2 });
+    expect(decodePagination(null, 1, 2, "PREFLIGHT"))
+      .toEqual({ total_pages: 1, total_count: 2 });
+  });
+
+  it("rejects unknown metadata and unpaginated full or later pages", () => {
+    for (const [metadata, page, pageCount] of [
+      [undefined, 1, 100],
+      [null, 1, 100],
+      [undefined, 2, 2],
+      [null, 2, 2],
+      [{ count: 2, page: 1, per_page: 50, total_count: 2, cursor: "unexpected" }, 1, 2],
     ] as const) {
+      expectCodecError(
+        () => decodePagination(metadata, page, pageCount, "PREFLIGHT"),
+        "OPENROUTER_PROVIDER_KEY_PREFLIGHT_FAILED",
+      );
+    }
+  });
+
+  it("rejects inconsistent current-page counts and total-page bounds", () => {
+    const invalidPages = [
+      [{ count: 1, page: 1, per_page: 50, total_count: 2 }, 2],
+      [{ count: 2, page: 1, per_page: 50, total_count: 2, total_pages: 2 }, 2],
+      [{ count: 50, page: 1, per_page: 50, total_count: 51, total_pages: 1 }, 50],
+    ] as const;
+
+    for (const [metadata, pageCount] of invalidPages) {
       expectCodecError(
         () => decodePagination(metadata, 1, pageCount, "PREFLIGHT"),
         "OPENROUTER_PROVIDER_KEY_PREFLIGHT_FAILED",
@@ -66,16 +91,32 @@ describe("provider-key REST response codec", () => {
     }
   });
 
-  it("rejects inconsistent current-page counts and total-page bounds", () => {
-    const invalidMetadata = [
-      { count: 1, page: 1, per_page: 50, total_count: 2 },
-      { count: 2, page: 1, per_page: 50, total_count: 2, total_pages: 2 },
-      { count: 50, page: 1, per_page: 50, total_count: 51, total_pages: 1 },
-    ];
+  it("preserves a positive rate limit and its positive window", () => {
+    const config = decodeObservedConfig(providerConfig({
+      rate_limit: 25,
+      rate_limit_period: 60,
+    }), GATEWAY_ID, "READBACK", true);
 
-    for (const metadata of invalidMetadata) {
+    expect(config.rate_limit).toBe(25);
+    expect(config.rate_limit_period).toBe(60);
+  });
+
+  it("validates inactive windows and requires a positive window for an active limit", () => {
+    for (const [rateLimit, ratePeriod] of [
+      [null, -1],
+      [null, 1.5],
+      [null, "60"],
+      [null, 2_147_483_648],
+      [25, undefined],
+      [25, null],
+      [25, 0],
+      [25, -1],
+    ] as const) {
       expectCodecError(
-        () => decodePagination(metadata, 1, metadata.count, "PREFLIGHT"),
+        () => decodeObservedConfig(providerConfig({
+          rate_limit: rateLimit,
+          rate_limit_period: ratePeriod,
+        }), GATEWAY_ID, "PREFLIGHT", true),
         "OPENROUTER_PROVIDER_KEY_PREFLIGHT_FAILED",
       );
     }

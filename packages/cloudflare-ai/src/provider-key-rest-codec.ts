@@ -70,7 +70,7 @@ export function decodeObservedConfig(
   if (value.secret_preview !== undefined) validatePreview(value.secret_preview, phase);
   const rateLimit = responseOptionalInteger(value.rate_limit, phase);
   const ratePeriod = responseOptionalInteger(value.rate_limit_period, phase);
-  if ((rateLimit === null) !== (ratePeriod === null)) invalidResponse(phase);
+  if (rateLimit !== null && ratePeriod === null) invalidResponse(phase);
   return Object.freeze({
     id,
     alias,
@@ -80,7 +80,7 @@ export function decodeObservedConfig(
     provider_slug: value.provider_slug,
     secret_id: secretId,
     rate_limit: rateLimit,
-    rate_limit_period: ratePeriod,
+    rate_limit_period: rateLimit === null ? null : ratePeriod,
   });
 }
 
@@ -90,7 +90,10 @@ export function decodePagination(
   count: number,
   phase: ListPhase,
 ): Pagination {
-  if (raw === undefined || raw === null) invalidList(phase);
+  if (raw === undefined || raw === null) {
+    if (page !== 1 || count >= MAX_PAGE_SIZE) invalidList(phase);
+    return { total_pages: 1, total_count: count };
+  }
   if (typeof raw !== "object" || raw === null || Array.isArray(raw) ||
       ![Object.prototype, null].includes(Object.getPrototypeOf(raw))) invalidList(phase);
   const info = raw as Record<string, unknown>;
