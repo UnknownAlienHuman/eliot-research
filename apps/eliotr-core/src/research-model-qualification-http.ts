@@ -7,12 +7,12 @@ import {
 import {
   createResearchModelQualificationDispatch,
   parseResearchQualificationPromptConfig,
-  type ResearchModelGatewayBinding,
   type ResearchModelGatewayRuntimeConfig,
   type ResearchQualificationPromptConfig,
 } from "@eliotr/cloudflare-research";
 import { selectResearchOwnerPrompt } from "@eliotr/cloudflare-research-stages";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
+import { WorkflowCheckpointError } from "@eliotr/cloudflare-workflows";
 import { readJsonBodyWithinBytes } from "./bounded-json.js";
 import type { Env } from "./env.js";
 import { apiResult, HttpRequestError } from "./http.js";
@@ -28,6 +28,7 @@ import { ServiceModelProviderOperationError } from "@eliotr/cloudflare-model-con
 import {
   bindConfiguredServiceModelProviderAlias,
   bindResearchPreparedModelTransportPolicy,
+  composeResearchModelGatewayConfiguration,
   parseResearchPreparedModelTransportPolicies,
   ResearchPreparedModelTransportError,
   resolveResearchPreparedModelTransportPolicy,
@@ -81,6 +82,56 @@ async function requireOwnerPrompt(
   invalid();
 }
 
+/** Credential/alias assembly for an already-parsed owner qualification; performs no model dispatch. */
+export async function qualificationModelGatewayConfiguration(
+  env: Env,
+  context: AuthenticatedRequestContext,
+  probe: DynamicRouteQualificationProbeInput,
+): Promise<ResearchModelGatewayRuntimeConfig> {
+  try {
+    const preparedPolicies = parseResearchPreparedModelTransportPolicies(
+      env.ELIOTR_RESEARCH_MODEL_TRANSPORT_POLICIES_JSON,
+    );
+    const preparedSelection = resolveResearchPreparedModelTransportPolicy(preparedPolicies, {
+      stage: qualificationStage(probe),
+      route_ref: probe.provisioning.deployment.route_ref,
+      route_version: probe.provisioning.deployment.route_version,
+      provider: probe.expected_provider,
+      model: probe.expected_model,
+    });
+    const globalProvider = probe.expected_provider === "workers-ai" ? null
+      : await createServiceModelSettingsComposition(env).service.resolveConfiguredProvider(
+        context,
+        probe.expected_provider,
+        { model_id: probe.expected_model },
+      );
+    const selectedTransport = bindConfiguredServiceModelProviderAlias(preparedSelection, globalProvider, {
+      provider: probe.expected_provider,
+      model: probe.expected_model,
+    });
+    return bindResearchPreparedModelTransportPolicy(
+      composeResearchModelGatewayConfiguration(env, selectedTransport?.provider ?? probe.expected_provider), selectedTransport,
+    );
+  } catch (error) {
+    if (error instanceof WorkflowCheckpointError) {
+      const native = probe.expected_provider === "workers-ai";
+      throw new HttpRequestError(native ? "RESEARCH_QUALIFICATION_AI_UNAVAILABLE"
+        : "RESEARCH_MODEL_TRANSPORT_CONFIGURATION_REQUIRED", 503,
+        native ? "Workers AI binding is unavailable" : "External model Gateway credential is unavailable");
+    }
+    if (error instanceof ServiceModelProviderOperationError) {
+      throw new HttpRequestError(error.code, error.status,
+        "Global service model provider is unresolved for qualification", error.retryable);
+    }
+    if (!(error instanceof ResearchPreparedModelTransportError)) throw error;
+    throw new HttpRequestError(
+      error.code,
+      503,
+      "Server-prepared model transport policy is invalid or does not match this exact qualification route",
+    );
+  }
+}
+
 export async function handleResearchModelQualification(
   request: Request,
   env: Env,
@@ -89,23 +140,6 @@ export async function handleResearchModelQualification(
 ): Promise<Response> {
   if (context.client_class !== "owner_pwa") {
     throw new HttpRequestError("RESEARCH_QUALIFICATION_OWNER_REQUIRED", 403, "Owner access is required");
-  }
-  const ai = env.AI as unknown as Partial<ResearchModelGatewayBinding> | undefined;
-  const configuredGatewayToken = env.ELIOTR_MODEL_GATEWAY_TOKEN;
-  let gateway: ResearchModelGatewayRuntimeConfig;
-  if (typeof configuredGatewayToken === "string" && configuredGatewayToken.trim() !== "") {
-    gateway = {
-      reasoning_gateway_base_url: env.AI_GATEWAY_REASONING_URL,
-      gateway_token: configuredGatewayToken,
-    };
-  } else {
-    if (typeof ai?.gateway !== "function") {
-      throw new HttpRequestError("RESEARCH_QUALIFICATION_AI_UNAVAILABLE", 503, "Workers AI binding is unavailable");
-    }
-    gateway = {
-      reasoning_gateway_base_url: env.AI_GATEWAY_REASONING_URL,
-      ai_gateway_binding: ai as ResearchModelGatewayBinding,
-    };
   }
   const raw: unknown = await readJsonBodyWithinBytes(request, maximumBytes);
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) invalid();
@@ -119,40 +153,7 @@ export async function handleResearchModelQualification(
     probe = parseDynamicRouteQualificationProbeInput(body.probe);
     prompt = parseResearchQualificationPromptConfig(body.prompt);
   } catch { invalid(); }
-
-  try {
-    const preparedPolicies = parseResearchPreparedModelTransportPolicies(
-      env.ELIOTR_RESEARCH_MODEL_TRANSPORT_POLICIES_JSON,
-    );
-    const preparedSelection = resolveResearchPreparedModelTransportPolicy(preparedPolicies, {
-      stage: qualificationStage(probe),
-      route_ref: probe.provisioning.deployment.route_ref,
-      route_version: probe.provisioning.deployment.route_version,
-      provider: probe.expected_provider,
-      model: probe.expected_model,
-    });
-    const globalProvider = await createServiceModelSettingsComposition(env).service.resolveConfiguredProvider(
-      context,
-      probe.expected_provider,
-      { model_id: probe.expected_model },
-    );
-    const selectedTransport = bindConfiguredServiceModelProviderAlias(preparedSelection, globalProvider, {
-      provider: probe.expected_provider,
-      model: probe.expected_model,
-    });
-    gateway = bindResearchPreparedModelTransportPolicy(gateway, selectedTransport);
-  } catch (error) {
-    if (error instanceof ServiceModelProviderOperationError) {
-      throw new HttpRequestError(error.code, error.status,
-        "Global service model provider is unresolved for qualification", error.retryable);
-    }
-    if (!(error instanceof ResearchPreparedModelTransportError)) throw error;
-    throw new HttpRequestError(
-      error.code,
-      503,
-      "Server-prepared model transport policy is invalid or does not match this exact qualification route",
-    );
-  }
+  const gateway = await qualificationModelGatewayConfiguration(env, context, probe);
   const transportPolicy = gateway.transport_policy;
   await requireOwnerPrompt(probe, prompt, transportPolicy);
   try {

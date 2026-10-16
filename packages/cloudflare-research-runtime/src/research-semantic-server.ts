@@ -99,6 +99,8 @@ export interface ResearchSemanticServerRuntimeInput {
   readonly native_acquisition_runtime?: Omit<Parameters<typeof createResearchNativeAcquisitionStageRoute>[0], "selection">;
   readonly native_model_runtime: NativeModelRuntime;
   readonly gateway: ResearchModelGatewayRuntimeConfig;
+  /** Trusted composition selects separate credentials after immutable per-stage provider resolution. */
+  readonly gateway_for_provider?: (provider: string) => ResearchModelGatewayRuntimeConfig;
   readonly config: ResearchSemanticConfiguration;
   readonly policy: ResearchModelSpendPolicy;
   readonly semantic_config: { readonly revision_ref: string | null; readonly config_sha256: string };
@@ -170,6 +172,7 @@ export async function assembleResearchSemanticServerHandlers(
   });
   const stageModelBindings = bindResearchSemanticStageModelTransports({
     gateway: input.gateway,
+    ...(input.gateway_for_provider === undefined ? {} : { gateway_for_provider: input.gateway_for_provider }),
     policy_rules: policy.rules,
     include_branch_stages: config.roles !== undefined,
     ...(input.run_configuration === undefined ? {} : { run_configuration: input.run_configuration }),

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { ResearchModelGatewayRuntimeConfig } from "@eliotr/cloudflare-research";
 import type { WorkflowPrincipal } from "@eliotr/cloudflare-workflows";
 import type { Env } from "../src/env.js";
+import { composeResearchModelGatewayConfiguration } from "../src/research-prepared-model-transport.js";
 import type { ResearchStageHandlerFactory } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import {
   bindHandlersToRunConfiguration,
@@ -49,6 +50,34 @@ const actor = Object.freeze({
 });
 
 describe("research semantic run configuration bindings", () => {
+  it("selects native and external credentials separately from each immutable stage provider", () => {
+    const native = { gateway: vi.fn() };
+    const env = { AI: native, AI_GATEWAY_REASONING_URL: "https://gateway.example.invalid",
+      ELIOTR_MODEL_GATEWAY_TOKEN: "server-held-external-token" } as unknown as Env;
+    const synthesis = selection("SYNTHESIZE", "synthesis", "max_completion_tokens", ["low"]);
+    synthesis.transport_policy.provider = "workers-ai";
+    synthesis.transport_policy.model = "@cf/zai-org/glm-5.3-flash";
+    const audit = { ...selection("AUDIT_CLAIMS", "audit", "max_tokens", ["low"]), transport_policy: {
+      version: 1, transport: "cloudflare-ai-gateway", api: "openrouter-chat-completions", provider: "openrouter",
+      model: "dots-studio/dots-3-note-preview:free", billing: { mode: "byok", alias: "saved-global-alias" },
+      capabilities: { max_output_tokens_field: "max_tokens", reasoning_efforts: ["low"] },
+    } };
+    const selections = [synthesis, audit];
+    const selectGateway = vi.fn((provider: string) => composeResearchModelGatewayConfiguration(env, provider));
+    const bindings = bindResearchSemanticStageModelTransports({
+      gateway: composeResearchModelGatewayConfiguration(env), gateway_for_provider: selectGateway,
+      policy_rules: spendRules(selections) as never,
+      run_configuration: { mode: "snapshot-v2", model_selections: selections }, include_branch_stages: false,
+    });
+    expect(selectGateway.mock.calls).toEqual([["workers-ai"], ["openrouter"]]);
+    expect(bindings.synthesis_gateway.ai_gateway_binding).toBe(native);
+    expect(bindings.synthesis_gateway).not.toHaveProperty("gateway_token");
+    expect(bindings.audit_gateway.gateway_token).toBe("server-held-external-token");
+    expect(bindings.audit_gateway).not.toHaveProperty("ai_gateway_binding");
+    expect(bindings.audit_gateway.transport_policy?.billing).toEqual({ mode: "byok", alias: "saved-global-alias" });
+    expect(native.gateway).not.toHaveBeenCalled();
+  });
+
   it("binds each snapshot stage to its exact spend route and keeps synthesis/audit separate", () => {
     const selections = [
       selection("ANALYZE_BRANCHES", "branch", "max_completion_tokens", ["low"]),

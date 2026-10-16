@@ -66,6 +66,7 @@ function bindSelectedModelTransport(
 /** Bind separate synthesis/audit routes and stage-specific branch gateways to the immutable run snapshot. */
 export function bindResearchSemanticStageModelTransports(input: {
   readonly gateway: ResearchModelGatewayRuntimeConfig;
+  readonly gateway_for_provider?: (provider: string) => ResearchModelGatewayRuntimeConfig;
   readonly policy_rules: ResearchModelSpendPolicy["rules"];
   readonly run_configuration?: ResearchSemanticRunModelConfiguration;
   readonly include_branch_stages: boolean;
@@ -80,7 +81,8 @@ export function bindResearchSemanticStageModelTransports(input: {
     if ((required && transport === undefined) || (transport !== undefined &&
         (transport.selection.route_ref !== rule.deployment.route_ref ||
          transport.selection.route_version !== rule.deployment.route_version))) configurationInvalid();
-    return { transport, gateway: bindSelectedModelTransport(input.gateway, transport) };
+    const gateway = input.gateway_for_provider?.(transport?.transport_policy.provider ?? "workers-ai") ?? input.gateway;
+    return { transport, gateway: bindSelectedModelTransport(gateway, transport) };
   };
 
   const synthesis = bindStage("SYNTHESIZE", false);
