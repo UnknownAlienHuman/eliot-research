@@ -64,6 +64,19 @@ const externalResult = { type: "object", additionalProperties: false,
     { if: { properties: { disposition: { enum: ["SUCCEEDED", "PARTIAL"] } }, required: ["disposition"] },
       then: { properties: { output: { type: "object" } } } },
   ] } as const;
+const doctorReceiptIdentity = {
+  delivery_id: { type: "string", pattern: "^doctor-[a-f0-9]{64}$" },
+  lease_generation: { type: "integer", minimum: 1, maximum: 2147483647 },
+  worker_slot: doctorWorkerSlot,
+} as const;
+const doctorIssueReceipt = { type: "object", additionalProperties: false,
+  required: ["delivery_id", "lease_generation", "worker_slot", "issue_number", "issue_url"],
+  properties: { ...doctorReceiptIdentity,
+    issue_number: { type: "integer", minimum: 1, maximum: 2147483647 },
+    issue_url: { type: "string", minLength: 1, maxLength: 2048, format: "uri" } } } as const;
+const doctorResolvedNoIssueReceipt = { type: "object", additionalProperties: false,
+  required: ["delivery_id", "lease_generation", "worker_slot", "result"],
+  properties: { ...doctorReceiptIdentity, result: { const: "INCIDENT_RESOLVED_NO_ISSUE" } } } as const;
 
 /** One registry for names, discovery schemas and dispatch. Only implemented consumers; cancellation is an explicit destructive control. */
 export const MCP_RESEARCH_TOOLS = {
@@ -255,14 +268,14 @@ export const MCP_RESEARCH_TOOLS = {
   },
   eliotr_doctor_delivery_receipt: {
     name: "eliotr_doctor_delivery_receipt",
-    description: "Settle the same doctor outbox item only from the owner-selected ELIOTR_DOCTOR_AGENT_CONNECTION_ID connection, after your GitHub MCP found or created its marker-bearing Issue. The receipt is bound to the current connection, worker_slot and exact lease_generation. An identical retry returns the stored receipt; stale leases or a changed Issue reference fail closed. This tool makes no GitHub request.",
+    description: "Settle this doctor outbox item on the owner-selected, currently MCP_WRITE-qualified connection. For an Issue, report its marker-bearing reference while the exact worker_slot/lease_generation lease is unexpired. If the incident is resolved and no Issue was created, send result=INCIDENT_RESOLVED_NO_ISSUE; this no-side-effect result may settle an expired lease only when its exact owner, slot and generation still match and both Issue fields are absent. Identical retries return the stored receipt; stale leases and cross-mode fields fail closed. This tool makes no GitHub request.",
     inputSchema: { type: "object", additionalProperties: false,
-      required: ["delivery_id", "lease_generation", "worker_slot", "issue_number", "issue_url"],
-      properties: { delivery_id: { type: "string", pattern: "^doctor-[a-f0-9]{64}$" },
-        lease_generation: { type: "integer", minimum: 1, maximum: 2147483647 },
-        worker_slot: doctorWorkerSlot,
+      required: ["delivery_id", "lease_generation", "worker_slot"],
+      properties: { ...doctorReceiptIdentity,
         issue_number: { type: "integer", minimum: 1, maximum: 2147483647 },
-        issue_url: { type: "string", minLength: 1, maxLength: 2048, format: "uri" } } },
+        issue_url: { type: "string", minLength: 1, maxLength: 2048, format: "uri" },
+        result: { const: "INCIDENT_RESOLVED_NO_ISSUE" } },
+      oneOf: [doctorIssueReceipt, doctorResolvedNoIssueReceipt] },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   eliotr_dispatch_pull: {
