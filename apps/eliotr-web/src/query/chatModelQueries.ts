@@ -3,9 +3,35 @@ import type { BoundWorkspaceApis } from "../app/runtime";
 import type { PrivacyController, SessionContext } from "../app/privacy";
 import { ProtectedReadClosedError, protectedQueryKey, runProtectedRead } from "./client";
 import { readDiscoveredCatalogModelOperation, type ChatCatalogModelOperationReadback } from './chatCatalogModelUse';
+import type { PreferredChatModel } from './chatModelCatalog';
 
 type ModelApi = BoundWorkspaceApis["connections"]["models"];
 type ProviderApi = BoundWorkspaceApis["connections"]["providers"];
+
+/** One bounded full-ID search. The consumer retains this real response and accepts only the exact pair. */
+export function chatPreferredModelCatalogQueryOptions(
+  models: Pick<ModelApi, 'readServiceModelCatalog'>,
+  privacy: PrivacyController, context: SessionContext,
+  preferred: PreferredChatModel | undefined,
+  isProjectCurrent: () => boolean,
+  projectId: string | undefined,
+): UseQueryOptions<Awaited<ReturnType<ModelApi['readServiceModelCatalog']>>> {
+  return {
+    queryKey: [...protectedQueryKey(context, 'service-model-catalog'), 'chat-preferred', projectId ?? null, preferred?.provider_id ?? null, preferred?.model_id ?? null],
+    enabled: projectId !== undefined && preferred !== undefined && privacy.isCurrent(context) && isProjectCurrent(),
+    retry: false, refetchOnMount: false, refetchOnWindowFocus: false, refetchOnReconnect: false,
+    queryFn: ({ signal }) => {
+      if (!preferred || projectId === undefined) throw new ProtectedReadClosedError();
+      return runProtectedRead(privacy, context, signal, async readSignal => {
+        if (!isProjectCurrent()) throw new ProtectedReadClosedError();
+        const page = await models.readServiceModelCatalog(context.deploymentGeneration,
+          { providerId: preferred.provider_id, search: preferred.model_id, page: 1, perPage: 20 }, readSignal);
+        if (!isProjectCurrent()) throw new ProtectedReadClosedError();
+        return page;
+      });
+    },
+  };
+}
 
 /** Fresh read-only discovery on every pane mount; stale/null cache never authorizes a new choice. */
 export function chatCurrentCatalogModelOperationQueryOptions(

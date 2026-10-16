@@ -61,12 +61,21 @@ describe("eliotr.workflow-checkpoint.v1 — actual D1/R2 single-stage execution"
 
   it("rejects skipped stages and a substituted prior-stage input without advancing W1", async () => {
     const f = await workflowFixture("sequence");
-    await expect(f.executor.execute({ ...f.request, stage: "SYNTHESIZE" }, principal, async () => resultBytes()))
+    let calls = 0;
+    const handler = async () => { calls += 1; return resultBytes(); };
+    await expect(f.executor.execute({ ...f.request, stage: "SYNTHESIZE" }, principal, handler))
       .rejects.toMatchObject({ code: "WORKFLOW_STAGE_OUT_OF_ORDER" });
-    const first = await f.executor.execute(f.request, principal, async () => resultBytes());
+    expect(calls).toBe(0);
+    const first = await f.executor.execute(f.request, principal, handler);
     const bad = { ...f.request, stage: "ORIENT", investigation_ref: first.investigation_ref };
-    await expect(f.executor.execute(bad, principal, async () => resultBytes()))
-      .rejects.toMatchObject({ code: "WORKFLOW_STAGE_OUT_OF_ORDER" });
+    // Native D1 trigger errors have no trusted WorkflowErrorCode. The mapper
+    // conservatively preserves uncertainty; the rejected reservation admits no handler.
+    await expect(f.executor.execute(bad, principal, handler))
+      .rejects.toMatchObject({ code: "WORKFLOW_EFFECT_UNCERTAIN", failure: {
+        code: "WORKFLOW_EFFECT_UNCERTAIN", phase: "STAGE", stage: "ORIENT",
+        dispatch_state: "OUTCOME_UNKNOWN", references_intact: "UNKNOWN", recovery_action: "RECONCILE",
+      } });
+    expect(calls).toBe(1);
     expect(await counts(f.db)).toEqual({ attempts: 1, checkpoints: 1, outbox: 1, ledger_events: 1 });
   });
 
@@ -235,8 +244,15 @@ describe("eliotr.workflow-checkpoint.v1 — actual D1/R2 single-stage execution"
     const db = faultDatabase(f.db, { beforeBatch: async () => {
       await f.db.prepare("UPDATE scope_access_grant SET state='REVOKED'").run();
     } });
-    await expect(createWorkflowCheckpointExecutor(db, f.bucket, f.ports).execute(f.request, principal, async () => resultBytes()))
-      .rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+    let calls = 0;
+    await expect(createWorkflowCheckpointExecutor(db, f.bucket, f.ports).execute(f.request, principal,
+      async () => { calls += 1; return resultBytes(); }))
+      .rejects.toMatchObject({ code: "WORKFLOW_EFFECT_UNCERTAIN", failure: {
+        code: "WORKFLOW_EFFECT_UNCERTAIN", phase: "STAGE", stage: f.request.stage,
+        dispatch_state: "OUTCOME_UNKNOWN", references_intact: "UNKNOWN", recovery_action: "RECONCILE",
+      } });
+    expect(calls).toBe(1);
+    expect(await f.db.prepare("SELECT state FROM scope_access_grant").first("state")).toBe("REVOKED");
     expect((await f.db.prepare("SELECT revision FROM investigation_ledger_head WHERE investigation_id=?1")
       .bind(f.request.investigation_ref.id).first<{ revision: number }>())?.revision).toBe(1);
     expect(await counts(f.db)).toEqual({ attempts: 1, checkpoints: 0, outbox: 0, ledger_events: 0 });
@@ -391,8 +407,12 @@ describe("eliotr.workflow-checkpoint.v1 — actual D1/R2 single-stage execution"
     } });
     let calls = 0;
     await expect(createWorkflowCheckpointExecutor(db, f.bucket, f.ports).execute(f.request, principal,
-      async () => { calls += 1; return resultBytes(); })).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+      async () => { calls += 1; return resultBytes(); })).rejects.toMatchObject({ code: "WORKFLOW_EFFECT_UNCERTAIN", failure: {
+        code: "WORKFLOW_EFFECT_UNCERTAIN", phase: "STAGE", stage: f.request.stage,
+        dispatch_state: "OUTCOME_UNKNOWN", references_intact: "UNKNOWN", recovery_action: "RECONCILE",
+      } });
     expect(calls).toBe(1);
+    expect(await f.db.prepare("SELECT allowed_use_json FROM scope_access_grant").first("allowed_use_json")).toBe("[]");
     expect(await counts(f.db)).toEqual({ attempts: 1, checkpoints: 0, outbox: 0, ledger_events: 0 });
     expect((await f.ledger.read(f.request.investigation_ref.id)).revision).toBe(1);
   });

@@ -112,7 +112,8 @@ export function ChatModelPicker({ locale, choices, selected, qualificationState 
     <Status tone={failed || qualificationState === "unknown" ? "error" : "neutral"}>
       {loading ? text.reading : failed ? text.failed : choices.length === 0 ? text.empty : status}
     </Status>
-    {qualificationState === "unknown" && onCheck && <Button variant="text" disabled={checkDisabled ?? disabled} onClick={onCheck}>{text.check}</Button>}
+    {(qualificationState === "unknown" || failed || (!loading && selected !== undefined && !byKey.has(selectedKey))) && onCheck &&
+      <Button variant="text" disabled={checkDisabled ?? disabled} onClick={onCheck}>{text.check}</Button>}
     <nav className="er-model-catalog__pagination" aria-label={text.label}>
       <Button variant="text" disabled={disabled || page <= 1} onClick={() => onPageChange(Math.max(1, page - 1))}>{text.previous}</Button>
       <span>{page}</span>

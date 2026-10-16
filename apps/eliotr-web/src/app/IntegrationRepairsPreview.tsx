@@ -8,6 +8,7 @@ import { createWorkspaceQueryClient, clearWorkspaceQueries, protectedQueryKey } 
 import type { LibraryPage } from '@eliotr/owner-api-client';
 import type { playResearchJourney } from './ResearchPreview';
 import { paneAnnouncement, announcementUntil, unchangedChannel } from './announcementAssertions';
+import { researchPreviewModelRead } from './researchModelPreview';
 
 /** Synthetic contract fixture. Only stories import it; every interaction uses the real workspace. */
 export function IntegrationRepairsPreview({ stalePage = false }: { readonly stalePage?: boolean }) {
@@ -19,6 +20,11 @@ export function IntegrationRepairsPreview({ stalePage = false }: { readonly stal
     const launch = { investigation_ref: { id: 'integration-investigation', revision: 1 }, workflow_instance_id: 'integration-workflow' };
     const fetchFixture: typeof fetch = async (input, init) => {
       const url = new URL(String(input), 'https://fixture.invalid');
+      if ((init?.method ?? 'GET') === 'GET') {
+        const modelRead = researchPreviewModelRead(url, 'integration-project', stamp, true);
+        if (modelRead !== undefined) return json(modelRead);
+        if (url.pathname === '/api/v1/research/projects/integration-project/catalog-model-use' && !url.search) return json(null);
+      }
       if (url.pathname === '/api/v1/system/health') return json({ ready: true, deployment_generation: generation, core_schema_generation: 'schema-1', search_schema_generation: 'schema-1', blocking_reason_codes: [], checked_at: stamp });
       if (url.pathname === '/api/v1/system/session') return json({ protocol: 'eliotr.owner-session.v1', principal_ref: 'integration-owner', credential_generation: 'integration-credential', client_class: 'owner_pwa', expires_at: '2027-01-01T00:00:00.000Z' });
       if (url.pathname === '/api/v1/research/projects') return json({ protocol: 'eliotr.project-owner-list.v1', projects: [{ protocol: 'eliotr.project-owner.v1', project_ref: { id: 'integration-project', revision: 1 }, title: 'Sources across pages', revision: 1, owner_principal_ref: 'integration-owner', deployment_generation: generation, source_ids: ['integration-source-1', 'integration-source-2'], created_at: stamp }] });
@@ -88,9 +94,11 @@ export async function playIntegrationRepairs({ canvas, userEvent }: Journey) {
   if (!root) throw new Error('Actual Research root absent');
   const region = paneAnnouncement(root);
   await userEvent.type(question, 'Compare the two selected sources.');
-  await userEvent.click(canvas.getByRole('button', { name: 'Ask', exact: true }));
+  const ask = canvas.getByRole('button', { name: 'Ask', exact: true });
+  await announcementUntil(() => ask instanceof HTMLButtonElement && !ask.disabled);
+  await userEvent.click(ask);
   await canvas.findByText('The launch outcome is unknown. The original question and request identity are preserved.', { selector: '.er-status > span' });
-  await announcementUntil(() => unchangedChannel(root, region, 'The launch outcome is unknown. The original question and request identity are preserved.'));
+  await announcementUntil(() => unchangedChannel(root, region, 'The launch outcome is unknown. The original question and request identity are preserved. The launch response could not be confirmed.'));
   await userEvent.click(canvas.getByRole('button', { name: 'Reconcile this question', exact: true }));
   await canvas.findByText('Research finished.');
   await announcementUntil(() => unchangedChannel(root, region, 'The engine finished. Review its result.'));

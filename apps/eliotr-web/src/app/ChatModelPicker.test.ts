@@ -32,4 +32,15 @@ describe('chat model picker availability labels', () => {
     expect(markup).toContain(' — Available');
     expect(markup).not.toContain(' — Availability check needed');
   });
+
+  it.each([true, false])('offers a read-only availability check for failed or missing metadata (failed=%s)', failed => {
+    const model = workersAiCatalogFixture.models[0];
+    const markup = renderToStaticMarkup(createElement(ChatModelPicker, { locale: 'ru', choices: [], selected: model,
+      failed, qualificationState: 'idle', search: '', page: 1, checkDisabled: false,
+      onCheck() {}, onSearchChange() {}, onPageChange() {}, onSelect() {},
+    }));
+    expect(markup).toContain('Проверить доступность');
+    expect(markup).toContain(model.model_id);
+    expect(markup).not.toContain(' — Доступна');
+  });
 });

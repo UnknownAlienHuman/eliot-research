@@ -3,6 +3,7 @@ import { canonicalJson } from "@eliotr/platform-cloudflare";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9:._/@-]{0,255}$/u;
+const MODEL_IDENTIFIER = /^[A-Za-z0-9~][A-Za-z0-9:._/~@-]{0,255}$/u;
 const WORKERS_AI_MODEL_ID = /^@cf\/[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._:@-]*$/u;
 const RATE = /^(?:0|[1-9][0-9]{0,15})(?:\.[0-9]{1,12})?$/u;
 const PRICING_BASIS = "EXACT_TOKEN_RATES_V1" as const;
@@ -154,7 +155,7 @@ function identifier(value: unknown, label: string, code: ResearchModelPricingErr
 }
 
 function exactModelId(value: unknown, label: string, code: ResearchModelPricingErrorCode): string {
-  if (typeof value !== "string" || value.length > 256 || (!IDENTIFIER.test(value) && !WORKERS_AI_MODEL_ID.test(value))) {
+  if (typeof value !== "string" || value.length > 256 || (!MODEL_IDENTIFIER.test(value) && !WORKERS_AI_MODEL_ID.test(value))) {
     fail(code, `${label} is invalid`);
   }
   return value;

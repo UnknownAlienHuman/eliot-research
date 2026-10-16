@@ -12,6 +12,7 @@ const USAGE_KEYS = new Set([
   "completion_tokens", "completion_tokens_details", "cost", "cost_details", "is_byok",
   "prompt_tokens", "prompt_tokens_details", "server_tool_use", "server_tool_use_details", "total_tokens",
 ]);
+const MODEL_IDENTIFIER = /^[A-Za-z0-9._:~@/-]{1,256}$/u;
 const IDENTIFIER = /^[A-Za-z0-9._:@/-]{1,256}$/u;
 const MAX_BODY_BYTES = 256 * 1024;
 const MAX_JSON_DEPTH = 16;
@@ -157,7 +158,7 @@ export function decodeModelGatewayOpenRouterBody(
   if (!IDENTIFIER.test(id)) invalid("OpenRouter response id is not a bounded identifier");
   if (typeof body.created !== "number" || !Number.isSafeInteger(body.created) || body.created < 0) invalid("OpenRouter created is invalid");
   const responseModel = string(body.model, "OpenRouter response model", 8192, "MODEL_ID_INVALID");
-  if (!IDENTIFIER.test(responseModel)) invalid("OpenRouter response model is not a bounded identifier", "MODEL_ID_INVALID");
+  if (!MODEL_IDENTIFIER.test(responseModel)) invalid("OpenRouter response model is not a bounded identifier", "MODEL_ID_INVALID");
   // OpenRouter's upstream vendor (for example AtlasCloud) is opaque metadata;
   // transport provider/model authority remains pinned by the Gateway policy.
   if (body.provider !== undefined) string(body.provider, "OpenRouter upstream provider", 256);

@@ -3,7 +3,7 @@ import { skipToken, useQueries, useQuery, useQueryClient } from '@tanstack/react
 import { WorkspaceLink } from '../routes/WorkspaceLink';
 import { Button, MaterialSymbol, OperationAnnouncement, ResearchRunFeature, Status, researchEngineLabel } from '@eliotr/ui';
 import type { ResearchCatalogModelUseReceipt, ResearchProjectModelConfiguration, ResearchRunLaunchView, ResearchRunProjectConfigurationPinV4, ResearchRunV4Request, VersionedRef } from '@eliotr/owner-api-client';
-import { researchModelCatalogAdapterForRouteProvider } from '@eliotr/owner-api-client';
+import { chatCatalogProviderForRouteProvider } from '../query/chatModelProviderIdentity';
 import type { BoundWorkspaceApis } from './runtime';
 import type { PrivacyController, SessionContext } from './privacy';
 import type { NextQuestionSource } from './NextQuestionScope';
@@ -13,9 +13,9 @@ import { ChatModelPicker, type ChatModelQualificationState } from './ChatModelPi
 import { serviceModelCatalogPreferencesQueryOptions, serviceModelCatalogQueryOptions,
   serviceModelProvidersV2QueryOptions, serviceModelSettingsQueryOptions,
   type ServiceModelProviderConnectionV2 } from '../query/globalModelSettings';
-import { buildChatModelOptions,
+import { buildChatModelOptions, preferredChatModelIdentity,
   type ChatModelOption, type ChatModelCatalogSlice } from '../query/chatModelCatalog';
-import { chatCatalogModelOperationQueryOptions, chatCurrentCatalogModelOperationQueryOptions,
+import { chatCatalogModelOperationQueryOptions, chatCurrentCatalogModelOperationQueryOptions, chatPreferredModelCatalogQueryOptions,
   chatProjectModelConfigurationQueryOptions } from '../query/chatModelQueries';
 import { ChatModelSelectionClosedError,
   ChatModelSelectionUnconfirmedError, configurationMatchesChatModel, prepareChatModelRunV4 }
@@ -23,7 +23,7 @@ import { ChatModelSelectionClosedError,
 import { catalogModelUseReceiptProblem, chatCatalogModelUseMatches, chatCatalogModelUseNeedsReadback, prepareCatalogChatModelSelection,
   readDiscoveredCatalogModelOperation, ChatCatalogModelUseDiscoveredError,
   ChatCatalogModelUseUnavailableError, type ChatCatalogModelUseIntent } from '../query/chatCatalogModelUse';
-import { modelCatalogEntryKey } from '../query/modelCatalog';
+import { isModelCatalogEntryVisible, modelCatalogEntryKey } from '../query/modelCatalog';
 import { researchLaunchFailureMessage, submitResearchLaunchOnce, type ResearchLaunchFailure } from '../query/researchLaunch';
 import { ReportPanel } from './ReportPanel';
 import { ProjectOverview } from './ProjectOverview';
@@ -108,6 +108,14 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     }),
     enabled: privacy.isCurrent(context) && (target.builtin || serviceProviders.isSuccess),
   })) });
+  const preferredModel = preferredChatModelIdentity(projectModels.isSuccess ? projectModels.data : undefined,
+    providerSettings.data?.cloudflare.default_model_id);
+  const preferredTargetIndex = preferredModel === undefined ? -1 : catalogTargets.findIndex(target =>
+    chatCatalogProviderForRouteProvider(target.catalogProviderId) === preferredModel.provider_id);
+  const preferredCatalog = useQuery({
+    ...chatPreferredModelCatalogQueryOptions(apis.connections.models, privacy, context, preferredModel, isProjectCurrent, projectId),
+    enabled: preferredModel !== undefined && preferredTargetIndex >= 0 && privacy.isCurrent(context) && isProjectCurrent(),
+  });
   const catalogSlices = useMemo<readonly ChatModelCatalogSlice[]>(() => catalogTargets.map((target, index) => ({
     catalogProviderId: target.catalogProviderId,
     preferenceProviderId: target.preferenceProviderId,
@@ -122,11 +130,12 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
   })), [catalogTargets, modelCatalogs, catalogPreferences, providerSettings.data]);
   const chatModelOptions = useMemo(() => buildChatModelOptions({ slices: catalogSlices,
     ...(projectModels.data === undefined ? {} : { configuration: projectModels.data as ResearchProjectModelConfiguration }),
-  }), [catalogSlices, projectModels.data]);
+    ...(preferredModel === undefined || preferredCatalog.data === undefined ? {} : { preferred: { model: preferredModel, catalog: preferredCatalog.data } }),
+  }), [catalogSlices, projectModels.data, preferredModel, preferredCatalog.data]);
   const modelCatalogLoading = serviceProviders.isPending || providerSettings.isPending ||
-    catalogPreferences.some(query => query.isFetching) || modelCatalogs.some(query => query.isFetching);
+    catalogPreferences.some(query => query.isFetching) || modelCatalogs.some(query => query.isFetching) || preferredCatalog.isFetching;
   const modelCatalogFailed = serviceProviders.isError || providerSettings.isError ||
-    catalogPreferences.some(query => query.isError) || modelCatalogs.some(query => query.isError);
+    catalogPreferences.some(query => query.isError) || modelCatalogs.some(query => query.isError) || preferredCatalog.isError;
   const modelCatalogHasMore = modelCatalogs.some(query => query.data?.pagination.has_more === true &&
     query.data.pagination.next_page !== null);
   const saved = memory.data, launch = saved?.intent?.launch ?? saved?.observedLaunch;
@@ -188,14 +197,28 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     observedCatalogOperation.receipt.model_id === selectedChatModelIdentity.model_id
       ? catalogModelUseReceiptProblem(observedCatalogOperation.receipt) : undefined;
   const catalogModelProblem = serverCatalogModelProblem ?? localCatalogModelProblem;
-  const selectedCatalogIndex = selectedChatModel === undefined ? -1 :
-    catalogTargets.findIndex(target => researchModelCatalogAdapterForRouteProvider(target.catalogProviderId) === selectedChatModel.model.provider_id);
+  const selectedCatalogIndex = selectedChatModelIdentity === undefined ? -1 :
+    catalogTargets.findIndex(target => chatCatalogProviderForRouteProvider(target.catalogProviderId) === selectedChatModelIdentity.provider_id);
+  const selectedUsesPreferred = selectedChatModelIdentity !== undefined && preferredModel !== undefined &&
+    modelCatalogEntryKey(selectedChatModelIdentity) === modelCatalogEntryKey(preferredModel);
+  const selectedCatalogRead = selectedUsesPreferred ? preferredCatalog : modelCatalogs[selectedCatalogIndex];
+  const selectedCatalogMissing = selectedChatModelIdentity !== undefined && selectedChatModel === undefined;
+  const selectedCatalogFailed = selectedChatModelIdentity !== undefined && (selectedCatalogIndex < 0 || selectedCatalogRead?.isError === true ||
+    catalogPreferences[selectedCatalogIndex]?.isError === true || (selectedChatModelIdentity.provider_id === 'cloudflare-workers-ai'
+      ? providerSettings.isError : serviceProviders.isError));
+  const failedCatalogTargets = catalogTargets.flatMap((target, index) => catalogPreferences[index]?.isError || modelCatalogs[index]?.isError ||
+    (preferredTargetIndex === index && preferredCatalog.isError) ? [{ index, label: target.connection?.display_name ??
+      (target.builtin ? 'Cloudflare Workers AI' : target.preferenceProviderId) }] : []);
+  const pickerCatalogFailed = currentCatalogOperation.isError || catalogOperationReadback.isError || selectedCatalogFailed ||
+    (selectedChatModelIdentity === undefined && chatModelOptions.length === 0 && modelCatalogFailed);
+  const pickerCatalogLoading = currentCatalogOperation.isFetching || catalogOperationReadback.isFetching ||
+    (selectedChatModelIdentity === undefined ? modelCatalogLoading : selectedCatalogRead?.isFetching === true || catalogPreferences[selectedCatalogIndex]?.isFetching === true);
   const selectedModelQueriesPending = selectedChatModel === undefined || selectedCatalogIndex < 0 ||
     (selectedChatModel.builtin ? providerSettings.isFetching : serviceProviders.isFetching) ||
-    catalogPreferences[selectedCatalogIndex]?.isFetching === true || modelCatalogs[selectedCatalogIndex]?.isFetching === true;
+    catalogPreferences[selectedCatalogIndex]?.isFetching === true || selectedCatalogRead?.isFetching === true;
   const selectedModelQueriesFailed = selectedChatModel !== undefined && (selectedCatalogIndex < 0 ||
     (selectedChatModel.builtin ? providerSettings.isError : serviceProviders.isError) ||
-    catalogPreferences[selectedCatalogIndex]?.isError === true || modelCatalogs[selectedCatalogIndex]?.isError === true);
+    catalogPreferences[selectedCatalogIndex]?.isError === true || selectedCatalogRead?.isError === true);
   useEffect(() => {
     explicitChatSelection.current = false;
     preparingModel.current = false;
@@ -220,18 +243,12 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
       setModelQualificationState("unknown");
       return;
     }
-    const selected = projectModels.data?.selected;
-    if (!selected) {
-      const builtin = chatModelOptions.find(choice => choice.builtin && choice.canRun);
-      if (builtin) { setSelectedChatModelKey(builtin.key); setSelectedChatModelIdentity(builtin.model); }
-      return;
+    const preferences = catalogPreferences[preferredTargetIndex]?.data;
+    if (preferredModel && preferences?.provider_id === preferredModel.provider_id &&
+        isModelCatalogEntryVisible(preferences.visibility, preferredModel.model_id)) {
+      setSelectedChatModelKey(modelCatalogEntryKey(preferredModel)); setSelectedChatModelIdentity(preferredModel);
     }
-    const synthesis = selected.model_selections.filter(model => model.stage === "SYNTHESIZE");
-    if (synthesis.length !== 1 || !synthesis[0]) return;
-    const current = chatModelOptions.find(choice => choice.canRun && choice.model.model_id === synthesis[0]?.model_id &&
-      configurationMatchesChatModel(selected, choice.model));
-    if (current) { setSelectedChatModelKey(current.key); setSelectedChatModelIdentity(current.model); }
-  }, [chatModelOptions, projectModels.data?.selected, selectedChatModelKey, catalogModelUseHeld, saved?.catalogModelUse,
+  }, [preferredModel, preferredTargetIndex, catalogPreferences, selectedChatModelKey, catalogModelUseHeld, saved?.catalogModelUse,
     projectId, catalogDiscoveryBlocked, discoveredCatalogOperation]);
   const running = useRef(false), mounted = useRef(true), controller = useRef<AbortController | undefined>(undefined);
   const recoveryInFlight = useRef(false);
@@ -437,7 +454,8 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     });
   };
   const checkModelSelection = () => {
-    if (!modelSelectionLocked || running.current || projectId === undefined || !isProjectCurrent() || !privacy.isCurrent(context)) return;
+    if ((!modelSelectionLocked && !modelCatalogFailed && !selectedCatalogMissing) || running.current || projectId === undefined ||
+        !isProjectCurrent() || !privacy.isCurrent(context)) return;
     const isCurrent = () => mounted.current && privacy.isCurrent(context) && isProjectCurrent();
     run(async signal => {
       try {
@@ -477,11 +495,19 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
           }
         }
         if (signal.aborted || !isCurrent()) throw new ChatModelSelectionClosedError();
+        // Reconcile any held operation first. Metadata retry is GET-only and scoped to this provider.
+        if (selectedCatalogIndex >= 0) {
+          const preferences = await catalogPreferences[selectedCatalogIndex]?.refetch();
+          const catalog = await selectedCatalogRead?.refetch();
+          if (signal.aborted || !isCurrent()) throw new ChatModelSelectionClosedError();
+          if (preferences?.isError || catalog?.isError) throw new ChatModelSelectionUnconfirmedError();
+        }
         setHeldModelChoice(undefined); setModelSelectionUnknown(false); setModelQualificationState(operationId ? 'ready' : 'idle');
       } catch (error) {
         if (signal.aborted || !isCurrent()) return;
         const unavailable = error instanceof ChatCatalogModelUseUnavailableError;
-        setModelSelectionUnknown(!unavailable); setModelQualificationState(unavailable ? 'idle' : 'unknown');
+        // A GET failure cannot create mutation uncertainty; any existing held intent still gates selection.
+        setModelSelectionUnknown(previous => !unavailable && previous); setModelQualificationState(unavailable ? 'idle' : 'unknown');
       }
     });
   };
@@ -622,8 +648,7 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
       <ChatModelPicker locale={locale} choices={chatModelOptions} selected={selectedChatModelIdentity}
         qualificationState={currentCatalogOperation.isFetching || catalogOperationReadback.isFetching ? 'qualifying'
           : modelSelectionLocked && !busy ? 'unknown' : modelQualificationState} search={modelSearch} page={modelCatalogPage}
-        loading={modelCatalogLoading || currentCatalogOperation.isFetching || catalogOperationReadback.isFetching}
-        failed={modelCatalogFailed || currentCatalogOperation.isError || catalogOperationReadback.isError} hasMore={modelCatalogHasMore}
+        loading={pickerCatalogLoading} failed={pickerCatalogFailed} hasMore={modelCatalogHasMore}
         disabled={busy || modelSelectionLocked || saved?.intent !== undefined || saved?.observedLaunch !== undefined || projectId === undefined ||
           !privacy.isCurrent(context) || !isProjectCurrent()}
         checkDisabled={busy || projectId === undefined || !privacy.isCurrent(context) || !isProjectCurrent()}
@@ -631,6 +656,14 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
         onPageChange={setModelCatalogPage}
         onCheck={() => checkModelSelection()}
         onSelect={chooseChatModel} />
+      {failedCatalogTargets.length > 0 && <div className="er-live-callout">
+        <p>{locale === 'ru' ? 'Не удалось прочитать списки моделей: ' : 'Model lists unavailable: '}{failedCatalogTargets.map(target => target.label).join(', ')}.</p>
+        {failedCatalogTargets.map(target => <Button key={target.index} variant="text" disabled={busy} onClick={() => {
+          if (!privacy.isCurrent(context) || !isProjectCurrent()) return;
+          void catalogPreferences[target.index]?.refetch(); void modelCatalogs[target.index]?.refetch();
+          if (preferredTargetIndex === target.index) void preferredCatalog.refetch();
+        }}>{locale === 'ru' ? 'Повторить чтение: ' : 'Retry model list: '}{target.label}</Button>)}
+      </div>}
       {catalogModelProblem && <div className="er-live-callout">
         <p>{catalogModelProblem === 'unsupported'
           ? locale === 'ru' ? 'Эта модель пока не поддерживается сервисом.' : 'This model is not currently supported by the service.'

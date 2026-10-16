@@ -55,6 +55,18 @@ const project = (revision: ResearchModelConfigurationRevision): ResearchProjectM
 });
 
 describe("chat model catalog eligibility", () => {
+  it('retains an included Go Muse option when another configured provider has no readable catalog', () => {
+    const muse = entry('opencode-go', 'muse-spark-1.3');
+    const external = externalSlice([]);
+    if (!external.connection) throw new Error('Expected saved connection');
+    const options = buildChatModelOptions({ slices: [external, { catalogProviderId: 'opencode-go', preferenceProviderId: 'opencode-go',
+      connection: { ...external.connection, provider_id: 'opencode-go', model_registration_mode: 'explicit_allowlist', model_ids: ['legacy-muse'] },
+      catalog: catalog('opencode-go', [muse]), preferences: { ...preferences('opencode-go', { mode: 'all' }),
+        visibility: { mode: 'include', model_ids: ['muse-spark-1.3'] } },
+    }] });
+    expect(options).toHaveLength(1);
+    expect(options[0]).toMatchObject({ model: muse, canRun: true, availabilityCheckRequired: true });
+  });
   it("applies saved visibility and requires an exact saved synthesis configuration", () => {
     const visible = entry("openrouter", "model-visible"), hidden = entry("openrouter", "model-hidden");
     const revision = configuredRevision(visible.model_id);

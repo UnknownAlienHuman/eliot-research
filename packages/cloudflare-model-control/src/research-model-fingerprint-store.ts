@@ -10,6 +10,7 @@ import {
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const IDENTIFIER = /^[A-Za-z0-9._:@/-]{1,256}$/u;
+const MODEL_IDENTIFIER = /^[A-Za-z0-9._:~@/-]{1,256}$/u;
 const FINGERPRINT_KEYS = new Set([
   "exact_model_id",
   "parameters_digest",
@@ -70,8 +71,9 @@ function identifier(
   value: unknown,
   label: string,
   code: ResearchModelFingerprintErrorCode = "MODEL_FINGERPRINT_INPUT_INVALID",
+  pattern = IDENTIFIER,
 ): string {
-  if (typeof value !== "string" || !IDENTIFIER.test(value)) {
+  if (typeof value !== "string" || !pattern.test(value)) {
     fail(code, `${label} is invalid`);
   }
   return value;
@@ -129,7 +131,7 @@ function decodeFingerprint(value: unknown, code: ResearchModelFingerprintErrorCo
     fail(code, "route fingerprint deployment is invalid", false, cause);
   }
   const provider = identifier(record.provider, "route fingerprint provider", code);
-  const exactModelId = identifier(record.exact_model_id, "route fingerprint model", code);
+  const exactModelId = identifier(record.exact_model_id, "route fingerprint model", code, MODEL_IDENTIFIER);
   return Object.freeze({ ...deployment, provider, exact_model_id: exactModelId });
 }
 

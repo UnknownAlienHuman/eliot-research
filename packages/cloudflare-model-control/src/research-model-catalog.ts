@@ -18,7 +18,7 @@ const MAX_MODEL_PROPERTIES = 128;
 const MAX_MODEL_TAGS = 64;
 const MAX_RESPONSE_BYTES = 262_144;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
-const MODEL_IDENTIFIER = /^(?:@[A-Za-z0-9][A-Za-z0-9._:@/-]{0,254}|[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255})$/u;
+const MODEL_IDENTIFIER = /^(?:@[A-Za-z0-9][A-Za-z0-9._:~@/-]{0,254}|[A-Za-z0-9~][A-Za-z0-9._:~@/-]{0,255})$/u;
 const PROVIDER_IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$/u;
 
 type JsonValue = null | boolean | number | string | readonly JsonValue[] | { readonly [key: string]: JsonValue };

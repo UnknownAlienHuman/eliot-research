@@ -306,7 +306,7 @@ export function createD1ProviderNativeModelCatalogV2Authority(input: Readonly<{
     if (row === null || !allowedStates.includes(String(row.state))) stale("exact catalog owner consent is unavailable");
     const binding = bindingFromRow(row, ownerRef, projectId, consentOperationId);
     if (row.provider_id !== binding.provider_id || row.route_provider_id !== binding.provider_slug ||
-        typeof row.model_id !== "string" || !/^(?:@[A-Za-z0-9][A-Za-z0-9._:@/-]{0,254}|[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255})$/u.test(row.model_id) ||
+        typeof row.model_id !== "string" || !/^(?:@[A-Za-z0-9][A-Za-z0-9._:~@/-]{0,254}|[A-Za-z0-9~][A-Za-z0-9._:~@/-]{0,255})$/u.test(row.model_id) ||
         typeof row.request_sha256 !== "string" || !SHA256.test(row.request_sha256)) stale("catalog consent does not bind the exact provider/model tuple");
     return Object.freeze({ binding, request_sha256: row.request_sha256, model_id: row.model_id,
       provider_id: binding.provider_id, provider_slug: binding.provider_slug });

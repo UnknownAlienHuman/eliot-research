@@ -9,7 +9,7 @@
  */
 
 import {
-  ArtifactRevisionSchema,
+  ArtifactRevisionReadSchema,
   Sha256Schema,
   type ArtifactRevision,
   type VersionedRef,
@@ -173,7 +173,7 @@ export function createArtifactApi(deps: ArtifactDependencies) {
     const data = record(outer.data, ['protocol', 'revision', 'receipt', ...(mutation ? ['disposition'] : [])]);
     if (data.protocol !== ARTIFACT_PUBLICATION_PROTOCOL) invalid();
     if (mutation) disposition(data.disposition);
-    const parsed = ArtifactRevisionSchema.safeParse(data.revision);
+    const parsed = ArtifactRevisionReadSchema.safeParse(data.revision);
     if (!parsed.success) invalid();
     const receipt = record(data.receipt, ['publication_ref', 'artifact_ref', 'publication_revision', 'manifest_sha256',
       'verification_set_sha256', 'evidence_currentness_sha256', 'acceptance_decision_ref', 'acceptance_provenance_ref',
@@ -182,7 +182,7 @@ export function createArtifactApi(deps: ArtifactDependencies) {
     if (!sameRef(artifactRef, parsed.data.artifact_ref) || artifactRef.id !== ref.id ||
         (!current && !sameRef(artifactRef, ref)) || (current && artifactRef.revision > ref.revision)) invalid();
     return {
-      revision: parsed.data as ArtifactRevision,
+      revision: parsed.data,
       receipt: {
         publication_ref: identifier(receipt.publication_ref, 'publication reference'),
         artifact_ref: artifactRef,

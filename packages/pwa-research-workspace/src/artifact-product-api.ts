@@ -1,9 +1,9 @@
-import { ArtifactRevisionSchema, Sha256Schema, type ArtifactRevision, type VersionedRef } from "@eliotr/contracts";
+import { ArtifactRevisionReadSchema, Sha256Schema, type ArtifactRevisionRead, type VersionedRef } from "@eliotr/contracts";
 import { ApiRequestError, requestApi, requestApiWithStatuses } from "@eliotr/pwa-http-client";
 import { envelope, record, identifier, versionedRef, sameRef, isoTimestamp, checkGeneration, invalid } from "./research-run-wire.js";
 
 export interface ArtifactPublicationView {
-  readonly revision: ArtifactRevision;
+  readonly revision: ArtifactRevisionRead;
   readonly receipt: {
     readonly publication_ref: string; readonly artifact_ref: VersionedRef; readonly publication_revision: number;
     readonly manifest_sha256: string; readonly verification_set_sha256: string; readonly evidence_currentness_sha256: string;
@@ -35,7 +35,7 @@ function decodePublication(raw: unknown, ref: VersionedRef, generation: string, 
   const data = record(outer.data, ["protocol", "revision", "receipt", ...(mutation ? ["disposition"] : [])]);
   if (data.protocol !== "eliotr.artifact-publication.v1") invalid();
   if (mutation) disposition(data.disposition);
-  const parsed = ArtifactRevisionSchema.safeParse(data.revision); if (!parsed.success) invalid();
+  const parsed = ArtifactRevisionReadSchema.safeParse(data.revision); if (!parsed.success) invalid();
   const receipt = record(data.receipt, ["publication_ref", "artifact_ref", "publication_revision", "manifest_sha256",
     "verification_set_sha256", "evidence_currentness_sha256", "acceptance_decision_ref", "acceptance_provenance_ref",
     "acceptance_decision_sha256", "principal_ref", "authorization_receipt_ref", "created_at"]);

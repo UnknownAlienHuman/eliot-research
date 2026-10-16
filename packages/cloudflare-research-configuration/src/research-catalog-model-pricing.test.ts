@@ -117,8 +117,7 @@ describe("readVerifiedCatalogModelPricing", () => {
     expect(result.model_id).toBe(MODEL_ID);
   });
 
-  it("reads a paid OpenRouter model's provider-level SDK and exact published rates", async () => {
-    const modelId = "vendor/paid-model";
+  it.each(["vendor/paid-model", "~openai/gpt-astra-latest"])("reads exact published OpenRouter rates for %s", async modelId => {
     const source = JSON.stringify({ openrouter: { id: "openrouter", npm: "@openrouter/ai-sdk-provider",
       api: "https://openrouter.ai/api/v1", models: { [modelId]: { id: modelId,
         cost: { input: 3, output: 12 }, modalities: { input: ["text"], output: ["text"] } } } } });
@@ -127,6 +126,12 @@ describe("readVerifiedCatalogModelPricing", () => {
       advertised_sdk: "@openrouter/ai-sdk-provider", advertised_api_base: "https://openrouter.ai/api/v1",
       advertised_capabilities: { status: "advertised_unverified", api_mode: "chat" },
       rates_usd_per_1k_tokens: { input: "0.003", output: "0.012", cache_read: null } });
+  });
+
+  it("blocks a public tilde alias absent from models.dev without guessing pricing", async () => {
+    await expectReaderError(makeInput(catalogFixture({ source_provider_id: "openrouter" }), {
+      provider_id: "openrouter", model_id: "~openai/gpt-astra-latest",
+    }), "MODEL_NOT_FOUND");
   });
 
   it("rejects an unsupported provider before making a request", async () => {

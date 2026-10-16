@@ -10,7 +10,7 @@ const operationId = z.string().regex(
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u,
 );
 const providerId = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$/u);
-const modelId = z.string().regex(/^(?:@[A-Za-z0-9][A-Za-z0-9._:@/-]{0,254}|[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255})$/u);
+const modelId = z.string().regex(/^(?:@[A-Za-z0-9][A-Za-z0-9._:~@/-]{0,254}|[A-Za-z0-9~][A-Za-z0-9._:~@/-]{0,255})$/u);
 const selectionRevision = z.number().int().min(1).max(999_999).nullable();
 const configurationRef = z.string().regex(/^rpmc-[a-f0-9]{64}$/u);
 const configurationSha256 = z.string().regex(/^[a-f0-9]{64}$/u);

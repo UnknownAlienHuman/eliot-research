@@ -1,7 +1,7 @@
 {
   "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "protocol": "eliotr.contract-schema-corpus.v1",
-  "registry_generation": 13,
+  "registry_generation": 14,
   "schema_count": 276,
   "schemas": [
     {
@@ -35107,7 +35107,7 @@
             ]
           },
           "__schema5": {
-            "pattern": "^(?:@[A-Za-z0-9][A-Za-z0-9._:@/-]{0,254}|[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255})$",
+            "pattern": "^(?:@[A-Za-z0-9][A-Za-z0-9._:~@/-]{0,254}|[A-Za-z0-9~][A-Za-z0-9._:~@/-]{0,255})$",
             "type": "string"
           },
           "__schema6": {
@@ -35158,7 +35158,7 @@
             ]
           }
         },
-        "$id": "urn:eliotr:contracts:research:research-catalog-model-use-receipt:v1:g1",
+        "$id": "urn:eliotr:contracts:research:research-catalog-model-use-receipt:v2:g1",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -35225,13 +35225,13 @@
         "type": "object",
         "x-eliotr-family": "research",
         "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
+        "x-eliotr-schema-version": 2,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:research:research-catalog-model-use-receipt:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-catalog-model-use-receipt:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
@@ -35264,7 +35264,7 @@
             "type": "string"
           },
           "__schema4": {
-            "pattern": "^(?:@[A-Za-z0-9][A-Za-z0-9._:@/-]{0,254}|[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255})$",
+            "pattern": "^(?:@[A-Za-z0-9][A-Za-z0-9._:~@/-]{0,254}|[A-Za-z0-9~][A-Za-z0-9._:~@/-]{0,255})$",
             "type": "string"
           },
           "__schema5": {
@@ -35278,7 +35278,7 @@
             ]
           }
         },
-        "$id": "urn:eliotr:contracts:research:research-catalog-model-use-request:v1:g1",
+        "$id": "urn:eliotr:contracts:research:research-catalog-model-use-request:v2:g1",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -35313,13 +35313,13 @@
         "type": "object",
         "x-eliotr-family": "research",
         "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
+        "x-eliotr-schema-version": 2,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:research:research-catalog-model-use-request:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-catalog-model-use-request:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
@@ -42310,11 +42310,11 @@
           "__schema1": {
             "maxLength": 256,
             "minLength": 1,
-            "pattern": "^(?:@[A-Za-z0-9][A-Za-z0-9._:@/-]{0,254}|[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255})$",
+            "pattern": "^(?:@[A-Za-z0-9][A-Za-z0-9._:~@/-]{0,254}|[A-Za-z0-9~][A-Za-z0-9._:~@/-]{0,255})$",
             "type": "string"
           }
         },
-        "$id": "urn:eliotr:contracts:model:service-model-provider-catalog-preferences:v1:g1",
+        "$id": "urn:eliotr:contracts:model:service-model-provider-catalog-preferences:v2:g1",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -42420,13 +42420,13 @@
         "type": "object",
         "x-eliotr-family": "model",
         "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
+        "x-eliotr-schema-version": 2,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:model:service-model-provider-catalog-preferences:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:model:service-model-provider-catalog-preferences:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
@@ -42445,11 +42445,11 @@
           "__schema1": {
             "maxLength": 256,
             "minLength": 1,
-            "pattern": "^(?:@[A-Za-z0-9][A-Za-z0-9._:@/-]{0,254}|[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255})$",
+            "pattern": "^(?:@[A-Za-z0-9][A-Za-z0-9._:~@/-]{0,254}|[A-Za-z0-9~][A-Za-z0-9._:~@/-]{0,255})$",
             "type": "string"
           }
         },
-        "$id": "urn:eliotr:contracts:model:service-model-provider-catalog-preferences-update:v1:g1",
+        "$id": "urn:eliotr:contracts:model:service-model-provider-catalog-preferences-update:v2:g1",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -42542,13 +42542,13 @@
         "type": "object",
         "x-eliotr-family": "model",
         "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
+        "x-eliotr-schema-version": 2,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:model:service-model-provider-catalog-preferences-update:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:model:service-model-provider-catalog-preferences-update:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
@@ -42567,11 +42567,11 @@
           "__schema1": {
             "maxLength": 256,
             "minLength": 1,
-            "pattern": "^(?:@[A-Za-z0-9][A-Za-z0-9._:@/-]{0,254}|[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255})$",
+            "pattern": "^(?:@[A-Za-z0-9][A-Za-z0-9._:~@/-]{0,254}|[A-Za-z0-9~][A-Za-z0-9._:~@/-]{0,255})$",
             "type": "string"
           }
         },
-        "$id": "urn:eliotr:contracts:model:service-model-provider-catalog-visibility:v1:g1",
+        "$id": "urn:eliotr:contracts:model:service-model-provider-catalog-visibility:v2:g1",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "oneOf": [
           {
@@ -42638,13 +42638,13 @@
         "title": "ServiceModelProviderCatalogVisibility",
         "x-eliotr-family": "model",
         "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
+        "x-eliotr-schema-version": 2,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "UNION",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:model:service-model-provider-catalog-visibility:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:model:service-model-provider-catalog-visibility:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "NON_OBJECT"
     },
     {
@@ -42673,7 +42673,7 @@
           "__schema11": {
             "maxLength": 256,
             "minLength": 1,
-            "pattern": "^(?:@[A-Za-z0-9][A-Za-z0-9._:@/-]{0,254}|[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255})$",
+            "pattern": "^(?:@[A-Za-z0-9][A-Za-z0-9._:~@/-]{0,254}|[A-Za-z0-9~][A-Za-z0-9._:~@/-]{0,255})$",
             "type": "string"
           },
           "__schema2": {
@@ -42768,7 +42768,7 @@
             "type": "string"
           }
         },
-        "$id": "urn:eliotr:contracts:model:service-model-provider-connection:v1:g1",
+        "$id": "urn:eliotr:contracts:model:service-model-provider-connection:v2:g1",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -42827,13 +42827,13 @@
         "type": "object",
         "x-eliotr-family": "model",
         "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
+        "x-eliotr-schema-version": 2,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:model:service-model-provider-connection:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:model:service-model-provider-connection:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
@@ -42943,7 +42943,7 @@
           "__schema11": {
             "maxLength": 256,
             "minLength": 1,
-            "pattern": "^(?:@[A-Za-z0-9][A-Za-z0-9._:@/-]{0,254}|[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255})$",
+            "pattern": "^(?:@[A-Za-z0-9][A-Za-z0-9._:~@/-]{0,254}|[A-Za-z0-9~][A-Za-z0-9._:~@/-]{0,255})$",
             "type": "string"
           },
           "__schema12": {
@@ -43096,7 +43096,7 @@
             ]
           }
         },
-        "$id": "urn:eliotr:contracts:model:service-model-provider-connection-v2:v1:g1",
+        "$id": "urn:eliotr:contracts:model:service-model-provider-connection-v2:v2:g1",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "oneOf": [
           {
@@ -43109,13 +43109,13 @@
         "title": "ServiceModelProviderConnectionV2",
         "x-eliotr-family": "model",
         "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
+        "x-eliotr-schema-version": 2,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "UNION",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:model:service-model-provider-connection-v2:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:model:service-model-provider-connection-v2:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "NON_OBJECT"
     },
     {
@@ -43132,11 +43132,11 @@
           "__schema1": {
             "maxLength": 256,
             "minLength": 1,
-            "pattern": "^(?:@[A-Za-z0-9][A-Za-z0-9._:@/-]{0,254}|[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255})$",
+            "pattern": "^(?:@[A-Za-z0-9][A-Za-z0-9._:~@/-]{0,254}|[A-Za-z0-9~][A-Za-z0-9._:~@/-]{0,255})$",
             "type": "string"
           }
         },
-        "$id": "urn:eliotr:contracts:model:service-model-provider-create-receipt:v1:g1",
+        "$id": "urn:eliotr:contracts:model:service-model-provider-create-receipt:v2:g1",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -43225,13 +43225,13 @@
         "type": "object",
         "x-eliotr-family": "model",
         "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
+        "x-eliotr-schema-version": 2,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:model:service-model-provider-create-receipt:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:model:service-model-provider-create-receipt:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
@@ -43281,7 +43281,7 @@
           "__schema6": {
             "maxLength": 256,
             "minLength": 1,
-            "pattern": "^(?:@[A-Za-z0-9][A-Za-z0-9._:@/-]{0,254}|[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255})$",
+            "pattern": "^(?:@[A-Za-z0-9][A-Za-z0-9._:~@/-]{0,254}|[A-Za-z0-9~][A-Za-z0-9._:~@/-]{0,255})$",
             "type": "string"
           },
           "__schema7": {
@@ -43291,7 +43291,7 @@
             "type": "string"
           }
         },
-        "$id": "urn:eliotr:contracts:model:service-model-provider-create-request:v1:g1",
+        "$id": "urn:eliotr:contracts:model:service-model-provider-create-request:v2:g1",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -43329,13 +43329,13 @@
         "type": "object",
         "x-eliotr-family": "model",
         "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
+        "x-eliotr-schema-version": 2,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:model:service-model-provider-create-request:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:model:service-model-provider-create-request:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
@@ -43487,7 +43487,7 @@
           "__schema12": {
             "maxLength": 256,
             "minLength": 1,
-            "pattern": "^(?:@[A-Za-z0-9][A-Za-z0-9._:@/-]{0,254}|[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255})$",
+            "pattern": "^(?:@[A-Za-z0-9][A-Za-z0-9._:~@/-]{0,254}|[A-Za-z0-9~][A-Za-z0-9._:~@/-]{0,255})$",
             "type": "string"
           },
           "__schema13": {
@@ -43632,7 +43632,7 @@
             ]
           }
         },
-        "$id": "urn:eliotr:contracts:model:service-model-provider-read-envelope-v2:v1:g1",
+        "$id": "urn:eliotr:contracts:model:service-model-provider-read-envelope-v2:v2:g1",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -43660,13 +43660,13 @@
         "type": "object",
         "x-eliotr-family": "model",
         "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
+        "x-eliotr-schema-version": 2,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:model:service-model-provider-read-envelope-v2:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:model:service-model-provider-read-envelope-v2:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
@@ -43721,7 +43721,7 @@
           "__schema11": {
             "maxLength": 256,
             "minLength": 1,
-            "pattern": "^(?:@[A-Za-z0-9][A-Za-z0-9._:@/-]{0,254}|[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255})$",
+            "pattern": "^(?:@[A-Za-z0-9][A-Za-z0-9._:~@/-]{0,254}|[A-Za-z0-9~][A-Za-z0-9._:~@/-]{0,255})$",
             "type": "string"
           },
           "__schema2": {
@@ -43816,7 +43816,7 @@
             "type": "string"
           }
         },
-        "$id": "urn:eliotr:contracts:model:service-model-provider-readback-envelope:v1:g1",
+        "$id": "urn:eliotr:contracts:model:service-model-provider-readback-envelope:v2:g1",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -43900,13 +43900,13 @@
         "type": "object",
         "x-eliotr-family": "model",
         "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
+        "x-eliotr-schema-version": 2,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:model:service-model-provider-readback-envelope:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:model:service-model-provider-readback-envelope:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
@@ -43992,7 +43992,7 @@
           "__schema11": {
             "maxLength": 256,
             "minLength": 1,
-            "pattern": "^(?:@[A-Za-z0-9][A-Za-z0-9._:@/-]{0,254}|[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255})$",
+            "pattern": "^(?:@[A-Za-z0-9][A-Za-z0-9._:~@/-]{0,254}|[A-Za-z0-9~][A-Za-z0-9._:~@/-]{0,255})$",
             "type": "string"
           },
           "__schema12": {
@@ -44145,7 +44145,7 @@
             ]
           }
         },
-        "$id": "urn:eliotr:contracts:model:service-model-provider-readback-envelope-v2:v1:g1",
+        "$id": "urn:eliotr:contracts:model:service-model-provider-readback-envelope-v2:v2:g1",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -44183,13 +44183,13 @@
         "type": "object",
         "x-eliotr-family": "model",
         "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
+        "x-eliotr-schema-version": 2,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:model:service-model-provider-readback-envelope-v2:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:model:service-model-provider-readback-envelope-v2:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
@@ -44200,7 +44200,7 @@
           "__schema0": {
             "maxLength": 256,
             "minLength": 1,
-            "pattern": "^(?:@[A-Za-z0-9][A-Za-z0-9._:@/-]{0,254}|[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255})$",
+            "pattern": "^(?:@[A-Za-z0-9][A-Za-z0-9._:~@/-]{0,254}|[A-Za-z0-9~][A-Za-z0-9._:~@/-]{0,255})$",
             "type": "string"
           },
           "__schema1": {
@@ -44369,7 +44369,7 @@
             ]
           }
         },
-        "$id": "urn:eliotr:contracts:model:service-model-settings:v1:g1",
+        "$id": "urn:eliotr:contracts:model:service-model-settings:v2:g1",
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "additionalProperties": false,
         "properties": {
@@ -44464,13 +44464,13 @@
         "type": "object",
         "x-eliotr-family": "model",
         "x-eliotr-schema-generation": 1,
-        "x-eliotr-schema-version": 1,
+        "x-eliotr-schema-version": 2,
         "x-eliotr-semantic-authority": "zod-runtime"
       },
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:model:service-model-settings:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:model:service-model-settings:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {

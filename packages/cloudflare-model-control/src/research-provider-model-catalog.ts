@@ -19,9 +19,11 @@ const MAX_OPENAI_MODELS = 1_000;
 const ANTHROPIC_PAGE_SIZE = 100;
 const MAX_ANTHROPIC_PAGES_PER_REQUEST = 10;
 const MAX_OPENROUTER_PAGE_SIZE = 50;
+const MAX_OPENROUTER_MODELS = 2_000;
+const MAX_OPENROUTER_RESPONSE_BYTES = 4 * 1024 * 1024;
 const MAX_OPENROUTER_PROPERTY_VALUES = 64;
 const MAX_MODEL_ID_BYTES = 256;
-const PROVIDER_ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
+const MODEL_ID = /^[A-Za-z0-9~][A-Za-z0-9._:~@/-]{0,255}$/u;
 const ACCOUNT_ID = /^[A-Fa-f0-9]{32}$/u;
 const GATEWAY_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
 
@@ -29,6 +31,7 @@ export const OPENCODE_GO_INFERENCE_BASE_URL = "https://opencode.ai/inference/go/
 export const OPENCODE_ZEN_INFERENCE_BASE_URL = "https://opencode.ai/inference/v1";
 const OPENCODE_GO_CATALOG_URL = `${OPENCODE_GO_INFERENCE_BASE_URL}/models`;
 const OPENCODE_ZEN_CATALOG_URL = `${OPENCODE_ZEN_INFERENCE_BASE_URL}/models`;
+const OPENROUTER_CATALOG_URL = "https://openrouter.ai/api/v1/models";
 
 export interface ResearchProviderModelCatalogOptions {
   /** The configured AI Gateway base URL, normally the reasoning gateway binding. */
@@ -110,14 +113,14 @@ function requestHeaders(token: string, provider: Provider, alias: string): Heade
   return headers;
 }
 
-async function readJsonWithinBound(response: Response): Promise<unknown> {
+async function readJsonWithinBound(response: Response, maxBytes = MAX_UPSTREAM_RESPONSE_BYTES): Promise<unknown> {
   const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase();
   if (contentType !== "application/json" && !contentType?.endsWith("+json")) {
     throw invalidResponse("provider model catalog returned a non-JSON response");
   }
   const lengthHeader = response.headers.get("content-length");
   if (lengthHeader !== null) {
-    if (!/^(?:0|[1-9][0-9]*)$/u.test(lengthHeader) || Number(lengthHeader) > MAX_UPSTREAM_RESPONSE_BYTES) {
+    if (!/^(?:0|[1-9][0-9]*)$/u.test(lengthHeader) || Number(lengthHeader) > maxBytes) {
       throw invalidResponse("provider model catalog response exceeded its byte bound");
     }
   }
@@ -130,7 +133,7 @@ async function readJsonWithinBound(response: Response): Promise<unknown> {
     const result = await reader.read();
     if (result.done) break;
     total += result.value.byteLength;
-    if (total > MAX_UPSTREAM_RESPONSE_BYTES) {
+    if (total > maxBytes) {
       await reader.cancel().catch(() => undefined);
       throw invalidResponse("provider model catalog response exceeded its byte bound");
     }
@@ -160,6 +163,8 @@ async function fetchCatalogJson(
   url: URL,
   headers: Headers,
   signal?: AbortSignal,
+  maxBytes = MAX_UPSTREAM_RESPONSE_BYTES,
+  publicCatalog = false,
 ): Promise<unknown> {
   let response: Response;
   try {
@@ -168,6 +173,7 @@ async function fetchCatalogJson(
       headers,
       redirect: "manual",
       cache: "no-store",
+      ...(publicCatalog ? { credentials: "omit" as const } : {}),
       ...(signal === undefined ? {} : { signal }),
     });
   } catch {
@@ -177,7 +183,7 @@ async function fetchCatalogJson(
     throw unavailable("configured provider model catalog could not be reached");
   }
   if (!response.ok) throw unavailable("configured provider model catalog returned an error");
-  return readJsonWithinBound(response);
+  return readJsonWithinBound(response, maxBytes);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -188,7 +194,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function modelId(value: unknown): string {
   if (typeof value !== "string" || new TextEncoder().encode(value).byteLength > MAX_MODEL_ID_BYTES ||
-      !PROVIDER_ID.test(value)) {
+      !MODEL_ID.test(value)) {
     throw invalidResponse("provider model catalog returned an invalid model identifier");
   }
   return value;
@@ -275,11 +281,6 @@ function anthropicPage(value: unknown): AnthropicPage {
   return Object.freeze({ models: Object.freeze(models), has_more: value.has_more, ...(lastId === undefined ? {} : { last_id: lastId }) });
 }
 
-interface OpenRouterPage {
-  readonly models: readonly ExternalProviderCatalogModel[];
-  readonly total_count: number;
-}
-
 function boundedStringList(value: unknown): readonly string[] | undefined {
   if (!Array.isArray(value) || value.length > MAX_OPENROUTER_PROPERTY_VALUES ||
       value.some((item) => typeof item !== "string" || new TextEncoder().encode(item).byteLength > 128)) {
@@ -290,24 +291,32 @@ function boundedStringList(value: unknown): readonly string[] | undefined {
   return Object.freeze([...strings]);
 }
 
-function openRouterPage(value: unknown, pageSize: number): OpenRouterPage {
-  if (!isRecord(value) || !Array.isArray(value.data) || value.data.length > pageSize ||
-      !isRecord(value.links) || !Number.isSafeInteger(value.total_count) ||
-      (value.total_count as number) < 0) {
+function openRouterModels(value: unknown): readonly ExternalProviderCatalogModel[] {
+  if (!isRecord(value) || !Array.isArray(value.data) || value.data.length > MAX_OPENROUTER_MODELS) {
     throw invalidResponse("OpenRouter model list has an invalid response envelope");
   }
+  // A no-query request must return the whole feed. Do not follow advertised
+  // links, accept a partial catalog as complete, or require optional pagination metadata.
+  if ((value.total_count !== undefined && value.total_count !== value.data.length) ||
+      (value.links !== undefined && (!isRecord(value.links) ||
+        (value.links.next !== undefined && value.links.next !== null)))) {
+    throw invalidResponse("OpenRouter full model catalog is incomplete");
+  }
   const seen = new Set<string>();
-  const models = value.data.map((raw): ExternalProviderCatalogModel => {
+  const models = value.data.flatMap((raw): ExternalProviderCatalogModel[] => {
     if (!isRecord(raw)) throw invalidResponse("OpenRouter model list contains an invalid row");
     const id = modelId(raw.id);
     if (seen.has(id)) throw invalidResponse("OpenRouter model list contains duplicate model identifiers");
     seen.add(id);
     const architecture = isRecord(raw.architecture) ? raw.architecture : undefined;
     const outputModalities = boundedStringList(architecture?.output_modalities);
-    // The endpoint is filtered to text output. Keep its claims descriptive; this
-    // does not establish ELIOT stage, schema, billing, or qualification support.
+    if (architecture?.output_modalities !== undefined && outputModalities === undefined) {
+      throw invalidResponse("OpenRouter model list has invalid output modalities");
+    }
+    // Filter the full public feed locally. Directory metadata never establishes
+    // ELIOT stage/schema support, account entitlement or model qualification.
     if (outputModalities !== undefined && !outputModalities.includes("text")) {
-      throw invalidResponse("OpenRouter text catalog returned a model without text output");
+      return [];
     }
     const properties: { property_id: string; value: string | number | readonly string[] }[] = [];
     const contextLength = optionalNonNegativeInteger(raw.context_length);
@@ -334,17 +343,19 @@ function openRouterPage(value: unknown, pageSize: number): OpenRouterPage {
     if (maxCompletion !== undefined) properties.push({ property_id: "catalog_top_provider_max_completion_tokens", value: maxCompletion });
     const name = optionalText(raw.name, 512);
     const description = optionalText(raw.description, 8_192);
-    return Object.freeze({
+    return [Object.freeze({
       model_id: id,
       name: name || id,
-      description: description || "",
+      // Public descriptions may contain paragraphs; project them as bounded
+      // display text without weakening the owner decoder's control-character gate.
+      description: (description || "").replace(/[\r\n\t]+/gu, " "),
       text_generation: "unknown" as const,
       billing_support: "unknown" as const,
       properties: Object.freeze(properties),
       tags: Object.freeze([]),
-    });
+    })];
   });
-  return Object.freeze({ models: Object.freeze(models), total_count: value.total_count as number });
+  return Object.freeze(models);
 }
 
 function matchesSearch(model: ExternalProviderCatalogModel, search: string | undefined): boolean {
@@ -459,26 +470,23 @@ function openRouterTransport(options: ResearchProviderModelCatalogOptions): Exte
   return Object.freeze({
     provider_id: "openrouter",
     async listTextGeneration(input: ExternalProviderCatalogInput): Promise<ExternalProviderCatalogPage> {
-      const config = await requestedProviderConfig("openrouter", options);
-      if (input.per_page > MAX_OPENROUTER_PAGE_SIZE) {
+      if (!Number.isSafeInteger(input.page) || input.page < 1 || !Number.isSafeInteger(input.per_page) ||
+          input.per_page < 1 || input.per_page > MAX_OPENROUTER_PAGE_SIZE) {
         throw invalidPage("OpenRouter catalog page exceeds its bounded page size");
       }
       const offset = (input.page - 1) * input.per_page;
-      if (!Number.isSafeInteger(offset)) throw invalidPage("OpenRouter catalog page is outside its bounded range");
-      const url = new URL(`${config.root}/openrouter/models`);
-      url.searchParams.set("offset", String(offset));
-      url.searchParams.set("limit", String(input.per_page));
-      url.searchParams.set("output_modalities", "text");
-      if (input.search !== undefined) url.searchParams.set("q", input.search);
+      const end = offset + input.per_page;
+      if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(end)) throw invalidPage("OpenRouter catalog page is outside its bounded range");
+      const url = new URL(OPENROUTER_CATALOG_URL);
       const fetcher = options.fetcher ?? fetch;
-      const raw = await fetchCatalogJson(fetcher, url, requestHeaders(config.token, "openrouter", config.alias), input.signal);
-      const page = openRouterPage(raw, input.per_page);
-      const models = page.models.filter((model) => matchesSearch(model, input.search) &&
-        (config.model_ids === undefined || config.model_ids.includes(model.model_id)));
+      // Public metadata is independent of configured account aliases. Inference
+      // credentials and registration/qualification authority stay on their existing paths.
+      const raw = await fetchCatalogJson(fetcher, url, new Headers({ accept: "application/json" }),
+        input.signal, MAX_OPENROUTER_RESPONSE_BYTES, true);
+      const models = openRouterModels(raw).filter((model) => matchesSearch(model, input.search));
       return Object.freeze({
-        models: Object.freeze(models),
-        has_more: config.model_ids !== undefined && models.length !== page.models.length
-          ? null : offset + page.models.length < page.total_count,
+        models: Object.freeze(models.slice(offset, end)),
+        has_more: models.length > end,
       });
     },
   });

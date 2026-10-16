@@ -52,6 +52,7 @@ function recorder(response: unknown): {
 }
 
 const revision = (overrides: Record<string, unknown> = {}) => ({
+  title: 'Published report',
   artifact_ref: REF,
   spec_ref: { id: 'spec-1', revision: 1 },
   spec_digest: SPEC_DIGEST,
@@ -111,6 +112,7 @@ describe('studio artifact publication reads', () => {
     const artifact = createArtifactApi({ ...deps, epoch: createSessionEpoch() });
     const view = await artifact.readArtifactPublication(REF, GENERATION);
     expect(view?.revision.status).toBe('ACCEPTED');
+    expect(view?.revision.title).toBe('Published report');
     expect(view?.receipt.publication_ref).toBe('publication-1');
     expect(calls[0]?.path).toBe('/api/v1/research/artifact/artifact-1%3A4/publication');
   });
@@ -331,7 +333,7 @@ const reauthorization = (
 const publicationEnvelope = (overrides: Record<string, unknown> = {}) => ({
   data: {
     protocol: 'eliotr.artifact-publication.v1',
-    revision: draft(),
+    revision: readDraft(),
     receipt: {
       publication_ref: 'publication-1',
       artifact_ref: REF,

@@ -23,6 +23,14 @@ export const CANONICAL_FIXTURE_REGISTRY =
     registry_generation: CONTRACT_SCHEMA_REGISTRY_GENERATION,
     fixtures: [
       {
+        fixture_id: "research-catalog-model-use-tilde-v1",
+        protocol: RESEARCH_CATALOG_MODEL_USE_REQUEST_PROTOCOL,
+        schema_export: "ResearchCatalogModelUseRequestSchema",
+        fixture_path: "docs/contracts/fixtures/eliotr.research.catalog-model-use-tilde.v1.json",
+        media_type: "application/json",
+        canonical_body_sha256: "ad51264c0ebd3ed9489e1b6796440e94373ad5a80699bba039974745cf2d4f5d",
+      },
+      {
         fixture_id: "research-catalog-model-use-request-v1",
         protocol: RESEARCH_CATALOG_MODEL_USE_REQUEST_PROTOCOL,
         schema_export: "ResearchCatalogModelUseRequestSchema",

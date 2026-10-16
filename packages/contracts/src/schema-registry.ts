@@ -53,7 +53,7 @@ import {
   type ContractStructuralStrictness,
 } from "./registry-contracts.js";
 
-export const CONTRACT_SCHEMA_REGISTRY_GENERATION = 13 as const;
+export const CONTRACT_SCHEMA_REGISTRY_GENERATION = 14 as const;
 
 export type ContractJsonPrimitive = string | number | boolean | null;
 export type ContractJsonValue =
@@ -329,7 +329,17 @@ function buildRegistry(): readonly ContractSchemaDescriptor[] {
       // binds each managed outcome request digest to its leg's retrieval request digest; the
       // retrieval service and branch adapter derive both from the same retrieval request.
       // Historical legacy traces still parse through their retained union member.
-      const version = ["ScopeSnapshotSchema", "RetrievalTraceSchema", "InvestigationSchema",
+      // Registry 14 widens model IDs only. Old readers reject opaque ~ IDs, so
+      // publish new schema versions while preserving every prior compatibility entry.
+      const version = ["ResearchCatalogModelUseReceiptSchema", "ResearchCatalogModelUseRequestSchema",
+        "ServiceModelProviderCatalogPreferencesSchema", "ServiceModelProviderCatalogPreferencesUpdateSchema",
+        "ServiceModelProviderCatalogVisibilitySchema", "ServiceModelProviderConnectionSchema",
+        "ServiceModelProviderConnectionV2Schema", "ServiceModelProviderCreateReceiptSchema",
+        "ServiceModelProviderCreateRequestSchema", "ServiceModelProviderReadEnvelopeV2Schema",
+        "ServiceModelProviderReadbackEnvelopeSchema", "ServiceModelProviderReadbackEnvelopeV2Schema",
+        "ServiceModelSettingsSchema"].includes(exportName)
+        ? { schema_version: 2, schema_generation: 1 }
+        : ["ScopeSnapshotSchema", "RetrievalTraceSchema", "InvestigationSchema",
         "InquiryProtocolProfileSchema"].includes(exportName)
         ? { schema_version: 1, schema_generation: 2 }
         : ["CoordinateMapEntrySchema", "CoordinateMapSchema", "CitationResolutionReceiptSchema",

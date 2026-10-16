@@ -7,6 +7,7 @@ import diagnosticIssuedFixtureRaw from "../../../docs/contracts/fixtures/eliotr.
 import researchBranchBudgetFixtureRaw from "../../../tests/fixtures/contracts/eliotr.research.branch-query-budget-exhaustion.v1.json?raw";
 import schemaCorpusRaw from "../../../docs/contracts/schema-corpus.v1.json?raw";
 import catalogModelUseFixtureRaw from "../../../docs/contracts/fixtures/eliotr.research.catalog-model-use-request.v1.json?raw";
+import catalogModelUseTildeFixtureRaw from "../../../docs/contracts/fixtures/eliotr.research.catalog-model-use-tilde.v1.json?raw";
 import libraryReadinessFixtureRaw from "../../../tests/fixtures/contracts/eliotr.library-readiness.v1.json?raw";
 import workspaceMcpFixtureRaw from "../../../tests/fixtures/contracts/eliotr.workspace-mcp-plan-input.v2.json?raw";
 import * as computerAgentConnection from "./computer-agent-connection.js";
@@ -124,7 +125,14 @@ describe("ER-01 public contract registry", () => {
           "ResearchBranchAnalysisCheckpointV2Schema", "ResearchBranchReconciliationCheckpointV2Schema",
         ].includes(exportName) ? 3
           : ["BranchQueryLegResultSchema", "BranchQueryResultSchema"].includes(exportName) ? 2
-            : exportName === "ResearchEvidenceFreezeV3Schema" ? 3 : 1;
+            : ["ResearchCatalogModelUseReceiptSchema", "ResearchCatalogModelUseRequestSchema",
+              "ServiceModelProviderCatalogPreferencesSchema", "ServiceModelProviderCatalogPreferencesUpdateSchema",
+              "ServiceModelProviderCatalogVisibilitySchema", "ServiceModelProviderConnectionSchema",
+              "ServiceModelProviderConnectionV2Schema", "ServiceModelProviderCreateReceiptSchema",
+              "ServiceModelProviderCreateRequestSchema", "ServiceModelProviderReadEnvelopeV2Schema",
+              "ServiceModelProviderReadbackEnvelopeSchema", "ServiceModelProviderReadbackEnvelopeV2Schema",
+              "ServiceModelSettingsSchema"].includes(exportName) ? 2
+              : exportName === "ResearchEvidenceFreezeV3Schema" ? 3 : 1;
         expect(requireContractSchemaDescriptor(exportName)).toMatchObject({
           family,
           schema_version: schemaVersion,
@@ -213,6 +221,7 @@ describe("ER-01 public contract registry", () => {
 
   it.each([
     ["research-catalog-model-use-request-v1", catalogModelUseFixtureRaw],
+    ["research-catalog-model-use-tilde-v1", catalogModelUseTildeFixtureRaw],
     ["library-readiness-v1", libraryReadinessFixtureRaw],
     ["workspace-mcp-plan-input-v2", workspaceMcpFixtureRaw],
     ["research-branch-query-budget-exhaustion-v1", researchBranchBudgetFixtureRaw],

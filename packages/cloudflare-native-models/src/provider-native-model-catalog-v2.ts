@@ -21,6 +21,7 @@ export const PROVIDER_NATIVE_MODEL_CATALOG_V2_PROOF_PROTOCOL =
   "eliotr.provider-native-model-qualification.v2" as const;
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9:._/@-]{0,255}$/u;
+const MODEL_IDENTIFIER = /^[A-Za-z0-9~][A-Za-z0-9:._/~@-]{0,255}$/u;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const ALIAS = /^eliotr-[a-f0-9]{48}$/u;
@@ -75,8 +76,8 @@ function object(value: unknown, keys: ReadonlySet<string>, label: string): Recor
   return result;
 }
 
-function id(value: unknown, label: string): string {
-  if (typeof value !== "string" || !IDENTIFIER.test(value)) return fail("INPUT_INVALID", `${label} is invalid`);
+function id(value: unknown, label: string, pattern = IDENTIFIER): string {
+  if (typeof value !== "string" || !pattern.test(value)) return fail("INPUT_INVALID", `${label} is invalid`);
   return value;
 }
 
@@ -329,7 +330,7 @@ export function decodeProviderNativeModelCatalogPreparationV2(raw: unknown): Pro
   const projectId = id(value.project_id, "catalog model project");
   const providerId = id(value.provider_id, "logical provider id");
   const providerSlug = id(value.provider_slug, "physical provider slug");
-  const modelId = id(value.model_id, "catalog model id");
+  const modelId = id(value.model_id, "catalog model id", MODEL_IDENTIFIER);
   const operationId = value.owner_operation_id;
   const consentId = value.consent_operation_id;
   const preparedAt = utc(value.prepared_at, "preparation time");
@@ -392,7 +393,7 @@ export function decodeProviderNativeModelCatalogObservationV2(raw: unknown): Pro
       typeof value.output_tokens !== "number" || !Number.isSafeInteger(value.output_tokens) || value.output_tokens < 0) {
     return fail("INPUT_INVALID", "catalog model observation is invalid");
   }
-  const modelId = id(value.model_id, "observed model id");
+  const modelId = id(value.model_id, "observed model id", MODEL_IDENTIFIER);
   if (value.response_model !== modelId) return fail("PROOF_INVALID", "provider response model does not match the exact selected model");
   return Object.freeze({ protocol: PROVIDER_NATIVE_MODEL_CATALOG_V2_OBSERVATION_PROTOCOL,
     qualification_purpose: "structured-output-connectivity", api: value.api as ProviderNativeModelCatalogObservationV2["api"],
@@ -513,7 +514,7 @@ export function decodeProviderNativeModelCatalogProofV2(raw: unknown): ProviderN
     owner_ref: id(value.owner_ref, "proof owner"), project_id: id(value.project_id, "proof project"),
     consent_operation_id: id(value.consent_operation_id, "consent operation"), provider_id: id(value.provider_id, "proof logical provider"),
     provider_slug: id(value.provider_slug, "proof physical provider"), provider_operation_id: id(value.provider_operation_id, "provider operation"),
-    model_id: id(value.model_id, "proof model"), pricing_snapshot_ref: id(value.pricing_snapshot_ref, "pricing snapshot ref"),
+    model_id: id(value.model_id, "proof model", MODEL_IDENTIFIER), pricing_snapshot_ref: id(value.pricing_snapshot_ref, "pricing snapshot ref"),
     pricing_snapshot_sha256: digest(value.pricing_snapshot_sha256, "pricing snapshot digest"),
     catalog_sdk: sdkName(value.catalog_sdk, "proof catalog SDK"),
     sdk_base_url: httpsUrl(value.sdk_base_url, "proof SDK base URL"),

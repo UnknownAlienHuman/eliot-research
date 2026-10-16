@@ -30,9 +30,9 @@ const operationId = z.string().regex(
 );
 const providerSlug = z.string().min(1).max(63).regex(/^[a-z0-9][a-z0-9-]{0,62}$/u);
 const displayName = z.string().min(1).max(128);
-/** Identical grammar to the existing catalog: a leading @ is a native Workers AI id. */
+/** Opaque model IDs admit RFC 3986 unreserved ~; a leading @ is a native Workers AI id. */
 const modelIdentifier = z.string().min(1).max(256)
-  .regex(/^(?:@[A-Za-z0-9][A-Za-z0-9._:@/-]{0,254}|[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255})$/u);
+  .regex(/^(?:@[A-Za-z0-9][A-Za-z0-9._:~@/-]{0,254}|[A-Za-z0-9~][A-Za-z0-9._:~@/-]{0,255})$/u);
 const providerConfigurationId =
   z.string().min(1).max(128).regex(/^[A-Za-z0-9._:-]+$/u);
 const providerAlias = z.string().min(1).max(63).regex(/^[A-Za-z0-9][A-Za-z0-9._-]*$/u);

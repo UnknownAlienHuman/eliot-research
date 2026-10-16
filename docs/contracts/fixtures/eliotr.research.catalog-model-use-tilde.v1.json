@@ -1,0 +1,8 @@
+{
+  "expected_selection_revision": null,
+  "model_id": "~openai/gpt-astra-latest",
+  "operation_id": "11111111-1111-4111-8111-111111111111",
+  "protocol": "eliotr.research.catalog-model-use-request.v1",
+  "provider_id": "openrouter",
+  "provider_operation_id": "22222222-2222-4222-8222-222222222222"
+}

@@ -64,6 +64,15 @@ function store(
 }
 
 describe("D1 model gateway fingerprint store over actual Worker D1", () => {
+  it("round-trips opaque tilde model IDs while provider IDs stay closed", async () => {
+    const value = { ...fingerprint("tilde"), exact_model_id: "~openai/gpt-astra-latest" };
+    const digest = await digestFingerprint(value);
+    const receipt = await store({ now: () => NOW }).putImmutable(value, digest) as FingerprintReceipt;
+    await expect(readD1ModelGatewayFingerprint(runtime.CORE_DB, receipt.fingerprint_ref)).resolves.toEqual(value);
+    const invalid = { ...value, provider: "~provider" };
+    await expect(store().putImmutable(invalid, await digestFingerprint(invalid)))
+      .rejects.toMatchObject({ code: "MODEL_FINGERPRINT_INPUT_INVALID" });
+  });
   it("persists the exact canonical fingerprint and replays the same immutable reference", async () => {
     const value = fingerprint("canonical");
     const expected = await digestFingerprint(value);

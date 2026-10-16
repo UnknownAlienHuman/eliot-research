@@ -137,11 +137,7 @@ describe("owner COW HTTP/runner on native Workerd D1/R2", () => {
       let decorated = 0;
       const originalAi = data.configuredEnv.AI;
       if (originalAi === undefined) throw new Error("COW regression has no controlled AI binding");
-      const ai = new Proxy(originalAi, { get(target, property) {
-        if (property === "run") return async (...args: unknown[]) => {
-          const run = Reflect.get(target, property, target) as (...values: unknown[]) => Promise<unknown>;
-          const result: unknown = await Reflect.apply(run, target, args);
-          if (!(result instanceof Response)) throw new Error("COW controlled model response is not HTTP bytes");
+      const decorateResponse = async (result: Response) => {
           const currentSlot = data.modelCalls() === 1 ? "SYNTHESIZE" : "INDEPENDENT_VERIFY";
           if (currentSlot !== slot) return result;
           const body = await result.json() as {
@@ -155,6 +151,13 @@ describe("owner COW HTTP/runner on native Workerd D1/R2", () => {
             choices: body.choices.map((choice) => ({ ...choice,
               message: { ...choice.message, reasoning_content: "Controlled private COW reasoning" } })),
             usage: { ...body.usage, neurons: 1 } }), { status: result.status, headers: result.headers });
+      };
+      const ai = new Proxy(originalAi, { get(target, property) {
+        if (property === "gateway") return (id: string) => {
+          const getGateway = Reflect.get(target, property, target) as (gatewayId: string) => Pick<AiGateway, "run" | "getUrl" | "getLog">;
+          const gateway = getGateway.call(target, id);
+          return { getUrl: gateway.getUrl.bind(gateway), getLog: gateway.getLog.bind(gateway),
+            run: async (...args: Parameters<AiGateway["run"]>) => decorateResponse(await gateway.run(...args)) };
         };
         const value = Reflect.get(target, property, target);
         return typeof value === "function" ? value.bind(target) : value;

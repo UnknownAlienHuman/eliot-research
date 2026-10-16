@@ -60,6 +60,16 @@ beforeAll(async () => {
 });
 
 describe("D1 research model pricing snapshot store over actual Worker D1", () => {
+  it("round-trips an opaque tilde model without widening pricing provider identities", async () => {
+    const model = "~openai/gpt-astra-latest";
+    const command = { identity: { ...identity("tilde"), exact_model_id: model }, snapshot: snapshot("tilde", { exact_model_id: model }) };
+    const store = createD1ResearchModelPricingSnapshotStore(runtime.CORE_DB, { now: () => NOW });
+    const persisted = await store.putImmutable(command);
+    expect(persisted.exact_model_id).toBe(model);
+    await expect(store.read(command.identity)).resolves.toEqual(persisted);
+    await expect(store.putImmutable({ identity: { ...command.identity, provider: "~provider" },
+      snapshot: { ...command.snapshot, provider: "~provider" } })).rejects.toThrow();
+  });
   it("persists the exact canonical document and replays one immutable identity", async () => {
     const command = input("canonical");
     const expectedDigest = await snapshotDigest(command.snapshot);

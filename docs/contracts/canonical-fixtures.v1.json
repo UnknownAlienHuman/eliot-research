@@ -1,6 +1,14 @@
 {
   "fixtures": [
     {
+      "canonical_body_sha256": "ad51264c0ebd3ed9489e1b6796440e94373ad5a80699bba039974745cf2d4f5d",
+      "fixture_id": "research-catalog-model-use-tilde-v1",
+      "fixture_path": "docs/contracts/fixtures/eliotr.research.catalog-model-use-tilde.v1.json",
+      "media_type": "application/json",
+      "protocol": "eliotr.research.catalog-model-use-request.v1",
+      "schema_export": "ResearchCatalogModelUseRequestSchema"
+    },
+    {
       "canonical_body_sha256": "a09eefe74414b993eaf546b7dd98c3983503ba998c52d1172d6ea08ff531e3fb",
       "fixture_id": "research-catalog-model-use-request-v1",
       "fixture_path": "docs/contracts/fixtures/eliotr.research.catalog-model-use-request.v1.json",
@@ -98,5 +106,5 @@
     }
   ],
   "protocol": "eliotr.contract-canonical-fixtures.v1",
-  "registry_generation": 13
+  "registry_generation": 14
 }

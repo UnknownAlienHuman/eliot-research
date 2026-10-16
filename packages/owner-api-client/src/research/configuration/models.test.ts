@@ -60,6 +60,24 @@ const catalogEntry = (overrides: Partial<ResearchModelCatalogEntry> = {}): Resea
   ...overrides,
 });
 
+describe('opaque public catalog model identities', () => {
+  it('round-trips tilde model IDs with unknown account entitlement and no provider grammar widening', async () => {
+    const model = catalogEntry({ provider_id: 'openrouter', model_id: '~openai/gpt-astra-latest',
+      source_id: null, source_task: null,
+      capabilities: { text_generation: 'unknown', input_output_schema: 'unknown', schema_requirement: null },
+      billing: { selected_path: 'provider_catalog', support: 'unknown', account_entitlement: 'not_established_by_catalog' } });
+    const { http, calls } = recorder(envelope({ protocol: 'eliotr.service-model-catalog.v1', task: 'text-generation',
+      catalog_scope: 'external_provider', provider_id: 'openrouter', models: [model],
+      pagination: { page: 1, per_page: 20, has_more: false, next_page: null, coverage: 'complete', probe: 'provider_reported' } }));
+    const api = createResearchModelConfigurationApi(http, errors, createSessionEpoch());
+    const page = await api.readServiceModelCatalog(generation, { providerId: 'openrouter' });
+    expect(page.models[0]).toEqual(model);
+    expect(page.models[0]?.model_id).toBe('~openai/gpt-astra-latest');
+    await expect(api.readServiceModelCatalog(generation, { providerId: '~openrouter' })).rejects.toThrow();
+    expect(calls).toHaveLength(1);
+  });
+});
+
 const modelSelection = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
   stage: 'SYNTHESIZE',
   route_ref: 'route/research',

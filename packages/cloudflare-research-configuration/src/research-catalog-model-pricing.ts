@@ -3,7 +3,7 @@ const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MAX_JSON_DEPTH = 128;
 const MAX_PRICE_TOKEN_LENGTH = 512;
 const MAX_PRICE_EXPONENT = 512;
-const MODEL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
+const MODEL_ID_PATTERN = /^[A-Za-z0-9~][A-Za-z0-9._:~@/-]{0,255}$/u;
 
 const SOURCE_PROVIDER_BY_LOGICAL_PROVIDER = {
   "opencode-go": "opencode-go",

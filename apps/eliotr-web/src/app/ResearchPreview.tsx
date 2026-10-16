@@ -413,8 +413,10 @@ export async function playResearchAnnouncements({ canvas, userEvent }: Parameter
   const before = region.textContent;
   await userEvent.type(question, 'How does a saved question preserve its evidence?');
   if (paneAnnouncement(root) !== region || region.textContent !== before) throw new Error('Typing created a static live region');
-  const ask = await canvas.findByRole('button', { name: 'Ask', exact: true }); ask.click(); ask.click();
-  await announcementUntil(() => unchangedChannel(root, region, 'The launch outcome is unknown. The original question and request identity are preserved.'));
+  const ask = await canvas.findByRole('button', { name: 'Ask', exact: true });
+  await announcementUntil(() => ask instanceof HTMLButtonElement && !ask.disabled);
+  ask.click(); ask.click();
+  await announcementUntil(() => unchangedChannel(root, region, 'The launch outcome is unknown. The original question and request identity are preserved. The launch response could not be confirmed.'));
   await userEvent.click(await canvas.findByRole('button', { name: 'Reconcile this question' }));
   await announcementUntil(() => unchangedChannel(root, region, 'The engine finished. Review its result.'));
   // Terminal visual readiness: the engine-finished announcement settled on the retained channel.

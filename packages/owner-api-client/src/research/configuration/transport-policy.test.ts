@@ -22,6 +22,12 @@ const basePolicy = {
 };
 
 describe('transport policy decoder', () => {
+  it('accepts opaque tilde model IDs while keeping provider and credential alias grammars unchanged', () => {
+    expect(decode({ ...basePolicy, model: '~openai/gpt-astra-latest' }).model).toBe('~openai/gpt-astra-latest');
+    expect(() => decode({ ...basePolicy, provider: '~openrouter' })).toThrow();
+    expect(() => decode({ ...basePolicy, billing: { mode: 'byok', alias: '~alias' } })).toThrow();
+    expect(() => decode({ ...basePolicy, model: 'vendor/model?redirect=other' })).toThrow();
+  });
   it('preserves a custom provider model and named alias while refusing guessed provider routing', () => {
     const policy = { ...basePolicy, api: 'custom-chat-completions', provider: 'custom-opencode-go',
       billing: { mode: 'byok', alias: 'saved-provider' },

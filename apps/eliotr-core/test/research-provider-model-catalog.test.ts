@@ -64,7 +64,7 @@ describe("official AI Gateway provider model catalog transports", () => {
       const url = new URL(input instanceof Request ? input.url : String(input));
       expect(url.href).toBe(`${gateway}/openai/models`);
       expect(init?.method).toBe("GET");
-      expect(init?.redirect).toBe("error");
+      expect(init?.redirect).toBe("manual");
       const headers = new Headers(init?.headers);
       expect(headers.get("cf-aig-authorization")).toBe("Bearer server-held-test-token"); // privacy-allowlist: synthetic token fixture
       expect(headers.get("cf-aig-no-wholesale")).toBe("true");
@@ -168,20 +168,15 @@ describe("official AI Gateway provider model catalog transports", () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it("reads OpenRouter's bounded official model directory through its exact prepared BYOK alias", async () => {
+  it("reads OpenRouter's full public directory without credentials or server pagination", async () => {
     const fetcher = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(input instanceof Request ? input.url : String(input));
-      expect(url.origin + url.pathname).toBe(`${gateway}/openrouter/models`);
-      expect(url.searchParams.get("offset")).toBe("0");
-      expect(url.searchParams.get("limit")).toBe("1");
-      expect(url.searchParams.get("output_modalities")).toBe("text");
-      expect(url.searchParams.get("q")).toBe("space-bunny");
+      expect(url.href).toBe("https://openrouter.ai/api/v1/models");
       expect(init?.method).toBe("GET");
-      expect(init?.redirect).toBe("error");
+      expect(init?.redirect).toBe("manual");
+      expect(init?.credentials).toBe("omit");
       const headers = new Headers(init?.headers);
-      expect(headers.get("cf-aig-authorization")).toBe("Bearer server-held-test-token"); // privacy-allowlist: synthetic token fixture
-      expect(headers.get("cf-aig-no-wholesale")).toBe("true");
-      expect(headers.get("cf-aig-byok-alias")).toBe("research");
+      expect([...headers]).toEqual([["accept", "application/json"]]);
       expect(headers.get("authorization")).toBeNull();
       expect(headers.get("x-api-key")).toBeNull();
       return jsonResponse({
@@ -195,11 +190,13 @@ describe("official AI Gateway provider model catalog transports", () => {
           supported_parameters: ["max_tokens", "reasoning_effort", "response_format"],
           pricing: { prompt: "0", completion: "0" },
           top_provider: { max_completion_tokens: 8_192 },
-        }],
+        }, { id: "stealth/space-bunny-beta", architecture: { output_modalities: ["text"] } },
+        { id: "audio/transcriber", architecture: { output_modalities: ["audio"] } }],
         links: {},
-        total_count: 2,
+        total_count: 3,
       });
     }) as typeof fetch;
+    const resolveProvider = vi.fn(async () => { throw new Error("ambiguous legacy configured accounts"); });
     const transports = createResearchProviderModelCatalogTransports({
       gateway_base_url: gateway,
       gateway_token: "server-held-test-token",
@@ -207,6 +204,7 @@ describe("official AI Gateway provider model catalog transports", () => {
         selection("SYNTHESIZE", "openrouter", "stealth/space-bunny-alpha", "research"),
       ]),
       fetcher,
+      resolve_service_provider: resolveProvider,
     });
 
     const result = await provider(transports, "openrouter").listTextGeneration({
@@ -214,6 +212,7 @@ describe("official AI Gateway provider model catalog transports", () => {
     });
 
     expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(resolveProvider).not.toHaveBeenCalled();
     expect(result.has_more).toBe(true);
     expect(result.models).toEqual([expect.objectContaining({
       model_id: "stealth/space-bunny-alpha",
@@ -271,5 +270,100 @@ describe("official AI Gateway provider model catalog transports", () => {
       page: 1_001, per_page: 1, task: "text-generation",
     })).rejects.toMatchObject({ code: "MODEL_CATALOG_REQUEST_INVALID", status: 400 });
     expect(fetcher).not.toHaveBeenCalled();
+  });
+});
+
+describe("OpenRouter public full-feed validation", () => {
+  function publicCatalog(fetcher: typeof fetch) {
+    return provider(createResearchProviderModelCatalogTransports({ gateway_base_url: "not-a-gateway", fetcher }), "openrouter");
+  }
+  const model = (id: string) => ({ id, architecture: { output_modalities: ["text"] } });
+
+  it("retains opaque tilde model identities without resolving or rewriting them", async () => {
+    const fetcher = vi.fn(async () => jsonResponse({ data: [{ ...model("~openai/gpt-astra-latest"),
+      description: "Public paragraph one.\n\nPublic paragraph two." }, model("vendor/model~variant")] }));
+    const page = await publicCatalog(fetcher).listTextGeneration({ page: 1, per_page: 20, task: "text-generation" });
+    expect(page.models.map(row => row.model_id)).toEqual(["~openai/gpt-astra-latest", "vendor/model~variant"]);
+    expect(page.models[0]?.description).toBe("Public paragraph one. Public paragraph two.");
+    expect(page.models.every(row => row.text_generation === "unknown" && row.billing_support === "unknown")).toBe(true);
+  });
+
+  it("accepts a bounded full feed larger than 256 KiB and pages/searches it locally", async () => {
+    const data = Array.from({ length: 120 }, (_item, index) => ({ ...model(`provider/model-${index}`),
+      name: `Model ${index}`, description: "public description ".repeat(200) }));
+    const source = JSON.stringify({ data });
+    expect(new TextEncoder().encode(source).byteLength).toBeGreaterThan(262_144);
+    const fetcher = vi.fn(async () => new Response(source, { headers: { "content-type": "application/json" } }));
+    const result = await publicCatalog(fetcher).listTextGeneration({ page: 2, per_page: 10, search: "model-1", task: "text-generation" });
+    const matching = data.filter(row => row.id.includes("model-1"));
+    expect(result.models.map(row => row.model_id)).toEqual(matching.slice(10, 20).map(row => row.id));
+    expect(result.has_more).toBe(matching.length > 20);
+    expect(String(fetcher.mock.calls[0]?.[0])).toBe("https://openrouter.ai/api/v1/models");
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
+  it.each([
+    { data: [model("p/a"), model("p/a")] },
+    { data: [model("p/a")], total_count: 2 },
+    { data: [model("p/a")], total_count: -1 },
+    { data: [model("p/a")], links: { next: "https://foreign.invalid/next" } },
+    { data: [{ id: "p/a", architecture: { output_modalities: "text" } }] },
+    { data: [{ id: "bad id" }] },
+    { data: Array.from({ length: 2_001 }, (_item, index) => model(`p/model-${index}`)) },
+  ])("rejects malformed, duplicate, partial or oversized model feeds %#", async value => {
+    const fetcher = vi.fn(async () => jsonResponse(value));
+    await expect(publicCatalog(fetcher).listTextGeneration({ page: 1, per_page: 20, task: "text-generation" }))
+      .rejects.toMatchObject({ code: "MODEL_CATALOG_RESPONSE_INVALID" });
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
+  it.each(["declared", "streamed"])("rejects %s bytes beyond the full-feed bound", async mode => {
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new Uint8Array(mode === "declared" ? 2 : 4 * 1024 * 1024 + 1)); },
+      cancel() { cancelled = true; },
+    });
+    const fetcher = vi.fn(async () => new Response(body, { headers: { "content-type": "application/json",
+      ...(mode === "declared" ? { "content-length": String(4 * 1024 * 1024 + 1) } : {}) } }));
+    await expect(publicCatalog(fetcher).listTextGeneration({ page: 1, per_page: 20, task: "text-generation" }))
+      .rejects.toMatchObject({ code: "MODEL_CATALOG_RESPONSE_INVALID" });
+    if (mode === "streamed") expect(cancelled).toBe(true);
+  });
+
+  it.each([
+    new Response("<html>error</html>", { headers: { "content-type": "text/html" } }),
+    new Response("{", { headers: { "content-type": "application/json" } }),
+    new Response(new Uint8Array([0xff]), { headers: { "content-type": "application/json" } }),
+  ])("rejects non-JSON or malformed response bytes %#", async response => {
+    await expect(publicCatalog(vi.fn(async () => response)).listTextGeneration({ page: 1, per_page: 20, task: "text-generation" }))
+      .rejects.toMatchObject({ code: "MODEL_CATALOG_RESPONSE_INVALID" });
+  });
+
+  it.each([{ page: 0, per_page: 20 }, { page: 1, per_page: 51 }, { page: Number.MAX_SAFE_INTEGER, per_page: 50 }])(
+    "rejects invalid local pagination before any request %#", async query => {
+      const fetcher = vi.fn(async () => jsonResponse({ data: [] }));
+      await expect(publicCatalog(fetcher).listTextGeneration({ ...query, task: "text-generation" }))
+        .rejects.toMatchObject({ code: "MODEL_CATALOG_REQUEST_INVALID" });
+      expect(fetcher).not.toHaveBeenCalled();
+    },
+  );
+
+  it("does not follow redirects to another origin", async () => {
+    const fetcher = vi.fn(async () => new Response(null, { status: 302, headers: { location: "https://foreign.invalid/models" } }));
+    await expect(publicCatalog(fetcher).listTextGeneration({ page: 1, per_page: 20, task: "text-generation" }))
+      .rejects.toMatchObject({ code: "MODEL_CATALOG_PROVIDER_UNAVAILABLE" });
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(String(fetcher.mock.calls[0]?.[0])).toBe("https://openrouter.ai/api/v1/models");
+  });
+
+  it("keeps cancellation explicit without resolving provider credentials", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const fetcher = vi.fn(async (_url: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.signal).toBe(controller.signal);
+      throw new DOMException("aborted", "AbortError");
+    });
+    await expect(publicCatalog(fetcher).listTextGeneration({ page: 1, per_page: 20, task: "text-generation", signal: controller.signal }))
+      .rejects.toMatchObject({ code: "MODEL_CATALOG_CANCELLED", status: 499 });
   });
 });

@@ -31,6 +31,7 @@ import {
 } from "./model-gateway-transport-policy.js";
 
 const IDENTIFIER = /^[A-Za-z0-9._:@/-]{1,256}$/u;
+const MODEL_IDENTIFIER = /^[A-Za-z0-9._:~@/-]{1,256}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
 const promptCompileFailures = new WeakMap<ModelGatewayExecutionError, ModelCallInput>();
 
@@ -94,8 +95,9 @@ function boundedIdentifier(
   value: unknown,
   label: string,
   code: ModelGatewayExecutionErrorCode = "MODEL_GATEWAY_RESPONSE_INVALID",
+  pattern = IDENTIFIER,
 ): string {
-  if (typeof value !== "string" || !IDENTIFIER.test(value)) {
+  if (typeof value !== "string" || !pattern.test(value)) {
     modelGatewayExecutionFailure(code, `${label} is not a bounded identifier`);
   }
   return value;
@@ -222,6 +224,7 @@ function decodeStoredFingerprint(
       value.exact_model_id,
       "stored route fingerprint model",
       "MODEL_GATEWAY_FINGERPRINT_PERSIST_FAILED",
+      MODEL_IDENTIFIER,
     ),
   });
 }

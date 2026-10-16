@@ -9,7 +9,7 @@
  */
 
 import type {
-  ArtifactRevision,
+  ArtifactRevisionRead,
   VersionedRef,
   WikiPageRevision,
 } from '@eliotr/contracts';
@@ -109,7 +109,7 @@ export interface WikiPublicationView {
 }
 
 export interface ArtifactPublicationView {
-  readonly revision: ArtifactRevision;
+  readonly revision: ArtifactRevisionRead;
   readonly receipt: {
     readonly publication_ref: string;
     readonly artifact_ref: VersionedRef;

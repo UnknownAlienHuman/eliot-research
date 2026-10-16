@@ -11,7 +11,7 @@ import type { LegacyErrorFactory } from '../../legacy/http';
 
 type JsonRecord = Record<string, unknown>;
 
-const MODEL_IDENTIFIER = /^(?:@[A-Za-z0-9][A-Za-z0-9._:@/-]{0,254}|[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255})$/u;
+const MODEL_IDENTIFIER = /^(?:@[A-Za-z0-9][A-Za-z0-9._:~@/-]{0,254}|[A-Za-z0-9~][A-Za-z0-9._:~@/-]{0,255})$/u;
 const PROVIDER_IDENTIFIER = /^[A-Za-z0-9._:@/-]{1,128}$/u;
 const BYOK_ALIAS = /^[A-Za-z0-9._-]{1,128}$/u;
 

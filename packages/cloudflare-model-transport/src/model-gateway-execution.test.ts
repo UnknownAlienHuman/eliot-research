@@ -9,6 +9,8 @@ import {
 } from "./model-gateway-request.js";
 import { executeObservedModelGatewayCall, isModelGatewayPromptCompileFailure } from "./model-gateway-execution.js";
 import { ModelGatewayExecutionError } from "./model-gateway-execution-contract.js";
+import { decodeModelGatewayOpenRouterBody } from "./model-gateway-openrouter-response.js";
+import { decodeDynamicRouteFingerprint } from "@eliotr/platform-cloudflare";
 
 const BASE_URL = `https://gateway.ai.cloudflare.com/v1/${"a".repeat(32)}/eliotr-reasoning`;
 const input: ModelCallInput = {
@@ -30,6 +32,19 @@ const input: ModelCallInput = {
 };
 
 describe("model gateway selected identity", () => {
+  it("keeps model and provider identity grammars separate at response and fingerprint boundaries", () => {
+    const model = "~openai/gpt-astra-latest";
+    const body = { id: "completion-1", object: "chat.completion", created: 1, model,
+      choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "answer" } }],
+      usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } };
+    const bytes = new TextEncoder().encode(JSON.stringify(body));
+    expect(decodeModelGatewayOpenRouterBody(body, bytes).response_model).toBe(model);
+    expect(() => decodeModelGatewayOpenRouterBody({ ...body, id: "~completion" }, bytes)).toThrow();
+    const deployment = { route_ref: "dynamic/eliotr-balanced", route_version: "v1", prompt_generation: "p1",
+      schema_generation: "s1", parameters_digest: "a".repeat(64), pricing_snapshot_ref: "price-1" };
+    expect(decodeDynamicRouteFingerprint({ "cf-aig-provider": "openrouter", "cf-aig-model": model }, deployment).exact_model_id).toBe(model);
+    expect(() => decodeDynamicRouteFingerprint({ "cf-aig-provider": "~openrouter", "cf-aig-model": model }, deployment)).toThrow();
+  });
   it("binds compiler non-dispatch proof to the exact call and discards it at transport", async () => {
     const parameters = { max_tokens: 32, stream: false };
     const deployment = { route_ref: "dynamic/eliotr-balanced" as const, route_version: "route-1",
@@ -66,7 +81,7 @@ describe("model gateway selected identity", () => {
     expect(providerCalls).toBe(1);
   });
 
-  it("rejects provider/model fallback before immutable output, fingerprint, or pricing writes", async () => {
+  it.each(["expected/model-1", "~openai/gpt-astra-latest"])("rejects response aliases for %s before output, fingerprint or pricing writes", async expectedModel => {
     const parameters = { max_tokens: 32, stream: false };
     const deployment = {
       route_ref: "dynamic/eliotr-balanced",
@@ -95,7 +110,7 @@ describe("model gateway selected identity", () => {
       transport: "cloudflare-ai-gateway",
       api: "compat-chat-completions",
       provider: "expected-provider",
-      model: "expected/model-1",
+      model: expectedModel,
       billing: { mode: "unified" },
       capabilities: { max_output_tokens_field: "max_tokens", reasoning_efforts: [] },
     };
@@ -118,7 +133,7 @@ describe("model gateway selected identity", () => {
           status: 200,
           headers: {
             "content-type": "application/json",
-            "cf-aig-provider": "fallback-provider",
+            "cf-aig-provider": "expected-provider",
             "cf-aig-model": "fallback/model-2",
             "cf-aig-log-id": "log-1",
           },

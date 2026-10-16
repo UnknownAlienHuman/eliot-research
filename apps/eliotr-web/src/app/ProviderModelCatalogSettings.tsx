@@ -1,5 +1,5 @@
 import { useDeferredValue, useEffect, useRef, useState, type FormEvent } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button, Status } from "@eliotr/ui";
 import type { BoundWorkspaceApis } from "./runtime";
 import type { PrivacyController, SessionContext } from "./privacy";
@@ -47,13 +47,16 @@ export function ProviderModelCatalogSettings({ locale, apis, privacy, context, p
   readonly catalogProviderId?: string;
 }) {
   const text = copy[locale], api = apis.settings.models;
-  const preferences = useQuery({ ...serviceModelCatalogPreferencesQueryOptions(api, privacy, context, providerId),
+  const client = useQueryClient();
+  const preferencesOptions = serviceModelCatalogPreferencesQueryOptions(api, privacy, context, providerId);
+  const preferences = useQuery({ ...preferencesOptions,
     enabled: privacy.isCurrent(context) });
   const [draft, setDraft] = useState<Draft>();
   const [dirty, setDirty] = useState(false), [busy, setBusy] = useState(false), [feedback, setFeedback] = useState<Feedback>("idle");
   const [page, setPage] = useState(1);
   const controller = useRef<AbortController | undefined>(undefined);
   const mounted = useRef(false), running = useRef(false);
+  const editRevision = useRef(0);
   const current = () => mounted.current && privacy.isCurrent(context);
   const saved = preferences.data;
 
@@ -67,11 +70,15 @@ export function ProviderModelCatalogSettings({ locale, apis, privacy, context, p
     const unsubscribe = privacy.subscribe(close);
     close();
     return () => { mounted.current = false; unsubscribe(); controller.current?.abort(); controller.current = undefined; };
-  }, [privacy, context]);
+  }, [privacy, context, providerId]);
 
   useEffect(() => {
-    if (!dirty && saved) setDraft({ search: saved.search, visibility: saved.visibility });
-  }, [saved, dirty]);
+    editRevision.current = 0; running.current = false; setBusy(false); setDraft(undefined); setDirty(false); setFeedback('idle'); setPage(1);
+  }, [context, providerId]);
+
+  useEffect(() => {
+    if (current() && draft === undefined && !dirty && saved) setDraft({ search: saved.search, visibility: saved.visibility });
+  }, [saved, dirty, draft]);
 
   const search = draft?.search ?? saved?.search ?? "";
   const visibility = draft?.visibility ?? saved?.visibility;
@@ -85,6 +92,7 @@ export function ProviderModelCatalogSettings({ locale, apis, privacy, context, p
 
   const updateDraft = (change: (previous: Draft) => Draft) => {
     if (!current() || saved === undefined) return;
+    editRevision.current++;
     setDraft(previous => change(previous ?? { search: saved.search, visibility: saved.visibility }));
     setDirty(true); setFeedback("idle");
   };
@@ -92,6 +100,7 @@ export function ProviderModelCatalogSettings({ locale, apis, privacy, context, p
   const save = async (event?: FormEvent) => {
     event?.preventDefault();
     if (!current() || !dirty || !draft || running.current) return;
+    const submittedRevision = editRevision.current;
     running.current = true; setBusy(true); setFeedback("saving");
     const selected = new AbortController(); controller.current = selected;
     try {
@@ -101,11 +110,17 @@ export function ProviderModelCatalogSettings({ locale, apis, privacy, context, p
         signal: selected.signal, isCurrent: current });
       if (!current()) return;
       if (result) {
-        setDraft({ search: result.search, visibility: result.visibility }); setDirty(false); setFeedback("saved");
-        void preferences.refetch();
+        // The write response is exact readback. Cancel an older GET before committing it to the
+        // shared cache, then clear dirty state; an old cached preference must not replace the draft.
+        await client.cancelQueries({ queryKey: preferencesOptions.queryKey, exact: true });
+        if (!current() || selected.signal.aborted) return;
+        client.setQueryData(preferencesOptions.queryKey, result);
+        if (submittedRevision === editRevision.current) {
+          setDraft({ search: result.search, visibility: result.visibility }); setDirty(false); setFeedback("saved");
+        } else setFeedback('idle');
       } else setFeedback("unknown");
     } catch {
-      if (current()) setFeedback("unknown");
+      if (current() && !selected.signal.aborted) setFeedback("unknown");
     } finally {
       if (controller.current === selected) { controller.current = undefined; running.current = false; if (current()) setBusy(false); }
     }
@@ -117,7 +132,7 @@ export function ProviderModelCatalogSettings({ locale, apis, privacy, context, p
     try {
       const result = await preferences.refetch();
       if (!current()) return;
-      if (result.data) {
+      if (!result.isError && result.data) {
         setDraft({ search: result.data.search, visibility: result.data.visibility }); setDirty(false); setFeedback("read");
       } else setFeedback("read-failed");
     } catch { if (current()) setFeedback("read-failed"); }

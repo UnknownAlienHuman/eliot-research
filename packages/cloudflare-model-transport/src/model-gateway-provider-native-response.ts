@@ -32,6 +32,7 @@ const ANTHROPIC_USAGE_KEYS = new Set([
   "cache_creation", "cache_creation_input_tokens", "cache_read_input_tokens", "input_tokens", "output_tokens", "server_tool_use", "service_tier",
 ]);
 const IDENTIFIER = /^[A-Za-z0-9._:@/-]{1,256}$/u;
+const MODEL_IDENTIFIER = /^[A-Za-z0-9._:~@/-]{1,256}$/u;
 const MAX_JSON_DEPTH = 16;
 const MAX_JSON_MEMBERS = 2048;
 
@@ -97,10 +98,11 @@ function identifier(
   value: unknown,
   label: string,
   safeResponseReason: ModelGatewaySafeResponseReason = "BODY_SHAPE_INVALID",
+  pattern = IDENTIFIER,
 ): string {
   if (typeof value !== "string" || value.length < 1 || value.trim().length < 1 ||
       new TextEncoder().encode(value).byteLength > 256 || /[\u0000-\u001f\u007f]/u.test(value) ||
-      !IDENTIFIER.test(value)) invalid(`${label} is not a bounded identifier`, safeResponseReason);
+      !pattern.test(value)) invalid(`${label} is not a bounded identifier`, safeResponseReason);
   const result = value;
   return result;
 }
@@ -136,7 +138,7 @@ function decodeChatBody(body: Record<string, unknown>, bodyBytes: Uint8Array): O
   tokenCount(body.created, "chat response created");
   legacyOptionalString(body.service_tier, "chat response service_tier");
   legacyOptionalString(body.system_fingerprint, "chat response system_fingerprint");
-  const responseModel = identifier(body.model, "chat response model", "MODEL_ID_INVALID");
+  const responseModel = identifier(body.model, "chat response model", "MODEL_ID_INVALID", MODEL_IDENTIFIER);
   if (!Array.isArray(body.choices) || body.choices.length !== 1) invalid("chat response must contain exactly one choice");
   const choice = exactObject(body.choices[0], CHAT_CHOICE_KEYS, "chat response choice");
   if (choice.index !== 0) invalid("chat response choice index must be zero");
@@ -171,7 +173,7 @@ function decodeResponsesBody(body: Record<string, unknown>, bodyBytes: Uint8Arra
   if (body.object !== "response" || body.status !== "completed" || (body.error !== null && body.error !== undefined)) invalid("OpenAI Responses result is not a completed successful response");
   identifier(body.id, "OpenAI Responses id");
   tokenCount(body.created_at, "OpenAI Responses created_at");
-  const responseModel = identifier(body.model, "OpenAI Responses model", "MODEL_ID_INVALID");
+  const responseModel = identifier(body.model, "OpenAI Responses model", "MODEL_ID_INVALID", MODEL_IDENTIFIER);
   if (body.incomplete_details !== null && body.incomplete_details !== undefined) modelGatewayExecutionFailure("MODEL_GATEWAY_OUTPUT_TRUNCATED", "OpenAI Responses output is incomplete");
   if (!Array.isArray(body.output) || body.output.length < 1 || body.output.length > 3) invalid("OpenAI Responses output is invalid");
   let messageCount = 0;
@@ -208,7 +210,7 @@ function decodeResponsesBody(body: Record<string, unknown>, bodyBytes: Uint8Arra
 
 function decodeAnthropicBody(body: Record<string, unknown>, bodyBytes: Uint8Array): Omit<DecodedModelGatewayResponse, "fingerprint" | "log_id"> {
   if (body.type !== "message" || body.role !== "assistant") invalid("Anthropic response is not an assistant message");
-  const responseModel = identifier(body.model, "Anthropic response model", "MODEL_ID_INVALID");
+  const responseModel = identifier(body.model, "Anthropic response model", "MODEL_ID_INVALID", MODEL_IDENTIFIER);
   identifier(body.id, "Anthropic response id");
   if (body.stop_reason === "max_tokens") modelGatewayExecutionFailure("MODEL_GATEWAY_OUTPUT_TRUNCATED", "Anthropic response reached max_tokens");
   if (body.stop_reason === "refusal") modelGatewayExecutionFailure("MODEL_GATEWAY_POLICY_REJECTED", "Anthropic response contains a refusal");

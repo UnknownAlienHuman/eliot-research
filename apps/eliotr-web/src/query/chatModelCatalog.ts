@@ -1,5 +1,5 @@
 import type { ResearchModelConfigurationRevision, ResearchProjectModelConfiguration, ServiceModelCatalogPage } from "@eliotr/owner-api-client";
-import { researchModelCatalogAdapterForRouteProvider } from "@eliotr/owner-api-client";
+import { chatCatalogProviderForRouteProvider } from './chatModelProviderIdentity';
 import type { ServiceModelCatalogPreferences, ServiceModelProviderConnectionV2 } from "./globalModelSettings";
 import { isModelCatalogEntryVisible, modelCatalogEntryKey, type ModelCatalogEntry } from "./modelCatalog";
 import { configurationMatchesChatModel } from "./chatModelSelection";
@@ -27,6 +27,21 @@ export type ChatModelOption = Readonly<{
   readonly providerOperationId?: string | null;
   readonly availabilityCheckRequired?: boolean;
 }>;
+
+export type PreferredChatModel = Pick<ModelCatalogEntry, 'provider_id' | 'model_id'>;
+
+/** Wait for the selected project snapshot. A selected synthesis model always wins over the default. */
+export function preferredChatModelIdentity(configuration: ResearchProjectModelConfiguration | undefined,
+  installedDefaultModelId: string | undefined): PreferredChatModel | undefined {
+  if (configuration === undefined) return undefined;
+  if (configuration.selected !== null) {
+    const synthesis = configuration.selected.model_selections.filter(selection => selection.stage === 'SYNTHESIZE');
+    const selected = synthesis[0];
+    return synthesis.length === 1 && selected ? Object.freeze({ provider_id: chatCatalogProviderForRouteProvider(selected.provider_id),
+      model_id: selected.model_id }) : undefined;
+  }
+  return installedDefaultModelId ? Object.freeze({ provider_id: 'cloudflare-workers-ai', model_id: installedDefaultModelId }) : undefined;
+}
 
 function projectCandidates(
   configuration: ResearchProjectModelConfiguration | undefined,
@@ -65,17 +80,22 @@ function bestProjectCandidate(
 export function buildChatModelOptions(input: {
   readonly slices: readonly ChatModelCatalogSlice[];
   readonly configuration?: ResearchProjectModelConfiguration;
+  /** Actual separate catalog response; its pagination/completeness is never merged into the browse page. */
+  readonly preferred?: { readonly model: PreferredChatModel; readonly catalog: ServiceModelCatalogPage };
 }): readonly ChatModelOption[] {
   const options = new Map<string, ChatModelOption>();
   for (const slice of input.slices) {
     const { catalog, preferences } = slice;
-    if (!catalog || !preferences || preferences.provider_id !== slice.preferenceProviderId ||
-        catalog.provider_id !== researchModelCatalogAdapterForRouteProvider(slice.catalogProviderId)) continue;
+    if (!preferences || preferences.provider_id !== slice.preferenceProviderId) continue;
+    const providerId = chatCatalogProviderForRouteProvider(slice.catalogProviderId);
+    const browseModels = catalog?.provider_id === providerId ? catalog.models : [];
+    const preferredModels = input.preferred?.model.provider_id === providerId && input.preferred.catalog.provider_id === providerId
+      ? input.preferred.catalog.models.filter(model => model.provider_id === providerId && model.model_id === input.preferred?.model.model_id) : [];
     if (slice.builtin === undefined && (slice.connection?.provider_id !== slice.preferenceProviderId ||
         slice.connection.status !== "configured")) continue;
 
-    for (const model of catalog.models) {
-      if (model.provider_id !== catalog.provider_id) continue;
+    for (const model of [...browseModels, ...preferredModels]) {
+      if (model.provider_id !== providerId) continue;
       if (!isModelCatalogEntryVisible(preferences.visibility, model.model_id)) continue;
       const key = modelCatalogEntryKey(model);
       const providerLabel = slice.providerLabel ?? model.provider_id;

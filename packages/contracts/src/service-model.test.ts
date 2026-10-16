@@ -4,6 +4,25 @@ import { ServiceModelSettingsSchema, ServiceModelProviderCreateRequestSchema,
   ServiceModelProviderCatalogConnectReceiptSchema, ServiceModelProviderConnectionV2Schema,
   ServiceModelProviderCatalogPreferencesUpdateSchema } from "./service-model.js";
 
+describe("opaque model IDs remain separate from other identities", () => {
+  const request = { protocol: "eliotr.service-model-provider-create.v1",
+    operation_id: "6f06e11b-e2d0-4b16-8e84-44aa52d37533", provider_id: "openrouter",
+    display_name: "Public models", model_ids: ["~openai/gpt-astra-latest"], api_key: "synthetic-fixture-key" };
+  it("round-trips leading and embedded tilde model IDs in explicit lists and preferences", () => {
+    expect(ServiceModelProviderCreateRequestSchema.parse(request)).toEqual(request);
+    const preferences = { protocol: "eliotr.service-model-provider-catalog-preferences.v1", provider_id: "openrouter",
+      visibility: { mode: "include", model_ids: ["~openai/gpt-astra-latest", "vendor/model~variant"] }, search: "" };
+    expect(ServiceModelProviderCatalogPreferencesUpdateSchema.parse(preferences)).toEqual(preferences);
+  });
+  it("does not widen provider/operation IDs or admit URL controls and credential fields", () => {
+    expect(ServiceModelProviderCreateRequestSchema.safeParse({ ...request, provider_id: "~openrouter" }).success).toBe(false);
+    expect(ServiceModelProviderCreateRequestSchema.safeParse({ ...request, operation_id: "~operation" }).success).toBe(false);
+    for (const model of ["vendor/model?key=x", "vendor/model#x", "vendor/model%2Fother", "vendor/model with spaces"]) {
+      expect(ServiceModelProviderCreateRequestSchema.safeParse({ ...request, model_ids: [model] }).success).toBe(false);
+    }
+  });
+});
+
 describe("global service model settings", () => {
   it("keeps built-in Cloudflare models available without a project or external management", () => {
     const settings = { protocol: "eliotr.service-model-settings.v1", cloudflare: {

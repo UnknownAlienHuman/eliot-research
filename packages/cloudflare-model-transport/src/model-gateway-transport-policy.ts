@@ -46,6 +46,7 @@ const CAPABILITY_KEYS = new Set([
 ]);
 const REASONING_EFFORT_KEYS = new Set(["high", "low", "max", "medium"]);
 const POLICY_IDENTIFIER = /^[A-Za-z0-9._:@/-]{1,128}$/u;
+const MODEL_IDENTIFIER = /^[A-Za-z0-9._:~@/-]{1,128}$/u;
 const BYOK_ALIAS = /^[A-Za-z0-9._-]{1,128}$/u;
 const REASONING_EFFORTS = new Set(["low", "medium", "high", "max"]);
 
@@ -79,8 +80,8 @@ function exactObject(
   return record;
 }
 
-function identifier(value: unknown, label: string): string {
-  if (typeof value !== "string" || !POLICY_IDENTIFIER.test(value)) {
+function identifier(value: unknown, label: string, pattern = POLICY_IDENTIFIER): string {
+  if (typeof value !== "string" || !pattern.test(value)) {
     modelGatewayExecutionFailure("MODEL_GATEWAY_REQUEST_INVALID", `${label} is invalid`);
   }
   return value;
@@ -307,7 +308,7 @@ export function validateModelGatewayTransportPolicy(
     transport: "cloudflare-ai-gateway",
     api,
     provider,
-    model: identifier(value.model, "model gateway exact model"),
+    model: identifier(value.model, "model gateway exact model", MODEL_IDENTIFIER),
     billing: decodedBilling,
     capabilities,
   });

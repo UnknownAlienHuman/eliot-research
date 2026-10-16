@@ -17,6 +17,7 @@ export const PROVIDER_NATIVE_MODEL_QUALIFICATION_PURPOSE = "structured-output-co
 
 const SHA256 = /^[a-f0-9]{64}$/u;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
+const MODEL_IDENTIFIER = /^[A-Za-z0-9~][A-Za-z0-9._:~@/-]{0,255}$/u;
 const MAX_QUALIFICATION_TTL_MS = 60 * 60 * 1000;
 export const PROVIDER_NATIVE_MODEL_MAX_PROBE_RESPONSE_BYTES = 32_768;
 export const PROVIDER_NATIVE_MODEL_MAX_PROBE_REQUEST_BYTES = 32_768;
@@ -107,8 +108,8 @@ function object(value: unknown, keys: ReadonlySet<string>, label: string): Recor
   return record;
 }
 
-function identifier(value: unknown, label: string): string {
-  if (typeof value !== "string" || !IDENTIFIER.test(value)) providerNativeModelFailure("PROVIDER_NATIVE_MODEL_INPUT_INVALID", `${label} is invalid`);
+function identifier(value: unknown, label: string, pattern = IDENTIFIER): string {
+  if (typeof value !== "string" || !pattern.test(value)) providerNativeModelFailure("PROVIDER_NATIVE_MODEL_INPUT_INVALID", `${label} is invalid`);
   return value;
 }
 
@@ -160,7 +161,7 @@ async function decodeExecution(
     providerNativeModelFailure("PROVIDER_NATIVE_MODEL_INPUT_INVALID", "native probe route fingerprint lacks provider identity");
   }
   const fingerprint: RouteFingerprint = Object.freeze({ ...deployment,
-    provider: identifier(provider, "native probe provider"), exact_model_id: identifier(exactModelId, "native probe model") });
+    provider: identifier(provider, "native probe provider"), exact_model_id: identifier(exactModelId, "native probe model", MODEL_IDENTIFIER) });
   const responseBytes = value.response_body_bytes;
   if (!(responseBytes instanceof Uint8Array) || responseBytes.byteLength < 1 ||
       responseBytes.byteLength > PROVIDER_NATIVE_MODEL_MAX_PROBE_RESPONSE_BYTES) {

@@ -9,6 +9,8 @@ import { CatalogModelOperationReloadRecovery as catalogReloadStory,
   CatalogModelOperationNullAllowsLegacyChoice as catalogNullStory } from './CatalogModelOperationPreview';
 export const CatalogModelOperationReloadRecovery = catalogReloadStory;
 export const CatalogModelOperationNullAllowsLegacyChoice = catalogNullStory;
+import { ProviderCatalogPreferencesSaveRace as providerPreferencesSaveRace } from './ProviderCatalogPreferencesPreview';
+export const ProviderCatalogPreferencesSaveRace = providerPreferencesSaveRace;
 import { playMaterialPreferences, playMaterialReading } from './MaterialReviewPreview';
 import { IntegrationRepairsPreview, playIntegrationRepairs, playReplacedSelection } from './IntegrationRepairsPreview';
 import { FiniteReadExportPreview, playReadsNoEffects, playFailedRequiredSectionNoExport } from "./FiniteReadExportPreview";

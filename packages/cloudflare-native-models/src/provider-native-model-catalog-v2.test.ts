@@ -22,7 +22,7 @@ const policy = Object.freeze({
     reasoning_efforts: Object.freeze(["low", "medium", "high"] as const) }),
 });
 
-async function fixture() {
+async function fixture(selectedModelId = modelId) {
   const preparation: ProviderNativeModelCatalogPreparationV2 = Object.freeze({
     protocol: "eliotr.provider-native-model-preparation.v2",
     owner_ref: "owner-1",
@@ -33,7 +33,7 @@ async function fixture() {
     provider_id: "opencode-go",
     provider_slug: "custom-opencode-go",
     provider_operation_id: providerOperation,
-    model_id: modelId,
+    model_id: selectedModelId,
     prepared_at: "2026-10-16T18:00:00.000Z",
     preparation_expires_at: "2026-10-16T18:05:00.000Z",
     pricing_snapshot_expires_at: "2026-10-17T18:00:00.000Z",
@@ -43,7 +43,7 @@ async function fixture() {
     probe_deployment: Object.freeze({ route_ref: "dynamic/eliotr-balanced", route_version: "rev-1",
       prompt_generation: "probe-prompt-1", schema_generation: "probe-schema-1", parameters_digest: "2".repeat(64),
       pricing_snapshot_ref: "modelsdev-opencodego-muse-1" }),
-    transport_policy: policy,
+    transport_policy: { ...policy, model: selectedModelId },
     key_binding: Object.freeze({ protocol: "eliotr.research-provider-key-configuration.v1",
       owner_ref: "owner-1", project_id: "project-1", operation_id: providerOperation,
       provider_id: "opencode-go", provider_slug: "custom-opencode-go", account_id: "c".repeat(32),
@@ -70,11 +70,11 @@ async function fixture() {
     api: "custom-chat-completions",
     provider_id: "opencode-go",
     provider_slug: "custom-opencode-go",
-    model_id: modelId,
+    model_id: selectedModelId,
     consent_request_sha256: preparation.request_sha256,
     request_body_sha256: "a".repeat(64),
     response_body_sha256: "b".repeat(64),
-    response_model: modelId,
+    response_model: selectedModelId,
     gateway_log_id: "gw-log-1",
     input_tokens: 12,
     output_tokens: 8,
@@ -88,6 +88,14 @@ async function fixture() {
 }
 
 describe("provider-native catalog v2 evidence", () => {
+  it("preserves opaque tilde IDs while rejecting a different response identity and non-model tilde IDs", async () => {
+    const { preparation, observation, bundle } = await fixture("~openai/gpt-astra-latest");
+    expect(bundle.selection.transport_policy.model).toBe("~openai/gpt-astra-latest");
+    expect(() => decodeProviderNativeModelCatalogPreparationV2({ ...preparation, owner_ref: "~owner" })).toThrow();
+    await expect(createProviderNativeModelCatalogCandidateBundleV2({ preparation,
+      preparation_ref: bundle.candidate.preparation_ref, preparation_sha256: bundle.candidate.preparation_sha256,
+      observation: { ...observation, response_model: "openai/gpt-astra-2026" } })).rejects.toMatchObject({ code: "PROOF_INVALID" });
+  });
   it("creates an exact custom-provider candidate and readback selection", async () => {
     const { preparation, bundle } = await fixture();
     expect(bundle.selection.candidate_kind).toBe("provider-native-v2");

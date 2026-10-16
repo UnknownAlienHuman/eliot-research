@@ -2,6 +2,7 @@ import { researchModelCatalogAdapterForRouteProvider, type ResearchModelConfigur
   type ResearchRunBuiltinCloudflareSelectionV4, type ResearchRunProjectConfigurationPinV4, type ResearchRunV4Request } from "@eliotr/owner-api-client";
 import type { BoundWorkspaceApis } from "../app/runtime";
 import type { ModelCatalogEntry } from "./modelCatalog";
+import { chatCatalogProviderForRouteProvider } from './chatModelProviderIdentity';
 
 type ModelApi = BoundWorkspaceApis["connections"]["models"];
 type RunsApi = BoundWorkspaceApis["research"]["runs"];
@@ -43,7 +44,7 @@ export function configurationMatchesChatModel(
   const synthesis = configuration.model_selections.filter(selection => selection.stage === "SYNTHESIZE");
   return synthesis.length === 1 && synthesis[0]?.model_id === model.model_id &&
     synthesis[0]?.provider_id !== undefined &&
-    researchModelCatalogAdapterForRouteProvider(synthesis[0].provider_id) === model.provider_id;
+    chatCatalogProviderForRouteProvider(synthesis[0].provider_id) === model.provider_id;
 }
 
 /**

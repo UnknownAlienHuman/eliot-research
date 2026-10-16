@@ -297,12 +297,7 @@ export async function fixture(claimKind: "observation" | "assumption" = "observa
   let modelCalls = 0;
   let failProvider = false;
   const target = await modelGatewayDynamicRouteTarget(deployment);
-  const binding = {
-    toMarkdown: async () => { throw new Error("COW model fixture must not invoke Markdown conversion"); },
-    gateway: (id: string) => {
-    expect(id).toBe("eliotr-reasoning");
-    return { getUrl: async () => BASE, getLog: async () => { throw new Error("Controlled response must carry its fingerprint"); } };
-  }, run: async (model: string, inputs: Record<string, unknown>) => {
+  const invokeControlledModel = async (model: string, inputs: Record<string, unknown>) => {
     modelCalls += 1;
     if (failProvider) throw new Error("Controlled provider acknowledgement lost after invocation");
     expect(model).toBe(target.model);
@@ -334,7 +329,27 @@ export async function fixture(claimKind: "observation" | "assumption" = "observa
       usage: { prompt_tokens: 4, completion_tokens: 8, total_tokens: 12 } }), { status: 200,
       headers: { "content-type": "application/json", "cf-aig-provider": "controlled-local-provider",
         "cf-aig-model": "controlled-local-model", "cf-aig-log-id": "cow-http-log-" + modelCalls } });
-  } };
+  };
+  const binding = {
+    toMarkdown: async () => { throw new Error("COW model fixture must not invoke Markdown conversion"); },
+    run: async () => { throw new Error("Dynamic Route fixture must use AI.gateway().run, never a native model fallback"); },
+    gateway: (id: string) => {
+      expect(id).toBe("eliotr-reasoning");
+      return { getUrl: async () => BASE,
+        getLog: async () => { throw new Error("Controlled response must carry its fingerprint"); },
+        run: async (request: Parameters<AiGateway["run"]>[0]) => {
+          if (Array.isArray(request)) throw new Error("COW fixture must make one exact Dynamic Route request");
+          expect(request.provider).toBe("compat");
+          expect(request.endpoint).toBe("chat/completions");
+          expect(request.headers).toEqual({});
+          const query = request.query;
+          if (typeof query !== "object" || query === null || Array.isArray(query)) throw new Error("Missing controlled model query");
+          const inputs = query as Record<string, unknown>;
+          if (typeof inputs.model !== "string") throw new Error("Missing controlled Dynamic Route selector");
+          return invokeControlledModel(inputs.model, inputs);
+        } };
+    },
+  };
   const counted = countResidencyPuts(runtime.WORK_BUCKET);
   const { ELIOTR_MODEL_GATEWAY_TOKEN: _gatewayToken, ...runtimeWithoutGatewayToken } =
     withoutResearchSemanticConfiguration(runtime);

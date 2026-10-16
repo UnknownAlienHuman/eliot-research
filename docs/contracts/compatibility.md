@@ -1,5 +1,16 @@
 # Contract compatibility policy
 
+Registry generation 14 admits RFC 3986 unreserved `~` in opaque model IDs, including
+the published OpenRouter alias IDs. The 13 affected model-use, service-model and
+catalog-preference schemas advance to schema version 2, generation 1, with explicit
+`BREAKING` successors: old readers reject those model IDs. Wire protocol strings
+remain unchanged; deploy the public catalog projection and owner decoder together.
+All prior compatibility entries and canonical fixtures are retained. Provider,
+route, operation and credential identifier grammars remain unchanged. Catalog
+listing grants no account entitlement, pricing or inference authority; missing
+models.dev prices remain an explicit blocking error before inference, and model
+response identities must still match exactly without alias guessing.
+
 The compatibility registry is append-only. A current schema is identified by
 `(export_name, schema_version, schema_generation)` and by its generation-specific `$id`. Versions,
 generations and registry ordinals are canonical unsigned 32-bit positive integers.
