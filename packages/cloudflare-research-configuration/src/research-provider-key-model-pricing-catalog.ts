@@ -15,14 +15,15 @@ export function researchProviderKeyModelPricingSourceUrl(modelId: string): strin
 const MAX_RESPONSE_BYTES = 32_768;
 const MAX_ENDPOINTS = 64;
 const FETCH_TIMEOUT_MS = 8_000;
-const REQUIRED_PARAMETERS = ["max_tokens", "reasoning_effort", "response_format"] as const;
+// The OpenRouter adapter maps internal reasoning_effort to native reasoning.effort.
+const REQUIRED_PARAMETERS = ["max_tokens", "reasoning", "response_format"] as const;
 const DATA_KEYS = new Set(["id", "name", "created", "description", "architecture", "endpoints"]);
 const ENDPOINT_KEYS = new Set([
   "name", "model_id", "model_name", "context_length", "pricing", "provider_name", "tag", "quantization",
   "max_completion_tokens", "max_prompt_tokens", "supported_parameters", "supports_tool_choice", "status",
   "uptime_last_30m", "uptime_last_5m", "uptime_last_1d", "supports_implicit_caching", "native_tools",
-  "supports_voice_cloning", "supports_multiple_audio_references", "supports_image_reference", "latency_last_30m",
-  "throughput_last_30m",
+  "supports_voice_cloning", "supports_multiple_audio_references", "supports_image_reference", "supports_diarization",
+  "service_tier", "latency_last_30m", "throughput_last_30m",
 ]);
 const PRICING_KEYS = new Set(["prompt", "completion", "discount"]);
 
