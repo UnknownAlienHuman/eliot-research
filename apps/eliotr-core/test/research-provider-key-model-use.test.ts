@@ -1,7 +1,10 @@
 import { applyD1Migrations, env as generatedEnv } from "cloudflare:test";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { validateModelGatewayTransportPolicy } from "@eliotr/cloudflare-ai";
+import { canonicalModelGatewayJson, validateModelGatewayTransportPolicy } from "@eliotr/cloudflare-ai";
 import { authorizeProjectClientGrant, createProjectClientGrantService } from "@eliotr/cloudflare-navigation";
+import { ResearchProviderKeyConfigurationError } from "@eliotr/cloudflare-model-control";
+import type { ConfiguredServiceModelProviderBinding } from "@eliotr/cloudflare-model-control/service-model-provider-service.js";
+import type { ServiceModelProviderService } from "@eliotr/cloudflare-model-control/service-model-provider-service.js";
 import { createResearchProviderKeyConfigurationService } from "../src/research-provider-key-configuration-service.js";
 import { createOwnerResearchProjectConfigurationService } from "../src/research-project-configuration-composition.js";
 import { resolveResearchRunAdmissionConfiguration } from "../src/research-run-configuration-admission.js";
@@ -12,6 +15,7 @@ import {
   freeOnlyCatalogResponse,
   GATEWAY_ACCOUNT_ID,
   MODEL_ID,
+  MODEL_POLICY,
 } from "./research-provider-key-model-use-fixture.js";
 import type { ResearchProviderKeyManagementPort } from "../src/research-provider-key-configuration-service.js";
 import type { ResearchProviderKeyConfigurationService } from "@eliotr/cloudflare-model-control";
@@ -20,6 +24,8 @@ import type { ResearchProjectModelConfigurationService } from "@eliotr/cloudflar
 import type { Env } from "../src/env.js";
 import { handleResearchProviderKeyModelUseHttp } from "../src/research-provider-key-model-use-http.js";
 import { createResearchProviderKeyModelUseService } from "../src/research-provider-key-model-use-service.js";
+import { createGlobalServiceProviderKeyConfiguration } from "../src/research-provider-key-model-use-composition.js";
+import { RESEARCH_PREPARED_MODEL_TRANSPORT_PROTOCOL } from "../src/research-prepared-model-transport.js";
 import type * as NativeAuthorityModule from "../src/research-provider-native-model-authority.js";
 
 const nativeAuthorityDiagnostics = vi.hoisted(() => ({ lastQualifyError: undefined as unknown }));
@@ -669,4 +675,130 @@ describe("owner OpenRouter model-key check and use", () => {
       "SELECT * FROM research_provider_key_configuration_operation WHERE project_id=?1",
     ).bind(project).all())).not.toContain(localKey);
   }, 15_000);
+});
+
+describe("global Settings provider binding for existing model use", () => {
+  it("resolves a global operation only after exact project-key absence and preserves its metadata binding", async () => {
+    const owner = `global-model-owner-${crypto.randomUUID()}`;
+    const project = `global-model-project-${crypto.randomUUID()}`;
+    const operationId = crypto.randomUUID();
+    const requestContext = context(owner, project);
+    const binding: ConfiguredServiceModelProviderBinding = Object.freeze({
+      owner_id: owner,
+      operation_id: operationId,
+      provider_id: "openrouter",
+      provider_slug: "openrouter",
+      model_ids: Object.freeze([MODEL_ID]),
+      alias: "eliotr-" + "c".repeat(48),
+      provider_config_id: "global-provider-config-1",
+      metadata_sha256: "d".repeat(64),
+      created_at: "2026-10-15T14:00:00.000Z",
+    });
+    const projectKeys = {
+      read: vi.fn(async () => ({
+        protocol: RESEARCH_PROVIDER_KEY_CONFIGURATION_PROTOCOL,
+        project_id: project,
+        provider_id: "openrouter" as const,
+        configurations: [],
+        truncated: false,
+      })),
+      readConfiguredOperation: vi.fn(async () => {
+        throw new ResearchProviderKeyConfigurationError(
+          "RESEARCH_PROVIDER_KEY_CONFIGURATION_OPERATION_NOT_FOUND", 404, "missing project row",
+        );
+      }),
+      create: vi.fn(async () => { throw new Error("global binding must not create project key rows"); }),
+    } as unknown as ResearchProviderKeyConfigurationService;
+    const serviceModels = {
+      resolveConfiguredProvider: vi.fn(async (
+        _context: AuthenticatedRequestContext,
+        providerId: string,
+        options?: { readonly model_id?: string; readonly operation_id?: string },
+      ) =>
+        providerId === "openrouter" && options?.operation_id === operationId ? binding : null),
+    } as unknown as ServiceModelProviderService;
+    const projectConfiguration = {
+      readSelected: vi.fn(async () => null),
+    } as unknown as ResearchProjectModelConfigurationService;
+    const transportPolicies = canonicalModelGatewayJson({
+      protocol: RESEARCH_PREPARED_MODEL_TRANSPORT_PROTOCOL,
+      model_selections: [{
+        stage: "SYNTHESIZE",
+        route_ref: "dynamic/eliotr-balanced",
+        route_version: "route-v5",
+        provider: "openrouter",
+        model: MODEL_ID,
+        transport_policy: MODEL_POLICY,
+      }],
+    });
+    const service = createGlobalServiceProviderKeyConfiguration({
+      env: { ...TEST_ENV, ELIOTR_RESEARCH_MODEL_TRANSPORT_POLICIES_JSON: transportPolicies },
+      project_id: project,
+      project_configuration: projectConfiguration,
+      project_keys: projectKeys,
+      service_models: serviceModels,
+    });
+
+    const resolved = await service.readConfiguredOperation(requestContext, project, operationId);
+
+    expect(resolved).toMatchObject({
+      owner_id: owner, project_id: project, operation_id: operationId, provider_id: "openrouter",
+      alias: binding.alias, provider_config_id: binding.provider_config_id,
+      metadata_sha256: binding.metadata_sha256, status: "configured_not_qualified",
+    });
+    expect(projectKeys.readConfiguredOperation).toHaveBeenCalledTimes(1);
+    expect(projectKeys.read).toHaveBeenCalledTimes(1);
+    expect(projectKeys.create).not.toHaveBeenCalled();
+    expect(serviceModels.resolveConfiguredProvider).toHaveBeenCalledExactlyOnceWith(
+      requestContext, "openrouter", { operation_id: operationId },
+    );
+  });
+
+  it("keeps a global operation unusable when its registered model list omits the prepared model", async () => {
+    const owner = `global-model-owner-${crypto.randomUUID()}`;
+    const project = `global-model-project-${crypto.randomUUID()}`;
+    const operationId = crypto.randomUUID();
+    const requestContext = context(owner, project);
+    const projectKeys = {
+      read: vi.fn(async () => ({
+        protocol: RESEARCH_PROVIDER_KEY_CONFIGURATION_PROTOCOL,
+        project_id: project,
+        provider_id: "openrouter" as const,
+        configurations: [],
+        truncated: false,
+      })),
+      readConfiguredOperation: vi.fn(async () => {
+        throw new ResearchProviderKeyConfigurationError(
+          "RESEARCH_PROVIDER_KEY_CONFIGURATION_OPERATION_NOT_FOUND", 404, "missing project row",
+        );
+      }),
+      create: vi.fn(),
+    } as unknown as ResearchProviderKeyConfigurationService;
+    const serviceModels = {
+      resolveConfiguredProvider: vi.fn(async () => ({
+        owner_id: owner, operation_id: operationId, provider_id: "openrouter", provider_slug: "openrouter",
+        model_ids: ["dots-studio/dots-3-note-preview:free"], alias: "eliotr-" + "c".repeat(48),
+        provider_config_id: "global-provider-config-1", metadata_sha256: "d".repeat(64),
+        created_at: "2026-10-15T14:00:00.000Z",
+      })),
+    } as unknown as ServiceModelProviderService;
+    const service = createGlobalServiceProviderKeyConfiguration({
+      env: { ...TEST_ENV, ELIOTR_RESEARCH_MODEL_TRANSPORT_POLICIES_JSON: canonicalModelGatewayJson({
+        protocol: RESEARCH_PREPARED_MODEL_TRANSPORT_PROTOCOL,
+        model_selections: [{
+          stage: "SYNTHESIZE", route_ref: "dynamic/eliotr-balanced", route_version: "route-v5",
+          provider: "openrouter", model: MODEL_ID, transport_policy: MODEL_POLICY,
+        }],
+      }) },
+      project_id: project,
+      project_configuration: { readSelected: vi.fn(async () => null) } as unknown as ResearchProjectModelConfigurationService,
+      project_keys: projectKeys,
+      service_models: serviceModels,
+    });
+
+    await expect(service.readConfiguredOperation(requestContext, project, operationId)).rejects.toMatchObject({
+      code: "RESEARCH_PROVIDER_KEY_CONFIGURATION_NOT_CONFIGURED", status: 409,
+    });
+    expect(projectKeys.create).not.toHaveBeenCalled();
+  });
 });

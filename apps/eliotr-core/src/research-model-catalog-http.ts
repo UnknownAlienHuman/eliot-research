@@ -3,6 +3,7 @@ import { apiResult, HttpRequestError } from "./http.js";
 import { createResearchModelCatalogService, ResearchModelCatalogError } from "@eliotr/cloudflare-model-control/research-model-catalog.js";
 import { createResearchProviderModelCatalogTransports } from "@eliotr/cloudflare-model-control/research-provider-model-catalog.js";
 import type { Env } from "./env.js";
+import { createServiceModelSettingsComposition } from "./service-model-settings-composition.js";
 
 /** The catalog is descriptive; this read never installs or qualifies a model. */
 export async function handleResearchModelCatalog(
@@ -38,6 +39,7 @@ export async function handleResearchModelCatalog(
     task: "text-generation" as const,
   };
   const workersAi = typeof env.AI?.models === "function" ? env.AI as Pick<Ai, "models"> : undefined;
+  const serviceProviders = createServiceModelSettingsComposition(env).service;
   const service = createResearchModelCatalogService({ database: env.CORE_DB,
     ...(workersAi === undefined ? {} : { workersAi }),
     externalProviders: createResearchProviderModelCatalogTransports({
@@ -46,6 +48,7 @@ export async function handleResearchModelCatalog(
       ...(env.ELIOTR_RESEARCH_MODEL_TRANSPORT_POLICIES_JSON === undefined ? {} : {
         prepared_transport_policies_json: env.ELIOTR_RESEARCH_MODEL_TRANSPORT_POLICIES_JSON,
       }),
+      resolve_service_provider: (provider) => serviceProviders.resolveConfiguredProvider(context, provider),
     }),
   });
   const providerId = query.get("provider_id");

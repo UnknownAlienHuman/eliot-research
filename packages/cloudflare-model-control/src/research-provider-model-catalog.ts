@@ -8,6 +8,7 @@ import {
   type ExternalProviderCatalogPage,
   type ExternalProviderCatalogTransport,
 } from "./research-model-catalog.js";
+import type { ConfiguredServiceModelProviderBinding } from "./service-model-provider-service.js";
 
 const PROVIDERS = ["openai", "anthropic", "openrouter"] as const;
 type Provider = typeof PROVIDERS[number];
@@ -31,6 +32,10 @@ export interface ResearchProviderModelCatalogOptions {
   readonly gateway_token?: string;
   /** Exact server-prepared provider/alias selection envelope. */
   readonly prepared_transport_policies_json?: string;
+  /** Owner-scoped D1 resolution; called only after catalog authorization. */
+  readonly resolve_service_provider?: (
+    provider: Provider,
+  ) => Promise<ConfiguredServiceModelProviderBinding | null>;
   /** Only injectable for deterministic tests; production uses the platform fetch. */
   readonly fetcher?: typeof fetch;
 }
@@ -343,10 +348,10 @@ function matchesSearch(model: ExternalProviderCatalogModel, search: string | und
   return model.model_id.toLowerCase().includes(normalized) || model.name.toLowerCase().includes(normalized);
 }
 
-function requestedProviderConfig(
+async function requestedProviderConfig(
   provider: Provider,
   options: ResearchProviderModelCatalogOptions,
-): Readonly<{ root: string; token: string; alias: string }> {
+): Promise<Readonly<{ root: string; token: string; alias: string; model_ids?: readonly string[] }>> {
   const root = gatewayRoot(options.gateway_base_url);
   if (root === undefined) throw unavailable("configured AI Gateway URL is not a supported provider passthrough base");
   if (typeof options.gateway_token !== "string" || options.gateway_token.trim() === "") {
@@ -358,22 +363,36 @@ function requestedProviderConfig(
   } catch {
     throw unavailable("server AI Gateway authorization is invalid for provider catalog reads");
   }
-  const alias = configuredAlias(provider, options.prepared_transport_policies_json);
+  let serviceProvider: ConfiguredServiceModelProviderBinding | null = null;
+  if (options.resolve_service_provider !== undefined) {
+    try {
+      serviceProvider = await options.resolve_service_provider(provider);
+    } catch (cause) {
+      throw unavailable("global service provider status is unavailable");
+    }
+  }
+  if (serviceProvider !== null && (serviceProvider.provider_id !== provider ||
+      serviceProvider.alias === "default" || serviceProvider.model_ids.length === 0)) {
+    throw unavailable("global service provider binding is invalid");
+  }
+  const alias = serviceProvider?.alias ?? configuredAlias(provider, options.prepared_transport_policies_json);
   if (alias === undefined) {
     throw unavailable("no single server-prepared BYOK alias authorizes this provider catalog");
   }
-  return Object.freeze({ root, token, alias });
+  return Object.freeze({ root, token, alias,
+    ...(serviceProvider === null ? {} : { model_ids: serviceProvider.model_ids }) });
 }
 
 function openAiTransport(options: ResearchProviderModelCatalogOptions): ExternalProviderCatalogTransport {
   return Object.freeze({
     provider_id: "openai",
     async listTextGeneration(input: ExternalProviderCatalogInput): Promise<ExternalProviderCatalogPage> {
-      const config = requestedProviderConfig("openai", options);
+      const config = await requestedProviderConfig("openai", options);
       const fetcher = options.fetcher ?? fetch;
       const url = new URL(`${config.root}/openai/models`);
       const value = await fetchCatalogJson(fetcher, url, requestHeaders(config.token, "openai", config.alias), input.signal);
-      const allModels = openAiModels(value).filter((model) => matchesSearch(model, input.search));
+      const allModels = openAiModels(value).filter((model) => matchesSearch(model, input.search) &&
+        (config.model_ids === undefined || config.model_ids.includes(model.model_id)));
       const start = (input.page - 1) * input.per_page;
       if (!Number.isSafeInteger(start)) throw invalidPage("provider catalog page is outside its bounded range");
       const end = start + input.per_page;
@@ -386,7 +405,7 @@ function anthropicTransport(options: ResearchProviderModelCatalogOptions): Exter
   return Object.freeze({
     provider_id: "anthropic",
     async listTextGeneration(input: ExternalProviderCatalogInput): Promise<ExternalProviderCatalogPage> {
-      const config = requestedProviderConfig("anthropic", options);
+      const config = await requestedProviderConfig("anthropic", options);
       const start = (input.page - 1) * input.per_page;
       if (!Number.isSafeInteger(start) || input.page > MAX_ANTHROPIC_PAGES_PER_REQUEST * ANTHROPIC_PAGE_SIZE / input.per_page) {
         throw invalidPage("Anthropic catalog page exceeds its bounded cursor window");
@@ -408,7 +427,8 @@ function anthropicTransport(options: ResearchProviderModelCatalogOptions): Exter
         for (const model of page.models) {
           if (ids.has(model.model_id)) throw invalidResponse("Anthropic model list contains duplicate model identifiers");
           ids.add(model.model_id);
-          if (matchesSearch(model, input.search)) models.push(model);
+          if (matchesSearch(model, input.search) &&
+              (config.model_ids === undefined || config.model_ids.includes(model.model_id))) models.push(model);
         }
         if (!page.has_more) {
           exhausted = true;
@@ -430,7 +450,7 @@ function openRouterTransport(options: ResearchProviderModelCatalogOptions): Exte
   return Object.freeze({
     provider_id: "openrouter",
     async listTextGeneration(input: ExternalProviderCatalogInput): Promise<ExternalProviderCatalogPage> {
-      const config = requestedProviderConfig("openrouter", options);
+      const config = await requestedProviderConfig("openrouter", options);
       if (input.per_page > MAX_OPENROUTER_PAGE_SIZE) {
         throw invalidPage("OpenRouter catalog page exceeds its bounded page size");
       }
@@ -444,10 +464,12 @@ function openRouterTransport(options: ResearchProviderModelCatalogOptions): Exte
       const fetcher = options.fetcher ?? fetch;
       const raw = await fetchCatalogJson(fetcher, url, requestHeaders(config.token, "openrouter", config.alias), input.signal);
       const page = openRouterPage(raw, input.per_page);
-      const models = page.models.filter((model) => matchesSearch(model, input.search));
+      const models = page.models.filter((model) => matchesSearch(model, input.search) &&
+        (config.model_ids === undefined || config.model_ids.includes(model.model_id)));
       return Object.freeze({
         models: Object.freeze(models),
-        has_more: offset + page.models.length < page.total_count,
+        has_more: config.model_ids !== undefined && models.length !== page.models.length
+          ? null : offset + page.models.length < page.total_count,
       });
     },
   });
