@@ -31,6 +31,23 @@ const PROVIDER_AUTHORITY_TABLES = [
   "provider_native_model_qualification_proof",
   "provider_native_model_qualification_revocation",
 ] as const;
+const SERVICE_MODEL_PROVIDER_TABLES = [
+  "service_model_provider_operation",
+  "service_model_provider_catalog_preference",
+] as const;
+const CATALOG_MODEL_USE_TABLES = [
+  "research_catalog_model_use_authorization",
+  "provider_native_model_catalog_v2_evidence",
+  "provider_native_model_catalog_v2_revocation",
+] as const;
+const RECENT_CANONICAL_TABLES = [
+  "doctor_delivery_outbox",
+  "projection_managed_item_effect",
+  "queue_owner_replay",
+  "queue_terminal_observation",
+  "research_workflow_authorized_read_stage_completion",
+  "research_workflow_native_stage_completion",
+] as const;
 
 function d1Database(db: DatabaseSync): D1Database {
   return {
@@ -93,6 +110,21 @@ describe("ER-34 O2 full Core migration coverage", () => {
       expect(CANONICAL_EXPORTED_TABLES.has(table)).toBe(true);
       expect(TABLE_SPECS.some((spec) => spec.table === table)).toBe(true);
     }
+    for (const table of SERVICE_MODEL_PROVIDER_TABLES) {
+      expect(classifyDurableTable(table)).toBe("CANONICAL_EXPORTED");
+      expect(CANONICAL_EXPORTED_TABLES.has(table)).toBe(true);
+      expect(TABLE_SPECS.some((spec) => spec.table === table)).toBe(true);
+    }
+    for (const table of CATALOG_MODEL_USE_TABLES) {
+      expect(classifyDurableTable(table)).toBe("CANONICAL_EXPORTED");
+      expect(CANONICAL_EXPORTED_TABLES.has(table)).toBe(true);
+      expect(TABLE_SPECS.some((spec) => spec.table === table)).toBe(true);
+    }
+    for (const table of RECENT_CANONICAL_TABLES) {
+      expect(classifyDurableTable(table)).toBe("CANONICAL_EXPORTED");
+      expect(CANONICAL_EXPORTED_TABLES.has(table)).toBe(true);
+      expect(TABLE_SPECS.some((spec) => spec.table === table)).toBe(true);
+    }
     expect(CANONICAL_EXPORTED_TABLES.has("scope_read_policy")).toBe(false);
     expect(classifyDurableTable("scope_read_policy")).toBe("NOT_A_BACKUP");
     expect(database.prepare("SELECT COUNT(*) AS n FROM historical_scope_access_grant").get()).toEqual({ n: 0 });
@@ -137,6 +169,59 @@ describe("ER-34 O2 full Core migration coverage", () => {
     for (const table of PROVIDER_AUTHORITY_TABLES) {
       expect(currentSpecs.some((spec) => spec.table === table)).toBe(true);
     }
+    const beforeServiceModelProvider = migrations.filter((name) => name < "0152_service_model_provider_operation.sql");
+    const beforeCatalogMode = migrations.filter((name) => name < "0157_service_model_provider_catalog_mode.sql");
+    expect(coreTableSpecsForMigrationNames(beforeServiceModelProvider).some(
+      (spec) => SERVICE_MODEL_PROVIDER_TABLES.includes(spec.table as typeof SERVICE_MODEL_PROVIDER_TABLES[number]),
+    )).toBe(false);
+    const preModeOperation = coreTableSpecsForMigrationNames(beforeCatalogMode)
+      .find((spec) => spec.table === "service_model_provider_operation");
+    expect(preModeOperation).toBeDefined();
+    expect(preModeOperation?.columns.model_registration_mode).toBeUndefined();
+    expect(coreTableSpecsForMigrationNames(beforeCatalogMode).some(
+      (spec) => spec.table === "service_model_provider_catalog_preference",
+    )).toBe(false);
+    const currentProviderSpecs = currentSpecs.filter((spec) => SERVICE_MODEL_PROVIDER_TABLES.includes(
+      spec.table as typeof SERVICE_MODEL_PROVIDER_TABLES[number],
+    ));
+    expect(currentProviderSpecs).toHaveLength(SERVICE_MODEL_PROVIDER_TABLES.length);
+    expect(currentProviderSpecs.find((spec) => spec.table === "service_model_provider_operation")?.columns.model_registration_mode)
+      .toBe("text");
+    const newTableIntroductions = [
+      ["research_workflow_native_stage_completion", "0127_research_workflow_native_stage_completion.sql"],
+      ["projection_managed_item_effect", "0128_managed_item_effects.sql"],
+      ["queue_terminal_observation", "0133_queue_terminal_observation.sql"],
+      ["queue_owner_replay", "0136_queue_owner_replay.sql"],
+      ["research_workflow_authorized_read_stage_completion", "0137_research_workflow_authorized_read_stage_completion.sql"],
+      ["doctor_delivery_outbox", "0153_doctor_state.sql"],
+    ] as const;
+    for (const [table, introduction] of newTableIntroductions) {
+      const beforeIntroduction = migrations.filter((name) => name < introduction);
+      expect(coreTableSpecsForMigrationNames(beforeIntroduction).some((spec) => spec.table === table)).toBe(false);
+    }
+    const beforeFailureHistory = coreTableSpecsForMigrationNames(
+      migrations.filter((name) => name < "0123_workflow_failure_outcomes.sql"),
+    ).find((spec) => spec.table === "research_workflow_run");
+    expect(beforeFailureHistory?.columns.failure_history_json).toBeUndefined();
+    const beforeNativeStages = coreTableSpecsForMigrationNames(
+      migrations.filter((name) => name < "0127_research_workflow_native_stage_completion.sql"),
+    ).find((spec) => spec.table === "research_workflow_run");
+    expect(beforeNativeStages?.columns.stage_effect_policy_generation).toBeUndefined();
+    const beforeCitationOutcomes = coreTableSpecsForMigrationNames(
+      migrations.filter((name) => name < "0124_citation_resolution_outcomes.sql"),
+    ).find((spec) => spec.table === "citation_resolution_receipt");
+    expect(beforeCitationOutcomes?.columns.outcomes_json).toBeUndefined();
+    const beforeManagedItems = coreTableSpecsForMigrationNames(
+      migrations.filter((name) => name < "0129_managed_item_protocol.sql"),
+    ).find((spec) => spec.table === "projection_generation");
+    expect(beforeManagedItems?.columns.managed_item_protocol).toBeUndefined();
+    const beforeWorkflowBranchBinding = coreTableSpecsForMigrationNames(
+      migrations.filter((name) => name < "0139_research_branch_role_workflow_binding.sql"),
+    ).find((spec) => spec.table === "research_model_spend_admission");
+    expect(beforeWorkflowBranchBinding?.columns.workflow_stage_request_sha256).toBeUndefined();
+    expect(() => coreTableSpecsForMigrationNames([
+      "0157_service_model_provider_catalog_mode.sql",
+    ])).toThrowError(expect.objectContaining({ code: "BACKUP_COVERAGE_GAP" }));
 
     expect(() => coreTableSpecsForMigrationNames([
       "0109_research_provider_key_configuration.sql",
@@ -168,5 +253,30 @@ describe("ER-34 O2 full Core migration coverage", () => {
       await expect(readCoreColumnInventory(broken, ["source"]))
         .rejects.toMatchObject({ code: "BACKUP_TABLE_MISSING" });
     }
+  });
+
+  it("keeps catalog model-use and native v2 inventory bound to their additive migration ledger", () => {
+    const migrations = readdirSync(migrationDirectory).filter(name => /^\d{4}_.+\.sql$/u.test(name)).sort();
+    const introductions = [
+      ["research_catalog_model_use_authorization", "0158_research_catalog_model_use_authority.sql"],
+      ["provider_native_model_catalog_v2_evidence", "0159_provider_native_model_catalog_v2.sql"],
+      ["provider_native_model_catalog_v2_revocation", "0159_provider_native_model_catalog_v2.sql"],
+    ] as const;
+    for (const [table, migration] of introductions) {
+      expect(coreTableSpecsForMigrationNames(migrations.filter(name => name < migration))
+        .some(spec => spec.table === table)).toBe(false);
+      expect(coreTableSpecsForMigrationNames(migrations).some(spec => spec.table === table)).toBe(true);
+    }
+    for (const missing of ["0111_provider_native_model_authority.sql", "0156_global_provider_model_use.sql",
+      "0157_service_model_provider_catalog_mode.sql", "0158_research_catalog_model_use_authority.sql"]) {
+      expect(() => coreTableSpecsForMigrationNames(migrations.filter(name => name !== missing)))
+        .toThrowError(expect.objectContaining({ code: "BACKUP_COVERAGE_GAP" }));
+    }
+    const catalogMigrations = ["0158_research_catalog_model_use_authority.sql", "0159_provider_native_model_catalog_v2.sql"];
+    expect(() => assertCoreTableMigrationPresence(CATALOG_MODEL_USE_TABLES, catalogMigrations)).not.toThrow();
+    expect(() => assertCoreTableMigrationPresence(CATALOG_MODEL_USE_TABLES.slice(0, 2), catalogMigrations))
+      .toThrowError(expect.objectContaining({ code: "BACKUP_COVERAGE_GAP" }));
+    expect(() => assertCoreTableMigrationPresence(CATALOG_MODEL_USE_TABLES, catalogMigrations.slice(0, 1)))
+      .toThrowError(expect.objectContaining({ code: "BACKUP_COVERAGE_GAP" }));
   });
 });

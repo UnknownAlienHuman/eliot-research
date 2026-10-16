@@ -1,5 +1,10 @@
 import { canonicalModelGatewayJson } from "./model-gateway-request.js";
 import {
+  SERVICE_MODEL_PROVIDER_CATALOG_CONNECT_PROTOCOL,
+  SERVICE_MODEL_PROVIDER_CREATE_PROTOCOL,
+  type ServiceModelProviderModelRegistrationMode,
+} from "@eliotr/contracts";
+import {
   decodeObservedConfig,
   decodePagination,
   MAX_CONFIGS,
@@ -49,11 +54,12 @@ export interface CloudflareServiceModelProviderManagementPort {
   readonly available: boolean;
   create(
     input: {
-      readonly protocol: "eliotr.service-model-provider-create.v1";
+      readonly protocol: typeof SERVICE_MODEL_PROVIDER_CREATE_PROTOCOL | typeof SERVICE_MODEL_PROVIDER_CATALOG_CONNECT_PROTOCOL;
       readonly operation_id: string;
       readonly provider_id: string;
       readonly display_name: string;
       readonly base_url: string | null;
+      readonly model_registration_mode: ServiceModelProviderModelRegistrationMode;
       readonly model_ids: readonly string[];
       readonly alias: string;
       readonly api_key: string;
@@ -566,9 +572,13 @@ export function createCloudflareServiceModelProviderManagementPort(
       const providerId = requireProvider(input.provider_id);
       const alias = requireAlias(input.alias);
       const secret = requireSecret(input.api_key);
-      if (input.protocol !== "eliotr.service-model-provider-create.v1" ||
-          input.display_name.length < 1 || input.display_name.length > 128 ||
-          input.model_ids.length < 1 || input.model_ids.length > 64) {
+      const registrationValid =
+        (input.protocol === SERVICE_MODEL_PROVIDER_CREATE_PROTOCOL &&
+          input.model_registration_mode === "explicit_allowlist" &&
+          input.model_ids.length >= 1 && input.model_ids.length <= 64) ||
+        (input.protocol === SERVICE_MODEL_PROVIDER_CATALOG_CONNECT_PROTOCOL &&
+          input.model_registration_mode === "catalog_managed" && input.model_ids.length === 0);
+      if (!registrationValid || input.display_name.length < 1 || input.display_name.length > 128) {
         providerConfigRestFailure("PROVIDER_CONFIG_INPUT_INVALID", "Service model provider input is invalid");
       }
       if (!dependencies.available) {

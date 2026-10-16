@@ -4,7 +4,10 @@ import {
   type ModelGatewayRequestCapabilitiesV1,
   type ModelGatewayTransportPolicyV1,
 } from "@eliotr/cloudflare-ai";
-import { decodeProviderNativeModelSelection } from "@eliotr/cloudflare-native-models";
+import {
+  decodeProviderNativeModelSelection,
+  decodeProviderNativeModelCatalogSelectionV2,
+} from "@eliotr/cloudflare-native-models";
 import type { ResearchModelGatewayRuntimeConfig } from "@eliotr/cloudflare-research";
 import type {
   ResearchRunModelSelection,
@@ -96,15 +99,17 @@ export function resolveResearchSelectedModelTransport(input: {
   if (matching.length !== 1) invalid(`snapshot has duplicate selected models for ${input.stage}`);
   const selection = matching[0];
   if (selection === undefined) required(`snapshot has no selected model for ${input.stage}`);
-  if (selection.candidate_kind === "provider-native-v1") {
+  if (selection.candidate_kind === "provider-native-v1" || selection.candidate_kind === "provider-native-v2") {
     try {
-      if (canonicalModelGatewayJson(decodeProviderNativeModelSelection(selection)) !==
+      const decoded = selection.candidate_kind === "provider-native-v1"
+        ? decodeProviderNativeModelSelection(selection) : decodeProviderNativeModelCatalogSelectionV2(selection);
+      if (canonicalModelGatewayJson(decoded) !==
           canonicalModelGatewayJson(selection)) {
-        invalid("snapshot Native model selection is not canonically encoded");
+        invalid("snapshot provider-native model selection is not canonically encoded");
       }
     } catch (cause) {
       if (cause instanceof ResearchSelectedModelTransportError) throw cause;
-      invalid("snapshot Native model selection is invalid", cause);
+      invalid("snapshot provider-native model selection is invalid", cause);
     }
   }
   if (typeof selection.route_ref !== "string" || selection.route_ref.length === 0 ||

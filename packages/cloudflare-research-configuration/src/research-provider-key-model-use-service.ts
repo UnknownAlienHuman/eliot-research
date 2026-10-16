@@ -38,6 +38,7 @@ import {
   probeDeploymentForStage,
   ResearchProviderKeyModelUsePlanError,
   type ResearchProviderKeyModelUseBasisV1,
+  type ResearchProviderKeyModelUseCatalogSelectionV1,
   type ResearchProviderKeyModelUseRuntimePolicyV1,
   type ResearchProviderKeyModelUseSemanticSourceV1,
 } from "./research-provider-key-model-use-plan.js";
@@ -103,6 +104,8 @@ export function createResearchProviderKeyModelUseService(input: {
   readonly key_configuration: ResearchProviderKeyConfigurationService;
   readonly project_configuration: ResearchProjectModelConfigurationService;
   readonly native_authority_factory: (input: ResearchProviderKeyModelUseNativeAuthorityFactoryInputV1) => ProviderNativeModelAuthorityPort;
+  /** Present only when a server-authorized exact catalog model is being qualified. */
+  readonly catalog_selection?: ResearchProviderKeyModelUseCatalogSelectionV1;
   readonly now?: () => number;
   readonly fetcher?: typeof fetch;
 }): ResearchProviderKeyModelUseService {
@@ -169,7 +172,39 @@ export function createResearchProviderKeyModelUseService(input: {
         key.provider_id !== "openrouter" || key.account_id !== row.account_id || key.gateway_id !== row.gateway_id ||
         key.alias !== row.alias || key.provider_config_id !== row.provider_config_id ||
         key.metadata_sha256 !== row.configuration_metadata_sha256) return null;
-    if (key.model_registry !== undefined) {
+    if (input.catalog_selection !== undefined) {
+      const target = input.catalog_selection;
+      if (key.model_registry === undefined || key.model_registry.operation_id !== row.key_operation_id ||
+          key.model_registry.model_registration_mode === undefined ||
+          key.provider_id !== target.provider_id || target.provider_operation_id !== row.key_operation_id) return null;
+      const basis = parseResearchProviderKeyModelUseBasis(row.configuration_basis_json);
+      if (basis.stages.length === 0 || basis.stages.some((planned) =>
+        planned.transport_policy.provider !== target.route_provider_id || planned.transport_policy.model !== target.model_id)) return null;
+      if (key.model_registry.model_registration_mode === "catalog_managed" && key.model_registry.model_ids.length !== 0) return null;
+      // This branch is reachable only through the versioned catalog-use API.
+      // Its exact owner/provider/model consent row, read below, authorizes one
+      // selected catalog model without changing the legacy allowlist.
+      let authorization: Record<string, unknown> | null;
+      try {
+        authorization = await input.database.prepare(
+          "SELECT provider_id,provider_operation_id,route_provider_id,model_id,alias,provider_config_id," +
+          "configuration_metadata_sha256,owner_credential_generation,project_generation,expected_selection_revision," +
+          "source_configuration_ref,source_configuration_sha256,state " +
+          "FROM research_catalog_model_use_authorization WHERE owner_id=?1 AND project_id=?2 AND operation_id=?3 LIMIT 1",
+        ).bind(row.owner_id, row.project_id, row.operation_id).first<Record<string, unknown>>();
+      } catch { return null; }
+      if (authorization === null || authorization.provider_id !== target.provider_id ||
+          authorization.provider_operation_id !== target.provider_operation_id ||
+          authorization.route_provider_id !== target.route_provider_id || authorization.model_id !== target.model_id ||
+          authorization.alias !== row.alias || authorization.provider_config_id !== row.provider_config_id ||
+          authorization.configuration_metadata_sha256 !== row.configuration_metadata_sha256 ||
+          authorization.owner_credential_generation !== row.owner_credential_generation ||
+          authorization.project_generation !== row.project_generation ||
+          authorization.expected_selection_revision !== row.expected_selection_revision ||
+          authorization.source_configuration_ref !== row.source_configuration_ref ||
+          authorization.source_configuration_sha256 !== row.source_configuration_sha256 ||
+          !["ACCEPTED", "PREPARING", "QUALIFYING", "IMPORTING"].includes(String(authorization.state))) return null;
+    } else if (key.model_registry !== undefined) {
       const basis = parseResearchProviderKeyModelUseBasis(row.configuration_basis_json);
       if (key.model_registry.operation_id !== row.key_operation_id ||
           basis.stages.some((planned) => !key.model_registry?.model_ids.includes(planned.transport_policy.model))) return null;
@@ -212,7 +247,8 @@ export function createResearchProviderKeyModelUseService(input: {
     let basis: ResearchProviderKeyModelUseBasisV1;
     try {
       basis = await createResearchProviderKeyModelUseBasis({ runtime_policy: input.runtime_policy,
-        semantic_source: input.semantic_source, selected, key, operation_id: request.operation_id, database: input.database });
+        semantic_source: input.semantic_source, selected, key, operation_id: request.operation_id, database: input.database,
+        ...(input.catalog_selection === undefined ? {} : { catalog_selection: input.catalog_selection }) });
     } catch (cause) {
       if (cause instanceof ResearchProviderKeyModelUsePlanError) {
         throw new ResearchProviderKeyModelUseServiceError(`PROVIDER_KEY_MODEL_USE_${cause.code}`, 409, cause.message, false, cause);
@@ -387,6 +423,7 @@ export function createResearchProviderKeyModelUseService(input: {
         signal: input.context.request.signal,
         maximum_input_bytes: planned.max_input_bytes,
         maximum_output_bytes: planned.max_output_bytes,
+        ...(input.catalog_selection === undefined ? {} : { catalog_model_use: true }),
         ...(input.now === undefined ? {} : { now: input.now }),
         ...(input.fetcher === undefined ? {} : { fetcher: input.fetcher }),
         readCurrentAuthority: async () => {

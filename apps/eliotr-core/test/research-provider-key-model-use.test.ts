@@ -688,6 +688,7 @@ describe("global Settings provider binding for existing model use", () => {
       operation_id: operationId,
       provider_id: "openrouter",
       provider_slug: "openrouter",
+      model_registration_mode: "explicit_allowlist",
       model_ids: Object.freeze([MODEL_ID]),
       alias: "eliotr-" + "c".repeat(48),
       provider_config_id: "global-provider-config-1",

@@ -139,9 +139,11 @@ async function scanVisibleRecent<Row, Entry>(
     const limit = Math.min(RECENT_CANDIDATE_BATCH, RECENT_RAW_CANDIDATE_BUDGET - scanned);
     const rows = await readCandidates(after, limit);
     if (rows.length > limit) invalidHistory("Recent history candidate batch is oversized");
-    for (const row of rows) {
-      scanned += 1;
-      const visible = await authorize(row);
+    // Each candidate has independent read authority. Await the bounded batch
+    // together, then select in SQL order regardless of completion order.
+    scanned += rows.length;
+    const authorized = await Promise.all(rows.map(authorize));
+    for (const visible of authorized) {
       if (visible === null) continue;
       entries.push(visible.entry);
       if (visible.require_current !== undefined) checks.push(visible.require_current);

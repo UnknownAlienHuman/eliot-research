@@ -15,8 +15,11 @@ import type {
 import type { PinnedModelSelection } from "@eliotr/cloudflare-model-control";
 import {
   decodeProviderNativeModelSelection,
+  decodeProviderNativeModelCatalogSelectionV2,
   type ProviderNativeModelAuthorityPort,
   type ProviderNativeModelSelectionV1,
+  type ProviderNativeModelCatalogSelectionV2,
+  type ProviderNativeModelCatalogV2AuthorityPort,
 } from "@eliotr/cloudflare-native-models";
 import {
   createD1ResearchModelSpendAdmissionPort,
@@ -168,6 +171,7 @@ export interface ResearchModelSpendPolicyServiceInput {
       options?: Readonly<{ allow_expired_qualification?: boolean }>): Promise<unknown | null>;
   };
   readonly native_model_authority?: Pick<ProviderNativeModelAuthorityPort, "resolvePinned">;
+  readonly catalog_native_model_authority_v2?: Pick<ProviderNativeModelCatalogV2AuthorityPort, "resolvePinned">;
   /** Validated immutable run-configuration association supplied by the Worker snapshot reader. */
   readonly run_configuration?: Readonly<{
     readonly mode: "legacy-installed" | "snapshot-v1" | "snapshot-v2";
@@ -175,7 +179,8 @@ export interface ResearchModelSpendPolicyServiceInput {
     readonly configuration_sha256: string;
     readonly project_owner_ref?: string | null;
     readonly project_id?: string | null;
-    readonly model_selections?: readonly ((PinnedModelSelection & { readonly stage: string }) | ProviderNativeModelSelectionV1)[];
+    readonly model_selections?: readonly ((PinnedModelSelection & { readonly stage: string }) |
+      ProviderNativeModelSelectionV1 | ProviderNativeModelCatalogSelectionV2)[];
   }>;
   readonly now?: () => number;
 }
@@ -237,6 +242,17 @@ export function createResearchModelSpendPolicyService(input: ResearchModelSpendP
       }
       return nativeSelection;
     }
+    if ("candidate_kind" in selection && selection.candidate_kind === "provider-native-v2") {
+      let nativeSelection: ProviderNativeModelCatalogSelectionV2;
+      try { nativeSelection = decodeProviderNativeModelCatalogSelectionV2(selection); }
+      catch (cause) { stale("snapshot provider-native v2 model selection is malformed", cause); }
+      if (runConfiguration.mode !== "snapshot-v2" || typeof runConfiguration.project_owner_ref !== "string" ||
+          runConfiguration.project_owner_ref !== policy.principal_ref || typeof runConfiguration.project_id !== "string" ||
+          runConfiguration.project_id.length === 0 || input.catalog_native_model_authority_v2 === undefined) {
+        stale("provider-native v2 selection lacks its current snapshot-v2 owner/project authority");
+      }
+      return nativeSelection;
+    }
     return Object.freeze({
       route_ref: selection.route_ref,
       route_version: selection.route_version,
@@ -283,14 +299,17 @@ export function createResearchModelSpendPolicyService(input: ResearchModelSpendP
     const runMode = runConfiguration?.mode;
     const pinned = runMode === "snapshot-v1" || runMode === "snapshot-v2";
     const selected = pinned ? pinnedSelection(stage, rule.deployment) : undefined;
-    const nativeSelection = selected !== undefined && "candidate_kind" in selected &&
+    const nativeV1Selection = selected !== undefined && "candidate_kind" in selected &&
       selected.candidate_kind === "provider-native-v1" ? selected : undefined;
+    const nativeV2Selection = selected !== undefined && "candidate_kind" in selected &&
+      selected.candidate_kind === "provider-native-v2" ? selected : undefined;
+    const nativeSelection = nativeV1Selection ?? nativeV2Selection;
     const nativeBinding: ResearchNativeModelAuthorityBinding | undefined = nativeSelection === undefined ? undefined : {
       owner_ref: runConfiguration?.project_owner_ref as string,
       project_id: runConfiguration?.project_id as string,
     };
     let rawDeployment: unknown;
-    if (nativeSelection !== undefined) {
+    if (nativeV1Selection !== undefined) {
       const nativeAuthority = input.native_model_authority;
       if (nativeAuthority === undefined || nativeBinding === undefined || runMode !== "snapshot-v2") {
         stale("pinned Native model authority is unavailable");
@@ -304,6 +323,20 @@ export function createResearchModelSpendPolicyService(input: ResearchModelSpendP
         stale("resolved Native model differs from the immutable run selection");
       }
       rawDeployment = resolved.candidate.candidate.preparation.deployment;
+    } else if (nativeV2Selection !== undefined) {
+      const nativeAuthority = input.catalog_native_model_authority_v2;
+      if (nativeAuthority === undefined || nativeBinding === undefined || runMode !== "snapshot-v2") {
+        stale("pinned provider-native v2 authority is unavailable");
+      }
+      let resolved: Awaited<ReturnType<typeof nativeAuthority.resolvePinned>>;
+      try {
+        resolved = await nativeAuthority.resolvePinned({ selection: nativeV2Selection, ...nativeBinding,
+          allow_expired_snapshot_v2: true });
+      } catch (cause) { stale("pinned provider-native v2 model selection is no longer current", cause); }
+      if (canonicalJson(resolved.selection) !== canonicalJson(nativeV2Selection)) {
+        stale("resolved provider-native v2 model differs from the immutable run selection");
+      }
+      rawDeployment = resolved.deployment;
     } else if (selected !== undefined) {
       rawDeployment = await (input.deployment_registry.resolvePinned?.(rule.deployment, selected as PinnedModelSelection, {
         allow_expired_qualification: runMode === "snapshot-v2",

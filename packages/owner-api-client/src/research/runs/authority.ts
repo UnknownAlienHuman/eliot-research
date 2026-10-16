@@ -20,6 +20,7 @@ const RUN_PATH = "/api/v1/research/run";
 
 /** Strictly additive owner transport version tag; v1 and v2 never carry a selector. */
 export const RESEARCH_RUN_REQUEST_V3 = "eliotr.research-run-request.v3" as const;
+export const RESEARCH_RUN_REQUEST_V4 = "eliotr.research-run-request.v4" as const;
 
 /**
  * Owner v3 transport selection. The named owned configuration project is caller-supplied
@@ -42,6 +43,30 @@ export interface ResearchRunV3Request {
   readonly query: string;
   readonly scope_expression: ScopeExpression;
   readonly selection: ResearchRunConfigurationSelection;
+  readonly max_results?: number;
+}
+
+/** The exact immutable project configuration chosen for one chat run. */
+export interface ResearchRunProjectConfigurationPinV4 {
+  readonly configuration_project_id: string;
+  readonly configuration_ref: string;
+  readonly configuration_sha256: string;
+  readonly selection_revision: number;
+}
+
+/** Explicit Cloudflare Workers AI installed-native selection, requiring no provider key. */
+export interface ResearchRunBuiltinCloudflareSelectionV4 {
+  readonly kind: "builtin";
+  readonly expected_model_id: string;
+}
+
+export type ResearchRunConfigurationPinV4 = ResearchRunProjectConfigurationPinV4 | ResearchRunBuiltinCloudflareSelectionV4;
+
+export interface ResearchRunV4Request {
+  readonly query: string;
+  readonly scope_expression: ScopeExpression;
+  readonly selection: ResearchRunConfigurationPinV4;
+  readonly output_language?: "en" | "ru";
   readonly max_results?: number;
 }
 
@@ -104,6 +129,8 @@ export interface ResearchRunsApi {
    * from a project id and never derives a selection from the scope.
    */
   researchRunBodyV3(request: ResearchRunV3Request): string;
+  /** Owner v4 body pins the exact selected configuration for this chat run. */
+  researchRunBodyV4(request: ResearchRunV4Request): string;
   decodeResearchRunLaunch(raw: unknown, expectedDeploymentGeneration?: string): ResearchRunLaunchView;
   decodeResearchRunStatus: ResearchRunStatusDecoder;
   startResearchRun(body: string, idempotencyKey: string, expectedDeploymentGeneration?: string, signal?: AbortSignal): Promise<ResearchRunLaunchView>;
@@ -133,6 +160,36 @@ export function createResearchRunsApi(ports: ResearchRunsApiPorts): ResearchRuns
     const configurationProjectId = identifier(raw.configuration_project_id, "configuration_project_id");
     if (!SAFE_IDENTIFIER.test(configurationProjectId)) invalid("configuration_project_id is invalid");
     return Object.freeze({ request_version: RESEARCH_RUN_REQUEST_V3, configuration_project_id: configurationProjectId });
+  };
+
+  const parseSelectionV4 = (selection: ResearchRunConfigurationPinV4): ResearchRunConfigurationPinV4 => {
+    if (typeof selection !== "object" || selection === null || Array.isArray(selection)) invalid("model configuration pin is invalid");
+    const raw: Record<string, unknown> = { ...selection };
+    if (Object.hasOwn(raw, "kind")) {
+      const allowedBuiltin = ["kind", "expected_model_id"];
+      if (Object.keys(raw).length !== allowedBuiltin.length ||
+          allowedBuiltin.some((key) => !Object.hasOwn(raw, key)) ||
+          Object.keys(raw).some((key) => !allowedBuiltin.includes(key)) || raw.kind !== "builtin") {
+        invalid("builtin model selection is invalid");
+      }
+      const expectedModelId = boundedString(raw.expected_model_id, "expected_model_id");
+      if (!/^@cf\/[A-Za-z0-9][A-Za-z0-9._:@/-]{0,254}$/u.test(expectedModelId)) {
+        invalid("builtin model selection is invalid");
+      }
+      return Object.freeze({ kind: "builtin", expected_model_id: expectedModelId });
+    }
+    const allowed = ["configuration_project_id", "configuration_ref", "configuration_sha256", "selection_revision"];
+    if (Object.keys(raw).length !== allowed.length || allowed.some((key) => !Object.hasOwn(raw, key)) ||
+        Object.keys(raw).some((key) => !allowed.includes(key))) invalid("model configuration pin is invalid");
+    const projectId = identifier(raw.configuration_project_id, "configuration_project_id");
+    const configurationRef = boundedString(raw.configuration_ref, "configuration_ref");
+    const configurationSha256 = boundedString(raw.configuration_sha256, "configuration_sha256");
+    if (!SAFE_IDENTIFIER.test(projectId) || !/^rpmc-[a-f0-9]{64}$/u.test(configurationRef) ||
+        !/^[a-f0-9]{64}$/u.test(configurationSha256) || configurationRef !== `rpmc-${configurationSha256}` ||
+        !Number.isSafeInteger(raw.selection_revision) || (raw.selection_revision as number) < 1 ||
+        (raw.selection_revision as number) > 1_000_000) invalid("model configuration pin is invalid");
+    return Object.freeze({ configuration_project_id: projectId, configuration_ref: configurationRef,
+      configuration_sha256: configurationSha256, selection_revision: raw.selection_revision as number });
   };
 
   const wire: ResearchRunWire = createResearchRunWire(errors);
@@ -265,6 +322,44 @@ export function createResearchRunsApi(ports: ResearchRunsApiPorts): ResearchRuns
     return body;
   };
 
+  /**
+   * Owner v4 body carries a content-addressed project configuration and its
+   * compare-and-swap selection revision. The body builder never reads or
+   * changes the project default and never retries with another configuration.
+   */
+  const researchRunBodyV4 = (request: ResearchRunV4Request): string => {
+    if (typeof request !== "object" || request === null) invalid("v4 request is invalid");
+    const allowed = ["query", "scope_expression", "selection", "max_results", "output_language"];
+    const rawRequest: Record<string, unknown> = { ...request };
+    if (!Object.hasOwn(rawRequest, "query") || !Object.hasOwn(rawRequest, "scope_expression") ||
+        !Object.hasOwn(rawRequest, "selection") || Object.keys(rawRequest).some((key) => !allowed.includes(key))) {
+      invalid("v4 request is invalid");
+    }
+    const selection = parseSelectionV4(request.selection);
+    if (!isResearchQuestionText(request.query)) {
+      throw errors({ code: "RESEARCH_INPUT_INVALID", status: 400, message: "query is invalid", traceId: null, retryable: false });
+    }
+    const maxResults = request.max_results === undefined ? MAX_RESULTS : request.max_results;
+    if (!Number.isSafeInteger(maxResults) || maxResults < 1 || maxResults > MAX_RESULTS) invalid("max_results is invalid");
+    const parsedScope = ScopeExpressionSchema.safeParse(request.scope_expression);
+    if (!parsedScope.success) invalid("source scope is invalid");
+    if (countSelectedSources(parsedScope.data) > OWNER_RESEARCH_MAX_SELECTED_SOURCES) invalid("source scope is invalid");
+    const outputLanguage = request.output_language;
+    if (outputLanguage !== undefined && outputLanguage !== "en" && outputLanguage !== "ru") {
+      invalid("output_language is invalid");
+    }
+    const body = JSON.stringify({ query: request.query, product: "RESEARCH", scope_expression: parsedScope.data,
+      literals: [], evidence_grade: "E0", budget_ref: "research-budget-v1", max_results: maxResults,
+      request_version: RESEARCH_RUN_REQUEST_V4, selection,
+      ...(outputLanguage === undefined ? {} : { output_language: outputLanguage }) });
+    if (new TextEncoder().encode(body).byteLength > RESEARCH_REQUEST_MAX_BYTES) {
+      throw errors({ code: "RESEARCH_INPUT_LIMIT", status: 413,
+        message: `Research HTTP request exceeds ${RESEARCH_REQUEST_MAX_BYTES} UTF-8 bytes`,
+        traceId: null, retryable: false });
+    }
+    return body;
+  };
+
   const control = (action: "cancel" | "recover", workflowInstanceId: string, expectedDeploymentGeneration?: string, signal?: AbortSignal) => {
     const id = checkWorkflowId(workflowInstanceId);
     return fenced(() => request(`${RUN_PATH}/${encodeURIComponent(id)}/${action}`, {
@@ -278,6 +373,7 @@ export function createResearchRunsApi(ports: ResearchRunsApiPorts): ResearchRuns
   return {
     researchRunBody,
     researchRunBodyV3,
+    researchRunBodyV4,
     decodeResearchRunLaunch,
     decodeResearchRunStatus,
     cancelResearchRun: (id, generation, signal) => control("cancel", id, generation, signal),

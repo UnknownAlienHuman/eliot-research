@@ -13,7 +13,8 @@ import {
   type BranchQueryPlan,
 } from "./research-branch-query.js";
 import { ResearchBranchResultV2Schema, ResearchReadExtractCheckpointV2Schema,
-  ResearchBranchAnalysisCheckpointV2Schema, ResearchBranchReconciliationCheckpointV2Schema } from "./research-branch.js";
+  ResearchBranchAnalysisCheckpointV2Schema, ResearchBranchReconciliationCheckpointV2Schema,
+  decodeLegacyResearchBranchCheckpointReadback } from "./research-branch.js";
 import { ResolvedEvidenceSchema } from "./evidence.js";
 import { EvidenceFreezeBranchFindingsProvenanceSchema, EvidenceFreezeBranchFindingsSchema, ResearchEvidenceFreezeV3Schema } from "./research-branch-finding.js";
 
@@ -178,6 +179,23 @@ describe("branch plan and scope pairing", () => {
       created_at: "2026-01-01T00:00:00.000Z",
     };
     expect(ResearchReadExtractCheckpointV2Schema.safeParse(read).success).toBe(true);
+    const currentLeg = queryResult.query_legs[0];
+    if (currentLeg === undefined) throw new Error("query fixture has no leg");
+    const legacyQueryResult = {
+      ...queryResult,
+      query_legs: [{
+        ...currentLeg,
+        trace: legacyTrace("query-SUPPORT") as unknown as NonNullable<typeof currentLeg.trace>,
+      }],
+    };
+    const legacyCheckpoint = { ...read, role_queries: [{ query_plan: plan, query_result: legacyQueryResult }] };
+    expect(ResearchReadExtractCheckpointV2Schema.safeParse(legacyCheckpoint).success).toBe(false);
+    expect(branchQueryResultMatchesPlan(plan, legacyQueryResult)).toBe(false);
+    const legacyReadback = decodeLegacyResearchBranchCheckpointReadback(legacyCheckpoint);
+    expect(legacyReadback).toMatchObject({
+      schema_id: "urn:eliotr:contracts:research:research-read-extract-checkpoint-v2:v2:g3",
+      authority: "READBACK_ONLY",
+    });
     expect(ResearchReadExtractCheckpointV2Schema.safeParse({ ...read, role_queries: [{ query_plan: plan,
       query_result: { ...queryResult, query_plan_ref: { id: "foreign-plan", revision: 1 } },
     }] }).success).toBe(false);

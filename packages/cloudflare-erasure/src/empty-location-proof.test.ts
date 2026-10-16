@@ -4,7 +4,7 @@ import {
   createEmptyLocationProofTarget,
   parseEmptyLocationProof,
 } from "./empty-location-proof.js";
-import { listR2WorkPrefix, projectionWorkPrefix } from "./empty-location-proof-r2.js";
+import { listR2WorkPrefix, projectionWorkPrefix, readRegisteredWorkEmptySnapshot } from "./empty-location-proof-r2.js";
 import { createCloudflareErasureBackend } from "./backend.js";
 import { createD1CoreErasureLocationPort } from "./core-location.js";
 import type { ErasureFence, ErasureRequest, PurgeTarget } from "@eliotr/contracts";
@@ -98,6 +98,50 @@ describe("versioned location-empty proofs", () => {
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode("source\u0000revision-1"));
     const token = [...new Uint8Array(digest)].map((value) => value.toString(16).padStart(2, "0")).join("").slice(0, 48);
     expect(prefix).toBe(`projection/${token}/`);
+  });
+
+  it("reads registered Work keys with the persisted erasure registry columns", async () => {
+    const row = {
+      canonical_ref: "r2-work:outside-source-prefix/registered-object",
+      object_identity_digest: "a".repeat(64),
+    };
+    const all = vi.fn(async () => ({ success: true, results: [row] }));
+    const bind = vi.fn(() => ({ all }));
+    const prepare = vi.fn((_statement: string) => ({ bind }));
+    const core = { prepare } as unknown as D1Database;
+    const head = vi.fn(async (key: string) => ({ key } as R2Object));
+    const bucket = { head } as unknown as R2Bucket;
+
+    const snapshot = await readRegisteredWorkEmptySnapshot(core, bucket, "revision-1", "source-revision:revision-1");
+
+    const statement = prepare.mock.calls[0]?.[0];
+    expect(statement).toContain("canonical_ref,object_identity_digest FROM erasure_dependency_registry");
+    expect(statement).not.toMatch(/managed_root_ref|managed_root_state|managed_object_kind/u);
+    expect(bind).toHaveBeenCalledWith("source-revision:revision-1", "source-revision:revision-1");
+    expect(head).toHaveBeenCalledWith("outside-source-prefix/registered-object");
+    expect(snapshot.keys).toEqual(["outside-source-prefix/registered-object"]);
+  });
+
+  it("keeps registered rows unresolved when root verification is requested without persisted root metadata", async () => {
+    const rows = [{
+      canonical_ref: "r2-work:projection/registered-object",
+      object_identity_digest: "b".repeat(64),
+    }];
+    const core = {
+      prepare: vi.fn(() => ({
+        bind: vi.fn(() => ({ all: vi.fn(async () => ({ success: true, results: rows })) })),
+      })),
+    } as unknown as D1Database;
+    const bucket = { head: vi.fn(async () => null) } as unknown as R2Bucket;
+    const verifyRootDependencySet = vi.fn(async (_rootRef: string) => undefined);
+
+    const snapshot = await readRegisteredWorkEmptySnapshot(
+      core, bucket, "revision-1", "source-revision:revision-1", verifyRootDependencySet,
+    );
+
+    expect(snapshot.keys).toEqual([]);
+    expect(snapshot.live_root_count).toBe(1);
+    expect(verifyRootDependencySet).not.toHaveBeenCalled();
   });
 
   it("revalidates under the fence before closure persistence, purge dispatch and separate absence readback", async () => {

@@ -7,6 +7,7 @@ import {
   type AssertCurrentResearchProjectAuthority,
   type ResearchProjectModelConfigurationService,
   type ResearchProjectNativeModelAuthorityFactory,
+  type ResearchProjectCatalogNativeModelV2AuthorityFactory,
 } from "@eliotr/cloudflare-research-configuration/research-project-configuration.js";
 import { fail } from "@eliotr/cloudflare-research-configuration/research-project-configuration-validation.js";
 import type { Env } from "./env.js";
@@ -23,6 +24,7 @@ export type {
   AssertCurrentResearchProjectAuthority,
   ResearchProjectModelConfigurationService,
   ResearchProjectNativeModelAuthorityFactory,
+  ResearchProjectCatalogNativeModelV2AuthorityFactory,
   SelectedResearchProjectConfiguration,
   ResearchProjectModelConfigurationSummary,
   ResearchProjectModelConfigurationPage,
@@ -37,6 +39,7 @@ export function createResearchProjectModelConfigurationService(options: {
   readonly env?: Env;
   readonly assertCurrentProjectAuthority?: AssertCurrentResearchProjectAuthority;
   readonly native_model_authority?: ResearchProjectNativeModelAuthorityFactory;
+  readonly catalog_native_model_authority_v2?: ResearchProjectCatalogNativeModelV2AuthorityFactory;
   readonly deployment_environment?: "TEST" | "PRODUCTION";
   readonly deployment_generation?: string;
   readonly now?: () => number;
@@ -50,6 +53,7 @@ export function createResearchProjectModelConfigurationServiceFromEnv(
   env: Env,
   assertCurrentProjectAuthority?: AssertCurrentResearchProjectAuthority,
   nativeModelAuthority?: ResearchProjectNativeModelAuthorityFactory,
+  catalogNativeModelV2Authority?: ResearchProjectCatalogNativeModelV2AuthorityFactory,
 ): ResearchProjectModelConfigurationService {
   if (env?.CORE_DB === undefined) {
     fail("RESEARCH_PROJECT_MODEL_CONFIGURATION_STORAGE_UNAVAILABLE", 503, "Core D1 binding is unavailable");
@@ -61,6 +65,9 @@ export function createResearchProjectModelConfigurationServiceFromEnv(
       env, context, projectId,
       ["CONFIGURATION_IMPORT", "SELECTION_READBACK", "COMPLETE"] satisfies readonly ResearchProviderKeyModelUseDbPhase[],
     )),
+    ...(catalogNativeModelV2Authority === undefined ? {} : {
+      catalog_native_model_authority_v2: catalogNativeModelV2Authority,
+    }),
     ...(assertCurrentProjectAuthority === undefined ? {} : { assertCurrentProjectAuthority }),
     deployment_environment: env.ENVIRONMENT === "development" ? "TEST" : "PRODUCTION",
     deployment_generation: env.DEPLOYMENT_GENERATION,

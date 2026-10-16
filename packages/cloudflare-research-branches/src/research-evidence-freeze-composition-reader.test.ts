@@ -28,6 +28,7 @@ import {
 import { ReferenceManifestError, type NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import {
   createEvidenceFreezePostSynthesisContextReader,
+  createEvidenceFreezeMaterializeContextReader,
   createEvidenceFreezeSynthesisContextReader,
   type EvidenceFreezeCommittedReaders,
   type EvidenceFreezeSynthesisReaderEnvironment,
@@ -383,8 +384,100 @@ async function retainedFixture(stage: "SYNTHESIZE" | "VERIFY" | "AUDIT_CLAIMS" |
   const reader = stage === "SYNTHESIZE" ? createEvidenceFreezeSynthesisContextReader(environment, navigation, readers)
     : createEvidenceFreezePostSynthesisContextReader(environment, navigation, readers, stage);
   return { reader, input: { request: invocation.request, principal, input_bytes: stage === "SYNTHESIZE" ? frozenBytes : modelBytes },
-    manifest, profile, commits, retainedGet, get, binding, changeAuthority: () => { currentAuthority = { policy_authority_ref: "revoked" }; } };
+    manifest, profile, commits, retainedGet, get, binding, environment, navigation, readers,
+    changeAuthority: () => { currentAuthority = { policy_authority_ref: "revoked" }; } };
 }
+
+describe("materialize context request-local lineage reuse", () => {
+  it("reads each committed predecessor once while preserving exact output bindings and fresh fences", async () => {
+    const f = await retainedFixture("MATERIALIZE");
+    const context = await createEvidenceFreezeMaterializeContextReader(f.environment, f.navigation, f.readers).read(f.input);
+    const synthesis = f.commits.get("SYNTHESIZE");
+    const coverage = f.commits.get("CALCULATE_COVERAGE");
+    expect(context).toMatchObject({
+      stage_twelve_request: synthesis?.request, stage_twelve_request_sha256: synthesis?.request_sha256,
+      stage_twelve_attempt_ref: synthesis?.attempt_ref, stage_twelve_receipt: synthesis?.receipt,
+      stage_sixteen_request: coverage?.request, stage_sixteen_request_sha256: coverage?.request_sha256,
+      stage_sixteen_attempt_ref: coverage?.attempt_ref, stage_sixteen_receipt: coverage?.receipt,
+    });
+    const stages = vi.mocked(readCommittedStageLineage).mock.calls.map(call => call[2]);
+    expect(stages).toHaveLength(7);
+    for (const stage of ["RECONCILE", "FREEZE_EVIDENCE", "SYNTHESIZE", "VERIFY", "AUDIT_CLAIMS",
+      "RESOLVE_CITATIONS", "CALCULATE_COVERAGE"] as const) {
+      expect(stages.filter(value => value === stage)).toHaveLength(1);
+    }
+    expect(readWorkflowObject).toHaveBeenCalledTimes(3);
+    expect(f.navigation.current).toHaveBeenCalledTimes(4);
+    expect(f.readers.read_authorization_receipt_ref).toHaveBeenCalledTimes(2);
+    expect(f.readers.read_w1_head).toHaveBeenCalledTimes(3);
+    expect(f.retainedGet).toHaveBeenCalledOnce();
+    expect(f.binding).toHaveBeenCalledOnce();
+  });
+
+  it("does not carry immutable reads or authority across invocations", async () => {
+    const f = await retainedFixture("MATERIALIZE");
+    const reader = createEvidenceFreezeMaterializeContextReader(f.environment, f.navigation, f.readers);
+    await reader.read(f.input);
+    await reader.read(f.input);
+    expect(readCommittedStageLineage).toHaveBeenCalledTimes(14);
+    expect(readWorkflowObject).toHaveBeenCalledTimes(6);
+    expect(f.navigation.current).toHaveBeenCalledTimes(8);
+    expect(f.retainedGet).toHaveBeenCalledTimes(2);
+    expect(f.binding).toHaveBeenCalledTimes(2);
+    vi.mocked(f.navigation.current).mockRejectedValueOnce(new WorkflowCheckpointError("WORKFLOW_AUTHORITY_STALE"));
+    await expect(reader.read(f.input)).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+    expect(readCommittedStageLineage).toHaveBeenCalledTimes(14);
+  });
+
+  it.each(["revocation", "policy", "grant"])("rejects late %s after immutable lineage reuse", async mode => {
+    const f = await retainedFixture("MATERIALIZE");
+    const current = vi.mocked(f.navigation.current);
+    const original = current.getMockImplementation();
+    if (original === undefined) throw new Error("Missing current authority fixture");
+    let calls = 0;
+    current.mockImplementation(async () => {
+      const grant = await original();
+      if (++calls !== 4) return grant;
+      if (mode === "revocation") throw new WorkflowCheckpointError("WORKFLOW_AUTHORITY_STALE");
+      return mode === "policy" ? { ...grant, policy_authority_ref: "changed-policy" }
+        : { ...grant, authorization_receipt_ref: "changed-grant" };
+    });
+    await expect(createEvidenceFreezeMaterializeContextReader(f.environment, f.navigation, f.readers).read(f.input))
+      .rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+    expect(current).toHaveBeenCalledTimes(4);
+    expect(f.retainedGet).toHaveBeenCalledOnce();
+  });
+
+  it.each(["owner", "scope", "revision", "deployment"])("rejects late %s head drift after immutable lineage reuse", async mode => {
+    const f = await retainedFixture("MATERIALIZE");
+    const head = vi.mocked(f.readers.read_w1_head);
+    const original = head.getMockImplementation();
+    if (original === undefined) throw new Error("Missing ledger head fixture");
+    let calls = 0;
+    head.mockImplementation(async (...args) => {
+      const value = await original(...args);
+      if (++calls !== 3) return value;
+      return { ...value, ...(mode === "owner" ? { principal_ref: "different-owner" }
+        : mode === "scope" ? { scope_snapshot_id: "different-scope" }
+          : mode === "revision" ? { revision: 99 } : { deployment_generation: "different-deployment" }) } as typeof value;
+    });
+    await expect(createEvidenceFreezeMaterializeContextReader(f.environment, f.navigation, f.readers).read(f.input))
+      .rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+    expect(head).toHaveBeenCalledTimes(3);
+    expect(f.navigation.current).toHaveBeenCalledTimes(4);
+  });
+
+  it.each(["SYNTHESIZE", "CALCULATE_COVERAGE"] as const)("refuses broken %s output hashes before reuse", async stage => {
+    const f = await retainedFixture("MATERIALIZE");
+    const committed = f.commits.get(stage);
+    if (committed === undefined) throw new Error("Missing committed lineage fixture");
+    Object.assign(committed.receipt, { output_manifest: { ...committed.receipt.output_manifest, sha256: "f".repeat(64) } });
+    await expect(createEvidenceFreezeMaterializeContextReader(f.environment, f.navigation, f.readers).read(f.input))
+      .rejects.toMatchObject({ code: "WORKFLOW_OUTPUT_CORRUPT" });
+    expect(f.retainedGet).not.toHaveBeenCalled();
+    expect(f.binding).not.toHaveBeenCalled();
+  });
+});
 
 describe("post-model retained context purpose", () => {
   it.each(["RESOLVE_CITATIONS", "CALCULATE_COVERAGE", "MATERIALIZE"] as const)("admits original expired artifacts for %s after all model commits", async stage => {

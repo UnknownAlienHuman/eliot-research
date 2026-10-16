@@ -23,7 +23,7 @@ export {
   type ModelGatewayUsageObservation,
   type PreparedModelGatewayHttpRequest,
 } from "./model-gateway-execution-contract.js";
-export { prepareModelGatewayHttpRequest, prepareModelGatewayBindingRequest, reasoningEndpoint as resolveModelGatewayReasoningEndpoint, gatewayToken as validateModelGatewayToken } from "./model-gateway-http-request.js";
+export { prepareModelGatewayHttpRequest, prepareModelGatewayBindingRequest, prepareCatalogModelQualificationHttpRequest, reasoningEndpoint as resolveModelGatewayReasoningEndpoint, gatewayToken as validateModelGatewayToken } from "./model-gateway-http-request.js";
 export { rejectModelGatewayHttpFailure } from "./model-gateway-http-failure.js";
 export {
   canonicalModelGatewayJson,
@@ -53,6 +53,7 @@ export {
 export {
   createModelGatewayFetchAdapter,
   executeObservedModelGatewayCall,
+  isModelGatewayPromptCompileFailure,
 } from "./model-gateway-execution.js";
 export * from "./dynamic-route-provisioning-contract.js";
 export * from "./dynamic-route-provisioning-codec.js";

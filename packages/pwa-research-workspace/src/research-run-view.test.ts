@@ -111,9 +111,17 @@ describe("Research presentation preserves execution facts", () => {
       created_at: "2026-09-22T00:00:00.000Z",
       draft: missingWithSavedDraft.saved_drafts[0],
     }]);
-    expect(historyStatusText(installedWithNoRuns)).toBe("No saved research runs or drafts are available yet.");
+    expect(historyStatusText(installedWithNoRuns)).toBe("No saved runs or drafts are visible in this response.");
+    expect(historyStatusText(installedWithNoRuns)).not.toMatch(/were found|available yet/i);
     expect(historyStatusText(installedWithNoRuns)).not.toMatch(/installed|ready/i);
     expect(idleBadgeText(true, false)).toBe("BLOCKED");
+  });
+
+  it.each(['eliotr.research-runs.v4', 'eliotr.research-runs.v5'] as const)("reports exhausted %s history only when both visibility scans finish", protocol => {
+    const exhausted = historyView({ protocol, visibility_scan: { runs: 'SOURCE_EXHAUSTED', saved_drafts: 'SOURCE_EXHAUSTED' } });
+    expect(historyStatusText(exhausted)).toBe('No saved research runs or drafts were found.');
+    const partial = historyView({ protocol, visibility_scan: { runs: 'BUDGET_STOPPED', saved_drafts: 'SOURCE_EXHAUSTED' } });
+    expect(historyStatusText(partial)).toBe('No saved runs or drafts are visible in this response.');
   });
 
   it("keeps a saved draft message separate from a ready or blocked start state", () => {

@@ -13,6 +13,8 @@ import {
 import {
   prepareModelGatewayBindingRequest,
   prepareModelGatewayHttpRequest,
+  prepareCatalogModelQualificationHttpRequest,
+  prepareNativeQualificationHttpRequest,
 } from "./model-gateway-http-request.js";
 import {
   decodeModelGatewayProviderBody,
@@ -151,6 +153,84 @@ async function fixture(
 }
 
 describe("model gateway transport policy", () => {
+  it.each(["opencode-go", "opencode-zen"])("routes %s through its exact saved custom provider and alias", async provider => {
+    const policy: ModelGatewayTransportPolicyV1 = {
+      ...OPENAI_CHAT_POLICY, api: "custom-chat-completions", provider: `custom-${provider}`,
+      model: "catalog-chosen-model", billing: { mode: "byok", alias: "one-saved-provider-key" },
+    };
+    const { deployment, compiled } = await fixture(policy);
+    const request = await prepareModelGatewayHttpRequest(input, deployment, compiled, BASE_URL, "gateway-secret", policy);
+    expect(request.url).toBe(`${BASE_URL}/custom-${provider}/chat/completions`);
+    expect(JSON.parse(request.body)).toMatchObject({ model: policy.model, max_completion_tokens: 32 });
+    expect(request.headers["cf-aig-byok-alias"]).toBe("one-saved-provider-key");
+    expect(request.headers["cf-aig-no-wholesale"]).toBe("true");
+    expect(request.headers).not.toHaveProperty("authorization");
+    expect(request.parameters_sha256).toBe(deployment.parameters_digest);
+    const response = (model: string) => new Response(JSON.stringify({
+      id: "custom-result", object: "chat.completion", created: 1, model,
+      choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "ok" } }],
+      usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 },
+    }), { headers: { "content-type": "application/json", "cf-aig-log-id": "custom-log" } });
+    const decoded = await decodeSelectedModelGatewayResponse(response(policy.model), deployment, 4096, policy);
+    expect(decoded.assistant_content).toBe("ok");
+    expect(decoded.fingerprint).toMatchObject({ provider: policy.provider, exact_model_id: policy.model });
+    await expect(decodeSelectedModelGatewayResponse(response("unselected-model"), deployment, 4096, policy))
+      .rejects.toMatchObject({ code: "MODEL_GATEWAY_RESPONSE_INVALID" });
+    await expect(prepareModelGatewayBindingRequest(input, deployment, compiled, BASE_URL, policy))
+      .rejects.toMatchObject({ code: "MODEL_GATEWAY_REQUEST_INVALID" });
+    const probeBody = { ...compiled.request_body, model: policy.model,
+      messages: [{ role: "user", content: "Return the server probe response." }] };
+    const probe = {
+      deployment, transport_policy: policy,
+      compiled: { ...compiled, request_body: probeBody, request_body_sha256: await modelGatewaySha256(canonicalModelGatewayJson(probeBody)) },
+      gateway_base_url: BASE_URL, gateway_token: "gateway-secret", maximum_input_bytes: 4096, maximum_output_bytes: 4096,
+      gateway_metadata: { operation_id: "chosen-model-check", stage_id: "SYNTHESIZE" },
+    };
+    const preparedProbe = await prepareCatalogModelQualificationHttpRequest(probe);
+    expect(preparedProbe.url).toBe(request.url);
+    expect(JSON.parse(preparedProbe.body)).toMatchObject({ model: policy.model });
+    expect(preparedProbe.headers["cf-aig-byok-alias"]).toBe("one-saved-provider-key");
+    await expect(prepareNativeQualificationHttpRequest(probe))
+      .rejects.toMatchObject({ code: "MODEL_GATEWAY_REQUEST_INVALID" });
+  });
+
+  it("rejects unsafe custom slugs, default credentials and wholesale fallback", () => {
+    const policy = { ...OPENAI_CHAT_POLICY, api: "custom-chat-completions", provider: "custom-opencode-go" };
+    for (const invalid of [
+      { ...policy, provider: "custom-opencode-go/other" }, { ...policy, provider: "opencode-go" },
+      { ...policy, billing: { mode: "unified" } }, { ...policy, billing: { mode: "byok", alias: "default" } },
+    ]) expect(() => validateModelGatewayTransportPolicy(invalid)).toThrow(ModelGatewayExecutionError);
+  });
+
+  it.each([
+    [OPENAI_CHAT_POLICY, "/openai/chat/completions"],
+    [OPENAI_RESPONSES_POLICY, "/openai/responses"],
+    [ANTHROPIC_POLICY, "/anthropic/v1/messages"],
+    [{ ...OPENAI_RESPONSES_POLICY, api: "custom-responses", provider: "custom-opencode-go" }, "/custom-opencode-go/responses"],
+    [{ ...ANTHROPIC_POLICY, api: "custom-anthropic-messages", provider: "custom-opencode-go" }, "/custom-opencode-go/v1/messages"],
+  ] as const)("keeps catalog qualification on the selected %s provider API", async (base, path) => {
+    const policy: ModelGatewayTransportPolicyV1 = { ...base, billing: { mode: "byok", alias: "saved-provider" } };
+    const { deployment, compiled } = await fixture(policy);
+    const body = { ...compiled.request_body, model: policy.model, messages: [{ role: "user", content: "Return the probe response." }] };
+    const request = await prepareCatalogModelQualificationHttpRequest({
+      deployment, transport_policy: policy, compiled: { ...compiled, request_body: body,
+        request_body_sha256: await modelGatewaySha256(canonicalModelGatewayJson(body)) },
+      gateway_base_url: BASE_URL, gateway_token: "gateway-secret", maximum_input_bytes: 4096, maximum_output_bytes: 4096,
+      gateway_metadata: { operation_id: "selected-provider-check", stage_id: "SYNTHESIZE" },
+    });
+    expect(request.url).toBe(`${BASE_URL}${path}`);
+    expect(JSON.parse(request.body)).toMatchObject({ model: policy.model });
+    expect(request.headers["cf-aig-byok-alias"]).toBe("saved-provider");
+    if (policy.api === "openai-responses" || policy.api === "custom-responses") {
+      expect(JSON.parse(request.body)).toMatchObject({ store: false, input: [{ role: "user", content: "Return the probe response." }], max_output_tokens: 32 });
+      expect(JSON.parse(request.body)).not.toHaveProperty("messages");
+    }
+    if (policy.api === "anthropic-messages" || policy.api === "custom-anthropic-messages") {
+      expect(request.headers["anthropic-version"]).toBe("2023-06-01");
+      expect(JSON.parse(request.body)).not.toHaveProperty("system");
+    }
+  });
+
   it("preserves legacy max_tokens while rejecting an unselected API token key", async () => {
     await expect(modelGatewayRequestParametersSha256({
       max_tokens: 32,

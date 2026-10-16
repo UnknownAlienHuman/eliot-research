@@ -49,6 +49,7 @@ export interface ResearchBranchRoleModelDependencies {
   /** Selects pricing for the exact W2 stage; Native zero pricing cannot leak across stages. */
   readonly pricing_for_stage?: (stage: "ANALYZE_BRANCHES" | "COUNTER_SEARCH") => ResearchModelStageHandlerDependencies["pricing"];
   readonly native_model_authority?: ResearchModelStageHandlerDependencies["native_model_authority"];
+  readonly catalog_native_model_authority_v2?: ResearchModelStageHandlerDependencies["catalog_native_model_authority_v2"];
   readonly deployment_environment?: ResearchModelStageHandlerDependencies["deployment_environment"];
   readonly expected_deployment?: ResearchModelStageHandlerDependencies["expected_deployment"];
   readonly now?: () => number;
@@ -90,8 +91,9 @@ export function deriveBranchRoleStageRequest(
 export function createResearchBranchRoleModelExecutor(
   dependencies: ResearchBranchRoleModelDependencies,
 ): ResearchBranchRoleModelExecutor {
-  if (dependencies.native_model_authority !== undefined && dependencies.pricing_for_stage === undefined) {
-    throw new Error("Native branch execution requires stage-specific model pricing");
+  if ((dependencies.native_model_authority !== undefined || dependencies.catalog_native_model_authority_v2 !== undefined) &&
+      dependencies.pricing_for_stage === undefined) {
+    throw new Error("Provider-native branch execution requires stage-specific model pricing");
   }
   const handlers = new Map<string, ResearchModelStageHandler>();
   const handlerFor = (
@@ -119,6 +121,9 @@ export function createResearchBranchRoleModelExecutor(
         dependencies.prompt_for_stage?.(role, stage) ?? dependencies.prompt(role),
       pricing: dependencies.pricing_for_stage?.(stage) ?? dependencies.pricing,
       ...(dependencies.native_model_authority === undefined ? {} : { native_model_authority: dependencies.native_model_authority }),
+      ...(dependencies.catalog_native_model_authority_v2 === undefined ? {} : {
+        catalog_native_model_authority_v2: dependencies.catalog_native_model_authority_v2,
+      }),
       prepare: (context) => dependencies.prepare(context, role),
       spend_authorization: dependencies.spend_authorization,
       ...(dependencies.deployment_environment === undefined

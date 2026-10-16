@@ -1,5 +1,9 @@
 import { canonicalJson } from "@eliotr/platform-cloudflare";
-import { createProviderNativeModelZeroPricePort } from "@eliotr/cloudflare-native-models";
+import {
+  createProviderNativeModelZeroPricePort,
+  createD1ProviderNativeModelCatalogV2Authority,
+  type ProviderNativeModelCatalogV2PricingReader,
+} from "@eliotr/cloudflare-native-models";
 import {
   createD1EvidenceAuthorityPort,
   createR2EvidenceContentPort,
@@ -44,6 +48,7 @@ export async function createOwnerArtifactCowModel(input: {
   readonly attempt: ArtifactSectionReviseAttempt;
   readonly navigation: NavigationReadAuthority;
   readonly cow: Awaited<ReturnType<typeof createOwnerArtifactCowPorts>>;
+  readonly catalog_pricing_snapshots?: ProviderNativeModelCatalogV2PricingReader;
 }) {
   const { env, context, attempt, navigation, cow } = input;
   const rawPin = attempt.request.report_admission_witness.material.run_configuration;
@@ -74,24 +79,45 @@ export async function createOwnerArtifactCowModel(input: {
   }
 
   let resolveNativeModelSelection: ArtifactCowNativeModelSelectionResolver | undefined;
-  if (runConfiguration?.model_selections.some((selection) => selection.candidate_kind === "provider-native-v1")) {
+  if (runConfiguration?.model_selections.some((selection) => selection.candidate_kind === "provider-native-v1" ||
+      selection.candidate_kind === "provider-native-v2")) {
     const ownerRef = runConfiguration.project_owner_ref;
     const projectId = runConfiguration.project_id;
     if ((runConfiguration.mode !== "snapshot-v1" && runConfiguration.mode !== "snapshot-v2") ||
         typeof ownerRef !== "string" || typeof projectId !== "string") {
       deny("Original COW Native selection has no captured project authority");
     }
-    const currentScope = createResearchProviderNativeModelCurrentScopeReader({ database: env.CORE_DB,
-      owner_ref: ownerRef, project_id: projectId, model_selections: runConfiguration.model_selections });
-    const nativeAuthority = createResearchProviderNativeModelAuthority({ env, current_scope: currentScope });
-    resolveNativeModelSelection = async (selectionInput) => {
-      const resolved = await nativeAuthority.resolvePinned({ selection: selectionInput.selection,
-        owner_ref: ownerRef, project_id: projectId,
-        allow_expired_snapshot_v2: selectionInput.allow_expired_snapshot_v2 });
-      const preparation = resolved.candidate.candidate.preparation;
-      return Object.freeze({ deployment: preparation.deployment, transport_policy: preparation.transport_policy,
-        pricing_port: createProviderNativeModelZeroPricePort(preparation, resolved.pricing_snapshot) });
-    };
+    const v1Selections = runConfiguration.model_selections.filter((selection) => selection.candidate_kind === "provider-native-v1");
+    const nativeAuthority = v1Selections.length === 0 ? undefined : createResearchProviderNativeModelAuthority({ env,
+      current_scope: createResearchProviderNativeModelCurrentScopeReader({ database: env.CORE_DB,
+        owner_ref: ownerRef, project_id: projectId, model_selections: v1Selections }) });
+    const hasV2 = runConfiguration.model_selections.some((selection) => selection.candidate_kind === "provider-native-v2");
+    const catalogAuthority = !hasV2 || input.catalog_pricing_snapshots === undefined ? undefined
+      : createD1ProviderNativeModelCatalogV2Authority({ database: env.CORE_DB,
+        pricing_snapshots: input.catalog_pricing_snapshots });
+    if (nativeAuthority !== undefined || catalogAuthority !== undefined) {
+      resolveNativeModelSelection = async (selectionInput) => {
+        const selected = selectionInput.selection as { readonly candidate_kind?: unknown };
+        if (selected.candidate_kind === "provider-native-v1") {
+          if (nativeAuthority === undefined) deny("Provider-native v1 authority is unavailable");
+          const resolved = await nativeAuthority.resolvePinned({ selection: selectionInput.selection,
+            owner_ref: ownerRef, project_id: projectId,
+            allow_expired_snapshot_v2: selectionInput.allow_expired_snapshot_v2 });
+          const preparation = resolved.candidate.candidate.preparation;
+          return Object.freeze({ deployment: preparation.deployment, transport_policy: preparation.transport_policy,
+            pricing_port: createProviderNativeModelZeroPricePort(preparation, resolved.pricing_snapshot) });
+        }
+        if (selected.candidate_kind === "provider-native-v2") {
+          if (catalogAuthority === undefined) deny("Trusted catalog pricing and SDK capability resolver is unavailable");
+          const resolved = await catalogAuthority.resolvePinned({ selection: selectionInput.selection,
+            owner_ref: ownerRef, project_id: projectId,
+            allow_expired_snapshot_v2: selectionInput.allow_expired_snapshot_v2 });
+          return Object.freeze({ deployment: resolved.deployment, transport_policy: resolved.selection.transport_policy,
+            pricing_port: resolved.pricing_port });
+        }
+        deny("Provider-native model selection version is unsupported");
+      };
+    }
   }
 
   const semantic = await resolveResearchSemanticConfig({ env: runtimeEnv, database: env.CORE_DB });

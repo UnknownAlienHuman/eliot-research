@@ -7,6 +7,8 @@ import {
 } from "@eliotr/cloudflare-research-configuration/research-provider-key-model-use-service.js";
 import type { Env } from "./env.js";
 import type { ResearchProjectModelConfigurationService } from "./research-project-configuration.js";
+import type { ResearchProviderKeyModelUseCatalogSelectionV1 } from
+  "@eliotr/cloudflare-research-configuration/research-provider-key-model-use-plan.js";
 import { createResearchProviderNativeModelAuthority } from "./research-provider-native-model-authority.js";
 import { createResearchProviderKeyModelUsePlanInputsFromEnv } from "./research-provider-key-model-use-plan.js";
 
@@ -19,6 +21,7 @@ export function createResearchProviderKeyModelUseService(input: {
   readonly project_id: string;
   readonly key_configuration: ResearchProviderKeyConfigurationService;
   readonly project_configuration: ResearchProjectModelConfigurationService;
+  readonly catalog_selection?: ResearchProviderKeyModelUseCatalogSelectionV1;
   readonly now?: () => number;
   readonly fetcher?: typeof fetch;
 }): ResearchProviderKeyModelUseService {
@@ -44,6 +47,7 @@ export function createResearchProviderKeyModelUseService(input: {
     project_id: input.project_id,
     key_configuration: input.key_configuration,
     project_configuration: input.project_configuration,
+    ...(input.catalog_selection === undefined ? {} : { catalog_selection: input.catalog_selection }),
     native_authority_factory: (authorityInput) => createResearchProviderNativeModelAuthority({
       env: input.env,
       current_scope: authorityInput.current_scope,

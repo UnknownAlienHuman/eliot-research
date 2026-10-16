@@ -31,28 +31,82 @@ async function file(root, relative, limit = MAX_BODY) {
   return { bytes, pin: { path: relative, byte_length: bytes.length, sha256: hash(bytes) } };
 }
 
-// Direct bounded HEAD/ref reads; never invokes Git or discovers a parent checkout.
-async function sourceHead(root) {
-  const directory = path.join(root, ".git"), info = await lstat(directory);
-  if (!info.isDirectory() || info.isSymbolicLink() || !samePath(await realpath(directory), directory)) fail("INDEPENDENT_REPO_REQUIRED");
-  const head = (await file(root, ".git/HEAD", 1024)).bytes.toString("utf8").trim();
-  if (/^[a-f0-9]{40}$/u.test(head)) return head;
-  const match = /^ref: (refs\/[A-Za-z0-9._/-]+)$/u.exec(head);
-  if (!match || match[1].split("/").some(part => !part || part === "." || part === "..")) fail("INVALID_SOURCE_HEAD");
-  try {
-    const value = (await file(root, ".git/" + match[1], 1024)).bytes.toString("utf8").trim();
-    if (!/^[a-f0-9]{40}$/u.test(value)) fail("INVALID_SOURCE_REF");
-    return value;
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-    const packed = (await file(root, ".git/packed-refs", MAX_BODY)).bytes.toString("utf8");
-    const matches = packed.split(/\r?\n/u).filter(line => line.endsWith(" " + match[1]));
-    if (matches.length !== 1 || !/^[a-f0-9]{40} /u.test(matches[0])) fail("SOURCE_REF_NOT_FOUND");
-    return matches[0].slice(0, 40);
+async function sourceDirectory(directory, code) {
+  const info = await lstat(directory).catch(() => null);
+  if (!info?.isDirectory() || info.isSymbolicLink() ||
+      !samePath(await realpath(directory), directory)) fail(code);
+}
+
+// Only a .git entry at the explicit root can authorize discovery. A linked
+// worktree must have reciprocal registration in its canonical common directory.
+async function sourceLayout(root) {
+  await sourceDirectory(root, "SOURCE_ROOT_REDIRECTED");
+  const entry = path.join(root, ".git"), info = await lstat(entry).catch(() => null);
+  if (!info || info.isSymbolicLink()) fail("SOURCE_GIT_ENTRY_REQUIRED");
+  let gitDirectory = entry, commonDirectory = entry;
+  const metadata = {};
+  if (info.isFile()) {
+    const pointer = await file(root, ".git", 4096);
+    const match = /^gitdir: ([^\r\n\0]+)\r?\n?$/u.exec(pointer.bytes.toString("utf8"));
+    if (!match) fail("INVALID_SOURCE_WORKTREE_LAYOUT");
+    gitDirectory = path.resolve(root, match[1]);
+    await sourceDirectory(gitDirectory, "INVALID_SOURCE_WORKTREE_LAYOUT");
+    const common = await file(gitDirectory, "commondir", 4096);
+    const commonPath = /^([^\r\n\0]+)\r?\n?$/u.exec(common.bytes.toString("utf8"));
+    if (!commonPath) fail("INVALID_SOURCE_WORKTREE_LAYOUT");
+    commonDirectory = path.resolve(gitDirectory, commonPath[1]);
+    await sourceDirectory(commonDirectory, "INVALID_SOURCE_WORKTREE_LAYOUT");
+    const registrations = path.join(commonDirectory, "worktrees");
+    if (!samePath(path.dirname(gitDirectory), registrations)) fail("INVALID_SOURCE_WORKTREE_LAYOUT");
+    await sourceDirectory(registrations, "INVALID_SOURCE_WORKTREE_LAYOUT");
+    const backlink = await file(gitDirectory, "gitdir", 4096);
+    const backPath = /^([^\r\n\0]+)\r?\n?$/u.exec(backlink.bytes.toString("utf8"));
+    if (!backPath || !samePath(path.resolve(gitDirectory, backPath[1]), entry)) fail("SOURCE_WORKTREE_BACKLINK_MISMATCH");
+    Object.assign(metadata, { pointer: pointer.pin.sha256, commondir: common.pin.sha256, backlink: backlink.pin.sha256 });
+  } else if (info.isDirectory()) await sourceDirectory(entry, "INVALID_SOURCE_WORKTREE_LAYOUT");
+  else fail("SOURCE_GIT_ENTRY_REQUIRED");
+  metadata.head = (await file(gitDirectory, "HEAD", 1024)).pin.sha256;
+  return { root, git_directory: gitDirectory, common_directory: commonDirectory, metadata };
+}
+
+function sourceGit(root, args) {
+  // Ambient Git routing/configuration must never redirect capture to a dirty
+  // primary checkout. Disable optional index writes and executable fsmonitors.
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.toUpperCase().startsWith("GIT_")));
+  Object.assign(env, { GIT_OPTIONAL_LOCKS: "0", GIT_CONFIG_NOSYSTEM: "1", GIT_NO_LAZY_FETCH: "1", GIT_TERMINAL_PROMPT: "0",
+    GIT_CONFIG_GLOBAL: process.platform === "win32" ? "NUL" : "/dev/null" });
+  return new Promise((resolve, reject) => execFile("git", ["--no-optional-locks", "--no-replace-objects",
+    "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-C", root, ...args],
+  { env, shell: false, windowsHide: true, encoding: "utf8", timeout: 5000, maxBuffer: MAX_BODY }, (error, stdout) => {
+    if (error) reject(new Error("Owner-web native routes: SOURCE_GIT_READ_FAILED"));
+    else resolve(stdout);
+  }));
+}
+
+/** Read-only identity of the requested clean checkout, including registered Git worktrees. */
+export async function readOwnerWebNativeSourceIdentity(root) {
+  root = path.resolve(root);
+  const before = await sourceLayout(root);
+  const facts = (await sourceGit(root, ["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir",
+    "--show-toplevel", "--is-inside-work-tree", "--is-bare-repository"])).trim().split(/\r?\n/u);
+  if (facts.length !== 5 || !samePath(path.resolve(facts[0]), before.git_directory) ||
+      !samePath(path.resolve(facts[1]), before.common_directory) || !samePath(path.resolve(facts[2]), root) ||
+      facts[3] !== "true" || facts[4] !== "false") fail("SOURCE_WORKTREE_IDENTITY_MISMATCH");
+  const head = (await sourceGit(root, ["rev-parse", "--verify", "HEAD^{commit}"])).trim();
+  if (!/^[a-f0-9]{40}$/u.test(head)) fail("INVALID_SOURCE_HEAD");
+  const index = await sourceGit(root, ["ls-files", "-v", "-z"]);
+  if (index.split("\0").some(record => /^[a-zS] /u.test(record))) fail("SOURCE_INDEX_FLAGS_UNSUPPORTED");
+  if (await sourceGit(root, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"])) {
+    fail("DIRTY_SOURCE_WORKTREE");
   }
+  const after = await sourceLayout(root);
+  if (JSON.stringify(before) !== JSON.stringify(after) ||
+      (await sourceGit(root, ["rev-parse", "--verify", "HEAD^{commit}"])).trim() !== head) fail("SOURCE_REPOSITORY_CHANGED");
+  return { ...before, source_head: head };
 }
 
 async function inputs(root) {
+  const sourceIdentity = await readOwnerWebNativeSourceIdentity(root);
   const records = {};
   for (const [key, relative, limit] of [
     ["generated_config", GENERATED, MAX_BODY], ["emitted_config", WORKER + "/wrangler.json", MAX_BODY],
@@ -88,7 +142,7 @@ async function inputs(root) {
   const html = records.inbox.bytes.toString("utf8");
   if (!html.includes("No task loaded.") || !html.includes("No dispatch loaded.") ||
       !html.includes("/agent-inbox/retirement.js") || !html.includes("/agent-inbox/app.js")) fail("IDLE_INBOX_ENTRY_MISSING");
-  return { records, source_head: await sourceHead(root) };
+  return { records, source_head: sourceIdentity.source_head, source_identity: sourceIdentity };
 }
 
 function localEnvironment(environment, logs) {
@@ -220,7 +274,7 @@ export async function assertOwnerWebNativeRoutes({ root, environment }) {
       result.state = "PASS";
     }
     const after = await within(inputs(root), workRemaining(), "INPUT_REREAD_DEADLINE");
-    if (after.source_head !== before.source_head || Object.keys(before.records).some(key =>
+    if (JSON.stringify(after.source_identity) !== JSON.stringify(before.source_identity) || Object.keys(before.records).some(key =>
       JSON.stringify(before.records[key].pin) !== JSON.stringify(after.records[key].pin))) fail("SOURCE_OR_PREPARED_BYTES_CHANGED");
   } catch (error) {
     failure = /^Owner-web native routes: [A-Z_]+$/u.test(error.message ?? "") ? error.message : "Owner-web native routes: OBSERVATION_FAILED";

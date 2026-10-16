@@ -15,12 +15,21 @@ import {
 } from "./registry-contracts.js";
 import { MCP_DIAGNOSTIC_PROTOCOL } from "./mcp-diagnostic.js";
 import { CONTRACT_SCHEMA_REGISTRY_GENERATION } from "./schema-registry.js";
+import { RESEARCH_CATALOG_MODEL_USE_REQUEST_PROTOCOL } from "./research-catalog-model-use.js";
 
 export const CANONICAL_FIXTURE_REGISTRY =
   CanonicalFixtureRegistryDocumentSchema.parse({
     protocol: CANONICAL_FIXTURE_REGISTRY_PROTOCOL,
     registry_generation: CONTRACT_SCHEMA_REGISTRY_GENERATION,
     fixtures: [
+      {
+        fixture_id: "research-catalog-model-use-request-v1",
+        protocol: RESEARCH_CATALOG_MODEL_USE_REQUEST_PROTOCOL,
+        schema_export: "ResearchCatalogModelUseRequestSchema",
+        fixture_path: "docs/contracts/fixtures/eliotr.research.catalog-model-use-request.v1.json",
+        media_type: "application/json",
+        canonical_body_sha256: "a09eefe74414b993eaf546b7dd98c3983503ba998c52d1172d6ea08ff531e3fb",
+      },
       {
         "fixture_id": "research-run-history-visibility-v4",
         "protocol": "eliotr.research-runs.v4",
@@ -36,6 +45,14 @@ export const CANONICAL_FIXTURE_REGISTRY =
         "fixture_path": "tests/fixtures/contracts/eliotr.research.branch-reconciliation-pending.v1.json",
         "media_type": "application/json",
         "canonical_body_sha256": "dcc8fd19399092a95acac1a2b8ba0f0895c792ace9181c31f245f42b8a31a872"
+      },
+      {
+        "fixture_id": "research-branch-query-budget-exhaustion-v1",
+        "protocol": "eliotr.research.branch-query-result.v1",
+        "schema_export": "BranchQueryResultSchema",
+        "fixture_path": "tests/fixtures/contracts/eliotr.research.branch-query-budget-exhaustion.v1.json",
+        "media_type": "application/json",
+        "canonical_body_sha256": "9c2e16cbbba9450c8e7bca6b1b7a012c0cd31d283c736d36d3551a37bcba219e"
       },
       {
         fixture_id: "research-session-binding-v1",

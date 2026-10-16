@@ -178,7 +178,9 @@ export const DURABLE_CORE_TABLE_SPECS_A: readonly TableSpec[] = [
       "cancellation_receipt_ref": "text-or-null",
       "created_at": "text",
       "first_failure_json": "text-or-null",
-      "latest_failure_json": "text-or-null"
+      "latest_failure_json": "text-or-null",
+      "failure_history_json": "text-or-null",
+      "stage_effect_policy_generation": "text-or-null"
   }, required: false },
   { manifest: "heads", table: "research_workflow_attempt", order_by: "operation_id, stage_index", columns: {
       "operation_id": "text",

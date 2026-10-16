@@ -317,7 +317,8 @@ export const DURABLE_CORE_TABLE_SPECS_D: readonly TableSpec[] = [
       "all_material_citations_resolved": "int",
       "receipt_json": "text",
       "receipt_sha256": "text",
-      "created_at": "text"
+      "created_at": "text",
+      "outcomes_json": "text-or-null"
   }, required: false },
   { manifest: "heads", table: "orientation_request", order_by: "operation_id", columns: {
       "operation_id": "text",

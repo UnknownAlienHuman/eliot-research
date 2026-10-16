@@ -37,6 +37,7 @@ export * from "./publication.js";
 export * from "./model.js";
 export * from "./research-provider-key.js";
 export * from "./research-provider-key-model-use.js";
+export * from "./research-catalog-model-use.js";
 export type { VerifyEvidenceRequest, VerifyEvidenceResult } from "./evidence-service.js";
 export * from "./backup.js";
 export * from "./backup-table-spec-types.js";

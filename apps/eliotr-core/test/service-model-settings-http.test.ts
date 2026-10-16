@@ -3,7 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { createServiceModelProviderService, ServiceModelProviderOperationError,
   type ServiceModelProviderService } from "@eliotr/cloudflare-model-control/service-model-provider-service.js";
-import { handleServiceModelProviders, handleServiceModelSettings } from "../src/service-model-settings-http.js";
+import { handleServiceModelProviders, handleServiceModelSettings, handleServiceModelProvidersV2,
+  handleServiceModelProviderCatalogPreferences } from "../src/service-model-settings-http.js";
 import type { Env } from "../src/env.js";
 
 const origin = "https://core.example";
@@ -16,7 +17,16 @@ function context(request: Request, clientClass: AuthenticatedRequestContext["cli
 function service(): ServiceModelProviderService {
   return { list: vi.fn(async () => { throw new ServiceModelProviderOperationError(
     "SERVICE_MODEL_PROVIDER_STORAGE_UNAVAILABLE", 503, "storage unavailable", true); }),
-  create: vi.fn(async () => { throw new Error("unexpected write"); }), readOperation: vi.fn(async () => null) };
+  listV2: vi.fn(async () => ({ connections: [], truncated: false })),
+  create: vi.fn(async () => { throw new Error("unexpected write"); }),
+  connectCatalogManaged: vi.fn(async () => { throw new Error("unexpected write"); }),
+  readOperation: vi.fn(async () => null), readOperationV2: vi.fn(async () => null),
+  readCatalogPreferences: vi.fn(async (_context, provider_id) => ({
+    protocol: "eliotr.service-model-provider-catalog-preferences.v1" as const, provider_id,
+    visibility: { mode: "all" as const }, search: "", updated_at: null,
+  })),
+  updateCatalogPreferences: vi.fn(async (_context, input) => ({ ...input, updated_at: "2026-10-15T14:00:00.000Z" })),
+  resolveConfiguredProvider: vi.fn(async () => null) };
 }
 
 describe("global model settings HTTP", () => {
@@ -59,5 +69,35 @@ describe("global model settings HTTP", () => {
     expect(port.readOperation).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ principal_ref: "owner-1" }), operation);
     expect(body.data).toEqual({ protocol: "eliotr.service-model-settings.v1", connection: null, truncated: false });
     expect(port.create).not.toHaveBeenCalled();
+  });
+
+  it("reads v2 provider registration mode and owner catalog preferences", async () => {
+    const providersRequest = new Request(`${origin}/api/v2/system/model-providers`);
+    const providersResponse = await handleServiceModelProvidersV2(providersRequest, env, context(providersRequest), service(), 0);
+    expect(await providersResponse.json()).toMatchObject({ data: {
+      protocol: "eliotr.service-model-provider-read.v2", connections: [], truncated: false,
+    } });
+
+    const preferencesRequest = new Request(`${origin}/api/v2/system/model-provider-catalog-preferences?provider_id=openrouter`);
+    const preferencesResponse = await handleServiceModelProviderCatalogPreferences(
+      preferencesRequest, env, context(preferencesRequest), service(), 0);
+    expect(await preferencesResponse.json()).toMatchObject({ data: {
+      protocol: "eliotr.service-model-provider-catalog-preferences.v1", provider_id: "openrouter",
+      visibility: { mode: "all" }, search: "", updated_at: null,
+    } });
+  });
+
+  it("persists catalog filters through same-origin owner PUT without treating them as qualifications", async () => {
+    const request = new Request(`${origin}/api/v2/system/model-provider-catalog-preferences`, { method: "PUT",
+      headers: { origin, "content-type": "application/json", "x-eliotr-csrf": "1" },
+      body: JSON.stringify({ protocol: "eliotr.service-model-provider-catalog-preferences.v1", provider_id: "openrouter",
+        visibility: { mode: "include", model_ids: ["vendor/model-a"] }, search: "reasoning" }) });
+    const port = service();
+    const response = await handleServiceModelProviderCatalogPreferences(request, env, context(request), port, 262144);
+
+    expect(response.status).toBe(200);
+    expect(port.updateCatalogPreferences).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ principal_ref: "owner-1" }),
+      expect.objectContaining({ provider_id: "openrouter", visibility: { mode: "include", model_ids: ["vendor/model-a"] } }));
+    expect(await response.json()).toMatchObject({ data: { visibility: { mode: "include", model_ids: ["vendor/model-a"] } } });
   });
 });

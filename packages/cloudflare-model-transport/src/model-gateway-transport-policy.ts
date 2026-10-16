@@ -5,7 +5,10 @@ export type ModelGatewayApi =
   | "openai-chat-completions"
   | "openai-responses"
   | "openrouter-chat-completions"
-  | "anthropic-messages";
+  | "anthropic-messages"
+  | "custom-chat-completions"
+  | "custom-responses"
+  | "custom-anthropic-messages";
 
 export type ModelGatewayRequestCapabilitiesV1 = Readonly<{
   readonly max_output_tokens_field: "max_tokens" | "max_completion_tokens" | "max_output_tokens";
@@ -188,7 +191,8 @@ export function validateModelGatewayTransportPolicy(
   }
   const api = value.api;
   if (api !== "compat-chat-completions" && api !== "openai-chat-completions" &&
-      api !== "openai-responses" && api !== "openrouter-chat-completions" && api !== "anthropic-messages") {
+      api !== "openai-responses" && api !== "openrouter-chat-completions" && api !== "anthropic-messages" &&
+      api !== "custom-chat-completions" && api !== "custom-responses" && api !== "custom-anthropic-messages") {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_REQUEST_INVALID",
       "model gateway provider API is unsupported",
@@ -228,10 +232,15 @@ export function validateModelGatewayTransportPolicy(
     );
   }
   const provider = identifier(value.provider, "model gateway provider");
+  if ((api === "custom-chat-completions" || api === "custom-responses" || api === "custom-anthropic-messages") &&
+      (!/^custom-[a-z0-9][a-z0-9-]{0,62}$/u.test(provider) || decodedBilling.mode !== "byok" || decodedBilling.alias === "default")) {
+    modelGatewayExecutionFailure("MODEL_GATEWAY_REQUEST_INVALID",
+      "Custom provider chat requires an exact saved provider slug and non-default BYOK alias");
+  }
   const capabilities = validateModelGatewayRequestCapabilities(value.capabilities);
-  if ((api === "openai-responses" && capabilities.max_output_tokens_field !== "max_output_tokens") ||
-      (api === "anthropic-messages" && capabilities.max_output_tokens_field !== "max_tokens") ||
-      ((api === "openai-chat-completions" || api === "openrouter-chat-completions") &&
+  if (((api === "openai-responses" || api === "custom-responses") && capabilities.max_output_tokens_field !== "max_output_tokens") ||
+      ((api === "anthropic-messages" || api === "custom-anthropic-messages") && capabilities.max_output_tokens_field !== "max_tokens") ||
+      ((api === "openai-chat-completions" || api === "openrouter-chat-completions" || api === "custom-chat-completions") &&
         capabilities.max_output_tokens_field === "max_output_tokens")) {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_REQUEST_INVALID",

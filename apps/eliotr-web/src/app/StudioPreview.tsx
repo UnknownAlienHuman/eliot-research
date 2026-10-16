@@ -152,9 +152,9 @@ export async function playStudioHistoryRecovery({ canvas, userEvent }: Parameter
   if (!root) throw new Error('Actual Studio report recovery root missing');
   const environment = studioEnvironments.get(root);
   if (!environment) throw new Error('Studio report recovery effects probe missing');
-  const pane = root.querySelector<HTMLElement>('.er-live-workspace');
+  const pane = failed.closest<HTMLElement>('.er-shell-reading');
   if (!pane) throw new Error('Actual Studio operation pane missing');
-  // The workspace snackbar is outside the pane's own announcement channel.
+  // Other panes and the workspace snackbar own independent announcement channels.
   const region = paneAnnouncement(pane);
   await announcementUntil(() => unchangedChannel(pane, region, 'Saved reports could not be read. Try a fresh read.'));
   if (root.textContent?.includes('No saved reports yet.')) throw new Error('Failed report read became an empty library');

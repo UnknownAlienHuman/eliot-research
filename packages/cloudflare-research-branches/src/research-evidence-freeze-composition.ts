@@ -539,16 +539,22 @@ export interface EvidenceFreezeVerificationContextReader {
   }): Promise<EvidenceFreezeSynthesisContext>;
 }
 
-/** Reads the original freeze through every committed predecessor of the current stage. */
-export function createEvidenceFreezePostSynthesisContextReader(
+type PostSynthesisStage = "VERIFY" | "AUDIT_CLAIMS" | "RESOLVE_CITATIONS" | "CALCULATE_COVERAGE" | "MATERIALIZE";
+interface PostSynthesisContextReadback {
+  readonly context: EvidenceFreezeSynthesisContext;
+  readonly synthesis_lineage: Awaited<ReturnType<typeof readCommittedStageLineage>>;
+  readonly predecessor_lineage: Awaited<ReturnType<typeof readCommittedStageLineage>>;
+}
+
+function createPostSynthesisContextReadbackReader(
   environment: EvidenceFreezeSynthesisReaderEnvironment,
   navigation: NavigationReadAuthority,
   readers: EvidenceFreezeCommittedReaders,
-  stage: "VERIFY" | "AUDIT_CLAIMS" | "RESOLVE_CITATIONS" | "CALCULATE_COVERAGE" | "MATERIALIZE",
-): EvidenceFreezeVerificationContextReader {
+  stage: PostSynthesisStage,
+): { read(input: Parameters<EvidenceFreezeVerificationContextReader["read"]>[0]): Promise<PostSynthesisContextReadback> } {
   const checkpoints = new WorkflowCheckpointStore(environment.database);
   return {
-    async read(input): Promise<EvidenceFreezeSynthesisContext> {
+    async read(input): Promise<PostSynthesisContextReadback> {
       if (input.request.stage !== stage) fail("WORKFLOW_INPUT_INVALID");
       if (input.input_bytes.byteLength !== input.request.input_manifest.byte_length ||
           await digest(input.input_bytes) !== input.request.input_manifest.sha256) fail("WORKFLOW_OUTPUT_CORRUPT");
@@ -587,15 +593,29 @@ export function createEvidenceFreezePostSynthesisContextReader(
             model.operation_id !== input.request.operation_id || model.investigation_id !== input.request.investigation_ref.id))) {
         fail("WORKFLOW_OUTPUT_CORRUPT");
       }
-      return createSynthesisContextReader(environment, navigation, readers, {
+      const context = await createSynthesisContextReader(environment, navigation, readers, {
         expected_head_revision: input.request.investigation_ref.revision,
         verify_input_bytes: true,
         ...(retained ? { post_model_readback: { purpose: "POST_MODEL_READBACK" as const, stage,
           operation_id: input.request.operation_id, investigation_id: input.request.investigation_ref.id,
           committed_model_stages: committedModels } } : {}),
       }).read({ request: first.request, principal: input.principal, input_bytes: stageTwelveInput });
+      // These immutable commits were verified in this invocation. Mutable read
+      // authority is still checked by the context reader and its caller.
+      return { context, synthesis_lineage: first, predecessor_lineage: previous };
     },
   };
+}
+
+/** Reads the original freeze through every committed predecessor of the current stage. */
+export function createEvidenceFreezePostSynthesisContextReader(
+  environment: EvidenceFreezeSynthesisReaderEnvironment,
+  navigation: NavigationReadAuthority,
+  readers: EvidenceFreezeCommittedReaders,
+  stage: PostSynthesisStage,
+): EvidenceFreezeVerificationContextReader {
+  const readback = createPostSynthesisContextReadbackReader(environment, navigation, readers, stage);
+  return { async read(input) { return (await readback.read(input)).context; } };
 }
 
 export function createEvidenceFreezeVerificationContextReader(
@@ -630,15 +650,13 @@ export function createEvidenceFreezeMaterializeContextReader(
   navigation: NavigationReadAuthority,
   readers: EvidenceFreezeCommittedReaders,
 ): EvidenceFreezeMaterializeContextReader {
-  const checkpoints = new WorkflowCheckpointStore(environment.database);
   return {
     async read(input): Promise<EvidenceFreezeMaterializeContext> {
       if (input.request.stage !== "MATERIALIZE") fail("WORKFLOW_INPUT_INVALID");
       const before = await navigation.current();
-      const context = await createEvidenceFreezePostSynthesisContextReader(environment, navigation, readers, "MATERIALIZE").read(input);
-      const stageTwelve = await readCommittedStageLineage(checkpoints, input.request.operation_id, "SYNTHESIZE");
+      const { context, synthesis_lineage: stageTwelve, predecessor_lineage: stageSixteen } =
+        await createPostSynthesisContextReadbackReader(environment, navigation, readers, "MATERIALIZE").read(input);
       const stageTwelveReceipt = stageTwelve.receipt;
-      const stageSixteen = await readCommittedStageLineage(checkpoints, input.request.operation_id, "CALCULATE_COVERAGE");
       const stageSixteenReceipt = stageSixteen.receipt;
       const finalHead = await readers.read_w1_head(input.request.investigation_ref.id);
       const after = await navigation.current();

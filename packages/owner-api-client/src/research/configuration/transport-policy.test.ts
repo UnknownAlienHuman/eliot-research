@@ -22,6 +22,14 @@ const basePolicy = {
 };
 
 describe('transport policy decoder', () => {
+  it('preserves a custom provider model and named alias while refusing guessed provider routing', () => {
+    const policy = { ...basePolicy, api: 'custom-chat-completions', provider: 'custom-opencode-go',
+      billing: { mode: 'byok', alias: 'saved-provider' },
+      capabilities: { max_output_tokens_field: 'max_tokens', reasoning_efforts: [] } };
+    expect(decode(policy)).toEqual(policy);
+    expect(() => decode({ ...policy, provider: 'opencode-go' })).toThrow('API_RESPONSE_SCHEMA_MISMATCH:502');
+    expect(() => decode({ ...policy, billing: { mode: 'byok', alias: 'default' } })).toThrow('API_RESPONSE_SCHEMA_MISMATCH:502');
+  });
   it('decodes the exact OpenRouter chat policy while preserving optional wire capabilities', () => {
     const policy = {
       ...basePolicy,

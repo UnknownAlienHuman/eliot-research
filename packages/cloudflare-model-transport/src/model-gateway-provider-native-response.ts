@@ -259,12 +259,12 @@ export async function decodeModelGatewayProviderBody(
   if (record.object === "chat.completion" && (expectedApi === "openrouter-chat-completions" ||
       (expectedApi === undefined && hasOpenRouterResponseFields(record)))) {
     decoded = decodeModelGatewayOpenRouterBody(record, bodyBytes);
-  } else if (record.object === "chat.completion" && (expectedApi === undefined || expectedApi === "compat-chat-completions" || expectedApi === "openai-chat-completions")) {
+  } else if (record.object === "chat.completion" && (expectedApi === undefined || expectedApi === "compat-chat-completions" || expectedApi === "openai-chat-completions" || expectedApi === "custom-chat-completions")) {
     decoded = decodeChatBody(exactObject(record, CHAT_RESPONSE_KEYS, "chat response"), bodyBytes);
-  } else if (record.object === "response" && (expectedApi === undefined || expectedApi === "openai-responses")) {
+  } else if (record.object === "response" && (expectedApi === undefined || expectedApi === "openai-responses" || expectedApi === "custom-responses")) {
     boundedJson(raw);
     decoded = decodeResponsesBody(exactObject(record, RESPONSES_KEYS, "OpenAI Responses"), bodyBytes);
-  } else if (record.type === "message" && (expectedApi === undefined || expectedApi === "anthropic-messages")) {
+  } else if (record.type === "message" && (expectedApi === undefined || expectedApi === "anthropic-messages" || expectedApi === "custom-anthropic-messages")) {
     boundedJson(raw);
     decoded = decodeAnthropicBody(exactObject(record, ANTHROPIC_RESPONSE_KEYS, "Anthropic response"), bodyBytes);
   }

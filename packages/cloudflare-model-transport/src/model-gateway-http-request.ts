@@ -19,6 +19,7 @@ import {
   validateModelGatewayTransportPolicy,
   validateModelGatewayRequestBody,
   validateModelGatewayProviderNativeRequestBody,
+  validateModelGatewayCatalogProviderRequestBody,
   type ModelGatewayTransportPolicyV1,
 } from "./model-gateway-request.js";
 import {
@@ -106,6 +107,7 @@ function safeInteger(
 export function reasoningEndpoint(
   baseUrl: string,
   api: ModelGatewayApi = "compat-chat-completions",
+  provider?: string,
 ): string {
   let url: URL;
   try {
@@ -142,7 +144,7 @@ export function reasoningEndpoint(
       "reasoning gateway base URL must identify the exact account and eliotr-reasoning gateway",
     );
   }
-  return `${url.origin}/v1/${parts[1]}/eliotr-reasoning${modelGatewayProviderNativePath(api)}`;
+  return `${url.origin}/v1/${parts[1]}/eliotr-reasoning${modelGatewayProviderNativePath(api, provider)}`;
 }
 
 export function gatewayToken(value: unknown): string {
@@ -195,13 +197,20 @@ function validatePolicy(
   }
 }
 
-function callTarget(api: ModelGatewayApi | undefined): ModelGatewayCallTarget {
+function callTarget(api: ModelGatewayApi | undefined, provider?: string): ModelGatewayCallTarget {
   if (api === undefined || api === "compat-chat-completions") {
     return { provider: "compat", endpoint: "chat/completions" };
   }
   if (api === "openai-chat-completions") return { provider: "openai", endpoint: "chat/completions" };
   if (api === "openrouter-chat-completions") return { provider: "openrouter", endpoint: "chat/completions" };
   if (api === "openai-responses") return { provider: "openai", endpoint: "responses" };
+  if (api === "custom-chat-completions" || api === "custom-responses" || api === "custom-anthropic-messages") {
+    if (typeof provider !== "string" || !/^custom-[a-z0-9][a-z0-9-]{0,62}$/u.test(provider)) {
+      modelGatewayExecutionFailure("MODEL_GATEWAY_REQUEST_INVALID", "Custom provider target requires an exact saved slug");
+    }
+    return { provider: provider as `custom-${string}`, endpoint: api === "custom-responses" ? "responses"
+      : api === "custom-anthropic-messages" ? "v1/messages" : "chat/completions" };
+  }
   return { provider: "anthropic", endpoint: "v1/messages" };
 }
 
@@ -241,7 +250,7 @@ async function prepareModelGatewayRequest(
     );
   }
   let policy: ModelGatewayCallPolicy;
-  const target = callTarget(transportPolicy?.api);
+  const target = callTarget(transportPolicy?.api, transportPolicy?.provider);
   try {
     policy = prepareModelGatewayCall(input, deployment, target);
   } catch (cause) {
@@ -332,12 +341,12 @@ async function prepareModelGatewayRequest(
   );
   const bodySha256 = await modelGatewaySha256(canonicalWireBody);
   return Object.freeze({
-    url: reasoningEndpoint(baseUrl, transportPolicy?.api),
+    url: reasoningEndpoint(baseUrl, transportPolicy?.api, transportPolicy?.provider),
     method: "POST",
     headers: Object.freeze({
       Accept: "application/json",
       "Content-Type": "application/json",
-      ...(transportPolicy?.api === "anthropic-messages"
+      ...(transportPolicy?.api === "anthropic-messages" || transportPolicy?.api === "custom-anthropic-messages"
         ? { "anthropic-version": "2023-06-01" }
         : {}),
       ...policy.headers,
@@ -394,6 +403,20 @@ export interface NativeQualificationHttpRequestInput {
 export async function prepareNativeQualificationHttpRequest(
   rawInput: NativeQualificationHttpRequestInput,
 ): Promise<PreparedModelGatewayHttpRequest> {
+  return prepareProviderQualificationHttpRequest(rawInput, false);
+}
+
+/** Exact server-selected provider probe; credentials remain in the saved Gateway alias. */
+export async function prepareCatalogModelQualificationHttpRequest(
+  rawInput: NativeQualificationHttpRequestInput,
+): Promise<PreparedModelGatewayHttpRequest> {
+  return prepareProviderQualificationHttpRequest(rawInput, true);
+}
+
+async function prepareProviderQualificationHttpRequest(
+  rawInput: NativeQualificationHttpRequestInput,
+  catalogSelection: boolean,
+): Promise<PreparedModelGatewayHttpRequest> {
   const input = exactQualificationObject(
     rawInput,
     NATIVE_QUALIFICATION_INPUT_KEYS,
@@ -401,14 +424,22 @@ export async function prepareNativeQualificationHttpRequest(
   );
   const deployment = decodeModelRouteDeployment(input.deployment);
   const transportPolicy = validateModelGatewayTransportPolicy(input.transport_policy);
-  if (transportPolicy.api !== "openrouter-chat-completions" ||
+  if (!catalogSelection && (transportPolicy.api !== "openrouter-chat-completions" ||
       transportPolicy.provider !== "openrouter" ||
       transportPolicy.billing.mode !== "byok" ||
-      transportPolicy.billing.free_only !== true) {
+      transportPolicy.billing.free_only !== true)) {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_REQUEST_INVALID",
       "native qualification requires free-only OpenRouter BYOK transport",
     );
+  }
+  if (catalogSelection && (transportPolicy.api === "compat-chat-completions" ||
+      transportPolicy.billing.mode !== "byok" || transportPolicy.billing.alias === "default")) {
+    modelGatewayExecutionFailure("MODEL_GATEWAY_REQUEST_INVALID",
+      "Catalog qualification requires an exact provider endpoint and saved non-default BYOK alias");
+  }
+  if (transportPolicy.billing.mode !== "byok") {
+    modelGatewayExecutionFailure("MODEL_GATEWAY_REQUEST_INVALID", "Provider qualification requires BYOK billing");
   }
   if (typeof input.gateway_base_url !== "string") {
     modelGatewayExecutionFailure(
@@ -455,7 +486,7 @@ export async function prepareNativeQualificationHttpRequest(
       "native qualification compiled prompt digest differs from its canonical body",
     );
   }
-  const validated = await validateModelGatewayProviderNativeRequestBody(
+  const validated = await (catalogSelection ? validateModelGatewayCatalogProviderRequestBody : validateModelGatewayProviderNativeRequestBody)(
     compiled.request_body,
     maximumInputBytes,
     maximumOutputBytes,
@@ -473,7 +504,7 @@ export async function prepareNativeQualificationHttpRequest(
       "native qualification parameters differ from the deployed parameter generation",
     );
   }
-  const wireBody = modelGatewayProviderNativeRequest(internalBody, transportPolicy);
+  const wireBody = modelGatewayProviderNativeRequest(internalBody, transportPolicy, catalogSelection);
   const canonicalWireBody = canonicalModelGatewayJson(wireBody);
   const wireBodyBytes = utf8Bytes(canonicalWireBody);
   if (wireBodyBytes > MAX_REQUEST_BYTES || wireBodyBytes > maximumInputBytes) {
@@ -522,7 +553,7 @@ export async function prepareNativeQualificationHttpRequest(
       : { "cf-aig-byok-alias": transportPolicy.billing.alias }),
   };
   return Object.freeze({
-    url: reasoningEndpoint(gatewayBaseUrl, transportPolicy.api),
+    url: reasoningEndpoint(gatewayBaseUrl, transportPolicy.api, transportPolicy.provider),
     method: "POST",
     headers: Object.freeze({
       Accept: "application/json",
@@ -533,6 +564,7 @@ export async function prepareNativeQualificationHttpRequest(
       "cf-aig-metadata": metadata,
       "cf-aig-skip-cache": "true",
       "cf-aig-request-timeout": String(requestTimeout),
+      ...(transportPolicy.api === "anthropic-messages" || transportPolicy.api === "custom-anthropic-messages" ? { "anthropic-version": "2023-06-01" } : {}),
       "cf-aig-max-attempts": "1",
       ...billingHeaders,
     }),

@@ -2,7 +2,7 @@ import {
   createSessionEpoch, createOwnerApiClient, createLegacyHttpAdapter,
   createHealthApi, createOwnerSessionApi, createProjectsApi, createLibraryApi,
   createReadinessApi, createRevisionApi, createReaderApi, createErasureOperations,
-  createClientGrantApi, createProviderKeyApi, createProviderModelUseApi, createGoogleOAuthApi,
+  createClientGrantApi, createProviderKeyApi, createProviderModelUseApi, createResearchCatalogModelUseApi, createGoogleOAuthApi,
   createComputerAgentConnectionApi,
   createComputerAgentDispatchReadApi,
   createComputerAgentTaskApi,
@@ -69,6 +69,7 @@ export interface BoundWorkspaceApis {
     readonly grants: ReturnType<typeof createClientGrantApi>;
     readonly providers: ReturnType<typeof createProviderKeyApi>;
     readonly modelUse: ReturnType<typeof createProviderModelUseApi>;
+    readonly catalogModelUse: ReturnType<typeof createResearchCatalogModelUseApi>;
     readonly google: ReturnType<typeof createGoogleOAuthApi>;
     readonly diagnostic: ReturnType<typeof createMcpDiagnosticApi>;
     readonly models: ReturnType<typeof createResearchModelConfigurationApi>;
@@ -144,6 +145,7 @@ function createBoundApis(ports: WorkspaceRuntimePorts, epoch: ReturnType<typeof 
       grants: createClientGrantApi(http, errorFactory, epoch, { now: ports.now }, { mint: ports.mint }),
       providers: createProviderKeyApi(http, errorFactory, epoch),
       modelUse: createProviderModelUseApi(http, errorFactory, epoch, models),
+      catalogModelUse: createResearchCatalogModelUseApi(http, errorFactory, epoch),
       google: createGoogleOAuthApi(http, errorFactory, epoch, { mint: ports.mint }),
       diagnostic: createMcpDiagnosticApi(http, errorFactory, epoch, isWorkspaceRequestError),
       models, configuration: createResearchConfigurationApi(http, errorFactory, epoch),

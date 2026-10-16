@@ -15,7 +15,8 @@ import { createD1InvestigationLedgerStore, LedgerError } from "@eliotr/research"
 import type { LedgerD1Database } from "@eliotr/research";
 import { SERVER_OWNED_RESEARCH_HANDLER_GENERATION, SERVER_OWNED_RETRIEVAL_HANDLER_GENERATION, SERVER_OWNED_FREEZE_HANDLER_GENERATION, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION, SERVER_OWNED_LEGACY_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_PROTOCOL_HANDLER_GENERATION, SERVER_OWNED_BRANCH_HANDLER_GENERATION, SERVER_OWNED_BRANCH_QUERY_HANDLER_GENERATION, SERVER_OWNED_NATIVE_EXTERNAL_AGENT_HANDLER_GENERATION, SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION, isSemanticResearchHandlerGeneration, SERVER_RETRIEVAL_SCOPE_PROFILE } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import { attachResearchRunConfiguration, readResearchRunConfiguration } from "./research-run-configuration.js";
-import { resolveResearchRunAdmissionConfiguration } from "./research-run-configuration-admission.js";
+import { assertCurrentInstalledNativeResearchModel, assertCurrentResearchRunConfigurationPin,
+  resolveResearchRunAdmissionConfiguration } from "./research-run-configuration-admission.js";
 import { RESEARCH_QUALIFICATION_RENEWAL_MARKER } from "./research-qualification-renewal.js";
 import { isResearchQuestionText, ScopeExpressionSchema, VersionedRefSchema } from "@eliotr/contracts";
 import type { VersionedRef } from "@eliotr/contracts";
@@ -98,8 +99,12 @@ function checkScope(value: unknown, maximumSelectedSources = 64): QueryRequest["
 const BASE_REQUEST_KEYS = ["query", "product", "scope_expression", "literals", "evidence_grade", "budget_ref", "max_results"] as const;
 const RUN_V2_REQUEST_KEYS = [...BASE_REQUEST_KEYS, "request_version", "inquiry_protocol_ref"] as const;
 const RUN_V3_REQUEST_KEYS = [...BASE_REQUEST_KEYS, "request_version", "configuration_project_id"] as const;
+const RUN_V4_REQUEST_KEYS = [...BASE_REQUEST_KEYS, "request_version", "selection"] as const;
+const RUN_V4_LANGUAGE_REQUEST_KEYS = [...RUN_V4_REQUEST_KEYS, "output_language"] as const;
 /** Strictly additive version tag; v1 and v2 never carry configuration_project_id. */
 export const RESEARCH_RUN_REQUEST_V3 = "eliotr.research-run-request.v3" as const;
+/** Owner v4 pins one immutable qualified project model configuration per run. */
+export const RESEARCH_RUN_REQUEST_V4 = "eliotr.research-run-request.v4" as const;
 function exactKeys(record: Record<string, unknown>, expected: readonly string[] = BASE_REQUEST_KEYS): void {
   if (Object.keys(record).length !== expected.length || expected.some((key) => !Object.hasOwn(record, key))) {
     fail("RESEARCH_INPUT_INVALID", "request has unknown or missing fields");
@@ -118,8 +123,67 @@ export interface ResearchRunTransportSelection {
   readonly configuration_project_id: string;
 }
 
-/** Validates the v3 key set and returns the exact selector bound to this body. */
-function parseResearchRunTransportSelection(raw: Record<string, unknown>): ResearchRunTransportSelection | null {
+export interface ResearchRunConfigurationPinV4 {
+  readonly configuration_project_id: string;
+  readonly configuration_ref: string;
+  readonly configuration_sha256: string;
+  readonly selection_revision: number;
+}
+
+export interface ResearchRunBuiltinCloudflareSelectionV4 {
+  readonly kind: "builtin";
+  readonly expected_model_id: string;
+}
+
+export type ResearchRunSelectionV4 = ResearchRunConfigurationPinV4 | ResearchRunBuiltinCloudflareSelectionV4;
+
+export interface ResearchRunTransportSelectionV4 {
+  readonly request_version: typeof RESEARCH_RUN_REQUEST_V4;
+  readonly selection: ResearchRunSelectionV4;
+  readonly output_language?: "en" | "ru";
+}
+
+export type ParsedResearchRunTransportSelection = ResearchRunTransportSelection | ResearchRunTransportSelectionV4;
+
+function parseResearchRunSelectionV4(raw: unknown): ResearchRunSelectionV4 {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    fail("RESEARCH_INPUT_INVALID", "model configuration pin is invalid");
+  }
+  const pin = raw as Record<string, unknown>;
+  if (Object.hasOwn(pin, "kind")) {
+    exactKeys(pin, ["kind", "expected_model_id"]);
+    if (pin.kind !== "builtin" || typeof pin.expected_model_id !== "string" ||
+        !/^@cf\/[A-Za-z0-9][A-Za-z0-9._:@/-]{0,254}$/u.test(pin.expected_model_id)) {
+      fail("RESEARCH_INPUT_INVALID", "builtin model selection is invalid");
+    }
+    return Object.freeze({ kind: "builtin", expected_model_id: pin.expected_model_id });
+  }
+  exactKeys(pin, ["configuration_project_id", "configuration_ref", "configuration_sha256", "selection_revision"]);
+  const projectId = checkId(pin.configuration_project_id, "configuration_project_id");
+  const configurationRef = pin.configuration_ref;
+  const configurationSha256 = pin.configuration_sha256;
+  if (typeof configurationRef !== "string" || !/^rpmc-[a-f0-9]{64}$/u.test(configurationRef) ||
+      typeof configurationSha256 !== "string" || !/^[a-f0-9]{64}$/u.test(configurationSha256) ||
+      configurationRef !== `rpmc-${configurationSha256}` ||
+      !Number.isSafeInteger(pin.selection_revision) || (pin.selection_revision as number) < 1 ||
+      (pin.selection_revision as number) > 1_000_000) {
+    fail("RESEARCH_INPUT_INVALID", "model configuration pin is invalid");
+  }
+  return Object.freeze({ configuration_project_id: projectId, configuration_ref: configurationRef,
+    configuration_sha256: configurationSha256, selection_revision: pin.selection_revision as number });
+}
+
+/** Validates and returns the exact versioned selection bound to this body. */
+function parseResearchRunTransportSelection(raw: Record<string, unknown>): ParsedResearchRunTransportSelection | null {
+  if (raw.request_version === RESEARCH_RUN_REQUEST_V4) {
+    exactKeys(raw, Object.hasOwn(raw, "output_language") ? RUN_V4_LANGUAGE_REQUEST_KEYS : RUN_V4_REQUEST_KEYS);
+    const selection = parseResearchRunSelectionV4(raw.selection);
+    if (Object.hasOwn(raw, "output_language") && raw.output_language !== "en" && raw.output_language !== "ru") {
+      fail("RESEARCH_INPUT_INVALID", "output_language is invalid");
+    }
+    return Object.freeze({ request_version: RESEARCH_RUN_REQUEST_V4, selection,
+      ...(Object.hasOwn(raw, "output_language") ? { output_language: raw.output_language as "en" | "ru" } : {}) });
+  }
   // Only a body that carries the selector enters this path at all; a v1 or v2
   // body without it returns null and keeps its own version handling untouched.
   if (!Object.hasOwn(raw, "configuration_project_id")) return null;
@@ -179,7 +243,7 @@ function parseResearchRunRequestBody(r: Record<string, unknown>): QueryRequest {
 /** Strictly additive v3 owner transport: the validated canonical request plus its exact selection. */
 export interface ParsedResearchRunTransportRequest {
   readonly request: QueryRequest;
-  readonly selection: ResearchRunTransportSelection | null;
+  readonly selection: ParsedResearchRunTransportSelection | null;
 }
 
 /**
@@ -195,9 +259,10 @@ export function parseResearchRunTransportRequest(raw: unknown): ParsedResearchRu
   if (selection === null) return { request: parseResearchRunRequest(raw), selection: null };
   // The exact v3 key set is validated, so only the seven shared keys are handed
   // to the canonical parse and the version tags cannot be re-read as v2.
-  return { request: parseResearchRunRequestBody({ query: r.query, product: r.product,
+  const requestBody = { query: r.query, product: r.product,
     scope_expression: r.scope_expression, literals: r.literals, evidence_grade: r.evidence_grade,
-    budget_ref: r.budget_ref, max_results: r.max_results }), selection };
+    budget_ref: r.budget_ref, max_results: r.max_results };
+  return { request: parseResearchRunRequestBody(requestBody), selection };
 }
 function idempotencyKey(context: AuthenticatedRequestContext): string { const key = context.request.headers.get("idempotency-key"); if (typeof key !== "string" || key.length < 1 || key.length > 256 || /[\u0000-\u0020\u007f]/u.test(key)) fail("RESEARCH_INPUT_INVALID", "idempotency-key header is required"); return key; }
 
@@ -211,11 +276,20 @@ function idempotencyKey(context: AuthenticatedRequestContext): string { const ke
  */
 export async function researchRunIdentityDigest(
   request: QueryRequest,
-  selection: ResearchRunTransportSelection | null,
+  selection: ParsedResearchRunTransportSelection | null,
 ): Promise<string> {
   const requestDigest = await shaHex(JSON.stringify(request));
   if (selection === null) return requestDigest;
-  return shaHex(`${requestDigest}|${selection.request_version}|${selection.configuration_project_id}`);
+  if (selection.request_version === RESEARCH_RUN_REQUEST_V3) {
+    return shaHex(`${requestDigest}|${selection.request_version}|${selection.configuration_project_id}`);
+  }
+  if ("kind" in selection.selection) {
+    return shaHex(`${requestDigest}|${selection.request_version}|builtin|${selection.selection.expected_model_id}|` +
+      `${selection.output_language ?? "legacy-default"}`);
+  }
+  return shaHex(`${requestDigest}|${selection.request_version}|${selection.selection.configuration_project_id}|` +
+    `${selection.selection.configuration_ref}|${selection.selection.configuration_sha256}|` +
+    `${selection.selection.selection_revision}|${selection.output_language ?? "legacy-default"}`);
 }
 // IMPLEMENTED_NOT_LIVE: ER-24 research.query retrieval composition over injected RetrievalQueryPorts with frozen 64-source scope-profile versioning; RETRIEVAL slice enablement remains separate.
 export const RETRIEVAL_SCOPE_PROFILE_VERSION = SERVER_RETRIEVAL_SCOPE_PROFILE.version;
@@ -289,6 +363,10 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
     async run(context, raw) {
       const parsed = parseResearchRunTransportRequest(raw);
       const request = parsed.request;
+      const v4Selection = parsed.selection?.request_version === RESEARCH_RUN_REQUEST_V4 ? parsed.selection : null;
+      if (v4Selection !== null && context.client_class !== "owner_pwa") {
+        fail("RESEARCH_OWNER_REQUIRED", "exact chat model selection requires an owner session", 403);
+      }
       const installedProtocol = request.inquiry_protocol_ref === undefined ? null : installedInquiryProtocolDefinition(request.inquiry_protocol_ref);
       if (context.client_class !== "owner_pwa" && installedProtocol !== null && installedProtocol.lane !== "exploratory") {
         fail("RESEARCH_PRODUCT_UNSUPPORTED", "Machine Research currently supports the exploratory protocol lane", 400);
@@ -311,6 +389,13 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       if (pre !== null && (pre.head.investigation_id !== investigation_id ||
           pre.head.principal_ref !== context.principal_ref)) {
         fail("RESEARCH_CONFLICT", "idempotency identity is bound to a different request", 409);
+      }
+      if (pre === null && v4Selection !== null) {
+        if ("kind" in v4Selection.selection) {
+          await assertCurrentInstalledNativeResearchModel(env, context, v4Selection.selection);
+        } else {
+          await assertCurrentResearchRunConfigurationPin(env, context, v4Selection.selection);
+        }
       }
       const admittedDeploymentGeneration = pre?.head.deployment_generation ?? env.DEPLOYMENT_GENERATION;
       const scopeRef = await prepareResearchRunScope(env, context, request, operation_id, requestDigest,
@@ -347,13 +432,37 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       };
       const admissionConfiguration = await resolveResearchRunAdmissionConfiguration(env, {
         actor: runConfigurationActor, context, scope_expression: request.scope_expression, new_run: pre === null,
-        ...(parsed.selection === null ? {} : { selected_project_id: parsed.selection.configuration_project_id }),
+        ...(parsed.selection === null ? {} : parsed.selection.request_version === RESEARCH_RUN_REQUEST_V3
+          ? { selected_project_id: parsed.selection.configuration_project_id }
+          : "kind" in parsed.selection.selection
+            ? {}
+            : { selected_project_id: parsed.selection.selection.configuration_project_id }),
+        ...(v4Selection === null ? {} : {
+          ...("kind" in v4Selection.selection
+            ? { installed_native_model_pin: { expected_model_id: v4Selection.selection.expected_model_id } }
+            : { selected_project_configuration_pin: v4Selection.selection }),
+          ...(v4Selection.output_language === undefined ? {} : { output_language: v4Selection.output_language }),
+        }),
         ...(priorWorkflow === null ? {} : { configuration_required: priorWorkflow.configuration_required }),
         ...(projectConfigurationReadAuthority === undefined ? {} : {
           project_configuration_read_authority: projectConfigurationReadAuthority,
         }),
         require_current_scope: requireCurrentConfigurationScope,
       });
+      if (v4Selection !== null) {
+        if ("kind" in v4Selection.selection) {
+          const synthesis = admissionConfiguration.model_selections.find((selection) => selection.stage === "SYNTHESIZE");
+          if (admissionConfiguration.project_id !== null || admissionConfiguration.project_configuration_ref !== null ||
+              synthesis?.transport_policy.model !== v4Selection.selection.expected_model_id) {
+            fail("RESEARCH_AUTHORITY_STALE", "installed Cloudflare model changed before run admission", 409);
+          }
+        } else if (admissionConfiguration.project_id !== v4Selection.selection.configuration_project_id ||
+            admissionConfiguration.project_configuration_ref !== v4Selection.selection.configuration_ref ||
+            admissionConfiguration.project_configuration_sha256 !== v4Selection.selection.configuration_sha256 ||
+            admissionConfiguration.project_selection_revision !== v4Selection.selection.selection_revision) {
+          fail("RESEARCH_AUTHORITY_STALE", "selected model configuration changed before run admission", 409);
+        }
+      }
       const lane = pre === null ? installedProtocol?.lane ?? "exploratory" :
         pre.head.lane === "confirmatory" || pre.head.lane === "exploratory" || pre.head.lane === "mixed_with_declared_split" ? pre.head.lane : null;
       if (lane === null) fail("RESEARCH_CONFLICT", "idempotency identity has an unsupported investigation lane", 409);

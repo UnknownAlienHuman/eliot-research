@@ -276,6 +276,13 @@ describe("research project model configuration store and 0106 migration", () => 
       configuration: { ...legacy, vars: { ...legacy.vars,
         ELIOTR_RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON: malformedProfile } } }))
       .rejects.toMatchObject({ code: "RESEARCH_PROJECT_MODEL_CONFIGURATION_INPUT_INVALID", status: 400 });
+    const missingRequiredVar: Record<string, string> = { ...withBothSelections.vars };
+    delete missingRequiredVar.ELIOTR_MODEL_PROFILE_DEFINITION_JSON;
+    for (const vars of [missingRequiredVar, { ...withBothSelections.vars, ELIOTR_UNKNOWN_CONFIG_JSON: "{}" }]) {
+      await expect(store.saveAndSelect({ owner_id: "owner-1", project_id: "project-1",
+        expected_project_generation: 1, expected_revision: 4, configuration: { ...legacy, vars } }))
+        .rejects.toMatchObject({ code: "RESEARCH_PROJECT_MODEL_CONFIGURATION_INPUT_INVALID", status: 400 });
+    }
     db.close();
   });
 

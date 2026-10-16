@@ -1,4 +1,5 @@
 import { WorkflowCheckpointError } from "@eliotr/cloudflare-workflows";
+import { validateModelGatewayTransportPolicy } from "@eliotr/cloudflare-ai";
 import { APPLICATION_MODEL_ROUTES } from "@eliotr/platform-cloudflare";
 
 const ID_RE = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,255}$/u;
@@ -9,7 +10,7 @@ const LEGACY_MODEL_SELECTION_KEYS = new Set(["stage", "route_ref", "route_versio
   "qualification_ref", "qualification_sha256", "transport_policy"]);
 
 export interface ResearchRunModelSelection {
-  readonly candidate_kind?: "provider-native-v1";
+  readonly candidate_kind?: "provider-native-v1" | "provider-native-v2";
   readonly stage: string;
   readonly route_ref: string;
   readonly route_version: string;
@@ -58,7 +59,7 @@ export function parseResearchRunModelSelections(value: unknown): readonly Resear
     const candidateKind = item.candidate_kind;
     if (Object.keys(item).length === LEGACY_MODEL_SELECTION_KEYS.size) exactKeys(item, LEGACY_MODEL_SELECTION_KEYS);
     else exactKeys(item, MODEL_SELECTION_KEYS);
-    if (candidateKind !== undefined && candidateKind !== "provider-native-v1") checkpoint();
+    if (candidateKind !== undefined && candidateKind !== "provider-native-v1" && candidateKind !== "provider-native-v2") checkpoint();
     const stage = identifier(item.stage);
     const routeRef = routeReference(item.route_ref);
     const routeVersion = identifier(item.route_version);
@@ -70,7 +71,14 @@ export function parseResearchRunModelSelections(value: unknown): readonly Resear
     if (stages.has(stage) || routes.has(selectionKey)) checkpoint();
     stages.add(stage);
     routes.add(selectionKey);
-    const transportPolicy = object(item.transport_policy);
+    let transportPolicy: ReturnType<typeof validateModelGatewayTransportPolicy>;
+    try { transportPolicy = validateModelGatewayTransportPolicy(item.transport_policy); }
+    catch { checkpoint(); }
+    if (candidateKind === "provider-native-v1" && (transportPolicy.api !== "openrouter-chat-completions" ||
+        transportPolicy.provider !== "openrouter" || transportPolicy.billing.mode !== "byok" ||
+        transportPolicy.billing.free_only !== true)) checkpoint();
+    if (candidateKind === "provider-native-v2" && (transportPolicy.api === "compat-chat-completions" ||
+        transportPolicy.billing.mode !== "byok" || transportPolicy.billing.alias === "default")) checkpoint();
     return Object.freeze({ ...(candidateKind === undefined ? {} : { candidate_kind: candidateKind }),
       stage, route_ref: routeRef, route_version: routeVersion, candidate_ref: candidateRef,
       candidate_sha256: candidateSha, qualification_ref: qualificationRef, qualification_sha256: qualificationSha,

@@ -130,7 +130,7 @@ describe("v2 bounded-read visibility scan", () => {
     const api = decodeOnly();
     const empty = api.decodeResearchChanges(changesFor(v2Data({
       items: [],
-      next_cursor: "c2NyZWfuLXN0YXRl",
+      next_cursor: "c2NyZWfu.LXN0YXRl",
       has_more: false,
       scan: scanOf("FORWARD", "SOURCE_EXHAUSTED"),
     })), "deployment-1");
@@ -138,7 +138,7 @@ describe("v2 bounded-read visibility scan", () => {
     expect(empty.has_more).toBe(false);
     const withItems = api.decodeResearchChanges(changesFor(v2Data({
       items: items(2, 7),
-      next_cursor: "c2NyZWfuLXN0YXRl",
+      next_cursor: "c2NyZWfu.LXN0YXRl",
       has_more: false,
       scan: scanOf("LATEST", "SOURCE_EXHAUSTED"),
     })), "deployment-1");

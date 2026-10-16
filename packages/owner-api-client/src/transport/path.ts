@@ -3,6 +3,10 @@ const CONTROL_CHARACTERS = new RegExp(
   'u',
 );
 const API_PREFIX = '/api/v1/';
+const VERSIONED_MODEL_SETTINGS_PATHS = new Set([
+  '/api/v2/system/model-providers',
+  '/api/v2/system/model-provider-catalog-preferences',
+]);
 const NOMINAL_ORIGIN = 'https://nominal.invalid';
 const BACKSLASH = String.fromCharCode(92);
 const HASH = String.fromCharCode(35);
@@ -28,7 +32,7 @@ export class OwnerApiPathError extends Error {
 /**
  * Legal only when all of the following hold:
  *
- * - the path is root-relative and stays under the versioned owner API prefix;
+ * - the path is root-relative and uses the V1 prefix or an exact approved V2 model-settings resource;
  * - it carries no hash marker, no backslash, and no character from NUL through space or DEL;
  * - resolving it against a nominal origin yields a pathname identical to its pre-query portion.
  *
@@ -39,7 +43,7 @@ export class OwnerApiPathError extends Error {
  */
 export function isSameOriginApiPath(path: string): boolean {
   if (typeof path !== 'string') return false;
-  if (!path.startsWith(API_PREFIX)) return false;
+  if (!path.startsWith(API_PREFIX) && !VERSIONED_MODEL_SETTINGS_PATHS.has(path.split('?')[0] ?? '')) return false;
   if (path.includes(BACKSLASH) || path.includes(HASH)) return false;
   if (CONTROL_CHARACTERS.test(path)) return false;
   try {

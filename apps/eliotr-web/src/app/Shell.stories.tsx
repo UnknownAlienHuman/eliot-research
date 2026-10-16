@@ -5,6 +5,10 @@ function markVisualReady(shell: HTMLElement | null | undefined): void {
 }
 
 import { paneAnnouncement, announcementUntil, unchangedChannel } from './announcementAssertions';
+import { CatalogModelOperationReloadRecovery as catalogReloadStory,
+  CatalogModelOperationNullAllowsLegacyChoice as catalogNullStory } from './CatalogModelOperationPreview';
+export const CatalogModelOperationReloadRecovery = catalogReloadStory;
+export const CatalogModelOperationNullAllowsLegacyChoice = catalogNullStory;
 import { playMaterialPreferences, playMaterialReading } from './MaterialReviewPreview';
 import { IntegrationRepairsPreview, playIntegrationRepairs, playReplacedSelection } from './IntegrationRepairsPreview';
 import { FiniteReadExportPreview, playReadsNoEffects, playFailedRequiredSectionNoExport } from "./FiniteReadExportPreview";
@@ -36,6 +40,12 @@ import { ResearchPreview, playResearchJourney, playResearchAnnouncements, playRe
 import { StudioPreview, playStudioJourney, playStudioAnnouncements, playStudioHistoryRecovery } from "./StudioPreview";
 import { ArtifactActionsPreview, playArtifactActionsJourney } from "./ArtifactActionsPreview";
 import { WorkspaceLinkPreview, playWorkspaceLinkJourney } from "./WorkspaceLinkJourney";
+import type { ServiceModelCatalogPage } from "@eliotr/owner-api-client";
+import { ChatModelPicker } from "./ChatModelPicker";
+import { ModelCatalogFilter, modelCatalogEntryKey } from "./ModelCatalogFilter";
+import { setAllModelCatalogEntriesVisible, setModelCatalogEntryVisibility,
+  type ModelCatalogEntry, type ModelCatalogVisibility } from "../query/modelCatalog";
+import type { ChatModelOption } from "../query/chatModelCatalog";
 
 function ShellPreview() {
   const [privacy] = useState(() => createPrivacyController({
@@ -400,3 +410,132 @@ export const NestedErasureOperation = { ...LiveErasureJourney };
 export const NestedBundleOperation = { ...LiveBundleJourney };
 export const NestedArtifactOperation = { render: () => <ArtifactActionsPreview />, play: playArtifactActionsJourney };
 export const NestedEvidenceOperation = { render: () => <FiniteExcerptPreview />, play: playFiniteExcerptLifecycle };
+
+const modelPickerFixtures: readonly ModelCatalogEntry[] = [
+  { provider_id: "opencode-go", model_id: "step-5-preview-free", name: "Step 5 Preview Free",
+    description: "Reasoning model listed by the provider catalog.", catalog_availability: "listed", account_availability: "unverified",
+    capabilities: { text_generation: "supported", input_output_schema: "available_from_transport", schema_requirement: null },
+    source_id: null, source_task: null,
+    billing: { selected_path: "provider_catalog", support: "unknown", account_entitlement: "not_established_by_catalog" },
+    properties: [], tags: ["reasoning", "free"] },
+  { provider_id: "openai", model_id: "gpt-6.1-sol", name: "GPT 6.1 Sol",
+    description: "General-purpose model listed by the provider catalog.", catalog_availability: "listed", account_availability: "unknown",
+    capabilities: { text_generation: "supported", input_output_schema: "available_from_transport", schema_requirement: null },
+    source_id: null, source_task: null,
+    billing: { selected_path: "provider_catalog", support: "unknown", account_entitlement: "not_established_by_catalog" },
+    properties: [], tags: ["general"] },
+];
+const stepModel = modelPickerFixtures[0];
+const generalModel = modelPickerFixtures[1];
+if (!stepModel || !generalModel) throw new Error("Model picker story fixtures are incomplete");
+const modelPickerCatalog: ServiceModelCatalogPage = {
+  protocol: "eliotr.service-model-catalog.v1", task: "text-generation", catalog_scope: "external_provider",
+  provider_id: "opencode-go", models: modelPickerFixtures,
+  pagination: { page: 1, per_page: 20, has_more: false, next_page: null, coverage: "complete", probe: "provider_reported" },
+};
+
+function ModelCatalogFilterStory() {
+  const [search, setSearch] = useState("");
+  const [visibility, setVisibility] = useState<ModelCatalogVisibility>({ mode: "all" });
+  return <ModelCatalogFilter locale="en" catalog={modelPickerCatalog} loading={false} failed={false} search={search}
+    visibility={visibility} onSearchChange={setSearch}
+    onVisibilityChange={(modelId, visible) => setVisibility(current => setModelCatalogEntryVisibility(current, modelId, visible))}
+    onAllVisibilityChange={visible => setVisibility(setAllModelCatalogEntriesVisible(visible))} onPageChange={() => {}} />;
+}
+
+function ChatModelPickerStory() {
+  const [selected, setSelected] = useState<Pick<ModelCatalogEntry, "provider_id" | "model_id"> | undefined>(undefined);
+  const [search, setSearch] = useState("");
+  const choices: readonly ChatModelOption[] = modelPickerFixtures.map(model => ({ model, providerLabel: model.provider_id,
+    key: modelCatalogEntryKey(model), canRun: true, builtin: false }));
+  return <ChatModelPicker locale="en" choices={choices} selected={selected} search={search} page={1} hasMore={false}
+    onSearchChange={setSearch} onPageChange={() => {}} onSelect={choice => {
+      setSelected(choice ? { provider_id: choice.model.provider_id, model_id: choice.model.model_id } : undefined);
+    }} />;
+}
+
+export const ProviderModelCatalogVisibility = {
+  render: () => <ModelCatalogFilterStory />,
+  play: async ({ canvas, userEvent }: {
+    readonly canvas: {
+      findByLabelText(label: string): Promise<HTMLElement>;
+      findByRole(role: string, options: { readonly name: string }): Promise<HTMLElement>;
+      queryByText(text: string): HTMLElement | null;
+    };
+    readonly userEvent: { type(element: HTMLElement, value: string): Promise<void>; click(element: HTMLElement): Promise<void> };
+  }) => {
+    await userEvent.type(await canvas.findByLabelText("Search model inventory"), "step-5");
+    await canvas.findByRole("checkbox", { name: "Show in Chat: Step 5 Preview Free step-5-preview-free" });
+    if (canvas.queryByText("GPT 6.1 Sol")) throw new Error("Search left an unrelated provider model visible");
+    await userEvent.click(await canvas.findByRole("checkbox", { name: "Show in Chat: Step 5 Preview Free step-5-preview-free" }));
+    await userEvent.click(await canvas.findByRole("button", { name: "Hide all models" }));
+    if (((await canvas.findByRole("checkbox", { name: "Show in Chat: Step 5 Preview Free step-5-preview-free" })) as HTMLInputElement).checked) {
+      throw new Error("Hide all left a model visible in Chat");
+    }
+  },
+};
+
+export const ChatModelPickerSelection = {
+  render: () => <ChatModelPickerStory />,
+  play: async ({ canvas, userEvent }: {
+    readonly canvas: { findByRole(role: string, options: { readonly name: string }): Promise<HTMLElement> };
+    readonly userEvent: { selectOptions(element: HTMLElement, value: string): Promise<void> };
+  }) => {
+    const picker = await canvas.findByRole("combobox", { name: "Chat model" });
+    await userEvent.selectOptions(picker, modelCatalogEntryKey(generalModel));
+    if ((picker as HTMLSelectElement).value !== modelCatalogEntryKey(generalModel)) {
+      throw new Error("Chat model selection did not retain the exact provider and model identity");
+    }
+  },
+};
+
+export const ChatModelPickerRunEligibility = {
+  render: () => {
+    const choices: readonly ChatModelOption[] = [
+      { model: stepModel, providerLabel: "OpenCode Go", key: modelCatalogEntryKey(stepModel), canRun: false,
+        builtin: false, unavailableReason: "project-configuration" },
+      { model: { ...generalModel, provider_id: "workers-ai", model_id: "@cf/default-model" }, providerLabel: "Cloudflare Workers AI",
+        key: modelCatalogEntryKey({ provider_id: "workers-ai", model_id: "@cf/default-model" }), canRun: true, builtin: true },
+    ];
+    return <ChatModelPicker locale="en" choices={choices} selected={undefined} search="" page={1}
+      onSearchChange={() => {}} onPageChange={() => {}} onSelect={() => {}} />;
+  },
+  play: async ({ canvas }: { readonly canvas: { findByRole(role: string, options: { readonly name: string }): Promise<HTMLElement> } }) => {
+    const picker = await canvas.findByRole("combobox", { name: "Chat model" }) as HTMLSelectElement;
+    const unavailable = Array.from(picker.options).find(option => option.value === modelCatalogEntryKey(stepModel));
+    const builtin = Array.from(picker.options).find(option => option.value === modelCatalogEntryKey({
+      provider_id: "workers-ai", model_id: "@cf/default-model",
+    }));
+    if (!unavailable?.disabled || !builtin || builtin.disabled) {
+      throw new Error("The picker allowed a catalog-only model or blocked the exact built-in default");
+    }
+  },
+};
+
+function ChatModelPickerReconciliationStory() {
+  const [confirmed, setConfirmed] = useState(false);
+  const choices: readonly ChatModelOption[] = modelPickerFixtures.map(model => ({ model, providerLabel: model.provider_id,
+    key: modelCatalogEntryKey(model), canRun: true, builtin: false }));
+  return <>
+    <ChatModelPicker locale="en" choices={choices} selected={stepModel} qualificationState="unknown"
+      search="" page={1} disabled checkDisabled={false} onSearchChange={() => {}} onPageChange={() => {}}
+      onCheck={() => setConfirmed(true)} onSelect={() => {}} />
+    {confirmed && <p role="status">Model status checked</p>}
+  </>;
+}
+
+export const ChatModelPickerReconciliation = {
+  render: () => <ChatModelPickerReconciliationStory />,
+  play: async ({ canvas, userEvent }: {
+    readonly canvas: {
+      findByRole(role: string, options: { readonly name: string }): Promise<HTMLElement>;
+      findByText(text: string): Promise<HTMLElement>;
+    };
+    readonly userEvent: { click(element: HTMLElement): Promise<void> };
+  }) => {
+    const picker = await canvas.findByRole("combobox", { name: "Chat model" }) as HTMLSelectElement;
+    if (!picker.disabled) throw new Error("Uncertain model selection allowed another choice before readback");
+    await userEvent.click(await canvas.findByRole("button", { name: "Check availability" }));
+    await canvas.findByText("Model status checked");
+  },
+};

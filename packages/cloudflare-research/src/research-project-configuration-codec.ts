@@ -40,12 +40,6 @@ const MODEL_SELECTION_REQUIRED_KEYS = new Set([
   "qualification_ref", "qualification_sha256", "transport_policy",
 ]);
 const MODEL_SELECTION_NATIVE_KEYS = new Set([...MODEL_SELECTION_REQUIRED_KEYS, "candidate_kind"]);
-const LEGACY_VAR_KEYS = new Set<string>(RUNTIME_VAR_KEYS);
-const VAR_KEYS = new Set<string>([
-  ...RUNTIME_VAR_KEYS,
-  NATIVE_ACQUISITION_SELECTION_VAR,
-  BRANCH_QUERY_BUDGET_PROFILE_VAR,
-]);
 
 const BranchQueryBudgetProfileSchema = z.object({
   protocol: z.literal(RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_PROTOCOL),
@@ -225,7 +219,7 @@ export interface ResearchProjectModelRuntimeVars {
 }
 
 export interface ResearchProjectModelSelection {
-  readonly candidate_kind?: "provider-native-v1";
+  readonly candidate_kind?: "provider-native-v1" | "provider-native-v2";
   readonly stage: string;
   readonly route_ref: string;
   readonly route_version: string;
@@ -391,7 +385,10 @@ function runtimeVars(value: unknown): ResearchProjectModelRuntimeVars {
   const record = plainObject(value, "configuration.vars");
   const hasNativeSelection = Object.prototype.hasOwnProperty.call(record, NATIVE_ACQUISITION_SELECTION_VAR);
   const hasBranchQueryBudgetProfile = Object.prototype.hasOwnProperty.call(record, BRANCH_QUERY_BUDGET_PROFILE_VAR);
-  exactKeys(record, hasNativeSelection || hasBranchQueryBudgetProfile ? VAR_KEYS : LEGACY_VAR_KEYS, "configuration.vars");
+  const expectedKeys = new Set<string>(RUNTIME_VAR_KEYS);
+  if (hasNativeSelection) expectedKeys.add(NATIVE_ACQUISITION_SELECTION_VAR);
+  if (hasBranchQueryBudgetProfile) expectedKeys.add(BRANCH_QUERY_BUDGET_PROFILE_VAR);
+  exactKeys(record, expectedKeys, "configuration.vars");
   const result = {} as Record<(typeof RUNTIME_VAR_KEYS)[number], string> & {
     ELIOTR_RESEARCH_NATIVE_ACQUISITION_SELECTION_JSON?: string;
     ELIOTR_RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON?: string;
@@ -466,13 +463,21 @@ function routeSelection(value: unknown): ResearchProjectModelSelection {
   } catch (cause) {
     failure("RESEARCH_PROJECT_MODEL_CONFIGURATION_INPUT_INVALID", "model selection transport policy is invalid", 400, false, cause);
   }
-  if (native && (record.candidate_kind !== "provider-native-v1" || transportPolicy.api !== "openrouter-chat-completions" ||
-      transportPolicy.provider !== "openrouter" || transportPolicy.billing.mode !== "byok" ||
-      transportPolicy.billing.free_only !== true)) {
-    failure("RESEARCH_PROJECT_MODEL_CONFIGURATION_INPUT_INVALID", "native model selection marker or free-only OpenRouter policy is invalid");
+  if (native && record.candidate_kind === "provider-native-v1" &&
+      (transportPolicy.api !== "openrouter-chat-completions" || transportPolicy.provider !== "openrouter" ||
+       transportPolicy.billing.mode !== "byok" || transportPolicy.billing.free_only !== true)) {
+    failure("RESEARCH_PROJECT_MODEL_CONFIGURATION_INPUT_INVALID", "provider-native v1 selection requires free-only OpenRouter BYOK");
+  }
+  if (native && record.candidate_kind === "provider-native-v2" &&
+      (transportPolicy.api === "compat-chat-completions" || transportPolicy.billing.mode !== "byok" ||
+       transportPolicy.billing.alias === "default")) {
+    failure("RESEARCH_PROJECT_MODEL_CONFIGURATION_INPUT_INVALID", "provider-native v2 selection requires an exact saved provider BYOK alias");
+  }
+  if (native && record.candidate_kind !== "provider-native-v1" && record.candidate_kind !== "provider-native-v2") {
+    failure("RESEARCH_PROJECT_MODEL_CONFIGURATION_INPUT_INVALID", "model selection candidate kind is unsupported");
   }
   return Object.freeze({
-    ...(native ? { candidate_kind: "provider-native-v1" as const } : {}),
+    ...(native ? { candidate_kind: record.candidate_kind as "provider-native-v1" | "provider-native-v2" } : {}),
     stage: identifier(record.stage, "model selection stage"),
     route_ref: identifier(record.route_ref, "model selection route_ref"),
     route_version: identifier(record.route_version, "model selection route_version"),

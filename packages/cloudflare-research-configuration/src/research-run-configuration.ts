@@ -51,6 +51,21 @@ export interface SelectedResearchProjectConfiguration {
   readonly configuration_json: string;
 }
 
+export type ResearchRunOutputLanguage = "en" | "ru";
+
+/** Exact immutable configuration selected in the chat request. */
+export interface ResearchRunProjectConfigurationPin {
+  readonly configuration_project_id: string;
+  readonly configuration_ref: string;
+  readonly configuration_sha256: string;
+  readonly selection_revision: number;
+}
+
+/** Exact installed native synthesis model selected in chat without a project config. */
+export interface ResearchRunInstalledNativeModelPin {
+  readonly expected_model_id: string;
+}
+
 export interface ResolvedResearchRunConfiguration<RuntimeEnvironment = unknown> {
   readonly env: RuntimeEnvironment;
   readonly mode: ResearchRunConfigurationModeWithLegacy;
@@ -61,6 +76,8 @@ export interface ResolvedResearchRunConfiguration<RuntimeEnvironment = unknown> 
   readonly project_configuration_sha256: string | null;
   readonly project_owner_ref: string | null;
   readonly project_id: string | null;
+  readonly project_selection_revision: number | null;
+  readonly output_language?: ResearchRunOutputLanguage;
   readonly native_acquisition_selection?: ResearchNativeAcquisitionSelection;
   readonly branch_query_budget_selection?: ResearchBranchQueryBudgetSelection;
 }
@@ -71,6 +88,12 @@ export interface CaptureResearchRunConfigurationInput extends ResearchRunConfigu
   /** Current verified grant authority for grantor-owned project configuration. */
   readonly project_configuration_read_authority?: ResearchProjectConfigurationGrantReadAuthority;
   readonly configuration_project_id?: string;
+  /** V4 chat pin; requires an exact current selected pointer and atomic freeze. */
+  readonly selected_project_configuration_pin?: ResearchRunProjectConfigurationPin;
+  /** V4 builtin branch; forces the already-installed and qualified native configuration. */
+  readonly installed_native_model_pin?: ResearchRunInstalledNativeModelPin;
+  /** Optional v4 owner choice frozen into the per-run artifact policy. */
+  readonly output_language?: ResearchRunOutputLanguage;
   readonly allow_installed_native_default?: boolean;
   readonly require_current_configuration_scope?: () => Promise<void>;
 }
@@ -84,7 +107,8 @@ export interface ResearchRunConfigurationRuntimeSnapshot {
   };
   readonly model_profile: { readonly config_json: string; readonly provenance_ref: string };
   readonly spend_policy: { readonly config_json: string; readonly provenance_ref: string };
-  readonly report: { readonly config_json: string; readonly provenance_ref: string };
+  readonly report: { readonly config_json: string; readonly provenance_ref: string;
+    readonly output_language?: ResearchRunOutputLanguage };
   readonly native_acquisition_selection?: ResearchNativeAcquisitionSelection;
   readonly branch_query_budget_selection?: ResearchBranchQueryBudgetSelection;
 }
@@ -95,7 +119,7 @@ export interface ResearchRunConfigurationRuntimePort<RuntimeEnvironment> {
   readonly semantic_source: (environment: RuntimeEnvironment) => ResearchSemanticConfigInput;
   readonly model_transport_available: (environment: RuntimeEnvironment) => boolean;
   readonly installed_native_configuration?: (environment: RuntimeEnvironment, ownerRef: string,
-    projectId: string) => Promise<InstalledNativeResearchConfiguration>;
+    projectId: string | undefined) => Promise<InstalledNativeResearchConfiguration>;
   readonly overlay_snapshot: (
     environment: RuntimeEnvironment,
     snapshot: ResearchRunConfigurationRuntimeSnapshot,
@@ -124,7 +148,8 @@ interface SnapshotEnvelope {
   };
   readonly model_profile: { readonly config_json: string; readonly provenance_ref: string };
   readonly spend_policy: { readonly config_json: string; readonly provenance_ref: string };
-  readonly report: { readonly config_json: string; readonly provenance_ref: string };
+  readonly report: { readonly config_json: string; readonly provenance_ref: string;
+    readonly output_language?: ResearchRunOutputLanguage };
   readonly native_acquisition_selection?: ResearchNativeAcquisitionSelection;
   readonly branch_query_budget_selection?: ResearchBranchQueryBudgetSelection;
 }
@@ -270,7 +295,13 @@ async function parseSnapshotRecord(record: ResearchRunConfigurationRecord): Prom
   const spendPolicy = object(root.spend_policy, "spend policy");
   exactKeys(spendPolicy, new Set(["config_json", "provenance_ref"]));
   const report = object(root.report, "report configuration");
-  exactKeys(report, new Set(["config_json", "provenance_ref"]));
+  const hasOutputLanguage = Object.prototype.hasOwnProperty.call(report, "output_language");
+  exactKeys(report, hasOutputLanguage
+    ? new Set(["config_json", "provenance_ref", "output_language"])
+    : new Set(["config_json", "provenance_ref"]));
+  if (hasOutputLanguage && report.output_language !== "en" && report.output_language !== "ru") {
+    checkpoint("WORKFLOW_CONFIGURATION_INVALID");
+  }
   const nativeAcquisitionSelection = hasNativeAcquisition
     ? parseResearchNativeAcquisitionSelection(root.native_acquisition_selection) : undefined;
   const branchQueryBudgetSelection = hasBranchQueryBudgetSelection
@@ -299,7 +330,8 @@ async function parseSnapshotRecord(record: ResearchRunConfigurationRecord): Prom
     (object(spend, "spend policy").protocol as string).endsWith("template.v2") ? "snapshot-v2" : "snapshot-v1";
   if (record.mode !== expectedMode) checkpoint("WORKFLOW_CONFIGURATION_INVALID");
   const modelSelections = parseModelSelections(root.model_selections);
-  const hasNativeSelection = modelSelections.some((selection) => selection.candidate_kind === "provider-native-v1");
+  const hasNativeSelection = modelSelections.some((selection) =>
+    selection.candidate_kind === "provider-native-v1" || selection.candidate_kind === "provider-native-v2");
   if (hasNativeSelection && (projectConfiguration?.owner_ref === undefined || projectConfiguration.project_id === undefined)) {
     checkpoint("WORKFLOW_CONFIGURATION_INVALID");
   }
@@ -315,7 +347,8 @@ async function parseSnapshotRecord(record: ResearchRunConfigurationRecord): Prom
     spend_policy: Object.freeze({ config_json: requiredJson(spendPolicy.config_json, "spend policy"),
       provenance_ref: provenance(spendPolicy.provenance_ref) }),
     report: Object.freeze({ config_json: requiredJson(report.config_json, "report configuration"),
-      provenance_ref: provenance(report.provenance_ref) }),
+      provenance_ref: provenance(report.provenance_ref),
+      ...(hasOutputLanguage ? { output_language: report.output_language as ResearchRunOutputLanguage } : {}) }),
     ...(nativeAcquisitionSelection === undefined ? {} : { native_acquisition_selection: nativeAcquisitionSelection }),
     ...(branchQueryBudgetSelection === undefined ? {} : { branch_query_budget_selection: branchQueryBudgetSelection }),
   });
@@ -325,7 +358,8 @@ async function resolved<RuntimeEnvironment>(environment: RuntimeEnvironment,
   record: ResearchRunConfigurationRecord,
   port: ResearchRunConfigurationRuntimePort<RuntimeEnvironment>): Promise<ResolvedResearchRunConfiguration<RuntimeEnvironment>> {
   const snapshot = await parseSnapshotRecord(record);
-  const hasNativeSelection = snapshot.model_selections.some((selection) => selection.candidate_kind === "provider-native-v1");
+  const hasNativeSelection = snapshot.model_selections.some((selection) =>
+    selection.candidate_kind === "provider-native-v1" || selection.candidate_kind === "provider-native-v2");
   if (hasNativeSelection && record.mode !== "snapshot-v2") checkpoint("WORKFLOW_CONFIGURATION_INVALID");
   const env = port.overlay_snapshot(environment, snapshot);
   return Object.freeze({ env, mode: record.mode,
@@ -335,6 +369,8 @@ async function resolved<RuntimeEnvironment>(environment: RuntimeEnvironment,
     project_configuration_sha256: snapshot.project_configuration?.configuration_sha256 ?? null,
     project_owner_ref: snapshot.project_configuration?.owner_ref ?? null,
     project_id: snapshot.project_configuration?.project_id ?? null,
+    project_selection_revision: snapshot.project_configuration?.selection_revision ?? null,
+    ...(snapshot.report.output_language === undefined ? {} : { output_language: snapshot.report.output_language }),
     ...(snapshot.native_acquisition_selection === undefined ? {} : {
       native_acquisition_selection: snapshot.native_acquisition_selection,
     }),
@@ -348,7 +384,8 @@ function runBindingError<RuntimeEnvironment>(error: unknown,
   if (error instanceof WorkflowCheckpointError) throw error;
   if (port.is_project_selection_failure?.(error) === true) throw error;
   if (error instanceof ResearchRunConfigurationStoreError) {
-    checkpoint(error.code === "RESEARCH_RUN_CONFIGURATION_INPUT_INVALID" ? "WORKFLOW_CONFIGURATION_INVALID" :
+    checkpoint(error.code === "RESEARCH_RUN_CONFIGURATION_SELECTION_STALE" ? "WORKFLOW_AUTHORITY_STALE" :
+      error.code === "RESEARCH_RUN_CONFIGURATION_INPUT_INVALID" ? "WORKFLOW_CONFIGURATION_INVALID" :
       error.code === "RESEARCH_RUN_CONFIGURATION_UNRESOLVED" ? "WORKFLOW_STORAGE_UNAVAILABLE" : "WORKFLOW_CONFIGURATION_INVALID");
   }
   checkpoint("WORKFLOW_STORAGE_UNAVAILABLE");
@@ -388,7 +425,7 @@ function sameAssociation(record: ResearchRunConfigurationRecord, actor: Research
 function legacy<RuntimeEnvironment>(env: RuntimeEnvironment): ResolvedResearchRunConfiguration<RuntimeEnvironment> {
   return Object.freeze({ env, mode: "legacy-installed", configuration_ref: null, configuration_sha256: null,
     model_selections: Object.freeze([]), project_configuration_ref: null, project_configuration_sha256: null,
-    project_owner_ref: null, project_id: null });
+    project_owner_ref: null, project_id: null, project_selection_revision: null });
 }
 
 function sourceString(value: unknown, _label: string): string {
@@ -493,6 +530,46 @@ function projectValue(envelope: Record<string, unknown>, vars: Record<string, un
   return envelope[field] ?? vars[envKey];
 }
 
+function applyRunOutputLanguage(reportJson: string, language: ResearchRunOutputLanguage): string {
+  const report = jsonObject(reportJson, "report configuration");
+  const artifact = object(report.artifact_policy, "report artifact policy");
+  const section = object(artifact.section_contract, "report section contract");
+  const titleTranslations: Readonly<Record<string, string>> = language === "en"
+    ? { "Ответ по документам": "Research answer" }
+    : { "Research answer": "Ответ по документам" };
+  const sectionTitleTranslations: Readonly<Record<string, string>> = language === "en"
+    ? { "Ответ": "Answer" }
+    : { "Answer": "Ответ" };
+  const purposeTranslations: Readonly<Record<string, string>> = language === "en"
+    ? { "Ответ на вопрос по документу с источниками, контраргументами и ограничениями":
+      "Evidence-backed answer with sources, counterarguments, and limitations" }
+    : { "Evidence-backed answer with sources, counterarguments, and limitations":
+      "Ответ на вопрос по документу с источниками, контраргументами и ограничениями" };
+  return canonicalJson({ ...report, artifact_policy: {
+    ...artifact,
+    title: typeof artifact.title === "string" ? titleTranslations[artifact.title] ?? artifact.title : artifact.title,
+    language,
+    section_contract: {
+      ...section,
+      title: typeof section.title === "string"
+        ? sectionTitleTranslations[section.title] ?? section.title : section.title,
+      purpose: typeof section.purpose === "string"
+        ? purposeTranslations[section.purpose] ?? section.purpose : section.purpose,
+    },
+  } });
+}
+
+function requireInstalledNativeModelPin(
+  configuration: InstalledNativeResearchConfiguration,
+  pin: ResearchRunInstalledNativeModelPin,
+): void {
+  const synthesis = configuration.model_selections.find((selection) => selection.stage === "SYNTHESIZE");
+  const model = synthesis?.transport_policy.model;
+  if (typeof model !== "string" || !model.startsWith("@cf/") || model !== pin.expected_model_id) {
+    checkpoint("WORKFLOW_AUTHORITY_STALE");
+  }
+}
+
 async function composeSnapshot<RuntimeEnvironment>(
   environment: RuntimeEnvironment,
   actor: ResearchRunConfigurationAssociation,
@@ -500,6 +577,7 @@ async function composeSnapshot<RuntimeEnvironment>(
   port: ResearchRunConfigurationRuntimePort<RuntimeEnvironment>,
   projectConfigurationAuthority?: ResearchProjectConfigurationGrantReadAuthority,
   installedNative?: InstalledNativeResearchConfiguration,
+  outputLanguage?: ResearchRunOutputLanguage,
 ): Promise<{ readonly mode: ResearchRunConfigurationMode; readonly configuration_json: string }> {
   let envelope: Record<string, unknown> | undefined = installedNative === undefined
     ? undefined : { model_selections: installedNative.model_selections };
@@ -555,7 +633,8 @@ async function composeSnapshot<RuntimeEnvironment>(
     projectValue(envelope ?? {}, vars ?? {}, "spend_policy_provenance_ref", "ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF"), "spend policy provenance");
   const reportValue = projectValue(envelope ?? {}, vars ?? {}, "report", "ELIOTR_RESEARCH_REPORT_CONFIG_JSON");
   const reportRecord = typeof reportValue === "object" ? object(reportValue, "report configuration") : undefined;
-  const reportJson = sourceString(reportRecord?.config_json ?? reportValue, "report configuration JSON");
+  const sourceReportJson = sourceString(reportRecord?.config_json ?? reportValue, "report configuration JSON");
+  const reportJson = outputLanguage === undefined ? sourceReportJson : applyRunOutputLanguage(sourceReportJson, outputLanguage);
   const reportProvenance = sourceProvenance(reportRecord?.provenance_ref ??
     projectValue(envelope ?? {}, vars ?? {}, "report_provenance_ref", "ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF"), "report configuration provenance");
   const selectionValue = envelope?.model_selections;
@@ -564,7 +643,8 @@ async function composeSnapshot<RuntimeEnvironment>(
       !modelSelections.some((selection) => selection.stage === "AUDIT_CLAIMS")) {
     checkpoint("WORKFLOW_CONFIGURATION_MISSING");
   }
-  const hasNativeSelection = modelSelections.some((selection) => selection.candidate_kind === "provider-native-v1");
+  const hasNativeSelection = modelSelections.some((selection) =>
+    selection.candidate_kind === "provider-native-v1" || selection.candidate_kind === "provider-native-v2");
   if (hasNativeSelection && (projectConfiguration?.owner_ref === undefined || projectConfiguration.project_id === undefined)) {
     checkpoint("WORKFLOW_CONFIGURATION_INVALID");
   }
@@ -581,7 +661,8 @@ async function composeSnapshot<RuntimeEnvironment>(
     association: actor, project_configuration: projectConfiguration, model_selections: modelSelections, semantic,
     model_profile: Object.freeze({ config_json: profileJson, provenance_ref: profileProvenance }),
     spend_policy: Object.freeze({ config_json: spendJson, provenance_ref: spendProvenance }),
-    report: Object.freeze({ config_json: reportJson, provenance_ref: reportProvenance }),
+    report: Object.freeze({ config_json: reportJson, provenance_ref: reportProvenance,
+      ...(outputLanguage === undefined ? {} : { output_language: outputLanguage }) }),
     ...(nativeAcquisitionSelection === undefined ? {} : {
       native_acquisition_selection: nativeAcquisitionSelection,
     }), ...(branchQueryBudgetSelection === undefined ? {} : {
@@ -596,15 +677,39 @@ export async function captureResearchRunConfiguration<RuntimeEnvironment>(
   port: ResearchRunConfigurationRuntimePort<RuntimeEnvironment>,
 ): Promise<ResolvedResearchRunConfiguration<RuntimeEnvironment>> {
   const actor = association(raw);
+  if (raw.output_language !== undefined && raw.output_language !== "en" && raw.output_language !== "ru") {
+    checkpoint("WORKFLOW_INPUT_INVALID");
+  }
   const store = createD1ResearchRunConfigurationStore(port.database);
   try {
     const existing = await store.getByOperation(actor.operation_id);
     if (existing !== null) {
       if (!sameAssociation(existing, actor)) checkpoint("WORKFLOW_AUTHORITY_STALE");
-      return await resolved(env, existing, port);
+      const result = await resolved(env, existing, port);
+      if (raw.selected_project_configuration_pin !== undefined &&
+          (result.project_id !== raw.selected_project_configuration_pin.configuration_project_id ||
+            result.project_configuration_ref !== raw.selected_project_configuration_pin.configuration_ref ||
+            result.project_configuration_sha256 !== raw.selected_project_configuration_pin.configuration_sha256 ||
+            result.project_selection_revision !== raw.selected_project_configuration_pin.selection_revision)) {
+        checkpoint("WORKFLOW_AUTHORITY_STALE");
+      }
+      if (raw.installed_native_model_pin !== undefined) {
+        const synthesis = result.model_selections.find((selection) => selection.stage === "SYNTHESIZE");
+        if (result.project_id !== null || result.project_configuration_ref !== null ||
+            synthesis?.transport_policy.model !== raw.installed_native_model_pin.expected_model_id) {
+          checkpoint("WORKFLOW_AUTHORITY_STALE");
+        }
+      }
+      if (result.output_language !== raw.output_language) checkpoint("WORKFLOW_AUTHORITY_STALE");
+      return result;
     }
-    if (raw.select_project_configuration === undefined) checkpoint("WORKFLOW_CONFIGURATION_MISSING");
     const projectConfigurationAuthority = raw.project_configuration_read_authority;
+    const installedNativePin = raw.installed_native_model_pin;
+    if ((installedNativePin !== undefined && (raw.selected_project_configuration_pin !== undefined ||
+          projectConfigurationAuthority !== undefined || raw.configuration_project_id !== undefined)) ||
+        (raw.select_project_configuration === undefined && installedNativePin === undefined)) {
+      checkpoint(installedNativePin === undefined ? "WORKFLOW_CONFIGURATION_MISSING" : "WORKFLOW_INPUT_INVALID");
+    }
     const requireCurrentProjectConfigurationAuthority = async () => {
       await raw.require_current_configuration_scope?.();
       if (projectConfigurationAuthority === undefined) return;
@@ -617,29 +722,45 @@ export async function captureResearchRunConfiguration<RuntimeEnvironment>(
       await projectConfigurationAuthority.require_current_scope();
     };
     await requireCurrentProjectConfigurationAuthority();
-    let selectedProject: SelectedResearchProjectConfiguration | null;
-    try {
-      selectedProject = await raw.select_project_configuration();
-    } catch (error) {
-      const typed = port.translate_project_selection_failure?.(error) ?? null;
-      if (typed !== null) throw typed;
-      throw error;
+    let selectedProject: SelectedResearchProjectConfiguration | null = null;
+    if (installedNativePin === undefined) {
+      const selectProjectConfiguration = raw.select_project_configuration;
+      if (selectProjectConfiguration === undefined) checkpoint("WORKFLOW_CONFIGURATION_MISSING");
+      try {
+        selectedProject = await selectProjectConfiguration();
+      } catch (error) {
+        const typed = port.translate_project_selection_failure?.(error) ?? null;
+        if (typed !== null) throw typed;
+        throw error;
+      }
     }
-    if (selectedProject === undefined) checkpoint("WORKFLOW_CONFIGURATION_MISSING");
+    if (installedNativePin === undefined && selectedProject === undefined) checkpoint("WORKFLOW_CONFIGURATION_MISSING");
+    const selectionPin = raw.selected_project_configuration_pin;
+    if (selectionPin !== undefined && (selectedProject === null ||
+        selectedProject.project_id !== selectionPin.configuration_project_id ||
+        selectedProject.configuration_ref !== selectionPin.configuration_ref ||
+        selectedProject.configuration_sha256 !== selectionPin.configuration_sha256 ||
+        selectedProject.selection_revision !== selectionPin.selection_revision)) {
+      checkpoint("WORKFLOW_AUTHORITY_STALE");
+    }
     let installedNative: InstalledNativeResearchConfiguration | undefined;
-    if (selectedProject === null) {
-      if (raw.allow_installed_native_default !== true || raw.configuration_project_id === undefined ||
-          port.installed_native_configuration === undefined) checkpoint("WORKFLOW_CONFIGURATION_MISSING");
+    if (selectedProject === null || installedNativePin !== undefined) {
+      if (selectionPin !== undefined) checkpoint("WORKFLOW_AUTHORITY_STALE");
+      if (raw.allow_installed_native_default !== true || port.installed_native_configuration === undefined ||
+          (installedNativePin === undefined && raw.configuration_project_id === undefined)) {
+        checkpoint("WORKFLOW_CONFIGURATION_MISSING");
+      }
       if (raw.require_current_configuration_scope === undefined) checkpoint("WORKFLOW_AUTHORITY_STALE");
-      if (projectConfigurationAuthority !== undefined &&
+      if (installedNativePin === undefined && projectConfigurationAuthority !== undefined &&
           raw.configuration_project_id !== projectConfigurationAuthority.lease.grant.project_id) {
         checkpoint("WORKFLOW_AUTHORITY_STALE");
       }
       try {
         installedNative = await port.installed_native_configuration(env,
           projectConfigurationAuthority?.lease.grant.grantor_principal_ref ?? actor.principal_ref,
-          identifier(raw.configuration_project_id));
-        if (await raw.select_project_configuration() !== null) checkpoint("WORKFLOW_AUTHORITY_STALE");
+          installedNativePin === undefined ? identifier(raw.configuration_project_id) : undefined);
+        if (installedNativePin !== undefined) requireInstalledNativeModelPin(installedNative, installedNativePin);
+        else if (await raw.select_project_configuration?.() !== null) checkpoint("WORKFLOW_AUTHORITY_STALE");
       } catch (error) {
         const typed = port.translate_project_selection_failure?.(error) ?? null;
         if (typed !== null) throw typed;
@@ -653,14 +774,68 @@ export async function captureResearchRunConfiguration<RuntimeEnvironment>(
     }
     await requireCurrentProjectConfigurationAuthority();
     const snapshot = await composeSnapshot(env, actor, selectedProject ?? undefined, port,
-      projectConfigurationAuthority, installedNative);
+      projectConfigurationAuthority, installedNative, raw.output_language);
     await requireCurrentProjectConfigurationAuthority();
-    await store.putImmutable({ ...actor, mode: snapshot.mode, configuration_json: snapshot.configuration_json });
+    if (selectionPin !== undefined) {
+      const selectProjectConfiguration = raw.select_project_configuration;
+      if (selectProjectConfiguration === undefined) checkpoint("WORKFLOW_CONFIGURATION_MISSING");
+      const latest = await selectProjectConfiguration();
+      if (selectedProject === null || latest === null ||
+          latest.owner_ref !== selectedProject.owner_ref || latest.project_id !== selectedProject.project_id ||
+          latest.configuration_ref !== selectionPin.configuration_ref ||
+          latest.configuration_sha256 !== selectionPin.configuration_sha256 ||
+          latest.selection_revision !== selectionPin.selection_revision ||
+          latest.configuration_json !== selectedProject.configuration_json) {
+        checkpoint("WORKFLOW_AUTHORITY_STALE");
+      }
+      await requireCurrentProjectConfigurationAuthority();
+    }
+    if (installedNativePin !== undefined) {
+      if (port.installed_native_configuration === undefined || installedNative === undefined) {
+        checkpoint("WORKFLOW_CONFIGURATION_MISSING");
+      }
+      const latest = await port.installed_native_configuration(env, actor.principal_ref, undefined);
+      requireInstalledNativeModelPin(latest, installedNativePin);
+      if (canonicalJson(latest.model_selections) !== canonicalJson(installedNative.model_selections) ||
+          canonicalJson(latest.vars) !== canonicalJson(installedNative.vars)) {
+        checkpoint("WORKFLOW_AUTHORITY_STALE");
+      }
+      await requireCurrentProjectConfigurationAuthority();
+    }
+    const selectionGuard = selectionPin === undefined ? undefined : (() => {
+      if (selectedProject === null || selectedProject.owner_ref === undefined || selectedProject.project_id === undefined) {
+        checkpoint("WORKFLOW_AUTHORITY_STALE");
+      }
+      return Object.freeze({ owner_id: selectedProject.owner_ref, project_id: selectedProject.project_id,
+        configuration_ref: selectedProject.configuration_ref, configuration_sha256: selectedProject.configuration_sha256,
+        selection_revision: selectedProject.selection_revision });
+    })();
+    await store.putImmutable({ ...actor, mode: snapshot.mode, configuration_json: snapshot.configuration_json,
+      ...(selectionGuard === undefined ? {} : { selection_guard: selectionGuard }),
+      ...(installedNativePin === undefined ? {} : {
+        installed_native_model_guard: { expected_model_id: installedNativePin.expected_model_id },
+      }) });
     const persisted = await store.getByOperation(actor.operation_id);
     if (persisted === null || !sameAssociation(persisted, actor) || persisted.configuration_json !== snapshot.configuration_json) {
       checkpoint("WORKFLOW_CONFIGURATION_INVALID");
     }
-    return await resolved(env, persisted, port);
+    const result = await resolved(env, persisted, port);
+    if (selectionPin !== undefined &&
+        (result.project_id !== selectionPin.configuration_project_id ||
+          result.project_configuration_ref !== selectionPin.configuration_ref ||
+          result.project_configuration_sha256 !== selectionPin.configuration_sha256 ||
+          result.project_selection_revision !== selectionPin.selection_revision)) {
+      checkpoint("WORKFLOW_AUTHORITY_STALE");
+    }
+    if (installedNativePin !== undefined) {
+      const synthesis = result.model_selections.find((selection) => selection.stage === "SYNTHESIZE");
+      if (result.project_id !== null || result.project_configuration_ref !== null ||
+          synthesis?.transport_policy.model !== installedNativePin.expected_model_id) {
+        checkpoint("WORKFLOW_AUTHORITY_STALE");
+      }
+    }
+    if (result.output_language !== raw.output_language) checkpoint("WORKFLOW_AUTHORITY_STALE");
+    return result;
   } catch (error) { runBindingError(error, port); }
 }
 

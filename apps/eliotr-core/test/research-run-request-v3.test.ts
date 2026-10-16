@@ -5,6 +5,7 @@ import {
   parseResearchRunRequest,
   parseResearchRunTransportRequest,
   RESEARCH_RUN_REQUEST_V3,
+  RESEARCH_RUN_REQUEST_V4,
   researchRunIdentityDigest,
 } from "../src/research-run-service.js";
 import { ResearchServiceError } from "../src/research-service-error.js";
@@ -21,6 +22,11 @@ const base = {
   max_results: 8,
 } as const;
 const v3 = { ...base, request_version: RESEARCH_RUN_REQUEST_V3, configuration_project_id: "project-beta" } as const;
+const v4 = { ...base, request_version: RESEARCH_RUN_REQUEST_V4,
+  selection: { configuration_project_id: "project-beta", configuration_ref: `rpmc-${"c".repeat(64)}`,
+    configuration_sha256: "c".repeat(64), selection_revision: 7 }, output_language: "en" } as const;
+const builtinV4 = { ...base, request_version: RESEARCH_RUN_REQUEST_V4,
+  selection: { kind: "builtin", expected_model_id: "@cf/meta/llama-3.1-8b-instruct" } } as const;
 
 /** The exact canonical body the wire request carries once the selector is removed. */
 const canonical = (fields: Record<string, unknown>) => JSON.stringify({ ...base, ...fields });
@@ -32,6 +38,11 @@ function failureOf(run: () => unknown): { readonly code: string; readonly status
     throw error;
   }
   throw new Error("expected the request to be rejected");
+}
+
+async function sha256(value: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 describe("research run request v3 transport selection", () => {
@@ -60,7 +71,7 @@ describe("research run request v3 transport selection", () => {
       .toEqual({ code: "RESEARCH_PROFILE_UNSUPPORTED", status: 422 });
     expect(failureOf(() => parseResearchRunTransportRequest({ ...base,
       request_version: "eliotr.research-run-request.v4", configuration_project_id: "project-beta" })))
-      .toEqual({ code: "RESEARCH_PROFILE_UNSUPPORTED", status: 422 });
+      .toEqual({ code: "RESEARCH_INPUT_INVALID", status: 400 });
   });
 
   it("preserves v1 and v2 exact key sets and rejects any configuration_project_id presence", () => {
@@ -104,13 +115,18 @@ describe("research run request v3 transport selection", () => {
     expect(parseResearchRunTransportRequest(v3)).toEqual(first);
   });
 
-  it("derives one operation identity from the canonical request alone for v1 and v2", async () => {
-    // No selection means the digest is exactly the pre-existing canonical request
-    // digest, so every already-shipped v1/v2 idempotency identity is unchanged.
-    const canonical = await researchRunIdentityDigest(parseResearchRunRequest(base), null);
-    expect(await researchRunIdentityDigest(parseResearchRunRequest(base), null)).toBe(canonical);
-    expect(canonical).not.toBe(await researchRunIdentityDigest(parseResearchRunTransportRequest(v3).request,
-      parseResearchRunTransportRequest(v3).selection));
+  it("preserves the exact v1/v2 request hashes and v3 selector hash formula", async () => {
+    const v1 = parseResearchRunTransportRequest(base);
+    const v2Body = { ...base, request_version: RESEARCH_RUN_REQUEST_V2,
+      inquiry_protocol_ref: INSTALLED_INQUIRY_PROTOCOL_REFS.lookup };
+    const v2 = parseResearchRunTransportRequest(v2Body);
+    expect(await researchRunIdentityDigest(v1.request, v1.selection)).toBe(await sha256(JSON.stringify(v1.request)));
+    expect(await researchRunIdentityDigest(v2.request, v2.selection)).toBe(await sha256(JSON.stringify(v2.request)));
+
+    const selected = parseResearchRunTransportRequest(v3);
+    const canonicalDigest = await sha256(JSON.stringify(selected.request));
+    expect(await researchRunIdentityDigest(selected.request, selected.selection))
+      .toBe(await sha256(`${canonicalDigest}|${RESEARCH_RUN_REQUEST_V3}|project-beta`));
   });
 
   it("binds a same-idempotency-key request to a different configuration project to a different identity", async () => {
@@ -127,6 +143,67 @@ describe("research run request v3 transport selection", () => {
     const original = parseResearchRunTransportRequest(v3);
     expect(await researchRunIdentityDigest(replay.request, replay.selection))
       .toBe(await researchRunIdentityDigest(original.request, original.selection));
+  });
+});
+
+describe("research run request v4 exact model pin", () => {
+  it("keeps the immutable configuration pin and output language outside QueryRequest", async () => {
+    const parsed = parseResearchRunTransportRequest(v4);
+    expect(parsed.selection).toEqual({ request_version: RESEARCH_RUN_REQUEST_V4,
+      selection: v4.selection, output_language: "en" });
+    expect(Object.hasOwn(parsed.request, "selection")).toBe(false);
+    expect(Object.hasOwn(parsed.request, "output_language")).toBe(false);
+    expect(Object.hasOwn(parsed.request, "request_version")).toBe(false);
+    if (parsed.selection === null || parsed.selection.request_version !== RESEARCH_RUN_REQUEST_V4) {
+      throw new Error("expected a v4 selection");
+    }
+    const identity = await researchRunIdentityDigest(parsed.request, parsed.selection);
+    expect(identity).toBe(await researchRunIdentityDigest(parsed.request, parseResearchRunTransportRequest(v4).selection));
+    expect(identity).not.toBe(await researchRunIdentityDigest(parsed.request,
+      { ...parsed.selection, output_language: "ru" }));
+  });
+
+  it("rejects unknown, malformed, ineligible-shaped, and mixed v4 selection fields", () => {
+    for (const invalid of [
+      { ...v4, extra: true },
+      { ...v4, selection: { ...v4.selection, extra: true } },
+      { ...v4, selection: { ...v4.selection, configuration_sha256: "d".repeat(64) } },
+      { ...v4, selection: { ...v4.selection, selection_revision: 0 } },
+      { ...v4, output_language: "fr" },
+      { ...v4, inquiry_protocol_ref: INSTALLED_INQUIRY_PROTOCOL_REFS.lookup },
+    ]) {
+      expect(failureOf(() => parseResearchRunTransportRequest(invalid)).status).toBe(400);
+    }
+  });
+
+  it("accepts only the explicit builtin branch and binds its expected model identity", async () => {
+    const parsed = parseResearchRunTransportRequest(builtinV4);
+    expect(parsed.selection).toEqual({ request_version: RESEARCH_RUN_REQUEST_V4,
+      selection: builtinV4.selection });
+    if (parsed.selection === null || parsed.selection.request_version !== RESEARCH_RUN_REQUEST_V4) {
+      throw new Error("expected v4 builtin selection");
+    }
+    const identity = await researchRunIdentityDigest(parsed.request, parsed.selection);
+    expect(identity).not.toBe(await researchRunIdentityDigest(parsed.request,
+      { ...parsed.selection, selection: { kind: "builtin", expected_model_id: "@cf/meta/llama-3.2-8b-instruct" } }));
+    for (const selection of [
+      { kind: "external", expected_model_id: "@cf/meta/llama-3.1-8b-instruct" },
+      { kind: "builtin", expected_model_id: "openai/gpt" },
+      { kind: "builtin", expected_model_id: "@cf/meta/llama-3.1-8b-instruct", configuration_ref: "fake" },
+    ]) {
+      expect(failureOf(() => parseResearchRunTransportRequest({ ...builtinV4, selection })).status).toBe(400);
+    }
+  });
+
+  it("leaves v1, v2, and v3 parsing and identity handling on their existing paths", async () => {
+    expect(parseResearchRunTransportRequest(base).selection).toBeNull();
+    expect(parseResearchRunTransportRequest(v3).selection).toEqual({
+      request_version: RESEARCH_RUN_REQUEST_V3, configuration_project_id: "project-beta",
+    });
+    expect(await researchRunIdentityDigest(parseResearchRunTransportRequest(v3).request,
+      parseResearchRunTransportRequest(v3).selection)).toBe(
+      await researchRunIdentityDigest(parseResearchRunTransportRequest(v3).request,
+        parseResearchRunTransportRequest(v3).selection));
   });
 });
 

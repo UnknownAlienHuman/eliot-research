@@ -22,6 +22,7 @@ const DOCUMENT_KEYS = new Set([
   "expires_at",
   "provenance_ref",
   "approval_receipt_ref",
+  "catalog_metadata",
 ]);
 const IDENTITY_KEYS = new Set([
   "pricing_snapshot_ref",
@@ -54,6 +55,8 @@ export interface ResearchModelPricingSnapshotDocument {
   readonly expires_at: string;
   readonly provenance_ref: string;
   readonly approval_receipt_ref: string;
+  /** Optional exact catalog evidence. Existing v1 snapshots omit this field. */
+  readonly catalog_metadata?: Readonly<Record<string, unknown>>;
 }
 
 export interface ResearchModelPricingSnapshot extends ResearchModelPricingSnapshotDocument {
@@ -181,6 +184,20 @@ function decodeDocument(value: unknown, code: ResearchModelPricingErrorCode): Re
   const effective = canonicalIso(record.effective_at, "pricing snapshot effective_at", code);
   const expires = canonicalIso(record.expires_at, "pricing snapshot expires_at", code);
   if (Date.parse(expires) <= Date.parse(effective)) fail(code, "pricing snapshot expiry must follow its effective date");
+  let catalogMetadata: Readonly<Record<string, unknown>> | undefined;
+  if (Object.prototype.hasOwnProperty.call(record, "catalog_metadata")) {
+    const metadata = record.catalog_metadata;
+    if (typeof metadata !== "object" || metadata === null || Array.isArray(metadata) ||
+        (Object.getPrototypeOf(metadata) !== Object.prototype && Object.getPrototypeOf(metadata) !== null)) {
+      fail(code, "catalog metadata must be a plain object");
+    }
+    let serialized: string;
+    try { serialized = canonicalJson(metadata); }
+    catch (cause) { fail(code, "catalog metadata is not canonical JSON data", false, cause); }
+    if (new TextEncoder().encode(serialized).byteLength > 16_384) fail(code, "catalog metadata exceeds its bound");
+    try { catalogMetadata = Object.freeze(JSON.parse(serialized) as Record<string, unknown>); }
+    catch (cause) { fail(code, "catalog metadata could not be read back", false, cause); }
+  }
   return Object.freeze({
     protocol: PRICING_PROTOCOL,
     pricing_snapshot_ref: identifier(record.pricing_snapshot_ref, "pricing_snapshot_ref", code),
@@ -195,6 +212,7 @@ function decodeDocument(value: unknown, code: ResearchModelPricingErrorCode): Re
     expires_at: expires,
     provenance_ref: identifier(record.provenance_ref, "provenance_ref", code),
     approval_receipt_ref: identifier(record.approval_receipt_ref, "approval_receipt_ref", code),
+    ...(catalogMetadata === undefined ? {} : { catalog_metadata: catalogMetadata }),
   });
 }
 
@@ -232,6 +250,7 @@ function documentProjection(value: ResearchModelPricingSnapshotDocument): Resear
     expires_at: value.expires_at,
     provenance_ref: value.provenance_ref,
     approval_receipt_ref: value.approval_receipt_ref,
+    ...(value.catalog_metadata === undefined ? {} : { catalog_metadata: value.catalog_metadata }),
   };
 }
 

@@ -184,3 +184,46 @@ describe('Research RUN selected-source envelope', () => {
     catch (error) { expect(error).toBeInstanceOf(OwnerClientError); expect((error as OwnerClientError).code).toBe('RESEARCH_INPUT_LIMIT'); }
   });
 });
+
+describe('Research RUN v4 exact model pin', () => {
+  const selection = {
+    configuration_project_id: 'project-chat',
+    configuration_ref: `rpmc-${'a'.repeat(64)}`,
+    configuration_sha256: 'a'.repeat(64),
+    selection_revision: 4,
+  } as const;
+
+  it('sends the immutable selected configuration and freezes the explicit output language in the request', () => {
+    const { api } = build(null, [200], createSessionEpoch());
+    const body = JSON.parse(api.researchRunBodyV4({ query: 'Compare the selected sources',
+      scope_expression: { kind: 'PROJECT', project_id: 'project-chat' }, selection,
+      output_language: 'en', max_results: 8 }));
+    expect(body).toMatchObject({ request_version: 'eliotr.research-run-request.v4',
+      selection, output_language: 'en', max_results: 8 });
+    expect(Object.keys(body).sort()).toEqual(["budget_ref", "evidence_grade", "literals", "max_results",
+      "output_language", "product", "query", "request_version", "scope_expression", "selection"].sort());
+  });
+
+  it('keeps output language optional and rejects stale-shaped or unknown pin fields locally', () => {
+    const { api } = build(null, [200], createSessionEpoch());
+    expect(JSON.parse(api.researchRunBodyV4({ query: 'q', scope_expression: { kind: 'GLOBAL_LIBRARY' }, selection }))
+      .output_language).toBeUndefined();
+    expect(() => api.researchRunBodyV4({ query: 'q', scope_expression: { kind: 'GLOBAL_LIBRARY' },
+      selection: { ...selection, configuration_sha256: 'b'.repeat(64) } })).toThrow();
+    expect(() => api.researchRunBodyV4({ query: 'q', scope_expression: { kind: 'GLOBAL_LIBRARY' },
+      selection: { ...selection, unexpected: true } as never })).toThrow();
+    expect(() => api.researchRunBodyV4({ query: 'q', scope_expression: { kind: 'GLOBAL_LIBRARY' },
+      selection, output_language: 'fr' as never })).toThrow();
+  });
+
+  it('accepts only an explicit installed Cloudflare model selection for the builtin branch', () => {
+    const { api } = build(null, [200], createSessionEpoch());
+    const builtin = { kind: 'builtin', expected_model_id: '@cf/meta/llama-3.1-8b-instruct' } as const;
+    expect(JSON.parse(api.researchRunBodyV4({ query: 'q', scope_expression: { kind: 'GLOBAL_LIBRARY' },
+      selection: builtin })).selection).toEqual(builtin);
+    expect(() => api.researchRunBodyV4({ query: 'q', scope_expression: { kind: 'GLOBAL_LIBRARY' },
+      selection: { kind: 'builtin', expected_model_id: 'openai/gpt' } as never })).toThrow();
+    expect(() => api.researchRunBodyV4({ query: 'q', scope_expression: { kind: 'GLOBAL_LIBRARY' },
+      selection: { ...builtin, configuration_ref: 'rpmc-unexpected' } as never })).toThrow();
+  });
+});

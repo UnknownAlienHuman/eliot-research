@@ -302,13 +302,13 @@ export async function verifyDeploymentSchemaGenerations({ env, input, plan, root
   }
   const readiness = tsSource(await read(resolve(root, "apps/eliotr-core/src/readiness.ts"), "utf8"), "readiness.ts");
   const expected = new Map([
-    ["CORE_DB", staticSchemaGeneration(readiness, "REQUIRED_CORE_SCHEMA_GENERATION")],
-    ["SEARCH_DB", staticSchemaGeneration(readiness, "REQUIRED_SEARCH_SCHEMA_GENERATION")],
+    ["CORE_DB", [staticSchemaGeneration(readiness, "REQUIRED_CORE_SCHEMA_GENERATION")]],
+    ["SEARCH_DB", staticSchemaGenerationSet(readiness, "SUPPORTED_SEARCH_SCHEMA_GENERATIONS", "REQUIRED_SEARCH_SCHEMA_GENERATION")],
   ]);
   const verified = [];
   for (const stream of plan) {
     const required = expected.get(stream.binding);
-    if (typeof required !== "string" || !UUID.test(stream.database_id ?? "")) fail("Deployment schema generation plan is invalid");
+    if (!Array.isArray(required) || required.length === 0 || !UUID.test(stream.database_id ?? "")) fail("Deployment schema generation plan is invalid");
     const url = `${input.apiBase}/accounts/${encodeURIComponent(env.CLOUDFLARE_ACCOUNT_ID)}/d1/database/${encodeURIComponent(stream.database_id)}/query`;
     const body = JSON.stringify({ sql: "SELECT value FROM schema_state WHERE key = 'schema_generation' LIMIT 2", params: [] });
     const { data } = await readJson(url, {
@@ -323,11 +323,11 @@ export async function verifyDeploymentSchemaGenerations({ env, input, plan, root
       fail("Deployment schema generation readback is invalid");
     }
     const row = result.results[0];
-    if (!isRecord(row) || Object.keys(row).length !== 1 || row.value !== required) {
+    if (!isRecord(row) || Object.keys(row).length !== 1 || !required.includes(row.value)) {
       fail(`Deployment ${stream.binding} schema generation does not match source requirement`);
     }
     verified.push({ binding: stream.binding, database_id: stream.database_id,
-      required_schema_generation: required, observed_schema_generation: row.value, readback: "PASS" });
+      required_schema_generation: row.value, observed_schema_generation: row.value, readback: "PASS" });
   }
   return Object.freeze({ state: "PASS", streams: Object.freeze(verified) });
 }
@@ -400,6 +400,32 @@ function normalizeBindings(bindings) {
     fail("Maintenance Worker version bindings are duplicate or oversized");
   }
   return normalized;
+}
+
+function staticSchemaGenerationSet(source, name, legacyName) {
+  const matches = [];
+  for (const statement of source.statements) {
+    if (!ts.isVariableStatement(statement) || !(statement.declarationList.flags & ts.NodeFlags.Const)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (!ts.isIdentifier(declaration.name) || declaration.name.text !== name) continue;
+      const value = declaration.initializer;
+      if (!value || !ts.isNewExpression(value) || !ts.isIdentifier(value.expression) || value.expression.text !== "Set" ||
+          value.arguments?.length !== 1 || !ts.isArrayLiteralExpression(value.arguments[0]) ||
+          value.arguments[0].elements.some(item => !ts.isStringLiteral(item))) {
+        fail(`Source schema generation set is dynamic (${name})`);
+      }
+      matches.push(value.arguments[0].elements.map(item => item.text));
+    }
+  }
+  // Retained source releases declared one exact required generation. They are
+  // still checked statically, without inferring a marker from the remote target.
+  if (matches.length === 0) return Object.freeze([staticSchemaGeneration(source, legacyName)]);
+  const values = matches[0];
+  if (matches.length !== 1 || values.length < 1 || values.length > 8 ||
+      values.some(value => !bounded(value)) || new Set(values).size !== values.length) {
+    fail(`Source schema generation set is missing, duplicated or invalid (${name})`);
+  }
+  return Object.freeze(values);
 }
 
 function staticSchemaGeneration(source, name) {

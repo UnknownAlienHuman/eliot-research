@@ -93,7 +93,7 @@ export type ServiceModelCatalogPage = Omit<ResearchModelCatalogPage, 'protocol' 
 }>;
 
 export type ResearchModelSelectionSummary = Readonly<{
-  candidate_kind?: 'provider-native-v1';
+  candidate_kind?: 'provider-native-v1' | 'provider-native-v2';
   stage: 'ANALYZE_BRANCHES' | 'COUNTER_SEARCH' | 'SYNTHESIZE' | 'AUDIT_CLAIMS';
   route_ref: string;
   route_version: string;
@@ -413,7 +413,9 @@ export function createResearchModelConfigurationApi(
       'qualification_ref', 'qualification_sha256', 'provider_id', 'model_id', 'transport_policy',
       ...(legacySummary ? [] : ['effective_reasoning_effort'])];
     const raw = exactRecord(value, keys, 'model selection');
-    if (native && raw.candidate_kind !== 'provider-native-v1') schemaMismatch('model selection candidate kind is unsupported');
+    if (native && raw.candidate_kind !== 'provider-native-v1' && raw.candidate_kind !== 'provider-native-v2') {
+      schemaMismatch('model selection candidate kind is unsupported');
+    }
     const stages = ['ANALYZE_BRANCHES', 'COUNTER_SEARCH', 'SYNTHESIZE', 'AUDIT_CLAIMS'] as const;
     if (!stages.includes(raw.stage as typeof stages[number])) schemaMismatch('model selection stage is invalid');
     const providerId = boundedText(raw.provider_id, 'provider_id', 64);
@@ -425,14 +427,22 @@ export function createResearchModelConfigurationApi(
       schemaMismatch('effective reasoning effort is invalid');
     }
     const policy = transportPolicy.decodeResearchModelTransportPolicy(raw.transport_policy);
-    if (providerId !== policy.provider || modelId !== policy.model) {
+    const logicalCustomProvider = policy.api === 'custom-chat-completions' && policy.provider.startsWith('custom-')
+      ? policy.provider.slice('custom-'.length) : null;
+    if ((providerId !== policy.provider && !(raw.candidate_kind === 'provider-native-v2' &&
+        logicalCustomProvider !== null && providerId === logicalCustomProvider)) || modelId !== policy.model) {
       schemaMismatch('model selection identity does not match its transport policy');
     }
-    if (native && (policy.api !== 'openrouter-chat-completions' || policy.provider !== 'openrouter' ||
+    if (native && raw.candidate_kind === 'provider-native-v1' &&
+        (policy.api !== 'openrouter-chat-completions' || policy.provider !== 'openrouter' ||
         policy.billing.mode !== 'byok' || policy.billing.free_only !== true)) {
-      schemaMismatch('native model selection requires a free-only OpenRouter BYOK transport policy');
+      schemaMismatch('provider-native v1 selection requires a free-only OpenRouter BYOK transport policy');
     }
-    return Object.freeze({ ...(native ? { candidate_kind: 'provider-native-v1' as const } : {}),
+    if (native && raw.candidate_kind === 'provider-native-v2' &&
+        (policy.api === 'compat-chat-completions' || policy.billing.mode !== 'byok' || policy.billing.alias === 'default')) {
+      schemaMismatch('provider-native v2 selection requires an exact saved provider BYOK transport');
+    }
+    return Object.freeze({ ...(native ? { candidate_kind: raw.candidate_kind as 'provider-native-v1' | 'provider-native-v2' } : {}),
       stage: raw.stage as ResearchModelSelectionSummary['stage'],
       route_ref: readIdentifier(raw.route_ref, 'route_ref'), route_version: readIdentifier(raw.route_version, 'route_version'),
       candidate_ref: readIdentifier(raw.candidate_ref, 'candidate_ref'), candidate_sha256: sha256(raw.candidate_sha256, 'candidate_sha256'),

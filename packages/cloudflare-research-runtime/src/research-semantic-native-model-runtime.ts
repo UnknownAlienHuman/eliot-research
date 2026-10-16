@@ -9,6 +9,12 @@ import {
   type ProviderNativeModelSelectionV1,
   type ResolvedProviderNativeModelSelectionV1,
 } from "@eliotr/cloudflare-native-models";
+import {
+  decodeProviderNativeModelCatalogSelectionV2,
+  type ProviderNativeModelCatalogSelectionV2,
+  type ProviderNativeModelCatalogV2AuthorityPort,
+  type ResolvedProviderNativeModelCatalogV2,
+} from "@eliotr/cloudflare-native-models";
 import type { ModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import type { PinnedModelSelection } from "@eliotr/cloudflare-model-control";
 import type {
@@ -17,6 +23,8 @@ import type {
 } from "@eliotr/cloudflare-research-configuration/research-run-configuration.js";
 
 type NativeStage = ProviderNativeModelSelectionV1["stage"];
+type NativeSelection = ProviderNativeModelSelectionV1 | ProviderNativeModelCatalogSelectionV2;
+type ResolvedNativeSelection = ResolvedProviderNativeModelSelectionV1 | ResolvedProviderNativeModelCatalogV2;
 
 export interface ResearchSemanticNativeModelRunConfiguration {
   readonly mode: ResearchRunConfigurationModeWithLegacy;
@@ -30,7 +38,7 @@ export interface ResearchSemanticNativeModelRunConfiguration {
 export interface ResearchSemanticNativeModelRunContext {
   readonly project_owner_ref: string;
   readonly project_id: string;
-  readonly selections: ReadonlyMap<NativeStage, ProviderNativeModelSelectionV1>;
+  readonly selections: ReadonlyMap<NativeStage, NativeSelection>;
 }
 
 export interface ResearchSemanticRouteAuthority {
@@ -46,11 +54,12 @@ type RouteAuthorityPinnedResolver = NonNullable<ResearchSemanticRouteAuthority["
 
 function selectionsByStage(
   raw: readonly ResearchRunModelSelection[] | undefined,
-): ReadonlyMap<NativeStage, ProviderNativeModelSelectionV1> {
-  const result = new Map<NativeStage, ProviderNativeModelSelectionV1>();
+): ReadonlyMap<NativeStage, NativeSelection> {
+  const result = new Map<NativeStage, NativeSelection>();
   for (const item of raw ?? []) {
-    if (item.candidate_kind !== "provider-native-v1") continue;
-    const selection = decodeProviderNativeModelSelection(item);
+    if (item.candidate_kind !== "provider-native-v1" && item.candidate_kind !== "provider-native-v2") continue;
+    const selection = item.candidate_kind === "provider-native-v1"
+      ? decodeProviderNativeModelSelection(item) : decodeProviderNativeModelCatalogSelectionV2(item);
     if (result.has(selection.stage)) throw new Error("run configuration repeats a Native model stage");
     result.set(selection.stage, selection);
   }
@@ -77,7 +86,7 @@ export function prepareResearchSemanticNativeModelRunContext(input: {
   });
 }
 
-function sameDynamicPin(dynamic: PinnedModelSelection, native: ProviderNativeModelSelectionV1): boolean {
+function sameDynamicPin(dynamic: PinnedModelSelection, native: NativeSelection): boolean {
   return dynamic.route_ref === native.route_ref && dynamic.route_version === native.route_version &&
     dynamic.candidate_ref === native.candidate_ref && dynamic.candidate_sha256 === native.candidate_sha256 &&
     dynamic.qualification_ref === native.qualification_ref &&
@@ -92,22 +101,25 @@ function sameDynamicPin(dynamic: PinnedModelSelection, native: ProviderNativeMod
 export function createResearchSemanticNativeModelRuntime(input: Readonly<{
   context: ResearchSemanticNativeModelRunContext | undefined;
   authority: Pick<ProviderNativeModelAuthorityPort, "resolvePinned"> | undefined;
+  catalog_authority: Pick<ProviderNativeModelCatalogV2AuthorityPort, "resolvePinned"> | undefined;
 }>): Readonly<{
-  readonly selections: ReadonlyMap<NativeStage, ProviderNativeModelSelectionV1>;
+  readonly selections: ReadonlyMap<NativeStage, NativeSelection>;
   readonly authority: Pick<ProviderNativeModelAuthorityPort, "resolvePinned"> | undefined;
-  resolvePinned(stage: NativeStage): Promise<ResolvedProviderNativeModelSelectionV1 | undefined>;
+  readonly catalog_authority: Pick<ProviderNativeModelCatalogV2AuthorityPort, "resolvePinned"> | undefined;
+  resolvePinned(stage: NativeStage): Promise<ResolvedNativeSelection | undefined>;
   pricingForStage(stage: NativeStage): Promise<ModelGatewayPricingPort | undefined>;
   profileRouteAuthority(routeAuthority: ResearchSemanticRouteAuthority): ResearchSemanticRouteAuthority;
 }> {
-  if ((input.context === undefined) !== (input.authority === undefined)) {
-    throw new Error("Native model run context and Core authority must be supplied together");
+  if (input.context === undefined && (input.authority !== undefined || input.catalog_authority !== undefined)) {
+    throw new Error("Native model authorities require a captured run context");
   }
   const context = input.context;
   if (context === undefined) {
-    const selections: ReadonlyMap<NativeStage, ProviderNativeModelSelectionV1> = new Map();
+    const selections: ReadonlyMap<NativeStage, NativeSelection> = new Map();
     return Object.freeze({
       selections,
       authority: undefined,
+      catalog_authority: undefined,
       async resolvePinned() { return undefined; },
       async pricingForStage() { return undefined; },
       profileRouteAuthority(routeAuthority) { return routeAuthority; },
@@ -115,23 +127,36 @@ export function createResearchSemanticNativeModelRuntime(input: Readonly<{
   }
 
   const authority = input.authority;
-  if (authority === undefined) throw new Error("Native model authority is unavailable");
-  const resolvePinned = async (stage: NativeStage): Promise<ResolvedProviderNativeModelSelectionV1 | undefined> => {
+  const catalogAuthority = input.catalog_authority;
+  const hasV1 = [...context.selections.values()].some((selection) => selection.candidate_kind === "provider-native-v1");
+  const hasV2 = [...context.selections.values()].some((selection) => selection.candidate_kind === "provider-native-v2");
+  if ((hasV1 && authority === undefined) || (hasV2 && catalogAuthority === undefined)) {
+    throw new Error("A selected provider-native model authority is unavailable");
+  }
+  const resolvePinned = async (stage: NativeStage): Promise<ResolvedNativeSelection | undefined> => {
     const selection = context.selections.get(stage);
     if (selection === undefined) return undefined;
-    return authority.resolvePinned({ selection, owner_ref: context.project_owner_ref,
+    if (selection.candidate_kind === "provider-native-v1") {
+      if (authority === undefined) throw new Error("Provider-native v1 authority is unavailable");
+      return authority.resolvePinned({ selection, owner_ref: context.project_owner_ref,
+        project_id: context.project_id, allow_expired_snapshot_v2: true });
+    }
+    if (catalogAuthority === undefined) throw new Error("Provider-native v2 authority is unavailable");
+    return catalogAuthority.resolvePinned({ selection, owner_ref: context.project_owner_ref,
       project_id: context.project_id, allow_expired_snapshot_v2: true });
   };
   return Object.freeze({
     selections: context.selections,
     authority,
+    catalog_authority: catalogAuthority,
     resolvePinned,
     async pricingForStage(stage) {
       const resolved = await resolvePinned(stage);
-      return resolved === undefined ? undefined : createProviderNativeModelZeroPricePort(
-        resolved.candidate.candidate.preparation,
-        resolved.pricing_snapshot,
-      );
+      if (resolved === undefined) return undefined;
+      return resolved.candidate.candidate.candidate_kind === "provider-native-v1"
+        ? createProviderNativeModelZeroPricePort(resolved.candidate.candidate.preparation,
+          (resolved as ResolvedProviderNativeModelSelectionV1).pricing_snapshot)
+        : (resolved as ResolvedProviderNativeModelCatalogV2).pricing_port;
     },
     profileRouteAuthority(routeAuthority) {
       return Object.freeze({
@@ -149,11 +174,12 @@ export function createResearchSemanticNativeModelRuntime(input: Readonly<{
             throw new Error("model-profile pin differs from the captured Native synthesis selection");
           }
           const resolved = await resolvePinned("SYNTHESIZE");
-          if (resolved === undefined || canonicalModelGatewayJson(resolved.candidate.candidate.preparation.deployment) !==
+          const resolvedDeployment = resolved?.candidate.candidate.preparation.deployment;
+          if (resolved === undefined || resolvedDeployment === undefined || canonicalModelGatewayJson(resolvedDeployment) !==
               canonicalModelGatewayJson(deployment)) {
             throw new Error("Native synthesis deployment differs from the model-profile pin");
           }
-          return resolved.candidate.candidate.preparation.deployment;
+          return resolvedDeployment;
         },
       });
     },

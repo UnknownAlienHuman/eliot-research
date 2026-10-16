@@ -75,7 +75,8 @@ export function bindConfiguredServiceModelProviderAlias(
     required("a global provider connection requires an exact server-prepared model route");
   }
   if (binding.provider_id !== identity.provider || selection.provider !== identity.provider ||
-      selection.model !== identity.model || !binding.model_ids.includes(identity.model) ||
+      selection.model !== identity.model ||
+      (binding.model_registration_mode === "explicit_allowlist" && !binding.model_ids.includes(identity.model)) ||
       selection.transport_policy.provider !== identity.provider ||
       selection.transport_policy.model !== identity.model) {
     mismatch("global provider connection does not authorize the exact prepared provider/model tuple");

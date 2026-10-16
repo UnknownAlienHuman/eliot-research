@@ -28,6 +28,7 @@ export const CANONICAL_EXPORTED_TABLES: ReadonlySet<string> = new Set([
   "model_generation",
   "exchange_generation",
   "projection_generation",
+  "projection_managed_item_effect",
   "backup_epoch",
   "backup_epoch_manifest_binding",
   "backup_epoch_verification_receipt",
@@ -44,6 +45,8 @@ export const CANONICAL_EXPORTED_TABLES: ReadonlySet<string> = new Set([
   "research_workflow_attempt",
   "research_workflow_checkpoint",
   "research_workflow_citation_binding",
+  "research_workflow_native_stage_completion",
+  "research_workflow_authorized_read_stage_completion",
   "retrieval_query_result",
   "retrieval_query_trace",
   "retrieval_exhaustive_job",
@@ -106,6 +109,8 @@ export const CANONICAL_EXPORTED_TABLES: ReadonlySet<string> = new Set([
   "outbox",
   "job",
   "delivery_inbox",
+  "queue_terminal_observation",
+  "queue_owner_replay",
   "investigation_event",
   "investigation_checkpoint",
   "evidence_freeze",
@@ -132,6 +137,7 @@ export const CANONICAL_EXPORTED_TABLES: ReadonlySet<string> = new Set([
   "source_admission_decision",
   "drive_observation",
   "incident",
+  "doctor_delivery_outbox",
   "evidence_resolution_receipt",
   "citation_resolution_receipt",
   "orientation_request",
@@ -166,6 +172,13 @@ export const CANONICAL_EXPORTED_TABLES: ReadonlySet<string> = new Set([
   "provider_native_model_candidate",
   "provider_native_model_qualification_proof",
   "provider_native_model_qualification_revocation",
+  "research_catalog_model_use_authorization",
+  "provider_native_model_catalog_v2_evidence",
+  "provider_native_model_catalog_v2_revocation",
+  // Global provider connection metadata and owner-scoped catalog presentation preferences.
+  // Provider credentials remain in Cloudflare BYOK and are not part of this export.
+  "service_model_provider_operation",
+  "service_model_provider_catalog_preference",
 ]);
 
 const REBUILD_REQUIRED_TABLES: ReadonlySet<string> = new Set([
@@ -223,6 +236,9 @@ const NOT_A_BACKUP_TABLES: ReadonlySet<string> = new Set([
   "backup_primary_writer_qualification",
   "backup_primary_writer_operation",
   "backup_primary_writer_current",
+  // Owner-issued bootstrap admissions and revocations are installation-local, short-lived writer authority.
+  "backup_primary_writer_admission",
+  "backup_primary_writer_admission_revocation",
   "backup_offsite_expiry",
   "backup_destination_authority",
   "backup_offsite_copy_part",

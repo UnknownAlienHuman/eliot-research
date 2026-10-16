@@ -38,7 +38,7 @@ export const TABLE_SPECS: readonly TableSpec[] = [
   { manifest: "ownership", table: "source_namespace_ownership", order_by: "source_namespace_id, ownership_record_revision", columns: { source_namespace_id: "text", ownership_record_revision: "int", owner_system_id: "text", owner_incarnation_ref: "text", source_owner_generation: "text", source_admission_policy_revision: "int", status: "text", cutover_receipt_ref: "text-or-null", created_at: "text" }, required: true },
   { manifest: "sources", table: "source", order_by: "source_id", columns: { source_id: "text", source_namespace_id: "text", source_owner_system_id: "text", source_owner_generation: "text", ownership_mode: "text", kind: "text", origin_uri: "text-or-null", title: "text", default_storage_policy: "text", default_residency_profile_id: "text", source_class: "text", license_policy_ref: "text", default_retention_policy_id: "text", head_rev: "text-or-null", created_at: "text" }, required: true },
   { manifest: "revisions", table: "source_revision", order_by: "source_revision_ref", columns: { source_revision_ref: "text", source_id: "text", source_owner_generation: "text", content_sha256: "text", object_residency_key_digest: "text", original_r2_key: "text-or-null", normalized_artifact_ref: "text-or-null", captured_at: "text", parser_profile_generation: "text-or-null", quality_state: "text", purge_state: "text", currentness_state: "text", source_view_ref: "text", workspace_view_revision_ref: "text-or-null", admitted_at: "text" }, required: true },
-  { manifest: "projects", table: "project", order_by: "project_id", columns: { project_id: "text", title: "text", default_disclosure: "text", retention_policy_ref: "text", default_source_policy_ref: "text", default_model_profile_ref: "text", default_depth_profile_ref: "text", generation: "int", membership_generation: "int", created_at: "text" }, required: true },
+  { manifest: "projects", table: "project", order_by: "project_id", columns: { project_id: "text", title: "text", default_disclosure: "text", retention_policy_ref: "text", default_source_policy_ref: "text", default_model_profile_ref: "text", default_depth_profile_ref: "text", generation: "int", created_at: "text" }, required: true },
   { manifest: "projects", table: "project_source_membership", order_by: "project_id, source_id, valid_from", columns: { project_id: "text", source_id: "text", role: "text", valid_from: "text", valid_to: "text-or-null", membership_generation: "int" }, required: true },
   { manifest: "projects", table: "source_tag", order_by: "source_id, tag, valid_from", columns: { source_id: "text", tag: "text", valid_from: "text", valid_to: "text-or-null" }, required: false },
   { manifest: "scopes", table: "scope_snapshot", order_by: "snapshot_id, revision", columns: { snapshot_id: "text", revision: "int", resolved_scope_expression_json: "text", participant_generations_json: "text", member_source_revision_refs_json: "text", source_owner_generations_json: "text", policy_authority_ref: "text", disclosure_closure_digest: "text", purge_ledger_revision: "int", client_fence_ref: "text-or-null", snapshot_digest: "text", created_at: "text", expires_at: "text", invalidated_at: "text-or-null", invalidation_reason: "text-or-null" }, required: true },
@@ -51,7 +51,7 @@ export const TABLE_SPECS: readonly TableSpec[] = [
   { manifest: "heads", table: "wiki_revision", order_by: "page_id, revision", columns: { page_id: "text", revision: "int", page_type: "text", title: "text", scope_snapshot_id: "text", scope_snapshot_revision: "int", body_r2_key: "text", manifest_r2_key: "text", coverage_receipt_id: "text", coverage_receipt_revision: "int", status: "text", supersedes_revision: "int-or-null", generator_generation: "text", reviewer_ref: "text-or-null", created_at: "text" }, required: false },
   { manifest: "generations", table: "model_generation", order_by: "generation_id", columns: { generation_id: "text", capability_class: "text", route_fingerprint_json: "text", pricing_snapshot_ref: "text", golden_set_result_ref: "text-or-null", status: "text", created_at: "text", activated_at: "text-or-null", retired_at: "text-or-null" }, required: false },
   { manifest: "generations", table: "exchange_generation", order_by: "generation_id", columns: { generation_id: "text", connection_id: "text", folder_id: "text", spreadsheet_id: "text", sheet_ids_json: "text", protocol_version: "text", state: "text", created_at: "text", retired_at: "text-or-null" }, required: false },
-  { manifest: "generations", table: "projection_generation", order_by: "source_revision_ref, projection_generation", columns: { source_revision_ref: "text", projection_generation: "text", job_id: "text", source_owner_generation: "text", content_sha256: "text", object_residency_key_digest: "text", projector_profile: "text", state: "text", item_count: "int-or-null", item_set_digest: "text-or-null", work_manifest_ref: "text-or-null", work_manifest_sha256: "text-or-null", d1_search_receipt_ref: "text-or-null", d1_search_readback_digest: "text-or-null", semantic_instance_id: "text-or-null", semantic_generation: "text-or-null", semantic_receipt_ref: "text-or-null", semantic_readback_digest: "text-or-null", reason_codes_json: "text", created_at: "text", updated_at: "text" }, required: false },
+  { manifest: "generations", table: "projection_generation", order_by: "source_revision_ref, projection_generation", columns: { source_revision_ref: "text", projection_generation: "text", job_id: "text", source_owner_generation: "text", content_sha256: "text", object_residency_key_digest: "text", projector_profile: "text", state: "text", item_count: "int-or-null", item_set_digest: "text-or-null", work_manifest_ref: "text-or-null", work_manifest_sha256: "text-or-null", d1_search_receipt_ref: "text-or-null", d1_search_readback_digest: "text-or-null", semantic_instance_id: "text-or-null", semantic_generation: "text-or-null", semantic_receipt_ref: "text-or-null", semantic_readback_digest: "text-or-null", reason_codes_json: "text", created_at: "text", updated_at: "text", managed_item_protocol: "text-or-null", managed_target_instance_id: "text-or-null", managed_target_generation: "text-or-null" }, required: false },
   { manifest: "retention", table: "backup_epoch", order_by: "backup_epoch_id", columns: { backup_epoch_id: "text", core_export_ref: "text", search_projection_manifest_ref: "text", evidence_manifest_ref: "text", work_manifest_ref: "text", offsite_copy_ref: "text", purge_ledger_revision: "int", verification_state: "text", created_at: "text", verified_at: "text-or-null" }, required: false },
   { manifest: "retention", table: "backup_epoch_manifest_binding", order_by: "backup_epoch_id, role", columns: {
       backup_epoch_id: "text", role: "text", binding_ref: "text", descriptor_sha256: "text", descriptor_json: "text",
@@ -100,6 +100,17 @@ const AUTHORITY_TABLE_INTRODUCTIONS: Readonly<Record<string, string>> = {
   backup_epoch_manifest_binding: "0119_backup_epoch_manifest_bindings.sql",
   backup_epoch_verification_receipt: "0119_backup_epoch_manifest_bindings.sql",
   model_route_qualification_failure_summary: "0122_model_qualification_failure_summary.sql",
+  research_workflow_native_stage_completion: "0127_research_workflow_native_stage_completion.sql",
+  projection_managed_item_effect: "0128_managed_item_effects.sql",
+  queue_terminal_observation: "0133_queue_terminal_observation.sql",
+  queue_owner_replay: "0136_queue_owner_replay.sql",
+  research_workflow_authorized_read_stage_completion: "0137_research_workflow_authorized_read_stage_completion.sql",
+  doctor_delivery_outbox: "0153_doctor_state.sql",
+  service_model_provider_operation: "0152_service_model_provider_operation.sql",
+  service_model_provider_catalog_preference: "0157_service_model_provider_catalog_mode.sql",
+  research_catalog_model_use_authorization: "0158_research_catalog_model_use_authority.sql",
+  provider_native_model_catalog_v2_evidence: "0159_provider_native_model_catalog_v2.sql",
+  provider_native_model_catalog_v2_revocation: "0159_provider_native_model_catalog_v2.sql",
 };
 
 const AUTHORITY_COLUMN_INTRODUCTIONS: Readonly<Record<string, Readonly<Record<string, string>>>> = {
@@ -116,12 +127,36 @@ const AUTHORITY_COLUMN_INTRODUCTIONS: Readonly<Record<string, Readonly<Record<st
     offsite_delete_receipt_ref: "0117_backup_erasure_primary_closure.sql",
     offsite_absence_receipt_ref: "0117_backup_erasure_primary_closure.sql",
   },
+  citation_resolution_receipt: {
+    outcomes_json: "0124_citation_resolution_outcomes.sql",
+  },
+  projection_generation: {
+    managed_item_protocol: "0129_managed_item_protocol.sql",
+    managed_target_instance_id: "0129_managed_item_protocol.sql",
+    managed_target_generation: "0129_managed_item_protocol.sql",
+  },
+  research_model_spend_admission: {
+    workflow_stage_request_sha256: "0139_research_branch_role_workflow_binding.sql",
+  },
+  research_workflow_run: {
+    failure_history_json: "0123_workflow_failure_outcomes.sql",
+    stage_effect_policy_generation: "0127_research_workflow_native_stage_completion.sql",
+  },
+  service_model_provider_operation: {
+    model_registration_mode: "0157_service_model_provider_catalog_mode.sql",
+  },
 };
 
 const AUTHORITY_MIGRATION_CHAINS = [
   ["0109_research_provider_key_configuration.sql", "0110_research_provider_key_model_use.sql", "0111_provider_native_model_authority.sql"],
   ["0055_model_route_qualification_dispatch.sql", "0122_model_qualification_failure_summary.sql"],
   ["0116_backup_epoch_producer_fence.sql", "0117_backup_erasure_primary_closure.sql", "0118_backup_primary_writer_qualification.sql", "0119_backup_epoch_manifest_bindings.sql"],
+  ["0127_research_workflow_native_stage_completion.sql", "0137_research_workflow_authorized_read_stage_completion.sql"],
+  ["0133_queue_terminal_observation.sql", "0136_queue_owner_replay.sql"],
+  ["0152_service_model_provider_operation.sql", "0157_service_model_provider_catalog_mode.sql"],
+  ["0157_service_model_provider_catalog_mode.sql", "0158_research_catalog_model_use_authority.sql", "0159_provider_native_model_catalog_v2.sql"],
+  ["0156_global_provider_model_use.sql", "0158_research_catalog_model_use_authority.sql"],
+  ["0111_provider_native_model_authority.sql", "0158_research_catalog_model_use_authority.sql"],
 ] as const;
 
 /**

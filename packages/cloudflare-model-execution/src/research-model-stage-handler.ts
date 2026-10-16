@@ -6,7 +6,10 @@ import { createModelGatewayFetchAdapter } from "@eliotr/cloudflare-ai";
 import { decodeModelRouteDeployment, type ModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import type { ModelRoutePort as ResearchModelRoutePort } from "@eliotr/research";
 import type { WorkflowStageHandler } from "@eliotr/cloudflare-workflows";
-import type { ProviderNativeModelAuthorityPort } from "@eliotr/cloudflare-native-models";
+import type {
+  ProviderNativeModelAuthorityPort,
+  ProviderNativeModelCatalogV2AuthorityPort,
+} from "@eliotr/cloudflare-native-models";
 import {
   createD1ModelGatewayDeploymentRegistry,
   createD1ModelGatewayFingerprintStore,
@@ -44,6 +47,7 @@ export interface ResearchModelStageHandlerDependencies {
   readonly spend_authorization: SpendAuthorizationReader;
   /** Native selections require this pinned authority; omitted-marker callers stay DynamicRoute-only. */
   readonly native_model_authority?: ResearchNativeModelAuthority;
+  readonly catalog_native_model_authority_v2?: Pick<ProviderNativeModelCatalogV2AuthorityPort, "resolvePinned">;
   /** TEST is an explicit server-owned fixture mode; production defaults to LIVE qualification. */
   readonly deployment_environment?: D1DynamicRouteRegistryOptions["environment"];
   /** Optional server-owned full deployment pin; omitted by legacy callers. */
@@ -134,6 +138,9 @@ export function createResearchModelStageHandler(
     routeAuthority: deployments,
     spendAuthorization: dependencies.spend_authorization,
     ...(dependencies.native_model_authority === undefined ? {} : { nativeModelAuthority: dependencies.native_model_authority }),
+    ...(dependencies.catalog_native_model_authority_v2 === undefined ? {} : {
+      catalogNativeModelAuthority: dependencies.catalog_native_model_authority_v2,
+    }),
   });
   const fingerprints = createD1ModelGatewayFingerprintStore(dependencies.database);
   const prompts = createResearchModelPromptCompiler(dependencies.prompt);

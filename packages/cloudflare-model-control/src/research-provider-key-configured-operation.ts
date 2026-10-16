@@ -1,4 +1,5 @@
-import { ServiceModelProviderCreateRequestSchema } from "@eliotr/contracts";
+import { ServiceModelProviderCreateRequestSchema, ServiceModelProviderModelRegistrationModeSchema,
+  type ServiceModelProviderModelRegistrationMode } from "@eliotr/contracts";
 
 const SHA256 = /^[0-9a-f]{64}$/u;
 
@@ -16,7 +17,12 @@ export interface ConfiguredResearchProviderKeyOperation {
   readonly status: "configured_not_qualified";
   readonly created_at: string;
   /** Present only for an existing global Settings operation; never a project credential registration. */
-  readonly model_registry?: Readonly<{ operation_id: string; model_ids: readonly string[] }>;
+  readonly model_registry?: Readonly<{
+    operation_id: string;
+    /** Absent only in legacy project-key fixtures; global provider operations always set it. */
+    model_registration_mode?: ServiceModelProviderModelRegistrationMode;
+    model_ids: readonly string[];
+  }>;
 }
 
 export type ConfiguredProviderKeyOperationReadResult =
@@ -58,6 +64,7 @@ interface ConfiguredProviderKeyOperationRow extends ConfiguredProviderKeyRow {
   readonly failure_code: unknown;
   readonly provider_http_status: unknown;
   readonly created_at: unknown;
+  readonly model_registration_mode?: unknown;
 }
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
@@ -102,7 +109,7 @@ export async function readConfiguredProviderKeyOperation(
       if (installed === null) return Object.freeze({ status: "missing" });
       globals = await database.prepare(
         "SELECT DISTINCT owner_id,project_id,provider_id,operation_id,account_id,gateway_id,alias,state," +
-        "provider_config_id,metadata_sha256,failure_code,provider_http_status,created_at,model_ids_json " +
+        "provider_config_id,metadata_sha256,failure_code,provider_http_status,created_at,model_registration_mode,model_ids_json " +
         "FROM research_provider_key_model_use_key_authority " +
         "WHERE owner_id=?1 AND project_id=?2 AND provider_id='openrouter' AND operation_id=?3 LIMIT 2",
       ).bind(ownerRef, projectId, operationId).all<ConfiguredProviderKeyOperationRow & { readonly model_ids_json: unknown }>();
@@ -132,11 +139,15 @@ export async function readConfiguredProviderKeyOperation(
     let modelIds: unknown;
     try { modelIds = JSON.parse(row.model_ids_json as string); }
     catch (cause) { throw new ConfiguredProviderKeyOperationReadError("READBACK_INVALID", cause); }
+    const mode = ServiceModelProviderModelRegistrationModeSchema.safeParse(row.model_registration_mode);
     const parsed = ServiceModelProviderCreateRequestSchema.shape.model_ids.safeParse(modelIds);
-    if (!parsed.success) {
+    if (!mode.success || !Array.isArray(modelIds) ||
+        (mode.data === "explicit_allowlist" && !parsed.success) ||
+        (mode.data === "catalog_managed" && modelIds.length !== 0)) {
       throw new ConfiguredProviderKeyOperationReadError("READBACK_INVALID");
     }
-    modelRegistry = Object.freeze({ operation_id: operationId, model_ids: Object.freeze([...new Set(parsed.data)]) });
+    modelRegistry = Object.freeze({ operation_id: operationId, model_registration_mode: mode.data,
+      model_ids: Object.freeze(parsed.success ? [...new Set(parsed.data)] : []) });
   }
   return Object.freeze({ status: "configured", operation: Object.freeze({
     owner_id: ownerRef,

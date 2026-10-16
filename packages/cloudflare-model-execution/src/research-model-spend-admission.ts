@@ -25,7 +25,10 @@ import type {
   ResearchSynthesisSpendAdmissionReadRequest,
   ResearchSynthesisSpendAdmissionRecord,
 } from "./research-model-spend-admission-types.js";
-import { decodeProviderNativeModelSelection } from "@eliotr/cloudflare-native-models";
+import {
+  decodeProviderNativeModelSelection,
+  decodeProviderNativeModelCatalogSelectionV2,
+} from "@eliotr/cloudflare-native-models";
 
 export const RESEARCH_MODEL_SPEND_ADMISSION_PROTOCOL = "eliotr.research-model-spend-admission.v1" as const;
 export const RESEARCH_MODEL_SPEND_APPROVAL_PROTOCOL = "eliotr.research-model-spend-approval.v1" as const;
@@ -437,6 +440,16 @@ async function current(dependency: ResearchModelSpendAdmissionOptions["read_curr
       "Native model owner/project binding", code);
     nativeBinding = Object.freeze({ owner_ref: id(binding.owner_ref, "Native model owner", code),
       project_id: id(binding.project_id, "Native model project", code) });
+  } else if (rawRecord.candidate_kind === "provider-native-v2") {
+    try { modelSelection = decodeProviderNativeModelCatalogSelectionV2(rawRecord); }
+    catch (cause) { fail(code, "current provider-native v2 model selection is malformed", true, cause); }
+    if (mode !== "snapshot-v2" || value.native_authority_binding === undefined) {
+      fail(code, "provider-native v2 selection is missing its snapshot-v2 owner/project binding", true);
+    }
+    const binding = plain(value.native_authority_binding, new Set(["owner_ref", "project_id"]),
+      "provider-native v2 owner/project binding", code);
+    nativeBinding = Object.freeze({ owner_ref: id(binding.owner_ref, "provider-native v2 owner", code),
+      project_id: id(binding.project_id, "provider-native v2 project", code) });
   } else {
     if (value.native_authority_binding !== undefined) {
       fail(code, "DynamicRoute selection unexpectedly carries a Native owner/project binding", true);

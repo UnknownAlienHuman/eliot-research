@@ -241,6 +241,7 @@ describe("bindConfiguredServiceModelProviderAlias", () => {
       operation_id: "a9f79914-a0a5-4f27-9e81-3b9b6c403a61",
       provider_id: "openrouter",
       provider_slug: "openrouter",
+      model_registration_mode: "explicit_allowlist",
       model_ids: Object.freeze([openrouterPolicy.model]),
       alias: "eliotr-" + "a".repeat(48),
       provider_config_id: "provider-config-1",
@@ -271,6 +272,7 @@ describe("bindConfiguredServiceModelProviderAlias", () => {
       operation_id: "a9f79914-a0a5-4f27-9e81-3b9b6c403a61",
       provider_id: "openrouter",
       provider_slug: "openrouter",
+      model_registration_mode: "explicit_allowlist",
       model_ids: Object.freeze(["another/model:free"]),
       alias: "eliotr-" + "a".repeat(48),
       provider_config_id: "provider-config-1",
@@ -283,6 +285,30 @@ describe("bindConfiguredServiceModelProviderAlias", () => {
     })).toThrowError(ResearchPreparedModelTransportError);
     expect(() => bindConfiguredServiceModelProviderAlias(undefined, registered, {
       provider: "openrouter", model: openrouterPolicy.model,
+    })).toThrowError(ResearchPreparedModelTransportError);
+  });
+
+  it("binds one exact server-prepared model through a catalog-managed credential without treating the catalog as qualification", () => {
+    const catalogBinding: ConfiguredServiceModelProviderBinding = Object.freeze({
+      owner_id: "owner-1",
+      operation_id: "a9f79914-a0a5-4f27-9e81-3b9b6c403a61",
+      provider_id: "openrouter",
+      provider_slug: "openrouter",
+      model_registration_mode: "catalog_managed",
+      model_ids: Object.freeze([]),
+      alias: "eliotr-" + "a".repeat(48),
+      provider_config_id: "provider-config-1",
+      metadata_sha256: "b".repeat(64),
+      created_at: "2026-10-15T14:00:00.000Z",
+    });
+
+    const bound = bindConfiguredServiceModelProviderAlias(openrouterSelection, catalogBinding, {
+      provider: "openrouter", model: openrouterPolicy.model,
+    });
+
+    expect(bound?.transport_policy.billing).toEqual({ mode: "byok", alias: catalogBinding.alias });
+    expect(() => bindConfiguredServiceModelProviderAlias(openrouterSelection, catalogBinding, {
+      provider: "openrouter", model: "another/model:free",
     })).toThrowError(ResearchPreparedModelTransportError);
   });
 });

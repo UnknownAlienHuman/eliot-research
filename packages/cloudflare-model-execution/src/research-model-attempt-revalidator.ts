@@ -5,11 +5,15 @@ import { ModelAttemptError, type ModelAttemptReservationInput } from "./model-at
 import { readD1CurrentResearchModelPricingSnapshot, type PinnedModelSelection } from "@eliotr/cloudflare-model-control";
 import {
   decodeProviderNativeModelSelection,
+  decodeProviderNativeModelCatalogSelectionV2,
   type ProviderNativeModelAuthorityPort,
   type ProviderNativeModelSelectionV1,
+  type ProviderNativeModelCatalogSelectionV2,
+  type ProviderNativeModelCatalogV2AuthorityPort,
+  type ProviderNativeModelCatalogPricingSnapshotV2,
 } from "@eliotr/cloudflare-native-models";
 
-export type ResearchModelPinnedSelection = PinnedModelSelection | ProviderNativeModelSelectionV1;
+export type ResearchModelPinnedSelection = PinnedModelSelection | ProviderNativeModelSelectionV1 | ProviderNativeModelCatalogSelectionV2;
 
 export interface ResearchNativeModelAuthorityBinding {
   readonly owner_ref: string;
@@ -75,6 +79,7 @@ export interface D1ResearchModelAttemptRevalidatorInput {
   readonly routeAuthority: ModelRouteAuthorityReader;
   readonly spendAuthorization: SpendAuthorizationReader;
   readonly nativeModelAuthority?: Pick<ProviderNativeModelAuthorityPort, "resolvePinned">;
+  readonly catalogNativeModelAuthority?: Pick<ProviderNativeModelCatalogV2AuthorityPort, "resolvePinned">;
   readonly now?: () => number;
 }
 
@@ -370,22 +375,25 @@ function verifySpendAuthorization(
     stale("pinned model selection and run configuration mode are incomplete");
   }
   const selection = authorization.model_selection;
-  const native = selection !== undefined && "candidate_kind" in selection &&
+  const nativeV1 = selection !== undefined && "candidate_kind" in selection &&
     selection.candidate_kind === "provider-native-v1";
-  if (native) {
+  const nativeV2 = selection !== undefined && "candidate_kind" in selection &&
+    selection.candidate_kind === "provider-native-v2";
+  if (nativeV1 || nativeV2) {
     try {
-      const decoded = decodeProviderNativeModelSelection(selection);
+      const decoded = nativeV1 ? decodeProviderNativeModelSelection(selection)
+        : decodeProviderNativeModelCatalogSelectionV2(selection);
       if (canonicalJson(decoded) !== canonicalJson(selection) || authorization.run_configuration_mode !== "snapshot-v2" ||
           authorization.native_authority_binding === undefined ||
           typeof authorization.native_authority_binding.owner_ref !== "string" ||
           authorization.native_authority_binding.owner_ref.length === 0 ||
           typeof authorization.native_authority_binding.project_id !== "string" ||
           authorization.native_authority_binding.project_id.length === 0) {
-        stale("native model selection is missing its immutable owner/project binding");
+        stale("provider-native model selection is missing its immutable owner/project binding");
       }
     } catch (cause) {
       if (cause instanceof ModelAttemptError) throw cause;
-      stale("pinned native model selection is malformed", cause);
+      stale("pinned provider-native model selection is malformed", cause);
     }
   } else if (selection !== undefined && authorization.native_authority_binding !== undefined) {
     stale("DynamicRoute selection unexpectedly carries a Native owner/project binding");
@@ -404,6 +412,9 @@ export function createD1ResearchModelAttemptRevalidator(
   input: D1ResearchModelAttemptRevalidatorInput,
 ): ModelAttemptDeploymentRevalidator {
   const now = input.now ?? (() => Date.now());
+  const catalogPricingSnapshot: { current?: ProviderNativeModelCatalogPricingSnapshotV2 } = {};
+  const readCatalogPricingSnapshot = (): ProviderNativeModelCatalogPricingSnapshotV2 | undefined =>
+    catalogPricingSnapshot.current;
   const resolveCurrentDeployment = async (
     authorization: SpendAuthorizationReadback,
     expectedDeployment: ModelRouteDeployment,
@@ -434,6 +445,34 @@ export function createD1ResearchModelAttemptRevalidator(
       }
       return deployment;
     }
+    if (selection !== undefined && "candidate_kind" in selection &&
+        selection.candidate_kind === "provider-native-v2") {
+      const v2Selection = selection as ProviderNativeModelCatalogSelectionV2;
+      const binding = authorization.native_authority_binding;
+      if (authorization.run_configuration_mode !== "snapshot-v2" || binding === undefined ||
+          input.catalogNativeModelAuthority === undefined) {
+        stale("pinned provider-native v2 authority is unavailable");
+      }
+      const resolved = await input.catalogNativeModelAuthority.resolvePinned({ selection: v2Selection, owner_ref: binding.owner_ref,
+        project_id: binding.project_id, allow_expired_snapshot_v2: true });
+      if (canonicalJson(resolved.selection) !== canonicalJson(v2Selection)) {
+        stale("resolved provider-native v2 model differs from the immutable run selection");
+      }
+      const preparation = resolved.candidate.candidate.preparation;
+      let deployment: ModelRouteDeployment;
+      try { deployment = decodeModelRouteDeployment(resolved.deployment); }
+      catch (cause) { stale("pinned provider-native v2 deployment is malformed", cause); }
+      if (canonicalJson(deployment) !== canonicalJson(expectedDeployment) || deployment.route_ref !== routeRef ||
+          preparation.owner_ref !== binding.owner_ref || preparation.project_id !== binding.project_id ||
+          preparation.provider_id !== resolved.proof.qualification.provider_id ||
+          preparation.provider_slug !== v2Selection.transport_policy.provider ||
+          preparation.model_id !== v2Selection.transport_policy.model ||
+          resolved.pricing_snapshot.pricing_snapshot_ref !== deployment.pricing_snapshot_ref) {
+        stale("pinned provider-native v2 tuple differs from the approved deployment or model policy");
+      }
+      catalogPricingSnapshot.current = resolved.pricing_snapshot;
+      return deployment;
+    }
     const currentRaw = selection === undefined
       ? await input.routeAuthority.resolve(routeRef)
       : await (input.routeAuthority.resolvePinned?.(expectedDeployment, selection, {
@@ -448,6 +487,7 @@ export function createD1ResearchModelAttemptRevalidator(
     return deployment;
   };
   return async (context, prepared): Promise<ModelRouteDeployment> => {
+    delete catalogPricingSnapshot.current;
     let phase = "REQUEST";
     try {
     const nowMs = now();
@@ -494,18 +534,42 @@ export function createD1ResearchModelAttemptRevalidator(
       Date.parse(authorization.expires_at),
     );
     phase = "PRICING_READ";
-    let pricing: Awaited<ReturnType<typeof readD1CurrentResearchModelPricingSnapshot>>;
-    try {
-      pricing = await readD1CurrentResearchModelPricingSnapshot(input.database, expectedDeployment, { now, valid_through_ms: pricingDeadlineMs });
-    } catch (cause) {
-      stale("approved deployment pricing is unavailable or not current", cause);
-    }
     const pricingSelection = authorization.model_selection;
+    let pricing: Readonly<{ provider: string; exact_model_id: string; effective_at: string; expires_at: string }>;
     if (pricingSelection !== undefined && "candidate_kind" in pricingSelection &&
-        pricingSelection.candidate_kind === "provider-native-v1" &&
-        (pricing.provider !== pricingSelection.transport_policy.provider ||
-         pricing.exact_model_id !== pricingSelection.transport_policy.model)) {
-      stale("approved pricing does not match the pinned Native provider and model");
+        pricingSelection.candidate_kind === "provider-native-v2") {
+      const v2Selection = pricingSelection as ProviderNativeModelCatalogSelectionV2;
+      const snapshot = readCatalogPricingSnapshot();
+      if (snapshot === undefined || snapshot.pricing_snapshot_ref !== expectedDeployment.pricing_snapshot_ref ||
+          snapshot.provider_slug !== v2Selection.transport_policy.provider ||
+          snapshot.exact_model_id !== v2Selection.transport_policy.model ||
+          canonicalJson(snapshot.capabilities) !== canonicalJson(v2Selection.transport_policy.capabilities) ||
+          Date.parse(snapshot.effective_at) > nowMs || Date.parse(snapshot.expires_at) <= pricingDeadlineMs) {
+        stale("trusted catalog pricing or advertised SDK metadata does not cover the approved v2 deployment");
+      }
+      pricing = Object.freeze({ provider: snapshot.provider_slug, exact_model_id: snapshot.exact_model_id,
+        effective_at: snapshot.effective_at, expires_at: snapshot.expires_at });
+    } else {
+      try {
+        pricing = await readD1CurrentResearchModelPricingSnapshot(input.database, expectedDeployment, {
+          now, valid_through_ms: pricingDeadlineMs,
+        });
+      } catch (cause) {
+        stale("approved deployment pricing is unavailable or not current", cause);
+      }
+    }
+    if (pricingSelection !== undefined && "candidate_kind" in pricingSelection) {
+      if (pricingSelection.candidate_kind === "provider-native-v1") {
+        const v1Selection = pricingSelection as ProviderNativeModelSelectionV1;
+        if (pricing.provider !== v1Selection.transport_policy.provider || pricing.exact_model_id !== v1Selection.transport_policy.model) {
+          stale("approved pricing does not match the exact provider-native provider and model");
+        }
+      } else if (pricingSelection.candidate_kind === "provider-native-v2") {
+        const v2Selection = pricingSelection as ProviderNativeModelCatalogSelectionV2;
+        if (pricing.provider !== v2Selection.transport_policy.provider || pricing.exact_model_id !== v2Selection.transport_policy.model) {
+          stale("trusted catalog pricing does not match the exact provider-native v2 provider and model");
+        }
+      }
     }
     phase = "FINAL_READ";
     const finalWorkflow = await readWorkflow(input.database, context, prepared);
@@ -518,7 +582,8 @@ export function createD1ResearchModelAttemptRevalidator(
     if (finalReceipt !== spendRequest.workflow_authorization_receipt_ref) stale("workflow authorization changed during revalidation");
     verifySpendAuthorization(authorization, { ...spendRequest, workflow_authorization_receipt_ref: finalReceipt }, prepared, finalNowMs);
     if (authorization.model_selection !== undefined && "candidate_kind" in authorization.model_selection &&
-        authorization.model_selection.candidate_kind === "provider-native-v1") {
+        (authorization.model_selection.candidate_kind === "provider-native-v1" ||
+         authorization.model_selection.candidate_kind === "provider-native-v2")) {
       phase = "FINAL_NATIVE_READ";
       const finalDeployment = await resolveCurrentDeployment(authorization, expectedDeployment, prepared.call.route_ref);
       if (canonicalJson(finalDeployment) !== canonicalJson(currentDeployment)) stale("pinned Native model changed during final W2 fencing");

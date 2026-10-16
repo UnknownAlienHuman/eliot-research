@@ -35,7 +35,10 @@ export default tseslint.config(
       "**/worker-configuration.d.ts",
       "coverage/**",
       ".eliotr-state/**",
+      // Local operator receipts and scratch helpers are outside the product source graph.
+      ".owner-live/**",
       "apps/eliotr-pwa/public/agent-inbox/app.js",
+      "apps/eliotr-pwa/public/agent-inbox/retirement.js",
     ],
   },
   js.configs.recommended,

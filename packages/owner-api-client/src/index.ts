@@ -22,7 +22,10 @@ export type { ComputerAgentConnection, ComputerAgentConnectionList } from '@elio
 export { createProviderKeyApi } from './connections/provider';
 export { createServiceModelSettingsApi } from './connections/service-models';
 export type { ServiceModelSettings, ServiceModelProviderCreateRequest, ServiceModelProviderCreateReceipt,
-  ServiceModelProviderReadbackEnvelope, ServiceModelProviderConnection } from '@eliotr/contracts';
+  ServiceModelProviderReadbackEnvelope, ServiceModelProviderConnection, ServiceModelProviderCatalogConnectRequest,
+  ServiceModelProviderCatalogConnectReceipt, ServiceModelProviderConnectionV2, ServiceModelProviderReadEnvelopeV2,
+  ServiceModelProviderReadbackEnvelopeV2, ServiceModelProviderCatalogPreferencesUpdate,
+  ServiceModelProviderCatalogPreferences, ServiceModelProviderCatalogVisibility } from '@eliotr/contracts';
 export { createProviderModelUseApi } from './connections/provider-model-use';
 export { createGoogleOAuthApi } from './connections/google';
 export { createMcpDiagnosticApi } from './connections/diagnostic';

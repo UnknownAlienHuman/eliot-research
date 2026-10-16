@@ -12,6 +12,7 @@ import { paneAnnouncement, announcementUntil, unchangedChannel } from './announc
 import { createWorkspaceRuntime } from './runtime';
 import { createPrivacyController } from './privacy';
 import { clearWorkspaceQueries, createWorkspaceQueryClient } from '../query/client';
+import { researchPreviewModelRead } from './researchModelPreview';
 
 type Scenario = 'capability' | 'disclosure';
 const origin = 'https://fixture.invalid';
@@ -42,6 +43,8 @@ interface FixtureAudit {
   readonly unexpected: string[];
   mutations: number;
   mints: number;
+  mcpInfo: number;
+  agents: number;
   providers: number;
   grants: number;
   models: number;
@@ -63,7 +66,7 @@ function createEnvironment(scenario: Scenario, holdDiagnostic: boolean) {
   const timers = { setTimeout: () => 0, clearTimeout() {} };
   const audit: FixtureAudit = {
     scenario, calls: [], unexpected: [], mutations: 0, mints: 0, releaseDiagnostic,
-    providers: 0, grants: 0, models: 0, readiness: 0, diagnostics: 0,
+    mcpInfo: 0, agents: 0, providers: 0, grants: 0, models: 0, readiness: 0, diagnostics: 0,
     proposals: 0, history: 0, manifests: 0, publications: 0,
   };
   const draft: ArtifactRevision = {
@@ -76,6 +79,14 @@ function createEnvironment(scenario: Scenario, holdDiagnostic: boolean) {
     }],
     dependency_manifest_ref: 'dependencies-safe', deterministic_export_refs: {},
     status: 'DRAFT', created_at: stamp,
+  };
+  const reportBody = '## Verified section\n\nOnly bounded public report facts are shown.\n';
+  const reportBytes = new TextEncoder().encode(reportBody);
+  const reportHash = digest(reportBytes);
+  const manifest = async () => {
+    const sha = await reportHash;
+    return { ...draft, title: 'Verified saved report',
+      sections: draft.sections.map(section => ({ ...section, title: 'Verified section', body_sha256: sha })) };
   };
   const publication = {
     protocol: 'eliotr.artifact-publication.v1',
@@ -115,6 +126,8 @@ function createEnvironment(scenario: Scenario, holdDiagnostic: boolean) {
     if (init?.credentials !== 'same-origin' || init?.redirect !== 'manual' || init?.cache !== 'no-store') {
       return unexpected('owner transport policy changed');
     }
+    const modelRead = researchPreviewModelRead(url, projectId, stamp, false);
+    if (modelRead !== undefined) { audit.models += 1; return json(modelRead); }
     if (url.pathname === '/api/v1/system/health') return json({
       ready: true, deployment_generation: generation,
       core_schema_generation: 'schema-1', search_schema_generation: 'schema-1',
@@ -125,6 +138,14 @@ function createEnvironment(scenario: Scenario, holdDiagnostic: boolean) {
       credential_generation: 'finite-truth-credential', client_class: 'owner_pwa',
       expires_at: '2027-01-01T00:00:00.000Z',
     });
+    if (url.pathname === '/api/v1/system/mcp-info' && !url.search) {
+      audit.mcpInfo += 1;
+      return json({ protocol: 'eliotr.mcp-service-info.v1', mcp_url: origin + '/mcp' });
+    }
+    if (url.pathname === '/api/v1/system/computer-agents' && !url.search) {
+      audit.agents += 1;
+      return json({ protocol: 'eliotr.computer-agent-connections.v1', connections: [] });
+    }
     if (url.pathname === '/api/v1/research/projects') return json({
       protocol: 'eliotr.project-owner-list.v1', projects: [{
         protocol: 'eliotr.project-owner.v1', project_ref: { id: projectId, revision: 1 },
@@ -146,6 +167,7 @@ function createEnvironment(scenario: Scenario, holdDiagnostic: boolean) {
         auth_profile: 'managed-oauth',
       });
     }
+    if (init?.method === 'GET' && url.pathname === '/api/v1/research/projects/' + projectId + '/catalog-model-use' && !url.search) return json(null);
     if (url.pathname === '/api/v1/research/projects/' + projectId + '/client-grants' && !url.search) {
       audit.grants += 1;
       return json({ protocol: 'eliotr.project-client-grants.v1', grants: [] });
@@ -193,13 +215,24 @@ function createEnvironment(scenario: Scenario, holdDiagnostic: boolean) {
     const reportPath = '/api/v1/research/artifact/' + encodeURIComponent(artifactRef.id + ':' + artifactRef.revision);
     if (scenario === 'disclosure' && url.pathname === reportPath && !url.search) {
       audit.manifests += 1;
-      return json(draft);
+      return json(await manifest());
+    }
+    if (scenario === 'disclosure' && url.pathname === reportPath + '/sections/section-safe%3A1' && !url.search) {
+      return new Response(reportBody, { headers: {
+        'content-type': 'application/octet-stream', 'content-length': String(reportBytes.byteLength),
+        'x-eliotr-artifact-ref': encodeURIComponent('report-safe:1'),
+        'x-eliotr-section-ref': encodeURIComponent('section-safe:1'), 'x-eliotr-section-object-ref': 'body-safe',
+        'x-eliotr-section-sha256': await reportHash, 'x-eliotr-deployment-generation': generation,
+      } });
     }
     if (scenario === 'disclosure' && url.pathname === reportPath + '/publication' && !url.search) {
       audit.publications += 1;
       // First read exposes bounded public receipt facts; second read exercises strict rejection.
-      if (audit.publications === 1) return json(publication);
-      if (audit.publications === 2) return json({ ...publication, ...rawMaterial });
+      const sha = await reportHash;
+      const currentPublication = { ...publication, revision: { ...publication.revision,
+        sections: publication.revision.sections.map(section => ({ ...section, body_sha256: sha })) } };
+      if (audit.publications === 1) return json(currentPublication);
+      if (audit.publications === 2) return json({ ...currentPublication, ...rawMaterial });
     }
     return unexpected(method + ' ' + url.pathname + url.search);
   };
@@ -291,6 +324,9 @@ function onlyButtons(root: HTMLElement, allowed: readonly string[]) {
   const main = root.querySelector('.er-shell-reading');
   assert(main, 'Actual Shell reading surface is missing');
   for (const button of main.querySelectorAll('button')) {
+    // Retained, closed dialogs are outside the current public pane's controls.
+    // noRawMaterial still checks their complete DOM and input values.
+    if (button.closest('dialog:not([open]), [hidden], [inert]')) continue;
     const label = button.getAttribute('aria-label') ?? button.textContent?.trim() ?? '';
     assert(allowed.includes(label), 'An unsupported composition control was rendered: ' + label);
   }
@@ -314,24 +350,33 @@ async function chooseProject(root: HTMLElement, userEvent: PlayContext['userEven
 function commonFacts(root: HTMLElement) {
   assert(row(root, 'Server and API') === 'Server answered', 'Health did not remain an independent positive fact');
   assert(row(root, 'Owner session') === 'Signed in from Owner web application', 'The exact owner web client was not described');
-  assert(row(root, 'Selected model') === 'No model selected', 'Empty model selection was inferred');
-  assert(row(root, 'Research configuration readiness') === 'Ready to run', 'Readiness was replaced by another row');
   assert(row(root, 'Google transport routing') === 'Google routing uses Google Drive Exchange', 'Routing was promoted into a connection');
   assert(row(root, 'Project permission') === 'Active: 0, Revoked: 0', 'Empty active and revoked grants were not kept distinct');
+  const labels = [...root.querySelectorAll('.connections-feature__label')].map(label => label.textContent);
+  assert(JSON.stringify(labels) === JSON.stringify([
+    'Server and API', 'Owner session', 'Project permission', 'Google transport routing', 'Observed client call',
+  ]), 'Agents rendered facts outside its access and diagnostic responsibilities');
+  assert(root.querySelector('.er-agent-connect__value code')?.textContent === origin + '/mcp', 'The guide did not use the published MCP address');
+  assert(root.querySelector('.er-agent-connections')?.textContent?.includes('No computer-agent connections are saved for this owner.'), 'A valid empty agent list did not stay distinct from a failed read');
+  assert(!root.querySelector('.er-agent-connections form'), 'An agent registration form opened automatically');
+  assert(!root.querySelector('dialog[open]'), 'A mutation dialog opened automatically');
+  assert(root.querySelector<HTMLAnchorElement>('.er-shell-reading a[href="/settings"]')?.textContent === 'Open settings', 'Global provider setup did not remain in Settings');
+  const audit = readOnlyAudit(root);
+  assert(audit.mcpInfo > 0 && audit.agents > 0 && audit.grants > 0, 'Agent access facts were not backed by their public reads');
+  assert(audit.providers === 0 && audit.models === 0 && audit.readiness === 0, 'Agents read project model or provider setup');
   assert(!/\bConnected\b/iu.test(root.querySelector('.connections-feature')?.textContent ?? ''), 'Unobserved connectivity was inferred');
 }
+const agentButtons = ['Copy: Service address', 'Copy: Codex', 'New connection', 'Refresh', 'Check again', 'Show diagnostics', 'Details'];
 
 /** Missing U5 case #4 only: empty configuration and independent capability facts through Shell. */
 export async function playCapabilityConnectionTruth({ canvas, userEvent }: PlayContext) {
-  const root = fixtureRoot(await canvas.findByRole('heading', { name: 'Agents and models', exact: true, level: 1 }), 'capability');
+  const root = fixtureRoot(await canvas.findByRole('heading', { name: 'Agents', exact: true, level: 1 }), 'capability');
   await chooseProject(root, userEvent);
   await waitForState(root, () => {
     commonFacts(root);
-    assert(row(root, 'Model provider configuration') === 'Not configured', 'Valid empty provider configuration became a failed read');
     assert(row(root, 'Observed client call') === 'Challenge issued, awaiting callback', 'Issued diagnostic became an observed connection');
-    assert(row(root, 'Provider-key operation') === 'Not checked yet', 'An unrequested saved operation was read');
   });
-  onlyButtons(root, ['Refresh', 'Check again', 'Show diagnostics', 'Details', 'Read saved status']);
+  onlyButtons(root, agentButtons);
   noRawMaterial(root);
   await userEvent.click(canvas.getByRole('link', { name: 'Studio', exact: true }));
   await canvas.findByRole('heading', { name: 'Studio', exact: true, level: 1 });
@@ -343,18 +388,17 @@ export async function playCapabilityConnectionTruth({ canvas, userEvent }: PlayC
     onlyButtons(root, ['Refresh saved work']);
   });
   const audit = readOnlyAudit(root);
-  assert(audit.providers > 0 && audit.grants > 0 && audit.models > 0 && audit.readiness > 0, 'Connections truth checks were vacuous');
+  assert(audit.mcpInfo > 0 && audit.agents > 0 && audit.grants > 0, 'Agent truth checks were vacuous');
   assert(audit.publications === 0 && audit.manifests === 0, 'Empty Studio automatically opened or operated on a report');
   noRawMaterial(root);
 }
 
 /** Missing U5 case #5 only: strict rejection and bounded disclosure; no publication/revision effect. */
 export async function playBoundedRootDisclosure({ canvas, userEvent }: PlayContext) {
-  const root = fixtureRoot(await canvas.findByRole('heading', { name: 'Agents and models', exact: true, level: 1 }), 'disclosure');
+  const root = fixtureRoot(await canvas.findByRole('heading', { name: 'Agents', exact: true, level: 1 }), 'disclosure');
   await chooseProject(root, userEvent);
   await waitForState(root, () => {
     commonFacts(root);
-    assert(row(root, 'Model provider configuration') === 'Check could not complete', 'Unknown provider fields were accepted as public configuration');
     assert(row(root, 'Observed client call') === 'Check could not complete', 'Malformed diagnostic problem did not stay unavailable');
   });
   noRawMaterial(root);
@@ -363,11 +407,6 @@ export async function playBoundedRootDisclosure({ canvas, userEvent }: PlayConte
     assert(root.querySelector('.connections-feature__diagnostic-value')?.textContent === 'Unknown', 'Details fabricated a diagnostic observation');
     noRawMaterial(root);
   });
-  const savedOperation = root.querySelector<HTMLElement>('.er-live-connection-operation > summary');
-  assert(savedOperation, 'Actual saved-operation disclosure is missing');
-  await userEvent.click(savedOperation);
-  assert(savedOperation.parentElement?.hasAttribute('open'), 'Saved-operation details did not open');
-  noRawMaterial(root);
   // First response was malformed; the explicit refetch returns an exact typed problem whose title
   // contains synthetic markers. The panel must still render its local safe copy, not error.message.
   const diagnostics = root.querySelectorAll<HTMLButtonElement>('.connections-feature button');
@@ -379,11 +418,11 @@ export async function playBoundedRootDisclosure({ canvas, userEvent }: PlayConte
     assert(row(root, 'Observed client call') === 'Check could not complete', 'Remote problem title replaced safe local copy');
     noRawMaterial(root);
   });
-  onlyButtons(root, ['Refresh', 'Check again', 'Show diagnostics', 'Details', 'Read saved status']);
+  onlyButtons(root, agentButtons);
   await userEvent.click(canvas.getByRole('link', { name: 'Studio', exact: true }));
   await canvas.findByRole('heading', { name: 'Studio', exact: true, level: 1 });
   await waitForState(root, () => {
-    assert(root.querySelector('.er-studio-live__list')?.textContent?.includes('Saved proposals could not be read. Nothing was shown.'), 'Rejected Wiki list did not render the bounded public error');
+    assert(root.querySelector('.er-studio-live')?.textContent?.includes('Saved proposals could not be read.'), 'Rejected Wiki list did not render the bounded public error');
     assert(readOnlyAudit(root).proposals > 0 && readOnlyAudit(root).history > 0, 'Studio rejection checks were vacuous');
     onlyButtons(root, ['Refresh saved work', 'Open saved report']);
     noRawMaterial(root);
@@ -413,7 +452,8 @@ export async function playBoundedRootDisclosure({ canvas, userEvent }: PlayConte
     noRawMaterial(root);
   });
   const audit = readOnlyAudit(root);
-  assert(audit.providers > 0 && audit.manifests > 0, 'Provider/report disclosure checks were vacuous');
+  assert(audit.mcpInfo > 0 && audit.agents > 0 && audit.manifests > 0, 'Agent/report disclosure checks were vacuous');
+  assert(audit.providers === 0 && audit.models === 0 && audit.readiness === 0, 'Read-only disclosure entered project provider setup');
   // Status reads must not infer a section action or expose a second publication from raw material.
   const reportButtons = [...root.querySelectorAll('.er-live-report button')].map(button => button.textContent?.trim());
   assert(!reportButtons.includes('Revise this section') && !reportButtons.includes('Confirm owner acceptance'), 'Unrequested section or acceptance controls appeared');
@@ -422,7 +462,7 @@ export async function playBoundedRootDisclosure({ canvas, userEvent }: PlayConte
 
 /** Actual Connections query operation: one retained channel, no mutation and no credential copy. */
 export async function playConnectionAnnouncements({ canvas, userEvent }: PlayContext) {
-  const root = fixtureRoot(await canvas.findByRole('heading', { name: 'Agents and models', exact: true, level: 1 }), 'disclosure');
+  const root = fixtureRoot(await canvas.findByRole('heading', { name: 'Agents', exact: true, level: 1 }), 'disclosure');
   await chooseProject(root, userEvent);
   const region = paneAnnouncement(root);
   const failure = 'Some status checks failed. Review the affected rows.';

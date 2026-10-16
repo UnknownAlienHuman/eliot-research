@@ -213,7 +213,7 @@ export async function createArtifactSectionReviseModelApplication(input: Artifac
   const selection = input.audit_selection?.selection;
   const activeVerifier = selection === undefined
     ? await runtime.deployments.resolve(auditRule.deployment.route_ref)
-    : selection.candidate_kind === "provider-native-v1"
+    : selection.candidate_kind === "provider-native-v1" || selection.candidate_kind === "provider-native-v2"
       ? input.resolve_native_model_selection === undefined ? stale("Native independent-verifier authority is unavailable")
         : (await input.resolve_native_model_selection({ selection,
             allow_expired_snapshot_v2: input.run_configuration?.mode === "snapshot-v2" })).deployment

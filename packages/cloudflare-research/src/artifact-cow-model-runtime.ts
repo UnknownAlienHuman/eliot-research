@@ -116,7 +116,7 @@ export function createArtifactCowModelRuntime(dependencies: ArtifactCowModelRunt
             !Object.prototype.hasOwnProperty.call(dependencies.gateway, "gateway_token")) {
           throw new Error("COW selected BYOK model has no configured HTTP gateway credential route");
         }
-        if (selection.candidate_kind === "provider-native-v1") {
+        if (selection.candidate_kind === "provider-native-v1" || selection.candidate_kind === "provider-native-v2") {
           if (dependencies.resolve_native_model_selection === undefined) {
             throw new Error("COW Native model authority is unavailable for the immutable run selection");
           }
@@ -160,7 +160,7 @@ export function createArtifactCowModelRuntime(dependencies: ArtifactCowModelRunt
           const stage = admission.call_slot === "SYNTHESIZE" ? "SYNTHESIZE" : "AUDIT_CLAIMS";
           const selected = (pin.model_selections as Array<Record<string, unknown>>).find((item) => item.stage === stage);
           if (selected === undefined) return null;
-          if (selected.candidate_kind === "provider-native-v1") {
+          if (selected.candidate_kind === "provider-native-v1" || selected.candidate_kind === "provider-native-v2") {
             if (dependencies.resolve_native_model_selection === undefined) return null;
             const resolved = await dependencies.resolve_native_model_selection({
               selection: selected,

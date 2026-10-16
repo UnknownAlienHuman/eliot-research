@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { ServiceModelSettingsSchema, ServiceModelProviderCreateRequestSchema,
-  ServiceModelProviderConnectionSchema } from "./service-model.js";
+  ServiceModelProviderConnectionSchema, ServiceModelProviderCatalogConnectRequestSchema,
+  ServiceModelProviderCatalogConnectReceiptSchema, ServiceModelProviderConnectionV2Schema,
+  ServiceModelProviderCatalogPreferencesUpdateSchema } from "./service-model.js";
 
 describe("global service model settings", () => {
   it("keeps built-in Cloudflare models available without a project or external management", () => {
@@ -37,5 +39,43 @@ describe("global service model settings", () => {
 
     expect(ServiceModelProviderConnectionSchema.safeParse(connection).success).toBe(true);
     expect(ServiceModelProviderConnectionSchema.safeParse({ ...connection, api_key: "must-never-be-returned" }).success).toBe(false);
+  });
+
+  it("uses an explicit catalog-managed v2 connect mode with no model ID field", () => {
+    const request = { protocol: "eliotr.service-model-provider-catalog-connect.v2",
+      operation_id: "6f06e11b-e2d0-4b16-8e84-44aa52d37533", provider_id: "opencode-go",
+      display_name: "OpenCode Go", model_registration_mode: "catalog_managed",
+      api_key: "synthetic-credential-test-only" };
+    expect(ServiceModelProviderCatalogConnectRequestSchema.safeParse(request).success).toBe(true);
+    expect(ServiceModelProviderCatalogConnectRequestSchema.safeParse({ ...request, model_ids: [] }).success).toBe(false);
+    expect(ServiceModelProviderCatalogConnectRequestSchema.safeParse({ ...request, model_registration_mode: undefined }).success).toBe(false);
+    expect(ServiceModelProviderCatalogConnectRequestSchema.safeParse({ ...request, api_key: request.operation_id }).success).toBe(false);
+    expect(ServiceModelProviderCatalogConnectRequestSchema.safeParse({ ...request, project_id: "project-1" }).success).toBe(false);
+  });
+
+  it("reads catalog-managed connections without allowlists or credentials", () => {
+    const connection = { operation_id: "6f06e11b-e2d0-4b16-8e84-44aa52d37533", provider_id: "opencode-go",
+      display_name: "OpenCode Go", model_registration_mode: "catalog_managed", base_url: "https://opencode.ai/inference/go/v1",
+      status: "configured", provider_config_id: "config-1", alias: "eliotr-provider", failure_code: null,
+      provider_http_status: null, created_at: "2026-10-15T14:00:00.000Z", updated_at: "2026-10-15T14:00:00.000Z" };
+    const receipt = { protocol: "eliotr.service-model-provider-catalog-connect.v2", operation_id: connection.operation_id,
+      provider_id: connection.provider_id, display_name: connection.display_name,
+      model_registration_mode: "catalog_managed", base_url: connection.base_url, alias: connection.alias,
+      provider_config_id: connection.provider_config_id, provider_slug: "custom-opencode-go", status: "configured",
+      created_at: connection.created_at };
+    expect(ServiceModelProviderConnectionV2Schema.safeParse(connection).success).toBe(true);
+    expect(ServiceModelProviderConnectionV2Schema.safeParse({ ...connection, model_ids: [] }).success).toBe(false);
+    expect(ServiceModelProviderConnectionV2Schema.safeParse({ ...connection, api_key: "must-never-be-returned" }).success).toBe(false);
+    expect(ServiceModelProviderCatalogConnectReceiptSchema.safeParse(receipt).success).toBe(true);
+    expect(ServiceModelProviderCatalogConnectReceiptSchema.safeParse({ ...receipt, api_key: "must-never-be-returned" }).success).toBe(false);
+  });
+
+  it("keeps visible-model preferences separate and strictly bounded as presentation state", () => {
+    const preference = { protocol: "eliotr.service-model-provider-catalog-preferences.v1", provider_id: "openrouter",
+      visibility: { mode: "exclude", model_ids: ["vendor/hidden-model"] }, search: "reasoning" };
+    expect(ServiceModelProviderCatalogPreferencesUpdateSchema.safeParse(preference).success).toBe(true);
+    expect(ServiceModelProviderCatalogPreferencesUpdateSchema.safeParse({ ...preference,
+      visibility: { mode: "exclude", model_ids: ["vendor/hidden-model", "vendor/hidden-model"] } }).success).toBe(false);
+    expect(ServiceModelProviderCatalogPreferencesUpdateSchema.safeParse({ ...preference, project_id: "project-1" }).success).toBe(false);
   });
 });

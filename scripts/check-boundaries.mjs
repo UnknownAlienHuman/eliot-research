@@ -239,6 +239,9 @@ const RESEARCH_CONFIGURATION_IMPORTS = [
   "@eliotr/cloudflare-research-configuration/research-provider-key-model-pricing.js",
   "@eliotr/cloudflare-research-configuration/research-provider-key-model-pricing-catalog.js",
   "@eliotr/cloudflare-research-configuration/research-provider-key-model-price-observation-store.js",
+  "@eliotr/cloudflare-research-configuration/research-catalog-model-use-store.js",
+  "@eliotr/cloudflare-research-configuration/research-catalog-model-pricing.js",
+  "@eliotr/cloudflare-research-configuration/research-catalog-model-v2-probe-executor.js",
   "@eliotr/cloudflare-research-configuration/research-qualification-renewal.js"
 ];
 const PACKAGE_RULES = new Map([

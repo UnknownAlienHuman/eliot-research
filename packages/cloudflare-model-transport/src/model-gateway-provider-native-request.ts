@@ -81,13 +81,23 @@ function chatResponseFormat(
   return Object.freeze({ type: "json_object" });
 }
 
-export function modelGatewayProviderNativePath(api: ModelGatewayApi): string {
+export function modelGatewayProviderNativePath(api: ModelGatewayApi, provider?: string): string {
   switch (api) {
     case "compat-chat-completions": return "/compat/chat/completions";
     case "openai-chat-completions": return "/openai/chat/completions";
     case "openrouter-chat-completions": return "/openrouter/chat/completions";
     case "openai-responses": return "/openai/responses";
     case "anthropic-messages": return "/anthropic/v1/messages";
+    case "custom-chat-completions":
+    case "custom-responses":
+    case "custom-anthropic-messages": {
+      if (typeof provider !== "string" || !/^custom-[a-z0-9][a-z0-9-]{0,62}$/u.test(provider)) {
+        modelGatewayExecutionFailure("MODEL_GATEWAY_REQUEST_INVALID", "Custom provider path requires an exact saved slug");
+      }
+      const endpoint = api === "custom-responses" ? "responses"
+        : api === "custom-anthropic-messages" ? "v1/messages" : "chat/completions";
+      return `/${provider}/${endpoint}`;
+    }
   }
 }
 
@@ -97,7 +107,8 @@ export function modelGatewayProviderNativeParameterProjection(
   capabilities?: ModelGatewayRequestCapabilitiesV1,
 ): Readonly<Record<string, unknown>> {
   const body = rawBody;
-  if (api === "compat-chat-completions" || api === "openai-chat-completions" || api === "openrouter-chat-completions") {
+  if (api === "compat-chat-completions" || api === "openai-chat-completions" || api === "openrouter-chat-completions" ||
+      api === "custom-chat-completions") {
     const result: Record<string, unknown> = {};
     for (const key of PARAMETER_KEYS) {
       if (body[key] === undefined) continue;
@@ -107,7 +118,7 @@ export function modelGatewayProviderNativeParameterProjection(
     }
     return Object.freeze(result);
   }
-  if (api === "openai-responses") {
+  if (api === "openai-responses" || api === "custom-responses") {
     if (body.seed !== undefined || body.stop !== undefined) {
       modelGatewayExecutionFailure(
         "MODEL_GATEWAY_REQUEST_INVALID",
@@ -145,6 +156,7 @@ export function modelGatewayProviderNativeParameterProjection(
 export function modelGatewayProviderNativeRequest(
   rawBody: unknown,
   policy: ModelGatewayTransportPolicyV1,
+  qualification = false,
 ): Readonly<Record<string, unknown>> {
   const freeOnly = policy.billing.mode === "byok" && policy.billing.free_only === true;
   if (freeOnly &&
@@ -172,11 +184,12 @@ export function modelGatewayProviderNativeRequest(
     return Object.freeze({ role: message.role, content: message.content });
   });
   const parameters = modelGatewayProviderNativeParameterProjection(body, policy.api, policy.capabilities);
-  if (policy.api === "anthropic-messages") {
+  if (policy.api === "anthropic-messages" || policy.api === "custom-anthropic-messages") {
     const systemMessages = messages.filter((message) => message.role === "system");
     const conversation = messages.filter((message) => message.role !== "system");
-    if (systemMessages.length !== 1 || messages[0]?.role !== "system" ||
-        conversation.some((message) => message.role !== "user" && message.role !== "assistant")) {
+    const userOnlyProbe = qualification && messages.length === 1 && messages[0]?.role === "user";
+    if (!userOnlyProbe && (systemMessages.length !== 1 || messages[0]?.role !== "system" ||
+        conversation.some((message) => message.role !== "user" && message.role !== "assistant"))) {
       modelGatewayExecutionFailure(
         "MODEL_GATEWAY_REQUEST_INVALID",
         "Anthropic Messages requires one leading system message and user/assistant turns",
@@ -184,12 +197,12 @@ export function modelGatewayProviderNativeRequest(
     }
     return Object.freeze({
       model: policy.model,
-      system: systemMessages[0]?.content,
+      ...(userOnlyProbe ? {} : { system: systemMessages[0]?.content }),
       messages: Object.freeze(conversation),
       ...parameters,
     });
   }
-  if (policy.api === "openai-responses") {
+  if (policy.api === "openai-responses" || policy.api === "custom-responses") {
     return Object.freeze({
       model: policy.model,
       input: Object.freeze(messages),

@@ -41,6 +41,50 @@ describe('global service model client', () => {
     expect(result).not.toHaveProperty('project_id');
   });
 
+  it('connects a catalog-managed provider without a manually supplied model ID', async () => {
+    const input = { protocol: 'eliotr.service-model-provider-catalog-connect.v2' as const,
+      operation_id: operation, provider_id: 'opencode-go', display_name: 'OpenCode Go',
+      model_registration_mode: 'catalog_managed' as const, api_key: 'synthetic-credential-test-only' };
+    const http = { requestApiWithStatuses: vi.fn(async () => wrap({ protocol: input.protocol,
+      operation_id: operation, provider_id: input.provider_id, display_name: input.display_name,
+      model_registration_mode: 'catalog_managed', base_url: 'https://opencode.ai/inference/go/v1',
+      alias: 'eliotr-global-test', provider_config_id: 'config-1', provider_slug: 'custom-opencode-go',
+      status: 'configured', created_at: '2026-10-15T14:00:00.000Z' })) };
+    const api = createServiceModelSettingsApi(http, errors, createSessionEpoch());
+
+    const result = await api.createCatalogManagedServiceModelProvider(input, 'deploy-1');
+
+    expect(http.requestApiWithStatuses).toHaveBeenCalledExactlyOnceWith('/api/v2/system/model-providers', {
+      method: 'POST', body: JSON.stringify(input), headers: { 'content-type': 'application/json',
+        'x-eliotr-csrf': '1', 'idempotency-key': operation },
+    }, [200, 201]);
+    expect(result.model_registration_mode).toBe('catalog_managed');
+    expect(result).not.toHaveProperty('model_ids');
+    expect(result).not.toHaveProperty('api_key');
+  });
+
+  it('reads and persists owner model visibility and search preferences', async () => {
+    const prefs = { protocol: 'eliotr.service-model-provider-catalog-preferences.v1', provider_id: 'openrouter',
+      visibility: { mode: 'exclude', model_ids: ['vendor/hidden-model'] }, search: 'reasoning',
+      updated_at: '2026-10-15T14:00:00.000Z' };
+    const http = { requestApiWithStatuses: vi.fn(async () => wrap(prefs)) };
+    const api = createServiceModelSettingsApi(http, errors, createSessionEpoch());
+
+    await api.readServiceModelProviderCatalogPreferences('openrouter', 'deploy-1');
+    await api.updateServiceModelProviderCatalogPreferences({
+      protocol: 'eliotr.service-model-provider-catalog-preferences.v1', provider_id: 'openrouter',
+      visibility: { mode: 'exclude', model_ids: ['vendor/hidden-model'] }, search: 'reasoning',
+    }, 'deploy-1');
+
+    expect(http.requestApiWithStatuses).toHaveBeenNthCalledWith(1,
+      '/api/v2/system/model-provider-catalog-preferences?provider_id=openrouter', { method: 'GET' }, [200]);
+    expect(http.requestApiWithStatuses).toHaveBeenNthCalledWith(2, '/api/v2/system/model-provider-catalog-preferences', {
+      method: 'PUT', headers: { 'content-type': 'application/json', 'x-eliotr-csrf': '1' },
+      body: JSON.stringify({ protocol: 'eliotr.service-model-provider-catalog-preferences.v1', provider_id: 'openrouter',
+        visibility: { mode: 'exclude', model_ids: ['vendor/hidden-model'] }, search: 'reasoning' }),
+    }, [200]);
+  });
+
   it('does not retry an uncertain write and reads only the original operation', async () => {
     const http = { requestApiWithStatuses: vi.fn()
       .mockRejectedValueOnce(new Error('lost acknowledgement'))

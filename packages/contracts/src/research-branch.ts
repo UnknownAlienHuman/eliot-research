@@ -1,7 +1,8 @@
 import { z } from "zod";
 import { IdentifierSchema, Sha256Schema, VersionedRefSchema } from "./common.js";
 import { BranchFindingCandidateSchema } from "./research-branch-finding.js";
-import { BranchQueryPlanSchema, BranchQueryResultSchema, branchQueryResultMatchesPlan, type BranchQueryPlan } from "./research-branch-query.js";
+import { BranchQueryLegResultSchema, BranchQueryPlanSchema, BranchQueryResultSchema,
+  branchQueryResultMatchesPlan, type BranchQueryPlan } from "./research-branch-query.js";
 import { ResearchBranchRoleSchema } from "./research-branch-role.js";
 import { branchDebtsMatchBlockedRoles, sameStrings, reconciliationStateIssues } from "./research-branch-invariants.js";
 import { ResearchDebtSchema } from "./research.js";
@@ -355,3 +356,68 @@ export const ResearchBranchReconciliationCheckpointV2Schema = z.object({
   }
 });
 export type ResearchBranchReconciliationCheckpointV2 = z.infer<typeof ResearchBranchReconciliationCheckpointV2Schema>;
+
+// g3 checkpoints are still structurally readable for diagnostics and archive
+// inspection. This decoder deliberately skips current cross-record authority
+// refinements, labels its output READBACK_ONLY, and is not used by workflow,
+// model-use, or evidence-freeze admission paths.
+const LegacyBranchQueryLegReadbackSchema = z.object(BranchQueryLegResultSchema.shape).strict();
+const LegacyBranchQueryResultReadbackSchema = z.object(BranchQueryResultSchema.shape)
+  .omit({ budget_exhaustion: true })
+  .extend({
+  query_legs: z.array(LegacyBranchQueryLegReadbackSchema).min(1).max(4),
+  }).strict();
+const LegacyResearchReadExtractCheckpointV2ReadbackSchema = z.object({
+  ...ResearchReadExtractCheckpointV2Schema.shape,
+  role_queries: z.array(z.object({
+    query_plan: BranchQueryPlanSchema,
+    query_result: LegacyBranchQueryResultReadbackSchema,
+  }).strict()).max(16),
+}).strict();
+const LegacyResearchBranchResultV2ReadbackSchema = z.object({
+  ...ResearchBranchResultV2Schema.shape,
+  query_result: LegacyBranchQueryResultReadbackSchema,
+}).strict();
+const LegacyResearchBranchAnalysisCheckpointV2ReadbackSchema = z.object({
+  ...ResearchBranchAnalysisCheckpointV2Schema.shape,
+  branch_results: z.array(LegacyResearchBranchResultV2ReadbackSchema).max(16),
+}).strict();
+const LegacyResearchBranchReconciliationCheckpointV2ReadbackSchema = z.object({
+  ...ResearchBranchReconciliationCheckpointV2Schema.shape,
+  branch_results: z.array(LegacyResearchBranchResultV2ReadbackSchema).max(16),
+}).strict();
+
+export type LegacyResearchBranchCheckpointReadback =
+  | { readonly schema_id: "urn:eliotr:contracts:research:research-read-extract-checkpoint-v2:v2:g3";
+      readonly authority: "READBACK_ONLY"; readonly value: z.infer<typeof LegacyResearchReadExtractCheckpointV2ReadbackSchema> }
+  | { readonly schema_id: "urn:eliotr:contracts:research:research-branch-result-v2:v2:g3";
+      readonly authority: "READBACK_ONLY"; readonly value: z.infer<typeof LegacyResearchBranchResultV2ReadbackSchema> }
+  | { readonly schema_id: "urn:eliotr:contracts:research:research-branch-analysis-checkpoint-v2:v2:g3";
+      readonly authority: "READBACK_ONLY"; readonly value: z.infer<typeof LegacyResearchBranchAnalysisCheckpointV2ReadbackSchema> }
+  | { readonly schema_id: "urn:eliotr:contracts:research:research-branch-reconciliation-checkpoint-v2:v2:g3";
+      readonly authority: "READBACK_ONLY"; readonly value: z.infer<typeof LegacyResearchBranchReconciliationCheckpointV2ReadbackSchema> };
+
+/** Parse the historical g3 result/checkpoint shapes without granting execution authority. */
+export function decodeLegacyResearchBranchCheckpointReadback(value: unknown): LegacyResearchBranchCheckpointReadback | null {
+  const readExtract = LegacyResearchReadExtractCheckpointV2ReadbackSchema.safeParse(value);
+  if (readExtract.success) return {
+    schema_id: "urn:eliotr:contracts:research:research-read-extract-checkpoint-v2:v2:g3",
+    authority: "READBACK_ONLY", value: readExtract.data,
+  };
+  const result = LegacyResearchBranchResultV2ReadbackSchema.safeParse(value);
+  if (result.success) return {
+    schema_id: "urn:eliotr:contracts:research:research-branch-result-v2:v2:g3",
+    authority: "READBACK_ONLY", value: result.data,
+  };
+  const analysis = LegacyResearchBranchAnalysisCheckpointV2ReadbackSchema.safeParse(value);
+  if (analysis.success) return {
+    schema_id: "urn:eliotr:contracts:research:research-branch-analysis-checkpoint-v2:v2:g3",
+    authority: "READBACK_ONLY", value: analysis.data,
+  };
+  const reconciliation = LegacyResearchBranchReconciliationCheckpointV2ReadbackSchema.safeParse(value);
+  if (reconciliation.success) return {
+    schema_id: "urn:eliotr:contracts:research:research-branch-reconciliation-checkpoint-v2:v2:g3",
+    authority: "READBACK_ONLY", value: reconciliation.data,
+  };
+  return null;
+}

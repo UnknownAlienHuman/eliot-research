@@ -10,6 +10,7 @@ const SOURCE_PROVIDER_BY_LOGICAL_PROVIDER = {
   "opencode-zen": "opencode",
   openai: "openai",
   anthropic: "anthropic",
+  openrouter: "openrouter",
 } as const;
 
 export type ResearchCatalogModelPricingProviderId = keyof typeof SOURCE_PROVIDER_BY_LOGICAL_PROVIDER;
@@ -342,7 +343,7 @@ function apiMode(sdk: string | null): {
   readonly mode: ResearchCatalogAdvertisedApiMode;
   readonly reason: ResearchCatalogAdvertisedCapabilities["api_mode_reason"];
 } {
-  if (sdk === "@ai-sdk/openai-compatible") return { mode: "chat", reason: null };
+  if (sdk === "@ai-sdk/openai-compatible" || sdk === "@openrouter/ai-sdk-provider") return { mode: "chat", reason: null };
   if (sdk === "@ai-sdk/openai") return { mode: "responses", reason: null };
   if (sdk === "@ai-sdk/anthropic") return { mode: "messages", reason: null };
   if (sdk === null) return { mode: "unsupported", reason: "sdk_not_advertised" };
@@ -528,8 +529,8 @@ export async function readVerifiedCatalogModelPricing(
   if (providerMetadata !== null && providerMetadataSpan !== undefined) {
     findObjectPropertySpan(source, providerMetadataSpan, "npm");
   }
-  const sdk = optionalProviderString(providerMetadata, "npm");
-  const apiBase = optionalProviderString(providerMetadata, "api");
+  const sdk = optionalProviderString(providerMetadata, "npm") ?? optionalProviderString(provider, "npm");
+  const apiBase = optionalProviderString(providerMetadata, "api") ?? optionalProviderString(provider, "api");
   const rates = parseRates(model, exactModelRecord);
   const capabilities = parseAdvertisedCapabilities(model, sdk);
 

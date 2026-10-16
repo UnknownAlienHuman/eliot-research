@@ -8,6 +8,10 @@ import {
   type NavigationReadAuthority,
 } from "@eliotr/cloudflare-evidence";
 import type { InvestigationLedgerStore } from "@eliotr/research";
+import type {
+  ResolvedProviderNativeModelSelectionV1,
+  ResolvedProviderNativeModelCatalogV2,
+} from "@eliotr/cloudflare-native-models";
 import { createD1ScopeProfilePort, type RetrievalQueryAccess, type ScopeProfileBinding } from "@eliotr/retrieval";
 import {
   fail,
@@ -67,6 +71,7 @@ import type {
   ResolvedResearchRunConfiguration,
 } from "@eliotr/cloudflare-research-configuration/research-run-configuration.js";
 import { createResearchSemanticWorkflowHandlerFactory } from "./research-semantic-composition.js";
+import type { ResearchSynthesisOutputLanguage } from "./research-output-language.js";
 import type { createResearchNativeAcquisitionStageRoute } from "./research-native-acquisition.js";
 
 type NativeModelRuntime = ReturnType<typeof createResearchSemanticNativeModelRuntime>;
@@ -107,6 +112,8 @@ export interface ResearchSemanticServerRuntimeInput {
   readonly deployment_environment: "TEST" | "PRODUCTION";
   readonly model_profile: { readonly raw: string | undefined; readonly provenance_ref: string | undefined };
   readonly report_config: { readonly raw: string | undefined; readonly provenance_ref: string | undefined };
+  /** Explicit output language from the immutable v4 run snapshot, absent for older requests. */
+  readonly output_language?: ResearchSynthesisOutputLanguage;
   readonly recheck_authority: () => Promise<{
     readonly investigation_id: string;
     readonly scope_snapshot_id: string;
@@ -168,6 +175,9 @@ export async function assembleResearchSemanticServerHandlers(
     ...(input.native_model_runtime.authority === undefined ? {} : {
       native_model_authority: input.native_model_runtime.authority,
     }),
+    ...(input.native_model_runtime.catalog_authority === undefined ? {} : {
+      catalog_native_model_authority_v2: input.native_model_runtime.catalog_authority,
+    }),
     ...(input.run_configuration === undefined ? {} : { run_configuration: input.run_configuration }),
   });
   const stageModelBindings = bindResearchSemanticStageModelTransports({
@@ -211,7 +221,7 @@ export async function assembleResearchSemanticServerHandlers(
     await navigation.current();
     const selected = auditTransport?.selection;
     if (input.run_configuration !== undefined && selected === undefined) fail("WORKFLOW_QUALIFICATION_STALE");
-    if (selected?.candidate_kind === "provider-native-v1") {
+    if (selected?.candidate_kind === "provider-native-v1" || selected?.candidate_kind === "provider-native-v2") {
       if (input.run_configuration?.mode !== "snapshot-v2") fail("WORKFLOW_QUALIFICATION_STALE");
       const resolved = await input.native_model_runtime.resolvePinned("AUDIT_CLAIMS");
       if (resolved === undefined) fail("WORKFLOW_QUALIFICATION_STALE");
@@ -219,10 +229,23 @@ export async function assembleResearchSemanticServerHandlers(
         try { return decodeModelRouteDeployment(resolved.candidate.candidate.preparation.deployment); }
         catch { fail("WORKFLOW_OUTPUT_CORRUPT"); }
       })();
-      const qualification = resolved.proof.qualification.qualification;
-      const receipt = IdentifierSchema.safeParse(qualification.observation_ref);
-      const expires = IsoDateTimeSchema.safeParse(qualification.expires_at);
-      if (qualification.tier !== "LIVE" || canonicalJson(deployment) !== canonicalJson(auditDeployment) ||
+      let tier: string;
+      let observationRef: string;
+      let expiresAt: string;
+      if (resolved.candidate.candidate.candidate_kind === "provider-native-v1") {
+        const qualification = (resolved as ResolvedProviderNativeModelSelectionV1).proof.qualification.qualification;
+        tier = qualification.tier;
+        observationRef = qualification.observation_ref;
+        expiresAt = qualification.expires_at;
+      } else {
+        const qualification = (resolved as ResolvedProviderNativeModelCatalogV2).proof.qualification;
+        tier = qualification.qualification_tier;
+        observationRef = qualification.observation_ref;
+        expiresAt = qualification.expires_at;
+      }
+      const receipt = IdentifierSchema.safeParse(observationRef);
+      const expires = IsoDateTimeSchema.safeParse(expiresAt);
+      if (tier !== "LIVE" || canonicalJson(deployment) !== canonicalJson(auditDeployment) ||
           !receipt.success || !expires.success || !config.audit.allowed_verifier_refs.includes(config.audit.verifier_ref)) {
         fail("WORKFLOW_QUALIFICATION_STALE");
       }
@@ -387,6 +410,9 @@ export async function assembleResearchSemanticServerHandlers(
       ...(input.native_model_runtime.authority === undefined ? {} : {
         native_model_authority: input.native_model_runtime.authority,
       }),
+      ...(input.native_model_runtime.catalog_authority === undefined ? {} : {
+        catalog_native_model_authority_v2: input.native_model_runtime.catalog_authority,
+      }),
       spend_authorization: spend.admissions,
       prepare: createResearchBranchRoleServerPreparation({
         read_stage_five: readBranchRoleStageFive,
@@ -419,6 +445,9 @@ export async function assembleResearchSemanticServerHandlers(
     ...(input.native_model_runtime.authority === undefined ? {} : {
       native_model_authority: input.native_model_runtime.authority,
     }),
+    ...(input.native_model_runtime.catalog_authority === undefined ? {} : {
+      catalog_native_model_authority_v2: input.native_model_runtime.catalog_authority,
+    }),
     model_profile_route_authority: input.native_model_runtime.profileRouteAuthority(deploymentRegistry),
     semantic_config: input.semantic_config,
     deployment_environment: input.deployment_environment,
@@ -429,6 +458,7 @@ export async function assembleResearchSemanticServerHandlers(
         gateway: synthesisGateway,
         prompt: {
           trusted_parameters: researchSemanticPromptParameters(config.synthesis.trusted_parameters),
+          ...(input.output_language === undefined ? {} : { output_language: input.output_language }),
           request_timeout_ms: config.synthesis.request_timeout_ms,
           ...(synthesisTransport === undefined ? {} : { request_capabilities: synthesisTransport.request_capabilities }),
           ...(synthesisTransport === undefined ? {} : { selected_transport_policy: synthesisTransport.transport_policy }),

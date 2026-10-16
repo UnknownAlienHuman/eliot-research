@@ -30,7 +30,7 @@ async function evidence(id: string): Promise<ResolvedEvidence> {
   });
 }
 
-async function fixture(withBranches: boolean) {
+async function fixture(withBranches: boolean, outputLanguage?: "en" | "ru") {
   const bytes = new TextEncoder().encode("frozen");
   const digest = await textDigest("frozen");
   const object = { object_ref: "work/frozen", sha256: digest, byte_length: bytes.byteLength,
@@ -91,10 +91,13 @@ async function fixture(withBranches: boolean) {
     spend_admission: { readPreparation: async () => admission },
   })(preparationInput, frozen);
   let storageReads = 0;
+  let contextReads = 0;
+  let navigationReads = 0;
+  let currentAttemptRef = "attempt-1";
   const database = { prepare: () => ({ bind: () => ({ first: async () => {
     storageReads += 1;
     return { operation_id: request.operation_id, stage_index: 12, request_json: JSON.stringify(request),
-      request_sha256: requestSha, attempt_ref: "attempt-1", expected_revision: 13, attempt_state: "STARTED",
+      request_sha256: requestSha, attempt_ref: currentAttemptRef, expected_revision: 13, attempt_state: "STARTED",
       output_json: null, investigation_id: request.investigation_ref.id, current_revision: 13, next_stage_index: 12,
       run_state: "ACTIVE", ...PRINCIPAL, scope_snapshot_id: SCOPE.id, scope_snapshot_revision: SCOPE.revision,
       idempotency_key: request.idempotency_key, handler_generation: request.handler_generation, ledger_revision: 13 };
@@ -106,12 +109,16 @@ async function fixture(withBranches: boolean) {
     body: new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(bytes); controller.close(); } }),
   }) } as unknown as R2Bucket;
   const navigation = { access: PRINCIPAL, scope: { snapshot_id: SCOPE.id, revision: SCOPE.revision },
-    current: async () => ({}), sources: async () => [] } as unknown as NavigationReadAuthority;
+    current: async () => { navigationReads += 1; return {}; }, sources: async () => [] } as unknown as NavigationReadAuthority;
   const prompt = createResearchSynthesisPromptDependencies({ database, work_bucket: workBucket,
-    operation_id: request.operation_id, principal: PRINCIPAL, context: { read: async () => frozen }, navigation,
+    operation_id: request.operation_id, principal: PRINCIPAL,
+    context: { read: async () => { contextReads += 1; return frozen; } }, navigation,
     evidence_resolver: { resolveHandle: async () => { throw new Error("unexpected resolver effect"); } } as unknown as CloudflareEvidenceResolver,
-    trusted_parameters: { prompt: "Use exact evidence", max_tokens: 64 }, request_timeout_ms: 1000 });
-  return { prepared, prompt, frozen, rootPack, synthesisPack, storageReads: () => storageReads };
+    trusted_parameters: { prompt: "Use exact evidence", max_tokens: 64 },
+    ...(outputLanguage === undefined ? {} : { output_language: outputLanguage }), request_timeout_ms: 1000 });
+  return { prepared, prompt, frozen, rootPack, synthesisPack,
+    storageReads: () => storageReads, contextReads: () => contextReads, navigationReads: () => navigationReads,
+    setCurrentAttemptRef: (value: string) => { currentAttemptRef = value; } };
 }
 
 describe("frozen synthesis evidence handoff", () => {
@@ -140,6 +147,40 @@ describe("frozen synthesis evidence handoff", () => {
     expect(manifest.evidence_pack).toEqual(input.rootPack);
     expect(manifest).not.toHaveProperty("untrusted_candidate_context");
     expect(manifest).not.toHaveProperty("required_handle_refs");
+  });
+
+  it("uses the frozen output language in the trusted model prompt and rechecks fences without rereading context", async () => {
+    const input = await fixture(false, "ru");
+    await input.prompt.build_manifest_input(input.prepared.call, DEPLOYMENT);
+    const parameters = await input.prompt.resolve_trusted_parameters(input.prepared.call, DEPLOYMENT);
+
+    expect(parameters.prompt).toContain("OUTPUT LANGUAGE: Russian.");
+    expect(parameters.prompt).toContain("Write the complete synthesized answer, including headings and methodology, in Russian.");
+    expect(parameters.prompt).toContain("research_question");
+    expect(input.contextReads()).toBe(1);
+    expect(input.navigationReads()).toBe(2);
+    expect(input.storageReads()).toBe(2);
+  });
+
+  it("rejects a synthesis attempt change between manifest construction and prompt resolution", async () => {
+    const input = await fixture(true);
+    await input.prompt.build_manifest_input(input.prepared.call, DEPLOYMENT);
+    input.setCurrentAttemptRef("attempt-2");
+
+    await expect(input.prompt.resolve_trusted_parameters(input.prepared.call, DEPLOYMENT))
+      .rejects.toMatchObject({ code: "MODEL_GATEWAY_PROMPT_COMPILE_FAILED", retryable: true });
+    expect(input.contextReads()).toBe(1);
+    expect(input.storageReads()).toBe(2);
+  });
+
+  it("does not reuse the cached context for a different model-input object", async () => {
+    const input = await fixture(true);
+    await input.prompt.build_manifest_input(input.prepared.call, DEPLOYMENT);
+    const changed = { ...input.prepared.call, evidence_pack: input.rootPack };
+
+    await expect(input.prompt.resolve_trusted_parameters(changed, DEPLOYMENT))
+      .rejects.toMatchObject({ code: "MODEL_GATEWAY_PROMPT_COMPILE_FAILED", retryable: false });
+    expect(input.contextReads()).toBe(2);
   });
 
   it("rejects substitution of the root pack after a branch pack has been frozen", async () => {

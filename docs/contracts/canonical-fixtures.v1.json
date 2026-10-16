@@ -1,6 +1,14 @@
 {
   "fixtures": [
     {
+      "canonical_body_sha256": "a09eefe74414b993eaf546b7dd98c3983503ba998c52d1172d6ea08ff531e3fb",
+      "fixture_id": "research-catalog-model-use-request-v1",
+      "fixture_path": "docs/contracts/fixtures/eliotr.research.catalog-model-use-request.v1.json",
+      "media_type": "application/json",
+      "protocol": "eliotr.research.catalog-model-use-request.v1",
+      "schema_export": "ResearchCatalogModelUseRequestSchema"
+    },
+    {
       "canonical_body_sha256": "92b4a1d6e1ab8dc6ce9e1673b2ace7d7531a89be4bd1889f88d129a8fdef2a77",
       "fixture_id": "research-run-history-visibility-v4",
       "fixture_path": "tests/fixtures/contracts/eliotr.research-run-history-visibility.v4.json",
@@ -15,6 +23,14 @@
       "media_type": "application/json",
       "protocol": "eliotr.research.branch-reconciliation-pending.v1",
       "schema_export": "ResearchBranchReconciliationPendingCheckpointSchema"
+    },
+    {
+      "canonical_body_sha256": "9c2e16cbbba9450c8e7bca6b1b7a012c0cd31d283c736d36d3551a37bcba219e",
+      "fixture_id": "research-branch-query-budget-exhaustion-v1",
+      "fixture_path": "tests/fixtures/contracts/eliotr.research.branch-query-budget-exhaustion.v1.json",
+      "media_type": "application/json",
+      "protocol": "eliotr.research.branch-query-result.v1",
+      "schema_export": "BranchQueryResultSchema"
     },
     {
       "canonical_body_sha256": "d01e543f9a8773859f6e6e937a00bd9b8d1cf7dab33e78a645299aa22f73d18d",
@@ -82,5 +98,5 @@
     }
   ],
   "protocol": "eliotr.contract-canonical-fixtures.v1",
-  "registry_generation": 11
+  "registry_generation": 13
 }

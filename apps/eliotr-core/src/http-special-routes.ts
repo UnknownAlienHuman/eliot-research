@@ -18,7 +18,8 @@ import { readReadiness } from "./readiness.js";
 import { readOwnerResearchRuns } from "./research-run-list.js";
 import { handleResearchModelQualification } from "./research-model-qualification-http.js";
 import { handleResearchModelCatalog } from "./research-model-catalog-http.js";
-import { handleServiceModelSettings, handleServiceModelProviders } from "./service-model-settings-http.js";
+import { handleServiceModelSettings, handleServiceModelProviders, handleServiceModelProvidersV2,
+  handleServiceModelProviderCatalogPreferences } from "./service-model-settings-http.js";
 import { createServiceModelSettingsComposition } from "./service-model-settings-composition.js";
 import { handleResearchProjectModelConfiguration,
   handleResearchProjectModelConfigurationImport } from "./research-project-configuration-http.js";
@@ -27,6 +28,8 @@ import { handleResearchProviderKeyConfiguration } from "./research-provider-key-
 import { createResearchProviderKeyConfigurationComposition } from "./research-provider-key-configuration-composition.js";
 import { createResearchProviderKeyModelUseComposition } from "./research-provider-key-model-use-composition.js";
 import { handleResearchProviderKeyModelUseHttp } from "./research-provider-key-model-use-http.js";
+import { createResearchCatalogModelUseComposition } from "./research-catalog-model-use-composition.js";
+import { handleResearchCatalogModelUseHttp } from "./research-catalog-model-use-http.js";
 import {
   handleMcpClientDiagnosticIssue,
   handleMcpClientDiagnosticLatest,
@@ -110,6 +113,18 @@ export async function dispatchHttpSpecialRoute(input: {
       return handleServiceModelProviders(input.request, input.env, input.context, configured.service,
         input.match.route.maximum_request_bytes);
     }
+    case "system.model-providers.v2.read":
+    case "system.model-providers.v2.connect": {
+      const configured = createServiceModelSettingsComposition(input.env);
+      return handleServiceModelProvidersV2(input.request, input.env, input.context, configured.service,
+        input.match.route.maximum_request_bytes);
+    }
+    case "system.model-provider-catalog-preferences.read":
+    case "system.model-provider-catalog-preferences.update": {
+      const configured = createServiceModelSettingsComposition(input.env);
+      return handleServiceModelProviderCatalogPreferences(input.request, input.env, input.context, configured.service,
+        input.match.route.maximum_request_bytes);
+    }
     case "project.provider-key-configuration.create":
       throw new HttpRequestError("SERVICE_MODEL_SETTINGS_GLOBAL", 410,
         "Provider connections are managed once in global model settings");
@@ -133,6 +148,13 @@ export async function dispatchHttpSpecialRoute(input: {
         input.match.route.maximum_request_bytes,
         composition,
       );
+    }
+    case "research.catalog-model-use.start":
+    case "research.catalog-model-use.read": {
+      const projectId = input.match.params.project_id ?? "";
+      return handleResearchCatalogModelUseHttp(input.request, input.env, input.context, projectId,
+        input.match.params.operation_id ?? null, input.match.route.maximum_request_bytes,
+        createResearchCatalogModelUseComposition(input.env, input.context, projectId));
     }
     case "system.computer-agent-qualifications.status":
     case "system.computer-agent-qualifications.issue":

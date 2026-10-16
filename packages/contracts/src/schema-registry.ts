@@ -1,6 +1,7 @@
 import * as z from "zod";
 
 import * as backup from "./backup.js";
+import * as aiUsage from "./ai-usage.js";
 import * as common from "./common.js";
 import * as computerAgentConnection from "./computer-agent-connection.js";
 import * as computerAgentDispatch from "./computer-agent-dispatch.js";
@@ -28,11 +29,14 @@ import * as researchBranchFinding from "./research-branch-finding.js";
 import * as researchBranchQuery from "./research-branch-query.js";
 import * as researchProviderKey from "./research-provider-key.js";
 import * as researchProviderKeyModelUse from "./research-provider-key-model-use.js";
+import * as researchCatalogModelUse from "./research-catalog-model-use.js";
 import * as researchBranchRelationPending from "./research-branch-relation-pending.js";
 import * as researchSessionBinding from "./research-session-binding.js";
 import * as researchRunHistoryVisibility from "./research-run-history-visibility.js";
+import * as serviceModel from "./service-model.js";
 import * as residency from "./residency.js";
 import * as retrieval from "./retrieval.js";
+import * as retrievalManagedRanking from "./retrieval-managed-ranking.js";
 import * as scope from "./scope.js";
 import * as projectClientGrant from "./project-client-grant.js";
 import * as security from "./security.js";
@@ -49,7 +53,7 @@ import {
   type ContractStructuralStrictness,
 } from "./registry-contracts.js";
 
-export const CONTRACT_SCHEMA_REGISTRY_GENERATION = 11 as const;
+export const CONTRACT_SCHEMA_REGISTRY_GENERATION = 13 as const;
 
 export type ContractJsonPrimitive = string | number | boolean | null;
 export type ContractJsonValue =
@@ -76,6 +80,7 @@ interface SchemaModule {
 
 const SCHEMA_MODULES: readonly SchemaModule[] = [
   { family: "backup", exports: backup },
+  { family: "model", exports: aiUsage },
   { family: "common", exports: common },
   { family: "computer-agent", exports: computerAgentConnection },
   { family: "computer-agent", exports: computerAgentDispatch },
@@ -90,6 +95,7 @@ const SCHEMA_MODULES: readonly SchemaModule[] = [
   { family: "library-readiness", exports: libraryReadiness },
   { family: "workspace-mcp", exports: mcpDiagnostic },
   { family: "model", exports: model },
+  { family: "model", exports: serviceModel },
   { family: "navigation", exports: navigation },
   { family: "normalized-bundle", exports: normalizedBundle },
   { family: "operations", exports: operations },
@@ -103,11 +109,13 @@ const SCHEMA_MODULES: readonly SchemaModule[] = [
   { family: "research", exports: researchBranchQuery },
   { family: "research", exports: researchProviderKey },
   { family: "research", exports: researchProviderKeyModelUse },
+  { family: "research", exports: researchCatalogModelUse },
   { family: "research", exports: researchBranchRelationPending },
   { family: "research", exports: researchSessionBinding },
   { family: "research", exports: researchRunHistoryVisibility },
   { family: "residency", exports: residency },
   { family: "retrieval", exports: retrieval },
+  { family: "retrieval", exports: retrievalManagedRanking },
   { family: "scope", exports: scope },
   { family: "scope", exports: projectClientGrant },
   { family: "security", exports: security },
@@ -330,10 +338,10 @@ function buildRegistry(): readonly ContractSchemaDescriptor[] {
           : exportName === "ResearchEvidenceFreezeV3Schema"
             ? { schema_version: 3, schema_generation: 1 }
             : exportName === "BranchQueryLegResultSchema" || exportName === "BranchQueryResultSchema"
-              ? { schema_version: 1, schema_generation: 3 }
+              ? { schema_version: 2, schema_generation: 1 }
               : ["ResearchReadExtractCheckpointV2Schema", "ResearchBranchResultV2Schema",
                 "ResearchBranchAnalysisCheckpointV2Schema", "ResearchBranchReconciliationCheckpointV2Schema"].includes(exportName)
-                ? { schema_version: 2, schema_generation: 3 }
+                ? { schema_version: 3, schema_generation: 1 }
                 : familyVersion;
       const schemaId = buildContractSchemaId(
         module.family,

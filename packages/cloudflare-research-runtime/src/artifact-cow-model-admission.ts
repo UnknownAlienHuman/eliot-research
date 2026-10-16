@@ -215,7 +215,7 @@ export async function createArtifactCowModelAdmissionApplication(input: Artifact
           selection.route_version !== rule.deployment.route_version) {
         stale("COW model selection is missing or differs from the original run snapshot");
       }
-      if (selection.candidate_kind === "provider-native-v1") {
+      if (selection.candidate_kind === "provider-native-v1" || selection.candidate_kind === "provider-native-v2") {
         if (typeof value.pinned_configuration.project_owner_ref !== "string" ||
             typeof value.pinned_configuration.project_id !== "string" ||
             input.resolve_native_model_selection === undefined) {

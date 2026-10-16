@@ -7,9 +7,8 @@ import {
 } from './path.js';
 
 /**
- * Policy frozen from `packages/pwa-http-client/src/api.ts`. The accepted cases matter as much as the
- * rejected ones: this guard must not become stricter than the legacy transport, or live requests that
- * used to succeed would start failing.
+ * Preserves the legacy V1 transport policy and the two exact V2 model-settings resources consumed by
+ * the owner UI. Other versioned paths remain denied; origin and normalization rules apply to both.
  */
 
 const BACKSLASH = String.fromCharCode(92);
@@ -25,6 +24,9 @@ describe('same-origin path policy', () => {
     ['an encoded identifier segment', '/api/v1/library/erasure/ref%2Frevision'],
     ['the versioned prefix alone', '/api/v1/'],
     ['a trailing-slash resource path', '/api/v1/system/health/'],
+    ['the owner V2 provider catalog endpoint', '/api/v2/system/model-providers'],
+    ['an exact V2 provider operation query', '/api/v2/system/model-providers?operation_id=11111111-1111-4111-8111-111111111111'],
+    ['V2 owner visibility preferences', '/api/v2/system/model-provider-catalog-preferences?provider_id=opencode-go'],
   ])('accepts %s', (_label, path) => {
     expect(isSameOriginApiPath(path)).toBe(true);
   });
@@ -46,6 +48,12 @@ describe('same-origin path policy', () => {
     ['a space character', '/api/v1/sys tem/health'],
     ['a DEL character', '/api/v1/system/health' + String.fromCharCode(0x7f)],
     ['a different-case prefix', '/API/V1/system/health'],
+    ['an unapproved V2 route', '/api/v2/system/health'],
+    ['an unapproved V2 provider child path', '/api/v2/system/model-providers/other'],
+    ['a V2 path prefix collision', '/api/v2/system/model-providers-other'],
+    ['a V2 parent segment', '/api/v2/system/model-providers/../model-providers'],
+    ['a V2 foreign origin', 'https://elsewhere.example/api/v2/system/model-providers'],
+    ['a V2 query fragment', '/api/v2/system/model-providers?value=' + HASH],
   ])('rejects %s', (_label, path) => {
     expect(isSameOriginApiPath(path)).toBe(false);
   });

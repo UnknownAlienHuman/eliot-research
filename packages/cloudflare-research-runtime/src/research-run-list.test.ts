@@ -205,6 +205,127 @@ describe("owner research history", () => {
     expect(run_status).not.toHaveBeenCalled();
   });
 
+  it("overlaps eight candidate reads while retaining SQL order after reverse completion", async () => {
+    const rows = Array.from({ length: 8 }, (_item, index) => ({ operation_id: `run-${index}`,
+      created_at: `2026-10-15T12:0${7 - index}:00.000Z`, query: `Question ${index}` }));
+    const { ports } = makePorts({ runRows: rows });
+    const gates = rows.map(() => Promise.withResolvers<void>());
+    const allStarted = Promise.withResolvers<void>();
+    let started = 0;
+    prepareReadMock.mockImplementation(async (_environment, _actor, operationId: string) => {
+      const index = rows.findIndex(row => row.operation_id === operationId);
+      if (++started === 8) allStarted.resolve();
+      await gates[index]?.promise;
+      return { status: workflowStatus(operationId), requireCurrent: async () => undefined };
+    });
+    let completed = false;
+    const response = readOwnerResearchRuns(ports, context).then(value => { completed = true; return value; });
+    await allStarted.promise;
+    expect(completed).toBe(false);
+    for (const gate of [...gates].reverse()) gate.resolve();
+    const history = await response;
+    expect(history.runs.map(row => row.status.workflow_instance_id)).toEqual(rows.map(row => row.operation_id));
+    expect(history.visibility_scan.runs).toBe("TARGET_REACHED");
+    expect(prepareReadMock).toHaveBeenCalledTimes(8);
+  });
+
+  it("overlaps saved-report reads and preserves report order after reverse completion", async () => {
+    const rows = Array.from({ length: 8 }, (_item, index) => ({ artifact_id: `draft-${index}`, revision: 1,
+      scope_snapshot_id: "scope-1", scope_snapshot_revision: 2, origin_client_class: "owner_pwa", principal_ref: "owner-1",
+      intent_id: `intent-${index}`, intent_revision: 1, created_at: `2026-10-15T12:0${7 - index}:00.000Z` }));
+    const { ports } = makePorts({ draftRows: rows });
+    const gates = rows.map(() => Promise.withResolvers<void>());
+    const allStarted = Promise.withResolvers<void>();
+    let started = 0;
+    const prepareDraft: ResearchRunListPorts["prepare_artifact_read"] = async (_actor, ref) => {
+      const index = rows.findIndex(row => row.artifact_id === ref.id);
+      if (++started === 8) allStarted.resolve();
+      await gates[index]?.promise;
+      return { original_scope_snapshot_ref: { id: "scope-1", revision: 2 }, requireCurrent: async () => undefined };
+    };
+    const response = readOwnerResearchRuns({ ...ports, prepare_artifact_read: prepareDraft }, context);
+    await allStarted.promise;
+    for (const gate of [...gates].reverse()) gate.resolve();
+    const history = await response;
+    expect(history.saved_drafts.map(row => row.artifact_ref.id)).toEqual(rows.map(row => row.artifact_id));
+    expect(history.visibility_scan.saved_drafts).toBe("TARGET_REACHED");
+  });
+
+  it("waits for concurrent final direct/historical fences and fails the response on revocation", async () => {
+    const { ports, run_status } = makePorts({ runRows: [
+      { operation_id: "direct-run", created_at: "2026-10-15T12:01:00.000Z", query: "Private direct question" },
+      { operation_id: "historical-run", created_at: "2026-10-15T12:00:00.000Z", query: "Private old question" },
+    ] });
+    const directFence = Promise.withResolvers<void>();
+    const historyFence = Promise.withResolvers<void>();
+    const allFinalStarted = Promise.withResolvers<void>();
+    let finalStarted = 0;
+    const finalCheck = async (gate: Promise<void>) => {
+      if (++finalStarted === 2) allFinalStarted.resolve();
+      await gate;
+    };
+    const requireCurrent = vi.fn().mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(() => finalCheck(historyFence.promise));
+    prepareReadMock.mockImplementation(async (_environment, _actor, operationId: string) => operationId === "direct-run"
+      ? null : { status: workflowStatus(operationId), requireCurrent });
+    const initial = await run_status(context, "direct-run");
+    run_status.mockClear();
+    run_status.mockResolvedValueOnce(initial).mockImplementationOnce(async () => {
+      await finalCheck(directFence.promise);
+      return initial;
+    });
+    let disclosed = false;
+    const response = readOwnerResearchRuns(ports, context).then(value => { disclosed = true; return value; });
+    const denied = new CatalogInputError("RESEARCH_HISTORY_AUTHORITY_STALE", "revoked", 409);
+    const rejected = expect(response).rejects.toBe(denied);
+    await allFinalStarted.promise;
+    expect(disclosed).toBe(false);
+    directFence.resolve();
+    historyFence.reject(denied);
+    await rejected;
+    expect(disclosed).toBe(false);
+    expect(requireCurrent).toHaveBeenCalledTimes(2);
+  });
+
+  it("fails closed on an unexpected error in a concurrent candidate read", async () => {
+    const { ports } = makePorts({ runRows: [
+      { operation_id: "readable", created_at: "2026-10-15T12:01:00.000Z", query: "Authorized question" },
+      { operation_id: "unavailable", created_at: "2026-10-15T12:00:00.000Z", query: "Unverified question" },
+    ] });
+    const failure = new Error("storage unavailable");
+    prepareReadMock.mockImplementation(async (_environment, _actor, operationId: string) => {
+      if (operationId === "unavailable") throw failure;
+      return { status: workflowStatus(operationId), requireCurrent: async () => undefined };
+    });
+    await expect(readOwnerResearchRuns(ports, context)).rejects.toBe(failure);
+    expect(prepareReadMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the four-query/32-candidate budget while parallelizing denied batches", async () => {
+    const { ports } = makePorts();
+    const rows = Array.from({ length: 33 }, (_item, index) => ({ operation_id: `run-${String(33 - index).padStart(2, "0")}`,
+      created_at: "2026-10-15T12:00:00.000Z", query: "Denied question" }));
+    let candidateQueries = 0;
+    const database = { prepare(query: string) {
+      if (!query.includes("FROM research_workflow_run r") || !query.includes("investigation_ledger_head")) {
+        return ports.database.prepare(query);
+      }
+      return { bind(...values: unknown[]) { return { all: async () => {
+        candidateQueries += 1;
+        const after = values[2];
+        const start = after === null ? 0 : rows.findIndex(row => row.operation_id === after) + 1;
+        return { success: true, results: rows.slice(start, start + Number(values[3])) };
+      } }; } };
+    } } as unknown as D1Database;
+    prepareReadMock.mockRejectedValue(new CatalogInputError("RESEARCH_HISTORY_AUTHORITY_STALE", "denied", 403));
+    const result = await readOwnerResearchRuns({ ...ports, database }, context);
+    expect(result.runs).toEqual([]);
+    expect(result.visibility_scan.runs).toBe("BUDGET_STOPPED");
+    expect(candidateQueries).toBe(4);
+    expect(prepareReadMock).toHaveBeenCalledTimes(32);
+    expect(JSON.stringify(result)).not.toContain("Denied question");
+  });
+
   it("attaches a complete run only through its verified saved-draft locator", async () => {
     const artifactRef = { id: "artifact-1", revision: 7 };
     const runRows = [{ operation_id: "completed-run", created_at: "2026-10-15T12:01:00.000Z", query: "Saved query" }];

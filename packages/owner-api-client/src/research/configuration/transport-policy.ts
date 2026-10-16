@@ -21,7 +21,7 @@ export type ResearchModelTransportPolicy = Readonly<{
   version: 1;
   transport: "cloudflare-ai-gateway";
   api: "compat-chat-completions" | "openai-chat-completions" | "openai-responses" |
-    "openrouter-chat-completions" | "anthropic-messages";
+    "openrouter-chat-completions" | "anthropic-messages" | "custom-chat-completions" | "custom-responses" | "custom-anthropic-messages";
   provider: string;
   model: string;
   billing: Readonly<{ mode: "unified" }> |
@@ -70,7 +70,8 @@ export function createTransportPolicyDecoder(errors: LegacyErrorFactory) {
     const raw = exactRecord(value, ["version", "transport", "api", "provider", "model", "billing", "capabilities"], "model transport policy");
     if (raw.version !== 1 || raw.transport !== "cloudflare-ai-gateway" ||
         (raw.api !== "compat-chat-completions" && raw.api !== "openai-chat-completions" &&
-         raw.api !== "openai-responses" && raw.api !== "openrouter-chat-completions" && raw.api !== "anthropic-messages")) {
+         raw.api !== "openai-responses" && raw.api !== "openrouter-chat-completions" && raw.api !== "anthropic-messages" &&
+         raw.api !== "custom-chat-completions" && raw.api !== "custom-responses" && raw.api !== "custom-anthropic-messages")) {
       schemaMismatch("model transport policy is unsupported");
     }
     const hasFreeOnly = isRecord(raw.billing) && Object.hasOwn(raw.billing, "free_only");
@@ -98,6 +99,10 @@ export function createTransportPolicyDecoder(errors: LegacyErrorFactory) {
     if (expectedNativeProvider !== undefined && (provider !== expectedNativeProvider || billing.mode !== "byok")) {
       schemaMismatch("native model API provider billing identity does not match");
     }
+    if ((raw.api === "custom-chat-completions" || raw.api === "custom-responses" || raw.api === "custom-anthropic-messages") &&
+        (!/^custom-[a-z0-9][a-z0-9-]{0,62}$/u.test(provider) || billing.mode !== "byok" || billing.alias === "default")) {
+      schemaMismatch("custom model API requires an exact provider slug and saved BYOK alias");
+    }
     if (billing.mode === "byok" && billing.free_only === true &&
         (raw.api !== "openrouter-chat-completions" || provider !== "openrouter")) {
       schemaMismatch("free-only billing requires the OpenRouter native endpoint");
@@ -110,6 +115,10 @@ export function createTransportPolicyDecoder(errors: LegacyErrorFactory) {
     if (capabilities.max_output_tokens_field !== "max_tokens" && capabilities.max_output_tokens_field !== "max_completion_tokens" &&
         capabilities.max_output_tokens_field !== "max_output_tokens") {
       schemaMismatch("model output token parameter is unsupported");
+    }
+    if ((raw.api === "custom-responses" && capabilities.max_output_tokens_field !== "max_output_tokens") ||
+        (raw.api === "custom-anthropic-messages" && capabilities.max_output_tokens_field !== "max_tokens")) {
+      schemaMismatch("custom provider API output token parameter is inconsistent");
     }
     const allowedEfforts = ["low", "medium", "high", "max"] as const;
     if (!Array.isArray(capabilities.reasoning_efforts) || capabilities.reasoning_efforts.length > allowedEfforts.length ||
@@ -177,6 +186,9 @@ export function researchModelSelectionApiLabel(policy: ResearchModelTransportPol
     "openai-responses": "OpenAI Responses API",
     "openrouter-chat-completions": "OpenRouter Chat Completions API",
     "anthropic-messages": "Anthropic Messages API",
+    "custom-chat-completions": "Provider Chat Completions API",
+    "custom-responses": "Provider Responses API",
+    "custom-anthropic-messages": "Provider Messages API",
   };
   const label = labels[policy.api];
   return policy.capabilities.response_format_normalization === "json-schema-to-json-object"

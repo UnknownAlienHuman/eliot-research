@@ -7,7 +7,8 @@ import {
   modelGatewaySha256,
   type ModelGatewayTransportPolicyV1,
 } from "./model-gateway-request.js";
-import { executeObservedModelGatewayCall } from "./model-gateway-execution.js";
+import { executeObservedModelGatewayCall, isModelGatewayPromptCompileFailure } from "./model-gateway-execution.js";
+import { ModelGatewayExecutionError } from "./model-gateway-execution-contract.js";
 
 const BASE_URL = `https://gateway.ai.cloudflare.com/v1/${"a".repeat(32)}/eliotr-reasoning`;
 const input: ModelCallInput = {
@@ -29,6 +30,42 @@ const input: ModelCallInput = {
 };
 
 describe("model gateway selected identity", () => {
+  it("binds compiler non-dispatch proof to the exact call and discards it at transport", async () => {
+    const parameters = { max_tokens: 32, stream: false };
+    const deployment = { route_ref: "dynamic/eliotr-balanced" as const, route_version: "route-1",
+      prompt_generation: input.prompt_generation, schema_generation: input.schema_generation,
+      parameters_digest: await modelGatewayRequestParametersSha256(parameters), pricing_snapshot_ref: "pricing-1" };
+    let providerCalls = 0;
+    const dependencies: ModelGatewayExecutionDependencies = {
+      reasoning_gateway_base_url: BASE_URL,
+      deployments: { resolve: async () => deployment },
+      prompts: { compile: async () => { throw new Error("REQUIRED_CONTEXT_BYTE_BUDGET_EXCEEDED"); } },
+      binding_transport: { fetch: async () => { providerCalls += 1; throw new Error("unknown remote outcome"); } },
+      outputs: { putImmutable: async () => ({}) },
+      fingerprints: { putImmutable: async () => ({}), getLatest: async () => null },
+      pricing: { quote: async () => ({}) },
+    };
+    const failure: unknown = await executeObservedModelGatewayCall(dependencies, input).catch((cause: unknown) => cause);
+    expect(isModelGatewayPromptCompileFailure(failure, input)).toBe(true);
+    expect(isModelGatewayPromptCompileFailure(failure, { ...input })).toBe(false);
+    expect(isModelGatewayPromptCompileFailure(new ModelGatewayExecutionError(
+      "MODEL_GATEWAY_PROMPT_COMPILE_FAILED", "code without provenance"), input)).toBe(false);
+    expect(providerCalls).toBe(0);
+
+    const target = await modelGatewayDynamicRouteTarget(deployment);
+    const body = { model: target.model, messages: [{ role: "system", content: "trusted instruction" },
+      { role: "user", content: "controlled input" }], ...parameters };
+    const remote: ModelGatewayExecutionDependencies = { ...dependencies,
+      prompts: { compile: async () => ({ request_body: body,
+        request_body_sha256: await modelGatewaySha256(canonicalModelGatewayJson(body)), request_timeout_ms: 5000 }) },
+      binding_transport: { fetch: async () => { providerCalls += 1; throw failure; } },
+    };
+    const transported: unknown = await executeObservedModelGatewayCall(remote, input).catch((cause: unknown) => cause);
+    expect(transported).toMatchObject({ code: "MODEL_GATEWAY_TRANSPORT_FAILED" });
+    expect(isModelGatewayPromptCompileFailure(transported, input)).toBe(false);
+    expect(providerCalls).toBe(1);
+  });
+
   it("rejects provider/model fallback before immutable output, fingerprint, or pricing writes", async () => {
     const parameters = { max_tokens: 32, stream: false };
     const deployment = {

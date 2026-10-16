@@ -12,6 +12,10 @@ const migration = await readFile(
   new URL("infra/d1/core/migrations/0152_service_model_provider_operation.sql", root),
   "utf8",
 );
+const catalogMigration = await readFile(
+  new URL("infra/d1/core/migrations/0157_service_model_provider_catalog_mode.sql", root),
+  "utf8",
+);
 const NOW = Date.parse("2026-10-15T14:00:00.000Z");
 const REQUEST = {
   protocol: "eliotr.service-model-provider-create.v1" as const,
@@ -42,6 +46,7 @@ function ownerContext(overrides: Partial<AuthenticatedRequestContext> = {}): Aut
 function database(): { readonly d1: D1Database; readonly sqlite: DatabaseSync } {
   const sqlite = new DatabaseSync(":memory:");
   sqlite.exec(migration);
+  sqlite.exec(catalogMigration);
   const d1 = {
     prepare(sql: string) {
       return {
@@ -104,6 +109,59 @@ describe("global service model provider operations", () => {
       .not.toContain(REQUEST.api_key);
     expect(store.sqlite.prepare("PRAGMA table_info(service_model_provider_operation)").all())
       .not.toEqual(expect.arrayContaining([expect.objectContaining({ name: "api_key" })]));
+  });
+
+  it("reuses one catalog-managed credential across models and stores owner-only presentation preferences", async () => {
+    const store = database();
+    const management = managementPort();
+    const service = createServiceModelProviderService({ database: store.d1, managementPort: management, now: () => NOW });
+    const request = {
+      protocol: "eliotr.service-model-provider-catalog-connect.v2" as const,
+      operation_id: "a9f79914-a0a5-4f27-9e81-3b9b6c403a61",
+      provider_id: "opencode-go",
+      display_name: "OpenCode Go",
+      model_registration_mode: "catalog_managed" as const,
+      api_key: "synthetic-opencode-key-test-only",
+    };
+
+    const created = await service.connectCatalogManaged(ownerContext(), request);
+    const replayed = await service.connectCatalogManaged(ownerContext(), request);
+    const listedV2 = await service.listV2(ownerContext());
+    const listedV1 = await service.list(ownerContext());
+    const firstModel = await service.resolveConfiguredProvider(ownerContext(), "opencode-go", { model_id: "model-one" });
+    const secondModel = await service.resolveConfiguredProvider(ownerContext(), "opencode-go", { model_id: "model-two" });
+    const defaultPreferences = await service.readCatalogPreferences(ownerContext(), "opencode-go");
+    const savedPreferences = await service.updateCatalogPreferences(ownerContext(), {
+      protocol: "eliotr.service-model-provider-catalog-preferences.v1",
+      provider_id: "opencode-go",
+      visibility: { mode: "exclude", model_ids: ["model-two"] },
+      search: "reasoning",
+    });
+    const readPreferences = await service.readCatalogPreferences(ownerContext(), "opencode-go");
+    const otherOwnerPreferences = await service.readCatalogPreferences(ownerContext({
+      principal_ref: "owner-2", credential_generation: "credential-2",
+      access: { principal_ref: "owner-2", credential_generation: "credential-2", expires_at: "2099-01-01T00:00:00.000Z" },
+    }), "opencode-go");
+
+    expect(created.receipt).toMatchObject({ model_registration_mode: "catalog_managed",
+      base_url: "https://opencode.ai/inference/go/v1" });
+    expect(replayed.replayed).toBe(true);
+    expect(management.create).toHaveBeenCalledTimes(1);
+    expect(listedV2.connections).toMatchObject([{ model_registration_mode: "catalog_managed", provider_id: "opencode-go" }]);
+    expect(listedV1.connections).toEqual([]);
+    expect(firstModel?.operation_id).toBe(created.receipt.operation_id);
+    expect(secondModel).toEqual(firstModel);
+    expect(firstModel?.model_registration_mode).toBe("catalog_managed");
+    expect(firstModel?.model_ids).toEqual([]);
+    expect(defaultPreferences.visibility).toEqual({ mode: "all" });
+    expect(savedPreferences).toEqual(readPreferences);
+    expect(readPreferences.visibility).toEqual({ mode: "exclude", model_ids: ["model-two"] });
+    expect(readPreferences.search).toBe("reasoning");
+    expect(otherOwnerPreferences.visibility).toEqual({ mode: "all" });
+    const rows = store.sqlite.prepare("SELECT model_ids_json,model_registration_mode,request_sha256 FROM service_model_provider_operation").all();
+    expect(rows).toMatchObject([{ model_ids_json: "[]", model_registration_mode: "catalog_managed" }]);
+    expect(JSON.stringify(rows)).not.toContain(request.api_key);
+    expect(JSON.stringify(created.receipt)).not.toContain(request.api_key);
   });
 
   it("returns the exact pre-effect 503 when management is absent and creates no intent", async () => {

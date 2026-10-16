@@ -1,4 +1,6 @@
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
+import type { ResearchProjectCatalogNativeModelV2AuthorityFactory } from
+  "@eliotr/cloudflare-research-configuration/research-project-configuration.js";
 import {
   ResearchProjectModelConfigurationError,
   type ResearchProjectModelConfigurationBundle,
@@ -45,6 +47,7 @@ export function composeSelectedProjectResearchReadinessEnv(
 /** Keep every read and CAS in one authenticated project's authority generation. */
 export function createOwnerResearchProjectConfigurationService(
   env: Env, context: AuthenticatedRequestContext, projectId: string,
+  catalogNativeModelV2Authority?: ResearchProjectCatalogNativeModelV2AuthorityFactory,
 ) {
   if (context.client_class !== "owner_pwa" ||
       !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u.test(projectId)) {
@@ -72,7 +75,7 @@ export function createOwnerResearchProjectConfigurationService(
         "Project configuration authority changed");
     }
     pinnedGeneration = row.generation;
-  });
+  }, undefined, catalogNativeModelV2Authority);
 }
 
 export function mapResearchProjectModelConfigurationError(error: unknown): never {
@@ -86,6 +89,7 @@ export function mapResearchProjectModelConfigurationError(error: unknown): never
 /** Readiness uses the same explicit project bundle or installed native default that a new run captures. */
 export async function readOwnerProjectResearchReadiness(
   env: Env, context: AuthenticatedRequestContext, projectId: string | undefined,
+  catalogNativeModelV2Authority?: ResearchProjectCatalogNativeModelV2AuthorityFactory,
 ) {
   const unavailable = async () => ({
     ...await readResearchConfigurationReadiness(env, context),
@@ -130,5 +134,9 @@ export async function readOwnerProjectResearchReadiness(
       ...(bundle.model_selections.some((selection) => selection.candidate_kind === "provider-native-v1")
         ? { native_model_authority: createOwnerResearchProviderNativeModelAuthority(env, context, selected.project_id,
           ["CONFIGURATION_IMPORT", "SELECTION_READBACK", "COMPLETE"] satisfies readonly ResearchProviderKeyModelUseDbPhase[]) }
+        : {}),
+      ...(bundle.model_selections.some((selection) => selection.candidate_kind === "provider-native-v2") &&
+          catalogNativeModelV2Authority !== undefined
+        ? { catalog_native_model_authority_v2: catalogNativeModelV2Authority(context, selected.project_id) }
         : {}) });
 }

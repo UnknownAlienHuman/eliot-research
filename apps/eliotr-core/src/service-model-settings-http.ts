@@ -1,5 +1,9 @@
-import { ServiceModelProviderCreateRequestSchema, ServiceModelProviderCreateReceiptSchema,
+import { ServiceModelProviderCatalogConnectRequestSchema, ServiceModelProviderCatalogConnectReceiptSchema,
+  ServiceModelProviderCatalogPreferencesReadQuerySchema, ServiceModelProviderCatalogPreferencesSchema,
+  ServiceModelProviderCatalogPreferencesUpdateSchema, ServiceModelProviderCreateRequestSchema, ServiceModelProviderCreateReceiptSchema,
   ServiceModelProviderReadQuerySchema, ServiceModelProviderReadbackEnvelopeSchema,
+  ServiceModelProviderReadEnvelopeV2Schema, ServiceModelProviderReadbackEnvelopeV2Schema,
+  SERVICE_MODEL_PROVIDER_READ_PROTOCOL,
   ServiceModelSettingsSchema, SERVICE_MODEL_SETTINGS_PROTOCOL, type ServiceModelSettings } from "@eliotr/contracts";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { ServiceModelProviderOperationError,
@@ -11,6 +15,7 @@ import { readJsonBodyWithinBytes } from "./bounded-json.js";
 import type { Env } from "./env.js";
 
 export const SERVICE_MODEL_PROVIDER_MAX_REQUEST_BYTES = 32_768;
+export const SERVICE_MODEL_PROVIDER_PREFERENCES_MAX_REQUEST_BYTES = 262_144;
 const MAX_RESPONSE_BYTES = 256 * 1024;
 const BUILTIN_SERVICE_MODEL = "@cf/zai-org/glm-5.3-flash";
 
@@ -110,5 +115,84 @@ export async function handleServiceModelProviders(request: Request, env: Env, co
     const result = await service.create(context, parsed.data);
     const receipt = ServiceModelProviderCreateReceiptSchema.parse(result.receipt);
     return apiResult(request, env, receipt, result.replayed ? 200 : 201);
+  } catch (error) { throw mappedError(error); }
+}
+
+export async function handleServiceModelProvidersV2(request: Request, env: Env, context: AuthenticatedRequestContext,
+  service: ServiceModelProviderService, maximumRequestBytes: number): Promise<Response> {
+  owner(context);
+  const url = new URL(request.url);
+  try {
+    if (request.method === "GET") {
+      requireEmptyGet(request);
+      const values = [...url.searchParams.entries()];
+      if (values.length === 0) {
+        const listed = await service.listV2(context);
+        const result = ServiceModelProviderReadEnvelopeV2Schema.parse({
+          protocol: SERVICE_MODEL_PROVIDER_READ_PROTOCOL,
+          connections: [...listed.connections], truncated: listed.truncated,
+        });
+        return apiResult(request, env, result);
+      }
+      if (values.length !== 1 || values[0]?.[0] !== "operation_id") {
+        throw new HttpRequestError("SERVICE_MODEL_PROVIDER_INPUT_INVALID", 400, "Provider status query is invalid");
+      }
+      const query = ServiceModelProviderReadQuerySchema.safeParse({ operation_id: values[0][1] });
+      if (!query.success || query.data.operation_id === undefined) {
+        throw new HttpRequestError("SERVICE_MODEL_PROVIDER_INPUT_INVALID", 400, "Provider operation id is invalid");
+      }
+      const result = ServiceModelProviderReadbackEnvelopeV2Schema.parse({
+        protocol: SERVICE_MODEL_PROVIDER_READ_PROTOCOL,
+        connection: await service.readOperationV2(context, query.data.operation_id),
+        truncated: false,
+      });
+      return apiResult(request, env, result);
+    }
+    if (request.method !== "POST") throw new HttpRequestError("METHOD_NOT_ALLOWED", 405, "Method is not supported");
+    requireNoQuery(url);
+    requireProviderKeyMutationSecurity(request, url,
+      new HttpRequestError("SERVICE_MODEL_PROVIDER_CSRF_DENIED", 403, "Provider changes require a same-origin owner request"),
+      new HttpRequestError("SERVICE_MODEL_PROVIDER_INPUT_INVALID", 415, "Provider changes require application/json"));
+    const cap = Math.min(maximumRequestBytes, SERVICE_MODEL_PROVIDER_MAX_REQUEST_BYTES);
+    if (!Number.isSafeInteger(cap) || cap < 1) throw new HttpRequestError("SERVICE_MODEL_PROVIDER_INPUT_INVALID", 400, "Request limit is invalid");
+    const parsed = ServiceModelProviderCatalogConnectRequestSchema.safeParse(await readJsonBodyWithinBytes(request, cap));
+    if (!parsed.success || (request.headers.has("idempotency-key") && request.headers.get("idempotency-key") !== parsed.data.operation_id)) {
+      throw new HttpRequestError("SERVICE_MODEL_PROVIDER_INPUT_INVALID", 400, "Catalog-managed provider settings are invalid");
+    }
+    const result = await service.connectCatalogManaged(context, parsed.data);
+    const receipt = ServiceModelProviderCatalogConnectReceiptSchema.parse(result.receipt);
+    return apiResult(request, env, receipt, result.replayed ? 200 : 201);
+  } catch (error) { throw mappedError(error); }
+}
+
+export async function handleServiceModelProviderCatalogPreferences(request: Request, env: Env,
+  context: AuthenticatedRequestContext, service: ServiceModelProviderService, maximumRequestBytes: number): Promise<Response> {
+  owner(context);
+  const url = new URL(request.url);
+  try {
+    if (request.method === "GET") {
+      requireEmptyGet(request);
+      const values = [...url.searchParams.entries()];
+      if (values.length !== 1 || values[0]?.[0] !== "provider_id") {
+        throw new HttpRequestError("SERVICE_MODEL_PROVIDER_INPUT_INVALID", 400, "Provider preference query is invalid");
+      }
+      const query = ServiceModelProviderCatalogPreferencesReadQuerySchema.safeParse({ provider_id: values[0][1] });
+      if (!query.success) throw new HttpRequestError("SERVICE_MODEL_PROVIDER_INPUT_INVALID", 400, "Provider id is invalid");
+      const result = ServiceModelProviderCatalogPreferencesSchema.parse(
+        await service.readCatalogPreferences(context, query.data.provider_id));
+      return apiResult(request, env, result);
+    }
+    if (request.method !== "PUT") throw new HttpRequestError("METHOD_NOT_ALLOWED", 405, "Method is not supported");
+    requireNoQuery(url);
+    requireProviderKeyMutationSecurity(request, url,
+      new HttpRequestError("SERVICE_MODEL_PROVIDER_CSRF_DENIED", 403, "Provider preferences require a same-origin owner request"),
+      new HttpRequestError("SERVICE_MODEL_PROVIDER_INPUT_INVALID", 415, "Provider preferences require application/json"));
+    const cap = Math.min(maximumRequestBytes, SERVICE_MODEL_PROVIDER_PREFERENCES_MAX_REQUEST_BYTES);
+    if (!Number.isSafeInteger(cap) || cap < 1) throw new HttpRequestError("SERVICE_MODEL_PROVIDER_INPUT_INVALID", 400, "Request limit is invalid");
+    const parsed = ServiceModelProviderCatalogPreferencesUpdateSchema.safeParse(await readJsonBodyWithinBytes(request, cap));
+    if (!parsed.success) throw new HttpRequestError("SERVICE_MODEL_PROVIDER_INPUT_INVALID", 400, "Provider preferences are invalid");
+    const result = ServiceModelProviderCatalogPreferencesSchema.parse(
+      await service.updateCatalogPreferences(context, parsed.data));
+    return apiResult(request, env, result);
   } catch (error) { throw mappedError(error); }
 }

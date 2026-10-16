@@ -97,3 +97,42 @@ remain enforced by Zod. The generated JSON Schema carries the closed structural 
 it does not encode the identifier equality refinement. The dedicated JSON fixture round-trips through
 the runtime schema and its canonical digest is registered. Extra authority fields and split identifiers
 are rejected by the runtime contract.
+
+## Global provider catalog contracts and branch-query compatibility
+
+Registry generation 12 registers the existing strict global service-model schemas in the `model` family,
+plus the previously unregistered `AiUsageObservationSchema`, four managed-ranking schemas,
+`ArtifactRevisionReadSchema`, current computer-agent dispatch list and summary schemas, and
+`ResearchRunHistoryQuerySchema`. These initial entries publish schema shape only:
+provider credential values are absent, catalog visibility remains presentation metadata, and catalog
+registration does not grant model-use or qualification authority.
+
+The g3 branch-query and V2 checkpoint digests recorded at generation 11 remain unchanged in history.
+The later `d37e72fd` source change added the optional aggregate `budget_exhaustion` receipt, tightened
+budget-stop validation, and made plan pairing reject historical unversioned retrieval traces. Those
+changes are breaking for strict g3 readers, so current identities advance by schema version:
+`BranchQueryLegResultSchema` v1:g3 to v2:g1, `BranchQueryResultSchema` v1:g3 to v2:g1, and the four
+V2 checkpoint/result schemas v2:g3 to v3:g1. The payload protocol literals remain unchanged.
+The new aggregate budget receipt is covered by the registered
+`research-branch-query-budget-exhaustion-v1` canonical fixture.
+
+`decodeLegacyResearchBranchCheckpointReadback` retains structural readback for g3 checkpoint/result
+objects and labels every result `READBACK_ONLY`. It does not run current cross-record authority
+refinements and is not used by workflow execution, model-use admission, or evidence-freeze admission.
+Current execution continues to require the request-digest and trace bindings enforced by the current
+schemas. The registry change does not require a D1/R2 migration.
+
+## Exact catalog model-use registration
+
+Registry generation 13 registers the five existing catalog model-use request, receipt, state, phase
+and failure-code schemas in the `research` family at version 1, generation 1. Each receives an
+`INITIAL` compatibility entry. Every earlier schema identity, digest, compatibility entry and
+canonical fixture remains unchanged. The new request fixture selects an exact generic provider/model
+tuple through an existing provider operation and rejects credentials and caller-supplied authority.
+
+This publication does not change those runtime wire schemas. Migrations 0157, 0158 and 0159 separately
+provide provider catalog preferences, exact catalog model-use authorization and provider-native v2
+evidence/revocation history. Their backup specs cover every persisted column and are selected only
+when the corresponding migrations are present; earlier backup inventories retain their existing
+shape. Registering metadata or retaining a qualification record does not grant inference permission
+or renew execution authority.

@@ -26,6 +26,7 @@ import {
 import { decodeModelRouteDeployment, type ModelRouteDeployment } from "@eliotr/platform-cloudflare";
 import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import type { ModelCallInput } from "@eliotr/research";
+import { bindResearchSynthesisOutputLanguage, type ResearchSynthesisOutputLanguage } from "./research-output-language.js";
 
 const SYNTHESIS_STAGE = "SYNTHESIZE" as const;
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -41,6 +42,8 @@ export interface ResearchSynthesisPromptDependenciesInput {
   readonly evidence_resolver: CloudflareEvidenceResolver;
   /** Explicitly installed by the server; no model or prompt defaults are selected here. */
   readonly trusted_parameters: TrustedModelPromptParameters;
+  /** Frozen v4 preference; absent on old runs to preserve their prompt behavior. */
+  readonly output_language?: ResearchSynthesisOutputLanguage;
   readonly request_timeout_ms: number;
 }
 
@@ -85,6 +88,8 @@ interface BoundSynthesisInput {
   readonly input: ModelCallInput;
   readonly deployment: ModelRouteDeployment;
   readonly context: EvidenceFreezeSynthesisContext;
+  readonly attempt_ref: string;
+  readonly request_sha256: string;
 }
 
 function fail(message: string, retryable = false, cause?: unknown): never {
@@ -278,6 +283,7 @@ export function createResearchSynthesisPromptDependencies(
     navigation: rawInput.navigation,
     evidence_resolver: rawInput.evidence_resolver,
     trusted_parameters: trustedParameters,
+    ...(rawInput.output_language === undefined ? {} : { output_language: rawInput.output_language }),
     request_timeout_ms: rawInput.request_timeout_ms,
   });
   const manifestReader = createResearchReferenceManifestReader({
@@ -286,26 +292,50 @@ export function createResearchSynthesisPromptDependencies(
     navigation: input.navigation,
   });
   const manifestService = createFrozenResearchReferenceManifestService(manifestReader);
+  const pending = new WeakMap<object, BoundSynthesisInput>();
 
-  async function readBound(rawModelInput: ModelCallInput, rawDeployment: ModelRouteDeployment): Promise<BoundSynthesisInput> {
-    const modelInput = snapshot(rawModelInput, "model call input");
-    const deployment = deploymentSnapshot(rawDeployment, "model deployment");
+  async function readCurrentStartedAttempt(): Promise<StartedResearchStageAttempt> {
     await input.navigation.current();
     if (input.navigation.access.principal_ref !== input.principal.principal_ref ||
         input.navigation.access.credential_generation !== input.principal.credential_generation) {
       fail("owner navigation is not current", true);
     }
-    const started = await readStartedResearchStageAttempt({
+    return readStartedResearchStageAttempt({
       database: input.database,
       operation_id: input.operation_id,
       stage: SYNTHESIS_STAGE,
       scope_snapshot_id: input.navigation.scope.snapshot_id,
       scope_snapshot_revision: input.navigation.scope.revision,
     }, input.principal);
+  }
+
+  async function readBound(rawModelInput: ModelCallInput, rawDeployment: ModelRouteDeployment): Promise<BoundSynthesisInput> {
+    const modelInput = snapshot(rawModelInput, "model call input");
+    const deployment = deploymentSnapshot(rawDeployment, "model deployment");
+    const started = await readCurrentStartedAttempt();
     const inputBytes = await readWorkflowObject(input.work_bucket, started.request.input_manifest, true);
     const frozen = await input.context.read({ request: started.request, principal: input.principal, input_bytes: inputBytes });
     validateModelBinding(modelInput, deployment, frozen);
-    return Object.freeze({ input: modelInput, deployment, context: frozen });
+    return Object.freeze({ input: modelInput, deployment, context: frozen,
+      attempt_ref: started.attempt_ref, request_sha256: started.request_sha256 });
+  }
+
+  async function revalidateBound(
+    rawModelInput: ModelCallInput,
+    rawDeployment: ModelRouteDeployment,
+    bound: BoundSynthesisInput,
+  ): Promise<void> {
+    const modelInput = snapshot(rawModelInput, "model call input");
+    const deployment = deploymentSnapshot(rawDeployment, "model deployment");
+    if (canonicalEvidenceJson(modelInput) !== canonicalEvidenceJson(bound.input) ||
+        !sameDeployment(deployment, bound.deployment)) {
+      fail("model input changed during synthesis prompt compilation");
+    }
+    const current = await readCurrentStartedAttempt();
+    if (current.attempt_ref !== bound.attempt_ref || current.request_sha256 !== bound.request_sha256) {
+      fail("synthesis stage authority changed during prompt compilation", true);
+    }
+    validateModelBinding(modelInput, deployment, bound.context);
   }
 
   return Object.freeze({
@@ -317,7 +347,7 @@ export function createResearchSynthesisPromptDependencies(
       const bound = await readBound(rawModelInput, deployment);
       const definition = bound.context.stage_ten_input.model_profile_definition;
       const candidateContext = candidateFindingContext(bound.context.branch_findings);
-      return Object.freeze({
+      const manifestInput = Object.freeze({
         evidence_pack: snapshot(bound.context.synthesis_evidence_pack ?? bound.context.stage_five.evidence_pack, "frozen evidence pack"),
         ...(candidateContext === undefined ? {} : {
           untrusted_candidate_context: candidateContext,
@@ -331,18 +361,25 @@ export function createResearchSynthesisPromptDependencies(
         model_route_ref: bound.deployment.route_ref,
         max_context_bytes: definition.max_context_bytes,
       });
+      pending.set(rawModelInput as unknown as object, bound);
+      return manifestInput;
     },
     resolve_trusted_parameters: async (
       rawModelInput: ModelCallInput,
       deployment: ModelRouteDeployment,
     ): Promise<TrustedModelPromptParameters> => {
-      const bound = await readBound(rawModelInput, deployment);
-      return Object.freeze({
+      const key = rawModelInput as unknown as object;
+      const cached = pending.get(key);
+      if (cached !== undefined) pending.delete(key);
+      const bound = cached ?? await readBound(rawModelInput, deployment);
+      if (cached !== undefined) await revalidateBound(rawModelInput, deployment, cached);
+      const parameters = Object.freeze({
         ...trustedParameters,
-        prompt: `${trustedParameters.prompt}\n\nResearch request:\n${canonicalEvidenceJson({
+        prompt: `${trustedParameters.prompt}\n\nAnswer the question directly using substantive passages. Each material claim should make one checkable assertion. Bibliography entries prove citations, not method adoption, mechanisms or results; do not substitute reference lists for an answer. State missing evidence briefly.\n\nResearch request:\n${canonicalEvidenceJson({
           research_question: bound.context.w1_head.goal,
         })}`,
       });
+      return bindResearchSynthesisOutputLanguage(parameters, input.output_language);
     },
     request_timeout_ms: input.request_timeout_ms,
   });

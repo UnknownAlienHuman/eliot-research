@@ -1,8 +1,10 @@
 import type { ModelCallReceipt, ModelRoutePort } from "@eliotr/research";
+import { isModelGatewayPromptCompileFailure } from "@eliotr/cloudflare-ai";
 import {
   digest, MAX_WORKFLOW_OUTPUT_BYTES, WorkflowCheckpointError, workflowFailure,
   type WorkflowAttemptRecoveryInput, type WorkflowPrincipal, type WorkflowStageHandler,
   type StageRequest,
+  type WorkflowFailureOutcome,
 } from "@eliotr/cloudflare-workflows";
 import type {
   ModelAttemptReadback,
@@ -77,6 +79,32 @@ function uncertain(message: string): never {
   const error = new WorkflowCheckpointError("WORKFLOW_EFFECT_UNCERTAIN");
   error.message = message;
   throw error;
+}
+
+const PROMPT_COMPILE_FAILED = "MODEL_GATEWAY_PROMPT_COMPILE_FAILED";
+const PROMPT_NOT_DISPATCHED = "MODEL_GATEWAY_PROMPT_COMPILE_NOT_DISPATCHED";
+
+function promptCompileFailure(stage: StageRequest["stage"]): WorkflowCheckpointError {
+  const failure: WorkflowFailureOutcome = {
+    protocol: "eliotr.workflow-failure-outcome.v1", code: PROMPT_COMPILE_FAILED,
+    phase: "STAGE", stage, retryable: false, dispatch_state: "NOT_STARTED",
+    // Compiler provenance proves non-dispatch, not that its references are valid.
+    references_intact: "UNKNOWN", recovery_action: "NONE",
+  };
+  return new WorkflowCheckpointError("WORKFLOW_PREPARATION_FAILED", failure);
+}
+
+function isSettledPromptCompileFailure(readback: ModelAttemptReadback): boolean {
+  const receipt = readback.operation_receipt;
+  return readback.state === "FAILED" && readback.persisted_state === "FAILED" &&
+    readback.error_code === PROMPT_COMPILE_FAILED && readback.receipt === null && readback.output === null &&
+    readback.reason_codes.length === 2 && readback.reason_codes[0] === PROMPT_NOT_DISPATCHED &&
+    readback.reason_codes[1] === PROMPT_COMPILE_FAILED && receipt !== null && receipt.outcome === "FAILED" &&
+    receipt.attempt_id === readback.attempt_id && receipt.intent_ref.id === readback.intent.intent_ref.id &&
+    receipt.intent_ref.revision === readback.intent.intent_ref.revision && !receipt.reconciliation_required &&
+    receipt.output_refs.length === 0 && receipt.readback_receipt_refs.length === 0 &&
+    receipt.reason_codes.length === 2 && receipt.reason_codes[0] === PROMPT_NOT_DISPATCHED &&
+    receipt.reason_codes[1] === PROMPT_COMPILE_FAILED;
 }
 
 function corrupt(message: string): never {
@@ -214,8 +242,11 @@ async function readSucceededAttempt(
   dependencies: GovernedModelAttemptDependencies,
   readback: ModelAttemptReadback | null,
   input: { readonly principal_ref: string; readonly credential_generation: string; readonly deployment_generation: string; readonly workflow_budget_receipt_ref: string; readonly operation_id: string; readonly operation_kind: GovernedModelAttemptDependencies["operation_kind"]; readonly idempotency_key: string; readonly scope_id: string; readonly output_object_ref: string; readonly stage_attempt_ref: string; readonly stage_request_sha256: string },
+  stage: StageRequest["stage"],
 ): Promise<Uint8Array | null> {
   if (readback === null) return null;
+  validateReadbackBinding(readback, input);
+  if (isSettledPromptCompileFailure(readback)) throw promptCompileFailure(stage);
   const output = validateReadbackIdentity(readback, input);
   return readBoundOutput(dependencies, output);
 }
@@ -279,6 +310,26 @@ export function createGovernedModelAttemptHandler(
     throw new WorkflowCheckpointError("WORKFLOW_OUTPUT_UNAVAILABLE");
   }
 
+  async function settlePromptCompileFailure(
+    attemptId: string, cause: unknown, stage: StageRequest["stage"],
+    binding: Parameters<typeof validateReadbackBinding>[1],
+  ): Promise<never> {
+    try {
+      const settled = await dependencies.attempts.settleAttempt({
+        attempt_id: attemptId, state: "FAILED", error_code: PROMPT_COMPILE_FAILED,
+        reason_codes: [PROMPT_NOT_DISPATCHED],
+      });
+      validateReadbackBinding(settled, binding);
+      if (settled.attempt_id !== attemptId || !isSettledPromptCompileFailure(settled)) {
+        uncertain("prompt compiler failure was not durably recorded");
+      }
+    } catch {
+      // A missing/ambiguous settlement cannot become a settled no-effect result.
+      throw modelRouteFailure(cause, stage);
+    }
+    throw promptCompileFailure(stage);
+  }
+
   async function recoverStartedAttempt(input: WorkflowAttemptRecoveryInput): Promise<Uint8Array | null> {
     const identity = await deriveModelAttemptIdentity({
       stage_request_sha256: input.request_sha256, principal_ref: input.principal_ref,
@@ -295,7 +346,7 @@ export function createGovernedModelAttemptHandler(
       operation_kind: dependencies.operation_kind, idempotency_key: identity.idempotency_key,
       scope_id: input.request.input_manifest.residency.scope_domain_id, output_object_ref: model_output_object_ref,
       stage_attempt_ref: input.attempt_ref, stage_request_sha256: input.request_sha256,
-    });
+    }, input.request.stage);
   }
 
   async function handler(input: Parameters<WorkflowStageHandler>[0]): Promise<Uint8Array> {
@@ -342,11 +393,7 @@ export function createGovernedModelAttemptHandler(
       idempotency_key: identity.idempotency_key,
     });
     if (existing !== null) {
-      validateReadbackBinding(existing, replayInput);
-      if (existing.state !== "SUCCEEDED" || existing.persisted_state !== "SUCCEEDED") {
-        uncertain("existing model attempt is not a succeeded replay");
-      }
-      const recovered = await readSucceededAttempt(dependencies, existing, replayInput);
+      const recovered = await readSucceededAttempt(dependencies, existing, replayInput, input.request.stage);
       if (recovered === null) uncertain("existing model attempt replay has no durable output");
       return recovered;
     }
@@ -380,7 +427,7 @@ export function createGovernedModelAttemptHandler(
          operation_kind: dependencies.operation_kind, idempotency_key: identity.idempotency_key,
         scope_id: input.request.input_manifest.residency.scope_domain_id, output_object_ref: model_output_object_ref,
         stage_attempt_ref: input.attempt_ref, stage_request_sha256,
-      });
+      }, input.request.stage);
       if (recovered === null) uncertain("model attempt is not durably succeeded");
       return recovered;
     }
@@ -428,7 +475,12 @@ export function createGovernedModelAttemptHandler(
     if (quoteExpired(prepared.authority.expires_at, dependencies.now?.() ?? Date.now())) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_AUTHORITY_STALE");
     let receipt: ModelCallReceipt;
     try { receipt = await timed("gateway_execute", () => dependencies.route.execute(prepared.call)); }
-    catch (cause) { throw modelRouteFailure(cause, input.request.stage); }
+    catch (cause) {
+      if (isModelGatewayPromptCompileFailure(cause, prepared.call)) {
+        return settlePromptCompileFailure(startedAttemptId, cause, input.request.stage, replayInput);
+      }
+      throw modelRouteFailure(cause, input.request.stage);
+    }
     if (receipt.output_object_ref !== model_output_object_ref) corrupt("model receipt output is bound to a different model object");
     const output: ModelOutputBinding = {
       output_object_ref: model_output_object_ref, output_sha256: receipt.output_sha256, output_size_bytes: 0, readback_sha256: receipt.output_sha256,
@@ -454,7 +506,7 @@ export function createGovernedModelAttemptHandler(
        operation_kind: dependencies.operation_kind, idempotency_key: identity.idempotency_key,
       scope_id: input.request.input_manifest.residency.scope_domain_id, output_object_ref: model_output_object_ref,
       stage_attempt_ref: input.attempt_ref, stage_request_sha256,
-    }));
+    }, input.request.stage));
     if (settledBytes === null) uncertain("model settlement readback is missing");
     emitTimings();
     if (postFetchCode !== undefined) throw new WorkflowCheckpointError(postFetchCode);

@@ -30,6 +30,9 @@
     "./research-provider-key-model-pricing.js": "./src/research-provider-key-model-pricing.ts",
     "./research-provider-key-model-pricing-catalog.js": "./src/research-provider-key-model-pricing-catalog.ts",
     "./research-provider-key-model-price-observation-store.js": "./src/research-provider-key-model-price-observation-store.ts",
+    "./research-catalog-model-pricing.js": "./src/research-catalog-model-pricing.ts",
+    "./research-catalog-model-v2-probe-executor.js": "./src/research-catalog-model-v2-probe-executor.ts",
+    "./research-catalog-model-use-store.js": "./src/research-catalog-model-use-store.ts",
     "./research-qualification-renewal.js": "./src/research-qualification-renewal.ts"
   },
   "types": "./src/index.ts",

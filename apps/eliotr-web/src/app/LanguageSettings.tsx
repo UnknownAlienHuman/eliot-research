@@ -13,7 +13,7 @@ export function LanguageSettings({ locale, onChange }: {
       <option value="en" lang="en">English</option>
       <option value="ru" lang="ru">Русский</option>
     </select>
-    <p>{locale === "ru" ? "Выбор сохраняется в этом браузере. Язык ответов следует языку вопроса."
-      : "Your choice is saved in this browser. Answers follow the language of your question."}</p>
+    <p>{locale === "ru" ? "Выбор сохраняется в этом браузере. Новые отчёты используют выбранный язык."
+      : "Your choice is saved in this browser. New reports use the selected language."}</p>
   </section>;
 }

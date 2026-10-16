@@ -1,0 +1,140 @@
+{
+  "budget_exhaustion": {
+    "executed_query_refs": [
+      {
+        "query_id": "query-one",
+        "query_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ],
+    "exhausted_dimension": "CANDIDATE_UNITS",
+    "protocol": "eliotr.research.branch-query-budget-exhaustion.v1",
+    "query_plan_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "query_plan_ref": {
+      "id": "query-plan-fixture",
+      "revision": 1
+    },
+    "settlements": [
+      {
+        "query_id": "query-one",
+        "request_budgets": {
+          "candidate_limit": 1,
+          "evidence_limit": 4,
+          "max_evidence_bytes": 4096,
+          "scan_limit": 4
+        },
+        "retrieval_request_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "usage": {
+          "candidateUnitsUsed": 1,
+          "evidenceBytesUsed": 0,
+          "evidenceItemsUsed": 0,
+          "exactResolverScanUnitsUsed": 0
+        }
+      }
+    ],
+    "unexecuted_query_refs": [
+      {
+        "query_id": "query-two",
+        "query_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "failure_disposition": "NONE",
+  "identity_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "omitted_candidate_refs": [
+    "candidate-omitted"
+  ],
+  "protocol": "eliotr.research.branch-query-result.v1",
+  "query_legs": [
+    {
+      "omitted_candidates": [
+        {
+          "candidate_id": "candidate-omitted",
+          "reason_code": "CANDIDATE_LIMIT"
+        }
+      ],
+      "query_id": "query-one",
+      "query_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "resolved_handle_refs": [],
+      "retrieval_request_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope_snapshot_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "scope_snapshot_ref": {
+        "id": "scope-fixture",
+        "revision": 1
+      },
+      "status": "COMPLETED",
+      "stop_reason": "CANDIDATE_BUDGET",
+      "trace": {
+        "budget_receipt_ref": "budget-fixture",
+        "candidates_by_lane": {
+          "ARGUMENT": 0,
+          "ARTIFACT": 0,
+          "ATLAS": 0,
+          "ATOM": 0,
+          "CODE": 0,
+          "EXACT": 0,
+          "EXHAUSTIVE": 0,
+          "IDENT": 0,
+          "LEX": 0,
+          "LITERAL": 0,
+          "SEM": 0,
+          "SOURCECARD": 0,
+          "STRUCTURE": 0,
+          "VERIFY": 0,
+          "WEB": 0,
+          "WIKI": 0
+        },
+        "context_expansion": 0,
+        "exact_probes": [],
+        "expansion_refs": [],
+        "index_generations": [],
+        "lanes_skipped": [],
+        "lanes_used": [
+          "LEX"
+        ],
+        "omitted_sources": [],
+        "query_product": "RESEARCH",
+        "raw_query": "bounded support query",
+        "represented_source_refs": [],
+        "scope_snapshot": {
+          "created_at": "2026-10-16T12:00:00.000Z",
+          "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "disclosure_closure_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "expires_at": "2026-10-17T12:00:00.000Z",
+          "member_source_revision_refs": [],
+          "participant_generations": {},
+          "policy_authority_ref": "policy-fixture",
+          "purge_ledger_revision": 0,
+          "resolved_scope_expression": {
+            "kind": "GLOBAL_LIBRARY"
+          },
+          "revision": 1,
+          "snapshot_id": "scope-fixture",
+          "source_owner_generations": {}
+        },
+        "stale_or_degraded_channels": [],
+        "trace_ref": {
+          "id": "trace-query-one",
+          "revision": 1
+        }
+      }
+    }
+  ],
+  "query_plan_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "query_plan_ref": {
+    "id": "query-plan-fixture",
+    "revision": 1
+  },
+  "query_result_ref": {
+    "id": "eliotr.research.branch-query-result-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "revision": 1
+  },
+  "resolved_evidence": [],
+  "role": "SUPPORT",
+  "scope_snapshot_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "scope_snapshot_ref": {
+    "id": "scope-fixture",
+    "revision": 1
+  },
+  "stop_reason": "BUDGET_EXHAUSTED",
+  "total_utf8_bytes": 0
+}

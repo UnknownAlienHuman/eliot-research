@@ -28,6 +28,11 @@ import {
   RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_PROTOCOL,
   type ResearchBranchQueryBudgetSelection,
 } from "@eliotr/cloudflare-research-configuration/research-run-configuration.js";
+import {
+  captureResearchRunConfiguration as captureFrozenRunConfiguration,
+  type InstalledNativeResearchConfiguration,
+  type ResearchRunConfigurationRuntimePort,
+} from "@eliotr/cloudflare-research-configuration/research-run-configuration.js";
 
 const actor = Object.freeze({
   operation_id: "run-config-core-1",
@@ -103,6 +108,7 @@ function selectedProjectConfiguration(input: {
   readonly owner_ref: string;
   readonly selection_revision: number;
   readonly spend_policy_json?: string;
+  readonly report_json?: string;
 }): SelectedResearchProjectConfiguration {
   const modelSelection = (stage: string, route: string) => ({ stage, route_ref: route, route_version: "version-1",
     candidate_ref: `candidate-${stage.toLowerCase()}`, candidate_sha256: "b".repeat(64),
@@ -122,7 +128,7 @@ function selectedProjectConfiguration(input: {
       ELIOTR_MODEL_SPEND_POLICY_JSON: input.spend_policy_json ??
         canonicalJson({ protocol: "eliotr.research-owner-spend-template.v2" }),
       ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF: "spend-provenance-1",
-      ELIOTR_RESEARCH_REPORT_CONFIG_JSON: canonicalJson({ report: "selected" }),
+      ELIOTR_RESEARCH_REPORT_CONFIG_JSON: input.report_json ?? canonicalJson({ report: "selected" }),
       ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF: "report-provenance-1",
       [RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON_KEY]: input.profile_json,
     },
@@ -320,6 +326,128 @@ describe("research run configuration binding", () => {
     expect(initial.branch_query_budget_selection?.profile_id).toBe("profile-captured");
     expect(initial.branch_query_budget_selection?.budgets.candidate_limit).toBe(7);
     expect(replay.branch_query_budget_selection).toEqual(initial.branch_query_budget_selection);
+  });
+
+  it("freezes an explicit output language into this run's report policy and preserves omitted behavior", async () => {
+    const reportJson = canonicalJson({ schema: "eliotr.research.report-config.v1", admission_policy: {},
+      artifact_policy: { title: "Ответ по документам", language: "ru", section_contract: {
+        title: "Ответ", purpose: "Ответ на вопрос по документу с источниками, контраргументами и ограничениями",
+      } } });
+    const selected = selectedProjectConfiguration({ profile_json: ownerProfileJson({
+      profile_id: "profile-language-1", profile_generation: 1, candidate_limit: 4,
+    }), owner_ref: actor.principal_ref, selection_revision: 5, report_json: reportJson });
+    const englishState = memoryDatabase();
+    const englishEnv = { ...testEnv(englishState.database), ELIOTR_MODEL_GATEWAY_TOKEN: "test-gateway-token" } as Env;
+    const englishResult = await captureResearchRunConfiguration(englishEnv, { ...actor, output_language: "en",
+      select_project_configuration: async () => selected });
+    const englishSnapshot = JSON.parse([...englishState.configurations.values()][0]?.configuration_json ?? "{}") as {
+      readonly report: { readonly config_json: string; readonly output_language?: string };
+    };
+    expect(englishResult.output_language).toBe("en");
+    expect(englishSnapshot.report.output_language).toBe("en");
+    expect(JSON.parse(englishSnapshot.report.config_json)).toMatchObject({ artifact_policy: {
+      title: "Research answer", language: "en", section_contract: { title: "Answer",
+        purpose: "Evidence-backed answer with sources, counterarguments, and limitations" },
+    } });
+
+    const unchangedState = memoryDatabase();
+    const unchangedEnv = { ...testEnv(unchangedState.database), ELIOTR_MODEL_GATEWAY_TOKEN: "test-gateway-token" } as Env;
+    await captureResearchRunConfiguration(unchangedEnv, { ...actor,
+      select_project_configuration: async () => selected });
+    const unchangedSnapshot = JSON.parse([...unchangedState.configurations.values()][0]?.configuration_json ?? "{}") as {
+      readonly report: { readonly config_json: string; readonly output_language?: string };
+    };
+    expect(unchangedSnapshot.report.config_json).toBe(reportJson);
+    expect(unchangedSnapshot.report.output_language).toBeUndefined();
+  });
+
+  it("does not write a run snapshot if the selected configuration becomes ineligible during capture", async () => {
+    const { database, configurations } = memoryDatabase();
+    const env = { ...testEnv(database), ELIOTR_MODEL_GATEWAY_TOKEN: "test-gateway-token" } as Env;
+    const selected = selectedProjectConfiguration({ profile_json: ownerProfileJson({
+      profile_id: "profile-revoked-1", profile_generation: 2, candidate_limit: 4,
+    }), owner_ref: actor.principal_ref, selection_revision: 6 });
+    let reads = 0;
+    await expect(captureResearchRunConfiguration(env, { ...actor,
+      selected_project_configuration_pin: { configuration_project_id: selected.project_id ?? "",
+        configuration_ref: selected.configuration_ref, configuration_sha256: selected.configuration_sha256,
+        selection_revision: selected.selection_revision },
+      select_project_configuration: async () => {
+        reads += 1;
+        return reads === 1 ? selected : null;
+      } })).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+    expect(reads).toBe(2);
+    expect(configurations.size).toBe(0);
+  });
+
+  it("rejects a stale selected revision before creating a snapshot or using another configuration", async () => {
+    const { database, configurations } = memoryDatabase();
+    const env = { ...testEnv(database), ELIOTR_MODEL_GATEWAY_TOKEN: "test-gateway-token" } as Env;
+    const selected = selectedProjectConfiguration({ profile_json: ownerProfileJson({
+      profile_id: "profile-stale-pin-1", profile_generation: 3, candidate_limit: 4,
+    }), owner_ref: actor.principal_ref, selection_revision: 8 });
+    let reads = 0;
+    await expect(captureResearchRunConfiguration(env, { ...actor,
+      selected_project_configuration_pin: { configuration_project_id: selected.project_id ?? "",
+        configuration_ref: selected.configuration_ref, configuration_sha256: selected.configuration_sha256,
+        selection_revision: 7 },
+      select_project_configuration: async () => {
+        reads += 1;
+        return selected;
+      } })).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+    expect(reads).toBe(1);
+    expect(configurations.size).toBe(0);
+  });
+
+  it("captures an explicit builtin Cloudflare model from installed qualification without a project config or key", async () => {
+    const state = memoryDatabase();
+    const modelId = "@cf/meta/llama-3.1-8b-instruct";
+    const installedBundle = JSON.parse(selectedProjectConfiguration({
+      profile_json: ownerProfileJson({ profile_id: "installed-native-1", profile_generation: 1, candidate_limit: 4 }),
+      owner_ref: actor.principal_ref,
+      selection_revision: 1,
+      report_json: canonicalJson({ schema: "eliotr.research.report-config.v1", admission_policy: {},
+        artifact_policy: { title: "Ответ по документам", language: "ru", section_contract: {
+          title: "Ответ", purpose: "Ответ на вопрос по документу с источниками, контраргументами и ограничениями",
+        } } }),
+    }).configuration_json) as { readonly vars: InstalledNativeResearchConfiguration["vars"];
+      readonly model_selections: InstalledNativeResearchConfiguration["model_selections"] };
+    const installed: InstalledNativeResearchConfiguration = {
+      vars: installedBundle.vars,
+      model_selections: installedBundle.model_selections.map((selection) => selection.stage === "SYNTHESIZE"
+        ? { ...selection, transport_policy: { ...selection.transport_policy, model: modelId } }
+        : selection),
+    };
+    let installedReads = 0;
+    const port: ResearchRunConfigurationRuntimePort<Record<string, unknown>> = {
+      database: state.database,
+      semantic_source: () => ({ revision_ref: `scr-${sha256(semantic).slice(0, 12)}`,
+        config_sha256: sha256(semantic) }),
+      model_transport_available: () => true,
+      installed_native_configuration: async (_env, ownerRef, projectId) => {
+        installedReads += 1;
+        expect(ownerRef).toBe(actor.principal_ref);
+        expect(projectId).toBeUndefined();
+        return installed;
+      },
+      overlay_snapshot: (environment, snapshot) => ({ ...environment,
+        report_config: snapshot.report.config_json,
+        output_language: snapshot.report.output_language,
+      }),
+    };
+    const result = await captureFrozenRunConfiguration({}, { ...actor,
+      allow_installed_native_default: true,
+      installed_native_model_pin: { expected_model_id: modelId },
+      output_language: "en",
+      require_current_configuration_scope: async () => {},
+    }, port);
+    expect(result.project_id).toBeNull();
+    expect(result.project_configuration_ref).toBeNull();
+    expect(result.model_selections.find((selection) => selection.stage === "SYNTHESIZE")?.transport_policy.model)
+      .toBe(modelId);
+    expect(result.output_language).toBe("en");
+    expect(installedReads).toBe(2);
+    expect(state.configurations.size).toBe(1);
   });
 
   it("captures grantor configuration and spend under the service actor, denying foreign or revoked grants", async () => {

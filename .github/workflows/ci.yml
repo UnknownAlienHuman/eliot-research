@@ -61,6 +61,8 @@ jobs:
       - run: corepack prepare pnpm@11.23.0 --activate
       - name: Install frozen dependencies
         run: pnpm install --frozen-lockfile
+      - name: Install browser for legacy research history tests
+        run: pnpm --dir packages/ui exec playwright install --with-deps chromium
       - name: Record complete root test discovery without executing tests
         run: |
           pnpm --silent test:root:list --json > "$RUNNER_TEMP/root-vitest-files.json"

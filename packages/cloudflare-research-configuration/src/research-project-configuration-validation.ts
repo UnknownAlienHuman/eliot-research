@@ -11,7 +11,10 @@ import {
   decodeModelRouteDeployment,
   type ModelRouteDeployment,
 } from "@eliotr/platform-cloudflare";
-import type { ProviderNativeModelAuthorityPort } from "@eliotr/cloudflare-native-models";
+import type {
+  ProviderNativeModelAuthorityPort,
+  ProviderNativeModelCatalogV2AuthorityPort,
+} from "@eliotr/cloudflare-native-models";
 import {
   createD1DynamicRouteQualificationProofStore,
   createD1ModelGatewayDeploymentRegistry,
@@ -258,7 +261,8 @@ export function createResearchProjectModelConfigurationValidator(options: {
   readonly deployment_generation?: string;
   readonly now?: () => number;
 }): (raw: unknown, expectedOwner: string, project: string | undefined,
-  nativeAuthority?: ProviderNativeModelAuthorityPort) => Promise<ConfigurationValidation> {
+  nativeAuthority?: ProviderNativeModelAuthorityPort,
+  catalogNativeAuthority?: ProviderNativeModelCatalogV2AuthorityPort) => Promise<ConfigurationValidation> {
   const now = options.now ?? (() => Date.now());
   const environment = options.deployment_environment ?? "PRODUCTION";
   const deployments = createD1ModelGatewayDeploymentRegistry(options.database, { environment });
@@ -270,6 +274,7 @@ export function createResearchProjectModelConfigurationValidator(options: {
     expectedOwner: string,
     project: string | undefined,
     nativeAuthority?: ProviderNativeModelAuthorityPort,
+    catalogNativeAuthority?: ProviderNativeModelCatalogV2AuthorityPort,
   ): Promise<ConfigurationValidation> {
     const storeDecoded = await decodeResearchProjectModelConfigurationBundle(raw);
     const bundle = storeDecoded.bundle;
@@ -424,6 +429,47 @@ export function createResearchProjectModelConfigurationValidator(options: {
             preparation.stage !== selection.stage || !same(preparation.deployment, rule.deployment) ||
             !same(resolvedNative.selection.transport_policy, transport)) {
           qualificationRequired(`${rule.stage} provider-native candidate differs from the exact saved application tuple`);
+        }
+        if (selection.stage === "SYNTHESIZE" || selection.stage === "AUDIT_CLAIMS") {
+          await validateOwnerPromptBinding(semantic, selection.stage, rule.deployment, transport);
+        }
+        continue;
+      }
+      if (selection.candidate_kind === "provider-native-v2") {
+        if (version !== "v2" || catalogNativeAuthority === undefined || project === undefined) {
+          qualificationRequired(`${rule.stage} provider-native v2 authority is unavailable for this configuration`);
+        }
+        let resolvedCatalog;
+        try {
+          resolvedCatalog = await catalogNativeAuthority.resolvePinned({ selection, owner_ref: expectedOwner,
+            project_id: project, allow_expired_snapshot_v2: true });
+        } catch (cause) {
+          qualificationRequired(`${rule.stage} exact provider-native v2 proof is missing, revoked, stale, or mismatched`, cause);
+        }
+        const preparation = resolvedCatalog.candidate.candidate.preparation;
+        const qualification = resolvedCatalog.proof.qualification;
+        const observation = resolvedCatalog.observation;
+        if (resolvedCatalog.selection.stage !== selection.stage ||
+            resolvedCatalog.selection.route_ref !== rule.deployment.route_ref ||
+            resolvedCatalog.selection.route_version !== rule.deployment.route_version ||
+            preparation.owner_ref !== expectedOwner || preparation.project_id !== project ||
+            preparation.owner_operation_id !== preparation.consent_operation_id ||
+            preparation.stage !== selection.stage || !same(preparation.deployment, rule.deployment) ||
+            preparation.provider_slug !== transport.provider || preparation.model_id !== transport.model ||
+            preparation.provider_id.length === 0 || preparation.provider_operation_id !== preparation.key_binding.operation_id ||
+            qualification.owner_ref !== expectedOwner || qualification.project_id !== project ||
+            qualification.consent_operation_id !== preparation.consent_operation_id ||
+            qualification.provider_id !== preparation.provider_id || qualification.provider_slug !== preparation.provider_slug ||
+            qualification.provider_operation_id !== preparation.provider_operation_id || qualification.model_id !== preparation.model_id ||
+            qualification.pricing_snapshot_ref !== preparation.pricing_snapshot_ref ||
+            qualification.pricing_snapshot_sha256 !== preparation.pricing_snapshot_sha256 ||
+            qualification.catalog_sdk !== preparation.catalog_sdk || qualification.sdk_base_url !== preparation.sdk_base_url ||
+            qualification.catalog_metadata_sha256 !== preparation.catalog_metadata_sha256 ||
+            observation.provider_id !== preparation.provider_id || observation.provider_slug !== preparation.provider_slug ||
+            observation.model_id !== preparation.model_id || observation.response_model !== preparation.model_id ||
+            observation.api !== transport.api || observation.consent_request_sha256 !== preparation.request_sha256 ||
+            !same(resolvedCatalog.selection.transport_policy, transport)) {
+          qualificationRequired(`${rule.stage} provider-native v2 candidate differs from the exact saved application tuple`);
         }
         if (selection.stage === "SYNTHESIZE" || selection.stage === "AUDIT_CLAIMS") {
           await validateOwnerPromptBinding(semantic, selection.stage, rule.deployment, transport);

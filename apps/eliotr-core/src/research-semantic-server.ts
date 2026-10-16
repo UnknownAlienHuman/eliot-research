@@ -34,6 +34,7 @@ import type { ResearchStageHandlerFactory } from "@eliotr/cloudflare-research-ru
 import { requireResearchDeploymentCompatibility } from "./research-deployment-compatibility.js";
 import { routeResearchComputerAgentStages } from "./research-external-agent-routing.js";
 import { createResearchSemanticNativeModelRuntime } from "./research-semantic-native-model-runtime.js";
+import type { ProviderNativeModelCatalogV2PricingReader } from "@eliotr/cloudflare-native-models";
 import { createResearchNativeCaptureOwner } from "./research-native-capture-owner.js";
 import { composeResearchModelGatewayConfiguration } from "./research-prepared-model-transport.js";
 import {
@@ -97,6 +98,7 @@ export interface ResearchSemanticServerInput {
   readonly navigation: NavigationReadAuthority;
   readonly ledger: Pick<InvestigationLedgerStore, "read">;
   readonly initial_manifest: WorkflowObject;
+  readonly catalog_pricing_snapshots?: ProviderNativeModelCatalogV2PricingReader;
 }
 
 /** The actual Worker binding/configuration assembly used by HTTP, DO and Workflow execution. */
@@ -126,7 +128,9 @@ async function assembleResearchSemanticServerHandlers(input: ResearchSemanticSer
       project_configuration_sha256: runConfiguration.project_configuration_sha256,
       model_selections: runConfiguration.model_selections });
   const nativeModelRuntime = createResearchSemanticNativeModelRuntime({ env, run_configuration: snapshotRunConfiguration,
-    owner_ref: principal.principal_ref });
+    owner_ref: principal.principal_ref,
+    ...(input.catalog_pricing_snapshots === undefined ? {} : { catalog_pricing_snapshots: input.catalog_pricing_snapshots }),
+  });
   let gateway: ResearchModelGatewayRuntimeConfig;
   try {
     const selected = resolveResearchSelectedModelTransport({ stage: "SYNTHESIZE",
@@ -236,6 +240,7 @@ async function assembleResearchSemanticServerHandlers(input: ResearchSemanticSer
     initial_manifest: input.initial_manifest,
     handler_generation: handlerGeneration,
     ...(snapshotRunConfiguration === undefined ? {} : { run_configuration: snapshotRunConfiguration }),
+    ...(runConfiguration.output_language === undefined ? {} : { output_language: runConfiguration.output_language }),
     ...(branchQueryBudgetSelection === undefined ? {} : {
       branch_query_budget_selection: branchQueryBudgetSelection,
     }),

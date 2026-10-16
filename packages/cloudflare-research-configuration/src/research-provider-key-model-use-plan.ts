@@ -88,8 +88,22 @@ export interface ResearchProviderKeyModelUseSemanticConfigurationV1 {
   readonly revision_ref: string | null;
 }
 
+/** The v1 service remains OpenRouter-only; catalog v2 binds other logical providers by exact consent. */
+export type ResearchProviderKeyModelUseCatalogProviderBinding = Omit<ConfiguredResearchProviderKeyOperation, "provider_id"> & {
+  readonly provider_id: string;
+};
+
 export interface ResearchProviderKeyModelUseSemanticSourceV1 {
   resolve(database: D1Database): Promise<ResearchProviderKeyModelUseSemanticConfigurationV1>;
+}
+
+/** Exact owner-selected catalog identity supplied only by the catalog-use application. */
+export interface ResearchProviderKeyModelUseCatalogSelectionV1 {
+  readonly provider_id: string;
+  readonly provider_operation_id: string;
+  readonly route_provider_id: string;
+  readonly model_id: string;
+  readonly transport_policy: ModelGatewayTransportPolicyV1;
 }
 
 function fail(message: string, cause?: unknown): never {
@@ -143,10 +157,37 @@ function jsonSchemaPrompt(
   return fail(`${stage} prompt/schema is not an installed owner prompt`);
 }
 
-function selectedModelId(key: ConfiguredResearchProviderKeyOperation, selected: SelectedResearchProjectConfiguration | null): string {
+function selectedModelId(
+  key: ResearchProviderKeyModelUseCatalogProviderBinding,
+  selected: SelectedResearchProjectConfiguration | null,
+  catalogSelection?: ResearchProviderKeyModelUseCatalogSelectionV1,
+): string {
+  if (catalogSelection !== undefined && key.model_registry === undefined) {
+    if (key.provider_id !== catalogSelection.provider_id || key.operation_id !== catalogSelection.provider_operation_id) {
+      fail("Exact catalog model is not authorized by the selected global provider operation");
+    }
+    return catalogSelection.model_id;
+  }
   if (key.model_registry === undefined) return LEGACY_MODEL_ID;
   const parsed = ServiceModelProviderCreateRequestSchema.shape.model_ids.safeParse(key.model_registry.model_ids);
-  if (key.model_registry.operation_id !== key.operation_id || !parsed.success) fail("Global model registration is invalid");
+  if (key.model_registry.operation_id !== key.operation_id ||
+      key.model_registry.model_registration_mode === "explicit_allowlist" && !parsed.success ||
+      key.model_registry.model_registration_mode === "catalog_managed" &&
+        (!Array.isArray(key.model_registry.model_ids) || key.model_registry.model_ids.length !== 0)) {
+    fail("Global model registration is invalid");
+  }
+  if (catalogSelection !== undefined) {
+    if (key.provider_id !== catalogSelection.provider_id || key.operation_id !== catalogSelection.provider_operation_id ||
+        (key.model_registry.model_registration_mode === "catalog_managed" && parsed.success && parsed.data.length !== 0) ||
+        (key.model_registry.model_registration_mode === "explicit_allowlist" && !parsed.success)) {
+      fail("Exact catalog model is not authorized by the selected global provider operation");
+    }
+    return catalogSelection.model_id;
+  }
+  if (key.model_registry.model_registration_mode === "catalog_managed") {
+    fail("Catalog-managed model use requires one exact owner catalog selection");
+  }
+  if (!parsed.success) fail("Global model registration is invalid");
   const registeredIds = [...new Set(parsed.data)];
   const onlyRegistered = registeredIds[0];
   if (registeredIds.length === 1 && onlyRegistered !== undefined) return onlyRegistered;
@@ -163,11 +204,31 @@ function modelTransportPolicy(
   raw: string | undefined,
   stage: ResearchProviderKeyModelUseStage,
   base: ModelRouteDeployment,
-  key: ConfiguredResearchProviderKeyOperation,
+  key: ResearchProviderKeyModelUseCatalogProviderBinding,
   selectedConfiguration: SelectedResearchProjectConfiguration | null,
   modelId: string,
+  catalogSelection?: ResearchProviderKeyModelUseCatalogSelectionV1,
 ): ModelGatewayTransportPolicyV1 {
+  if (catalogSelection !== undefined) {
+    let selected: ModelGatewayTransportPolicyV1;
+    try { selected = validateModelGatewayTransportPolicy(catalogSelection.transport_policy); }
+    catch (cause) { return fail(`${stage} catalog transport policy is invalid`, cause); }
+    if (selected.provider !== catalogSelection.route_provider_id || selected.model !== modelId ||
+        selected.billing.mode !== "byok" || selected.billing.alias !== key.alias || key.alias === "default") {
+      fail(`${stage} catalog policy does not match the exact global connection and selected model`);
+    }
+    if (catalogSelection.provider_id === "openrouter" &&
+        (selected.api !== "openrouter-chat-completions" || selected.billing.free_only !== true ||
+         selected.capabilities.max_output_tokens_field !== "max_tokens" ||
+         selected.capabilities.response_format_normalization !== "json-schema-to-json-object")) {
+      fail(`${stage} OpenRouter catalog policy differs from the existing free-only probe contract`);
+    }
+    return selected;
+  }
   if (key.model_registry !== undefined) {
+    if (key.model_registry.model_registration_mode === "catalog_managed") {
+      fail("Catalog-managed model use requires a server-authorized exact policy");
+    }
     if (key.alias === "default") fail("Global model use requires its exact non-default saved alias");
     // This is the existing OpenRouter free-only request contract. Endpoint
     // metadata and the real connectivity qualification still admit the model.
@@ -361,9 +422,10 @@ export async function createResearchProviderKeyModelUseBasis(input: {
   readonly runtime_policy: ResearchProviderKeyModelUseRuntimePolicyV1;
   readonly semantic_source: ResearchProviderKeyModelUseSemanticSourceV1;
   readonly selected: SelectedResearchProjectConfiguration | null;
-  readonly key: ConfiguredResearchProviderKeyOperation;
+  readonly key: ResearchProviderKeyModelUseCatalogProviderBinding;
   readonly operation_id: string;
   readonly database: D1Database;
+  readonly catalog_selection?: ResearchProviderKeyModelUseCatalogSelectionV1;
 }): Promise<ResearchProviderKeyModelUseBasisV1> {
   let semanticRevision: ResearchProviderKeyModelUseSemanticConfigurationV1;
   try { semanticRevision = await input.semantic_source.resolve(input.database); }
@@ -385,14 +447,14 @@ export async function createResearchProviderKeyModelUseBasis(input: {
     fail("Trusted spend policy must enable each required stage exactly once");
   }
   const stages: ResearchProviderKeyModelUseStagePlanV1[] = [];
-  const modelId = selectedModelId(input.key, input.selected);
+  const modelId = selectedModelId(input.key, input.selected, input.catalog_selection);
   for (const [index, rule] of sortedRules.entries()) {
     const stage = rule.stage as ResearchProviderKeyModelUseStage;
     let baseDeployment: ModelRouteDeployment;
     try { baseDeployment = decodeModelRouteDeployment(rule.deployment); }
     catch (cause) { return fail(`${stage} owner spend deployment is invalid`, cause); }
     const exactPolicy = modelTransportPolicy(input.runtime_policy.ELIOTR_RESEARCH_MODEL_TRANSPORT_POLICIES_JSON,
-      stage, baseDeployment, input.key, input.selected, modelId);
+      stage, baseDeployment, input.key, input.selected, modelId, input.catalog_selection);
     stages.push(await buildStagePlan({
       stage,
       sequence_number: index,

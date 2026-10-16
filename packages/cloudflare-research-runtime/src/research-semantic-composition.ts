@@ -108,6 +108,7 @@ function composeSynthesisPrompt(
       navigation: input.navigation,
       evidence_resolver: evidenceResolver,
       trusted_parameters: prompt.trusted_parameters,
+      ...(prompt.output_language === undefined ? {} : { output_language: prompt.output_language }),
       request_timeout_ms: prompt.request_timeout_ms,
       }),
       ...(prompt.request_capabilities === undefined ? {} : { request_capabilities: prompt.request_capabilities }),
@@ -289,6 +290,9 @@ export function createResearchSemanticComposition(
       pricing: input.model.synthesis.pricing ?? pricing,
       spend_authorization: input.model.synthesis.spend_authorization,
       ...(input.native_model_authority === undefined ? {} : { native_model_authority: input.native_model_authority }),
+      ...(input.catalog_native_model_authority_v2 === undefined ? {} : {
+        catalog_native_model_authority_v2: input.catalog_native_model_authority_v2,
+      }),
       prepare: input.model.synthesis.prepare,
     },
   };
@@ -331,6 +335,9 @@ export function createResearchSemanticComposition(
     pricing: input.model.audit.pricing ?? pricing,
     spend_authorization: input.model.audit.spend_authorization,
     ...(input.native_model_authority === undefined ? {} : { native_model_authority: input.native_model_authority }),
+    ...(input.catalog_native_model_authority_v2 === undefined ? {} : {
+      catalog_native_model_authority_v2: input.catalog_native_model_authority_v2,
+    }),
     input: auditInput,
     prepare: input.model.audit.prepare,
   };
@@ -416,6 +423,9 @@ export function createResearchSemanticWorkflowHandlerFactory(
       pricing: roles.pricing,
       ...(roles.pricing_for_stage === undefined ? {} : { pricing_for_stage: roles.pricing_for_stage }),
       ...(input.native_model_authority === undefined ? {} : { native_model_authority: input.native_model_authority }),
+      ...(input.catalog_native_model_authority_v2 === undefined ? {} : {
+        catalog_native_model_authority_v2: input.catalog_native_model_authority_v2,
+      }),
       deployment_environment: input.deployment_environment,
       ...(input.now === undefined ? {} : { now: input.now }),
     });

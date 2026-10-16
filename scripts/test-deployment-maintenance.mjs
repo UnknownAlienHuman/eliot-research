@@ -298,7 +298,8 @@ await check("authenticated capabilities require exact envelope and generation ag
 
 const plan = [{ binding: "CORE_DB", database_id: "11111111-1111-4111-8111-111111111111" },
   { binding: "SEARCH_DB", database_id: "22222222-2222-4222-8222-222222222222" }];
-async function schemaCheck({ stale = false, meta = { changed_db: false, rows_written: 0 } } = {}) {
+async function schemaCheck({ stale = false, searchGeneration = "search-v4-ai-search-generation-registry",
+  meta = { changed_db: false, rows_written: 0 } } = {}) {
   const requests = [];
   const result = await verifyDeploymentSchemaGenerations({ env, input, plan, root,
     fetchImpl: async (url, init) => {
@@ -309,7 +310,7 @@ async function schemaCheck({ stale = false, meta = { changed_db: false, rows_wri
       requests.push(url);
       return globalThis.Response.json({ success: true, result: [{ success: true, meta,
         results: [{ value: stale ? "stale-schema" : url.includes(plan[0].database_id)
-          ? "core-v11-owner-orientation" : "search-v4-ai-search-generation-registry" }] }] });
+          ? "core-v11-owner-orientation" : searchGeneration }] }] });
     } });
   return { result, requests };
 }
@@ -317,6 +318,8 @@ await check("required schema generations use two bounded read-only queries", asy
   const { result, requests } = await schemaCheck();
   assert.equal(result.state, "PASS");
   assert.equal(requests.length, 2);
+  assert.equal((await schemaCheck({ searchGeneration: "search-v3-erasure-invalidation" })).result.state, "PASS");
+  await assert.rejects(schemaCheck({ searchGeneration: "search-v5-uninstalled" }));
 });
 await check("schema mismatch and missing or write-bearing metadata refuse upload", async () => {
   await assert.rejects(schemaCheck({ stale: true }));

@@ -236,7 +236,7 @@ export function createD1ArtifactCowModelRevalidator(input: {
       if (row === null || row.configuration_ref !== pin.configuration_ref || row.configuration_sha256 !== pin.configuration_sha256) {
         stale("COW original run configuration pointer changed or disappeared");
       }
-      if (selection.candidate_kind === "provider-native-v1") {
+      if (selection.candidate_kind === "provider-native-v1" || selection.candidate_kind === "provider-native-v2") {
         if (input.resolve_native_model_selection === undefined) {
           stale("COW Native model authority is unavailable for the immutable run selection");
         }

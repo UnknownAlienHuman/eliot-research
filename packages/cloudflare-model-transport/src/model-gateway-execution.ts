@@ -32,6 +32,13 @@ import {
 
 const IDENTIFIER = /^[A-Za-z0-9._:@/-]{1,256}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
+const promptCompileFailures = new WeakMap<ModelGatewayExecutionError, ModelCallInput>();
+
+/** Local compiler provenance for this exact call; error codes and remote payloads are not proof. */
+export function isModelGatewayPromptCompileFailure(cause: unknown, input: ModelCallInput): boolean {
+  return cause instanceof ModelGatewayExecutionError && promptCompileFailures.get(cause) === input;
+}
+
 const COMPILED_PROMPT_KEYS = new Set([
   "request_body",
   "request_body_sha256",
@@ -430,17 +437,18 @@ async function executeObservedModelGatewayCall(
     );
   }
 
-  let rawCompiled: unknown;
+  let compiled: CompiledModelGatewayPrompt;
   try {
-    rawCompiled = await dependencies.prompts.compile(input, deployment);
+    compiled = decodeCompiledPrompt(await dependencies.prompts.compile(input, deployment));
   } catch (cause) {
-    modelGatewayExecutionFailure(
+    const failure = new ModelGatewayExecutionError(
       "MODEL_GATEWAY_PROMPT_COMPILE_FAILED",
       "trusted model prompt compiler failed",
       { cause },
     );
+    promptCompileFailures.set(failure, input);
+    throw failure;
   }
-  const compiled = decodeCompiledPrompt(rawCompiled);
 
   let token: unknown;
   if (binding === undefined) {
@@ -480,7 +488,9 @@ async function executeObservedModelGatewayCall(
       redirect: "error",
     });
   } catch (cause) {
-    if (cause instanceof ModelGatewayExecutionError) throw cause;
+    // A transport-thrown error cannot carry compiler non-dispatch authority,
+    // even if an in-process transport rethrows an earlier compiler exception.
+    if (cause instanceof ModelGatewayExecutionError && !promptCompileFailures.has(cause)) throw cause;
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_TRANSPORT_FAILED",
       "AI Gateway transport failed with an unknown upstream execution outcome",

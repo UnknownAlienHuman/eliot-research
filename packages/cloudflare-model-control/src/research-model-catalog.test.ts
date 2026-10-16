@@ -205,6 +205,7 @@ describe("research model catalog", () => {
       operation_id: "a9f79914-a0a5-4f27-9e81-3b9b6c403a61",
       provider_id: "openrouter",
       provider_slug: "openrouter",
+      model_registration_mode: "explicit_allowlist",
       model_ids: Object.freeze([modelId]),
       alias: "eliotr-" + "a".repeat(48),
       provider_config_id: "provider-config-1",
@@ -233,6 +234,43 @@ describe("research model catalog", () => {
     expect(new Headers(fetcher.mock.calls[0]?.[1]?.headers).get("cf-aig-byok-alias")).toBe(binding.alias);
     expect(page?.models.map((model) => model.model_id)).toEqual([modelId]);
     expect(page?.has_more).toBeNull();
+  });
+
+  it("returns the provider catalog for catalog-managed connections without promoting listed models", async () => {
+    const binding: ConfiguredServiceModelProviderBinding = Object.freeze({
+      owner_id: "owner-1",
+      operation_id: "a9f79914-a0a5-4f27-9e81-3b9b6c403a61",
+      provider_id: "openrouter",
+      provider_slug: "openrouter",
+      model_registration_mode: "catalog_managed",
+      model_ids: Object.freeze([]),
+      alias: "eliotr-" + "a".repeat(48),
+      provider_config_id: "provider-config-1",
+      metadata_sha256: "b".repeat(64),
+      created_at: "2026-10-15T14:00:00.000Z",
+    });
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+      data: [
+        { id: "first/model:free", architecture: { output_modalities: ["text"] } },
+        { id: "second/model:free", architecture: { output_modalities: ["text"] } },
+      ],
+      links: {},
+      total_count: 2,
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    const transports = createResearchProviderModelCatalogTransports({
+      gateway_base_url: `https://gateway.ai.cloudflare.com/v1/${"a".repeat(32)}/eliotr-reasoning`,
+      gateway_token: "server-held-test-gateway-token",
+      fetcher: fetcher as typeof fetch,
+      resolve_service_provider: vi.fn(async (provider) => provider === "openrouter" ? binding : null),
+    });
+    const openRouter = transports.find((provider) => provider.provider_id === "openrouter");
+
+    const page = await openRouter?.listTextGeneration({ page: 1, per_page: 20, task: "text-generation" });
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(new Headers(fetcher.mock.calls[0]?.[1]?.headers).get("cf-aig-byok-alias")).toBe(binding.alias);
+    expect(page?.models.map((model) => model.model_id)).toEqual(["first/model:free", "second/model:free"]);
+    expect(page?.has_more).toBe(false);
   });
 
   it("requires the owner/project check before reporting a missing Workers AI binding", async () => {

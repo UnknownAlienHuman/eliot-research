@@ -13,11 +13,18 @@ import {
 
 const MIGRATIONS = resolve(__dirname, "../../../infra/d1/core/migrations");
 
-function freshDb(): DatabaseSync {
+function freshDb(withProjectSelection = false): DatabaseSync {
   const db = new DatabaseSync(":memory:");
   for (const file of readdirSync(MIGRATIONS).sort().filter((name) => name.endsWith(".sql"))) {
-    if (file > "0104_research_run_configuration.sql") break;
+    if (file > (withProjectSelection ? "0106_research_project_model_configuration.sql" : "0104_research_run_configuration.sql")) break;
     db.exec(readFileSync(resolve(MIGRATIONS, file), "utf8"));
+  }
+  if (withProjectSelection) {
+    db.prepare(`INSERT INTO project(project_id,title,default_disclosure,retention_policy_ref,default_source_policy_ref,
+      default_model_profile_ref,default_depth_profile_ref,generation,created_at)
+      VALUES ('project-pin','Pinned model','owner','retention-1','source-policy-1','profile-1','depth-1',1,'2026-10-03T12:00:00.000Z')`).run();
+    db.prepare(`INSERT INTO project_owner(project_id,principal_ref,deployment_generation,created_at,updated_at)
+      VALUES ('project-pin','owner-config-1','deployment-1','2026-10-03T12:00:00.000Z','2026-10-03T12:00:00.000Z')`).run();
   }
   return db;
 }
@@ -97,6 +104,108 @@ describe("research run configuration store", () => {
     }) })).rejects.toMatchObject({ code: "RESEARCH_RUN_CONFIGURATION_CONFLICT" });
     await expect(store.putImmutable({ ...association, principal_ref: "owner-other", mode: "snapshot-v1",
       configuration_json: firstJson })).rejects.toMatchObject({ code: "RESEARCH_RUN_CONFIGURATION_INPUT_INVALID" });
+    expect((db.prepare("SELECT COUNT(*) AS n FROM research_run_configuration").get() as { n: number }).n).toBe(1);
+    db.close();
+  });
+
+  it("freezes only while the exact selected project configuration pointer is current", async () => {
+    const db = freshDb(true);
+    const store = createD1ResearchRunConfigurationStore(createD1Shim(db));
+    const firstSha = "c".repeat(64);
+    const firstRef = `rpmc-${firstSha}`;
+    const secondSha = "d".repeat(64);
+    const secondRef = `rpmc-${secondSha}`;
+    const configurationRevision = (reference: string, sha: string) => {
+      const json = "{}";
+      db.prepare(`INSERT INTO research_project_model_configuration_revision
+        (owner_id,project_id,configuration_ref,configuration_sha256,configuration_json,byte_length,protocol,created_at,created_by_principal_ref)
+        VALUES ('owner-config-1','project-pin',?1,?2,?3,2,'eliotr.research-project-model-configuration.v1',
+          '2026-10-03T12:00:00.000Z','owner-config-1')`).run(reference, sha, json);
+    };
+    configurationRevision(firstRef, firstSha);
+    db.prepare(`INSERT INTO research_project_model_configuration_selection
+      (owner_id,project_id,selection_revision,configuration_ref,configuration_sha256,selected_at,selected_by_principal_ref)
+      VALUES ('owner-config-1','project-pin',2,?1,?2,'2026-10-03T12:00:00.000Z','owner-config-1')`).run(firstRef, firstSha);
+
+    const guard = { owner_id: "owner-config-1", project_id: "project-pin", configuration_ref: firstRef,
+      configuration_sha256: firstSha, selection_revision: 2 };
+    const pinnedSnapshot = snapshot("snapshot-v1", { project_configuration: {
+      configuration_ref: firstRef, configuration_sha256: firstSha, selection_revision: 2,
+      owner_ref: guard.owner_id, project_id: guard.project_id,
+    } });
+    await expect(store.putImmutable({ ...association, mode: "snapshot-v1", configuration_json: pinnedSnapshot,
+      selection_guard: guard, created_at: "2026-10-03T12:00:00.000Z" })).resolves.toMatchObject({ created: true });
+
+    configurationRevision(secondRef, secondSha);
+    db.prepare(`UPDATE research_project_model_configuration_selection
+      SET selection_revision=selection_revision+1,configuration_ref=?1,configuration_sha256=?2
+      WHERE owner_id='owner-config-1' AND project_id='project-pin'`).run(secondRef, secondSha);
+    const staleSnapshot = snapshot("snapshot-v1", { ...JSON.parse(pinnedSnapshot) as Record<string, unknown>,
+      association: { ...association, operation_id: "run-config-stale" } });
+    await expect(store.putImmutable({ ...association, operation_id: "run-config-stale", mode: "snapshot-v1",
+      configuration_json: staleSnapshot, selection_guard: guard,
+      created_at: "2026-10-03T12:01:00.000Z" })).rejects.toMatchObject({
+        code: "RESEARCH_RUN_CONFIGURATION_SELECTION_STALE",
+      });
+    expect((db.prepare("SELECT COUNT(*) AS n FROM research_run_configuration").get() as { n: number }).n).toBe(1);
+    db.close();
+  });
+
+  it("freezes the installed Cloudflare model only while every captured global qualification remains active", async () => {
+    const db = freshDb(true);
+    const store = createD1ResearchRunConfigurationStore(createD1Shim(db));
+    const expectedModelId = "@cf/meta/llama-3.1-8b-instruct";
+    const makeSelection = (stage: string, suffix: string, model: string) => {
+      const route_ref = `route-${suffix}`;
+      const route_version = `version-${suffix}`;
+      const candidate_ref = `candidate-${suffix}`;
+      const candidate_sha256 = suffix === "synthesis" ? "e".repeat(64) : "f".repeat(64);
+      const qualification_ref = `qualification-${suffix}`;
+      const qualification_sha256 = suffix === "synthesis" ? "1".repeat(64) : "2".repeat(64);
+      db.prepare(`INSERT INTO dynamic_route_candidate
+        (candidate_ref,route_ref,route_version,candidate_sha256,candidate_json,staged_at)
+        VALUES (?1,?2,?3,?4,'{}','2026-10-03T12:00:00.000Z')`)
+        .run(candidate_ref, route_ref, route_version, candidate_sha256);
+      db.prepare(`INSERT INTO dynamic_route_active_generation
+        (route_ref,route_version,candidate_ref,candidate_sha256,promotion_ref,promoted_at)
+        VALUES (?1,?2,?3,?4,?5,'2026-10-03T12:00:00.000Z')`)
+        .run(route_ref, route_version, candidate_ref, candidate_sha256, `promotion-${suffix}`);
+      const qualificationJson = JSON.stringify({ qualification: { tier: "LIVE" } });
+      db.prepare(`INSERT INTO dynamic_route_qualification_proof
+        (qualification_ref,proof_sha256,qualification_json,route_ref,route_version,candidate_ref,candidate_sha256,created_at)
+        VALUES (?1,?2,?3,?4,?5,?6,?7,'2026-10-03T12:00:00.000Z')`)
+        .run(qualification_ref, qualification_sha256, qualificationJson, route_ref, route_version,
+          candidate_ref, candidate_sha256);
+      db.prepare(`INSERT INTO dynamic_route_active_qualification
+        (route_ref,route_version,candidate_ref,candidate_sha256,qualification_ref,qualification_sha256,activated_at)
+        VALUES (?1,?2,?3,?4,?5,?6,'2026-10-03T12:00:00.000Z')`)
+        .run(route_ref, route_version, candidate_ref, candidate_sha256, qualification_ref, qualification_sha256);
+      return { stage, route_ref, route_version, candidate_ref, candidate_sha256, qualification_ref,
+        qualification_sha256, transport_policy: { provider: "workers-ai", model } };
+    };
+    const selections = [
+      makeSelection("SYNTHESIZE", "synthesis", expectedModelId),
+      makeSelection("AUDIT_CLAIMS", "audit", "@cf/meta/llama-3.1-8b-instruct-fast"),
+    ];
+    const baseJson = snapshot("snapshot-v2", { project_configuration: null, model_selections: selections });
+    const guard = { expected_model_id: expectedModelId };
+    await expect(store.putImmutable({ ...association, mode: "snapshot-v2", configuration_json: baseJson,
+      installed_native_model_guard: guard, created_at: "2026-10-03T12:00:00.000Z" }))
+      .resolves.toMatchObject({ created: true });
+
+    db.prepare(`INSERT INTO dynamic_route_qualification_revocation
+      (qualification_ref,qualification_sha256,reason,revoked_by,revoked_at)
+      VALUES ('qualification-synthesis',?1,'qualification revoked','operator-1','2026-10-03T12:01:00.000Z')`)
+      .run("1".repeat(64));
+    const replayJson = snapshot("snapshot-v2", {
+      ...JSON.parse(baseJson) as Record<string, unknown>,
+      association: { ...association, operation_id: "run-config-native-revoked" },
+    });
+    await expect(store.putImmutable({ ...association, operation_id: "run-config-native-revoked",
+      mode: "snapshot-v2", configuration_json: replayJson, installed_native_model_guard: guard,
+      created_at: "2026-10-03T12:01:00.000Z" })).rejects.toMatchObject({
+        code: "RESEARCH_RUN_CONFIGURATION_SELECTION_STALE",
+      });
     expect((db.prepare("SELECT COUNT(*) AS n FROM research_run_configuration").get() as { n: number }).n).toBe(1);
     db.close();
   });

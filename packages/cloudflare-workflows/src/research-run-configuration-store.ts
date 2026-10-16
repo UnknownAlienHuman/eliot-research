@@ -13,7 +13,8 @@ export type ResearchRunConfigurationMode = "snapshot-v1" | "snapshot-v2";
 export type ResearchRunConfigurationStoreErrorCode =
   | "RESEARCH_RUN_CONFIGURATION_INPUT_INVALID"
   | "RESEARCH_RUN_CONFIGURATION_CONFLICT"
-  | "RESEARCH_RUN_CONFIGURATION_UNRESOLVED";
+  | "RESEARCH_RUN_CONFIGURATION_UNRESOLVED"
+  | "RESEARCH_RUN_CONFIGURATION_SELECTION_STALE";
 
 export class ResearchRunConfigurationStoreError extends Error {
   constructor(readonly code: ResearchRunConfigurationStoreErrorCode, message: string, options?: { cause?: unknown }) {
@@ -33,7 +34,27 @@ export interface ResearchRunConfigurationWriteInput extends ResearchRunConfigura
   readonly mode: ResearchRunConfigurationMode;
   /** Canonical JSON including protocol, mode and the same association fields. */
   readonly configuration_json: string;
+  /**
+   * Optional linearization guard for chat runs pinned to a selected project
+   * configuration. The immutable snapshot is inserted only while this exact
+   * selected pointer is still current.
+   */
+  readonly selection_guard?: ResearchRunConfigurationSelectionGuard;
+  /** Atomic qualification/current-generation guard for the installed native branch. */
+  readonly installed_native_model_guard?: ResearchRunInstalledNativeModelGuard;
   readonly created_at?: string;
+}
+
+export interface ResearchRunConfigurationSelectionGuard {
+  readonly owner_id: string;
+  readonly project_id: string;
+  readonly configuration_ref: string;
+  readonly configuration_sha256: string;
+  readonly selection_revision: number;
+}
+
+export interface ResearchRunInstalledNativeModelGuard {
+  readonly expected_model_id: string;
 }
 
 export interface ResearchRunConfigurationRecord extends ResearchRunConfigurationAssociation {
@@ -136,6 +157,63 @@ function validateConfigurationJson(
   return { json: canonical, value: record, byte_length: byteLength };
 }
 
+function validateSelectionGuard(value: unknown, configuration: Record<string, unknown>): ResearchRunConfigurationSelectionGuard {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    failure("RESEARCH_RUN_CONFIGURATION_INPUT_INVALID", "selection_guard is invalid");
+  }
+  const guard = value as Record<string, unknown>;
+  const keys = ["owner_id", "project_id", "configuration_ref", "configuration_sha256", "selection_revision"];
+  if (Object.keys(guard).length !== keys.length || Object.keys(guard).some((key) => !keys.includes(key)) ||
+      keys.some((key) => !Object.hasOwn(guard, key)) ||
+      typeof guard.owner_id !== "string" || !IDENTIFIER_RE.test(guard.owner_id) ||
+      typeof guard.project_id !== "string" || !IDENTIFIER_RE.test(guard.project_id) ||
+      typeof guard.configuration_sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(guard.configuration_sha256) ||
+      guard.configuration_ref !== `rpmc-${guard.configuration_sha256}` ||
+      !Number.isSafeInteger(guard.selection_revision) || (guard.selection_revision as number) < 1 ||
+      (guard.selection_revision as number) > 1_000_000) {
+    failure("RESEARCH_RUN_CONFIGURATION_INPUT_INVALID", "selection_guard is invalid");
+  }
+  const projectConfiguration = configuration.project_configuration;
+  if (typeof projectConfiguration !== "object" || projectConfiguration === null || Array.isArray(projectConfiguration)) {
+    failure("RESEARCH_RUN_CONFIGURATION_INPUT_INVALID", "selection_guard requires a project configuration snapshot");
+  }
+  const project = projectConfiguration as Record<string, unknown>;
+  if (project.owner_ref !== guard.owner_id || project.project_id !== guard.project_id ||
+      project.configuration_ref !== guard.configuration_ref ||
+      project.configuration_sha256 !== guard.configuration_sha256 ||
+      project.selection_revision !== guard.selection_revision) {
+    failure("RESEARCH_RUN_CONFIGURATION_INPUT_INVALID", "selection_guard does not match the frozen project configuration");
+  }
+  return Object.freeze({ owner_id: guard.owner_id as string, project_id: guard.project_id as string,
+    configuration_ref: guard.configuration_ref as string,
+    configuration_sha256: guard.configuration_sha256 as string, selection_revision: guard.selection_revision as number });
+}
+
+function validateInstalledNativeModelGuard(
+  value: unknown,
+  configuration: Record<string, unknown>,
+): ResearchRunInstalledNativeModelGuard {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    failure("RESEARCH_RUN_CONFIGURATION_INPUT_INVALID", "installed_native_model_guard is invalid");
+  }
+  const guard = value as Record<string, unknown>;
+  if (Object.keys(guard).length !== 1 || !Object.hasOwn(guard, "expected_model_id") ||
+      typeof guard.expected_model_id !== "string" ||
+      !/^@cf\/[A-Za-z0-9][A-Za-z0-9._:@/-]{0,254}$/u.test(guard.expected_model_id) ||
+      configuration.project_configuration !== null || !Array.isArray(configuration.model_selections)) {
+    failure("RESEARCH_RUN_CONFIGURATION_INPUT_INVALID", "installed_native_model_guard is invalid");
+  }
+  const syntheses = configuration.model_selections.filter((selection) =>
+    typeof selection === "object" && selection !== null && !Array.isArray(selection) &&
+    (selection as Record<string, unknown>).stage === "SYNTHESIZE");
+  const policy = syntheses.length === 1 && typeof (syntheses[0] as Record<string, unknown>).transport_policy === "object"
+    ? (syntheses[0] as Record<string, unknown>).transport_policy as Record<string, unknown> : null;
+  if (policy === null || policy.model !== guard.expected_model_id) {
+    failure("RESEARCH_RUN_CONFIGURATION_INPUT_INVALID", "installed native model guard does not match the synthesis selection");
+  }
+  return Object.freeze({ expected_model_id: guard.expected_model_id });
+}
+
 export function deriveResearchRunConfigurationRef(configurationSha256: string): string {
   try { assertEvidenceSha256(configurationSha256, "configuration_sha256"); }
   catch { failure("RESEARCH_RUN_CONFIGURATION_INPUT_INVALID", "configuration_sha256 is not a lowercase SHA-256 digest"); }
@@ -211,23 +289,92 @@ export function createD1ResearchRunConfigurationStore(database: D1Database) {
       }
       const association = validateAssociation(input);
       const validated = validateConfigurationJson(input.configuration_json, association, input.mode);
+      const selectionGuard = input.selection_guard === undefined
+        ? undefined : validateSelectionGuard(input.selection_guard, validated.value);
+      const installedNativeModelGuard = input.installed_native_model_guard === undefined
+        ? undefined : validateInstalledNativeModelGuard(input.installed_native_model_guard, validated.value);
+      if (selectionGuard !== undefined && installedNativeModelGuard !== undefined) {
+        failure("RESEARCH_RUN_CONFIGURATION_INPUT_INVALID", "run configuration cannot use two selection guards");
+      }
       const configurationSha256 = await evidenceSha256Bytes(evidenceUtf8Bytes(validated.json));
       const configurationRef = deriveResearchRunConfigurationRef(configurationSha256);
       const createdAt = input.created_at ?? new Date().toISOString();
       if (typeof createdAt !== "string" || !ISO_UTC_RE.test(createdAt) || Number.isNaN(Date.parse(createdAt))) {
         failure("RESEARCH_RUN_CONFIGURATION_INPUT_INVALID", "created_at is invalid");
       }
-      const write = await database.prepare(
-        `INSERT INTO research_run_configuration
-          (operation_id,investigation_id,principal_ref,deployment_generation,protocol,mode,configuration_ref,
-           configuration_sha256,configuration_json,byte_length,created_at)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
-         ON CONFLICT(operation_id) DO NOTHING`,
-      ).bind(association.operation_id, association.investigation_id, association.principal_ref,
-        association.deployment_generation, RESEARCH_RUN_CONFIGURATION_PROTOCOL, input.mode, configurationRef,
-        configurationSha256, validated.json, validated.byte_length, createdAt).run();
+      const write = selectionGuard === undefined && installedNativeModelGuard === undefined
+        ? await database.prepare(
+          `INSERT INTO research_run_configuration
+            (operation_id,investigation_id,principal_ref,deployment_generation,protocol,mode,configuration_ref,
+             configuration_sha256,configuration_json,byte_length,created_at)
+           VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)
+           ON CONFLICT(operation_id) DO NOTHING`,
+        ).bind(association.operation_id, association.investigation_id, association.principal_ref,
+          association.deployment_generation, RESEARCH_RUN_CONFIGURATION_PROTOCOL, input.mode, configurationRef,
+          configurationSha256, validated.json, validated.byte_length, createdAt).run()
+        : selectionGuard !== undefined
+          ? await database.prepare(
+          `INSERT INTO research_run_configuration
+            (operation_id,investigation_id,principal_ref,deployment_generation,protocol,mode,configuration_ref,
+             configuration_sha256,configuration_json,byte_length,created_at)
+           SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11
+           WHERE EXISTS (
+             SELECT 1 FROM research_project_model_configuration_selection s
+             JOIN project_owner o ON o.project_id=s.project_id AND o.principal_ref=s.owner_id
+             JOIN project p ON p.project_id=s.project_id
+             WHERE s.owner_id=?12 AND s.project_id=?13 AND s.selection_revision=?14
+               AND s.configuration_ref=?15 AND s.configuration_sha256=?16
+           )
+           ON CONFLICT(operation_id) DO NOTHING`,
+          ).bind(association.operation_id, association.investigation_id, association.principal_ref,
+          association.deployment_generation, RESEARCH_RUN_CONFIGURATION_PROTOCOL, input.mode, configurationRef,
+          configurationSha256, validated.json, validated.byte_length, createdAt,
+          selectionGuard.owner_id, selectionGuard.project_id, selectionGuard.selection_revision,
+            selectionGuard.configuration_ref, selectionGuard.configuration_sha256).run()
+          : await database.prepare(
+            `INSERT INTO research_run_configuration
+              (operation_id,investigation_id,principal_ref,deployment_generation,protocol,mode,configuration_ref,
+               configuration_sha256,configuration_json,byte_length,created_at)
+             SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11
+             WHERE EXISTS (
+               SELECT 1 FROM json_each(?9,'$.model_selections') synthesis
+               WHERE json_extract(synthesis.value,'$.stage')='SYNTHESIZE'
+                 AND json_extract(synthesis.value,'$.transport_policy.model')=?12
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM json_each(?9,'$.model_selections') selected
+               WHERE NOT EXISTS (
+                 SELECT 1 FROM dynamic_route_active_generation a
+                 JOIN dynamic_route_active_qualification q
+                   ON q.route_ref=a.route_ref AND q.route_version=a.route_version
+                   AND q.candidate_ref=a.candidate_ref AND q.candidate_sha256=a.candidate_sha256
+                 JOIN dynamic_route_qualification_proof p
+                   ON p.qualification_ref=q.qualification_ref AND p.proof_sha256=q.qualification_sha256
+                 WHERE a.route_ref=json_extract(selected.value,'$.route_ref')
+                   AND a.route_version=json_extract(selected.value,'$.route_version')
+                   AND a.candidate_ref=json_extract(selected.value,'$.candidate_ref')
+                   AND a.candidate_sha256=json_extract(selected.value,'$.candidate_sha256')
+                   AND q.qualification_ref=json_extract(selected.value,'$.qualification_ref')
+                   AND q.qualification_sha256=json_extract(selected.value,'$.qualification_sha256')
+                   AND json_extract(p.qualification_json,'$.qualification.tier')='LIVE'
+                   AND NOT EXISTS (
+                     SELECT 1 FROM dynamic_route_qualification_revocation rev
+                     WHERE rev.qualification_ref=q.qualification_ref
+                       AND rev.qualification_sha256=q.qualification_sha256
+                   )
+               )
+             )
+             ON CONFLICT(operation_id) DO NOTHING`,
+          ).bind(association.operation_id, association.investigation_id, association.principal_ref,
+            association.deployment_generation, RESEARCH_RUN_CONFIGURATION_PROTOCOL, input.mode, configurationRef,
+            configurationSha256, validated.json, validated.byte_length, createdAt,
+            installedNativeModelGuard?.expected_model_id ?? "").run();
       const stored = await readRowByOperation(association.operation_id);
-      if (stored === null) failure("RESEARCH_RUN_CONFIGURATION_UNRESOLVED", "Research run configuration write did not persist");
+      if (stored === null) failure(selectionGuard === undefined && installedNativeModelGuard === undefined
+        ? "RESEARCH_RUN_CONFIGURATION_UNRESOLVED" : "RESEARCH_RUN_CONFIGURATION_SELECTION_STALE",
+      selectionGuard === undefined && installedNativeModelGuard === undefined
+        ? "Research run configuration write did not persist"
+        : "Selected model qualification changed before the run snapshot was frozen");
       const record = await decodeRow(stored);
       if (record.investigation_id !== association.investigation_id || record.principal_ref !== association.principal_ref ||
           record.deployment_generation !== association.deployment_generation || record.mode !== input.mode ||

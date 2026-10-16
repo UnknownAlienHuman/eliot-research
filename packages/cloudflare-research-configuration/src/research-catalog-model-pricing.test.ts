@@ -117,10 +117,22 @@ describe("readVerifiedCatalogModelPricing", () => {
     expect(result.model_id).toBe(MODEL_ID);
   });
 
+  it("reads a paid OpenRouter model's provider-level SDK and exact published rates", async () => {
+    const modelId = "vendor/paid-model";
+    const source = JSON.stringify({ openrouter: { id: "openrouter", npm: "@openrouter/ai-sdk-provider",
+      api: "https://openrouter.ai/api/v1", models: { [modelId]: { id: modelId,
+        cost: { input: 3, output: 12 }, modalities: { input: ["text"], output: ["text"] } } } } });
+    const result = await readVerifiedCatalogModelPricing(makeInput(source, { provider_id: "openrouter", model_id: modelId }));
+    expect(result).toMatchObject({ provider_id: "openrouter", model_id: modelId,
+      advertised_sdk: "@openrouter/ai-sdk-provider", advertised_api_base: "https://openrouter.ai/api/v1",
+      advertised_capabilities: { status: "advertised_unverified", api_mode: "chat" },
+      rates_usd_per_1k_tokens: { input: "0.003", output: "0.012", cache_read: null } });
+  });
+
   it("rejects an unsupported provider before making a request", async () => {
     let calls = 0;
     const input = makeInput(catalogFixture(), {
-      provider_id: "openrouter",
+      provider_id: "google",
       fetch: async () => {
         calls += 1;
         return new Response(null);

@@ -116,14 +116,17 @@ export function validateResearchSemanticCompositionDependencies(input: ResearchS
     configurationMissing("selected-model request capabilities are required by the immutable run configuration");
   }
   const nativeSelections = input.run_configuration?.model_selections?.filter((selection) =>
-    selection.candidate_kind === "provider-native-v1") ?? [];
+    selection.candidate_kind === "provider-native-v1" || selection.candidate_kind === "provider-native-v2") ?? [];
+  const hasNativeV1 = nativeSelections.some((selection) => selection.candidate_kind === "provider-native-v1");
+  const hasNativeV2 = nativeSelections.some((selection) => selection.candidate_kind === "provider-native-v2");
   if (nativeSelections.length > 0) {
     if (input.run_configuration?.mode !== "snapshot-v2") {
       configurationInvalid("Native model selections require snapshot-v2 owner/project authority");
     }
     if (input.run_configuration.project_owner_ref === undefined || input.run_configuration.project_owner_ref === null ||
         input.run_configuration.project_id === undefined || input.run_configuration.project_id === null ||
-        input.native_model_authority === undefined) {
+        (hasNativeV1 && input.native_model_authority === undefined) ||
+        (hasNativeV2 && input.model.roles?.pricing_for_stage === undefined)) {
       configurationMissing("Native model selections require snapshot-v2 owner/project authority");
     }
     if (typeof input.run_configuration.project_owner_ref !== "string" || input.run_configuration.project_owner_ref.length === 0 ||
@@ -131,7 +134,7 @@ export function validateResearchSemanticCompositionDependencies(input: ResearchS
       configurationInvalid("Native model selections require snapshot-v2 owner/project authority");
     }
   }
-  if (input.native_model_authority !== undefined && input.model.roles !== undefined &&
+  if (nativeSelections.length > 0 && input.model.roles !== undefined &&
       input.model.roles.pricing_for_stage === undefined) {
     configurationMissing("Native branch execution requires stage-specific model pricing");
   }

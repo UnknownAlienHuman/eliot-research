@@ -13,6 +13,7 @@ import { createWorkspaceRuntime } from './runtime';
 import { createPrivacyController } from './privacy';
 import { clearWorkspaceQueries, createWorkspaceQueryClient, protectedQueryKey } from '../query/client';
 import { materialSources, materialReading, materialSections } from './materialReviewData';
+import { researchPreviewModelRead } from './researchModelPreview';
 
 const stamp = '2026-10-09T12:00:00.000Z', generation = 'research-fixture';
 const historyQuestion = 'How do the saved source revisions change this evidence?';
@@ -79,6 +80,8 @@ export function ResearchPreview({ designReview = false, historyState, scopeMode,
     const fetchFixture: typeof fetch = async (input, init) => {
       const url = new URL(String(input), 'https://fixture.invalid');
       const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase();
+      const modelRead = method === 'GET' ? researchPreviewModelRead(url, 'project-fixture', stamp, true) : undefined;
+      if (modelRead !== undefined) return json(modelRead);
       if (method !== 'GET' && method !== 'HEAD') {
         if (url.pathname === '/api/v1/research/run' && method === 'POST') admissionPosts++;
         else if (/\/cancel(?:\/|$)/u.test(url.pathname)) cancellations++;
@@ -87,6 +90,7 @@ export function ResearchPreview({ designReview = false, historyState, scopeMode,
       if (url.pathname === '/api/v1/system/health') return json({ ready: true, deployment_generation: generation, core_schema_generation: 'schema-1', search_schema_generation: 'schema-1', blocking_reason_codes: [], checked_at: stamp });
       if (url.pathname === '/api/v1/system/session') return json({ protocol: 'eliotr.owner-session.v1', principal_ref: 'research-owner', credential_generation: 'research-credential', client_class: 'owner_pwa', expires_at: '2027-01-01T00:00:00.000Z' });
       if (url.pathname === '/api/v1/research/projects') return json({ protocol: 'eliotr.project-owner-list.v1', projects: [{ protocol: 'eliotr.project-owner.v1', project_ref: { id: 'project-fixture', revision: 1 }, title: 'Evidence in context', revision: 1, owner_principal_ref: 'research-owner', deployment_generation: generation, source_ids: sourceRows.map(source => source.id).sort(), created_at: stamp }] });
+      if (init?.method === 'GET' && url.pathname === '/api/v1/research/projects/project-fixture/catalog-model-use' && !url.search) return json(null);
       if (url.pathname === '/api/v1/research/catalog') return json({ projects: [{ id: 'project-fixture', title: 'Evidence in context', generation }], sources: sourceRows.map(source => ({ ...source, readiness_ref: `readiness:${source.id}:observation-1` })) });
       if (designReview && url.pathname === '/api/v1/library/readiness') {
         const source = url.searchParams.get('source_id'), revision = `${source}-revision-1`;

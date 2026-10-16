@@ -1,6 +1,16 @@
 {
   "entries": [
     {
+      "export_name": "AiUsageObservationSchema",
+      "family": "model",
+      "json_schema_sha256": "83bd6fdfbb2c1d2299b34d397b662addbbbefd5b5aaf62f2407d6527de2a12a3",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:model:ai-usage-observation:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
       "export_name": "AllowedReferenceManifestSchema",
       "family": "policy",
       "json_schema_sha256": "2a7b64f2934db6e07fb38aa70bad5b26c76da108f91eb6ff063cc29313c7fde6",
@@ -19,6 +29,16 @@
       "schema_id": "urn:eliotr:contracts:publication:artifact-kind:v1:g1",
       "schema_version": 1,
       "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ArtifactRevisionReadSchema",
+      "family": "publication",
+      "json_schema_sha256": "5da1d07422451c2cd3fefd2cd128c2d7223b1aae45e82a6ae767445ce72f7d42",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:publication:artifact-revision-read:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
     },
     {
       "export_name": "ArtifactRevisionSchema",
@@ -123,11 +143,11 @@
     {
       "export_name": "BranchQueryLegResultSchema",
       "family": "research",
-      "json_schema_sha256": "9dcdb1943f8f21118f89c57004bd5dfc518a1ce8fda1668e1bbabe24ea3e0913",
+      "json_schema_sha256": "82a312cee9f2c89ebc4d624806eec3ecf0319aa3579d7029f7f5b0f07409cb06",
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:research:branch-query-leg-result:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:research:branch-query-leg-result:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
@@ -173,11 +193,11 @@
     {
       "export_name": "BranchQueryResultSchema",
       "family": "research",
-      "json_schema_sha256": "fb4ae7bed3568ea358aac8ad70cd7f2399ac1adaa9d4b1d7cf73fce8b3ce68d2",
+      "json_schema_sha256": "ce02b5e5518b816eec7ccfed18d97059c94a988a6b0bf493dbabd1eed988e2a0",
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:research:branch-query-result:v1:g1",
-      "schema_version": 1,
+      "schema_id": "urn:eliotr:contracts:research:branch-query-result:v2:g1",
+      "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
@@ -511,6 +531,16 @@
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
+      "export_name": "ComputerAgentDispatchListSchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "351cd4478ae1e1836a31d62b61f7fda47af69d91a94263be6120b7c0839aadcc",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-dispatch-list:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
       "export_name": "ComputerAgentDispatchOfferSchema",
       "family": "computer-agent",
       "json_schema_sha256": "69a88b6921f16fee41d2213baaaec531cf1b15ad6bdb3565ceb08c942aa68929",
@@ -597,6 +627,16 @@
       "kind": "OBJECT",
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-dispatch-status:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ComputerAgentDispatchSummarySchema",
+      "family": "computer-agent",
+      "json_schema_sha256": "58acb53d7d03f55214225ae0dbda5ab3f8d4dd828013e06049077a1e146854be",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:computer-agent:computer-agent-dispatch-summary:v1:g1",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
     },
@@ -1371,6 +1411,46 @@
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
+      "export_name": "ManagedRankingCandidateSchema",
+      "family": "retrieval",
+      "json_schema_sha256": "8bf5c7c77bcc7888bbb42af44ae4bdb6a30a54d1520b5a1b210e1cc2d0bdafc8",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:retrieval:managed-ranking-candidate:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ManagedRankingOutcomeSchema",
+      "family": "retrieval",
+      "json_schema_sha256": "de0612fcd14c7d8e69385d18c015a789e04e465b3565aa3c4089b51bbb8c6eeb",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:retrieval:managed-ranking-outcome:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ManagedRankingSignalSchema",
+      "family": "retrieval",
+      "json_schema_sha256": "d992cfbdb4b4e7ef54d8cc6bfd3fc177218b3b4f10c2e94b40e0ba0392165941",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:retrieval:managed-ranking-signal:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ManagedRetrievalTraceSchema",
+      "family": "retrieval",
+      "json_schema_sha256": "9a23cd4cecce59e6e8153bd8abe4061aa86c650f5559e74fa4c45d94ea2cdc46",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:retrieval:managed-retrieval-trace:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
       "export_name": "McpDiagnosticChallengeResultSchema",
       "family": "workspace-mcp",
       "json_schema_sha256": "f6b2a0c03b4d1e90a5d6e33d72329d50d3bfb3ac9fcde93b2fef4a104d7ab2c0",
@@ -1783,11 +1863,11 @@
     {
       "export_name": "ResearchBranchAnalysisCheckpointV2Schema",
       "family": "research",
-      "json_schema_sha256": "9089bf9ae4ba8fceac3b3e153eddb89c31c51de0c5bf5abdc8a476f6b3ea332c",
+      "json_schema_sha256": "bd041c6764361053d9a97ad04c974e8239844a3548cfd8ebc9b5c142bf7f0dcb",
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:research:research-branch-analysis-checkpoint-v2:v2:g1",
-      "schema_version": 2,
+      "schema_id": "urn:eliotr:contracts:research:research-branch-analysis-checkpoint-v2:v3:g1",
+      "schema_version": 3,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
@@ -1813,11 +1893,11 @@
     {
       "export_name": "ResearchBranchReconciliationCheckpointV2Schema",
       "family": "research",
-      "json_schema_sha256": "e363fe4ac246fb1c21f571226628685dadc946eba25088dfbdef6be2c74459a5",
+      "json_schema_sha256": "08092577769a88965eb19fef0be6189c002d8c3f2291018f36f69153be374a02",
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:research:research-branch-reconciliation-checkpoint-v2:v2:g1",
-      "schema_version": 2,
+      "schema_id": "urn:eliotr:contracts:research:research-branch-reconciliation-checkpoint-v2:v3:g1",
+      "schema_version": 3,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
@@ -1843,11 +1923,11 @@
     {
       "export_name": "ResearchBranchResultV2Schema",
       "family": "research",
-      "json_schema_sha256": "4e2e8277293abb27a5a2dee5616b4c6ee2433cfe2451f28ac951073e64aadf4a",
+      "json_schema_sha256": "2526d9d3d478c6a30546635c076e29e6489ceed51230bd05561ccc0ff01473b3",
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:research:research-branch-result-v2:v2:g1",
-      "schema_version": 2,
+      "schema_id": "urn:eliotr:contracts:research:research-branch-result-v2:v3:g1",
+      "schema_version": 3,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
@@ -1857,6 +1937,56 @@
       "kind": "ENUM",
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:research:research-branch-role:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ResearchCatalogModelUseFailureCodeSchema",
+      "family": "research",
+      "json_schema_sha256": "74efe44992aed7bd4955eec2e2a6b009a2fc2dbfaf217fcb6ad75497484c9ccf",
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-catalog-model-use-failure-code:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ResearchCatalogModelUsePhaseSchema",
+      "family": "research",
+      "json_schema_sha256": "bf8af7c3b927c84f6b2fa4870da8ecb116d27a532fb99943d94e2bc26a6cbc9b",
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-catalog-model-use-phase:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ResearchCatalogModelUseReceiptSchema",
+      "family": "research",
+      "json_schema_sha256": "272687b96f27f6dceb707130a6890eda3ec4e0018f850e53810aa6b81cf47d64",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-catalog-model-use-receipt:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchCatalogModelUseRequestSchema",
+      "family": "research",
+      "json_schema_sha256": "6f91055f79cefa11ac204cf69cd4510fc487c851d991e6cac28c73c78d549433",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-catalog-model-use-request:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ResearchCatalogModelUseStateSchema",
+      "family": "research",
+      "json_schema_sha256": "0603f40fa1eeeda6009b1b0ae3bec8effd4620f7e284c860603684e9c4012bb8",
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-catalog-model-use-state:v1:g1",
       "schema_version": 1,
       "structural_strictness": "NON_OBJECT"
     },
@@ -2023,11 +2153,11 @@
     {
       "export_name": "ResearchReadExtractCheckpointV2Schema",
       "family": "research",
-      "json_schema_sha256": "f249d3722e456c253b0b90edc6dc22c3ed0afbf7ce6a9996a643d5b4cfaf7891",
+      "json_schema_sha256": "ee88f11c88b9d8a4b6def7a485157b5e7ef667668a31417ebafceac524e2d7d1",
       "kind": "OBJECT",
       "schema_generation": 1,
-      "schema_id": "urn:eliotr:contracts:research:research-read-extract-checkpoint-v2:v2:g1",
-      "schema_version": 2,
+      "schema_id": "urn:eliotr:contracts:research:research-read-extract-checkpoint-v2:v3:g1",
+      "schema_version": 3,
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
@@ -2037,6 +2167,16 @@
       "kind": "UNION",
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:research:research-relation-assessment-state:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ResearchRunHistoryQuerySchema",
+      "family": "research",
+      "json_schema_sha256": "0f9b437470bbd15ba1fd01d347065c8b7fd36c44b2d14a3b110e17ee50fe6fe8",
+      "kind": "SCALAR",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:research-run-history-query:v1:g1",
       "schema_version": 1,
       "structural_strictness": "NON_OBJECT"
     },
@@ -2177,6 +2317,186 @@
       "kind": "OBJECT",
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:security:selection-integrity-receipt:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ServiceModelProviderCatalogConnectReceiptSchema",
+      "family": "model",
+      "json_schema_sha256": "fbad07d1f2ea11f4e30821abb00c96eaf20182166093f2a63eb469377cdfb6e6",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:model:service-model-provider-catalog-connect-receipt:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ServiceModelProviderCatalogConnectRequestSchema",
+      "family": "model",
+      "json_schema_sha256": "5c64d54982d139ba40424a0ddfbc399efca854ec2cd6b4007a5e4435942f72a0",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:model:service-model-provider-catalog-connect-request:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ServiceModelProviderCatalogPreferencesReadQuerySchema",
+      "family": "model",
+      "json_schema_sha256": "7fdd878cfe43068521de07a73214bc72b632cc7215d5b68e428dc7d688902b47",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:model:service-model-provider-catalog-preferences-read-query:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ServiceModelProviderCatalogPreferencesSchema",
+      "family": "model",
+      "json_schema_sha256": "167eb440d31436ef5cdbb8b399887e381f5a3b8be1d06219000489a5a6a1a744",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:model:service-model-provider-catalog-preferences:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ServiceModelProviderCatalogPreferencesUpdateSchema",
+      "family": "model",
+      "json_schema_sha256": "a978aea9137563bec4fd8e41a24f560a997b7b1d09eda86c2416814ce849bbf1",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:model:service-model-provider-catalog-preferences-update:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ServiceModelProviderCatalogVisibilitySchema",
+      "family": "model",
+      "json_schema_sha256": "e9fd8cd749851f642fca8bc88386a97d3307a1566ce574a5050228220c331557",
+      "kind": "UNION",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:model:service-model-provider-catalog-visibility:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ServiceModelProviderConnectionSchema",
+      "family": "model",
+      "json_schema_sha256": "ce289fba451c9e050b5078ad7abcdecf32d25f757e0a7c74a9a047a5675a48fd",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:model:service-model-provider-connection:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ServiceModelProviderConnectionStatusSchema",
+      "family": "model",
+      "json_schema_sha256": "7b43f03fdde242c0ea7d0232d4f7990adea23c791adda2cabe0f4fa74f4fb9f0",
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:model:service-model-provider-connection-status:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ServiceModelProviderConnectionV2Schema",
+      "family": "model",
+      "json_schema_sha256": "395234e90655578a0ab396128b53760f09960c8d5bf9b8dc1d20f47cae7c6377",
+      "kind": "UNION",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:model:service-model-provider-connection-v2:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ServiceModelProviderCreateReceiptSchema",
+      "family": "model",
+      "json_schema_sha256": "432abec70e28a6ed3d4c6b3b767014dfe8d09e60126e1c0b12e6f9e4a64cb20a",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:model:service-model-provider-create-receipt:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ServiceModelProviderCreateRequestSchema",
+      "family": "model",
+      "json_schema_sha256": "1c7518c85c4731dc1e95319f6645064281db45e356564a963ece777a1d3b7053",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:model:service-model-provider-create-request:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ServiceModelProviderFailureCodeSchema",
+      "family": "model",
+      "json_schema_sha256": "942b83222736c99e74752c5a06401046c014793db3810d53a8495581d8991abc",
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:model:service-model-provider-failure-code:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ServiceModelProviderModelRegistrationModeSchema",
+      "family": "model",
+      "json_schema_sha256": "648c856fa3bd67140117677355cce2cb5674f2fa77877ac7c8311e7d6f27f59d",
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:model:service-model-provider-model-registration-mode:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ServiceModelProviderReadEnvelopeV2Schema",
+      "family": "model",
+      "json_schema_sha256": "b74665ad891c59e20c384da2760517c381cb1f9ba2fa5f04af99f48d96e891fc",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:model:service-model-provider-read-envelope-v2:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ServiceModelProviderReadQuerySchema",
+      "family": "model",
+      "json_schema_sha256": "b599734a3f2f03ba5f9d07c52d319ce0d509ba5333dc03a7be126b2117636622",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:model:service-model-provider-read-query:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ServiceModelProviderReadbackEnvelopeSchema",
+      "family": "model",
+      "json_schema_sha256": "aea66503b08e7164dec388ef6a44506fbf0eb0a703214a7b60d7051966ef16a2",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:model:service-model-provider-readback-envelope:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ServiceModelProviderReadbackEnvelopeV2Schema",
+      "family": "model",
+      "json_schema_sha256": "417a02ec2a1ff6d34dff5796ccd443a58061798dec5b211e928aeb2fc0cbe595",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:model:service-model-provider-readback-envelope-v2:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ServiceModelSettingsSchema",
+      "family": "model",
+      "json_schema_sha256": "6be4d8badc0bea1b491e807700e4eabc2ed3f765f5d0f4616ada46590d6882a1",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:model:service-model-settings:v1:g1",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
     },
@@ -2443,6 +2763,6 @@
   ],
   "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "protocol": "eliotr.contract-schema-index.v1",
-  "registry_generation": 11,
-  "schema_count": 244
+  "registry_generation": 13,
+  "schema_count": 276
 }

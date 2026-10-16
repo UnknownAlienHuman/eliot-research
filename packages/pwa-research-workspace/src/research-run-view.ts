@@ -197,7 +197,7 @@ export function historyStatusText(view: ResearchRunHistoryView): string {
   if (hasSavedDraft && hasSavedRuns) return "Saved drafts and recent runs are available below.";
   if (hasSavedDraft) return "Saved drafts are available below.";
   if (hasSavedRuns) return "Saved runs are available below.";
-  const visibility = view.protocol === "eliotr.research-runs.v4" ? view.visibility_scan : undefined;
+  const visibility = view.protocol === "eliotr.research-runs.v4" || view.protocol === "eliotr.research-runs.v5" ? view.visibility_scan : undefined;
   if (visibility !== undefined && visibility.runs === "SOURCE_EXHAUSTED" && visibility.saved_drafts === "SOURCE_EXHAUSTED") {
     return "No saved research runs or drafts were found.";
   }

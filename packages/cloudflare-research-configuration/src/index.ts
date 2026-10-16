@@ -103,6 +103,9 @@ export * from "./research-provider-key-model-use-store.js";
 export * from "./research-provider-key-model-use-progress.js";
 export * from "./research-provider-key-model-use-current-scope.js";
 export * from "./research-provider-key-model-use-executor.js";
+export * from "./research-catalog-model-pricing.js";
+export * from "./research-catalog-model-v2-probe-executor.js";
+export * from "./research-catalog-model-use-store.js";
 export * from "./research-provider-key-model-pricing.js";
 export * from "./research-provider-key-model-pricing-catalog.js";
 export {
@@ -128,3 +131,7 @@ export type {
   ResearchQualificationRenewalHead,
 } from "./research-qualification-renewal.js";
 export * from "./research-run-configuration-admission.js";
+export * from "./research-native-builtin-catalog-driver.js";
+export * from "./research-native-builtin-catalog-preparation.js";
+export * from "./research-native-builtin-catalog-pricing.js";
+export * from "./research-native-builtin-catalog-target.js";

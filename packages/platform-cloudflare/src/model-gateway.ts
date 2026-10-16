@@ -9,6 +9,7 @@ export type ModelGatewayCallTarget =
   | Readonly<{ readonly provider: "compat"; readonly endpoint: "chat/completions" }>
   | Readonly<{ readonly provider: "openai"; readonly endpoint: "chat/completions" | "responses" }>
   | Readonly<{ readonly provider: "openrouter"; readonly endpoint: "chat/completions" }>
+  | Readonly<{ readonly provider: `custom-${string}`; readonly endpoint: "chat/completions" | "responses" | "v1/messages" }>
   | Readonly<{ readonly provider: "anthropic"; readonly endpoint: "v1/messages" }>;
 export type ModelGatewayCallPolicy = ModelGatewayCallTarget & Readonly<{ readonly gateway_id: "eliotr-reasoning"; readonly route_ref: ApplicationModelRoute; readonly headers: Readonly<Record<string, string>> }>;
 export interface ModelGatewayAdapter extends ModelRoutePort { execute(input: ModelCallInput): Promise<ModelCallReceipt>; resolveFingerprint(routeRef: string): Promise<RouteFingerprint>; }

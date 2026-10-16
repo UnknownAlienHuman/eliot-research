@@ -108,6 +108,34 @@ describe("research run configuration admission selection project", () => {
     expect(h.captured[0]?.select_project_configuration).toBeTypeOf("function");
   });
 
+  it("passes the exact current pin and optional language into the run snapshot capture", async () => {
+    const h = harness({ scope: union("project-alpha", "project-beta"), new_run: true,
+      selected_project_id: "project-beta" });
+    const pin = { configuration_project_id: "project-beta", configuration_ref: "rpmc-v3",
+      configuration_sha256: "b".repeat(64), selection_revision: 3 };
+    const input: ResearchRunConfigurationAdmissionInputV1 = { ...h.input,
+      selected_project_configuration_pin: pin, output_language: "ru" };
+    await resolve(input, h.dependencies);
+    expect(h.requested).toEqual(["project-beta"]);
+    expect(h.captured[0]).toMatchObject({ selected_project_configuration_pin: pin, output_language: "ru" });
+  });
+
+  it("routes builtin Cloudflare selection to the installed qualified snapshot without reading project defaults", async () => {
+    const h = harness({ scope: union("project-alpha", "project-beta"), new_run: true });
+    const installedPin = { expected_model_id: "@cf/meta/llama-3.1-8b-instruct" };
+    const input: ResearchRunConfigurationAdmissionInputV1 = {
+      ...h.input,
+      installed_native_model_pin: installedPin,
+      output_language: "en",
+    };
+    await resolve(input, h.dependencies);
+    expect(h.requested).toEqual([]);
+    expect(h.captured[0]).toMatchObject({ allow_installed_native_default: true,
+      installed_native_model_pin: installedPin, output_language: "en" });
+    expect(h.captured[0]?.configuration_project_id).toBeUndefined();
+    expect(h.captured[0]?.select_project_configuration).toBeUndefined();
+  });
+
   it("keeps rejecting a multi-project scope without an explicit selector", async () => {
     const h = harness({ scope: union("project-alpha", "project-beta"), new_run: true });
     await expect(resolve(h.input, h.dependencies))

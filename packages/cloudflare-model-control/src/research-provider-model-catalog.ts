@@ -25,8 +25,10 @@ const PROVIDER_ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const ACCOUNT_ID = /^[A-Fa-f0-9]{32}$/u;
 const GATEWAY_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
 
-const OPENCODE_GO_CATALOG_URL = "https://opencode.ai/inference/go/v1/models";
-const OPENCODE_ZEN_CATALOG_URL = "https://opencode.ai/inference/v1/models";
+export const OPENCODE_GO_INFERENCE_BASE_URL = "https://opencode.ai/inference/go/v1";
+export const OPENCODE_ZEN_INFERENCE_BASE_URL = "https://opencode.ai/inference/v1";
+const OPENCODE_GO_CATALOG_URL = `${OPENCODE_GO_INFERENCE_BASE_URL}/models`;
+const OPENCODE_ZEN_CATALOG_URL = `${OPENCODE_ZEN_INFERENCE_BASE_URL}/models`;
 
 export interface ResearchProviderModelCatalogOptions {
   /** The configured AI Gateway base URL, normally the reasoning gateway binding. */
@@ -375,7 +377,9 @@ async function requestedProviderConfig(
     }
   }
   if (serviceProvider !== null && (serviceProvider.provider_id !== provider ||
-      serviceProvider.alias === "default" || serviceProvider.model_ids.length === 0)) {
+      serviceProvider.alias === "default" ||
+      (serviceProvider.model_registration_mode === "explicit_allowlist" && serviceProvider.model_ids.length === 0) ||
+      (serviceProvider.model_registration_mode === "catalog_managed" && serviceProvider.model_ids.length !== 0))) {
     throw unavailable("global service provider binding is invalid");
   }
   const alias = serviceProvider?.alias ?? configuredAlias(provider, options.prepared_transport_policies_json);
@@ -383,7 +387,8 @@ async function requestedProviderConfig(
     throw unavailable("no single server-prepared BYOK alias authorizes this provider catalog");
   }
   return Object.freeze({ root, token, alias,
-    ...(serviceProvider === null ? {} : { model_ids: serviceProvider.model_ids }) });
+    ...(serviceProvider === null || serviceProvider.model_registration_mode === "catalog_managed"
+      ? {} : { model_ids: serviceProvider.model_ids }) });
 }
 
 

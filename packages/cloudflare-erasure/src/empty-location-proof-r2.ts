@@ -57,8 +57,6 @@ export interface R2WorkEmptySnapshot {
 interface RegisteredWorkRow {
   readonly canonical_ref: string;
   readonly object_identity_digest: string;
-  readonly managed_root_ref: string | null;
-  readonly managed_root_state: "BUILDING" | "ACTIVE" | "BLOCKED" | null;
 }
 
 /** Registry lookup is source exact; target-wide R2 scans are never authorized. */
@@ -70,31 +68,24 @@ export async function readRegisteredWorkEmptySnapshot(
   verifyRootDependencySet?: (rootRef: string) => Promise<void>,
 ): Promise<{ readonly keys: readonly string[]; readonly live_root_count: number; readonly generation: string; readonly digest: string }> {
   const result = await core.prepare(
-    "SELECT canonical_ref,object_identity_digest,managed_root_ref,managed_root_state FROM erasure_dependency_registry " +
+    "SELECT canonical_ref,object_identity_digest FROM erasure_dependency_registry " +
     "WHERE exact_subject_ref IN (?1,?2) AND location='Projection' AND state='ACTIVE' " +
-    "AND managed_object_kind IS NOT NULL ORDER BY dependency_id LIMIT 10001",
+    "ORDER BY dependency_id LIMIT 10001",
   ).bind(subjectRef, `source-revision:${sourceRevisionRef}`).all<RegisteredWorkRow>();
   if (result.success !== true || !Array.isArray(result.results)) {
     erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "registered Work inventory is unavailable", true);
   }
   if (result.results.length > 10_000) erasureFail("ERASURE_CLOSURE_INCOMPLETE", "registered Work inventory exceeds its bound");
   const keys = new Set<string>();
-  const verifiedRoots = new Set<string>();
-  let liveRootCount = 0;
+  // The current registry has no managed-root columns. If a caller still
+  // requires root verification, keep every row unresolved because it cannot
+  // be bound to a root from the persisted registry contract.
+  const liveRootCount = verifyRootDependencySet === undefined ? 0 : result.results.length;
   for (const row of result.results) {
-    if (!row.canonical_ref.startsWith("r2-work:") ||
-        ![null, "BUILDING", "ACTIVE", "BLOCKED"].includes(row.managed_root_state)) {
+    if (!row.canonical_ref.startsWith("r2-work:")) {
       erasureFail("ERASURE_IDENTITY_CONFLICT", "registered Work dependency is malformed");
     }
     const key = assertErasureText(row.canonical_ref.slice("r2-work:".length), "registered Work key", 1024);
-    if (row.managed_root_ref !== null) {
-      if (row.managed_root_state !== "BLOCKED" || verifyRootDependencySet === undefined) liveRootCount += 1;
-      else if (!verifiedRoots.has(row.managed_root_ref)) {
-        try { await verifyRootDependencySet(row.managed_root_ref); }
-        catch (cause) { erasureFail("ERASURE_CLOSURE_INCOMPLETE", "complete immutable root dependencies were not verified", false, cause); }
-        verifiedRoots.add(row.managed_root_ref);
-      }
-    }
     try { if (await bucket.head(key) !== null) keys.add(key); }
     catch (cause) { erasureFail("ERASURE_SETTLEMENT_UNCERTAIN", "registered Work absence readback failed", true, cause); }
   }

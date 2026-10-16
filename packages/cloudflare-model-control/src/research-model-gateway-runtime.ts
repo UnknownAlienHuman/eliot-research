@@ -300,7 +300,7 @@ export function createResearchModelGatewayRuntime(
     ? undefined
     : validateModelGatewayTransportPolicy(input.transport_policy);
   const api: ModelGatewayApi = transportPolicy?.api ?? "compat-chat-completions";
-  const endpoint = resolveModelGatewayReasoningEndpoint(input.reasoning_gateway_base_url, api);
+  const endpoint = resolveModelGatewayReasoningEndpoint(input.reasoning_gateway_base_url, api, transportPolicy?.provider);
   const binding = input.ai_gateway_binding;
   if (binding !== undefined && transportPolicy?.billing.mode === "byok") {
     requestInvalid("BYOK aliases require direct AI Gateway passthrough transport");
@@ -310,7 +310,7 @@ export function createResearchModelGatewayRuntime(
   }
   const token = binding === undefined ? validateModelGatewayToken(input.gateway_token) : undefined;
   const httpFetch = input.fetch ?? globalThis.fetch.bind(globalThis);
-  const bindingBase = binding === undefined ? undefined : endpoint.slice(0, -modelGatewayProviderNativePath(api).length);
+  const bindingBase = binding === undefined ? undefined : endpoint.slice(0, -modelGatewayProviderNativePath(api, transportPolicy?.provider).length);
   const transport: ModelGatewayFetchPort = Object.freeze({
     async fetch(url: string, init: RequestInit): Promise<Response> {
       if (url !== endpoint) requestInvalid("model gateway transport destination differs from configured reasoning gateway");

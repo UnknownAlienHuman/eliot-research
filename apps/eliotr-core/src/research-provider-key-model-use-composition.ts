@@ -12,6 +12,8 @@ import {
 } from "@eliotr/cloudflare-model-control";
 import type { ServiceModelProviderService } from "@eliotr/cloudflare-model-control/service-model-provider-service.js";
 import { createServiceModelSettingsComposition } from "./service-model-settings-composition.js";
+import type { ResearchProviderKeyModelUseCatalogSelectionV1 } from
+  "@eliotr/cloudflare-research-configuration/research-provider-key-model-use-plan.js";
 
 /**
  * The old project-key operation remains authoritative when present. A global
@@ -72,7 +74,9 @@ export function createGlobalServiceProviderKeyConfiguration(input: {
         metadata_sha256: binding.metadata_sha256,
         status: "configured_not_qualified",
         created_at: binding.created_at,
-        model_registry: Object.freeze({ operation_id: binding.operation_id, model_ids: Object.freeze([...new Set(binding.model_ids)]) }),
+        model_registry: Object.freeze({ operation_id: binding.operation_id,
+          model_registration_mode: binding.model_registration_mode,
+          model_ids: Object.freeze([...new Set(binding.model_ids)]) }),
       });
     },
   });
@@ -83,6 +87,7 @@ export function createResearchProviderKeyModelUseComposition(
   env: Env,
   context: AuthenticatedRequestContext,
   projectId: string,
+  catalogSelection?: ResearchProviderKeyModelUseCatalogSelectionV1,
 ) {
   const projectConfiguration = createOwnerResearchProjectConfigurationService(env, context, projectId);
   const keyConfiguration = createGlobalServiceProviderKeyConfiguration({
@@ -98,5 +103,6 @@ export function createResearchProviderKeyModelUseComposition(
     project_id: projectId,
     key_configuration: keyConfiguration,
     project_configuration: projectConfiguration,
+    ...(catalogSelection === undefined ? {} : { catalog_selection: catalogSelection }),
   });
 }

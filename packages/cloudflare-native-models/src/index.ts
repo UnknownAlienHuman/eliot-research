@@ -1,4 +1,6 @@
 export * from "./provider-native-model-candidate.js";
+export * from "./provider-native-model-catalog-v2.js";
+export * from "./provider-native-model-catalog-v2-authority.js";
 export * from "./provider-native-model-key-binding.js";
 export * from "./provider-native-model-observation.js";
 export * from "./provider-native-model-probe-contract.js";

@@ -167,7 +167,8 @@ export const DURABLE_CORE_TABLE_SPECS_C: readonly TableSpec[] = [
       "max_output_bytes": "int",
       "expires_at": "text",
       "created_at": "text",
-      "role": "text-or-null"
+      "role": "text-or-null",
+      "workflow_stage_request_sha256": "text-or-null"
   }, required: false },
   { manifest: "generations", table: "research_semantic_config_revision", order_by: "revision_ref", columns: {
       "revision_ref": "text",

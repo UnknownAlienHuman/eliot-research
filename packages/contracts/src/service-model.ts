@@ -16,6 +16,12 @@ import { IsoDateTimeSchema } from "./common.js";
 export const SERVICE_MODEL_SETTINGS_PROTOCOL = "eliotr.service-model-settings.v1" as const;
 export const SERVICE_MODEL_PROVIDER_CREATE_PROTOCOL =
   "eliotr.service-model-provider-create.v1" as const;
+export const SERVICE_MODEL_PROVIDER_CATALOG_CONNECT_PROTOCOL =
+  "eliotr.service-model-provider-catalog-connect.v2" as const;
+export const SERVICE_MODEL_PROVIDER_READ_PROTOCOL =
+  "eliotr.service-model-provider-read.v2" as const;
+export const SERVICE_MODEL_PROVIDER_CATALOG_PREFERENCES_PROTOCOL =
+  "eliotr.service-model-provider-catalog-preferences.v1" as const;
 export const WORKERS_AI_PROVIDER_ID = "cloudflare-workers-ai" as const;
 export const AI_SEARCH_INDEXING_PROVIDER_ID = "cloudflare-ai-search" as const;
 
@@ -59,12 +65,16 @@ export const ServiceModelProviderFailureCodeSchema = z.enum([
 export type ServiceModelProviderFailureCode =
   z.infer<typeof ServiceModelProviderFailureCodeSchema>;
 
-/** One global external provider connection. No key, secret preview or token. */
-export const ServiceModelProviderConnectionSchema = z.object({
+export const ServiceModelProviderModelRegistrationModeSchema = z.enum([
+  "explicit_allowlist", "catalog_managed",
+]);
+export type ServiceModelProviderModelRegistrationMode =
+  z.infer<typeof ServiceModelProviderModelRegistrationModeSchema>;
+
+const serviceModelProviderConnectionFields = {
   operation_id: operationId,
   provider_id: providerSlug,
   display_name: displayName,
-  model_ids: z.array(modelIdentifier).min(1).max(64),
   base_url: baseUrl.nullable(),
   status: ServiceModelProviderConnectionStatusSchema,
   provider_config_id: providerConfigurationId.nullable(),
@@ -73,7 +83,15 @@ export const ServiceModelProviderConnectionSchema = z.object({
   provider_http_status: z.number().int().min(100).max(599).nullable(),
   created_at: IsoDateTimeSchema,
   updated_at: IsoDateTimeSchema,
-}).strict().refine((connection) => {
+};
+
+function connectionStatusIsConsistent(connection: {
+  readonly status: ServiceModelProviderConnectionStatus;
+  readonly provider_config_id: string | null;
+  readonly alias: string | null;
+  readonly failure_code: ServiceModelProviderFailureCode | null;
+  readonly provider_http_status: number | null;
+}): boolean {
   if (connection.status === "configured") {
     return connection.provider_config_id !== null && connection.alias !== null &&
       connection.failure_code === null && connection.provider_http_status === null;
@@ -85,8 +103,29 @@ export const ServiceModelProviderConnectionSchema = z.object({
   return connection.provider_config_id === null && connection.alias === null &&
     connection.failure_code === null && connection.provider_http_status === null &&
     connection.status === "uncertain";
+}
+
+/** One global external provider connection. No key, secret preview or token. */
+export const ServiceModelProviderConnectionSchema = z.object({
+  ...serviceModelProviderConnectionFields,
+  model_ids: z.array(modelIdentifier).min(1).max(64),
+}).strict().refine((connection) => {
+  return connectionStatusIsConsistent(connection);
 }, "provider connection details do not match its status");
 export type ServiceModelProviderConnection = z.infer<typeof ServiceModelProviderConnectionSchema>;
+
+/** V2 reads identify catalog-managed connections without inventing a model allowlist. */
+export const ServiceModelProviderConnectionV2Schema = z.discriminatedUnion("model_registration_mode", [
+  z.object({ ...serviceModelProviderConnectionFields,
+    model_registration_mode: z.literal("explicit_allowlist"),
+    model_ids: z.array(modelIdentifier).min(1).max(64),
+  }).strict(),
+  z.object({ ...serviceModelProviderConnectionFields,
+    model_registration_mode: z.literal("catalog_managed"),
+  }).strict(),
+]).refine((connection) => connectionStatusIsConsistent(connection),
+  "provider connection details do not match its status");
+export type ServiceModelProviderConnectionV2 = z.infer<typeof ServiceModelProviderConnectionV2Schema>;
 
 export const ServiceModelSettingsSchema = z.object({
   protocol: z.literal(SERVICE_MODEL_SETTINGS_PROTOCOL),
@@ -140,6 +179,91 @@ export const ServiceModelProviderCreateReceiptSchema = z.object({
 }).strict();
 export type ServiceModelProviderCreateReceipt =
   z.infer<typeof ServiceModelProviderCreateReceiptSchema>;
+
+/** Connects one provider credential while discovering model IDs from its catalog. */
+export const ServiceModelProviderCatalogConnectRequestSchema = z.object({
+  protocol: z.literal(SERVICE_MODEL_PROVIDER_CATALOG_CONNECT_PROTOCOL),
+  operation_id: operationId,
+  provider_id: providerSlug,
+  display_name: displayName,
+  base_url: baseUrl.optional(),
+  model_registration_mode: z.literal("catalog_managed"),
+  api_key: z.string().min(16).max(4_096).regex(/^[\x21-\x7e]+$/u),
+}).strict().refine((request) => ![request.provider_id, request.display_name, request.base_url ?? ""]
+  .concat([request.protocol, request.operation_id, request.model_registration_mode])
+  .some(value => value.includes(request.api_key)), "Credentials belong only in the write-only key field");
+export type ServiceModelProviderCatalogConnectRequest =
+  z.infer<typeof ServiceModelProviderCatalogConnectRequestSchema>;
+
+export const ServiceModelProviderCatalogConnectReceiptSchema = z.object({
+  protocol: z.literal(SERVICE_MODEL_PROVIDER_CATALOG_CONNECT_PROTOCOL),
+  operation_id: operationId,
+  provider_id: providerSlug,
+  display_name: displayName,
+  model_registration_mode: z.literal("catalog_managed"),
+  base_url: baseUrl.nullable(),
+  alias: providerAlias,
+  provider_config_id: providerConfigurationId,
+  provider_slug: providerSlug,
+  status: z.literal("configured"),
+  created_at: IsoDateTimeSchema,
+}).strict();
+export type ServiceModelProviderCatalogConnectReceipt =
+  z.infer<typeof ServiceModelProviderCatalogConnectReceiptSchema>;
+
+export const ServiceModelProviderReadEnvelopeV2Schema = z.object({
+  protocol: z.literal(SERVICE_MODEL_PROVIDER_READ_PROTOCOL),
+  connections: z.array(ServiceModelProviderConnectionV2Schema).max(50),
+  truncated: z.boolean(),
+}).strict();
+export type ServiceModelProviderReadEnvelopeV2 =
+  z.infer<typeof ServiceModelProviderReadEnvelopeV2Schema>;
+
+export const ServiceModelProviderReadbackEnvelopeV2Schema = z.object({
+  protocol: z.literal(SERVICE_MODEL_PROVIDER_READ_PROTOCOL),
+  connection: ServiceModelProviderConnectionV2Schema.nullable(),
+  truncated: z.boolean(),
+}).strict();
+export type ServiceModelProviderReadbackEnvelopeV2 =
+  z.infer<typeof ServiceModelProviderReadbackEnvelopeV2Schema>;
+
+/** Presentation-only rules; they do not grant permission or model qualification. */
+const preferenceModelIds = z.array(modelIdentifier).min(1).max(512)
+  .refine((ids) => new Set(ids).size === ids.length, "Model visibility IDs must be unique");
+export const ServiceModelProviderCatalogVisibilitySchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("all") }).strict(),
+  z.object({ mode: z.literal("none") }).strict(),
+  z.object({ mode: z.literal("include"), model_ids: preferenceModelIds }).strict(),
+  z.object({ mode: z.literal("exclude"), model_ids: preferenceModelIds }).strict(),
+]);
+export type ServiceModelProviderCatalogVisibility =
+  z.infer<typeof ServiceModelProviderCatalogVisibilitySchema>;
+
+const catalogSearch = z.string().max(512)
+  .refine((value) => new TextEncoder().encode(value).byteLength <= 512 &&
+    !/[\u0000-\u001f\u007f]/u.test(value), "Model catalog search is invalid");
+
+export const ServiceModelProviderCatalogPreferencesUpdateSchema = z.object({
+  protocol: z.literal(SERVICE_MODEL_PROVIDER_CATALOG_PREFERENCES_PROTOCOL),
+  provider_id: providerSlug,
+  visibility: ServiceModelProviderCatalogVisibilitySchema,
+  search: catalogSearch,
+}).strict();
+export type ServiceModelProviderCatalogPreferencesUpdate =
+  z.infer<typeof ServiceModelProviderCatalogPreferencesUpdateSchema>;
+
+export const ServiceModelProviderCatalogPreferencesSchema = z.object({
+  ...ServiceModelProviderCatalogPreferencesUpdateSchema.shape,
+  updated_at: IsoDateTimeSchema.nullable(),
+}).strict();
+export type ServiceModelProviderCatalogPreferences =
+  z.infer<typeof ServiceModelProviderCatalogPreferencesSchema>;
+
+export const ServiceModelProviderCatalogPreferencesReadQuerySchema = z.object({
+  provider_id: providerSlug,
+}).strict();
+export type ServiceModelProviderCatalogPreferencesReadQuery =
+  z.infer<typeof ServiceModelProviderCatalogPreferencesReadQuerySchema>;
 
 /** The readback endpoint accepts only this optional exact-operation selector. */
 export const ServiceModelProviderReadQuerySchema = z.object({

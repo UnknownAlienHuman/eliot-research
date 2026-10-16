@@ -73,4 +73,64 @@ export const DURABLE_CORE_TABLE_SPECS_F: readonly TableSpec[] = [
     qualification_ref: "text", qualification_sha256: "text", owner_ref: "text", project_id: "text",
     reason: "text", revoked_by: "text", revoked_at: "text",
   }, required: true },
+  // Global service-provider connection metadata only. `alias` refers to the existing
+  // Cloudflare BYOK secret; the secret value is never stored in Core or exported here.
+  { manifest: "heads", table: "service_model_provider_operation", order_by: "owner_id, operation_id", columns: {
+    owner_id: "text", operation_id: "text", provider_id: "text", display_name: "text",
+    base_url: "text-or-null", model_ids_json: "text", request_sha256: "text", alias: "text",
+    state: "text", provider_config_id: "text-or-null", provider_slug: "text-or-null",
+    metadata_sha256: "text-or-null", failure_code: "text-or-null", provider_http_status: "int-or-null",
+    created_at: "text", updated_at: "text", model_registration_mode: "text",
+  }, required: true },
+  // Owner presentation filters persist through supported backups; they carry no model-use authority.
+  { manifest: "heads", table: "service_model_provider_catalog_preference", order_by: "owner_id, provider_id", columns: {
+    owner_id: "text", provider_id: "text", visibility_json: "text", search_text: "text", updated_at: "text",
+  }, required: true },
+  // Workflow-native and authorized-read stage results are durable completion receipts.
+  { manifest: "heads", table: "research_workflow_native_stage_completion", order_by: "operation_id, stage_index", columns: {
+    operation_id: "text", stage_index: "int", stage: "text", request_json: "text", request_sha256: "text",
+    handler_generation: "text", effect_policy_generation: "text", effect_class: "text",
+    authority_policy_generation: "text", policy_authority_ref: "text", principal_ref: "text",
+    credential_generation: "text", deployment_generation: "text", scope_snapshot_id: "text",
+    scope_snapshot_revision: "int", authorization_receipt_ref: "text", purge_revision: "int",
+    expected_revision: "int", input_manifest_json: "text", output_manifest_json: "text", receipt_json: "text",
+    receipt_sha256: "text", ledger_event_id: "text", created_at: "text",
+  }, required: true },
+  { manifest: "heads", table: "research_workflow_authorized_read_stage_completion", order_by: "operation_id, stage_index", columns: {
+    operation_id: "text", stage_index: "int", stage: "text", request_json: "text", request_sha256: "text",
+    handler_generation: "text", effect_policy_generation: "text", effect_class: "text",
+    authority_policy_generation: "text", policy_authority_ref: "text", principal_ref: "text",
+    credential_generation: "text", deployment_generation: "text", scope_snapshot_id: "text",
+    scope_snapshot_revision: "int", authorization_receipt_ref: "text", purge_revision: "int",
+    expected_revision: "int", input_manifest_json: "text", output_manifest_json: "text", receipt_json: "text",
+    receipt_sha256: "text", ledger_event_id: "text", created_at: "text",
+  }, required: true },
+  // Immutable queue receipts prevent transport replay from becoming a new business effect.
+  { manifest: "heads", table: "queue_terminal_observation", order_by: "queue_name, platform_message_id", columns: {
+    queue_name: "text", platform_message_id: "text", platform_attempt: "int", observed_at_ms: "int",
+    disposition: "text", outbox_id: "text-or-null", original_message_json: "text-or-null",
+    completed_receipt_ref: "text-or-null",
+  }, required: true },
+  { manifest: "heads", table: "queue_owner_replay", order_by: "queue_name, platform_message_id", columns: {
+    queue_name: "text", platform_message_id: "text", outbox_id: "text", original_message_id: "text",
+    replay_outbox_attempt: "int", principal_ref: "text", credential_generation: "text",
+    request_key: "text", authorized_at_ms: "int",
+  }, required: true },
+  // Immutable per-item effect intent/readback reconciles external projection writes.
+  { manifest: "heads", table: "projection_managed_item_effect", order_by: "source_revision_ref, projection_generation, item_key", columns: {
+    source_revision_ref: "text", projection_generation: "text", job_id: "text", item_key: "text",
+    desired_index: "int", normalized_start_byte: "int", normalized_end_byte: "int", intent_id: "text",
+    intent_revision: "int", attempt_id: "text", execution_operation_id: "text",
+    dispatch_lease_generation: "int-or-null", managed_instance_id: "text", managed_generation: "text",
+    provider_source: "text", provider_key: "text", section_content_sha256: "text", document_sha256: "text",
+    document_size_bytes: "int", metadata_json: "text", state: "text", provider_item_id: "text-or-null",
+    readback_receipt_json: "text-or-null", readback_sha256: "text-or-null", created_at: "text", updated_at: "text",
+  }, required: true },
+  // Outbox state and external issue receipts stay with incidents to prevent duplicate deliveries.
+  { manifest: "heads", table: "doctor_delivery_outbox", order_by: "delivery_id", columns: {
+    delivery_id: "text", incident_id: "text", sink_ref: "text", marker: "text", state: "text",
+    diagnosis_state: "text", diagnosis: "text-or-null", external_issue_number: "int-or-null",
+    external_issue_url: "text-or-null", last_error_code: "text-or-null", lease_owner: "text-or-null",
+    lease_until: "int-or-null", lease_generation: "int", created_at: "text", updated_at: "text",
+  }, required: true },
 ];

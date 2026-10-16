@@ -1,13 +1,30 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { skipToken, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { skipToken, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { WorkspaceLink } from '../routes/WorkspaceLink';
 import { Button, MaterialSymbol, OperationAnnouncement, ResearchRunFeature, Status, researchEngineLabel } from '@eliotr/ui';
-import type { ResearchRunLaunchView, VersionedRef } from '@eliotr/owner-api-client';
+import type { ResearchCatalogModelUseReceipt, ResearchProjectModelConfiguration, ResearchRunLaunchView, ResearchRunProjectConfigurationPinV4, ResearchRunV4Request, VersionedRef } from '@eliotr/owner-api-client';
+import { researchModelCatalogAdapterForRouteProvider } from '@eliotr/owner-api-client';
 import type { BoundWorkspaceApis } from './runtime';
 import type { PrivacyController, SessionContext } from './privacy';
 import type { NextQuestionSource } from './NextQuestionScope';
 import { matchesResearchRunLaunch, researchQueryOptions } from '../query/research';
 import { protectedQueryKey, runProtectedRead } from '../query/client';
+import { ChatModelPicker, type ChatModelQualificationState } from './ChatModelPicker';
+import { serviceModelCatalogPreferencesQueryOptions, serviceModelCatalogQueryOptions,
+  serviceModelProvidersV2QueryOptions, serviceModelSettingsQueryOptions,
+  type ServiceModelProviderConnectionV2 } from '../query/globalModelSettings';
+import { buildChatModelOptions,
+  type ChatModelOption, type ChatModelCatalogSlice } from '../query/chatModelCatalog';
+import { chatCatalogModelOperationQueryOptions, chatCurrentCatalogModelOperationQueryOptions,
+  chatProjectModelConfigurationQueryOptions } from '../query/chatModelQueries';
+import { ChatModelSelectionClosedError,
+  ChatModelSelectionUnconfirmedError, configurationMatchesChatModel, prepareChatModelRunV4 }
+  from '../query/chatModelSelection';
+import { catalogModelUseReceiptProblem, chatCatalogModelUseMatches, chatCatalogModelUseNeedsReadback, prepareCatalogChatModelSelection,
+  readDiscoveredCatalogModelOperation, ChatCatalogModelUseDiscoveredError,
+  ChatCatalogModelUseUnavailableError, type ChatCatalogModelUseIntent } from '../query/chatCatalogModelUse';
+import { modelCatalogEntryKey } from '../query/modelCatalog';
+import { researchLaunchFailureMessage, submitResearchLaunchOnce, type ResearchLaunchFailure } from '../query/researchLaunch';
 import { ReportPanel } from './ReportPanel';
 import { ProjectOverview } from './ProjectOverview';
 import { usePaneAnnouncement } from './usePaneAnnouncement';
@@ -20,20 +37,30 @@ interface ResearchIntent {
   readonly wholeScope?: string;
   readonly phase: 'pending' | 'unknown' | 'admitted';
   readonly launch?: ResearchRunLaunchView;
+  readonly launchFailure?: ResearchLaunchFailure;
 }
 interface ResearchMemory {
+  readonly discoveredCatalogModelUse?: ResearchCatalogModelUseReceipt;
+  readonly catalogModelUse?: ChatCatalogModelUseIntent;
   readonly recovery?: ResearchRunRecoveryMemory;
   readonly intent?: ResearchIntent;
   readonly observedLaunch?: ResearchRunLaunchView;
   readonly artifact?: VersionedRef;
 }
+interface ChatCatalogTarget {
+  readonly catalogProviderId: string;
+  readonly preferenceProviderId: string;
+  readonly builtin: boolean;
+  readonly connection?: ServiceModelProviderConnectionV2;
+}
 const copy = {
-  en: { statusUnavailable: 'The research status could not be read.', working: 'Researching your question.', runRead: 'Status updated.', runFailed: 'The research ended with an error.', runComplete: 'The engine finished. Review its result.', cancelled: 'Research cancelled.', historyLoaded: 'Recent research loaded.', scope: 'Choose sources', scopeStale: 'Review your selected sources again before asking a new question.', scopeEmpty: 'Choose the sources for your next question first.', noProject: 'Open a project to choose its sources.', projects: 'Open projects', blocked: 'Research settings need a check before you ask.', check: 'Check research readiness', connections: 'Review connections', history: 'Recent research', readHistory: 'Refresh recent research', openRun: 'Read this run', report: 'Open saved report', unknown: 'The launch outcome is unknown. The original question and request identity are preserved.', recover: 'Reconcile this question', same: 'If the research started, it opens; if not, the same request is sent again without a duplicate.', next: 'Ask another question', input: 'The question could not be prepared. Review its text and source selection.', unavailable: 'Recent research could not be read. Refresh it.', noRuns: 'Your questions and saved reports will appear here.', incomplete: 'No draft report yet.' },
-  ru: { statusUnavailable: 'Не удалось узнать статус исследования.', working: 'Исследую ваш вопрос.', runRead: 'Статус обновлён.', runFailed: 'Исследование завершилось с ошибкой.', runComplete: 'Исследование завершено. Посмотрите результат.', cancelled: 'Исследование отменено.', historyLoaded: 'Последние исследования прочитаны.', scope: 'Выбрать источники', scopeStale: 'Перед новым вопросом проверьте выбранные источники ещё раз.', scopeEmpty: 'Сначала выберите источники для следующего вопроса.', noProject: 'Откройте проект, чтобы выбрать его источники.', projects: 'Открыть проекты', blocked: 'Перед вопросом нужно проверить настройки исследования.', check: 'Проверить готовность исследования', connections: 'Проверить подключения', history: 'Последние исследования', readHistory: 'Обновить список', openRun: 'Открыть исследование', report: 'Открыть отчёт', unknown: 'Не удалось подтвердить запуск исследования. Вопрос сохранён.', recover: 'Проверить этот вопрос', same: 'Если исследование началось, оно откроется; если нет — тот же запрос уйдёт ещё раз, без дубликата.', next: 'Задать другой вопрос', input: 'Не удалось подготовить вопрос. Проверьте текст и выбранные источники.', unavailable: 'Не удалось загрузить последние исследования. Обновите список.', noRuns: 'Здесь появятся ваши вопросы и сохранённые отчёты.', incomplete: 'Черновика отчёта пока нет.' },
+  en: { statusUnavailable: 'The research status could not be read.', working: 'Researching your question.', runRead: 'Status updated.', runFailed: 'The research ended with an error.', runComplete: 'The engine finished. Review its result.', cancelled: 'Research cancelled.', historyLoaded: 'Recent research loaded.', scope: 'Choose sources', scopeStale: 'Review your selected sources again before asking a new question.', scopeEmpty: 'Choose the sources for your next question first.', noProject: 'Open a project to choose its sources.', projects: 'Open projects', blocked: 'Research settings need a check before you ask.', check: 'Check research readiness', connections: 'Review connections', history: 'Recent research', readHistory: 'Refresh recent research', openRun: 'Read this run', report: 'Open saved report', unknown: 'The launch outcome is unknown. The original question and request identity are preserved.', recover: 'Reconcile this question', same: 'If the research started, it opens; if not, the same request is sent again without a duplicate.', next: 'Ask another question', input: 'The question could not be prepared. Review its text and source selection.', unavailable: 'Recent research could not be read. Refresh it.', noRuns: 'Your questions and saved reports will appear here.', incomplete: 'No draft report yet.', modelConfigurationReading: 'Checking model availability…', modelConfigurationFailed: 'Model availability could not be checked.', modelConfigurationsPartial: 'Some model options may be missing.', modelRunUnavailable: 'No model is currently available for this chat.', providerListIncomplete: 'Some provider connections could not be checked.' },
+  ru: { statusUnavailable: 'Не удалось узнать статус исследования.', working: 'Исследую ваш вопрос.', runRead: 'Статус обновлён.', runFailed: 'Исследование завершилось с ошибкой.', runComplete: 'Исследование завершено. Посмотрите результат.', cancelled: 'Исследование отменено.', historyLoaded: 'Последние исследования прочитаны.', scope: 'Выбрать источники', scopeStale: 'Перед новым вопросом проверьте выбранные источники ещё раз.', scopeEmpty: 'Сначала выберите источники для следующего вопроса.', noProject: 'Откройте проект, чтобы выбрать его источники.', projects: 'Открыть проекты', blocked: 'Перед вопросом нужно проверить настройки исследования.', check: 'Проверить готовность исследования', connections: 'Проверить подключения', history: 'Последние исследования', readHistory: 'Обновить список', openRun: 'Открыть исследование', report: 'Открыть отчёт', unknown: 'Не удалось подтвердить запуск исследования. Вопрос сохранён.', recover: 'Проверить этот вопрос', same: 'Если исследование началось, оно откроется; если нет — тот же запрос уйдёт ещё раз, без дубликата.', next: 'Задать другой вопрос', input: 'Не удалось подготовить вопрос. Проверьте текст и выбранные источники.', unavailable: 'Не удалось загрузить последние исследования. Обновите список.', noRuns: 'Здесь появятся ваши вопросы и сохранённые отчёты.', incomplete: 'Черновика отчёта пока нет.', modelConfigurationReading: 'Проверяем доступность моделей…', modelConfigurationFailed: 'Не удалось проверить доступность моделей.', modelConfigurationsPartial: 'Некоторые варианты моделей могут отсутствовать.', modelRunUnavailable: 'Для этого чата сейчас нет доступных моделей.', providerListIncomplete: 'Не удалось проверить некоторые подключения провайдеров.' },
 } as const;
 
 /** One explicit intent owns admission. Polling, navigation and history never allocate a run. */
-export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurrent, isScopeCurrent, projectId, isProjectCurrent, cover, wholeScope }: {
+export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurrent, isScopeCurrent, projectId, isProjectCurrent,
+  cover, wholeScope }: {
   readonly apis: BoundWorkspaceApis; readonly privacy: PrivacyController; readonly context: SessionContext;
   readonly locale: 'en' | 'ru'; readonly scope: readonly NextQuestionSource[]; readonly scopeCurrent: boolean;
   readonly isScopeCurrent: () => boolean;
@@ -55,6 +82,53 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     } : undefined);
   const configuration = useQuery(options.configuration());
   const history = useQuery({ ...options.history(), enabled: projectId !== undefined && isProjectCurrent() });
+  const projectModelQuery = chatProjectModelConfigurationQueryOptions(apis.connections.models, privacy, context, projectId, isProjectCurrent);
+  const projectModels = useQuery(projectModelQuery);
+  const currentCatalogOperation = useQuery(chatCurrentCatalogModelOperationQueryOptions(apis.connections.catalogModelUse,
+    privacy, context, projectId, isProjectCurrent));
+  const providerSettings = useQuery(serviceModelSettingsQueryOptions(apis.settings.models, privacy, context));
+  const serviceProviders = useQuery(serviceModelProvidersV2QueryOptions(apis.settings.models, privacy, context));
+  const connectedProviders = serviceProviders.data?.connections.filter(connection => connection.status === "configured" &&
+    connection.provider_id !== "cloudflare-workers-ai") ?? [];
+  const catalogTargets: readonly ChatCatalogTarget[] = [
+    { catalogProviderId: "workers-ai", preferenceProviderId: "cloudflare-workers-ai", builtin: true },
+    ...connectedProviders.map(connection => ({ catalogProviderId: connection.provider_id,
+      preferenceProviderId: connection.provider_id, connection, builtin: false })),
+  ];
+  const [modelSearch, setModelSearch] = useState("");
+  const deferredModelSearch = useDeferredValue(modelSearch);
+  const [modelCatalogPage, setModelCatalogPage] = useState(1);
+  const catalogPreferences = useQueries({ queries: catalogTargets.map(target => ({
+    ...serviceModelCatalogPreferencesQueryOptions(apis.settings.models, privacy, context, target.preferenceProviderId),
+    enabled: privacy.isCurrent(context),
+  })) });
+  const modelCatalogs = useQueries({ queries: catalogTargets.map(target => ({
+    ...serviceModelCatalogQueryOptions(apis.connections.models, privacy, context, {
+      providerId: target.catalogProviderId, search: deferredModelSearch, page: modelCatalogPage,
+    }),
+    enabled: privacy.isCurrent(context) && (target.builtin || serviceProviders.isSuccess),
+  })) });
+  const catalogSlices = useMemo<readonly ChatModelCatalogSlice[]>(() => catalogTargets.map((target, index) => ({
+    catalogProviderId: target.catalogProviderId,
+    preferenceProviderId: target.preferenceProviderId,
+    providerLabel: target.connection?.display_name ?? (target.builtin ? "Cloudflare Workers AI" : target.preferenceProviderId),
+    ...(target.connection === undefined ? {} : { connection: target.connection }),
+    ...(modelCatalogs[index]?.data === undefined ? {} : { catalog: modelCatalogs[index].data }),
+    ...(catalogPreferences[index]?.data === undefined ? {} : { preferences: catalogPreferences[index].data }),
+    ...(target.builtin ? { builtin: {
+      bindingAvailable: providerSettings.data?.cloudflare.binding_available === true,
+      defaultModelId: providerSettings.data?.cloudflare.default_model_id ?? "",
+    } } : {}),
+  })), [catalogTargets, modelCatalogs, catalogPreferences, providerSettings.data]);
+  const chatModelOptions = useMemo(() => buildChatModelOptions({ slices: catalogSlices,
+    ...(projectModels.data === undefined ? {} : { configuration: projectModels.data as ResearchProjectModelConfiguration }),
+  }), [catalogSlices, projectModels.data]);
+  const modelCatalogLoading = serviceProviders.isPending || providerSettings.isPending ||
+    catalogPreferences.some(query => query.isFetching) || modelCatalogs.some(query => query.isFetching);
+  const modelCatalogFailed = serviceProviders.isError || providerSettings.isError ||
+    catalogPreferences.some(query => query.isError) || modelCatalogs.some(query => query.isError);
+  const modelCatalogHasMore = modelCatalogs.some(query => query.data?.pagination.has_more === true &&
+    query.data.pagination.next_page !== null);
   const saved = memory.data, launch = saved?.intent?.launch ?? saved?.observedLaunch;
   const historyHeading = useRef<HTMLHeadingElement>(null), returningFromReport = useRef(false);
   const composer = useRef<HTMLDivElement>(null), returningToComposer = useRef(false);
@@ -79,19 +153,133 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     refetchIntervalInBackground: false,
   } : { queryKey: [...protectedQueryKey(context, 'research'), 'status-unselected'], queryFn: skipToken });
   const [busy, setBusy] = useState(false), [inputError, setInputError] = useState(false);
+  const [selectedChatModelKey, setSelectedChatModelKey] = useState("");
+  const [selectedChatModelIdentity, setSelectedChatModelIdentity] = useState<Pick<ChatModelOption["model"], "provider_id" | "model_id">>();
+  const [modelQualificationState, setModelQualificationState] = useState<ChatModelQualificationState>("idle");
+  const [modelSelectionUnknown, setModelSelectionUnknown] = useState(false);
+  const [heldModelChoice, setHeldModelChoice] = useState<ChatModelOption>();
+  const explicitChatSelection = useRef(false);
+  const preparingModel = useRef(false);
   const [heldDraft, setHeldDraft] = useState<{ readonly context: SessionContext; readonly text: string } | undefined>(undefined);
   const nextQuestionDraft = heldDraft !== undefined && heldDraft.context === context && privacy.isCurrent(context)
     ? heldDraft.text : '';
+  const selectedChatModel = chatModelOptions.find(choice => choice.key === selectedChatModelKey);
+  const localCatalogModelUseHeld = chatCatalogModelUseNeedsReadback(saved?.catalogModelUse);
+  const discoveredCatalogOperation = saved?.discoveredCatalogModelUse ?? currentCatalogOperation.data ?? undefined;
+  const catalogOperationId = localCatalogModelUseHeld ? saved?.catalogModelUse?.request.operation_id : discoveredCatalogOperation?.operation_id;
+  const catalogOperationReadback = useQuery({
+    ...chatCatalogModelOperationQueryOptions(apis.connections.catalogModelUse, apis.connections.models,
+      privacy, context, projectId, isProjectCurrent, catalogOperationId),
+    enabled: !busy && projectId !== undefined && catalogOperationId !== undefined && privacy.isCurrent(context) && isProjectCurrent(),
+  });
+  const observedCatalogOperation = !catalogOperationReadback.isError && catalogOperationReadback.data?.receipt.operation_id === catalogOperationId
+    ? catalogOperationReadback.data : undefined;
+  const catalogOperationTerminal = observedCatalogOperation !== undefined && ['selected', 'blocked', 'conflict'].includes(observedCatalogOperation.receipt.state);
+  const serverCatalogOperationHeld = catalogOperationId !== undefined && (!catalogOperationTerminal || catalogOperationReadback.isFetching);
+  const catalogDiscoveryBlocked = projectId !== undefined && (!currentCatalogOperation.isSuccess || currentCatalogOperation.isFetching);
+  const catalogModelUseHeld = localCatalogModelUseHeld || serverCatalogOperationHeld;
+  const modelSelectionLocked = modelSelectionUnknown || catalogDiscoveryBlocked || serverCatalogOperationHeld ||
+    (localCatalogModelUseHeld && !catalogOperationTerminal);
+  const localCatalogModelProblem = saved?.catalogModelUse && selectedChatModel &&
+    chatCatalogModelUseMatches(saved.catalogModelUse, selectedChatModel.model, selectedChatModel.providerOperationId ?? null)
+      ? saved.catalogModelUse.problem : undefined;
+  const serverCatalogModelProblem = observedCatalogOperation && ['blocked', 'conflict'].includes(observedCatalogOperation.receipt.state) &&
+    observedCatalogOperation.receipt.provider_id === selectedChatModelIdentity?.provider_id &&
+    observedCatalogOperation.receipt.model_id === selectedChatModelIdentity.model_id
+      ? catalogModelUseReceiptProblem(observedCatalogOperation.receipt) : undefined;
+  const catalogModelProblem = serverCatalogModelProblem ?? localCatalogModelProblem;
+  const selectedCatalogIndex = selectedChatModel === undefined ? -1 :
+    catalogTargets.findIndex(target => researchModelCatalogAdapterForRouteProvider(target.catalogProviderId) === selectedChatModel.model.provider_id);
+  const selectedModelQueriesPending = selectedChatModel === undefined || selectedCatalogIndex < 0 ||
+    (selectedChatModel.builtin ? providerSettings.isFetching : serviceProviders.isFetching) ||
+    catalogPreferences[selectedCatalogIndex]?.isFetching === true || modelCatalogs[selectedCatalogIndex]?.isFetching === true;
+  const selectedModelQueriesFailed = selectedChatModel !== undefined && (selectedCatalogIndex < 0 ||
+    (selectedChatModel.builtin ? providerSettings.isError : serviceProviders.isError) ||
+    catalogPreferences[selectedCatalogIndex]?.isError === true || modelCatalogs[selectedCatalogIndex]?.isError === true);
+  useEffect(() => {
+    explicitChatSelection.current = false;
+    preparingModel.current = false;
+    setSelectedChatModelKey(""); setModelQualificationState("idle"); setModelSelectionUnknown(false);
+    setSelectedChatModelIdentity(undefined); setHeldModelChoice(undefined);
+  }, [projectId, context]);
+  useEffect(() => {
+    if (explicitChatSelection.current || selectedChatModelKey !== "") return;
+    if (catalogDiscoveryBlocked) return;
+    if (discoveredCatalogOperation) {
+      explicitChatSelection.current = true;
+      setSelectedChatModelKey(modelCatalogEntryKey(discoveredCatalogOperation));
+      setSelectedChatModelIdentity(discoveredCatalogOperation);
+      setModelQualificationState('unknown');
+      return;
+    }
+    if (catalogModelUseHeld && saved?.catalogModelUse !== undefined && saved.catalogModelUse.projectId === projectId) {
+      const held = saved.catalogModelUse.request;
+      explicitChatSelection.current = true;
+      setSelectedChatModelKey(modelCatalogEntryKey(held));
+      setSelectedChatModelIdentity({ provider_id: held.provider_id, model_id: held.model_id });
+      setModelQualificationState("unknown");
+      return;
+    }
+    const selected = projectModels.data?.selected;
+    if (!selected) {
+      const builtin = chatModelOptions.find(choice => choice.builtin && choice.canRun);
+      if (builtin) { setSelectedChatModelKey(builtin.key); setSelectedChatModelIdentity(builtin.model); }
+      return;
+    }
+    const synthesis = selected.model_selections.filter(model => model.stage === "SYNTHESIZE");
+    if (synthesis.length !== 1 || !synthesis[0]) return;
+    const current = chatModelOptions.find(choice => choice.canRun && choice.model.model_id === synthesis[0]?.model_id &&
+      configurationMatchesChatModel(selected, choice.model));
+    if (current) { setSelectedChatModelKey(current.key); setSelectedChatModelIdentity(current.model); }
+  }, [chatModelOptions, projectModels.data?.selected, selectedChatModelKey, catalogModelUseHeld, saved?.catalogModelUse,
+    projectId, catalogDiscoveryBlocked, discoveredCatalogOperation]);
   const running = useRef(false), mounted = useRef(true), controller = useRef<AbortController | undefined>(undefined);
   const recoveryInFlight = useRef(false);
   const read = () => client.getQueryData<ResearchMemory>(memoryKey) ?? {};
   const write = (update: (old: ResearchMemory) => ResearchMemory) => {
     if (privacy.isCurrent(context)) client.setQueryData<ResearchMemory>(memoryKey, old => update(old ?? {}));
   };
+  const holdDiscoveredCatalogOperation = (receipt: ResearchCatalogModelUseReceipt) => {
+    if (receipt.project_id !== projectId || !isProjectCurrent() || !privacy.isCurrent(context)) return;
+    write(old => ({ ...old, discoveredCatalogModelUse: receipt }));
+    explicitChatSelection.current = true;
+    setSelectedChatModelKey(modelCatalogEntryKey(receipt)); setSelectedChatModelIdentity(receipt);
+    setModelSelectionUnknown(true); setModelQualificationState('unknown');
+  };
+  const rememberCatalogOperation = (receipt: ResearchCatalogModelUseReceipt) => {
+    write(old => {
+      const local = old.catalogModelUse;
+      const matching = local?.request.operation_id === receipt.operation_id &&
+        chatCatalogModelUseMatches(local, receipt, receipt.provider_operation_id);
+      const phase = receipt.state === 'selected' || receipt.state === 'blocked' || receipt.state === 'conflict' ? receipt.state : 'unknown';
+      return { ...old, discoveredCatalogModelUse: receipt, ...(matching ? { catalogModelUse: { ...local, phase, receipt,
+        ...(['blocked', 'conflict'].includes(receipt.state) ? { problem: catalogModelUseReceiptProblem(receipt) } : {}) } } : {}) };
+    });
+  };
+  useEffect(() => {
+    const receipt = currentCatalogOperation.data;
+    if (receipt && privacy.isCurrent(context) && isProjectCurrent()) {
+      write(old => ({ ...old, discoveredCatalogModelUse: receipt }));
+    }
+  }, [currentCatalogOperation.data, context, projectId]);
+  useEffect(() => {
+    if (!observedCatalogOperation || busy || !privacy.isCurrent(context) || !isProjectCurrent()) return;
+    rememberCatalogOperation(observedCatalogOperation.receipt);
+    if (['selected', 'blocked', 'conflict'].includes(observedCatalogOperation.receipt.state)) {
+      setModelSelectionUnknown(false);
+      setModelQualificationState(observedCatalogOperation.selection ? 'ready' : 'idle');
+      if (observedCatalogOperation.selection) { void projectModels.refetch(); void configuration.refetch(); }
+    }
+  }, [observedCatalogOperation, context, projectId, busy]);
   useEffect(() => {
     mounted.current = true;
     const clearStaleDraft = () => {
-      if (!privacy.isCurrent(context)) setHeldDraft(undefined);
+      if (!privacy.isCurrent(context)) {
+        controller.current?.abort();
+        preparingModel.current = false;
+        setHeldDraft(undefined); setSelectedChatModelKey(""); setSelectedChatModelIdentity(undefined); setModelQualificationState("idle");
+        setModelSelectionUnknown(false); setHeldModelChoice(undefined);
+      }
     };
     const unsubscribe = privacy.subscribe(clearStaleDraft);
     clearStaleDraft();
@@ -113,9 +301,66 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     }).finally(() => { running.current = false; if (mounted.current) setBusy(false); });
   };
   const admit = async (intent: ResearchIntent, signal: AbortSignal) => {
-    const result = await runProtectedRead(privacy, context, signal, readSignal =>
-      apis.research.runs.startResearchRun(intent.body, intent.key, context.deploymentGeneration, readSignal));
-    write(old => old.intent?.key === intent.key ? { ...old, intent: { ...intent, phase: 'admitted', launch: result } } : old);
+    const result = await submitResearchLaunchOnce({ runs: apis.research.runs, privacy, context, body: intent.body, key: intent.key,
+      signal, isCurrent: () => mounted.current && isProjectCurrent() && read().intent?.key === intent.key });
+    write(old => {
+      if (old.intent?.key !== intent.key) return old;
+      const { launchFailure: _failure, ...original } = intent;
+      return { ...old, intent: result.phase === 'admitted' ? { ...original, phase: 'admitted', launch: result.launch }
+        : { ...original, phase: 'unknown', launchFailure: result.failure } };
+    });
+  };
+  const confirmModelSelection = async (selection: ResearchRunProjectConfigurationPinV4, model: Pick<ChatModelOption['model'], 'provider_id' | 'model_id'>,
+    signal: AbortSignal, isCurrent: () => boolean) => {
+    const refreshed = await projectModels.refetch(), selected = refreshed.data?.selected;
+    if (signal.aborted || !isCurrent()) throw new ChatModelSelectionClosedError();
+    if (refreshed.isError || !refreshed.data || refreshed.data.project_id !== projectId || !selected ||
+        refreshed.data.selection_revision !== selection.selection_revision || selected.configuration_ref !== selection.configuration_ref ||
+        selected.configuration_sha256 !== selection.configuration_sha256 || selected.qualification_state !== 'qualified' ||
+        !configurationMatchesChatModel(selected, model)) throw new ChatModelSelectionUnconfirmedError();
+    const readiness = await configuration.refetch();
+    if (signal.aborted || !isCurrent()) throw new ChatModelSelectionClosedError();
+    if (readiness.isError || !readiness.data || readiness.data.run_readiness === 'blocked') throw new ChatModelSelectionUnconfirmedError();
+  };
+  const prepareCatalogChoice = async (choice: ChatModelOption, signal: AbortSignal, isCurrent: () => boolean) => {
+    if (projectId === undefined || signal.aborted || !isCurrent()) throw new ChatModelSelectionClosedError();
+    if (choice.builtin) {
+      const observed = await providerSettings.refetch();
+      if (signal.aborted || !isCurrent()) throw new ChatModelSelectionClosedError();
+      if (observed.isError || !observed.data?.cloudflare.binding_available) throw new ChatCatalogModelUseUnavailableError('unsupported');
+    }
+    if (choice.providerOperationId === undefined) throw new ChatCatalogModelUseUnavailableError('unavailable');
+    const selection = await prepareCatalogChatModelSelection({ api: apis.connections.catalogModelUse, models: apis.connections.models,
+      projectId, generation: context.deploymentGeneration, modelChoice: choice.model,
+      providerOperationId: choice.providerOperationId, signal, isCurrent, mintOperationId: () => crypto.randomUUID(),
+      readIntent: () => read().catalogModelUse, writeIntent: catalogModelUse => write(old => ({ ...old, catalogModelUse })) });
+    await confirmModelSelection(selection, choice.model, signal, isCurrent);
+    return selection;
+  };
+  const chooseChatModel = (choice: ChatModelOption | undefined) => {
+    if (running.current || modelSelectionLocked || read().intent || read().observedLaunch || projectId === undefined ||
+        !privacy.isCurrent(context) || !isProjectCurrent()) return;
+    explicitChatSelection.current = true;
+    setSelectedChatModelKey(choice?.key ?? ''); setSelectedChatModelIdentity(choice?.model);
+    setModelQualificationState('idle'); setModelSelectionUnknown(false); setHeldModelChoice(undefined);
+    write(old => { const { catalogModelUse: _modelUse, discoveredCatalogModelUse: _discovered, ...rest } = old; return rest; });
+    if (!choice?.canRun || choice.candidate?.qualification_state === 'qualified' || (scope.length > 0 && (!scopeCurrent || !isScopeCurrent()))) return;
+    const isCurrent = () => mounted.current && privacy.isCurrent(context) && isProjectCurrent() &&
+      (scope.length === 0 || (scopeCurrent && isScopeCurrent()));
+    setModelQualificationState('qualifying');
+    run(async signal => {
+      try {
+        await prepareCatalogChoice(choice, signal, isCurrent);
+        if (!isCurrent()) throw new ChatModelSelectionClosedError();
+        setModelQualificationState('ready');
+      } catch (error) {
+        if (signal.aborted || !isCurrent()) return;
+        if (error instanceof ChatCatalogModelUseDiscoveredError) { holdDiscoveredCatalogOperation(error.receipt); return; }
+        setHeldModelChoice(choice);
+        const unavailable = error instanceof ChatCatalogModelUseUnavailableError;
+        setModelQualificationState(unavailable ? 'idle' : 'unknown'); setModelSelectionUnknown(!unavailable);
+      }
+    });
   };
   const ask = (question: string) => {
     // No ticked source asks the whole open project (a PROJECT scope); a selection must still be current.
@@ -123,17 +368,62 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     if (read().intent || read().observedLaunch || running.current || projectId === undefined || !isProjectCurrent() ||
       (!wholeProject && (!scopeCurrent || !isScopeCurrent())) || !privacy.isCurrent(context) ||
       configuration.isError || configuration.isFetching || !configuration.data ||
-      client.getQueryData(options.configuration().queryKey) !== configuration.data || configuration.data.run_readiness === 'blocked') return;
-    try {
-      const body = apis.research.runs.researchRunBody(question, scope.map(source => source.id), undefined, projectId);
-      const intent: ResearchIntent = Object.freeze({ body, key: apis.sources.mintIntent(), question,
-        scope: Object.freeze(scope.map(source => Object.freeze({ id: source.id, label: source.label }))), phase: 'pending',
-        ...(scope.length === 0 && wholeScope !== undefined ? { wholeScope } : {}) });
-      write(old => ({ ...old, intent }));
-      if (read().intent?.key !== intent.key) return;
-      setInputError(false); setHeldDraft(undefined);
-      run(signal => admit(intent, signal));
-    } catch { setInputError(true); }
+      client.getQueryData(options.configuration().queryKey) !== configuration.data || configuration.data.run_readiness === 'blocked' ||
+      projectModels.isError || projectModels.isFetching || !projectModels.data ||
+      client.getQueryData(projectModelQuery.queryKey) !== projectModels.data || !selectedChatModel?.canRun ||
+      modelSelectionLocked || catalogModelProblem !== undefined || selectedModelQueriesPending || selectedModelQueriesFailed) return;
+    const selectedChoice = selectedChatModel;
+    const scopeExpression: ResearchRunV4Request["scope_expression"] = wholeProject
+      ? { kind: "PROJECT", project_id: projectId }
+      : { kind: "INTERSECT", left: { kind: "PROJECT", project_id: projectId },
+        right: { kind: "SELECTED_SOURCES", source_ids: scope.map(source => source.id) } };
+    const isSelectionCurrent = () => mounted.current && privacy.isCurrent(context) && isProjectCurrent() &&
+      (wholeProject || (scopeCurrent && isScopeCurrent()));
+    preparingModel.current = true;
+    setInputError(false); setHeldDraft({ context, text: question });
+    setModelQualificationState("qualifying"); setModelSelectionUnknown(false);
+    run(async signal => {
+      let intentCommitted = false;
+      try {
+        const request = { query: question, scope_expression: scopeExpression, output_language: locale };
+        let body: string;
+        if (selectedChoice.candidate?.qualification_state === 'qualified') {
+          const prepared = await prepareChatModelRunV4({ models: apis.connections.models, runs: apis.research.runs,
+            projectId, generation: context.deploymentGeneration, candidate: selectedChoice.candidate,
+            modelChoice: selectedChoice.model, request, signal, isCurrent: isSelectionCurrent,
+            mintSelectionOperation: () => crypto.randomUUID(),
+          });
+          await confirmModelSelection(prepared.selection, selectedChoice.model, signal, isSelectionCurrent);
+          body = prepared.body;
+        } else {
+          const selection = await prepareCatalogChoice(selectedChoice, signal, isSelectionCurrent);
+          if (!isSelectionCurrent()) throw new ChatModelSelectionClosedError();
+          body = apis.research.runs.researchRunBodyV4({ ...request, selection });
+        }
+        if (!isSelectionCurrent()) throw new ChatModelSelectionClosedError();
+        const intent: ResearchIntent = Object.freeze({ body, key: apis.sources.mintIntent(), question,
+          scope: Object.freeze(scope.map(source => Object.freeze({ id: source.id, label: source.label }))), phase: 'pending',
+          ...(scope.length === 0 && wholeScope !== undefined ? { wholeScope } : {}) });
+        write(old => ({ ...old, intent }));
+        if (read().intent?.key !== intent.key) throw new ChatModelSelectionClosedError();
+        intentCommitted = true;
+        preparingModel.current = false;
+        setModelQualificationState("ready"); setHeldModelChoice(undefined); setHeldDraft(undefined);
+        await admit(intent, signal);
+      } catch (error) {
+        if (!intentCommitted) {
+          preparingModel.current = false;
+          if (signal.aborted || !isSelectionCurrent()) setModelQualificationState("idle");
+        }
+        if (!intentCommitted && !signal.aborted && isSelectionCurrent()) {
+          if (error instanceof ChatCatalogModelUseDiscoveredError) { holdDiscoveredCatalogOperation(error.receipt); return; }
+          setHeldModelChoice(selectedChoice);
+          const unavailable = error instanceof ChatCatalogModelUseUnavailableError;
+          setModelQualificationState(unavailable ? 'idle' : 'unknown'); setModelSelectionUnknown(!unavailable);
+        }
+        throw error;
+      }
+    });
   };
   const reconcile = () => {
     const intent = read().intent; if (!intent || intent.phase === 'pending') return;
@@ -144,6 +434,55 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
         await client.fetchQuery(options.status(intent.launch));
         write(old => old.intent?.key === intent.key ? { ...old, intent: { ...intent, phase: 'admitted' } } : old);
       } else await admit(intent, signal);
+    });
+  };
+  const checkModelSelection = () => {
+    if (!modelSelectionLocked || running.current || projectId === undefined || !isProjectCurrent() || !privacy.isCurrent(context)) return;
+    const isCurrent = () => mounted.current && privacy.isCurrent(context) && isProjectCurrent();
+    run(async signal => {
+      try {
+        const discovery = await currentCatalogOperation.refetch();
+        if (signal.aborted || !isCurrent()) throw new ChatModelSelectionClosedError();
+        if (discovery.isError || discovery.data === undefined) throw new ChatModelSelectionUnconfirmedError();
+        const local = read().catalogModelUse;
+        const known = discovery.data ?? read().discoveredCatalogModelUse;
+        const operationId = chatCatalogModelUseNeedsReadback(local) ? local?.request.operation_id : known?.operation_id;
+        if (operationId !== undefined) {
+          const query = chatCatalogModelOperationQueryOptions(apis.connections.catalogModelUse, apis.connections.models,
+            privacy, context, projectId, isProjectCurrent, operationId);
+          await client.cancelQueries({ queryKey: query.queryKey, exact: true });
+          const result = await runProtectedRead(privacy, context, signal, readSignal => readDiscoveredCatalogModelOperation({
+            api: apis.connections.catalogModelUse, models: apis.connections.models, projectId,
+            generation: context.deploymentGeneration, operationId, signal: readSignal, isCurrent,
+          }));
+          if (signal.aborted || !isCurrent()) throw new ChatModelSelectionClosedError();
+          client.setQueryData(query.queryKey, result);
+          rememberCatalogOperation(result.receipt);
+          if (result.selection === null) {
+            if (['blocked', 'conflict'].includes(result.receipt.state)) throw new ChatCatalogModelUseUnavailableError(catalogModelUseReceiptProblem(result.receipt));
+            throw new ChatModelSelectionUnconfirmedError();
+          }
+          await confirmModelSelection(result.selection, result.receipt, signal, isCurrent);
+        } else if (modelSelectionUnknown) {
+          const model = heldModelChoice?.model ?? selectedChatModel?.model;
+          if (model) {
+            const refreshed = await projectModels.refetch(), selected = refreshed.data?.selected;
+            if (signal.aborted || !isCurrent()) throw new ChatModelSelectionClosedError();
+            if (refreshed.isError || !refreshed.data || !selected || selected.qualification_state !== 'qualified' ||
+                !configurationMatchesChatModel(selected, model) || (heldModelChoice?.candidate && (
+                  selected.configuration_ref !== heldModelChoice.candidate.configuration_ref ||
+                  selected.configuration_sha256 !== heldModelChoice.candidate.configuration_sha256))) {
+              throw new ChatModelSelectionUnconfirmedError();
+            }
+          }
+        }
+        if (signal.aborted || !isCurrent()) throw new ChatModelSelectionClosedError();
+        setHeldModelChoice(undefined); setModelSelectionUnknown(false); setModelQualificationState(operationId ? 'ready' : 'idle');
+      } catch (error) {
+        if (signal.aborted || !isCurrent()) return;
+        const unavailable = error instanceof ChatCatalogModelUseUnavailableError;
+        setModelSelectionUnknown(!unavailable); setModelQualificationState(unavailable ? 'idle' : 'unknown');
+      }
     });
   };
   const progress = status.isError ? undefined : status.data;
@@ -233,9 +572,15 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     : progress?.execution_state === 'CANCELLED' ? 'cancelled'
     : progress?.failure ? 'error' : progress?.execution_state === 'ENGINE_COMPLETED' ? 'useful'
     : launch || busy ? 'loading' : 'empty';
+  const launchFailure = saved?.intent?.phase === 'unknown' ? saved.intent.launchFailure : undefined;
+  const launchFailureReason = launchFailure === undefined ? undefined : researchLaunchFailureMessage(launchFailure, locale);
   const announcement = usePaneAnnouncement(recoveryMessage || (busy ? text.working
     : inputError ? text.input
-    : saved?.intent?.phase === 'unknown' ? text.unknown
+    : saved?.intent?.phase === 'unknown' ? `${text.unknown}${launchFailureReason ? ` ${launchFailureReason}` : ''}`
+    : !launch && (currentCatalogOperation.isFetching || catalogOperationReadback.isFetching || modelQualificationState === 'qualifying') ? text.modelConfigurationReading
+    : !launch && modelSelectionLocked ? locale === 'ru' ? 'Не удалось подтвердить доступность модели. Проверьте сохранённый статус.'
+      : 'Model availability could not be confirmed. Check its saved status.'
+    : !launch && modelQualificationState === 'ready' ? locale === 'ru' ? 'Доступность модели подтверждена для запуска.' : 'Model availability confirmed for this run.'
     : status.isError ? text.statusUnavailable
     : progress?.failure ? text.runFailed
     : progress?.execution_state === 'CANCELLED' ? text.cancelled
@@ -266,15 +611,48 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
       {saved?.intent && <Button variant="tonal" disabled={busy || recoveryHeld} onClick={() => finishFailedRun(true)}>{locale === 'ru' ? 'Повторить вопрос' : 'Retry question'}</Button>}
       <Button variant="text" disabled={busy || recoveryHeld} onClick={() => finishFailedRun(false)}>{text.next}</Button>
     </div>}
-    <div ref={composer} className="er-live-research"><ResearchRunFeature key={saved?.intent?.key ?? 'next-question'} locale={locale} state={state}
+    {projectId !== undefined && projectModels.isPending && <Status>{text.modelConfigurationReading}</Status>}
+    {projectId !== undefined && projectModels.isError && <Status tone="error">{text.modelConfigurationFailed}</Status>}
+    {projectId !== undefined && projectModels.data?.next_cursor !== null && projectModels.data?.next_cursor !== undefined &&
+      <Status>{text.modelConfigurationsPartial}</Status>}
+    {serviceProviders.data?.truncated && <Status>{text.providerListIncomplete}</Status>}
+    {!modelCatalogLoading && !modelCatalogFailed && chatModelOptions.every(choice => !choice.canRun) &&
+      <Status>{text.modelRunUnavailable}</Status>}
+    <div ref={composer} className="er-live-research">
+      <ChatModelPicker locale={locale} choices={chatModelOptions} selected={selectedChatModelIdentity}
+        qualificationState={currentCatalogOperation.isFetching || catalogOperationReadback.isFetching ? 'qualifying'
+          : modelSelectionLocked && !busy ? 'unknown' : modelQualificationState} search={modelSearch} page={modelCatalogPage}
+        loading={modelCatalogLoading || currentCatalogOperation.isFetching || catalogOperationReadback.isFetching}
+        failed={modelCatalogFailed || currentCatalogOperation.isError || catalogOperationReadback.isError} hasMore={modelCatalogHasMore}
+        disabled={busy || modelSelectionLocked || saved?.intent !== undefined || saved?.observedLaunch !== undefined || projectId === undefined ||
+          !privacy.isCurrent(context) || !isProjectCurrent()}
+        checkDisabled={busy || projectId === undefined || !privacy.isCurrent(context) || !isProjectCurrent()}
+        onSearchChange={value => { setModelSearch(value); setModelCatalogPage(1); }}
+        onPageChange={setModelCatalogPage}
+        onCheck={() => checkModelSelection()}
+        onSelect={chooseChatModel} />
+      {catalogModelProblem && <div className="er-live-callout">
+        <p>{catalogModelProblem === 'unsupported'
+          ? locale === 'ru' ? 'Эта модель пока не поддерживается сервисом.' : 'This model is not currently supported by the service.'
+          : catalogModelProblem === 'conflict'
+            ? locale === 'ru' ? 'Выбор модели изменился. Проверьте её доступность ещё раз.' : 'The model selection changed. Check its availability again.'
+            : locale === 'ru' ? 'Модель недоступна. Проверьте подключение провайдера или выберите другую модель.'
+              : 'This model is unavailable. Check the provider connection or choose another model.'}</p>
+        <Button variant="text" disabled={busy} onClick={() => chooseChatModel(selectedChatModel)}>
+          {locale === 'ru' ? 'Проверить доступность ещё раз' : 'Check availability again'}</Button>
+      </div>}
+      <ResearchRunFeature key={saved?.intent?.key ?? 'next-question'} locale={locale} state={state}
       {...(cover ? { cover } : {})}
       scope={saved?.intent?.scope ?? scope} busy={busy}
-      questionHeld={saved?.intent !== undefined || saved?.observedLaunch !== undefined}
+      questionHeld={saved?.intent !== undefined || saved?.observedLaunch !== undefined || modelQualificationState === "qualifying"}
       draftQuestion={nextQuestionDraft} onDraftQuestionChange={value => {
-        if (mounted.current && privacy.isCurrent(context)) setHeldDraft({ context, text: value });
+        if (mounted.current && privacy.isCurrent(context) && !preparingModel.current) setHeldDraft({ context, text: value });
       }}
       {...(projectId !== undefined && displayedWholeScope !== undefined ? { wholeScope: displayedWholeScope } : {})}
-      canSubmit={!saved?.intent && !saved?.observedLaunch && projectId !== undefined && (scope.length === 0 || scopeCurrent) && !configuration.isError && !configuration.isFetching && configuration.data !== undefined && configuration.data.run_readiness !== 'blocked'}
+      canSubmit={!saved?.intent && !saved?.observedLaunch && projectId !== undefined && (scope.length === 0 || scopeCurrent) &&
+        !configuration.isError && !configuration.isFetching && configuration.data !== undefined && configuration.data.run_readiness !== 'blocked' &&
+        !modelSelectionLocked && catalogModelProblem === undefined && !selectedModelQueriesPending && !selectedModelQueriesFailed && selectedChatModel?.canRun === true &&
+          projectModels.isSuccess && !projectModels.isFetching && projectModels.data !== undefined}
       {...(saved?.intent ? { question: saved.intent.question } : {})}
       {...(progress ? { progress, ...(displayedFailure ? { firstCause: displayedFailure } : {}) } : {})}
       onAsk={ask} {...(launch ? { onReadStatus: () => { if (recoveryHeld) recoverResearch('readback'); else void status.refetch(); } } : {})}
@@ -294,7 +672,9 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
         {projectId !== undefined && !busy && <ProjectOverview locale={locale} onSuggest={question => {
           if (mounted.current && privacy.isCurrent(context) && isProjectCurrent()) setHeldDraft({ context, text: question });
         }} />}
-        {saved?.intent?.phase === 'unknown' && <div className="er-live-callout er-live-callout--attention"><Status>{text.unknown}</Status><p>{text.same}</p>
+        {saved?.intent?.phase === 'unknown' && <div className="er-live-callout er-live-callout--attention"><Status>{text.unknown}</Status>
+          {launchFailureReason && <p>{launchFailureReason}{launchFailure?.code && <> <code>{launchFailure.code}</code></>}</p>}
+          <p>{text.same}</p>
           <Button variant="tonal" disabled={busy} onClick={reconcile}>{text.recover}</Button></div>}
         <section className="er-live-history" aria-label={text.history}><div className="er-live-history-heading"><h2 ref={historyHeading} tabIndex={-1}>{text.history}</h2>
           <Button variant="text" disabled={history.isFetching} onClick={() => { void history.refetch(); }}>{text.readHistory}</Button></div>

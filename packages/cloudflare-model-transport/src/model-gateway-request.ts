@@ -551,6 +551,20 @@ export async function validateModelGatewayProviderNativeRequestBody(
   );
 }
 
+/** Additive catalog probe validation; legacy free-only qualification stays unchanged. */
+export async function validateModelGatewayCatalogProviderRequestBody(
+  raw: unknown, maximumInputBytes: number,
+  maximumOutputBytes: number, rawPolicy: ModelGatewayTransportPolicyV1,
+): Promise<ValidatedModelGatewayRequestBody> {
+  const policy = validateTransportPolicy(rawPolicy);
+  if (policy.api === "compat-chat-completions" || policy.billing.mode !== "byok" || policy.billing.alias === "default") {
+    modelGatewayExecutionFailure("MODEL_GATEWAY_REQUEST_INVALID",
+      "Catalog provider probe requires an exact endpoint and saved non-default BYOK alias");
+  }
+  return validateModelGatewayRequestBodyForExactModel(raw, policy.model, maximumInputBytes, maximumOutputBytes,
+    policy.capabilities, "catalog probe model differs from the selected provider policy", "native-qualification");
+}
+
 /**
  * Prompt compilers retain their historical max_tokens field. A selected API
  * policy may project that value onto its one supported wire field; a body

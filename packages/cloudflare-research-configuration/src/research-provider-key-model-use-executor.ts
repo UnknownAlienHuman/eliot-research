@@ -6,7 +6,8 @@ import {
   type ProviderNativeModelPreparationV1,
   type ProviderNativeModelProbeExecutionV1,
 } from "@eliotr/cloudflare-native-models";
-import { canonicalModelGatewayJson, modelGatewaySha256, ModelGatewayExecutionError } from "@eliotr/cloudflare-ai";
+import { canonicalModelGatewayJson, modelGatewaySha256, ModelGatewayExecutionError,
+  prepareCatalogModelQualificationHttpRequest } from "@eliotr/cloudflare-ai";
 import { prepareNativeQualificationHttpRequest } from "@eliotr/cloudflare-model-transport/model-gateway-http-request.js";
 import { decodeModelGatewayProviderNativeResponse } from "@eliotr/cloudflare-model-transport/model-gateway-provider-native-response.js";
 import type { ResearchProviderKeyModelUseRow, ResearchProviderKeyModelUseStageRow } from "./research-provider-key-model-use-store.js";
@@ -33,6 +34,7 @@ export function createResearchProviderKeyModelNativeProbeExecutor(input: {
   readonly signal: AbortSignal;
   readonly maximum_input_bytes: number;
   readonly maximum_output_bytes: number;
+  readonly catalog_model_use?: boolean;
   readonly readCurrentAuthority: (preparation: ProviderNativeModelPreparationV1) => Promise<ResearchProviderKeyModelProbeCurrentAuthority | null>;
   readonly now?: () => number;
   readonly fetcher?: typeof fetch;
@@ -76,7 +78,7 @@ export function createResearchProviderKeyModelNativeProbeExecutor(input: {
       throw new ResearchProviderKeyModelProbeExecutorError("PROVIDER_KEY_MODEL_USE_AUTHORITY_CHANGED",
         "The bounded native qualification window expired");
     }
-    const prepared = await prepareNativeQualificationHttpRequest({
+    const qualificationInput = {
       deployment: preparation.probe_deployment,
       transport_policy: preparation.transport_policy,
       compiled: Object.freeze({
@@ -89,7 +91,10 @@ export function createResearchProviderKeyModelNativeProbeExecutor(input: {
       maximum_input_bytes: input.maximum_input_bytes,
       maximum_output_bytes: input.maximum_output_bytes,
       gateway_metadata: Object.freeze({ operation_id: preparation.owner_operation_id, stage_id: preparation.stage }),
-    });
+    };
+    const prepared = input.catalog_model_use
+      ? await prepareCatalogModelQualificationHttpRequest(qualificationInput)
+      : await prepareNativeQualificationHttpRequest(qualificationInput);
     if (prepared.parameters_sha256 !== preparation.probe_parameters_sha256 ||
         prepared.parameters_sha256 !== preparation.probe_deployment.parameters_digest) {
       throw new ResearchProviderKeyModelProbeExecutorError("PROVIDER_KEY_MODEL_USE_SERVER_POLICY_UNAVAILABLE",

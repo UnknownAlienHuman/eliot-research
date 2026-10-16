@@ -10,7 +10,10 @@ import {
   type StoredDynamicRouteCandidate,
 } from "@eliotr/cloudflare-research";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
-import type { ProviderNativeModelAuthorityPort } from "@eliotr/cloudflare-native-models";
+import type {
+  ProviderNativeModelAuthorityPort,
+  ProviderNativeModelCatalogV2AuthorityPort,
+} from "@eliotr/cloudflare-native-models";
 import type { ResearchRunModelSelection } from "./research-run-model-selection-codec.js";
 import {
   readResearchConfigurationStatus,
@@ -189,6 +192,7 @@ export async function readResearchConfigurationReadiness(
     readonly project_owner_ref?: string;
     readonly project_id?: string;
     readonly native_model_authority?: ProviderNativeModelAuthorityPort;
+    readonly catalog_native_model_authority_v2?: ProviderNativeModelCatalogV2AuthorityPort;
   }> = {},
 ): Promise<ResearchConfigurationReadiness> {
   const status = readResearchConfigurationStatus(input.configuration, owner);
@@ -279,6 +283,24 @@ export async function readResearchConfigurationReadiness(
           if (!Number.isFinite(expires) || (mode !== "snapshot-v2" && expires <= Date.now())) failure(`selected ${stage} provider-native proof has expired`);
           return Object.freeze({ qualification_state: mode === "snapshot-v2" || expires > Date.now() + RENEWAL_WINDOW_MS
             ? "current" : "renewal_required", expires_at: expiresAt });
+        }
+        if (selection.candidate_kind === "provider-native-v2") {
+          if (mode !== "snapshot-v2" || options.project_owner_ref === undefined || options.project_id === undefined ||
+              options.catalog_native_model_authority_v2 === undefined) {
+            failure(`selected ${stage} provider-native v2 authority is unavailable`);
+          }
+          const resolvedCatalog = await options.catalog_native_model_authority_v2.resolvePinned({ selection,
+            owner_ref: options.project_owner_ref, project_id: options.project_id, allow_expired_snapshot_v2: true });
+          const preparation = resolvedCatalog.candidate.candidate.preparation;
+          if (resolvedCatalog.selection.stage !== stage || preparation.owner_ref !== options.project_owner_ref ||
+              preparation.project_id !== options.project_id || preparation.stage !== stage ||
+              canonicalJson(preparation.deployment) !== canonicalJson(route)) {
+            failure(`selected ${stage} provider-native v2 candidate differs from the exact installed tuple`);
+          }
+          const expiresAt = resolvedCatalog.proof.qualification.expires_at;
+          const expires = Date.parse(expiresAt);
+          if (!Number.isFinite(expires)) failure(`selected ${stage} provider-native v2 proof expiry is invalid`);
+          return Object.freeze({ qualification_state: "current", expires_at: expiresAt });
         }
         const proof = await proofStore.readPinned({ route_ref: selection.route_ref, route_version: selection.route_version,
           candidate_ref: selection.candidate_ref, candidate_sha256: selection.candidate_sha256,

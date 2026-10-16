@@ -4,18 +4,24 @@ import * as z from "zod";
 import canonicalFixturesRaw from "../../../docs/contracts/canonical-fixtures.v1.json?raw";
 import diagnosticConfirmedFixtureRaw from "../../../docs/contracts/fixtures/eliotr.mcp-client-diagnostic.confirmed.v1.json?raw";
 import diagnosticIssuedFixtureRaw from "../../../docs/contracts/fixtures/eliotr.mcp-client-diagnostic.issued.v1.json?raw";
+import researchBranchBudgetFixtureRaw from "../../../tests/fixtures/contracts/eliotr.research.branch-query-budget-exhaustion.v1.json?raw";
 import schemaCorpusRaw from "../../../docs/contracts/schema-corpus.v1.json?raw";
+import catalogModelUseFixtureRaw from "../../../docs/contracts/fixtures/eliotr.research.catalog-model-use-request.v1.json?raw";
 import libraryReadinessFixtureRaw from "../../../tests/fixtures/contracts/eliotr.library-readiness.v1.json?raw";
 import workspaceMcpFixtureRaw from "../../../tests/fixtures/contracts/eliotr.workspace-mcp-plan-input.v2.json?raw";
 import * as computerAgentConnection from "./computer-agent-connection.js";
 import * as computerAgentDispatch from "./computer-agent-dispatch.js";
 import * as computerAgentQualification from "./computer-agent-qualification.js";
 import * as computerAgentRoute from "./computer-agent-route.js";
+import * as aiUsage from "./ai-usage.js";
+import * as serviceModel from "./service-model.js";
 import * as researchBranch from "./research-branch.js";
 import * as researchBranchQuery from "./research-branch-query.js";
 import * as researchBranchFinding from "./research-branch-finding.js";
+import * as retrievalManagedRanking from "./retrieval-managed-ranking.js";
 import * as researchProviderKey from "./research-provider-key.js";
 import * as researchProviderKeyModelUse from "./research-provider-key-model-use.js";
+import * as researchCatalogModelUse from "./research-catalog-model-use.js";
 import * as publicContracts from "./index.js";
 import {
   CompletionDispositionSchema,
@@ -96,6 +102,8 @@ describe("ER-01 public contract registry", () => {
     expect(registeredExports).toEqual(publicSchemaExports);
 
     const additiveSchemaFamilies = [
+      ["model", aiUsage],
+      ["model", serviceModel],
       ["computer-agent", computerAgentConnection],
       ["computer-agent", computerAgentDispatch],
       ["computer-agent", computerAgentQualification],
@@ -105,6 +113,8 @@ describe("ER-01 public contract registry", () => {
       ["research", researchBranchFinding],
       ["research", researchProviderKey],
       ["research", researchProviderKeyModelUse],
+      ["research", researchCatalogModelUse],
+      ["retrieval", retrievalManagedRanking],
     ] as const;
     for (const [family, schemaModule] of additiveSchemaFamilies) {
       for (const [exportName, candidate] of Object.entries(schemaModule)) {
@@ -112,7 +122,9 @@ describe("ER-01 public contract registry", () => {
         const schemaVersion = [
           "ResearchReadExtractCheckpointV2Schema", "ResearchBranchResultV2Schema",
           "ResearchBranchAnalysisCheckpointV2Schema", "ResearchBranchReconciliationCheckpointV2Schema",
-        ].includes(exportName) ? 2 : exportName === "ResearchEvidenceFreezeV3Schema" ? 3 : 1;
+        ].includes(exportName) ? 3
+          : ["BranchQueryLegResultSchema", "BranchQueryResultSchema"].includes(exportName) ? 2
+            : exportName === "ResearchEvidenceFreezeV3Schema" ? 3 : 1;
         expect(requireContractSchemaDescriptor(exportName)).toMatchObject({
           family,
           schema_version: schemaVersion,
@@ -200,8 +212,10 @@ describe("ER-01 public contract registry", () => {
   });
 
   it.each([
+    ["research-catalog-model-use-request-v1", catalogModelUseFixtureRaw],
     ["library-readiness-v1", libraryReadinessFixtureRaw],
     ["workspace-mcp-plan-input-v2", workspaceMcpFixtureRaw],
+    ["research-branch-query-budget-exhaustion-v1", researchBranchBudgetFixtureRaw],
     ["mcp-client-diagnostic-issued-v1", diagnosticIssuedFixtureRaw],
     ["mcp-client-diagnostic-confirmed-v1", diagnosticConfirmedFixtureRaw],
   ])("round-trips %s with its published canonical digest", async (fixtureId, raw) => {
@@ -212,6 +226,15 @@ describe("ER-01 public contract registry", () => {
     expect(schema.parse(value)).toEqual(value);
     expect(schema.parse(parseJson(serializeCanonicalContractJson(value)))).toEqual(value);
     expect(await sha256(value)).toBe(fixture.canonical_body_sha256);
+  });
+
+  it("keeps catalog model selection strict without admitting credential or authority fields", () => {
+    const request = parseJson(catalogModelUseFixtureRaw) as Record<string, unknown>;
+    expect(researchCatalogModelUse.ResearchCatalogModelUseRequestSchema.parse(request)).toEqual(request);
+    for (const field of ["api_key", "alias", "owner_credential_generation", "qualification_ref"]) {
+      expect(researchCatalogModelUse.ResearchCatalogModelUseRequestSchema.safeParse({ ...request, [field]: "forged" }).success)
+        .toBe(false);
+    }
   });
 
   it("serializes deterministic plain JSON and rejects hidden runtime state", () => {

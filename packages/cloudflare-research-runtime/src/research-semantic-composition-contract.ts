@@ -19,6 +19,7 @@ import type {
   ResearchNativeModelAuthority,
   SpendAuthorizationReader,
 } from "@eliotr/cloudflare-model-execution";
+import type { ProviderNativeModelCatalogV2AuthorityPort } from "@eliotr/cloudflare-native-models";
 import type {
   EvidenceFreezeCommittedReaders,
   EvidenceFreezeCompositionDependencies,
@@ -43,6 +44,7 @@ import type { ResearchBranchRolePromptDependenciesInput } from "./research-branc
 import type { SemanticResearchHandlerGeneration } from "./research-stage-handlers.js";
 import type { ResearchBranchQueryBudgetSelection } from
   "@eliotr/cloudflare-research-configuration/research-run-configuration.js";
+import type { ResearchSynthesisOutputLanguage } from "./research-output-language.js";
 import type { AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
 import type { createResearchNativeAcquisitionStageRoute } from "./research-native-acquisition.js";
 
@@ -64,6 +66,7 @@ type ResearchSemanticSynthesisPromptOverrides = Omit<ResearchModelPromptCompiler
 
 export interface ResearchSemanticInstalledSynthesisPrompt {
   readonly trusted_parameters: TrustedModelPromptParameters;
+  readonly output_language?: ResearchSynthesisOutputLanguage;
   /** Selected-model request limits are part of the immutable run configuration. */
   readonly request_capabilities?: ModelGatewayRequestCapabilitiesV1;
   readonly selected_transport_policy?: ResearchModelPromptCompilerDependencies["selected_transport_policy"];
@@ -162,6 +165,7 @@ export interface ResearchSemanticCompositionDependencies {
   readonly principal: SemanticPrincipal;
   /** Shared current Native authority; present only for captured Native model selections. */
   readonly native_model_authority?: ResearchNativeModelAuthority;
+  readonly catalog_native_model_authority_v2?: Pick<ProviderNativeModelCatalogV2AuthorityPort, "resolvePinned">;
   /** Existing profile resolver with the captured Native synthesis pin adapter, when selected. */
   readonly model_profile_route_authority?: Parameters<typeof createPersistedModelProfileBindingProducer>[0]["routeAuthority"];
   /** Immutable selection captured before Workflow.create; absent only for legacy-installed runs. */
@@ -174,7 +178,7 @@ export interface ResearchSemanticCompositionDependencies {
     readonly project_configuration_ref?: string | null;
     readonly project_configuration_sha256?: string | null;
     readonly model_selections?: readonly ({
-      readonly candidate_kind?: "provider-native-v1";
+      readonly candidate_kind?: "provider-native-v1" | "provider-native-v2";
       readonly stage: string;
       readonly route_ref: string;
       readonly route_version: string;

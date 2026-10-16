@@ -154,7 +154,9 @@ function candidateProvisioningMatches(
 }
 
 function parsePricing(value: unknown): ResearchModelPricingSnapshot {
-  const pricing = exactObject(value, PRICING_KEYS, "prepared pricing snapshot");
+  const hasMetadata = value !== null && typeof value === "object" && Object.hasOwn(value, "catalog_metadata");
+  const pricing = exactObject(value, hasMetadata ? new Set([...PRICING_KEYS, "catalog_metadata"]) : PRICING_KEYS,
+    "prepared pricing snapshot");
   for (const key of PRICING_KEYS) {
     if (typeof pricing[key] !== "string") fail("RESEARCH_MODEL_STAGE_INPUT_INVALID", `prepared pricing ${key} is invalid`);
   }
@@ -162,6 +164,19 @@ function parsePricing(value: unknown): ResearchModelPricingSnapshot {
   canonicalTime(pricing.effective_at, "prepared pricing effective_at");
   canonicalTime(pricing.expires_at, "prepared pricing expires_at");
   canonicalTime(pricing.created_at, "prepared pricing created_at");
+  if (hasMetadata) {
+    const metadata = pricing.catalog_metadata;
+    if (metadata === null || typeof metadata !== "object" || Array.isArray(metadata) ||
+        (Object.getPrototypeOf(metadata) !== Object.prototype && Object.getPrototypeOf(metadata) !== null)) {
+      fail("RESEARCH_MODEL_STAGE_INPUT_INVALID", "prepared catalog metadata must be a plain object");
+    }
+    let bytes: string;
+    try { bytes = canonicalModelGatewayJson(metadata); }
+    catch (cause) { fail("RESEARCH_MODEL_STAGE_INPUT_INVALID", "prepared catalog metadata is invalid", cause); }
+    if (new TextEncoder().encode(bytes).byteLength > 16_384) {
+      fail("RESEARCH_MODEL_STAGE_INPUT_INVALID", "prepared catalog metadata exceeds its bound");
+    }
+  }
   return pricing as unknown as ResearchModelPricingSnapshot;
 }
 
