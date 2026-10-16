@@ -39,6 +39,7 @@ const CATALOG_MODEL_USE_TABLES = [
   "research_catalog_model_use_authorization",
   "provider_native_model_catalog_v2_evidence",
   "provider_native_model_catalog_v2_revocation",
+  "provider_native_model_catalog_v2_failure",
 ] as const;
 const RECENT_CANONICAL_TABLES = [
   "doctor_delivery_outbox",
@@ -261,6 +262,7 @@ describe("ER-34 O2 full Core migration coverage", () => {
       ["research_catalog_model_use_authorization", "0158_research_catalog_model_use_authority.sql"],
       ["provider_native_model_catalog_v2_evidence", "0159_provider_native_model_catalog_v2.sql"],
       ["provider_native_model_catalog_v2_revocation", "0159_provider_native_model_catalog_v2.sql"],
+      ["provider_native_model_catalog_v2_failure", "0161_catalog_qualification_failure_reconciliation.sql"],
     ] as const;
     for (const [table, migration] of introductions) {
       expect(coreTableSpecsForMigrationNames(migrations.filter(name => name < migration))
@@ -272,7 +274,8 @@ describe("ER-34 O2 full Core migration coverage", () => {
       expect(() => coreTableSpecsForMigrationNames(migrations.filter(name => name !== missing)))
         .toThrowError(expect.objectContaining({ code: "BACKUP_COVERAGE_GAP" }));
     }
-    const catalogMigrations = ["0158_research_catalog_model_use_authority.sql", "0159_provider_native_model_catalog_v2.sql"];
+    const catalogMigrations = ["0158_research_catalog_model_use_authority.sql", "0159_provider_native_model_catalog_v2.sql",
+      "0161_catalog_qualification_failure_reconciliation.sql"];
     expect(() => assertCoreTableMigrationPresence(CATALOG_MODEL_USE_TABLES, catalogMigrations)).not.toThrow();
     expect(() => assertCoreTableMigrationPresence(CATALOG_MODEL_USE_TABLES.slice(0, 2), catalogMigrations))
       .toThrowError(expect.objectContaining({ code: "BACKUP_COVERAGE_GAP" }));

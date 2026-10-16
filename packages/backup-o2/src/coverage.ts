@@ -175,6 +175,7 @@ export const CANONICAL_EXPORTED_TABLES: ReadonlySet<string> = new Set([
   "research_catalog_model_use_authorization",
   "provider_native_model_catalog_v2_evidence",
   "provider_native_model_catalog_v2_revocation",
+  "provider_native_model_catalog_v2_failure",
   // Global provider connection metadata and owner-scoped catalog presentation preferences.
   // Provider credentials remain in Cloudflare BYOK and are not part of this export.
   "service_model_provider_operation",

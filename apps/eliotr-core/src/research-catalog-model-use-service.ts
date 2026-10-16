@@ -119,6 +119,9 @@ export function createResearchCatalogModelUseService(input: {
   readonly project_configuration: ResearchProjectModelConfigurationService;
   readonly model_use: (selection: ResearchProviderKeyModelUseCatalogSelectionV1) => ResearchProviderKeyModelUseService;
   readonly provider_native_v2?: ResearchCatalogModelUseV2Driver;
+  /** Status-only reconciliation; never prepares, dispatches or retries a model. */
+  readonly reconcile_failed_qualification?: (row: ResearchCatalogModelUseAuthorizationRow) =>
+    Promise<ResearchCatalogModelUseAuthorizationRow>;
   readonly builtin_native?: Readonly<{
     run(operation: ResearchCatalogModelUseAuthorizationRow): Promise<ResearchCatalogModelUseAuthorizationRow>;
   }>;
@@ -144,6 +147,24 @@ export function createResearchCatalogModelUseService(input: {
           input.context.access.credential_generation !== input.context.credential_generation) {
       throw new ResearchCatalogModelUseServiceError("RESEARCH_CATALOG_MODEL_USE_AUTHORITY_CHANGED", 409,
         "Owner authority changed during catalog model use");
+    }
+  }
+
+  async function requireCurrentStatusOwner(row: ResearchCatalogModelUseAuthorizationRow): Promise<void> {
+    if (row.owner_id !== input.context.principal_ref || row.project_id !== input.project_id) {
+      throw new ResearchCatalogModelUseServiceError("RESEARCH_CATALOG_MODEL_USE_AUTHORITY_CHANGED", 409,
+        "Current catalog model-use owner changed");
+    }
+    let project: { readonly generation: number } | null;
+    try {
+      project = await input.env.CORE_DB.prepare(
+        "SELECT p.generation FROM project p JOIN project_owner o ON o.project_id=p.project_id " +
+        "WHERE p.project_id=?1 AND o.principal_ref=?2 LIMIT 1",
+      ).bind(input.project_id, input.context.principal_ref).first<{ readonly generation: number }>();
+    } catch (cause) { unavailable(cause); }
+    if (project === null || project.generation !== row.project_generation) {
+      throw new ResearchCatalogModelUseServiceError("RESEARCH_CATALOG_MODEL_USE_AUTHORITY_CHANGED", 409,
+        "Current project owner or generation changed");
     }
   }
 
@@ -517,6 +538,11 @@ export function createResearchCatalogModelUseService(input: {
         throw new ResearchCatalogModelUseServiceError("RESEARCH_CATALOG_MODEL_USE_IDEMPOTENCY_CONFLICT", 409,
           "Catalog model-use operation ID is bound to another provider/model selection");
       }
+      if (row.owner_credential_generation !== input.context.credential_generation ||
+          row.deployment_generation !== input.env.DEPLOYMENT_GENERATION) {
+        throw new ResearchCatalogModelUseServiceError("RESEARCH_CATALOG_MODEL_USE_AUTHORITY_CHANGED", 409,
+          "Original catalog model-use execution authority changed; use status reconciliation");
+      }
       if (["SELECTED", "BLOCKED", "UNCERTAIN", "CONFLICT"].includes(row.state)) return receiptFromAuthorization(row);
       if (isBuiltin) return selectInstalledBuiltinDefault(request, row);
       const service = await useService(request, row);
@@ -532,24 +558,10 @@ export function createResearchCatalogModelUseService(input: {
       requireCurrentOwner();
       const row = await store.readUnresolved(input.context.principal_ref, input.project_id);
       if (row === null) return null;
-      if (row.owner_id !== input.context.principal_ref || row.project_id !== input.project_id ||
-          row.owner_credential_generation !== input.context.credential_generation ||
-          row.deployment_generation !== input.env.DEPLOYMENT_GENERATION) {
-        throw new ResearchCatalogModelUseServiceError("RESEARCH_CATALOG_MODEL_USE_AUTHORITY_CHANGED", 409,
-          "Current catalog model-use authority changed");
-      }
-      let project: { readonly generation: number } | null;
-      try {
-        project = await input.env.CORE_DB.prepare(
-          "SELECT p.generation FROM project p JOIN project_owner o ON o.project_id=p.project_id " +
-          "WHERE p.project_id=?1 AND o.principal_ref=?2 LIMIT 1",
-        ).bind(input.project_id, input.context.principal_ref).first<{ readonly generation: number }>();
-      } catch (cause) { unavailable(cause); }
-      if (project === null || project.generation !== row.project_generation) {
-        throw new ResearchCatalogModelUseServiceError("RESEARCH_CATALOG_MODEL_USE_AUTHORITY_CHANGED", 409,
-          "Current project owner or generation changed");
-      }
-      return receiptFromAuthorization(row);
+      await requireCurrentStatusOwner(row);
+      const reconciled = row.state === "UNCERTAIN" && input.reconcile_failed_qualification !== undefined
+        ? await input.reconcile_failed_qualification(row) : row;
+      return receiptFromAuthorization(reconciled);
     },
     async read(operationId: string): Promise<ResearchCatalogModelUseReceipt> {
       requireCurrentOwner();
@@ -558,10 +570,7 @@ export function createResearchCatalogModelUseService(input: {
       const row = await store.read(input.context.principal_ref, input.project_id, operationId);
       if (row === null) throw new ResearchCatalogModelUseServiceError("RESEARCH_CATALOG_MODEL_USE_NOT_FOUND", 404,
         "Catalog model-use operation was not found");
-      if (row.owner_credential_generation !== input.context.credential_generation) {
-        throw new ResearchCatalogModelUseServiceError("RESEARCH_CATALOG_MODEL_USE_AUTHORITY_CHANGED", 409,
-          "Owner credential generation changed during model qualification");
-      }
+      await requireCurrentStatusOwner(row);
       const request: ResearchCatalogModelUseRequest = {
         protocol: RESEARCH_CATALOG_MODEL_USE_REQUEST_PROTOCOL, operation_id: row.operation_id,
         expected_selection_revision: row.expected_selection_revision, provider_id: row.provider_id,
@@ -583,7 +592,14 @@ export function createResearchCatalogModelUseService(input: {
         }
         return receiptFromAuthorization(row);
       }
+      if (row.state === "UNCERTAIN" && input.reconcile_failed_qualification !== undefined) {
+        return receiptFromAuthorization(await input.reconcile_failed_qualification(row));
+      }
       if (["SELECTED", "BLOCKED", "UNCERTAIN", "CONFLICT"].includes(row.state)) return receiptFromAuthorization(row);
+      // Original credential/deployment generations remain execution provenance.
+      // A status read under a fresh context never resumes an old preparation.
+      if (row.owner_credential_generation !== input.context.credential_generation ||
+          row.deployment_generation !== input.env.DEPLOYMENT_GENERATION) return receiptFromAuthorization(row);
       const service = await useService(request, row);
       if (service.kind === "provider-native-v2") return persistV2Receipt(row, await service.service.read(), request);
       try {

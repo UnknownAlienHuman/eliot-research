@@ -111,6 +111,7 @@ const AUTHORITY_TABLE_INTRODUCTIONS: Readonly<Record<string, string>> = {
   research_catalog_model_use_authorization: "0158_research_catalog_model_use_authority.sql",
   provider_native_model_catalog_v2_evidence: "0159_provider_native_model_catalog_v2.sql",
   provider_native_model_catalog_v2_revocation: "0159_provider_native_model_catalog_v2.sql",
+  provider_native_model_catalog_v2_failure: "0161_catalog_qualification_failure_reconciliation.sql",
 };
 
 const AUTHORITY_COLUMN_INTRODUCTIONS: Readonly<Record<string, Readonly<Record<string, string>>>> = {

@@ -14,7 +14,7 @@ const targets = ["research_catalog_model_use_authorization", "research_provider_
 
 beforeAll(async () => {
   if (migration === undefined) throw new Error("0160 migration is missing");
-  await applyD1Migrations(db, runtime.CORE_MIGRATIONS.filter(item => !item.name.startsWith("0160")));
+  await applyD1Migrations(db, runtime.CORE_MIGRATIONS.filter(item => item.name < "0160_"));
 });
 
 async function insert(table: string, row: Record<string, unknown>) {

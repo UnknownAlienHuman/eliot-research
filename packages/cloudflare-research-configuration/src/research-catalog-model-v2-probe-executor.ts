@@ -12,14 +12,70 @@ import {
   type ProviderNativeModelCatalogPreparationV2,
 } from "@eliotr/cloudflare-native-models";
 import { decodeModelGatewayProviderNativeResponse } from "@eliotr/cloudflare-model-transport/model-gateway-provider-native-response.js";
+import { rejectModelGatewayHttpFailure } from "@eliotr/cloudflare-model-transport/model-gateway-http-failure.js";
 
 const MAX_REQUEST_BYTES = 32_768;
 const MAX_RESPONSE_BYTES = 262_144;
 const MAX_TIMEOUT_MS = 30_000;
 const MAX_QUALIFICATION_TTL_MS = 24 * 60 * 60 * 1000;
+const MAX_ERROR_BYTES = 16_384;
+
+/** A bounded digest is diagnostic evidence, never proof that the provider had no effects. */
+export async function summarizeCatalogModelProbeHttpFailure(response: Response, signal: AbortSignal) {
+  const reader = response.body?.getReader();
+  if (reader === undefined) return { response_digest_scope: "UNAVAILABLE", response_bytes_captured: 0,
+    error_code: "HTTP_ERROR_BODY_UNAVAILABLE", upstream_error_codes: [] as number[] };
+  const chunks: Uint8Array[] = [];
+  let length = 0, complete = false;
+  let abortRead: (() => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    abortRead = () => reject(new Error("bounded diagnostic read aborted"));
+    signal.addEventListener("abort", abortRead, { once: true });
+  });
+  try {
+    while (!signal.aborted) {
+      const next = await Promise.race([reader.read(), aborted]);
+      if (next.done) { complete = true; break; }
+      const remaining = MAX_ERROR_BYTES - length;
+      if (next.value.byteLength > remaining) {
+        chunks.push(next.value.slice(0, remaining)); length = MAX_ERROR_BYTES; break;
+      }
+      chunks.push(next.value); length += next.value.byteLength;
+    }
+  } catch { /* Preserve a labeled prefix; never parse an incomplete error body. */ }
+  finally {
+    if (abortRead !== undefined) signal.removeEventListener("abort", abortRead);
+    if (!complete) void reader.cancel().catch(() => undefined);
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.byteLength; }
+  let code = "HTTP_ERROR_BODY_INCOMPLETE";
+  let codes: number[] = [];
+  if (complete) {
+    code = "HTTP_RESPONSE_UNVERIFIED";
+    try {
+      // Reuse the established Gateway numeric-code semantics. No Go-specific
+      // interpretation is inferred from an arbitrary provider message/string.
+      await rejectModelGatewayHttpFailure(new Response(bytes, { status: response.status, headers: response.headers }));
+    } catch (error) {
+      if (error instanceof ModelGatewayExecutionError) {
+        code = error.code;
+        const cause = error.cause;
+        if (typeof cause === "object" && cause !== null && "upstream_error_codes" in cause && Array.isArray(cause.upstream_error_codes)) {
+          codes = cause.upstream_error_codes.filter((value): value is number =>
+            typeof value === "number" && Number.isSafeInteger(value) && value >= 0).slice(0, 8);
+        }
+      }
+    }
+  }
+  return { response_digest_scope: complete ? "FULL" : "PREFIX", response_bytes_captured: length,
+    response_sha256: await modelGatewaySha256(bytes), error_code: code, upstream_error_codes: codes };
+}
 
 export class ResearchCatalogModelV2ProbeExecutorError extends Error {
-  public constructor(public readonly code: "AUTHORITY_CHANGED" | "SERVER_POLICY_UNAVAILABLE" | "PROBE_NO_EFFECT",
+  public constructor(public readonly code: "AUTHORITY_CHANGED" | "SERVER_POLICY_UNAVAILABLE" | "PROBE_UNVERIFIED",
     message: string, cause?: unknown) {
     super(message, cause === undefined ? undefined : { cause });
     this.name = "ResearchCatalogModelV2ProbeExecutorError";
@@ -102,20 +158,33 @@ export function createResearchCatalogModelV2ProbeExecutor(input: Readonly<{
         const response = await fetcher(prepared.url, { method: prepared.method, headers: prepared.headers,
           body: prepared.body, signal: controller.signal, redirect: "manual" });
         if (response.status !== 200 || response.redirected || (response.url !== "" && response.url !== prepared.url)) {
-          throw new ResearchCatalogModelV2ProbeExecutorError("PROBE_NO_EFFECT",
+          const logId = response.headers.get("cf-aig-log-id");
+          const redirected = response.redirected || (response.url !== "" && response.url !== prepared.url) ||
+            (response.status >= 300 && response.status < 400);
+          const failure = redirected ? { error_code: "REDIRECT_REJECTED", response_digest_scope: "UNAVAILABLE",
+            response_bytes_captured: 0, upstream_error_codes: [] } : await summarizeCatalogModelProbeHttpFailure(response, controller.signal);
+          console.warn(JSON.stringify({ event: "eliotr.catalog_native_v2_probe.http_rejected",
+            operation_id: preparation.consent_operation_id, stage: preparation.stage, http_status: response.status,
+            classification: redirected ? "REDIRECT_REJECTED" : response.status >= 500 ? "HTTP_SERVER_AMBIGUOUS" :
+              response.status >= 400 ? "HTTP_CLIENT_REJECTED" : "HTTP_RESPONSE_UNVERIFIED",
+            ...(logId !== null && /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u.test(logId) ? { gateway_log_id: logId } : {}),
+            ...failure,
+          }));
+          if (redirected) await response.body?.cancel();
+          throw new ResearchCatalogModelV2ProbeExecutorError("PROBE_UNVERIFIED",
             "The selected provider did not acknowledge the one-shot qualification request");
         }
         const decoded = await decodeModelGatewayProviderNativeResponse(response, preparation.probe_deployment,
           Math.min(input.maximum_output_bytes, MAX_RESPONSE_BYTES), policy);
         let output: unknown;
         try { output = JSON.parse(decoded.assistant_content) as unknown; }
-        catch (cause) { throw new ResearchCatalogModelV2ProbeExecutorError("PROBE_NO_EFFECT",
+        catch (cause) { throw new ResearchCatalogModelV2ProbeExecutorError("PROBE_UNVERIFIED",
           "Provider response did not match the structured connectivity probe", cause); }
         if (output === null || typeof output !== "object" || Array.isArray(output) ||
             Object.getPrototypeOf(output) !== Object.prototype || Object.keys(output).length !== 2 ||
             (output as Record<string, unknown>).connected !== true ||
             (output as Record<string, unknown>).qualification_purpose !== "structured-output-connectivity") {
-          throw new ResearchCatalogModelV2ProbeExecutorError("PROBE_NO_EFFECT",
+          throw new ResearchCatalogModelV2ProbeExecutorError("PROBE_UNVERIFIED",
             "Provider response did not match the exact structured connectivity schema");
         }
         const observedAtMs = now();
@@ -150,7 +219,7 @@ export function createResearchCatalogModelV2ProbeExecutor(input: Readonly<{
           console.warn(JSON.stringify({ event: "eliotr.catalog_native_v2_probe.rejected", stage: preparation.stage,
             code: cause.code, safe_response_reason: cause.safe_response_reason ?? "UNCLASSIFIED" }));
         }
-        throw new ResearchCatalogModelV2ProbeExecutorError("PROBE_NO_EFFECT",
+        throw new ResearchCatalogModelV2ProbeExecutorError("PROBE_UNVERIFIED",
           "The selected provider call did not produce a verified one-shot qualification result", cause);
       } finally {
         clearTimeout(timer);
