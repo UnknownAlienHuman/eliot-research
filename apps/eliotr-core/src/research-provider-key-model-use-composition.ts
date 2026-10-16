@@ -36,7 +36,7 @@ export function createGlobalServiceProviderKeyConfiguration(input: {
 }): ResearchProviderKeyConfigurationService {
   const gateway = installedGatewayIdentity(input.env.AI_GATEWAY_REASONING_URL);
   const preparedModels = configuredOpenRouterModels(input.env);
-  return Object.freeze({
+  return Object.freeze<ResearchProviderKeyConfigurationService>({
     read: (context, projectId, operationId) => input.project_keys.read(context, projectId, operationId),
     create: (context, projectId, request) => input.project_keys.create(context, projectId, request),
     async readConfiguredOperation(context, projectId, operationId) {
@@ -71,7 +71,7 @@ export function createGlobalServiceProviderKeyConfiguration(input: {
       }
 
       const selected = await input.project_configuration.readSelected(context, projectId);
-      const selectedModels = selected?.model_selections
+      const selectedModels = selected?.configuration.model_selections
         .filter((selection) => selection.provider_id === "openrouter")
         .map((selection) => selection.model_id) ?? [];
       const requiredModels = [...new Set([...selectedModels, ...preparedModels])];

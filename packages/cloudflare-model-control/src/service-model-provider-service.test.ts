@@ -217,6 +217,17 @@ describe("global service model provider operations", () => {
     expect(management.read).not.toHaveBeenCalled();
   });
 
+  it("uses the shared model identifier grammar for leading-at model IDs", async () => {
+    const store = database();
+    const service = createServiceModelProviderService({ database: store.d1, now: () => NOW });
+    await expect(service.resolveConfiguredProvider(ownerContext(), "openrouter", {
+      model_id: "@vendor/text-model",
+    })).resolves.toBeNull();
+    await expect(service.resolveConfiguredProvider(ownerContext(), "openrouter", {
+      model_id: "invalid model id",
+    })).rejects.toMatchObject({ code: "SERVICE_MODEL_PROVIDER_INPUT_INVALID" });
+  });
+
   it("does not let a failed global operation authorize fallback, but ignores it after a unique configured save", async () => {
     const store = database();
     const failedManagement = managementPort({

@@ -548,7 +548,7 @@ export function createServiceModelProviderService(options: {
     const owner = ownerPrincipal(context, now);
     const providerId = rowString(providerIdRaw, PROVIDER_ID, "Service model provider id is invalid");
     const modelId = request.model_id;
-    if (modelId !== undefined && !IDENTIFIER.test(modelId)) {
+    if (modelId !== undefined && !ServiceModelProviderCreateRequestSchema.shape.model_ids.element.safeParse(modelId).success) {
       fail("SERVICE_MODEL_PROVIDER_INPUT_INVALID", 400, "Service model identifier is invalid", false);
     }
     if (request.operation_id !== undefined) {
