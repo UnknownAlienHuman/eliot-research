@@ -76,7 +76,7 @@ async function executionState(database: D1Database) {
   }));
   // These columns are bounded failure diagnostics, not authorization or execution state.
   return results.map((rows, queryIndex) => rows.map((row) => Object.fromEntries(Object.entries(row).filter(([key]) =>
-    queryIndex === 0 ? key !== "first_failure_json" && key !== "latest_failure_json"
+    queryIndex === 0 ? key !== "first_failure_json" && key !== "latest_failure_json" && key !== "failure_history_json"
       : queryIndex === 1 ? key !== "first_failure_json" : true))));
 }
 
@@ -87,8 +87,8 @@ async function expectRetainedFailure(
   attemptStageIndexes: readonly number[] = [],
 ) {
   const run = await database.prepare(
-    "SELECT first_failure_json,latest_failure_json FROM research_workflow_run ORDER BY operation_id LIMIT 1",
-  ).first<{ readonly first_failure_json: string | null; readonly latest_failure_json: string | null }>();
+    "SELECT first_failure_json,latest_failure_json,failure_history_json FROM research_workflow_run ORDER BY operation_id LIMIT 1",
+  ).first<{ readonly first_failure_json: string | null; readonly latest_failure_json: string | null; readonly failure_history_json: string | null }>();
   if (run === null) throw new Error("workflow failure diagnostic row is missing");
   const attemptRows = await database.prepare(
     "SELECT stage_index,first_failure_json FROM research_workflow_attempt WHERE first_failure_json IS NOT NULL ORDER BY stage_index",
@@ -102,6 +102,9 @@ async function expectRetainedFailure(
   const decode = (text: string | null) => text === null ? null : JSON.parse(text) as Record<string, unknown>;
   expect({ first: decode(run.first_failure_json), latest: decode(run.latest_failure_json) })
     .toEqual({ first: expected, latest: expected });
+  expect(decode(run.failure_history_json)).toMatchObject({
+    protocol: "eliotr.workflow-failure-history.v1", first_cause: expected, consequences: [],
+  });
   expect((attemptRows.results ?? []).map((row) => ({ stage_index: row.stage_index, failure: decode(row.first_failure_json) })))
     .toEqual(attemptStageIndexes.map((stage_index) => ({ stage_index, failure: expected })));
 }

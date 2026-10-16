@@ -22,24 +22,29 @@ beforeEach(async () => {
   await reset();
   await db.batch([
     db.prepare("CREATE TABLE research_deployment_compatible(origin_deployment_generation TEXT,active_deployment_generation TEXT)"),
-    db.prepare("CREATE TABLE research_workflow_run(operation_id TEXT PRIMARY KEY,created_at TEXT,principal_ref TEXT, deployment_generation TEXT,credential_generation TEXT,handler_generation TEXT,scope_snapshot_id TEXT, scope_snapshot_revision INTEGER,authorization_receipt_ref TEXT)"),
+    db.prepare("CREATE TABLE research_workflow_run(operation_id TEXT PRIMARY KEY,created_at TEXT,principal_ref TEXT, deployment_generation TEXT,credential_generation TEXT,handler_generation TEXT,scope_snapshot_id TEXT, scope_snapshot_revision INTEGER,authorization_receipt_ref TEXT,investigation_id TEXT)"),
+    db.prepare("CREATE TABLE scope_snapshot(snapshot_id TEXT,revision INTEGER,resolved_scope_expression_json TEXT)"),
+    db.prepare("CREATE TABLE investigation_ledger_head(investigation_id TEXT,principal_ref TEXT,goal TEXT)"),
+    db.prepare("CREATE TABLE research_report_admission(operation_id TEXT,principal_ref TEXT,scope_snapshot_id TEXT,scope_snapshot_revision INTEGER,intent_id TEXT,intent_revision INTEGER,client_class TEXT)"),
     db.prepare("CREATE TABLE owner_machine_run_origin(operation_id TEXT,reader_principal_ref TEXT,origin_client_class TEXT)"),
     db.prepare("CREATE TABLE scope_access_grant(snapshot_id TEXT,snapshot_revision INTEGER,principal_ref TEXT, credential_generation TEXT,authorization_receipt_ref TEXT,client_class TEXT,project_client_grant_id TEXT)"),
-    db.prepare("CREATE TABLE artifact_draft_binding(artifact_id TEXT,revision INTEGER,scope_snapshot_id TEXT, scope_snapshot_revision INTEGER,intent_id TEXT,intent_revision INTEGER,created_at TEXT,PRIMARY KEY(artifact_id,revision))"),
+    db.prepare("CREATE TABLE artifact_draft_binding(artifact_id TEXT,revision INTEGER,scope_snapshot_id TEXT, scope_snapshot_revision INTEGER,intent_id TEXT,intent_revision INTEGER,created_at TEXT,principal_ref TEXT,PRIMARY KEY(artifact_id,revision))"),
     db.prepare("CREATE TABLE owner_artifact_read_origin(artifact_id TEXT,artifact_revision INTEGER,reader_principal_ref TEXT,origin_client_class TEXT)"),
   ]);
   await db.prepare("INSERT INTO research_deployment_compatible VALUES (?1,?1)").bind(generation).run();
+  await db.prepare("INSERT INTO scope_snapshot VALUES (?1,1,?2)")
+    .bind(scope.id, JSON.stringify({ kind: "PROJECT", project_id: "recent-project" })).run();
 });
 
 const id = (kind: string, ordinal: number) => `${kind}-${String(ordinal).padStart(3, "0")}`;
 async function insertRun(operation: string) {
-  await db.prepare("INSERT INTO research_workflow_run VALUES (?1,?2,?3,?4,?5,?6,?7,1,?8)")
+  await db.prepare("INSERT INTO research_workflow_run(operation_id,created_at,principal_ref,deployment_generation,credential_generation,handler_generation,scope_snapshot_id,scope_snapshot_revision,authorization_receipt_ref) VALUES (?1,?2,?3,?4,?5,?6,?7,1,?8)")
     .bind(operation, timestamp, principal, generation, "recent-credential", "recent-controlled-handler", scope.id, "recent-auth").run();
 }
 async function insertDraft(artifact: string, revision = 1) {
   await db.batch([
-    db.prepare("INSERT INTO artifact_draft_binding VALUES (?1,?2,?3,1,?4,1,?5)")
-      .bind(artifact, revision, scope.id, "intent-recent", timestamp),
+    db.prepare("INSERT INTO artifact_draft_binding VALUES (?1,?2,?3,1,?4,1,?5,?6)")
+      .bind(artifact, revision, scope.id, "intent-recent", timestamp, principal),
     db.prepare("INSERT INTO owner_artifact_read_origin VALUES (?1,?2,?3,'trusted_agent')")
       .bind(artifact, revision, principal),
   ]);
@@ -100,11 +105,12 @@ describe("bounded Recent visible history over native D1 candidate SQL", () => {
     const deniedDrafts = new Set(Array.from({ length: 8 }, (_item, index) => id("draft", index + 2)));
     const reads = ports({ deniedRuns, deniedDrafts });
     const result = await readOwnerResearchRuns(reads.value, context());
-    expect(result.protocol).toBe("eliotr.research-runs.v4");
+    expect(result.protocol).toBe("eliotr.research-runs.v5");
     expect(result.runs.map(row => row.status.workflow_instance_id)).toEqual([id("run", 1)]);
     expect(result.saved_drafts.map(row => row.artifact_ref.id)).toEqual([id("draft", 1)]);
     expect(result.visibility_scan).toEqual({ runs: "SOURCE_EXHAUSTED", saved_drafts: "SOURCE_EXHAUSTED" });
-    expect(reads.counts).toEqual({ run_candidate_queries: 2, draft_candidate_queries: 2, run_authorizations: 9, draft_authorizations: 9 });
+    // Nine candidates plus the final authority recheck for the one visible run.
+    expect(reads.counts).toEqual({ run_candidate_queries: 2, draft_candidate_queries: 2, run_authorizations: 10, draft_authorizations: 9 });
     for (const denied of [...deniedRuns, ...deniedDrafts]) expect(JSON.stringify(result)).not.toContain(denied);
   });
 
