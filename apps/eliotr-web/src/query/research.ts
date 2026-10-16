@@ -69,7 +69,8 @@ export function researchQueryOptions(
 
     history() {
       return queryOptions({
-        queryKey: [...key, "history"],
+        queryKey: [...key, "history", project?.id ?? null],
+        enabled: project !== undefined && project.isCurrent(),
         refetchOnMount: false,
         queryFn: ({ signal }) => readResearchRunHistoryWithDiagnostic({
           privacy,
@@ -78,7 +79,12 @@ export function researchQueryOptions(
           ...(diagnostics?.onRecentHistoryRead === undefined
             ? {}
             : { observer: diagnostics.onRecentHistoryRead }),
-          read: readSignal => apis.history.readResearchRunHistory(generation, readSignal),
+          read: async readSignal => {
+            if (project !== undefined && !project.isCurrent()) throw new Error("Research project is no longer current");
+            const result = await apis.history.readResearchRunHistory(generation, readSignal, project?.id);
+            if (project !== undefined && !project.isCurrent()) throw new Error("Research project is no longer current");
+            return result;
+          },
         }),
       });
     },

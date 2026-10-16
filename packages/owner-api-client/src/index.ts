@@ -40,3 +40,4 @@ export * from './research/index';
 export * from './mutations/index';
 export { RESEARCH_DEFAULT_INQUIRY_PROTOCOL_REF } from "@eliotr/contracts";
 export type { ComputerAgentQualificationTransport, ProjectClientGrant } from "@eliotr/contracts";
+export { readAiUsageObservation } from "./settings/ai-usage.js";

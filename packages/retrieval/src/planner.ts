@@ -29,12 +29,17 @@ const PLAN_DEFAULTS: Readonly<Record<QueryProduct, QueryPlanDefaults>> = {
 export function compileQueryPlan(request: RetrievalRequest): QueryPlan {
   const defaults = PLAN_DEFAULTS[request.product as keyof typeof PLAN_DEFAULTS] as QueryPlanDefaults | undefined;
   if (defaults === undefined) throw new Error(`unsupported query product: ${String(request.product)}`);
+  // A natural-language research question is not an exact phrase. Enumerating and
+  // reading every section to find that entire question exhausts the query before
+  // lexical/native search runs. Retrieved locators still undergo exact evidence
+  // resolution; explicit literal requests retain their EXACT lane.
+  const skipExact = request.product === "RESEARCH" && request.literals.length === 0;
   return {
     raw_query: request.raw_query,
     preserved_literals: request.literals,
     product: request.product,
     ...defaults,
-    skip_reasons: {},
+    skip_reasons: skipExact ? { EXACT: "NO_EXPLICIT_LITERAL" } : {},
   };
 }
 

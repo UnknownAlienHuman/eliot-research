@@ -280,6 +280,38 @@ async function q3Error(promise: Promise<unknown>): Promise<RetrievalQueryError> 
 }
 
 describe("Q3 query orchestration", () => {
+  it("reaches native search for a natural question without scanning the corpus for the entire question", async () => {
+    const harness = q3Harness({
+      candidates: { SEM: [q3Candidate({ lane: "SEM" })] },
+      // The old exact-phrase scan would consume the deadline before native search.
+      failingLanes: { EXACT: "RETRIEVAL_BUDGET_STOP" },
+    });
+    const result = await createRetrievalQueryService(harness.ports).query({
+      request: q3Request({ raw_query: "Какое расписание скорости обучения использует Transformer?", literals: [] }),
+      idempotency_key: "natural-research-question",
+    });
+    expect(harness.calls).not.toContain("lane:EXACT");
+    expect(harness.calls).toContain("lane:SEM");
+    expect(harness.calls).toContain("resolve:c-1");
+    expect(result.trace.lanes_skipped).toContainEqual({ lane: "EXACT", reason: "NO_EXPLICIT_LITERAL" });
+    expect(result.evidence_pack.resolved_evidence).toHaveLength(1);
+    expect(result.coverage_claim).toBe("SAMPLED");
+  });
+
+  it("retains verified lexical evidence when native search fails for a natural question", async () => {
+    const harness = q3Harness({
+      candidates: { LEX: [q3Candidate()] },
+      failingLanes: { EXACT: "RETRIEVAL_BUDGET_STOP", SEM: "SEARCH_UNAVAILABLE" },
+    });
+    const result = await createRetrievalQueryService(harness.ports).query({
+      request: q3Request({ literals: [] }), idempotency_key: "natural-question-lexical-fallback",
+    });
+    expect(harness.calls).not.toContain("lane:EXACT");
+    expect(result.trace.lanes_used).toContain("LEX");
+    expect(result.trace.lanes_skipped).toContainEqual({ lane: "SEM", reason: "SEARCH_UNAVAILABLE" });
+    expect(result.evidence_pack.resolved_evidence).toHaveLength(1);
+  });
+
   it("keeps direct lanes before semantic for every query product", () => {
     for (const product of ["FAST_SEARCH", "LOCATE", "ORIENT", "RESEARCH", "EXHAUSTIVE_JOB", "VERIFY_EXACT", "MATERIALIZE"] as const) {
       const plan = compileQueryPlan({

@@ -23,13 +23,19 @@ const copy = {
  * It is the record of how the answer was found, not the answer: it stays one tap away, folded.
  */
 const METHOD_HEADING = /^#{1,3}[ \t]+(?:Coverage and method|Охват и метод)[ \t]*$/mu;
-function ReportMarkdown({ body, method }: { readonly body: string; readonly method: string }) {
+function ReportMarkdown({ body, method, locale }: { readonly body: string; readonly method: string; readonly locale: 'en' | 'ru' }) {
   const match = METHOD_HEADING.exec(body);
   if (match === null) return <SafeMarkdown text={body} />;
   const answer = body.slice(0, match.index).trimEnd(), record = body.slice(match.index + match[0].length).trim();
+  const counts = /Evidence uses (\d+) sources; (\d+) sources are cited\./u.exec(record)
+    ?? /В доказательствах использовано источников: (\d+); процитировано: (\d+)\./u.exec(record);
+  const sampled = /Coverage is sampled|Охват выборочный/u.test(record);
+  const localizedRecord = counts === null ? record : locale === 'ru'
+    ? `В доказательствах использовано источников: ${counts[1]}; процитировано: ${counts[2]}.\n\n${sampled ? 'Охват выборочный; полнота корпуса не установлена.' : 'Область исследования зафиксирована.'} Метод и ограничения сохранены в квитанции охвата.`
+    : `Evidence uses ${counts[1]} sources; ${counts[2]} sources are cited.\n\n${sampled ? 'Coverage is sampled; corpus completeness is not established.' : 'The research scope is fixed.'} The coverage receipt retains the method and limitations.`;
   return <>
     {answer ? <SafeMarkdown text={answer} /> : null}
-    {record ? <details className="er-live-report-method"><summary>{method}</summary><SafeMarkdown text={record} /></details> : null}
+    {record ? <details className="er-live-report-method"><summary>{method}</summary><SafeMarkdown text={localizedRecord} /></details> : null}
   </>;
 }
 
@@ -184,7 +190,7 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
         return <article key={refKey(declared.section_ref)} className="er-live-report-part" aria-label={declared.title}
           data-state={body !== undefined ? 'read' : failed ? 'failed' : 'pending'}>
           <h2 className="er-live-report-part-heading">{declared.title}</h2>
-          {body !== undefined ? <ReportMarkdown body={body} method={text.method} />
+          {body !== undefined ? <ReportMarkdown body={body} method={text.method} locale={locale} />
             : failed ? <Status tone="error">{text.unknown}</Status>
               : <p className="er-live-report-pending"><span>{text.pending}</span></p>}
           {body !== undefined && <Button variant="text" icon="evidence" onClick={() => readSection(declared)}>{text.quotes}</Button>}
@@ -204,7 +210,7 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
     {active && <section className="er-live-report-section" aria-label={active.title}>
       <h2 ref={sectionHeading} tabIndex={-1}>{active.title}</h2>
       <div className="er-live-report-layout"><div className="er-live-report-body">
-      {section.isFetching ? <Status>{text.reading}</Status> : section.isError || body === undefined ? <Status tone="error">{text.unknown}</Status> : <ReportMarkdown body={body} method={text.method} />}
+      {section.isFetching ? <Status>{text.reading}</Status> : section.isError || body === undefined ? <Status tone="error">{text.unknown}</Status> : <ReportMarkdown body={body} method={text.method} locale={locale} />}
       {citations.data?.semantic_verification === 'NOT_EXECUTED' && <p className="er-shell-note">{text.noAudit}</p>}
       </div><aside className="er-live-report-evidence" aria-label={text.evidence}><EvidenceFeature citations={evidenceRows}
         loading={citations.isFetching} emptyMessage={text.noEvidence} longLocale={locale}

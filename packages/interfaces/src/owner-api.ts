@@ -223,6 +223,7 @@ export interface SourceRevisionsResult {
 
 export interface LibraryReadinessRequest {
   readonly source_id: string;
+  readonly project_id?: string;
 }
 
 export type LibraryReadinessResult = LibraryReadiness;

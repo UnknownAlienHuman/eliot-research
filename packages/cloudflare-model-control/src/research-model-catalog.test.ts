@@ -242,4 +242,31 @@ describe("research model catalog", () => {
       .rejects.toMatchObject({ code: "MODEL_CATALOG_WORKERS_AI_UNAVAILABLE", status: 503 });
     expect(db.prepare).toHaveBeenCalledTimes(1);
   });
+
+  it.each([
+    ["opencode-go", "https://opencode.ai/inference/go/v1/models"],
+    ["opencode-zen", "https://opencode.ai/inference/v1/models"],
+  ])("reads the public %s catalog without sending any Cloudflare credential", async (provider, endpoint) => {
+    const fetcher = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify({
+      object: "list", data: [{ id: "longcat-2.5-preview-free" }, { id: "cat-jam-free" }],
+    }), { headers: { "content-type": "application/json" } }));
+    const resolve = vi.fn(async () => { throw new Error("Credentials must not be resolved for a public catalog"); });
+    const service = createResearchModelCatalogService({ database: database(true),
+      externalProviders: createResearchProviderModelCatalogTransports({
+        gateway_base_url: "https://gateway.invalid", gateway_token: "private-cloudflare-token",
+        resolve_service_provider: resolve, fetcher: fetcher as typeof fetch,
+      }),
+    });
+
+    await expect(service.listExternalProviderForService(ownerContext({ client_class: "trusted_agent" }), provider))
+      .rejects.toMatchObject({ code: "MODEL_CATALOG_OWNER_REQUIRED" });
+    expect(fetcher).not.toHaveBeenCalled();
+    const page = await service.listExternalProviderForService(ownerContext(), provider, { per_page: 1, page: 2 });
+    expect(String(fetcher.mock.calls[0]?.[0])).toBe(endpoint);
+    expect([...new Headers(fetcher.mock.calls[0]?.[1]?.headers).entries()]).toEqual([["accept", "application/json"]]);
+    expect(resolve).not.toHaveBeenCalled();
+    expect(page.models.map(model => model.model_id)).toEqual(["cat-jam-free"]);
+    expect(page.pagination.has_more).toBe(false);
+    expect(page.models[0]?.account_availability).toBe("unknown");
+  });
 });

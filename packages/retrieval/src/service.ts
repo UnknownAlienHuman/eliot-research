@@ -545,6 +545,8 @@ export function createRetrievalQueryService(ports: RetrievalQueryPorts): Retriev
           if (lane === "LEX") await preflightManagedCall();
         },
         skipLane: (lane: RetrievalLane) => {
+          const plannedSkip = plan.skip_reasons[lane];
+          if (plannedSkip !== undefined) return plannedSkip;
           if (managedHybridPrimary && lane === "LEX") return "MANAGED_HYBRID_PRIMARY";
           if (candidateBudget.isExhausted()) return "CANDIDATE_LIMIT";
           return undefined;

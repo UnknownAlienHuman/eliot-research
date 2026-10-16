@@ -35,6 +35,9 @@ export function NextQuestionScope({ locale, page, projectSelected, isLoading, is
     </label></li>)}</ul> : <Status tone={isError && !isLoading ? "error" : "neutral"}>{missingPage}</Status>}
     <div className="er-live-scope-footer">
       <p>{text.selected(selected.length)}</p>
+      {page && page.sources.length > 0 && <Button variant="text" onClick={() => {
+        for (const source of page.sources.slice(0, selectionLimit)) onToggle(page, source.id, true);
+      }}>{locale === 'ru' ? page.next_cursor ? 'Выбрать страницу' : 'Выбрать все' : page.next_cursor ? 'Select page' : 'Select all'}</Button>}
       {selected.length > 0 && <Button variant="text" onClick={onClear}>{text.clear}</Button>}
     </div>
   </details>;

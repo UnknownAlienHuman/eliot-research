@@ -10,7 +10,7 @@ import {
 } from "./research-model-catalog.js";
 import type { ConfiguredServiceModelProviderBinding } from "./service-model-provider-service.js";
 
-const PROVIDERS = ["openai", "anthropic", "openrouter"] as const;
+const PROVIDERS = ["openai", "anthropic", "openrouter", "opencode-go", "opencode-zen"] as const;
 type Provider = typeof PROVIDERS[number];
 type ExternalProviderCatalogInput = Parameters<ExternalProviderCatalogTransport["listTextGeneration"]>[0];
 
@@ -24,6 +24,9 @@ const MAX_MODEL_ID_BYTES = 256;
 const PROVIDER_ID = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const ACCOUNT_ID = /^[A-Fa-f0-9]{32}$/u;
 const GATEWAY_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u;
+
+const OPENCODE_GO_CATALOG_URL = "https://opencode.ai/inference/go/v1/models";
+const OPENCODE_ZEN_CATALOG_URL = "https://opencode.ai/inference/v1/models";
 
 export interface ResearchProviderModelCatalogOptions {
   /** The configured AI Gateway base URL, normally the reasoning gateway binding. */
@@ -383,6 +386,7 @@ async function requestedProviderConfig(
     ...(serviceProvider === null ? {} : { model_ids: serviceProvider.model_ids }) });
 }
 
+
 function openAiTransport(options: ResearchProviderModelCatalogOptions): ExternalProviderCatalogTransport {
   return Object.freeze({
     provider_id: "openai",
@@ -475,10 +479,32 @@ function openRouterTransport(options: ResearchProviderModelCatalogOptions): Exte
   });
 }
 
+
+function openCodeTransport(
+  provider: "opencode-go" | "opencode-zen",
+  options: ResearchProviderModelCatalogOptions,
+): ExternalProviderCatalogTransport {
+  return Object.freeze({
+    provider_id: provider,
+    async listTextGeneration(input: ExternalProviderCatalogInput): Promise<ExternalProviderCatalogPage> {
+      const fetcher = options.fetcher ?? fetch;
+      const url = new URL(provider === "opencode-go" ? OPENCODE_GO_CATALOG_URL : OPENCODE_ZEN_CATALOG_URL);
+      // These official catalogs are public. Gateway/BYOK credentials are scoped
+      // to inference through Cloudflare and must never leave that origin here.
+      const raw = await fetchCatalogJson(fetcher, url, new Headers({ accept: "application/json" }), input.signal);
+      const allModels = openAiModels(raw).filter((model) => matchesSearch(model, input.search));
+      const start = (input.page - 1) * input.per_page;
+      if (!Number.isSafeInteger(start)) throw invalidPage("provider catalog page is outside its bounded range");
+      const end = start + input.per_page;
+      return Object.freeze({ models: Object.freeze(allModels.slice(start, end)), has_more: allModels.length > end });
+    },
+  });
+}
+
 /**
  * Compose only fixed official provider model-list endpoints. Each adapter
- * revalidates its exact server-prepared provider and BYOK alias after owner/project
- * authorization, before any request. No control-plane credential or caller URL is used.
+ * uses its prepared BYOK alias or a public catalog after owner/project authorization.
+ * No control-plane credential or caller URL is used.
  */
 export function createResearchProviderModelCatalogTransports(
   options: ResearchProviderModelCatalogOptions,
@@ -488,6 +514,8 @@ export function createResearchProviderModelCatalogTransports(
       case "openai": return openAiTransport(options);
       case "anthropic": return anthropicTransport(options);
       case "openrouter": return openRouterTransport(options);
+      case "opencode-go": return openCodeTransport(provider, options);
+      case "opencode-zen": return openCodeTransport(provider, options);
     }
   }));
 }

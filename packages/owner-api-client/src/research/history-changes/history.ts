@@ -54,7 +54,7 @@ export interface RunHistoryApiPorts {
 
 export interface RunHistoryApi {
   readonly decodeResearchRunHistory: (raw: unknown, expectedDeploymentGeneration?: string) => ResearchRunHistoryView;
-  readonly readResearchRunHistory: (expectedDeploymentGeneration?: string, signal?: AbortSignal) => Promise<ResearchRunHistoryView>;
+  readonly readResearchRunHistory: (expectedDeploymentGeneration?: string, signal?: AbortSignal, projectId?: string) => Promise<ResearchRunHistoryView>;
 }
 
 /**
@@ -193,11 +193,14 @@ export function createRunHistoryApi(
   const readResearchRunHistory = async (
     expectedDeploymentGeneration?: string,
     signal?: AbortSignal,
+    projectId?: string,
   ): Promise<ResearchRunHistoryView> => {
     // Preflight: an already-closed or missing epoch never dispatches.
     const captured = epoch.capture();
     if (captured === undefined || !epoch.isCurrent(captured)) closed();
-    const raw = await request(`/api/v1/research/runs`, signal === undefined ? {} : { signal }, [200]);
+    const path = projectId === undefined ? "/api/v1/research/runs"
+      : `/api/v1/research/runs?project_id=${encodeURIComponent(wire.identifier(projectId, "project_id"))}`;
+    const raw = await request(path, signal === undefined ? {} : { signal }, [200]);
     const view = decodeResearchRunHistory(raw, expectedDeploymentGeneration);
     // Post-await/post-decode fence: a stale response never reaches the caller.
     if (!epoch.isCurrent(captured)) closed();

@@ -120,6 +120,50 @@ export function workflowFailure(
   }));
 }
 
+/**
+ * Read-only stages can stop before they admit or dispatch anything. The closed
+ * workflow failure vocabulary has no retrieval-specific member, so those stops
+ * previously collapsed to WORKFLOW_EFFECT_UNCERTAIN and read as unknown paid
+ * work. Map ONLY the codes that are definitive pre-dispatch terminal stops; a
+ * code that itself means "cannot tell" (RETRIEVAL_RESOLUTION_UNCERTAIN) is
+ * deliberately absent and keeps the generic unknown tuple, so uncertainty is
+ * never rewritten as a settled non-dispatch. The caller still retains the
+ * underlying retrieval code as bounded diagnostics, because the closed enum
+ * cannot carry it.
+ */
+const SETTLED_READ_ONLY_FAILURE_CODES: Readonly<Record<string, WorkflowFailureOutcome["code"]>> = {
+  RETRIEVAL_BUDGET_STOP: "WORKFLOW_BUDGET_STOP",
+  RETRIEVAL_INPUT_INVALID: "WORKFLOW_INPUT_INVALID",
+};
+
+/** Null means this code is not a proven pre-dispatch read-only stop and must stay uncertain. */
+export function settledReadOnlyWorkflowFailureCode(code: unknown): WorkflowFailureOutcome["code"] | null {
+  return typeof code === "string" && Object.hasOwn(SETTLED_READ_ONLY_FAILURE_CODES, code)
+    ? SETTLED_READ_ONLY_FAILURE_CODES[code] ?? null
+    : null;
+}
+
+/**
+ * A proven pre-dispatch read-only stop: a known failure with no effect to repeat.
+ * retryable stays false because that field never authorizes replaying an effect;
+ * the owner still decides whether to launch a new run.
+ */
+export function settledReadOnlyWorkflowFailure(input: {
+  readonly code: WorkflowFailureOutcome["code"];
+  readonly stage: NonNullable<WorkflowFailureOutcome["stage"]>;
+}): WorkflowFailureOutcome {
+  return Object.freeze(WorkflowFailureOutcomeSchema.parse({
+    protocol: "eliotr.workflow-failure-outcome.v1",
+    code: input.code,
+    phase: "STAGE",
+    stage: input.stage,
+    retryable: false,
+    dispatch_state: "NOT_STARTED",
+    references_intact: "INTACT",
+    recovery_action: "NONE",
+  }));
+}
+
 export function decodeWorkflowFailure(value: unknown): WorkflowFailureCompatible | null {
   if (value === null || value === undefined) return null;
   if (typeof value !== "string" || new TextEncoder().encode(value).byteLength > MAX_FAILURE_BYTES) {

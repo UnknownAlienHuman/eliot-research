@@ -124,6 +124,7 @@ export interface ImportFlowProps {
   readonly conversionRequest?: RawMarkdownConversionRequest | undefined;
   readonly selectionName?: string | undefined;
   readonly onSelectFile?: ((file: File) => void) | undefined;
+  readonly onSelectFiles?: ((files: readonly File[]) => void) | undefined;
   readonly onSelectBundle?: ((files: readonly File[]) => void) | undefined;
   readonly onPrepareFile?: (() => void) | undefined;
   readonly onPrepareBundle?: (() => void) | undefined;
@@ -320,13 +321,13 @@ export function ImportFlow(props: ImportFlowProps) {
         <span className="er-import__drop-glyph" aria-hidden="true"><MaterialSymbol name="upload" /></span>
         <span className="er-import__drop-title">{copy.drop_title}</span>
         <span className="er-import__drop-hint">{copy.auto_hint}</span>
-        <input id={fileInputId} type="file" disabled={busy} aria-label={copy.choose_file}
-          onChange={event => { const selected = event.target.files?.[0]; if (selected) props.onSelectFile?.(selected); event.target.value = ""; }} />
+        <input id={fileInputId} type="file" multiple={props.onSelectFiles !== undefined} disabled={busy} aria-label={copy.choose_file}
+          onChange={event => { const selected = Array.from(event.target.files ?? []); if (selected.length > 0 && props.onSelectFiles) props.onSelectFiles(selected); else if (selected[0]) props.onSelectFile?.(selected[0]); event.target.value = ""; }} />
       </label> : null}
       {!automatic && !uncertain && !capture && props.onSelectFile && <label className="er-import__picker er-button er-button--tonal" htmlFor={fileInputId}>
         <span>{copy.choose_file}</span>
-        <input id={fileInputId} type="file" disabled={busy}
-          onChange={event => { const selected = event.target.files?.[0]; if (selected) props.onSelectFile?.(selected); event.target.value = ""; }} />
+        <input id={fileInputId} type="file" multiple={props.onSelectFiles !== undefined} disabled={busy}
+          onChange={event => { const selected = Array.from(event.target.files ?? []); if (selected.length > 0 && props.onSelectFiles) props.onSelectFiles(selected); else if (selected[0]) props.onSelectFile?.(selected[0]); event.target.value = ""; }} />
       </label>}
       {automatic && (props.selectionName || capture) ? <div className="er-import__progress">
         <p className="er-import__file-row">

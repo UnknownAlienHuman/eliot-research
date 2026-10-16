@@ -36,6 +36,7 @@ export interface ReadinessApi {
     expectedDeploymentGeneration?: string,
     signal?: AbortSignal,
     expectedSourceRevisionRef?: string,
+    projectId?: string,
   ) => Promise<LibraryReadinessView>;
 }
 
@@ -106,11 +107,13 @@ export function createReadinessApi(
     expectedDeploymentGeneration?: string,
     signal?: AbortSignal,
     expectedSourceRevisionRef?: string,
+    projectId?: string,
   ): Promise<LibraryReadinessView> => {
     const parsedId = IdentifierSchema.safeParse(sourceId);
     if (!parsedId.success) invalid();
     const generation = expectedDeploymentGeneration === undefined ? undefined : id(expectedDeploymentGeneration);
     const query = new URLSearchParams({ source_id: parsedId.data });
+    if (projectId !== undefined) query.set("project_id", id(projectId));
     const capture = epoch.capture();
     if (!capture || !epoch.isCurrent(capture)) closed();
     const raw = await http.requestApi(`/api/v1/library/readiness?${query}`, signal === undefined ? {} : { signal });

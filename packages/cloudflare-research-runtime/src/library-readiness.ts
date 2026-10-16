@@ -28,6 +28,8 @@ import {
   catalogEligibility,
   validateRequestIdentifier,
 } from "@eliotr/cloudflare-navigation";
+import type { AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
+import { readProjectSemanticReadiness } from "./library-semantic-readiness.js";
 
 interface HeadRow {
   readonly source_id: unknown;
@@ -238,9 +240,11 @@ export async function readLibraryReadiness(
   request: LibraryReadinessRequest,
   deploymentGeneration: string,
   now: () => number = Date.now,
+  namespace?: AiSearchNamespaceLike,
 ): Promise<LibraryReadiness> {
   const sourceId = validateRequestIdentifier(request.source_id, "source_id");
-  const fence = await beginCatalogRead(database, context, deploymentGeneration, now);
+  const projectId = request.project_id === undefined ? undefined : validateRequestIdentifier(request.project_id, "project_id");
+  const fence = await beginCatalogRead(database, context, deploymentGeneration, now, projectId);
   await fence.authority.requireReadPolicy();
   const observedAt = new Date(fence.started).toISOString();
   const headRow = await database.prepare(`${catalogEligibility()} SELECT source_id, head_rev FROM eligible WHERE source_id=?3 LIMIT 1`)
@@ -256,7 +260,10 @@ export async function readLibraryReadiness(
   ).bind(head).first<CurrentnessRow>();
   if (currentnessRow === null) invalid("source currentness row is missing");
   const currentnessObservation = await currentness(database, context, currentnessRow, head, authoritative);
-  const semantic = semanticNotRequested(head, observedAt);
+  const semantic = namespace === undefined || projectId === undefined ? semanticNotRequested(head, observedAt)
+    : await readProjectSemanticReadiness({ database, search_database: searchDatabase, namespace,
+      project_id: projectId, source_id: sourceId, source_revision_ref: head,
+      principal_ref: fence.policy_principal_ref, observed_at: observedAt });
   const [finalExact, finalLexical] = await Promise.all([
     activeProjection(searchDatabase, database, "exact", head, authoritative.revision.source_owner_generation),
     activeProjection(searchDatabase, database, "lexical", head, authoritative.revision.source_owner_generation),

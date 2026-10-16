@@ -97,6 +97,24 @@ describe('C3-RR run authority', () => {
     expect(api.decodeResearchRunStatus(status(), 'dep-1').execution_state).toBe('ACTIVE');
   });
 
+  it('cancels the original workflow with a stable key and validates its canonical receipt', async () => {
+    const { api, sink } = build(status({ execution_state: 'CANCELLED', cancellation_receipt_ref: 'workflow-cancelled:wf-1' }), [200], createSessionEpoch());
+    expect((await api.cancelResearchRun('wf-1', 'dep-1')).execution_state).toBe('CANCELLED');
+    expect(sink[0]?.path).toBe('/api/v1/research/run/wf-1/cancel');
+    expect(sink[0]?.init?.body).toBe('{}');
+    expect(new Headers(sink[0]?.init?.headers).get('idempotency-key')).toBe('research-cancel:wf-1');
+    const other = build(status({ workflow_instance_id: 'wf-2' }), [200], createSessionEpoch());
+    await expect(other.api.cancelResearchRun('wf-1', 'dep-1')).rejects.toMatchObject({ code: 'RESEARCH_RUN_RESPONSE_INVALID' });
+  });
+
+  it('does not send a cancellation after its owner epoch closes', async () => {
+    const epoch = createSessionEpoch();
+    const { api, sink } = build(status(), [200], epoch);
+    epoch.close();
+    await expect(api.cancelResearchRun('wf-1', 'dep-1')).rejects.toBeDefined();
+    expect(sink).toHaveLength(0);
+  });
+
   it('rejects a mismatched run identity and a changed deployment generation', async () => {
     const epoch = createSessionEpoch();
     const mismatch = build(status({ workflow_instance_id: 'wf-2' }), [200], epoch);

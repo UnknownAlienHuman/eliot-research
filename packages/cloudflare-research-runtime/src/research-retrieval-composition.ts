@@ -34,11 +34,15 @@ import {
   type RetrievalQueryService,
   type RetrievalQueryInput,
   type RetrievalQueryExecutionV1,
+  type RetrievalQueryAdmissionReceiptV1,
+  type RetrievalResultStore,
+  type StoredRetrievalResult,
   type ScopeProfileBinding,
 } from "@eliotr/retrieval";
 import type { LocatorCandidate, ResolvedEvidence, RetrievalLane, ScopeSnapshot } from "@eliotr/contracts";
 import type { RetrievalRequest, RetrievalResult } from "@eliotr/retrieval";
 import { createExactPhraseVerifier } from "./research-exact-search.js";
+import { settledReadOnlyWorkflowFailure, settledReadOnlyWorkflowFailureCode, type WorkflowFailureOutcome } from "@eliotr/cloudflare-workflows";
 import { createD1RetrievalQueryAdmissionPort } from "./research-retrieval-admission.js";
 import { createD1RetrievalSettlementOwnerPort } from "./research-retrieval-settlement-owner.js";
 
@@ -47,6 +51,99 @@ export interface ResearchRetrievalEnvironment {
   readonly SEARCH_DB: D1Database;
   readonly EVIDENCE_BUCKET: R2Bucket;
   readonly AI_SEARCH?: AiSearchNamespaceLike;
+}
+
+/**
+ * Server-local, per-call proof that this retrieval reached a provider call or an
+ * evidence/result write. It exists because absence of the durable managed
+ * admission rows (q4) is NOT proof of non-dispatch: the native SEM lane
+ * (`createSemLaneExecutor({ search })`) has `managed_outcome_capable === false`
+ * and can call `searchProject` without any q4 row, and handle persistence plus
+ * trace/result writes also happen outside q4. Only an untouched tracker proves
+ * that a read-only stop happened before any provider call or evidence write.
+ */
+export interface RetrievalDispatchProof {
+  /** Mutable server-local flag; set the moment a provider call or evidence/result write begins. */
+  effect_dispatched: boolean;
+}
+
+/**
+ * Module-private Symbol: no JSON body, header or wire value can forge it, so only
+ * this server-side composition can mark a stop as effect-free.
+ */
+const NO_RETRIEVAL_EFFECT_DISPATCHED = Symbol("eliotr.retrieval-no-effect-dispatched");
+
+/** Mark a durable result/trace write; reads stay unmarked so a pure read stop is still provable. */
+function wrapResultStoreWithDispatchProof(
+  store: RetrievalResultStore,
+  proof: RetrievalDispatchProof,
+): RetrievalResultStore {
+  const loadPending = store.loadPending;
+  const settle = store.settle;
+  return {
+    load: (idempotencyKey) => store.load(idempotencyKey),
+    ...(loadPending === undefined ? {} : { loadPending: (key: string) => loadPending.call(store, key) }),
+    store: (record) => { proof.effect_dispatched = true; return store.store(record); },
+    ...(settle === undefined ? {} : {
+      settle: (record: StoredRetrievalResult, admission?: RetrievalQueryAdmissionReceiptV1) => {
+        proof.effect_dispatched = true;
+        return settle.call(store, record, admission);
+      },
+    }),
+  };
+}
+
+/**
+ * True only when the retrieval that produced this error provably reached neither a
+ * provider call nor an evidence/result write. This is a server-local marker set by
+ * `retrieveWithHeldScope`, not a browser-supplied field; a frozen error that cannot
+ * be annotated reads as unproven. It never claims that no read happened: EXACT and
+ * other lanes may still have performed read-only R2/D1 reads.
+ */
+export function retrievalEffectNotDispatched(error: unknown): boolean {
+  if (error === null || typeof error !== "object") return false;
+  return Object.getOwnPropertyDescriptor(error, NO_RETRIEVAL_EFFECT_DISPATCHED)?.value === true;
+}
+
+/**
+ * The complete settlement gate for a read-only stage stop: the failure code must
+ * be a pre-dispatch candidate AND the server-local tracker must prove that no
+ * provider call or evidence/result write began. Absence of durable q4 rows is
+ * deliberately NOT sufficient. Returns the truthful outcome, or null when the
+ * stop must keep the generic unknown-effect fence.
+ */
+export function settledReadOnlyRetrievalStop(input: {
+  readonly error: unknown;
+  readonly code: unknown;
+  readonly stage: WorkflowFailureOutcome["stage"];
+}): WorkflowFailureOutcome | null {
+  if (!retrievalEffectNotDispatched(input.error)) return null;
+  const mapped = settledReadOnlyWorkflowFailureCode(input.code);
+  if (mapped === null || input.stage === undefined) return null;
+  return settledReadOnlyWorkflowFailure({ code: mapped, stage: input.stage });
+}
+
+/** Server-local annotation used by the composition and by its verifiers. */
+export function annotateNoRetrievalEffectDispatched(error: unknown): unknown {
+  if (error === null || typeof error !== "object") return error;
+  try {
+    Object.defineProperty(error, NO_RETRIEVAL_EFFECT_DISPATCHED, {
+      value: true, enumerable: false, configurable: true, writable: false,
+    });
+  } catch {
+    // A frozen error keeps its original shape and therefore stays unproven.
+  }
+  return error;
+}
+
+/**
+ * The exact decision both retrieval entrypoints make when a query rejects. A stop
+ * that reached no provider call and no evidence/result write is annotated so the
+ * workflow settle seam can classify it; anything else is rethrown untouched and
+ * therefore keeps the generic unknown-effect fence.
+ */
+export function settleRetrievalFailure(proof: RetrievalDispatchProof, error: unknown): never {
+  throw proof.effect_dispatched ? error : annotateNoRetrievalEffectDispatched(error);
 }
 
 export interface HeldScopeRetrievalInput {
@@ -130,6 +227,7 @@ export async function loadHeldResearchScope(
 async function createHeldScopeRetrievalQuery(
   env: ResearchRetrievalEnvironment,
   input: HeldScopeRetrievalInput,
+  proof: RetrievalDispatchProof,
 ): Promise<{ readonly service: RetrievalQueryService; readonly input: RetrievalQueryInput }> {
   const access = input.access;
   const scopePorts = createD1ScopePorts(env.CORE_DB, access);
@@ -159,6 +257,8 @@ async function createHeldScopeRetrievalQuery(
   const queryBudget = createQueryBudgetGuard(input.deadline_ms, () => input.signal.aborted);
   async function resolveEvidence(candidate: LocatorCandidate, scope: ScopeSnapshot): Promise<ResolvedEvidence | null> {
     try {
+      // Handle/evidence persistence is a durable effect even though it creates no q4 row.
+      proof.effect_dispatched = true;
       return await resolver.resolveCandidate({
         candidate,
         scope_snapshot_ref: { id: scope.snapshot_id, revision: scope.revision },
@@ -194,6 +294,9 @@ async function createHeldScopeRetrievalQuery(
     ? null
     : createSemLaneExecutor({
         async search(request) {
+          // The native SEM lane is not managed_outcome_capable, so it reaches the
+          // provider without any q4 admission row; mark the dispatch here.
+          proof.effect_dispatched = true;
           const raw = await searchProject({
             namespace: aiSearch,
             core_database: env.CORE_DB,
@@ -228,8 +331,12 @@ async function createHeldScopeRetrievalQuery(
     lanes,
     fusion: { reciprocal_rank_constant: 60, lane_weights: { IDENT: 2, EXACT: 2, LEX: 1, SEM: 1 }, maxPerSourceRevision: 8 },
     resolveEvidence,
-    persistTrace: (trace, options) => createD1RetrievalTracePort(env.CORE_DB, access).persistTrace(trace, options),
-    results: createD1RetrievalResultStore(env.CORE_DB, access, undefined, createD1RetrievalSettlementOwnerPort()),
+    persistTrace: (trace, options) => {
+      proof.effect_dispatched = true;
+      return createD1RetrievalTracePort(env.CORE_DB, access).persistTrace(trace, options);
+    },
+    results: wrapResultStoreWithDispatchProof(
+      createD1RetrievalResultStore(env.CORE_DB, access, undefined, createD1RetrievalSettlementOwnerPort()), proof),
     checkBudget: () => queryBudget.checkBudget(),
   };
   const request: RetrievalRequest = {
@@ -248,8 +355,13 @@ export async function retrieveWithHeldScope(
   env: ResearchRetrievalEnvironment,
   input: HeldScopeRetrievalInput,
 ): Promise<RetrievalResult> {
-  const query = await createHeldScopeRetrievalQuery(env, input);
-  return query.service.query(query.input);
+  const proof: RetrievalDispatchProof = { effect_dispatched: false };
+  const query = await createHeldScopeRetrievalQuery(env, input, proof);
+  try {
+    return await query.service.query(query.input);
+  } catch (error) {
+    settleRetrievalFailure(proof, error);
+  }
 }
 
 /** Internal measured readback; the historical public retrieval result stays unchanged. */
@@ -257,6 +369,11 @@ export async function retrieveWithHeldScopeWithBudgetSettlement(
   env: ResearchRetrievalEnvironment,
   input: HeldScopeRetrievalInput,
 ): Promise<RetrievalQueryExecutionV1> {
-  const query = await createHeldScopeRetrievalQuery(env, input);
-  return query.service.queryWithBudgetSettlement(query.input);
+  const proof: RetrievalDispatchProof = { effect_dispatched: false };
+  const query = await createHeldScopeRetrievalQuery(env, input, proof);
+  try {
+    return await query.service.queryWithBudgetSettlement(query.input);
+  } catch (error) {
+    settleRetrievalFailure(proof, error);
+  }
 }

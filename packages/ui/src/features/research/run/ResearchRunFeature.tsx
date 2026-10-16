@@ -337,11 +337,11 @@ export function ResearchRunFeature({
   const scopeDisclosure = (
     <details className="er-research-run__scope">
       <summary><h3 className="er-research-run__scope-heading">{controlledDraft && question !== undefined ? copy.currentScopeHeading : copy.scopeHeading}</h3>
-        <span className="er-research-run__scope-count">{controlledDraft && question !== undefined ? copy.currentScopeCount(selected.length)
-          : selected.length === 0 && wholeScope !== undefined ? wholeScope : copy.scopeCount(selected.length)}</span></summary>
+        <span className="er-research-run__scope-count">{selected.length === 0 && wholeScope !== undefined ? wholeScope
+          : controlledDraft && question !== undefined ? copy.currentScopeCount(selected.length) : copy.scopeCount(selected.length)}</span></summary>
       {selected.length === 0 ? (
-        <p className="er-research-run__scope-empty">{controlledDraft && question !== undefined ? copy.currentScopeEmpty
-          : wholeScope !== undefined ? copy.scopeWhole : copy.scopeEmpty}</p>
+        <p className="er-research-run__scope-empty">{wholeScope !== undefined ? copy.scopeWhole
+          : controlledDraft && question !== undefined ? copy.currentScopeEmpty : copy.scopeEmpty}</p>
       ) : (
         <ul className="er-research-run__scope-list">
           {selected.map(function (item) {

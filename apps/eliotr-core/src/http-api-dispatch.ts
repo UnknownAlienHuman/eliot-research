@@ -34,6 +34,7 @@ import { readWorkspaceCandidateRequest, readWorkspaceAdmissionId } from "./works
 import { readNavigationExpansionRequest } from "./navigation-expand-http.js";
 import { HttpRequestError } from "./http-errors.js";
 import { readPrimaryWriterInventory } from "./backup-primary-composition.js";
+import { createAiUsageObservation } from "./ai-usage-http.js";
 import { issuePrimaryWriterBootstrapAdmissionRoute } from "@eliotr/cloudflare-backup";
 import { readOwnerProjectResearchReadiness } from "./research-project-configuration-composition.js";
 import { parseWikiProposalFromResearchRunRequest, parseWikiProposalRef } from "./wiki-service.js";
@@ -120,6 +121,13 @@ export async function dispatchHttpApiRoute(
       return apiResult(request, env, await readOwnerProjectResearchReadiness(env, context,
         singleQueryValue(url, "project_id")));
     }
+    case "system.ai-usage.read": {
+      requireNoQuery(url);
+      return apiResult(request, env, await createAiUsageObservation({
+        gatewayUrl: env.AI_GATEWAY_REASONING_URL,
+        analyticsToken: env.ELIOTR_MODEL_PROVIDER_CONTROL_TOKEN,
+      }));
+    }
     case "library.source.content": {
       for (const key of url.searchParams.keys()) {
         if (key !== "source_revision_ref") {
@@ -178,10 +186,12 @@ export async function dispatchHttpApiRoute(
     }
     case "library.active.readiness": {
       const sourceId = singleQueryValue(url, "source_id");
-      if (sourceId === undefined || [...url.searchParams.keys()].some((key) => key !== "source_id")) {
+      const projectId = singleQueryValue(url, "project_id");
+      if (sourceId === undefined || [...url.searchParams.keys()].some((key) => key !== "source_id" && key !== "project_id")) {
         throw new HttpRequestError("LIBRARY_READINESS_INPUT_INVALID", 400, "exactly one source_id is required");
       }
-      return apiResult(request, env, await application.services.owner.libraryReadiness(context, { source_id: sourceId }));
+      return apiResult(request, env, await application.services.owner.libraryReadiness(context,
+        { source_id: sourceId, ...(projectId === undefined ? {} : { project_id: projectId }) }));
     }
     case "research.catalog": {
       return apiResult(

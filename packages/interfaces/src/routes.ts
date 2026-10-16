@@ -25,6 +25,7 @@ export const ROUTES: readonly RouteDefinition[] = [
   { method: "GET", path: "/api/v1/system/research-models", operation: "system.research.models", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "GET", path: "/api/v1/system/model-settings", operation: "system.model-settings.read", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "GET", path: "/api/v1/system/model-providers", operation: "system.model-providers.read", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
+  { method: "GET", path: "/api/v1/system/ai-usage", operation: "system.ai-usage.read", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "POST", path: "/api/v1/system/model-providers", operation: "system.model-providers.create", auth: "owner", maximum_request_bytes: 32768, response_mode: "json" },
   { method: "GET", path: "/api/v1/research/projects/:project_id/model-configuration", operation: "research.project-model-configuration.read", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "PUT", path: "/api/v1/research/projects/:project_id/model-configuration", operation: "research.project-model-configuration.select", auth: "owner", maximum_request_bytes: 262144, response_mode: "json" },

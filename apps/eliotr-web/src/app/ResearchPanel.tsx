@@ -9,11 +9,13 @@ import type { NextQuestionSource } from './NextQuestionScope';
 import { matchesResearchRunLaunch, researchQueryOptions } from '../query/research';
 import { protectedQueryKey, runProtectedRead } from '../query/client';
 import { ReportPanel } from './ReportPanel';
+import { ProjectOverview } from './ProjectOverview';
 import { usePaneAnnouncement } from './usePaneAnnouncement';
 
 interface ResearchIntent {
   readonly body: string; readonly key: string; readonly question: string;
   readonly scope: readonly { readonly id: string; readonly label: string }[];
+  readonly wholeScope?: string;
   readonly phase: 'pending' | 'unknown' | 'admitted';
   readonly launch?: ResearchRunLaunchView;
 }
@@ -39,7 +41,7 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
   readonly cover?: { readonly title: string; readonly meta?: string } | undefined;
 }) {
   const client = useQueryClient(), text = copy[locale];
-  const memoryKey = [...protectedQueryKey(context, 'research'), 'local-intent'];
+  const memoryKey = [...protectedQueryKey(context, 'research'), 'local-intent', projectId ?? null];
   const memory = useQuery<ResearchMemory>({ queryKey: memoryKey, queryFn: skipToken, gcTime: Infinity });
   const options = researchQueryOptions({ ...apis.research, configuration: apis.connections.configuration }, privacy, context,
     projectId === undefined ? undefined : { id: projectId, isCurrent: isProjectCurrent },
@@ -70,8 +72,7 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(date) : iso;
   };
   const status = useQuery(launch ? { ...options.status(launch),
-    refetchInterval: query => query.state.data?.execution_state === 'ACTIVE' &&
-      ['queued', 'running', 'waiting'].includes(query.state.data.engine_status) ? 5000 : false,
+    refetchInterval: query => query.state.data?.execution_state === 'ACTIVE' ? 5000 : false,
     refetchIntervalInBackground: false,
   } : { queryKey: [...protectedQueryKey(context, 'research'), 'status-unselected'], queryFn: skipToken });
   const [busy, setBusy] = useState(false), [inputError, setInputError] = useState(false);
@@ -120,7 +121,8 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     try {
       const body = apis.research.runs.researchRunBody(question, scope.map(source => source.id), undefined, projectId);
       const intent: ResearchIntent = Object.freeze({ body, key: apis.sources.mintIntent(), question,
-        scope: Object.freeze(scope.map(source => Object.freeze({ id: source.id, label: source.label }))), phase: 'pending' });
+        scope: Object.freeze(scope.map(source => Object.freeze({ id: source.id, label: source.label }))), phase: 'pending',
+        ...(scope.length === 0 && wholeScope !== undefined ? { wholeScope } : {}) });
       write(old => ({ ...old, intent }));
       if (read().intent?.key !== intent.key) return;
       setInputError(false); setHeldDraft(undefined);
@@ -139,6 +141,34 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     });
   };
   const progress = status.isError ? undefined : status.data;
+  const displayedWholeScope = saved?.intent?.wholeScope ?? wholeScope;
+  const failedActiveRun = launch !== undefined && progress?.execution_state === 'ACTIVE' &&
+    ['errored', 'terminated'].includes(progress.engine_status) && !status.isFetching;
+  const finishFailedRun = (retry: boolean) => {
+    const original = read().intent;
+    if (!launch || !failedActiveRun || running.current || !privacy.isCurrent(context)) return;
+    const selected = launch;
+    run(async signal => {
+      await runProtectedRead(privacy, context, signal, readSignal =>
+        apis.research.runs.cancelResearchRun(selected.workflow_instance_id, context.deploymentGeneration, readSignal));
+      const confirmed = await runProtectedRead(privacy, context, signal, readSignal =>
+        apis.research.runs.readResearchRunStatus(selected.workflow_instance_id, context.deploymentGeneration, readSignal));
+      if (!matchesResearchRunLaunch(confirmed, selected) || confirmed.execution_state !== 'CANCELLED') {
+        throw new Error('Research cancellation is not confirmed');
+      }
+      client.setQueryData(options.status(selected).queryKey, confirmed);
+      if (retry && original) {
+        const { launch: _launch, ...request } = original;
+        const next: ResearchIntent = { ...request, key: apis.sources.mintIntent(), phase: 'pending' };
+        write(old => ({ ...old, intent: next }));
+        await admit(next, signal);
+      } else {
+        returningToComposer.current = true;
+        write(old => { const { intent: _intent, observedLaunch: _launch, ...rest } = old; return rest; });
+      }
+      void history.refetch();
+    });
+  };
   const terminal = saved?.intent?.launch && progress?.workflow_instance_id === saved.intent.launch.workflow_instance_id &&
     progress.execution_state !== 'ACTIVE' && !status.isError && !status.isFetching;
   const observed = saved?.intent ? undefined : saved?.observedLaunch;
@@ -182,6 +212,10 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
       <Status>{text.blocked}</Status><div className="er-live-actions"><Button variant="tonal" disabled={configuration.isFetching} onClick={() => { void configuration.refetch(); }}>{text.check}</Button><WorkspaceLink className="er-shell-link" to="/connections">{text.connections}</WorkspaceLink></div>
     </div> : null}
     {inputError && <Status tone="error">{text.input}</Status>}
+    {failedActiveRun && <div className="er-live-actions">
+      {saved?.intent && <Button variant="tonal" disabled={busy} onClick={() => finishFailedRun(true)}>{locale === 'ru' ? 'Повторить вопрос' : 'Retry question'}</Button>}
+      <Button variant="text" disabled={busy} onClick={() => finishFailedRun(false)}>{text.next}</Button>
+    </div>}
     <div ref={composer} className="er-live-research"><ResearchRunFeature key={saved?.intent?.key ?? 'next-question'} locale={locale} state={state}
       {...(cover ? { cover } : {})}
       scope={saved?.intent?.scope ?? scope} busy={busy}
@@ -189,7 +223,7 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
       draftQuestion={nextQuestionDraft} onDraftQuestionChange={value => {
         if (mounted.current && privacy.isCurrent(context)) setHeldDraft({ context, text: value });
       }}
-      {...(projectId !== undefined && wholeScope !== undefined ? { wholeScope } : {})}
+      {...(projectId !== undefined && displayedWholeScope !== undefined ? { wholeScope: displayedWholeScope } : {})}
       canSubmit={!saved?.intent && !saved?.observedLaunch && projectId !== undefined && (scope.length === 0 || scopeCurrent) && !configuration.isError && !configuration.isFetching && configuration.data !== undefined && configuration.data.run_readiness !== 'blocked'}
       {...(saved?.intent ? { question: saved.intent.question } : {})}
       {...(progress ? { progress, ...(progress.failure ? { firstCause: progress.failure } : {}) } : {})}
@@ -207,6 +241,9 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
         {historyTerminal && <Button variant="text" onClick={dismissHistory}>{text.next}</Button>}
         </div> : undefined}
       conversation={<>
+        {projectId !== undefined && !busy && <ProjectOverview locale={locale} onSuggest={question => {
+          if (mounted.current && privacy.isCurrent(context) && isProjectCurrent()) setHeldDraft({ context, text: question });
+        }} />}
         {saved?.intent?.phase === 'unknown' && <div className="er-live-callout er-live-callout--attention"><Status>{text.unknown}</Status><p>{text.same}</p>
           <Button variant="tonal" disabled={busy} onClick={reconcile}>{text.recover}</Button></div>}
         <section className="er-live-history" aria-label={text.history}><div className="er-live-history-heading"><h2 ref={historyHeading} tabIndex={-1}>{text.history}</h2>

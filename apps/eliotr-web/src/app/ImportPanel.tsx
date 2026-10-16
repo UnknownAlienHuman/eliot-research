@@ -11,6 +11,7 @@ import { importActions } from '../query/imports';
 import { protectedQueryKey, runProtectedRead } from '../query/client';
 import { useCanonicalCommitReport } from './canonicalCommit';
 import { createExistingProjectAttachmentController, freezeProjectAttachmentTarget, type ProjectAttachmentState, type ProjectAttachmentTarget } from '../query/projectAttachment';
+import { useWorkspaceNotice } from './WorkspaceNotifications';
 
 export interface CanonicalCommittedRawSource {
   readonly sourceId: string;
@@ -103,6 +104,9 @@ export function ImportPanel({ apis, privacy, context, locale, project, projectSe
   const [open, setOpen] = useState(false), [view, setView] = useState<ImportFlowView>('file');
   const [namespace, setNamespace] = useState(''), [selectedFile, setSelectedFile] = useState<File>();
   const [files, setFiles] = useState<readonly File[]>([]);
+  const [batch, setBatch] = useState<{ readonly files: readonly File[]; readonly names: readonly string[]; readonly finished: number; readonly cancelled?: boolean }>();
+  const batchCommits = useRef(new Set<string>());
+  const notify = useWorkspaceNotice();
   // The owner only picks a file; the chain below advances capture, processing and admission itself.
   const [auto, setAuto] = useState(false), [autoBundle, setAutoBundle] = useState(false);
   const polls = useRef(0), pending = useRef<ReturnType<typeof setTimeout> | undefined>(undefined), autoNow = useRef(false);
@@ -278,7 +282,7 @@ export function ImportPanel({ apis, privacy, context, locale, project, projectSe
         attachmentTarget: _attachmentTarget, attachment: _attachment, ...rest } = old;
       return rest;
     });
-    setSelectedFile(undefined); setAuto(false);
+    setSelectedFile(undefined); setAuto(false); setBatch(undefined);
   };
   // Terminality follows the accepted status contract, not COMMITTED alone. An unsaved bundle is still
   // freely replaceable. Once submitted, the attempt is released only by the owner's explicit
@@ -367,11 +371,36 @@ export function ImportPanel({ apis, privacy, context, locale, project, projectSe
     if (current.attempt && !current.submitted) { runBundle(); return; }
     setAutoBundle(false);
   });
-  // The only workspace is chosen for the owner; with several, the first is preselected and stays changeable.
+  // Prefer an existing document area that admits extracted PDFs. Explicit user choice and strict policies stay intact.
   useEffect(() => {
-    const first = namespaces.data?.namespaces[0]?.source_namespace_id;
+    const first = (namespaces.data?.namespaces.find(item => item.minimum_quality_state === 'degraded' && item.read_access !== 'EXPIRED')
+      ?? namespaces.data?.namespaces[0])?.source_namespace_id;
     if (namespace === '' && first !== undefined) setNamespace(first);
   }, [namespace, namespaces.data]);
+  // Advance only a fully committed file whose project attachment is confirmed.
+  // An uncertain request keeps its identity and blocks the queue until readback.
+  useEffect(() => {
+    if (!batch || batch.cancelled || batch.finished >= batch.names.length || !rawCommitKey ||
+        busy || running.current || saved.file?.uncertain !== undefined || !privacy.isCurrent(context) ||
+        (saved.attachmentTarget != null && saved.attachment?.phase !== 'confirmed') ||
+        batchCommits.current.has(rawCommitKey)) return;
+    batchCommits.current.add(rawCommitKey);
+    const finished = batch.finished + 1, next = batch.files[finished];
+    setBatch({ ...batch, finished, ...(next === undefined ? { files: [] } : {}) });
+    if (next === undefined) {
+      setAuto(false);
+      notify(locale === 'ru' ? `Добавлено файлов: ${finished}.` : `${finished} files added.`);
+      return;
+    }
+    const nextTarget = saved.attachment?.project
+      ? freezeProjectAttachmentTarget(saved.attachment.project, context.deploymentGeneration) : saved.attachmentTarget;
+    write(old => {
+      const { selection: _selection, file: _file, request: _request, admissionRejected: _rejected,
+        attachment: _attachment, attachmentTarget: _target, ...rest } = old;
+      return { ...rest, ...(nextTarget === undefined ? {} : { attachmentTarget: nextTarget }) };
+    });
+    setSelectedFile(next); resume();
+  });
   const refused = view === 'bundle' ? saved.bundleRejected : saved.admissionRejected;
   const refusedText = locale === 'ru'
     ? 'Запрос импорта отклонён до выполнения. Проверьте исходные данные и доступ перед продолжением.'
@@ -408,10 +437,31 @@ export function ImportPanel({ apis, privacy, context, locale, project, projectSe
         {namespaces.isError && <Button variant="text" onClick={() => { void namespaces.refetch(); }}>{text.read}</Button>}
       </div>}
       {error && <p>{refused ? refusedText : text.error}</p>}
+      {batch && <section aria-label={locale === 'ru' ? 'Загрузка файлов' : 'File uploads'}>
+        <p>{locale === 'ru' ? `Добавлено: ${batch.finished} из ${batch.names.length}` : `Added ${batch.finished} of ${batch.names.length}`}</p>
+        <ol>{batch.names.map((name, index) => <li key={`${index}:${name}`}>
+          {name} · {index < batch.finished ? locale === 'ru' ? 'Добавлен' : 'Added'
+            : batch.cancelled ? locale === 'ru' ? 'В очереди отменён' : 'Queue cancelled'
+              : index === batch.finished ? locale === 'ru' ? 'Текущий файл' : 'Current file'
+                : locale === 'ru' ? 'Ожидает' : 'Waiting'}
+        </li>)}</ol>
+        {!batch.cancelled && batch.finished < batch.names.length && <Button variant="text"
+          onClick={() => setBatch({ ...batch, files: [], cancelled: true })}>{locale === 'ru' ? 'Отменить очередь' : 'Cancel queue'}</Button>}
+      </section>}
       <ImportFlow locale={locale} copy={IMPORT_FLOW_COPY[locale]} view={view} active={open} onViewChange={busy ? undefined : setView}
         fileState={{ ...fileState, phase }} bundleState={busy && view === 'bundle' ? { ...saved.bundleState, phase: 'loading' } : saved.bundleState}
         bundleReview={saved.review} conversionRequest={saved.request} selectionName={saved.selection?.original_file_name ?? selectedFile?.name}
         automatic working={auto}
+        onSelectFiles={!saved.selection ? (selected: readonly File[]) => {
+          const first = selected[0];
+          if (!first || !privacy.isCurrent(context) || (projectSelected && !project)) return;
+          write(old => {
+            const { attachment: _attachment, ...rest } = old;
+            return { ...rest, attachmentTarget: project ? freezeProjectAttachmentTarget(project, context.deploymentGeneration) : null };
+          });
+          setBatch({ files: [...selected], names: selected.map(file => file.name), finished: 0 });
+          setSelectedFile(first); resume();
+        } : undefined}
         onSelectFile={!saved.selection ? (file: File) => {
           if (!privacy.isCurrent(context)) return;
           if (projectSelected && !project) return;

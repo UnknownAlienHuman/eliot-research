@@ -45,6 +45,7 @@ export interface SourceNamespaceSummary {
   readonly read_policy_generation?: number;
   readonly read_expires_at?: string;
   readonly read_access?: "ACTIVE" | "EXPIRED";
+  readonly minimum_quality_state?: "high_fidelity" | "standard" | "degraded";
 }
 
 export interface SourceNamespaceCatalog {
@@ -208,7 +209,7 @@ export function createNamespacesApi(ports: NamespaceApiPorts): NamespaceApi {
 
   function namespaceSummary(value: unknown, index: number): SourceNamespaceSummary {
     const namespace = exactRecord(value, ["source_namespace_id", "title"], `namespace ${index}`, [
-      "read_policy_generation", "read_expires_at", "read_access",
+      "read_policy_generation", "read_expires_at", "read_access", "minimum_quality_state",
     ]);
     const hasPolicyGeneration = Object.hasOwn(namespace, "read_policy_generation");
     const hasExpiresAt = Object.hasOwn(namespace, "read_expires_at");
@@ -219,12 +220,17 @@ export function createNamespacesApi(ports: NamespaceApiPorts): NamespaceApi {
     const policy = hasPolicyGeneration ? policyGeneration(namespace.read_policy_generation, `namespace ${index} policy generation`) : undefined;
     const expiresAt = hasExpiresAt ? timestamp(namespace.read_expires_at, `namespace ${index} read_expires_at`) : undefined;
     const access = hasReadAccess ? readAccess(namespace.read_access, `namespace ${index} read_access`) : undefined;
+    const quality = namespace.minimum_quality_state;
+    if (quality !== undefined && quality !== "high_fidelity" && quality !== "standard" && quality !== "degraded") {
+      schemaFailure(`namespace ${index} minimum quality is invalid`);
+    }
     return {
       source_namespace_id: identifier(namespace.source_namespace_id, `namespace ${index} ID`),
       title: boundedText(namespace.title, `namespace ${index} title`, 120),
       ...(policy === undefined ? {} : { read_policy_generation: policy }),
       ...(expiresAt === undefined ? {} : { read_expires_at: expiresAt }),
       ...(access === undefined ? {} : { read_access: access }),
+      ...(quality === undefined ? {} : { minimum_quality_state: quality }),
     };
   }
 

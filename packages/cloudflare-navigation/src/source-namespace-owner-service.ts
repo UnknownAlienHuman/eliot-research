@@ -312,6 +312,7 @@ function listNamespaceRow(row: Record<string, unknown>, nowMs: number): {
   readonly read_policy_generation: number;
   readonly read_expires_at: string;
   readonly read_access: "ACTIVE" | "EXPIRED";
+  readonly minimum_quality_state?: "high_fidelity" | "standard" | "degraded";
 } | null {
   let uses: unknown;
   try { uses = typeof row.scope_allowed_use_json === "string" ? JSON.parse(row.scope_allowed_use_json) : undefined; } catch { uses = undefined; }
@@ -331,6 +332,8 @@ function listNamespaceRow(row: Record<string, unknown>, nowMs: number): {
     read_policy_generation: row.scope_generation,
     read_expires_at: row.scope_expires_at,
     read_access: expiresAt > nowMs ? "ACTIVE" : "EXPIRED",
+    ...(row.minimum_quality_state === "degraded" || row.minimum_quality_state === "standard" || row.minimum_quality_state === "high_fidelity"
+      ? { minimum_quality_state: row.minimum_quality_state } : {}),
   };
 }
 
@@ -345,7 +348,7 @@ export function createSourceNamespaceOwnerService(options: SourceNamespaceOwnerS
       rows = (await options.database.prepare(
         "SELECT o.source_namespace_id,COALESCE(i.title,substr(o.source_namespace_id,1,120)) AS title,?1 AS principal_ref," +
         "o.status AS owner_status,s.principal_ref AS scope_principal,s.client_class AS scope_client_class,s.state AS scope_state," +
-        "s.generation AS scope_generation,s.expires_at AS scope_expires_at,s.allowed_use_json AS scope_allowed_use_json FROM source_namespace_ownership o JOIN scope_read_policy s " +
+        "s.generation AS scope_generation,s.expires_at AS scope_expires_at,s.allowed_use_json AS scope_allowed_use_json,p.minimum_quality_state FROM source_namespace_ownership o JOIN scope_read_policy s " +
         "ON s.source_namespace_id=o.source_namespace_id AND s.principal_ref=?1 AND s.client_class='owner_pwa' " +
         "JOIN source_admission_policy p ON p.source_namespace_id=o.source_namespace_id AND p.revision=o.source_admission_policy_revision " +
         "LEFT JOIN source_namespace_initialization i ON i.source_namespace_id=o.source_namespace_id " +

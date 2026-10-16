@@ -251,7 +251,7 @@ function ownerApi(env: Env): OwnerApi {
     sourceContent: (context, sourceRevisionRef) => readSourceContent(env, context, sourceRevisionRef),
     sourceRevisions: (context, request) => readSourceRevisions(env.CORE_DB, context, request, env.DEPLOYMENT_GENERATION),
     libraryReadiness: (context, request) => readLibraryReadiness(
-      env.CORE_DB, env.SEARCH_DB, context, request, env.DEPLOYMENT_GENERATION,
+      env.CORE_DB, env.SEARCH_DB, context, request, env.DEPLOYMENT_GENERATION, Date.now, env.AI_SEARCH,
     ),
     async systemHealth(): Promise<Record<string, unknown>> {
       return {

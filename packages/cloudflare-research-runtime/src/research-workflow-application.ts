@@ -19,6 +19,7 @@ import {
   type WorkflowPrincipal,
 } from "@eliotr/cloudflare-workflows";
 import { createD1ScopePorts, managedRetrievalInvocationIdsV1, RetrievalQueryError } from "@eliotr/retrieval";
+import { settledReadOnlyRetrievalStop } from "./research-retrieval-composition.js";
 import {
   createD1InvestigationLedgerStore,
   type InvestigationLedgerStore,
@@ -228,10 +229,16 @@ export async function executeResearchWorkflowApplication<QualificationRenewalMar
           settle_stage_failure: async ({ request, principal: failedPrincipal, error }) => {
             if (request.operation_id !== params.operation_id || request.handler_generation !== params.handler_generation ||
                 request.stage !== "RETRIEVE_BRANCHES" || !(error instanceof RetrievalQueryError) ||
-                error.code !== "RETRIEVAL_RESOLUTION_UNCERTAIN" ||
                 failedPrincipal.principal_ref !== workflowAccessForSettlement.principal_ref ||
                 failedPrincipal.credential_generation !== workflowAccessForSettlement.credential_generation ||
                 failedPrincipal.deployment_generation !== principal.deployment_generation) return null;
+            // Only a stop whose composition provably reached no provider call or
+            // evidence/result write, and whose code is a pre-dispatch candidate, may
+            // settle. The durable q4 rows alone are NOT proof: the native SEM lane is
+            // not managed_outcome_capable and can reach the provider without any q4
+            // row, and handle/trace/result writes also occur outside q4.
+            const settled = settledReadOnlyRetrievalStop({ error, code: error.code, stage: request.stage });
+            if (settled === null) return null;
             const idempotencyKey = `retrieve-branches:${await textDigest(JSON.stringify(request))}`;
             const invocation = await managedRetrievalInvocationIdsV1(
               workflowAccessForSettlement.principal_ref,
@@ -248,16 +255,14 @@ export async function executeResearchWorkflowApplication<QualificationRenewalMar
             ).bind(invocation.retrieval_operation_id, invocation.execution_id)
               .first<{ readonly admitted: unknown }>();
             if (admission === null || admission.admitted !== 0) return null;
-            return {
-              protocol: "eliotr.workflow-failure-outcome.v1",
-              code: "WORKFLOW_EFFECT_UNCERTAIN",
-              phase: "STAGE",
-              stage: request.stage,
-              retryable: false,
-              dispatch_state: "NOT_STARTED",
-              references_intact: "INTACT",
-              recovery_action: "NONE",
-            };
+            // Proven: no provider call, evidence handle or result write began, and no
+            // durable q4 admission row exists for this scoped invocation. Read-only
+            // R2/D1 reads may still have happened; this claims only the absence of a
+            // provider/evidence-result write. The closed workflow vocabulary cannot
+            // carry the retrieval code, so keep it as bounded diagnostics.
+            console.warn(JSON.stringify({ event: "research_read_only_stage_stop_settled",
+              retrieval_code: error.code, stage: request.stage, operation_id: request.operation_id }));
+            return settled;
           },
         }),
     });

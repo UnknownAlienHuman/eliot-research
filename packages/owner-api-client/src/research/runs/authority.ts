@@ -108,6 +108,10 @@ export interface ResearchRunsApi {
   decodeResearchRunStatus: ResearchRunStatusDecoder;
   startResearchRun(body: string, idempotencyKey: string, expectedDeploymentGeneration?: string, signal?: AbortSignal): Promise<ResearchRunLaunchView>;
   readResearchRunStatus(workflowInstanceId: string, expectedDeploymentGeneration?: string, signal?: AbortSignal): Promise<ResearchRunStatusView>;
+  /** Owner control POST. The server enforces the same ACTIVE/engine_status fence and durable journal receipt. */
+  cancelResearchRun(workflowInstanceId: string, expectedDeploymentGeneration?: string, signal?: AbortSignal): Promise<ResearchRunStatusView>;
+  /** Owner control POST. The server enforces the same ACTIVE/engine_status fence and durable journal receipt. */
+  recoverResearchRun(workflowInstanceId: string, expectedDeploymentGeneration?: string, signal?: AbortSignal): Promise<ResearchRunStatusView>;
 }
 
 
@@ -261,11 +265,23 @@ export function createResearchRunsApi(ports: ResearchRunsApiPorts): ResearchRuns
     return body;
   };
 
+  const control = (action: "cancel" | "recover", workflowInstanceId: string, expectedDeploymentGeneration?: string, signal?: AbortSignal) => {
+    const id = checkWorkflowId(workflowInstanceId);
+    return fenced(() => request(`${RUN_PATH}/${encodeURIComponent(id)}/${action}`, {
+      method: "POST", body: "{}", headers: { "content-type": "application/json", "idempotency-key": `research-${action}:${id}` },
+      ...(signal === undefined ? {} : { signal }),
+    }, [200]).then(raw => decodeResearchRunStatus(raw, expectedDeploymentGeneration))).then(view => {
+      if (view.workflow_instance_id !== id) invalid("research control response belongs to another run");
+      return view;
+    });
+  };
   return {
     researchRunBody,
     researchRunBodyV3,
     decodeResearchRunLaunch,
     decodeResearchRunStatus,
+    cancelResearchRun: (id, generation, signal) => control("cancel", id, generation, signal),
+    recoverResearchRun: (id, generation, signal) => control("recover", id, generation, signal),
     startResearchRun(body, idempotencyKey, expectedDeploymentGeneration, signal) {
       const key = identifier(idempotencyKey, "idempotency_key");
       const init: RequestInit = {

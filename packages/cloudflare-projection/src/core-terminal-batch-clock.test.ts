@@ -13,6 +13,7 @@ import {
   createD1ProjectionAuthority,
   projectionExecutionOperationId,
 } from "./index.js";
+import { readTerminalReceipt } from "./core-terminal-receipt.js";
 import type {
   ProjectionExecutionProfile,
   ProjectionSettlement,
@@ -270,6 +271,10 @@ function createSchema(database: DatabaseSync): void {
       updated_at TEXT NOT NULL,
       PRIMARY KEY(source_revision_ref, channel)
     ) STRICT;
+    CREATE TABLE projection_managed_item_effect (
+      source_revision_ref TEXT NOT NULL,
+      projection_generation TEXT NOT NULL
+    ) STRICT;
     CREATE TABLE operation_attempt (
       attempt_id TEXT PRIMARY KEY,
       state TEXT NOT NULL,
@@ -444,4 +449,69 @@ describe("projection terminal settlement batch clock fence", () => {
       sqlite.close();
     }
   }, 10_000);
+});
+
+function sourceOnlyTerminalFixture() {
+  const { database } = seedDatabase({
+    operation_id: "source-only-terminal", lease_owner: "source-only-worker", lease_generation: 1,
+  });
+  database.prepare(
+    "UPDATE projection_generation SET state='COMPLETED',work_manifest_ref='work-manifest'," +
+    "work_manifest_sha256=?,d1_search_receipt_ref='d1-search-receipt',d1_search_readback_digest=?",
+  ).run(A, B);
+  database.prepare(
+    "INSERT INTO operation_receipt VALUES ('source-terminal-receipt',1,?,1,?,'SUCCEEDED',?,?,0,'[]',?)",
+  ).run(context.intent_ref.id, context.acceptance_attempt_id,
+    JSON.stringify([context.job_id, `projection-generation:${generationId}`, "work-manifest", "d1-search-receipt"]),
+    JSON.stringify(["work-manifest", "d1-search-receipt"]), sourceRevision.captured_at);
+  database.exec(
+    "UPDATE job SET state='COMPLETED',terminal_receipt_ref='receipt:source-terminal-receipt:1'",
+  );
+  database.prepare(
+    "INSERT INTO projection_terminal_guard VALUES (?,?,?,'source-terminal-receipt',1,'SUCCEEDED',1,?)",
+  ).run(sourceRevision.source_revision_ref, generationId, context.job_id, sourceRevision.captured_at);
+  const disabled = { ...profile, managed_generation_active: false };
+  return { database, disabled, d1: makeD1(database).database };
+}
+
+describe("disabled-managed source projection terminal readback", () => {
+  it("reads and replays the existing Work + D1 terminal without a semantic receipt or any mutation", async () => {
+    const f = sourceOnlyTerminalFixture();
+    try {
+      const before = snapshotCoreTables(f.database);
+      const read = () => readTerminalReceipt(f.d1, context, generationId, f.disabled);
+      const terminal = await read();
+      expect(terminal).toMatchObject({ outcome: "SUCCEEDED", receipt_ref: "receipt:source-terminal-receipt:1" });
+      expect(terminal?.receipt.readback_receipt_refs).toEqual(["work-manifest", "d1-search-receipt"]);
+      expect(await read()).toEqual(terminal);
+      expect(snapshotCoreTables(f.database)).toEqual(before);
+    } finally { f.database.close(); }
+  });
+
+  it("still requires the semantic receipt for an enabled managed profile", async () => {
+    const f = sourceOnlyTerminalFixture();
+    try {
+      await expect(readTerminalReceipt(f.d1, context, generationId, profile))
+        .rejects.toMatchObject({ code: "PROJECTION_AUTHORITY_CONFLICT" });
+    } finally { f.database.close(); }
+  });
+
+  it.each([
+    ["persisted managed binding", "UPDATE projection_generation SET semantic_instance_id='instance-terminal-clock',semantic_generation='generation-managed-terminal-clock'", "PROJECTION_AUTHORITY_CONFLICT"],
+    ["managed item effect", "INSERT INTO projection_managed_item_effect SELECT source_revision_ref,projection_generation FROM projection_generation", "PROJECTION_AUTHORITY_CONFLICT"],
+    ["missing Work manifest", "UPDATE projection_generation SET work_manifest_ref=NULL", "PROJECTION_INPUT_INVALID"],
+    ["missing D1 digest", "UPDATE projection_generation SET d1_search_readback_digest=NULL", "PROJECTION_INPUT_INVALID"],
+    ["missing Work readback", `UPDATE operation_receipt SET readback_receipt_refs_json='["d1-search-receipt"]'`, "PROJECTION_AUTHORITY_CONFLICT"],
+    ["missing D1 output", `UPDATE operation_receipt SET output_refs_json='["job-terminal-clock","projection-generation:projection-generation-terminal-clock","work-manifest"]'`, "PROJECTION_AUTHORITY_CONFLICT"],
+    ["unbound managed output", `UPDATE operation_receipt SET readback_receipt_refs_json='["work-manifest","d1-search-receipt","forged-managed-receipt"]'`, "PROJECTION_AUTHORITY_CONFLICT"],
+    ["partial semantic proof", "UPDATE projection_generation SET semantic_readback_digest='" + A + "'", "PROJECTION_AUTHORITY_CONFLICT"],
+    ["partial semantic reference", "UPDATE projection_generation SET semantic_receipt_ref='forged-managed-receipt'", "PROJECTION_AUTHORITY_CONFLICT"],
+  ])("rejects %s even when managed generation is disabled", async (_label, sql, code) => {
+    const f = sourceOnlyTerminalFixture();
+    try {
+      f.database.exec(sql);
+      await expect(readTerminalReceipt(f.d1, context, generationId, f.disabled))
+        .rejects.toMatchObject({ code });
+    } finally { f.database.close(); }
+  });
 });

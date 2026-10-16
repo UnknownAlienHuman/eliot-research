@@ -7,6 +7,7 @@ export interface OwnerNamespaceSummary {
   readonly read_policy_generation: number;
   readonly read_expires_at: string;
   readonly read_access: "ACTIVE" | "EXPIRED";
+  readonly minimum_quality_state?: "high_fidelity" | "standard" | "degraded";
 }
 
 export interface OwnerNamespaceList {

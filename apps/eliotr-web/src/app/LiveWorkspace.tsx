@@ -27,16 +27,20 @@ import { NewProjectPanel } from "./NewProjectPanel";
 import { InboxPanel } from "./InboxPanel";
 import { ComputerAgentTaskAssignment } from "./ComputerAgentTaskAssignment";
 import { usePaneAnnouncement } from "./usePaneAnnouncement";
+import { WorkspaceNotifications } from "./WorkspaceNotifications";
+import { LanguageSettings } from "./LanguageSettings";
+import { AiUsagePanel } from "./AiUsagePanel";
 
 const copy = {
   en: { tabs: "Research panes", tabSources: "Sources", tabChat: "Chat", tabTools: "Agents", tools: "Agents and tools", toolsLead: "Open a tool for the selected project and sources.", toolIndex: "Search index", toolVersions: "Source versions", toolReports: "Saved reports", toolWiki: "Wiki drafts", toolImport: "Import sources", toolModel: "Model and connections", toolIndexHint: "How sources are indexed for search", toolVersionsHint: "Saved versions of a source", toolReportsHint: "Reports saved from earlier research", toolWikiHint: "Review and publish Wiki drafts", toolImportHint: "Add documents to this project", toolModelHint: "Choose the model and check access", collapseSources: "Collapse sources", expandSources: "Expand sources", collapseTools: "Collapse research tools", expandTools: "Expand research tools", projects: "Projects", inbox: "Inbox", sources: "Sources", research: "Research", studio: "Studio", connections: "Agents", choose: "Choose a project to get started", detail: "Keep sources, questions and their evidence together.", next: "Next page", previous: "Previous page", versions: "Choose a version to read", document: "Source document", close: "Back to sources", untitled: "No project selected", researchPrompt: "Choose the sources for your next question", researchDetail: "The question will keep the exact source scope you choose.", studioEmpty: "Your saved work belongs here", studioDetail: "Reports and artifacts will keep the sources they were created from.", connectionsDetail: "Review owner access and research configuration.", review: "Review connections", selected: (count: number) => count === 0 ? 'All project sources' : count === 1 ? '1 source selected' : `${count} sources selected`, allSources: (count: number) => count === 1 ? 'The project source' : `All ${count} sources`, addSources: "Add sources", sourceScope: "For your next question", openSources: "All sources", sourceCount: (count: number) => count === 1 ? "1 source" : `${count} sources`, version: (index: number) => `Version ${index + 1}`, settings: "Settings", settingsDetail: "Model and provider settings are shared by the whole service. Cloudflare is built in and default.", scopeNote: "Readiness and recorded versions are separate observations." },
   ru: { tabs: "Панели исследования", tabSources: "Источники", tabChat: "Чат", tabTools: "Агенты", tools: "Агенты и инструменты", toolsLead: "Инструменты для выбранного проекта и источников.", toolIndex: "Индекс поиска", toolVersions: "Версии источников", toolReports: "Сохранённые отчёты", toolWiki: "Вики-черновики", toolImport: "Импорт источников", toolModel: "Модель и подключения", toolIndexHint: "Готовность источников к поиску", toolVersionsHint: "Сохранённые версии источника", toolReportsHint: "Отчёты прошлых исследований", toolWikiHint: "Проверка и публикация черновиков вики", toolImportHint: "Добавить документы в проект", toolModelHint: "Выбор модели и проверка доступа", collapseSources: "Свернуть источники", expandSources: "Развернуть источники", collapseTools: "Свернуть инструменты", expandTools: "Развернуть инструменты", projects: "Проекты", inbox: "Входящие", sources: "Источники", research: "Исследование", studio: "Студия", connections: "Агенты", choose: "Выберите проект, чтобы начать", detail: "Источники, вопросы и доказательства остаются вместе.", next: "Следующая страница", previous: "Предыдущая страница", versions: "Выберите версию для чтения", document: "Документ источника", close: "Вернуться к источникам", untitled: "Проект не выбран", researchPrompt: "Выберите источники для следующего вопроса", researchDetail: "Вопрос сохранит точный набор выбранных источников.", studioEmpty: "Здесь будут сохранённые материалы", studioDetail: "Отчёты и материалы сохраняют связь с исходными источниками.", connectionsDetail: "Проверьте доступ владельца и настройки исследования.", review: "Проверить подключения", selected: (count: number) => count === 0 ? 'Все источники проекта' : `Выбрано источников: ${count}`, allSources: (count: number) => count === 1 ? 'Источник проекта' : `Все источники (${count})`, addSources: "Добавить источники", sourceScope: "Для следующего вопроса", openSources: "Все источники", sourceCount: (count: number) => { const tail = count % 10, hundred = count % 100; return `${count} ${tail === 1 && hundred !== 11 ? "источник" : tail >= 2 && tail <= 4 && (hundred < 12 || hundred > 14) ? "источника" : "источников"}`; }, version: (index: number) => `Версия ${index + 1}`, settings: "Настройки", settingsDetail: "Настройки моделей и провайдеров общие для всего сервиса. Cloudflare встроен и применяется по умолчанию.", scopeNote: "Готовность и записанные версии — отдельные наблюдения." },
 } as const;
 
-export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, context }: {
+export function LiveWorkspace({ destination, locale, onLocaleChange, headingRef, apis, privacy, context }: {
   readonly destination: typeof destinations[number]; readonly locale: "en" | "ru";
   readonly headingRef: RefObject<HTMLHeadingElement | null>; readonly apis: BoundWorkspaceApis;
   readonly privacy: PrivacyController; readonly context: SessionContext;
+  readonly onLocaleChange?: (locale: "en" | "ru") => void;
 }) {
   const client = useQueryClient();
   const navigate = useNavigate();
@@ -170,7 +174,7 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
     if (tool === "versions" || tool === "erase") openSourceTool();
     else if (privacy.isCurrent(context)) void navigate(tool === "wiki" ? "/studio" : "/sources");
   };
-  return <div className="er-live-workspace">
+  return <WorkspaceNotifications locale={locale} privacy={privacy} context={context}><div className="er-live-workspace">
     {destination === "research" && <div className="er-research-tabs" role="group" aria-label={text.tabs}>
       {([["sources", text.tabSources], ["chat", text.tabChat], ["tools", text.tabTools]] as const).map(([tab, label]) =>
         <button key={tab} type="button" className="er-research-tab" aria-pressed={researchTab === tab} onClick={() => setResearchTab(tab)}>
@@ -184,6 +188,19 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
       <p className="er-shell-eyebrow" title={selected?.title}>{selected?.title ?? text.untitled}</p>
       <WorkspaceLink className="er-shell-link" to="/sources" title={text.addSources}><MaterialSymbol name="add" /><span>{text.addSources}</span></WorkspaceLink>
       <p>{text.selected(scope.length)}</p>
+      {library.data && <div className="er-live-actions">
+        <Button variant="text" disabled={library.isFetching || library.data.sources.length === 0}
+          onClick={() => {
+            const page = library.data;
+            if (!page || !privacy.isCurrent(context) ||
+                client.getQueryData([...key, "library", projectId, cursor ?? null]) !== page) return;
+            setScope(page.sources.slice(0, selectedSourceLimit).map(source => ({
+              id: source.id, label: source.title, page, ...(cursor === undefined ? {} : { cursor }),
+            })));
+          }}>{locale === "ru" ? library.data.next_cursor ? "Выбрать страницу" : "Выбрать все" : library.data.next_cursor ? "Select page" : "Select all"}</Button>
+        <Button variant="text" disabled={scope.length === 0} onClick={() => { if (privacy.isCurrent(context)) setScope([]); }}>
+          {locale === "ru" ? "Снять все" : "Clear all"}</Button>
+      </div>}
       {/* Choose the next question's sources beside the conversation, as in NotebookLM; the same guarded toggle as Sources. */}
       {selected && library.data ? <ul className="er-live-source-pick" aria-label={text.sourceScope}>{library.data.sources.map(source => {
         const checked = scope.some(item => item.id === source.id);
@@ -236,7 +253,11 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
           {projectPages.length > 1 && <Button variant="text" onClick={() => { setProjectId(undefined); setProjectPages(pages => pages.slice(0, -1)); }}>{text.previous}</Button>}
           {projects.data?.next_project_id && <Button variant="tonal" onClick={() => { const next = projects.data?.next_project_id; if (next) { setProjectId(undefined); setProjectPages(pages => [...pages, next]); } }}>{text.next}</Button>}
         </div>
-      </> : destination === "settings" ? <SettingsPanel locale={locale} apis={apis} privacy={privacy} context={context} />
+      </> : destination === "settings" ? <>
+        {onLocaleChange && <LanguageSettings locale={locale} onChange={onLocaleChange} />}
+        <AiUsagePanel apis={apis} privacy={privacy} context={context} locale={locale} />
+        <SettingsPanel locale={locale} apis={apis} privacy={privacy} context={context} />
+      </>
         : destination === "connections" ? <ConnectionsPanel locale={locale} apis={apis} privacy={privacy} context={context}
         projects={projects} projectQueryKey={[...protectedQueryKey(context, "sources"), "projects", after ?? null]} projectId={selected?.project_id}
         onProject={chooseProject}
@@ -251,9 +272,16 @@ export function LiveWorkspace({ destination, locale, headingRef, apis, privacy, 
       <NewProjectPanel open={newProjectOpen} locale={locale} apis={apis} privacy={privacy} context={context} scope={scope}
         onClose={() => { setNewProjectOpen(false); }}
         currentPage={() => projects.data}
-        onProjectCommitted={() => { if (privacy.isCurrent(context)) { setNewProjectOpen(false); void projects.refetch(); } }} />
+        onProjectCommitted={(project, readback) => {
+          if (!privacy.isCurrent(context) || readback.deployment_generation !== context.deploymentGeneration ||
+              !readback.projects.some(row => row.project_id === project.project_id)) return;
+          client.setQueryData([...key, "projects", null], readback);
+          setProjectPages([undefined]); setProjectId(project.project_id); setSourceId(undefined);
+          setLibraryPages([undefined]); setScope([]); setNewProjectOpen(false);
+          void navigate("/research");
+        }} />
     </main>
-  </div>;
+  </div></WorkspaceNotifications>;
 }
 
 const sourceReadCopy = {
@@ -325,7 +353,9 @@ function ActiveSources({ locale, apis, privacy, context, projectId, projects, af
   const library = useQuery(projectId && projects.data ? options.library(projects.data, projectId, cursor)
     : { queryKey: [...key, "library-unselected"], queryFn: skipToken });
   const source = library.data?.sources.find(row => row.id === sourceId);
-  const readiness = useQuery(source && library.data ? options.readiness(library.data, source.id)
+  const readiness = useQuery(source && library.data ? { ...options.readiness(library.data, source.id, undefined, projectId),
+    refetchInterval: query => query.state.data?.channels.some(channel => channel.state === "queued" || channel.state === "running") ? 5000 : false,
+  }
     : { queryKey: [...key, "readiness-unselected"], queryFn: skipToken });
   const revisions = useQuery(source && library.data ? options.revisions(library.data, source.id, revisionCursor)
     : { queryKey: [...key, "revisions-unselected"], queryFn: skipToken });

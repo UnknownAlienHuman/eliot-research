@@ -45,3 +45,4 @@ export * from "./validation/cross-field.js";
 export { DELIVERY_MESSAGE_PROTOCOL, type OutboxLease, type DeliveryMessage, type QueueSendReceipt, type OutboxClaimRequest, type InboxLease, type DeliveryHandlerContext } from "./delivery.js";
 export * from "./research-run-history-visibility.js";
 export * from "./service-model.js";
+export { AiUsageObservationSchema, type AiUsageObservation } from "./ai-usage.js";

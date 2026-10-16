@@ -36,7 +36,17 @@ const copy = {
   },
 } as const;
 type Feedback = "idle" | "saving" | "checking" | "configured" | "unknown" | "invalid" | "unavailable" | "rejected";
-type ProviderKind = "openrouter" | "openai" | "anthropic" | "compatible";
+type ProviderKind = "openrouter" | "openai" | "anthropic" | "opencode-go" | "opencode-zen" | "compatible";
+
+const OPENCODE_GO_BASE_URL = "https://opencode.ai/inference/go/openai/v1";
+const OPENCODE_ZEN_BASE_URL = "https://opencode.ai/inference/openai/v1";
+const needsBaseUrl = (kind: ProviderKind): boolean =>
+  kind === "compatible" || kind === "opencode-go" || kind === "opencode-zen";
+const defaultDisplayName = (kind: ProviderKind): string => {
+  if (kind === "opencode-go") return "OpenCode Go";
+  if (kind === "opencode-zen") return "OpenCode Zen";
+  return "";
+};
 
 /** Settings has only owner authority; no project selection or content grant participates. */
 export function SettingsPanel({ locale, apis, privacy, context }: { readonly locale: "en" | "ru";
@@ -104,8 +114,9 @@ export function SettingsPanel({ locale, apis, privacy, context }: { readonly loc
     try {
       if (typeof key !== "string" || typeof name !== "string" || typeof models !== "string" ||
         (base !== null && typeof base !== "string")) { setFeedback("invalid"); return; }
-      const displayName = name.trim() || (providerKind === "compatible" ? "" : providerKind);
+      const displayName = name.trim() || defaultDisplayName(providerKind) || (providerKind === "compatible" ? "" : providerKind);
       const baseUrl = typeof base === "string" ? base.trim() : "";
+      const effectiveBaseUrl = baseUrl || (providerKind === "opencode-go" ? OPENCODE_GO_BASE_URL : providerKind === "opencode-zen" ? OPENCODE_ZEN_BASE_URL : "");
       let providerId: string = providerKind;
       if (providerKind === "compatible") {
         const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${displayName}\n${baseUrl}`));
@@ -117,7 +128,7 @@ export function SettingsPanel({ locale, apis, privacy, context }: { readonly loc
       const operation = crypto.randomUUID(); hold(operation); setFeedback("saving");
       const request: ServiceModelProviderCreateRequest = { protocol: "eliotr.service-model-provider-create.v1", operation_id: operation,
         provider_id: providerId, display_name: displayName, model_ids: [...new Set(models.split(",").map(model => model.trim()).filter(Boolean))],
-        api_key: key, ...(baseUrl === "" ? {} : { base_url: baseUrl }) };
+        api_key: key, ...(effectiveBaseUrl === "" ? {} : { base_url: effectiveBaseUrl }) };
       settle(await configureGlobalModelProviderOnce({ api, request, generation: context.deploymentGeneration,
         signal: selected.signal, isCurrent: current }), operation);
     } catch (error) {
@@ -175,10 +186,11 @@ export function SettingsPanel({ locale, apis, privacy, context }: { readonly loc
           <select id={`${id}-provider`} className="er-field__control" value={providerKind} disabled={!canConnect}
             onChange={event => setProviderKind(event.target.value as ProviderKind)}>
             <option value="openrouter">OpenRouter</option><option value="openai">OpenAI</option>
-            <option value="anthropic">Anthropic</option><option value="compatible">{text.compatible}</option>
+            <option value="anthropic">Anthropic</option><option value="opencode-go">OpenCode Go</option>
+            <option value="opencode-zen">OpenCode Zen</option><option value="compatible">{text.compatible}</option>
           </select></div>
-        <Field label={text.name} name="display_name" maxLength={128} required={providerKind === "compatible"} disabled={!canConnect} />
-        {providerKind === "compatible" && <Field label={text.base} type="url" name="base_url" maxLength={2048} required disabled={!canConnect} />}
+        <Field key={`${providerKind}-name`} label={text.name} name="display_name" maxLength={128} required={providerKind === "compatible"} disabled={!canConnect} defaultValue={defaultDisplayName(providerKind)} />
+        {needsBaseUrl(providerKind) && <Field key={`${providerKind}-base`} label={text.base} type="url" name="base_url" maxLength={2048} required disabled={!canConnect} defaultValue={providerKind === "opencode-go" ? OPENCODE_GO_BASE_URL : providerKind === "opencode-zen" ? OPENCODE_ZEN_BASE_URL : undefined} />}
         <Field label={text.model} placeholder={text.modelHint} name="model_ids" maxLength={4096} required disabled={!canConnect} />
         <Field label={text.key} placeholder={text.keyHint} type="password" name="api_key" autoComplete="new-password" maxLength={4096} required disabled={!canConnect} />
         <div className="er-settings__actions">

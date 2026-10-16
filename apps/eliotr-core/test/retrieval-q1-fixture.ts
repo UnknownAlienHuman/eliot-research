@@ -21,9 +21,9 @@ import {
   createProjectionExecutionHandler,
   createR2ProjectionContentPort,
   createR2ProjectionWorkPort,
+  type ProjectionExecutionProfile,
 } from "@eliotr/cloudflare-projection";
 import type { ScopeSnapshot } from "@eliotr/contracts";
-import { PROJECTION_EXECUTION_PROFILE } from "@eliotr/cloudflare-ai";
 import type { RetrievalRequest } from "@eliotr/retrieval";
 import { bundleFixture } from "../../../packages/platform-cloudflare/src/ingest-test-fixture.js";
 import { prepareBrowserBundle } from "../../../packages/pwa-source-workspace/src/bundle-input.js";
@@ -32,6 +32,21 @@ import type { ImportTransport } from "../../../packages/pwa-source-workspace/src
 import { decodeApiProblem } from "../../eliotr-pwa/src/api.js";
 import { handleHttp } from "../src/http.js";
 import type { Env } from "../src/env.js";
+
+// Match the current source-delivery profile in projection-execution-handler.ts;
+// project outbox delivery owns native AI Search uploads.
+const PROJECTION_EXECUTION_PROFILE: ProjectionExecutionProfile = Object.freeze({
+  projector_profile: "structural-markdown-v1",
+  managed_instance_id: "private-prose-g2",
+  managed_generation: "g2-qwen3-2026-09-03",
+  managed_generation_active: false,
+  maximum_markdown_bytes: 4 * 1024 * 1024,
+  maximum_synchronous_items: 64,
+  target_item_utf8_bytes: 32 * 1024,
+  maximum_item_utf8_bytes: 64 * 1024,
+  managed_poll_interval_ms: 1_000,
+  managed_timeout_ms: 30_000,
+});
 
 export interface Q1Migration {
   readonly name: string;
@@ -426,15 +441,6 @@ export function createQ1Consumer(world: Q1Namespace): Q1Consumer {
       object_store: miniflareWorkStore(runtime.WORK_BUCKET) as never,
     }),
     search: createD1ProjectionSearchPort(world.searchDb),
-    managed: {
-      index: async (_context, _executionGeneration, _canonicalGeneration, copyPlan) => ({
-        state: "DEGRADED" as const,
-        item_count: copyPlan.items.length,
-        instance_id: PROJECTION_EXECUTION_PROFILE.managed_instance_id,
-        managed_generation: PROJECTION_EXECUTION_PROFILE.managed_generation,
-        reason_codes: ["MANAGED_INDEX_READBACK_FAILED"],
-      }),
-    },
     leases: createD1ExecutionLeaseStore(db),
     profile: PROJECTION_EXECUTION_PROFILE,
   });
@@ -445,7 +451,8 @@ export function createQ1Consumer(world: Q1Namespace): Q1Consumer {
   ) => {
     invocations += 1;
     await accept(message, context);
-    return executor.execute(message);
+    try { return await executor.execute(message); }
+    catch (error) { console.error("Q1 projection fixture execution failed", error); throw error; }
   };
   return {
     invocations: () => invocations,
@@ -504,7 +511,7 @@ export async function importAndProject(world: Q1Namespace, options: Q1ImportOpti
   expect(message.payload_ref).toBe(world.revision);
   const pipeline = createQ1Consumer(world);
   const first = await pipeline.consume(message);
-  expect(first.result.disposition).toBe("COMPLETED");
+  expect(first.result.disposition, JSON.stringify(first.result)).toBe("COMPLETED");
   const receiptRef = first.result.receipt_ref;
   if (receiptRef === undefined || !/^receipt:/u.test(receiptRef)) {
     throw new Error(`Missing terminal projection receipt: ${receiptRef}`);

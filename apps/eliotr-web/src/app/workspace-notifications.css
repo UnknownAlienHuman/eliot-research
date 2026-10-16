@@ -1,0 +1,31 @@
+.er-workspace-snackbar {
+  position: fixed;
+  inset-block-end: var(--eliot-space-panel);
+  inset-inline: var(--eliot-space-panel);
+  margin-inline: auto;
+  inline-size: fit-content;
+  max-inline-size: calc(100% - var(--eliot-space-panel) * 2);
+  z-index: var(--eliot-z-menu);
+  display: flex;
+  align-items: center;
+  gap: var(--eliot-space-panel);
+  padding: var(--eliot-space-block-control) var(--eliot-space-panel);
+  border-radius: var(--eliot-shape-small);
+  background: var(--md-sys-color-inverse-surface);
+  color: var(--md-sys-color-inverse-on-surface);
+  box-shadow: var(--eliot-elevation-2);
+  font-size: var(--eliot-type-body-medium-size);
+}
+.er-workspace-snackbar > span { min-inline-size: 0; overflow-wrap: anywhere; }
+.er-workspace-snackbar > button {
+  flex-shrink: 0;
+  min-block-size: var(--eliot-size-touch-target);
+  padding-inline: var(--eliot-space-block-control);
+  border: 0;
+  background: transparent;
+  color: var(--md-sys-color-inverse-primary);
+  font: inherit;
+  font-weight: var(--eliot-type-font-weight-medium);
+  cursor: pointer;
+}
+.er-workspace-snackbar > button:focus-visible { outline: solid var(--md-sys-color-inverse-primary); }

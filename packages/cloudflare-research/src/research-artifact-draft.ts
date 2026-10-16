@@ -139,81 +139,23 @@ function snapshotCoverageReceipt(value: CoverageReceipt | undefined): CoverageRe
   }
 }
 
-function coverageList(values: readonly string[]): string {
-  return values.length === 0 ? "none recorded" : values.join(", ");
-}
-
-function coverageCount(values: readonly string[]): string {
-  return `${values.length} (${coverageList(values)})`;
-}
-
-function describeDenominator(kind: CoverageReceipt["denominator_kind"]): string {
-  switch (kind) {
-    case "complete_scope": return "a complete frozen scope was used as the denominator";
-    case "sampled_with_method": return "a sampled scope with a declared method was used";
-    case "unknown": return "the available coverage completeness is unknown";
-  }
-}
-
-function describeDisposition(disposition: CoverageReceipt["terminal_disposition"]): string {
-  switch (disposition) {
-    case "ANSWERED_WITH_SUPPORTED_RESULT": return "a supported result was recorded";
-    case "NO_MATCH_IN_COMPLETE_SCOPE": return "no match was found in the recorded complete scope";
-    case "NO_NEW_USEFUL_EVIDENCE": return "no new useful evidence was recorded";
-    case "SOURCE_UNAVAILABLE": return "a source needed for the request was unavailable";
-    case "STALE_SOURCE_OR_INDEX": return "a source or index became stale";
-    case "POLICY_OR_DISCLOSURE_DENIED": return "policy or disclosure rules prevented the result";
-    case "INCOMPLETE_COVERAGE": return "coverage remained incomplete";
-    case "INCONCLUSIVE": return "the recorded evidence was inconclusive";
-    case "CANCELLED": return "the coverage run was cancelled";
-  }
-}
-
-function describeCounterSearch(status: CoverageReceipt["counter_search_status"]): string {
-  switch (status) {
-    case "NOT_REQUIRED": return "not required";
-    case "NOT_RUN": return "not run";
-    case "PARTIAL": return "partially completed";
-    case "COMPLETE": return "completed for the recorded method";
-  }
-}
-
-function describeOmissionReason(reason: string): string {
-  return reason === "NOT_REPRESENTED_IN_EVIDENCE_PACK"
-    ? "this source was not represented in the evidence pack"
-    : `recorded reason ${reason}`;
-}
-
-function describeUnknownReason(reason: string | undefined): string {
-  if (reason === undefined) return "none recorded";
-  return reason === "EXPLORATORY_MEMBERSHIP_OBSERVATION_DOES_NOT_PROVE_COMPLETE_SCOPE"
-    ? "the exploratory membership observation does not prove complete scope"
-    : reason;
-}
-
-function coverageMethodologyBlock(receipt: CoverageReceipt): string {
-  const omitted = receipt.omitted_sources.length === 0
-    ? "none recorded"
-    : receipt.omitted_sources.map((item) => `${item.source_ref} (${describeOmissionReason(item.reason)})`).join(", ");
-  const missing = [
-    ...receipt.stale_or_skipped_lanes.map((value) => `lane ${value}`),
-    ...receipt.failed_acquisition_refs.map((value) => `acquisition ${value}`),
-    ...receipt.provider_degradation_refs.map((value) => `provider ${value}`),
-    ...receipt.parser_degradation_refs.map((value) => `parser ${value}`),
-    ...receipt.redacted_dependency_refs.map((value) => `redacted dependency ${value}`),
-    ...receipt.budget_limitations.map((value) => `budget: ${value}`),
-  ];
-  return [
+function coverageMethodologyBlock(receipt: CoverageReceipt, language: string): string {
+  const represented = receipt.represented_source_refs.length;
+  const cited = receipt.cited_source_refs.length;
+  // Exact source identities, omissions and failure codes stay in the committed
+  // coverage receipt. The report gets a readable summary of that same receipt.
+  return /^ru(?:-|$)/iu.test(language) ? [
+    "## Охват и метод",
+    `В доказательствах использовано источников: ${represented}; процитировано: ${cited}.`,
+    receipt.denominator_kind === "complete_scope"
+      ? "Область исследования зафиксирована. Метод и ограничения сохранены в квитанции охвата."
+      : "Охват выборочный; полнота корпуса не установлена. Метод и ограничения сохранены в квитанции охвата.",
+  ].join("\n") : [
     "## Coverage and method",
-    "This report is a DRAFT. The coverage receipt records the inspected scope and limits; it does not establish completion.",
-    `Coverage basis: ${describeDenominator(receipt.denominator_kind)}.`,
-    `Represented sources: ${coverageCount(receipt.represented_source_refs)}.`,
-    `Cited sources: ${coverageCount(receipt.cited_source_refs)}.`,
-    `Omitted sources: ${receipt.omitted_sources.length} (${omitted}).`,
-    `Recorded limits or gaps: ${missing.length === 0 ? "none recorded" : `${missing.length} (${missing.join(", ")})`}.`,
-    `Counter-search: ${describeCounterSearch(receipt.counter_search_status)}.`,
-    `Recorded outcome: ${describeDisposition(receipt.terminal_disposition)}.`,
-    `Why coverage may be unknown: ${describeUnknownReason(receipt.unknown_coverage_reason)}.`,
+    `Evidence uses ${represented} sources; ${cited} sources are cited.`,
+    receipt.denominator_kind === "complete_scope"
+      ? "The research scope is fixed. The coverage receipt retains the method and limitations."
+      : "Coverage is sampled; corpus completeness is not established. The coverage receipt retains the method and limitations.",
   ].join("\n");
 }
 
@@ -465,7 +407,7 @@ export async function materializeResearchArtifactDraft(input: ResearchArtifactDr
   if (canonicalEvidenceJson(initialGrant) !== canonicalEvidenceJson(finalGrant)) fail("RESEARCH_ARTIFACT_DRAFT_AUTHORITY_STALE", "scope authority changed during evidence readback");
   const sectionText = coverageReceipt === undefined
     ? candidate.section_text
-    : `${candidate.section_text}\n\n${coverageMethodologyBlock(coverageReceipt)}`;
+    : `${candidate.section_text}\n\n${coverageMethodologyBlock(coverageReceipt, input.spec.language)}`;
   const sectionBytes = new TextEncoder().encode(sectionText);
   for (const evidence of input.evidence_pack.resolved_evidence) {
     if (candidate.cited_handle_refs.some((ref) => sameRef(ref, evidence.handle.handle_ref)) && evidence.handle.expires_at !== undefined && Date.parse(evidence.handle.expires_at) <= now) fail("RESEARCH_ARTIFACT_DRAFT_AUTHORITY_STALE", "cited evidence handle is expired");

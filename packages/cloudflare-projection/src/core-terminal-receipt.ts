@@ -155,10 +155,31 @@ async function verifyManagedTerminalReadback(
   }
   if (persistedReadbackDigest === null) {
     if (expectedOutcome === "SUCCEEDED") {
-      projectionFail(
-        "PROJECTION_AUTHORITY_CONFLICT",
-        "completed managed generation is missing its persisted readback receipt",
-      );
+      // The protocol marker also pins Work + D1 source projection generations.
+      // Disabled managed indexing needs no semantic receipt, but must not hide
+      // a managed binding or an item effect left by an earlier execution.
+      const managedEffect = profile.managed_generation_active ||
+        generation.semantic_instance_id !== null || generation.semantic_generation !== null
+        ? true
+        : await database.prepare(
+          "SELECT 1 AS present FROM projection_managed_item_effect " +
+          "WHERE source_revision_ref=?1 AND projection_generation=?2 LIMIT 1",
+        ).bind(context.source_revision.source_revision_ref, projectionGeneration)
+          .first<{ readonly present: number }>() !== null;
+      if (managedEffect) {
+        projectionFail(
+          "PROJECTION_AUTHORITY_CONFLICT",
+          "completed managed generation is missing its persisted readback receipt",
+        );
+      }
+      const workRef = assertProjectionIdentifier(generation.work_manifest_ref, "source terminal Work manifest");
+      const searchRef = assertProjectionIdentifier(generation.d1_search_receipt_ref, "source terminal D1 receipt");
+      assertProjectionSha256(generation.work_manifest_sha256, "source terminal Work digest");
+      assertProjectionSha256(generation.d1_search_readback_digest, "source terminal D1 digest");
+      if ([workRef, searchRef].some((reference) =>
+        !receipt.output_refs.includes(reference) || !receipt.readback_receipt_refs.includes(reference))) {
+        projectionFail("PROJECTION_AUTHORITY_CONFLICT", "source terminal is missing its Work or D1 readback reference");
+      }
     }
     const nonManagedRefs = new Set([
       context.job_id,
@@ -176,7 +197,7 @@ async function verifyManagedTerminalReadback(
     ) {
       projectionFail(
         "PROJECTION_AUTHORITY_CONFLICT",
-        "partial managed generation claims a receipt without persisted readback authority",
+        "projection generation claims a receipt without persisted readback authority",
       );
     }
     return;

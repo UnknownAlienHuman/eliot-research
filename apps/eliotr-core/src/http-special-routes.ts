@@ -173,10 +173,16 @@ export async function dispatchHttpSpecialRoute(input: {
       return handleResearchModelQualification(input.request, input.env, input.context,
         input.match.route.maximum_request_bytes);
     case "research.runs": {
-      requireNoQuery(input.url);
+      if ([...input.url.searchParams.keys()].some(key => key !== "project_id") || input.url.searchParams.getAll("project_id").length > 1) {
+        throw new HttpRequestError("RESEARCH_INPUT_INVALID", 400, "Only one project_id is supported");
+      }
+      const projectId = input.url.searchParams.get("project_id") ?? undefined;
+      if (projectId !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u.test(projectId)) {
+        throw new HttpRequestError("RESEARCH_INPUT_INVALID", 400, "Invalid project_id");
+      }
       const readiness = await readReadiness(input.env);
       if (!readiness.ready) throw new HttpRequestError("SCHEMA_NOT_READY", 503, "Required D1 migrations are not applied", true);
-      return apiResult(input.request, input.env, await readOwnerResearchRuns(input.env, input.context));
+      return apiResult(input.request, input.env, await readOwnerResearchRuns(input.env, input.context, projectId));
     }
     case "system.mcp-diagnostic.issue":
       return handleMcpClientDiagnosticIssue(

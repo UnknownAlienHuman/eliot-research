@@ -8,7 +8,7 @@ import { researchSemanticConfigurationInstalled } from "./research-semantic-serv
 import { createResearchRunReadEnvironment } from "./research-run-read-authorization.js";
 import { readOwnerResearchRuns as readOwnerResearchRunsCapability } from "@eliotr/cloudflare-research-runtime";
 
-export async function readOwnerResearchRuns(env: Env, context: AuthenticatedRequestContext) {
+export async function readOwnerResearchRuns(env: Env, context: AuthenticatedRequestContext, projectId?: string) {
   const runService = createResearchRunService(env);
   return readOwnerResearchRunsCapability({
     database: env.CORE_DB,
@@ -26,7 +26,7 @@ export async function readOwnerResearchRuns(env: Env, context: AuthenticatedRequ
     reopen_owner_artifact_draft: (requestContext, artifactRef) =>
       reopenOwnerArtifactDraft(env, requestContext, artifactRef),
     semantic_configuration_installed: () => researchSemanticConfigurationInstalled(env),
-  }, context);
+  }, context, projectId);
 }
 
 export type { VersionedRef };

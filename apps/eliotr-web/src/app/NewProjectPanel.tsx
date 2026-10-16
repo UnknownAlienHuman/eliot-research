@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Button, Dialog, Field, MaterialSymbol, OperationAnnouncement, Status } from "@eliotr/ui";
-import type { ProjectSummary } from "@eliotr/owner-api-client";
+import type { ProjectListView, ProjectSummary } from "@eliotr/owner-api-client";
 import type { BoundWorkspaceApis } from "./runtime";
 import type { PrivacyController, SessionContext } from "./privacy";
 import { createProjectCreationController, PROJECT_MAX_SOURCE_IDS, type ProjectCreationCurrentPage, type ProjectCreationState } from "../query/projectCreation";
@@ -14,7 +14,7 @@ export interface NewProjectPanelProps {
   readonly context: SessionContext;
   readonly scope: readonly NewProjectSource[];
   readonly currentPage?: ProjectCreationCurrentPage;
-  readonly onProjectCommitted?: (project: ProjectSummary) => void;
+  readonly onProjectCommitted?: (project: ProjectSummary, readback: ProjectListView) => void;
   readonly open: boolean;
   readonly onClose: () => void;
 }
@@ -53,7 +53,7 @@ export function NewProjectPanel(props: NewProjectPanelProps) {
   if (owned.current?.context !== context) {
     owned.current = { context, controller: createProjectCreationController(apis.sources, privacy, context, {
       currentPage: () => latest.current.currentPage?.(),
-      onProjectCommitted: project => latest.current.onProjectCommitted?.(project),
+      onProjectCommitted: (project, readback) => latest.current.onProjectCommitted?.(project, readback),
     }) };
   }
   const controller = owned.current.controller;

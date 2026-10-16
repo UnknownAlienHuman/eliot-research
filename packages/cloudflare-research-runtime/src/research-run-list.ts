@@ -9,6 +9,7 @@ import { prepareReauthenticatedRunRead } from "./research-run-read-authorization
 import { runControlStatus } from "./research-run-control.js";
 import { WorkflowCheckpointError } from "@eliotr/cloudflare-workflows";
 import type { ResearchRunReadEnvironment, ReopenedResearchRunDraft } from "./research-run-read-authorization.js";
+import { scopeIncludesProject } from "./research-history-project.js";
 
 export interface ResearchArtifactReadAuthorization {
   readonly original_scope_snapshot_ref: VersionedRef;
@@ -32,6 +33,7 @@ export interface ResearchRunListPorts {
 }
 
 interface SavedDraftRow {
+  readonly scope_expression?: unknown;
   readonly origin_client_class: unknown;
   readonly principal_ref: unknown;
   readonly artifact_id: unknown;
@@ -152,22 +154,33 @@ async function scanVisibleRecent<Row, Entry>(
 }
 
 /** Recent locators use the same current read authority as an opened run/report. */
-export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context: AuthenticatedRequestContext) {
+export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context: AuthenticatedRequestContext, projectId?: string) {
   ports.authorize_owner_read(context);
-  type RunRow = { operation_id: string; created_at: string; query: unknown };
+  const projectOwner = () => ports.database.prepare("SELECT p.generation FROM project p JOIN project_owner o ON o.project_id=p.project_id WHERE p.project_id=?1 AND o.principal_ref=?2")
+    .bind(projectId ?? "", context.principal_ref).first<{ generation: number }>();
+  const project = projectId === undefined ? null : await projectOwner();
+  if (projectId !== undefined && project === null) throw new CatalogInputError("RESEARCH_PROJECT_NOT_FOUND", "Owned project not found", 404);
+  const inProject = (raw: unknown) => {
+    if (projectId === undefined) return true;
+    try { return scopeIncludesProject(typeof raw === "string" ? JSON.parse(raw) : raw, projectId); }
+    catch { return false; }
+  };
+  type RunRow = { operation_id: string; created_at: string; query: unknown; scope_expression?: unknown };
   type RunEntry = { created_at: string; query?: string; status: ResearchRunStatus };
   const runsRead = scanVisibleRecent<RunRow, RunEntry>(async (after, limit) => {
     try {
       const result = await ports.database.prepare(
-        "SELECT r.operation_id, r.created_at, h.goal AS query FROM research_workflow_run r " +
+        "SELECT r.operation_id, r.created_at, h.goal AS query,ss.resolved_scope_expression_json AS scope_expression FROM research_workflow_run r " +
+        "JOIN scope_snapshot ss ON ss.snapshot_id=r.scope_snapshot_id AND ss.revision=r.scope_snapshot_revision " +
         "LEFT JOIN investigation_ledger_head h ON h.investigation_id=r.investigation_id " +
         "AND h.principal_ref=r.principal_ref " +
         "JOIN research_deployment_compatible c ON c.origin_deployment_generation=r.deployment_generation " +
         "AND c.active_deployment_generation=?2 WHERE (r.principal_ref=?1 OR EXISTS " +
         "(SELECT 1 FROM owner_machine_run_origin o WHERE o.operation_id=r.operation_id AND o.reader_principal_ref=?1)) " +
         "AND (?3 IS NULL OR r.created_at<?3 OR (r.created_at=?3 AND r.operation_id<?4)) " +
+        "AND (?6 IS NULL OR EXISTS (SELECT 1 FROM json_tree(ss.resolved_scope_expression_json) j WHERE j.key='project_id' AND j.value=?6)) " +
         "ORDER BY r.created_at DESC,r.operation_id DESC LIMIT ?5",
-      ).bind(context.principal_ref, ports.deployment_generation, after?.created_at ?? null, after?.operation_id ?? null, limit)
+      ).bind(context.principal_ref, ports.deployment_generation, after?.created_at ?? null, after?.operation_id ?? null, limit, projectId ?? null)
         .all<RunRow>();
       if (!result.success) throw new Error("Research history read failed");
       return result.results;
@@ -175,6 +188,7 @@ export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context
       throw new CatalogInputError("RESEARCH_HISTORY_UNAVAILABLE", "Research history is temporarily unavailable", 503, true);
     }
   }, async (row) => {
+    if (!inProject(row.scope_expression)) return null;
     if (typeof row.operation_id !== "string" || row.operation_id.length < 1 || typeof row.created_at !== "string" ||
         !Number.isFinite(Date.parse(row.created_at))) invalidHistory("Stored research history is invalid");
     try {
@@ -203,12 +217,14 @@ export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context
     try {
       const result = await ports.database.prepare(
         "SELECT b.artifact_id,b.revision,b.intent_id,b.intent_revision,b.scope_snapshot_id,b.scope_snapshot_revision,b.created_at,b.principal_ref," +
-        "o.origin_client_class FROM artifact_draft_binding b JOIN owner_artifact_read_origin o " +
+        "o.origin_client_class,ss.resolved_scope_expression_json AS scope_expression FROM artifact_draft_binding b JOIN owner_artifact_read_origin o " +
         "ON o.artifact_id=b.artifact_id AND o.artifact_revision=b.revision " +
+        "JOIN scope_snapshot ss ON ss.snapshot_id=b.scope_snapshot_id AND ss.revision=b.scope_snapshot_revision " +
         "WHERE o.reader_principal_ref=?1 AND (?2 IS NULL OR b.created_at<?2 OR " +
         "(b.created_at=?2 AND (b.artifact_id<?3 OR (b.artifact_id=?3 AND b.revision<?4)))) " +
+        "AND (?6 IS NULL OR EXISTS (SELECT 1 FROM json_tree(ss.resolved_scope_expression_json) j WHERE j.key='project_id' AND j.value=?6)) " +
         "ORDER BY b.created_at DESC,b.artifact_id DESC,b.revision DESC LIMIT ?5",
-      ).bind(context.principal_ref, after?.created_at ?? null, after?.artifact_id ?? null, after?.revision ?? null, limit)
+      ).bind(context.principal_ref, after?.created_at ?? null, after?.artifact_id ?? null, after?.revision ?? null, limit, projectId ?? null)
         .all<SavedDraftRow>();
       if (!result.success) throw new Error("Saved report history read failed");
       return result.results;
@@ -216,6 +232,7 @@ export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context
       throw new CatalogInputError("RESEARCH_HISTORY_UNAVAILABLE", "Saved reports are temporarily unavailable", 503, true);
     }
   }, async (row) => {
+    if (!inProject(row.scope_expression)) return null;
     const ref = VersionedRefSchema.parse({ id: row.artifact_id, revision: row.revision });
     if (typeof row.created_at !== "string" || !Number.isFinite(Date.parse(row.created_at))) invalidHistory("Saved report metadata is invalid");
     const originalRef = VersionedRefSchema.parse({ id: row.scope_snapshot_id, revision: row.scope_snapshot_revision });
@@ -261,6 +278,9 @@ export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context
   // A changed authority invalidates the whole response; it never silently turns
   // a previously selected locator into a complete short list.
   await Promise.all([...runs.checks, ...drafts.checks].map((requireCurrent) => requireCurrent()));
+  if (projectId !== undefined && (await projectOwner())?.generation !== project?.generation) {
+    throw new CatalogInputError("RESEARCH_PROJECT_CHANGED", "Project changed while reading history", 409, true);
+  }
   return {
     protocol: "eliotr.research-runs.v5" as const,
     runs: runs.entries.map((entry) => {

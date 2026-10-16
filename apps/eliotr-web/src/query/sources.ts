@@ -47,12 +47,12 @@ export function sourcesQueryOptions(apis: SourcesQueryApis, privacy: PrivacyCont
         }),
       });
     },
-    readiness(page: LibraryPage, sourceId: string, sourceRevisionRef?: string) {
+    readiness(page: LibraryPage, sourceId: string, sourceRevisionRef?: string, projectId?: string) {
       return queryOptions({
-        queryKey: [...key, "readiness", sourceId, sourceRevisionRef ?? null],
+        queryKey: [...key, "readiness", sourceId, sourceRevisionRef ?? null, projectId ?? null],
         queryFn: ({ signal }) => runProtectedRead(privacy, context, signal, async readSignal => {
           currentSource(page, sourceId);
-          const result = await apis.readiness.readLibraryReadiness(sourceId, generation, readSignal, sourceRevisionRef);
+          const result = await apis.readiness.readLibraryReadiness(sourceId, generation, readSignal, sourceRevisionRef, projectId);
           currentSource(page, sourceId);
           return result;
         }),
