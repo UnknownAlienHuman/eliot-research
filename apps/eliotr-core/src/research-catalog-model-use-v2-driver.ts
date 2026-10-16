@@ -629,8 +629,10 @@ export function createResearchCatalogModelUseV2Driver(input: Readonly<{
       }
 
       async function start(): Promise<ResearchCatalogModelUseV2Receipt> {
+        let preparationStep = "CONSENT";
         try {
           await currentIntent();
+          preparationStep = "CATALOG_PRICING";
           const metadata = await pricingMetadata();
           if (metadata.owner_ref !== selection.binding.owner_id || metadata.project_id !== input.project_id ||
               metadata.consent_operation_id !== selection.request.operation_id ||
@@ -639,7 +641,9 @@ export function createResearchCatalogModelUseV2Driver(input: Readonly<{
               metadata.model_id !== selection.request.model_id || metadata.request_sha256 !== selection.request_sha256) {
             throw new Error("trusted catalog metadata does not match the exact owner consent");
           }
+          preparationStep = "STAGE_PLAN";
           const { basis, snapshots } = await stagePlan(metadata);
+          preparationStep = "NATIVE_PREPARATION";
           const prepared: Array<Readonly<{ stage: ResearchProviderKeyModelUseStageV1;
             preparation_ref: string; preparation_sha256: string }>> = [];
           for (const planned of basis.stages) {
@@ -750,6 +754,7 @@ export function createResearchCatalogModelUseV2Driver(input: Readonly<{
             }
             selections.push(selected);
           }
+          preparationStep = "CONFIGURATION_BUILD";
           const target = await buildResearchProviderKeyModelUseTarget({ basis, selections,
             pricing_snapshot_refs: new Map([...snapshots].map(([stage, snapshot]) => [stage as ResearchProviderKeyModelUseStageV1,
               snapshot.pricing_snapshot_ref])) });
@@ -777,6 +782,15 @@ export function createResearchCatalogModelUseV2Driver(input: Readonly<{
           }
           return receipt("selected", "complete", null, selected);
         } catch (error) {
+          // Log only bounded classifications, never exception messages, provider
+          // payloads or configuration bytes. The step distinguishes failures
+          // before preparation from failures after native qualification.
+          const code = typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
+          console.warn(JSON.stringify({ event: "eliotr.catalog_model_v2_preparation_failed",
+            operation_id: selection.request.operation_id, preparation_step: preparationStep,
+            error_code: typeof code === "string" && /^[A-Z0-9_]{1,64}$/u.test(code) ? code : "UNCLASSIFIED",
+            error_type: error instanceof Error && /^[A-Za-z0-9_]{1,64}$/u.test(error.name) ? error.name : "UNKNOWN",
+          }));
           return receipt("blocked", "provider_resolution", mapPricingFailure(error));
         }
       }
