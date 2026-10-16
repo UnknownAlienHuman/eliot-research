@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
+import type { AuthenticatedRequestContext, ResearchRunStatus } from "@eliotr/interfaces";
+import { CatalogInputError } from "@eliotr/cloudflare-navigation";
 import { readHistoricalResearchArtifactLocator } from "@eliotr/cloudflare-research-stages";
 import { readOwnerResearchRuns, type ResearchRunListPorts } from "./research-run-list.js";
 import { prepareReauthenticatedRunRead } from "./research-run-read-authorization.js";
@@ -41,9 +42,10 @@ function workflowStatus(operationId: string) {
 }
 
 function makePorts(input: {
-  runRows?: readonly { operation_id: string; created_at: string; query: unknown }[];
+  runRows?: readonly { operation_id: string; created_at: string; query: unknown; scope_expression?: unknown }[];
   draftRows?: readonly Record<string, unknown>[];
   workflowBindingRows?: readonly Record<string, unknown>[];
+  projectGeneration?: number;
 } = {}) {
   let historySql = "";
   const database = {
@@ -64,13 +66,18 @@ function makePorts(input: {
               }
               return { success: true, results: [] as T[] };
             },
-            first: async <T>() => null as T | null,
+            first: async <T>() => query.includes("SELECT p.generation") && input.projectGeneration !== undefined
+              ? { generation: input.projectGeneration } as T : null,
           };
         },
       };
     },
   } as unknown as D1Database;
-  const run_status = vi.fn(async () => { throw new Error("full run status read must not be used by history"); });
+  const run_status = vi.fn(async (_actor: AuthenticatedRequestContext, operationId: string): Promise<ResearchRunStatus> => ({
+    protocol: "eliotr.research-run-status.v1", workflow_instance_id: operationId,
+    investigation_ref: { id: `investigation-${operationId}`, revision: 4 }, execution_state: "ACTIVE",
+    engine_status: "errored", next_stage_index: 3, answer: { availability: "unavailable" },
+  }));
   const prepare_artifact_read = vi.fn(async () => ({
     original_scope_snapshot_ref: { id: "scope-1", revision: 2 },
     requireCurrent: async () => undefined,
@@ -95,7 +102,7 @@ describe("owner research history", () => {
     historicalLocatorMock.mockReset();
   });
 
-  it("uses one reauthenticated status read per run and retains valid history metadata", async () => {
+  it("uses reauthenticated metadata for historical runs and retains valid history metadata", async () => {
     const question = "How did the saved source revisions change this evidence?";
     const rows = [
       { operation_id: "current-run", created_at: "2026-10-15T12:01:00.000Z", query: question },
@@ -120,6 +127,69 @@ describe("owner research history", () => {
     });
     expect(history.runs[1]).not.toHaveProperty("query");
     expect(getHistorySql()).toContain("LEFT JOIN investigation_ledger_head");
+    expect(getHistorySql()).not.toContain("research_deployment_compatible");
+  });
+
+  it("uses the canonical direct status port when current owner reauthentication is unnecessary", async () => {
+    const { ports, run_status } = makePorts({ runRows: [
+      { operation_id: "current-run", created_at: "2026-10-15T12:01:00.000Z", query: "Authorized current question" },
+    ] });
+    prepareReadMock.mockResolvedValue(null);
+
+    const history = await readOwnerResearchRuns(ports, context);
+
+    expect(run_status).toHaveBeenCalledTimes(2);
+    expect(run_status).toHaveBeenCalledWith(context, "current-run");
+    expect(history.runs).toEqual([expect.objectContaining({
+      query: "Authorized current question",
+      status: expect.objectContaining({ workflow_instance_id: "current-run", engine_status: "errored" }),
+    })]);
+  });
+
+  it("omits denied direct-owner candidates without disclosing their questions", async () => {
+    const { ports, run_status } = makePorts({ runRows: [
+      { operation_id: "denied-run", created_at: "2026-10-15T12:01:00.000Z", query: "Sensitive denied question" },
+    ] });
+    prepareReadMock.mockResolvedValue(null);
+    run_status.mockRejectedValue(new CatalogInputError("RESEARCH_AUTHORITY_STALE", "denied", 409));
+
+    const history = await readOwnerResearchRuns(ports, context);
+
+    expect(history.runs).toEqual([]);
+    expect(JSON.stringify(history)).not.toContain("Sensitive denied question");
+    expect(run_status).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails the whole result when a selected direct-owner run loses read rights before disclosure", async () => {
+    const { ports, run_status } = makePorts({ runRows: [
+      { operation_id: "current-run", created_at: "2026-10-15T12:01:00.000Z", query: "No late disclosure" },
+    ] });
+    prepareReadMock.mockResolvedValue(null);
+    const status = await run_status(context, "current-run");
+    run_status.mockClear();
+    const denial = new CatalogInputError("RESEARCH_AUTHORITY_STALE", "revoked", 409);
+    run_status.mockResolvedValueOnce(status).mockRejectedValueOnce(denial);
+
+    await expect(readOwnerResearchRuns(ports, context)).rejects.toBe(denial);
+    expect(run_status).toHaveBeenCalledTimes(2);
+  });
+
+  it("preserves canonical project filtering before any question or run read", async () => {
+    const { ports, run_status } = makePorts({ projectGeneration: 1, runRows: [
+      { operation_id: "excluded-run", created_at: "2026-10-15T12:02:00.000Z", query: "Excluded project question",
+        scope_expression: { kind: "EXCEPT", left: { kind: "PROJECT", project_id: "other-project" },
+          right: { kind: "PROJECT", project_id: "selected-project" } } },
+      { operation_id: "selected-run", created_at: "2026-10-15T12:01:00.000Z", query: "Selected project question",
+        scope_expression: { kind: "PROJECT", project_id: "selected-project" } },
+    ] });
+    prepareReadMock.mockResolvedValue(null);
+
+    const history = await readOwnerResearchRuns(ports, context, "selected-project");
+
+    expect(history.runs.map(row => row.status.workflow_instance_id)).toEqual(["selected-run"]);
+    expect(prepareReadMock).toHaveBeenCalledTimes(1);
+    expect(run_status).not.toHaveBeenCalledWith(context, "excluded-run");
+    expect(JSON.stringify(history)).not.toContain("Excluded project question");
   });
 
   it("fails the whole history response when a selected run loses current authority", async () => {

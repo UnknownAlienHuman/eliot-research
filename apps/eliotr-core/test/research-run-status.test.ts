@@ -144,15 +144,19 @@ describe("owner run status after reauthentication over real HTTP/D1/R2", () => {
     expect(await executionSnapshot()).toEqual(before);
   }, 30_000);
 
-  it("includes a pre-login run in history without requiring the new credential to have created it", async () => {
+  it("includes current and pre-login runs in history without changing their execution credentials", async () => {
     await storedRun();
+    const current = await run(new Request("https://research.example/api/v1/research/runs"));
+    expect(current.status, JSON.stringify(await current.clone().json())).toBe(200);
+    expect((await body<{ runs: { status: ResearchRunStatus }[] }>(current)).data.runs
+      .map(item => item.status.workflow_instance_id)).toEqual(["status-run"]);
     const response = await run(new Request("https://research.example/api/v1/research/runs"), refreshed());
     expect(response.status, JSON.stringify(await response.clone().json())).toBe(200);
     const result = await body<{ runs: { status: ResearchRunStatus }[] }>(response);
     expect(result.data.runs.map((item) => item.status.workflow_instance_id)).toEqual(["status-run"]);
   });
 
-  it("keeps the original run readable under an equal-backend PWA-only deployment", async () => {
+  it("keeps run history readable across backend changes while incompatible recovery stays forbidden", async () => {
     await storedRun();
     const before = await executionSnapshot();
     const fingerprint = "a".repeat(64);
@@ -173,7 +177,16 @@ describe("owner run status after reauthentication over real HTTP/D1/R2", () => {
     await db.prepare("UPDATE investigation_current_deployment SET backend_fingerprint=?2 WHERE deployment_generation=?1")
       .bind(nextDeployment, "b".repeat(64)).run();
     const incompatible = await handleHttp(statusRequest(), nextRuntime, {} as ExecutionContext, { accessVerifier: verifier() });
-    expect(incompatible.status).toBe(409);
+    expect(incompatible.status, JSON.stringify(await incompatible.clone().json())).toBe(200);
+    const retained = await handleHttp(new Request("https://research.example/api/v1/research/runs"), nextRuntime,
+      {} as ExecutionContext, { accessVerifier: verifier() });
+    expect(retained.status, JSON.stringify(await retained.clone().json())).toBe(200);
+    expect((await body<{ runs: { status: ResearchRunStatus }[] }>(retained)).data.runs
+      .map(item => item.status.workflow_instance_id)).toContain("status-run");
+    const denied = await handleHttp(recoverRequest(), nextRuntime, {} as ExecutionContext, { accessVerifier: verifier() });
+    expect(denied.status, JSON.stringify(await denied.clone().json())).toBe(403);
+    expect((await body(denied)).code).toBe("RESEARCH_CONTROL_DENIED");
+    expect(await executionSnapshot()).toEqual(before);
   });
 
   it("preserves durable cancellation across login and does not resume the run", async () => {

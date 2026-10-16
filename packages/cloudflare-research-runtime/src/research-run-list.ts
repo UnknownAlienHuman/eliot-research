@@ -174,13 +174,12 @@ export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context
         "JOIN scope_snapshot ss ON ss.snapshot_id=r.scope_snapshot_id AND ss.revision=r.scope_snapshot_revision " +
         "LEFT JOIN investigation_ledger_head h ON h.investigation_id=r.investigation_id " +
         "AND h.principal_ref=r.principal_ref " +
-        "JOIN research_deployment_compatible c ON c.origin_deployment_generation=r.deployment_generation " +
-        "AND c.active_deployment_generation=?2 WHERE (r.principal_ref=?1 OR EXISTS " +
+        "WHERE (r.principal_ref=?1 OR EXISTS " +
         "(SELECT 1 FROM owner_machine_run_origin o WHERE o.operation_id=r.operation_id AND o.reader_principal_ref=?1)) " +
-        "AND (?3 IS NULL OR r.created_at<?3 OR (r.created_at=?3 AND r.operation_id<?4)) " +
-        "AND (?6 IS NULL OR EXISTS (SELECT 1 FROM json_tree(ss.resolved_scope_expression_json) j WHERE j.key='project_id' AND j.value=?6)) " +
-        "ORDER BY r.created_at DESC,r.operation_id DESC LIMIT ?5",
-      ).bind(context.principal_ref, ports.deployment_generation, after?.created_at ?? null, after?.operation_id ?? null, limit, projectId ?? null)
+        "AND (?2 IS NULL OR r.created_at<?2 OR (r.created_at=?2 AND r.operation_id<?3)) " +
+        "AND (?5 IS NULL OR EXISTS (SELECT 1 FROM json_tree(ss.resolved_scope_expression_json) j WHERE j.key='project_id' AND j.value=?5)) " +
+        "ORDER BY r.created_at DESC,r.operation_id DESC LIMIT ?4",
+      ).bind(context.principal_ref, after?.created_at ?? null, after?.operation_id ?? null, limit, projectId ?? null)
         .all<RunRow>();
       if (!result.success) throw new Error("Research history read failed");
       return result.results;
@@ -193,18 +192,33 @@ export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context
         !Number.isFinite(Date.parse(row.created_at))) invalidHistory("Stored research history is invalid");
     try {
       const read = await prepareReauthenticatedRunRead(ports.run_read, context, row.operation_id);
-      if (read === null) return null;
-      // Recent is a locator projection. Opening a run still reads and verifies
-      // its complete coverage and report lineage through the detailed reader.
-      await read.requireCurrent();
-      const status = runControlStatus(read.status);
+      let status: ResearchRunStatus;
+      let requireCurrent: () => Promise<void>;
+      if (read === null) {
+        // Same-owner/current-credential runs deliberately use the canonical
+        // direct reader, which independently checks the current held scope.
+        status = await ports.run_status(context, row.operation_id);
+        const initial = status;
+        requireCurrent = async () => {
+          const current = await ports.run_status(context, row.operation_id);
+          if (current.workflow_instance_id !== initial.workflow_instance_id ||
+              current.investigation_ref.id !== initial.investigation_ref.id) invalidHistory("Run history identity changed");
+        };
+      } else {
+        // Historical metadata remains a locator. Detailed reads independently
+        // verify coverage and report lineage under the current reader's rights.
+        await read.requireCurrent();
+        status = runControlStatus(read.status);
+        requireCurrent = read.requireCurrent;
+      }
+      if (status.workflow_instance_id !== row.operation_id) invalidHistory("Run history status has a different origin");
       let query: string | undefined;
       if (row.query !== null && row.query !== undefined) {
         try { query = ResearchRunHistoryQuerySchema.parse(row.query); }
         catch { invalidHistory("Stored research query is invalid"); }
       }
       return { entry: { created_at: row.created_at, ...(query === undefined ? {} : { query }), status },
-        require_current: read.requireCurrent };
+        require_current: requireCurrent };
     } catch (error) {
       if (error instanceof CatalogInputError && [403, 404, 409, 410].includes(error.status)) return null;
       if (error instanceof WorkflowCheckpointError && error.code === "WORKFLOW_AUTHORITY_STALE") return null;

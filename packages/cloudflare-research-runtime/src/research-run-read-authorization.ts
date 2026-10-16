@@ -78,7 +78,8 @@ export { requireRunStatusContinuity };
 
 /** A refreshed owner session can read history; it cannot renew execution authority.
  * The stored credential is provenance only. All authorization uses the current caller.
- * Deployment continuity is deliberately left to the separate deployment contract. */
+ * Historical provenance and current read rights are independent of the stronger
+ * deployment compatibility required for execution control. */
 export async function prepareReauthenticatedRunRead(
 	ports: ResearchRunReadEnvironment,
   context: AuthenticatedRequestContext,
@@ -98,15 +99,29 @@ export async function prepareReauthenticatedRunRead(
     "AND g.client_class='owner_pwa' AND g.project_client_grant_id IS NULL))) LIMIT 1",
   ).bind(operationId, context.principal_ref).first<RunBinding>();
   if (binding === null) return null;
-  try {
-		await ports.require_deployment_compatibility(binding.deployment_generation, ports.active_deployment_generation);
-  } catch {
-    if (forControl) stale();
-    return null;
+  if (forControl) {
+    try {
+      await ports.require_deployment_compatibility(binding.deployment_generation, ports.active_deployment_generation);
+    } catch { stale(); }
   }
   if (!forControl && binding.origin_client_class === "owner_pwa" && binding.credential_generation === context.credential_generation &&
 		binding.deployment_generation === ports.active_deployment_generation) return null;
   if (typeof binding.credential_generation !== "string" || typeof binding.handler_generation !== "string") corrupt();
+
+  const requireHistoryOrigin = async () => {
+    let origin: { origin_deployment_generation: string; active_deployment_generation: string } | null;
+    try {
+      origin = await ports.database.prepare(
+        "SELECT origin.deployment_generation AS origin_deployment_generation," +
+        "active.deployment_generation AS active_deployment_generation FROM investigation_current_deployment origin " +
+        "JOIN investigation_current_deployment active ON active.deployment_generation=?2 AND active.state='ACTIVE' " +
+        "WHERE origin.deployment_generation=?1 AND origin.state IN ('ACTIVE','RETIRED') LIMIT 1",
+      ).bind(binding.deployment_generation, ports.active_deployment_generation).first<typeof origin>();
+    } catch { throw new WorkflowCheckpointError("WORKFLOW_STORAGE_UNAVAILABLE"); }
+    if (origin === null || origin.origin_deployment_generation !== binding.deployment_generation ||
+        origin.active_deployment_generation !== ports.active_deployment_generation) stale();
+  };
+  if (!forControl) await requireHistoryOrigin();
 
   const principal = {
     principal_ref: binding.principal_ref,
@@ -140,6 +155,10 @@ export async function prepareReauthenticatedRunRead(
     const head = await store.head(first.investigation_id);
     if (head.principal_ref !== binding.principal_ref || head.scope_snapshot_id !== originalRef.id ||
         head.scope_snapshot_revision !== originalRef.revision) stale();
+    if (!forControl) {
+      if (head.deployment_generation !== binding.deployment_generation) stale();
+      await requireHistoryOrigin();
+    }
     if (forControl) {
 		await ports.require_deployment_compatibility(
 			binding.deployment_generation, ports.active_deployment_generation,
@@ -160,6 +179,7 @@ export async function prepareReauthenticatedRunRead(
   };
   const requireCurrent = async () => { await currentAuthorization(); };
   const controlFence = async (): Promise<ResearchRunControlFence> => {
+    if (!forControl) stale();
     // Capture before the read-only recheck: a mutation during validation must
     // invalidate the final SQL, not become an accidentally trusted newer epoch.
 	const epochs = await ports.database.prepare(
