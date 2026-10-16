@@ -18,9 +18,8 @@ const purePolicy: WorkflowNativeStagePolicy = {
 };
 
 describe("native research step denial retries", () => {
-  it("does not retry typed authority-stale or cancellation denials", async () => {
-    for (const [index, code] of ["WORKFLOW_AUTHORITY_STALE", "WORKFLOW_CANCELLED"].entries()) {
-      const fixture = await workflowFixture(`native-denial-${index}`, "exploratory");
+  it.each(["WORKFLOW_AUTHORITY_STALE", "WORKFLOW_CANCELLED"] as const)("does not retry typed %s denial", async (code) => {
+      const fixture = await workflowFixture(`native-denial-${code.toLowerCase().replaceAll("_", "-")}`, "exploratory");
       let nativeInvocations = 0;
       let orientCallbackAttempts = 0;
       const fakeStep = {
@@ -50,7 +49,7 @@ describe("native research step denial retries", () => {
           fixture.executor.execute(request, actor, async () => fixture.bytes),
         native_handler: (stage) => stage !== "ORIENT" ? undefined : async () => {
           nativeInvocations += 1;
-          throw new WorkflowCheckpointError(code as "WORKFLOW_AUTHORITY_STALE" | "WORKFLOW_CANCELLED");
+          throw new WorkflowCheckpointError(code);
         },
         native_stage_policy: async () => purePolicy,
         execute_native: async (request, actor, handler) => {
@@ -73,7 +72,6 @@ describe("native research step denial retries", () => {
       await expect(pending).rejects.toBeInstanceOf(NonRetryableError);
       expect(nativeInvocations).toBe(1);
       expect(orientCallbackAttempts).toBe(1);
-    }
   });
 });
 

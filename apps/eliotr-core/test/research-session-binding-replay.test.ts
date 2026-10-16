@@ -78,6 +78,17 @@ function ownerHistory(runtime: Env, operationId: string) {
   );
 }
 
+function ownerProjection(stub: DurableObjectStub<ResearchSession>, operationId: string) {
+  // The real outer owner route above bootstraps this binding. Reopen only its
+  // canonical read projection; the retired SDK transcript never becomes readable.
+  return stub.fetch(new Request(`https://session.example/session/${operationId}/projection`, { headers: {
+    "x-research-principal": workflowPrincipal.principal_ref,
+    "x-research-credential": workflowPrincipal.credential_generation,
+    "x-research-deployment": workflowPrincipal.deployment_generation,
+    "x-research-access-expires-at": "2027-01-01T00:00:00.000Z",
+  } }));
+}
+
 async function workflowSnapshot(database: D1Database, operationId: string) {
   const run = await database.prepare(
     "SELECT state,next_stage_index,current_revision FROM research_workflow_run WHERE operation_id=?1",
@@ -100,7 +111,7 @@ async function workflowSnapshot(database: D1Database, operationId: string) {
   return { run, attempts, checkpoints, outbox, events };
 }
 
-it("rejects owner history when one immutable SessionRecord binding is stale", async () => {
+it("rejects owner projection bootstrap when one immutable SessionRecord binding is stale", async () => {
   const fixture = await prepareHistoricalV2Workflow("session-binding-replay-tamper");
   const runtime = env as unknown as Env;
   const operationId = fixture.request.operation_id;
@@ -108,8 +119,11 @@ it("rejects owner history when one immutable SessionRecord binding is stale", as
   const workflow = observeWorkflow(runtime);
   try {
     const first = await ownerHistory(runtime, operationId);
-    expect(first.status).toBe(200);
-    expect(await first.json()).toEqual([]);
+    expect(first.status).toBe(410);
+    expect(await first.json()).toMatchObject({ code: "SESSION_CHAT_HISTORY_DISABLED" });
+    const projection = await ownerProjection(stub, operationId);
+    expect(projection.status).toBe(200);
+    expect(await projection.json()).toMatchObject({ state: "ACTIVE", operation_id: operationId });
 
     const original = await readSessionRecord(stub, operationId);
     expect(original).toMatchObject({
@@ -163,8 +177,11 @@ it("rejects owner history when one immutable SessionRecord binding is stale", as
 
       expect(await readSessionRecord(stub, operationId)).toEqual(original);
       const restored = await ownerHistory(runtime, operationId);
-      expect(restored.status).toBe(200);
-      expect(await restored.json()).toEqual([]);
+      expect(restored.status).toBe(410);
+      expect(await restored.json()).toMatchObject({ code: "SESSION_CHAT_HISTORY_DISABLED" });
+      const restoredProjection = await ownerProjection(stub, operationId);
+      expect(restoredProjection.status).toBe(200);
+      expect(await restoredProjection.json()).toMatchObject({ state: "ACTIVE", operation_id: operationId });
       expect(await workflowSnapshot(fixture.db, operationId)).toEqual(before);
       expect(workflow.create).not.toHaveBeenCalled();
     }
@@ -183,8 +200,11 @@ it("reopens a completed historical run using its immutable initial revision", as
   const stub = sessionStub(runtime, operationId);
   try {
     const initialHistory = await ownerHistory(runtime, operationId);
-    expect(initialHistory.status).toBe(200);
-    expect(await initialHistory.json()).toEqual([]);
+    expect(initialHistory.status).toBe(410);
+    expect(await initialHistory.json()).toMatchObject({ code: "SESSION_CHAT_HISTORY_DISABLED" });
+    const initialProjection = await ownerProjection(stub, operationId);
+    expect(initialProjection.status).toBe(200);
+    expect(await initialProjection.json()).toMatchObject({ state: "ACTIVE", operation_id: operationId });
     expect((await readSessionRecord(stub, operationId)).state).toBe("ACTIVE");
 
     await createMonotoneStageExecutor(fixture.db, fixture.bucket, fixture.ports).executeOperation({
@@ -221,8 +241,12 @@ it("reopens a completed historical run using its immutable initial revision", as
     const beforeReplay = await workflowSnapshot(fixture.db, operationId);
 
     const reopened = await ownerHistory(runtime, operationId);
-    expect(reopened.status).toBe(200);
-    expect(await reopened.json()).toEqual([]);
+    expect(reopened.status).toBe(410);
+    expect(await reopened.json()).toMatchObject({ code: "SESSION_CHAT_HISTORY_DISABLED" });
+    const completedProjection = await ownerProjection(stub, operationId);
+    expect(completedProjection.status).toBe(200);
+    expect(await completedProjection.json()).toMatchObject({ state: "ENGINE_COMPLETED", operation_id: operationId,
+      investigation_ref: { id: fixture.request.investigation_ref.id, revision: completed?.current_revision } });
     expect(await readSessionRecord(stub, operationId)).toEqual(settledSession);
     expect(await workflowSnapshot(fixture.db, operationId)).toEqual(beforeReplay);
     expect(workflow.create).not.toHaveBeenCalled();

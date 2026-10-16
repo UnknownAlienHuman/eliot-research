@@ -12,19 +12,6 @@ const bindings = env as unknown as Env;
 const EXPIRY_HEADER = "x-research-access-expires-at";
 const CLOSE_TIMEOUT_MS = 5_000;
 
-interface ResumableChatStreamHarness {
-  start(requestId: string, options?: { messageId?: string }): string;
-  storeChunk(streamId: string, body: string): number | undefined;
-  flushBuffer(): void;
-  hasActiveStream(): boolean;
-  activeRequestId: string | null;
-  complete(streamId: string): void;
-}
-
-interface ChatStreamHarness {
-  _resumableStream: ResumableChatStreamHarness;
-}
-
 interface ObservedSocket {
   readonly frames: string[];
   readonly closed: Promise<{ code: number; reason: string }>;
@@ -138,7 +125,7 @@ async function expectClosedWithoutMarker(
   expect(remaining).not.toContain(connectionId);
 }
 
-it("enforces expiry for SDK frames, scheduled callbacks, restored sockets, and guarded sends", async () => {
+it("enforces expiry for projection frames, scheduled callbacks, restored sockets, and guarded sends", async () => {
   const fixture = await prepareHistoricalV2Workflow(`session-expiry-${crypto.randomUUID().replaceAll("-", "")}`);
   const sessionId = fixture.session_body.session_id;
   const workflow = bindings.RESEARCH_WORKFLOW;
@@ -150,7 +137,10 @@ it("enforces expiry for SDK frames, scheduled callbacks, restored sockets, and g
   const namespace = bindings.RESEARCH_SESSION;
   const stub = namespace.get(namespace.idFromName(sessionId));
   const sockets: WebSocket[] = [];
-  let activeStreamId: string | undefined;
+  const projectionFrame = (marker: string) => JSON.stringify({ type: "rpc", id: marker, success: true, done: true,
+    result: { protocol: "eliotr.research-session-projection.v1", session_id: sessionId,
+      operation_id: fixture.request.operation_id, state: "ACTIVE", investigation_ref: fixture.request.investigation_ref,
+      run_status: { execution_state: "ACTIVE", engine_status: "waiting", next_stage_index: 0 } } });
 
   try {
     const started = await stub.fetch(new Request("https://session.example/session/start", {
@@ -171,7 +161,7 @@ it("enforces expiry for SDK frames, scheduled callbacks, restored sockets, and g
     const storedBroadcastExpiry = await runInDurableObject(stub, (instance) => {
       const connection = connectionFor(instance, broadcastConnection.id);
       connection.setState((previous) => ({ ...(previous ?? {}), research_access_expires_at: broadcastExpiry }));
-      researchSession(instance).broadcast(JSON.stringify({ type: "expiry-test", marker: broadcastMarker }));
+      researchSession(instance).broadcast(projectionFrame(broadcastMarker));
       return connection.state?.research_access_expires_at;
     });
     expect(storedBroadcastExpiry).toBe(broadcastExpiry);
@@ -181,39 +171,10 @@ it("enforces expiry for SDK frames, scheduled callbacks, restored sockets, and g
     sockets.push(resumeSocket);
     const resumeObservation = observe(resumeSocket);
     const resumeConnection = await connectedState(stub);
-    const replayMarker = "research-session-expired-stream-replay";
-    const requestId = `resume-${sessionId}`;
-    const seededStream = await runInDurableObject(stub, (instance) => {
-      const sdk = instance as unknown as ChatStreamHarness;
-      const streamId = sdk._resumableStream.start(requestId, { messageId: requestId });
-      const sequence = sdk._resumableStream.storeChunk(streamId, JSON.stringify({
-        body: replayMarker,
-        done: false,
-        id: requestId,
-      }));
-      sdk._resumableStream.flushBuffer();
-      const connection = connectionFor(instance, resumeConnection.id);
-      connection.setState((previous) => ({ ...(previous ?? {}), research_access_expires_at: pastExpiry() }));
-      return {
-        stream_id: streamId,
-        sequence,
-        active: sdk._resumableStream.hasActiveStream(),
-        active_request_id: sdk._resumableStream.activeRequestId,
-      };
-    });
-    activeStreamId = seededStream.stream_id;
-    expect(seededStream.sequence).toBe(0);
-    expect(seededStream).toMatchObject({ active: true, active_request_id: requestId });
-    resumeSocket.send(JSON.stringify({ type: "stream-resume-request", probeId: "expired-resume-probe" }));
+    const replayMarker = "expired-projection-probe";
+    await setConnectionExpiry(stub, resumeConnection.id, pastExpiry());
+    resumeSocket.send(JSON.stringify({ type: "rpc", id: replayMarker, method: "readResearchSessionProjection", args: [] }));
     await expectClosedWithoutMarker(stub, resumeConnection.id, resumeObservation, replayMarker);
-    expect(resumeObservation.frames.join("\n")).not.toContain("expired-resume-probe");
-    const completedStreamId = activeStreamId;
-    if (completedStreamId !== undefined) {
-      await runInDurableObject(stub, (instance) => {
-        (instance as unknown as ChatStreamHarness)._resumableStream.complete(completedStreamId);
-      });
-    }
-    activeStreamId = undefined;
 
     const scheduledSocket = await openSocket(stub, sessionId, fixture.session_headers, currentExpiry());
     sockets.push(scheduledSocket);
@@ -239,14 +200,14 @@ it("enforces expiry for SDK frames, scheduled callbacks, restored sockets, and g
     expect(persistedExpiry).toBeTypeOf("string");
     await evictDurableObject(stub);
     // runInDurableObject bypasses Agents lifecycle startup. Wake through the
-    // authenticated SDK history path so onStart reinstalls guards on the
+    // authenticated canonical projection path so onStart reinstalls guards on the
     // hibernated connection before exercising a direct send.
-    const restoredHistory = await stub.fetch(new Request(
-      `https://session.example/get-messages?session_id=${encodeURIComponent(sessionId)}`,
+    const restoredProjection = await stub.fetch(new Request(
+      `https://session.example/session/${encodeURIComponent(sessionId)}/projection`,
       { headers: { ...fixture.session_headers, [EXPIRY_HEADER]: currentExpiry() } },
     ));
-    expect(restoredHistory.status).toBe(200);
-    await restoredHistory.text();
+    expect(restoredProjection.status).toBe(200);
+    expect(await restoredProjection.json()).toMatchObject({ state: "ACTIVE", operation_id: fixture.request.operation_id });
     const afterEviction = await runInDurableObject(stub, (instance) => {
       const connection = connectionFor(instance, rehydratedConnection.id);
       return {
@@ -260,7 +221,7 @@ it("enforces expiry for SDK frames, scheduled callbacks, restored sockets, and g
     await runInDurableObject(stub, (instance) => {
       const connection = connectionFor(instance, rehydratedConnection.id);
       connection.setState((previous) => ({ ...(previous ?? {}), research_access_expires_at: pastExpiry() }));
-      connection.send(postEvictionMarker);
+      connection.send(projectionFrame(postEvictionMarker));
     });
     await expectClosedWithoutMarker(stub, rehydratedConnection.id, rehydratedObservation, postEvictionMarker);
 
@@ -284,14 +245,6 @@ it("enforces expiry for SDK frames, scheduled callbacks, restored sockets, and g
     );
     expect(create).not.toHaveBeenCalled();
   } finally {
-    const pendingStreamId = activeStreamId;
-    if (pendingStreamId !== undefined) {
-      try {
-        await runInDurableObject(stub, (instance) => {
-          (instance as unknown as ChatStreamHarness)._resumableStream.complete(pendingStreamId);
-        });
-      } catch { /* The test may already have evicted or closed this Durable Object. */ }
-    }
     for (const socket of sockets) {
       try { socket.close(1000, "test cleanup"); } catch { /* The server may already have closed it. */ }
     }
