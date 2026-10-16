@@ -1,5 +1,5 @@
 import { ORIENTATION_PROFILE, OWNER_RESEARCH_MAX_SELECTED_SOURCES, readOwnerScopeProfile } from "@eliotr/cloudflare-navigation";
-import { createD1ScopePorts, createD1ScopeProfilePort } from "@eliotr/retrieval";
+import { EXACT_VERIFICATION_BOUNDS, createD1ScopePorts, createD1ScopeProfilePort } from "@eliotr/retrieval";
 import type { ScopeProfileBinding } from "@eliotr/retrieval";
 import { createD1EvidenceAuthorityPort } from "@eliotr/cloudflare-evidence";
 import { loadHeldResearchScope } from "@eliotr/cloudflare-research-runtime/research-retrieval-composition.js";
@@ -197,9 +197,81 @@ function parseResearchRunTransportSelection(raw: Record<string, unknown>): Parse
   return Object.freeze({ request_version: RESEARCH_RUN_REQUEST_V3,
     configuration_project_id: checkId(raw.configuration_project_id, "configuration_project_id") });
 }
-function checkLiteralsMax(record: Record<string, unknown>): number { if (!Array.isArray(record.literals) || record.literals.length !== 0) fail("RESEARCH_INPUT_INVALID", "literals must be empty"); if (!Number.isSafeInteger(record.max_results) || (record.max_results as number) < 1 || (record.max_results as number) > 16) fail("RESEARCH_INPUT_INVALID", "max_results is invalid"); return record.max_results as number; }
+function checkMaxResults(record: Record<string, unknown>): number {
+  if (!Number.isSafeInteger(record.max_results) || (record.max_results as number) < 1 || (record.max_results as number) > 16) {
+    fail("RESEARCH_INPUT_INVALID", "max_results is invalid");
+  }
+  return record.max_results as number;
+}
+
+function checkEmptyLiterals(record: Record<string, unknown>): void {
+  if (!Array.isArray(record.literals) || record.literals.length !== 0) {
+    fail("RESEARCH_INPUT_INVALID", "literals must be empty");
+  }
+}
+
+function checkLiteralsMax(record: Record<string, unknown>): number {
+  checkEmptyLiterals(record);
+  return checkMaxResults(record);
+}
+
+function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
+  return left.byteLength === right.byteLength && left.every((value, index) => value === right[index]);
+}
+
+function checkFastSearchLiterals(raw: unknown, query: string): readonly string[] {
+  if (!Array.isArray(raw)) fail("RESEARCH_INPUT_INVALID", "literals must be an array");
+  // Empty is the natural-language default; the exact adapter probes raw_query,
+  // so its opt-in marker must be that same unchanged UTF-8 text.
+  if (raw.length === 0) return [];
+  if (raw.length !== 1 || typeof raw[0] !== "string" || raw[0].length === 0) {
+    fail("RESEARCH_INPUT_INVALID", "FAST_SEARCH accepts at most one non-empty exact literal");
+  }
+  const literal = raw[0] as string;
+  const literalBytes = new TextEncoder().encode(literal);
+  if (literalBytes.byteLength > EXACT_VERIFICATION_BOUNDS.max_probe_bytes) {
+    fail("RESEARCH_INPUT_LIMIT", "FAST_SEARCH exact literal exceeds its byte bound", 413);
+  }
+  if (!sameBytes(literalBytes, new TextEncoder().encode(query))) {
+    fail("RESEARCH_INPUT_INVALID", "FAST_SEARCH exact literal must match the raw query bytes");
+  }
+  return [literal];
+}
+
 export const FAST_SEARCH_PROFILE = "retrieval-fast-v1";
-export function parseResearchQueryRequest(raw: unknown): QueryRequest { if (typeof raw !== "object" || raw === null || Array.isArray(raw)) fail("RESEARCH_INPUT_INVALID", "query request must be an object"); const r = raw as Record<string, unknown>; exactKeys(r); const product = r.product === "FAST_SEARCH" ? "FAST_SEARCH" : "ORIENT"; const profile = product === "FAST_SEARCH" ? FAST_SEARCH_PROFILE : ORIENTATION_PROFILE; if (r.product !== product || r.evidence_grade !== "E0" || r.budget_ref !== profile) fail("RESEARCH_PROFILE_UNSUPPORTED", product === "FAST_SEARCH" ? "research.query FAST_SEARCH requires the bounded retrieval profile" : "research.query supports only the ORIENT metadata profile or FAST_SEARCH retrieval profile", 422); return { query: checkQuery(r.query), product, scope_expression: checkScope(r.scope_expression), literals: [], evidence_grade: "E0", budget_ref: profile, max_results: checkLiteralsMax(r) }; }
+export function parseResearchQueryRequest(raw: unknown): QueryRequest {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    fail("RESEARCH_INPUT_INVALID", "query request must be an object");
+  }
+  const r = raw as Record<string, unknown>;
+  exactKeys(r);
+  const product = r.product === "FAST_SEARCH" ? "FAST_SEARCH" : "ORIENT";
+  const profile = product === "FAST_SEARCH" ? FAST_SEARCH_PROFILE : ORIENTATION_PROFILE;
+  if (r.product !== product || r.evidence_grade !== "E0" || r.budget_ref !== profile) {
+    fail(
+      "RESEARCH_PROFILE_UNSUPPORTED",
+      product === "FAST_SEARCH"
+        ? "research.query FAST_SEARCH requires the bounded retrieval profile"
+        : "research.query supports only the ORIENT metadata profile or FAST_SEARCH retrieval profile",
+      422,
+    );
+  }
+  const query = checkQuery(r.query);
+  const scope_expression = checkScope(r.scope_expression);
+  const literals = product === "FAST_SEARCH"
+    ? checkFastSearchLiterals(r.literals, query)
+    : [];
+  const max_results = product === "FAST_SEARCH" ? checkMaxResults(r) : checkLiteralsMax(r);
+  return {
+    query,
+    product,
+    scope_expression,
+    literals,
+    evidence_grade: "E0",
+    budget_ref: profile,
+    max_results,
+  };
+}
 export function parseResearchRunRequest(raw: unknown): QueryRequest {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) fail("RESEARCH_INPUT_INVALID", "run request must be an object");
   const r = raw as Record<string, unknown>;
@@ -235,7 +307,8 @@ function parseResearchRunRequestBody(r: Record<string, unknown>): QueryRequest {
   if (r.evidence_grade !== "E0" && r.evidence_grade !== "E1" && r.evidence_grade !== "E2") fail("RESEARCH_PROFILE_UNSUPPORTED", "research.run supports grades E0-E2", 422);
   if (r.budget_ref !== RUN_BUDGET) fail("RESEARCH_PROFILE_UNSUPPORTED", "research.run requires the bounded research budget profile", 422);
   return {
-    query: checkQuery(r.query), product: "RESEARCH" as const, scope_expression: checkScope(r.scope_expression, OWNER_RESEARCH_MAX_SELECTED_SOURCES), literals: [] as const,
+    query: checkQuery(r.query), product: "RESEARCH" as const,
+    scope_expression: checkScope(r.scope_expression, OWNER_RESEARCH_MAX_SELECTED_SOURCES), literals: [] as const,
     evidence_grade: r.evidence_grade as QueryRequest["evidence_grade"], budget_ref: RUN_BUDGET, max_results: checkLiteralsMax(r),
   };
 }

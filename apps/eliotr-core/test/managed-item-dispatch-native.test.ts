@@ -300,7 +300,7 @@ async function advanceSourceHead(fixture: ManagedDispatchFixture): Promise<strin
 describe("native managed item dispatch authority", () => {
   beforeAll(async () => setupOrientationDatabase());
 
-  it.each(["owner", "purge"] as const)(
+  it.each(["owner", "admission", "purge"] as const)(
     "denies a new D1 dispatch when current %s authority changes after source load",
     async (changedAuthority) => {
       const fixture = await prepareDispatchFixture();
@@ -308,6 +308,14 @@ describe("native managed item dispatch authority", () => {
         await db.prepare(
           "UPDATE source_namespace_ownership SET status = 'FENCED' WHERE source_namespace_id = ?1",
         ).bind(fixture.context.source_revision.source_namespace_id).run();
+      } else if (changedAuthority === "admission") {
+        await db.prepare(
+          "UPDATE source_admission_decision SET decision = 'REJECTED' WHERE decision_receipt_ref = ?1",
+        ).bind(`decision-${fixture.source_id}`).run();
+        await expect(
+          db.prepare("SELECT decision FROM source_admission_decision WHERE decision_receipt_ref = ?1")
+            .bind(`decision-${fixture.source_id}`).first<{ readonly decision: string }>(),
+        ).resolves.toEqual({ decision: "REJECTED" });
       } else {
         await db.prepare(
           "UPDATE source_revision SET purge_state = 'PURGE_REQUESTED' WHERE source_revision_ref = ?1",

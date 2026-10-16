@@ -61,16 +61,23 @@ function pack(overrides: Record<string, unknown> = {}): Record<string, unknown> 
 }
 
 describe("retrieval request", () => {
-  it("sends exactly the FAST_SEARCH profile the Worker accepts", () => {
+  it("sends the FAST_SEARCH exact-term profile with one query-equal literal", () => {
     expect(JSON.parse(retrievalBody("pinned", []))).toEqual({
       query: "pinned",
       product: "FAST_SEARCH",
       scope_expression: { kind: "GLOBAL_LIBRARY" },
-      literals: [],
+      literals: ["pinned"],
       evidence_grade: "E0",
       budget_ref: "retrieval-fast-v1",
       max_results: 16,
     });
+  });
+
+  it("preserves punctuation and whitespace in the exact search probe", () => {
+    const query = "Résumé (v2)! ";
+    const body = JSON.parse(retrievalBody(query, [])) as { readonly query: string; readonly literals: readonly string[] };
+    expect(body.query).toBe(query);
+    expect(body.literals).toEqual([query]);
   });
 
   it("binds selected sources into the scope expression", () => {

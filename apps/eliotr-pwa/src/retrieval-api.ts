@@ -49,15 +49,15 @@ function record(raw: unknown, keys: readonly string[]): Record<string, unknown> 
 export function retrievalBody(query: string, sourceIds: readonly string[]): string {
   if (typeof query !== "string" || query.trim().length === 0) mismatch();
   parsed(() => sourceIds.forEach((id) => IdentifierSchema.parse(id)));
-  // FAST_SEARCH deliberately uses the same seven bounded keys as ORIENT. The profile
-  // distinguishes active retrieval from navigation metadata at the Worker boundary.
+  // This owner panel asks for an exact term or phrase, so mark the unchanged query
+  // as its single EXACT probe. Natural-language callers leave literals empty.
   return JSON.stringify({
     query,
     product: "FAST_SEARCH",
     scope_expression: sourceIds.length
       ? { kind: "SELECTED_SOURCES", source_ids: sourceIds }
       : { kind: "GLOBAL_LIBRARY" },
-    literals: [],
+    literals: [query],
     evidence_grade: "E0",
     budget_ref: "retrieval-fast-v1",
     max_results: RETRIEVAL_MAX_RESULTS,

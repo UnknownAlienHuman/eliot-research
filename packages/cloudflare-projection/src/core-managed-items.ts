@@ -56,6 +56,71 @@ function nowIso(clock: () => number): string {
   }
 }
 
+function currentSourceAuthorityExistsSql(firstParameter: number): string {
+  const intentId = `?${firstParameter}`;
+  const intentRevision = `?${firstParameter + 1}`;
+  const sourceRevisionRef = `?${firstParameter + 2}`;
+  const sourceId = `?${firstParameter + 3}`;
+  const sourceOwnerGeneration = `?${firstParameter + 4}`;
+  return "EXISTS (SELECT 1 FROM operation_intent current_intent " +
+    "JOIN source_revision current_revision " +
+    "ON current_revision.source_revision_ref=current_intent.payload_ref " +
+    "JOIN source current_source ON current_source.source_id=current_revision.source_id " +
+    "JOIN source_namespace_ownership current_owner " +
+    "ON current_owner.source_namespace_id=current_source.source_namespace_id " +
+    "AND current_owner.owner_system_id=current_source.source_owner_system_id " +
+    "AND current_owner.source_owner_generation=current_revision.source_owner_generation " +
+    "JOIN source_admission_decision current_admission " +
+    "ON current_admission.decision_receipt_ref=current_intent.policy_decision_ref " +
+    "AND current_admission.source_namespace_id=current_source.source_namespace_id " +
+    "AND current_admission.owner_system_id=current_source.source_owner_system_id " +
+    "AND current_admission.source_revision_ref=current_revision.source_revision_ref " +
+    "AND current_admission.source_owner_generation=current_revision.source_owner_generation " +
+    `WHERE current_intent.intent_id=${intentId} ` +
+    `AND current_intent.revision=${intentRevision} ` +
+    "AND current_intent.operation_kind='PROJECTION' " +
+    `AND current_intent.payload_ref=${sourceRevisionRef} ` +
+    `AND current_revision.source_revision_ref=${sourceRevisionRef} ` +
+    `AND current_revision.source_id=${sourceId} ` +
+    `AND current_revision.source_owner_generation=${sourceOwnerGeneration} ` +
+    "AND current_revision.purge_state='LIVE' " +
+    "AND current_source.source_owner_generation=current_revision.source_owner_generation " +
+    "AND current_owner.status='ACTIVE' " +
+    "AND current_admission.decision='ADMITTED')";
+}
+
+function currentSourceAuthorityBindings(
+  context: ProjectionSourceContext,
+): readonly [string, number, string, string, string] {
+  return [
+    context.intent_ref.id,
+    context.intent_ref.revision,
+    context.source_revision.source_revision_ref,
+    context.source_revision.source_id,
+    context.source_revision.source_owner_generation,
+  ];
+}
+
+async function hasCurrentSourceAuthority(
+  database: D1Database,
+  context: ProjectionSourceContext,
+): Promise<boolean> {
+  let row: { readonly authorized: unknown } | null;
+  try {
+    row = await database.prepare(
+      `SELECT ${currentSourceAuthorityExistsSql(1)} AS authorized`,
+    ).bind(...currentSourceAuthorityBindings(context)).first<{ readonly authorized: unknown }>();
+  } catch (cause) {
+    projectionFail(
+      "PROJECTION_SETTLEMENT_UNCERTAIN",
+      "current source authority could not be read after a denied dispatch transition",
+      true,
+      cause,
+    );
+  }
+  return row?.authorized === 1;
+}
+
 function assertCallerFenceInput(
   operationId: string,
   callerFence: ExecutionFence,
@@ -270,7 +335,8 @@ export async function beginManagedItemDispatch(
     "AND execution_operation_id = ?7 AND EXISTS (SELECT 1 FROM operation_execution_lease l " +
     "WHERE l.operation_id = ?7 AND l.operation_kind = 'PROJECTION_EXECUTE' " +
     "AND l.lease_owner = ?9 AND l.lease_generation = ?5 AND l.state = 'LEASED' " +
-    "AND l.lease_until > ?8 AND l.lease_until > " + D1_EXECUTION_LEASE_NOW_SQL + ")",
+    "AND l.lease_until > ?8 AND l.lease_until > " + D1_EXECUTION_LEASE_NOW_SQL + ") " +
+    `AND ${currentSourceAuthorityExistsSql(10)}`,
   ).bind(
     context.source_revision.source_revision_ref,
     projectionGeneration,
@@ -281,6 +347,7 @@ export async function beginManagedItemDispatch(
     operationId,
     nowMs,
     callerFence.lease_owner,
+    ...currentSourceAuthorityBindings(context),
   ).run();
   if (result.meta.changes === 1) {
     await assertCallerFence(database, operationId, callerFence, readClock(clock));
@@ -293,6 +360,12 @@ export async function beginManagedItemDispatch(
   }
   assertLineage(row, context, projectionGeneration, operationId);
   if (row.state === "INTENT") {
+    if (!await hasCurrentSourceAuthority(database, context)) {
+      projectionFail(
+        "PROJECTION_AUTHORITY_CONFLICT",
+        "source owner, admission, or purge authority changed before managed item dispatch",
+      );
+    }
     projectionFail(
       "PROJECTION_SETTLEMENT_UNCERTAIN",
       "managed item dispatch was not fenced by the current execution lease",

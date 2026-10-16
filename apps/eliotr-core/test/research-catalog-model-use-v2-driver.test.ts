@@ -165,7 +165,8 @@ describe("default generic catalog model-use composition", () => {
       DEPLOYMENT_GENERATION: DEPLOYMENT,
       AI_GATEWAY_REASONING_URL: GATEWAY_BASE,
     });
-    const requests: Array<{ url: string; body: Record<string, unknown>; alias: string | null }> = [];
+    const requests: Array<{ url: string; body: Record<string, unknown>; alias: string | null;
+      client: string | null; session: string | null }> = [];
     let requestConstructionFailure: string | undefined;
     const fetcher: typeof fetch = async (input, init) => {
       // Exercise native Workers request-option validation before the controlled
@@ -181,7 +182,8 @@ describe("default generic catalog model-use composition", () => {
         return new Response(providerCatalog(), { status: 200, headers: { "content-type": "application/json" } });
       }
       const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
-      requests.push({ url, body, alias: new Headers(init?.headers).get("cf-aig-byok-alias") });
+      requests.push({ url, body, alias: request.headers.get("cf-aig-byok-alias"),
+        client: request.headers.get("user-agent"), session: request.headers.get("x-opencode-session") });
       const ordinal = requests.length;
       return new Response(JSON.stringify({
         object: "response",
@@ -209,6 +211,9 @@ describe("default generic catalog model-use composition", () => {
     expect(requests.length).toBeGreaterThan(0);
     expect(requests.every((request) => request.url === `${GATEWAY_BASE}/custom-opencode-go/responses`)).toBe(true);
     expect(requests.every((request) => request.body.model === MODEL && request.alias === connection.receipt.alias)).toBe(true);
+    expect(requests.every((request) => request.client === "EliotResearch/1.0" &&
+      /^eliotr_[a-f0-9]{32}$/u.test(request.session ?? ""))).toBe(true);
+    expect(new Set(requests.map(request => request.session)).size).toBe(1);
     expect(requests.every((request) => request.body.model !== "openai/gpt-4.1" && request.body.provider === undefined)).toBe(true);
 
     const connectionRow = await testEnv.CORE_DB.prepare(

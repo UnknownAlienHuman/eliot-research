@@ -57,6 +57,8 @@ async function insertActiveProjectionWriter(sourceRevisionRef: string, sourceId:
   const namespace = `active-producer-namespace-${suffix}`;
   const ownerSystem = `active-producer-owner-${suffix}`;
   const ownerGeneration = `active-producer-generation-${suffix}`;
+  const managedInstanceId = `active-producer-instance-${suffix}`;
+  const managedGeneration = `active-producer-managed-generation-${suffix}`;
   const intentId = `active-producer-intent-${suffix}`;
   const jobId = `active-producer-job-${suffix}`;
   const projectionGeneration = `active-producer-projection-${suffix}`;
@@ -89,9 +91,11 @@ async function insertActiveProjectionWriter(sourceRevisionRef: string, sourceId:
     ).bind(jobId, intentId, now),
     runtime.CORE_DB.prepare(
       "INSERT INTO projection_generation(source_revision_ref,projection_generation,job_id,source_owner_generation," +
-      "content_sha256,object_residency_key_digest,projector_profile,state,reason_codes_json,created_at,updated_at) " +
-      "VALUES (?1,?2,?3,?4,?5,?6,'profile-1','PREPARING','[]',?7,?7)",
-    ).bind(sourceRevisionRef, projectionGeneration, jobId, ownerGeneration, "c".repeat(64), "d".repeat(64), now),
+      "content_sha256,object_residency_key_digest,projector_profile,state,reason_codes_json,managed_item_protocol," +
+      "managed_target_instance_id,managed_target_generation,created_at,updated_at) " +
+      "VALUES (?1,?2,?3,?4,?5,?6,'profile-1','PREPARING','[]','eliotr.managed-item-effects.v1',?7,?8,?9,?9)",
+    ).bind(sourceRevisionRef, projectionGeneration, jobId, ownerGeneration, "c".repeat(64), "d".repeat(64),
+      managedInstanceId, managedGeneration, now),
     runtime.CORE_DB.prepare(
       "INSERT INTO operation_execution_lease(operation_id,operation_kind,lease_owner,lease_generation,lease_until," +
       "attempt,state,created_at,updated_at) VALUES (?1,'PROJECTION_EXECUTE','projection-worker',1,?2,1,'LEASED',?3,?3)",

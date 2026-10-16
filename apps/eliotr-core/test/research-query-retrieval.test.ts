@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { ORIENTATION_PROFILE } from "@eliotr/cloudflare-navigation";
 import type { AuthenticatedRequestContext, QueryRequest, QueryResult } from "@eliotr/interfaces";
+import { EXACT_VERIFICATION_BOUNDS } from "@eliotr/retrieval";
 import { createProjectOwnerService } from "@eliotr/cloudflare-navigation";
 import {
   createResearchQueryService,
@@ -89,11 +90,12 @@ function queryFor(world: Q1Namespace, query: string): QueryRequest {
   };
 }
 
-function fastSearchQueryFor(world: Q1Namespace, query: string): QueryRequest {
+function fastSearchQueryFor(world: Q1Namespace, query: string, literals: readonly string[] = []): QueryRequest {
   return {
     ...queryFor(world, query),
     product: "FAST_SEARCH",
     budget_ref: FAST_SEARCH_PROFILE,
+    literals,
   };
 }
 
@@ -130,7 +132,7 @@ describe("research.query retrieval over real D1/R2", () => {
   it("serves FAST_SEARCH through the owner HTTP route over the imported/projected Q1 source", async () => {
     const owner = "rq-fast-search-owner";
     const world = await worldWithPolicy(owner);
-    const request = fastSearchQueryFor(world, "Pinned");
+    const request = fastSearchQueryFor(world, "Pinned", ["Pinned"]);
     const result = await q1Transport(runtime, owner)("/api/v1/research/query", {
       method: "POST",
       headers: { "content-type": "application/json", "idempotency-key": "rq-fast-search" },
@@ -149,12 +151,14 @@ describe("research.query retrieval over real D1/R2", () => {
       readonly lanes_used: readonly string[];
       readonly lanes_skipped: readonly { readonly lane: string; readonly reason: string }[];
       readonly candidates_by_lane: Readonly<Record<string, number>>;
+      readonly exact_probes: readonly string[];
     };
     expect(trace.raw_query).toBe("Pinned");
     expect(trace.query_product).toBe("FAST_SEARCH");
     expect(trace.lanes_used).toContain("EXACT");
     expect(trace.lanes_used).toContain("LEX");
     expect(trace.lanes_skipped).not.toContainEqual({ lane: "EXACT", reason: "LANE_UNAVAILABLE" });
+    expect(trace.exact_probes).toEqual(["Pinned"]);
     expect(trace.candidates_by_lane.EXACT).toBeGreaterThan(0);
     const resultRow = await db
       .prepare("SELECT state, coverage_claim FROM retrieval_query_result WHERE principal_ref = ?1 AND idempotency_key = ?2")
@@ -179,25 +183,37 @@ describe("research.query retrieval over real D1/R2", () => {
       profile: await tableCount("retrieval_scope_profile"),
       grant: await tableCount("scope_access_grant"),
     }).toEqual(persistedBeforeReplay);
+    const naturalHit = await q1Transport(runtime, owner)("/api/v1/research/query", {
+      method: "POST",
+      headers: { "content-type": "application/json", "idempotency-key": "rq-fast-search-natural" },
+      body: JSON.stringify(fastSearchQueryFor(world, "Pinned")),
+    }) as { readonly data: QueryResult };
+    expect(naturalHit.data.evidence_pack.resolved_evidence).toHaveLength(1);
+    const naturalTrace = await persistedTrace(naturalHit.data);
+    expect(naturalTrace.lanes_used).toContain("LEX");
+    expect(naturalTrace.lanes_used).not.toContain("EXACT");
+    expect(naturalTrace.lanes_skipped).toContainEqual({ lane: "EXACT", reason: "NO_EXPLICIT_LITERAL" });
     const noHit = await q1Transport(runtime, owner)("/api/v1/research/query", {
       method: "POST",
       headers: { "content-type": "application/json", "idempotency-key": "rq-fast-search-none" },
       body: JSON.stringify(fastSearchQueryFor(world, "absent")),
     }) as { readonly data: QueryResult };
-    // A lexical miss still supplies bounded, exactly resolved selected-document context.
-    expectPinnedContext(noHit.data, world);
-    expect((await persistedTrace(noHit.data)).candidates_by_lane.LEX).toBe(1);
+    // A miss stays empty; a selected source is not injected as unrelated context.
+    expect(noHit.data.evidence_pack.resolved_evidence).toEqual([]);
+    const noHitTrace = await persistedTrace(noHit.data);
+    expect(noHitTrace.candidates_by_lane.LEX).toBe(0);
+    expect(noHitTrace.lanes_skipped).toContainEqual({ lane: "EXACT", reason: "NO_EXPLICIT_LITERAL" });
     const noHitRow = await db
       .prepare("SELECT state, coverage_claim FROM retrieval_query_result WHERE principal_ref = ?1 AND idempotency_key = ?2")
       .bind(owner, "rq-fast-search-none")
       .first<{ readonly state: string; readonly coverage_claim: string }>();
-    expect(noHitRow).toMatchObject({ state: "COMPLETE", coverage_claim: "SAMPLED" });
+    expect(noHitRow).toMatchObject({ state: "COMPLETE", coverage_claim: "NONE" });
     await expect(q1Transport(runtime, owner)("/api/v1/research/query", {
       method: "POST",
       headers: { "content-type": "application/json", "idempotency-key": "rq-fast-search" },
       body: JSON.stringify(fastSearchQueryFor(world, "different")),
     })).rejects.toMatchObject({ status: 409 });
-    expect(await tableCount("retrieval_query_result")).toBe(persistedBeforeReplay.result + 1);
+    expect(await tableCount("retrieval_query_result")).toBe(persistedBeforeReplay.result + 2);
     await db.prepare("UPDATE scope_access_grant SET state='REVOKED' WHERE principal_ref=?1 AND client_class='owner_pwa' AND credential_generation=?2")
       .bind(owner, CREDENTIAL).run();
     await expect(q1Transport(runtime, owner)("/api/v1/research/query", {
@@ -205,7 +221,7 @@ describe("research.query retrieval over real D1/R2", () => {
       headers: { "content-type": "application/json", "idempotency-key": "rq-fast-search" },
       body: JSON.stringify(request),
     })).rejects.toMatchObject({ status: 409, code: "RESEARCH_AUTHORITY_STALE" });
-    expect(await tableCount("retrieval_query_result")).toBe(persistedBeforeReplay.result + 1);
+    expect(await tableCount("retrieval_query_result")).toBe(persistedBeforeReplay.result + 2);
     await expect(q1Transport(runtime, owner)("/api/v1/research/query", {
       method: "POST",
       headers: { "content-type": "application/json", "idempotency-key": "rq-fast-search-invalid-profile" },
@@ -213,7 +229,7 @@ describe("research.query retrieval over real D1/R2", () => {
     })).rejects.toMatchObject({ status: 422 });
   });
 
-  it("persists FAST_SEARCH EXACT candidate counts for literal whitespace and punctuation distinctions", async () => {
+  it("persists FAST_SEARCH EXACT hit and miss counts for literal whitespace and punctuation", async () => {
     const owner = "rq-fast-exact-literal-owner";
     const world = await worldWithPolicy(owner);
     const transport = q1Transport(runtime, owner);
@@ -221,7 +237,7 @@ describe("research.query retrieval over real D1/R2", () => {
       const response = await transport("/api/v1/research/query", {
         method: "POST",
         headers: { "content-type": "application/json", "idempotency-key": key },
-        body: JSON.stringify(fastSearchQueryFor(world, query)),
+        body: JSON.stringify(fastSearchQueryFor(world, query, [query])),
       }) as { readonly data: QueryResult };
       return response.data;
     };
@@ -238,6 +254,7 @@ describe("research.query retrieval over real D1/R2", () => {
     const whitespaceMiss = await run("rq-fast-exact-whitespace-miss", whitespaceMissQuery);
     const whitespaceMissTrace = await persistedTrace(whitespaceMiss);
     expect(whitespaceMissTrace.raw_query).toBe(whitespaceMissQuery);
+    expect(whitespaceMissTrace.exact_probes).toEqual([whitespaceMissQuery]);
     expect(whitespaceMissTrace.lanes_used).toContain("EXACT");
     expect(whitespaceMissTrace.candidates_by_lane.EXACT).toBe(0);
 
@@ -245,8 +262,41 @@ describe("research.query retrieval over real D1/R2", () => {
     const punctuationMiss = await run("rq-fast-exact-punctuation-miss", punctuationMissQuery);
     const punctuationMissTrace = await persistedTrace(punctuationMiss);
     expect(punctuationMissTrace.raw_query).toBe(punctuationMissQuery);
+    expect(punctuationMissTrace.exact_probes).toEqual([punctuationMissQuery]);
     expect(punctuationMissTrace.lanes_used).toContain("EXACT");
     expect(punctuationMissTrace.candidates_by_lane.EXACT).toBe(0);
+  });
+
+  it("rejects mismatched, multiple and over-bound FAST_SEARCH literals before persistence", async () => {
+    const owner = "rq-fast-exact-literal-invalid-owner";
+    const world = await worldWithPolicy(owner);
+    const transport = q1Transport(runtime, owner);
+    const before = await Promise.all([
+      "scope_access_grant",
+      "scope_snapshot",
+      "retrieval_scope_profile",
+      "retrieval_query_result",
+      "retrieval_query_trace",
+    ].map((table) => tableCount(table)));
+    const reject = (key: string, query: string, literals: readonly string[]) => transport("/api/v1/research/query", {
+      method: "POST",
+      headers: { "content-type": "application/json", "idempotency-key": key },
+      body: JSON.stringify(fastSearchQueryFor(world, query, literals)),
+    });
+    await expect(reject("rq-fast-literal-mismatch", "Pinned", ["pinned"]))
+      .rejects.toMatchObject({ code: "RESEARCH_INPUT_INVALID" });
+    await expect(reject("rq-fast-literal-many", "Pinned", ["Pinned", "Pinned"]))
+      .rejects.toMatchObject({ code: "RESEARCH_INPUT_INVALID" });
+    const oversized = "x".repeat(EXACT_VERIFICATION_BOUNDS.max_probe_bytes + 1);
+    await expect(reject("rq-fast-literal-oversized", oversized, [oversized]))
+      .rejects.toMatchObject({ code: "RESEARCH_INPUT_LIMIT" });
+    expect(await Promise.all([
+      "scope_access_grant",
+      "scope_snapshot",
+      "retrieval_scope_profile",
+      "retrieval_query_result",
+      "retrieval_query_trace",
+    ].map((table) => tableCount(table)))).toEqual(before);
   });
 
   it("refuses a FAST_SEARCH replay after its source authority is invalidated", async () => {
@@ -475,7 +525,7 @@ describe("research.query retrieval over real D1/R2", () => {
     const owner = "rq-expiry-owner";
     const world = await worldWithPolicy(owner);
     const service = createResearchQueryService({ CORE_DB: db, SEARCH_DB: searchDb, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET });
-    const first = await service.query(contextFor(owner, "rq-expiry-first"), queryFor(world, "absent"));
+    const first = await service.query(contextFor(owner, "rq-expiry-first"), queryFor(world, "Pinned"));
     expectPinnedContext(first, world);
     const snapshotId = first.evidence_pack.scope_snapshot_ref.id;
     await db.prepare("UPDATE scope_snapshot SET expires_at = ?1 WHERE snapshot_id = ?2").bind("2020-01-01T00:00:00.000Z", snapshotId).run();
@@ -486,7 +536,7 @@ describe("research.query retrieval over real D1/R2", () => {
     };
     // Same idempotency key after expiry: the replay rechecks the stored frozen scope live and
     // fails closed instead of silently re-freezing fresh or serving stale-bounded bytes.
-    await expect(service.query(contextFor(owner, "rq-expiry-first"), queryFor(world, "absent"))).rejects.toMatchObject({ code: "RESEARCH_AUTHORITY_STALE" });
+    await expect(service.query(contextFor(owner, "rq-expiry-first"), queryFor(world, "Pinned"))).rejects.toMatchObject({ code: "RESEARCH_AUTHORITY_STALE" });
     expect(await tableCount("retrieval_query_result")).toBe(before.result);
     expect(await tableCount("retrieval_query_trace")).toBe(before.trace);
     expect(await tableCount("scope_access_grant")).toBe(before.grant);
@@ -496,7 +546,7 @@ describe("research.query retrieval over real D1/R2", () => {
     const owner = "rq-profile-owner";
     const world = await worldWithPolicy(owner);
     const v1 = createResearchQueryService({ CORE_DB: db, SEARCH_DB: searchDb, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET });
-    const first = await v1.query(contextFor(owner, "rq-profile-first"), queryFor(world, "absent"));
+    const first = await v1.query(contextFor(owner, "rq-profile-first"), queryFor(world, "Pinned"));
     expectPinnedContext(first, world);
     const resultsBefore = await tableCount("retrieval_query_result");
     const v2 = createResearchQueryService(
@@ -513,7 +563,7 @@ describe("research.query retrieval over real D1/R2", () => {
     const owner = "rq-trace-owner";
     const world = await worldWithPolicy(owner);
     const service = createResearchQueryService({ CORE_DB: db, SEARCH_DB: searchDb, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET });
-    const first = await service.query(contextFor(owner, "rq-trace-first"), queryFor(world, "absent"));
+    const first = await service.query(contextFor(owner, "rq-trace-first"), queryFor(world, "Pinned"));
     expectPinnedContext(first, world);
     const snapshot = await db
       .prepare("SELECT snapshot_digest FROM scope_snapshot WHERE snapshot_id = ?1 AND revision = ?2")

@@ -29,6 +29,12 @@ import {
 import type { ModelGatewayApi } from "./model-gateway-transport-policy.js";
 
 const SHA256 = /^[a-f0-9]{64}$/u;
+/** Go documents an honest client identity and stable, opaque conversation routing. */
+async function openCodeGoClientHeaders(provider: string | undefined, sessionRef: string): Promise<Readonly<Record<string, string>>> {
+  if (provider !== "custom-opencode-go") return {};
+  const digest = await modelGatewaySha256(`eliotr/opencode-go/session/v1\0${sessionRef}`);
+  return Object.freeze({ "User-Agent": "EliotResearch/1.0", "x-opencode-session": `eliotr_${digest.slice(0, 32)}` });
+}
 const ACCOUNT_ID = /^[a-f0-9]{32}$/u;
 const POLICY_HEADER_KEYS = new Set([
   "cf-aig-collect-log",
@@ -351,6 +357,7 @@ async function prepareModelGatewayRequest(
         : {}),
       ...policy.headers,
       ...byokHeaders,
+      ...await openCodeGoClientHeaders(transportPolicy?.provider, canonicalModelGatewayJson(input.evidence_pack.scope_snapshot_ref)),
       "cf-aig-request-timeout": String(requestTimeout),
       "cf-aig-max-attempts": "1",
     }),
@@ -567,6 +574,7 @@ async function prepareProviderQualificationHttpRequest(
       ...(transportPolicy.api === "anthropic-messages" || transportPolicy.api === "custom-anthropic-messages" ? { "anthropic-version": "2023-06-01" } : {}),
       "cf-aig-max-attempts": "1",
       ...billingHeaders,
+      ...await openCodeGoClientHeaders(transportPolicy.provider, rawMetadata.operation_id),
     }),
     body: canonicalWireBody,
     body_sha256: await modelGatewaySha256(canonicalWireBody),

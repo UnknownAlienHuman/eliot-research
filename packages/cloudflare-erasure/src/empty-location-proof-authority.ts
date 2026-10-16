@@ -66,6 +66,12 @@ interface ProjectionLeaseBindingRow {
   readonly namespace_status: unknown;
 }
 
+const SUPPORTED_SEARCH_SCHEMA_GENERATIONS: ReadonlySet<string> = new Set([
+  "search-v3-erasure-invalidation",
+  // Core readiness explicitly supports existing accounts with the dormant v4 registry table.
+  "search-v4-ai-search-generation-registry",
+]);
+
 function complete<T>(result: D1Result<T>, label: string): readonly T[] {
   const runtime = result as unknown as { readonly success?: unknown; readonly results?: unknown };
   if (runtime.success !== true || !Array.isArray(runtime.results)) {
@@ -313,7 +319,8 @@ export async function readD1SearchEmptySnapshot(
   const authorityDigest = await readEmptyProofAuthorityDigest(core, revisionRef, subjectRef, "Index");
   const state = await search.prepare("SELECT value FROM schema_state WHERE key='schema_generation' LIMIT 1")
     .first<{ value: unknown }>();
-  if (state === null || state.value !== "search-v2-projection-generations") {
+  if (state === null || typeof state.value !== "string" ||
+      !SUPPORTED_SEARCH_SCHEMA_GENERATIONS.has(state.value)) {
     erasureFail("ERASURE_CLOSURE_INCOMPLETE", "D1 Search schema generation is unknown");
   }
   const counts: { readonly name: string; readonly count: number }[] = [];
