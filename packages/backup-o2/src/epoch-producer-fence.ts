@@ -9,6 +9,9 @@ export const BACKUP_PRODUCER_FENCE_MIGRATION = "0116_backup_epoch_producer_fence
 export const BACKUP_PRODUCER_FENCE_MIGRATION_SHA256 = "c31dddfdf65c9ad67205dac33e397d24d2de18fee5ab81ec5fbde2eca446046f";
 export const BACKUP_PRODUCER_FENCE_SCHEMA_SHA256 = "fc7e814453b25356b91113f6f1554d0cb6d0fde13aeef20f24771f004583cb6c";
 export const BACKUP_PRODUCER_ERASURE_SCHEMA_SHA256 = "64f9b23f9ac9d2aacf45598b3835ea3fc72063fb00448be189e6028d64a3218b";
+// 0135 adds one immutable completion-feed trigger to the otherwise exact 0117 schema.
+export const BACKUP_PRODUCER_ERASURE_FEED_MIGRATION = "0135_erasure_completion_change_feed.sql";
+export const BACKUP_PRODUCER_ERASURE_FEED_SCHEMA_SHA256 = "adde4cf7319c7bb85475aa089c0c0d8e4be1824f7a248fbe38f6709531daf963";
 
 const PRODUCER_TABLE = "backup_epoch_producer_claim";
 const REQUIRED_LEDGER = [
@@ -230,20 +233,24 @@ async function assertErasureGuardColumnsAndIndexes(database: D1Database): Promis
   if (canonicalBackupJson(observed) !== canonicalBackupJson(expected)) failSchema("erasure-state-tables");
 }
 
-/** Strict O2 + 0116 + exact 0117 erasure-completion guard authority; never performs runtime DDL. */
+/** Strict O2 + 0116 + exact 0117/0135 erasure guard authority; never performs runtime DDL. */
 export async function assertBackupProducerFenceMigrationAuthority(database: D1Database): Promise<void> {
   await assertO2MigrationAuthority(database);
+  const acceptedLedger = [...REQUIRED_LEDGER, BACKUP_PRODUCER_ERASURE_FEED_MIGRATION];
   const names = await all<{ readonly name: unknown }>(
     database,
-    `SELECT name FROM d1_migrations WHERE name IN (${REQUIRED_LEDGER.map((_, i) => `?${i + 1}`).join(",")})`,
-    REQUIRED_LEDGER,
+    `SELECT name FROM d1_migrations WHERE name IN (${acceptedLedger.map((_, i) => `?${i + 1}`).join(",")})`,
+    acceptedLedger,
   );
   const observedNames = new Set(names.map((row) => row.name));
   for (const name of REQUIRED_LEDGER) if (!observedNames.has(name)) failSchema(name);
   await assertErasureGuardColumnsAndIndexes(database);
+  const hasCompletionFeed = observedNames.has(BACKUP_PRODUCER_ERASURE_FEED_MIGRATION);
   await assertObjectFingerprint(
-    database, ["erasure_case", "erasure_execution"], ERASURE_FINGERPRINT_OBJECTS,
-    BACKUP_PRODUCER_ERASURE_SCHEMA_SHA256, "erasure-state-tables",
+    database, ["erasure_case", "erasure_execution"], hasCompletionFeed
+      ? [...ERASURE_FINGERPRINT_OBJECTS, "trigger:erasure_execution_completion_change_feed"] : ERASURE_FINGERPRINT_OBJECTS,
+    hasCompletionFeed ? BACKUP_PRODUCER_ERASURE_FEED_SCHEMA_SHA256 : BACKUP_PRODUCER_ERASURE_SCHEMA_SHA256,
+    "erasure-state-tables",
   );
   await assertProducerColumnsAndIndexes(database);
   await assertObjectFingerprint(

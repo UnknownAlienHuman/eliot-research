@@ -184,7 +184,7 @@ describe("ER-34 O2 FIX4 terminal DELETED replay re-validates live authority", ()
     expect(evil.describes).toBeGreaterThan(0);
     expect(snap(h, `expiry-drift-${tag}`)).toBe(before);
   });
-  it("refuses revoked authority, rotated policy, drifted principal/decision and retention/hold drift with zero new deletes", async () => {
+  it("refuses revoked authority on terminal replay with zero new deletes", async () => {
     const h = await setup();
     const adapter = counting(createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" }));
     const draft = await copied(h, "fix4-revoked", adapter);
@@ -194,6 +194,8 @@ describe("ER-34 O2 FIX4 terminal DELETED replay re-validates live authority", ()
     await expect(expireWith(h, draft, "fix4-revoked", "expiry-revoked", adapter)).rejects.toMatchObject({ code: "BACKUP_DESTINATION_POLICY_MISMATCH" });
     expect(adapter.deletes).toBe(draft.part_index.length);
     expect(snap(h, "expiry-revoked")).toBe(before);
+  });
+  it("refuses rotated policy on terminal replay with zero new deletes", async () => {
     // Rotated policy: replay under the new grant fails the terminal binding,
     // replay under the stale grant fails authority.
     const h2 = await setup();
@@ -207,6 +209,8 @@ describe("ER-34 O2 FIX4 terminal DELETED replay re-validates live authority", ()
     await expect(expireWith(h2, draft2, "fix4-rotated", "expiry-rotated", adapter2)).rejects.toMatchObject({ code: "BACKUP_DESTINATION_POLICY_MISMATCH" });
     expect(adapter2.deletes).toBe(draft2.part_index.length);
     expect(snap(h2, "expiry-rotated")).toBe(before2);
+  });
+  it("refuses drifted principal and decision on terminal replay with zero new deletes", async () => {
     // Drifted principal / decision.
     const h3 = await setup();
     const adapter3 = counting(createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" }));
@@ -217,6 +221,8 @@ describe("ER-34 O2 FIX4 terminal DELETED replay re-validates live authority", ()
     await expect(expireWith(h3, draft3, "fix4-principal", "expiry-principal", adapter3, { intent: { ...intent("fix4-principal"), policy_decision_ref: "policy-evil" } })).rejects.toMatchObject({ code: "BACKUP_DESTINATION_POLICY_MISMATCH" });
     expect(adapter3.deletes).toBe(draft3.part_index.length);
     expect(snap(h3, "expiry-principal")).toBe(before3);
+  });
+  it("refuses controller retention and hold drift on terminal replay with zero new deletes", async () => {
     // Retention/hold drift on the controller grant.
     const h4 = await setup();
     const adapter4 = counting(createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" }));
@@ -229,7 +235,7 @@ describe("ER-34 O2 FIX4 terminal DELETED replay re-validates live authority", ()
     expect(adapter4.deletes).toBe(draft4.part_index.length);
     expect(snap(h4, "expiry-holddrift")).toBe(before4);
   });
-  it("refuses a forged persisted binding and an unreadable hold read with zero new deletes", async () => {
+  it("refuses a forged persisted binding with zero new deletes", async () => {
     const h = await setup();
     const adapter = counting(createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" }));
     const draft = await copied(h, "fix4-forge", adapter);
@@ -237,6 +243,8 @@ describe("ER-34 O2 FIX4 terminal DELETED replay re-validates live authority", ()
     h.db.prepare("UPDATE backup_offsite_expiry SET descriptor_digest = ? WHERE expiry_intent_key = 'expiry-forge'").run("0".repeat(64));
     await expect(expireWith(h, draft, "fix4-forge", "expiry-forge", adapter)).rejects.toMatchObject({ code: "BACKUP_DESTINATION_POLICY_MISMATCH" });
     expect(adapter.deletes).toBe(draft.part_index.length);
+  });
+  it("refuses an unreadable hold authority on terminal replay with zero new deletes", async () => {
     // Unreadable hold authority refuses even terminal history.
     const h2 = await setup();
     const adapter2 = counting(createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" }));

@@ -66,7 +66,11 @@ test("production and dry-run do not require or derive staging permission", async
     log: () => {},
   });
   assert.equal(result, null);
-  assert.equal(commands.length, 4);
+  assert.deepEqual(commands, [
+    ["pnpm", ["check"]],
+    ["pnpm", ["--filter", "@eliotr/core", "cf:types"]],
+    ["pnpm", ["budgets:emitted"]],
+  ]);
 });
 
 test("invalid staging target stops orchestrator before credential reads, commands or effects", async () => {

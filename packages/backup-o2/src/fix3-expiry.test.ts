@@ -221,7 +221,7 @@ describe("ER-34 O2 FIX3 expiry reconciliation (same-or-stricter than copy)", () 
     await expect(expire(h, draft, `fix3-neg-${tag}`, `expiry-neg-${tag}`, evil)).rejects.toMatchObject({ code: "BACKUP_DESTINATION_POLICY_MISMATCH" });
     expect(evil.deletes).toBe(0);
   });
-  it("refuses revoked authority, rotated policy, drifted principal/decision and retention/hold drift with zero deletes", async () => {
+  it("refuses revoked authority with zero deletes", async () => {
     // Revoked.
     const h = await setup();
     const adapter = counting(createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" }));
@@ -229,6 +229,8 @@ describe("ER-34 O2 FIX3 expiry reconciliation (same-or-stricter than copy)", () 
     await revokeBackupDestination(h.coreDb, "offsite-1", "tester", "policy-1");
     await expect(expire(h, draft, "fix3-revoked", "expiry-revoked", adapter)).rejects.toMatchObject({ code: "BACKUP_DESTINATION_POLICY_MISMATCH" });
     expect(adapter.deletes).toBe(0);
+  });
+  it("refuses rotated retention and expiry policy with zero deletes", async () => {
     // Rotated policy (same ID, changed retention/expiry identity).
     const h2 = await setup();
     const adapter2 = counting(createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" }));
@@ -237,6 +239,8 @@ describe("ER-34 O2 FIX3 expiry reconciliation (same-or-stricter than copy)", () 
     await authorizeBackupDestination(h2.coreDb, { destination_id: "offsite-1", principal_ref: "tester", policy_decision_ref: "policy-1", policy: rotated, authorization_receipt_ref: "auth-1" });
     await expect(expireOffsiteCopy({ core_db: h2.coreDb, draft: draft2, intent: intent("fix3-rotated"), expiry: { expiry_intent_key: "expiry-rotated", epoch_id: draft2.epoch_id, reason: "retention-expired" }, destination_policy: rotated, primary_failure_domain: "domain-primary", adapter: adapter2, now_ms: Date.now() })).rejects.toMatchObject({ code: "BACKUP_DESTINATION_POLICY_MISMATCH" });
     expect(adapter2.deletes).toBe(0);
+  });
+  it("refuses drifted principal and decision with zero deletes", async () => {
     // Drifted principal / decision.
     const h3 = await setup();
     const adapter3 = counting(createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" }));
@@ -244,6 +248,8 @@ describe("ER-34 O2 FIX3 expiry reconciliation (same-or-stricter than copy)", () 
     await expect(expireOffsiteCopy({ core_db: h3.coreDb, draft: draft3, intent: { ...intent("fix3-principal"), principal_ref: "stranger" }, expiry: { expiry_intent_key: "expiry-stranger", epoch_id: draft3.epoch_id, reason: "retention-expired" }, destination_policy: policy(), primary_failure_domain: "domain-primary", adapter: adapter3, now_ms: Date.now() })).rejects.toMatchObject({ code: "BACKUP_DESTINATION_POLICY_MISMATCH" });
     await expect(expireOffsiteCopy({ core_db: h3.coreDb, draft: draft3, intent: { ...intent("fix3-principal"), policy_decision_ref: "policy-evil" }, expiry: { expiry_intent_key: "expiry-evil", epoch_id: draft3.epoch_id, reason: "retention-expired" }, destination_policy: policy(), primary_failure_domain: "domain-primary", adapter: adapter3, now_ms: Date.now() })).rejects.toMatchObject({ code: "BACKUP_DESTINATION_POLICY_MISMATCH" });
     expect(adapter3.deletes).toBe(0);
+  });
+  it("refuses controller retention and hold drift with zero deletes", async () => {
     // Retention/hold drift on the controller grant.
     const h4 = await setup();
     const adapter4 = counting(createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" }));

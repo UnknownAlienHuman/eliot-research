@@ -4,7 +4,7 @@ import { createD1ErasureAuthority } from "./authority.js";
 import { createCloudflareErasureBackend } from "./backend.js";
 import { createD1ErasureInventory } from "./inventory.js";
 import { createManagedSearchErasureLocationPort } from "./provider-location.js";
-import { canonicalErasureJson } from "./canonical.js";
+import { erasureDigest } from "./canonical.js";
 import { projectionWorkPrefix } from "./empty-location-proof-r2.js";
 import { readEmptyProofAuthorityDigest } from "./empty-location-proof-authority.js";
 import type * as EmptyProofAuthorityModule from "./empty-location-proof-authority.js";
@@ -80,7 +80,7 @@ function emptyD1(): D1Database {
   } as unknown as D1Database;
 }
 
-function sourceRevisionInventoryD1(effectRows: readonly Record<string, unknown>[]): D1Database {
+function sourceRevisionInventoryD1(dependencyRows: readonly Record<string, unknown>[]): D1Database {
   const contentSha = "a".repeat(64);
   const sourceRow = {
     source_revision_ref: "revision-1",
@@ -126,14 +126,14 @@ function sourceRevisionInventoryD1(effectRows: readonly Record<string, unknown>[
               if (sql.includes("FROM raw_file_capture")) return { success: true, results: [] as T[] };
               if (sql.includes("FROM raw_normalized_admission")) return { success: true, results: [] as T[] };
               if (sql.includes("FROM projection_generation")) return { success: true, results: [] as T[] };
-              if (sql.includes("FROM projection_managed_item_effect")) {
-                const sourceRef = values[0];
+              if (sql.includes("FROM erasure_dependency_registry")) {
                 return {
                   success: true,
-                  results: effectRows.filter((row) => row.source_revision_ref === sourceRef) as T[],
+                  results: dependencyRows.filter((row) => sql.includes("location='Projection'")
+                    ? values.includes(row.exact_subject_ref) && row.location === "Projection"
+                    : row.exact_subject_ref === values[0]) as T[],
                 };
               }
-              if (sql.includes("FROM erasure_dependency_registry")) return { success: true, results: [] as T[] };
               throw new Error(`unexpected all query: ${sql}`);
             },
           };
@@ -224,28 +224,21 @@ describe("erasure closure completeness", () => {
       .rejects.toMatchObject({ code: "ERASURE_CLOSURE_INCOMPLETE" });
   });
 
-  it("enumerates only source-scoped Work keys and exact readback-verified provider keys", async () => {
+  it("enumerates the source-scoped Work prefix and exact registered provider dependency", async () => {
     const providerKey = "project-a/source/revision-1/item-1.md";
-    const readback = {
-      chunks_count: 1,
-      content_sha256: "d".repeat(64),
-      file_size: 17,
-      item_key: "item-1",
-      provider_item_id: "provider-item-1",
-      provider_key: providerKey,
-      readback_sha256: "e".repeat(64),
+    const dependencyIdentity = {
+      exact_subject_ref: "source-revision:revision-1",
+      location: "ProviderCopy",
+      canonical_ref: `ai-search:index-1:${providerKey}`,
+      provider_ref: "target-generation-1",
     };
-    const effect = {
-      source_revision_ref: "revision-1",
-      projection_generation: "canonical-generation-1",
-      managed_instance_id: "index-1",
-      managed_generation: "target-generation-1",
-      item_key: "item-1",
-      provider_key: providerKey,
-      state: "READBACK_VERIFIED",
-      provider_item_id: "provider-item-1",
-      readback_receipt_json: canonicalErasureJson(readback),
-      readback_sha256: "e".repeat(64),
+    const dependency = {
+      ...dependencyIdentity,
+      dependency_id: "provider-dependency-1",
+      object_identity_digest: await erasureDigest(dependencyIdentity),
+      shared_reference_key: null,
+      retention_or_hold_ref: null,
+      next_review_at: null,
     };
     const prefix = await projectionWorkPrefix("revision-1");
     const workKeys = [
@@ -261,7 +254,10 @@ describe("erasure closure completeness", () => {
       },
     } as unknown as R2Bucket;
     const inventory = createD1ErasureInventory({
-      core_database: sourceRevisionInventoryD1([effect]),
+      core_database: sourceRevisionInventoryD1([
+        dependency,
+        { ...dependency, dependency_id: "foreign-provider-dependency", exact_subject_ref: "source-revision:revision-2" },
+      ]),
       search_database: emptyD1(),
       work_bucket: workBucket,
     });
@@ -272,30 +268,34 @@ describe("erasure closure completeness", () => {
     ));
     const workTargets = closure.targets.filter((entry) => entry.location === "Projection");
     const providerTargets = closure.targets.filter((entry) => entry.location === "ProviderCopy");
-    expect(workTargets.map((entry) => entry.canonical_ref).sort()).toEqual(
-      workKeys.map((key) => `r2-work-prefix:${key}`).sort(),
-    );
-    expect(workTargets).not.toContainEqual(expect.objectContaining({ canonical_ref: `r2-work-prefix:${prefix}` }));
+    expect(workTargets).toHaveLength(1);
+    expect(workTargets[0]).toMatchObject({
+      canonical_ref: `r2-work-prefix:${prefix}`,
+      exact_subject_ref: "source-revision:revision-1",
+    });
     expect(providerTargets).toHaveLength(1);
     expect(providerTargets[0]).toMatchObject({
       canonical_ref: `ai-search:index-1:${providerKey}`,
       provider_ref: "target-generation-1",
+      exact_subject_ref: "source-revision:revision-1",
     });
   });
 
-  it("blocks a source-scoped provider effect without exact provider readback", async () => {
+  it("blocks provider closure without an exact source-scoped registered dependency", async () => {
+    const identity = {
+      exact_subject_ref: "source-revision:revision-2",
+      location: "ProviderCopy",
+      canonical_ref: "ai-search:index-1:project-a/source/revision-2/item-1.md",
+      provider_ref: "target-generation-1",
+    };
     const inventory = createD1ErasureInventory({
       core_database: sourceRevisionInventoryD1([{
-        source_revision_ref: "revision-1",
-        projection_generation: "canonical-generation-1",
-        managed_instance_id: "index-1",
-        managed_generation: "target-generation-1",
-        item_key: "item-1",
-        provider_key: "project-a/source/revision-1/item-1.md",
-        state: "UNKNOWN",
-        provider_item_id: null,
-        readback_receipt_json: null,
-        readback_sha256: null,
+        ...identity,
+        dependency_id: "foreign-provider-dependency",
+        object_identity_digest: await erasureDigest(identity),
+        shared_reference_key: null,
+        retention_or_hold_ref: null,
+        next_review_at: null,
       }]),
       search_database: emptyD1(),
     });

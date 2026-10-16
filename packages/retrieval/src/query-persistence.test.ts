@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 describe("typed read-only retrieval storage failure", () => {
   it("distinguishes a failed result SELECT from integrity refusals", async () => {
@@ -66,7 +66,13 @@ interface RawStatement {
 interface RawDatabase {
   prepare(sql: string): RawStatement;
   exec(sql: string): void;
+  close(): void;
 }
+const openedDatabases = new Set<RawDatabase>();
+afterEach(() => {
+  for (const database of openedDatabases) database.close();
+  openedDatabases.clear();
+});
 function sqliteBindings(sql: string, params: readonly unknown[]): never[] {
   const numbered = [...new Set(sql.match(/\?[1-9][0-9]*/gu) ?? [])];
   // Node 22's SQLite API treats ?NNN as named parameters, unlike later positional support.
@@ -145,6 +151,7 @@ function scopeFixture(overrides: Partial<ScopeSnapshot> = {}): ScopeSnapshot {
 
 function openDatabase(): { raw: RawDatabase; d1: RetrievalQueryD1 } {
   const raw = new DatabaseSync(":memory:") as unknown as RawDatabase;
+  openedDatabases.add(raw);
   for (const name of Object.keys(CORE_MIGRATIONS).sort()) {
     raw.exec(CORE_MIGRATIONS[name] as string);
   }
@@ -442,23 +449,21 @@ describe("Q3 D1 query persistence over migration 0021", () => {
     expect(count(raw, "retrieval_query_result")).toBe(1);
   });
 
-  it("persists nothing when the scope is expired or the grant is denied", async () => {
-    const expired = openDatabase();
-    seedAuthority(expired.raw, scopeFixture({ expires_at: "2026-01-01T00:00:00.000Z" }), true);
-    const expiredError = await queryError(createRetrievalQueryService(
-      portsFor(expired.d1, scopeFixture()),
-    ).query({ request: requestFor(scopeFixture()), idempotency_key: "expired-1" }));
-    expect(expiredError.code).toBe("RETRIEVAL_SCOPE_STALE");
-    expect(count(expired.raw, "retrieval_query_result")).toBe(0);
-    expect(count(expired.raw, "retrieval_query_trace")).toBe(0);
-    const denied = openDatabase();
-    seedAuthority(denied.raw, scopeFixture(), false);
-    const deniedError = await queryError(createRetrievalQueryService(
-      portsFor(denied.d1, scopeFixture()),
-    ).query({ request: requestFor(scopeFixture()), idempotency_key: "denied-1" }));
-    expect(deniedError.code).toBe("RETRIEVAL_AUTHORITY_STALE");
-    expect(count(denied.raw, "retrieval_query_result")).toBe(0);
-    expect(count(denied.raw, "retrieval_query_trace")).toBe(0);
+  // Each independent refusal gets one complete migration fixture and the existing test deadline.
+  it.each([
+    { reason: "expired scope", scope: scopeFixture({ expires_at: "2026-01-01T00:00:00.000Z" }),
+      withGrant: true, expectedCode: "RETRIEVAL_SCOPE_STALE", key: "expired-1" },
+    { reason: "denied grant", scope: scopeFixture(),
+      withGrant: false, expectedCode: "RETRIEVAL_AUTHORITY_STALE", key: "denied-1" },
+  ])("persists nothing for $reason", async ({ scope, withGrant, expectedCode, key }) => {
+    const { raw, d1 } = openDatabase();
+    seedAuthority(raw, scope, withGrant);
+    const error = await queryError(createRetrievalQueryService(
+      portsFor(d1, scopeFixture()),
+    ).query({ request: requestFor(scopeFixture()), idempotency_key: key }));
+    expect(error.code).toBe(expectedCode);
+    expect(count(raw, "retrieval_query_result")).toBe(0);
+    expect(count(raw, "retrieval_query_trace")).toBe(0);
   });
 
   it("refuses a substituted trace cursor with no stored rows", async () => {

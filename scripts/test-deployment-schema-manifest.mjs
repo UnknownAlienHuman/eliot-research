@@ -14,9 +14,11 @@ import {
 import { pinGeneratedDeploymentConfig } from "./lib/deployment-build-inputs.mjs";
 import { readDeploymentMigrationEntries } from "./lib/deployment-migrations.mjs";
 import { WRANGLER } from "./lib/local-launch.mjs";
+import { parseDeploymentJsonc } from "./lib/deployment-jsonc.mjs";
 
 const ACCOUNT_ID = "0123456789abcdef0123456789abcdef";
-const CORE_ASSETS = JSON.parse(await readFile(new URL("../apps/eliotr-core/wrangler.jsonc", import.meta.url), "utf8")).assets;
+const CORE_ASSETS = parseDeploymentJsonc(await readFile(new URL("../apps/eliotr-core/wrangler.jsonc", import.meta.url), "utf8"),
+  "canonical Worker configuration").assets;
 const CORE_ID = "11111111-1111-4111-8111-111111111111";
 const SEARCH_ID = "22222222-2222-4222-8222-222222222222";
 const FIXTURE_PREFIX = "eliotr-schema-manifest-test-";

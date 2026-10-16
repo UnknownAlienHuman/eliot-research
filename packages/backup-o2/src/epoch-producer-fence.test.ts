@@ -4,9 +4,13 @@ import { backupSha256Hex } from "./shared.js";
 import { canonicalizeSchemaSql } from "./migration-gate.js";
 import {
   BACKUP_PRODUCER_ERASURE_SCHEMA_SHA256,
+  BACKUP_PRODUCER_ERASURE_FEED_MIGRATION,
+  BACKUP_PRODUCER_ERASURE_FEED_SCHEMA_SHA256,
   BACKUP_PRODUCER_FENCE_MIGRATION_SHA256,
   BACKUP_PRODUCER_FENCE_SCHEMA_SHA256,
+  assertBackupProducerFenceMigrationAuthority,
 } from "./epoch-producer-fence.js";
+import { applyCanonicalCoreMigrations, recordCanonicalCoreMigrationLedger } from "./core-migration-fixture.js";
 import { openExportCut, type CutInputs } from "./coherent-cut.js";
 import m0001 from "../../../infra/d1/core/migrations/0001_initial.sql?raw";
 import m0008 from "../../../infra/d1/core/migrations/0008_erasure_closure.sql?raw";
@@ -88,6 +92,48 @@ async function schemaDigest(database: DatabaseSync, tableNames: readonly string[
 }
 
 describe("0116 backup producer state constraints", () => {
+  it("accepts the complete tracked schema with exact 0135 erasure feed authority", async () => {
+    const database = new DatabaseSync(":memory:");
+    try {
+      applyCanonicalCoreMigrations(database);
+      recordCanonicalCoreMigrationLedger(database, NOW);
+      expect(await schemaDigest(database, ["erasure_case", "erasure_execution"]))
+        .toBe(BACKUP_PRODUCER_ERASURE_FEED_SCHEMA_SHA256);
+      await expect(assertBackupProducerFenceMigrationAuthority(d1Database(database))).resolves.toBeUndefined();
+    } finally { database.close(); }
+  });
+
+  it.each(["missing-ledger", "missing-feed", "altered-feed", "altered-primary-guard", "extra-trigger"])(
+    "rejects %s in the complete tracked erasure schema", async (mode) => {
+      const database = new DatabaseSync(":memory:");
+      try {
+        applyCanonicalCoreMigrations(database);
+        recordCanonicalCoreMigrationLedger(database, NOW);
+        if (mode === "missing-ledger") database.prepare("DELETE FROM d1_migrations WHERE name=?1")
+          .run(BACKUP_PRODUCER_ERASURE_FEED_MIGRATION);
+        if (mode === "missing-feed") database.exec("DROP TRIGGER erasure_execution_completion_change_feed");
+        if (mode === "altered-feed" || mode === "altered-primary-guard") {
+          const name = mode === "altered-feed" ? "erasure_execution_completion_change_feed" : "erasure_execution_backup_primary_complete_guard";
+          database.exec(`DROP TRIGGER ${name}; CREATE TRIGGER ${name} AFTER UPDATE OF state ON erasure_execution BEGIN SELECT 1; END`);
+        }
+        if (mode === "extra-trigger") database.exec("CREATE TRIGGER unreviewed_erasure_trigger AFTER UPDATE ON erasure_execution BEGIN SELECT 1; END");
+        await expect(assertBackupProducerFenceMigrationAuthority(d1Database(database)))
+          .rejects.toMatchObject({ code: "BACKUP_TABLE_MISSING", detail: { schema: "erasure-state-tables" } });
+      } finally { database.close(); }
+    },
+  );
+
+  it("rejects a forged 0135 ledger row against the unchanged legacy erasure schema", async () => {
+    const database = openDatabase();
+    try {
+      await expect(assertBackupProducerFenceMigrationAuthority(d1Database(database))).resolves.toBeUndefined();
+      database.prepare("INSERT INTO d1_migrations(name,applied_at) VALUES (?1,?2)")
+        .run(BACKUP_PRODUCER_ERASURE_FEED_MIGRATION, NOW);
+      await expect(assertBackupProducerFenceMigrationAuthority(d1Database(database)))
+        .rejects.toMatchObject({ code: "BACKUP_TABLE_MISSING", detail: { schema: "erasure-state-tables" } });
+    } finally { database.close(); }
+  });
+
   it("pins the migration bytes and exact producer and 0117 erasure DDL", async () => {
     const database = openDatabase();
     try {
