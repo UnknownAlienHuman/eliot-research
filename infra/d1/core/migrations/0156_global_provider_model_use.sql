@@ -189,12 +189,36 @@ INSERT INTO research_provider_key_model_price_observation_0156_copy SELECT * FRO
 
 CREATE TABLE global_model_use_0156_copy_guard (ok INTEGER NOT NULL CHECK(ok=1));
 
--- An unexpected cascading/restricting child must abort before either parent is dropped.
+-- Native D1 authorizes constant-name FK pragmas, but rejects a correlated
+-- pragma_foreign_key_list(t.name). Inspect every known table with constants.
+-- Any other table mentioning either parent is schema drift and must abort
+-- before DROP, even if its FK action would otherwise be safe. A quoted or
+-- case-varied reference still contains the canonical ASCII parent name.
 INSERT INTO global_model_use_0156_copy_guard
 SELECT CASE WHEN NOT EXISTS (
-  SELECT 1 FROM sqlite_schema t JOIN pragma_foreign_key_list(t.name) fk
-  WHERE t.type='table' AND fk."table" IN ('research_provider_key_model_use_operation','research_provider_key_model_price_observation')
+  SELECT 1 FROM (
+    SELECT "table",on_delete FROM pragma_foreign_key_list('research_provider_key_model_use_operation')
+    UNION ALL
+    SELECT "table",on_delete FROM pragma_foreign_key_list('research_provider_key_model_use_operation_0156_copy')
+    UNION ALL
+    SELECT "table",on_delete FROM pragma_foreign_key_list('research_provider_key_model_use_stage_operation')
+    UNION ALL
+    SELECT "table",on_delete FROM pragma_foreign_key_list('research_provider_key_model_price_observation')
+    UNION ALL
+    SELECT "table",on_delete FROM pragma_foreign_key_list('research_provider_key_model_price_observation_0156_copy')
+  ) fk
+  WHERE lower(fk."table") IN ('research_provider_key_model_use_operation','research_provider_key_model_price_observation')
     AND fk.on_delete<>'NO ACTION'
+) AND NOT EXISTS (
+  SELECT 1 FROM sqlite_schema t
+  WHERE t.type='table' AND (
+    instr(lower(t.sql),'research_provider_key_model_use_operation')>0
+    OR instr(lower(t.sql),'research_provider_key_model_price_observation')>0
+  ) AND lower(t.name) NOT IN (
+    'research_provider_key_model_use_operation','research_provider_key_model_use_operation_0156_copy',
+    'research_provider_key_model_use_stage_operation','research_provider_key_model_price_observation',
+    'research_provider_key_model_price_observation_0156_copy'
+  )
 ) THEN 1 ELSE 0 END;
 
 INSERT INTO global_model_use_0156_copy_guard SELECT CASE WHEN

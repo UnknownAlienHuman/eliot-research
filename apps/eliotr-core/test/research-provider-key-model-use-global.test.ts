@@ -2,7 +2,7 @@ import { applyD1Migrations, env as generatedEnv } from "cloudflare:test";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { RESEARCH_PROVIDER_KEY_MODEL_USE_PROTOCOL, SERVICE_MODEL_PROVIDER_CREATE_PROTOCOL } from "@eliotr/contracts";
 import { createServiceModelProviderService, type ServiceModelProviderManagementPort } from "@eliotr/cloudflare-model-control/service-model-provider-service.js";
-import { readConfiguredProviderKeyOperation } from "@eliotr/cloudflare-model-control/research-provider-key-configured-operation.js";
+import { readConfiguredProviderKeyOperation } from "@eliotr/cloudflare-model-control";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import type { Env } from "../src/env.js";
 import { createGlobalServiceProviderKeyConfiguration } from "../src/research-provider-key-model-use-composition.js";
@@ -55,6 +55,26 @@ async function setup(modelIds: readonly string[]) {
 }
 
 describe("registered global model check-and-use", () => {
+  it("keeps the native D1 pre-DROP guard fail-closed for an unexpected cascading child", async () => {
+    const migration = env.CORE_MIGRATIONS.find((item) => item.name.startsWith("0156_global_provider_model_use"));
+    const guard = migration?.queries.find((query) => query.includes("pragma_foreign_key_list('research_provider_key_model_use_stage_operation')"));
+    if (guard === undefined) throw new Error("Migration 0156 cascade safety guard is missing");
+    await env.CORE_DB.prepare(
+      "CREATE TABLE global_model_use_cascade_fixture (owner_id TEXT,project_id TEXT,operation_id TEXT," +
+      "FOREIGN KEY(owner_id,project_id,operation_id) REFERENCES research_provider_key_model_use_operation(owner_id,project_id,operation_id) ON DELETE CASCADE)",
+    ).run();
+    try {
+      await expect(env.CORE_DB.batch([
+        env.CORE_DB.prepare("CREATE TABLE global_model_use_0156_copy_guard (ok INTEGER NOT NULL CHECK(ok=1))"),
+        env.CORE_DB.prepare(guard),
+      ])).rejects.toThrow(/CHECK constraint/u);
+      expect(await env.CORE_DB.prepare("SELECT name FROM sqlite_schema WHERE name='global_model_use_0156_copy_guard'").first()).toBeNull();
+      expect((await env.CORE_DB.prepare("PRAGMA foreign_key_check").all()).results).toEqual([]);
+    } finally {
+      await env.CORE_DB.prepare("DROP TABLE global_model_use_cascade_fixture").run();
+    }
+  });
+
   it("uses real price/qualification/selection services with mocked I/O for exact global Dots pins", async () => {
     const fixture = await setup([DOTS]);
     const pricing = vi.fn(async (_resource: RequestInfo | URL) => freeOnlyCatalogResponse(DOTS));
