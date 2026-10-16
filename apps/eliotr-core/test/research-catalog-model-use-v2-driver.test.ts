@@ -166,8 +166,17 @@ describe("default generic catalog model-use composition", () => {
       AI_GATEWAY_REASONING_URL: GATEWAY_BASE,
     });
     const requests: Array<{ url: string; body: Record<string, unknown>; alias: string | null }> = [];
+    let requestConstructionFailure: string | undefined;
     const fetcher: typeof fetch = async (input, init) => {
-      const url = String(input);
+      // Exercise native Workers request-option validation before the controlled
+      // transport boundary, as the real global fetch does.
+      let request: Request;
+      try { request = new Request(input, init); }
+      catch (error) {
+        requestConstructionFailure = error instanceof Error ? error.message : String(error);
+        throw error;
+      }
+      const url = request.url;
       if (url === "https://models.dev/api.json") {
         return new Response(providerCatalog(), { status: 200, headers: { "content-type": "application/json" } });
       }
@@ -193,6 +202,7 @@ describe("default generic catalog model-use composition", () => {
       operation_id: catalogOperation, expected_selection_revision: null, provider_id: "opencode-go",
       model_id: MODEL, provider_operation_id: providerOperation });
 
+    expect(requestConstructionFailure, "native Workers request initialization").toBeUndefined();
     expect(receipt).toMatchObject({ state: "selected", phase: "complete", failure_code: null, provider_id: "opencode-go",
       provider_operation_id: providerOperation, model_id: MODEL });
     expect(receipt.selected_configuration_ref).toBe(`rpmc-${receipt.selected_configuration_sha256}`);

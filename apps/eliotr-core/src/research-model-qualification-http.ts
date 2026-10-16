@@ -10,7 +10,7 @@ import {
   type ResearchModelGatewayRuntimeConfig,
   type ResearchQualificationPromptConfig,
 } from "@eliotr/cloudflare-research";
-import { selectResearchOwnerPrompt } from "@eliotr/cloudflare-research-stages";
+import { matchResearchOwnerPrompt } from "@eliotr/cloudflare-research-stages";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { WorkflowCheckpointError } from "@eliotr/cloudflare-workflows";
 import { readJsonBodyWithinBytes } from "./bounded-json.js";
@@ -48,7 +48,7 @@ function qualificationStage(
     : routeRef === "dynamic/eliotr-audit-verifier" ? "AUDIT_CLAIMS" : invalid();
 }
 
-/** Only the two server-owned document prompts may use this setup endpoint. */
+/** Only exact installed document prompt revisions may use this setup endpoint. */
 async function requireOwnerPrompt(
   probe: DynamicRouteQualificationProbeInput,
   prompt: ResearchQualificationPromptConfig,
@@ -56,30 +56,29 @@ async function requireOwnerPrompt(
 ): Promise<void> {
   const deployment = probe.provisioning.deployment;
   const stage = qualificationStage(probe);
-  for (const outputFormat of ["prompt_json", "json_schema"] as const) {
-    const selected = selectResearchOwnerPrompt(stage, outputFormat);
-    const trusted = {
-      prompt: selected.prompt,
-      max_tokens: prompt.trusted_parameters.max_tokens,
-      ...(selected.response_format === undefined ? {} : { response_format: selected.response_format }),
-      ...(prompt.trusted_parameters.reasoning_effort === undefined
-        ? {} : { reasoning_effort: prompt.trusted_parameters.reasoning_effort }),
-    };
-    if (canonicalModelGatewayJson(trusted) !== canonicalModelGatewayJson(prompt.trusted_parameters)) continue;
-    const plan = await createResearchOwnerRoutePlan({
-      stage, output_format: outputFormat,
-      route_ref: deployment.route_ref,
-      route_version: deployment.route_version,
-      pricing_snapshot_ref: deployment.pricing_snapshot_ref,
-      max_tokens: trusted.max_tokens,
-      ...(prompt.trusted_parameters.reasoning_effort === undefined
-        ? {} : { reasoning_effort: prompt.trusted_parameters.reasoning_effort }),
-      ...(transportPolicy === undefined ? {} : { transport_policy: transportPolicy }),
-      route_definition: probe.route_definition,
-    });
-    if (canonicalModelGatewayJson(plan.deployment) === canonicalModelGatewayJson(deployment)) return;
-  }
-  invalid();
+  const matched = matchResearchOwnerPrompt(stage, prompt.trusted_parameters);
+  if (matched === null) invalid();
+  const selected = matched.definition;
+  const trusted = {
+    prompt: selected.prompt,
+    max_tokens: prompt.trusted_parameters.max_tokens,
+    ...(selected.response_format === undefined ? {} : { response_format: selected.response_format }),
+    ...(prompt.trusted_parameters.reasoning_effort === undefined
+      ? {} : { reasoning_effort: prompt.trusted_parameters.reasoning_effort }),
+  };
+  if (canonicalModelGatewayJson(trusted) !== canonicalModelGatewayJson(prompt.trusted_parameters)) invalid();
+  const plan = await createResearchOwnerRoutePlan({
+    stage, output_format: matched.output_format, prompt_revision: matched.revision,
+    route_ref: deployment.route_ref,
+    route_version: deployment.route_version,
+    pricing_snapshot_ref: deployment.pricing_snapshot_ref,
+    max_tokens: trusted.max_tokens,
+    ...(prompt.trusted_parameters.reasoning_effort === undefined
+      ? {} : { reasoning_effort: prompt.trusted_parameters.reasoning_effort }),
+    ...(transportPolicy === undefined ? {} : { transport_policy: transportPolicy }),
+    route_definition: probe.route_definition,
+  });
+  if (canonicalModelGatewayJson(plan.deployment) !== canonicalModelGatewayJson(deployment)) invalid();
 }
 
 /** Credential/alias assembly for an already-parsed owner qualification; performs no model dispatch. */

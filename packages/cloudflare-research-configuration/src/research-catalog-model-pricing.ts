@@ -469,7 +469,9 @@ export async function readVerifiedCatalogModelPricing(
   try {
     response = await fetcher(SOURCE_URL, {
       method: "GET",
-      redirect: "error",
+      // Workers rejects redirect:"error" while constructing the request.
+      // Manual mode preserves the fail-closed status/URL checks below.
+      redirect: "manual",
       credentials: "omit",
       cache: "no-store",
       ...(input.signal === undefined ? {} : { signal: input.signal }),

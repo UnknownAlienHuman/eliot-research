@@ -28,7 +28,7 @@ import {
 } from "@eliotr/cloudflare-native-models";
 import { APPLICATION_MODEL_ROUTES } from "@eliotr/platform-cloudflare";
 import { parseResearchPreparedModelTransportPolicies } from "@eliotr/cloudflare-model-control/research-prepared-model-transport-policies.js";
-import { selectResearchOwnerPrompt } from "@eliotr/cloudflare-research-stages";
+import { matchResearchOwnerPrompt } from "@eliotr/cloudflare-research-stages";
 import { parseResearchSemanticConfiguration } from "./research-semantic-configuration-schema.js";
 import type { SelectedResearchProjectConfiguration } from "./research-project-configuration.js";
 import type { ConfiguredResearchProviderKeyOperation } from "@eliotr/cloudflare-model-control";
@@ -147,13 +147,8 @@ function jsonSchemaPrompt(
   stage: "SYNTHESIZE" | "AUDIT_CLAIMS",
 ) {
   const configured = stage === "SYNTHESIZE" ? semantic.synthesis.trusted_parameters : semantic.audit.trusted_parameters;
-  for (const format of ["prompt_json", "json_schema"] as const) {
-    const selected = selectResearchOwnerPrompt(stage, format);
-    if (selected.prompt === configured.prompt &&
-        canonicalModelGatewayJson(selected.response_format ?? null) === canonicalModelGatewayJson(configured.response_format ?? null)) {
-      return selected;
-    }
-  }
+  const matched = matchResearchOwnerPrompt(stage, configured);
+  if (matched !== null) return matched.definition;
   return fail(`${stage} prompt/schema is not an installed owner prompt`);
 }
 

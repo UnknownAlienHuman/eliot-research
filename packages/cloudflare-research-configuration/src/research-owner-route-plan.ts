@@ -12,6 +12,7 @@ import {
   parseResearchOwnerOutputFormat,
   selectResearchOwnerPrompt,
   type ResearchOwnerOutputFormat,
+  type ResearchOwnerPromptRevision,
 } from "@eliotr/cloudflare-research-stages";
 import {
   parseResearchOwnerReasoningEffort,
@@ -36,6 +37,8 @@ export interface ResearchOwnerRoutePlanInput {
   readonly max_tokens: number;
   readonly route_definition: unknown;
   readonly output_format?: ResearchOwnerOutputFormat;
+  /** Omitted means immutable legacy v1; v2 is available only for AUDIT_CLAIMS. */
+  readonly prompt_revision?: ResearchOwnerPromptRevision;
   readonly reasoning_effort?: ResearchOwnerReasoningEffort;
   /** Exact transport selected for this stage; omitted for legacy routes. */
   readonly transport_policy?: ModelGatewayTransportPolicyV1;
@@ -99,7 +102,7 @@ export async function createResearchOwnerRoutePlan(
   } catch {
     throw new Error("research owner reasoning_effort is invalid");
   }
-  const prompt = selectResearchOwnerPrompt(stage, outputFormat);
+  const prompt = selectResearchOwnerPrompt(stage, outputFormat, input.prompt_revision);
   let transportPolicy: ModelGatewayTransportPolicyV1 | undefined;
   if (input.transport_policy !== undefined) {
     try {

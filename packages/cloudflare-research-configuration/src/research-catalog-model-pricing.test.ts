@@ -262,7 +262,7 @@ describe("readVerifiedCatalogModelPricing", () => {
     expect(requestUrl).toBe("https://models.dev/api.json");
     expect(requestInit).toMatchObject({
       method: "GET",
-      redirect: "error",
+      redirect: "manual",
       credentials: "omit",
       cache: "no-store",
     });

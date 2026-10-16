@@ -488,7 +488,7 @@ async function executeObservedModelGatewayCall(
       method: request.method,
       headers: request.headers,
       body: request.body,
-      redirect: "error",
+      redirect: "manual",
     });
   } catch (cause) {
     // A transport-thrown error cannot carry compiler non-dispatch authority,
@@ -505,6 +505,10 @@ async function executeObservedModelGatewayCall(
       "MODEL_GATEWAY_RESPONSE_INVALID",
       "AI Gateway transport returned a non-Response value",
     );
+  }
+  if (rawResponse.redirected) {
+    await rawResponse.body?.cancel().catch(() => undefined);
+    modelGatewayExecutionFailure("MODEL_GATEWAY_RESPONSE_INVALID", "AI Gateway redirects are not supported");
   }
   if (!rawResponse.ok) await rejectModelGatewayHttpFailure(rawResponse);
 

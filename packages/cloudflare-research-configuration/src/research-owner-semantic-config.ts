@@ -3,10 +3,12 @@ import { canonicalJson } from "@eliotr/platform-cloudflare";
 import {
   parseResearchClaimAuditPolicy,
   parseResearchOwnerOutputFormat,
+  parseResearchOwnerPromptRevision,
   selectResearchOwnerPrompt,
   type ResearchClaimAuditPolicy,
   type ResearchOwnerJsonResponseFormat,
   type ResearchOwnerOutputFormat,
+  type ResearchOwnerPromptRevision,
 } from "@eliotr/cloudflare-research-stages";
 
 const PROTOCOL = "eliotr.research-semantic-config.v1" as const;
@@ -37,6 +39,8 @@ export type ResearchOwnerNormalizationInput = Readonly<{
 }>;
 
 export type ResearchOwnerAuditConfigurationInput = ResearchOwnerPromptLimits & Readonly<{
+  /** Opt-in asset revision; omission preserves exact legacy semantic bytes. */
+  prompt_revision?: ResearchOwnerPromptRevision;
   verifier_ref: string;
   verifier_schema_generation: string;
   allowed_verifier_refs: readonly string[];
@@ -162,7 +166,10 @@ function auditInput(value: unknown): ResearchOwnerAuditConfigurationInput {
   exactKeys(input, [
     "max_tokens", "request_timeout_ms", "verifier_ref", "verifier_schema_generation",
     "allowed_verifier_refs", "policy",
-  ], "audit", ["reasoning_effort"]);
+  ], "audit", ["reasoning_effort", "prompt_revision"]);
+  let promptRevision: ResearchOwnerPromptRevision;
+  try { promptRevision = parseResearchOwnerPromptRevision("AUDIT_CLAIMS", input.prompt_revision); }
+  catch { invalid("audit.prompt_revision is invalid"); }
   const limits = promptLimits({
     max_tokens: input.max_tokens,
     request_timeout_ms: input.request_timeout_ms,
@@ -181,6 +188,7 @@ function auditInput(value: unknown): ResearchOwnerAuditConfigurationInput {
   }
   return Object.freeze({
     ...limits,
+    prompt_revision: promptRevision,
     verifier_ref: verifierRef,
     verifier_schema_generation: identifier(input.verifier_schema_generation, "audit.verifier_schema_generation"),
     allowed_verifier_refs: allowedVerifierRefs,
@@ -226,7 +234,7 @@ export function createResearchOwnerSemanticConfiguration(
   const audit = auditInput(setup.audit);
   const normalization = normalizationInput(setup.normalization);
   const synthesisPrompt = selectResearchOwnerPrompt("SYNTHESIZE", outputFormat);
-  const auditPrompt = selectResearchOwnerPrompt("AUDIT_CLAIMS", outputFormat);
+  const auditPrompt = selectResearchOwnerPrompt("AUDIT_CLAIMS", outputFormat, audit.prompt_revision);
   const configuration = {
     protocol: PROTOCOL,
     synthesis: {

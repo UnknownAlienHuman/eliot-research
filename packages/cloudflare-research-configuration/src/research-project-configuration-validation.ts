@@ -31,7 +31,7 @@ import {
   type ResearchProjectModelSelection,
 } from "@eliotr/cloudflare-research";
 import { BranchQueryPlanSchema, IdentifierSchema } from "@eliotr/contracts";
-import { selectResearchOwnerPrompt } from "@eliotr/cloudflare-research-stages";
+import { matchResearchOwnerPrompt } from "@eliotr/cloudflare-research-stages";
 import { parseResearchSemanticConfiguration } from "./research-semantic-configuration-schema.js";
 import {
   readResearchOwnerReportAdmissionTemplate,
@@ -85,10 +85,6 @@ function exactKeys(value: Record<string, unknown>, expected: readonly string[], 
 
 function same(left: unknown, right: unknown): boolean {
   return canonicalJson(left) === canonicalJson(right);
-}
-
-function sameOptional(left: unknown, right: unknown): boolean {
-  return left === undefined || right === undefined ? left === right : same(left, right);
 }
 
 function qualificationRequired(message: string, cause?: unknown): never {
@@ -210,19 +206,12 @@ async function validateOwnerPromptBinding(
   transportPolicy: ResearchProjectModelSelection["transport_policy"],
 ): Promise<void> {
   const configured = stage === "SYNTHESIZE" ? semantic.synthesis : semantic.audit;
-  let promptMatch: ReturnType<typeof selectResearchOwnerPrompt> | undefined;
-  for (const format of ["prompt_json", "json_schema"] as const) {
-    const prompt = selectResearchOwnerPrompt(stage, format);
-    if (prompt.prompt === configured.trusted_parameters.prompt &&
-        sameOptional(prompt.response_format, configured.trusted_parameters.response_format)) {
-      promptMatch = prompt;
-      break;
-    }
-  }
-  if (promptMatch === undefined) {
+  const matched = matchResearchOwnerPrompt(stage, configured.trusted_parameters);
+  if (matched === null) {
     fail("RESEARCH_PROJECT_MODEL_CONFIGURATION_INPUT_INVALID", 400,
       `${stage} prompt/schema bytes do not match a supported immutable prompt bundle`);
   }
+  const promptMatch = matched.definition;
   const p = configured.trusted_parameters;
   const params = {
     model: deployment.route_ref,
