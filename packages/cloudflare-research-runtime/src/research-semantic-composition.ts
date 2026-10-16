@@ -29,6 +29,7 @@ import {
   type EvidenceFreezeCompositionDependencies,
   type EvidenceFreezeManifestStoreFactory,
   type EvidenceFreezeSynthesisContextReader,
+  type EvidenceFreezeSynthesisReaderEnvironment,
   type ResearchBranchRoleModelExecutor,
 } from "@eliotr/cloudflare-research-branches";
 import {
@@ -159,6 +160,20 @@ function composeAuditPrompt(
   });
 }
 
+function postModelBindingResolver(
+  producer: ReturnType<typeof createPersistedModelProfileBindingProducer>,
+  navigation: NavigationReadAuthority,
+): NonNullable<EvidenceFreezeSynthesisReaderEnvironment["resolve_post_model_binding"]> {
+  return async ({ protocol_scope, w1_head, frozen_definition }) => (await producer.resolveForPostModelReadback({
+    model_profile_ref: protocol_scope.protocol_profile.model_profile_ref,
+    policy_generation: w1_head.policy_generation,
+    policy_authority_ref: w1_head.policy_authority_ref,
+    deployment_generation: w1_head.deployment_generation,
+    scope_snapshot_ref: protocol_scope.scope_snapshot_ref,
+    scope_snapshot_digest: navigation.scope.digest,
+  }, frozen_definition)).binding;
+}
+
 /**
  * Builds one server-owned semantic graph for a single workflow run. The run
  * identity is captured before any asynchronous stage read; profile and route
@@ -251,6 +266,7 @@ export function createResearchSemanticComposition(
     work_bucket: input.work_bucket,
     manifest_store: manifestStore,
     read_stage_five: readers.read_stage_five,
+    resolve_post_model_binding: postModelBindingResolver(modelProfile, input.navigation),
   };
   const synthesisContext = createEvidenceFreezeSynthesisContextReader(
     readerEnvironment,
@@ -408,6 +424,7 @@ export function createResearchSemanticWorkflowHandlerFactory(
     work_bucket: input.work_bucket,
     manifest_store: semantic.manifest_store,
     read_stage_five: semantic.readers.read_stage_five,
+    resolve_post_model_binding: postModelBindingResolver(semantic.model_profile, semantic.navigation),
   };
   const acquisitionSelection = input.native_acquisition_selection;
   const acquisitionRoute = acquisitionSelection === undefined ||

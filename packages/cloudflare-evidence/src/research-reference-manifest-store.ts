@@ -55,46 +55,75 @@ export interface ResearchReferenceManifestStore extends ReferenceManifestStore {
   readReceipt(ref: VersionedRef): Promise<ReferenceManifestReceipt | null>;
 }
 
+/** Server-internal lineage readback, never a caller-provided permission or a renewed lease. */
+export interface PostModelReadbackManifestContext {
+  readonly purpose: "POST_MODEL_READBACK";
+  readonly stage: "RESOLVE_CITATIONS" | "CALCULATE_COVERAGE" | "MATERIALIZE";
+  readonly operation_id: string;
+  readonly investigation_id: string;
+  readonly principal_ref: string;
+  readonly credential_generation: string;
+  readonly scope_snapshot_ref: VersionedRef;
+  readonly stage_five_attempt_ref: string;
+  readonly stage_five_request_sha256: string;
+  /** Obtained through the canonical committed-request/receipt reader, in workflow order. */
+  readonly committed_model_stages: readonly {
+    readonly stage: "SYNTHESIZE" | "VERIFY" | "AUDIT_CLAIMS";
+    readonly operation_id: string;
+    readonly investigation_id: string;
+    readonly attempt_ref: string;
+    readonly request_sha256: string;
+    readonly receipt_ref: string;
+  }[];
+}
+
+export interface ResearchReferenceManifestReader extends Pick<ReferenceManifestStore, "get"> {
+  getForPostModelReadback(ref: VersionedRef, context: PostModelReadbackManifestContext): Promise<AllowedReferenceManifest | null>;
+}
+
 /** Read a saved manifest with its persisted storage binding and current owner authority. */
 export function createResearchReferenceManifestReader(input: {
   readonly database: D1Database;
   readonly work_bucket: R2Bucket;
   readonly navigation: NavigationReadAuthority;
-}): Pick<ReferenceManifestStore, "get"> {
+}): ResearchReferenceManifestReader {
+  async function read(rawRef: VersionedRef, retained?: PostModelReadbackManifestContext): Promise<AllowedReferenceManifest | null> {
+    const ref = VersionedRefSchema.safeParse(rawRef);
+    if (!ref.success) fail("REFERENCE_MANIFEST_INPUT_INVALID", "manifest reference is invalid");
+    const access = input.navigation.access;
+    const scope = input.navigation.scope;
+    let found: ManifestRow | null;
+    try {
+      found = await input.database.prepare(
+        "SELECT * FROM research_reference_manifest WHERE manifest_id=?1 AND manifest_revision=?2 " +
+        "AND principal_ref=?3 AND credential_generation=?4 AND scope_snapshot_id=?5 AND scope_snapshot_revision=?6",
+      ).bind(ref.data.id, ref.data.revision, access.principal_ref, access.credential_generation,
+        scope.snapshot_id, scope.revision).first<ManifestRow>();
+    } catch (cause) {
+      fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "manifest storage binding is unavailable", true, cause);
+    }
+    if (found === null || found.state !== "COMMITTED") return null;
+    const row = validateRow(found);
+    const context: ReferenceManifestStorageContext = {
+      principal_ref: row.principal_ref,
+      credential_generation: row.credential_generation,
+      scope_snapshot_ref: { id: row.scope_snapshot_id, revision: row.scope_snapshot_revision },
+      manifest_residency_key: ObjectResidencyKeySchema.parse(JSON.parse(row.r2_residency_key_json)),
+      policy_authority_ref: row.policy_authority_ref,
+      authorization_receipt_ref: row.authorization_receipt_ref,
+      scope_snapshot_digest: row.scope_snapshot_digest,
+      pack_ref: { id: row.pack_ref_id, revision: row.pack_ref_revision },
+      trace_ref: { id: row.trace_ref_id, revision: row.trace_ref_revision },
+      stage_attempt_ref: row.stage_attempt_ref,
+      stage_request_sha256: row.stage_request_sha256,
+      created_at: row.created_at,
+    };
+    const store = createResearchReferenceManifestStore({ ...input, context });
+    return retained === undefined ? store.get(ref.data) : store.getForPostModelReadback(ref.data, retained);
+  }
   return Object.freeze({
-    async get(rawRef: VersionedRef): Promise<AllowedReferenceManifest | null> {
-      const ref = VersionedRefSchema.safeParse(rawRef);
-      if (!ref.success) fail("REFERENCE_MANIFEST_INPUT_INVALID", "manifest reference is invalid");
-      const access = input.navigation.access;
-      const scope = input.navigation.scope;
-      let found: ManifestRow | null;
-      try {
-        found = await input.database.prepare(
-          "SELECT * FROM research_reference_manifest WHERE manifest_id=?1 AND manifest_revision=?2 " +
-          "AND principal_ref=?3 AND credential_generation=?4 AND scope_snapshot_id=?5 AND scope_snapshot_revision=?6",
-        ).bind(ref.data.id, ref.data.revision, access.principal_ref, access.credential_generation,
-          scope.snapshot_id, scope.revision).first<ManifestRow>();
-      } catch (cause) {
-        fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "manifest storage binding is unavailable", true, cause);
-      }
-      if (found === null || found.state !== "COMMITTED") return null;
-      const row = validateRow(found);
-      const context: ReferenceManifestStorageContext = {
-        principal_ref: row.principal_ref,
-        credential_generation: row.credential_generation,
-        scope_snapshot_ref: { id: row.scope_snapshot_id, revision: row.scope_snapshot_revision },
-        manifest_residency_key: ObjectResidencyKeySchema.parse(JSON.parse(row.r2_residency_key_json)),
-        policy_authority_ref: row.policy_authority_ref,
-        authorization_receipt_ref: row.authorization_receipt_ref,
-        scope_snapshot_digest: row.scope_snapshot_digest,
-        pack_ref: { id: row.pack_ref_id, revision: row.pack_ref_revision },
-        trace_ref: { id: row.trace_ref_id, revision: row.trace_ref_revision },
-        stage_attempt_ref: row.stage_attempt_ref,
-        stage_request_sha256: row.stage_request_sha256,
-        created_at: row.created_at,
-      };
-      return createResearchReferenceManifestStore({ ...input, context }).get(ref.data);
-    },
+    get: (rawRef: VersionedRef) => read(rawRef),
+    getForPostModelReadback: (rawRef: VersionedRef, context: PostModelReadbackManifestContext) => read(rawRef, context),
   });
 }
 
@@ -318,6 +347,7 @@ function validateManifestGrant(
   grant: Awaited<ReturnType<NavigationReadAuthority["current"]>>,
   scope: NavigationReadAuthority["scope"],
   now: string,
+  purpose?: "POST_MODEL_READBACK",
 ): void {
   if (manifest.allowed_use.some((use) => !grant.allowed_use.includes(use)) ||
       manifest.disclosure_ceiling !== grant.disclosure_ceiling) {
@@ -328,8 +358,34 @@ function validateManifestGrant(
   const grantExpiry = Date.parse(grant.expires_at);
   const nowMs = Date.parse(now);
   if (![manifestExpiry, scopeExpiry, grantExpiry, nowMs].every(Number.isSafeInteger) ||
-      manifestExpiry <= nowMs || manifestExpiry > scopeExpiry || manifestExpiry > grantExpiry) {
+      scopeExpiry <= nowMs || grantExpiry <= nowMs ||
+      (purpose !== "POST_MODEL_READBACK" && manifestExpiry <= nowMs) ||
+      manifestExpiry > scopeExpiry || manifestExpiry > grantExpiry) {
     fail("REFERENCE_MANIFEST_SCOPE_STALE", "manifest expiry is outside current authorization", true);
+  }
+}
+
+function validatePostModelReadback(context: PostModelReadbackManifestContext, stored: ReferenceManifestStorageContext): void {
+  if (context?.purpose !== "POST_MODEL_READBACK" ||
+      !["RESOLVE_CITATIONS", "CALCULATE_COVERAGE", "MATERIALIZE"].includes(context.stage) ||
+      context.principal_ref !== stored.principal_ref || context.credential_generation !== stored.credential_generation ||
+      refKey(ref(context.scope_snapshot_ref, "readback scope")) !== refKey(stored.scope_snapshot_ref) ||
+      context.stage_five_attempt_ref !== stored.stage_attempt_ref ||
+      context.stage_five_request_sha256 !== stored.stage_request_sha256 ||
+      !Array.isArray(context.committed_model_stages) || context.committed_model_stages.length !== 3) {
+    fail("REFERENCE_MANIFEST_INPUT_INVALID", "retained read requires exact post-model lineage and storage binding");
+  }
+  text(context.operation_id, "readback operation");
+  text(context.investigation_id, "readback investigation");
+  const stages = ["SYNTHESIZE", "VERIFY", "AUDIT_CLAIMS"];
+  for (const [index, committed] of context.committed_model_stages.entries()) {
+    if (committed.stage !== stages[index] || committed.operation_id !== context.operation_id ||
+        committed.investigation_id !== context.investigation_id) {
+      fail("REFERENCE_MANIFEST_INPUT_INVALID", "retained read is outside the committed model lineage");
+    }
+    text(committed.attempt_ref, "committed model attempt");
+    sha(committed.request_sha256, "committed model request");
+    text(committed.receipt_ref, "committed model receipt");
   }
 }
 
@@ -381,7 +437,7 @@ export function createResearchReferenceManifestStore(input: {
   readonly work_bucket: R2Bucket;
   readonly context: ReferenceManifestStorageContext;
   readonly navigation: NavigationReadAuthority;
-}): ResearchReferenceManifestStore {
+}): ResearchReferenceManifestStore & ResearchReferenceManifestReader {
   validateContext(input.context);
   const database = input.database;
   const store = createR2EvidenceObjectStore(input.work_bucket);
@@ -415,6 +471,14 @@ export function createResearchReferenceManifestStore(input: {
     return database.prepare(
       "SELECT manifest_id, manifest_revision, manifest_digest, r2_content_sha256, r2_residency_key_json, r2_residency_key_digest, r2_key, r2_etag, r2_size_bytes, scope_snapshot_id, scope_snapshot_revision, scope_snapshot_digest, policy_authority_ref, authorization_receipt_ref, principal_ref, credential_generation, pack_ref_id, pack_ref_revision, trace_ref_id, trace_ref_revision, stage_attempt_ref, stage_request_sha256, state, created_at, expires_at FROM research_reference_manifest WHERE manifest_id=?1 AND manifest_revision=?2 LIMIT 1",
     ).bind(refValue.id, refValue.revision).first<ManifestRow>();
+  }
+
+  async function currentSources(grant: Awaited<ReturnType<typeof ensureCurrent>>) {
+    try { return await input.navigation.sources(input.navigation.scope.member_source_revision_refs, grant); }
+    catch (cause) {
+      if (isNavigationScopeError(cause)) fail("REFERENCE_MANIFEST_SCOPE_STALE", "retained manifest source authority is stale", true, cause);
+      throw cause;
+    }
   }
 
   async function receipt(refValue: VersionedRef): Promise<ReferenceManifestReceipt | null> {
@@ -503,24 +567,39 @@ export function createResearchReferenceManifestStore(input: {
     return { ...final, existed_identically: r2Receipt.existed_identically };
   }
 
+  async function readManifest(refValue: VersionedRef, retained?: PostModelReadbackManifestContext): Promise<AllowedReferenceManifest | null> {
+    if (retained !== undefined) validatePostModelReadback(retained, input.context);
+    const found = await find(refValue);
+    if (found === null || found.state !== "COMMITTED") return null;
+    const row = validateRow(found);
+    const residencyDigest = await objectResidencyKeyDigest(input.context.manifest_residency_key);
+    if (!contextMatchesRow(row, input.context, residencyDigest)) fail("REFERENCE_MANIFEST_INPUT_INVALID", "manifest read is outside its exact authority binding");
+    const before = await ensureCurrent();
+    const sourcesBefore = retained === undefined ? undefined
+      : await currentSources(before);
+    const readback = await readR2(store, row);
+    if (retained !== undefined && readback.manifest.allowed_source_revision_refs.some((source) =>
+      !input.navigation.scope.member_source_revision_refs.includes(source))) {
+      fail("REFERENCE_MANIFEST_SCOPE_STALE", "retained manifest source is outside the current frozen scope", true);
+    }
+    const sourcesAfter = retained === undefined ? undefined
+      : await currentSources(before);
+    const after = await ensureCurrent();
+    if (canonicalEvidenceJson(before) !== canonicalEvidenceJson(after) ||
+        (retained !== undefined && canonicalEvidenceJson(sourcesBefore) !== canonicalEvidenceJson(sourcesAfter))) {
+      fail("REFERENCE_MANIFEST_SCOPE_STALE", "manifest authorization changed during readback", true);
+    }
+    validateManifestGrant(readback.manifest, before, input.navigation.scope, input.navigation.timestamp(), retained?.purpose);
+    validateManifestGrant(readback.manifest, after, input.navigation.scope, input.navigation.timestamp(), retained?.purpose);
+    return AllowedReferenceManifestSchema.parse(JSON.parse(readback.json));
+  }
+
   return {
     async put(manifest) {
       return (await persist(manifest)).manifest_ref;
     },
-    async get(refValue) {
-      const found = await find(refValue);
-      if (found === null || found.state !== "COMMITTED") return null;
-      const row = validateRow(found);
-      const residencyDigest = await objectResidencyKeyDigest(input.context.manifest_residency_key);
-      if (!contextMatchesRow(row, input.context, residencyDigest)) fail("REFERENCE_MANIFEST_INPUT_INVALID", "manifest read is outside its exact authority binding");
-      const before = await ensureCurrent();
-      const readback = await readR2(store, row);
-      const after = await ensureCurrent();
-      if (canonicalEvidenceJson(before) !== canonicalEvidenceJson(after)) fail("REFERENCE_MANIFEST_SCOPE_STALE", "manifest authorization changed during readback", true);
-      validateManifestGrant(readback.manifest, before, input.navigation.scope, input.navigation.timestamp());
-      validateManifestGrant(readback.manifest, after, input.navigation.scope, input.navigation.timestamp());
-      return AllowedReferenceManifestSchema.parse(JSON.parse(readback.json));
-    },
+    get: (refValue) => readManifest(refValue),
+    getForPostModelReadback: (refValue, context) => readManifest(refValue, context),
     persist,
     readReceipt: receipt,
   };

@@ -223,7 +223,10 @@ export function createPersistedModelProfileCurrentAuthorityReader(
       scope_snapshot_digest: input.navigation.scope.digest,
       scope_snapshot: input.navigation.scope,
       grant_expires_at: second.grant_expires_at,
-      ...(second.run_budget_expires_at_ms === null ? {} : { run_budget_expires_at_ms: second.run_budget_expires_at_ms }),
+      // A planning attempt's five-minute reservation is not the lifetime of the
+      // immutable evidence needed by later model and citation stages. Each stage
+      // still checks its own reservation independently in the workflow executor.
+      run_authorization_expires_at_ms: Math.min(Date.parse(second.scope_expires_at), Date.parse(second.grant_expires_at)),
       policy_state: "ACTIVE" as const,
       deployment_state: "ACTIVE" as const,
       state: "ACTIVE" as const,

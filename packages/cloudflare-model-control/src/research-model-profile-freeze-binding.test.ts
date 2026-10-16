@@ -89,6 +89,42 @@ async function fixture() {
   return { state, producer };
 }
 describe("committed model profile binding across evidence freeze", () => {
+  it("keeps a new run binding valid after a completed planning reservation expires", async () => {
+    const { state, producer } = await fixture();
+    const { run_budget_expires_at_ms: _stageLease, ...authority } = state.authority;
+    state.authority = { ...authority, run_authorization_expires_at_ms: Date.parse(scope.expires_at) };
+    const prepared = await producer.resolve(stage), frozen = await definition(prepared.binding);
+    expect(Date.parse(prepared.binding.expires_at)).toBe(Date.parse(scope.expires_at));
+    state.clock = firstDeadline + 1000;
+    const later = await producer.resolve(stage, frozen);
+    expect(later.binding.binding_ref).toEqual(prepared.binding.binding_ref);
+    expect(later.binding.expires_at).toBe(prepared.binding.expires_at);
+    // An explicit separate budget ceiling remains authoritative when supplied.
+    state.authority = { ...state.authority, run_budget_expires_at_ms: firstDeadline };
+    await expect(producer.resolve(stage, frozen)).rejects.toMatchObject({ code: "MODEL_PROFILE_BINDING_EXPIRED" });
+  });
+
+  it("permits exact post-model historical readback without renewing or disclosing an expired binding", async () => {
+    const { state, producer } = await fixture();
+    const original = await producer.resolve(stage), frozen = await definition(original.binding);
+    const { run_budget_expires_at_ms: _stageLease, ...authority } = state.authority;
+    state.authority = { ...authority, run_authorization_expires_at_ms: Date.parse(scope.expires_at) };
+    state.clock = firstDeadline + 1000;
+    await expect(producer.resolve(stage, frozen)).rejects.toMatchObject({ code: "MODEL_PROFILE_BINDING_EXPIRED" });
+    const retained = await producer.resolveForPostModelReadback(stage, frozen);
+    expect(retained.binding).toEqual(original.binding);
+    expect(retained.binding.expires_at).toBe(new Date(firstDeadline).toISOString());
+    await expect(producer.resolve(stage, frozen)).rejects.toMatchObject({ code: "MODEL_PROFILE_BINDING_EXPIRED" });
+    await expect(producer.resolveForPostModelReadback(stage, undefined))
+      .rejects.toMatchObject({ code: "MODEL_PROFILE_BINDING_INPUT_INVALID" });
+    state.authority = { ...state.authority, policy_state: "REVOKED" as "ACTIVE" };
+    await expect(producer.resolveForPostModelReadback(stage, frozen))
+      .rejects.toMatchObject({ code: "MODEL_PROFILE_BINDING_AUTHORITY_STALE" });
+    state.authority = { ...state.authority, policy_state: "ACTIVE" };
+    state.clock = Date.parse(scope.expires_at);
+    await expect(producer.resolveForPostModelReadback(stage, frozen)).rejects.toMatchObject({ code: "MODEL_PROFILE_BINDING_EXPIRED" });
+  });
+
   it("retains the committed definition and binding when the next W2 deadline advances", async () => {
     const { state, producer } = await fixture();
     const prepared = await producer.resolve(stage);

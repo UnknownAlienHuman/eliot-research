@@ -34,7 +34,7 @@ const STAGE_KEYS = new Set([
   "scope_snapshot_digest", "scope_snapshot_ref",
 ]);
 const CURRENT_KEYS = new Set([...STAGE_KEYS, "deployment_state", "policy_state", "scope_snapshot", "state",
-  "grant_expires_at", "run_budget_expires_at_ms"]);
+  "grant_expires_at", "run_budget_expires_at_ms", "run_authorization_expires_at_ms"]);
 
 export type ModelProfileBindingErrorCode =
   | "MODEL_PROFILE_BINDING_INPUT_INVALID"
@@ -236,6 +236,8 @@ export interface ModelProfileCurrentAuthority extends ModelProfileStageAuthority
   readonly grant_expires_at?: string;
   /** Current monotone W2 attempt deadline; not a reusable or refreshable lease. */
   readonly run_budget_expires_at_ms?: number;
+  /** Entire run's existing scope/grant window; independent of a single stage reservation. */
+  readonly run_authorization_expires_at_ms?: number;
   readonly policy_state: "ACTIVE";
   readonly deployment_state: "ACTIVE";
   readonly state: "ACTIVE";
@@ -459,9 +461,14 @@ function currentAuthority(value: unknown): ModelProfileCurrentAuthority {
   if (runBudgetExpiry !== undefined && (!Number.isSafeInteger(runBudgetExpiry) || (runBudgetExpiry as number) < 1)) {
     fail("MODEL_PROFILE_BINDING_AUTHORITY_STALE", "current workflow budget expiry is invalid");
   }
+  const runAuthorizationExpiry = record.run_authorization_expires_at_ms;
+  if (runAuthorizationExpiry !== undefined && (!Number.isSafeInteger(runAuthorizationExpiry) || (runAuthorizationExpiry as number) < 1)) {
+    fail("MODEL_PROFILE_BINDING_AUTHORITY_STALE", "current run authorization expiry is invalid");
+  }
   return Object.freeze({ ...fields, state: "ACTIVE", policy_state: "ACTIVE", deployment_state: "ACTIVE",
     scope_snapshot: parsed.data, ...(grantExpiry === undefined ? {} : { grant_expires_at: grantExpiry }),
-    ...(runBudgetExpiry === undefined ? {} : { run_budget_expires_at_ms: runBudgetExpiry as number }) });
+    ...(runBudgetExpiry === undefined ? {} : { run_budget_expires_at_ms: runBudgetExpiry as number }),
+    ...(runAuthorizationExpiry === undefined ? {} : { run_authorization_expires_at_ms: runAuthorizationExpiry as number }) });
 }
 
 async function normalizeOwnerProfileTemplateV2(
@@ -469,14 +476,16 @@ async function normalizeOwnerProfileTemplateV2(
   authority: ModelProfileCurrentAuthority,
   now: number,
 ): Promise<ModelProfileDefinition> {
-  if (authority.grant_expires_at === undefined || authority.run_budget_expires_at_ms === undefined) {
+  if (authority.grant_expires_at === undefined ||
+      (authority.run_budget_expires_at_ms === undefined && authority.run_authorization_expires_at_ms === undefined)) {
     fail("MODEL_PROFILE_BINDING_AUTHORITY_STALE", "current grant or W2 budget deadline is unavailable");
   }
   const expires = Math.min(
     template.expires_at === undefined ? Number.POSITIVE_INFINITY : Date.parse(template.expires_at),
     Date.parse(authority.scope_snapshot.expires_at),
     Date.parse(authority.grant_expires_at),
-    authority.run_budget_expires_at_ms,
+    authority.run_budget_expires_at_ms ?? Number.POSITIVE_INFINITY,
+    authority.run_authorization_expires_at_ms ?? Number.POSITIVE_INFINITY,
   );
   if (!Number.isFinite(expires) || expires <= now) fail("MODEL_PROFILE_BINDING_EXPIRED", "owner profile or current run authority has expired");
   const expiresAt = new Date(expires).toISOString();
@@ -509,7 +518,7 @@ function selectionForProfile(input: ModelProfileBindingProducerInput, deployment
   return selection;
 }
 
-function assertCurrent(binding: ModelProfileBinding, current: ModelProfileCurrentAuthority, now: number): void {
+function assertCurrent(binding: ModelProfileBinding, current: ModelProfileCurrentAuthority, now: number, postModelReadback = false): void {
   const authority = currentAuthority(current);
   if (authority.model_profile_ref !== binding.model_profile_ref || authority.policy_generation !== binding.policy_generation ||
       authority.policy_authority_ref !== binding.policy_authority_ref || authority.deployment_generation !== binding.deployment_generation ||
@@ -521,7 +530,7 @@ function assertCurrent(binding: ModelProfileBinding, current: ModelProfileCurren
     fail("MODEL_PROFILE_BINDING_AUTHORITY_STALE", "current scope snapshot does not match the binding");
   }
   if (Date.parse(parsed.data.expires_at) <= now) fail("MODEL_PROFILE_BINDING_EXPIRED", "scope snapshot is expired");
-  if (Date.parse(binding.expires_at) <= now) fail("MODEL_PROFILE_BINDING_EXPIRED", "model profile definition is expired");
+  if (!postModelReadback && Date.parse(binding.expires_at) <= now) fail("MODEL_PROFILE_BINDING_EXPIRED", "model profile definition is expired");
 }
 
 async function revalidateFrozenDefinition(
@@ -557,8 +566,11 @@ export function createModelProfileBindingProducer(input: ModelProfileBindingProd
     fail("MODEL_PROFILE_BINDING_INPUT_INVALID", "model profile binding producer dependencies are invalid");
   }
   const now = input.now ?? (() => Date.now());
-  return Object.freeze({
-    async resolve(stage: ModelProfileStageAuthority, frozenDefinition?: unknown): Promise<ResolvedModelProfileBinding> {
+  async function resolveBinding(stage: ModelProfileStageAuthority, frozenDefinition?: unknown,
+    postModelReadback = false): Promise<ResolvedModelProfileBinding> {
+      if (postModelReadback && frozenDefinition === undefined) {
+        fail("MODEL_PROFILE_BINDING_INPUT_INVALID", "post-model readback requires the exact already-frozen definition");
+      }
       const nowMs = now();
       if (typeof nowMs !== "number" || !Number.isFinite(nowMs)) fail("MODEL_PROFILE_BINDING_INPUT_INVALID", "binding clock is invalid");
       const parsedStage = stageFields(stage, "stage model profile authority", "MODEL_PROFILE_BINDING_INPUT_INVALID");
@@ -583,7 +595,7 @@ export function createModelProfileBindingProducer(input: ModelProfileBindingProd
         normalizedDefinition, frozenDefinition, input.source.provenance_ref, v2Template !== null,
       );
       const binding = await resolvedBinding(definition, first);
-      assertCurrent(binding, first, nowMs);
+      assertCurrent(binding, first, nowMs, postModelReadback);
       let rawDeployment: unknown | null;
       try {
         const runMode = input.run_configuration?.mode;
@@ -605,10 +617,16 @@ export function createModelProfileBindingProducer(input: ModelProfileBindingProd
       assertStageCurrent(parsedStage, second);
       const finalNow = now();
       if (typeof finalNow !== "number" || !Number.isFinite(finalNow)) fail("MODEL_PROFILE_BINDING_INPUT_INVALID", "binding clock is invalid");
-      assertCurrent(binding, second, finalNow);
+      assertCurrent(binding, second, finalNow, postModelReadback);
       if (canonicalModelGatewayJson(first) !== canonicalModelGatewayJson(second)) fail("MODEL_PROFILE_BINDING_AUTHORITY_STALE", "research authority changed during model profile resolution");
       return Object.freeze({ binding, deployment, policy: binding.policy, scope_snapshot: second.scope_snapshot });
-    },
+  }
+  return Object.freeze({
+    resolve: (stage: ModelProfileStageAuthority, frozenDefinition?: unknown) => resolveBinding(stage, frozenDefinition),
+    /** Only after committed model/audit lineage is proved. Returns unchanged historical bytes;
+     * it grants no model dispatch and never extends the binding's original expiry. */
+    resolveForPostModelReadback: (stage: ModelProfileStageAuthority, frozenDefinition: unknown) =>
+      resolveBinding(stage, frozenDefinition, true),
   });
 }
 

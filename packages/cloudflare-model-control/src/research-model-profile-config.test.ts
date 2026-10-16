@@ -69,7 +69,7 @@ function authorityDatabase(): { readonly database: D1Database; close(): void } {
 }
 
 describe("persisted model-profile authority reader", () => {
-  it("maps the live W2 budget column into the snapshot-v2 authority field", async () => {
+  it("separates the run's scope/grant lifetime from its current W2 stage reservation", async () => {
     const { database, close } = authorityDatabase();
     const grant = {
       authorization_receipt_ref: "authorization-1",
@@ -95,7 +95,8 @@ describe("persisted model-profile authority reader", () => {
           deployment_generation: "deployment-1",
         },
       })();
-      expect(authority.run_budget_expires_at_ms).toBe(1791277375960);
+      expect(authority.run_budget_expires_at_ms).toBeUndefined();
+      expect(authority.run_authorization_expires_at_ms).toBe(Math.min(Date.parse(scope.expires_at), Date.parse(grant.expires_at)));
     } finally {
       close();
     }

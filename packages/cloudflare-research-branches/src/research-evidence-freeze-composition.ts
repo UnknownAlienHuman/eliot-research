@@ -1,4 +1,5 @@
-import { canonicalEvidenceJson, type CloudflareEvidenceResolver, type NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
+import { canonicalEvidenceJson, ReferenceManifestError, type CloudflareEvidenceResolver, type NavigationReadAuthority,
+  type ResearchReferenceManifestReader, type PostModelReadbackManifestContext } from "@eliotr/cloudflare-evidence";
 import type { ReferenceManifestStore } from "@eliotr/policy";
 import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import type { InvestigationLedgerStore, LedgerHead } from "@eliotr/research";
@@ -258,8 +259,14 @@ export interface EvidenceFreezeSynthesisContextReader {
 export interface EvidenceFreezeSynthesisReaderEnvironment {
   readonly database: D1Database;
   readonly work_bucket: R2Bucket;
-  readonly manifest_store: Pick<ReferenceManifestStore, "get">;
+  readonly manifest_store: Pick<ReferenceManifestStore, "get"> & Partial<ResearchReferenceManifestReader>;
   readonly read_stage_five: (input: EvidenceFreezeCommittedReaderInput) => Promise<EvidenceFreezeStageFiveLineage>;
+  /** Read-only exact frozen binding revalidation; must never reserve or dispatch a model. */
+  readonly resolve_post_model_binding?: (input: {
+    readonly protocol_scope: ProtocolScopeCheckpoint;
+    readonly w1_head: LedgerHead;
+    readonly frozen_definition: EvidenceFreezeStageInput["model_profile_definition"];
+  }) => Promise<EvidenceFreezeModelBinding>;
 }
 
 interface EvidenceFreezeSynthesisReaderOptions {
@@ -267,6 +274,8 @@ interface EvidenceFreezeSynthesisReaderOptions {
   readonly expected_head_revision?: number;
   /** Materialize validates its own committed input through the stage receipt. */
   readonly verify_input_bytes?: boolean;
+  readonly post_model_readback?: Pick<PostModelReadbackManifestContext,
+    "purpose" | "stage" | "operation_id" | "investigation_id" | "committed_model_stages">;
 }
 
 function sameJson(left: unknown, right: unknown): boolean {
@@ -385,8 +394,26 @@ function createSynthesisContextReader(
         () => environment.read_stage_five({
           operation_id: input.request.operation_id, investigation_id: input.request.investigation_ref.id, principal: input.principal,
         }),
-        () => Promise.resolve().then(() => environment.manifest_store.get(stageTenInput.manifest_ref))
-          .catch(() => fail("WORKFLOW_OUTPUT_UNAVAILABLE")),
+        () => Promise.resolve().then(() => {
+          const retained = options.post_model_readback;
+          if (retained === undefined || environment.manifest_store.getForPostModelReadback === undefined) {
+            return environment.manifest_store.get(stageTenInput.manifest_ref);
+          }
+          if (environment.resolve_post_model_binding === undefined) fail("WORKFLOW_CONFIGURATION_MISSING");
+          return environment.manifest_store.getForPostModelReadback(stageTenInput.manifest_ref, {
+            ...retained, principal_ref: input.principal.principal_ref,
+            credential_generation: input.principal.credential_generation,
+            scope_snapshot_ref: stageZero.scope_snapshot_ref,
+            stage_five_attempt_ref: stageTenInput.stage_five_attempt_ref,
+            stage_five_request_sha256: stageTenInput.stage_five_request_sha256,
+          });
+        }).catch((cause: unknown) => {
+          if (cause instanceof WorkflowCheckpointError) throw cause;
+          if (cause instanceof ReferenceManifestError && cause.code === "REFERENCE_MANIFEST_SCOPE_STALE") {
+            fail("WORKFLOW_AUTHORITY_STALE");
+          }
+          fail("WORKFLOW_OUTPUT_UNAVAILABLE");
+        }),
       ] as const);
       if (stageZero === null) fail("WORKFLOW_OUTPUT_CORRUPT");
       if (manifest === null) fail("WORKFLOW_OUTPUT_CORRUPT");
@@ -457,6 +484,14 @@ function createSynthesisContextReader(
           stageTenInput.stage_zero_attempt_ref.length === 0 ||
           stageTen.request.investigation_ref.id !== stageZero.investigation_ref.id ||
           stageTenInput.model_profile_definition.definition_ref.revision !== 1) fail("WORKFLOW_OUTPUT_CORRUPT");
+      if (options.post_model_readback !== undefined && environment.manifest_store.getForPostModelReadback !== undefined) {
+        const head = await readers.read_w1_head(input.request.investigation_ref.id);
+        if (head === null || environment.resolve_post_model_binding === undefined) fail("WORKFLOW_AUTHORITY_STALE");
+        const binding = await environment.resolve_post_model_binding({
+          protocol_scope: stageZero, w1_head: head, frozen_definition: stageTenInput.model_profile_definition,
+        });
+        if (!sameJson(binding.binding_ref, stageTenInput.model_profile_binding_ref)) fail("WORKFLOW_AUTHORITY_STALE");
+      }
       const [finalAuthorizationReceiptRef, finalHead] = await readConcurrentInOrder([
         () => readers.read_authorization_receipt_ref(
           input.request.operation_id, input.request.investigation_ref.id, input.principal,
@@ -521,6 +556,7 @@ export function createEvidenceFreezePostSynthesisContextReader(
       const endIndex = RESEARCH_WORKFLOW_STAGES.indexOf(stage);
       let first: Awaited<ReturnType<typeof readCommittedStageLineage>> | undefined;
       let previous: Awaited<ReturnType<typeof readCommittedStageLineage>> | undefined;
+      const committedModels: PostModelReadbackManifestContext["committed_model_stages"][number][] = [];
       const predecessorReads = await settleConcurrentReads(
         RESEARCH_WORKFLOW_STAGES.slice(firstIndex, endIndex).map((predecessor) =>
           () => readCommittedStageLineage(checkpoints, input.request.operation_id, predecessor)),
@@ -533,6 +569,11 @@ export function createEvidenceFreezePostSynthesisContextReader(
             committed.receipt.engine_state !== "CHECKPOINTED" ||
             (previous !== undefined && (previous.receipt.investigation_ref.revision !== committed.request.investigation_ref.revision ||
               !sameJson(previous.receipt.output_manifest, committed.request.input_manifest)))) fail("WORKFLOW_OUTPUT_CORRUPT");
+        if (committed.request.stage === "SYNTHESIZE" || committed.request.stage === "VERIFY" || committed.request.stage === "AUDIT_CLAIMS") {
+          committedModels.push({ stage: committed.request.stage, operation_id: committed.request.operation_id,
+            investigation_id: committed.request.investigation_ref.id, attempt_ref: committed.attempt_ref,
+            request_sha256: committed.request_sha256, receipt_ref: committed.receipt.receipt_ref });
+        }
         first ??= committed;
         previous = committed;
       }
@@ -540,9 +581,18 @@ export function createEvidenceFreezePostSynthesisContextReader(
           previous.receipt.investigation_ref.revision !== input.request.investigation_ref.revision ||
           !sameJson(previous.receipt.output_manifest, input.request.input_manifest)) fail("WORKFLOW_OUTPUT_CORRUPT");
       const stageTwelveInput = await readWorkflowObject(environment.work_bucket, first.request.input_manifest, true);
+      const retained = stage === "RESOLVE_CITATIONS" || stage === "CALCULATE_COVERAGE" || stage === "MATERIALIZE";
+      if (retained && (committedModels.length !== 3 ||
+          committedModels.some((model, index) => model.stage !== ["SYNTHESIZE", "VERIFY", "AUDIT_CLAIMS"][index] ||
+            model.operation_id !== input.request.operation_id || model.investigation_id !== input.request.investigation_ref.id))) {
+        fail("WORKFLOW_OUTPUT_CORRUPT");
+      }
       return createSynthesisContextReader(environment, navigation, readers, {
         expected_head_revision: input.request.investigation_ref.revision,
         verify_input_bytes: true,
+        ...(retained ? { post_model_readback: { purpose: "POST_MODEL_READBACK" as const, stage,
+          operation_id: input.request.operation_id, investigation_id: input.request.investigation_ref.id,
+          committed_model_stages: committedModels } } : {}),
       }).read({ request: first.request, principal: input.principal, input_bytes: stageTwelveInput });
     },
   };
