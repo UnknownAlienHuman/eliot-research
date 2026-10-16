@@ -148,7 +148,8 @@ function oldCacheCount(environment: Environment, context: SessionContext) {
 export async function playFiniteExcerptLifecycle(test: ExcerptPlayContext) {
   const host = test.canvasElement.querySelector<HTMLElement>('[data-finite-excerpt]'), environment = host && environments.get(host);
   assert(environment && host, 'Finite excerpt fixture was not registered');
-  await test.userEvent.click(await test.canvas.findByRole('button', { name: 'Open · Saved draft', exact: true }));
+  // A one-section report reads as the document itself; its quotes open from the section.
+  await test.userEvent.click(await test.canvas.findByRole('button', { name: 'Quotes and sources', exact: true }));
   const reportRoot = test.canvasElement.querySelector<HTMLElement>('.er-live-report');
   assert(reportRoot, 'Actual report root absent');
   const reportRegion = reportRoot.querySelector<HTMLElement>(':scope > .er-operation-announcement');

@@ -14,9 +14,24 @@ import { ArtifactActions } from './ArtifactActions';
 const refKey = (ref: VersionedRef) => `${ref.id}:${ref.revision}`;
 const sameRef = (left: VersionedRef, right: VersionedRef) => left.id === right.id && left.revision === right.revision;
 const copy = {
-  en: { readingCitations: 'Reading citations for this section.', readingReport: 'Reading the saved report.', reportReady: 'Saved report loaded.', sectionReady: 'The selected section was read and verified.', readingEvidence: 'Reading the selected cited excerpt.', evidenceReady: 'The selected cited excerpt was verified.', title: 'Saved report', back: 'Close report', outline: 'Contents', backToSections: 'Back to the report', read: 'Refresh', reauthorize: 'Read with current access', access: 'Read with your current access. The report keeps its original sources.', evidence: 'Evidence for this section', quotes: 'Quotes and sources', document: 'Report text', pending: 'Reading this section…', noAudit: 'Claims in this section were not checked against the sources.', unknown: 'This section could not be read or verified.', legacyRead: 'This report response has no section titles. Refresh after the application updates.', exportError: 'The export could not be prepared. Read all sections again.', reading: 'Reading the selected section.', noEvidence: 'No citations are declared for this section.', evidenceError: 'This quote could not be verified against its source.' },
-  ru: { readingCitations: 'Читаем цитаты для этого раздела.', readingReport: 'Читаем сохранённый отчёт.', reportReady: 'Сохранённый отчёт прочитан.', sectionReady: 'Выбранный раздел прочитан и проверен.', readingEvidence: 'Читаем цитату.', evidenceReady: 'Цитата сверена с источником.', title: 'Сохранённый отчёт', back: 'Закрыть отчёт', outline: 'Содержание', backToSections: 'Назад к отчёту', read: 'Обновить', reauthorize: 'Прочитать с текущим доступом', access: 'Чтение с вашим текущим доступом. Источники отчёта остаются прежними.', evidence: 'Доказательства этого раздела', quotes: 'Цитаты и источники', document: 'Текст отчёта', pending: 'Читаем раздел…', noAudit: 'Утверждения этого раздела не проверялись по источникам.', unknown: 'Не удалось прочитать или проверить этот раздел.', legacyRead: 'В этом ответе нет названий разделов. Обновите приложение и повторите чтение.', exportError: 'Не удалось подготовить экспорт. Прочитайте все разделы ещё раз.', reading: 'Читаем выбранный раздел.', noEvidence: 'Для этого раздела не объявлены цитаты.', evidenceError: 'Не удалось сверить эту цитату с источником.' },
+  en: { readingCitations: 'Reading citations for this section.', readingReport: 'Reading the saved report.', reportReady: 'Saved report loaded.', sectionReady: 'The selected section was read and verified.', readingEvidence: 'Reading the selected cited excerpt.', evidenceReady: 'The selected cited excerpt was verified.', title: 'Saved report', back: 'Close report', outline: 'Contents', backToSections: 'Back to the report', read: 'Refresh', reauthorize: 'Read with current access', access: 'Read with your current access. The report keeps its original sources.', evidence: 'Evidence for this section', quotes: 'Quotes and sources', method: 'How it was researched', exportShort: 'Export', document: 'Report text', pending: 'Reading this section…', noAudit: 'Claims in this section were not checked against the sources.', unknown: 'This section could not be read or verified.', legacyRead: 'This report response has no section titles. Refresh after the application updates.', exportError: 'The export could not be prepared. Read all sections again.', reading: 'Reading the selected section.', noEvidence: 'No citations are declared for this section.', evidenceError: 'This quote could not be verified against its source.' },
+  ru: { readingCitations: 'Читаем цитаты для этого раздела.', readingReport: 'Читаем сохранённый отчёт.', reportReady: 'Сохранённый отчёт прочитан.', sectionReady: 'Выбранный раздел прочитан и проверен.', readingEvidence: 'Читаем цитату.', evidenceReady: 'Цитата сверена с источником.', title: 'Сохранённый отчёт', back: 'Закрыть отчёт', outline: 'Содержание', backToSections: 'Назад к отчёту', read: 'Обновить', reauthorize: 'Прочитать с текущим доступом', access: 'Чтение с вашим текущим доступом. Источники отчёта остаются прежними.', evidence: 'Доказательства этого раздела', quotes: 'Цитаты и источники', method: 'Как проводилось исследование', exportShort: 'Экспорт', document: 'Текст отчёта', pending: 'Читаем раздел…', noAudit: 'Утверждения этого раздела не проверялись по источникам.', unknown: 'Не удалось прочитать или проверить этот раздел.', legacyRead: 'В этом ответе нет названий разделов. Обновите приложение и повторите чтение.', exportError: 'Не удалось подготовить экспорт. Прочитайте все разделы ещё раз.', reading: 'Читаем выбранный раздел.', noEvidence: 'Для этого раздела не объявлены цитаты.', evidenceError: 'Не удалось сверить эту цитату с источником.' },
 } as const;
+
+/**
+ * The draft writer appends a "Coverage and method" part (scope, encountered and cited revisions, limits).
+ * It is the record of how the answer was found, not the answer: it stays one tap away, folded.
+ */
+const METHOD_HEADING = /^#{1,3}[ \t]+(?:Coverage and method|Охват и метод)[ \t]*$/mu;
+function ReportMarkdown({ body, method }: { readonly body: string; readonly method: string }) {
+  const match = METHOD_HEADING.exec(body);
+  if (match === null) return <SafeMarkdown text={body} />;
+  const answer = body.slice(0, match.index).trimEnd(), record = body.slice(match.index + match[0].length).trim();
+  return <>
+    {answer ? <SafeMarkdown text={answer} /> : null}
+    {record ? <details className="er-live-report-method"><summary>{method}</summary><SafeMarkdown text={record} /></details> : null}
+  </>;
+}
 
 /** One requested section at a time. Exact verified bytes remain in protected memory-only Query. */
 export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClose, onOpenDraft }: {
@@ -97,6 +112,7 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
     if (read === undefined || documentReads[index]?.isError || !sameRef(read.section_ref, declared.section_ref)) return undefined;
     try { return new TextDecoder('utf-8', { fatal: true }).decode(read.bytes); } catch { return undefined; }
   };
+  const single = artifact !== undefined && artifact.sections.length === 1;
   const rows = artifact?.sections.map(declared => ({ section: declared,
     read: client.getQueryState(sectionOptions(artifact, declared).queryKey)?.status === 'success'
       ? client.getQueryData<ArtifactSectionResponse>(sectionOptions(artifact, declared).queryKey) : undefined,
@@ -154,13 +170,13 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
     <h2 className="er-live-report-title" ref={reportHeading} tabIndex={-1}>{artifact?.title ?? text.title}</h2>
     <OperationFeedback message={operationMessage} />
     <div className="er-live-actions er-live-report-toolbar"><Button variant="text" onClick={onClose}>{text.back}</Button>
-      <Button variant="text" disabled={manifest.isFetching} onClick={() => { void manifest.refetch(); }}>{text.read}</Button></div>
+      <Button variant="text" disabled={manifest.isFetching} onClick={() => { void manifest.refetch(); }}>{text.read}</Button>
+      {single && <Button variant="text" icon="send" disabled={!rows.every(row => row.read !== undefined)} onClick={exportReport}>{text.exportShort}</Button>}</div>
     {mode === 'author' && (author.isError || section.isError || citations.isError || evidence.isError) &&
       <Button variant="tonal" disabled={manifest.isFetching || !privacy.isCurrent(context)} onClick={() => {
         if (!privacy.isCurrent(context)) return;
         setSelected(undefined); setPicked(undefined); setMode('reauthorized');
       }}>{text.reauthorize}</Button>}
-    {grant && <p>{text.access}</p>}
     {exportError && <Status tone="error">{text.exportError}</Status>}
     {!active && artifact && <section className="er-live-report-document" aria-label={text.document}>
       {declaredSections.map((declared, index) => {
@@ -168,14 +184,15 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
         return <article key={refKey(declared.section_ref)} className="er-live-report-part" aria-label={declared.title}
           data-state={body !== undefined ? 'read' : failed ? 'failed' : 'pending'}>
           <h2 className="er-live-report-part-heading">{declared.title}</h2>
-          {body !== undefined ? <SafeMarkdown text={body} />
+          {body !== undefined ? <ReportMarkdown body={body} method={text.method} />
             : failed ? <Status tone="error">{text.unknown}</Status>
               : <p className="er-live-report-pending"><span>{text.pending}</span></p>}
           {body !== undefined && <Button variant="text" icon="evidence" onClick={() => readSection(declared)}>{text.quotes}</Button>}
         </article>;
       })}
     </section>}
-    <details className="er-live-report-outline" open={outlineOpen}
+    {/* A one-section report needs no contents page; its export sits on the toolbar. */}
+    {!single && <details className="er-live-report-outline" open={outlineOpen}
       onToggle={event => { if (event.target === event.currentTarget) setOutlineOpen(event.currentTarget.open); }}>
     <summary ref={outlineSummary}>{text.outline}</summary>
     <ReportFeature locale={locale} copy={REPORT_COPY[locale]} state={manifest.isPending ? 'loading' : manifest.isError || unsupportedLegacyRead ? 'error' : artifact ? 'useful' : 'empty'}
@@ -183,11 +200,11 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
       sections={rows} freshness={grant?.source_freshness.state ?? 'UNKNOWN'} onReadSection={readSection} onOpenManifest={() => { void manifest.refetch(); }} onExport={exportReport}
       {...(section.isFetching && active ? { readingRef: refKey(active.section_ref) } : {})}
       {...(section.isError && active ? { rejectedSectionRef: refKey(active.section_ref) } : {})} />
-    </details>
+    </details>}
     {active && <section className="er-live-report-section" aria-label={active.title}>
       <h2 ref={sectionHeading} tabIndex={-1}>{active.title}</h2>
       <div className="er-live-report-layout"><div className="er-live-report-body">
-      {section.isFetching ? <Status>{text.reading}</Status> : section.isError || body === undefined ? <Status tone="error">{text.unknown}</Status> : <SafeMarkdown text={body} />}
+      {section.isFetching ? <Status>{text.reading}</Status> : section.isError || body === undefined ? <Status tone="error">{text.unknown}</Status> : <ReportMarkdown body={body} method={text.method} />}
       {citations.data?.semantic_verification === 'NOT_EXECUTED' && <p className="er-shell-note">{text.noAudit}</p>}
       </div><aside className="er-live-report-evidence" aria-label={text.evidence}><EvidenceFeature citations={evidenceRows}
         loading={citations.isFetching} emptyMessage={text.noEvidence} longLocale={locale}

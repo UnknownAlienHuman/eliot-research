@@ -17,16 +17,45 @@ const copy = {
 } as const;
 const icons: Record<typeof destinations[number], MaterialSymbolName> = { projects: "home", inbox: "inbox", sources: "folder", research: "research", studio: "bookmarks", settings: "settings", connections: "agent" };
 
-export function Shell({ privacy, fixture, fixtureOutlet: FixtureOutlet, runtime }: {
+// Language and appearance are a per-browser convenience, never protected state. Only the real app
+// remembers them; previews and stories always start from the same defaults.
+const PREFERENCES_KEY = "eliotr.owner-preferences.v1";
+type Preferences = { readonly locale?: "en" | "ru"; readonly theme?: "light" | "dark" };
+function readPreferences(): Preferences {
+  try {
+    const raw: unknown = JSON.parse(window.localStorage.getItem(PREFERENCES_KEY) ?? "{}");
+    if (typeof raw !== "object" || raw === null) return {};
+    const value = raw as Record<string, unknown>;
+    return {
+      ...(value.locale === "en" || value.locale === "ru" ? { locale: value.locale } : {}),
+      ...(value.theme === "light" || value.theme === "dark" ? { theme: value.theme } : {}),
+    };
+  } catch { return {}; }
+}
+function writePreferences(next: Preferences): void {
+  try { window.localStorage.setItem(PREFERENCES_KEY, JSON.stringify({ ...readPreferences(), ...next })); } catch { /* storage unavailable */ }
+}
+
+export function Shell({ privacy, fixture, fixtureOutlet: FixtureOutlet, runtime, rememberPreferences = false }: {
   readonly privacy: PrivacyController;
   readonly fixture: boolean;
   readonly fixtureOutlet?: ComponentType<Parameters<typeof FixtureWorkspace>[0]>;
   readonly runtime?: WorkspaceRuntime;
+  /** The real app keeps the owner's language and appearance across reloads. */
+  readonly rememberPreferences?: boolean;
 }) {
   const snapshot = useSyncExternalStore(privacy.subscribe, privacy.getSnapshot, privacy.getSnapshot);
-  const [locale, setLocale] = useState<"en" | "ru">("en");
-  const [theme, setTheme] = useState<"light" | "dark">(() =>
-    typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  const [locale, setLocaleState] = useState<"en" | "ru">(() => {
+    if (!rememberPreferences || typeof window === "undefined") return "en";
+    const saved = readPreferences().locale;
+    if (saved !== undefined) return saved;
+    return (navigator.languages ?? [navigator.language]).some(tag => tag.toLowerCase().startsWith("ru")) ? "ru" : "en";
+  });
+  const [theme, setThemeState] = useState<"light" | "dark">(() =>
+    (rememberPreferences && typeof window !== "undefined" ? readPreferences().theme : undefined) ??
+    (typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+  const setLocale = (next: "en" | "ru") => { setLocaleState(next); if (rememberPreferences) writePreferences({ locale: next }); };
+  const setTheme = (next: "light" | "dark") => { setThemeState(next); if (rememberPreferences) writePreferences({ theme: next }); };
   const location = useLocation();
   const destination = decodeWorkspaceLocation(location) ?? "research";
   const text = copy[locale];

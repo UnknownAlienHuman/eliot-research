@@ -60,7 +60,7 @@ if (await ensureLegacyWorkerRetired()) {
   const root = createRoot(container);
   root.render(
     <React.StrictMode>
-      <QueryClientProvider client={queryClient}><BrowserRouter><Shell privacy={privacy} fixture={fixture} {...(FixtureOutlet ? { fixtureOutlet: FixtureOutlet } : {})} runtime={runtime} /></BrowserRouter></QueryClientProvider>
+      <QueryClientProvider client={queryClient}><BrowserRouter><Shell privacy={privacy} fixture={fixture} {...(FixtureOutlet ? { fixtureOutlet: FixtureOutlet } : {})} runtime={runtime} rememberPreferences /></BrowserRouter></QueryClientProvider>
     </React.StrictMode>,
   );
   if (import.meta.hot) import.meta.hot.dispose(() => {

@@ -472,3 +472,15 @@
 }
 @keyframes er-report-pending { to { opacity: 0.45; } }
 @media (prefers-reduced-motion: reduce) { .er-live-report-pending > span { animation: none; } }
+
+/* The draft's method record folds under the answer: one quiet summary, smaller type when opened. */
+.er-live-report-method { margin-block-start: var(--eliot-space-panel); color: var(--md-sys-color-on-surface-variant); }
+.er-live-report-method > summary {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--eliot-size-control-small);
+  font-size: var(--eliot-type-label-large-size);
+  font-weight: var(--eliot-type-font-weight-medium);
+  cursor: pointer;
+}
+.er-live-report-method > .er-safe-markdown { font-size: var(--eliot-type-body-small-size); line-height: var(--eliot-type-body-small-line-height); overflow-wrap: anywhere; }
