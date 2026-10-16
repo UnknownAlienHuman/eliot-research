@@ -3,6 +3,7 @@ import {
   modelGatewaySha256,
   prepareCatalogModelQualificationHttpRequest,
   ModelGatewayExecutionError,
+  rejectModelGatewayHttpFailure,
 } from "@eliotr/cloudflare-ai";
 import {
   PROVIDER_NATIVE_MODEL_PROBE_MAX_TOKENS,
@@ -12,7 +13,6 @@ import {
   type ProviderNativeModelCatalogPreparationV2,
 } from "@eliotr/cloudflare-native-models";
 import { decodeModelGatewayProviderNativeResponse } from "@eliotr/cloudflare-model-transport/model-gateway-provider-native-response.js";
-import { rejectModelGatewayHttpFailure } from "@eliotr/cloudflare-model-transport/model-gateway-http-failure.js";
 
 const MAX_REQUEST_BYTES = 32_768;
 const MAX_RESPONSE_BYTES = 262_144;
