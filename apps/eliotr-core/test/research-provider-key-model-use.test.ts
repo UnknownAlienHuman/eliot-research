@@ -718,7 +718,10 @@ describe("global Settings provider binding for existing model use", () => {
         providerId === "openrouter" && options?.operation_id === operationId ? binding : null),
     } as unknown as ServiceModelProviderService;
     const projectConfiguration = {
-      readSelected: vi.fn(async () => null),
+      readPage: vi.fn(async () => ({
+        protocol: "eliotr.research-project-model-configuration.v1", project_id: project,
+        selection_revision: null, selected: null, revisions: [], next_cursor: null,
+      })),
     } as unknown as ResearchProjectModelConfigurationService;
     const transportPolicies = canonicalModelGatewayJson({
       protocol: RESEARCH_PREPARED_MODEL_TRANSPORT_PROTOCOL,
@@ -791,7 +794,10 @@ describe("global Settings provider binding for existing model use", () => {
         }],
       }) },
       project_id: project,
-      project_configuration: { readSelected: vi.fn(async () => null) } as unknown as ResearchProjectModelConfigurationService,
+      project_configuration: { readPage: vi.fn(async () => ({
+        protocol: "eliotr.research-project-model-configuration.v1", project_id: project,
+        selection_revision: null, selected: null, revisions: [], next_cursor: null,
+      })) } as unknown as ResearchProjectModelConfigurationService,
       project_keys: projectKeys,
       service_models: serviceModels,
     });

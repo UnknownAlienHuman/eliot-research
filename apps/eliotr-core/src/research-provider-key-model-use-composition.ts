@@ -70,8 +70,8 @@ export function createGlobalServiceProviderKeyConfiguration(input: {
         );
       }
 
-      const selected = await input.project_configuration.readSelected(context, projectId);
-      const selectedModels = selected?.configuration.model_selections
+      const selected = (await input.project_configuration.readPage(context, projectId, { limit: 1 })).selected;
+      const selectedModels = selected?.model_selections
         .filter((selection) => selection.provider_id === "openrouter")
         .map((selection) => selection.model_id) ?? [];
       const requiredModels = [...new Set([...selectedModels, ...preparedModels])];
