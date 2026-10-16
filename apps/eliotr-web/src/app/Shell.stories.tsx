@@ -6,9 +6,13 @@ function markVisualReady(shell: HTMLElement | null | undefined): void {
 
 import { paneAnnouncement, announcementUntil, unchangedChannel } from './announcementAssertions';
 import { CatalogModelOperationReloadRecovery as catalogReloadStory,
-  CatalogModelOperationNullAllowsLegacyChoice as catalogNullStory } from './CatalogModelOperationPreview';
+  CatalogModelOperationNullAllowsLegacyChoice as catalogNullStory,
+  CatalogModelAvailabilityChecking as catalogCheckingStory,
+  CatalogModelAvailabilityCheckingRussian as catalogCheckingRussianStory } from './CatalogModelOperationPreview';
 export const CatalogModelOperationReloadRecovery = catalogReloadStory;
 export const CatalogModelOperationNullAllowsLegacyChoice = catalogNullStory;
+export const CatalogModelAvailabilityChecking = catalogCheckingStory;
+export const CatalogModelAvailabilityCheckingRussian = catalogCheckingRussianStory;
 import { ProviderCatalogPreferencesSaveRace as providerPreferencesSaveRace } from './ProviderCatalogPreferencesPreview';
 export const ProviderCatalogPreferencesSaveRace = providerPreferencesSaveRace;
 import { playMaterialPreferences, playMaterialReading } from './MaterialReviewPreview';

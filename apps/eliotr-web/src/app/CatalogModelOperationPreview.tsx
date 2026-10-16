@@ -5,7 +5,7 @@ import type { ResearchCatalogModelUseReceipt, ResearchModelConfigurationRevision
 import { ResearchPanel } from './ResearchPanel';
 import { createWorkspaceRuntime } from './runtime';
 import { createPrivacyController } from './privacy';
-import { createWorkspaceQueryClient, clearWorkspaceQueries } from '../query/client';
+import { createWorkspaceQueryClient, clearWorkspaceQueries, protectedQueryKey } from '../query/client';
 import { modelCatalogEntryKey } from '../query/modelCatalog';
 import { announcementUntil, paneAnnouncement } from './announcementAssertions';
 
@@ -21,13 +21,20 @@ const selected: ResearchModelConfigurationRevision = { configuration_ref: `rpmc-
       api: 'custom-chat-completions', provider: 'custom-opencode-go', model: model.model_id, billing: { mode: 'byok', alias: 'saved-go' },
       capabilities: { max_output_tokens_field: 'max_tokens', reasoning_efforts: [] } } }],
 };
-interface Probe { readonly baseReads: () => number; readonly statusReads: () => number; readonly posts: () => number; readonly errors: () => string }
+interface Probe {
+  readonly baseReads: () => number; readonly statusReads: () => number; readonly posts: () => number; readonly errors: () => string;
+  readonly finishQualification: () => void; readonly assertNoResearch: () => void;
+}
 let probe: Probe | undefined;
 
-function CatalogOperationPreview({ existing }: { readonly existing: boolean }) {
+function CatalogOperationPreview({ existing, holdQualification = false, locale = 'en' }: {
+  readonly existing: boolean; readonly holdQualification?: boolean; readonly locale?: 'en' | 'ru';
+}) {
   const [environment] = useState(() => {
     const client = createWorkspaceQueryClient(), timers = { setTimeout: () => 0, clearTimeout() {} };
-    let baseReads = 0, statusReads = 0, posts = 0, completed = false, operationId = existingOperationId;
+    let baseReads = 0, statusReads = 0, posts = 0, researchPosts = 0, completed = false, operationId = existingOperationId;
+    let finishQualification = () => {};
+    const qualification = new Promise<void>(resolve => { finishQualification = resolve; });
     const json = (data: unknown) => new Response(JSON.stringify({ data, trace_id: 'catalog-preview-trace', deployment_generation: generation }),
       { headers: { 'content-type': 'application/json' } });
     const receipt = (): ResearchCatalogModelUseReceipt => ({ protocol: 'eliotr.research.catalog-model-use-receipt.v1', project_id: 'project-chat',
@@ -37,6 +44,7 @@ function CatalogOperationPreview({ existing }: { readonly existing: boolean }) {
       failure_code: null, created_at: stamp, updated_at: stamp });
     const fetcher: typeof fetch = async (input, init) => {
       const url = new URL(String(input), 'https://fixture.invalid');
+      if (url.pathname === '/api/v1/research/run' && init?.method === 'POST') researchPosts++;
       if (url.pathname === '/api/v1/system/health') return json({ ready: true, deployment_generation: generation,
         core_schema_generation: 'schema-1', search_schema_generation: 'schema-1', blocking_reason_codes: [], checked_at: stamp });
       if (url.pathname === '/api/v1/system/session') return json({ protocol: 'eliotr.owner-session.v1', principal_ref: 'owner-1',
@@ -80,7 +88,9 @@ function CatalogOperationPreview({ existing }: { readonly existing: boolean }) {
             !('provider_operation_id' in body) || body.provider_operation_id !== providerOperationId || !('provider_id' in body) ||
             body.provider_id !== model.provider_id || !('model_id' in body) || body.model_id !== model.model_id ||
             !('expected_selection_revision' in body) || body.expected_selection_revision !== null) throw new Error('Catalog preparation replaced the held operation or global connection');
-        operationId = body.operation_id; completed = true; return json(receipt());
+        operationId = body.operation_id;
+        if (holdQualification) await qualification;
+        completed = true; return json(receipt());
       }
       if (url.pathname === base + '/' + operationId && init?.method === 'GET') {
         statusReads++;
@@ -94,7 +104,16 @@ function CatalogOperationPreview({ existing }: { readonly existing: boolean }) {
       isCurrent: context => privacy.isCurrent(context), onAuthorizationLoss() { privacy.close(); } });
     const privacy = createPrivacyController({ now: () => Date.parse(stamp), timers, mask() { runtime.close(); }, reveal() {},
       cancelReads() { void client.cancelQueries(); }, clearProtected() { clearWorkspaceQueries(client); }, verify: signal => runtime.verify(signal) });
-    probe = { baseReads: () => baseReads, statusReads: () => statusReads, posts: () => posts,
+    probe = { baseReads: () => baseReads, statusReads: () => statusReads, posts: () => posts, finishQualification,
+      assertNoResearch() {
+        const snapshot = privacy.getSnapshot();
+        if (snapshot.phase !== 'available') throw new Error('Catalog fixture context is unavailable');
+        const memory = client.getQueryData<{ intent?: unknown; observedLaunch?: unknown }>([
+          ...protectedQueryKey(snapshot.context, 'research'), 'local-intent', 'project-chat',
+        ]);
+        if (researchPosts !== 0 || memory?.intent !== undefined || memory?.observedLaunch !== undefined)
+          throw new Error('Model availability checking allocated research');
+      },
       errors: () => client.getQueryCache().getAll().filter(query => query.state.error).map(query =>
         JSON.stringify(query.queryKey) + ': ' + String(query.state.error)).join('\n') };
     return { client, runtime, privacy };
@@ -108,7 +127,7 @@ function CatalogOperationPreview({ existing }: { readonly existing: boolean }) {
   const apis = snapshot.phase === 'available' ? environment.runtime.read(snapshot.context) : undefined;
   return <QueryClientProvider client={environment.client}><MemoryRouter><section aria-label="Research recovery fixture">
     {snapshot.phase === 'available' && apis && <ResearchPanel apis={apis} privacy={environment.privacy} context={snapshot.context}
-      locale="en" scope={[]} scopeCurrent isScopeCurrent={() => true} projectId="project-chat" isProjectCurrent={() => true} />}
+      locale={locale} scope={[]} scopeCurrent isScopeCurrent={() => true} projectId="project-chat" isProjectCurrent={() => true} />}
   </section></MemoryRouter></QueryClientProvider>;
 }
 
@@ -116,8 +135,54 @@ export interface CatalogModelOperationPlay {
   readonly canvas: { findByRole(role: string, options: { name: string }): Promise<HTMLElement>;
     findByText(text: string, options?: { selector: string }): Promise<HTMLElement> };
   readonly canvasElement: HTMLElement;
-  readonly userEvent: { click(element: HTMLElement): Promise<void>; selectOptions(element: HTMLElement, value: string): Promise<void> };
+  readonly userEvent: { click(element: HTMLElement): Promise<void>; selectOptions(element: HTMLElement, value: string): Promise<void>;
+    type(element: HTMLElement, text: string): Promise<void> };
 }
+
+function availabilityCheckingStory(locale: 'en' | 'ru') {
+  const ru = locale === 'ru';
+  return {
+    render: () => <CatalogOperationPreview existing={false} holdQualification locale={locale} />,
+    play: async ({ canvas, canvasElement, userEvent }: CatalogModelOperationPlay) => {
+      const picker = await canvas.findByRole('combobox', { name: ru ? 'Модель чата' : 'Chat model' }) as HTMLSelectElement;
+      await announcementUntil(() => !picker.disabled && Array.from(picker.options).some(option => option.value === modelCatalogEntryKey(model)),
+        () => probe?.errors() ?? '');
+      const draft = await canvas.findByRole('textbox', { name: ru ? 'Вопрос исследования' : 'Research question' }) as HTMLTextAreaElement;
+      const question = ru ? 'Сравни источники.' : 'Compare the sources.';
+      await userEvent.type(draft, question);
+      const pane = canvasElement.querySelector('section[aria-label="Research recovery fixture"]');
+      if (!(pane instanceof HTMLElement) || !probe) throw new Error('Missing model availability fixture');
+      const channel = paneAnnouncement(pane), currentProbe = probe;
+      await userEvent.selectOptions(picker, modelCatalogEntryKey(model));
+      try {
+        await announcementUntil(() => currentProbe.posts() === 1 && channel.textContent ===
+          (ru ? 'Проверяем доступность моделей…' : 'Checking model availability…'));
+        await canvas.findByText(ru ? 'Проверяем доступность модели…' : 'Checking model availability…', { selector: '.er-status > span' });
+        const ask = await canvas.findByRole('button', { name: ru ? 'Спросить' : 'Ask' }) as HTMLButtonElement;
+        if (!picker.disabled || !ask.disabled || draft.value !== question) throw new Error('Availability checking lost its lock or question draft');
+        if (pane.querySelector('.er-research-run')?.getAttribute('data-phase') !== 'start' ||
+            pane.querySelector('.er-research-run__heading')?.textContent !== (ru ? 'Спросите свои источники' : 'Ask your sources') ||
+            pane.querySelector('.er-research-run__turn') !== null ||
+            !pane.querySelector(`section[aria-label="${ru ? 'Предлагаемые вопросы' : 'Suggested questions'}"]`))
+          throw new Error('Availability checking replaced the start view with research progress');
+        if (paneAnnouncement(pane) !== channel) throw new Error('Model checking replaced the announcement channel');
+        currentProbe.assertNoResearch();
+        // A locked Ask cannot submit even though a nonempty question draft is present.
+        await userEvent.click(ask);
+        currentProbe.assertNoResearch();
+      } finally { currentProbe.finishQualification(); }
+      await canvas.findByText(ru ? 'Доступность модели подтверждена для запуска.' : 'Model availability confirmed for this run.',
+        { selector: '.er-status > span' });
+      const ask = await canvas.findByRole('button', { name: ru ? 'Спросить' : 'Ask' }) as HTMLButtonElement;
+      await announcementUntil(() => !picker.disabled && !ask.disabled);
+      currentProbe.assertNoResearch();
+      if (currentProbe.posts() !== 1 || picker.value !== modelCatalogEntryKey(model) || draft.value !== question)
+        throw new Error('Qualification repeated or replaced the chosen model or question draft');
+    },
+  };
+}
+export const CatalogModelAvailabilityChecking = availabilityCheckingStory('en');
+export const CatalogModelAvailabilityCheckingRussian = availabilityCheckingStory('ru');
 export const CatalogModelOperationReloadRecovery = {
   render: () => <CatalogOperationPreview existing />,
   play: async ({ canvas, canvasElement, userEvent }: CatalogModelOperationPlay) => {

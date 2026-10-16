@@ -594,13 +594,15 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
       const { observedLaunch: _launch, ...rest } = old; return rest;
     });
   };
+  // The shared operation lock also covers standalone model checks, which are not research turns.
+  const researchBusy = busy && (preparingModel.current || saved?.intent !== undefined || launch !== undefined);
   const state = saved?.intent?.phase === 'unknown' || status.isError || recovery?.phase === 'unknown' ? 'degraded'
     : progress?.execution_state === 'CANCELLED' ? 'cancelled'
     : progress?.failure ? 'error' : progress?.execution_state === 'ENGINE_COMPLETED' ? 'useful'
-    : launch || busy ? 'loading' : 'empty';
+    : launch || researchBusy ? 'loading' : 'empty';
   const launchFailure = saved?.intent?.phase === 'unknown' ? saved.intent.launchFailure : undefined;
   const launchFailureReason = launchFailure === undefined ? undefined : researchLaunchFailureMessage(launchFailure, locale);
-  const announcement = usePaneAnnouncement(recoveryMessage || (busy ? text.working
+  const announcement = usePaneAnnouncement(recoveryMessage || (busy ? researchBusy ? text.working : text.modelConfigurationReading
     : inputError ? text.input
     : saved?.intent?.phase === 'unknown' ? `${text.unknown}${launchFailureReason ? ` ${launchFailureReason}` : ''}`
     : !launch && (currentCatalogOperation.isFetching || catalogOperationReadback.isFetching || modelQualificationState === 'qualifying') ? text.modelConfigurationReading
@@ -676,13 +678,13 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
       </div>}
       <ResearchRunFeature key={saved?.intent?.key ?? 'next-question'} locale={locale} state={state}
       {...(cover ? { cover } : {})}
-      scope={saved?.intent?.scope ?? scope} busy={busy}
-      questionHeld={saved?.intent !== undefined || saved?.observedLaunch !== undefined || modelQualificationState === "qualifying"}
+      scope={saved?.intent?.scope ?? scope} busy={researchBusy}
+      questionHeld={saved?.intent !== undefined || saved?.observedLaunch !== undefined || preparingModel.current}
       draftQuestion={nextQuestionDraft} onDraftQuestionChange={value => {
         if (mounted.current && privacy.isCurrent(context) && !preparingModel.current) setHeldDraft({ context, text: value });
       }}
       {...(projectId !== undefined && displayedWholeScope !== undefined ? { wholeScope: displayedWholeScope } : {})}
-      canSubmit={!saved?.intent && !saved?.observedLaunch && projectId !== undefined && (scope.length === 0 || scopeCurrent) &&
+      canSubmit={!busy && !saved?.intent && !saved?.observedLaunch && projectId !== undefined && (scope.length === 0 || scopeCurrent) &&
         !configuration.isError && !configuration.isFetching && configuration.data !== undefined && configuration.data.run_readiness !== 'blocked' &&
         !modelSelectionLocked && catalogModelProblem === undefined && !selectedModelQueriesPending && !selectedModelQueriesFailed && selectedChatModel?.canRun === true &&
           projectModels.isSuccess && !projectModels.isFetching && projectModels.data !== undefined}
@@ -702,7 +704,7 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
         {historyTerminal && <Button variant="text" onClick={dismissHistory}>{text.next}</Button>}
         </div> : undefined}
       conversation={<>
-        {projectId !== undefined && !busy && <ProjectOverview locale={locale} onSuggest={question => {
+        {projectId !== undefined && !researchBusy && <ProjectOverview locale={locale} onSuggest={question => {
           if (mounted.current && privacy.isCurrent(context) && isProjectCurrent()) setHeldDraft({ context, text: question });
         }} />}
         {saved?.intent?.phase === 'unknown' && <div className="er-live-callout er-live-callout--attention"><Status>{text.unknown}</Status>
