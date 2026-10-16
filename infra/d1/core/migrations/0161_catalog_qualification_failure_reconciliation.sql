@@ -44,7 +44,6 @@ WHEN NOT EXISTS (
     AND g.provider_config_id=e.provider_config_id AND g.metadata_sha256=e.configuration_metadata_sha256
     AND julianday(NEW.logged_at)>=julianday(json_extract(e.preparation_json,'$.prepared_at'))
     AND julianday(NEW.logged_at)<julianday(json_extract(e.preparation_json,'$.preparation_expires_at'))
-    AND julianday(NEW.logged_at)<=julianday(e.updated_at)
 )
 BEGIN SELECT RAISE(ABORT,'exact current uncertain qualification and authenticated Gateway failure receipt are required'); END;
 

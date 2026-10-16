@@ -79,6 +79,56 @@ async function fixture(status = 400) {
 }
 
 describe("authenticated failed catalog qualification reconciliation", () => {
+  it("accepts Gateway publication 396ms after the uncertain update while rejecting future and out-of-window logs", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const f = await fixture();
+    if (migration === undefined) throw new Error("0161 migration missing");
+    await applyD1Migrations(db, [migration]);
+    const original = await f.readRows();
+    const uncertain = required(original.find(row => row.state === "UNCERTAIN"));
+    const preparation = JSON.parse(String(uncertain.preparation_json)) as {
+      prepared_at: string; preparation_expires_at: string;
+    };
+    const localUpdateMs = Date.parse(String(uncertain.updated_at));
+    // Actual 4091 timing: native 22:33:46.403Z, Gateway 22:33:46.799Z.
+    const publicationDelayMs = Date.parse("2026-10-16T22:33:46.799Z") - Date.parse("2026-10-16T22:33:46.403Z");
+    expect(publicationDelayMs).toBe(396);
+    const publishedAt = new Date(localUpdateMs + publicationDelayMs).toISOString();
+    const observedAt = new Date(localUpdateMs + 1_000).toISOString();
+    expect(Date.parse(publishedAt)).toBeGreaterThan(localUpdateMs);
+    expect(Date.parse(publishedAt)).toBeLessThan(Date.parse(preparation.preparation_expires_at));
+    const failureLog = required(f.logs.find(log => log.success === false));
+    let loggedAt = publishedAt;
+    const freshContext = { ...f.context, credential_generation: "refreshed-owner-after-4091" };
+    const readLogs = vi.fn(async () => ({ account_id: ACCOUNT, gateway_id: "eliotr-reasoning",
+      logs: [{ ...failureLog, created_at: loggedAt }] }));
+    const reconcile = createCatalogQualificationFailureReconciler({ database: db, context: freshContext,
+      deployment_generation: "release-after-4091", read_logs: readLogs, now: () => observedAt });
+    const authorization = required(await createD1ResearchCatalogModelUseStore(db).read(f.owner, f.project, f.operation));
+    vi.stubGlobal("fetch", () => { throw new Error("status reconciliation must never dispatch a probe"); });
+    for (const rejectedAt of [
+      new Date(Date.parse(preparation.prepared_at) - 1).toISOString(),
+      preparation.preparation_expires_at,
+      new Date(Date.parse(preparation.preparation_expires_at) + 1).toISOString(),
+      new Date(Date.parse(observedAt) + 1).toISOString(),
+    ]) {
+      loggedAt = rejectedAt;
+      expect((await reconcile(authorization)).state).toBe("UNCERTAIN");
+      expect(await db.prepare("SELECT count(*) AS n FROM provider_native_model_catalog_v2_failure WHERE consent_operation_id=?1")
+        .bind(f.operation).first("n")).toBe(0);
+    }
+    loggedAt = publishedAt;
+    expect((await reconcile(authorization)).state).toBe("BLOCKED");
+    const receipt = required(await db.prepare("SELECT logged_at,observed_at,receipt_json FROM provider_native_model_catalog_v2_failure " +
+      "WHERE consent_operation_id=?1").bind(f.operation).first<{ logged_at: string; observed_at: string; receipt_json: string }>());
+    expect(receipt.logged_at).toBe(publishedAt);
+    expect(receipt.observed_at).toBe(observedAt);
+    expect(JSON.parse(receipt.receipt_json)).toMatchObject({ provider_effects: "UNKNOWN", original_state: "UNCERTAIN",
+      reader_credential_generation: freshContext.credential_generation, reader_deployment_generation: "release-after-4091" });
+    expect(await f.readRows()).toEqual(original);
+    expect(f.modelCalls()).toBe(2);
+  }, 30_000);
+
   it("upgrades populated history additively and blocks only exact terminal failure, retaining unknown effects and revoking earlier proofs", async () => {
     const warnings = vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const f = await fixture();

@@ -108,10 +108,10 @@ export function createCatalogQualificationFailureReconciler(input: Readonly<{
       if (provider === null || provider.provider_id !== row.provider_id || provider.provider_slug !== row.route_provider_id ||
           provider.alias !== row.alias || provider.provider_config_id !== row.provider_config_id ||
           provider.metadata_sha256 !== row.configuration_metadata_sha256) return row;
-      const evidence = await db.prepare("SELECT stage,preparation_ref,preparation_sha256,preparation_json,updated_at " +
+      const evidence = await db.prepare("SELECT stage,preparation_ref,preparation_sha256,preparation_json " +
         "FROM provider_native_model_catalog_v2_evidence WHERE owner_ref=?1 AND project_id=?2 AND consent_operation_id=?3 " +
         "AND state='UNCERTAIN' ORDER BY stage LIMIT 2").bind(row.owner_id, row.project_id, row.operation_id)
-        .all<{ stage: string; preparation_ref: string; preparation_sha256: string; preparation_json: string; updated_at: string }>();
+        .all<{ stage: string; preparation_ref: string; preparation_sha256: string; preparation_json: string }>();
       if (evidence.results.length !== 1) return row;
       const e = evidence.results[0];
       if (e === undefined) return row;
@@ -146,9 +146,11 @@ export function createCatalogQualificationFailureReconciler(input: Readonly<{
           log.provider !== row.route_provider_id || log.model !== row.model_id || typeof log.created_at !== "string") return row;
       const observedAt = (input.now ?? (() => new Date().toISOString()))();
       const loggedMs = Date.parse(log.created_at), observedMs = Date.parse(observedAt);
+      // Gateway log publication can follow the local UNCERTAIN update. Only
+      // the original preparation window and current read observation bound it.
       if (!Number.isFinite(loggedMs) || !Number.isFinite(observedMs) || new Date(observedMs).toISOString() !== observedAt ||
           loggedMs < Date.parse(preparation.prepared_at) || loggedMs >= Date.parse(preparation.preparation_expires_at) ||
-          loggedMs > Date.parse(e.updated_at) || loggedMs > observedMs) return row;
+          loggedMs > observedMs) return row;
       const metadata: unknown = typeof log.metadata === "string" ? JSON.parse(log.metadata) : log.metadata;
       const deployment = preparation.probe_deployment;
       // Gateway retains five metadata fields. Stage is derived from the exact
