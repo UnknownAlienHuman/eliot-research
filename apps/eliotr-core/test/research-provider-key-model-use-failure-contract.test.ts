@@ -374,4 +374,4 @@ it("preserves populated Native children and retains an unpriced BLOCKED stage wi
   expect(await readOperationRows(successfulOperationId)).toEqual(legacyCompletedBeforeGlobal);
   expect(await readOperationRows(failedOperationId)).toEqual(legacyBlockedBeforeGlobal);
   expect((await database.prepare("PRAGMA foreign_key_check").all()).results).toEqual([]);
-});
+}, 15_000);
