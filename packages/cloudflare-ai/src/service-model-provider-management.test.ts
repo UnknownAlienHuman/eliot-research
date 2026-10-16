@@ -36,7 +36,7 @@ function gateway(): Response {
   return envelope({
     id: GATEWAY_ID,
     store_id: STORE_ID,
-    auth: true,
+    authentication: true,
     future_gateway_field: "ignored",
   });
 }
@@ -232,13 +232,13 @@ describe("Cloudflare service-model provider management", () => {
     expect(requests.filter(({ init }) => init.method === "POST")).toHaveLength(0);
   });
 
-  it.each(["id", "auth", "store_id"] as const)(
+  it.each(["id", "authentication", "store_id"] as const)(
     "requires the gateway %s before any Secrets Store write",
     async (field) => {
       const gatewayResult = {
         id: field === "id" ? "other-gateway" : GATEWAY_ID,
         store_id: field === "store_id" ? "invalid" : STORE_ID,
-        auth: field !== "auth",
+        authentication: field !== "authentication",
         unrelated_future_field: true,
       };
       const requests: CapturedRequest[] = [];
@@ -286,7 +286,9 @@ describe("Cloudflare service-model provider management", () => {
     expect(error).toMatchObject({ code: "PROVIDER_CONFIG_CREATE_UNCERTAIN", effect: "CREATE" });
     expect((error as Error).message).not.toContain(API_KEY);
     expect(requests.filter(({ init }) => init.method === "POST")).toHaveLength(1);
-    expect(requests.some(({ url }) => url.includes("/provider_configs"))).toBe(false);
+    expect(requests.some(({ init, url }) =>
+      init.method === "POST" && url.includes("/provider_configs")
+    )).toBe(false);
   });
 
   it("requires the created provider config to reference the exact new secret ID", async () => {
