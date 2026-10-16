@@ -748,6 +748,7 @@ describe("global Settings provider binding for existing model use", () => {
       owner_id: owner, project_id: project, operation_id: operationId, provider_id: "openrouter",
       alias: binding.alias, provider_config_id: binding.provider_config_id,
       metadata_sha256: binding.metadata_sha256, status: "configured_not_qualified",
+      model_registry: { operation_id: operationId, model_ids: [MODEL_ID] },
     });
     expect(projectKeys.readConfiguredOperation).toHaveBeenCalledTimes(1);
     expect(projectKeys.read).toHaveBeenCalledTimes(1);
@@ -757,7 +758,7 @@ describe("global Settings provider binding for existing model use", () => {
     );
   });
 
-  it("keeps a global operation unusable when its registered model list omits the prepared model", async () => {
+  it("carries the registered model independently of unrelated installed transport policies", async () => {
     const owner = `global-model-owner-${crypto.randomUUID()}`;
     const project = `global-model-project-${crypto.randomUUID()}`;
     const operationId = crypto.randomUUID();
@@ -802,8 +803,8 @@ describe("global Settings provider binding for existing model use", () => {
       service_models: serviceModels,
     });
 
-    await expect(service.readConfiguredOperation(requestContext, project, operationId)).rejects.toMatchObject({
-      code: "RESEARCH_PROVIDER_KEY_CONFIGURATION_NOT_CONFIGURED", status: 409,
+    await expect(service.readConfiguredOperation(requestContext, project, operationId)).resolves.toMatchObject({
+      model_registry: { operation_id: operationId, model_ids: ["dots-studio/dots-3-note-preview:free"] },
     });
     expect(projectKeys.create).not.toHaveBeenCalled();
   });

@@ -1,3 +1,5 @@
+import { ServiceModelProviderCreateRequestSchema } from "@eliotr/contracts";
+
 const SHA256 = /^[0-9a-f]{64}$/u;
 
 /** Internal server-to-server metadata for an acknowledged provider-key configuration. */
@@ -13,6 +15,8 @@ export interface ConfiguredResearchProviderKeyOperation {
   readonly metadata_sha256: string;
   readonly status: "configured_not_qualified";
   readonly created_at: string;
+  /** Present only for an existing global Settings operation; never a project credential registration. */
+  readonly model_registry?: Readonly<{ operation_id: string; model_ids: readonly string[] }>;
 }
 
 export type ConfiguredProviderKeyOperationReadResult =
@@ -87,7 +91,28 @@ export async function readConfiguredProviderKeyOperation(
   } catch (cause) {
     throw new ConfiguredProviderKeyOperationReadError("STORAGE_UNAVAILABLE", cause);
   }
-  if (row === null) return Object.freeze({ status: "missing" });
+  if (row === null) {
+    // The SQL projection admits global keys only through a durable project use
+    // operation, with exact owner/provider/alias/model pins and project-row precedence.
+    let globals: { readonly results?: readonly (ConfiguredProviderKeyOperationRow & { readonly model_ids_json: unknown })[] };
+    try {
+      const installed = await database.prepare(
+        "SELECT name FROM sqlite_schema WHERE type='view' AND name='research_provider_key_model_use_key_authority' LIMIT 1",
+      ).first<{ readonly name: string }>();
+      if (installed === null) return Object.freeze({ status: "missing" });
+      globals = await database.prepare(
+        "SELECT DISTINCT owner_id,project_id,provider_id,operation_id,account_id,gateway_id,alias,state," +
+        "provider_config_id,metadata_sha256,failure_code,provider_http_status,created_at,model_ids_json " +
+        "FROM research_provider_key_model_use_key_authority " +
+        "WHERE owner_id=?1 AND project_id=?2 AND provider_id='openrouter' AND operation_id=?3 LIMIT 2",
+      ).bind(ownerRef, projectId, operationId).all<ConfiguredProviderKeyOperationRow & { readonly model_ids_json: unknown }>();
+    } catch (cause) { throw new ConfiguredProviderKeyOperationReadError("STORAGE_UNAVAILABLE", cause); }
+    const rows = globals.results ?? [];
+    if (rows.length === 0) return Object.freeze({ status: "missing" });
+    if (rows.length !== 1) throw new ConfiguredProviderKeyOperationReadError("READBACK_INVALID");
+    row = rows[0] ?? null;
+  }
+  if (row === null) throw new ConfiguredProviderKeyOperationReadError("READBACK_INVALID");
   if (row.owner_id !== ownerRef || row.project_id !== projectId || row.operation_id !== operationId ||
       row.provider_id !== "openrouter") {
     throw new ConfiguredProviderKeyOperationReadError("READBACK_INVALID");
@@ -102,6 +127,17 @@ export async function readConfiguredProviderKeyOperation(
       new Date(Date.parse(row.created_at)).toISOString() !== row.created_at) {
     throw new ConfiguredProviderKeyOperationReadError("READBACK_INVALID");
   }
+  let modelRegistry: ConfiguredResearchProviderKeyOperation["model_registry"];
+  if ("model_ids_json" in row) {
+    let modelIds: unknown;
+    try { modelIds = JSON.parse(row.model_ids_json as string); }
+    catch (cause) { throw new ConfiguredProviderKeyOperationReadError("READBACK_INVALID", cause); }
+    const parsed = ServiceModelProviderCreateRequestSchema.shape.model_ids.safeParse(modelIds);
+    if (!parsed.success) {
+      throw new ConfiguredProviderKeyOperationReadError("READBACK_INVALID");
+    }
+    modelRegistry = Object.freeze({ operation_id: operationId, model_ids: Object.freeze([...new Set(parsed.data)]) });
+  }
   return Object.freeze({ status: "configured", operation: Object.freeze({
     owner_id: ownerRef,
     project_id: projectId,
@@ -114,5 +150,6 @@ export async function readConfiguredProviderKeyOperation(
     metadata_sha256: configured.metadata_sha256,
     status: "configured_not_qualified",
     created_at: row.created_at,
+    ...(modelRegistry === undefined ? {} : { model_registry: modelRegistry }),
   }) });
 }

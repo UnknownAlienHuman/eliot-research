@@ -131,7 +131,7 @@ export function createResearchProviderKeyModelUseService(input: {
         operation: live,
         route: Object.freeze({ stage: planned.stage, route_ref: planned.route_ref,
           route_version: planned.route_version, provider: "openrouter" as const,
-          exact_model_id: "stealth/space-bunny-alpha" as const }),
+          exact_model_id: planned.transport_policy.model }),
       });
     },
   });
@@ -169,6 +169,11 @@ export function createResearchProviderKeyModelUseService(input: {
         key.provider_id !== "openrouter" || key.account_id !== row.account_id || key.gateway_id !== row.gateway_id ||
         key.alias !== row.alias || key.provider_config_id !== row.provider_config_id ||
         key.metadata_sha256 !== row.configuration_metadata_sha256) return null;
+    if (key.model_registry !== undefined) {
+      const basis = parseResearchProviderKeyModelUseBasis(row.configuration_basis_json);
+      if (key.model_registry.operation_id !== row.key_operation_id ||
+          basis.stages.some((planned) => !key.model_registry?.model_ids.includes(planned.transport_policy.model))) return null;
+    }
     let selected: SelectedResearchProjectConfiguration | null;
     try { selected = await input.project_configuration.readSelected(input.context, input.project_id); }
     catch { return null; }
@@ -302,7 +307,7 @@ export function createResearchProviderKeyModelUseService(input: {
         if (cause instanceof ResearchProviderKeyModelPriceObservationStoreError) return markFailure(row, "STORAGE_UNAVAILABLE", "BLOCKED");
         unavailable(cause);
       }
-      if (quote.provider !== "openrouter" || quote.exact_model_id !== "stealth/space-bunny-alpha" ||
+      if (quote.provider !== "openrouter" || quote.exact_model_id !== planned.transport_policy.model ||
           quote.route_ref !== planned.route_ref || quote.route_version !== planned.route_version ||
           quote.expires_at !== row.deadline_at) return markFailure(row, "FREE_PRICE_NOT_PROVEN", "BLOCKED");
       stages = await transitionStage(row, planned.stage, "PENDING", "PENDING",

@@ -4,6 +4,11 @@ import {
   type ResearchProviderKeyModelPricingObservationStore,
 } from "@eliotr/cloudflare-research-configuration/research-provider-key-model-pricing.js";
 import type { ResearchProviderKeyModelUseRow } from "@eliotr/cloudflare-research-configuration/research-provider-key-model-use-store.js";
+import {
+  assertVerifiedZeroPriceCatalogBytes,
+  researchProviderKeyModelPricingSourceUrl,
+} from "../../../packages/cloudflare-research-configuration/src/research-provider-key-model-pricing-catalog.js";
+import { freeOnlyCatalogResponse } from "./research-provider-key-model-use-fixture.js";
 
 const operationId = "00000000-0000-4000-8000-000000000001";
 const operation = {
@@ -70,6 +75,28 @@ function makeObserver(currentOperation: ResearchProviderKeyModelUseRow, reads: {
 const request = { operation_id: operationId, route_ref: "route-test", route_version: "version-test" };
 
 describe("pricing observer owner-use operation shape", () => {
+  it("binds free pricing to the exact registered model and its encoded source rather than a vendor fixture", async () => {
+    const modelId = "dots-studio/dots-3-note-preview:free";
+    expect(researchProviderKeyModelPricingSourceUrl(modelId))
+      .toBe("https://openrouter.ai/api/v1/models/dots-studio/dots-3-note-preview%3Afree/endpoints");
+    const bytes = new Uint8Array(await freeOnlyCatalogResponse(modelId).arrayBuffer());
+    expect(() => assertVerifiedZeroPriceCatalogBytes(bytes, modelId)).not.toThrow();
+    expect(() => assertVerifiedZeroPriceCatalogBytes(bytes, "stealth/space-bunny-alpha"))
+      .toThrow(expect.objectContaining({ code: "FREE_PRICE_NOT_PROVEN" }));
+    type CatalogFixture = { data: { description?: string; endpoints: [{ quantization?: string; pricing: Record<string, string | number> }] } };
+    const nonzero = JSON.parse(new TextDecoder().decode(bytes)) as CatalogFixture;
+    nonzero.data.endpoints[0].pricing["prompt"] = "0.01";
+    expect(() => assertVerifiedZeroPriceCatalogBytes(new TextEncoder().encode(JSON.stringify(nonzero)), modelId))
+      .toThrow(expect.objectContaining({ code: "FREE_PRICE_NOT_ZERO" }));
+    const optionalMetadata = JSON.parse(new TextDecoder().decode(bytes)) as CatalogFixture;
+    delete optionalMetadata.data.description;
+    delete optionalMetadata.data.endpoints[0].quantization;
+    expect(() => assertVerifiedZeroPriceCatalogBytes(new TextEncoder().encode(JSON.stringify(optionalMetadata)), modelId)).not.toThrow();
+    optionalMetadata.data.endpoints[0].pricing["unknown_fee"] = "0.01";
+    expect(() => assertVerifiedZeroPriceCatalogBytes(new TextEncoder().encode(JSON.stringify(optionalMetadata)), modelId))
+      .toThrow(expect.objectContaining({ code: "FREE_PRICE_NOT_PROVEN" }));
+    expect(() => researchProviderKeyModelPricingSourceUrl("dots-studio/../other?model=free")).toThrow();
+  });
   it("accepts the complete canonical store row while retaining strict unknown-key rejection", async () => {
     const canonicalReads = { count: 0 };
     const canonicalFailure = await makeObserver(operation, canonicalReads)

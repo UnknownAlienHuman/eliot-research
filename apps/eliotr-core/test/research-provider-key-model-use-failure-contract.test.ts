@@ -79,6 +79,9 @@ it("preserves populated Native children and retains an unpriced BLOCKED stage wi
     migration.name.startsWith("0113_research_provider_key_model_use_failure_alignment"));
   const proofMigrationIndex = migrations.findIndex((migration) =>
     migration.name.startsWith("0114_provider_native_model_proof_attempt_alignment"));
+  const serviceProviderMigration = migrations.find((migration) => migration.name.startsWith("0152_service_model_provider_operation"));
+  const globalUseMigration = migrations.find((migration) => migration.name.startsWith("0156_global_provider_model_use"));
+  if (serviceProviderMigration === undefined || globalUseMigration === undefined) throw new Error("Global model-use migrations are missing");
   if (blockedMigrationIndex < 1) throw new Error("Migration 0113 is not present in the Core migration stream");
   if (proofMigrationIndex !== blockedMigrationIndex + 1) throw new Error("Migration 0114 must immediately follow migration 0113");
   const blockedMigration = migrations[blockedMigrationIndex];
@@ -362,4 +365,10 @@ it("preserves populated Native children and retains an unpriced BLOCKED stage wi
     "WHERE owner_id=?1 AND project_id=?2 AND operation_id=?3 AND state='BLOCKED'",
   ).bind(owner, project, failedOperationId).run()).rejects.toBeDefined();
   expect(nativeCalls).toBe(2);
+  const legacyCompletedBeforeGlobal = await readOperationRows(successfulOperationId);
+  const legacyBlockedBeforeGlobal = await readOperationRows(failedOperationId);
+  await applyD1Migrations(database, [serviceProviderMigration, globalUseMigration]);
+  expect(await readOperationRows(successfulOperationId)).toEqual(legacyCompletedBeforeGlobal);
+  expect(await readOperationRows(failedOperationId)).toEqual(legacyBlockedBeforeGlobal);
+  expect((await database.prepare("PRAGMA foreign_key_check").all()).results).toEqual([]);
 });

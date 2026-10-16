@@ -11,16 +11,7 @@ import {
   type ResearchProviderKeyConfigurationService,
 } from "@eliotr/cloudflare-model-control";
 import type { ServiceModelProviderService } from "@eliotr/cloudflare-model-control/service-model-provider-service.js";
-import { parseResearchPreparedModelTransportPolicies } from "@eliotr/cloudflare-model-control/research-prepared-model-transport-policies.js";
 import { createServiceModelSettingsComposition } from "./service-model-settings-composition.js";
-
-function configuredOpenRouterModels(env: Env): readonly string[] {
-  const policies = parseResearchPreparedModelTransportPolicies(env.ELIOTR_RESEARCH_MODEL_TRANSPORT_POLICIES_JSON);
-  return Object.freeze([...new Set((policies?.model_selections ?? [])
-    .filter((selection) => selection.provider === "openrouter" &&
-      selection.transport_policy.provider === "openrouter" && selection.transport_policy.billing.mode === "byok")
-    .map((selection) => selection.model))]);
-}
 
 /**
  * The old project-key operation remains authoritative when present. A global
@@ -35,7 +26,6 @@ export function createGlobalServiceProviderKeyConfiguration(input: {
   readonly service_models: ServiceModelProviderService;
 }): ResearchProviderKeyConfigurationService {
   const gateway = installedGatewayIdentity(input.env.AI_GATEWAY_REASONING_URL);
-  const preparedModels = configuredOpenRouterModels(input.env);
   return Object.freeze<ResearchProviderKeyConfigurationService>({
     read: (context, projectId, operationId) => input.project_keys.read(context, projectId, operationId),
     create: (context, projectId, request) => input.project_keys.create(context, projectId, request),
@@ -70,17 +60,6 @@ export function createGlobalServiceProviderKeyConfiguration(input: {
         );
       }
 
-      const selected = (await input.project_configuration.readPage(context, projectId, { limit: 1 })).selected;
-      const selectedModels = selected?.model_selections
-        .filter((selection) => selection.provider_id === "openrouter")
-        .map((selection) => selection.model_id) ?? [];
-      const requiredModels = [...new Set([...selectedModels, ...preparedModels])];
-      if (requiredModels.length === 0 || requiredModels.some((model) => !binding.model_ids.includes(model))) {
-        throw new ResearchProviderKeyConfigurationError(
-          "RESEARCH_PROVIDER_KEY_CONFIGURATION_NOT_CONFIGURED", 409,
-          "Global provider connection does not register every model selected by this model-use plan",
-        );
-      }
       return Object.freeze({
         owner_id: binding.owner_id,
         project_id: projectId,
@@ -93,6 +72,7 @@ export function createGlobalServiceProviderKeyConfiguration(input: {
         metadata_sha256: binding.metadata_sha256,
         status: "configured_not_qualified",
         created_at: binding.created_at,
+        model_registry: Object.freeze({ operation_id: binding.operation_id, model_ids: Object.freeze([...new Set(binding.model_ids)]) }),
       });
     },
   });

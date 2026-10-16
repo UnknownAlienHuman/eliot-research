@@ -30,10 +30,11 @@ import { selectResearchOwnerPrompt } from "@eliotr/cloudflare-research-stages";
 import { parseResearchSemanticConfiguration } from "./research-semantic-configuration-schema.js";
 import type { SelectedResearchProjectConfiguration } from "./research-project-configuration.js";
 import type { ConfiguredResearchProviderKeyOperation } from "@eliotr/cloudflare-model-control";
+import { ServiceModelProviderCreateRequestSchema } from "@eliotr/contracts";
 import type { ResearchProviderKeyModelUseStage, ResearchProviderKeyModelUseStagePlan } from "./research-provider-key-model-use-store.js";
 
 export const RESEARCH_PROVIDER_KEY_MODEL_USE_BASIS_PROTOCOL = "eliotr.research.provider-key-model-use-basis.v1" as const;
-const MODEL_ID = "stealth/space-bunny-alpha" as const;
+const LEGACY_MODEL_ID = "stealth/space-bunny-alpha" as const;
 const STAGE_ORDER: readonly ResearchProviderKeyModelUseStage[] = ["ANALYZE_BRANCHES", "COUNTER_SEARCH", "SYNTHESIZE", "AUDIT_CLAIMS"];
 const REQUIRED_VARS = [
   "ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON", "ELIOTR_MODEL_PROFILE_DEFINITION_JSON",
@@ -140,13 +141,41 @@ function jsonSchemaPrompt(
   return fail(`${stage} prompt/schema is not an installed owner prompt`);
 }
 
-function fixedTransportPolicy(
+function selectedModelId(key: ConfiguredResearchProviderKeyOperation, selected: SelectedResearchProjectConfiguration | null): string {
+  if (key.model_registry === undefined) return LEGACY_MODEL_ID;
+  const parsed = ServiceModelProviderCreateRequestSchema.shape.model_ids.safeParse(key.model_registry.model_ids);
+  if (key.model_registry.operation_id !== key.operation_id || !parsed.success) fail("Global model registration is invalid");
+  const registeredIds = [...new Set(parsed.data)];
+  const onlyRegistered = registeredIds[0];
+  if (registeredIds.length === 1 && onlyRegistered !== undefined) return onlyRegistered;
+  const selectedIds = new Set((selected?.configuration.model_selections ?? []).map((selection) =>
+    validateModelGatewayTransportPolicy(selection.transport_policy)).filter((policy) =>
+    policy.provider === "openrouter" && registeredIds.includes(policy.model)).map((policy) => policy.model));
+  if (selectedIds.size !== 1) fail("Multiple registered models require one exact existing owner model selection");
+  const onlySelected = [...selectedIds][0];
+  if (onlySelected === undefined) fail("An exact registered model selection is required");
+  return onlySelected;
+}
+
+function modelTransportPolicy(
   raw: string | undefined,
   stage: ResearchProviderKeyModelUseStage,
   base: ModelRouteDeployment,
   key: ConfiguredResearchProviderKeyOperation,
   selectedConfiguration: SelectedResearchProjectConfiguration | null,
+  modelId: string,
 ): ModelGatewayTransportPolicyV1 {
+  if (key.model_registry !== undefined) {
+    if (key.alias === "default") fail("Global model use requires its exact non-default saved alias");
+    // This is the existing OpenRouter free-only request contract. Endpoint
+    // metadata and the real connectivity qualification still admit the model.
+    return validateModelGatewayTransportPolicy({
+      version: 1, transport: "cloudflare-ai-gateway", api: "openrouter-chat-completions", provider: "openrouter",
+      model: modelId, billing: { mode: "byok", alias: key.alias, free_only: true },
+      capabilities: { max_output_tokens_field: "max_tokens", reasoning_efforts: ["low", "medium", "high", "max"],
+        response_format_normalization: "json-schema-to-json-object" },
+    });
+  }
   let sourcePolicy: unknown;
   const nativeSelection = selectedConfiguration?.configuration.model_selections.find((entry) =>
     entry.stage === stage && entry.candidate_kind === "provider-native-v1");
@@ -158,18 +187,18 @@ function fixedTransportPolicy(
   } else {
     let policies;
     try { policies = parseResearchPreparedModelTransportPolicies(raw); }
-    catch (cause) { return fail("The installed exact Bunny transport policy is invalid", cause); }
+    catch (cause) { return fail("The installed legacy OpenRouter transport policy is invalid", cause); }
     const installed = policies?.model_selections.find((entry) => entry.stage === stage &&
       entry.route_ref === base.route_ref && entry.route_version === base.route_version &&
-      entry.provider === "openrouter" && entry.model === MODEL_ID);
-    if (installed === undefined) fail(`${stage} has no server-installed exact OpenRouter Bunny policy for its current route`);
+      entry.provider === "openrouter" && entry.model === modelId);
+    if (installed === undefined) fail(`${stage} has no server-installed exact legacy OpenRouter policy for its current route`);
     sourcePolicy = installed.transport_policy;
   }
   let source: ModelGatewayTransportPolicyV1;
   try { source = validateModelGatewayTransportPolicy(sourcePolicy); }
   catch (cause) { return fail(`${stage} OpenRouter policy is invalid`, cause); }
   if (source.api !== "openrouter-chat-completions" || source.provider !== "openrouter" ||
-      source.model !== MODEL_ID || source.billing.mode !== "byok" ||
+      source.model !== modelId || source.billing.mode !== "byok" ||
       source.billing.free_only !== true ||
       source.capabilities.max_output_tokens_field !== "max_tokens" ||
       source.capabilities.response_format_normalization !== "json-schema-to-json-object" ||
@@ -181,7 +210,7 @@ function fixedTransportPolicy(
     transport: "cloudflare-ai-gateway",
     api: "openrouter-chat-completions",
     provider: "openrouter",
-    model: MODEL_ID,
+    model: modelId,
     billing: { mode: "byok", alias: key.alias, free_only: true },
     capabilities: source.capabilities,
   });
@@ -211,7 +240,7 @@ async function buildStagePlan(
   const params = stageParameters(input.semantic, input.stage);
   if (params.reasoning_effort !== undefined) {
     try { normalizeModelGatewayReasoningEffort(params.reasoning_effort, input.transport_policy.capabilities); }
-    catch (cause) { return fail(`${input.stage} parameter profile is unsupported by the fixed Bunny policy`, cause); }
+    catch (cause) { return fail(`${input.stage} parameter profile is unsupported by the selected OpenRouter policy`, cause); }
   }
   const appPrompt = input.stage === "SYNTHESIZE" || input.stage === "AUDIT_CLAIMS"
     ? jsonSchemaPrompt(input.semantic, input.stage)
@@ -243,7 +272,7 @@ async function buildStagePlan(
   const [probeDigests, probeParametersSha] = await Promise.all([
     providerNativeModelProbeInputDigests(),
     modelGatewayRequestParametersSha256({
-      model: MODEL_ID,
+      model: input.transport_policy.model,
       messages: [{ role: "user", content: PROVIDER_NATIVE_MODEL_PROBE_PROMPT }],
       max_tokens: 32,
       response_format: { type: "json_object" },
@@ -353,13 +382,14 @@ export async function createResearchProviderKeyModelUseBasis(input: {
     fail("Trusted spend policy must enable each required stage exactly once");
   }
   const stages: ResearchProviderKeyModelUseStagePlanV1[] = [];
+  const modelId = selectedModelId(input.key, input.selected);
   for (const [index, rule] of sortedRules.entries()) {
     const stage = rule.stage as ResearchProviderKeyModelUseStage;
     let baseDeployment: ModelRouteDeployment;
     try { baseDeployment = decodeModelRouteDeployment(rule.deployment); }
     catch (cause) { return fail(`${stage} owner spend deployment is invalid`, cause); }
-    const exactPolicy = fixedTransportPolicy(input.runtime_policy.ELIOTR_RESEARCH_MODEL_TRANSPORT_POLICIES_JSON,
-      stage, baseDeployment, input.key, input.selected);
+    const exactPolicy = modelTransportPolicy(input.runtime_policy.ELIOTR_RESEARCH_MODEL_TRANSPORT_POLICIES_JSON,
+      stage, baseDeployment, input.key, input.selected, modelId);
     stages.push(await buildStagePlan({
       stage,
       sequence_number: index,
@@ -453,11 +483,11 @@ export function parseResearchProviderKeyModelUseBasis(raw: string): ResearchProv
         probeDeployment.prompt_generation !== `eliotr.research.provider-native-probe-prompt-${probePromptSha}` ||
         probeDeployment.schema_generation !== `eliotr.research.provider-native-probe-schema-${probeSchemaSha}` ||
         transportPolicy.api !== "openrouter-chat-completions" || transportPolicy.provider !== "openrouter" ||
-        transportPolicy.model !== MODEL_ID || transportPolicy.billing.mode !== "byok" ||
+        transportPolicy.billing.mode !== "byok" ||
         transportPolicy.billing.free_only !== true || !/^eliotr-[0-9a-f]{48}$/u.test(transportPolicy.billing.alias) ||
         transportPolicy.capabilities.max_output_tokens_field !== "max_tokens" ||
         transportPolicy.capabilities.response_format_normalization !== "json-schema-to-json-object") {
-      fail("Stored stage binding does not satisfy the fixed free-only Bunny preparation contract");
+      fail("Stored stage binding does not satisfy the exact free-only OpenRouter preparation contract");
     }
     stages.push(Object.freeze({
       sequence_number: sequence,
@@ -478,6 +508,7 @@ export function parseResearchProviderKeyModelUseBasis(raw: string): ResearchProv
     }));
   }
   if (new Set(stages.map((stage) => stage.stage)).size !== stages.length ||
+      new Set(stages.map((stage) => stage.transport_policy.model)).size !== 1 ||
       !stages.some((stage) => stage.stage === "SYNTHESIZE") || !stages.some((stage) => stage.stage === "AUDIT_CLAIMS")) {
     fail("Stored stage set is duplicated or missing a required stage");
   }

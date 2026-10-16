@@ -2,6 +2,16 @@ const EXACT_MODEL_ID = "stealth/space-bunny-alpha" as const;
 export const RESEARCH_PROVIDER_KEY_MODEL_PRICING_SOURCE_URL =
   "https://openrouter.ai/api/v1/models/stealth/space-bunny-alpha/endpoints" as const;
 
+/** Encode the exact two-part model identity, including a :free suffix, without caller-controlled URL components. */
+export function researchProviderKeyModelPricingSourceUrl(modelId: string): string {
+  const parts = modelId.split("/");
+  if (modelId.length > 256 || parts.length !== 2 ||
+      parts.some((part) => !/^[A-Za-z0-9][A-Za-z0-9._:@-]{0,254}$/u.test(part))) {
+    fail("FREE_PRICE_NOT_PROVEN", "OpenRouter model identity is invalid for its exact pricing endpoint");
+  }
+  return `https://openrouter.ai/api/v1/models/${parts.map(encodeURIComponent).join("/")}/endpoints`;
+}
+
 const MAX_RESPONSE_BYTES = 32_768;
 const MAX_ENDPOINTS = 64;
 const FETCH_TIMEOUT_MS = 8_000;
@@ -73,7 +83,7 @@ function parsePricing(value: unknown): void {
   }
 }
 
-function parseCatalog(bytes: Uint8Array): void {
+function parseCatalog(bytes: Uint8Array, modelId: string): void {
   let decoded: string;
   try { decoded = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
   catch (cause) { fail("FREE_PRICE_NOT_PROVEN", "OpenRouter pricing response is not UTF-8", false, cause); }
@@ -83,19 +93,19 @@ function parseCatalog(bytes: Uint8Array): void {
   const root = exactRecord(raw, "OpenRouter response", new Set(["data"]));
   exactKeys(root, new Set(["data"]), "OpenRouter response");
   const data = exactRecord(root.data, "OpenRouter model data", DATA_KEYS);
-  exactKeys(data, DATA_KEYS, "OpenRouter model data");
-  if (data.id !== EXACT_MODEL_ID || !Array.isArray(data.endpoints) || data.endpoints.length < 1 || data.endpoints.length > MAX_ENDPOINTS) {
+  if (data.id !== modelId || !Array.isArray(data.endpoints) || data.endpoints.length < 1 || data.endpoints.length > MAX_ENDPOINTS) {
     fail("FREE_PRICE_NOT_PROVEN", "OpenRouter model or endpoint identity is unsupported");
   }
-  if (typeof data.description !== "string" || /(?:sunset|deprecat|retir|end\s+of\s+life)/iu.test(data.description)) {
+  if (data.description !== undefined && data.description !== null &&
+      (typeof data.description !== "string" || /(?:sunset|deprecat|retir|end\s+of\s+life)/iu.test(data.description))) {
     fail("FREE_PRICE_NOT_PROVEN", "OpenRouter model description indicates unsupported or sunset status");
   }
 
   for (const rawEndpoint of data.endpoints) {
     const endpoint = exactRecord(rawEndpoint, "OpenRouter endpoint", ENDPOINT_KEYS);
-    exactKeys(endpoint, ENDPOINT_KEYS, "OpenRouter endpoint");
     assertNoSunsetOrDisableMarker(endpoint, "OpenRouter endpoint");
-    if (endpoint.model_id !== EXACT_MODEL_ID || endpoint.provider_name !== "Stealth" || endpoint.tag !== "stealth") {
+    if (endpoint.model_id !== modelId || typeof endpoint.provider_name !== "string" || endpoint.provider_name.length < 1 ||
+        endpoint.provider_name.length > 256 || typeof endpoint.tag !== "string" || endpoint.tag.length < 1 || endpoint.tag.length > 256) {
       fail("FREE_PRICE_NOT_PROVEN", "OpenRouter returned an unselected endpoint for the pinned model");
     }
     if (typeof endpoint.status !== "number" || !Number.isFinite(endpoint.status)) {
@@ -110,12 +120,13 @@ function parseCatalog(bytes: Uint8Array): void {
   }
 }
 
-/** Revalidate persisted response bytes with the same fixed-catalog rules as a fresh response. */
-export function assertVerifiedZeroPriceCatalogBytes(bytes: Uint8Array): void {
+/** Revalidate persisted response bytes against the same exact model and zero-price rules as a fresh response. */
+export function assertVerifiedZeroPriceCatalogBytes(bytes: Uint8Array, modelId: string = EXACT_MODEL_ID): void {
+  researchProviderKeyModelPricingSourceUrl(modelId);
   if (!(bytes instanceof Uint8Array) || bytes.byteLength < 1 || bytes.byteLength > MAX_RESPONSE_BYTES) {
     fail("FREE_PRICE_NOT_PROVEN", "OpenRouter pricing response exceeds its byte bound");
   }
-  parseCatalog(bytes);
+  parseCatalog(bytes, modelId);
 }
 
 async function readBoundedResponse(response: Response): Promise<Uint8Array> {
@@ -163,23 +174,24 @@ async function readBoundedResponse(response: Response): Promise<Uint8Array> {
   return bytes;
 }
 
-/** Read and validate the exact fixed OpenRouter catalog; returned bytes are the persisted provenance. */
-export async function readVerifiedZeroPriceCatalog(): Promise<Uint8Array> {
+/** Read the exact model endpoint; returned bounded bytes are the persisted pricing provenance. */
+export async function readVerifiedZeroPriceCatalog(modelId: string = EXACT_MODEL_ID): Promise<Uint8Array> {
+  const sourceUrl = researchProviderKeyModelPricingSourceUrl(modelId);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const response = await globalThis.fetch(RESEARCH_PROVIDER_KEY_MODEL_PRICING_SOURCE_URL, {
+    const response = await globalThis.fetch(sourceUrl, {
       method: "GET",
       headers: { accept: "application/json", "cache-control": "no-cache", pragma: "no-cache" },
-      redirect: "error",
+      redirect: "manual",
       signal: controller.signal,
     });
     if (response.status !== 200 || response.redirected || (response.status >= 300 && response.status < 400) ||
-        (response.url !== "" && response.url !== RESEARCH_PROVIDER_KEY_MODEL_PRICING_SOURCE_URL)) {
-      fail("FREE_PRICE_NOT_PROVEN", "OpenRouter pricing metadata request did not return the fixed source");
+        (response.url !== "" && response.url !== sourceUrl)) {
+      fail("FREE_PRICE_NOT_PROVEN", "OpenRouter pricing metadata request did not return the exact source");
     }
     const bytes = await readBoundedResponse(response);
-    assertVerifiedZeroPriceCatalogBytes(bytes);
+    assertVerifiedZeroPriceCatalogBytes(bytes, modelId);
     return bytes;
   } catch (cause) {
     if (cause instanceof ResearchProviderKeyModelPricingCatalogError) throw cause;
