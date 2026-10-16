@@ -49,7 +49,7 @@ export async function preparePrivateSecretsStore(
     "NONE",
   );
   const storeId = gateway.store_id;
-  if (gateway.id !== input.gateway_id || gateway.auth !== true ||
+  if (gateway.id !== input.gateway_id || gateway.authentication !== true ||
       typeof storeId !== "string" || !STORE_ID.test(storeId)) {
     providerConfigRestFailure(
       "PROVIDER_CONFIG_RESPONSE_INVALID",
