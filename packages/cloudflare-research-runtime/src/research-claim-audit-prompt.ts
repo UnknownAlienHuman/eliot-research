@@ -316,6 +316,8 @@ export function createResearchClaimAuditPromptDependencies(
       pending.set(rawModelInput as unknown as object, bound);
       return Object.freeze({
         evidence_pack: snapshot(bound.audit.context.stage_five.evidence_pack, "frozen audit evidence pack"),
+        required_handle_refs: snapshot(bound.audit.evidence.map((item) => item.handle.handle_ref),
+          "verified audit evidence handles"),
         navigation: input.navigation,
         resolver: input.evidence_resolver,
         policy: manifestPolicy(bound.audit.context.manifest),

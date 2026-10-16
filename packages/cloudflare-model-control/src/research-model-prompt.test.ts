@@ -19,7 +19,7 @@ import { evidenceSha256, type NavigationReadAuthority } from "@eliotr/cloudflare
 import type { BuiltReferenceManifest, BuildReferenceManifestInput } from "@eliotr/cloudflare-evidence";
 import { createEvidenceContextCompiler } from "@eliotr/policy";
 import { createResearchModelPromptCompiler } from "./research-model-prompt.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 const manifestRef: VersionedRef = { id: "manifest-1", revision: 1 };
 const packRef: VersionedRef = { id: "pack-1", revision: 1 };
@@ -114,6 +114,7 @@ const buildInput = {
 } satisfies BuildReferenceManifestInput;
 
 function builtManifest(request: BuildReferenceManifestInput): BuiltReferenceManifest & { readonly manifest_ref: VersionedRef } {
+  expect(request.prefer_source_diversity).toBe(true);
   if (request.serialize_request_body === undefined) throw new Error("Fixture requires the emitted request serializer");
   const bytes = new TextEncoder().encode(request.serialize_request_body({
     blocks: compiled.blocks,
@@ -273,6 +274,7 @@ describe("research model prompt compiler", () => {
             evidence: request.evidence_pack.resolved_evidence,
             modelRouteRef: request.model_route_ref,
             maxBytes: request.max_context_bytes,
+            preferSourceDiversity: request.prefer_source_diversity === true,
             ...(request.required_handle_refs === undefined ? {} : { requiredHandleRefs: request.required_handle_refs }),
             ...(request.serialize_request_body === undefined
               ? {}
@@ -410,6 +412,7 @@ describe("research model prompt compiler", () => {
             evidence: request.evidence_pack.resolved_evidence,
             modelRouteRef: request.model_route_ref,
             maxBytes: request.max_context_bytes,
+            preferSourceDiversity: request.prefer_source_diversity === true,
             ...(request.required_handle_refs === undefined ? {} : { requiredHandleRefs: request.required_handle_refs }),
             ...(request.serialize_request_body === undefined
               ? {}
@@ -553,21 +556,35 @@ describe("research model prompt compiler", () => {
   it("keeps admitted source text in quoted user data and returns canonical bytes", async () => {
     let persisted = 0;
     const deployment = await testDeployment();
+    const modelInput = { ...input, evidence_pack: { ...input.evidence_pack,
+      resolved_evidence: [await resolvedEvidence("handle-1", "source-1", block.quoted_content)],
+      total_utf8_bytes: new TextEncoder().encode(block.quoted_content).byteLength,
+    } };
     const compiler = createResearchModelPromptCompiler({
       manifest_service: { buildAndPersist: async request => { persisted += 1; return builtManifest(request); } },
-      build_manifest_input: async () => buildInput,
+      build_manifest_input: async () => ({ ...buildInput, evidence_pack: modelInput.evidence_pack, prefer_source_diversity: false }),
       resolve_trusted_parameters: async () => ({ prompt: "Summarize the evidence.", max_tokens: 32 }),
       request_timeout_ms: 15_000,
     });
 
-    const result = await compiler.compile(input, deployment) as {
-      readonly request_body: { readonly messages: readonly { readonly role: string; readonly content: string }[] };
-      readonly request_body_sha256: string;
-    };
-    expect(persisted).toBe(1);
-    expect(result.request_body.messages[0]?.content).not.toContain("secret source text");
-    expect(result.request_body.messages[1]?.content).toContain("secret source text");
-    expect(result.request_body_sha256).toMatch(/^[a-f0-9]{64}$/u);
+    const timing = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const result = await compiler.compile(modelInput, deployment) as {
+        readonly request_body: { readonly messages: readonly { readonly role: string; readonly content: string }[] };
+        readonly request_body_sha256: string;
+      };
+      expect(persisted).toBe(1);
+      expect(result.request_body.messages[0]?.content).not.toContain("secret source text");
+      expect(result.request_body.messages[1]?.content).toContain("secret source text");
+      expect(result.request_body_sha256).toMatch(/^[a-f0-9]{64}$/u);
+      expect(timing).toHaveBeenCalledOnce();
+      const timingText = timing.mock.calls[0]?.[0] as string;
+      expect(JSON.parse(timingText)).toMatchObject({ event: "research_model_prompt_timing",
+        candidate_block_count: 1, candidate_source_count: 1, admitted_block_count: 1, admitted_source_count: 1,
+        rejected_candidate_count: 0,
+      });
+      expect(timingText).not.toContain(block.quoted_content);
+    } finally { timing.mockRestore(); }
   });
 
   it("rejects a route binding mismatch before reading the manifest authority", async () => {

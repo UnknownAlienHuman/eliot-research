@@ -24,6 +24,8 @@ export interface ContextCompilationInput {
   readonly schemaReserveUtf8Bytes?: number;
   /** Returns the exact canonical model request body; when supplied, it replaces fixed reserves. */
   readonly serializeRequestBody?: ContextRequestBodySerializer;
+  /** Owner-controlled packing preference applied only after every authority/integrity check. */
+  readonly preferSourceDiversity?: boolean;
 }
 
 export interface CompiledEvidenceContext {
@@ -256,6 +258,9 @@ export function createEvidenceContextCompiler(
       if (input.serializeRequestBody !== undefined && typeof input.serializeRequestBody !== "function") {
         throw new TypeError("serializeRequestBody must be a function");
       }
+      if (input.preferSourceDiversity !== undefined && typeof input.preferSourceDiversity !== "boolean") {
+        throw new TypeError("preferSourceDiversity must be a boolean");
+      }
       const wrapperReserveUtf8Bytes = reserveBytes(input.wrapperReserveUtf8Bytes, "wrapperReserveUtf8Bytes");
       const schemaReserveUtf8Bytes = reserveBytes(input.schemaReserveUtf8Bytes, "schemaReserveUtf8Bytes");
       if (!Number.isSafeInteger(wrapperReserveUtf8Bytes + schemaReserveUtf8Bytes)) {
@@ -278,6 +283,7 @@ export function createEvidenceContextCompiler(
         wrapperReserveUtf8Bytes: number;
         schemaReserveUtf8Bytes: number;
         serializeRequestBody?: ContextRequestBodySerializer;
+        preferSourceDiversity: boolean;
       }> = Object.freeze({
         manifest: AllowedReferenceManifestSchema.parse(input.manifest),
         evidence: Object.freeze(input.evidence.map((rawEvidence, index) => {
@@ -291,6 +297,7 @@ export function createEvidenceContextCompiler(
         requiredHandleRefs,
         wrapperReserveUtf8Bytes,
         schemaReserveUtf8Bytes,
+        preferSourceDiversity: input.preferSourceDiversity === true,
         ...(input.serializeRequestBody === undefined ? {} : { serializeRequestBody: input.serializeRequestBody }),
       });
       const observedAt = now();
@@ -475,13 +482,17 @@ export function createEvidenceContextCompiler(
           plan.rejectionReason = "CONTEXT_BYTE_BUDGET_EXCEEDED";
         }
       }
-      for (const plan of plans) {
-        if (plan.required || plan.block === undefined) continue;
+      const optionalPlans = plans.filter(
+        (plan): plan is PlannedEvidenceBlock => !plan.required && hasBlock(plan),
+      );
+      const attemptedIndexes = new Set<number>();
+      const admitOptional = async (plan: PlannedEvidenceBlock): Promise<boolean> => {
+        attemptedIndexes.add(plan.index);
         const trialIndexes = new Set(selectedIndexes);
         trialIndexes.add(plan.index);
         const trialBlocks = blocksFor(trialIndexes);
         if (prepared.serializeRequestBody === undefined) {
-          if (baseBytes + serializedBlockListBytes(trialBlocks) > prepared.maxBytes) continue;
+          if (baseBytes + serializedBlockListBytes(trialBlocks) > prepared.maxBytes) return false;
         } else {
           const trialReceipt = await buildSelectionReceipt({
             manifest,
@@ -492,10 +503,37 @@ export function createEvidenceContextCompiler(
             createdAt,
             policyGeneration,
           });
-          if (measureRequestBytes(trialBlocks, trialReceipt) > prepared.maxBytes) continue;
+          if (measureRequestBytes(trialBlocks, trialReceipt) > prepared.maxBytes) return false;
         }
         selectedIndexes.add(plan.index);
         delete plan.rejectionReason;
+        return true;
+      };
+      if (prepared.preferSourceDiversity) {
+        // Group only validated blocks by canonical source identity. Prose/titles
+        // never choose membership. Required sources already have representation.
+        const representedSources = new Set(requiredPlans.map((plan) => plan.block.source_revision_ref));
+        const bySource = new Map<string, PlannedEvidenceBlock[]>();
+        for (const plan of optionalPlans) {
+          const source = plan.block.source_revision_ref;
+          const group = bySource.get(source);
+          if (group === undefined) bySource.set(source, [plan]);
+          else group.push(plan);
+        }
+        for (const [source, candidates] of bySource) {
+          if (representedSources.has(source)) continue;
+          for (const plan of candidates) {
+            if (await admitOptional(plan)) {
+              representedSources.add(source);
+              break;
+            }
+          }
+        }
+      }
+      // Extra blocks retain packet rank; output blocks and every receipt list
+      // still use the original candidate order regardless of admission order.
+      for (const plan of optionalPlans) {
+        if (!attemptedIndexes.has(plan.index)) await admitOptional(plan);
       }
       const blocks = blocksFor(selectedIndexes);
       const admittedRefs = selectedRefs(selectedIndexes);

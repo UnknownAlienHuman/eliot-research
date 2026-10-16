@@ -47,6 +47,7 @@ import {
   type FusionOptions,
 } from "./fusion.js";
 import { createRetrievalCandidateBudgetV1, createRetrievalExecutionBoundsV1 } from "./query-lane-budget.js";
+import { sourceDiverseEvidenceOrder } from "./evidence-selection.js";
 import {
   createRetrievalExecutionIdV1,
   decodeRetrievalBudgetSettlementV1,
@@ -759,7 +760,10 @@ export function createRetrievalQueryService(ports: RetrievalQueryPorts): Retriev
         : 1;
       const limit = Math.min(requestedLimit, executionBounds.evidence_limit);
       const exactResolutionScanLimit = executionBounds.exact_resolution_scan_limit;
-      const exactScan = ranked.slice(0, exactResolutionScanLimit);
+      // Preserve provider/fusion rank provenance. Only Research's bounded exact
+      // selection prefers one locator per canonical source before extra excerpts.
+      const rankedForSelection = request.product === "RESEARCH" ? sourceDiverseEvidenceOrder(ranked) : ranked;
+      const exactScan = rankedForSelection.slice(0, exactResolutionScanLimit);
       const resolved: ResolvedEvidence[] = [];
       let exactResolverScanUnitsUsed = 0;
       let evidenceItemsUsed = 0;
@@ -800,11 +804,11 @@ export function createRetrievalQueryService(ports: RetrievalQueryPorts): Retriev
       }
       const evidenceLimitReached = resolved.length >= limit;
       if (evidenceLimitReached) {
-        for (const entry of ranked.slice(exactScan.length)) {
+        for (const entry of rankedForSelection.slice(exactScan.length)) {
           addOmission(entry.candidate_id, "EVIDENCE_LIMIT");
         }
       } else {
-        for (const entry of ranked.slice(exactResolutionScanLimit)) {
+        for (const entry of rankedForSelection.slice(exactResolutionScanLimit)) {
           addOmission(entry.candidate_id, "EXACT_RESOLUTION_SCAN_LIMIT");
         }
       }

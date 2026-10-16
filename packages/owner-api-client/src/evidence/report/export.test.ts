@@ -80,6 +80,20 @@ describe('assembleResearchDraftMarkdown', () => {
     expect(() => assembleResearchDraftMarkdown(input({ sections: [] }))).toThrow(TypeError);
   });
 
+  it('keeps unresolved and inferred statements visible outside the exact saved body', () => {
+    const labeled: ArtifactRevision = { ...artifact, sections: artifact.sections.map(row => ({ ...row,
+      statement_labels: { a: 'SOURCE_SUPPORTED', b: 'UNRESOLVED', c: 'UNRESOLVED', d: 'DERIVED_INFERENCE' },
+    })) };
+    const markdown = text(assembleResearchDraftMarkdown(input({ artifact: labeled })));
+    expect(markdown).toContain('SOURCE_SUPPORTED: 1; UNRESOLVED: 2');
+    expect(markdown).toContain('DERIVED_INFERENCE: 1');
+    expect(markdown).toContain('this does not establish that they are false');
+    expect(markdown).toContain('rather than directly source-supported statements');
+    expect(markdown.indexOf('Saved statement checks:')).toBeLessThan(markdown.indexOf(bodyText));
+    expect(markdown).toContain(`\n\n${bodyText}\n\n## Claim assessments`);
+    expect(section.bytes).toEqual(bodyBytes);
+  });
+
   it('blocks the export when a section body digest does not match the manifest row', async () => {
     const mismatched: ArtifactSectionResponse = { ...section, body_sha256: otherDigest };
     expect(() => assembleResearchDraftMarkdown(input({ sections: [mismatched] }))).toThrow(TypeError);

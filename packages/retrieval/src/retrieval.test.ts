@@ -280,18 +280,19 @@ async function q3Error(promise: Promise<unknown>): Promise<RetrievalQueryError> 
 }
 
 describe("Q3 query orchestration", () => {
-  it("reaches native search for a natural question without scanning the corpus for the entire question", async () => {
+  it.each(["RESEARCH", "FAST_SEARCH"] as const)("reaches a useful %s lane without scanning the entire question", async product => {
+    const expectedLane = product === "RESEARCH" ? "SEM" : "LEX";
     const harness = q3Harness({
-      candidates: { SEM: [q3Candidate({ lane: "SEM" })] },
+      candidates: { [expectedLane]: [q3Candidate({ lane: expectedLane })] },
       // The old exact-phrase scan would consume the deadline before native search.
       failingLanes: { EXACT: "RETRIEVAL_BUDGET_STOP" },
     });
     const result = await createRetrievalQueryService(harness.ports).query({
-      request: q3Request({ raw_query: "Какое расписание скорости обучения использует Transformer?", literals: [] }),
-      idempotency_key: "natural-research-question",
+      request: q3Request({ product, raw_query: "Какое расписание скорости обучения использует Transformer?", literals: [] }),
+      idempotency_key: `natural-${product}-question`,
     });
     expect(harness.calls).not.toContain("lane:EXACT");
-    expect(harness.calls).toContain("lane:SEM");
+    expect(harness.calls).toContain(`lane:${expectedLane}`);
     expect(harness.calls).toContain("resolve:c-1");
     expect(result.trace.lanes_skipped).toContainEqual({ lane: "EXACT", reason: "NO_EXPLICIT_LITERAL" });
     expect(result.evidence_pack.resolved_evidence).toHaveLength(1);

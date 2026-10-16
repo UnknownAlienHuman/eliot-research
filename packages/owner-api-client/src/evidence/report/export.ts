@@ -112,9 +112,17 @@ export const assembleResearchDraftMarkdown = (input: ReportExportInput): ReportE
   ];
   sections.forEach((section, index) => {
     const body = decodeUtf8(section.bytes);
+    const declared = artifact.sections.find(item => refKey(item.section_ref) === refKey(section.section_ref));
+    if (declared === undefined) throw new TypeError('an exported section is not declared by the report manifest');
+    const labels = Object.values(declared.statement_labels);
+    const summary = [...new Set(labels)].sort().map(label => `${label}: ${labels.filter(value => value === label).length}`);
     parts.push(
       `## Section ${index + 1}\n\n`,
       `Section ref: \`${refKey(section.section_ref)}\`\n\n`,
+      summary.length === 0 ? 'No saved statement verification labels were recorded.\n\n'
+        : `Saved statement checks: ${summary.join('; ')}.\n\n`,
+      labels.includes('UNRESOLVED') ? 'Unresolved statements could not be verified from the available sources; this does not establish that they are false.\n\n' : '',
+      labels.includes('DERIVED_INFERENCE') ? 'Inferences are conclusions drawn from sources, rather than directly source-supported statements.\n\n' : '',
       body,
       body.endsWith('\n') ? '\n' : '\n\n',
     );

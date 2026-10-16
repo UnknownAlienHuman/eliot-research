@@ -14,6 +14,7 @@ import { createExistingProjectAttachmentController, freezeProjectAttachmentTarge
 import { useWorkspaceNotice } from './WorkspaceNotifications';
 import { claimImportAttachment, confirmImportAttachment, finishImportQueueJob, startImportQueue,
   type ImportQueue, type ImportQueueWorker } from './importQueue';
+import { defaultRawImportNamespace, rawImportQuarantineReason } from './importNamespaceSelection';
 
 export interface CanonicalCommittedRawSource {
   readonly sourceId: string;
@@ -80,8 +81,8 @@ interface ImportMemory {
   readonly bundleRejected?: boolean;
 }
 const copy = {
-  en: { working: 'Checking the current import step.', projectLoading: 'Loading the selected project.', prepared: 'The selected file is ready for capture.', captured: 'The exact file was captured.', converted: 'Processing finished. Review the captured file.', admitted: 'The source was added to the Library.', attached: 'The file was added to this project.', attaching: 'Adding the file to the selected project.', attachUnknown: 'The file is saved. Its project link is not confirmed.', attachConflict: 'The file is saved. The project changed before it could be updated.', attachAuthority: 'The file is saved. Sign in again before checking its project link.', sourceIdentity: 'The file is saved. Its project link could not be checked yet.', checkProject: 'Check project', checkIdentity: 'Check project link', rejected: 'The source was not admitted. Review its saved status.', bundleReady: 'The exact bundle files are ready for review.', bundleCommitted: 'The import is committed with a verified receipt.', unknown: 'The import step is unresolved. Check the same request before continuing.', namespaces: 'Workspaces loaded.', namespaceError: 'Workspaces could not be loaded.', open: 'Import sources', close: 'Back to sources', workspace: 'Save the file in', choose: 'Choose a workspace', read: 'Refresh workspaces', error: 'The last step could not be verified. Check its saved status before starting again.', another: 'Add another file', resume: 'Continue' },
-  ru: { working: 'Работаем с файлом.', projectLoading: 'Загружается выбранный проект.', prepared: 'Файл выбран.', captured: 'Файл загружен.', converted: 'Файл переведён в текст.', admitted: 'Источник добавлен в библиотеку.', attached: 'Файл добавлен в этот проект.', attaching: 'Добавляем файл в выбранный проект.', attachUnknown: 'Файл сохранён. Связь с проектом пока не подтверждена.', attachConflict: 'Файл сохранён. Проект изменился до обновления.', attachAuthority: 'Файл сохранён. Войдите снова, чтобы проверить связь с проектом.', sourceIdentity: 'Файл сохранён. Пока не удалось проверить связь с проектом.', checkProject: 'Проверить проект', checkIdentity: 'Проверить связь с проектом', rejected: 'Источник не добавлен. Проверьте статус.', bundleReady: 'Файлы подборки готовы.', bundleCommitted: 'Импорт подтверждён.', unknown: 'Не удалось подтвердить последний шаг. Проверьте его, прежде чем продолжать.', namespaces: 'Рабочие области загружены.', namespaceError: 'Не удалось загрузить рабочие области.', open: 'Добавить источники', close: 'Готово', workspace: 'Сохранить файл в', choose: 'Выберите рабочую область', read: 'Обновить рабочие области', error: 'Не удалось подтвердить последний шаг. Проверьте его статус, прежде чем повторять.', another: 'Добавить ещё файл', resume: 'Продолжить' },
+  en: { working: 'Checking the current import step.', projectLoading: 'Loading the selected project.', prepared: 'The selected file is ready for capture.', captured: 'The exact file was captured.', converted: 'Processing finished. Review the captured file.', admitted: 'The source was added to the Library.', attached: 'The file was added to this project.', attaching: 'Adding the file to the selected project.', attachUnknown: 'The file is saved. Its project link is not confirmed.', attachConflict: 'The file is saved. The project changed before it could be updated.', attachAuthority: 'The file is saved. Sign in again before checking its project link.', sourceIdentity: 'The file is saved. Its project link could not be checked yet.', checkProject: 'Check project', checkIdentity: 'Check project link', rejected: 'The source was not admitted. Review its saved status.', noCompatibleWorkspace: 'No active workspace currently publishes a minimum quality of degraded. Choose a compatible owner-authorized workspace before importing this file.', bundleReady: 'The exact bundle files are ready for review.', bundleCommitted: 'The import is committed with a verified receipt.', unknown: 'The import step is unresolved. Check the same request before continuing.', namespaces: 'Workspaces loaded.', namespaceError: 'Workspaces could not be loaded.', open: 'Import sources', close: 'Back to sources', workspace: 'Save the file in', choose: 'Choose a workspace', read: 'Refresh workspaces', error: 'The last step could not be verified. Check its saved status before starting again.', another: 'Add another file', resume: 'Continue' },
+  ru: { working: 'Работаем с файлом.', projectLoading: 'Загружается выбранный проект.', prepared: 'Файл выбран.', captured: 'Файл загружен.', converted: 'Файл переведён в текст.', admitted: 'Источник добавлен в библиотеку.', attached: 'Файл добавлен в этот проект.', attaching: 'Добавляем файл в выбранный проект.', attachUnknown: 'Файл сохранён. Связь с проектом пока не подтверждена.', attachConflict: 'Файл сохранён. Проект изменился до обновления.', attachAuthority: 'Файл сохранён. Войдите снова, чтобы проверить связь с проектом.', sourceIdentity: 'Файл сохранён. Пока не удалось проверить связь с проектом.', checkProject: 'Проверить проект', checkIdentity: 'Проверить связь с проектом', rejected: 'Источник не добавлен. Проверьте статус.', noCompatibleWorkspace: 'Нет активной рабочей области с опубликованным минимальным качеством degraded. Перед импортом выберите совместимую область с правами владельца.', bundleReady: 'Файлы подборки готовы.', bundleCommitted: 'Импорт подтверждён.', unknown: 'Не удалось подтвердить последний шаг. Проверьте его, прежде чем продолжать.', namespaces: 'Рабочие области загружены.', namespaceError: 'Не удалось загрузить рабочие области.', open: 'Добавить источники', close: 'Готово', workspace: 'Сохранить файл в', choose: 'Выберите рабочую область', read: 'Обновить рабочие области', error: 'Не удалось подтвердить последний шаг. Проверьте его статус, прежде чем повторять.', another: 'Добавить ещё файл', resume: 'Продолжить' },
 } as const;
 const withoutUncertainty = (file: ImportFileState | undefined) => {
   const { uncertain: _uncertain, ...rest } = file ?? { phase: 'useful' as const };
@@ -400,11 +401,10 @@ export function ImportPanel({ apis, privacy, context, locale, project, projectSe
     if (current.attempt && !current.submitted) { runBundle(); return; }
     setAutoBundle(false);
   });
-  // Prefer an existing document area that admits extracted PDFs. Explicit user choice and strict policies stay intact.
+  // The owner catalog publishes the active minimum-quality policy; never default to a workspace that quarantines degraded PDFs.
   useEffect(() => {
-    const first = (namespaces.data?.namespaces.find(item => item.minimum_quality_state === 'degraded' && item.read_access !== 'EXPIRED')
-      ?? namespaces.data?.namespaces[0])?.source_namespace_id;
-    if (namespace === '' && first !== undefined) setNamespace(first);
+    const preferred = defaultRawImportNamespace(namespace, namespaces.data);
+    if (namespace === '' && preferred !== undefined) setNamespace(preferred);
   }, [namespace, namespaces.data]);
   const refused = view === 'bundle' ? saved.bundleRejected : saved.admissionRejected;
   const refusedText = locale === 'ru'
@@ -427,14 +427,17 @@ export function ImportPanel({ apis, privacy, context, locale, project, projectSe
       : saved.review ? text.bundleReady : ''
     : fileState?.uncertain ? text.unknown
     : fileState?.admission?.state === 'COMMITTED' ? text.admitted
-    : fileState?.admission?.state === 'REJECTED' || fileState?.admission?.state === 'QUARANTINED' ? text.rejected
+    : fileState?.admission?.state === 'QUARANTINED'
+      ? rawImportQuarantineReason(fileState.admission.reason_codes, locale) ?? text.rejected
+    : fileState?.admission?.state === 'REJECTED' ? text.rejected
     : fileState?.conversion?.state === 'COMPLETE' ? text.converted
     : fileState?.conversion?.state === 'FAILED' ? text.error
     : fileState?.receipt ? text.captured : saved.selection ? text.prepared
     : namespaces.isFetching ? text.working : namespaces.isError ? text.namespaceError : namespaces.data ? text.namespaces : '');
   const controls = <>
       {open && <OperationFeedback key={view} message={operationMessage} />}
-      {view === 'file' && !saved.selection && (namespaces.isError || (namespaces.data?.namespaces.length ?? 0) > 1) && <div className="er-live-import-settings">
+      {view === 'file' && !saved.selection && (namespaces.isError || (namespaces.data !== undefined &&
+        (defaultRawImportNamespace('', namespaces.data) === undefined || namespaces.data.namespaces.length > 1))) && <div className="er-live-import-settings">
         <label className="er-field__label" htmlFor={selectId}>{text.workspace}</label>
         <select className="er-field__control" id={selectId} value={namespace} onChange={event => setNamespace(event.target.value)} disabled={busy}>
           <option value="">{text.choose}</option>
@@ -442,6 +445,8 @@ export function ImportPanel({ apis, privacy, context, locale, project, projectSe
         </select>
         {namespaces.isError && <Button variant="text" onClick={() => { void namespaces.refetch(); }}>{text.read}</Button>}
       </div>}
+      {view === 'file' && !saved.selection && namespaces.data && namespace === '' && defaultRawImportNamespace('', namespaces.data) === undefined &&
+        <p role="status">{text.noCompatibleWorkspace}</p>}
       {error && <p>{refused ? refusedText : text.error}</p>}
       <ImportFlow locale={locale} copy={IMPORT_FLOW_COPY[locale]} view={view} active={open} onViewChange={busy || worker ? undefined : setView}
         accessibleName={worker ? `${locale === 'ru' ? 'Файл' : 'File'} ${worker.position}: ${worker.file.name}` : undefined}

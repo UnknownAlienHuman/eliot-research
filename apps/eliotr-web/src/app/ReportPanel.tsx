@@ -23,6 +23,27 @@ const copy = {
  * It is the record of how the answer was found, not the answer: it stays one tap away, folded.
  */
 const METHOD_HEADING = /^#{1,3}[ \t]+(?:Coverage and method|Охват и метод)[ \t]*$/mu;
+function StatementChecks({ labels, locale }: {
+  readonly labels: ArtifactRevisionRead['sections'][number]['statement_labels']; readonly locale: 'en' | 'ru';
+}) {
+  const names = locale === 'ru' ? {
+    SOURCE_SUPPORTED: 'Подтверждены источниками', DERIVED_INFERENCE: 'Выводы на основе источников',
+    HYPOTHESIS: 'Гипотезы', CONTESTED: 'Оспариваются', UNRESOLVED: 'Не удалось проверить по доступным источникам',
+    EDITORIAL_RECOMMENDATION: 'Редакционные рекомендации', REDACTED_DEPENDENCY: 'Зависят от недоступных данных',
+  } : {
+    SOURCE_SUPPORTED: 'Supported by sources', DERIVED_INFERENCE: 'Inferences from sources',
+    HYPOTHESIS: 'Hypotheses', CONTESTED: 'Contested', UNRESOLVED: 'Could not be verified from available sources',
+    EDITORIAL_RECOMMENDATION: 'Editorial recommendations', REDACTED_DEPENDENCY: 'Depend on unavailable evidence',
+  };
+  const values = Object.values(labels);
+  if (values.length === 0) return null;
+  const counts = (Object.keys(names) as (keyof typeof names)[]).flatMap(label => {
+    const count = values.filter(value => value === label).length;
+    return count === 0 ? [] : [`${names[label]}: ${count}`];
+  });
+  return <p className="er-shell-note" role="note">{locale === 'ru' ? 'Сохранённая проверка утверждений. ' : 'Saved statement checks. '}{counts.join('; ')}.</p>;
+}
+
 function ReportMarkdown({ body, method, locale }: { readonly body: string; readonly method: string; readonly locale: 'en' | 'ru' }) {
   const match = METHOD_HEADING.exec(body);
   if (match === null) return <SafeMarkdown text={body} />;
@@ -190,7 +211,7 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
         return <article key={refKey(declared.section_ref)} className="er-live-report-part" aria-label={declared.title}
           data-state={body !== undefined ? 'read' : failed ? 'failed' : 'pending'}>
           <h2 className="er-live-report-part-heading">{declared.title}</h2>
-          {body !== undefined ? <ReportMarkdown body={body} method={text.method} locale={locale} />
+          {body !== undefined ? <><StatementChecks labels={declared.statement_labels} locale={locale} /><ReportMarkdown body={body} method={text.method} locale={locale} /></>
             : failed ? <Status tone="error">{text.unknown}</Status>
               : <p className="er-live-report-pending"><span>{text.pending}</span></p>}
           {body !== undefined && <Button variant="text" icon="evidence" onClick={() => readSection(declared)}>{text.quotes}</Button>}
@@ -210,7 +231,7 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
     {active && <section className="er-live-report-section" aria-label={active.title}>
       <h2 ref={sectionHeading} tabIndex={-1}>{active.title}</h2>
       <div className="er-live-report-layout"><div className="er-live-report-body">
-      {section.isFetching ? <Status>{text.reading}</Status> : section.isError || body === undefined ? <Status tone="error">{text.unknown}</Status> : <ReportMarkdown body={body} method={text.method} locale={locale} />}
+      {section.isFetching ? <Status>{text.reading}</Status> : section.isError || body === undefined ? <Status tone="error">{text.unknown}</Status> : <><StatementChecks labels={active.statement_labels} locale={locale} /><ReportMarkdown body={body} method={text.method} locale={locale} /></>}
       {citations.data?.semantic_verification === 'NOT_EXECUTED' && <p className="er-shell-note">{text.noAudit}</p>}
       </div><aside className="er-live-report-evidence" aria-label={text.evidence}><EvidenceFeature citations={evidenceRows}
         loading={citations.isFetching} emptyMessage={text.noEvidence} longLocale={locale}

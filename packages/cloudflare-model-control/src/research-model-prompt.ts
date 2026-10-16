@@ -240,6 +240,7 @@ export function createResearchModelPromptCompiler(
       const built = await dependencies.manifest_service.buildAndPersist({
         ...manifestInput,
         serialize_request_body,
+        prefer_source_diversity: true,
       });
       const manifestBuiltAt = Date.now();
       if (!sameRef(built.manifest.manifest_ref, built.compiled.manifest_ref) ||
@@ -275,6 +276,11 @@ export function createResearchModelPromptCompiler(
         prompt_parameters_ms: promptParametersAt - manifestInputAt,
         manifest_build_ms: manifestBuiltAt - promptParametersAt,
         request_compile_ms: Date.now() - manifestBuiltAt,
+        candidate_block_count: input.evidence_pack.resolved_evidence.length,
+        candidate_source_count: new Set(input.evidence_pack.resolved_evidence.map((item) => item.handle.source_revision_ref)).size,
+        admitted_block_count: built.compiled.blocks.length,
+        admitted_source_count: new Set(built.compiled.blocks.map((block) => block.source_revision_ref)).size,
+        rejected_candidate_count: built.compiled.selection_receipt.rejected_candidates.length,
         request_utf8_bytes: encoder.encode(serializedRequestBody).byteLength }));
       return Object.freeze({
         request_body: JSON.parse(validated.body) as unknown,

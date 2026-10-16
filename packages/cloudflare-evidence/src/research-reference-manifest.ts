@@ -64,6 +64,8 @@ export interface BuildReferenceManifestInput {
   readonly schema_reserve_utf8_bytes?: number;
   /** Exact canonical request-body projection supplied by the model-prompt owner. */
   readonly serialize_request_body?: ContextRequestBodySerializer;
+  /** Server-owned optional packing preference; never derived from candidate text. */
+  readonly prefer_source_diversity?: boolean;
 }
 
 export interface BuiltReferenceManifest {
@@ -249,6 +251,7 @@ export async function buildAllowedReferenceManifest(input: BuildReferenceManifes
     ...(input.wrapper_reserve_utf8_bytes === undefined ? {} : { wrapperReserveUtf8Bytes: input.wrapper_reserve_utf8_bytes }),
     ...(input.schema_reserve_utf8_bytes === undefined ? {} : { schemaReserveUtf8Bytes: input.schema_reserve_utf8_bytes }),
     ...(input.serialize_request_body === undefined ? {} : { serializeRequestBody: input.serialize_request_body }),
+    ...(input.prefer_source_diversity === undefined ? {} : { preferSourceDiversity: input.prefer_source_diversity }),
   });
   return { manifest, compiled, resolved_evidence: authoritative, source_authorities: finalSources };
 }
