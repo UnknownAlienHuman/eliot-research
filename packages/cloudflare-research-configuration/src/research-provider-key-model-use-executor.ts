@@ -1,5 +1,6 @@
 import {
   PROVIDER_NATIVE_MODEL_PROBE_PROMPT,
+  PROVIDER_NATIVE_MODEL_PROBE_MAX_TOKENS,
   providerNativeModelProbeZeroPriceQuoteRef,
   type ProviderNativeModelPreparationV1,
   type ProviderNativeModelProbeExecutionV1,
@@ -57,7 +58,7 @@ export function createResearchProviderKeyModelNativeProbeExecutor(input: {
     const compiledBody = Object.freeze({
       model: preparation.transport_policy.model,
       messages: Object.freeze([Object.freeze({ role: "user", content: PROVIDER_NATIVE_MODEL_PROBE_PROMPT })]),
-      max_tokens: 32,
+      max_tokens: PROVIDER_NATIVE_MODEL_PROBE_MAX_TOKENS,
       response_format: Object.freeze({ type: "json_object" }),
       stream: false,
     });

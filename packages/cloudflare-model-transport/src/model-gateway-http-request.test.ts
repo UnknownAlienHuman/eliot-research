@@ -435,6 +435,7 @@ describe("model gateway transport policy", () => {
   it("accepts current OpenRouter SDK nullable usage fields without weakening identity or billing guards", async () => {
     const body = {
       id: "openrouter-sdk-nullable-usage",
+      provider: "AtlasCloud",
       object: "chat.completion",
       created: 1,
       model: OPENROUTER_POLICY.model,
@@ -483,9 +484,12 @@ describe("model gateway transport policy", () => {
       } },
     })), "openrouter-chat-completions")).rejects.toMatchObject({ code: "MODEL_GATEWAY_RESPONSE_INVALID" });
     await expect(decodeModelGatewayProviderBody(new TextEncoder().encode(JSON.stringify({
-      ...body, provider: "unverified-provider-field",
+      ...body, provider: { route_ref: "untrusted-route" },
     })), "openrouter-chat-completions")).rejects.toMatchObject({ code: "MODEL_GATEWAY_RESPONSE_INVALID" });
     const { deployment } = await fixture(OPENROUTER_POLICY);
+    await expect(decodeModelGatewayProviderBody(new TextEncoder().encode(JSON.stringify({
+      ...body, choices: [{ ...body.choices[0], finish_reason: "length" }],
+    })), "openrouter-chat-completions")).rejects.toMatchObject({ code: "MODEL_GATEWAY_OUTPUT_TRUNCATED" });
     const wrongModel = new Response(JSON.stringify({ ...body, model: "another/model" }), {
       status: 200,
       headers: { "content-type": "application/json", "cf-aig-log-id": "openrouter-wrong-model" },

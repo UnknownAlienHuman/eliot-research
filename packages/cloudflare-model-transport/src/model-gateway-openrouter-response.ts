@@ -5,7 +5,7 @@ import {
   type ModelGatewayUsageObservation,
 } from "./model-gateway-execution-contract.js";
 
-const ROOT_KEYS = new Set(["choices", "created", "id", "model", "object", "service_tier", "system_fingerprint", "usage"]);
+const ROOT_KEYS = new Set(["choices", "created", "id", "model", "object", "provider", "service_tier", "system_fingerprint", "usage"]);
 const CHOICE_KEYS = new Set(["error", "finish_reason", "index", "logprobs", "message", "native_finish_reason"]);
 const MESSAGE_KEYS = new Set(["content", "reasoning", "reasoning_content", "reasoning_details", "refusal", "role", "tool_calls"]);
 const USAGE_KEYS = new Set([
@@ -149,6 +149,9 @@ export function decodeModelGatewayOpenRouterBody(
   if (typeof body.created !== "number" || !Number.isSafeInteger(body.created) || body.created < 0) invalid("OpenRouter created is invalid");
   const responseModel = string(body.model, "OpenRouter response model", 8192, "MODEL_ID_INVALID");
   if (!IDENTIFIER.test(responseModel)) invalid("OpenRouter response model is not a bounded identifier", "MODEL_ID_INVALID");
+  // OpenRouter's upstream vendor (for example AtlasCloud) is opaque metadata;
+  // transport provider/model authority remains pinned by the Gateway policy.
+  if (body.provider !== undefined) string(body.provider, "OpenRouter upstream provider", 256);
   if (body.system_fingerprint !== undefined && body.system_fingerprint !== null) string(body.system_fingerprint, "OpenRouter system fingerprint");
   if (body.service_tier !== undefined && body.service_tier !== null) string(body.service_tier, "OpenRouter service tier");
   if (!Array.isArray(body.choices) || body.choices.length !== 1) invalid("OpenRouter response must contain exactly one choice");

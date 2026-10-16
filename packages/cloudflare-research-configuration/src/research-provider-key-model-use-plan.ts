@@ -22,6 +22,7 @@ import {
 } from "@eliotr/cloudflare-research";
 import {
   PROVIDER_NATIVE_MODEL_PROBE_PROMPT,
+  PROVIDER_NATIVE_MODEL_PROBE_MAX_TOKENS,
   providerNativeModelProbeInputDigests,
 } from "@eliotr/cloudflare-native-models";
 import { APPLICATION_MODEL_ROUTES } from "@eliotr/platform-cloudflare";
@@ -274,7 +275,7 @@ async function buildStagePlan(
     modelGatewayRequestParametersSha256({
       model: input.transport_policy.model,
       messages: [{ role: "user", content: PROVIDER_NATIVE_MODEL_PROBE_PROMPT }],
-      max_tokens: 32,
+      max_tokens: PROVIDER_NATIVE_MODEL_PROBE_MAX_TOKENS,
       response_format: { type: "json_object" },
       stream: false,
     }, input.transport_policy.capabilities, input.transport_policy.api),

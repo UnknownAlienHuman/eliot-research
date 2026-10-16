@@ -86,7 +86,7 @@ describe("registered global model check-and-use", () => {
       requests.push(JSON.parse(String(init?.body)) as { model: string; provider: unknown });
       aliases.push(new Headers(init?.headers).get("cf-aig-byok-alias"));
       return new Response(JSON.stringify({ id: `mock-dots-${requests.length}`, object: "chat.completion", created: 1_759_000_000,
-        model: DOTS, choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant",
+        model: DOTS, provider: "AtlasCloud", choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant",
           content: JSON.stringify({ connected: true, qualification_purpose: "structured-output-connectivity" }) } }],
         usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
       }), { status: 200, headers: { "content-type": "application/json", "cf-aig-log-id": `mock-dots-log-${requests.length}` } });

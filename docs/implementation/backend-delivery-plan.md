@@ -1,5 +1,21 @@
 # Backend delivery plan
 
+## Exact response interoperability repair, October 16, 2026, 07:03 UTC
+
+A separate, bounded gateway/decoder diagnostic identified the actual wire issues
+without replaying either uncertain application operation or enabling payload logs.
+OpenRouter returns an upstream `provider` name (`AtlasCloud`), which is metadata
+and does not replace the pinned Gateway transport provider. Its 32-token response
+also ended with `finish_reason: length` before completing the fixed JSON object.
+
+The decoder now validates and ignores that vendor metadata for routing authority.
+The fixed connectivity probe uses a shared 128-token constant in its request and
+parameter-digest plan; Research limits, prompts and provider price caps are unchanged.
+The distinct 128-token diagnostic returned HTTP 200, observed cost 0, `stop`, and
+the exact connectivity JSON accepted by the corrected decoder. This is gateway
+interoperability evidence, not completed application qualification. Focused response
+and native global-use regressions pass; full post-deployment selection is next.
+
 ## Verified global Settings, October 16, 2026, 06:43 UTC
 
 Source `39dbd96c7976643b91695f2905a5c46cdafd0df0` is live as
