@@ -5,6 +5,7 @@ import {
 } from "@eliotr/cloudflare-ai";
 import type { ResearchModelGatewayRuntimeConfig } from "@eliotr/cloudflare-research";
 import {
+  bindConfiguredServiceModelProviderAlias,
   bindResearchPreparedModelTransportPolicy,
   parseResearchPreparedModelTransportPolicies,
   RESEARCH_PREPARED_MODEL_TRANSPORT_PROTOCOL,
@@ -12,6 +13,7 @@ import {
   resolveResearchPreparedModelTransportPolicy,
   type ResearchPreparedModelTransportSelectionV1,
 } from "../src/research-prepared-model-transport.js";
+import type { ConfiguredServiceModelProviderBinding } from "@eliotr/cloudflare-model-control/service-model-provider-service.js";
 
 const unifiedPolicy: ModelGatewayTransportPolicyV1 = Object.freeze({
   version: 1,
@@ -229,6 +231,59 @@ describe("resolveResearchPreparedModelTransportPolicy", () => {
       provider: "zai",
       model: "@cf/zai-org/glm-5.3-flash",
     })).toThrow("missing for AUDIT_CLAIMS");
+  });
+});
+
+describe("bindConfiguredServiceModelProviderAlias", () => {
+  it("binds only the registered exact model and changes only the BYOK alias", () => {
+    const registered: ConfiguredServiceModelProviderBinding = Object.freeze({
+      owner_id: "owner-1",
+      operation_id: "a9f79914-a0a5-4f27-9e81-3b9b6c403a61",
+      provider_id: "openrouter",
+      provider_slug: "openrouter",
+      model_ids: Object.freeze([openrouterPolicy.model]),
+      alias: "eliotr-" + "a".repeat(48),
+      provider_config_id: "provider-config-1",
+      metadata_sha256: "b".repeat(64),
+      created_at: "2026-10-15T14:00:00.000Z",
+    });
+
+    const bound = bindConfiguredServiceModelProviderAlias(openrouterSelection, registered, {
+      provider: "openrouter", model: openrouterPolicy.model,
+    });
+
+    expect(bound).toMatchObject({
+      ...openrouterSelection,
+      transport_policy: {
+        ...openrouterPolicy,
+        billing: { mode: "byok", alias: registered.alias },
+      },
+    });
+    expect(bound?.transport_policy).toEqual({
+      ...openrouterPolicy,
+      billing: { mode: "byok", alias: registered.alias },
+    });
+  });
+
+  it("fails before dispatch when the global record does not authorize the exact prepared model", () => {
+    const registered: ConfiguredServiceModelProviderBinding = Object.freeze({
+      owner_id: "owner-1",
+      operation_id: "a9f79914-a0a5-4f27-9e81-3b9b6c403a61",
+      provider_id: "openrouter",
+      provider_slug: "openrouter",
+      model_ids: Object.freeze(["another/model:free"]),
+      alias: "eliotr-" + "a".repeat(48),
+      provider_config_id: "provider-config-1",
+      metadata_sha256: "b".repeat(64),
+      created_at: "2026-10-15T14:00:00.000Z",
+    });
+
+    expect(() => bindConfiguredServiceModelProviderAlias(openrouterSelection, registered, {
+      provider: "openrouter", model: openrouterPolicy.model,
+    })).toThrowError(ResearchPreparedModelTransportError);
+    expect(() => bindConfiguredServiceModelProviderAlias(undefined, registered, {
+      provider: "openrouter", model: openrouterPolicy.model,
+    })).toThrowError(ResearchPreparedModelTransportError);
   });
 });
 

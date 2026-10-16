@@ -9,6 +9,8 @@ import {
   type ResearchModelCatalogQuery,
   type WorkersAiModelCatalogBinding,
 } from "./research-model-catalog.js";
+import { createResearchProviderModelCatalogTransports } from "./research-provider-model-catalog.js";
+import type { ConfiguredServiceModelProviderBinding } from "./service-model-provider-service.js";
 
 function ownerContext(overrides: Partial<AuthenticatedRequestContext> = {}): AuthenticatedRequestContext {
   return {
@@ -194,6 +196,43 @@ describe("research model catalog", () => {
       billing: { selected_path: "provider_catalog", support: "byok" },
     });
     expect(result.pagination).toMatchObject({ has_more: null, coverage: "unknown", probe: "next_page_unavailable" });
+  });
+
+  it("uses the owner-resolved global alias and exposes only globally registered OpenRouter models", async () => {
+    const modelId = "dots-studio/dots-3-note-preview:free";
+    const binding: ConfiguredServiceModelProviderBinding = Object.freeze({
+      owner_id: "owner-1",
+      operation_id: "a9f79914-a0a5-4f27-9e81-3b9b6c403a61",
+      provider_id: "openrouter",
+      provider_slug: "openrouter",
+      model_ids: Object.freeze([modelId]),
+      alias: "eliotr-" + "a".repeat(48),
+      provider_config_id: "provider-config-1",
+      metadata_sha256: "b".repeat(64),
+      created_at: "2026-10-15T14:00:00.000Z",
+    });
+    const fetcher = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => new Response(JSON.stringify({
+      data: [
+        { id: modelId, architecture: { output_modalities: ["text"] } },
+        { id: "another/model:free", architecture: { output_modalities: ["text"] } },
+      ],
+      links: {},
+      total_count: 2,
+    }), { status: 200, headers: { "content-type": "application/json" } }));
+    const transports = createResearchProviderModelCatalogTransports({
+      gateway_base_url: `https://gateway.ai.cloudflare.com/v1/${"a".repeat(32)}/eliotr-reasoning`,
+      gateway_token: "server-held-test-gateway-token",
+      fetcher: fetcher as typeof fetch,
+      resolve_service_provider: vi.fn(async (provider) => provider === "openrouter" ? binding : null),
+    });
+    const openRouter = transports.find((provider) => provider.provider_id === "openrouter");
+
+    const page = await openRouter?.listTextGeneration({ page: 1, per_page: 20, task: "text-generation" });
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(new Headers(fetcher.mock.calls[0]?.[1]?.headers).get("cf-aig-byok-alias")).toBe(binding.alias);
+    expect(page?.models.map((model) => model.model_id)).toEqual([modelId]);
+    expect(page?.has_more).toBeNull();
   });
 
   it("requires the owner/project check before reporting a missing Workers AI binding", async () => {

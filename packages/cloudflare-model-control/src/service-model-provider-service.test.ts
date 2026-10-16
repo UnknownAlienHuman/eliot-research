@@ -179,4 +179,77 @@ describe("global service model provider operations", () => {
     expect(JSON.stringify(reconciled)).not.toContain(REQUEST.api_key);
   });
 
+  it("resolves only the exact configured global provider/model for its owner", async () => {
+    const store = database();
+    const management = managementPort();
+    const service = createServiceModelProviderService({ database: store.d1, managementPort: management, now: () => NOW });
+    const operationId = "a9f79914-a0a5-4f27-9e81-3b9b6c403a61";
+    const modelId = "dots-studio/dots-3-note-preview:free";
+    const created = await service.create(ownerContext(), {
+      protocol: "eliotr.service-model-provider-create.v1",
+      operation_id: operationId,
+      provider_id: "openrouter",
+      display_name: "OpenRouter",
+      model_ids: [modelId],
+      api_key: "synthetic-openrouter-key-for-test",
+    });
+
+    const resolved = await service.resolveConfiguredProvider(ownerContext(), "openrouter", { model_id: modelId });
+    const exact = await service.resolveConfiguredProvider(ownerContext(), "openrouter", {
+      model_id: modelId, operation_id: operationId,
+    });
+    const wrongModel = await service.resolveConfiguredProvider(ownerContext(), "openrouter", {
+      model_id: "another/model:free",
+    });
+    const foreign = await service.resolveConfiguredProvider(ownerContext({
+      principal_ref: "owner-2", credential_generation: "credential-2",
+      access: { principal_ref: "owner-2", credential_generation: "credential-2", expires_at: "2099-01-01T00:00:00.000Z" },
+    }), "openrouter", { model_id: modelId });
+
+    expect(resolved).toMatchObject({
+      owner_id: "owner-1", operation_id: operationId, provider_id: "openrouter",
+      provider_slug: "openrouter", model_ids: [modelId], alias: created.receipt.alias,
+      provider_config_id: created.receipt.provider_config_id,
+    });
+    expect(exact).toEqual(resolved);
+    expect(wrongModel).toBeNull();
+    expect(foreign).toBeNull();
+    expect(management.read).not.toHaveBeenCalled();
+  });
+
+  it("does not let a failed global operation authorize fallback, but ignores it after a unique configured save", async () => {
+    const store = database();
+    const failedManagement = managementPort({
+      create: vi.fn(async () => {
+        throw Object.assign(new Error("synthetic credential rejection"), {
+          effect: "NONE", code: "OPENROUTER_PROVIDER_KEY_CREDENTIAL_INVALID", http_status: 401,
+        });
+      }),
+    });
+    const failedService = createServiceModelProviderService({
+      database: store.d1, managementPort: failedManagement, now: () => NOW,
+    });
+    const modelId = "dots-studio/dots-3-note-preview:free";
+    const failedRequest = {
+      protocol: "eliotr.service-model-provider-create.v1" as const,
+      operation_id: "a72422bc-e5d8-43c3-96ad-22f3d8c4f9dd",
+      provider_id: "openrouter", display_name: "OpenRouter", model_ids: [modelId],
+      api_key: "synthetic-openrouter-key-for-test",
+    };
+    await expect(failedService.create(ownerContext(), failedRequest)).rejects.toMatchObject({
+      code: "SERVICE_MODEL_PROVIDER_PROVIDER_REJECTED", effect: "NONE",
+    });
+    await expect(failedService.resolveConfiguredProvider(ownerContext(), "openrouter", { model_id: modelId }))
+      .rejects.toMatchObject({ code: "SERVICE_MODEL_PROVIDER_PROVIDER_REJECTED", status: 502 });
+
+    const configured = createServiceModelProviderService({
+      database: store.d1, managementPort: managementPort(), now: () => NOW,
+    });
+    const saved = await configured.create(ownerContext(), {
+      ...failedRequest, operation_id: "b9f381b8-0576-420d-8105-5cf6a8d6e205",
+    });
+    await expect(configured.resolveConfiguredProvider(ownerContext(), "openrouter", { model_id: modelId }))
+      .resolves.toMatchObject({ operation_id: saved.receipt.operation_id, alias: saved.receipt.alias });
+  });
+
 });

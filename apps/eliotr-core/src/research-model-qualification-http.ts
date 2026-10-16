@@ -24,12 +24,15 @@ import {
   transportFailureReason,
   typedUpstreamStatus,
 } from "@eliotr/cloudflare-model-control/research-model-qualification-http-error-classifier.js";
+import { ServiceModelProviderOperationError } from "@eliotr/cloudflare-model-control/service-model-provider-service.js";
 import {
+  bindConfiguredServiceModelProviderAlias,
   bindResearchPreparedModelTransportPolicy,
   parseResearchPreparedModelTransportPolicies,
   ResearchPreparedModelTransportError,
   resolveResearchPreparedModelTransportPolicy,
 } from "./research-prepared-model-transport.js";
+import { createServiceModelSettingsComposition } from "./service-model-settings-composition.js";
 
 function invalid(): never {
   throw new HttpRequestError("RESEARCH_QUALIFICATION_INPUT_INVALID", 400,
@@ -128,8 +131,21 @@ export async function handleResearchModelQualification(
       provider: probe.expected_provider,
       model: probe.expected_model,
     });
-    gateway = bindResearchPreparedModelTransportPolicy(gateway, preparedSelection);
+    const globalProvider = await createServiceModelSettingsComposition(env).service.resolveConfiguredProvider(
+      context,
+      probe.expected_provider,
+      { model_id: probe.expected_model },
+    );
+    const selectedTransport = bindConfiguredServiceModelProviderAlias(preparedSelection, globalProvider, {
+      provider: probe.expected_provider,
+      model: probe.expected_model,
+    });
+    gateway = bindResearchPreparedModelTransportPolicy(gateway, selectedTransport);
   } catch (error) {
+    if (error instanceof ServiceModelProviderOperationError) {
+      throw new HttpRequestError(error.code, error.status,
+        "Global service model provider is unresolved for qualification", error.retryable);
+    }
     if (!(error instanceof ResearchPreparedModelTransportError)) throw error;
     throw new HttpRequestError(
       error.code,

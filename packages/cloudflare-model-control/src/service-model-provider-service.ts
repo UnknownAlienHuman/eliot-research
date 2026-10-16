@@ -99,6 +99,19 @@ export interface ServiceModelProviderManagementReadback {
   readonly alias: string;
 }
 
+/** Safe runtime binding for an acknowledged service-wide provider connection. */
+export interface ConfiguredServiceModelProviderBinding {
+  readonly owner_id: string;
+  readonly operation_id: string;
+  readonly provider_id: string;
+  readonly provider_slug: string;
+  readonly model_ids: readonly string[];
+  readonly alias: string;
+  readonly provider_config_id: string;
+  readonly metadata_sha256: string;
+  readonly created_at: string;
+}
+
 export interface ServiceModelProviderService {
   list(context: AuthenticatedRequestContext): Promise<{
     readonly connections: readonly ServiceModelProviderConnection[];
@@ -115,6 +128,12 @@ export interface ServiceModelProviderService {
     context: AuthenticatedRequestContext,
     operationId: string,
   ): Promise<ServiceModelProviderConnection | null>;
+  /** Resolve a unique, already-configured global connection without control-plane reconciliation. */
+  resolveConfiguredProvider(
+    context: AuthenticatedRequestContext,
+    providerId: string,
+    options?: { readonly model_id?: string; readonly operation_id?: string },
+  ): Promise<ConfiguredServiceModelProviderBinding | null>;
 }
 
 interface ServiceModelProviderOperationRow {
@@ -469,6 +488,126 @@ export function createServiceModelProviderService(options: {
     });
   }
 
+  async function readProviderRows(ownerId: string, providerId: string): Promise<readonly ServiceModelProviderOperationRow[]> {
+    let rows: { readonly results?: readonly ServiceModelProviderOperationRow[] };
+    try {
+      rows = await options.database.prepare(
+        "SELECT owner_id,operation_id,provider_id,display_name,base_url,model_ids_json,request_sha256,alias,state," +
+        "provider_config_id,provider_slug,metadata_sha256,failure_code,provider_http_status,created_at,updated_at " +
+        "FROM service_model_provider_operation WHERE owner_id=?1 AND provider_id=?2 " +
+        "ORDER BY created_at DESC,operation_id DESC LIMIT ?3",
+      ).bind(ownerId, providerId, MAX_HISTORY + 1).all<ServiceModelProviderOperationRow>();
+    } catch {
+      fail("SERVICE_MODEL_PROVIDER_STORAGE_UNAVAILABLE", 503,
+        "Service model provider resolution is unavailable", true);
+    }
+    const selected = rows.results ?? [];
+    if (selected.length > MAX_HISTORY) {
+      fail("SERVICE_MODEL_PROVIDER_STORAGE_UNAVAILABLE", 503,
+        "Service model provider resolution exceeds its bounded history", true);
+    }
+    return selected;
+  }
+
+  function configuredBinding(
+    row: ServiceModelProviderOperationRow,
+    ownerId: string,
+  ): ConfiguredServiceModelProviderBinding | null {
+    if (row.owner_id !== ownerId) {
+      fail("SERVICE_MODEL_PROVIDER_STORAGE_UNAVAILABLE", 503,
+        "Stored service model provider owner does not match its lookup", true);
+    }
+    const connection = mapConnection(row);
+    if (connection.status !== "configured") return null;
+    const providerSlug = rowString(row.provider_slug, PROVIDER_ID,
+      "Stored Cloudflare provider slug is invalid");
+    const metadataSha = rowString(row.metadata_sha256, SHA256,
+      "Stored service model provider metadata digest is invalid");
+    if (connection.alias === null || connection.alias === "default" || connection.provider_config_id === null) {
+      fail("SERVICE_MODEL_PROVIDER_STORAGE_UNAVAILABLE", 503,
+        "Configured service model provider has no non-default binding", true);
+    }
+    return Object.freeze({
+      owner_id: ownerId,
+      operation_id: connection.operation_id,
+      provider_id: connection.provider_id,
+      provider_slug: providerSlug,
+      model_ids: connection.model_ids,
+      alias: connection.alias,
+      provider_config_id: connection.provider_config_id,
+      metadata_sha256: metadataSha,
+      created_at: connection.created_at,
+    });
+  }
+
+  async function resolveConfiguredProvider(
+    context: AuthenticatedRequestContext,
+    providerIdRaw: string,
+    request: { readonly model_id?: string; readonly operation_id?: string } = {},
+  ): Promise<ConfiguredServiceModelProviderBinding | null> {
+    const owner = ownerPrincipal(context, now);
+    const providerId = rowString(providerIdRaw, PROVIDER_ID, "Service model provider id is invalid");
+    const modelId = request.model_id;
+    if (modelId !== undefined && !IDENTIFIER.test(modelId)) {
+      fail("SERVICE_MODEL_PROVIDER_INPUT_INVALID", 400, "Service model identifier is invalid", false);
+    }
+    if (request.operation_id !== undefined) {
+      const operationId = validOperationId(request.operation_id);
+      const row = await readRow(owner, operationId);
+      if (row === null) return null;
+      if (row.owner_id !== owner || row.provider_id !== providerId) {
+        fail("SERVICE_MODEL_PROVIDER_OPERATION_CONFLICT", 409,
+          "Service model provider operation does not match this owner and provider", false);
+      }
+      const connection = mapConnection(row);
+      if (connection.status === "uncertain") {
+        fail("SERVICE_MODEL_PROVIDER_OUTCOME_UNKNOWN", 503,
+          "Service model provider operation is unresolved", false, "UNKNOWN");
+      }
+      if (connection.status === "failed_no_effect") {
+        fail("SERVICE_MODEL_PROVIDER_PROVIDER_REJECTED", 502,
+          "Service model provider operation did not create a connection", false,
+          "NONE", connection.failure_code ?? undefined, connection.provider_http_status ?? undefined);
+      }
+      const binding = configuredBinding(row, owner);
+      if (binding === null) return null;
+      if (modelId !== undefined && !binding.model_ids.includes(modelId)) {
+        fail("SERVICE_MODEL_PROVIDER_OPERATION_CONFLICT", 409,
+          "Requested model is not registered on this global provider connection", false);
+      }
+      return binding;
+    }
+
+    const rows = await readProviderRows(owner, providerId);
+    const connections = rows.map((row) => {
+      if (row.owner_id !== owner || row.provider_id !== providerId) {
+        fail("SERVICE_MODEL_PROVIDER_STORAGE_UNAVAILABLE", 503,
+          "Stored service model provider identity does not match its lookup", true);
+      }
+      return { row, connection: mapConnection(row) };
+    }).filter(({ connection }) => modelId === undefined || connection.model_ids.includes(modelId));
+    if (connections.some(({ connection }) => connection.status === "uncertain")) {
+      fail("SERVICE_MODEL_PROVIDER_OUTCOME_UNKNOWN", 503,
+        "A matching service model provider operation is unresolved", false, "UNKNOWN");
+    }
+    const failed = connections.filter(({ connection }) => connection.status === "failed_no_effect");
+    const configured = connections.filter(({ connection }) => connection.status === "configured");
+    if (configured.length > 1) {
+      fail("SERVICE_MODEL_PROVIDER_OPERATION_CONFLICT", 409,
+        "More than one global provider connection matches this selection", false);
+    }
+    if (configured.length === 0) {
+      if (failed.length > 0) {
+        const failure = failed[0]!.connection;
+        fail("SERVICE_MODEL_PROVIDER_PROVIDER_REJECTED", 502,
+          "The matching global provider connection was rejected", false, "NONE",
+          failure.failure_code ?? undefined, failure.provider_http_status ?? undefined);
+      }
+      return null;
+    }
+    return configuredBinding(configured[0]!.row, owner);
+  }
+
   async function resolveExisting(
     row: ServiceModelProviderOperationRow,
     requestSha: string,
@@ -580,6 +719,8 @@ export function createServiceModelProviderService(options: {
       }
       return mapConnection(row);
     },
+
+    resolveConfiguredProvider,
 
     async create(context: AuthenticatedRequestContext, rawInput: ServiceModelProviderCreateRequest) {
       const parsed = ServiceModelProviderCreateRequestSchema.safeParse(rawInput);

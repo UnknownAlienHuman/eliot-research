@@ -25,6 +25,8 @@ const READBACK_PROTOCOL = "eliotr.openrouter-provider-key-configured.v1" as cons
 const PROVIDER_ID = "openrouter" as const;
 const MAX_HISTORY = 50;
 const MANAGEMENT_DEADLINE_MS = 30_000;
+const RFC3339_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d{1,9})?(Z|[+-](\d{2}):(\d{2}))$/u;
+const CLOUDFLARE_TIMESTAMP = /^(\d{4})-(\d{2})-(\d{2}) (\d{2}):(\d{2}):(\d{2})$/u;
 
 export type AssertCurrentResearchProviderKeyProjectAuthority = (
   context: AuthenticatedRequestContext,
@@ -191,6 +193,30 @@ function noEffectFailureCode(value: OpenRouterProviderKeyErrorCode):
   return isNoEffectErrorCode(value) ? value : null;
 }
 
+function validCalendarTime(year: number, month: number, day: number, hour: number, minute: number, second: number): boolean {
+  if (month < 1 || month > 12 || hour > 23 || minute > 59 || second > 59 || day < 1) return false;
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysByMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day <= (daysByMonth[month - 1] ?? 0);
+}
+
+/** Validate the provider timestamp grammar while preserving its exact wire bytes. */
+function validObservedModifiedAt(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const rfc3339 = RFC3339_TIMESTAMP.exec(value);
+  if (rfc3339 !== null) {
+    const zone = rfc3339[7];
+    const offsetHour = zone === "Z" ? 0 : Number(rfc3339[8]);
+    const offsetMinute = zone === "Z" ? 0 : Number(rfc3339[9]);
+    return validCalendarTime(Number(rfc3339[1]), Number(rfc3339[2]), Number(rfc3339[3]),
+      Number(rfc3339[4]), Number(rfc3339[5]), Number(rfc3339[6])) &&
+      offsetHour <= 23 && offsetMinute <= 59;
+  }
+  const native = CLOUDFLARE_TIMESTAMP.exec(value);
+  return native !== null && validCalendarTime(Number(native[1]), Number(native[2]), Number(native[3]),
+    Number(native[4]), Number(native[5]), Number(native[6]));
+}
+
 function readback(value: unknown, alias: string, expectedAccount: string, expectedGateway: string): SafeConfiguredReadback {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     fail("RESEARCH_PROVIDER_KEY_CONFIGURATION_READBACK_INVALID", 503,
@@ -202,12 +228,12 @@ function readback(value: unknown, alias: string, expectedAccount: string, expect
       item.account_id !== expectedAccount || item.gateway_id !== expectedGateway || typeof item.provider_config_id !== "string" ||
       !/^[A-Za-z0-9._:-]{1,128}$/u.test(item.provider_config_id) || typeof item.secret_id !== "string" ||
       !/^[A-Za-z0-9._:-]{1,128}$/u.test(item.secret_id) ||
-      typeof item.observed_modified_at !== "string" || !Number.isFinite(Date.parse(item.observed_modified_at))) {
+      !validObservedModifiedAt(item.observed_modified_at)) {
     fail("RESEARCH_PROVIDER_KEY_CONFIGURATION_READBACK_INVALID", 503,
       "Provider configuration did not match the requested OpenRouter alias", true);
   }
   return Object.freeze({ account_id: expectedAccount, gateway_id: expectedGateway, provider_config_id: item.provider_config_id,
-    secret_id: item.secret_id, observed_modified_at: new Date(item.observed_modified_at).toISOString() });
+    secret_id: item.secret_id, observed_modified_at: item.observed_modified_at });
 }
 
 export interface ResearchProviderKeyConfigurationService {

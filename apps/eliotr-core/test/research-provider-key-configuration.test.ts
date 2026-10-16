@@ -52,13 +52,21 @@ async function insertOwnerProject(database: D1Database, owner: string): Promise<
   return project;
 }
 
-function createPort(onCreate?: (input: { readonly alias: string; readonly secret: string }) => Promise<void>) {
+function createPort(
+  onCreate?: (input: { readonly alias: string; readonly secret: string }) => Promise<void>,
+  observedModifiedAt = new Date().toISOString(),
+) {
+  const readbacks: Array<{
+    readonly provider_config_id: string;
+    readonly secret_id: string;
+    readonly observed_modified_at: string;
+  }> = [];
   const calls = vi.fn(async (
     input: { readonly alias: string; readonly secret: string },
     _execution?: { readonly signal?: AbortSignal; readonly deadline_ms?: number },
   ) => {
     await onCreate?.(input);
-    return {
+    const readback = {
       protocol: "eliotr.openrouter-provider-key-configured.v1",
       disposition: "configured_not_qualified",
       account_id: ACCOUNT_ID,
@@ -68,13 +76,25 @@ function createPort(onCreate?: (input: { readonly alias: string; readonly secret
       alias: input.alias,
       default_config: false,
       secret_id: `secret-${crypto.randomUUID()}`,
-      observed_modified_at: new Date().toISOString(),
+      observed_modified_at: observedModifiedAt,
     };
+    readbacks.push({
+      provider_config_id: readback.provider_config_id,
+      secret_id: readback.secret_id,
+      observed_modified_at: readback.observed_modified_at,
+    });
+    return readback;
   });
   return {
     calls,
+    readbacks,
     port: { account_id: ACCOUNT_ID, gateway_id: GATEWAY_ID, create: calls },
   };
+}
+
+async function sha256Hex(value: string): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value)));
+  return [...digest].map((part) => part.toString(16).padStart(2, "0")).join("");
 }
 
 function requestBody(operationId: string, providerKey: string) {
@@ -150,6 +170,37 @@ describe("owner OpenRouter provider-key configuration", () => {
     await expect(read(`${url}?unexpected=1`)).rejects.toMatchObject({
       code: "RESEARCH_PROVIDER_KEY_CONFIGURATION_INPUT_INVALID", status: 400,
     });
+  });
+
+  it("preserves Cloudflare SQL modified_at bytes in metadata without assigning a timezone", async () => {
+    const owner = `provider-key-sql-time-${crypto.randomUUID()}`;
+    const project = await insertOwnerProject(env.CORE_DB, owner);
+    const operationId = crypto.randomUUID();
+    const observedModifiedAt = "2026-10-15 08:32:11";
+    const { port, readbacks } = createPort(undefined, observedModifiedAt);
+    const service = createResearchProviderKeyConfigurationService({ database: env.CORE_DB, managementPort: port });
+
+    const created = await service.create(context(owner), project,
+      requestBody(operationId, "sk-or-v1-synthetic-key-do-not-persist-1234567890"));
+    const readback = readbacks[0];
+    const stored = await env.CORE_DB.prepare(
+      "SELECT metadata_sha256 FROM research_provider_key_configuration_operation " +
+      "WHERE owner_id=?1 AND project_id=?2 AND operation_id=?3",
+    ).bind(owner, project, operationId).first<{ readonly metadata_sha256: string }>();
+
+    expect(created.receipt.status).toBe("configured_not_qualified");
+    expect(readback?.observed_modified_at).toBe(observedModifiedAt);
+    expect(stored?.metadata_sha256).toBe(await sha256Hex(JSON.stringify([
+      "eliotr.openrouter-provider-key-configured.v1",
+      GATEWAY_ID,
+      readback?.provider_config_id,
+      ACCOUNT_ID,
+      "openrouter",
+      created.receipt.alias,
+      false,
+      readback?.secret_id,
+      observedModifiedAt,
+    ])));
   });
 
   it("saves a replacement as a new operation and preserves safe replay readback", async () => {
