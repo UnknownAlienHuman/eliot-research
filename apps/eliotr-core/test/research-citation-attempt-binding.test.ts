@@ -276,8 +276,10 @@ describe("ER-13 Stage15 citation-receipt binding migration", () => {
     expect(citation.receipt.requested_handle_refs).toEqual([missingHandle]);
     expect(citation.receipt.rejected).toEqual([{
       handle_ref: missingHandle,
-      reason_code: "EVIDENCE_HANDLE_NOT_FOUND",
+      reason_code: "INVALID_REFERENCE",
     }]);
+    expect(citation.receipt.outcomes).toEqual([{ handle_ref: missingHandle, outcome: "INVALID_REFERENCE" }]);
+    expect(citation.receipt.resolved_count).toBe(0);
     expect(citation.receipt.all_material_citations_resolved).toBe(false);
 
     const citationReceiptRow = await workflow.db.prepare(
@@ -426,8 +428,10 @@ describe("ER-13 Stage15 citation-receipt binding migration", () => {
     expect(applicationCitation.resolved_evidence).toHaveLength(0);
     expect(applicationCitation.receipt.rejected).toEqual([{
       handle_ref: applicationHandle,
-      reason_code: "EVIDENCE_HANDLE_NOT_FOUND",
+      reason_code: "INVALID_REFERENCE",
     }]);
+    expect(applicationCitation.receipt.outcomes).toEqual([{ handle_ref: applicationHandle, outcome: "INVALID_REFERENCE" }]);
+    expect(applicationCitation.receipt.resolved_count).toBe(0);
     const applicationReceiptJson = canonicalEvidenceJson(applicationCitation.receipt);
     const applicationReceiptSha = await evidenceSha256(applicationCitation.receipt);
     const applicationSettlement = await readCitationSettlement(

@@ -5,6 +5,7 @@ import type { AuthenticatedRequestContext, QueryRequest, QueryResult } from "@el
 import { ORIENTATION_PROFILE } from "@eliotr/cloudflare-navigation";
 import { sha256Utf8 } from "@eliotr/platform-cloudflare";
 import { canonicalRetrievalJson } from "@eliotr/retrieval";
+import { canonicalRetrievalResultJson, decodeRetrievalPersistenceValue } from "../../../packages/retrieval/src/query-codec.js";
 import { createProjectOwnerService } from "@eliotr/cloudflare-navigation";
 import { createResearchQueryService, FAST_SEARCH_PROFILE } from "../src/research-session.js";
 import { observeDatabase } from "./orientation-fixture.js";
@@ -109,7 +110,11 @@ describe("S08 immutable HTTP query replay", () => {
     const row = await db.prepare("SELECT result_json,result_digest FROM retrieval_query_result WHERE idempotency_key=?1")
       .bind(key).first<{ result_json: string; result_digest: string }>();
     if (row === null) throw new Error("missing persisted replay result");
-    expect(row.result_digest).toBe(await sha256Utf8(row.result_json));
+    const decoded = decodeRetrievalPersistenceValue(JSON.parse(row.result_json) as unknown);
+    if (decoded === null) throw new Error("persisted replay result failed strict decoding");
+    expect(decoded.result.evidence_pack).toEqual(first.evidence_pack);
+    // Settlement metadata remains stored and checked; output identity covers the public result.
+    expect(row.result_digest).toBe(await sha256Utf8(canonicalRetrievalResultJson(decoded.result)));
   });
 
   it("rejects substituted raw query, product, limit and selected scope before a fresh freeze or write", async () => {
@@ -237,12 +242,17 @@ async function historicalRecord(kind: "missing-expression" | "corrupt-result" | 
   if (!row || typeof row.result_json !== "string") throw new Error("missing original query fixture");
   const traceRow = await db.prepare("SELECT * FROM retrieval_query_trace WHERE trace_id=?1").bind(row.trace_id).first<SqlRow>();
   if (!traceRow) throw new Error("missing original trace fixture");
-  const value = JSON.parse(row.result_json) as { trace: { trace_ref: { id: string }; scope_snapshot: Record<string, unknown> };
-    evidence_pack: { trace_ref: { id: string } } };
+  const decoded = decodeRetrievalPersistenceValue(JSON.parse(row.result_json) as unknown);
+  if (decoded === null) throw new Error("original historical query fixture failed strict decoding");
   const traceId = `historical-${kind}`;
-  value.trace.trace_ref.id = traceId;
-  value.evidence_pack.trace_ref.id = traceId;
-  if (kind === "missing-expression") delete value.trace.scope_snapshot.resolved_scope_expression;
+  const original = decoded.result;
+  const trace = { ...original.trace, trace_ref: { ...original.trace.trace_ref, id: traceId } };
+  const { resolved_scope_expression: _expression, ...historicalScope } = trace.scope_snapshot;
+  // Model the old three-field result before internal settlement metadata existed.
+  // Keeping a modern wrapper while deleting a scope field tests malformed bytes instead.
+  const value = { evidence_pack: { ...original.evidence_pack,
+    trace_ref: { ...original.evidence_pack.trace_ref, id: traceId } }, coverage_claim: original.coverage_claim,
+    trace: kind === "missing-expression" ? { ...trace, scope_snapshot: historicalScope } : trace };
   const resultJson = kind === "corrupt-result" ? "{}" : canonicalRetrievalJson(value);
   const traceJson = canonicalRetrievalJson(value.trace);
   await insertRow("retrieval_query_trace", { ...traceRow, trace_id: traceId, trace_json: traceJson, trace_digest: await sha256Utf8(traceJson) });

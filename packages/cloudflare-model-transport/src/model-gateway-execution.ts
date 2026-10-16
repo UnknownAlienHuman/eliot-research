@@ -488,7 +488,9 @@ async function executeObservedModelGatewayCall(
       method: request.method,
       headers: request.headers,
       body: request.body,
-      redirect: "manual",
+      // This is the canonical adapter contract. The Workers runtime adapter
+      // converts it to manual mode before calling the real Fetch API.
+      redirect: "error",
     });
   } catch (cause) {
     // A transport-thrown error cannot carry compiler non-dispatch authority,

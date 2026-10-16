@@ -17,13 +17,19 @@ beforeAll(async () => {
 });
 
 async function durableState(operationId: string) {
-  const checkpoints = await db.prepare("SELECT stage_index,receipt_json FROM research_workflow_checkpoint WHERE operation_id=?1 ORDER BY stage_index")
-    .bind(operationId).all<{ stage_index: number; receipt_json: string }>();
+  // Pure native stages have their own canonical receipt table and do not reserve
+  // a W2 external-effect attempt. Read every durable stage representation.
+  const checkpoints = await db.prepare(
+    "SELECT stage_index,receipt_json FROM research_workflow_checkpoint WHERE operation_id=?1 " +
+    "UNION ALL SELECT stage_index,receipt_json FROM research_workflow_native_stage_completion WHERE operation_id=?1 " +
+    "UNION ALL SELECT stage_index,receipt_json FROM research_workflow_authorized_read_stage_completion WHERE operation_id=?1 " +
+    "ORDER BY stage_index",
+  ).bind(operationId).all<{ stage_index: number; receipt_json: string }>();
   const attempts = await db.prepare("SELECT stage_index,state FROM research_workflow_attempt WHERE operation_id=?1 ORDER BY stage_index")
     .bind(operationId).all<{ stage_index: number; state: string }>();
   const models = await db.prepare("SELECT state,receipt_sha256,output_sha256,readback_sha256 FROM research_model_attempt ORDER BY operation_kind")
     .all<{ state: string; receipt_sha256: string; output_sha256: string; readback_sha256: string }>();
-  const outbox = await db.prepare("SELECT COUNT(*) AS n FROM outbox WHERE topic='research.workflow.checkpoint.v1'").first<number>("n");
+  const outbox = await db.prepare("SELECT COUNT(*) AS n FROM outbox WHERE topic IN ('research.workflow.checkpoint.v1','research.workflow.native-stage.v1')").first<number>("n");
   const ledger = await db.prepare("SELECT COUNT(*) AS n FROM investigation_ledger_event WHERE kind='CHECKPOINT'").first<number>("n");
   if (outbox === null || ledger === null) throw new Error("durable checkpoint readback missing");
   return { checkpoints: checkpoints.results, attempts: attempts.results, models: models.results, outbox, ledger };
@@ -70,7 +76,8 @@ describe("HTTP-created current semantic run on the native Workflow binding", () 
         first_failure_json: null, latest_failure_json: null });
       const state = await durableState(admitted.workflow_instance_id);
       expect(state.checkpoints.map((row) => row.stage_index)).toEqual(RESEARCH_WORKFLOW_STAGES.map((_, index) => index));
-      expect(state.attempts).toEqual(RESEARCH_WORKFLOW_STAGES.map((_, stage_index) => ({ stage_index, state: "COMMITTED" })));
+      expect(state.attempts).toEqual(RESEARCH_WORKFLOW_STAGES.map((_, stage_index) => ({ stage_index, state: "COMMITTED" }))
+        .filter(({ stage_index }) => stage_index === 0 || stage_index >= 5));
       expect(state.outbox).toBe(18); expect(state.ledger).toBe(18);
       expect(state.models).toHaveLength(2);
       for (const model of state.models) {
