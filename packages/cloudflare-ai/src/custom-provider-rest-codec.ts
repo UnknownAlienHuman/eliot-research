@@ -43,7 +43,7 @@ const PROVIDER_KEYS = new Set([
   "modified_at", "name", "position", "slug",
 ]);
 const RESULT_INFO_KEYS = new Set([
-  "page", "per_page", "total_count", "total_pages",
+  "count", "page", "per_page", "total_count", "total_pages",
 ]);
 
 export const CUSTOM_PROVIDER_API_ORIGIN = "https://api.cloudflare.com";
@@ -245,18 +245,26 @@ export function decodeCustomProviderListPage(
     "custom provider total_count",
     "NONE",
   );
-  const totalPages = responseInteger(
-    info.total_pages,
-    "custom provider total_pages",
-    "NONE",
-  );
+  const resultCount = rawResult.length;
+  const reportedCount = info.count === undefined
+    ? undefined
+    : responseInteger(info.count, "custom provider count", "NONE");
+  const derivedPages = totalCount === 0 ? 0 : Math.ceil(totalCount / perPage);
+  const totalPages = info.total_pages === undefined
+    ? derivedPages
+    : responseInteger(info.total_pages, "custom provider total_pages", "NONE");
   if (
     page < 1 ||
     perPage < 1 ||
     perPage > MAX_PAGE_SIZE ||
+    resultCount > perPage ||
+    (reportedCount !== undefined && reportedCount !== resultCount) ||
     totalPages > MAX_PAGES ||
-    (totalPages === 0 && totalCount !== 0) ||
-    totalCount > MAX_PROVIDERS
+    totalCount > MAX_PROVIDERS ||
+    (totalPages !== derivedPages && !(totalCount === 0 && totalPages === 1)) ||
+    (totalCount === 0 && (page !== 1 || resultCount !== 0 ||
+      (totalPages !== 0 && totalPages !== 1))) ||
+    (totalCount > 0 && (totalPages < 1 || page > totalPages || resultCount === 0))
   ) {
     customProviderRestFailure(
       "CUSTOM_PROVIDER_RESPONSE_INVALID",
