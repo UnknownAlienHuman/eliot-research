@@ -242,7 +242,7 @@ export interface ResearchQualificationRenewalServiceInput {
     readonly goal: string;
     readonly operation_id: string;
   }) => Promise<ResearchEvidencePack>;
-  readonly model_gateway: () => ResearchModelGatewayRuntimeConfig;
+  readonly model_gateway: (provider: string) => ResearchModelGatewayRuntimeConfig;
   readonly control_plane_for: (
     candidate: StoredDynamicRouteCandidate,
   ) => Promise<ResearchOwnerQualificationRenewalAssemblerDependencies["control_plane"]>;
@@ -258,7 +258,6 @@ async function renewStage(
     readonly evidence_pack: ResearchEvidencePack;
     readonly config: ResearchSemanticConfiguration;
     readonly profile: Awaited<ReturnType<ReturnType<typeof createPersistedModelProfileBindingProducer>["resolve"]>>;
-    readonly gateway: ResearchModelGatewayRuntimeConfig;
   },
 ): Promise<ResearchModelQualificationRenewalResult> {
   const controlPlane = await input.control_plane_for(stageInput.candidate);
@@ -290,7 +289,7 @@ async function renewStage(
   const renewed = createResearchModelQualificationRenewal({
     database: input.database,
     work_bucket: input.work_bucket,
-    gateway: stageInput.gateway,
+    gateway: input.model_gateway(assembly.fresh.expected_provider),
     control_plane: controlPlane,
     prompt_compiler: assembly.prompt_compiler,
     now: canonicalNow,
@@ -402,7 +401,6 @@ export async function createResearchQualificationRenewal(
   if (evidencePack.resolved_evidence.length === 0) {
     fail("RESEARCH_QUALIFICATION_RENEWAL_UNAVAILABLE", "owner evidence query returned no resolved evidence");
   }
-  const gateway = input.model_gateway();
   for (const item of pending) {
     await renewStage(input, {
       stage: item.stage,
@@ -410,7 +408,6 @@ export async function createResearchQualificationRenewal(
       evidence_pack: evidencePack,
       config,
       profile: resolvedProfile,
-      gateway,
       max_input_bytes: item.rule.max_input_bytes,
       max_output_bytes: item.rule.max_output_bytes,
     });

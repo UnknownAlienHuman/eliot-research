@@ -1,5 +1,7 @@
-import { canonicalModelGatewayJson } from "@eliotr/cloudflare-ai";
-import type { ResearchModelGatewayRuntimeConfig } from "@eliotr/cloudflare-research";
+import { canonicalModelGatewayJson, validateModelGatewayToken } from "@eliotr/cloudflare-ai";
+import type { ResearchModelGatewayBinding, ResearchModelGatewayRuntimeConfig } from "@eliotr/cloudflare-research";
+import { WorkflowCheckpointError } from "@eliotr/cloudflare-workflows";
+import type { Env } from "./env.js";
 import {
   ResearchPreparedModelTransportError,
   type ResearchPreparedModelTransportIdentity,
@@ -9,6 +11,26 @@ import {
 import type { ConfiguredServiceModelProviderBinding } from "@eliotr/cloudflare-model-control/service-model-provider-service.js";
 
 export * from "@eliotr/cloudflare-model-control/research-prepared-model-transport-policies.js";
+
+/** Select credentials only for the server-selected provider; builtin calls never inspect an external token. */
+export function composeResearchModelGatewayConfiguration(
+  env: Pick<Env, "AI" | "AI_GATEWAY_REASONING_URL" | "ELIOTR_MODEL_GATEWAY_TOKEN">,
+  provider = "workers-ai",
+): ResearchModelGatewayRuntimeConfig {
+  if (provider === "workers-ai") {
+    const binding = env.AI as Partial<ResearchModelGatewayBinding> | undefined;
+    if (typeof binding?.gateway !== "function") throw new WorkflowCheckpointError("WORKFLOW_CREDENTIALS_MISSING");
+    return Object.freeze({ reasoning_gateway_base_url: env.AI_GATEWAY_REASONING_URL,
+      ai_gateway_binding: binding as ResearchModelGatewayBinding });
+  }
+  const token = env.ELIOTR_MODEL_GATEWAY_TOKEN;
+  if (typeof token !== "string" || token.trim() === "") {
+    throw new WorkflowCheckpointError("WORKFLOW_CREDENTIALS_MISSING");
+  }
+  try { validateModelGatewayToken(token); }
+  catch { throw new WorkflowCheckpointError("WORKFLOW_CREDENTIALS_INVALID"); }
+  return Object.freeze({ reasoning_gateway_base_url: env.AI_GATEWAY_REASONING_URL, gateway_token: token });
+}
 
 function required(message: string): never {
   throw new ResearchPreparedModelTransportError(

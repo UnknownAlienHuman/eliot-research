@@ -2,7 +2,6 @@ import {
   isSemanticResearchHandlerGeneration,
   SERVER_OWNED_BRANCH_QUERY_HANDLER_GENERATION,
 } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
-import { validateModelGatewayToken } from "@eliotr/cloudflare-ai";
 import { IdentifierSchema } from "@eliotr/contracts";
 import { canonicalJson } from "@eliotr/platform-cloudflare";
 import type { NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
@@ -36,6 +35,11 @@ import { requireResearchDeploymentCompatibility } from "./research-deployment-co
 import { routeResearchComputerAgentStages } from "./research-external-agent-routing.js";
 import { createResearchSemanticNativeModelRuntime } from "./research-semantic-native-model-runtime.js";
 import { createResearchNativeCaptureOwner } from "./research-native-capture-owner.js";
+import { composeResearchModelGatewayConfiguration } from "./research-prepared-model-transport.js";
+import {
+  resolveResearchSelectedModelTransport,
+  ResearchSelectedModelTransportError,
+} from "@eliotr/cloudflare-research-runtime/research-selected-model-transport.js";
 import {
   assembleResearchSemanticServerHandlers as assembleResearchSemanticRuntimeHandlers,
 } from "@eliotr/cloudflare-research-runtime/research-semantic-server.js";
@@ -64,17 +68,8 @@ interface CurrentInvestigationPolicyRow {
   readonly state: unknown;
 }
 
-export function modelGatewayConfiguration(env: Env): ResearchModelGatewayRuntimeConfig {
-  const token = env.ELIOTR_MODEL_GATEWAY_TOKEN;
-  if (typeof token === "string" && token.trim() !== "") {
-    try { validateModelGatewayToken(token); }
-    catch { fail("WORKFLOW_CREDENTIALS_INVALID"); }
-    return { reasoning_gateway_base_url: env.AI_GATEWAY_REASONING_URL, gateway_token: token };
-  }
-  const binding = env.AI as Partial<ResearchModelGatewayBinding> | undefined;
-  if (typeof binding?.gateway !== "function") fail("WORKFLOW_CREDENTIALS_MISSING");
-  return { reasoning_gateway_base_url: env.AI_GATEWAY_REASONING_URL,
-    ai_gateway_binding: binding as ResearchModelGatewayBinding };
+export function modelGatewayConfiguration(env: Env, provider = "workers-ai"): ResearchModelGatewayRuntimeConfig {
+  return composeResearchModelGatewayConfiguration(env, provider);
 }
 
 export function researchSemanticConfigurationInstalled(env: Env): boolean {
@@ -132,7 +127,15 @@ async function assembleResearchSemanticServerHandlers(input: ResearchSemanticSer
       model_selections: runConfiguration.model_selections });
   const nativeModelRuntime = createResearchSemanticNativeModelRuntime({ env, run_configuration: snapshotRunConfiguration,
     owner_ref: principal.principal_ref });
-  const gateway = modelGatewayConfiguration(env);
+  let gateway: ResearchModelGatewayRuntimeConfig;
+  try {
+    const selected = resolveResearchSelectedModelTransport({ stage: "SYNTHESIZE",
+      ...(snapshotRunConfiguration === undefined ? {} : { run_configuration: snapshotRunConfiguration }) });
+    gateway = modelGatewayConfiguration(env, selected?.transport_policy.provider);
+  } catch (error) {
+    if (error instanceof ResearchSelectedModelTransportError) fail("WORKFLOW_CONFIGURATION_INVALID");
+    throw error;
+  }
   if (!researchSemanticConfigurationInstalled(env)) configurationMissing();
   await requireResearchDeploymentCompatibility(env.CORE_DB, principal.deployment_generation, env.DEPLOYMENT_GENERATION);
   const runBinding = await env.CORE_DB.prepare(
@@ -244,6 +247,7 @@ async function assembleResearchSemanticServerHandlers(input: ResearchSemanticSer
     }),
     native_model_runtime: nativeModelRuntime,
     gateway,
+    gateway_for_provider: (provider) => modelGatewayConfiguration(env, provider),
     config,
     policy,
     semantic_config: {

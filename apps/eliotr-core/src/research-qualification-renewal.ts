@@ -1,14 +1,12 @@
 import {
   DYNAMIC_ROUTE_GATEWAY_ID,
   createCloudflareDynamicRouteRestControlPlane,
-  validateModelGatewayToken,
   type DynamicRouteRestBinding,
   type DynamicRouteRestResponse,
 } from "@eliotr/cloudflare-ai";
 import type { NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import {
   createD1DynamicRouteRestBindingStore,
-  type ResearchModelGatewayBinding,
   type ResearchModelGatewayRuntimeConfig,
   type StoredDynamicRouteCandidate,
 } from "@eliotr/cloudflare-research";
@@ -22,6 +20,7 @@ import {
 import { retrieveWithHeldScope } from "@eliotr/cloudflare-research-runtime/research-retrieval-composition.js";
 import { SERVER_RETRIEVAL_SCOPE_PROFILE } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import type { Env } from "./env.js";
+import { composeResearchModelGatewayConfiguration } from "./research-prepared-model-transport.js";
 import {
   resolveResearchSemanticConfig,
   semanticConfigCheckpointError,
@@ -57,24 +56,8 @@ function requiredText(
 }
 
 /** Env-backed model credential adapter; the service calls this only when renewal is pending. */
-function modelGateway(env: Env): ResearchModelGatewayRuntimeConfig {
-  const token = env.ELIOTR_MODEL_GATEWAY_TOKEN;
-  if (typeof token === "string" && token.trim() !== "") {
-    try { validateModelGatewayToken(token); }
-    catch { throw new WorkflowCheckpointError("WORKFLOW_CREDENTIALS_INVALID"); }
-    return Object.freeze({
-      reasoning_gateway_base_url: env.AI_GATEWAY_REASONING_URL,
-      gateway_token: token,
-    });
-  }
-  const binding = env.AI as Partial<ResearchModelGatewayBinding> | undefined;
-  if (typeof binding?.gateway !== "function") {
-    throw new WorkflowCheckpointError("WORKFLOW_CREDENTIALS_MISSING");
-  }
-  return Object.freeze({
-    reasoning_gateway_base_url: env.AI_GATEWAY_REASONING_URL,
-    ai_gateway_binding: binding as ResearchModelGatewayBinding,
-  });
+function modelGateway(env: Env, provider: string): ResearchModelGatewayRuntimeConfig {
+  return composeResearchModelGatewayConfiguration(env, provider);
 }
 
 /** Env-backed Dynamic Route adapter, still invoked only for a stage that needs renewal. */
@@ -189,7 +172,7 @@ export async function renewResearchQualifications(
       provenance_ref: env.ELIOTR_MODEL_PROFILE_PROVENANCE_REF,
     },
     retrieve_evidence: ({ navigation, goal, operation_id }) => freshEvidence(env, navigation, goal, operation_id),
-    model_gateway: () => modelGateway(env),
+    model_gateway: (provider) => modelGateway(env, provider),
     control_plane_for: (candidate) => controlPlaneFor(env, candidate),
   });
 }

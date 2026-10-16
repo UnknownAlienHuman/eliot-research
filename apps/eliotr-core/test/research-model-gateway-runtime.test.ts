@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ModelGatewayExecutionError } from "@eliotr/cloudflare-ai";
 import type { ResearchModelGatewayBinding } from "@eliotr/cloudflare-research";
 import { createResearchModelGatewayRuntime } from "../../../packages/cloudflare-research/src/research-model-gateway-runtime.js";
+import type { Env } from "../src/env.js";
+import { composeResearchModelGatewayConfiguration } from "../src/research-prepared-model-transport.js";
 
 const ACCOUNT_ID = "a".repeat(32);
 const BASE_URL = `https://gateway.ai.cloudflare.com/v1/${ACCOUNT_ID}/eliotr-reasoning`;
@@ -65,6 +67,45 @@ function requestInit(): RequestInit {
 }
 
 describe("research model gateway runtime", () => {
+  it.each(["server-held-external-token", " bearer"])(
+    "prefers the native binding for builtin calls regardless of external credential %s", (token) => {
+      const native = { gateway: vi.fn() };
+      const env = { AI: native, AI_GATEWAY_REASONING_URL: BASE_URL, ELIOTR_MODEL_GATEWAY_TOKEN: token } as unknown as Env;
+      const configured = composeResearchModelGatewayConfiguration(env);
+      expect(configured.ai_gateway_binding).toBe(native);
+      expect(configured).not.toHaveProperty("gateway_token");
+      expect(configured).not.toHaveProperty("fetch");
+      expect(native.gateway).not.toHaveBeenCalled();
+    },
+  );
+
+  it("selects external HTTP credentials by provider and never falls back across providers", () => {
+    const native = { gateway: vi.fn() };
+    const env = { AI: native, AI_GATEWAY_REASONING_URL: BASE_URL,
+      ELIOTR_MODEL_GATEWAY_TOKEN: "server-held-external-token" } as unknown as Env;
+    expect(composeResearchModelGatewayConfiguration(env, "openrouter")).toEqual({
+      reasoning_gateway_base_url: BASE_URL, gateway_token: "server-held-external-token",
+    });
+    expect(() => composeResearchModelGatewayConfiguration({ ...env, ELIOTR_MODEL_GATEWAY_TOKEN: undefined }, "openrouter"))
+      .toThrow(expect.objectContaining({ code: "WORKFLOW_CREDENTIALS_MISSING" }));
+    expect(() => composeResearchModelGatewayConfiguration({ ...env, ELIOTR_MODEL_GATEWAY_TOKEN: " bearer" }, "openrouter"))
+      .toThrow(expect.objectContaining({ code: "WORKFLOW_CREDENTIALS_INVALID" }));
+    expect(() => composeResearchModelGatewayConfiguration({ ...env, AI: undefined } as unknown as Env, "workers-ai"))
+      .toThrow(expect.objectContaining({ code: "WORKFLOW_CREDENTIALS_MISSING" }));
+    expect(native.gateway).not.toHaveBeenCalled();
+  });
+
+  it("still rejects explicitly mixing native binding with a token or custom HTTP fetch", () => {
+    const native = { gateway: vi.fn() };
+    const fetcher = vi.fn();
+    for (const extra of [{ gateway_token: "server-held-token" }, { fetch: fetcher }]) {
+      expect(() => createResearchModelGatewayRuntime({ reasoning_gateway_base_url: BASE_URL,
+        ai_gateway_binding: native, ...extra } as never)).toThrowError(ModelGatewayExecutionError);
+    }
+    expect(native.gateway).not.toHaveBeenCalled();
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it("retains the canonical HTTP policy and rejects invalid BYOK and native binding alias fallback", async () => {
     let fetchCalls = 0;
     const http = createResearchModelGatewayRuntime({
@@ -233,6 +274,8 @@ describe("research model gateway runtime", () => {
     await expect(runtime.transport.fetch(`${ENDPOINT}/other`, requestInit()))
       .rejects.toMatchObject({ code: "MODEL_GATEWAY_REQUEST_INVALID" });
     await expect(runtime.transport.fetch(ENDPOINT, { ...requestInit(), method: "GET" }))
+      .rejects.toMatchObject({ code: "MODEL_GATEWAY_REQUEST_INVALID" });
+    await expect(runtime.transport.fetch(ENDPOINT, { ...requestInit(), redirect: "manual" }))
       .rejects.toMatchObject({ code: "MODEL_GATEWAY_REQUEST_INVALID" });
     await expect(runtime.transport.fetch(ENDPOINT, { ...requestInit(), headers: {} }))
       .rejects.toMatchObject({ code: "MODEL_GATEWAY_REQUEST_INVALID" });
