@@ -94,6 +94,8 @@ jobs:
           test/raw-normalized-admission-http.test.ts
           test/research-native-global-default.test.ts
           --reporter=verbose
+      - name: Native owner report byte headers
+        run: pnpm --dir apps/eliotr-core exec vitest run test/artifact-draft-reader.test.ts --testNamePattern 'reads one historical section body' --reporter=dot
       - name: Build served assets and owner web
         run: |
           pnpm build:pwa

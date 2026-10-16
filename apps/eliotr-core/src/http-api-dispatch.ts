@@ -303,7 +303,9 @@ export async function dispatchHttpApiRoute(
         return apiResult(request, env, await application.services.semantic.artifactSectionCitations(
           context, parseArtifactRef(ref), parseArtifactSectionRef(sectionRef)));
       }
-      return application.services.semantic.artifactSection(context, parseArtifactRef(ref), parseArtifactSectionRef(sectionRef));
+      const response = await application.services.semantic.artifactSection(context, parseArtifactRef(ref), parseArtifactSectionRef(sectionRef));
+      response.headers.set("x-eliotr-deployment-generation", env.DEPLOYMENT_GENERATION);
+      return response;
     }
     case "research.wiki.propose": {
       requireNoQuery(url);

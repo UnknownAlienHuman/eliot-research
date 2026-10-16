@@ -409,6 +409,7 @@ describe("actual D1/R2 artifact draft reader", () => {
     );
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("application/octet-stream");
+    expect(response.headers.get("x-eliotr-deployment-generation")).toBe(runtime.DEPLOYMENT_GENERATION);
     expect(response.headers.get("content-length")).toBe(String(result.body.byteLength));
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
