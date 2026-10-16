@@ -114,7 +114,7 @@ describe("production governed model attempt handler over actual D1/R2", () => {
     })).resolves.toMatchObject({ state: "UNKNOWN", persisted_state: "STARTED" });
   });
 
-  it("settles cancellation and expiry before the controlled route without a provider call", async () => {
+  it("settles expiry before the controlled route without a provider call", async () => {
     const expired = await governedModelAttemptFixture("handler-expired");
     const expiredHandler = createGovernedModelAttemptHandler({
       ...expired.dependencies, now: () => Date.parse("2026-09-10T14:00:00.000Z"),
@@ -122,7 +122,9 @@ describe("production governed model attempt handler over actual D1/R2", () => {
     await expect(expiredHandler.handler(expired.invocation("FREEZE_PROTOCOL_AND_SCOPE", expired.stageAttemptRef)))
       .rejects.toMatchObject({ code: "WORKFLOW_BUDGET_STOP" });
     expect(expired.calls()).toBe(0);
+  });
 
+  it("settles cancellation before the controlled route without a provider call", async () => {
     const cancelled = await governedModelAttemptFixture("handler-cancelled");
     const controller = new AbortController();
     const cancelling = createGovernedModelAttemptHandler({

@@ -300,6 +300,23 @@ export function createGovernedModelAttemptHandler(
 
   async function handler(input: Parameters<WorkflowStageHandler>[0]): Promise<Uint8Array> {
     if (input.principal.signal?.aborted) throw new WorkflowCheckpointError("WORKFLOW_CANCELLED");
+    // Operational timings contain no prompts, evidence, credentials or bodies.
+    // Keep every existing boundary and its failure semantics in the same order.
+    const phaseTimings: { phase: string; duration_ms: number; succeeded: boolean }[] = [];
+    const emitTimings = () => console.warn(JSON.stringify({ event: "research_model_phase_timing",
+      stage: input.request.stage, operation_id: input.request.operation_id, phases: phaseTimings }));
+    const timed = async <T>(phase: string, action: () => Promise<T>): Promise<T> => {
+      const startedAt = Date.now();
+      let succeeded = false;
+      try {
+        const value = await action();
+        succeeded = true;
+        return value;
+      } finally {
+        phaseTimings.push({ phase, duration_ms: Date.now() - startedAt, succeeded });
+        if (!succeeded) emitTimings();
+      }
+    };
     const stage_request_sha256 = await digest(new TextEncoder().encode(JSON.stringify(input.request)));
     const identity = await deriveModelAttemptIdentity({
       stage_request_sha256, principal_ref: input.principal.principal_ref,
@@ -339,9 +356,9 @@ export function createGovernedModelAttemptHandler(
       model_output_object_ref, stage_request_sha256,
       model_operation_id: identity.operation_id, model_idempotency_key: identity.idempotency_key,
     });
-    const prepared = await dependencies.prepare(preparation);
+    const prepared = await timed("prepare", () => dependencies.prepare(preparation));
     validatePrepared(preparation, prepared, dependencies.operation_kind);
-    const reservation = await dependencies.attempts.reserve(prepared);
+    const reservation = await timed("reserve", () => dependencies.attempts.reserve(prepared));
     const workflowBudgetReceipt = (reservation as Partial<WorkflowBudgetBoundReservation>).workflow_budget_receipt_ref;
     if (reservation.output_object_ref !== model_output_object_ref || reservation.intent.operation_kind !== dependencies.operation_kind ||
         reservation.intent.intent_ref.id !== identity.operation_id || reservation.intent.principal_ref !== input.principal.principal_ref ||
@@ -352,7 +369,7 @@ export function createGovernedModelAttemptHandler(
         reservation.stage_request_sha256 !== stage_request_sha256) {
       uncertain("model reservation is bound to a different workflow output");
     }
-    const started = await dependencies.attempts.beginAttempt(reservation);
+    const started = await timed("begin_attempt", () => dependencies.attempts.beginAttempt(reservation));
     if (!started.should_invoke) {
       if (started.attempt === null) uncertain("model attempt recovery has no durable attempt identity");
       const readback = await dependencies.attempts.readByAttempt(started.attempt.attempt_id);
@@ -368,12 +385,14 @@ export function createGovernedModelAttemptHandler(
       return recovered;
     }
     if (started.attempt === null || started.state !== "STARTED") uncertain("model attempt start is not invokable");
+    const startedAttempt = started.attempt;
+    const startedAttemptId = startedAttempt.attempt_id;
     const nowMs = dependencies.now?.() ?? Date.now();
     if (input.principal.signal?.aborted) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_CANCELLED");
     if (quoteExpired(prepared.quote.expires_at, nowMs)) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_BUDGET_STOP");
     if (quoteExpired(prepared.authority.expires_at, nowMs)) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_AUTHORITY_STALE");
     try {
-      await dependencies.revalidate(preparation, prepared);
+      await timed("revalidate_before_output_binding", () => dependencies.revalidate(preparation, prepared));
     } catch (cause) {
       return settleBeforeProvider(started.attempt.attempt_id, revalidationCode(cause));
     }
@@ -381,12 +400,12 @@ export function createGovernedModelAttemptHandler(
     if (quoteExpired(prepared.quote.expires_at, dependencies.now?.() ?? Date.now())) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_BUDGET_STOP");
     if (quoteExpired(prepared.authority.expires_at, dependencies.now?.() ?? Date.now())) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_AUTHORITY_STALE");
     try {
-      await dependencies.prepareOutputBinding({
+      await timed("prepare_output_binding", () => dependencies.prepareOutputBinding({
         reservation,
-        attempt_id: started.attempt.attempt_id,
-        started_at: started.attempt.started_at,
+        attempt_id: startedAttemptId,
+        started_at: startedAttempt.started_at,
         residency_domains: residencyDomainsForRequest(preparation.request),
-      });
+      }));
     } catch (cause) {
       console.error(JSON.stringify({ event: "research_model_output_binding_failed",
         code: outputPreparationAuthorityCode(cause) ?? "UNCLASSIFIED" }));
@@ -400,7 +419,7 @@ export function createGovernedModelAttemptHandler(
     if (quoteExpired(prepared.quote.expires_at, dependencies.now?.() ?? Date.now())) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_BUDGET_STOP");
     if (quoteExpired(prepared.authority.expires_at, dependencies.now?.() ?? Date.now())) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_AUTHORITY_STALE");
     try {
-      await dependencies.revalidate(preparation, prepared);
+      await timed("revalidate_before_dispatch", () => dependencies.revalidate(preparation, prepared));
     } catch (cause) {
       return settleBeforeProvider(started.attempt.attempt_id, revalidationCode(cause));
     }
@@ -408,13 +427,13 @@ export function createGovernedModelAttemptHandler(
     if (quoteExpired(prepared.quote.expires_at, dependencies.now?.() ?? Date.now())) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_BUDGET_STOP");
     if (quoteExpired(prepared.authority.expires_at, dependencies.now?.() ?? Date.now())) return settleBeforeProvider(started.attempt.attempt_id, "WORKFLOW_AUTHORITY_STALE");
     let receipt: ModelCallReceipt;
-    try { receipt = await dependencies.route.execute(prepared.call); }
+    try { receipt = await timed("gateway_execute", () => dependencies.route.execute(prepared.call)); }
     catch (cause) { throw modelRouteFailure(cause, input.request.stage); }
     if (receipt.output_object_ref !== model_output_object_ref) corrupt("model receipt output is bound to a different model object");
     const output: ModelOutputBinding = {
       output_object_ref: model_output_object_ref, output_sha256: receipt.output_sha256, output_size_bytes: 0, readback_sha256: receipt.output_sha256,
     };
-    const bytes = await dependencies.readOutput({ output_object_ref: model_output_object_ref, output_sha256: receipt.output_sha256 });
+    const bytes = await timed("read_output", () => dependencies.readOutput({ output_object_ref: model_output_object_ref, output_sha256: receipt.output_sha256 }));
     if (!(bytes instanceof Uint8Array) || bytes.byteLength > MAX_WORKFLOW_OUTPUT_BYTES) corrupt("model output exceeds the workflow bound");
     const binding: ModelOutputBinding = { ...output, output_size_bytes: bytes.byteLength, readback_sha256: await digest(bytes) };
     if (binding.readback_sha256 !== binding.output_sha256) corrupt("model output readback digest differs from the model receipt");
@@ -423,20 +442,21 @@ export function createGovernedModelAttemptHandler(
     else if (quoteExpired(prepared.quote.expires_at, dependencies.now?.() ?? Date.now())) postFetchCode = "WORKFLOW_BUDGET_STOP";
     else if (quoteExpired(prepared.authority.expires_at, dependencies.now?.() ?? Date.now())) postFetchCode = "WORKFLOW_AUTHORITY_STALE";
     try {
-      await dependencies.revalidate(preparation, prepared);
+      await timed("revalidate_after_dispatch", () => dependencies.revalidate(preparation, prepared));
     } catch (cause) {
       if (postFetchCode === undefined) postFetchCode = revalidationCode(cause);
     }
-    const settled = await dependencies.attempts.settleAttempt({ attempt_id: started.attempt.attempt_id, state: "SUCCEEDED", receipt, output: binding });
-    const settledBytes = await readSucceededAttempt(dependencies, settled, {
+    const settled = await timed("settle_attempt", () => dependencies.attempts.settleAttempt({ attempt_id: startedAttemptId, state: "SUCCEEDED", receipt, output: binding }));
+    const settledBytes = await timed("read_settled_output", () => readSucceededAttempt(dependencies, settled, {
        principal_ref: input.principal.principal_ref, credential_generation: input.principal.credential_generation,
        deployment_generation: input.principal.deployment_generation, operation_id: identity.operation_id,
        workflow_budget_receipt_ref: input.budget_receipt_ref,
        operation_kind: dependencies.operation_kind, idempotency_key: identity.idempotency_key,
       scope_id: input.request.input_manifest.residency.scope_domain_id, output_object_ref: model_output_object_ref,
       stage_attempt_ref: input.attempt_ref, stage_request_sha256,
-    });
+    }));
     if (settledBytes === null) uncertain("model settlement readback is missing");
+    emitTimings();
     if (postFetchCode !== undefined) throw new WorkflowCheckpointError(postFetchCode);
     return settledBytes;
   }

@@ -279,6 +279,26 @@ function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
   return true;
 }
 
+async function settleConcurrentReads<T>(
+  reads: readonly (() => Promise<T>)[],
+): Promise<readonly PromiseSettledResult<T>[]> {
+  return Promise.allSettled(reads.map((read) => Promise.resolve().then(read)));
+}
+
+function readSettledValue<T>(result: PromiseSettledResult<T>): T {
+  if (result.status === "rejected") throw result.reason;
+  return result.value;
+}
+
+async function readConcurrentInOrder<T extends readonly unknown[]>(
+  reads: { readonly [Index in keyof T]: () => Promise<T[Index]> },
+): Promise<T> {
+  const settled = await settleConcurrentReads(reads);
+  const values: unknown[] = [];
+  for (const result of settled) values.push(readSettledValue(result));
+  return values as unknown as T;
+}
+
 function ref(value: { readonly id: string; readonly revision: number }): string {
   return `${value.id}:${value.revision}`;
 }
@@ -330,8 +350,10 @@ function createSynthesisContextReader(
           input.request.input_manifest.residency.access_domain_id !== input.principal.principal_ref) {
         fail("WORKFLOW_AUTHORITY_STALE");
       }
-      const stageTen = await readCommittedStageLineage(checkpoints, input.request.operation_id, "RECONCILE");
-      const stageEleven = await readCommittedStageLineage(checkpoints, input.request.operation_id, "FREEZE_EVIDENCE");
+      const [stageTen, stageEleven] = await readConcurrentInOrder([
+        () => readCommittedStageLineage(checkpoints, input.request.operation_id, "RECONCILE"),
+        () => readCommittedStageLineage(checkpoints, input.request.operation_id, "FREEZE_EVIDENCE"),
+      ] as const);
       const stageTenReceipt = stageTen.receipt;
       const stageElevenReceipt = stageEleven.receipt;
       assertSynthesisLineage(input.request, stageTen, stageTenReceipt, stageEleven, stageElevenReceipt);
@@ -339,23 +361,34 @@ function createSynthesisContextReader(
         input.request.operation_id, input.request.investigation_ref.id, input.principal,
       );
       if (authorizationReceiptRef === null) fail("WORKFLOW_AUTHORITY_STALE");
-      const stageZero = await readers.read_stage_zero({ operation_id: input.request.operation_id, investigation_id: input.request.investigation_ref.id, principal: input.principal });
+      const stageZeroRead = Promise.resolve().then(() => readers.read_stage_zero({
+        operation_id: input.request.operation_id, investigation_id: input.request.investigation_ref.id, principal: input.principal,
+      }));
       const predecessorObjects = [stageTen.request.input_manifest, stageTenReceipt.output_manifest,
         stageEleven.request.input_manifest, stageElevenReceipt.output_manifest, input.request.input_manifest];
       if (predecessorObjects.some((object) => object.residency.scope_domain_id !== navigation.scope.snapshot_id ||
-          object.residency.access_domain_id !== input.principal.principal_ref)) fail("WORKFLOW_AUTHORITY_STALE");
-      const stageTenBytes = await readWorkflowObject(environment.work_bucket, stageTenReceipt.output_manifest, true);
-      const stageElevenBytes = await readWorkflowObject(environment.work_bucket, stageElevenReceipt.output_manifest, true);
+          object.residency.access_domain_id !== input.principal.principal_ref)) {
+        await stageZeroRead;
+        fail("WORKFLOW_AUTHORITY_STALE");
+      }
+      const [stageZero, stageTenBytes, stageElevenBytes] = await readConcurrentInOrder([
+        () => stageZeroRead,
+        () => readWorkflowObject(environment.work_bucket, stageTenReceipt.output_manifest, true),
+        () => readWorkflowObject(environment.work_bucket, stageElevenReceipt.output_manifest, true),
+      ] as const);
       if (options.verify_input_bytes !== false && !sameBytes(stageElevenBytes, input.input_bytes)) fail("WORKFLOW_OUTPUT_CORRUPT");
       let stageTenInput: EvidenceFreezeStageInput;
       try { stageTenInput = await decodeEvidenceFreezeStageInput(stageTenBytes); }
       catch { fail("WORKFLOW_OUTPUT_CORRUPT"); }
       const { freeze, branch_findings: branchFindings } = await parseCommittedFreeze(stageElevenBytes, stageEleven.request.handler_generation);
-      const stageFive = await environment.read_stage_five({ operation_id: input.request.operation_id, investigation_id: input.request.investigation_ref.id, principal: input.principal });
+      const [stageFive, manifest] = await readConcurrentInOrder([
+        () => environment.read_stage_five({
+          operation_id: input.request.operation_id, investigation_id: input.request.investigation_ref.id, principal: input.principal,
+        }),
+        () => Promise.resolve().then(() => environment.manifest_store.get(stageTenInput.manifest_ref))
+          .catch(() => fail("WORKFLOW_OUTPUT_UNAVAILABLE")),
+      ] as const);
       if (stageZero === null) fail("WORKFLOW_OUTPUT_CORRUPT");
-      let manifest: AllowedReferenceManifest | null;
-      try { manifest = await environment.manifest_store.get(stageTenInput.manifest_ref); }
-      catch { fail("WORKFLOW_OUTPUT_UNAVAILABLE"); }
       if (manifest === null) fail("WORKFLOW_OUTPUT_CORRUPT");
       if (branchFindings !== undefined) {
         const branchLineage = await readers.read_branch_reconciliation?.({
@@ -424,10 +457,12 @@ function createSynthesisContextReader(
           stageTenInput.stage_zero_attempt_ref.length === 0 ||
           stageTen.request.investigation_ref.id !== stageZero.investigation_ref.id ||
           stageTenInput.model_profile_definition.definition_ref.revision !== 1) fail("WORKFLOW_OUTPUT_CORRUPT");
-      const finalAuthorizationReceiptRef = await readers.read_authorization_receipt_ref(
-        input.request.operation_id, input.request.investigation_ref.id, input.principal,
-      );
-      const finalHead = await readers.read_w1_head(input.request.investigation_ref.id);
+      const [finalAuthorizationReceiptRef, finalHead] = await readConcurrentInOrder([
+        () => readers.read_authorization_receipt_ref(
+          input.request.operation_id, input.request.investigation_ref.id, input.principal,
+        ),
+        () => readers.read_w1_head(input.request.investigation_ref.id),
+      ] as const);
       const after = await navigation.current();
       if (finalHead === null || !sameJson(before, after) || finalAuthorizationReceiptRef !== authorizationReceiptRef ||
           finalHead.investigation_id !== input.request.investigation_ref.id ||
@@ -486,8 +521,12 @@ export function createEvidenceFreezePostSynthesisContextReader(
       const endIndex = RESEARCH_WORKFLOW_STAGES.indexOf(stage);
       let first: Awaited<ReturnType<typeof readCommittedStageLineage>> | undefined;
       let previous: Awaited<ReturnType<typeof readCommittedStageLineage>> | undefined;
-      for (const predecessor of RESEARCH_WORKFLOW_STAGES.slice(firstIndex, endIndex)) {
-        const committed = await readCommittedStageLineage(checkpoints, input.request.operation_id, predecessor);
+      const predecessorReads = await settleConcurrentReads(
+        RESEARCH_WORKFLOW_STAGES.slice(firstIndex, endIndex).map((predecessor) =>
+          () => readCommittedStageLineage(checkpoints, input.request.operation_id, predecessor)),
+      );
+      for (const result of predecessorReads) {
+        const committed = readSettledValue(result);
         if (committed.request.investigation_ref.id !== input.request.investigation_ref.id ||
             committed.request.handler_generation !== input.request.handler_generation ||
             committed.receipt.investigation_ref.id !== input.request.investigation_ref.id ||

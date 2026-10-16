@@ -113,8 +113,16 @@ const buildInput = {
   max_context_bytes: 32 * 1024,
 } satisfies BuildReferenceManifestInput;
 
-function builtManifest(): BuiltReferenceManifest & { readonly manifest_ref: VersionedRef } {
-  return { manifest, compiled, resolved_evidence: [], source_authorities: [], manifest_ref: manifestRef };
+function builtManifest(request: BuildReferenceManifestInput): BuiltReferenceManifest & { readonly manifest_ref: VersionedRef } {
+  if (request.serialize_request_body === undefined) throw new Error("Fixture requires the emitted request serializer");
+  const bytes = new TextEncoder().encode(request.serialize_request_body({
+    blocks: compiled.blocks,
+    manifest_ref: compiled.manifest_ref,
+    selection_receipt: compiled.selection_receipt,
+    system_instructions: compiled.system_instructions,
+  })).byteLength;
+  return { manifest, compiled: { ...compiled, total_utf8_bytes: bytes },
+    resolved_evidence: [], source_authorities: [], manifest_ref: manifestRef };
 }
 
 async function testDeployment(): Promise<ModelRouteDeployment> {
@@ -174,10 +182,10 @@ describe("research model prompt compiler", () => {
     const candidates = { statement, unknowns: ["candidate needs verification"] };
     const compiler = createResearchModelPromptCompiler({
       manifest_service: {
-        buildAndPersist: async () => {
+        buildAndPersist: async request => {
           candidates.statement = "changed while compiling";
           candidates.unknowns.length = 0;
-          return builtManifest();
+          return builtManifest(request);
         },
       },
       build_manifest_input: async () => ({ ...buildInput, untrusted_candidate_context: candidates }),
@@ -476,7 +484,7 @@ describe("research model prompt compiler", () => {
       reasoning_efforts: ["max"],
     };
     const compiler = createResearchModelPromptCompiler({
-      manifest_service: { buildAndPersist: async () => builtManifest() },
+      manifest_service: { buildAndPersist: async request => builtManifest(request) },
       build_manifest_input: async () => buildInput,
       resolve_trusted_parameters: async () => ({
         prompt: "Summarize the evidence.",
@@ -492,7 +500,7 @@ describe("research model prompt compiler", () => {
     expect(result.request_body.reasoning_effort).toBe("max");
 
     const legacyCompiler = createResearchModelPromptCompiler({
-      manifest_service: { buildAndPersist: async () => builtManifest() },
+      manifest_service: { buildAndPersist: async request => builtManifest(request) },
       build_manifest_input: async () => buildInput,
       resolve_trusted_parameters: async () => ({
         prompt: "Summarize the evidence.",
@@ -522,7 +530,7 @@ describe("research model prompt compiler", () => {
       }, capabilities),
     };
     const compiler = createResearchModelPromptCompiler({
-      manifest_service: { buildAndPersist: async () => builtManifest() },
+      manifest_service: { buildAndPersist: async request => builtManifest(request) },
       build_manifest_input: async () => buildInput,
       resolve_trusted_parameters: async () => ({
         prompt: "Summarize the evidence.",
@@ -546,7 +554,7 @@ describe("research model prompt compiler", () => {
     let persisted = 0;
     const deployment = await testDeployment();
     const compiler = createResearchModelPromptCompiler({
-      manifest_service: { buildAndPersist: async () => { persisted += 1; return builtManifest(); } },
+      manifest_service: { buildAndPersist: async request => { persisted += 1; return builtManifest(request); } },
       build_manifest_input: async () => buildInput,
       resolve_trusted_parameters: async () => ({ prompt: "Summarize the evidence.", max_tokens: 32 }),
       request_timeout_ms: 15_000,
@@ -565,7 +573,7 @@ describe("research model prompt compiler", () => {
   it("rejects a route binding mismatch before reading the manifest authority", async () => {
     let called = false;
     const compiler = createResearchModelPromptCompiler({
-      manifest_service: { buildAndPersist: async () => { called = true; return builtManifest(); } },
+      manifest_service: { buildAndPersist: async request => { called = true; return builtManifest(request); } },
       build_manifest_input: async () => buildInput,
       resolve_trusted_parameters: async () => ({ prompt: "Unused", max_tokens: 1 }),
       request_timeout_ms: 15_000,

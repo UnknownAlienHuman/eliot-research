@@ -198,16 +198,19 @@ export function createResearchModelPromptCompiler(
 
   return {
     async compile(input, deployment): Promise<CompiledModelGatewayPrompt> {
+      const compileStartedAt = Date.now();
       if (input.route_ref !== deployment.route_ref ||
           input.prompt_generation !== deployment.prompt_generation ||
           input.schema_generation !== deployment.schema_generation) {
         fail("model call is not bound to the deployed prompt generations");
       }
       const manifestInput = await dependencies.build_manifest_input(input, deployment);
+      const manifestInputAt = Date.now();
       assertInputBinding(input, deployment, manifestInput);
       const untrustedContext = manifestInput.untrusted_candidate_context === undefined ? undefined :
         JSON.parse(canonicalModelGatewayJson(manifestInput.untrusted_candidate_context)) as unknown;
       const resolvedPrompt = await dependencies.resolve_trusted_parameters(input, deployment);
+      const promptParametersAt = Date.now();
       const prompt = JSON.parse(canonicalModelGatewayJson(resolvedPrompt)) as TrustedModelPromptParameters;
       assertTrustedParameters(prompt);
       const target = await modelGatewayDynamicRouteTarget(deployment);
@@ -238,6 +241,7 @@ export function createResearchModelPromptCompiler(
         ...manifestInput,
         serialize_request_body,
       });
+      const manifestBuiltAt = Date.now();
       if (!sameRef(built.manifest.manifest_ref, built.compiled.manifest_ref) ||
           !sameRef(built.manifest_ref, built.manifest.manifest_ref) ||
           built.compiled.source_text_in_system_fields !== false) {
@@ -266,6 +270,12 @@ export function createResearchModelPromptCompiler(
       }
       const requestBodySha256 = await modelGatewaySha256(validated.body);
       if (!SHA256.test(requestBodySha256)) fail("compiled model request digest is invalid");
+      console.warn(JSON.stringify({ event: "research_model_prompt_timing", route_ref: input.route_ref,
+        manifest_input_ms: manifestInputAt - compileStartedAt,
+        prompt_parameters_ms: promptParametersAt - manifestInputAt,
+        manifest_build_ms: manifestBuiltAt - promptParametersAt,
+        request_compile_ms: Date.now() - manifestBuiltAt,
+        request_utf8_bytes: encoder.encode(serializedRequestBody).byteLength }));
       return Object.freeze({
         request_body: JSON.parse(validated.body) as unknown,
         request_body_sha256: requestBodySha256,
