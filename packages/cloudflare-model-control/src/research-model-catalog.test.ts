@@ -55,6 +55,21 @@ function binding(models: ReturnType<typeof vi.fn>): WorkersAiModelCatalogBinding
 }
 
 describe("research model catalog", () => {
+  it("uses the callable native name rather than the catalog-record UUID", async () => {
+    const raw = { ...workersModel("95666467-f984-4211-b48a-7c246dd4adb7"), name: "@cf/zai-org/glm-5.3-flash" };
+    const models = vi.fn(async ({ page }: AiModelsSearchParams) => page === 1 ? [raw] : []);
+    const service = createResearchModelCatalogService({ database: database(false), workersAi: binding(models) });
+    const result = await service.listWorkersAiForService(ownerContext());
+    expect(result.models[0]).toMatchObject({ model_id: raw.name, name: raw.name });
+    expect(raw.id).toBe("95666467-f984-4211-b48a-7c246dd4adb7");
+  });
+
+  it("rejects conflicting callable identities instead of choosing a different model", async () => {
+    const models = vi.fn(async () => [{ ...workersModel("@cf/example/one"), name: "@cf/example/two" }]);
+    const service = createResearchModelCatalogService({ database: database(false), workersAi: binding(models) });
+    await expect(service.listWorkersAiForService(ownerContext())).rejects.toMatchObject({ code: "MODEL_CATALOG_RESPONSE_INVALID" });
+  });
+
   it("lists built-in models for global Settings without consulting any project or D1", async () => {
     const db = database(false);
     const aiModels = vi.fn(async ({ page }: AiModelsSearchParams) => page === 1 ? [workersModel("@cf/zai-org/glm-5.3-flash")] : []);
@@ -198,7 +213,7 @@ describe("research model catalog", () => {
     expect(result.pagination).toMatchObject({ has_more: null, coverage: "unknown", probe: "next_page_unavailable" });
   });
 
-  it("uses the owner-resolved global alias and exposes only globally registered OpenRouter models", async () => {
+  it("reads the public OpenRouter directory without adopting a legacy account allowlist", async () => {
     const modelId = "dots-studio/dots-3-note-preview:free";
     const binding: ConfiguredServiceModelProviderBinding = Object.freeze({
       owner_id: "owner-1",
@@ -220,20 +235,23 @@ describe("research model catalog", () => {
       links: {},
       total_count: 2,
     }), { status: 200, headers: { "content-type": "application/json" } }));
+    const resolveProvider = vi.fn(async () => binding);
     const transports = createResearchProviderModelCatalogTransports({
       gateway_base_url: `https://gateway.ai.cloudflare.com/v1/${"a".repeat(32)}/eliotr-reasoning`,
       gateway_token: "server-held-test-gateway-token",
       fetcher: fetcher as typeof fetch,
-      resolve_service_provider: vi.fn(async (provider) => provider === "openrouter" ? binding : null),
+      resolve_service_provider: resolveProvider,
     });
     const openRouter = transports.find((provider) => provider.provider_id === "openrouter");
 
     const page = await openRouter?.listTextGeneration({ page: 1, per_page: 20, task: "text-generation" });
 
     expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(new Headers(fetcher.mock.calls[0]?.[1]?.headers).get("cf-aig-byok-alias")).toBe(binding.alias);
-    expect(page?.models.map((model) => model.model_id)).toEqual([modelId]);
-    expect(page?.has_more).toBeNull();
+    expect(String(fetcher.mock.calls[0]?.[0])).toBe("https://openrouter.ai/api/v1/models");
+    expect([...new Headers(fetcher.mock.calls[0]?.[1]?.headers)]).toEqual([["accept", "application/json"]]);
+    expect(resolveProvider).not.toHaveBeenCalled();
+    expect(page?.models.map((model) => model.model_id)).toEqual([modelId, "another/model:free"]);
+    expect(page?.has_more).toBe(false);
   });
 
   it("returns the provider catalog for catalog-managed connections without promoting listed models", async () => {
@@ -257,18 +275,20 @@ describe("research model catalog", () => {
       links: {},
       total_count: 2,
     }), { status: 200, headers: { "content-type": "application/json" } }));
+    const resolveProvider = vi.fn(async () => binding);
     const transports = createResearchProviderModelCatalogTransports({
       gateway_base_url: `https://gateway.ai.cloudflare.com/v1/${"a".repeat(32)}/eliotr-reasoning`,
       gateway_token: "server-held-test-gateway-token",
       fetcher: fetcher as typeof fetch,
-      resolve_service_provider: vi.fn(async (provider) => provider === "openrouter" ? binding : null),
+      resolve_service_provider: resolveProvider,
     });
     const openRouter = transports.find((provider) => provider.provider_id === "openrouter");
 
     const page = await openRouter?.listTextGeneration({ page: 1, per_page: 20, task: "text-generation" });
 
     expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(new Headers(fetcher.mock.calls[0]?.[1]?.headers).get("cf-aig-byok-alias")).toBe(binding.alias);
+    expect([...new Headers(fetcher.mock.calls[0]?.[1]?.headers)]).toEqual([["accept", "application/json"]]);
+    expect(resolveProvider).not.toHaveBeenCalled();
     expect(page?.models.map((model) => model.model_id)).toEqual(["first/model:free", "second/model:free"]);
     expect(page?.has_more).toBe(false);
   });
@@ -282,6 +302,7 @@ describe("research model catalog", () => {
   });
 
   it.each([
+    ["openrouter", "https://openrouter.ai/api/v1/models"],
     ["opencode-go", "https://opencode.ai/inference/go/v1/models"],
     ["opencode-zen", "https://opencode.ai/inference/v1/models"],
   ])("reads the public %s catalog without sending any Cloudflare credential", async (provider, endpoint) => {
@@ -306,5 +327,16 @@ describe("research model catalog", () => {
     expect(page.models.map(model => model.model_id)).toEqual(["cat-jam-free"]);
     expect(page.pagination.has_more).toBe(false);
     expect(page.models[0]?.account_availability).toBe("unknown");
+    expect(page.models[0]?.billing.account_entitlement).toBe("not_established_by_catalog");
+  });
+
+  it("keeps project ownership checks ahead of the public OpenRouter request", async () => {
+    const fetcher = vi.fn(async () => new Response("{}"));
+    const service = createResearchModelCatalogService({ database: database(false),
+      externalProviders: createResearchProviderModelCatalogTransports({ gateway_base_url: "", fetcher }),
+    });
+    await expect(service.listExternalProvider(ownerContext(), "project-1", "openrouter"))
+      .rejects.toMatchObject({ code: "MODEL_CATALOG_PROJECT_NOT_FOUND", status: 404 });
+    expect(fetcher).not.toHaveBeenCalled();
   });
 });

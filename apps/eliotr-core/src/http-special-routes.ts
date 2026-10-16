@@ -150,6 +150,7 @@ export async function dispatchHttpSpecialRoute(input: {
       );
     }
     case "research.catalog-model-use.start":
+    case "research.catalog-model-use.current":
     case "research.catalog-model-use.read": {
       const projectId = input.match.params.project_id ?? "";
       return handleResearchCatalogModelUseHttp(input.request, input.env, input.context, projectId,

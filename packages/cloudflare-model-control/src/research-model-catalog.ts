@@ -358,7 +358,14 @@ function workersAiModel(raw: unknown): ResearchModelCatalogEntry {
       "Workers AI catalog returned a model outside the requested text-generation task");
   }
   const task = raw.task as Record<string, unknown>;
-  const modelId = boundedText(raw.id, "model id", 256, false);
+  const catalogId = boundedText(raw.id, "catalog record id", 256, false);
+  const name = boundedText(raw.name, "model name", 512, false);
+  const callableName = name.startsWith("@") && MODEL_IDENTIFIER.test(name);
+  if (callableName && catalogId.startsWith("@") && catalogId !== name) {
+    throw new ResearchModelCatalogError("MODEL_CATALOG_RESPONSE_INVALID", 502,
+      "Workers AI catalog contains conflicting callable model identities");
+  }
+  const modelId = callableName ? name : catalogId;
   if (!MODEL_IDENTIFIER.test(modelId)) {
     throw new ResearchModelCatalogError("MODEL_CATALOG_RESPONSE_INVALID", 502,
       "Workers AI catalog returned an invalid model id");
@@ -376,7 +383,7 @@ function workersAiModel(raw: unknown): ResearchModelCatalogEntry {
   return Object.freeze({
     provider_id: "cloudflare-workers-ai",
     model_id: modelId,
-    name: boundedText(raw.name, "model name", 512, false),
+    name,
     description: boundedText(raw.description, "model description"),
     catalog_availability: "listed",
     account_availability: "unknown",

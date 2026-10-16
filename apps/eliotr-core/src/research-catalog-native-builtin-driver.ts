@@ -68,13 +68,8 @@ export function createResearchCatalogNativeBuiltinDriver(input: {
   const assertCurrent = async (operation: Operation) => { if (await current(operation) === null) throw new Error("Native owner/project selection changed"); };
   const advertised = async (modelId: string) => {
     const nativeAi = typeof env.AI?.models === "function" ? env.AI as Pick<Ai, "models"> : undefined;
-    // The native API may expose its catalog-record UUID as id and the callable @cf reference as name.
-    const workersAi: Pick<Ai, "models"> | undefined = nativeAi === undefined ? undefined : {
-      models: async (...args) => (await nativeAi.models(...args)).map(model =>
-        model.name.startsWith("@cf/") && !model.id.startsWith("@cf/") ? { ...model, id: model.name } : model),
-    };
     const page = await createResearchModelCatalogService({ database: env.CORE_DB,
-      ...(workersAi === undefined ? {} : { workersAi }) }).listWorkersAi(context, projectId, { search: modelId });
+      ...(nativeAi === undefined ? {} : { workersAi: nativeAi }) }).listWorkersAi(context, projectId, { search: modelId });
     return page.models.find(model => model.model_id === modelId) ?? null;
   };
   const pricing = createResearchNativeBuiltinCatalogPricing({ database: env.CORE_DB,

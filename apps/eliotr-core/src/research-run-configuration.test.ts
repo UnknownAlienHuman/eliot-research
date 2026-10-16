@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { canonicalJson } from "@eliotr/platform-cloudflare";
 import type { ProjectClientGrant } from "@eliotr/contracts";
 import { WorkflowCheckpointError } from "@eliotr/cloudflare-workflows";
+import type { ModelGatewayTransportPolicyV1 } from "@eliotr/cloudflare-ai";
 import {
   resolveResearchRunConfigurationAdmission,
   type ResearchRunConfigurationAdmissionDependenciesV1,
@@ -44,8 +45,8 @@ const actor = Object.freeze({
 const semantic = canonicalJson({ protocol: "eliotr.research-semantic-config.v1", marker: "captured-semantic" });
 const sha256 = (value: string) => createHash("sha256").update(value, "utf8").digest("hex");
 const transport_policy = { version: 1, transport: "cloudflare-ai-gateway", api: "compat-chat-completions",
-  provider: "workers-ai", model: "@cf/example/model", billing: { mode: "unified_billing" },
-  capabilities: { reasoning_efforts: ["low", "medium", "high"] } };
+  provider: "workers-ai", model: "@cf/example/model", billing: { mode: "unified" },
+  capabilities: { max_output_tokens_field: "max_tokens", reasoning_efforts: ["low", "medium", "high"] } } satisfies ModelGatewayTransportPolicyV1;
 
 function snapshotJson(
   mode: "snapshot-v1" | "snapshot-v2" = "snapshot-v1",
@@ -276,6 +277,8 @@ describe("research run configuration binding", () => {
     expect(result.env.ELIOTR_MODEL_PROFILE_DEFINITION_JSON).toBe(canonicalJson({ profile: "captured" }));
     expect(result.env.ELIOTR_MODEL_GATEWAY_TOKEN).toBe("current-secret-token");
     expect(result.env.DEPLOYMENT_GENERATION).toBe("deployment-current-2");
+    expect(result.model_selections.map((selection) => selection.transport_policy))
+      .toEqual([transport_policy, transport_policy]);
   });
 
   it("accepts canonical dynamic routes and rejects malformed route references on snapshot readback", async () => {
@@ -326,6 +329,38 @@ describe("research run configuration binding", () => {
     expect(initial.branch_query_budget_selection?.profile_id).toBe("profile-captured");
     expect(initial.branch_query_budget_selection?.budgets.candidate_limit).toBe(7);
     expect(replay.branch_query_budget_selection).toEqual(initial.branch_query_budget_selection);
+    const expectedSelections = [
+      { stage: "SYNTHESIZE", route_ref: "dynamic/eliotr-balanced", route_version: "version-1",
+        candidate_ref: "candidate-synthesize", candidate_sha256: "b".repeat(64),
+        qualification_ref: "qualification-synthesize", qualification_sha256: "c".repeat(64), transport_policy },
+      { stage: "AUDIT_CLAIMS", route_ref: "dynamic/eliotr-audit-verifier", route_version: "version-1",
+        candidate_ref: "candidate-audit_claims", candidate_sha256: "b".repeat(64),
+        qualification_ref: "qualification-audit_claims", qualification_sha256: "c".repeat(64), transport_policy },
+    ];
+    expect(initial.model_selections).toEqual(expectedSelections);
+    expect(replay.model_selections).toEqual(expectedSelections);
+  });
+
+  it.each([
+    { label: "unknown selection field", patch: { fallback_model: "unselected-model" } },
+    { label: "unknown transport field", patch: { transport_policy: { ...transport_policy, fallback: true } } },
+    { label: "obsolete billing mode", patch: { transport_policy: { ...transport_policy, billing: { mode: "unified_billing" } } } },
+    { label: "missing output token capability", patch: { transport_policy: { ...transport_policy,
+      capabilities: { reasoning_efforts: transport_policy.capabilities.reasoning_efforts } } } },
+  ])("rejects $label during capture without persisting an invalid model pin", async ({ patch }) => {
+    const { database, configurations } = memoryDatabase();
+    const env = { ...testEnv(database), ELIOTR_MODEL_GATEWAY_TOKEN: "test-gateway-token" } as Env;
+    const selected = selectedProjectConfiguration({ profile_json: ownerProfileJson({
+      profile_id: "profile-invalid-pin-1", profile_generation: 1, candidate_limit: 4,
+    }), owner_ref: actor.principal_ref, selection_revision: 1 });
+    const bundle = JSON.parse(selected.configuration_json) as { model_selections: Record<string, unknown>[] };
+    bundle.model_selections = bundle.model_selections.map((selection) => ({ ...selection, ...patch }));
+    const configuration_json = canonicalJson(bundle), configuration_sha256 = sha256(configuration_json);
+    await expect(captureResearchRunConfiguration(env, { ...actor,
+      select_project_configuration: async () => ({ ...selected, configuration_json, configuration_sha256,
+        configuration_ref: `rpmc-${configuration_sha256}` }),
+    })).rejects.toMatchObject({ code: "WORKFLOW_CONFIGURATION_INVALID" });
+    expect(configurations.size).toBe(0);
   });
 
   it("freezes an explicit output language into this run's report policy and preserves omitted behavior", async () => {

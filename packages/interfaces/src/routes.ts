@@ -33,6 +33,7 @@ export const ROUTES: readonly RouteDefinition[] = [
   { method: "POST", path: "/api/v1/system/model-providers", operation: "system.model-providers.create", auth: "owner", maximum_request_bytes: 32768, response_mode: "json" },
   { method: "GET", path: "/api/v1/research/projects/:project_id/model-configuration", operation: "research.project-model-configuration.read", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "POST", path: "/api/v1/research/projects/:project_id/catalog-model-use", operation: "research.catalog-model-use.start", auth: "owner", maximum_request_bytes: 4096, response_mode: "json" },
+  { method: "GET", path: "/api/v1/research/projects/:project_id/catalog-model-use", operation: "research.catalog-model-use.current", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "GET", path: "/api/v1/research/projects/:project_id/catalog-model-use/:operation_id", operation: "research.catalog-model-use.read", auth: "owner", maximum_request_bytes: 0, response_mode: "json" },
   { method: "PUT", path: "/api/v1/research/projects/:project_id/model-configuration", operation: "research.project-model-configuration.select", auth: "owner", maximum_request_bytes: 262144, response_mode: "json" },
   { method: "POST", path: "/api/v1/research/projects/:project_id/model-configuration/revisions", operation: "research.project-model-configuration.import", auth: "owner", maximum_request_bytes: 262144, response_mode: "json" },

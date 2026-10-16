@@ -1,9 +1,11 @@
 import { env } from "cloudflare:test";
-import { describe, expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import type { Env } from "../src/env.js";
 import { handleResearchCatalogModelUseHttp } from "../src/research-catalog-model-use-http.js";
 import type { ResearchCatalogModelUseService } from "../src/research-catalog-model-use-service.js";
+import { handleHttp } from "../src/http.js";
+import { runtime, setupOrientationDatabase, verifier } from "./orientation-fixture.js";
 
 const project = "catalog-project";
 const operation = "11111111-1111-4111-8111-111111111111";
@@ -19,6 +21,25 @@ const current = {
 };
 
 describe("catalog operation discovery HTTP", () => {
+  beforeAll(setupOrientationDatabase);
+  it("routes owner GET-base through the real HTTP dispatcher without model or provider calls", async () => {
+    const outgoing = vi.spyOn(globalThis, "fetch").mockImplementation(async () => { throw new Error("Unexpected provider call"); });
+    try {
+      const request = new Request(`https://research.example/api/v1/research/projects/${project}/catalog-model-use`);
+      const response = await handleHttp(request, runtime, {} as ExecutionContext, { accessVerifier: verifier() });
+      expect(response.status, JSON.stringify(await response.clone().json())).toBe(200);
+      expect(await response.json()).toMatchObject({ data: null });
+      expect(outgoing).not.toHaveBeenCalled();
+    } finally { outgoing.mockRestore(); }
+  });
+
+  it("keeps current-operation discovery owner-only in the real dispatcher", async () => {
+    const request = new Request(`https://research.example/api/v1/research/projects/${project}/catalog-model-use`);
+    const response = await handleHttp(request, runtime, {} as ExecutionContext,
+      { accessVerifier: verifier("service-reader", "service_token") });
+    expect(response.status).toBe(403);
+  });
+
   it.each([null, current])("reads the current operation without starting or probing a model", async receipt => {
     const service = { start: vi.fn(), read: vi.fn(), readCurrent: vi.fn(async () => receipt) } satisfies ResearchCatalogModelUseService;
     const request = new Request(`https://research.example/api/v1/research/projects/${project}/catalog-model-use`);
