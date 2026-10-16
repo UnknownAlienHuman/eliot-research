@@ -1,7 +1,7 @@
 import type { ArtifactDraftReadError } from "@eliotr/cloudflare-research";
 import { readArtifactDraft, readArtifactDraftSection, readReauthorizedArtifactDraft } from "@eliotr/cloudflare-research";
 import { readArtifactDraftSectionCitations } from "../../../packages/cloudflare-artifacts/src/artifact-draft-reader.js";
-import type { OperationIntent } from "@eliotr/contracts";
+import type { ArtifactRevisionRead, OperationIntent } from "@eliotr/contracts";
 import { createNavigationReadAuthority, evidenceSha256Bytes, EvidenceRuntimeError } from "@eliotr/cloudflare-evidence";
 import { OrientationError } from "@eliotr/cloudflare-navigation";
 import { createEvidenceFreezeMaterializeContextReader, createEvidenceFreezeVerificationContextReader } from "../../../packages/cloudflare-research/src/research-evidence-freeze-composition.js";
@@ -71,6 +71,13 @@ function expectReadCode(value: Promise<unknown>, code: ArtifactDraftReadError["c
 async function seed(fixture: ArtifactDraftReadFixture): Promise<void> {
   const result = await createArtifactDraftRuntime().prepare(fixture.input);
   expect(result.disposition).toBe("CREATED");
+}
+
+function expectedReadRevision(fixture: ArtifactDraftReadFixture): ArtifactRevisionRead {
+  // draftInput's immutable spec names the report and its single Summary contract.
+  // Readback adds that metadata while the persisted revision/digest stay unchanged.
+  return { ...fixture.input.revision, title: fixture.input.spec.title,
+    sections: fixture.input.revision.sections.map(section => ({ ...section, title: "Summary" })) };
 }
 
 async function read(
@@ -157,7 +164,7 @@ describe("actual D1/R2 artifact draft reader", () => {
     });
     await createArtifactDraftRuntime().prepare(later);
     const before = await draftHead(fixture.input.revision.artifact_ref.id);
-    await expect(read(fixture)).resolves.toEqual(fixture.input.revision);
+    await expect(read(fixture)).resolves.toEqual(expectedReadRevision(fixture));
     expect(await draftHead(fixture.input.revision.artifact_ref.id)).toEqual(before);
   });
 
@@ -241,7 +248,7 @@ describe("actual D1/R2 artifact draft reader", () => {
     await seed(draftFixture);
     const beforeDraft = await draftHead(artifactId);
     const beforePublished = await publishedHead(artifactId);
-    await expect(read(draftFixture)).resolves.toEqual(draftFixture.input.revision);
+    await expect(read(draftFixture)).resolves.toEqual(expectedReadRevision(draftFixture));
     expect(await draftHead(artifactId)).toEqual(beforeDraft);
     expect(await publishedHead(artifactId)).toEqual(beforePublished);
   });
@@ -482,7 +489,7 @@ describe("actual D1/R2 artifact draft reader", () => {
     );
     expect(response.status).toBe(200);
     const envelope = await response.json() as { readonly data: unknown };
-    expect(envelope.data).toEqual(fixture.input.revision);
+    expect(envelope.data).toEqual(expectedReadRevision(fixture));
 
     const absent = await handleHttp(
       new Request("https://research.example/api/v1/research/artifact/reader-absent:1"),
