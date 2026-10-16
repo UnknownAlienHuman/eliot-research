@@ -405,12 +405,13 @@ describe("model gateway transport policy", () => {
 
   it("accepts the documented minimal OpenRouter response without optional native_finish_reason", async () => {
     const { deployment } = await fixture(OPENROUTER_POLICY);
+    const content = '{\n\t"connected": true,\r\n\t"qualification_purpose": "structured-output-connectivity"\n}';
     const body = JSON.stringify({
       id: "openrouter-minimal-response",
       object: "chat.completion",
       created: 1,
       model: OPENROUTER_POLICY.model,
-      choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "ok" } }],
+      choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content } }],
       usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 },
     });
     const response = new Response(body, {
@@ -427,9 +428,16 @@ describe("model gateway transport policy", () => {
       new TextEncoder().encode(body),
       "openrouter-chat-completions",
     );
-    expect(live.assistant_content).toBe("ok");
-    expect(stored.assistant_content).toBe("ok");
+    expect(live.assistant_content).toBe(content);
+    expect(stored.assistant_content).toBe(content);
     expect(new TextDecoder().decode(stored.body_bytes)).toBe(body);
+    const parsedBody = JSON.parse(body);
+    await expect(decodeModelGatewayProviderBody(new TextEncoder().encode(JSON.stringify({
+      ...parsedBody, id: "invalid\nidentifier",
+    })), "openrouter-chat-completions")).rejects.toMatchObject({ code: "MODEL_GATEWAY_RESPONSE_INVALID" });
+    await expect(decodeModelGatewayProviderBody(new TextEncoder().encode(JSON.stringify({
+      ...parsedBody, choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "invalid\u0000content" } }],
+    })), "openrouter-chat-completions")).rejects.toMatchObject({ code: "MODEL_GATEWAY_RESPONSE_INVALID" });
   });
 
   it("accepts current OpenRouter SDK nullable usage fields without weakening identity or billing guards", async () => {

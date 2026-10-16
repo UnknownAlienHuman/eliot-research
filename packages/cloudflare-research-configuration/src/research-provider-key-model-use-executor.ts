@@ -1,6 +1,7 @@
 import {
   PROVIDER_NATIVE_MODEL_PROBE_PROMPT,
   PROVIDER_NATIVE_MODEL_PROBE_MAX_TOKENS,
+  PROVIDER_NATIVE_MODEL_PROBE_TEMPERATURE,
   providerNativeModelProbeZeroPriceQuoteRef,
   type ProviderNativeModelPreparationV1,
   type ProviderNativeModelProbeExecutionV1,
@@ -8,6 +9,7 @@ import {
 import { canonicalModelGatewayJson, modelGatewaySha256 } from "@eliotr/cloudflare-ai";
 import { prepareNativeQualificationHttpRequest } from "@eliotr/cloudflare-model-transport/model-gateway-http-request.js";
 import { decodeModelGatewayProviderNativeResponse } from "@eliotr/cloudflare-model-transport/model-gateway-provider-native-response.js";
+import { ModelGatewayExecutionError } from "@eliotr/cloudflare-model-transport/model-gateway-execution-contract.js";
 import type { ResearchProviderKeyModelUseRow, ResearchProviderKeyModelUseStageRow } from "./research-provider-key-model-use-store.js";
 import { parseResearchProviderKeyModelUseBasis } from "./research-provider-key-model-use-plan.js";
 
@@ -59,6 +61,7 @@ export function createResearchProviderKeyModelNativeProbeExecutor(input: {
       model: preparation.transport_policy.model,
       messages: Object.freeze([Object.freeze({ role: "user", content: PROVIDER_NATIVE_MODEL_PROBE_PROMPT })]),
       max_tokens: PROVIDER_NATIVE_MODEL_PROBE_MAX_TOKENS,
+      temperature: PROVIDER_NATIVE_MODEL_PROBE_TEMPERATURE,
       response_format: Object.freeze({ type: "json_object" }),
       stream: false,
     });
@@ -185,6 +188,12 @@ export function createResearchProviderKeyModelNativeProbeExecutor(input: {
         ...(decoded.successful_step === undefined ? {} : { successful_step: decoded.successful_step }),
       });
     } catch (cause) {
+      if (cause instanceof ModelGatewayExecutionError) {
+        console.warn(JSON.stringify({
+          event: "eliotr.native_probe.rejected", stage: preparation.stage,
+          code: cause.code, safe_response_reason: cause.safe_response_reason ?? "UNCLASSIFIED",
+        }));
+      }
       if (cause instanceof ResearchProviderKeyModelProbeExecutorError) throw cause;
       throw new ResearchProviderKeyModelProbeExecutorError("PROVIDER_KEY_MODEL_USE_PROBE_NO_EFFECT",
         "The one-shot native connectivity request did not produce an acknowledged response", cause);

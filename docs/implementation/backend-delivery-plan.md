@@ -1,6 +1,6 @@
 # Backend delivery plan
 
-## Exact response interoperability repair, October 16, 2026, 07:03 UTC
+## Exact response interoperability repair, October 16, 2026, 07:31 UTC
 
 A separate, bounded gateway/decoder diagnostic identified the actual wire issues
 without replaying either uncertain application operation or enabling payload logs.
@@ -9,12 +9,18 @@ and does not replace the pinned Gateway transport provider. Its 32-token respons
 also ended with `finish_reason: length` before completing the fixed JSON object.
 
 The decoder now validates and ignores that vendor metadata for routing authority.
-The fixed connectivity probe uses a shared 128-token constant in its request and
-parameter-digest plan; Research limits, prompts and provider price caps are unchanged.
+The fixed connectivity probe uses shared temperature-zero and 1,024-token constants
+in its request and parameter-digest plan; Research limits, prompts and provider price
+caps are unchanged. Assistant content now preserves valid line breaks and tabs;
+identifier fields still reject control characters. Rejected Gateway replies emit
+only a closed error code, response-reason enum and stage, without response text.
 The distinct 128-token diagnostic returned HTTP 200, observed cost 0, `stop`, and
 the exact connectivity JSON accepted by the corrected decoder. This is gateway
-interoperability evidence, not completed application qualification. Focused response
-and native global-use regressions pass; full post-deployment selection is next.
+interoperability evidence, not completed application qualification. On `ed957a07`,
+the real synthesis stage was QUALIFIED with a completed native receipt, while the
+audit stage remained UNCERTAIN; that operation is retained without replay.
+Focused response and native global-use regressions now include multiline JSON;
+full post-deployment selection remains the next check.
 
 ## Verified global Settings, October 16, 2026, 06:43 UTC
 

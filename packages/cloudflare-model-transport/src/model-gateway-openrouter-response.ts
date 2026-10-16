@@ -54,6 +54,15 @@ function tokenCount(value: unknown, label: string): number {
   return value;
 }
 
+function assistantContent(value: unknown): string {
+  if (typeof value !== "string" || value.trim().length === 0 ||
+      new TextEncoder().encode(value).byteLength > MAX_BODY_BYTES ||
+      /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/u.test(value)) {
+    invalid("OpenRouter assistant content is invalid");
+  }
+  return value;
+}
+
 function cost(value: unknown, label: string, nullable = false): void {
   if (nullable && value === null) return;
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) invalid(`${label} is invalid`);
@@ -181,7 +190,7 @@ export function decodeModelGatewayOpenRouterBody(
     }
   }
   if (message.reasoning_details !== undefined && message.reasoning_details !== null) boundedJson(message.reasoning_details);
-  const content = string(message.content, "OpenRouter assistant content", MAX_BODY_BYTES);
+  const content = assistantContent(message.content);
   return Object.freeze({
     body_bytes: bodyBytes,
     body_sha256: "",

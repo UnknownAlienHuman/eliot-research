@@ -13,8 +13,9 @@ function invalidProbeResponse(message: string, cause?: unknown): never {
 export const PROVIDER_NATIVE_MODEL_PROBE_PROMPT =
   'Return only this JSON object: {"connected":true,"qualification_purpose":"structured-output-connectivity"}.' as const;
 
-// A 32-token budget truncated the fixed JSON on the live reasoning model.
-export const PROVIDER_NATIVE_MODEL_PROBE_MAX_TOKENS = 128;
+// Bound the fixed JSON plus hidden reasoning independently of Research stage limits.
+export const PROVIDER_NATIVE_MODEL_PROBE_MAX_TOKENS = 1024;
+export const PROVIDER_NATIVE_MODEL_PROBE_TEMPERATURE = 0;
 
 export const PROVIDER_NATIVE_MODEL_PROBE_SCHEMA = Object.freeze({
   type: "object",
