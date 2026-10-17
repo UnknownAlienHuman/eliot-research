@@ -36,6 +36,7 @@ import { createResearchProviderNativeModelCurrentScopeReader } from "./research-
 import { resolveResearchSelectedModelTransport } from "@eliotr/cloudflare-research-runtime/research-selected-model-transport.js";
 import type { Env } from "./env.js";
 import { HttpRequestError } from "./http-errors.js";
+import { createResearchCatalogModelUseV2PricingReader } from "./research-catalog-model-use-v2-driver.js";
 
 function deny(message: string): never {
   throw new HttpRequestError("ARTIFACT_SECTION_REVISE_STALE", 409, message);
@@ -92,9 +93,10 @@ export async function createOwnerArtifactCowModel(input: {
       current_scope: createResearchProviderNativeModelCurrentScopeReader({ database: env.CORE_DB,
         owner_ref: ownerRef, project_id: projectId, model_selections: v1Selections }) });
     const hasV2 = runConfiguration.model_selections.some((selection) => selection.candidate_kind === "provider-native-v2");
-    const catalogAuthority = !hasV2 || input.catalog_pricing_snapshots === undefined ? undefined
+    const catalogAuthority = !hasV2 ? undefined
       : createD1ProviderNativeModelCatalogV2Authority({ database: env.CORE_DB,
-        pricing_snapshots: input.catalog_pricing_snapshots });
+        pricing_snapshots: input.catalog_pricing_snapshots ??
+          createResearchCatalogModelUseV2PricingReader({ database: env.CORE_DB }) });
     if (nativeAuthority !== undefined || catalogAuthority !== undefined) {
       resolveNativeModelSelection = async (selectionInput) => {
         const selected = selectionInput.selection as { readonly candidate_kind?: unknown };

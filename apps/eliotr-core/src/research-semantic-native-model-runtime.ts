@@ -8,6 +8,7 @@ import { createD1ProviderNativeModelCatalogV2Authority,
 import { createResearchProviderNativeModelCurrentScopeReader } from "./research-provider-native-model-current-scope.js";
 import type { Env } from "./env.js";
 import type { ResearchRunModelSelection } from "./research-run-configuration.js";
+import { createResearchCatalogModelUseV2PricingReader } from "./research-catalog-model-use-v2-driver.js";
 
 interface NativeRunConfiguration {
   readonly mode: "legacy-installed" | "snapshot-v1" | "snapshot-v2";
@@ -40,12 +41,10 @@ export function createResearchSemanticNativeModelRuntime(input: Readonly<{
       model_selections: [...context.selections.values()],
     }),
   });
-  if (hasV2 && input.catalog_pricing_snapshots === undefined) {
-    throw new Error("Trusted catalog pricing and SDK capability resolver is required for provider-native v2 run pins");
-  }
   const catalogAuthority = !hasV2 ? undefined : createD1ProviderNativeModelCatalogV2Authority({
     database: input.env.CORE_DB,
-    pricing_snapshots: input.catalog_pricing_snapshots as ProviderNativeModelCatalogV2PricingReader,
+    pricing_snapshots: input.catalog_pricing_snapshots ??
+      createResearchCatalogModelUseV2PricingReader({ database: input.env.CORE_DB }),
   });
   return composeNativeRuntime({ context, authority, catalog_authority: catalogAuthority });
 }

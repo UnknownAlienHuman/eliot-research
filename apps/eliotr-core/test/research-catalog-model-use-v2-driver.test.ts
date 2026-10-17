@@ -12,6 +12,8 @@ import { createResearchCatalogModelUseComposition } from "../src/research-catalo
 import { createResearchCatalogModelTransportPolicyV2 } from "../src/research-catalog-model-use-v2-driver.js";
 import { createOwnerResearchProjectConfigurationService, readOwnerProjectResearchReadiness } from
   "../src/research-project-configuration-composition.js";
+import { createResearchSemanticNativeModelRuntime } from "../src/research-semantic-native-model-runtime.js";
+import { decodeResearchProjectModelConfigurationBundle } from "@eliotr/cloudflare-research";
 import type { Env } from "../src/env.js";
 import { createNativeUseEnvironment } from "./research-provider-key-model-use-fixture.js";
 
@@ -220,6 +222,17 @@ describe("default generic catalog model-use composition", () => {
     const page = await readbackService.readPage(context, project, { limit: 50 });
     expect(page.selected?.qualification_state).toBe("qualified");
     expect((await readOwnerProjectResearchReadiness(installedEnv, context, project)).run_readiness).toBe("ready");
+    const savedConfiguration = await testEnv.CORE_DB.prepare(
+      "SELECT configuration_json FROM research_project_model_configuration_revision WHERE configuration_ref=?1",
+    ).bind(receipt.selected_configuration_ref).first<string>("configuration_json");
+    if (savedConfiguration === null) throw new Error("selected configuration missing");
+    const { bundle } = await decodeResearchProjectModelConfigurationBundle(JSON.parse(savedConfiguration) as unknown);
+    const nativeRuntime = createResearchSemanticNativeModelRuntime({ env: installedEnv, owner_ref: owner,
+      run_configuration: { mode: "snapshot-v2", configuration_ref: receipt.selected_configuration_ref,
+        configuration_sha256: receipt.selected_configuration_sha256, project_owner_ref: owner,
+        project_id: project, model_selections: bundle.model_selections } });
+    expect(nativeRuntime.selections.size).toBe(2);
+    expect((await nativeRuntime.resolvePinned("SYNTHESIZE"))?.selection.candidate_kind).toBe("provider-native-v2");
     expect(requests.length).toBe(beforeReadbackCalls);
     expect(requests.length).toBeGreaterThan(0);
     expect(requests.every((request) => request.url === `${GATEWAY_BASE}/custom-custom-opencode-go/responses`)).toBe(true);
