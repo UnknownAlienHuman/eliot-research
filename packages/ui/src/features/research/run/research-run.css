@@ -367,6 +367,15 @@
 
 .er-research-run__composer-bar > .er-research-run__scope { flex: 1 1 auto; }
 
+/* Next-question controls (model, method) sit in the bar between the scope chip and Ask. */
+.er-research-run__tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--eliot-space-tight);
+  min-inline-size: 0;
+}
+
 /* Scope: an assist-chip summary; the frozen labels open beneath it as small chips. */
 .er-research-run__scope { min-width: 0; }
 

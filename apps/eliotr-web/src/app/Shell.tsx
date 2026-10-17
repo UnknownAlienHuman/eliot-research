@@ -119,7 +119,7 @@ export function Shell({ privacy, fixture, fixtureOutlet: FixtureOutlet, runtime,
           <span className="er-shell-destination-label">{text[item]}</span>
         </WorkspaceLink>)}
       </nav>
-      {fixture && FixtureOutlet ? <Suspense fallback={<Status>{text.scope}</Status>}><FixtureOutlet destination={destination} locale={locale} headingRef={heading} /></Suspense> : apis ? <LiveWorkspace destination={destination} locale={locale} onLocaleChange={setLocale} headingRef={heading} apis={apis} privacy={privacy} context={snapshot.context} /> : <><aside className="er-shell-sources" hidden={destination !== "research"} aria-label={text.sources}>
+      {fixture && FixtureOutlet ? <Suspense fallback={<Status>{text.scope}</Status>}><FixtureOutlet destination={destination} locale={locale} headingRef={heading} /></Suspense> : apis ? <LiveWorkspace destination={destination} locale={locale} onLocaleChange={setLocale} headingRef={heading} apis={apis} privacy={privacy} context={snapshot.context} rememberProject={rememberPreferences} /> : <><aside className="er-shell-sources" hidden={destination !== "research"} aria-label={text.sources}>
         <h2>{text.sources}</h2><Status>{text.list}</Status><p>{text.sourceBody}</p>
         <WorkspaceLink className="er-shell-link" to="/sources">{text.sources}</WorkspaceLink>
       </aside>

@@ -47,21 +47,23 @@ function ConnectedProjectGuide({ connection, locale, onSuggest }: {
   const live = () => connection.privacy.isCurrent(connection.context) && connection.isProjectCurrent();
   const current = live();
   const ready = current && !query.isError && (view?.state === "READY" || view?.state === "PARTIAL") && view.guide !== null ? view : undefined;
+  // Plain words: the overview is being prepared, is not ready, or needs something from the owner.
   const messages = ru ? {
-    EMPTY: "Добавьте источники, чтобы создать путеводитель по проекту.", MISSING: "Готовим путеводитель по источникам проекта.",
-    BLOCKED: "Для путеводителя нужна доступная квалифицированная модель проекта.", PENDING: "Исследуем источники для путеводителя.",
-    UNKNOWN: "Запуск путеводителя пока не подтверждён. Проверяется тот же запрос.", FAILED: "Исследование для путеводителя завершилось с ошибкой.",
-    STALE: "Источники путеводителя изменились. Сохранённый отчёт не является текущим обзором проекта.",
-    INVALID: "Сохранённый результат не содержит проверенного обзора и 3–5 вопросов по источникам.", PARTIAL: "Частичный путеводитель", READY: "",
+    EMPTY: "Добавьте источники — и здесь появится обзор проекта.", MISSING: "Готовим обзор источников проекта…",
+    BLOCKED: "Для обзора нужна рабочая модель. Выберите её в Настройках.", PENDING: "Готовим обзор источников проекта…",
+    UNKNOWN: "Обзор проекта пока не готов.", FAILED: "Не удалось подготовить обзор проекта.",
+    STALE: "Источники изменились после прошлого обзора.",
+    INVALID: "Не удалось подготовить обзор проекта.", PARTIAL: "Обзор по части источников", READY: "",
   } : {
-    EMPTY: "Add sources to create this project's guide.", MISSING: "Preparing a guide to this project's sources.",
-    BLOCKED: "The guide needs an available qualified project model.", PENDING: "Researching the sources for your project guide.",
-    UNKNOWN: "The guide launch is not confirmed. The same request is being checked.", FAILED: "The guide research ended with an error.",
-    STALE: "The guide's sources changed. Its saved report is not a current project overview.",
-    INVALID: "The saved result does not contain a verified summary and 3–5 source-derived questions.", PARTIAL: "Partial guide", READY: "",
+    EMPTY: "Add sources and an overview of this project appears here.", MISSING: "Preparing an overview of this project's sources…",
+    BLOCKED: "The overview needs a working model. Choose one in Settings.", PENDING: "Preparing an overview of this project's sources…",
+    UNKNOWN: "The project overview isn't ready yet.", FAILED: "The project overview could not be prepared.",
+    STALE: "Sources changed since the last overview.",
+    INVALID: "The project overview could not be prepared.", PARTIAL: "Overview of some sources", READY: "",
   };
+  const preparing = current && !query.isError && !admissionFailed && (view === undefined || view.state === "MISSING" || view.state === "PENDING");
   return <section aria-label={ru ? "Путеводитель по проекту" : "Project source guide"}>
-    <h3>{ru ? "Об источниках проекта" : "About this project's sources"}</h3>
+    <h3>{ru ? "Обзор проекта" : "Project overview"}</h3>
     {!connection.hasSourceEvidence ? <p>{messages.EMPTY}</p> : ready?.guide ? <>
       {ready.state === "PARTIAL" && <Status>{messages.PARTIAL}</Status>}
       {ready.guide.summary.map(claim => <div key={claim.claim_ref.id}><SafeMarkdown text={claim.text} />
@@ -82,13 +84,13 @@ function ConnectedProjectGuide({ connection, locale, onSuggest }: {
       }}>{ru ? "Источники и доказательства путеводителя" : "Guide sources and evidence"}</Button>}
     </> : <>
       <Status>{!current || query.isError || admissionFailed
-        ? ru ? "Путеводитель сейчас недоступен. Вы можете продолжить исследование ниже." : "The guide is unavailable. You can continue with your question below."
-        : view ? messages[view.state] : ru ? "Читаем путеводитель проекта." : "Reading the project guide."}</Status>
-      <Button variant="text" disabled={query.isFetching} onClick={() => { setAdmissionFailed(false); void query.refetch(); }}>
-        {ru ? "Проверить путеводитель" : "Check guide"}</Button>
+        ? ru ? "Обзор проекта сейчас недоступен — можно сразу задать вопрос." : "The project overview isn't available — you can ask your question right away."
+        : view ? messages[view.state] : messages.MISSING}</Status>
+      {!preparing && <Button variant="text" disabled={query.isFetching} onClick={() => { setAdmissionFailed(false); void query.refetch(); }}>
+        {ru ? "Повторить" : "Try again"}</Button>}
       {current && !query.isError && view?.artifact_ref && <Button variant="text" onClick={() => {
         if (view.artifact_ref && connection.privacy.isCurrent(connection.context) && connection.isProjectCurrent()) connection.onOpenReport(view.artifact_ref);
-      }}>{ru ? "Открыть сохранённый отчёт" : "Open saved report"}</Button>}
+      }}>{ru ? "Открыть прошлый обзор" : "Open the last overview"}</Button>}
     </>}
   </section>;
 }

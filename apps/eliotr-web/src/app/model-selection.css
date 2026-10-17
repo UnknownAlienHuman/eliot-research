@@ -1,11 +1,8 @@
-.er-model-catalog,
-.er-chat-model-picker { display: grid; gap: var(--eliot-space-block-control); min-inline-size: 0; }
+.er-model-catalog { display: grid; gap: var(--eliot-space-block-control); min-inline-size: 0; }
 
-.er-model-catalog > h4,
-.er-chat-model-picker > p { margin: 0; }
+.er-model-catalog > h4 { margin: 0; }
 
 .er-model-catalog > p,
-.er-chat-model-picker > p,
 .er-model-catalog__coverage { color: var(--md-sys-color-on-surface-variant); }
 
 .er-model-catalog__search { display: grid; gap: var(--eliot-space-tight); max-inline-size: 36rem; }
@@ -21,8 +18,135 @@
 .er-model-catalog__identity { display: grid; gap: var(--eliot-space-tight); min-inline-size: 0; cursor: pointer; }
 .er-model-catalog__identity > span { color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-body-small-size); overflow-wrap: anywhere; }
 .er-model-catalog__identity > code { color: var(--md-sys-color-on-surface); font-family: var(--eliot-type-font-family-mono); font-size: var(--eliot-type-body-small-size); overflow-wrap: anywhere; }
-.er-chat-model-picker { max-inline-size: 36rem; }
+/* The chat model is an assist chip in the composer bar: the model's name, a native menu grouped by
+   provider, and a quiet search for long catalogs. Status appears only while something is happening. */
+.er-chat-model-picker {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--eliot-space-hairline);
+  min-inline-size: 0;
+}
+.er-chat-model-picker__label {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.er-chat-model-picker__chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--eliot-space-tight);
+  min-block-size: var(--eliot-size-control);
+  max-inline-size: 18rem;
+  padding-inline: var(--eliot-space-block-control) var(--eliot-space-tight);
+  border-radius: var(--eliot-shape-full);
+  color: var(--md-sys-color-on-surface-variant);
+}
+.er-chat-model-picker__chip:hover:not([data-disabled="true"]) { background: color-mix(in srgb, var(--md-sys-color-on-surface) 6%, transparent); }
+.er-chat-model-picker__chip:focus-within { outline: var(--eliot-focus-width) solid var(--md-sys-color-primary); }
+.er-chat-model-picker__chip > .er-symbol,
+.er-chat-model-picker__chip > svg { flex: none; pointer-events: none; }
+.er-chat-model-picker__select {
+  appearance: none;
+  min-inline-size: 0;
+  max-inline-size: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--md-sys-color-on-surface);
+  font: inherit;
+  font-size: var(--eliot-type-label-large-size);
+  font-weight: var(--eliot-type-font-weight-medium);
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.er-chat-model-picker__select:focus-visible { outline: none; }
+.er-chat-model-picker__select:disabled { cursor: default; color: var(--md-sys-color-on-surface-variant); }
+.er-chat-model-picker__select option,
+.er-chat-model-picker__select optgroup { background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface); }
+.er-chat-model-picker__find { position: relative; }
+.er-chat-model-picker__find > summary {
+  display: inline-grid;
+  place-items: center;
+  inline-size: var(--eliot-size-control);
+  block-size: var(--eliot-size-control);
+  border-radius: var(--eliot-shape-full);
+  color: var(--md-sys-color-on-surface-variant);
+  list-style: none;
+  cursor: pointer;
+}
+.er-chat-model-picker__find > summary::-webkit-details-marker { display: none; }
+.er-chat-model-picker__find > summary::before { display: none; }
+.er-chat-model-picker__find > summary:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 6%, transparent); }
+.er-chat-model-picker__find-panel {
+  position: absolute;
+  inset-block-end: calc(100% + var(--eliot-space-tight));
+  inset-inline-end: 0;
+  z-index: var(--eliot-z-menu);
+  display: grid;
+  gap: var(--eliot-space-block-control);
+  inline-size: min(24rem, 80vw);
+  padding: var(--eliot-space-panel);
+  border-radius: var(--eliot-shape-medium);
+  background: var(--md-sys-color-surface-container-high);
+  box-shadow: var(--eliot-elevation-2);
+}
+.er-chat-model-picker > .er-status { flex-basis: 100%; }
 
 @media (forced-colors: active) {
   .er-model-catalog__row { border-block-end: var(--eliot-divider-width) solid CanvasText; }
+}
+
+/* Research method: two segmented chips beside the model; the radio keeps native semantics. */
+.er-live-method-selector {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  border: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant);
+  border-radius: var(--eliot-shape-full);
+  min-inline-size: 0;
+}
+.er-live-method-selector > legend {
+  position: absolute;
+  inline-size: 1px;
+  block-size: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.er-live-method-selector > label {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--eliot-size-control-small);
+  padding-inline: var(--eliot-space-gutter);
+  border-radius: var(--eliot-shape-full);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-large-size);
+  font-weight: var(--eliot-type-font-weight-medium);
+  white-space: nowrap;
+  cursor: pointer;
+}
+.er-live-method-selector > label > input {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  opacity: 0;
+  cursor: inherit;
+}
+.er-live-method-selector > label:has(input:checked) {
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+}
+.er-live-method-selector > label:has(input:focus-visible) { outline: var(--eliot-focus-width) solid var(--md-sys-color-primary); }
+.er-live-method-selector > label:has(input:disabled) { opacity: var(--eliot-state-disabled-opacity); cursor: default; }
+
+@media (forced-colors: active) {
+  .er-live-method-selector > label:has(input:checked) { outline: var(--eliot-focus-width) solid Highlight; }
 }

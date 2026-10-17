@@ -816,17 +816,7 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
         <p>{savedCatalogStatusCopy[locale].detail}</p>
         <Button variant="tonal" disabled={busy} onClick={() => checkModelSelection()}>{savedCatalogStatusCopy[locale].button}</Button>
       </div>}
-      {projectId !== undefined && <><ChatModelPicker locale={locale} choices={chatModelOptions} selected={selectedChatModelIdentity}
-        qualificationState={currentCatalogOperation.isFetching || catalogOperationReadback.isFetching ? 'qualifying'
-          : modelSelectionLocked && !busy ? 'unknown' : modelQualificationState} search={modelSearch} page={modelCatalogPage}
-        loading={pickerCatalogLoading} failed={pickerCatalogFailed} hasMore={modelCatalogHasMore}
-        disabled={busy || modelSelectionLocked || saved?.intent !== undefined || saved?.observedLaunch !== undefined || projectId === undefined ||
-          !privacy.isCurrent(context) || !isProjectCurrent()}
-        checkDisabled={busy || projectId === undefined || !privacy.isCurrent(context) || !isProjectCurrent()}
-        onSearchChange={value => { setModelSearch(value); setModelCatalogPage(1); }}
-        onPageChange={setModelCatalogPage}
-        {...(catalogModelUseHeld ? {} : { onCheck: () => checkModelSelection() })}
-        onSelect={chooseChatModel} />
+      {projectId !== undefined && <>
       {failedCatalogTargets.length > 0 && <div className="er-live-callout">
         <p>{locale === 'ru' ? 'Не удалось прочитать списки моделей: ' : 'Model lists unavailable: '}{failedCatalogTargets.map(target => target.label).join(', ')}.</p>
         {failedCatalogTargets.map(target => <Button key={target.index} variant="text" disabled={busy} onClick={() => {
@@ -846,19 +836,29 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
           {locale === 'ru' ? 'Проверить доступность ещё раз' : 'Check availability again'}</Button>
       </div>}
       </>}
-      {projectId !== undefined && <fieldset className="er-live-method-selector" disabled={busy || modelSelectionLocked ||
+      <ResearchRunFeature key={saved?.intent?.key ?? 'next-question'} locale={locale} state={state}
+      {...(projectId !== undefined ? { composerTools: <><ChatModelPicker locale={locale} choices={chatModelOptions} selected={selectedChatModelIdentity}
+        qualificationState={currentCatalogOperation.isFetching || catalogOperationReadback.isFetching ? 'qualifying'
+          : modelSelectionLocked && !busy ? 'unknown' : modelQualificationState} search={modelSearch} page={modelCatalogPage}
+        loading={pickerCatalogLoading} failed={pickerCatalogFailed} hasMore={modelCatalogHasMore}
+        disabled={busy || modelSelectionLocked || saved?.intent !== undefined || saved?.observedLaunch !== undefined || projectId === undefined ||
+          !privacy.isCurrent(context) || !isProjectCurrent()}
+        checkDisabled={busy || projectId === undefined || !privacy.isCurrent(context) || !isProjectCurrent()}
+        onSearchChange={value => { setModelSearch(value); setModelCatalogPage(1); }}
+        onPageChange={setModelCatalogPage}
+        {...(catalogModelUseHeld ? {} : { onCheck: () => checkModelSelection() })}
+        onSelect={chooseChatModel} />
+        <fieldset className="er-live-method-selector" disabled={busy || modelSelectionLocked ||
         saved?.intent !== undefined || saved?.observedLaunch !== undefined || !privacy.isCurrent(context) || !isProjectCurrent()}>
         <legend>{runMethodCopy[locale].legend}</legend>
         <label><input type="radio" name="research-method" value="lookup" checked={(saved?.intent?.method ?? runMethod) === 'lookup'}
-          onChange={() => setRunMethod('lookup')} /> {runMethodCopy[locale].lookup}</label>
-        <label><input type="radio" name="research-method" value="evidence_review" checked={(saved?.intent?.method ?? runMethod) === 'evidence_review'}
-          disabled={!evidenceReviewReady} onChange={() => { if (evidenceReviewReady) setRunMethod('evidence_review'); }} /> {runMethodCopy[locale].review}</label>
-        {!evidenceReviewReady && <Status>{methodReadinessQuery.isFetching
+          onChange={() => setRunMethod('lookup')} /><span>{runMethodCopy[locale].lookup}</span></label>
+        <label {...(!evidenceReviewReady ? { title: methodReadinessQuery.isFetching
           ? locale === 'ru' ? 'Проверяем готовность проверки доказательств…' : 'Checking evidence-review readiness…'
           : methodReadinessQuery.data?.evidence_review_unavailable_reason === 'V9_MANAGED_SEARCH_UNAVAILABLE'
-            ? runMethodCopy[locale].managedSearchUnavailable : runMethodCopy[locale].unavailable}</Status>}
-      </fieldset>}
-      <ResearchRunFeature key={saved?.intent?.key ?? 'next-question'} locale={locale} state={state}
+            ? runMethodCopy[locale].managedSearchUnavailable : runMethodCopy[locale].unavailable } : {})}><input type="radio" name="research-method" value="evidence_review" checked={(saved?.intent?.method ?? runMethod) === 'evidence_review'}
+          disabled={!evidenceReviewReady} onChange={() => { if (evidenceReviewReady) setRunMethod('evidence_review'); }} /><span>{runMethodCopy[locale].review}</span></label>
+      </fieldset></> } : {})}
       {...(cover ? { cover } : {})}
       scope={saved?.intent?.scope ?? scope} busy={researchBusy}
       questionHeld={saved?.intent !== undefined || saved?.observedLaunch !== undefined || preparingModel.current}

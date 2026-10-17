@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useRef, useState, type Ref, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Ref, type RefObject } from "react";
 import { skipToken, useQueries, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router";
 import { WorkspaceLink } from "../routes/WorkspaceLink";
@@ -36,11 +36,24 @@ const copy = {
   ru: { tabs: "Панели исследования", tabSources: "Источники", tabChat: "Чат", tabTools: "Агенты", tools: "Агенты и инструменты", toolsLead: "Инструменты для выбранного проекта и источников.", toolIndex: "Индекс поиска", toolVersions: "Версии источников", toolReports: "Сохранённые отчёты", toolWiki: "Вики-черновики", toolImport: "Импорт источников", toolModel: "Модель и подключения", toolIndexHint: "Готовность источников к поиску", toolVersionsHint: "Сохранённые версии источника", toolReportsHint: "Отчёты прошлых исследований", toolWikiHint: "Проверка и публикация черновиков вики", toolImportHint: "Добавить документы в проект", toolModelHint: "Выбор модели и проверка доступа", collapseSources: "Свернуть источники", expandSources: "Развернуть источники", collapseTools: "Свернуть инструменты", expandTools: "Развернуть инструменты", projects: "Проекты", inbox: "Входящие", sources: "Источники", research: "Исследование", studio: "Студия", connections: "Агенты", choose: "Выберите проект, чтобы начать", detail: "Источники, вопросы и доказательства остаются вместе.", next: "Следующая страница", previous: "Предыдущая страница", versions: "Выберите версию для чтения", document: "Документ источника", close: "Вернуться к источникам", untitled: "Проект не выбран", researchPrompt: "Выберите источники для следующего вопроса", researchDetail: "Вопрос сохранит точный набор выбранных источников.", studioEmpty: "Здесь будут сохранённые материалы", studioDetail: "Отчёты и материалы сохраняют связь с исходными источниками.", connectionsDetail: "Проверьте доступ владельца и настройки исследования.", review: "Проверить подключения", selected: (count: number) => count === 0 ? 'Все источники проекта' : `Выбрано источников: ${count}`, allSources: (count: number) => count === 1 ? 'Источник проекта' : `Все источники (${count})`, addSources: "Добавить источники", sourceScope: "Для следующего вопроса", openSources: "Все источники", sourceCount: (count: number) => { const tail = count % 10, hundred = count % 100; return `${count} ${tail === 1 && hundred !== 11 ? "источник" : tail >= 2 && tail <= 4 && (hundred < 12 || hundred > 14) ? "источника" : "источников"}`; }, version: (index: number) => `Версия ${index + 1}`, settings: "Настройки", settingsDetail: "Настройки моделей и провайдеров общие для всего сервиса. Cloudflare встроен и применяется по умолчанию.", scopeNote: "Готовность и записанные версии — отдельные наблюдения." },
 } as const;
 
-export function LiveWorkspace({ destination, locale, onLocaleChange, headingRef, apis, privacy, context }: {
+// The last opened project is a per-browser convenience like the language: an opaque id, reopened only
+// when the owner's own current project list still contains it. Previews and stories never use it.
+const LAST_PROJECT_KEY = "eliotr.owner-last-project.v1";
+function readLastProject(): string | undefined {
+  try { const value = window.localStorage.getItem(LAST_PROJECT_KEY); return value === null || value === "" ? undefined : value; }
+  catch { return undefined; }
+}
+function writeLastProject(id: string): void {
+  try { window.localStorage.setItem(LAST_PROJECT_KEY, id); } catch { /* storage unavailable */ }
+}
+
+export function LiveWorkspace({ destination, locale, onLocaleChange, headingRef, apis, privacy, context, rememberProject = false }: {
   readonly destination: typeof destinations[number]; readonly locale: "en" | "ru";
   readonly headingRef: RefObject<HTMLHeadingElement | null>; readonly apis: BoundWorkspaceApis;
   readonly privacy: PrivacyController; readonly context: SessionContext;
   readonly onLocaleChange?: (locale: "en" | "ru") => void;
+  /** The real app reopens the project the owner last worked in after a reload. */
+  readonly rememberProject?: boolean;
 }) {
   const client = useQueryClient();
   const navigate = useNavigate();
@@ -87,6 +100,15 @@ export function LiveWorkspace({ destination, locale, onLocaleChange, headingRef,
     library: () => client.getQueryData<LibraryPage>([...key, "library", projectId, cursor ?? null]),
   });
   const projects = useQuery(options.projects(after));
+  const reopened = useRef(false);
+  useEffect(() => {
+    if (!rememberProject || reopened.current || projectId !== undefined || after !== undefined ||
+        !projects.isSuccess || !privacy.isCurrent(context)) return;
+    reopened.current = true;
+    const last = readLastProject();
+    if (last !== undefined && projects.data.projects.some(project => project.project_id === last)) setProjectId(last);
+  }, [after, context, privacy, projectId, projects.data, projects.isSuccess, rememberProject]);
+  useEffect(() => { if (rememberProject && projectId !== undefined) writeLastProject(projectId); }, [projectId, rememberProject]);
   const selected = projects.data?.projects.find(project => project.project_id === projectId);
   const [taskCursor, setTaskCursor] = useState<{ readonly projectId: string; readonly after: string }>();
   const taskAfter = taskCursor?.projectId === selected?.project_id ? taskCursor?.after : undefined;

@@ -1,10 +1,11 @@
 .er-workspace-snackbar {
   position: fixed;
+  /* M3 on large screens: the snackbar sits at the leading edge beside the rail, clear of the composer. */
   inset-block-end: var(--eliot-space-panel);
-  inset-inline: var(--eliot-space-panel);
-  margin-inline: auto;
+  /* On monitors wider than the shell frame, start where the centred frame's rail ends, not at the screen edge. */
+  inset-inline-start: calc(max(0px, (100vw - var(--eliot-layout-shell-max)) / 2) + var(--eliot-layout-rail-size) + var(--eliot-space-panel));
   inline-size: fit-content;
-  max-inline-size: calc(100% - var(--eliot-space-panel) * 2);
+  max-inline-size: min(36rem, calc(100% - var(--eliot-layout-rail-size) - var(--eliot-space-panel) * 2));
   z-index: var(--eliot-z-menu);
   display: flex;
   align-items: center;
@@ -29,3 +30,7 @@
   cursor: pointer;
 }
 .er-workspace-snackbar > button:focus-visible { outline: solid var(--md-sys-color-inverse-primary); }
+
+@media (max-width: 839px) {
+  .er-workspace-snackbar { inset-inline: var(--eliot-space-panel); max-inline-size: none; }
+}

@@ -89,6 +89,11 @@ export interface ResearchRunFeatureProps {
    * ("All 3 sources") in the composer chip. Without it an empty selection stays "none selected".
    */
   readonly wholeScope?: string;
+  /**
+   * Root-owned controls for the next question (the chat model and the research method), shown in
+   * the composer bar beside the scope chip, as Gemini and NotebookLM keep them. Presentation only.
+   */
+  readonly composerTools?: ReactNode;
 }
 
 const ENGINE_LABEL: Record<'en' | 'ru', Record<ResearchRunStatusView['engine_status'], string>> = {
@@ -306,6 +311,7 @@ export function ResearchRunFeature({
   answerActions,
   cover,
   wholeScope,
+  composerTools,
 }: ResearchRunFeatureProps) {
   const [localDraft, setLocalDraft] = useState<string>('');
   const [recorded, setRecorded] = useState<string | null>(question ?? null);
@@ -392,7 +398,12 @@ export function ResearchRunFeature({
           }}
           />
         </div>}
-        {!hasQuestion ? <div className="er-research-run__composer-bar">{scopeDisclosure}{runActions}</div> : null}
+        {/* The model and method stay in place (locked by the root) while a question is held. */}
+        {!hasQuestion ? <div className="er-research-run__composer-bar">{scopeDisclosure}
+          {composerTools === undefined ? null : <div className="er-research-run__tools">{composerTools}</div>}
+          {runActions}</div>
+          : composerTools === undefined ? null
+            : <div className="er-research-run__composer-bar"><div className="er-research-run__tools">{composerTools}</div></div>}
       </div>
       <div className="er-research-run__hints">
         <p id={questionId + '-hint'} className="er-research-run__question-hint">{controlledDraft && draftHeld ? copy.heldQuestionHint : copy.questionHint}</p>

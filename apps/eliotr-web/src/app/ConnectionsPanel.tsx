@@ -11,8 +11,8 @@ import { usePaneAnnouncement } from "./usePaneAnnouncement";
 import { WorkspaceLink } from "../routes/WorkspaceLink";
 
 const copy = {
-  en: { reading: 'Reading connection status.', failed: 'Some status checks failed. Review the affected rows.', loaded: 'Connection status checks updated.', choose: "Choose a project", project: "Project source permissions", next: "Next project page", previous: "Previous project page", modelSettings: "Model and provider settings are global; open Settings to connect an external provider.", openSettings: "Open settings" },
-  ru: { reading: 'Читается статус подключений.', failed: 'Некоторые проверки статуса завершились ошибкой. Проверьте соответствующие строки.', loaded: 'Проверки статуса подключений обновлены.', choose: "Выберите проект", project: "Доступ к источникам проекта", next: "Следующая страница проектов", previous: "Предыдущая страница проектов", modelSettings: "Настройки моделей и провайдеров общие; внешний провайдер подключается в Настройках", openSettings: "Открыть настройки" },
+  en: { reading: 'Reading connection status.', failed: 'Some status checks failed. Review the affected rows.', loaded: 'Connection status checks updated.', choose: "Choose a project", project: "Project source permissions", next: "Next project page", previous: "Previous project page", modelSettings: "Models and providers are shared by all projects.", openSettings: "Open settings" },
+  ru: { reading: 'Читается статус подключений.', failed: 'Некоторые проверки статуса завершились ошибкой. Проверьте соответствующие строки.', loaded: 'Проверки статуса подключений обновлены.', choose: "Выберите проект", project: "Доступ к источникам проекта", next: "Следующая страница проектов", previous: "Предыдущая страница проектов", modelSettings: "Модели и провайдеры общие для всех проектов.", openSettings: "Открыть настройки" },
 } as const;
 
 function rowState<T>(query: UseQueryResult<T, Error>, enabled = true): "idle" | "loading" | "loaded" | "failed" {
@@ -74,8 +74,8 @@ export function ConnectionsPanel({ locale, apis, privacy, context, projects, pro
       {onPrevious && <Button variant="text" onClick={onPrevious}>{text.previous}</Button>}
       {onNext && <Button variant="tonal" onClick={onNext}>{text.next}</Button>}
     </div>
-    <p>{text.modelSettings}</p>
-    <WorkspaceLink className="er-shell-link" to="/settings">{text.openSettings}</WorkspaceLink>
+    {/* The pointer to Settings reads as one sentence in the centred column, not a stray link at the pane edge. */}
+    <p>{text.modelSettings} <WorkspaceLink className="er-shell-link" to="/settings">{text.openSettings}</WorkspaceLink></p>
     <ConnectionsFeature locale={locale} visibleRows={["health", "session", "grant", "googleTransport", "diagnostic"]}
       queries={{ health: rowState(health), session: rowState(session), diagnostic: rowState(diagnostic),
       grant: rowState(grants, active), providerConfig: "idle", projectModel: "idle", researchReadiness: "idle",

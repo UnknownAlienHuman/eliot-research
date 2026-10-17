@@ -1,5 +1,5 @@
 import { useId } from "react";
-import { Button, Status } from "@eliotr/ui";
+import { Button, MaterialSymbol, Status } from "@eliotr/ui";
 import { modelCatalogEntryKey } from "../query/modelCatalog";
 import type { ChatModelOption } from "../query/chatModelCatalog";
 import "./model-selection.css";
@@ -11,8 +11,6 @@ const copy = {
     label: "Chat model",
     placeholder: "Choose a model",
     search: "Search visible models",
-    helper: "Choose a model for this chat. We’ll check availability before starting.",
-    idle: "Choose a visible model for this chat.",
     qualifying: "Checking model availability…",
     ready: "Model availability confirmed for this run.",
     unknown: "We couldn’t confirm model availability. Check again before sending.",
@@ -20,23 +18,18 @@ const copy = {
     noProjectConfiguration: "This model isn’t available for this project yet.",
     qualificationUnavailable: "Provider access needs to be checked before this model can be used.",
     builtinUnavailable: "This model isn’t available in the current service configuration.",
-    builtin: "Available",
-    qualified: "Available",
-    needsQualification: "Availability check needed",
-    accountUnverified: "Access not confirmed",
-    accountUnknown: "Access unknown",
     reading: "Reading visible model catalogs…",
     failed: "Model availability could not be checked.",
     previous: "Previous model page",
     next: "More models",
     check: "Check availability",
+    find: "Find a model",
+    unavailableShort: "unavailable",
   },
   ru: {
     label: "Модель чата",
     placeholder: "Выберите модель",
     search: "Поиск видимых моделей",
-    helper: "Выберите модель для чата. Перед запуском мы проверим её доступность.",
-    idle: "Выберите видимую модель для этого чата.",
     qualifying: "Проверяем доступность модели…",
     ready: "Доступность модели подтверждена для запуска.",
     unknown: "Не удалось подтвердить доступность модели. Проверьте ещё раз перед отправкой.",
@@ -44,16 +37,13 @@ const copy = {
     noProjectConfiguration: "Эта модель пока недоступна для проекта.",
     qualificationUnavailable: "Перед использованием нужно проверить доступ к провайдеру.",
     builtinUnavailable: "Эта модель недоступна в текущих настройках сервиса.",
-    builtin: "Доступна",
-    qualified: "Доступна",
-    needsQualification: "Нужно проверить доступность",
-    accountUnverified: "Доступ не подтверждён",
-    accountUnknown: "Доступ неизвестен",
     reading: "Читаем каталоги видимых моделей…",
     failed: "Не удалось проверить доступность модели.",
     previous: "Предыдущая страница моделей",
     next: "Больше моделей",
     check: "Проверить доступность",
+    find: "Найти модель",
+    unavailableShort: "недоступна",
   },
 } as const;
 
@@ -81,43 +71,60 @@ export function ChatModelPicker({ locale, choices, selected, qualificationState 
   const id = useId(), text = copy[locale];
   const selectedKey = selected ? modelCatalogEntryKey(selected) : "";
   const byKey = new Map(choices.map(choice => [choice.key, choice]));
+  // Native optgroups carry the provider, so each option is just the model's name; an unavailable
+  // model says so briefly. Availability of the rest is checked automatically on choice.
+  const groups = new Map<string, ChatModelOption[]>();
+  for (const choice of choices) groups.set(choice.providerLabel, [...(groups.get(choice.providerLabel) ?? []), choice]);
+  const current = byKey.get(selectedKey);
   const status = qualificationState === "qualifying" ? text.qualifying : qualificationState === "ready"
-    ? text.ready : qualificationState === "unknown" ? text.unknown : text.idle;
-  const reason = (choice: ChatModelOption) => choice.unavailableReason === "project-configuration"
-    ? text.noProjectConfiguration : choice.unavailableReason === "qualification" ? text.qualificationUnavailable
-      : choice.unavailableReason === "builtin-default" ? text.builtinUnavailable : "";
+    ? text.ready : qualificationState === "unknown" ? text.unknown : undefined;
+  const statusText = loading ? text.reading : failed ? text.failed : choices.length === 0 ? text.empty : status;
+  const locked = disabled || qualificationState === "qualifying";
   return <section className="er-chat-model-picker" aria-labelledby={`${id}-label`}>
-    <label id={`${id}-label`} className="er-field__label" htmlFor={`${id}-select`}>{text.label}</label>
-    <label className="er-model-catalog__search" htmlFor={`${id}-search`}>
-      <span>{text.search}</span>
-      <input id={`${id}-search`} className="er-field__control" type="search" maxLength={512}
-        value={search} disabled={disabled || qualificationState === "qualifying"}
-        onChange={event => onSearchChange(event.currentTarget.value)} />
-    </label>
-    <select id={`${id}-select`} className="er-field__control" value={selectedKey}
-      disabled={disabled || qualificationState === "qualifying" || (choices.length === 0 && !selected)}
-      onChange={event => onSelect(byKey.get(event.currentTarget.value))}>
-      <option value="">{text.placeholder}</option>
-      {selectedKey !== "" && !byKey.has(selectedKey) && <option value={selectedKey} disabled>
-        {selected?.provider_id} · {selected?.model_id}
-      </option>}
-      {choices.map(choice => <option key={choice.key} value={choice.key} disabled={!choice.canRun}>
-        {choice.model.name} · {choice.providerLabel} ({choice.model.provider_id}) · {choice.model.model_id}
-        {!choice.canRun ? ` — ${reason(choice)}` : ` — ${choice.availabilityCheckRequired || choice.candidate?.qualification_state === "qualification_required"
-          ? text.needsQualification : choice.builtin ? text.builtin : text.qualified} · ${
-          choice.model.account_availability === "unverified" ? text.accountUnverified : text.accountUnknown}`}
-      </option>)}
-    </select>
-    <p>{text.helper}</p>
-    <Status tone={failed || qualificationState === "unknown" ? "error" : "neutral"}>
-      {loading ? text.reading : failed ? text.failed : choices.length === 0 ? text.empty : status}
-    </Status>
+    <label id={`${id}-label`} className="er-chat-model-picker__label" htmlFor={`${id}-select`}>{text.label}</label>
+    <span className="er-chat-model-picker__chip" data-disabled={locked || (choices.length === 0 && !selected) ? "true" : "false"}>
+      <MaterialSymbol name="spark" />
+      <select id={`${id}-select`} className="er-chat-model-picker__select" value={selectedKey}
+        title={current ? `${current.model.name} · ${current.providerLabel}` : text.placeholder}
+        disabled={locked || (choices.length === 0 && !selected)}
+        onChange={event => onSelect(byKey.get(event.currentTarget.value))}>
+        <option value="">{text.placeholder}</option>
+        {selectedKey !== "" && !byKey.has(selectedKey) && <option value={selectedKey} disabled>
+          {selected?.model_id}
+        </option>}
+        {[...groups].map(([provider, rows]) => <optgroup key={provider} label={provider}>
+          {rows.map(choice => <option key={choice.key} value={choice.key} disabled={!choice.canRun}
+            title={!choice.canRun ? reasonText(text, choice) : `${choice.model.name} · ${provider}`}>
+            {choice.model.name}{!choice.canRun ? ` — ${text.unavailableShort}` : ""}
+          </option>)}
+        </optgroup>)}
+      </select>
+      <MaterialSymbol name="arrow-drop-down" />
+    </span>
+    <details className="er-chat-model-picker__find">
+      <summary aria-label={text.find} title={text.find}><MaterialSymbol name="search" /></summary>
+      <div className="er-chat-model-picker__find-panel">
+        <label className="er-model-catalog__search" htmlFor={`${id}-search`}>
+          <span>{text.search}</span>
+          <input id={`${id}-search`} className="er-field__control" type="search" maxLength={512}
+            value={search} disabled={locked}
+            onChange={event => onSearchChange(event.currentTarget.value)} />
+        </label>
+        <nav className="er-model-catalog__pagination" aria-label={text.label}>
+          <Button variant="text" disabled={disabled || page <= 1} onClick={() => onPageChange(Math.max(1, page - 1))}>{text.previous}</Button>
+          <span>{page}</span>
+          <Button variant="text" disabled={disabled || !hasMore} onClick={() => onPageChange(page + 1)}>{text.next}</Button>
+        </nav>
+      </div>
+    </details>
+    {statusText !== undefined && <Status tone={failed || qualificationState === "unknown" ? "error" : "neutral"}>{statusText}</Status>}
     {(qualificationState === "unknown" || failed || (!loading && selected !== undefined && !byKey.has(selectedKey))) && onCheck &&
       <Button variant="text" disabled={checkDisabled ?? disabled} onClick={onCheck}>{text.check}</Button>}
-    <nav className="er-model-catalog__pagination" aria-label={text.label}>
-      <Button variant="text" disabled={disabled || page <= 1} onClick={() => onPageChange(Math.max(1, page - 1))}>{text.previous}</Button>
-      <span>{page}</span>
-      <Button variant="text" disabled={disabled || !hasMore} onClick={() => onPageChange(page + 1)}>{text.next}</Button>
-    </nav>
   </section>;
+}
+
+function reasonText(text: (typeof copy)[keyof typeof copy], choice: ChatModelOption): string {
+  return choice.unavailableReason === "project-configuration" ? text.noProjectConfiguration
+    : choice.unavailableReason === "qualification" ? text.qualificationUnavailable
+      : choice.unavailableReason === "builtin-default" ? text.builtinUnavailable : text.unavailableShort;
 }

@@ -6,6 +6,7 @@ import type { BoundWorkspaceApis } from "./runtime";
 import type { PrivacyController, SessionContext } from "./privacy";
 import { protectedQueryKey, runProtectedRead } from "../query/client";
 import { aiUsagePresentation } from "../query/aiUsagePresentation";
+import "./settings.css";
 
 export function AiUsagePanel({ apis, privacy, context, locale }: {
   readonly apis: BoundWorkspaceApis; readonly privacy: PrivacyController;
@@ -18,24 +19,35 @@ export function AiUsagePanel({ apis, privacy, context, locale }: {
   const value = query.data, ru = locale === "ru";
   const usage = aiUsagePresentation(value, query.isError);
   const number = (count: number) => new Intl.NumberFormat(locale, { maximumFractionDigits: 2 }).format(count);
-  const unavailable = ru ? "Недоступно" : "Unavailable";
-  return <section className="er-live-callout" aria-labelledby={heading}>
-    <h2 id={heading}>Cloudflare Workers AI</h2>
-    {query.isPending ? <Status>{ru ? "Читается расход нейронов…" : "Reading neuron usage…"}</Status>
-      : (usage.used === null || usage.remaining === null) && <Status>{ru
-        ? "Данные Cloudflare Analytics недоступны. Расход и остаток не определены."
-        : "Cloudflare Analytics data is unavailable. Usage and remaining allocation are unknown."}</Status>}
-    {(value || usage.freeAllocation !== undefined) && <dl>
-      <dt>{ru ? "Бесплатная дневная квота" : "Daily free allocation"}</dt>
-      <dd>{usage.freeAllocation === undefined ? unavailable : `${number(usage.freeAllocation)} ${ru ? "нейронов" : "neurons"}`}</dd>
-      <dt>{ru ? "Использовано сегодня (UTC)" : "Used today (UTC)"}</dt>
-      <dd>{usage.used === null ? unavailable : `${number(usage.used)} ${ru ? "нейронов" : "neurons"}`}</dd>
-      <dt>{ru ? "Осталось бесплатных нейронов" : "Free neurons remaining"}</dt>
-      <dd>{usage.remaining === null ? unavailable : `${number(usage.remaining)} ${ru ? "нейронов" : "neurons"}`}</dd>
+  const unavailable = ru ? "нет данных" : "no data";
+  const neurons = (count: number) => `${number(count)} ${ru ? "нейронов" : "neurons"}`;
+  const measured = usage.used !== null && usage.remaining !== null && usage.freeAllocation !== undefined;
+  // The answer first (how much is left today), then the three numbers behind it, then when it resets.
+  return <section className="er-settings-card er-ai-usage" aria-labelledby={heading}>
+    <div className="er-settings-card__head">
+      <h2 id={heading}>{ru ? "Квота Cloudflare Workers AI" : "Cloudflare Workers AI quota"}</h2>
+      <Button variant="text" disabled={query.isFetching} onClick={() => { void query.refetch(); }}>{ru ? "Обновить" : "Refresh"}</Button>
+    </div>
+    {query.isPending ? <Status>{ru ? "Читаем расход нейронов…" : "Reading neuron usage…"}</Status>
+      : measured ? <>
+        <p className="er-ai-usage__headline"><strong>{number(usage.remaining ?? 0)}</strong> {ru
+          ? `из ${neurons(usage.freeAllocation ?? 0)} осталось сегодня` : `of ${neurons(usage.freeAllocation ?? 0)} left today`}</p>
+        <meter className="er-ai-usage__meter" min={0} max={usage.freeAllocation} value={Math.min(usage.used ?? 0, usage.freeAllocation ?? 0)}
+          low={(usage.freeAllocation ?? 0) * 0.7} high={(usage.freeAllocation ?? 0) * 0.9} optimum={0}
+          aria-label={ru ? "Израсходовано сегодня" : "Used today"} />
+      </> : <Status>{ru
+        ? "Расход пока не виден: серверу нужен доступ на чтение Cloudflare Analytics."
+        : "Usage isn't visible yet: the server needs read access to Cloudflare Analytics."}</Status>}
+    {(value || usage.freeAllocation !== undefined) && <dl className="er-ai-usage__facts">
+      <div><dt>{ru ? "Бесплатно в день" : "Free per day"}</dt>
+        <dd>{usage.freeAllocation === undefined ? unavailable : neurons(usage.freeAllocation)}</dd></div>
+      <div><dt>{ru ? "Израсходовано сегодня" : "Used today"}</dt>
+        <dd>{usage.used === null ? unavailable : neurons(usage.used)}</dd></div>
+      <div><dt>{ru ? "Осталось" : "Remaining"}</dt>
+        <dd>{usage.remaining === null ? unavailable : neurons(usage.remaining)}</dd></div>
     </dl>}
-    <p>{ru ? "Данные аккаунта из Cloudflare Analytics. Бесплатная квота обновляется в 00:00 UTC; платное использование может её превышать."
-      : "Account usage from Cloudflare Analytics. The free allocation resets at 00:00 UTC; paid usage can exceed it."}</p>
-    {usage.observedAt && <p>{ru ? "Обновлено: " : "Updated: "}<time dateTime={usage.observedAt}>{new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(usage.observedAt))}</time></p>}
-    <Button variant="text" disabled={query.isFetching} onClick={() => { void query.refetch(); }}>{ru ? "Обновить" : "Refresh"}</Button>
+    <p className="er-settings-card__note">{ru ? "Квота обновляется в 00:00 UTC; сверх неё расход платный."
+      : "The free allocation resets at 00:00 UTC; usage beyond it is paid."}
+      {usage.observedAt && <> {ru ? "Обновлено " : "Updated "}<time dateTime={usage.observedAt}>{new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(new Date(usage.observedAt))}</time>.</>}</p>
   </section>;
 }
