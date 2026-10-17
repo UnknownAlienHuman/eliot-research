@@ -83,9 +83,10 @@ export function createRunHistoryDecoder(
   decodeStatus: ResearchRunStatusDecoder,
   wire: ResearchRunWire = createResearchRunWire(errors),
 ): ResearchRunHistoryDecoder {
-  const decodeResearchRunHistory = (raw: unknown, expectedDeploymentGeneration?: string): ResearchRunHistoryView => {
+  const decodeResearchRunHistory = (raw: unknown, _expectedDeploymentGeneration?: string): ResearchRunHistoryView => {
     const parsed = wire.envelope(raw);
-    wire.checkGeneration(parsed.deployment_generation, expectedDeploymentGeneration);
+    // History is reauthorized by the current Worker on every read. Its response
+    // generation identifies that Worker; it need not match the cached UI bundle.
     const data = wire.record(parsed.data,
       ["protocol", "runs", "configuration_state", "checked_at"], ["saved_drafts", "visibility_scan"]);
     const protocol: ResearchRunHistoryView["protocol"] = data.protocol as ResearchRunHistoryView["protocol"];
@@ -191,7 +192,7 @@ export function createRunHistoryApi(
   const decodeResearchRunHistory = createRunHistoryDecoder(errors, decodeStatus, wire);
 
   const readResearchRunHistory = async (
-    expectedDeploymentGeneration?: string,
+    _expectedDeploymentGeneration?: string,
     signal?: AbortSignal,
     projectId?: string,
   ): Promise<ResearchRunHistoryView> => {
@@ -201,7 +202,7 @@ export function createRunHistoryApi(
     const path = projectId === undefined ? "/api/v1/research/runs"
       : `/api/v1/research/runs?project_id=${encodeURIComponent(wire.identifier(projectId, "project_id"))}`;
     const raw = await request(path, signal === undefined ? {} : { signal }, [200]);
-    const view = decodeResearchRunHistory(raw, expectedDeploymentGeneration);
+    const view = decodeResearchRunHistory(raw);
     // Post-await/post-decode fence: a stale response never reaches the caller.
     if (!epoch.isCurrent(captured)) closed();
     return view;

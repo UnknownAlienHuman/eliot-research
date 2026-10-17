@@ -33,10 +33,10 @@ const status = (id: string) => ({
 
 const runEntry = (id: string, createdAt: string) => ({ created_at: createdAt, status: status(id) });
 
-const historyFor = (data: Record<string, unknown>) => ({
+const historyFor = (data: Record<string, unknown>, deploymentGeneration = "deployment-1") => ({
   data,
   trace_id: "trace-1",
-  deployment_generation: "deployment-1",
+  deployment_generation: deploymentGeneration,
 });
 
 const baseData = (overrides: Record<string, unknown> = {}) => ({
@@ -127,10 +127,10 @@ describe("history decoder boundaries", () => {
       .toMatchObject({ code: "RESEARCH_RUN_RESPONSE_INVALID" });
   });
 
-  it("rejects a generation change without decoding the stale body", () => {
+  it("accepts current-authorized history from a newer backend generation", () => {
     const api = decodeOnly();
-    expect(thrown(() => api.decodeResearchRunHistory(historyFor(baseData()), "deployment-2")))
-      .toMatchObject({ code: "RESEARCH_RUN_DEPLOYMENT_CHANGED", status: 409, retryable: true });
+    expect(api.decodeResearchRunHistory(historyFor(baseData(), "deployment-2"), "deployment-1"))
+      .toMatchObject({ protocol: "eliotr.research-runs.v3", deployment_generation: "deployment-2" });
   });
 
   it("rejects an invalid draft artifact reference", () => {
@@ -212,5 +212,17 @@ describe("history transport fence across a deferred request", () => {
       .resolves.toMatchObject({ protocol: "eliotr.research-runs.v3" });
     expect(seenPath).toBe("/api/v1/research/runs");
     expect(Object.keys(seenInit as object)).not.toContain("method");
+  });
+
+  it("does not reject a current-authorized history response when the UI bundle generation is older", async () => {
+    const { epoch } = liveEpoch();
+    const api = createRunHistoryApi({
+      request: (() => Promise.resolve(historyFor(baseData(), "deployment-2"))) as unknown as ResearchRunRequest,
+      errors,
+      epoch,
+    }, { wire, decodeStatus: runs.decodeResearchRunStatus });
+
+    await expect(api.readResearchRunHistory("deployment-1"))
+      .resolves.toMatchObject({ deployment_generation: "deployment-2", runs: [{ status: { workflow_instance_id: "run-1" } }] });
   });
 });
