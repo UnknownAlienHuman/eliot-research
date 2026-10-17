@@ -15,6 +15,7 @@ const config: StorybookConfig = {
     "../../../apps/eliotr-web/src/app/ComputerAgentConnectionsPanelRegression.stories.tsx",
     "../../../apps/eliotr-web/src/app/NewProject.stories.tsx",
     "../../../apps/eliotr-web/src/app/ReportAnswer.stories.tsx",
+    "../../../apps/eliotr-web/src/app/ProviderQuota.stories.tsx",
   ],
   addons: ["@storybook/addon-a11y", "@storybook/addon-vitest"],
   core: { disableTelemetry: true },

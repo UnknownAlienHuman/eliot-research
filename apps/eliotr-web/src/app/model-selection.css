@@ -166,3 +166,50 @@
 @media (forced-colors: active) {
   .er-live-method-selector > label:has(input:checked) { outline: var(--eliot-focus-width) solid Highlight; }
 }
+
+/* Catalog settings: the chat menu as chips on top, search and bulk actions on one row, the provider's
+   whole inventory folded below (hundreds of models never open as one long sheet). */
+.er-model-catalog__chosen { display: flex; flex-wrap: wrap; align-items: center; gap: var(--eliot-space-tight); min-inline-size: 0; }
+.er-model-catalog__chosen-label { color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-label-large-size); }
+.er-model-catalog__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--eliot-space-hairline);
+  min-block-size: var(--eliot-size-control-small);
+  padding-inline: var(--eliot-space-block-control);
+  border-radius: var(--eliot-shape-small);
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  font-size: var(--eliot-type-label-large-size);
+  font-weight: var(--eliot-type-font-weight-medium);
+}
+.er-model-catalog__chip > button {
+  display: inline-grid;
+  place-items: center;
+  inline-size: var(--eliot-size-control-small);
+  block-size: var(--eliot-size-control-small);
+  margin-inline-end: calc(var(--eliot-space-block-control) * -1);
+  border: 0;
+  border-radius: var(--eliot-shape-full);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.er-model-catalog__chip > button:hover { background: color-mix(in srgb, currentColor 10%, transparent); }
+.er-model-catalog__none { color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-body-medium-size); }
+.er-model-catalog__tools { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--eliot-space-block-control) var(--eliot-space-gutter); }
+.er-model-catalog__tools > .er-model-catalog__search { flex: 1 1 18rem; }
+.er-model-catalog__inventory > summary {
+  display: inline-flex;
+  align-items: center;
+  min-block-size: var(--eliot-size-control);
+  color: var(--md-sys-color-primary);
+  font-size: var(--eliot-type-label-large-size);
+  font-weight: var(--eliot-type-font-weight-medium);
+  cursor: pointer;
+}
+.er-model-catalog__inventory[open] > summary { margin-block-end: var(--eliot-space-block-control); }
+@media (forced-colors: active) {
+  .er-model-catalog__chip { border: var(--eliot-divider-width) solid CanvasText; }
+}

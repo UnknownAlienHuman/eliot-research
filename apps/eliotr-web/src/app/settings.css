@@ -118,6 +118,10 @@
 }
 
 .er-settings__provider-text { display: grid; flex: 1 1 auto; min-inline-size: 0; }
+/* A provider row: name, status and quota on the first line; its model catalog takes the full width below
+   instead of a narrow column beside a vertically centred name. */
+.er-settings__providers > li { align-items: flex-start; }
+.er-settings__providers > li > .er-model-catalog-settings { flex: 1 1 100%; min-inline-size: 0; }
 .er-settings__provider-text > span { color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-body-small-size); overflow-wrap: anywhere; }
 
 .er-settings__form {
@@ -205,3 +209,18 @@
   .er-settings-card--row { grid-template-columns: minmax(0, 1fr); }
   .er-ai-usage__facts { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* Provider quota: one compact row per window (label, meter, "42% · resets in 2 hours"), as OpenCodex shows it. */
+.er-provider-quota { display: grid; gap: var(--eliot-space-hairline); margin: 0; padding: 0; list-style: none; min-inline-size: 0; }
+.er-provider-quota > li {
+  display: grid;
+  grid-template-columns: 4rem minmax(4rem, 8rem) minmax(0, auto);
+  align-items: center;
+  gap: var(--eliot-space-block-control);
+  font-size: var(--eliot-type-body-small-size);
+  line-height: var(--eliot-type-body-small-line-height);
+}
+.er-provider-quota__label { color: var(--md-sys-color-on-surface-variant); }
+.er-provider-quota__value { font-variant-numeric: var(--eliot-type-numerals); overflow-wrap: anywhere; }
+.er-provider-quota meter { inline-size: 100%; block-size: var(--eliot-space-block-control); }
+.er-provider-quota--quiet { margin: 0; color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-body-small-size); }
