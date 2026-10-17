@@ -238,6 +238,7 @@ const RESEARCH_CONFIGURATION_IMPORTS = [
   "@eliotr/cloudflare-research-configuration/research-semantic-configuration-schema.js",
   "@eliotr/cloudflare-research-configuration/research-provider-key-model-use-service.js",
   "@eliotr/cloudflare-research-configuration/research-provider-key-model-use-plan.js",
+  "@eliotr/cloudflare-research-configuration/research-provider-key-model-use-qualification-template.js",
   "@eliotr/cloudflare-research-configuration/research-provider-key-model-use-store.js",
   "@eliotr/cloudflare-research-configuration/research-provider-key-model-use-progress.js",
   "@eliotr/cloudflare-research-configuration/research-provider-key-model-use-current-scope.js",
