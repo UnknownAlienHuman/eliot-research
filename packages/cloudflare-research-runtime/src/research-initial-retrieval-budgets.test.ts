@@ -7,10 +7,9 @@ import type * as EvidenceFreezeCompositionModule from "./research-evidence-freez
 import {
   MANAGED_RANKING_OUTCOME_PROTOCOL,
   MANAGED_RETRIEVAL_TRACE_PROTOCOL,
-  type RetrievalRequestBudgets,
   type ScopeSnapshot,
 } from "@eliotr/contracts";
-import { retrievalRequestDigest } from "@eliotr/retrieval";
+import { retrievalRequestDigest, type RetrievalRequestBudgets } from "@eliotr/retrieval";
 import { textDigest } from "@eliotr/cloudflare-research";
 import { BRANCH_QUERY_HANDLER_GENERATION } from "@eliotr/cloudflare-research";
 import type { ResearchBranchQueryBudgetSelection } from
@@ -121,7 +120,7 @@ const PRINCIPAL = {
 const ACCESS = { ...PRINCIPAL, client_class: "owner_pwa" as const };
 const PROFILE = { version: "scope-profile-v1", max_sources: 8, max_results: 16 };
 
-function stageRequest(stage: string, revision: number, generation = BRANCH_QUERY_HANDLER_GENERATION) {
+function stageRequest(stage: string, revision: number, generation: string = BRANCH_QUERY_HANDLER_GENERATION) {
   return {
     protocol: "eliotr.workflow-stage.v1" as const,
     operation_id: "budget-operation",
@@ -265,7 +264,7 @@ function dependencies(budgets?: RetrievalRequestBudgets): RetrieveBranchesStageD
   };
 }
 
-function configureStageReads(generation = BRANCH_QUERY_HANDLER_GENERATION) {
+function configureStageReads(generation: string = BRANCH_QUERY_HANDLER_GENERATION) {
   const stage0 = stageRequest("FREEZE_PROTOCOL_AND_SCOPE", 1, generation);
   const stage5 = stageRequest("RETRIEVE_BRANCHES", 7, generation);
   seams.readCommittedStageRequest.mockImplementation(async (_operationId: string, stage: string) => {
@@ -342,7 +341,7 @@ describe("initial retrieval budget handoff", () => {
     const deps = dependencies(BUDGETS);
     const request = stageRequest("RETRIEVE_BRANCHES", 7);
     const handler = createRetrieveBranchesStageHandler(deps);
-    const bytes = await handler({ request, principal: PRINCIPAL, input_bytes: new Uint8Array(), budget_receipt_ref: "workflow-budget" });
+    const bytes = await handler({ request, principal: PRINCIPAL, input_bytes: new Uint8Array(), attempt_ref: "retrieve-attempt", budget_receipt_ref: "workflow-budget" });
     const input = seams.retrieve.mock.calls[0]?.[1] as { budgets?: RetrievalRequestBudgets };
     const output = JSON.parse(new TextDecoder().decode(bytes)) as { retrieval_request_digest: string };
     expect(input.budgets).toEqual(BUDGETS);
@@ -357,7 +356,7 @@ describe("initial retrieval budget handoff", () => {
     const handler = createRetrieveBranchesStageHandler(dependencies());
     await expect(handler({
       request: stageRequest("RETRIEVE_BRANCHES", 7), principal: PRINCIPAL,
-      input_bytes: new Uint8Array(), budget_receipt_ref: "workflow-budget",
+      input_bytes: new Uint8Array(), attempt_ref: "retrieve-attempt", budget_receipt_ref: "workflow-budget",
     })).rejects.toMatchObject({ code: "WORKFLOW_CONFIGURATION_MISSING" });
     expect(seams.retrieve).not.toHaveBeenCalled();
   });
