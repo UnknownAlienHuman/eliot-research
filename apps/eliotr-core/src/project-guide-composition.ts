@@ -193,8 +193,9 @@ export function createOwnerProjectGuideService(env: Env) {
           if (instance.id !== record.workflow_instance_id) fail("PROJECT_GUIDE_RUN_IDENTITY_CHANGED");
           return false;
         } catch (error) {
-          // The binding's exact missing-instance error is distinct from an unavailable status read.
-          if (!(error instanceof Error) || error.message !== "instance.not_found") throw error;
+          // Accept only the exact local and live binding missing-instance errors.
+          if (!(error instanceof Error) || (error.message !== "instance.not_found" &&
+              error.message !== "(instance.not_found) Instance not found")) throw error;
           return true;
         }
       });

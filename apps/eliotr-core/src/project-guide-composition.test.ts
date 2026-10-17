@@ -100,11 +100,40 @@ describe("guide composition keeps canonical Research admission", () => {
       expect(f.run).not.toHaveBeenCalled(); expect(f.grant).not.toHaveBeenCalled();
     } finally { log.mockRestore(); }
   });
-  it("allows a contract successor only after pure V4/profile rejection and native plus investigation absence", async () => {
+  it.each(["instance.not_found", "(instance.not_found) Instance not found"])(
+    "allows a contract successor only after all gates and native Error message %s", async message => {
     const g = await legacyPreflightFixture();
+    const retained = canonicalEvidenceJson(g.record);
+    g.native.mockRejectedValueOnce(new Error(message));
     expect(await g.blocked(context, g.record, g.observed)).toBe(true);
     expect(g.native).toHaveBeenCalledWith(g.record.workflow_instance_id);
     expect(g.prepare.mock.calls[0]?.[0]).toContain("investigation_ledger_head");
+    expect(canonicalEvidenceJson(g.record)).toBe(retained);
+    expect(f.run).not.toHaveBeenCalled(); expect(f.grant).not.toHaveBeenCalled();
+  });
+  it.each([
+    { label: "local message string", error: "instance.not_found" },
+    { label: "live message string", error: "(instance.not_found) Instance not found" },
+    { label: "local message object", error: { name: "Error", message: "instance.not_found" } },
+    { label: "live message object", error: { name: "Error", message: "(instance.not_found) Instance not found" } },
+    { label: "REST 10400 object", error: { code: 10400, status: 404, message: "workflows.api.error.instance.not_found" } },
+    { label: "REST 10400 Error", error: Object.assign(new Error("workflows.api.error.instance.not_found"), { code: 10400, status: 404 }) },
+    { label: "other 404", error: Object.assign(new Error("Not Found"), { status: 404 }) },
+    { label: "unavailable", error: new Error("native status unavailable") },
+    { label: "local trailing whitespace", error: new Error("instance.not_found ") },
+    { label: "live trailing punctuation", error: new Error("(instance.not_found) Instance not found.") },
+    { label: "local prefixed text", error: new Error("Error: instance.not_found") },
+    { label: "live changed case", error: new Error("(instance.not_found) instance not found") },
+    { label: "null", error: null },
+    { label: "undefined", error: undefined },
+  ])("rethrows $label unchanged without inferring native absence", async ({ error }) => {
+    const g = await legacyPreflightFixture();
+    const retained = canonicalEvidenceJson(g.record);
+    g.native.mockRejectedValueOnce(error);
+
+    await expect(g.blocked(context, g.record, g.observed)).rejects.toBe(error);
+
+    expect(canonicalEvidenceJson(g.record)).toBe(retained);
     expect(f.run).not.toHaveBeenCalled(); expect(f.grant).not.toHaveBeenCalled();
   });
   it.each([1, null, 7])("does not infer absence from D1 admission readback %s", async present => {
@@ -127,11 +156,12 @@ describe("guide composition keeps canonical Research admission", () => {
     expect(await g.blocked(context, g.record, g.observed)).toBe(false);
     expect(g.native).not.toHaveBeenCalled(); expect(g.presence).not.toHaveBeenCalled(); expect(f.run).not.toHaveBeenCalled();
   });
-  it("rechecks source authority after the native absence observation", async () => {
+  it.each(["instance.not_found", "(instance.not_found) Instance not found"])(
+    "rechecks source authority after native absence Error message %s", async message => {
     const g = await legacyPreflightFixture();
     g.native.mockImplementation(async () => {
       f.members = [...f.members, { source_revision_ref: "added", source_owner_generation: "owner-generation", policy_closure_ref: "policy" }];
-      throw new Error("instance.not_found");
+      throw new Error(message);
     });
     await expect(g.blocked(context, g.record, g.observed)).rejects.toMatchObject({ code: "PROJECT_GUIDE_AUTHORITY_CHANGED" });
     expect(f.run).not.toHaveBeenCalled(); expect(f.grant).not.toHaveBeenCalled();
