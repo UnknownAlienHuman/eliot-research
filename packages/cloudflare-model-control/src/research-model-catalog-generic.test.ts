@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, type Mock } from "vitest";
+import { gzipSync, brotliCompressSync } from "node:zlib";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { createResearchModelCatalogService } from "./research-model-catalog.js";
 import { createResearchProviderModelCatalogTransports } from "./research-provider-model-catalog.js";
@@ -9,6 +10,7 @@ const providerId = `compatible-${"a".repeat(24)}`;
 const slug = `custom-${providerId}`;
 const account = "b".repeat(32);
 const registryUrl = `https://api.cloudflare.com/client/v4/accounts/${account}/ai-gateway/custom-providers?page=1&per_page=100`;
+const registryNextUrl = registryUrl.replace("page=1&", "page=2&");
 const catalogUrl = "https://openrouter.ai/api/v1/models";
 type ConnectionResolver = Parameters<typeof createGenericOpenRouterCatalogResolver>[0]["resolve_connection"];
 
@@ -39,6 +41,7 @@ function fixture(options: { readonly base?: string; readonly resolve?: Mock<Conn
   const resolve = options.resolve ?? vi.fn<ConnectionResolver>(async () => bound);
   const fetcher = vi.fn<typeof fetch>(async input => {
     const url = String(input);
+    if (url === registryNextUrl) return json({ success: true, result: [] });
     if (url === registryUrl) return options.registry?.() ?? registry([{ slug, enable: true,
       base_url: options.base ?? "https://openrouter.ai/api/v1" }]);
     if (url === catalogUrl) return json({ data: [{ id: "vendor/new-model", architecture: { output_modalities: ["text"] } }] });
@@ -73,8 +76,8 @@ describe("registered generic OpenRouter catalog binding", () => {
       expect(JSON.stringify(bound)).toBe(before);
       expect(resolve).toHaveBeenCalledTimes(2);
       expect(resolve.mock.calls[0]).toEqual([expect.objectContaining({ principal_ref: "owner-1" }), providerId]);
-      expect(fetcher.mock.calls.map(call => String(call[0]))).toEqual([registryUrl, catalogUrl]);
-      const publicRequest = fetcher.mock.calls[1]?.[1];
+      expect(fetcher.mock.calls.map(call => String(call[0]))).toEqual([registryUrl, registryNextUrl, catalogUrl]);
+      const publicRequest = fetcher.mock.calls[2]?.[1];
       expect([...new Headers(publicRequest?.headers)]).toEqual([["accept", "application/json"]]);
       expect(publicRequest).toMatchObject({ method: "GET", redirect: "manual", credentials: "omit" });
       expect(db.prepare).not.toHaveBeenCalled();
@@ -100,7 +103,7 @@ describe("registered generic OpenRouter catalog binding", () => {
     await expect(service.listExternalProviderForService(context(), providerId)).rejects.toMatchObject({
       code: "MODEL_CATALOG_PROVIDER_UNAVAILABLE", status: 503, retryable: false,
     });
-    expect(fetcher.mock.calls.map(call => String(call[0]))).toEqual([registryUrl]);
+    expect(fetcher.mock.calls.map(call => String(call[0]))).toEqual([registryUrl, registryNextUrl]);
   });
 
   it.each(["unknown-provider", "compatible-unknown", "custom-compatible-" + "a".repeat(24)])(
@@ -157,7 +160,7 @@ describe("registered generic OpenRouter catalog binding", () => {
     await expect(service.listExternalProviderForService(context(), providerId)).rejects.toMatchObject({
       code: "MODEL_CATALOG_PROVIDER_UNAVAILABLE", retryable: false,
     });
-    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher.mock.calls.every(call => String(call[0]) === registryUrl || String(call[0]) === registryNextUrl)).toBe(true);
   });
 
   it("does not accept a partial registry page as proof that the slug is unique", async () => {
@@ -167,7 +170,7 @@ describe("registered generic OpenRouter catalog binding", () => {
     await expect(service.listExternalProviderForService(context(), providerId)).rejects.toMatchObject({
       code: "MODEL_CATALOG_PROVIDER_UNAVAILABLE", retryable: true,
     });
-    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledTimes(2);
   });
 
   it("does not follow a registry redirect or forward its credential elsewhere", async () => {
@@ -188,5 +191,146 @@ describe("registered generic OpenRouter catalog binding", () => {
       code: "MODEL_CATALOG_PROVIDER_UNAVAILABLE", retryable: true,
     });
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("SDK 7.3 bounded registry pagination", () => {
+  const target = { slug, enable: true, base_url: "https://openrouter.ai/api/v1" };
+  function reader(fetcher: typeof fetch) {
+    return createGenericCatalogRegisteredProviderReader({ account_id: account, gateway_id: "eliotr-reasoning",
+      control_token: "existing-control-token-fixture", fetcher });
+  }
+
+  it.each([undefined, {}, { page: 1 }, { per_page: 100 }, { page: 1, per_page: 100 }])(
+    "accepts omitted optional pagination metadata and verifies the empty terminal page", async info => {
+      const fetcher = vi.fn<typeof fetch>(async input => {
+        const page = Number(new URL(String(input)).searchParams.get("page"));
+        return json({ success: true, result: page === 1 ? [target] : [],
+          ...(page === 1 && info !== undefined ? { result_info: info } : {}) });
+      });
+      await expect(reader(fetcher)(slug, new AbortController().signal)).resolves.toEqual({ slug, base_url: target.base_url });
+      expect(fetcher.mock.calls.map(call => String(call[0]))).toEqual([registryUrl, registryNextUrl]);
+    },
+  );
+
+  it("continues past a short nonempty page without totals, using requested page numbers", async () => {
+    const fetcher = vi.fn<typeof fetch>(async input => {
+      const page = Number(new URL(String(input)).searchParams.get("page"));
+      return json({ success: true, result: page === 1 ? [{ ...target, slug: "another-provider" }] : page === 2 ? [target] : [] });
+    });
+    await expect(reader(fetcher)(slug, new AbortController().signal)).resolves.toEqual({ slug, base_url: target.base_url });
+    expect(fetcher.mock.calls.map(call => new URL(String(call[0])).searchParams.get("page"))).toEqual(["1", "2", "3"]);
+  });
+
+  it("rejects a duplicate exact target appearing on a later page", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => json({ success: true, result: [target] }));
+    await expect(reader(fetcher)(slug, new AbortController().signal)).resolves.toBeNull();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a repeated non-target page instead of treating it as exhaustion", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => json({ success: true, result: [{ ...target, slug: "another-provider" }] }));
+    await expect(reader(fetcher)(slug, new AbortController().signal)).rejects.toMatchObject({ code: "MODEL_CATALOG_PROVIDER_UNAVAILABLE" });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not trust a found target when the page bound prevents completion", async () => {
+    const fetcher = vi.fn<typeof fetch>(async input => {
+      const page = Number(new URL(String(input)).searchParams.get("page"));
+      return json({ success: true, result: [{ ...target, slug: page === 1 ? slug : `provider-${page}` }] });
+    });
+    await expect(reader(fetcher)(slug, new AbortController().signal)).rejects.toMatchObject({ code: "MODEL_CATALOG_PROVIDER_UNAVAILABLE", retryable: true });
+    expect(fetcher).toHaveBeenCalledTimes(4);
+  });
+
+  it("enforces a global byte budget across otherwise valid pages", async () => {
+    const fetcher = vi.fn<typeof fetch>(async input => {
+      const page = Number(new URL(String(input)).searchParams.get("page"));
+      return json({ success: true, result: page === 1 ? [target] : [], padding: "x".repeat(140_000) });
+    });
+    await expect(reader(fetcher)(slug, new AbortController().signal)).rejects.toMatchObject({ code: "MODEL_CATALOG_PROVIDER_UNAVAILABLE", retryable: true });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a genuinely truncated JSON response without returning its earlier target", async () => {
+    const fetcher = vi.fn<typeof fetch>(async input => Number(new URL(String(input)).searchParams.get("page")) === 1
+      ? json({ success: true, result: [target] })
+      : new Response('{"success":true,"result":[', { headers: { "content-type": "application/json" } }));
+    await expect(reader(fetcher)(slug, new AbortController().signal)).rejects.toMatchObject({ code: "MODEL_CATALOG_PROVIDER_UNAVAILABLE", retryable: true });
+  });
+
+  it.each(["gzip", "br"])("accepts Fetch-decoded %s bytes when the wire Content-Length differs", async coding => {
+    const fetcher = vi.fn<typeof fetch>(async input => {
+      const page = Number(new URL(String(input)).searchParams.get("page"));
+      const decoded = JSON.stringify({ success: true, result: page === 1 ? [target] : [] });
+      const wire = coding === "gzip" ? gzipSync(decoded) : brotliCompressSync(decoded);
+      expect(wire.byteLength).not.toBe(new TextEncoder().encode(decoded).byteLength);
+      // Match Fetch's post-decompression response: decoded body, original encoding/length headers.
+      return new Response(decoded, { headers: { "content-type": "application/json", "content-encoding": coding,
+        "content-length": String(wire.byteLength) } });
+    });
+    await expect(reader(fetcher)(slug, new AbortController().signal)).resolves.toEqual({ slug, base_url: target.base_url });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("still rejects an identity representation shorter than its declared Content-Length", async () => {
+    const decoded = JSON.stringify({ success: true, result: [target] });
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(decoded, { headers: {
+      "content-type": "application/json", "content-encoding": "identity", "content-length": String(decoded.length + 1),
+    } }));
+    await expect(reader(fetcher)(slug, new AbortController().signal)).rejects.toMatchObject({ code: "MODEL_CATALOG_PROVIDER_UNAVAILABLE", retryable: true });
+  });
+
+  it("rejects a decoded stream failure from a truncated compressed response", async () => {
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) { controller.error(new TypeError("compressed response terminated")); },
+    }), { headers: { "content-type": "application/json", "content-encoding": "gzip", "content-length": "100" } }));
+    await expect(reader(fetcher)(slug, new AbortController().signal)).rejects.toMatchObject({ code: "MODEL_CATALOG_PROVIDER_UNAVAILABLE", retryable: true });
+  });
+
+  it("bounds decoded bytes even when the compressed Content-Length is small", async () => {
+    const decoded = JSON.stringify({ success: true, result: [target], padding: "x".repeat(262_144) });
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(decoded, { headers: {
+      "content-type": "application/json", "content-encoding": "gzip", "content-length": String(gzipSync(decoded).byteLength),
+    } }));
+    await expect(reader(fetcher)(slug, new AbortController().signal)).rejects.toMatchObject({ code: "MODEL_CATALOG_PROVIDER_UNAVAILABLE", retryable: true });
+  });
+
+  it("does not return a partial match when a later request is aborted", async () => {
+    const controller = new AbortController();
+    const fetcher = vi.fn<typeof fetch>(async input => {
+      if (Number(new URL(String(input)).searchParams.get("page")) === 1) return json({ success: true, result: [target] });
+      controller.abort();
+      return new Promise<Response>(() => {});
+    });
+    await expect(reader(fetcher)(slug, controller.signal)).rejects.toMatchObject({ code: "MODEL_CATALOG_CANCELLED", status: 499 });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it("cancels a stalled body read when the caller aborts", async () => {
+    const controller = new AbortController();
+    let cancelled = false;
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(new ReadableStream<Uint8Array>({
+      pull() { controller.abort(); }, cancel() { cancelled = true; },
+    }), { headers: { "content-type": "application/json" } }));
+    await expect(reader(fetcher)(slug, controller.signal)).rejects.toMatchObject({ code: "MODEL_CATALOG_CANCELLED" });
+    expect(cancelled).toBe(true);
+  });
+
+  it("uses one deadline across pages even if a fetch ignores abort", async () => {
+    vi.useFakeTimers();
+    try {
+      const fetcher = vi.fn<typeof fetch>(input => new Promise(resolve => {
+        const page = Number(new URL(String(input)).searchParams.get("page"));
+        setTimeout(() => resolve(json({ success: true, result: page === 1 ? [target] : [] })), 3_000);
+      }));
+      const rejected = expect(reader(fetcher)(slug, new AbortController().signal)).rejects.toMatchObject({
+        code: "MODEL_CATALOG_PROVIDER_UNAVAILABLE", retryable: true,
+      });
+      await vi.advanceTimersByTimeAsync(5_001);
+      await rejected;
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(fetcher.mock.calls[0]?.[1]?.signal).toBe(fetcher.mock.calls[1]?.[1]?.signal);
+    } finally { vi.clearAllTimers(); vi.useRealTimers(); }
   });
 });

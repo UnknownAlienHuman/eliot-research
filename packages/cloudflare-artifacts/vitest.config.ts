@@ -1,10 +1,15 @@
-import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
 
-export default defineConfig(async () => ({
-  root: fileURLToPath(new URL(".", import.meta.url)),
-  plugins: [cloudflareTest({
+export default defineConfig(async () => {
+  const coreRoot = new URL("../../apps/eliotr-core/", import.meta.url);
+  const coreRequire = createRequire(new URL("package.json", coreRoot));
+  const { default: agents } = await import(pathToFileURL(coreRequire.resolve("agents/vite")).href);
+  return {
+  root: fileURLToPath(coreRoot),
+  plugins: [agents(), cloudflareTest({
     remoteBindings: false,
     miniflare: {
       bindings: {
@@ -18,8 +23,9 @@ export default defineConfig(async () => ({
     },
   })],
   test: {
-    include: ["test/**/*.test.ts"],
+    include: [`${fileURLToPath(new URL("./test/", import.meta.url)).replaceAll("\\", "/")}**/*.test.ts`],
     maxWorkers: 2,
     globalSetup: [fileURLToPath(new URL("../../scripts/lib/miniflare-port-guard.mjs", import.meta.url))],
   },
-}));
+  };
+});

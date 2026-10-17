@@ -42,8 +42,12 @@ async function fixture(registeredBase = base, catalogSource = source) {
   const requests: Array<{ url: string; alias: string | null; body: Record<string, unknown> }> = [];
   const fetcher = vi.fn<typeof fetch>(async (input, init) => {
     const request = new Request(input, init), url = request.url;
-    if (url.startsWith("https://api.cloudflare.com/")) return Response.json({ success: true,
-      result: [{ slug: physical, base_url: registeredBase, enable: true }], result_info: { page: 1, total_count: 1 } });
+    if (url.startsWith("https://api.cloudflare.com/")) {
+      const page = Number(new URL(url).searchParams.get("page") ?? "1");
+      return Response.json({ success: true,
+        result: page === 1 ? [{ slug: physical, base_url: registeredBase, enable: true }] : [],
+        result_info: { page, per_page: 100, total_count: 1 } });
+    }
     if (url === `${base}/models`) {
       expect([...request.headers]).toEqual([["accept", "application/json"]]);
       return Response.json({ data: [{ id: model, architecture: { output_modalities: ["text"] } }] });
@@ -71,6 +75,8 @@ describe("generic OpenRouter catalog to exact qualified selection", () => {
     expect(response.status).toBe(200);
     const catalog = await response.json() as { data: { provider_id: string; models: Array<{ provider_id: string; model_id: string }> } };
     expect(catalog.data).toMatchObject({ provider_id: provider, models: [{ provider_id: provider, model_id: model }] });
+    expect(f.fetcher.mock.calls.some(call => String(call[0]).startsWith("https://api.cloudflare.com/") &&
+      new URL(String(call[0])).searchParams.get("page") === "2")).toBe(true);
     const receipt = await f.start();
     expect(receipt).toMatchObject({ state: "selected", phase: "complete", provider_id: provider,
       provider_operation_id: f.providerOperation, model_id: model, failure_code: null });
