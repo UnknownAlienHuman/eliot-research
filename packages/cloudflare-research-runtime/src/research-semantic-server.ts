@@ -1,6 +1,7 @@
 import { DynamicRouteProvisioningError } from "@eliotr/cloudflare-ai";
 import { IdentifierSchema, IsoDateTimeSchema, type ProjectClientGrant, type ResearchBranchRole } from "@eliotr/contracts";
 import { canonicalJson, decodeModelRouteDeployment, type AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
+import { researchSemanticNativeMainPricing } from "./research-semantic-main-pricing.js";
 import {
   createCloudflareEvidenceResolver,
   createD1EvidenceAuthorityPort,
@@ -319,6 +320,7 @@ export async function assembleResearchSemanticServerHandlers(
   }
 
   const verifier = await readVerifier();
+  const nativeMainPricing = await researchSemanticNativeMainPricing(input.native_model_runtime);
   let roles: ResearchSemanticRolesModelDependencies | undefined;
   const roleConfig = config.roles;
   const nativeBranchPricing = new Map<ResearchSemanticBranchStage, ResearchSemanticRolesModelDependencies["pricing"]>();
@@ -456,6 +458,7 @@ export async function assembleResearchSemanticServerHandlers(
     model: {
       synthesis: {
         gateway: synthesisGateway,
+        ...(nativeMainPricing.synthesis === undefined ? {} : { pricing: nativeMainPricing.synthesis }),
         prompt: {
           trusted_parameters: researchSemanticPromptParameters(config.synthesis.trusted_parameters),
           ...(input.output_language === undefined ? {} : { output_language: input.output_language }),
@@ -471,6 +474,7 @@ export async function assembleResearchSemanticServerHandlers(
       },
       audit: {
         gateway: auditGateway,
+        ...(nativeMainPricing.audit === undefined ? {} : { pricing: nativeMainPricing.audit }),
         prompt: {
           trusted_parameters: researchSemanticPromptParameters(config.audit.trusted_parameters),
           request_timeout_ms: config.audit.request_timeout_ms,

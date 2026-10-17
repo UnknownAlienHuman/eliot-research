@@ -114,9 +114,19 @@ export function buildChatModelOptions(input: {
       // 0158 records fresh consent for this exact catalog pair against the saved connection.
       // Legacy registrations remain unchanged; their allowlist is not the consent for this new flow.
       const openCode = providerId === "opencode-go" || providerId === "opencode-zen";
-      const route = model.properties.find(property => property.property_id === "opencode_transport")?.value;
-      const transportEligible = !openCode || (typeof route === "object" && route !== null && !Array.isArray(route) &&
-        "status" in route && route.status === "eligible_unverified");
+      const transportMetadata = model.properties.find(property => property.property_id === "opencode_transport");
+      const route = transportMetadata?.value;
+      const routeStatus = typeof route === "object" && route !== null && !Array.isArray(route) && "status" in route
+        ? route.status : undefined;
+      const selected = input.configuration?.selected;
+      const exactQualifiedPin = selected?.qualification_state === "qualified" &&
+        candidate?.configuration_ref === selected.configuration_ref &&
+        candidate.configuration_sha256 === selected.configuration_sha256 &&
+        configurationMatchesChatModel(selected, model);
+      // Missing public metadata may reuse only the exact backend-qualified selection. Run preparation
+      // re-reads that identity before dispatch, so changed or revoked qualification cannot pass here.
+      const transportEligible = !openCode || routeStatus === "eligible_unverified" ||
+        (transportMetadata === undefined && exactQualifiedPin);
       const canRun = connection?.operation_id !== undefined && transportEligible;
       options.set(key, Object.freeze({ model, providerLabel, key, canRun, builtin: false,
         ...(candidate === undefined ? {} : { candidate }),

@@ -20,6 +20,13 @@ const configuredRevision = (modelId: string, qualificationState: ResearchModelCo
         capabilities: { max_output_tokens_field: "max_tokens", reasoning_efforts: ["high", "low"] } } }],
   });
 
+const qualifiedGoRevision = (modelId: string): ResearchModelConfigurationRevision => {
+  const revision = configuredRevision(modelId);
+  return { ...revision, model_selections: revision.model_selections.map(selection => ({ ...selection,
+    provider_id: "custom-opencode-go", transport_policy: { ...selection.transport_policy,
+      api: "custom-chat-completions", provider: "custom-opencode-go" } })) };
+};
+
 const entry = (providerId: string, modelId: string): ModelCatalogEntry => ({
   provider_id: providerId, model_id: modelId, name: modelId, description: "Catalog entry",
   catalog_availability: "listed", account_availability: "unknown",
@@ -148,6 +155,64 @@ describe("chat model catalog eligibility", () => {
       expect(options[0]).toMatchObject({ canRun: false, availabilityCheckRequired: true });
     },
   );
+
+  it('allows a qualified exact selected Go pin when the public catalog omits transport metadata', () => {
+    const model = entry('opencode-go', 'step-5-preview-free');
+    const candidate = qualifiedGoRevision(model.model_id);
+    const source = externalSlice([model]);
+    if (!source.connection) throw new Error('Missing connection');
+    const options = buildChatModelOptions({ slices: [{ ...source, catalogProviderId: 'opencode-go', preferenceProviderId: 'opencode-go',
+      connection: { ...source.connection, provider_id: 'opencode-go' }, catalog: catalog('opencode-go', [model]),
+      preferences: preferences('opencode-go', { mode: 'all' }) }],
+      configuration: { protocol: 'eliotr.research-project-model-configuration.v1', project_id: 'project-1',
+        selection_revision: 4, selected: candidate, revisions: [candidate], next_cursor: null } });
+    expect(options[0]).toMatchObject({ canRun: true, candidate });
+    expect(options[0]?.availabilityCheckRequired).toBeUndefined();
+  });
+
+  it.each([
+    { status: 'blocked', reason: 'SDK_UNSUPPORTED' },
+    { status: 'blocked', reason: 'REGISTERED_BASE_INCOMPATIBLE' },
+  ])('keeps an exact qualified Go pin disabled for explicit transport blocker $reason', readiness => {
+    const model = { ...entry('opencode-go', 'step-5-preview-free'), properties: [
+      { property_id: 'opencode_transport', value: readiness },
+    ] };
+    const candidate = qualifiedGoRevision(model.model_id);
+    const source = externalSlice([model]);
+    if (!source.connection) throw new Error('Missing connection');
+    const options = buildChatModelOptions({ slices: [{ ...source, catalogProviderId: 'opencode-go', preferenceProviderId: 'opencode-go',
+      connection: { ...source.connection, provider_id: 'opencode-go' }, catalog: catalog('opencode-go', [model]),
+      preferences: preferences('opencode-go', { mode: 'all' }) }],
+      configuration: { protocol: 'eliotr.research-project-model-configuration.v1', project_id: 'project-1',
+        selection_revision: 4, selected: candidate, revisions: [candidate], next_cursor: null } });
+    expect(options[0]).toMatchObject({ canRun: false, candidate });
+  });
+
+  it('requires verified Go transport eligibility before preparing an unqualified model', () => {
+    const model = entry('opencode-go', 'step-5-preview-free');
+    const candidate = { ...qualifiedGoRevision(model.model_id), qualification_state: 'qualification_required' as const };
+    const source = externalSlice([model]);
+    if (!source.connection) throw new Error('Missing connection');
+    const options = buildChatModelOptions({ slices: [{ ...source, catalogProviderId: 'opencode-go', preferenceProviderId: 'opencode-go',
+      connection: { ...source.connection, provider_id: 'opencode-go' }, catalog: catalog('opencode-go', [model]),
+      preferences: preferences('opencode-go', { mode: 'all' }) }],
+      configuration: { protocol: 'eliotr.research-project-model-configuration.v1', project_id: 'project-1',
+        selection_revision: 4, selected: candidate, revisions: [candidate], next_cursor: null } });
+    expect(options[0]).toMatchObject({ canRun: false, candidate, availabilityCheckRequired: true });
+  });
+
+  it('does not reuse missing transport metadata for a qualified but unselected Go revision', () => {
+    const model = entry('opencode-go', 'step-5-preview-free');
+    const candidate = qualifiedGoRevision(model.model_id);
+    const source = externalSlice([model]);
+    if (!source.connection) throw new Error('Missing connection');
+    const options = buildChatModelOptions({ slices: [{ ...source, catalogProviderId: 'opencode-go', preferenceProviderId: 'opencode-go',
+      connection: { ...source.connection, provider_id: 'opencode-go' }, catalog: catalog('opencode-go', [model]),
+      preferences: preferences('opencode-go', { mode: 'all' }) }],
+      configuration: { protocol: 'eliotr.research-project-model-configuration.v1', project_id: 'project-1',
+        selection_revision: 4, selected: null, revisions: [candidate], next_cursor: null } });
+    expect(options[0]).toMatchObject({ canRun: false, candidate });
+  });
 
   it("offers a newly discovered model on a legacy connection for exact qualification without changing its allowlist", () => {
     const model = entry('openrouter', 'outside-allowlist'), source = externalSlice([model]);

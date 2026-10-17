@@ -31,7 +31,8 @@ export function composeResearchModelGatewayConfiguration(
   try { validateModelGatewayToken(token); }
   catch { throw new WorkflowCheckpointError("WORKFLOW_CREDENTIALS_INVALID"); }
   return Object.freeze({ reasoning_gateway_base_url: env.AI_GATEWAY_REASONING_URL, gateway_token: token,
-    read_opencode_provider: createOpenCodeRegisteredProviderReader(env) });
+    ...((provider === "custom-opencode-go" || provider === "custom-opencode-zen")
+      ? { read_opencode_provider: createOpenCodeRegisteredProviderReader(env) } : {}) });
 }
 
 function required(message: string): never {

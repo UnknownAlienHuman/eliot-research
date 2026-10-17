@@ -34,8 +34,16 @@ function d1(database: DatabaseSync): D1Database {
       return { bind, ...bind() };
     },
     async batch(statements: D1PreparedStatement[]) {
-      for (const statement of statements) await statement.run();
-      return [];
+      database.exec("BEGIN");
+      try {
+        const results = [];
+        for (const statement of statements) results.push(await statement.all());
+        database.exec("COMMIT");
+        return results;
+      } catch (error) {
+        database.exec("ROLLBACK");
+        throw error;
+      }
     },
   } as unknown as D1Database;
 }
