@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ModelGatewayPricingPort } from "@eliotr/cloudflare-ai";
 import type { NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import type { ResolvedProviderNativeModelCatalogV2 } from "@eliotr/cloudflare-native-models";
+import { createOwnerModelProfileTemplateV2 } from "@eliotr/cloudflare-research";
 import { createResearchOwnerRuntimeConfiguration } from "@eliotr/cloudflare-research-configuration";
 import { resolveResearchOwnerSpendPolicy } from "@eliotr/cloudflare-research-configuration/research-owner-spend-policy.js";
 import { parseResearchSemanticConfiguration } from "@eliotr/cloudflare-research-configuration/research-semantic-configuration-schema.js";
@@ -18,7 +19,7 @@ const stages = ["SYNTHESIZE", "AUDIT_CLAIMS"] as const;
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-async function fixture(missingPricing?: Stage) {
+async function fixture(missingPricing?: Stage, withV2RoleProfile = false) {
   const principal = { principal_ref: "assembly-owner", credential_generation: "assembly-session",
     deployment_generation: "assembly-deployment" };
   const base = admissionTestConfiguration(principal.deployment_generation, principal.principal_ref, "assembly");
@@ -52,11 +53,27 @@ async function fixture(missingPricing?: Stage) {
     sources: vi.fn(async () => []),
     timestamp: () => new Date().toISOString(),
   };
-  const policy = resolveResearchOwnerSpendPolicy({ raw: value("ELIOTR_MODEL_SPEND_POLICY_JSON"),
+  const resolvedPolicy = resolveResearchOwnerSpendPolicy({ raw: value("ELIOTR_MODEL_SPEND_POLICY_JSON"),
     provenance: value("ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF"), access: navigation.access,
     deployment_generation: principal.deployment_generation, policy_generation: "assembly-policy",
     policy_authority_ref: navigation.scope.policy_authority_ref, scope_expires_at: expires,
     authorization: await navigation.current() }).policy;
+  const synthesisRule = resolvedPolicy.rules.find(rule => rule.stage === "SYNTHESIZE");
+  if (synthesisRule === undefined) throw new Error("Synthesis spend rule is required for assembly test");
+  const profileDeployment = withV2RoleProfile ? Object.freeze({
+    ...synthesisRule.deployment,
+    parameters_digest: "c".repeat(64),
+  }) : undefined;
+  const profileRules = profileDeployment === undefined ? resolvedPolicy.rules : resolvedPolicy.rules.map(rule =>
+    rule.stage === "SYNTHESIZE" ? { ...rule, deployment: profileDeployment } : rule);
+  const profileSynthesisRule = profileRules.find(rule => rule.stage === "SYNTHESIZE");
+  if (profileSynthesisRule === undefined) throw new Error("Synthesis profile rule is required for assembly test");
+  const branchRules = withV2RoleProfile
+    ? (["ANALYZE_BRANCHES", "COUNTER_SEARCH"] as const).map(stage => ({
+      ...profileSynthesisRule, stage,
+    }))
+    : [];
+  const policy = Object.freeze({ ...resolvedPolicy, rules: Object.freeze([...profileRules, ...branchRules]) });
   const transports = JSON.parse(value("ELIOTR_RESEARCH_MODEL_TRANSPORT_POLICIES_JSON")) as typeof prepared;
   const selections = transports.model_selections.map((selection) => ({
     stage: selection.stage, route_ref: selection.route_ref, route_version: selection.route_version,
@@ -64,10 +81,18 @@ async function fixture(missingPricing?: Stage) {
     candidate_kind: "provider-native-v2" as const, candidate_ref: `candidate-${selection.stage}`,
     candidate_sha256: "a".repeat(64), qualification_ref: `qualification-${selection.stage}`, qualification_sha256: "b".repeat(64),
   }));
+  const synthesisSelection = selections.find(selection => selection.stage === "SYNTHESIZE");
+  if (synthesisSelection === undefined) throw new Error("Synthesis selection is required for assembly test");
+  const branchSelections = withV2RoleProfile
+    ? (["ANALYZE_BRANCHES", "COUNTER_SEARCH"] as const).map(stage => ({
+      ...synthesisSelection, stage, candidate_ref: `candidate-${stage}`,
+      qualification_ref: `qualification-${stage}`,
+    }))
+    : [];
   // Snapshot admission and Core's Env/D1 wrapper are outside this package-boundary test.
   const run = { mode: "snapshot-v2" as const, configuration_ref: `rrc-${"c".repeat(24)}`, configuration_sha256: "c".repeat(64),
     project_owner_ref: principal.principal_ref, project_id: "assembly-project", project_configuration_ref: "assembly-config",
-    project_configuration_sha256: "f".repeat(64), model_selections: selections };
+    project_configuration_sha256: "f".repeat(64), model_selections: [...selections, ...branchSelections] };
   const price = (): ModelGatewayPricingPort => ({ quote: vi.fn(async () => {
     throw new Error("Assembly must not quote or dispatch a model");
   }) });
@@ -80,7 +105,7 @@ async function fixture(missingPricing?: Stage) {
     if (deployment === undefined) throw new Error("Unexpected branch-stage catalog read");
     return { candidate: { candidate: { candidate_kind: "provider-native-v2", preparation: { deployment } } },
       proof: { qualification: { qualification_tier: "LIVE", observation_ref: `observation-${selected.stage}`, expires_at: expires } },
-      ...(missingPricing === selected.stage ? {} : { pricing_port: prices[selected.stage as Stage] }),
+      ...(missingPricing === selected.stage ? {} : { pricing_port: prices[selected.stage as Stage] ?? price() }),
     } as unknown as ResolvedProviderNativeModelCatalogV2;
   });
   const nativeRuntime = createResearchSemanticNativeModelRuntime({
@@ -89,15 +114,47 @@ async function fixture(missingPricing?: Stage) {
   });
   const forbidden = vi.fn(() => { throw new Error("Unexpected external I/O during assembly"); });
   vi.stubGlobal("fetch", forbidden);
-  const database = { prepare: vi.fn((sql: string) => {
-    if (!sql.includes("FROM retrieval_scope_profile")) throw new Error(`Unexpected assembly SQL: ${sql}`);
-    return { bind: (...parameters: unknown[]) => {
-      expect(parameters).toEqual([navigation.scope.snapshot_id, navigation.scope.revision]);
-      return { first: async () => ({ profile_version: "assembly-profile", max_sources: 1, max_results: 1 }) };
-    } };
-  }) } as unknown as D1Database;
+  const database = {
+    prepare: vi.fn((sql: string) => ({
+      bind: (...parameters: unknown[]) => {
+        if (sql.includes("FROM retrieval_scope_profile")) {
+          expect(parameters).toEqual([navigation.scope.snapshot_id, navigation.scope.revision]);
+          return { first: async () => ({ profile_version: "assembly-profile", max_sources: 1, max_results: 1 }) };
+        }
+        if (withV2RoleProfile && sql.includes("FROM research_workflow_current r JOIN investigation_ledger_head h")) {
+          expect(parameters).toEqual(["assembly-run", "assembly-investigation", principal.principal_ref]);
+          return { first: async () => ({ operation_id: "assembly-run", investigation_id: "assembly-investigation",
+            state: "ACTIVE", principal_ref: principal.principal_ref, credential_generation: principal.credential_generation,
+            deployment_generation: principal.deployment_generation, policy_generation: policy.policy_generation,
+            policy_authority_ref: navigation.scope.policy_authority_ref, scope_snapshot_id: navigation.scope.snapshot_id,
+            scope_snapshot_revision: navigation.scope.revision, current_revision: 1, ledger_revision: 1,
+            model_profile_ref: "research-model-v1", scope_expires_at: expires, grant_expires_at: expires,
+            run_budget_expires_at_ms: null }) };
+        }
+        throw new Error(`Unexpected assembly SQL: ${sql}`);
+      },
+    })),
+  } as unknown as D1Database;
   const bucket = { get: forbidden, head: forbidden, put: forbidden } as unknown as R2Bucket;
   const bind = vi.fn<AssemblyInput["bind_handlers"]>(handlers => handlers);
+  const parsedSemanticConfig = parseResearchSemanticConfiguration(value("ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON"));
+  const semanticConfig = withV2RoleProfile ? Object.freeze({ ...parsedSemanticConfig, roles: Object.freeze({
+    trusted_parameters: Object.freeze({ prompt: "Installed branch role template", max_tokens: 512 }),
+    request_timeout_ms: 1000,
+  }) }) : parsedSemanticConfig;
+  let modelProfileRaw = value("ELIOTR_MODEL_PROFILE_DEFINITION_JSON");
+  if (withV2RoleProfile) {
+    if (profileDeployment === undefined) throw new Error("Profile deployment is required for role profile test");
+    const { expires_at: _expiry, ...profilePolicy } = base.model_profile.policy;
+    void _expiry;
+    modelProfileRaw = JSON.stringify(await createOwnerModelProfileTemplateV2({
+      config_provenance_ref: value("ELIOTR_MODEL_PROFILE_PROVENANCE_REF"),
+      model_profile_ref: base.model_profile.model_profile_ref,
+      max_context_bytes: base.model_profile.max_context_bytes,
+      deployment: profileDeployment,
+      policy: profilePolicy,
+    }));
+  }
   const input: AssemblyInput = {
     database, search_database: database, work_bucket: bucket, evidence_bucket: bucket,
     ai_search: {} as AssemblyInput["ai_search"], operation_id: "assembly-run", investigation_id: "assembly-investigation",
@@ -107,9 +164,9 @@ async function fixture(missingPricing?: Stage) {
         scope_domain_id: navigation.scope.snapshot_id, content_digest: { algorithm: "sha256", digest: "0".repeat(64) } } },
     run_configuration: run, native_model_runtime: nativeRuntime,
     gateway: { reasoning_gateway_base_url: "https://gateway.example.invalid", gateway_token: "local-fixture-only" },
-    config: parseResearchSemanticConfiguration(value("ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON")), policy,
+    config: semanticConfig, policy,
     semantic_config: { revision_ref: null, config_sha256: "d".repeat(64) }, deployment_environment: "TEST",
-    model_profile: { raw: value("ELIOTR_MODEL_PROFILE_DEFINITION_JSON"), provenance_ref: value("ELIOTR_MODEL_PROFILE_PROVENANCE_REF") },
+    model_profile: { raw: modelProfileRaw, provenance_ref: value("ELIOTR_MODEL_PROFILE_PROVENANCE_REF") },
     report_config: { raw: value("ELIOTR_RESEARCH_REPORT_CONFIG_JSON"), provenance_ref: value("ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF") },
     recheck_authority: forbidden, require_client_execution: forbidden, route_external_agent_stages: forbidden, bind_handlers: bind,
   };
@@ -117,6 +174,15 @@ async function fixture(missingPricing?: Stage) {
 }
 
 describe("actual semantic main-pricing producer assembly (package boundary)", () => {
+  it("materializes the V2 branch-role profile through the captured native-v2 synthesis authority", async () => {
+    const f = await fixture(undefined, true);
+    const handlers = await assembleResearchSemanticServerHandlers(f.input);
+    expect(f.bind).toHaveBeenCalledWith(handlers);
+    expect(f.resolvePinned.mock.calls.map(([request]) => (request.selection as { stage: string }).stage))
+      .toContain("SYNTHESIZE");
+    expect(f.forbidden).not.toHaveBeenCalled();
+  });
+
   it("passes each native-v2 main stage's trusted pricing and capabilities into real handlers without optional roles", async () => {
     const f = await fixture();
     // Observe arguments while calling through; do not replace the producer or factory.

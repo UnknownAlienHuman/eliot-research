@@ -16,6 +16,7 @@ import type {
 import { createD1ScopeProfilePort, type RetrievalQueryAccess, type ScopeProfileBinding } from "@eliotr/retrieval";
 import {
   fail,
+  WorkflowCheckpointError,
   readCommittedWorkflowStageLineage,
   readWorkflowObject,
   WorkflowCheckpointStore,
@@ -31,8 +32,9 @@ import {
   createResearchBranchRoleServerPreparation,
   createResearchSynthesisPreparation,
   createResearchModelSpendPolicyService,
+  createPersistedModelProfileBindingProducer,
+  ModelProfileBindingError,
   decodeResearchReadExtractCheckpoint,
-  parseResearchModelProfileDefinition,
   type ResearchNativeAcquisitionSelection,
   type ReferenceManifestPolicyProfile,
   type ResearchModelGatewayRuntimeConfig,
@@ -72,6 +74,7 @@ import type {
   ResolvedResearchRunConfiguration,
 } from "@eliotr/cloudflare-research-configuration/research-run-configuration.js";
 import { createResearchSemanticWorkflowHandlerFactory } from "./research-semantic-composition.js";
+import { resolveResearchSemanticServerRoleModelPolicy } from "./research-semantic-profile-policy.js";
 import type { ResearchSynthesisOutputLanguage } from "./research-output-language.js";
 import type { createResearchNativeAcquisitionStageRoute } from "./research-native-acquisition.js";
 
@@ -132,6 +135,17 @@ export interface ResearchSemanticServerRuntimeInput {
 
 function configurationMissing(): never { return fail("WORKFLOW_CONFIGURATION_MISSING"); }
 function configurationInvalid(): never { return fail("WORKFLOW_CONFIGURATION_INVALID"); }
+
+function modelProfileBindingFailure(error: ModelProfileBindingError): never {
+  switch (error.code) {
+    case "MODEL_PROFILE_BINDING_CONFIG_MISSING": return configurationMissing();
+    case "MODEL_PROFILE_BINDING_AUTHORITY_STALE":
+    case "MODEL_PROFILE_BINDING_EXPIRED": return fail("WORKFLOW_AUTHORITY_STALE");
+    case "MODEL_PROFILE_BINDING_DEPLOYMENT_MISSING":
+    case "MODEL_PROFILE_BINDING_DEPLOYMENT_MISMATCH": return fail("WORKFLOW_QUALIFICATION_STALE");
+    default: return configurationInvalid();
+  }
+}
 
 function installed(value: string | undefined): string {
   if (value === undefined || value.trim() === "") configurationMissing();
@@ -332,10 +346,40 @@ export async function assembleResearchSemanticServerHandlers(
   }
   if (roleConfig !== undefined) {
     let modelPolicy: ReferenceManifestPolicyProfile;
+    const modelProfileSource = Object.freeze({ raw: installed(input.model_profile.raw),
+      provenance_ref: installed(input.model_profile.provenance_ref) });
     try {
-      modelPolicy = (await parseResearchModelProfileDefinition(
-        JSON.parse(installed(input.model_profile.raw)))).policy;
-    } catch { configurationInvalid(); }
+      const modelProfileProducer = createPersistedModelProfileBindingProducer({
+        config: modelProfileSource,
+        authority: {
+          database: input.database,
+          navigation: input.navigation,
+          operation_id: input.operation_id,
+          investigation_id: input.investigation_id,
+          principal: input.principal,
+        },
+        routeAuthority: input.native_model_runtime.profileRouteAuthority(deploymentRegistry),
+        ...(input.run_configuration === undefined ? {} : { run_configuration: input.run_configuration }),
+      });
+      modelPolicy = await resolveResearchSemanticServerRoleModelPolicy({
+        ...modelProfileSource,
+        materialize_owner_template: async (model_profile_ref) => {
+          const resolved = await modelProfileProducer.resolve({
+            model_profile_ref,
+            policy_generation: policy.policy_generation,
+            policy_authority_ref: policy.policy_authority_ref,
+            deployment_generation: principal.deployment_generation,
+            scope_snapshot_ref: { id: navigation.scope.snapshot_id, revision: navigation.scope.revision },
+            scope_snapshot_digest: navigation.scope.digest,
+          });
+          return Object.freeze({ policy: resolved.policy });
+        },
+      });
+    } catch (error) {
+      if (error instanceof ModelProfileBindingError) modelProfileBindingFailure(error);
+      if (error instanceof WorkflowCheckpointError) throw error;
+      configurationInvalid();
+    }
     const roleEvidenceAuthority = createD1EvidenceAuthorityPort({
       core_database: input.database, search_database: input.search_database, now: () => Date.now(),
     });
