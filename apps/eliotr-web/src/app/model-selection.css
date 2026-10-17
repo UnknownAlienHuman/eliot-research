@@ -12,8 +12,16 @@
 .er-model-catalog__pagination { display: flex; flex-wrap: wrap; align-items: center; gap: var(--eliot-space-block-control); }
 .er-model-catalog-settings__actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: var(--eliot-space-block-control); margin-block-start: var(--eliot-space-block-control); }
 .er-model-catalog__pagination { justify-content: space-between; max-inline-size: 36rem; }
-.er-model-catalog__list { display: grid; gap: var(--eliot-space-block-control); margin: 0; padding: 0; list-style: none; }
-.er-model-catalog__row { display: grid; grid-template-columns: var(--eliot-size-control-small) minmax(0, 1fr); align-items: start; gap: var(--eliot-space-gutter); padding-block: var(--eliot-space-block-control); border-block-end: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant); }
+/* Long catalogs read as a compact multi-column checklist on wide panes, one column on narrow ones. */
+.er-model-catalog__list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
+  gap: 0 var(--eliot-space-gutter);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.er-model-catalog__row { display: grid; grid-template-columns: var(--eliot-size-control-small) minmax(0, 1fr); align-items: center; gap: var(--eliot-space-block-control); padding-block: var(--eliot-space-tight); }
 .er-model-catalog__checkbox { inline-size: var(--eliot-size-control-small); block-size: var(--eliot-size-control-small); margin: 0; accent-color: var(--md-sys-color-primary); }
 .er-model-catalog__identity { display: grid; gap: var(--eliot-space-tight); min-inline-size: 0; cursor: pointer; }
 .er-model-catalog__identity > span { color: var(--md-sys-color-on-surface-variant); font-size: var(--eliot-type-body-small-size); overflow-wrap: anywhere; }
@@ -97,9 +105,6 @@
 }
 .er-chat-model-picker > .er-status { flex-basis: 100%; }
 
-@media (forced-colors: active) {
-  .er-model-catalog__row { border-block-end: var(--eliot-divider-width) solid CanvasText; }
-}
 
 /* Research method: two segmented chips beside the model; the radio keeps native semantics. */
 .er-live-method-selector {

@@ -1,0 +1,21 @@
+/* Placeholder rows: a short and a long bar on the tonal row surface, gently pulsing unless motion is reduced. */
+.er-loading-rows { display: grid; gap: var(--eliot-space-block-control); min-inline-size: 0; }
+.er-loading-rows__row {
+  display: grid;
+  gap: var(--eliot-space-tight);
+  padding: var(--eliot-space-gutter) var(--eliot-space-panel);
+  border-radius: var(--eliot-shape-large);
+  background: var(--eliot-color-group);
+}
+.er-loading-rows__row > span {
+  display: block;
+  block-size: var(--eliot-space-block-control);
+  border-radius: var(--eliot-shape-full);
+  background: color-mix(in srgb, var(--md-sys-color-on-surface) 10%, transparent);
+  animation: er-loading-pulse calc(var(--eliot-motion-spatial) * 4) var(--eliot-motion-standard-easing) infinite alternate;
+}
+.er-loading-rows__row > span:first-child { inline-size: 30%; }
+.er-loading-rows__row > span:last-child { inline-size: 80%; }
+@keyframes er-loading-pulse { from { opacity: 1; } to { opacity: var(--eliot-state-disabled-opacity); } }
+@media (prefers-reduced-motion: reduce) { .er-loading-rows__row > span { animation: none; } }
+@media (forced-colors: active) { .er-loading-rows__row > span { background: GrayText; } }

@@ -12,13 +12,12 @@ type CatalogPage = ResearchModelCatalogPage | ServiceModelCatalogPage;
 const copy = {
   en: {
     title: "Model catalog",
-    explanation: "Visibility only controls which catalog entries appear in Chat. It does not grant provider access or verify account entitlement.",
+    explanation: "Tick the models to offer in the chat's model menu.",
     search: "Search model inventory",
     showAll: "Show all models",
     hideAll: "Hide all models",
     visible: "Show in Chat",
     accountUnverified: "Account access unverified",
-    accountUnknown: "Account access unknown",
     reading: "Reading model catalog…",
     failed: "The model catalog could not be read.",
     empty: "No models are listed on this page.",
@@ -26,17 +25,16 @@ const copy = {
     previous: "Previous page",
     next: "Next page",
     coverage: (value: CatalogPage["pagination"]["coverage"]) => value === "complete"
-      ? "Catalog coverage reported complete" : value === "partial" ? "Catalog coverage is partial" : "Catalog coverage is unknown",
+      ? "" : "The provider may list more models than shown here.",
   },
   ru: {
     title: "Каталог моделей",
-    explanation: "Видимость управляет только тем, какие записи каталога показаны в чате. Она не предоставляет доступ к провайдеру и не подтверждает право аккаунта.",
+    explanation: "Отметьте модели, которые предлагать в выборе модели в чате.",
     search: "Поиск в каталоге моделей",
     showAll: "Показывать все модели",
     hideAll: "Скрыть все модели",
     visible: "Показывать в чате",
     accountUnverified: "Доступ аккаунта не проверен",
-    accountUnknown: "Доступ аккаунта неизвестен",
     reading: "Читаем каталог моделей…",
     failed: "Не удалось прочитать каталог моделей.",
     empty: "На этой странице каталога нет моделей.",
@@ -44,7 +42,7 @@ const copy = {
     previous: "Предыдущая страница",
     next: "Следующая страница",
     coverage: (value: CatalogPage["pagination"]["coverage"]) => value === "complete"
-      ? "Каталог сообщает о полном охвате" : value === "partial" ? "Охват каталога частичный" : "Охват каталога неизвестен",
+      ? "" : "У провайдера может быть больше моделей, чем показано здесь.",
   },
 } as const;
 
@@ -80,7 +78,8 @@ export function ModelCatalogFilter({ locale, catalog, loading, failed, search, v
     </div>
     {loading && <Status announce>{text.reading}</Status>}
     {failed && <Status tone="error" announce>{text.failed}</Status>}
-    {catalog && <p className="er-model-catalog__coverage" role="status">{text.coverage(catalog.pagination.coverage)}</p>}
+    {catalog && text.coverage(catalog.pagination.coverage) !== "" &&
+      <p className="er-model-catalog__coverage" role="status">{text.coverage(catalog.pagination.coverage)}</p>}
     {catalog && models.length === 0 && <p>{search.trim() ? text.noMatch : text.empty}</p>}
     {models.length > 0 && <ul className="er-model-catalog__list">
       {models.map(model => {
@@ -92,8 +91,9 @@ export function ModelCatalogFilter({ locale, catalog, loading, failed, search, v
             disabled={busy || visibility === undefined}
             onChange={event => onVisibilityChange(model.model_id, event.currentTarget.checked)} />
           <label htmlFor={checkboxId} className="er-model-catalog__identity">
-            <strong>{model.name}</strong><code>{model.model_id}</code>
-            <span>{model.provider_id} · {model.account_availability === "unverified" ? text.accountUnverified : text.accountUnknown}</span>
+            {/* The name, and the exact ID only when it says something the name does not. */}
+            <strong>{model.name}</strong>{model.model_id !== model.name && <code>{model.model_id}</code>}
+            {model.account_availability === "unverified" && <span>{text.accountUnverified}</span>}
           </label>
         </li>;
       })}

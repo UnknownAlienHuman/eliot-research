@@ -13,6 +13,7 @@ import { researchQueryOptions } from '../query/research';
 import { ReportPanel } from './ReportPanel';
 import { usePaneAnnouncement } from './usePaneAnnouncement';
 import { hasInboxStudioSelectionState, matchesInboxStudioReadback, resolveInboxStudioSelection } from './inboxStudioSelection';
+import { LoadingRows } from './LoadingRows';
 
 type StudioIntent = ({ readonly kind: 'edit'; readonly base: WikiProposalReadView; readonly title: string; readonly body: string; readonly note: string }
   | { readonly kind: 'publish'; readonly base: WikiProposalReadView; readonly expectedHead: number })
@@ -32,9 +33,9 @@ const publicationReadbackCopy = {
   ru: { failed: 'Публикация подтверждена, но не удалось прочитать опубликованную страницу. Повторите чтение; публикация не будет отправлена снова.', retry: 'Повторить чтение опубликованной страницы' },
 } as const;
 const savedReportsCopy = {
-  en: { reading: 'Reading saved reports.', failed: 'Saved reports could not be read. Try a fresh read.',
+  en: { reading: 'Loading saved reports…', failed: 'Saved reports could not be read. Try a fresh read.',
     refresh: 'Refresh saved reports', empty: 'No saved reports yet.' },
-  ru: { reading: 'Читаются сохранённые отчёты.', failed: 'Не удалось прочитать сохранённые отчёты. Повторите чтение.',
+  ru: { reading: 'Загружаем сохранённые отчёты…', failed: 'Не удалось прочитать сохранённые отчёты. Повторите чтение.',
     refresh: 'Обновить сохранённые отчёты', empty: 'Сохранённых отчётов пока нет.' },
 } as const;
 const inboxSelectionCopy = {
@@ -349,7 +350,7 @@ export function StudioPanel({ apis, privacy, context, locale }: {
       <div className="er-live-history-heading"><h2 ref={reportsHeading} tabIndex={-1}>{text.recent}</h2>
         {history.isError ? <Button variant="text" disabled={history.isFetching} onClick={() => { void history.refetch(); }}>{reportText.refresh}</Button> : null}</div>
       {history.isError ? <Status tone="error">{reportText.failed}</Status>
-        : history.isPending || history.isFetching ? <Status>{reportText.reading}</Status>
+        : history.isPending ? <LoadingRows label={reportText.reading} />
         : history.data?.saved_drafts.length === 0 ? <p>{reportText.empty}</p> : null}
       <ul>{!history.isError && history.data?.saved_drafts.map(draft => <li key={`${draft.artifact_ref.id}:${draft.artifact_ref.revision}`}>
       <time dateTime={draft.created_at}>{displayTime(draft.created_at)}</time><Button variant="tonal" onClick={() => write(old => ({ ...old, artifact: draft.artifact_ref }))}>{text.report}</Button>
