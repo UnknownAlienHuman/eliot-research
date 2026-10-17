@@ -105,8 +105,8 @@ async function environment(unknownAttachment: boolean) {
   const apis = { sources: { imports: { raw }, projects,
     namespaces: { async readSourceNamespaces() { return { protocol: 'eliotr.owner-namespaces.v1',
       deployment_generation: generation, profiles: [], namespaces: [
-        { source_namespace_id: 'strict', title: 'Strict', minimum_quality_state: 'standard' },
-        { source_namespace_id: 'documents', title: 'Documents', minimum_quality_state: 'degraded' },
+        { source_namespace_id: 'strict', title: 'Strict', minimum_quality_state: 'standard', read_access: 'ACTIVE' },
+        { source_namespace_id: 'documents', title: 'Documents', minimum_quality_state: 'degraded', read_access: 'ACTIVE' },
       ] }; } },
     mintIntent() { minted++; return `11111111-1111-4111-8111-${String(minted).padStart(12, '0')}`; },
   } } as unknown as BoundWorkspaceApis;

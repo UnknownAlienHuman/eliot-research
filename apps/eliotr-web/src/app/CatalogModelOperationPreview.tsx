@@ -65,10 +65,18 @@ function CatalogOperationPreview({ existing, holdQualification = false, locale =
           models: provider === model.provider_id ? [{ ...model, name: 'Step 5 Preview Free', description: 'A discovered catalog model.',
             catalog_availability: 'listed', account_availability: 'unknown', capabilities: { text_generation: 'supported',
               input_output_schema: 'available_from_transport', schema_requirement: null }, source_id: null, source_task: null,
-            billing: { selected_path: 'provider_catalog', support: 'unknown', account_entitlement: 'not_established_by_catalog' }, properties: [], tags: [] }] : [],
+            billing: { selected_path: 'provider_catalog', support: 'unknown', account_entitlement: 'not_established_by_catalog' },
+            properties: [{ property_id: 'opencode_transport', value: { status: 'eligible_unverified', api: 'custom-chat-completions' } }], tags: [] }] : [],
           pagination: { page: 1, per_page: 20, has_more: false, next_page: null, coverage: 'complete',
             probe: provider === 'cloudflare-workers-ai' ? 'next_page_empty' : 'provider_reported' } };
         return json(catalog);
+      }
+      if (url.pathname === '/api/v1/system/research-configuration' && url.searchParams.get('capability') === 'research-methods-v1') {
+        return json({ protocol: 'eliotr.research-configuration-method-readiness.v1', project_id: 'project-chat',
+          selected_pin: { configuration_project_id: 'project-chat', configuration_ref: selected.configuration_ref,
+            configuration_sha256: selected.configuration_sha256, selection_revision: 4 },
+          evidence_review_ready: false, evidence_review_handler_generation: null,
+          evidence_review_unavailable_reason: 'STAGE_BINDINGS_UNAVAILABLE', checked_at: stamp });
       }
       if (url.pathname === '/api/v1/system/research-configuration') return json({ protocol: 'eliotr.research-configuration-readiness.v1',
         configuration: 'present', model_transport: 'available', qualification_state: 'current', run_readiness: 'ready',
@@ -156,14 +164,15 @@ function availabilityCheckingStory(locale: 'en' | 'ru') {
       await userEvent.selectOptions(picker, modelCatalogEntryKey(model));
       try {
         await announcementUntil(() => currentProbe.posts() === 1 && channel.textContent ===
-          (ru ? 'Проверяем доступность моделей…' : 'Checking model availability…'));
+          (ru ? 'Проверяем доступность моделей…' : 'Checking model availability…'),
+          () => currentProbe.errors() + `\nposts=${currentProbe.posts()}; announcement=${channel.textContent}`);
         await canvas.findByText(ru ? 'Проверяем доступность модели…' : 'Checking model availability…', { selector: '.er-status > span' });
         const ask = await canvas.findByRole('button', { name: ru ? 'Спросить' : 'Ask' }) as HTMLButtonElement;
         if (!picker.disabled || !ask.disabled || draft.value !== question) throw new Error('Availability checking lost its lock or question draft');
         if (pane.querySelector('.er-research-run')?.getAttribute('data-phase') !== 'start' ||
             pane.querySelector('.er-research-run__heading')?.textContent !== (ru ? 'Спросите свои источники' : 'Ask your sources') ||
             pane.querySelector('.er-research-run__turn') !== null ||
-            !pane.querySelector(`section[aria-label="${ru ? 'Предлагаемые вопросы' : 'Suggested questions'}"]`))
+            !pane.querySelector(`section[aria-label="${ru ? 'Путеводитель по проекту' : 'Project source guide'}"]`))
           throw new Error('Availability checking replaced the start view with research progress');
         if (paneAnnouncement(pane) !== channel) throw new Error('Model checking replaced the announcement channel');
         currentProbe.assertNoResearch();
@@ -192,7 +201,7 @@ export const CatalogModelOperationReloadRecovery = {
     const pane = canvasElement.querySelector('section[aria-label="Research recovery fixture"]');
     if (!(pane instanceof HTMLElement)) throw new Error('Missing research fixture pane');
     paneAnnouncement(pane);
-    await userEvent.click(await canvas.findByRole('button', { name: 'Check availability' }));
+    await userEvent.click(await canvas.findByRole('button', { name: 'Check saved status' }));
     await canvas.findByText('Model availability confirmed for this run.', { selector: '.er-status > span' });
     await announcementUntil(() => !picker.disabled);
     if (probe?.posts() !== 0 || probe.baseReads() < 2 || probe.statusReads() < 2) throw new Error('Reload recovery did not stay GET-only on the original operation');
