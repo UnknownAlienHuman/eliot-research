@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ModelGatewayPricingPort } from "@eliotr/cloudflare-ai";
 import type { NavigationReadAuthority } from "@eliotr/cloudflare-evidence";
 import type { ResolvedProviderNativeModelCatalogV2 } from "@eliotr/cloudflare-native-models";
-import { createResearchOwnerRuntimeConfiguration } from "@eliotr/cloudflare-research-configuration/research-owner-runtime-config.js";
+import { createResearchOwnerRuntimeConfiguration } from "@eliotr/cloudflare-research-configuration";
 import { resolveResearchOwnerSpendPolicy } from "@eliotr/cloudflare-research-configuration/research-owner-spend-policy.js";
 import { parseResearchSemanticConfiguration } from "@eliotr/cloudflare-research-configuration/research-semantic-configuration-schema.js";
 import { admissionTestConfiguration } from "../../../apps/eliotr-core/test/research-current-dispatch-config.js";
