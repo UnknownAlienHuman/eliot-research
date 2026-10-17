@@ -22,10 +22,11 @@ import {
   type CandidateAnchorAuthority,
   type EvidenceAccessContext,
   type EvidenceSourceAuthority,
+  type FreshEvidenceAuthorityRead,
   type ScopeAuthority,
   type ScopeAuthorization,
 } from "./types.js";
-import { SCOPE_COLUMNS, decodeStoredScopeRow } from "./scope-codec.js";
+import { SCOPE_COLUMNS, decodeStoredScopeRow, scopePersistenceFailure, validateScopeStorageRef } from "./scope-codec.js";
 
 interface GrantRow {
   readonly authorization_receipt_ref: unknown;
@@ -129,12 +130,14 @@ export async function loadScopeAuthority(
   ref: VersionedRef,
 ): Promise<ScopeAuthority | null> {
   try { return await readD1ScopeSnapshot(database, ref.id, ref.revision); }
-  catch (cause) {
-    if (cause instanceof ScopePersistenceError) {
-      fail("EVIDENCE_INPUT_INVALID", "stored ScopeSnapshot failed integrity validation", { cause });
-    }
-    fail("EVIDENCE_SETTLEMENT_UNCERTAIN", "ScopeSnapshot authority read is unavailable", { retryable: true, cause });
+  catch (cause) { return scopeAuthorityReadFailure(cause); }
+}
+
+function scopeAuthorityReadFailure(cause: unknown): never {
+  if (cause instanceof ScopePersistenceError) {
+    fail("EVIDENCE_INPUT_INVALID", "stored ScopeSnapshot failed integrity validation", { cause });
   }
+  fail("EVIDENCE_SETTLEMENT_UNCERTAIN", "ScopeSnapshot authority read is unavailable", { retryable: true, cause });
 }
 
 export async function authorizeScopeAuthority(
@@ -297,12 +300,7 @@ async function parseAdmissionDecision(row: SourceRow): Promise<SourceAdmissionDe
   return decision;
 }
 
-export async function loadSourceAuthority(
-  database: D1Database,
-  sourceRevisionRef: string,
-  nowMs: number,
-): Promise<EvidenceSourceAuthority | null> {
-  const row = await database.prepare(
+const sourceAuthoritySql =
     "SELECT s.source_id, s.source_owner_system_id AS owner_system_id, " +
     "s.source_namespace_id, sr.source_owner_generation, " +
     "sr.source_revision_ref, s.title AS source_title, s.source_class, sr.content_sha256, " +
@@ -314,10 +312,88 @@ export async function loadSourceAuthority(
     "AND o.status = 'ACTIVE' " +
     "LEFT JOIN source_admission_decision d ON d.source_revision_ref = sr.source_revision_ref " +
     "AND d.decision = 'ADMITTED' " +
-    "WHERE sr.source_revision_ref = ?1 ORDER BY d.created_at DESC LIMIT 1",
-  ).bind(sourceRevisionRef).first<SourceRow>();
+    "WHERE sr.source_revision_ref = ?1 ORDER BY d.created_at DESC LIMIT 1";
+
+export async function loadSourceAuthority(
+  database: D1Database,
+  sourceRevisionRef: string,
+  nowMs: number,
+): Promise<EvidenceSourceAuthority | null> {
+  const row = await database.prepare(sourceAuthoritySql).bind(sourceRevisionRef).first<SourceRow>();
   if (row === null) return null;
   return decodeSourceAuthority(row, nowMs);
+}
+
+function authorityBatchRow<T>(results: readonly D1Result<unknown>[], index: number): T | null {
+  const result = results[index];
+  if (result?.success !== true || !Array.isArray(result.results) || result.results.length > 1) {
+    throw new Error(result?.error ?? "D1 authority read result is incomplete");
+  }
+  return (result.results[0] as T | undefined) ?? null;
+}
+
+/** Same primary-D1 SELECTs in one fresh transaction; decode scope, grant, then source in caller order. */
+export async function loadFreshEvidenceAuthority(
+  database: D1Database,
+  ref: VersionedRef,
+  access: EvidenceAccessContext,
+  sourceRevisionRef: string,
+  now: () => number,
+): Promise<FreshEvidenceAuthorityRead> {
+  const readTime = (): number => {
+    const observed = now();
+    if (!Number.isSafeInteger(observed) || observed < 0) throw new RangeError("evidence authority clock is invalid");
+    return observed;
+  };
+  try { validateScopeStorageRef(ref.id, ref.revision); }
+  catch (cause) { return scopeAuthorityReadFailure(cause); }
+  let results: D1Result<unknown>[];
+  try {
+    results = await database.batch([
+      database.prepare(`SELECT ${SCOPE_COLUMNS} FROM scope_snapshot WHERE snapshot_id = ?1 AND revision = ?2 LIMIT 1`)
+        .bind(ref.id, ref.revision),
+      database.prepare(scopeAuthorizationSql).bind(
+        ref.id, ref.revision, access.principal_ref, access.client_class, access.credential_generation,
+      ),
+      database.prepare(sourceAuthoritySql).bind(sourceRevisionRef),
+    ]);
+  } catch {
+    // D1 can reject the whole read batch without individual results. Use the
+    // original ordered reads so a later SELECT failure cannot mask an earlier denial.
+    const scope = await loadScopeAuthority(database, ref);
+    return {
+      scope,
+      authorize: async () => {
+        if (scope === null) fail("EVIDENCE_SCOPE_NOT_FOUND", "ScopeSnapshot does not exist");
+        return authorizeScopeAuthority(database, scope, access, readTime());
+      },
+      loadSource: () => loadSourceAuthority(database, sourceRevisionRef, readTime()),
+    };
+  }
+  let scope: ScopeAuthority | null;
+  try {
+    if (!Array.isArray(results) || results.length > 3) throw new Error("D1 authority read batch is invalid");
+    const row = authorityBatchRow<Record<string, unknown>>(results, 0);
+    scope = row === null ? null : await decodeStoredScopeRow(row);
+    if (scope !== null && (scope.snapshot.snapshot_id !== ref.id || scope.snapshot.revision !== ref.revision)) {
+      scopePersistenceFailure("SCOPE_STORAGE_READBACK_MISMATCH");
+    }
+  } catch (cause) { return scopeAuthorityReadFailure(cause); }
+  return {
+    scope,
+    authorize: async () => {
+      if (scope === null) fail("EVIDENCE_SCOPE_NOT_FOUND", "ScopeSnapshot does not exist");
+      const observed = readTime();
+      assertScopeAuthorizationCurrent(scope, access, observed);
+      return decodeScopeAuthorizationRow(scope, observed, authorityBatchRow<GrantRow>(results, 1));
+    },
+    // Source errors remain deferred past handle expiry and inside its invalidation catch.
+    loadSource: async () => {
+      const observed = readTime();
+      const row = authorityBatchRow<SourceRow>(results, 2);
+      return row === null ? null : decodeSourceAuthority(row, observed);
+    },
+  };
 }
 
 export async function loadSourceAuthorities(

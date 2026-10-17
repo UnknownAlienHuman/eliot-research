@@ -147,7 +147,19 @@ export interface PersistCitationResolutionInput {
   readonly attempt_binding?: CitationResolutionAttemptBinding;
 }
 
+/** Fresh read results for one resolution, decoded at the original authority boundaries. */
+export interface FreshEvidenceAuthorityRead {
+  readonly scope: ScopeAuthority | null;
+  authorize(): Promise<ScopeAuthorization>;
+  loadSource(): Promise<EvidenceSourceAuthority | null>;
+}
+
 export interface EvidenceAuthorityPort {
+  loadFreshAuthority?(
+    ref: VersionedRef,
+    access: EvidenceAccessContext,
+    sourceRevisionRef: string,
+  ): Promise<FreshEvidenceAuthorityRead>;
   loadScope(ref: VersionedRef): Promise<ScopeAuthority | null>;
   authorizeScope(
     scope: ScopeAuthority,

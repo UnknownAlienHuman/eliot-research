@@ -71,8 +71,16 @@ async function loadAuthorizedScope(
   dependencies: EvidenceResolverDependencies,
   ref: VersionedRef,
   access: EvidenceAccessContext,
-): Promise<{ readonly scope: ScopeAuthority; readonly authorization: ScopeAuthorization }> {
+  sourceRevisionRef?: string,
+): Promise<{ readonly scope: ScopeAuthority; readonly authorization: ScopeAuthorization;
+  readonly readSource?: () => Promise<EvidenceSourceAuthority | null> }> {
   validateAccess(access);
+  if (sourceRevisionRef !== undefined && dependencies.authority.loadFreshAuthority !== undefined) {
+    const read = await dependencies.authority.loadFreshAuthority(ref, access, sourceRevisionRef);
+    if (read.scope === null) fail("EVIDENCE_SCOPE_NOT_FOUND", "ScopeSnapshot does not exist");
+    const authorization = await read.authorize();
+    return { scope: read.scope, authorization, readSource: () => read.loadSource() };
+  }
   const scope = await dependencies.authority.loadScope(ref);
   if (scope === null) fail("EVIDENCE_SCOPE_NOT_FOUND", "ScopeSnapshot does not exist");
   const authorization = await dependencies.authority.authorizeScope(scope, access);
@@ -140,8 +148,9 @@ async function loadSource(
   sourceRevisionRef: string,
   scope: ScopeAuthority,
   authorization: ScopeAuthorization,
+  readSource?: () => Promise<EvidenceSourceAuthority | null>,
 ): Promise<EvidenceSourceAuthority> {
-  const source = await dependencies.authority.loadSource(sourceRevisionRef);
+  const source = await (readSource === undefined ? dependencies.authority.loadSource(sourceRevisionRef) : readSource());
   if (source === null) fail("EVIDENCE_SOURCE_NOT_FOUND", "SourceRevision does not exist");
   requireLiveSource(source);
   requireSourceInScope(source, scope.snapshot, authorization);
@@ -362,12 +371,13 @@ async function resolveCandidate(
   scopeRef: VersionedRef,
   access: EvidenceAccessContext,
 ): Promise<ResolvedEvidence> {
-  const { scope, authorization } = await loadAuthorizedScope(dependencies, scopeRef, access);
+  const { scope, authorization, readSource } = await loadAuthorizedScope(dependencies, scopeRef, access, candidate.source_revision_ref);
   const source = await loadSource(
     dependencies,
     candidate.source_revision_ref,
     scope,
     authorization,
+    readSource,
   );
   const anchorAuthority = await dependencies.authority.resolveCandidate(candidate, source, scope);
   const materialized = await dependencies.content.materialize(source, anchorAuthority.anchor);
@@ -401,10 +411,11 @@ async function resolveHandle(
   if (expectedScopeRef !== undefined && !exactEvidenceRef(handle.scope_snapshot_ref, expectedScopeRef)) {
     fail("EVIDENCE_SCOPE_MISMATCH", "EvidenceHandle is bound to another ScopeSnapshot");
   }
-  const { scope, authorization } = await loadAuthorizedScope(
+  const { scope, authorization, readSource } = await loadAuthorizedScope(
     dependencies,
     handle.scope_snapshot_ref,
     access,
+    handle.source_revision_ref,
   );
   const time = observedAt(dependencies.now ?? Date.now);
   if (handle.expires_at !== undefined && Date.parse(handle.expires_at) <= time.epoch) {
@@ -417,6 +428,7 @@ async function resolveHandle(
       handle.source_revision_ref,
       scope,
       authorization,
+      readSource,
     );
     if (
       source.source_namespace_id !== handle.source_namespace_id ||

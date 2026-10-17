@@ -2,6 +2,7 @@ import type { EvidenceAuthorityPort } from "./types.js";
 import {
   authorizeScopeAuthority,
   loadEvidenceHandle,
+  loadFreshEvidenceAuthority,
   loadScopeAuthority,
   loadSourceAuthority,
   resolveCandidateAuthority,
@@ -23,6 +24,9 @@ export function createD1EvidenceAuthorityPort(
 ): EvidenceAuthorityPort {
   const now = dependencies.now ?? Date.now;
   return {
+    loadFreshAuthority: (ref, access, sourceRevisionRef) => loadFreshEvidenceAuthority(
+      dependencies.core_database, ref, access, sourceRevisionRef, now,
+    ),
     loadScope: (ref) => loadScopeAuthority(dependencies.core_database, ref),
     authorizeScope: (scope, access) => {
       const observed = now();
