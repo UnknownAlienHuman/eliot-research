@@ -47,10 +47,17 @@ export type ResearchOwnerAuditConfigurationInput = ResearchOwnerPromptLimits & R
   policy: ResearchClaimAuditPolicy;
 }>;
 
+/** Existing shared branch-role prompt template settings; the server appends each installed role question. */
+export type ResearchOwnerBranchRoleConfigurationInput = ResearchOwnerPromptLimits & Readonly<{
+  prompt: string;
+}>;
+
 export type ResearchOwnerSemanticConfigurationInput = Readonly<{
   readonly output_format?: ResearchOwnerOutputFormat;
   synthesis: ResearchOwnerPromptLimits;
   audit: ResearchOwnerAuditConfigurationInput;
+  /** Omission preserves byte-identical legacy two-stage semantic configuration. */
+  roles?: ResearchOwnerBranchRoleConfigurationInput;
   normalization: ResearchOwnerNormalizationInput;
 }>;
 
@@ -73,6 +80,7 @@ export type ResearchSemanticServerConfiguration = Readonly<{
     allowed_verifier_refs: readonly string[];
     policy: ResearchClaimAuditPolicy;
   }>;
+  roles?: ResearchSemanticPromptConfiguration;
   normalization: Readonly<{
     section_ref: VersionedRef;
     required_precision: string;
@@ -196,6 +204,21 @@ function auditInput(value: unknown): ResearchOwnerAuditConfigurationInput {
   });
 }
 
+function branchRoleInput(value: unknown): ResearchOwnerBranchRoleConfigurationInput {
+  const input = record(value, "roles");
+  // Branch-role prompting is a server-owned plain-text template. It does not
+  // accept caller-supplied response schemas; rejecting the field here keeps
+  // setup-time validation aligned with the actual branch-role transport.
+  exactKeys(input, ["prompt", "max_tokens", "request_timeout_ms"], "roles", ["reasoning_effort"]);
+  if (typeof input.prompt !== "string" || input.prompt.trim().length === 0) invalid("roles.prompt is invalid");
+  const limits = promptLimits({
+    max_tokens: input.max_tokens,
+    request_timeout_ms: input.request_timeout_ms,
+    ...(input.reasoning_effort === undefined ? {} : { reasoning_effort: input.reasoning_effort }),
+  }, "roles");
+  return Object.freeze({ prompt: input.prompt, ...limits });
+}
+
 function normalizationInput(value: unknown): ResearchOwnerNormalizationInput {
   const input = record(value, "normalization");
   exactKeys(input, ["section_ref", "required_precision", "required_source_class"], "normalization");
@@ -223,7 +246,7 @@ export function createResearchOwnerSemanticConfiguration(
   input: ResearchOwnerSemanticConfigurationInput,
 ): ResearchSemanticServerConfiguration {
   const setup = record(input, "semantic configuration");
-  exactKeys(setup, ["synthesis", "audit", "normalization"], "semantic configuration", ["output_format"]);
+  exactKeys(setup, ["synthesis", "audit", "normalization"], "semantic configuration", ["output_format", "roles"]);
   let outputFormat: ResearchOwnerOutputFormat;
   try {
     outputFormat = parseResearchOwnerOutputFormat(setup.output_format);
@@ -232,6 +255,7 @@ export function createResearchOwnerSemanticConfiguration(
   }
   const synthesisLimits = promptLimits(setup.synthesis, "synthesis");
   const audit = auditInput(setup.audit);
+  const roles = setup.roles === undefined ? undefined : branchRoleInput(setup.roles);
   const normalization = normalizationInput(setup.normalization);
   const synthesisPrompt = selectResearchOwnerPrompt("SYNTHESIZE", outputFormat);
   const auditPrompt = selectResearchOwnerPrompt("AUDIT_CLAIMS", outputFormat, audit.prompt_revision);
@@ -263,6 +287,16 @@ export function createResearchOwnerSemanticConfiguration(
       allowed_verifier_refs: audit.allowed_verifier_refs,
       policy: audit.policy,
     },
+    ...(roles === undefined ? {} : {
+      roles: {
+        trusted_parameters: {
+          prompt: roles.prompt,
+          max_tokens: roles.max_tokens,
+          ...(roles.reasoning_effort === undefined ? {} : { reasoning_effort: roles.reasoning_effort }),
+        },
+        request_timeout_ms: roles.request_timeout_ms,
+      },
+    }),
     normalization,
   } satisfies ResearchSemanticServerConfiguration;
   const frozen = deepFreeze(configuration);

@@ -137,7 +137,9 @@ describe("owner v2 permanent settings and prepared transport", () => {
     expect(selected?.transport_policy.capabilities.max_output_tokens_field).toBe("max_completion_tokens");
     const semantic = JSON.parse(requiredRuntimeVar(first.vars, "ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON")) as {
       readonly synthesis: { readonly trusted_parameters: { readonly max_tokens: number; readonly reasoning_effort?: string; readonly response_format?: unknown } };
+      readonly roles?: unknown;
     };
+    expect(semantic.roles).toBeUndefined();
     const trusted = semantic.synthesis.trusted_parameters;
     const expectedDigest = await modelGatewayRequestParametersSha256({
       model: profile.deployment.route_ref, messages: [], max_completion_tokens: trusted.max_tokens,
@@ -147,6 +149,62 @@ describe("owner v2 permanent settings and prepared transport", () => {
     }, selected?.transport_policy.capabilities);
     expect(expectedDigest).toBe(profile.deployment.parameters_digest);
     expect(canonicalJson(first.vars.ELIOTR_MODEL_SPEND_POLICY_JSON)).toBe(canonicalJson(second.vars.ELIOTR_MODEL_SPEND_POLICY_JSON));
+  });
+
+  it("uses the explicit shared branch-role parameters for both branch spend digests", async () => {
+    const input = v2Input(generation);
+    const synthesisRule = input.spend_policy.rules.find((rule) => rule.stage === "SYNTHESIZE");
+    if (synthesisRule === undefined) throw new Error("fixture synthesis spend rule is missing");
+    const branchRules = (["ANALYZE_BRANCHES", "COUNTER_SEARCH"] as const).map((stage) => ({
+      ...synthesisRule,
+      stage,
+      deployment: { ...synthesisRule.deployment, route_version: `${tag}-${stage.toLowerCase()}` },
+    }));
+    const roleSettings = { prompt: "existing shared branch-role prompt template settings",
+      max_tokens: 256, request_timeout_ms: 1_500, reasoning_effort: "high" as const };
+    const compiled = await createResearchOwnerRuntimeConfiguration({
+      ...input,
+      semantic: { ...input.semantic, roles: roleSettings },
+      spend_policy: { ...input.spend_policy, rules: [...input.spend_policy.rules, ...branchRules] },
+    });
+    const semantic = JSON.parse(requiredRuntimeVar(compiled.vars, "ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON")) as {
+      readonly roles: { readonly trusted_parameters: { readonly prompt: string; readonly max_tokens: number;
+        readonly reasoning_effort?: string }; readonly request_timeout_ms: number };
+    };
+    expect(semantic.roles).toMatchObject({ trusted_parameters: { prompt: roleSettings.prompt,
+      max_tokens: roleSettings.max_tokens, reasoning_effort: roleSettings.reasoning_effort },
+      request_timeout_ms: roleSettings.request_timeout_ms });
+    const spend = JSON.parse(requiredRuntimeVar(compiled.vars, "ELIOTR_MODEL_SPEND_POLICY_JSON")) as {
+      readonly rules: readonly { readonly stage: string; readonly deployment: { readonly route_ref: string;
+        readonly parameters_digest: string } }[];
+    };
+    const branchSpend = spend.rules.filter((rule) =>
+      rule.stage === "ANALYZE_BRANCHES" || rule.stage === "COUNTER_SEARCH");
+    expect(branchSpend.map((rule) => rule.stage)).toEqual(["ANALYZE_BRANCHES", "COUNTER_SEARCH"]);
+    for (const rule of branchSpend) {
+      const expected = await modelGatewayRequestParametersSha256({
+        model: rule.deployment.route_ref, messages: [], max_tokens: roleSettings.max_tokens,
+        reasoning_effort: roleSettings.reasoning_effort, stream: false,
+      });
+      expect(rule.deployment.parameters_digest).toBe(expected);
+    }
+
+    await expect(createResearchOwnerRuntimeConfiguration({
+      ...input,
+      spend_policy: { ...input.spend_policy, rules: [...input.spend_policy.rules, ...branchRules] },
+    })).rejects.toThrow("the installed owner branch-role template and both branch spend stages must be configured together");
+    await expect(createResearchOwnerRuntimeConfiguration({
+      ...input,
+      semantic: { ...input.semantic, roles: roleSettings },
+    })).rejects.toThrow("the installed owner branch-role template and both branch spend stages must be configured together");
+
+    for (const response_format of [null, "bad", { type: "unknown" }]) {
+      await expect(createResearchOwnerRuntimeConfiguration({
+        ...input,
+        semantic: { ...input.semantic,
+          roles: { ...roleSettings, response_format } as never },
+      })).rejects.toThrow("roles contains unsupported fields");
+    }
   });
 
   it("binds an explicit OpenRouter JSON-object normalization into the generated runtime digest", async () => {

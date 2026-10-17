@@ -158,6 +158,11 @@ export async function createResearchOwnerRuntimeConfiguration(
     invalid("unsupported setup document");
   }
   const semantic = createResearchOwnerSemanticConfiguration(input.semantic);
+  const branchRules = input.spend_policy.rules.filter((rule) =>
+    rule.stage === "ANALYZE_BRANCHES" || rule.stage === "COUNTER_SEARCH");
+  if (branchRules.length === 1 || (branchRules.length === 2) !== (semantic.roles !== undefined)) {
+    invalid("the installed owner branch-role template and both branch spend stages must be configured together");
+  }
   const transportPolicies = input.transport_policies === undefined ? undefined :
     parseResearchPreparedModelTransportPolicies(canonicalJson(input.transport_policies));
   const transportFor = (stage: "SYNTHESIZE" | "AUDIT_CLAIMS", deployment: ResearchOwnerDeploymentInput) => {
@@ -194,7 +199,9 @@ export async function createResearchOwnerRuntimeConfiguration(
   }
   const spendRules: Array<ResearchModelSpendPolicy["rules"][number]> = [];
   for (const rule of input.spend_policy.rules) {
-    const configured = rule.stage === "SYNTHESIZE" ? semantic.synthesis : semantic.audit;
+    const configured = rule.stage === "SYNTHESIZE" ? semantic.synthesis :
+      rule.stage === "AUDIT_CLAIMS" ? semantic.audit : semantic.roles;
+    if (configured === undefined) invalid("branch spend rules require the installed owner branch-role template");
     const selection = rule.stage === "SYNTHESIZE" || rule.stage === "AUDIT_CLAIMS"
       ? transportFor(rule.stage, rule.deployment) : undefined;
     const parametersDigest = await semanticParametersDigest(rule.deployment.route_ref, configured, selection);
