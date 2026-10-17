@@ -269,7 +269,14 @@ async function observeEntry({ browser, entry, origin, files, sourceCommit, build
           request.postDataBuffer() !== null || request.serviceWorker() !== null ||
           Object.keys(request.headers()).some(key => ["authorization", "cookie", "cf-access-jwt-assertion",
             "cf-access-client-id", "cf-access-client-secret"].includes(key.toLowerCase()))) {
-        errors.push("REQUEST_OUTSIDE_READONLY_SCOPE"); await route.abort("blockedbyclient");
+        const url = new URL(request.url());
+        errors.push("REQUEST_OUTSIDE_READONLY_SCOPE:" + JSON.stringify({ pathname: url.pathname,
+          selected: Boolean(selected), same_origin: url.origin === origin, query_keys: [...url.searchParams.keys()],
+          method: request.method(), body_bytes: request.postDataBuffer()?.length ?? 0,
+          service_worker: request.serviceWorker() !== null, prior_errors: errors.length,
+          credential_headers: Object.keys(request.headers()).filter(key => ["authorization", "cookie", "cf-access-jwt-assertion",
+            "cf-access-client-id", "cf-access-client-secret"].includes(key.toLowerCase())),
+        })); await route.abort("blockedbyclient");
       } else await route.continue(); // Real loopback HTTP, no fulfill/mock or credential injection.
     }));
     const page = await bounded(context.newPage());
