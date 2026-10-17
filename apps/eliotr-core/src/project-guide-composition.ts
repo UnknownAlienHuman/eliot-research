@@ -25,6 +25,28 @@ import type { Env } from "./env.js";
 
 function same(left: unknown, right: unknown) { return canonicalEvidenceJson(left) === canonicalEvidenceJson(right); }
 function fail(code: string): never { throw new HttpRequestError(code, 409, "Project guide authority changed"); }
+type LegacyRecoveryPhase = "selected-pin" | "deterministic-rejection" | "D1-absence" | "native-absence" | "post-currentness";
+async function legacyRecoveryPhase<T>(phase: LegacyRecoveryPhase, work: () => Promise<T>): Promise<T> {
+  const event = "project_guide_legacy_recovery_phase";
+  console.warn(JSON.stringify({ event, phase: `${phase}:START` }));
+  try {
+    const result = await work();
+    console.warn(JSON.stringify({ event, phase: `${phase}:OK` }));
+    return result;
+  } catch (error) {
+    const own = (key: string): unknown => error !== null && typeof error === "object"
+      ? Object.getOwnPropertyDescriptor(error, key)?.value : undefined;
+    const bounded = (value: unknown) => typeof value === "string" && /^[A-Za-z0-9_.:-]{1,64}$/u.test(value) ? value : "UNCLASSIFIED";
+    const name = error instanceof Error ? error.name : own("name");
+    const code = own("code");
+    const message = phase === "native-absence" ? error instanceof Error ? error.message
+      : typeof error === "string" ? error : own("message") : undefined;
+    console.warn(JSON.stringify({ event, phase: `${phase}:ERROR`, error_class: bounded(name),
+      error_code: bounded(typeof code === "number" ? String(code) : code),
+      ...(typeof message === "string" ? { native_error_message: message.slice(0, 512) } : {}) }));
+    throw error;
+  }
+}
 function active(context: AuthenticatedRequestContext) {
   if (context.client_class !== "owner_pwa" || context.request.signal.aborted ||
       (context.access !== undefined && (context.access.principal_ref !== context.principal_ref ||
@@ -123,49 +145,61 @@ export function createOwnerProjectGuideService(env: Env) {
       return { body, key, workflow_instance_id: `run-${hex.slice(0, 48)}` };
     },
     async legacyContractBlocked(context, record, observation) {
-      active(context);
-      await observation.requireCurrent();
-      const selected = await createOwnerResearchProjectConfigurationService(env, context, record.project_id)
-        .readSelected(context, record.project_id);
-      if (selected === null || observation.selection === null) return false;
-      if (!same(observation.selection, { configuration_project_id: selected.project_id,
-        configuration_ref: selected.configuration_ref, configuration_sha256: selected.configuration_sha256,
-        selection_revision: selected.selection_revision })) fail("PROJECT_GUIDE_AUTHORITY_CHANGED");
-      const profileJson = selected.configuration.vars[RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON_KEY];
-      if (profileJson === undefined) return false;
-      // readSelected has strictly validated the canonical profile and exact qualified bundle.
-      const profile = JSON.parse(profileJson) as Pick<ResearchBranchQueryBudgetSelection, "profile_id" | "profile_generation" | "budgets">;
-      const parsed = parseResearchRunTransportRequest(JSON.parse(record.request_body));
-      if (parsed.selection?.request_version !== "eliotr.research-run-request.v4" || parsed.request.inquiry_protocol_ref !== undefined) return false;
-      let rejected = false;
-      try {
-        selectResearchRunHandlerGeneration({ lane: "exploratory", prior_handler_generation: null,
-          explicit_protocol: false, delegated: false, request_max_results: parsed.request.max_results,
-          managed_primary_available: false, branch_query_budget_selection: { ...profile,
-            protocol: "eliotr.research.branch-query-budget-selection.v1", selected_configuration: {
-              owner_ref: context.principal_ref, project_id: selected.project_id, configuration_ref: selected.configuration_ref,
-              configuration_sha256: selected.configuration_sha256, selection_revision: selected.selection_revision } } });
-      } catch (error) {
-        if (!(error instanceof ResearchServiceError) || error.code !== "RESEARCH_CONFLICT" || error.status !== 409 ||
-            error.message !== "the selected branch budget profile requires a new explicit exploratory protocol run") throw error;
-        rejected = true;
-      }
-      if (!rejected) return false;
-      const row = await env.CORE_DB.prepare("SELECT (EXISTS(SELECT 1 FROM research_workflow_run WHERE operation_id=?1 OR idempotency_key=?2) " +
-        "OR EXISTS(SELECT 1 FROM investigation_ledger_head WHERE investigation_id=?3)) AS present")
-        .bind(record.workflow_instance_id, record.idempotency_key, `research-${record.workflow_instance_id.slice(4)}`)
-        .first<{ present: number }>();
-      if (row === null || (row.present !== 0 && row.present !== 1)) fail("PROJECT_GUIDE_ADMISSION_UNAVAILABLE");
-      if (row.present !== 0) return false;
-      try {
-        const instance = await env.RESEARCH_WORKFLOW.get(record.workflow_instance_id);
-        if (instance.id !== record.workflow_instance_id) fail("PROJECT_GUIDE_RUN_IDENTITY_CHANGED");
+      const selected = await legacyRecoveryPhase("selected-pin", async () => {
+        active(context); await observation.requireCurrent();
+        const current = await createOwnerResearchProjectConfigurationService(env, context, record.project_id)
+          .readSelected(context, record.project_id);
+        if (current === null || observation.selection === null) return null;
+        if (!same(observation.selection, { configuration_project_id: current.project_id,
+          configuration_ref: current.configuration_ref, configuration_sha256: current.configuration_sha256,
+          selection_revision: current.selection_revision })) fail("PROJECT_GUIDE_AUTHORITY_CHANGED");
+        return current;
+      });
+      if (selected === null) return false;
+      const rejected = await legacyRecoveryPhase("deterministic-rejection", async () => {
+        const profileJson = selected.configuration.vars[RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON_KEY];
+        if (profileJson === undefined) return false;
+        // readSelected has strictly validated the canonical profile and exact qualified bundle.
+        const profile = JSON.parse(profileJson) as Pick<ResearchBranchQueryBudgetSelection, "profile_id" | "profile_generation" | "budgets">;
+        const parsed = parseResearchRunTransportRequest(JSON.parse(record.request_body));
+        if (parsed.selection?.request_version !== "eliotr.research-run-request.v4" || parsed.request.inquiry_protocol_ref !== undefined) return false;
+        try {
+          selectResearchRunHandlerGeneration({ lane: "exploratory", prior_handler_generation: null,
+            explicit_protocol: false, delegated: false, request_max_results: parsed.request.max_results,
+            managed_primary_available: false, branch_query_budget_selection: { ...profile,
+              protocol: "eliotr.research.branch-query-budget-selection.v1", selected_configuration: {
+                owner_ref: context.principal_ref, project_id: selected.project_id, configuration_ref: selected.configuration_ref,
+                configuration_sha256: selected.configuration_sha256, selection_revision: selected.selection_revision } } });
+        } catch (error) {
+          if (!(error instanceof ResearchServiceError) || error.code !== "RESEARCH_CONFLICT" || error.status !== 409 ||
+              error.message !== "the selected branch budget profile requires a new explicit exploratory protocol run") throw error;
+          return true;
+        }
         return false;
-      } catch (error) {
-        // The binding's exact missing-instance error is distinct from an unavailable status read.
-        if (!(error instanceof Error) || error.message !== "instance.not_found") throw error;
-      }
-      await observation.requireCurrent(); active(context);
+      });
+      if (!rejected) return false;
+      const absent = await legacyRecoveryPhase("D1-absence", async () => {
+        const row = await env.CORE_DB.prepare("SELECT (EXISTS(SELECT 1 FROM research_workflow_run WHERE operation_id=?1 OR idempotency_key=?2) " +
+          "OR EXISTS(SELECT 1 FROM investigation_ledger_head WHERE investigation_id=?3)) AS present")
+          .bind(record.workflow_instance_id, record.idempotency_key, `research-${record.workflow_instance_id.slice(4)}`)
+          .first<{ present: number }>();
+        if (row === null || (row.present !== 0 && row.present !== 1)) fail("PROJECT_GUIDE_ADMISSION_UNAVAILABLE");
+        return row.present === 0;
+      });
+      if (!absent) return false;
+      const nativeAbsent = await legacyRecoveryPhase("native-absence", async () => {
+        try {
+          const instance = await env.RESEARCH_WORKFLOW.get(record.workflow_instance_id);
+          if (instance.id !== record.workflow_instance_id) fail("PROJECT_GUIDE_RUN_IDENTITY_CHANGED");
+          return false;
+        } catch (error) {
+          // The binding's exact missing-instance error is distinct from an unavailable status read.
+          if (!(error instanceof Error) || error.message !== "instance.not_found") throw error;
+          return true;
+        }
+      });
+      if (!nativeAbsent) return false;
+      await legacyRecoveryPhase("post-currentness", async () => { await observation.requireCurrent(); active(context); });
       return true;
     },
     async launch(context, record) {

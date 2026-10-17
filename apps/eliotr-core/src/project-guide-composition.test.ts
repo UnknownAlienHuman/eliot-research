@@ -70,6 +70,36 @@ async function legacyPreflightFixture() {
 }
 
 describe("guide composition keeps canonical Research admission", () => {
+  it("logs bounded phases and only the trusted native error message while rethrowing the same failure", async () => {
+    const log = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const g = await legacyPreflightFixture();
+      expect(await g.blocked(context, g.record, g.observed)).toBe(true);
+      expect(log.mock.calls.map(call => JSON.parse(String(call[0])).phase)).toEqual([
+        "selected-pin:START", "selected-pin:OK", "deterministic-rejection:START", "deterministic-rejection:OK",
+        "D1-absence:START", "D1-absence:OK", "native-absence:START", "native-absence:OK",
+        "post-currentness:START", "post-currentness:OK",
+      ]);
+      log.mockClear();
+      const nativeError = Object.assign(new Error("trusted native binding diagnostic"),
+        { code: "NATIVE_UNAVAILABLE", request_body: "private request", provider_body: "private provider" });
+      g.native.mockRejectedValueOnce(nativeError);
+      await expect(g.blocked(context, g.record, g.observed)).rejects.toBe(nativeError);
+      const logged = log.mock.calls.map(call => JSON.parse(String(call[0])));
+      expect(logged.at(-1)).toEqual({ event: "project_guide_legacy_recovery_phase", phase: "native-absence:ERROR",
+        error_class: "Error", error_code: "NATIVE_UNAVAILABLE", native_error_message: "trusted native binding diagnostic" });
+      expect(JSON.stringify(logged)).not.toContain("private request"); expect(JSON.stringify(logged)).not.toContain("private provider");
+      log.mockClear();
+      const selectedError = Object.assign(new Error("private source and key body"), { code: "AUTHORITY_READ_FAILED" });
+      f.readSelected.mockRejectedValueOnce(selectedError);
+      await expect(g.blocked(context, g.record, g.observed)).rejects.toBe(selectedError);
+      expect(log.mock.calls.map(call => JSON.parse(String(call[0]))).at(-1)).toEqual({
+        event: "project_guide_legacy_recovery_phase", phase: "selected-pin:ERROR", error_class: "Error", error_code: "AUTHORITY_READ_FAILED",
+      });
+      expect(JSON.stringify(log.mock.calls)).not.toContain("private source and key body");
+      expect(f.run).not.toHaveBeenCalled(); expect(f.grant).not.toHaveBeenCalled();
+    } finally { log.mockRestore(); }
+  });
   it("allows a contract successor only after pure V4/profile rejection and native plus investigation absence", async () => {
     const g = await legacyPreflightFixture();
     expect(await g.blocked(context, g.record, g.observed)).toBe(true);
