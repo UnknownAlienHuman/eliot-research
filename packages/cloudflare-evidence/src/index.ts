@@ -29,3 +29,5 @@ export type { EvidenceSourcePagePort } from "./mcp-source-reader.js";
 export { EvidenceHttpInputError, parseVerifyEvidenceRequest, parseEvidenceHandleRef, parseEvidenceOpenRange } from "./evidence-http.js";
 export { createCloudflareEvidenceService, EvidenceDelegatedGrantError } from "./evidence-service.js";
 export type { CloudflareEvidenceServiceDependencies, EvidenceDelegatedGrant, EvidenceDelegatedGrantAuthorizer } from "./evidence-service.js";
+export { matchSourceQuote, SOURCE_QUOTE_BOUNDS } from "./source-quote.js";
+export type { MatchSourceQuoteInput, SourceQuoteByteRange, SourceQuoteResult } from "./source-quote.js";
