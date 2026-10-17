@@ -23,7 +23,7 @@ const RESPONSES_KEYS = new Set([
   "background", "billing", "completed_at", "created_at", "error", "frequency_penalty", "id", "incomplete_details",
   "instructions", "max_output_tokens", "max_tool_calls", "metadata", "model", "object", "output", "parallel_tool_calls",
   "presence_penalty", "previous_response_id", "prompt_cache_key", "prompt_cache_retention", "reasoning", "safety_identifier",
-  "service_tier", "status", "temperature", "text", "tool_choice", "tools", "top_logprobs", "top_p", "truncation", "usage", "user",
+  "service_tier", "status", "store", "temperature", "text", "tool_choice", "tools", "top_logprobs", "top_p", "truncation", "usage", "user",
 ]);
 const RESPONSES_USAGE_KEYS = new Set(["input_tokens", "input_tokens_details", "output_tokens", "output_tokens_details", "total_tokens"]);
 const ANTHROPIC_RESPONSE_KEYS = new Set([
@@ -172,6 +172,7 @@ function decodeChatBody(body: Record<string, unknown>, bodyBytes: Uint8Array): O
 
 function decodeResponsesBody(body: Record<string, unknown>, bodyBytes: Uint8Array): Omit<DecodedModelGatewayResponse, "fingerprint" | "log_id"> {
   if (body.object !== "response" || body.status !== "completed" || (body.error !== null && body.error !== undefined)) invalid("OpenAI Responses result is not a completed successful response");
+  if (body.store !== undefined && typeof body.store !== "boolean") invalid("OpenAI Responses store flag is invalid");
   identifier(body.id, "OpenAI Responses id");
   tokenCount(body.created_at, "OpenAI Responses created_at");
   const responseModel = identifier(body.model, "OpenAI Responses model", "MODEL_ID_INVALID", MODEL_IDENTIFIER);
@@ -180,20 +181,22 @@ function decodeResponsesBody(body: Record<string, unknown>, bodyBytes: Uint8Arra
   let messageCount = 0;
   const content: string[] = [];
   for (const [index, rawItem] of body.output.entries()) {
-    const item = exactObject(rawItem, new Set(["content", "encrypted_content", "id", "role", "status", "summary", "type"]), `OpenAI Responses output[${index}]`);
+    const item = exactObject(rawItem, new Set(["content", "encrypted_content", "id", "phase", "role", "status", "summary", "type"]), `OpenAI Responses output[${index}]`);
     if (item.type === "reasoning") {
       if (item.summary !== undefined) boundedJson(item.summary);
       continue;
     }
     if (item.type !== "message" || item.role !== "assistant" || item.status !== "completed" || !Array.isArray(item.content)) invalid("OpenAI Responses contains an unsupported output item");
+    if (item.phase !== undefined && item.phase !== null && item.phase !== "final_answer") invalid("OpenAI Responses message is not a final answer");
     messageCount++;
     for (const [contentIndex, rawContent] of item.content.entries()) {
-      const block = exactObject(rawContent, new Set(["annotations", "refusal", "text", "type"]), `OpenAI Responses content[${contentIndex}]`);
+      const block = exactObject(rawContent, new Set(["annotations", "logprobs", "refusal", "text", "type"]), `OpenAI Responses content[${contentIndex}]`);
       if (block.type === "refusal") {
         text(block.refusal, "OpenAI Responses refusal");
         modelGatewayExecutionFailure("MODEL_GATEWAY_POLICY_REJECTED", "OpenAI Responses contains a refusal");
       }
       if (block.type !== "output_text") invalid("OpenAI Responses contains unsupported assistant content");
+      if (block.logprobs !== undefined && (!Array.isArray(block.logprobs) || block.logprobs.length !== 0)) invalid("OpenAI Responses contains unrequested logprobs");
       if (block.annotations !== undefined) boundedJson(block.annotations);
       content.push(text(block.text, "OpenAI Responses output text"));
     }
