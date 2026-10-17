@@ -79,14 +79,16 @@ export { requireRunStatusContinuity };
 /** A refreshed owner session can read history; it cannot renew execution authority.
  * The stored credential is provenance only. All authorization uses the current caller.
  * Historical provenance and current read rights are independent of the stronger
- * deployment compatibility required for execution control. */
+ * deployment compatibility required for execution recovery. Cancellation only
+ * needs a known origin and a current active deployment, plus all current rights. */
 async function prepareReauthenticatedRunReadWithMode(
 	ports: ResearchRunReadEnvironment,
   context: AuthenticatedRequestContext,
   operationId: string,
-  forControl = false,
-  forceHistoryRead = false,
+  mode: "read" | "metadata" | "cancel" | "recover",
 ): Promise<ReauthenticatedRunRead | null> {
+  const forControl = mode === "cancel" || mode === "recover";
+  const executionRecovery = mode === "recover";
   if (context.client_class !== "owner_pwa") stale();
   requireActiveRequest(context);
 	const binding = await ports.database.prepare(
@@ -100,12 +102,12 @@ async function prepareReauthenticatedRunReadWithMode(
     "AND g.client_class='owner_pwa' AND g.project_client_grant_id IS NULL))) LIMIT 1",
   ).bind(operationId, context.principal_ref).first<RunBinding>();
   if (binding === null) return null;
-  if (forControl) {
+  if (executionRecovery) {
     try {
       await ports.require_deployment_compatibility(binding.deployment_generation, ports.active_deployment_generation);
     } catch { stale(); }
   }
-	if (!forControl && !forceHistoryRead && binding.origin_client_class === "owner_pwa" && binding.credential_generation === context.credential_generation &&
+	if (mode === "read" && binding.origin_client_class === "owner_pwa" && binding.credential_generation === context.credential_generation &&
 		binding.deployment_generation === ports.active_deployment_generation) return null;
   if (typeof binding.credential_generation !== "string" || typeof binding.handler_generation !== "string") corrupt();
 
@@ -122,7 +124,7 @@ async function prepareReauthenticatedRunReadWithMode(
     if (origin === null || origin.origin_deployment_generation !== binding.deployment_generation ||
         origin.active_deployment_generation !== ports.active_deployment_generation) stale();
   };
-  if (!forControl) await requireHistoryOrigin();
+  if (!executionRecovery) await requireHistoryOrigin();
 
   const principal = {
     principal_ref: binding.principal_ref,
@@ -156,14 +158,16 @@ async function prepareReauthenticatedRunReadWithMode(
     const head = await store.head(first.investigation_id);
     if (head.principal_ref !== binding.principal_ref || head.scope_snapshot_id !== originalRef.id ||
         head.scope_snapshot_revision !== originalRef.revision) stale();
-    if (!forControl) {
+    if (!executionRecovery) {
       if (head.deployment_generation !== binding.deployment_generation) stale();
       await requireHistoryOrigin();
     }
     if (forControl) {
-		await ports.require_deployment_compatibility(
-			binding.deployment_generation, ports.active_deployment_generation,
-		).catch(stale);
+		if (executionRecovery) {
+			await ports.require_deployment_compatibility(
+				binding.deployment_generation, ports.active_deployment_generation,
+			).catch(stale);
+		}
 		const activePolicy = await ports.database.prepare(
         "SELECT 1 AS present FROM investigation_current_policy " +
         "WHERE policy_generation=?1 AND policy_authority_ref=?2 AND state='ACTIVE' LIMIT 1",
@@ -208,7 +212,16 @@ export async function prepareReauthenticatedRunRead(
   operationId: string,
   forControl = false,
 ): Promise<ReauthenticatedRunRead | null> {
-  return prepareReauthenticatedRunReadWithMode(ports, context, operationId, forControl);
+  return prepareReauthenticatedRunReadWithMode(ports, context, operationId, forControl ? "recover" : "read");
+}
+
+/** Terminal cancellation reauthenticates current owner rights without renewing execution. */
+export async function prepareReauthenticatedRunCancellation(
+  ports: ResearchRunReadEnvironment,
+  context: AuthenticatedRequestContext,
+  operationId: string,
+): Promise<ReauthenticatedRunRead | null> {
+  return prepareReauthenticatedRunReadWithMode(ports, context, operationId, "cancel");
 }
 
 /** History needs current scope/source fences even when the run uses this exact credential. */
@@ -217,7 +230,7 @@ export async function prepareReauthenticatedRunMetadataRead(
   context: AuthenticatedRequestContext,
   operationId: string,
 ): Promise<ReauthenticatedRunRead | null> {
-  return prepareReauthenticatedRunReadWithMode(ports, context, operationId, false, true);
+  return prepareReauthenticatedRunReadWithMode(ports, context, operationId, "metadata");
 }
 
 /** Current caller authorization stays in the shared artifact service. */

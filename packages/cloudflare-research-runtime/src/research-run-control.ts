@@ -13,7 +13,7 @@ import type { WorkflowRunStatus } from "@eliotr/cloudflare-research";
 import { RESEARCH_WORKFLOW_STAGES } from "@eliotr/domain";
 import type { AuthenticatedRequestContext, ResearchEngineStatus, ResearchRunStatus } from "@eliotr/interfaces";
 import { CatalogInputError, ClientGrantError, OrientationError, ScopeServiceError } from "@eliotr/cloudflare-navigation";
-import { prepareReauthenticatedRunRead, requireRunStatusContinuity, type ReauthenticatedRunRead, type ResearchRunReadEnvironment } from "./research-run-read-authorization.js";
+import { prepareReauthenticatedRunCancellation, prepareReauthenticatedRunRead, requireRunStatusContinuity, type ReauthenticatedRunRead, type ResearchRunReadEnvironment } from "./research-run-read-authorization.js";
 import { prepareProjectClientRecoverySpend, prepareOwnerMachineRecoverySpend, requireProjectClientSpendSchema, type ResearchClientSpendEnvironment } from "./research-client-spend.js";
 import { RUN_CONTROL_FENCE_SQL, runControlFenceBindings, requireRunControlSchema, type AuthorizedRunControl } from "./research-run-control-fence.js";
 import { prepareProjectClientRunRead, type ProjectClientRunReadEnvironment } from "./research-client-run-read.js";
@@ -86,7 +86,8 @@ export async function cancelResearchRun(
     await requireRunControlSchema(ports.database);
     const clientRead = context.client_class === "owner_pwa" ? null
       : await prepareProjectClientRunRead(ports.client_run_read, context, operationId, "cancel");
-    const read = context.client_class === "owner_pwa" ? await authorize(ports, context, operationId) : clientRead;
+    const read = context.client_class === "owner_pwa"
+      ? await prepareReauthenticatedRunCancellation(ports.run_read, context, operationId) : clientRead;
     if (read === null) fail("RESEARCH_RUN_NOT_FOUND", 404);
     if (read.status.state === "ENGINE_COMPLETED") fail("RESEARCH_RUN_ALREADY_COMPLETED", 409);
     const action = clientRead !== null || ("owner_machine" in read && read.owner_machine !== undefined)

@@ -10,7 +10,7 @@ import type * as Evidence from "@eliotr/cloudflare-evidence";
 import type * as Navigation from "@eliotr/cloudflare-navigation";
 import type * as ResearchStages from "@eliotr/cloudflare-research-stages";
 import compatibilityMigration from "../../../infra/d1/core/migrations/0068_research_deployment_compatibility.sql?raw";
-import { prepareReauthenticatedRunMetadataRead, prepareReauthenticatedRunRead, readReauthenticatedRunAnswer,
+import { prepareReauthenticatedRunCancellation, prepareReauthenticatedRunMetadataRead, prepareReauthenticatedRunRead, readReauthenticatedRunAnswer,
   type ReauthenticatedRunRead, type ResearchRunReadEnvironment } from "./research-run-read-authorization.js";
 import { readOwnerResearchRuns, type ResearchRunListPorts } from "./research-run-list.js";
 import { recoverResearchRun, type ResearchRunControlEnvironment } from "./research-run-control.js";
@@ -252,6 +252,39 @@ describe("read-only owner run provenance versus execution compatibility", () => 
     sqlite.prepare("UPDATE investigation_current_deployment SET backend_fingerprint=? WHERE state='ACTIVE'").run("b".repeat(64));
     await expect(read.requireCurrent()).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
     await expect(read.controlFence()).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+  });
+
+  it("authorizes cancellation across incompatible known deployments without authorizing recovery", async () => {
+    const f = setup();
+    const read = await prepareReauthenticatedRunCancellation(f.read, f.context, "old-run");
+    if (read === null) throw new Error("Expected current-owner cancellation authority");
+    expect(await read.controlFence()).toMatchObject({ ledger_epoch: 7, orientation_epoch: 9,
+      scope_ref: { id: "scope-1", revision: 1 }, authorization_receipt_ref: "current-read" });
+    expect(f.compatible).not.toHaveBeenCalled();
+    await expect(recoverResearchRun(f.control, f.context, "old-run", {}))
+      .rejects.toMatchObject({ code: "RESEARCH_CONTROL_DENIED", status: 403 });
+    expect(f.workflow.get).not.toHaveBeenCalled();
+  });
+
+  it.each(["origin", "active", "lineage"] as const)("rechecks cancellation %s before issuing its SQL fence", async changed => {
+    const f = setup();
+    const read = await prepareReauthenticatedRunCancellation(f.read, f.context, "old-run");
+    if (read === null) throw new Error("Expected current-owner cancellation authority");
+    if (changed === "origin") sqlite.exec("DELETE FROM investigation_current_deployment WHERE deployment_generation='origin-generation'");
+    else if (changed === "active") sqlite.exec("UPDATE investigation_current_deployment SET state='RETIRED' WHERE deployment_generation='active-generation'");
+    else f.head.deployment_generation = "different-origin";
+    await expect(read.requireCurrent()).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+    await expect(read.controlFence()).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+    expect(f.compatible).not.toHaveBeenCalled();
+  });
+
+  it("retains current source denial in cancellation authorization", async () => {
+    const f = setup();
+    const read = await prepareReauthenticatedRunCancellation(f.read, f.context, "old-run");
+    if (read === null) throw new Error("Expected current-owner cancellation authority");
+    authority.sources.mockRejectedValue(new ScopeServiceError("SCOPE_SNAPSHOT_STALE", "Source read revoked"));
+    await expect(read.controlFence()).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+    expect(f.compatible).not.toHaveBeenCalled();
   });
 
   it.each(["owner", "source"] as const)("omits history when current %s permissions are denied", async denied => {

@@ -70,6 +70,7 @@ export type { ResearchEngineObservation } from "./research-run-failure.js";
 export { readOwnerResearchRuns } from "./research-run-list.js";
 export {
   createRunArtifactReadback,
+  prepareReauthenticatedRunCancellation,
   prepareReauthenticatedRunRead,
   readReauthenticatedRunAnswer,
   requireRunStatusContinuity,
