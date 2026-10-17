@@ -89,6 +89,41 @@ function input(mode: "installed" | "override", selected: boolean): ResearchSeman
 }
 
 describe("semantic selected transport handoff", () => {
+  function nativeMainStages(): ResearchSemanticCompositionDependencies {
+    const base = input("installed", true);
+    const unavailable = () => { throw new Error("construction must not perform effects"); };
+    const nativePolicy: ModelGatewayTransportPolicyV1 = { ...POLICY, api: "custom-responses", provider: "custom-opencode-go",
+      model: "muse-spark-1.3-contributor", billing: { mode: "byok", alias: "existing-key" } };
+    const selection = (stage: "SYNTHESIZE" | "AUDIT_CLAIMS") => ({ candidate_kind: "provider-native-v2" as const,
+      stage, route_ref: "dynamic/eliotr-balanced", route_version: "native-test",
+      candidate_ref: `provider-native-model-candidate-v2-${"a".repeat(64)}`, candidate_sha256: "a".repeat(64),
+      qualification_ref: `provider-native-model-qualification-v2-${"b".repeat(64)}`, qualification_sha256: "b".repeat(64),
+      transport_policy: nativePolicy });
+    return { ...base, run_configuration: { mode: "snapshot-v2", configuration_ref: `rcc-${"c".repeat(64)}`,
+      configuration_sha256: "c".repeat(64), project_owner_ref: "principal-test", project_id: "project-test",
+      model_selections: [selection("SYNTHESIZE"), selection("AUDIT_CLAIMS")] },
+      model: { ...base.model, synthesis: { ...base.model.synthesis, pricing: { quote: unavailable } },
+        audit: { ...base.model.audit, pricing: { quote: unavailable } } } };
+  }
+
+  it("constructs native-v2 synthesis and audit with their own trusted pricing and no optional branch roles", () => {
+    expect(() => createResearchSemanticComposition(nativeMainStages())).not.toThrow();
+  });
+
+  it.each(["synthesis", "audit"] as const)("still requires trusted %s pricing for a native-v2 main stage", stage => {
+    const deps = nativeMainStages();
+    const invalid = { ...deps, model: { ...deps.model, [stage]: { ...deps.model[stage], pricing: undefined } } };
+    expect(() => createResearchSemanticComposition(invalid)).toThrowError(expect.objectContaining({ code: "WORKFLOW_CONFIGURATION_MISSING" }));
+  });
+
+  it("keeps native-v2 branch pricing mandatory", () => {
+    const deps = nativeMainStages();
+    const first = deps.run_configuration?.model_selections?.[0];
+    if (!first) throw new Error("native fixture missing");
+    const invalid = { ...deps, run_configuration: { ...deps.run_configuration,
+      model_selections: [{ ...first, stage: "ANALYZE_BRANCHES" as const }] } };
+    expect(() => createResearchSemanticComposition(invalid)).toThrowError(expect.objectContaining({ code: "WORKFLOW_CONFIGURATION_MISSING" }));
+  });
   it.each(["installed", "override"] as const)("retains the exact selected policy for %s synthesis and audit compilers", (mode) => {
     const source = input(mode, true);
     const graph = createResearchSemanticComposition(source);

@@ -118,7 +118,10 @@ export function validateResearchSemanticCompositionDependencies(input: ResearchS
   const nativeSelections = input.run_configuration?.model_selections?.filter((selection) =>
     selection.candidate_kind === "provider-native-v1" || selection.candidate_kind === "provider-native-v2") ?? [];
   const hasNativeV1 = nativeSelections.some((selection) => selection.candidate_kind === "provider-native-v1");
-  const hasNativeV2 = nativeSelections.some((selection) => selection.candidate_kind === "provider-native-v2");
+  const missingNativeV2Pricing = nativeSelections.some((selection) => selection.candidate_kind === "provider-native-v2" &&
+    (selection.stage === "SYNTHESIZE" ? input.model.synthesis.pricing === undefined :
+      selection.stage === "AUDIT_CLAIMS" ? input.model.audit.pricing === undefined :
+        input.model.roles?.pricing_for_stage === undefined));
   if (nativeSelections.length > 0) {
     if (input.run_configuration?.mode !== "snapshot-v2") {
       configurationInvalid("Native model selections require snapshot-v2 owner/project authority");
@@ -126,7 +129,7 @@ export function validateResearchSemanticCompositionDependencies(input: ResearchS
     if (input.run_configuration.project_owner_ref === undefined || input.run_configuration.project_owner_ref === null ||
         input.run_configuration.project_id === undefined || input.run_configuration.project_id === null ||
         (hasNativeV1 && input.native_model_authority === undefined) ||
-        (hasNativeV2 && input.model.roles?.pricing_for_stage === undefined)) {
+        missingNativeV2Pricing) {
       configurationMissing("Native model selections require snapshot-v2 owner/project authority");
     }
     if (typeof input.run_configuration.project_owner_ref !== "string" || input.run_configuration.project_owner_ref.length === 0 ||
@@ -134,8 +137,8 @@ export function validateResearchSemanticCompositionDependencies(input: ResearchS
       configurationInvalid("Native model selections require snapshot-v2 owner/project authority");
     }
   }
-  if (nativeSelections.length > 0 && input.model.roles !== undefined &&
-      input.model.roles.pricing_for_stage === undefined) {
+  if (nativeSelections.some((selection) => selection.stage === "ANALYZE_BRANCHES" || selection.stage === "COUNTER_SEARCH") &&
+      input.model.roles?.pricing_for_stage === undefined) {
     configurationMissing("Native branch execution requires stage-specific model pricing");
   }
   requireObject(input.verification, "verification");
