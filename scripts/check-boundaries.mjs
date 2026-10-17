@@ -174,6 +174,8 @@ const WORKSPACE_CAPABILITY_IMPORTS = [
   "@eliotr/cloudflare-workspace-mcp/mcp-external-agent-task"
 ];
 const MODEL_TRANSPORT_IMPORTS = [
+  "@eliotr/cloudflare-model-transport/opencode-model-routing.js",
+  "@eliotr/cloudflare-model-transport/opencode-http-routing.js",
   "@eliotr/cloudflare-model-transport/model-gateway-execution-contract.js",
   "@eliotr/cloudflare-model-transport/model-gateway-execution.js",
   "@eliotr/cloudflare-model-transport/model-gateway-http-failure.js",
@@ -248,7 +250,7 @@ const PACKAGE_RULES = new Map([
   ["packages/cloudflare-http-protocol", new Set([
     "@eliotr/cloudflare-navigation", "@eliotr/interfaces", "@eliotr/platform-cloudflare",
   ])],
-["packages/cloudflare-research-configuration", new Set(["@eliotr/cloudflare-ai","@eliotr/cloudflare-evidence","@eliotr/cloudflare-model-control","@eliotr/cloudflare-model-control/research-prepared-model-transport-policies.js","@eliotr/cloudflare-model-control/research-model-pricing-store.js","@eliotr/cloudflare-model-transport/model-gateway-http-request.js","@eliotr/cloudflare-model-transport/model-gateway-provider-native-response.js","@eliotr/cloudflare-native-models","@eliotr/cloudflare-research","@eliotr/cloudflare-research-stages","@eliotr/cloudflare-workflows","@eliotr/contracts","@eliotr/interfaces","@eliotr/platform-cloudflare","zod"])],
+["packages/cloudflare-research-configuration", new Set(["@eliotr/cloudflare-ai","@eliotr/cloudflare-evidence","@eliotr/cloudflare-model-control","@eliotr/cloudflare-model-control/research-prepared-model-transport-policies.js","@eliotr/cloudflare-model-control/research-model-pricing-store.js","@eliotr/cloudflare-model-transport/model-gateway-http-request.js","@eliotr/cloudflare-model-transport/model-gateway-provider-native-response.js","@eliotr/cloudflare-model-transport/opencode-http-routing.js","@eliotr/cloudflare-model-transport/opencode-model-routing.js","@eliotr/cloudflare-native-models","@eliotr/cloudflare-research","@eliotr/cloudflare-research-stages","@eliotr/cloudflare-workflows","@eliotr/contracts","@eliotr/interfaces","@eliotr/platform-cloudflare","zod"])],
   ["packages/cloudflare-research-runtime", new Set([
     "@eliotr/cloudflare-artifacts/artifact-draft-reauthorization.js",
     "@eliotr/cloudflare-ai", "@eliotr/cloudflare-ai/project-search", "@eliotr/cloudflare-evidence", "@eliotr/cloudflare-navigation",
@@ -270,7 +272,7 @@ const PACKAGE_RULES = new Map([
   ["packages/cloudflare-native-models", new Set(["@eliotr/cloudflare-ai", "@eliotr/cloudflare-model-control", "@eliotr/contracts", "@eliotr/platform-cloudflare"])],
   ["packages/cloudflare-model-execution", new Set(["@eliotr/cloudflare-ai", "@eliotr/cloudflare-evidence", "@eliotr/cloudflare-model-control", "@eliotr/cloudflare-native-models", "@eliotr/cloudflare-workflows", "@eliotr/contracts", "@eliotr/platform-cloudflare", "@eliotr/research", "zod"])],
   ["packages/cloudflare-research-branches", new Set(["@eliotr/cloudflare-ai", "@eliotr/cloudflare-evidence", "@eliotr/cloudflare-model-control", "@eliotr/cloudflare-model-execution", "@eliotr/cloudflare-workflows", "@eliotr/contracts", "@eliotr/domain", "@eliotr/platform-cloudflare", "@eliotr/policy", "@eliotr/research", "@eliotr/retrieval", "zod"])],
-  ["packages/cloudflare-model-control", new Set(["@eliotr/interfaces", "@eliotr/cloudflare-ai", "@eliotr/cloudflare-evidence", "@eliotr/cloudflare-workflows", "@eliotr/contracts", "@eliotr/platform-cloudflare", "@eliotr/policy", "@eliotr/retrieval", "zod"])],
+  ["packages/cloudflare-model-control", new Set(["@eliotr/interfaces", "@eliotr/cloudflare-ai", "@eliotr/cloudflare-ai/opencode-model-routing.js", "@eliotr/cloudflare-evidence", "@eliotr/cloudflare-workflows", "@eliotr/contracts", "@eliotr/platform-cloudflare", "@eliotr/policy", "@eliotr/retrieval", "zod"])],
   ["packages/contracts", new Set(["zod"])],
   ["packages/domain", new Set(["@eliotr/contracts"])],
   ["packages/policy", new Set(["@eliotr/contracts", "@eliotr/domain"])],
@@ -330,6 +332,7 @@ const PACKAGE_RULES = new Map([
     "@eliotr/cloudflare-research-branches",
     "@eliotr/cloudflare-model-transport/model-gateway-provider-native-response.js",
     "@eliotr/cloudflare-model-transport/model-gateway-http-request.js",
+    "@eliotr/cloudflare-model-transport/opencode-model-routing.js",
     ...RESEARCH_CONFIGURATION_IMPORTS,
     ...RESEARCH_RUNTIME_IMPORTS,
     "@eliotr/cloudflare-erasure-operations",
