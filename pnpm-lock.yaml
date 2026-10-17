@@ -782,12 +782,12 @@ importers:
       '@eliotr/interfaces':
         specifier: workspace:*
         version: link:../interfaces
-      '@eliotr/research':
-        specifier: workspace:*
-        version: link:../research
       '@eliotr/platform-cloudflare':
         specifier: workspace:*
         version: link:../platform-cloudflare
+      '@eliotr/research':
+        specifier: workspace:*
+        version: link:../research
       '@eliotr/retrieval':
         specifier: workspace:*
         version: link:../retrieval
