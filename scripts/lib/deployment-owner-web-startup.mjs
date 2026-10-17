@@ -277,7 +277,10 @@ async function observeEntry({ browser, entry, origin, files, sourceCommit, build
     await bounded(page.goto(origin + entry.route, { waitUntil: "load", timeout: Math.min(30_000, remaining()) }));
     let pageState;
     for (;;) {
-      if (errors.length || pageErrors || consoleErrors) fail("unclean actual startup observation");
+      if (errors.length || pageErrors || consoleErrors) fail("unclean actual startup observation " + JSON.stringify({
+        route: entry.route, errors, pageErrors, consoleErrors,
+        requests: [...rows.values()].map(row => ({ pathname: row.pathname, state: row.state, status: row.status })),
+      }));
       pageState = await bounded(page.evaluate(route => {
         const { navigator, document, location } = globalThis;
         const controller = "serviceWorker" in navigator ? navigator.serviceWorker.controller : null;
