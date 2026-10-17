@@ -1,12 +1,10 @@
-import { createRequire } from "node:module";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { cloudflareTest, readD1Migrations } from "@cloudflare/vitest-plugin";
 import { defineConfig } from "vitest/config";
+import agents from "../../apps/eliotr-core/vite-agents.mjs";
 
 export default defineConfig(async () => {
   const coreRoot = new URL("../../apps/eliotr-core/", import.meta.url);
-  const coreRequire = createRequire(new URL("package.json", coreRoot));
-  const { default: agents } = await import(pathToFileURL(coreRequire.resolve("agents/vite")).href);
   return {
   root: fileURLToPath(coreRoot),
   plugins: [agents(), cloudflareTest({
