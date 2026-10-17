@@ -6,9 +6,11 @@ This directory is the compressed implementation view of `docs/architecture/ELIOT
 It exists so an implementation agent can work from a bounded packet without rereading the entire
 normative document.
 
-The guide does not weaken the master contract. When a packet and architecture conflict, stop the
-packet, identify the exact conflict, and change the shared contract through ER-01/ER-00 before leaf
-implementation continues.
+The current applicability table in the architecture and [ADR-0019](../adr/0019-compact-refactoring.md)
+reconcile the owner service with #377 and ADR-0018. Use [backend-entrypoints.md](backend-entrypoints.md)
+for current work. Old Launch/S01–S99/index-promotion documents below are historical capability references,
+not mandatory reading or competing queues. Resolve an affected contract conflict without freezing
+independent tasks or creating a new owner/claim protocol.
 
 ## Documents
 
@@ -22,11 +24,11 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 | [implementation-status.md](implementation-status.md) | What the four states mean and why a compiling port is not an implemented feature. |
 | [implementation-status.json](implementation-status.json) | The machine-readable registry. `pnpm check:implementation-status` validates it. |
 | [backend-entrypoints.md](backend-entrypoints.md) | Current backend router, dependency-ready cards, donor decisions and shared integration boundaries. |
-| [backend-delivery-plan.md](backend-delivery-plan.md) | Owner-resumed checkpoint, historical October 6 evidence and separate assembled-product acceptance. |
+| [backend-delivery-plan.md](backend-delivery-plan.md) | Dated source/live delivery record, October 15 cancellation and October 16 bounded product receipts. |
 | [backend-checkpoint-2026-10-08.md](backend-checkpoint-2026-10-08.md) | Published backend slices, scoped verification and remaining acceptance. |
 | [r05-local-native-qualification-2026-10-09.md](r05-local-native-qualification-2026-10-09.md) | Bounded local R05 and Session native results, preserved failures and unqualified product/live gates. |
 | [s40-frozen-debt-source-2026-10-10.md](s40-frozen-debt-source-2026-10-10.md) | Installed denominator binding, frozen debt source checks and separate native/terminal/reopen acceptance. |
-| [backend-contract-conflicts.md](backend-contract-conflicts.md) | Concrete contract conflicts and missing inputs for owner review. |
+| [backend-contract-conflicts.md](backend-contract-conflicts.md) | Resolved scope decisions and remaining inputs for the affected consumers. |
 | [frontend-platform-migration.md](frontend-platform-migration.md) | React/Vite executable migration route. |
 | [frontend-stack-validation-2026-10-08.md](frontend-stack-validation-2026-10-08.md) | Stack, Cloudflare, primitive, binding and compatibility validation. |
 | [frontend-agent-harness.md](frontend-agent-harness.md) | Component catalog, fixtures, visual evidence and UI-agent workflow. |
@@ -42,8 +44,8 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 | [gap-register.md](gap-register.md) | Prioritized list of what is genuinely missing, with the closure evidence each gap requires. |
 | [2026-09-10 saved work](checkpoints/2026-09-10/README.md) | Inactive snapshots of unfinished local work, push verification and cleanup inventory. |
 | [2026-09-10 cleanup receipt](checkpoints/2026-09-10/cleanup-receipt.json) | Exact removed build paths, recovered Git objects, preserved state, and cleanup exclusions. |
-| [production-readiness-plan.md](production-readiness-plan.md) | The only accepted definition of production-ready, and the ordered path to it. |
-| [slice-gates.md](slice-gates.md) | Vertical delivery order and the real completion evidence each slice owes. |
+| [production-readiness-plan.md](production-readiness-plan.md) | Current selected-profile acceptance, with historical full-capability phases retained as references. |
+| [slice-gates.md](slice-gates.md) | Historical slice ordering and capability acceptance evidence; apply current selected scope first. |
 | [release-checklist.md](release-checklist.md) | Promotion and production release gate. |
 | [canonical-alignment.md](canonical-alignment.md) | Recorded divergences between implementation and the canonical contracts. |
 
@@ -57,24 +59,24 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 | [branch-query-budget-selection.md](branch-query-budget-selection.md) | Missing immutable branch-query budget selection and denial without explicit limits. |
 | [workflow-conversion-admission-cutover.md](workflow-conversion-admission-cutover.md) | Required selected conversion inputs, current authority and explicit scope cutover. |
 | [native-external-task-wait-cutover.md](native-external-task-wait-cutover.md) | Native external-task prepare/wait/settle topology, callback/outbox authority and acceptance boundaries. |
-| [managed-generation-promotion-fence.md](managed-generation-promotion-fence.md) | Shadow key cutover, complete required-set evidence and existing pointer authority. |
+| [managed-generation-promotion-fence.md](managed-generation-promotion-fence.md) | Historical S52 promotion design, canceled for this service by #377. |
 | [research-session-projection-protocol.md](research-session-projection-protocol.md) | Strict read-only Agent RPC snapshot contract and pending lifecycle qualification. |
 | [rust-kernel-abi-versioning.md](rust-kernel-abi-versioning.md) | Versioned Rust/Wasm ABI and the consumer-newer compatibility guard. |
 | [runtime-contract.md](runtime-contract.md) | Bounded Worker, DO, Workflow, Queue, D1, R2 and AI Search behaviour. |
 | [failure-model.md](failure-model.md) | Retries, lost ACKs, tampering, stale generations, partial failure. |
 | [security-checklist.md](security-checklist.md) | Executable disclosure, taint, erasure and secret boundaries. |
 
-### Process — read before you edit anything
+### Process and historical references
 
 | Document | Purpose |
 |---|---|
-| [branch-discipline.md](branch-discipline.md) | Main-only implementation and exact-head, integration-proven branch cleanup. |
+| [branch-discipline.md](branch-discipline.md) | One checkout/worktree per manager and integration-proven branch cleanup. |
 | [scoped-verification.md](scoped-verification.md) | Focused verification commands and the distinction between scoped checks and the full chain. |
 | [toolchain.md](toolchain.md) | Pinned bootstrap tools. Leaf agents must not upgrade these; toolchain changes are ER-00. |
-| [launch-prs/README.md](launch-prs/README.md) | Theme map and the checkpoint dependency graph. |
-| [launch-prs/agent-start.md](launch-prs/agent-start.md) | How to select a checkpoint and the claim block to post before editing. |
-| [launch-prs/execution-contract.md](launch-prs/execution-contract.md) | Mandatory reading, claim procedure, implementation order, required tests and commands. |
-| [launch-prs/cloudflare-handoff.md](launch-prs/cloudflare-handoff.md) | Execution contract for account work; currently blocked by unfinished application code. |
+| [launch-prs/README.md](launch-prs/README.md) | Historical theme map and checkpoint graph; not the current execution queue. |
+| [launch-prs/agent-start.md](launch-prs/agent-start.md) | Historical checkpoint/claim procedure, superseded by ADR-0019. |
+| [launch-prs/execution-contract.md](launch-prs/execution-contract.md) | Historical launch procedure and command record; use the current router for scope and verification timing. |
+| [launch-prs/cloudflare-handoff.md](launch-prs/cloudflare-handoff.md) | Historical account-work handoff; inspect actual selected product and deployed state before platform work. |
 | [launch-prs/01-library.md](launch-prs/01-library.md) | Launch 01 plan — source ingest and owner Library. |
 | [launch-prs/09-rust.md](launch-prs/09-rust.md) | Launch 09 plan — Rust family parity, Wasm promotion, TS-authority removal. |
 
@@ -106,3 +108,28 @@ from the tables below, so an unlisted file is a bug, not an omission you may ign
 | [gemini-spark-mcp.md](gemini-spark-mcp.md) | Spark/Antigravity MCP protocol, client orchestration and live gates. |
 | [muse-operator-runbook.md](muse-operator-runbook.md) | Computer-agent operation — capabilities, transport and operating procedure per ADR-0007. |
 | [computer-agent-web-inbox.md](computer-agent-web-inbox.md) | Browser transport for the computer-agent web inbox; common task semantics live in the operator runbook. |
+
+### Additional implementation notes and dated evidence
+
+These records retain their original scope and qualification limits. In particular, the S52 managed
+target/registry records below do not reopen work canceled by #377.
+
+| Document | Purpose |
+|---|---|
+| [d1-native-representation-operator-2026-10-11.md](d1-native-representation-operator-2026-10-11.md) | Dated native D1 migration representation observations. |
+| [d1-nullable-check-operator-2026-10-11.md](d1-nullable-check-operator-2026-10-11.md) | Guarded nullable CHECK validation. |
+| [d1-supported-schema-representation-2026-10-11.md](d1-supported-schema-representation-2026-10-11.md) | Source-derived supported D1 schema representation. |
+| [http-cache-semantics-advisory-2026-10-14.md](http-cache-semantics-advisory-2026-10-14.md) | Dated dependency advisory disposition. |
+| [issue-282-cli-intake-2026-10-11.md](issue-282-cli-intake-2026-10-11.md) | CLI intake and native generated Worker lifecycle. |
+| [issue-282-legacy-startup-intake-2026-10-11.md](issue-282-legacy-startup-intake-2026-10-11.md) | Served PWA startup intake evidence. |
+| [issue-282-occurrence-network-source-2026-10-11.md](issue-282-occurrence-network-source-2026-10-11.md) | Startup occurrence inventory and observed membership. |
+| [issue-282-startup-observation-2026-10-11.md](issue-282-startup-observation-2026-10-11.md) | Dated local Research startup observations. |
+| [issue-333-routing-local-acceptance-2026-10-10.md](issue-333-routing-local-acceptance-2026-10-10.md) | Selective agent-routing local acceptance. |
+| [maintenance-owner-web-runtime-transition.md](maintenance-owner-web-runtime-transition.md) | Owner-web maintenance runtime transition. |
+| [managed-target-authority-2026-10-14.md](managed-target-authority-2026-10-14.md) | Historical managed-target authority and bounded source/local results; S52 is canceled. |
+| [owner-web-prepared-core-startup.md](owner-web-prepared-core-startup.md) | Prepared Core startup contract and limits. |
+| [research-full-answer-v1.md](research-full-answer-v1.md) | Existing full-source answer interface and context settings. |
+| [research-session-readonly-native-qualification-2026-10-11.md](research-session-readonly-native-qualification-2026-10-11.md) | Bounded read-only Session native qualification. |
+| [s64-dlq-quarantine-2026-10-11.md](s64-dlq-quarantine-2026-10-11.md) | Dated DLQ transport quarantine record. |
+| [s64-primary-queue-ownership-2026-10-11.md](s64-primary-queue-ownership-2026-10-11.md) | Primary Queue ownership and legacy API retirement record. |
+| [s91-managed-registry-transaction-qualification-2026-10-11.md](s91-managed-registry-transaction-qualification-2026-10-11.md) | Historical registry transaction qualification; canceled S52 is not a release prerequisite. |

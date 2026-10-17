@@ -671,7 +671,7 @@ Reject the change when any answer is yes:
 Every accepted UI checkpoint publishes:
 
 ```text
-checkpoint, claim and predecessor identities
+task outcome, exact scope and relevant contract decisions
 source commit and dirty-state check
 exact dependency, Storybook, browser and OS versions
 U1-R observations used

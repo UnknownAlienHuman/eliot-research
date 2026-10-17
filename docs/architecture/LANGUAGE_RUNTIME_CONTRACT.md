@@ -1,8 +1,8 @@
 ---
 title: "Eliot Research language and runtime contract"
 protocol: "eliotr.language-runtime.v1"
-version: "1.0"
-date: 2026-09-01
+version: "1.1"
+date: 2026-10-17
 status: "normative"
 authority: "normative for language ownership, runtime boundaries, testing, and migration in this repository"
 facts_checked: 2026-09-01
@@ -10,6 +10,12 @@ decision: "TypeScript Cloudflare control plane + Rust deterministic kernel + SQL
 ---
 
 # Eliot Research language and runtime contract
+
+The 2026-10-17 revision applies [ADR-0019](../adr/0019-compact-refactoring.md): capability families are
+modules before crates, migration proceeds through a real caller one operation at a time, and Rust ports
+do not block the owner product selected in #377. This changes implementation direction, not wire ABI
+versions or historical platform facts. At baseline `4e53d5e2`, the three Rust crates have no Worker
+product ABI caller; TypeScript still executes the unpromoted product decisions.
 
 ## 0. Binding decision
 
@@ -32,9 +38,10 @@ SQL
 This decision is permanent until superseded by a later normative ADR. It is not a temporary compromise
 and it is not a license to implement the same authority twice.
 
-[ADR-0015](../adr/0015-browser-capability-libraries.md) permits finite browser-only capability
-libraries within the existing static PWA build. TypeScript retains browser composition; no
-backend authority, extra runtime, service, or authentication implementation moves into them.
+[ADR-0016](../adr/0016-react-cloudflare-owner-ui.md) and
+[ADR-0017](../adr/0017-owner-web-browser-runtime-and-tooling.md) select the existing React/Vite owner web.
+Astro is frozen served compatibility until cutover. TypeScript retains browser composition; no backend
+authority, extra service or independent authentication implementation moves into the browser.
 
 The priority order is:
 
@@ -87,7 +94,7 @@ one eliotr-core Worker
   scheduled handlers
   ResearchSession Durable Object
   ResearchWorkflow
-  Static Assets / PWA routing
+  Static Assets / React owner-web routing (PWA compatibility until cutover)
 ```
 
 The hybrid stack does not create a service mesh, a second backend, or a second authority plane.
@@ -118,7 +125,7 @@ Rust code is embedded as a Wasm module or executed as an offline native tool. It
 | Analytics Engine and observability sinks | TypeScript | Native bindings |
 | MCP transport and JSON-RPC framing | TypeScript | HTTP/Access/stream boundary |
 | Google Workspace and gcloud orchestration | TypeScript | Official CLI/Node ecosystem boundary |
-| PWA | TypeScript | Browser application; no authority |
+| React owner web | TypeScript | Browser application; no backend authority; Astro compatibility retires at cutover |
 | Provisioning and Wrangler automation | TypeScript/Node | Tracks Cloudflare resource schema quickly |
 | Canonical serialization rules | Rust | Pure deterministic kernel |
 | Stable IDs and content-derived digests | Rust | Pure deterministic kernel |
@@ -208,33 +215,24 @@ canonical bytes + versioned context
 
 It does not perform effects.
 
-### 5.2 Target crate layout
+### 5.2 Capability modules and actual crates
 
-The target workspace is:
+The existing workspace has `eliotr-canonical`, `eliotr-kernel-wasm` and `eliotr-test-vectors`. Extend
+coherent modules in these crates first. The former 17-name target tree described capability families;
+it is not a requirement to create 17 crates or complete them before the product can ship.
 
-```text
-crates/
-  eliotr-canonical
-  eliotr-contract-core
-  eliotr-identities
-  eliotr-state-machines
-  eliotr-scope
-  eliotr-policy
-  eliotr-residency
-  eliotr-qualification
-  eliotr-evidence
-  eliotr-coverage
-  eliotr-projection-core
-  eliotr-erasure-core
-  eliotr-federation-core
-  eliotr-research-core
-  eliotr-kernel-wasm
-  eliotr-bundle-cli
-  eliotr-test-vectors
-```
+| Capability family | Implementation boundary |
+|---|---|
+| Canonical bytes, digests, stable identity | Existing pure canonical kernel and its internal modules |
+| State, scope, policy, residency, qualification | Pure modules added only for a selected operation |
+| Evidence, coverage, research, erasure, federation decisions | Pure modules selected by an actual consumer; effects stay outside |
+| Projection/coordinate algorithms | Bounded pure transforms; no second parser or index runtime |
+| Wasm entrypoint | Existing `eliotr-kernel-wasm`, one versioned adapter to selected pure operations |
+| Shared vectors | Existing `eliotr-test-vectors`; parity checked after the operation is assembled |
+| Offline bundle verification | Add an executable only when a selected product path needs it |
 
-Crates remain micro-modular. A crate owns one coherent authority or algorithmic family; it does not mirror
-the current TypeScript file tree mechanically.
+A new crate must justify a concrete dependency, build or public-interface boundary in its PR. A function,
+work packet or line-count warning is not such a boundary. Do not mirror TypeScript packages mechanically.
 
 ### 5.3 Safety policy
 
@@ -338,11 +336,21 @@ Rules:
 - a change-count or provider acknowledgement is not readback proof;
 - rollback, stale-CAS, lost-ACK, duplicate, and conflicting-replay cases are mandatory.
 
+Those cases are acceptance work after implementation assembly. Prefer row-local constraints, unique/FK
+constraints and atomic CAS predicates; do not encode a duplicate domain engine in JSON-heavy views and
+triggers. Pure preflight can move to its kernel owner, but the final concurrency predicate stays in the
+transaction. Source cleanup never implies resetting deployed D1 or applying canceled S52 migrations.
+
 ## 8. Test and verification contract
+
+During the current code phase, compile/lint the affected source and run minimal Clippy for changed Rust.
+Tests and the broader acceptance gates below run after the functionality is assembled, before authority
+promotion or release as applicable. They are not a test-writing or full-suite prerequisite to every edit.
+Existing CI remains in place; unexecuted checks remain pending.
 
 ### 8.1 Rust gates
 
-Every Rust change must pass, as applicable:
+Assembled Rust authority promotion must pass, as applicable:
 
 ```bash
 cargo fmt --all --check
@@ -381,7 +389,7 @@ wrangler types
 wrangler deploy --dry-run
 compressed bundle budget
 startup budget
-PWA Playwright tests
+integrated owner-web Playwright tests
 ```
 
 A native Rust test cannot replace a Workers runtime test.
@@ -433,18 +441,21 @@ TypeScript unless it owns a critical invariant that requires the Rust proof surf
 The current TypeScript implementation is a transitional executable specification, not disposable code
 and not the final owner of domain authority.
 
-Migration order:
+Migration vocabulary and order:
 
 ```text
 M0  adopt this contract and freeze language-boundary drift
 M1  create Cargo workspace, toolchain, CI, and shared test-vector crate
-M2  move canonical JSON, digests, stable IDs, and generation tokens
-M3  move state machines, scope algebra, policy, residency, and qualification
-M4  move evidence, coverage, erasure, federation, and research dispositions
-M5  compile the kernel to Wasm and run differential shadow mode
-M6  promote Rust results to authority one capability at a time
-M7  remove the superseded TypeScript domain implementation
+M2–M4  select one needed canonical/domain/disposition operation and implement it
+M5     expose that operation through Wasm and its real Worker caller; check assembled parity
+M6     promote that operation after runtime/byte/budget acceptance
+M7     remove that operation's superseded TypeScript decision
+       repeat for the next operation only when the product needs it
 ```
+
+M2–M4 are capability families, not prerequisites requiring every family to be ported before M5.
+Foundation/vector-only work does not complete a product slice. Existing pure code stays useful without
+being advertised as active Worker authority; no migration family is a release prerequisite by default.
 
 ### 10.1 Freeze rule
 
@@ -452,13 +463,14 @@ Until a Rust capability is promoted:
 
 - bug fixes and platform integration may continue in TypeScript;
 - new domain fields or invariants must be added to versioned fixtures;
-- new domain semantics must name the target Rust crate;
+- new domain semantics must name the pure capability module and its current/target owner;
 - no new large TypeScript domain package is allowed;
 - no direct one-file-for-one-file Rust rewrite is allowed.
 
 The N1 native coordinate-map contract is one such migration debt: its deterministic table-cell
 mapping and source/content identity semantics currently execute in the TypeScript R2/D1 adapter,
-with `eliotr-projection-core` as the named future Rust target. This checkpoint adds versioned
+with the pure projection capability family as its future Rust target (`eliotr-projection-core` was a
+provisional crate name, not an instruction to create it). This checkpoint adds versioned
 fixtures and strict wire validation but does not claim Rust/Wasm parity or promote a new authority.
 
 ### 10.2 Shadow-mode rule
@@ -513,16 +525,9 @@ Agents must read this file before:
 - changing the TypeScript↔Wasm ABI;
 - moving a capability from shadow to authority.
 
-A work packet must state:
-
-```text
-language owner
-platform owner
-authority owner
-test owner
-migration phase
-live gate
-```
+The bounded task/PR identifies the current and target decision owner, real caller, effect boundary and
+assembled acceptance. It needs no additional claim JSON, prerequisite commit or registry entry merely to
+start implementation. Update runtime status when an operation actually changes owner.
 
 A PR that violates the language ownership matrix is rejected even if it compiles.
 

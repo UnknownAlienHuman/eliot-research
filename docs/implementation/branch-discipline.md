@@ -1,8 +1,8 @@
 ---
 title: "Eliot Research branch discipline"
 protocol: "eliotr.branch-discipline.v2"
-version: "2.1"
-date: 2026-10-08
+version: "2.2"
+date: 2026-10-17
 status: "normative"
 ---
 
@@ -10,28 +10,19 @@ status: "normative"
 
 ## Owner-directed implementation
 
-The owner's S27 instruction supersedes the former branch ceiling, dated launch reservations, and
-age-based deletion procedure. Ordinary owner-directed source implementation works directly on `main`:
-do not create an ad hoc task branch or additional worktree. One agent holds one checkpoint at a time,
-claims exact paths and base SHA in the active task, tests the change, publishes without rewriting
-history, and records its acceptance. Preserve concurrent main changes; do not force an implementation
-update over them.
+[ADR-0019](../adr/0019-compact-refactoring.md) selects one checkout/worktree per manager. Use the existing
+authorized direct-main context or one review branch for a coherent PR; do not create leaf worktrees or
+branches. The manager assigns exact disjoint paths and serializes shared files. No JSON claim, prior
+claim commit, ancestry gate or packet reservation is required for current refactoring work.
 
-There is one explicit exception. The owner may authorize a named manager packet or review PR to use
-exactly one dedicated manager worktree/branch instead of direct main. That authorization must name the
-packet or PR, base SHA, write scope, manager and stop condition. Leaf subagents work only inside the
-manager's delegated disjoint paths and do not create another branch, worktree, package root, manifest,
-barrel or shared fixture. The manager serializes shared files and publishes one coherent result.
+Start from current main and preserve concurrent changes. Refresh before publication; never force an update
+over shared work. Record the implementation result and scoped checks in the PR. Tests and assembled
+acceptance follow the source phase; documentation does not establish runtime readiness.
 
-A review branch/worktree is an isolation mechanism, not authority expansion. It does not lift an owner
-implementation stop, make blocked dependencies complete, grant paths outside the packet, authorize
-Cloudflare/provider/account mutation, permit deployment, or establish merge readiness. Planning-only
-branches remain documentation/evidence until their executable gates pass and the owner separately
-authorizes source work or merge.
-
-Existing planning and salvage PRs remain specifications/evidence, not permission to merge stale trees.
-An open theme is not automatically unfinished in every detail: compare each checkpoint against current
-main. Keep a theme open until all mandatory code acceptance is met; live acceptance stays separate.
+A review branch isolates a change; it does not expand the task into deployment, account mutation or data
+deletion. The 44 former draft PRs are archived in
+[#377](https://github.com/UnknownAlienHuman/eliot-research/issues/377). They supply reusable requirements
+or source when a current task needs them, not a competing queue or permission to merge stale trees.
 
 ## Cleanup authority
 

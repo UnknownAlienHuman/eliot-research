@@ -3,7 +3,7 @@
 **Slice:** owner-interface migration
 **Packet completion dependencies:** none
 **Coordination inputs:** accepted current ER-00 workspace/toolchain, ER-21 owner APIs and ER-24 Worker composition; their whole packets need not be complete.
-**Scheduler input:** ER-49 static registry/checker before parallel leaves.
+**Coordination:** current refactor work follows ADR-0019 and the owner-web execution map; ER-49 is historical audit material.
 **Compatibility baseline:** ER-25 remains served until accepted cutover; it is not a completion prerequisite.
 **Architecture:** [ADR-0016](../adr/0016-react-cloudflare-owner-ui.md) and
 [ADR-0017](../adr/0017-owner-web-browser-runtime-and-tooling.md)
@@ -12,15 +12,16 @@
 **Material UI procedure:** [frontend-material-agent-playbook.md](frontend-material-agent-playbook.md)
 **Design authority:** [OWNER_WEB_UI.md](../design/OWNER_WEB_UI.md)
 
-**Status:** ownership reservation and execution contract only. Source implementation remains paused until the
-owner authorizes a named U checkpoint or an autonomous tranche containing it.
+**Status:** historical feature and acceptance contract. Current refactor tasks are assigned by the manager from
+the implementation router; no named U checkpoint or claim is a prerequisite.
 
-Within an authorized tranche the manager continues through dependency-ready U checkpoints without repeated
-owner prompts. Checkpoint claims, packet ownership, human gates and release/account restrictions remain exact.
+The manager uses one checkout, assigns exact paths and keeps parallel work disjoint. The manager serializes shared
+composition points. Product acceptance below remains applicable where selected work touches it; deployment,
+cutover and account or production actions retain their separate authorization boundaries.
 
-The packet DAG is intentionally empty. Exact bootstrap, scheduler, client-family, visual-direction, feature
-and cutover prerequisites live in the leaf execution map; unrelated/live ER-00/21/24 obligations do not block
-the reservation.
+The historical packet DAG is empty. The execution map preserves product acceptance; the current implementation
+router and manager assignment determine task order and scope. Existing ER-00/21/24 contracts remain owned by
+their current owners and are consulted when the selected work touches them.
 
 ## Objective
 
@@ -44,10 +45,10 @@ reasoning, raw prompts or provider payloads.
 - `scripts/ui-owner/**`
 - `docs/agent-work/frontend-owner-claims/ER-47/**`
 
-These paths are reserved to one ER-47 manager. Leaves receive exact checkpoints/paths from the execution map.
-The manager serializes package-local manifests, barrels, route/query roots, catalog and handoffs. ER-49 owns
-static definitions/checker; ER-47 cannot edit ER-48 claims or scheduler authority. ER-00 owns root registration
-and root-command/CI integration.
+These are the historical ER-47 ownership paths. Current assignments use the implementation router and manager's
+exact-path task scope. Parallel tasks may edit disjoint paths; serialize package manifests, barrels, route/query
+roots, catalog and handoffs. ER-49's registry/checker and claim files are optional historical audit material.
+Root registration and root-command/CI integration remain with their current owners.
 
 ## Read only unless explicitly delegated
 
@@ -64,6 +65,10 @@ and root-command/CI integration.
 - D1, R2, Queue, Workflow, Durable Object, MCP and provider code
 - `apps/eliotr-core/wrangler.jsonc`
 - root package, lockfile, TypeScript, lint, CI, deployment and receipt files
+
+These are shared integration homes, not permanent packet locks. The manager may assign their exact paths
+under the current authorized router, including preparation of the build bridge and rollback before review.
+Serialize those edits with other tasks; actual deploy/cutover still needs its action authorization.
 
 ER-47 must not import a legacy browser package root/subpath, wrap a `mount...Panel()` renderer, copy a wire
 decoder, issue feature owner-API `fetch` calls or open an ad hoc SSE/WebSocket/Agents channel.
@@ -101,32 +106,24 @@ The current orchestrator deploys an attested entrypoint with explicit `--no-bund
 wrangler.deploy.jsonc`, so it does not consume Vite redirected output automatically. U6 implements one
 explicit bridge; Vite assets plus unchanged legacy deploy script is invalid.
 
-U1.1a is package-local only. Before U1.1b, ER-00 B-U registers manifests in frozen lockfile, root TS
-references, fail-closed boundaries/negative fixture and applicable test/budget scripts. Direct Vite/editor
-success before B-U is non-authority evidence.
+Compile and lint the affected scope during implementation. Root registration, lockfile, TypeScript references,
+boundaries and scripts are integrated by the current owner when needed; a package-local build is not final
+integration evidence. Tests and browser/UI acceptance run after assembly, not after every edit.
 
-During U1-U5 legacy stays release-authoritative. Root build/deploy/CI/config/receipt changes remain serialized
-ER-00/24/26 ownership.
+During U1-U5 legacy stays release-authoritative. Prepare and verify root build/deploy/CI/config/receipt
+integration before the finished review build; the manager serializes these shared ER-00/24/26 homes.
 
-Before cutover, U6 creates one immutable retirement-safe legacy rollback artifact through ER-25/00/24/26:
+During preparation, create one immutable retirement-safe legacy rollback artifact through the existing
+ER-25/00/24/26 homes, before FINAL-UI and actual cutover:
 accepted online legacy behavior, no root `/sw.js` registration, no historical fetch/cache worker, exact
 retirement helper and permanent inert `/sw.js` tombstone. Historical production bytes are not post-retirement
 rollback.
 
 ## Scheduler and evidence boundary
 
-Before ER-49 acceptance, at most one frontend leaf runs. Afterward:
-
-- every source-edit commit is covered by exactly one active claim committed in a strict ancestor;
-- same-commit claim plus source edit is invalid;
-- one checkpoint has one active claim;
-- all ER-47 active claims share one owner-authorized manager context;
-- parallel checkpoints have disjoint canonical paths and structurally valid predecessor references;
-- ER-49 proves syntax, scope and ancestry, not the semantic truth of a human approval or test receipt;
-- manager/operator review remains responsible for accepting evidence.
-
-ER-49 remains optional for parallelism. Sequential one-manager/one-leaf work may continue if scheduler
-implementation would become a general workflow product.
+Use one manager checkout. Parallel tasks are allowed only for disjoint exact paths; the manager serializes shared
+files and integrates the result. No JSON claims, Git ancestry, ER-49 acceptance or leaf caps are required for
+current work. The old checker can be run as an optional historical audit and does not validate product behavior.
 
 ## Local Cloudflare boundary
 
@@ -147,9 +144,10 @@ fixtures and no Worker plugin.
 ## Remote state, progressive events and page lifecycle
 
 - Query functions consume `AbortSignal` and recheck route/session/lifecycle/deployment epochs after awaits.
-- Protected keys include relevant principal/session epoch and deployment generation.
-- Logout, auth loss, revoke, purge, generation change and `pagehide` cancel reads and remove protected Query/
-  view data; invalidation alone is insufficient.
+- Protected keys include the authenticated principal/session epoch.
+- Logout, auth loss, revoke, purge, principal change and `pagehide` cancel reads and remove protected
+  Query/view data; invalidation alone is insufficient. Deployment-generation change alone does not clear owner
+  data: preserve the draft and last known read with stale indication and retry, as defined by ADR-0018.
 - Mutations use `retry:false`; uncertain retry preserves exact operation/body after readback.
 - Credentials, grants, prompts and source/report/evidence bytes never enter URL or browser persistence.
 - Unmount, poll stop or event-stream close is not server cancellation.
@@ -201,24 +199,18 @@ Initial JS remains `<= 600 KiB gzip`. P1-P10 measure shell, lists, progressive u
 panes, theme, authority clearing and bfcache. Memoization, virtualization, workers, generic chat state or global
 stores require reproduced traces and before/after receipts.
 
-`@ai-sdk/react` is not baseline. It may enter B-U only after an accepted event contract, measured bundle/value
+`@ai-sdk/react` is not baseline. It may enter only after an accepted event contract, measured bundle/value
 and proof that Eliot identity, decoding, cancellation, disclosure/currentness and no-retry semantics remain.
 
 ## Required order
 
-```text
-ER-49 registry/checker
-U1.1a → B-U → U1.1b → U1-R → U1.2 → U1.3 → U1.4 → U1-D → U1.5
-→ U2-S/U2-R/U2-T/U2-C → U2-X
-→ U3-P/U3-I/U3-D/U3-E → U3-X
-→ U4-R/U4-M/U4-E → U4-X
-→ U5-S/U5-C → U5-X
-→ serialized U6 deployment + permanent tombstone + safe rollback
-→ U7 legacy/rollback-artifact removal; inert `/sw.js` remains
-```
+The labels below preserve the former UI sequence as a useful map of product acceptance. They are not a claim,
+checkpoint or implementation prerequisite. For current assignments, use the implementation router. Keep shared
+route/query roots and catalogs serialized with the manager; test the integrated journey after assembly.
 
-Matching ER-48 client leaves/gates precede U3-U5. Feature leaves never edit shared route/query roots or
-catalogs; U3-X/U4-X/U5-X are manager-only integrations.
+U1-R/U1-D visual direction → U2-X no-hint journey → feature wiring and integrated bridge/rollback preparation
+→ U5-X integrated review → FINAL-UI owner review → authorized U6 deployment/cutover → code retirement
+within the authorized refactor after rollback obligations are satisfied.
 
 U2-X uses a fresh-context tester who did not implement the screen: select/create a project, add/select a
 source, ask a question, open exact citation/evidence, save/open a supported artifact and locate/fix one
@@ -227,33 +219,26 @@ acceptance, the manager continues through U3-U5; the owner reviews the finished 
 
 ## Mandatory negative case
 
-Bind a dev/Preview candidate to a production resource and hold a protected response across logout, generation
+Bind a dev/Preview candidate to a production resource and hold a protected response across logout, principal
 change or `pagehide`. The binding gate rejects the resource, and epochs plus synchronous root guard prevent the
-old response/tree from appearing, including first restored paint.
+old response/tree from appearing, including first restored paint. Across deployment-generation renewal, retain
+the owner draft/last read as stale, accept prior-generation owner reads and reconcile without replaying writes.
 
-Additional negatives include malformed/generation-mismatched envelopes, sampled no-hit, missing coordinates,
+Additional product/security checks include malformed strict mutation/evidence envelopes, sampled no-hit, missing coordinates,
 false connectivity, lazy/export failure, CSP violation, legacy worker resurrection, rollback re-registration,
 controlled inbox before controller-null reload, missing permanent tombstone, bfcache flash, nested scroll/
 reparenting, progress gap/reorder/replay, render storms, unapproved generic visual direction, unusable owner
-journey, duplicate/overlapping/stale-takeover claims and unregistered workspace packages escaping root gates.
+journey and unregistered workspace packages escaping root gates. Claim-history negatives belong only to optional
+ER-49 audit; additive owner read fields and previous deployment-generation reads follow ADR-0018.
 
 ## Verification
 
 ```text
-ER-49 scheduler/history receipt + one manager context + valid prior claim
-B-U root-registration + unknown-package negative
-frozen install + root/scoped typecheck/lint
-component/stories interaction/a11y/CSP
-U1-R live-reference evidence + U1-D internal rendered-direction acceptance
-Playwright route/keyboard/network/overflow/page-lifecycle/first-paint
-fresh-context no-hint U2-X audit receipt
-progress gap/reconnect/readback/no-run-replay
-bounded visual + P1-P10
-safe Vite/workerd + binding preflight
-supported Preview or serialized staging
-legacy behavior + safe rollback + inbox-controller + permanent tombstone
-JS/CSS/font/Worker/rollback budgets
-ordered release acceptance
+During implementation: scoped TypeScript compilation and lint for changed code.
+After assembly: applicable component/API/client tests, U1-R/U1-D, browser/Playwright and accessibility checks,
+U2-X journey, progress readback/no-run-replay, visual/security/CSP/performance checks and local binding preflight.
+Before U6: supported deploy-path, legacy behavior, safe rollback, inbox/controller and permanent tombstone acceptance.
+At release: remaining ordered release acceptance. Record unrun checks as PENDING; do not run browser/tests for every edit.
 ```
 
 A package-local build, claim, component, story, screenshot, benchmark, Explorer trace or Preview URL never

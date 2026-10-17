@@ -52,6 +52,27 @@ revision_29_1:
 > implementation state. The normative contract and its requirements remain authoritative.
 > Backend delivery state is tracked in [backend-delivery-plan.md](../implementation/backend-delivery-plan.md).
 
+## Current service applicability — 2026-10-17
+
+Read this table before the historical full-product requirements below. The active implementation router is
+[backend-entrypoints.md](../implementation/backend-entrypoints.md); archived S01–S99 tasks are not the
+current queue. These amendments do not change existing wire protocol versions.
+
+| Area | Current rule and authority |
+|---|---|
+| Product delivery | [Owner decision #377](https://github.com/UnknownAlienHuman/eliot-research/issues/377) selects five working owner paths and archives 44 draft PRs. Rust migration and historical audits do not block those paths. |
+| Owner profile | [ADR-0018](../adr/0018-owner-single-function-first-profile.md) selects `OWNER_SINGLE`: one ingress owner context, summary reads without per-item evidence/grant work, exact checks on citation open, one streamed E0/E1 synthesis, explicit E2/E3. This supersedes conflicting per-read/model/deploy rules below. |
+| Search | #377 cancels S52's own search index/generation registry/target manifests/required-set promotion and rollback. Use Cloudflare AI Search or provider-native search. Canonical source admission, membership, existing delivery and evidence resolution remain; old index-generation chapters do not reopen S52. |
+| Owner UI | [ADR-0016](../adr/0016-react-cloudflare-owner-ui.md) / [ADR-0017](../adr/0017-owner-web-browser-runtime-and-tooling.md) select React/Vite, `@eliotr/ui` and one owner client. Astro is served compatibility pending cutover, not the target. |
+| Implementation shape | [ADR-0019](../adr/0019-compact-refactoring.md) selects coherent modules in one Worker, on-demand Rust operations, bounded legacy retirement and one manager checkout without JSON-claim/ancestry prerequisites. |
+| Optional capabilities | Federation and `drive-exchange` requirements apply only when their client profile is selected. Backup/export/restore execution is deferred by the recorded owner decision; retention/erasure obligations are preserved. They do not become the current implementation queue. |
+| Evidence and acceptance | Source/evidence identity, honest coverage, original attempt/replay semantics and atomic state changes still apply. Performance targets and React/Rust cutovers remain unverified until measured. |
+
+The selected Google transport is `gemini-mcp` (ADR-0006); it is independent of `OWNER_SINGLE`.
+Generic multi-client and deep-research sections remain reference contracts for those explicit profiles,
+not mandatory machinery for every owner question. Stale instruction conflicts are resolved at this
+applicability boundary rather than by adding another enforcement layer.
+
 ## Profile applicability — ADR-0006 (2026-09-09)
 
 ADR-0006 supersedes the unconditional Day-0 Google Drive requirements in this document only for the
@@ -4072,9 +4093,12 @@ Portable export contains R2 objects, D1 JSONL, schemas/migrations, EvidenceHandl
 
 ```text
 /apps/eliotr-core
-/apps/eliotr-pwa
+/apps/eliotr-web
+/apps/eliotr-pwa            served compatibility until React cutover
 
 /packages/contracts
+/packages/owner-api-client
+/packages/ui
 /packages/domain
 /packages/policy
 /packages/platform-cloudflare
@@ -4092,7 +4116,10 @@ Portable export contains R2 objects, D1 JSONL, schemas/migrations, EvidenceHandl
 /packages/testkit
 ```
 
-Source packages compile to one `eliotr-core` Worker plus static PWA assets. A package is not a service.
+This is a responsibility map, not an exhaustive workspace inventory or a requirement to create a package
+for each function. Source packages compile to one `eliotr-core` Worker plus static React assets after
+cutover. The baseline still points Wrangler at PWA assets; ADR-0016/0017 govern the actual switch.
+Use [ADR-0019](../adr/0019-compact-refactoring.md) for consolidation and retirement order.
 
 ## 17.2. Production dependency policy
 
@@ -4111,7 +4138,7 @@ Development only:
 typescript
 wrangler
 @cloudflare/workers-types
-@cloudflare/vitest-pool-workers
+@cloudflare/vitest-plugin
 eslint
 ```
 
@@ -4146,7 +4173,7 @@ wrangler types --check
 wrangler deploy --dry-run --minify
 bundle/startup/forbidden-import checks
 Workers integration tests
-PWA bundle budgets
+owner-web bundle budgets
 ```
 
 No deployment is accepted merely because TypeScript compiles.
@@ -4185,6 +4212,10 @@ If it requires native process, persistent filesystem, corpus in memory, unbounde
 # 18. Implementation by vertical slices
 
 The sequence delivers a working user loop before advanced research machinery.
+
+The slices below are the historical full-product decomposition. For the selected owner service, #377
+and ADR-0018/0019 determine the active order: do not block the owner paths on Drive Exchange, all Rust
+families, S52 or unselected specialist capabilities. Current tasks are in `backend-entrypoints.md`.
 
 ## Slice 0 — platform skeleton and Drive exchange proof
 

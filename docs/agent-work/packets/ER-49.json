@@ -8,7 +8,7 @@
       "scripts/check-frontend-owner-checkpoints.mjs",
       "scripts/test-frontend-owner-checkpoints.mjs"
     ],
-    "mandatory_negative_case": "Seed unknown or duplicate checkpoint IDs, dependency cycles, packet-scope escape, manager/external-gate misuse, malformed paths or SHAs, cross-packet placement, missing or foreign predecessor/approval references, multiple manager contexts, duplicate checkpoint claims, overlapping active paths, unreachable history, claim and source introduced in the same commit, source edits before or outside an active covering claim, immutable claim rewrites, evidence deletion, reverse transitions, unauthorized takeover, claim rename/deletion/recreation, replacement while the old claim remains active, and false completion handoff; the checker must fail before affected leaf work is accepted.",
+    "mandatory_negative_case": "Historical audit only under ADR-0019: the retained checker rejects malformed IDs, dependency cycles, path overlap, invalid predecessor references and claim/source ancestry violations when explicitly auditing the former protocol. This packet does not require new claims, prior commits or checker acceptance for current implementation.",
     "document": "ER-49-frontend-leaf-scheduler.md",
     "max_package_source_lines": 10000
   }

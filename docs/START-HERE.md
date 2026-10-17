@@ -1,240 +1,82 @@
 # Start here
 
-This is the only repository entry point for implementation work.
+The current task is to finish and simplify the owner product. Begin with
+[backend-entrypoints.md](implementation/backend-entrypoints.md), choose one bounded outcome, then read
+[AGENTS.md](../AGENTS.md) and the exact source/contracts for that outcome.
 
-## Current authorities
+## Current decisions, in order
 
-- Current backend execution order and dependency-ready cards: [backend-entrypoints.md](implementation/backend-entrypoints.md).
-- Owner-resumed checkpoint and historical evidence: [backend-delivery-plan.md](implementation/backend-delivery-plan.md).
-- Repository boundaries: [AGENTS.md](../AGENTS.md).
-- Packet ownership: [agent-work/README.md](agent-work/README.md), `manifest.json` and validated fragments.
-- Implemented/scaffold/live state: [implementation-status.json](implementation/implementation-status.json).
-- Known blockers: [gap-register.md](implementation/gap-register.md).
-- Original S01-S99 requirements: [PR #292](https://github.com/UnknownAlienHuman/eliot-research/pull/292).
+1. Current owner direction and [#377](https://github.com/UnknownAlienHuman/eliot-research/issues/377):
+   five working product paths; the former 44-PR queue is archived. S52's custom index/generation/target/
+   promotion/rollback layer is canceled. Rust migration does not block the product.
+2. [ADR-0019](adr/0019-compact-refactoring.md): compact modules, retirement boundaries and simple agent work.
+3. [ADR-0018](adr/0018-owner-single-function-first-profile.md): `OWNER_SINGLE` reads and ordinary answers.
+4. [ADR-0016](adr/0016-react-cloudflare-owner-ui.md) /
+   [ADR-0017](adr/0017-owner-web-browser-runtime-and-tooling.md): React/Vite and browser cutover.
+5. [Product architecture](architecture/ELIOT_RESEARCH.md) and
+   [language contract](architecture/LANGUAGE_RUNTIME_CONTRACT.md): the named capability's detailed rules.
 
-### Owner web
+Astro is rejected as the target. The existing PWA remains the served compatibility path until the
+integrated React/Worker cutover. Do not infer that changing a document or a fixture build switched it.
 
-- **UI agent first read:** [Material UI agent playbook](agent-work/frontend-material-agent-playbook.md).
-- Exact frontend DAG: [frontend-owner-execution-map.md](agent-work/frontend-owner-execution-map.md).
-- Autonomous manager operation: [frontend-autonomous-manager-runbook.md](agent-work/frontend-autonomous-manager-runbook.md).
-- Current-main reconciliation: [frontend-current-contract-amendment-2026-10-09.md](agent-work/frontend-current-contract-amendment-2026-10-09.md).
-- React presentation: [ER-47](agent-work/ER-47-owner-web-interface.md).
-- Owner-client extraction: [ER-48](agent-work/ER-48-owner-api-client-extraction.md).
-- Leaf scheduler: [ER-49](agent-work/ER-49-frontend-leaf-scheduler.md).
-- Platform/runtime: [ADR-0016](adr/0016-react-cloudflare-owner-ui.md) and
-  [ADR-0017](adr/0017-owner-web-browser-runtime-and-tooling.md).
-- Stack/cutover: [stack validation](implementation/frontend-stack-validation-2026-10-08.md) and
-  [cutover inventory](implementation/frontend-cutover-inventory-2026-10-08.md).
-- Product design: [OWNER_WEB_UI.md](design/OWNER_WEB_UI.md).
-- Live reference and autonomous execution: [NotebookLM/Material protocol](agent-work/frontend-notebooklm-material-reference.md)
-  and [autonomous manager runbook](agent-work/frontend-autonomous-manager-runbook.md).
+The [October 17 source reconciliation](../.github/audits/2026-10-17/README.md) distinguishes current defects
+from fixed/overstated audit findings. Audits and donor snapshots are evidence, not another work queue.
 
-The current-main amendment is mandatory for every affected checkpoint. It supersedes dated frontend inventory
-assumptions only for the topics it names; exact current TypeScript contracts remain authoritative.
+## One manager, one checkout
 
-ER-25 remains served compatibility until cutover. ER-47/48 are manager packets with empty coarse dependencies;
-execution map owns real leaf prerequisites/handoffs. ER-49 owns static scheduling mechanics. After PR #329 is
-merged, Issue #335 authorizes one manager to execute F1-F4 continuously through U5-X. U1-D and U2-X are internal
-quality gates; the first owner UI review is the finished integrated interface before merge/deploy. One durable owner comment may authorize an autonomous
-tranche; that removes per-checkpoint continuation prompts but does not expand path, merge, deployment or account
-authority.
+Use one manager checkout/worktree from current main. The manager assigns each leaf exact files and one
+observable outcome; independent leaves may work in parallel. Shared roots, manifests, route registries,
+barrels and migrations are serialized by the manager. Leaves create no branches or worktrees.
 
-Before ER-49 acceptance, maximum concurrency is one frontend manager plus one leaf. Afterward:
+An assignment needs the outcome, files, relevant contract, dependency if any, and how the assembled result
+will be accepted. This belongs in the task/PR; no JSON claim, claim-only commit, ancestry gate, new registry,
+ER-49 prerequisite or per-leaf owner approval is required. Old packet files remain useful source maps.
+Optional historical claim tools do not decide whether new implementation may proceed.
 
-- manager publishes claims only in its packet-owned directory;
-- claim commit is a strict ancestor of covered source edits;
-- every source-edit commit has exactly one active covering claim in parent tree;
-- same-commit claim+source, unclaimed/out-of-scope edit and overlap fail;
-- one active claim per checkpoint and one active manager context per packet;
-- predecessor refs name checkpoint and reachable ancestor commit; manager/external gates include approval ref;
-- ER-49 validates mechanics, not semantic truth of human approval or test evidence.
+A missing prerequisite blocks only its consumer. Continue independent work and fix routine integration
+within the authorized scope. Do not restart a completed review because main gained an unrelated commit.
 
-Historical service-worker-registering PWA is not post-retirement rollback. U6 prebuilds an attested online
-legacy rollback without registration/old fetch worker and retains permanent inert `/sw.js`.
+## Code and verification
 
-Open planning PRs, old Launch plans and audits are evidence, not competing queues.
+During implementation:
 
-For owner-web execution, the current #335 authorization and the manager runbook's 2026-10-11 clarification
-supersede audit-added process restrictions in older #335/#337 comments. Keep the existing manager context and
-authorized direct-main publication. No fixed two-leaf cap or new auditor approval applies after ER-49;
-parallelism follows disjoint paths and dependencies. A blocked case, a missing status edit or a new main SHA
-alone does not stop independent implementation or verification. Reuse accepted early gates and unchanged
-evidence; do not restart them on every resume. Execution eligibility is not verified acceptance: pending or
-failed required checks still need execution/repair, and FINAL-UI still needs the complete review package.
+- TypeScript: compile the affected project/reference graph and lint the changed source files.
+- Rust: compile and run minimal Clippy for the affected crate; no broad test campaign now.
+- SQL: use the existing depth-100 compiler for changed schema/queries, without creating another analyzer.
+- Documentation: check links, consistency and `git diff --check`.
 
-## 1. Orient from current main
+Tests, browser journeys and live acceptance follow assembled functionality. Keep existing CI behavior;
+do not claim deferred checks passed. `pnpm check:affected` currently invokes the full repository suite:
+it is not the scoped command for this edit loop.
 
-```bash
-git fetch origin --prune
-git log --oneline -5 origin/main
-git status --short
-pnpm launch:code
-pnpm work-packets:check
-pnpm check:implementation-status
-gh pr view 327
-gh pr view <assigned-task> --comments
-```
+Before publication, refresh the remote head, review the exact diff and preserve concurrent changes.
+Publish the coherent result through authenticated Git or GitHub Git Data API. A local patch or unattached
+blob is not delivered work. Follow [branch-discipline.md](implementation/branch-discipline.md); do not
+delete historical work by age, count or closed-PR status.
 
-Read in order:
+## Read only what the task needs
 
-1. dependency-ready card in `backend-entrypoints.md` and owner-resumed checkpoint in delivery plan;
-2. latest assigned-task comment;
-3. `AGENTS.md`;
-4. owning packet;
-5. exact architecture/source named by checkpoint.
-
-For ER-47/48, read the exact execution-map block and current-main amendment first. Do not infer current work
-from old PR body, branch name, audit percentage, PR count or local patch. `origin/main` plus current task
-discussion is authoritative.
-
-## 2. Claim one checkpoint inside the authorized program
-
-Each leaf receives one checkpoint. The tranche manager continues automatically and may dispatch independent
-dependency-ready leaves in parallel after ER-49, preserving disjoint paths and shared-file serialization.
-Post:
-
-```text
-Baseline: <exact origin/main SHA>
-Packet / checkpoint: <one bounded result>
-Manager + manager context: <one owner-authorized packet context>
-Owner authorization: <immutable issue/PR comment or accepted evidence reference>
-Owned files: <canonical exact repository paths>
-Predecessor refs: <checkpoint IDs + ancestor commit SHAs + gate approval refs where required>
-Exit: <commands, negative case, human gate when named>
-Deferred: <browser/native/staging/live checks not run>
-```
-
-Rules:
-
-- direct main is default;
-- owner may authorize exactly one manager worktree/review branch with manager, base SHA, scope and stop;
-- one leaf receives one exact checkpoint inside manager context;
-- no subagent creates another branch/worktree, manifest, barrel, migration or shared fixture;
-- manager branch does not lift stop, expand ownership, satisfy dependencies or authorize merge/deploy/account
-  mutation;
-- before ER-49, no more than one frontend leaf;
-- after ER-49, claim must be committed and validated before source edits;
-- shared root/Worker/CI/deploy files require named integrator;
-- if `origin/main` moves, reconcile before publication; never force-push except the exact owner-authorized
-  manager review branch under an expected-head lease;
-- each leaf finishes/hands off its checkpoint before taking another; unrelated pending handoffs do not
-  serialize the whole manager.
-
-ER-47 owns web/UI/tests/scripts and ER-47 claims. ER-48 owns owner client, three legacy browser packages and
-ER-48 claims. ER-49 owns static registry/checker. ER-25 is compatibility authority and bounded U6 rollback
-handoff—not ER-47/48 completion prerequisite.
-
-## 3. Implement one authority path
-
-When implementation resumes:
-
-- TypeScript: scoped compile/ESLint;
-- SQL: depth-100 compiler + migration/constraint fixtures;
-- Rust: compilation and applicable Clippy/native/differential gates;
-- owner UI: stories, browser/visual/a11y/CSP/performance/rendered inspection;
-- owner client: import-side-effect, strict decoder, headers/status/body/range-validator/lifecycle and legacy
-  compatibility;
-- broad repository/native/live suites follow assembly unless checkpoint names narrow gate.
-
-`pnpm check:affected` runs full repository check. Deferred checks are `PENDING`, never PASS.
-
-Reuse contracts/stores/Workflow/authority readers. Missing composition is not permission for another engine.
-Every mutation remains:
-
-```text
-Intent → Attempt → Receipt → Readback → Reconciliation
-```
-
-No HTTP/model/R2/crypto inside D1 transaction. Lost acknowledgement is `UNKNOWN`, not permission to repeat
-paid/storage effect or mint identity.
-
-Owner-web changes presentation/lifecycle/client organization—not Worker/retrieval/evidence/Research authority.
-Polling remains canonical progress/readback fallback. The accepted authenticated ResearchSession route is an
-`IMPLEMENTED_NOT_LIVE` presentation transport owned through ER-48; event/data gaps, reconnects and old epochs
-reconcile through canonical readback and never create/repeat a run. Exact range bytes require admitted
-revision, strong validator/conditional and untransformed representation.
-
-### Internal UI gates and final review
-
-- **U1-D:** manager-only rendered design acceptance against live NotebookLM, official Material guidance and the
-  committed U1-R matrix. Fix failures and continue automatically.
-- **U2-X:** fresh-context no-hint internal usability audit. Fix confusion and continue automatically.
-- **FINAL-UI:** the first required owner UI review occurs after U5-X on the complete integrated review build.
-  Deployment, cutover, legacy deletion and final implementation merge remain separately authorized.
-
-## 4. Publish safely
-
-Before:
-
-```bash
-git fetch origin --prune
-git diff --check
-```
-
-Use authenticated Git or authorized GitHub Git Data API. Update main only non-forced fast-forward from
-refreshed expected head unless owner requested review PR. An owner-authorized manager review branch may be
-rebased/squashed only with exact expected-head force-with-lease; never rewrite another manager's branch.
-
-After:
-
-1. read main ref again;
-2. verify file list;
-3. post SHA, commands/results, negative/human gates and remaining work;
-4. update active router/plan when queue changed.
-
-A local patch, manifest, claim or unattached blob is not published work.
-
-## 5. Authority map
-
-| Need | Read |
+| Work | Relevant source |
 |---|---|
-| Backend router/cards | [backend-entrypoints.md](implementation/backend-entrypoints.md) |
-| Owner-resumed checkpoint/history | [backend-delivery-plan.md](implementation/backend-delivery-plan.md) |
-| Frontend DAG | [frontend-owner-execution-map.md](agent-work/frontend-owner-execution-map.md) |
-| Current frontend/backend reconciliation | [frontend-current-contract-amendment-2026-10-09.md](agent-work/frontend-current-contract-amendment-2026-10-09.md) |
-| Static scheduler | [ER-49](agent-work/ER-49-frontend-leaf-scheduler.md), then registry after implementation |
-| ER-47/48 claims | `agent-work/frontend-owner-claims/ER-47/`, `ER-48/` |
-| React / client | [ER-47](agent-work/ER-47-owner-web-interface.md), [ER-48](agent-work/ER-48-owner-api-client-extraction.md) |
-| Platform/runtime | [ADR-0016](adr/0016-react-cloudflare-owner-ui.md), [ADR-0017](adr/0017-owner-web-browser-runtime-and-tooling.md) |
-| Cutover | [frontend-cutover-inventory](implementation/frontend-cutover-inventory-2026-10-08.md) |
-| UI procedure/design/gates | [Material UI agent playbook](agent-work/frontend-material-agent-playbook.md), [OWNER_WEB_UI.md](design/OWNER_WEB_UI.md), [agent harness](implementation/frontend-agent-harness.md) |
-| Product/state | [ELIOT_RESEARCH.md](architecture/ELIOT_RESEARCH.md), named sections only |
-| Runtime ownership | [LANGUAGE_RUNTIME_CONTRACT.md](architecture/LANGUAGE_RUNTIME_CONTRACT.md), ADR-0007 |
-| Status/gaps | [implementation-status.json](implementation/implementation-status.json), [gap register](implementation/gap-register.md) |
-| Failure/security | [failure-model.md](implementation/failure-model.md), [security checklist](implementation/security-checklist.md) |
-| Branch/tools | [branch-discipline.md](implementation/branch-discipline.md), [toolchain.md](implementation/toolchain.md) |
+| Current tasks, donor choices, concrete blockers | [backend-entrypoints.md](implementation/backend-entrypoints.md) |
+| Actual recorded implementation/live evidence | [backend-delivery-plan.md](implementation/backend-delivery-plan.md), [implementation-status.json](implementation/implementation-status.json) |
+| Current versus historical gaps | [gap-register.md](implementation/gap-register.md), [contract conflicts](implementation/backend-contract-conflicts.md) |
+| UI components and integration | [Material playbook](agent-work/frontend-material-agent-playbook.md), [execution map](agent-work/frontend-owner-execution-map.md) |
+| UI final review/cutover | [manager runbook](agent-work/frontend-autonomous-manager-runbook.md), ADR-0016/0017 |
+| Product semantics | Named sections of [ELIOT_RESEARCH.md](architecture/ELIOT_RESEARCH.md) |
+| Tools/platform operations | [toolchain.md](implementation/toolchain.md), [Cloudflare runbook](implementation/cloudflare-runbook.md) |
+| Eventual release acceptance | [production-readiness-plan.md](implementation/production-readiness-plan.md), selected-profile section first |
 
-An unresolved authoritative conflict stops only the affected edit or acceptance. Reconcile stale audit prose
-against current owner instructions and contracts; continue independent work. For owner-web, use the manager
-runbook's scoped hard-stop procedure. Do not infer a whole-program freeze from unrelated moving-main changes,
-reporting failures or historical receipt status strings; no leaf-local security/ownership exception is allowed.
+Old S01–S99, Launch and October 8 donor plans are available through #377 and Git history when a named
+function needs them. They are not mandatory reading or prerequisites for every task.
 
-## 6. Final acceptance
+## Acceptance and publication
 
-General repository workflows remain manual-only unless separately authorized. The existing narrow
-`.github/workflows/frontend-owner.yml` has scoped push/pull-request triggers; preserve its current behavior.
-Do not disable it to match old prose, add broad triggers, or change CI/security rules as process cleanup.
+The source phase can finish with implementation plus scoped compilation/lint while tests remain pending.
+Final product acceptance still checks the implemented owner paths, citations/omissions, replay/cancellation,
+integrated UI and actual platform behavior. Do not equate Workflow completion with verified research.
 
-After assembly: S92 local integration → S94 staging → S93/S95/S96 on attested build → S97 release.
-`pnpm check:full` does not replace ordered release acceptance.
-
-Compilation, docs, screenshots, stories, benchmarks, claims, MCP responses, Explorer traces, Preview URLs,
-emulators, Workflow completion or provider acceptance alone do not establish readiness.
-
-Cutover additionally requires exact Vite graph, no-registration rollback, permanent non-claiming tombstone,
-controller-null inbox recovery and first-paint privacy mask in one reviewed receipt family.
-
-## 7. Never treat these as permission
-
-- branch age/count or closed PR;
-- stale planning head/audit estimate;
-- configured client ID without verified possession;
-- index hit without exact authorized evidence bytes;
-- screenshot/benchmark without exact source/build/fixture/browser identity;
-- claim/predecessor reference without accepted work/evidence;
-- attractive component set without manager-recorded U1-D internal acceptance;
-- automated journey without fresh-context U2-X acceptance;
-- local Golden fixture integrity as product/visual promotion;
-- historical legacy artifact as post-retirement rollback;
-- optional managed OAuth/unselected Slice 7 as baseline blocker;
-- missing local Git credentials as proof GitHub write access is unavailable.
+UI U1-D and U2-X are internal manager reviews. FINAL-UI is the owner's review of the complete interface;
+deployment/cutover/final UI implementation merge stay separate. Preserve the single Vite/Worker artifact,
+inbox recovery and service-worker retirement/rollback behavior. Do not request repeated permission for
+routine continuation already authorized by the owner.

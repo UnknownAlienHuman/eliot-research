@@ -1,77 +1,31 @@
 # Agent work packets
 
-New to the repository? Read [`docs/START-HERE.md`](../START-HERE.md) first.
+Start at [docs/START-HERE.md](../START-HERE.md) and the
+[current router](../implementation/backend-entrypoints.md). [ADR-0019](../adr/0019-compact-refactoring.md)
+supersedes the former mandatory claim/ancestry procedure.
 
-The manifest plus validated fragments reserve exclusive write ownership. A packet is not complete without its
-mandatory negative case and any named live/human gate. Product work still follows the active checkpoint and
-repository stop/resume state.
+## Use the existing map, not a new scheduler
 
-## Use
+The manifest and fragments locate existing capability files and contracts. Their historical exclusive
+path lists are not permanent locks over an owner-authorized refactor. A new task is assigned by one
+manager with a bounded outcome and exact files. Independent leaves may work in parallel on disjoint
+files; the manager serializes shared roots, manifests, barrels, routes, migrations and publication.
 
-1. Run `pnpm work-packets:check`.
-2. For UI work, read [frontend-material-agent-playbook.md](frontend-material-agent-playbook.md) before any
-   design, component or browser action.
-3. Select a dependency-ready leaf packet, or claim an owner-authorized ER-47/ER-48 manager packet and use its
-   exact leaf map plus [frontend-autonomous-manager-runbook.md](frontend-autonomous-manager-runbook.md).
-4. Read this index, packet document and only contracts/source named by exact checkpoint.
-4. Claim one checkpoint, not an undefined subsystem portion.
-5. Edit only packet-owned and exact delegated leaf paths.
-6. Record paths, contract/generation effect, commands, negative case, evidence and unresolved gates.
+Read the relevant packet's behavior and source, not all 49 packets. Existing packet metadata remains
+synchronized for repository checks. Do not add a packet, claim JSON or prerequisite commit merely to
+start current work. ER-49's checker/claims are optional historical audit, not an acceptance gate for
+new implementation. No fixed leaf cap or predecessor-approval protocol applies.
 
-Do not edit another packet's barrel, package manifest, migration, claim directory, fixture or shared
-configuration. A contract conflict returns to its owner; do not create a leaf-local schema.
+The five owner paths, #377 cancellations, OWNER_SINGLE profile and React/Vite target govern current work.
+Old packet dependencies do not reopen canceled S52 or turn all Rust families into release prerequisites.
+Record result and scoped compile/lint in the PR. Tests and product/platform acceptance follow assembly;
+an unexecuted check remains pending.
 
-## Frontend mandatory entrypoint
-
-Every ER-47 rendered-product manager or leaf starts with
-[frontend-material-agent-playbook.md](frontend-material-agent-playbook.md). It contains the approved official
-links, Google Design MCP, Chrome/NotebookLM, Storybook MCP, Playwright, private registry, token mapping, exact
-U1-R receipts, component/screen algorithms, dispatch envelopes and rejection checklist. Do not reconstruct the
-procedure from random web search.
-
-## Packet and checkpoint semantics
-
-Most packets are leaf-sized. ER-47/48 are manager/reservation packets spanning disjoint feature families while
-preserving one client and one UI authority. ER-49 is their independent scheduler packet. The manager follows
-`frontend-autonomous-manager-runbook.md` and `frontend-notebooklm-material-reference.md` and continues F1-F4
-through U5-X without intermediate owner prompts.
-
-For ER-47/48:
-
-- one manager owns one direct-main or single worktree/review context explicitly authorized by the owner;
-- subagents receive one exact checkpoint from
-  [`frontend-owner-execution-map.md`](frontend-owner-execution-map.md);
-- subagents create no branch/worktree, shared barrel, manifest or competing framework;
-- manager serializes package-local shared files and coherent publication;
-- coarse packet dependencies are intentionally empty; exact prerequisites/handoffs live in execution map;
-- ER-25 is compatibility baseline, not completion dependency;
-- manager context does not lift implementation stop or authorize deployment; a tranche authorization lets the
-  manager continue through its ready checkpoints without repeated owner prompts.
-
-ER-49 owns static definitions/checker only. ER-47/48 own separate claim directories and cannot edit registry
-or each other's claims.
-
-Before ER-49 acceptance, maximum concurrency is one frontend manager plus one leaf. Afterward:
-
-- every source edit is covered by an active claim committed in a strict ancestor;
-- claim and covered source cannot first appear in the same commit;
-- one checkpoint ID has at most one active claim;
-- all active claims in a packet share one owner-authorized manager context;
-- parallel claims use dependency-ready IDs and disjoint canonical paths;
-- predecessor refs identify checkpoint and ancestor commit; manager/external gates also require an approval
-  reference;
-- ER-49 validates structure/scope/ancestry, while manager/operator review decides whether evidence and approval
-  are substantively valid.
-
-ER-49 is optional for parallelism. If its implementation becomes a general workflow engine, stay sequential.
-
-The execution map grants no new root/Worker/CI/deploy ownership. ER-00 may integrate accepted scheduler command
-into root CI without taking scheduler authority.
-
-ER-25 retains served compatibility behavior. Its bounded cutover exception is U6 retirement-safe rollback:
-accepted online legacy behavior with root `/sw.js` registration disabled, old fetch/cache worker never restored,
-and exact retirement helper retained. It is release safety, not a second product direction. Permanent inert
-`/sw.js` remains after rollback artifact retirement.
+For rendered UI work use the [Material playbook](frontend-material-agent-playbook.md) and
+[delivery map](frontend-owner-execution-map.md). U1-D/U2-X are internal manager quality reviews;
+the owner reviews the finished integrated interface at FINAL-UI. ADR-0016/0017 still govern actual
+React/Worker cutover, standalone inbox, service-worker retirement and rollback. Astro remains served
+compatibility until that switch.
 
 ## Packet index
 
@@ -136,13 +90,12 @@ synchronization and dependency cycles. A fragment cannot override an existing pa
 | [ER-48](ER-48-owner-api-client-extraction.md) | — | Owner API client manager packet and legacy compatibility | — |
 | [ER-49](ER-49-frontend-leaf-scheduler.md) | — | Frontend leaf scheduler and claim validation | — |
 
-ER-47 owns React/UI/harness paths and its claims. ER-48 owns mixed legacy browser packages, extracts one pure
-owner client and owns its claims. ER-49 owns static scheduling definitions/checks. Shared root, Worker, CI and
-cutover work remains serialized with named owner.
+ER-47/48 identify the React/UI and owner-client capability homes. ER-49 retains historical audit tooling.
+Shared root, Worker, CI and cutover changes are serialized by the manager; no new claims are required.
 
 ## Before starting
 
-Read `../implementation/implementation-status.json` and `../implementation/gap-register.md`, then the exact
-execution-map block. A compiling DTO, configured client, claim, component story, package-local build or pretty screenshot is not
-implemented/live-qualified product behavior. U1-D and U2-X are internal manager gates; final owner review occurs
-after the complete U5-X interface is ready.
+Use the current router to select the task and read its source and relevant contract. Check
+`../implementation/implementation-status.json` and the applicable gap entries for recorded implementation
+and qualification limits. A package-local build or component story establishes only that scope of evidence.
+For UI work, U1-D and U2-X are internal manager reviews; final owner review follows the complete U5-X interface.

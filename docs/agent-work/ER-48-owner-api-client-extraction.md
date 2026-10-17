@@ -4,7 +4,7 @@
 **Packet completion dependencies:** none
 **Coordination inputs:** accepted current ER-00 package/tooling rules and ER-21/ER-24 owner API contracts; their
 whole packets need not be complete.
-**Scheduler input:** ER-49 before parallel leaves.
+**Coordination:** current refactor work follows ADR-0019 and the owner-web execution map; ER-49 is historical audit material.
 **Compatibility baseline:** ER-25 consumes legacy adapters until cutover; it is not a completion prerequisite.
 **Consumers:** ER-47 U3-U6
 **Architecture:** ADR-0015, ADR-0016 and ADR-0017
@@ -15,10 +15,9 @@ whole packets need not be complete.
 **Transport evidence:**
 [frontend-transport-audit-2026-10-08.md](../implementation/frontend-transport-audit-2026-10-08.md)
 
-**Status:** ownership reservation and execution contract only. No extraction is implemented by this planning
-PR. Source work remains paused until the owner authorizes one named C checkpoint or an autonomous tranche
-containing it. A tranche manager continues through dependency-ready C checkpoints and bounded B-C handoffs
-without repeated owner prompts; it still stops for missing contracts, unsafe authority changes or release work.
+**Status:** historical extraction and transport contract. Current refactor tasks are assigned by the manager from
+the implementation router; no named C checkpoint, claim or ER-49 handoff is a prerequisite. Missing contracts,
+unsafe authority changes and release work still require their existing owners or separate authorization.
 
 ## Objective
 
@@ -41,11 +40,12 @@ cancellation, completion or provider-effect authority.
 - `packages/pwa-research-workspace/**`
 - `docs/agent-work/frontend-owner-claims/ER-48/**`
 
-ER-48 owns the delivered legacy browser changes adapters and their tests; ER-45 retains the canonical server feed and erasure callback. This removes the overlapping packet claim.
+These paths record the historical ER-48 ownership boundary; the current task manager assigns exact paths from the
+implementation router. Preserve the canonical server feed and erasure callback under their existing owners.
 
-One ER-48 manager reserves these paths. Leaves receive disjoint C checkpoints. The manager serializes package-
-local manifests, barrels, shared test utilities and compatibility exports. ER-49 owns static checkpoint
-registry/checker. Root lockfile, references, boundaries, scripts and CI remain ER-00-owned.
+One manager uses one checkout. Parallel tasks may edit disjoint exact paths; serialize package-local manifests,
+barrels, shared test utilities and compatibility exports. ER-49 registry/checker and claim files are optional
+historical audit material. Root integration files follow the current implementation router.
 
 ## Read only unless explicitly delegated
 
@@ -95,11 +95,12 @@ connections/
 
 The package root exports finite client/decoder/value types only. It imports no React, TanStack Query, UI, DOM
 renderer, browser persistence, service worker or Cloudflare binding. A transport-specific ResearchSession
-submodule may depend on the exact approved `agents/client` surface only after B-C/B-U dependency and bundle
-qualification; that dependency never leaks into unrelated HTTP-only consumers or UI components.
+submodule may depend on the exact approved `agents/client` surface only after its dependency and bundle behavior
+are verified at assembly; that dependency never leaks into unrelated HTTP-only consumers or UI components.
 
-`sideEffects:false` must be truthful and tested. Package-local compilation does not establish root integration;
-B-C registers the package in lockfile, root references and fail-closed boundary map before C1.
+`sideEffects:false` must be truthful. During implementation, compile and lint the affected scope. Package-local
+compilation does not establish root integration; tests and browser acceptance run after assembly, with root
+references and fail-closed boundaries integrated by their current owner when needed.
 
 ## HTTP transport contract
 
@@ -127,7 +128,8 @@ Fixed invariants:
 - login/redirect HTML never decodes as success;
 - separate media and byte budgets for success and problem bodies;
 - inspect available Content-Length/media before large reads while streaming limits remain authoritative;
-- unknown load-bearing fields and generation mismatch fail closed;
+- known fields remain validated. Owner list/draft reads tolerate additive fields and previous deployment
+  generations as specified by ADR-0018; mutation and evidence contracts retain strict versioned decoding;
 - endpoint methods own finite status/body/range/validator semantics;
 - mutations and paid/provider effects never auto-retry;
 - uncertain retry reuses exact operation/idempotency identity and frozen body after readback.
@@ -262,28 +264,18 @@ server identities.
 
 ## Required order
 
-```text
-ER-49 before parallel leaves
-C0.1 inventory + C0.2 transport characterization
-→ C0.4 package-local skeleton
-→ ER-00 B-C registration
-→ C1 transport/session seam
-
-C0.3 source/research characterization + C1.4 compatibility
-→ C2 Sources leaves
-→ C3 Research/Evidence/Studio/Connections leaves
-→ ER-47 feature wiring
-→ compatibility retirement after U6
-```
-
-C0/C1 block real API wiring. U1/U2 fixture presentation may proceed independently. A family is incomplete
-while two maintained endpoint/decoder implementations remain.
+The C0-C3 labels below preserve the former extraction sequence as a contract map, not as a scheduler or queue.
+Current work follows the implementation router; compile/lint the affected scope first, then integrate and run
+relevant API/client and browser acceptance after assembly. Retire compatibility only after the authorized UI
+cutover and rollback conditions are met. A family is incomplete while two maintained endpoint/decoder
+implementations remain.
 
 ## Mandatory negative case
 
-Hold a protected source/report/range/projection response, change owner session, lifecycle or deployment
-generation, then release it. Client/React cannot restore bytes or advance completion; legacy adapter emits one
-clear transition; uncertain mutation retry retains original identity/body.
+Hold a protected source/report/range/projection response, change owner session or lifecycle, then release it.
+Client/React cannot restore bytes or advance completion; legacy adapter emits one clear transition; uncertain
+mutation retry retains original identity/body. Deployment-generation change alone retains owner reads/draft and
+triggers stale indication/reconciliation under ADR-0018.
 
 ## Additional acceptance
 
@@ -297,7 +289,8 @@ clear transition; uncertain mutation retry retains original identity/body.
 - whole 206 and range 200/bad range/validator/transformed representation fail;
 - problem body cannot consume success-object ceiling;
 - endpoint status policy cannot be widened by caller allowlist;
-- strict projection rejects unknown/nested extra fields, identity mismatch and stale authority;
+- strict ResearchSession projection rejects unknown/nested extra fields, identity mismatch and stale authority;
+- owner list/draft responses tolerate additive fields while validating known fields;
 - projection adapter sends no args and no frame other than the callable RPC;
 - `get-messages` 410 is decoded as intentional disabled history, never SPA HTML or retry loop;
 - no chat transcript/state is stored or rendered;
@@ -310,19 +303,11 @@ clear transition; uncertain mutation retry retains original identity/body.
 
 ## Verification
 
-```text
-valid prior claim and manager context
-B-C registration + unknown-package negative
-frozen install + root/scoped TypeScript and ESLint
-legacy HTTP/source/research characterization tests
-new import/header/status/problem/whole/range/validator/body/lifecycle tests
-ResearchSession AgentClient callable/strict-union/410/forbidden-frame/reconnect tests
-legacy browser regressions through adapters
-ER-47 protected Query/page-lifecycle tests
-bundle graph: agents/client only in the exact optional adapter chunk
-package/source budgets
-pnpm check:full and ordered release acceptance
-```
+During implementation: scoped TypeScript compilation and lint for changed code. After assembly: run applicable
+HTTP/source/research and ResearchSession contract tests, API and protected-query lifecycle tests, import/bundle
+checks, and relevant browser acceptance. Run full repository/release acceptance at its actual release boundary;
+do not run tests or browser checks for every edit. Historical claims and B-C labels are not gates.
 
-No extraction, claim, package-local compiler result, native projection test or browser result is claimed by
-this planning document.
+No extraction or acceptance is implied by this historical contract. During code work, use scoped compile/lint;
+perform applicable tests, projection checks and browser acceptance after assembly. No JSON claim or ancestry
+receipt is required.

@@ -15,11 +15,11 @@ pnpm exec eslint <changed-source-file-1> <changed-source-file-2>
 ```
 
 The TypeScript build follows that project's declared references. ESLint receives only the named files.
-For example, the existing Cloudflare Backup package can be checked with:
+For example, the current report-freshness task can be checked with:
 
 ```sh
-pnpm --filter @eliotr/cloudflare-backup typecheck
-pnpm exec eslint packages/cloudflare-backup/src/restore-executor.ts
+pnpm --filter @eliotr/cloudflare-navigation typecheck
+pnpm exec eslint packages/cloudflare-navigation/src/source-revision-freshness.ts
 ```
 
 For SQL changes, run the installed cross-migration compiler:
@@ -35,7 +35,7 @@ cargo check -p <crate> --all-features --locked
 cargo clippy -p <crate> --all-targets --all-features --locked -- -D warnings
 ```
 
-Run a focused regression only when the active task requires it, using the exact test path:
+After product-code assembly, run a relevant focused regression using its exact test path:
 
 ```sh
 pnpm exec vitest run <exact-test-path>
@@ -72,8 +72,9 @@ entries and verifies LF/CRLF, Unicode byte counts and preserved scanner/argument
 owner-web mode is `node scripts/check-emitted-budgets.mjs --owner-web` (add `--check-only` for retained
 receipt validation). Worker ≤4 MiB gzip and initial owner-web JavaScript ≤600 KiB gzip remain release
 limits. Missing/stale artifacts, incomplete startup observations and unsupported native measurements do
-not establish readiness. Startup/CPU/heap/workload acceptance remains S96 on the attested build; request,
-reader, SQL and model security limits are unaffected.
+not establish readiness. Startup/CPU/heap/workload acceptance uses the applicable S96 measurements on the
+assembled build; request, reader, SQL and model security limits are unaffected. Historical acceptance
+programs do not expand the selected product scope in ADR-0019.
 
 ## Full repository and release checks
 
@@ -84,5 +85,7 @@ pnpm check:full
 ```
 
 This runs the unchanged `pnpm check` chain, including repository checks, tests, and `pnpm rust:check`. It is
-not affected-file selection and does not replace the manual S92–S97 release acceptance in
-[`START-HERE.md`](../START-HERE.md).
+not affected-file selection and does not establish live acceptance. Select the product/platform checks
+for the five owner paths and current profile from
+[`production-readiness-plan.md`](production-readiness-plan.md) and [ADR-0019](../adr/0019-compact-refactoring.md).
+Archived audit programs and optional Rust ports are not prerequisites for those paths (#377).

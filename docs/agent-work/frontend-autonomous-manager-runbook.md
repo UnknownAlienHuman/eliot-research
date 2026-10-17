@@ -1,23 +1,25 @@
 # Frontend autonomous manager runbook
 
-**Status:** normative operating contract for the owner-authorized ER-47/ER-48 frontend manager.
-**Owner authorization:** execute F1-F4 continuously and present the finished integrated interface after U5-X.
+**Status:** frontend delivery and acceptance guidance for the owner-authorized compact refactor programme.
+**Owner authorization:** continue scoped implementation through the completed integrated interface and U5-X.
 **Reference contract:** `frontend-notebooklm-material-reference.md`.
 **UI operating procedure:** `frontend-material-agent-playbook.md`.
-**Deployment authority:** none. F5, production/account mutation, cutover, legacy deletion and final merge remain
-separately authorized actions.
+**Publication boundary:** prepare the integrated build/deploy bridge and rollback artifact within the
+authorized refactor before FINAL-UI. Actual production deploy, account mutation, cutover and final merge
+require the owner's authorization for those actions; reuse it if already given. Ordinary code retirement
+after cutover/rollback obligations is part of the authorized refactor.
 
-Use the existing manager context and its one worktree. Direct-main publication is already authorized for this
-program; do not create another branch for process compliance. Subagents receive small tasks inside that context
-and create no branches or worktrees. Routine checkpoint completion never requires another owner prompt.
+Use the existing manager checkout/worktree. The manager assigns exact allowed paths and acceptance criteria for
+each task. Parallel tasks may proceed only on disjoint paths; the manager serializes shared composition roots,
+manifests, routes, barrels, fixtures, SQL, Worker and CI files. Do not create another scheduler, claim registry,
+branch or worktree for process compliance. Routine task completion never requires another owner prompt.
 
 ### Execution clarification — 2026-10-11
 
-The owner has withdrawn the extra process restrictions introduced by the earlier #337 audit addenda. Read the
-current #335/#337 disposition, not an old receipt's BLOCKED snapshot, when selecting work. The execution map,
-API/security contracts, claim checker and actual acceptance requirements are unchanged. After ER-49 the
-manager chooses useful parallelism from dependency-ready disjoint paths; the audit-added two-leaf cap is not
-an additional prerequisite. Ordinary in-scope UI/copy/layout repairs do not need a new Issue or auditor approval.
+The current programme authority is [ADR-0019](../adr/0019-compact-refactoring.md) and the current router in
+`docs/implementation/backend-entrypoints.md`. Historical ER-47/48 claims and ER-49 ancestry checks are
+optional audit records only; they are not task prerequisites, active assignments or completion gates. Ordinary
+in-scope repairs follow the manager's exact-path envelope and need no new Issue or auditor approval.
 
 Execution eligibility is not verified acceptance. Withdrawing a prerequisite does not execute tests, repair a
 product defect or accept FINAL-UI. Required checks still need actual evidence. Reuse accepted early gates and
@@ -25,30 +27,26 @@ unchanged evidence; do not restart U1-R/U1-D/U2-X solely because the manager res
 
 ## 1. Continuous authorized program
 
-```text
-U1.1a → B-U → U1.1b → U1-R live NotebookLM study
-→ U1.2 → U1.3 → U1.4 → U1-D internal design gate → U1.5
-→ U2-S / U2-R / U2-T / U2-C → U2-X independent internal usability audit
-→ C0 → B-C → C1 → C2 → U3
-→ C3 → U4 → U5 → U5-X
-→ FINAL-UI owner review
-```
+Use `backend-entrypoints.md` for the active implementation order. The owner-web delivery map retains the UI
+quality milestones: U1-R/U1-D visual direction, U2-X usability, U5-X integrated acceptance, FINAL-UI owner
+review and separately authorized U6 cutover. Historical C/U checkpoint labels are descriptive references,
+not claim IDs, task prerequisites or an assignment protocol.
 
-C0/C1 work may run in parallel with fixture UI only when ownership and paths are disjoint. Before ER-49, run
-one leaf at a time. After ER-49, only dependency-ready disjoint leaves may run.
+The manager may run independent work concurrently only when exact paths are disjoint. Shared files and
+integration points are serialized by the manager.
 
 The manager does not stop at U1-D or U2-X. Those are internal quality gates. It fixes defects and continues.
 The first owner UI review is after U5-X, with the complete interface and evidence package.
 
 ## 2. Mandatory tool and source sequence
 
-For every rendered checkpoint, follow `frontend-material-agent-playbook.md` rather than reconstructing a process.
-The fixed sequence is: exact checkpoint → approved official sources → live NotebookLM U1-R evidence → Google
-Design MCP for token/icon/font proposals → accepted `@eliotr/ui` catalog and Storybook docs → implementation →
-real Chrome inspection → Storybook `test-run` → scoped Playwright interaction/a11y/visual checks → receipt.
-Random design galleries, public dashboard templates and undocumented component props are not inputs.
+For rendered UI work, follow the applicable method in `frontend-material-agent-playbook.md`. Use approved official
+sources and live NotebookLM U1-R evidence before token or shell decisions. Use the accepted `@eliotr/ui` catalog
+and Storybook docs, implement the needed state, then inspect it in Chrome and run relevant Storybook/Playwright,
+accessibility, visual and CSP checks. Google Design MCP may inform token/icon/font proposals. Random design
+galleries, public dashboard templates and undocumented component props are not inputs.
 
-## 2. Required design-reference behavior
+## 3. Required design-reference behavior
 
 Before choosing product tokens or shell composition, execute U1-R from
 `frontend-notebooklm-material-reference.md`:
@@ -60,37 +58,38 @@ Before choosing product tokens or shell composition, execute U1-R from
 - build Eliot in the same design discipline but with a distinct, more modern identity;
 - treat generic shadcn/admin output as a failed result.
 
-The manager must use rendered browser inspection throughout implementation. Types, DOM snapshots and isolated
+The manager uses rendered browser inspection at assembled UI acceptance. Types, DOM snapshots and isolated
 component stories cannot establish visual quality.
 
-## 3. Operating loop
+## 4. Operating loop
 
 Repeat until U5-X is accepted:
 
-1. refresh current main, task comments, contracts and manager authorization;
-2. maintain a table of `BLOCKED | READY | ACTIVE | ACCEPTED | INTERNAL_GATE | FINAL_REVIEW`;
-3. select the highest-value dependency-ready checkpoint without asking the owner;
-4. issue one leaf envelope with exact paths, inputs, commands, success tests, mandatory negative and stop rules;
-5. inspect source, diff and actual rendered output;
-6. repair compiler, lint, test, peer, CSP, accessibility, responsive, visual, browser and performance failures;
-7. publish coherent commits and exact evidence;
-8. immediately select the next ready checkpoint;
-9. update the task only for meaningful tranche progress, hard blockers and final review readiness.
+1. refresh the implementation router, relevant contracts and manager authorization;
+2. select the highest-value ready task without asking the owner;
+3. issue a bounded task envelope with exact paths, inputs, commands, acceptance evidence and stop rules;
+4. inspect source, diff and actual rendered output;
+5. during implementation repair scoped compiler/lint failures; after assembly repair applicable test, peer, CSP,
+   accessibility, responsive, visual, browser and performance failures;
+6. publish coherent changes and concise evidence;
+7. immediately select the next ready task;
+8. update the existing task only for material progress, hard blockers and final review readiness.
 
-A leaf performs the task rather than returning a plan and waiting. A failing test is work to repair; a pending
-cross-owner handoff does not stop independent implementation, verification or review-package preparation.
+Each assigned task is implemented in the manager's checkout rather than returned as a plan. A failing check is
+work to repair; a pending cross-owner handoff does not stop independent implementation, verification or
+review-package preparation.
 
-Use local focused checks during iteration and compact checkpoint receipts at completion. Reference unchanged
-source/evidence instead of duplicating complete hash inventories. A coherent publication batch may contain
-several commits required by separate prior claims; do not rewrite history to force a single commit. Existing
-CI/checker behavior remains unchanged. Run the applicable full gate/final matrix at its actual boundary.
+During the code phase use scoped compile/lint first. Do not run tests or browser checks after every edit; run
+applicable suites and UI acceptance after assembly at their actual boundary. Reference unchanged source/evidence
+instead of duplicating hash inventories. Do not create JSON claims or ancestry receipts. Existing UI product,
+security, accessibility, rendered-quality and release checks remain.
 
 Maintain the existing #335 status for material results. A denied comment edit is a reporting limitation, not
 a development stop; retain the result in the existing handoff or one explicitly superseding status. Historical
 PR cleanup is a separate operator lane, not a prerequisite for UI delivery. A posted instruction alone does
 not prove that the local manager received it or resumed.
 
-## 4. Default decisions
+## 5. Default decisions
 
 | Concern | Default |
 |---|---|
@@ -114,28 +113,28 @@ not prove that the local manager received it or resumed.
 | Visual baseline | pinned Chromium, deterministic fixtures, no auto-accept |
 | Unsupported product | omit rather than decorative disabled cards |
 
-A reversible default may change only with recorded evidence that it fails the checkpoint.
+A reversible default may change only with recorded evidence that it fails acceptance.
 
-## 5. Leaf task envelope
+## 6. Task envelope
 
 ```text
-Checkpoint: <ID>
+Task: <short name>
 Objective: <one bounded result>
 Allowed paths: <exact paths>
-Read: <only exact packet/checkpoint/contracts/source>
-Inputs: <predecessor commits/receipts>
+Read: <relevant contract/source>
+Inputs: <required current source/evidence>
 Reference observations: <applicable U1-R items>
 Required implementation: <finite list>
-Success tests: <finite list>
+Acceptance: <observable behavior and evidence>
 Mandatory negative: <named failure>
 Rendered inspection: <states, viewports, themes, content lengths>
 Commands: <exact scoped commands>
-Done when: <observable evidence>
+Done when: <acceptance evidence is recorded>
 Stop only if: <hard blocker classes>
 Forbidden: <ownership/authority/unsafe shortcuts>
 ```
 
-## 6. Review passes
+## 7. Review passes
 
 ### Authority
 
@@ -161,12 +160,12 @@ Forbidden: <ownership/authority/unsafe shortcuts>
 
 ### Engineering
 
-- applicable type/lint/unit/Storybook/Playwright/CSP/a11y/performance checks;
+- during implementation, scoped type/lint; after assembly, applicable unit/Storybook/Playwright/CSP/a11y/performance checks;
 - no console errors, unhandled rejection or unexpected request;
 - exact build, bundle, browser, fixture and visual evidence;
 - `git diff --check` and no unrelated cleanup.
 
-## 7. Internal gates
+## 8. Internal gates
 
 ### U1-D
 
@@ -180,7 +179,7 @@ material confusion and reruns until accepted, then continues to C/U feature wiri
 
 Neither gate asks the owner to approve partial work.
 
-## 8. Two-failure recovery
+## 9. Two-failure recovery
 
 After two materially different failed approaches to one blocker, write:
 
@@ -199,21 +198,15 @@ Then change approach. Do not add a third CSS override or repeat the same library
 Count materially different failed attempts, not status observations. A third check is not an automatic
 Goal=BLOCKED condition. Record diagnosis in the existing work record and execute the different approach.
 
-## 9. Cross-owner handoffs
+## 10. Cross-owner handoffs
 
-For B-U, B-C and other named gates, prepare an exact handoff with input commits, shared paths, finite changes,
-commands, mandatory negative, rollback condition and downstream checkpoints. Delegate to an authorized
-integrator when available and review the result. Continue independent ready work while a handoff is pending.
-Do not ask the owner to restate architecture already recorded in the repository. A named handoff is not proof
-of an active recipient; confirm delivery where tools permit and continue ready work. Do not silently take
-another writer's paths or fabricate a missing contract.
+When work crosses an existing owner boundary, give that owner the exact files, interface change, acceptance
+evidence and shared-file coordination needed. Continue independent ready work while the handoff is pending. Do
+not ask the owner to restate recorded architecture, silently edit another owner's paths, or invent a missing
+contract. Preserve mutation identity/readback and disclose material UI limitations. A newly reproduced failure
+still needs a repair.
 
-For the selected non-production baseline, the withdrawn admission-effect DTO, private cross-reload persistence
-and Wiki-continuation requests are not new prerequisites. Preserve same-body/key reconciliation, disclose the
-reload and bounded-list limitations, and verify the actual selected HTTP baseline. Optional C11/staging/live
-work does not hold that baseline. A newly reproduced failure still needs a repair.
-
-## 10. Hard stops
+## 11. Hard stops
 
 Apply a stop to the affected action or acceptance, not automatically to every workstream. Mark the whole
 program BLOCKED only when no authorized independent implementation, verification or integration work can
@@ -226,25 +219,25 @@ Escalate only for:
 - required path outside authorization with no named owner able to accept the handoff;
 - proposed weakening of CSP, authorization, privacy, exact evidence, currentness or replay;
 - unavailable authenticated NotebookLM/browser access after tooling recovery attempts;
-- production deployment, Cloudflare/provider/account mutation or budget spend;
-- irreversible migration, deletion, cutover, release or final merge;
+- production deployment, Cloudflare/provider/account mutation or budget spend without existing authorization;
+- irreversible migration/data deletion, cutover, release or final merge without existing authorization;
 - moving-main conflict that semantically invalidates accepted work;
 - FINAL-UI owner review after U5-X.
 
 Not hard stops: compiler/lint/test failure, peer conflict inside the approved toolchain, a failed primitive or
-splitter candidate, layout/a11y/CSP defects, optional MCP failure, regenerable screenshots, a blocked leaf with
-another ready leaf, or an owned-path refactor needed to fix root cause.
+splitter candidate, layout/a11y/CSP defects, optional MCP failure, regenerable screenshots, a blocked task with
+another independent task ready, or an in-scope refactor needed to fix root cause.
 
-## 11. Final review package
+## 12. Final review package
 
 After U5-X, provide one finished review build containing Sources, Research, Evidence, Studio and Connections.
 Include:
 
 ```text
-exact base/final commits and manager authorization
-checkpoint table and predecessor SHAs
+exact source/build identity and manager authorization
+completed UI areas and dependencies
 live NotebookLM / Material reference matrix
-changed paths by checkpoint
+changed paths by task
 commands and exit statuses
 mandatory negative evidence
 Storybook/Playwright/CSP/a11y/performance/visual evidence
@@ -254,15 +247,16 @@ safe local/non-production review instructions
 known limitations and PENDING staging/live/release gates
 ```
 
-Ask the owner to review the complete product once. Do not deploy, merge final implementation, cut over or remove
-legacy until separately authorized.
+Ask the owner to review the complete product once, with the prepared bridge and rollback included. Actual
+deploy, final implementation merge and cutover need their action authorization. Replaced legacy code may be
+removed within the authorized refactor after cutover and rollback obligations are satisfied.
 
-## 12. Ready-to-use launch instruction
+## 13. Ready-to-use launch instruction
 
 ```text
-Act as the Eliot owner-web manager. Work in one manager worktree and use bounded subagents inside it. Read
-START-HERE, AGENTS, the Material UI agent playbook, this runbook, the NotebookLM/Material reference protocol,
-execution map, ER-47/ER-48 and the current contract amendment.
+Act as the Eliot owner-web manager in the existing manager checkout. Read START-HERE, AGENTS, ADR-0019, the
+current implementation router, the Material UI agent playbook, this runbook, the NotebookLM/Material reference
+protocol and affected owner API contracts.
 
 Execute F1-F4 continuously through U5-X. Open the current live NotebookLM in the available authenticated browser
 and study it before choosing tokens or shell composition. Use current official Material 3 / M3 Expressive
@@ -270,7 +264,8 @@ principles. Build a distinct Eliot interface that is more modern, precise and co
 admin dashboard and not a pixel copy.
 
 Do not stop at U1-D or U2-X and do not ask whether to continue. Treat them as internal gates, repair failures and
-advance automatically. After two failed approaches, write a failure audit and change strategy. Stop only for a
+advance automatically. Use exact path scopes; parallelize only disjoint work and serialize shared files. After
+two failed approaches, record the failure and change strategy. Stop only for a
 genuine authority/security/ownership blocker, unavailable required browser access, unauthorized production or
 irreversible action, or the final complete-interface review after U5-X.
 ```

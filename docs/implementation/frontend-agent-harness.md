@@ -2,7 +2,7 @@
 
 **Product owner:** ER-47
 **Client input:** ER-48
-**Leaf scheduler:** ER-49
+**Task coordination:** one manager checkout; see [ADR-0019](../adr/0019-compact-refactoring.md)
 **Root integration:** bounded ER-00 handoffs
 **Autonomous manager:** [frontend-autonomous-manager-runbook.md](../agent-work/frontend-autonomous-manager-runbook.md)
 **Material UI procedure:** [frontend-material-agent-playbook.md](../agent-work/frontend-material-agent-playbook.md)
@@ -14,24 +14,24 @@ engine or screenshot factory. Repository files and CLI remain authoritative; MCP
 
 ## 1. Entry conditions
 
-A UI leaf starts only when:
+A bounded UI task starts when:
 
-1. the owner lifted the implementation stop for its exact checkpoint or an autonomous tranche containing it;
-2. the ER-47 manager context is authorized under branch discipline;
-3. before ER-49, no other frontend leaf is active;
-4. after ER-49, a claim was committed before source work and history-aware validation passes;
-5. package/build work has the required B-U root-registration receipt;
-6. predecessor checkpoint commits and manager/external-gate approval references are named;
-7. the manager confirms the evidence is substantively accepted—ER-49 checks structure/ancestry, not truth.
+1. the existing owner authorization covers the work;
+2. the manager assigns exact allowed paths, relevant contracts and acceptance evidence;
+3. parallel tasks have disjoint paths; shared files are serialized by the manager;
+4. root/package/build integration is reviewed by its existing owner where needed;
+5. the manager reviews the implementation and verifies that evidence matches the result.
 
-A claim, package-local build, screenshot or green component test is not completion evidence.
+New JSON claims and Git-ancestry receipts are not required. A package-local build, screenshot or green component
+test alone is not completion evidence. Existing ER-49 claims are historical audit records only.
 
 ## Exact agent tool order
 
-The harness implements the commands and MCP sequence defined by the Material UI agent playbook. UI leaves must
-query Storybook manifests/docs before component use, use Google Design MCP for U1.2 proposals, inspect actual
-rendering through Chrome, and run scoped Playwright interaction/a11y/visual checks. Repository files and CLI are
-the fallback when optional MCP transport fails; no second catalog or random design search is created.
+The harness implements the commands and MCP sequence defined by the Material UI agent playbook. During code
+implementation, use scoped compile/lint first; do not run browser or test suites after every edit. At assembled
+UI acceptance, query Storybook manifests/docs before component use, use Google Design MCP for U1.2 proposals,
+inspect actual rendering through Chrome, and run scoped Playwright interaction/a11y/visual checks. Repository
+files and CLI remain authoritative; no second catalog or random design search is created.
 
 ## 2. Repository shape
 
@@ -74,7 +74,7 @@ Exact names may change in U1. Boundaries do not:
 - scenarios describe product state, never DOM markup;
 - tests execute behavior;
 - receipts bind results to source/build/environment;
-- ER-49 owns static scheduling validation, not product acceptance;
+- the legacy ER-49 checker records former scheduling mechanics; it is not an active product gate;
 - ER-00 owns root registration/CI, not component contracts.
 
 Only components needed by an accepted slice enter the catalog.
@@ -157,7 +157,7 @@ A product scenario describes typed state:
 
 ```text
 scenario/version
-session and deployment generation
+authenticated session and deployment generation (the previous generation remains valid for owner reads)
 project/source catalog and selected scope
 readiness/currentness
 run stages/status
@@ -165,12 +165,13 @@ report manifest/sections/citations
 evidence excerpt/coordinates/verification
 connection observations
 allowed actions
-expected protected-data clearing events
+expected protected-data clearing events (sign-out/principal change/revoke/purge; deployment renewal preserves the draft)
 ```
 
 Canonical families are added only as slices need them: empty project, shared source, uncertain import,
 not-search-ready selection, sampled no-hit, waiting/degraded/failed/completed run, 40-section lazy report,
-coordinate quality variants, late response after revoke/purge/generation, Studio states, server-ready without
+coordinate quality variants, late response after principal change/revoke/purge/lifecycle close, deployment renewal
+with draft retained, Studio states, server-ready without
 client observation, measured large list and long RU/EN.
 
 Fixtures pass through strict client/view-model decoders where practical. Impossible authority states are
@@ -193,7 +194,7 @@ Sources / question-first Research / contextual evidence
 loading, useful content and one degraded state
 ```
 
-The owner-visible review decides:
+The manager's internal review records one coherent direction:
 
 - typography and reading measure;
 - information density and whitespace;
@@ -221,10 +222,9 @@ protected-state clearing, console/CSP failures, unexpected requests and bounded 
 
 ### C — local Vite/workerd
 
-Run only after:
+Run the local Worker integration only after the workspace is registered and the local safety preflight passes:
 
 ```text
-B-U receipt accepted
 CLOUDFLARE_ENV=test
 remoteBindings:false
 normalized input/output contain no remote/production/effectful binding
@@ -290,13 +290,13 @@ fixes failures and reruns the audit, then continues automatically through U3-U5.
 The final owner UI review occurs after U5-X on the complete integrated review build. It is not replaced by
 Playwright, screenshots or the independent audit, but it no longer interrupts the program at U1-D or U2-X.
 
-## 10. Review receipt
+## 10. Review evidence
 
 The bounded JSON/Markdown receipt includes:
 
 ```text
-claim/checkpoint and structurally validated predecessor refs
-commit/dirty state/lockfile
+task scope and changed paths
+source/build identity and lockfile state
 exact dependency/browser versions
 build/output-config digests
 environment and binding disposition
@@ -312,8 +312,8 @@ design/catalog changes
 PENDING native/staging/live gates
 ```
 
-It excludes source/evidence text, prompts, credentials, cookies and provider payloads. Receipt presence does
-not prove its claims; review validates semantic truth.
+It excludes source/evidence text, prompts, credentials, cookies and provider payloads. Evidence is reviewed
+against the actual behavior; a receipt alone does not establish acceptance.
 
 ## 11. Local Explorer
 
@@ -324,36 +324,33 @@ screenshots.
 
 ## 12. Agent workflow
 
-The manager repeats this workflow across every dependency-ready checkpoint in the authorized tranche. A leaf
-completion automatically returns control to the manager; it is not a prompt to ask the owner what to do next.
+The manager repeats this workflow across ready tasks in the authorized programme. Task completion returns
+control to the manager; it is not a prompt to ask the owner what to do next.
 Routine failures are repaired locally. After two failed approaches, the manager records a failure audit and
 selects a different approach.
 
-1. **Claim:** commit claim, pass ER-49 history validation, then edit source.
-2. **Orient:** read exact checkpoint, affected catalog/story/scenario and client/DTO contract.
-3. **Reproduce:** choose smallest failing story/scenario.
-4. **Constrain:** declare one affected token/component/pattern and exact paths.
-5. **Implement:** reuse approved UI/client boundaries; no direct fetch/global event/design literal.
-6. **Inspect:** render actual states; inspect layout/accessibility/CSP.
-7. **Verify:** run scoped type/lint/component/flow/design/CSP/visual and applicable C–E layers.
-8. **Compare:** review pixels, budget, console/network/focus/scroll.
-9. **Internal gate:** complete U1-D or U2-X evidence when required and continue automatically after repair.
-10. **Receipt:** publish exact evidence and PENDING gates.
-11. **Handoff:** move claim to `HANDED_OFF`; completion remains accepted commit/evidence.
-12. **Advance:** select the next dependency-ready checkpoint in the same tranche; stop only at its named human
+1. **Orient:** read the task scope, affected catalog/story/scenario and client/DTO contract.
+2. **Reproduce:** choose the smallest failing story/scenario.
+3. **Constrain:** identify the affected behavior and exact paths; serialize shared integration files.
+4. **Implement:** reuse approved UI/client boundaries; no direct fetch/global event/design literal.
+5. **Inspect:** render actual states; inspect layout/accessibility/CSP.
+6. **Verify:** run scoped type/lint during implementation; run component/flow/design/CSP/visual and applicable integration checks after assembly.
+7. **Compare:** review rendering, budget, console/network/focus/scroll.
+8. **Internal gate:** complete U1-D or U2-X evidence when required and continue automatically after repair.
+9. **Record:** publish concise evidence and PENDING gates.
+10. **Advance:** select the next ready task in the same authorized programme; stop only at a named human
     gate or a hard authority/security/ownership blocker.
 
-“Looks good,” DOM snapshot, mocked story or claim file is not acceptance.
+“Looks good,” DOM snapshot or mocked story alone is not acceptance.
 
 ## 13. CI and merge policy
 
-U1 introduces scoped commands after B-U. ER-00 adds stable commands to root CI only after runtime, flakiness
-and artifact size are measured.
+Use scoped commands during implementation. Coordinate any new root command or CI integration with ER-00 only
+when the task actually changes shared root configuration; do not require a historical bootstrap receipt.
 
 Shared UI blockers:
 
-- ER-49 claim/history validation;
-- B-U/root registration where applicable;
+- root integration only when a task adds or changes a workspace package or shared build configuration;
 - typecheck/scoped lint;
 - catalog/registry consistency;
 - design-literal/primitive-family gate;
@@ -371,8 +368,7 @@ repository/release acceptance remain ordered assembly gates.
 
 Before U2:
 
-- ER-49 checker and one valid prior ER-47 claim are proven, or sequential mode remains explicit;
-- B-U registration/exact tool tuple are accepted;
+- the existing workspace/build tuple is verified for the active UI;
 - minimum catalog/private registry builds deterministically;
 - native-first policy and one external composite family are locked after a11y/CSP comparison;
 - design gate catches seeded violations;

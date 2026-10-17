@@ -1,419 +1,196 @@
 ---
 title: "Backend implementation entry points"
-date: 2026-10-08
-status: "current execution router after audit handoff"
-source_baseline: "3e6c25660c1ae515760e19d5f9e6b8a735795c4c"
-audit_pr: 327
+date: 2026-10-17
+status: "current owner-product refactoring router"
+source_baseline: "4e53d5e2296e7f4ed3ed29cef2f049891c5d20c0"
 ---
 
-# Backend implementation entry points
+# Current implementation work
 
-**Owner-resumed full continuation, 2026-10-08:** the owner assigned this chat all
-remaining documented implementation and acceptance except website design, with
-up to ten leaf workers. On October 9 the owner requested a gradual move from
-Luna Max to `opencode-go2/step-5-preview-free`, after each Luna finishes its
-assigned checkpoint. The named integrator and workers use the existing
-`main` checkout with disjoint write sets. The manager/worktree examples below
-describe the historical audit handoff protocol; this run creates no additional
-worktree. The Goal remains active across checkpoints and publication. Explicitly
-canceled backup/export/restore and replay of the historical uncertain run remain
-excluded. Refer to [the active delivery plan](backend-delivery-plan.md) and
-[October 8 source evidence](backend-checkpoint-2026-10-08.md) for actual results.
-Native, selected-profile and release acceptance remains pending until its
-required receipts exist; a source checkpoint does not establish those gates.
+The owner requested preparation for a compact refactor in [#380](https://github.com/UnknownAlienHuman/eliot-research/issues/380).
+[ADR-0019](../adr/0019-compact-refactoring.md) defines the implementation boundaries;
+[ADR-0018](../adr/0018-owner-single-function-first-profile.md) defines the selected owner behavior.
+This document replaces the historical October 8 backend queue.
 
-The transition is complete for the assigned Luna leaves. Branch-library source
-closure is published in `2adbc42d`; bounded local Session transport acceptance
-now has five passing cases across the retained run and one failed-case-only
-repair. C1/C2/C5 still defer their named pipeline cutovers.
+## What is already decided
 
-Current shared-checkout continuation: R05 source assembly is published in `a59f441e`.
-Frontend B-U source `1e1c6213`, acceptance receipt `950bf86e`, tooling `0a211f6f`
-and the accepted backend prerequisites are published. SQL depth recovery and five
-receipt boundary cases pass with source review; these do not qualify the native pipeline.
-The Core decorator dependency is committed in `0c4f39a1`; frontend released the
-reconciled/frozen installation. Native fixture acceptance injects AccessVerifier
-and simulates Workflow status `waiting`; real JWT/native Workflow/browser/live
-acceptance remains pending. Workflow-kind parser compile/lint and six focused
-cases pass. Socrates accepted the exact parser and Session test pairs read-only
-and is closed/archived; local source commits are `3f7d873a` and `8c5fc604`.
-Canonical result readback `a2b38729` retains existing guards and exposes the
-original stored-byte digest, with compile/lint/six focused cases and independent
-source acceptance. One separate generated Session DO qualification passes on
-the exact emitted graph through injected AccessVerifier/source HTTP, using the
-real local fixture's active `running` status. Neither result accepts actual
-ResearchWorkflow wait, emitted JWT/HTTP, browser, live or release behavior.
-Root owns [R05 topology/outbox integration](native-external-task-wait-cutover.md); neither repair
-qualifies native wait. All 37 previous backend descendants are closed/archived.
+[#377](https://github.com/UnknownAlienHuman/eliot-research/issues/377) archived 44 draft PRs on October 15.
+Closure did not mean implementation. Their old dependency graph is not a prerequisite for current work.
 
-Branch prepare/read ports are published in `79f66f54`; owning compile,
-exact lint and independent source review pass. The separate W2 preparation seam
-and migration 0130 have source acceptance; native assembly is now published.
-The migration preserves the exact legacy recovery predicate and permits only
-current, predeadline recorded-result settlement for the new descriptive generation.
-SQLite 3.50.4 depth-100 Core schema checks and five positive/eighteen negative
-view-predicate cases pass; upstream views in the latter fixture are explicit rows.
-The SQL extractor now respects `.tsx` filename dialects. Its focused parser
-fixture and corrected depth compiler pass; target qualification remains incomplete
-(1,048 unknown targets, 85 unknown arities and 152 unresolved sites).
+- Finish the five selected paths: sources/project/question/cited report/reopen; project upload to managed
+  search; Inbox publication; connected agents; assignment of a task to an agent.
+- Use Cloudflare AI Search or provider-native search. S52 custom index, generation registry, target
+  manifests, required-set promotion and rollback are canceled.
+- React/Vite is the owner-web target. Astro is served compatibility until the integrated cutover.
+- Rust ports and historical audit programs do not block these paths. Pure Rust stays available for a
+  concrete selected operation, with a real ABI/caller and eventual removal of its old TS decision.
+- Existing backup/export/restore work is deferred; do not start a replacement system. Preserve retained
+  data, erasure and recovery obligations during code retirement.
+- One manager checkout/worktree, exact disjoint leaf files, manager-owned shared-file integration.
+  No new JSON claims, ancestry gate, scheduler or per-checkpoint owner confirmation.
 
-The published sibling native prepare/wait/settle prerequisite has exact source
-acceptance, owning compile and lint. New-generation result recording
-now uses one D1 batch for the existing canonical result UPDATE and intent/outbox
-inserts. Migration 0131 binds locator authority to the exact recorded timestamp,
-digest and 0130 settlement view; a missing/replaced result cannot leave an orphan
-wake. Original result/outbox readback reconciles a lost ACK; legacy callbacks
-retain their original path. Exact source review, seven focused cases, depth-100
-Core schema (639 shapes) and nineteen owning-source queries pass. Upstream
-currentness in the focused fixture is explicit input.
+The latest recorded live evidence is in [backend-delivery-plan.md](backend-delivery-plan.md), including
+the October 16 source/report/citation/Inbox/model/MCP receipts. Those are bounded observations, not proof
+that ADR-0018, React cutover or all production capabilities are complete.
 
-The published source assembly wires `research-handlers.exploratory.external-wait.v1`
-through admission, same-grant routing, pinned configuration and the Workflow
-application. Stage 8 uses sibling native prepare/wait/settle steps outside the
-legacy outer `step.do`; historical generations retain their graph. Manual
-recovery restarts the new generation at its named prepare step. Queue dispatch
-uses the existing outbox/inbox runtime with an explicit reserved-topic handler;
-native callbacks return the exact durable receipt after canonical generation
-readback, while historical callbacks retain digest-bound recovery.
+## Baseline: code versus target
 
-Preparation persists a strictly validated canonical JSON string because native
-RPC objects acquire platform disposer symbols. Settlement reads canonical result
-bytes once, forwards the event digest even for OUTPUT_RECORDED, and checks the
-original W2 manifest before existing executor settlement. Absent expired results
-remain uncertain; recovery authorization still fences known-result mutation.
-Nine helper, three pinned-configuration, twenty callback and nine server-port
-composition cases pass. The final test fixture's metadata/type-only correction
-passes owning compilation and lint; passing runtime cases were retained.
-The new callback query compiles against actual Core at depth 100 (639 schema
-shapes, one query, no unresolved site or failure). The R05-only Core graph compiles
-on TypeScript 6.0.3 with zero diagnostics, excluding earlier C2 WIP. Revised
-executor/ports and runtime routing have bounded source acceptance; generation
-review leaves canonical acceptance outside its scope. Publication remains
-separate from canonical native acceptance.
-
-Seven local native topology cases and two added restart/pause cases pass with
-injected server ports and counter D1. These exercise real Workflow steps/events,
-not the complete W2/grant/R2/callback/Queue path. Canonical/native/live/release
-acceptance and #326 remain open; the Goal remains active.
-
-The subsequent actual-Core fixture found missing native-generation predicates
-in the existing payload binding/current view and COMPUTER dispatch trigger.
-Append-only migration 0132 extends exactly those three predicates, retaining
-historical v8 and every existing authority fence. Three Core regressions pass
-for exact payload, absent payload and foreign attempt; owning TypeScript 6.0.3
-compilation and exact lint pass. SQLite 3.50.4 depth-100 accepts 128 migrations,
-639 schema shapes and the callback query without failure or unresolved site.
-The [local native qualification record](r05-local-native-qualification-2026-10-09.md)
-distinguishes the bounded actual D1/R2/W2/callback/Queue results from scientific
-`consumeResult`, pinned production configuration, COMPUTER/public caller and
-live acceptance. Paused native continuation after original expiry initially
-failed three stopped attempts. The causal audit found pause falling through the
-helper's catch-all into premature settlement. Explicit RPC error serialization
-preserves `WorkflowTimeoutError`; only that timeout now permits canonical reread,
-while native lifecycle and unknown errors propagate. Eight changed/new helper
-cases, owning compilation/lint and independent source review pass. Actual native
-pause/resume after expiry and timeout with a recorded result both pass against
-canonical D1/R2/W2, each with one read and the original attempt. Complete scientific,
-production/public/live acceptance, #326 and implementation status remain open.
-
-Five later bounded native cases also exercise the existing scientific
-`prepareTask`/`readRecordedResult`/`consumeResult` with actual protocol freeze,
-read/extract, D1 navigation and W1/W2. Valid BLOCKED branch output settles the
-original attempt, arbitrary output is rejected, and pause/resume after expiry
-passes. Actual immutable D1 configuration/Core read/runtime binding passes;
-forged expected digest fails before task publication. Empty evidence, fixture
-stage-five lineage/configuration and injected COMPUTER route leave complete
-scientific, production-selected and public/live acceptance open. The detailed
-[qualification record](r05-local-native-qualification-2026-10-09.md) owns those limits.
-
-Three further named local native cases replace the injected route callback with
-actual D1 COMPUTER connection/project-route/run-binding services and exact reads.
-The bound result passes; missing binding and foreign grant create no task or
-native settlement. Authenticated contexts remain injected and COMPUTER dispatch,
-connection qualification, production profiles and public HTTP/JWT remain open.
-Earlier passing scientific sources/cases are retained without repetition.
-
-Three subsequent local signed HTTP cases exercise existing owner challenge
-issuance, service WEB_INBOX confirmation, task pull/result and an identical
-duplicate callback through `handleHttp`. The original task/attempt settles once
-through actual D1/R2/outbox/Queue/inbox/native Workflow, with two current route
-and configuration reads; a capable but unqualified connection is denied before
-task SQL. The service-class repair covers the existing eight agent operations
-and preserves all seven federation operations. Local JWKS, initial admission,
-retrieval/predecessor/budget/configuration fixtures and empty evidence remain
-explicit limits. COMPUTER dispatch, nonempty exact evidence, production-selected
-profiles/providers, full scientific/native/live/release acceptance remain open.
-
-Three new local cases extend the signed HTTP/native fixture with nonempty exact
-evidence. The positive case first reproduced `WORKFLOW_OUTPUT_CORRUPT`: fresh
-resolution creates a new verification receipt. The consumer now compares the
-existing complete source-bound evidence identity and retains exact authorization
-receipt equality. Actual D1/R2 resolution settles the original Stage-8 attempt
-once, retaining `UNASSESSED`; forged source binding and changed R2 bytes cannot
-advance the stage. Owning compile/lint and independent final-source review pass. Admission/scope/stage-five lineage
-and budget/configuration values are fixtures, so complete ingest/retrieval,
-selected scientific/native/live/release acceptance remain open.
-
-Four later added-only cases exercise actual normalized-bundle admission before
-the same nonempty evidence/native path. The first positive calls the existing
-Core application; its owner-policy negative leaves eight canonical/Workflow
-table deltas and both R2 bucket counts at zero. A separate positive replaces
-the injected admission context with locally signed owner RS256/JWKS and existing
-`handleHttp`: eight prepare/part/complete/commit requests return 200, followed by
-two exact resolutions and one original Stage-8 commitment. Its separate policy
-negative observes the product's nonretryable 403 `INGEST_POLICY_DENIED` and zero
-effects. The private seed wrapper's 500 is only an observation envelope.
-Actual Search migrations/binding satisfy existing readiness; no readiness guard
-was bypassed. Earlier passing fixtures were preserved without repetition.
-Local JWKS/policy/scope/stage-five/budget/configuration inputs and the private
-Workflow entrypoint still bound acceptance; production Access/ingress, full
-scientific/COMPUTER dispatch/native/live/release remain open. The new private
-graph has esbuild/runtime acceptance, not a new semantic TypeScript verdict.
-See the same qualification record and private admitted-evidence completion proof.
-Three later public-admission/native negatives also pass: foreign attempt and
-unknown locator field fail before settlement; event before canonical result
-performs one read and remains uncertain. Each retains the original STARTED
-attempt, stage 8/revision 9 and zero checkpoints; full selected acceptance stays open.
-
-The bounded ResearchSession HTTP extraction preserves all five existing handler
-bodies, six helpers and retained DO members; persistence remains private through
-per-call closures. The two source files are 393/362 physical lines. AST preservation,
-TypeScript 6.0.3 owning compilation (zero diagnostics, 4937 virtual outputs), exact
-lint, three retained scoped regression results and independent exact-source review
-pass. This removes the Session file overage; Core package totals and emitted,
-complete scientific/native/live/release acceptance remain open.
-
-The frontend's unpublished mixed-claim commit was split under one coordinated
-history-repair window. Original Session commit `40f08d27` maps to `d6b21d49` with
-the same complete tree and reviewed blobs; the final repaired frontier also has
-an identical full tree. Runtime receipts keep their original recorded SHA.
-This mapping is delivery provenance, not a rerun or new acceptance gate.
-
-This is the canonical day-to-day backend router. It does not replace product architecture, work-packet
-ownership or release acceptance. It tells each role where to begin, which active PR owns the result,
-and where the concise donor/anti-duplication instructions live.
-
-[`backend-delivery-plan.md`](backend-delivery-plan.md) records the active owner
-continuation and retains the October 6 stop as dated historical evidence. The
-cards and passports below govern the implementation queue.
-
-## 1. Start by role
-
-| Role or question | First document | Next authority |
+| Area | Observed at the baseline | Refactor consequence |
 |---|---|---|
-| Manager starting a backend slice | [Implementation cards](../../.github/audits/2026-10-08/BACKEND-IMPLEMENTATION-CARDS.md) §4/§5 | Assigned PR body, owning ER packet and only its named architecture sections |
-| Shared-code integrator | This document §4 | [Final PR matrix](../../.github/audits/2026-10-08/FINAL-PR-DISPOSITION-MATRIX.md) and accepted manager SHAs |
-| Reviewer deciding whether a slice is complete | [Implementation cards](../../.github/audits/2026-10-08/BACKEND-IMPLEMENTATION-CARDS.md) §6 | PR acceptance, changed callers and removed duplicate path |
-| Agent asking “what should I implement now?” | This document §2 | First dependency-ready PR assigned to its manager |
-| Agent asking “what should we borrow from donors?” | [Implementation cards](../../.github/audits/2026-10-08/BACKEND-IMPLEMENTATION-CARDS.md) §3 | Pinned donor function in the active PR/playbook |
-| Agent asking “why does Eliot own this instead of Cloudflare?” | [Cloudflare ownership](../../.github/audits/2026-10-08/CLOUDFLARE-NATIVE-OWNERSHIP.md) | Active PR’s semantic-authority boundary |
-| Agent reviewing an old or closed PR | [Final PR matrix](../../.github/audits/2026-10-08/FINAL-PR-DISPOSITION-MATRIX.md) | [Preservation reconciliation](../../.github/audits/2026-10-08/PRESERVATION-RECONCILIATION.md) when applicable |
-| Agent needing detailed donor evidence | [Donor playbook 1](../../.github/audits/2026-10-08/BACKEND-DONOR-PLAYBOOK.md) / [playbook 2](../../.github/audits/2026-10-08/BACKEND-DONOR-PLAYBOOK-2.md) | Treat their old process headers as historical; the cards/router own execution order |
-| UI manager | [PR #329](https://github.com/UnknownAlienHuman/eliot-research/pull/329) | ER-47/ER-48 and UI-owned docs; do not edit backend shared contracts in parallel |
-| Staging/release operator | [production-readiness-plan.md](production-readiness-plan.md) | S94–S97 after implementation identities and local gates exist |
+| UI delivery | Wrangler assets still point to `../eliotr-pwa/dist`; the separate React/Vite app and owner client exist. | Build one integrated React + existing Worker release path; fixture output alone cannot replace deployed assets. |
+| Ordinary answers | The current public path retains the deep Workflow; streamed-answer text extraction already exists in `research-answer-text.ts`. | Reuse its pieces for one E0/E1 synthesis, preserving explicit E2/E3. |
+| Rust | Three crates exist; the default Wasm ABI has stamps and no product operation called by the Worker. | No 17-crate scaffold campaign and no claim that authority already moved. |
+| Native wait | `native-external-task-step.ts` implements `waitForEvent` for the unactivated R05 Research external-task W2 graph. | Reuse it if that Research flow is selected; generic computer-agent assignment has its own existing lifecycle. Implementation is not activation or live acceptance. |
+| Process | The frontend provenance CI job is already manual/advisory; active prose still required prior claims. | ADR-0019 and updated entrypoints remove that stale prerequisite. Product CI is separate. |
+| Old SQL | The repository retains migration history for both active and canceled paths. October 15 records 0141 applied and 0142–0151 absent remotely. | Runtime retirement needs actual ledger/caller evidence, not blanket apply/drop/squash. |
 
-The audit closure marker is
-[`BACKEND-AUDIT-PREPARATION-COMPLETE.md`](../../.github/audits/2026-10-08/BACKEND-AUDIT-PREPARATION-COMPLETE.md).
+The [October 17 audit](../../.github/audits/2026-10-17/README.md) contains exact source links and
+C01–C11 statuses. C04's two provider readers and C08's observation decoder are fixed. C07 is partially
+fixed. The old claim of a second Session stage executor no longer matches current code. The repeated
+Managed OAuth context check is functional in the current path, not dead code.
 
-## 2. Current dependency-ready wave
+## Small implementation outcomes
 
-One manager owns one worktree and one bounded checkpoint at a time.
+These are bounded outcomes, not a new numbered issue program. Assign one at a time, splitting a row by
+endpoint or representation when necessary. Historical PR numbers in the audit supply source context;
+do not reopen their entire archived scope.
 
-| Manager lane | Start | Required result before downstream work |
+### Immutable payload and digest observation
+
+**Files:** `packages/cloudflare-research-runtime/src/research-session-application.ts`,
+`packages/platform-cloudflare/src/r2.ts`; the relevant payload consumer.
+
+C01/C02/C11: use conditional absent-key R2 writes; reconcile race/lost ACK by exact bounded readback;
+bind digest observations to the requested object. Same bytes recover the original result, different
+bytes conflict, unavailable reads remain unknown. Correct the shared helper's distinction between
+integrity mismatch and verifier unavailability before reusing it. Preserve pre-ledger payload metadata
+and the original attempt; do not add a second storage abstraction.
+
+**Assembled acceptance:** existing conflicting object survives a failed HEAD; committed-but-unacknowledged
+write reopens once; missing checksum does not become the expected hash. This can proceed independently
+of the UI and ordinary-answer redesign.
+
+### Input and checkpoint limits
+
+**Files:** `packages/contracts/src/research.ts`,
+`cloudflare-research-runtime/src/research-session-application.ts`,
+`cloudflare-research-branches/src/research-protocol-freeze.ts`,
+`cloudflare-workflows/src/types.ts` (all under `packages/`) and their actual client/codecs.
+
+C03: separate the HTTP envelope (262144 bytes), R2 query/planning object and 64 KiB checkpoint receipt.
+Choose one bounded persisted-input representation; version its writer and all readers together. Reuse
+immutable planning data plus a compact descriptor when the manifest dominates the checkpoint. Keep
+legacy run codecs readable. A larger HTTP ceiling alone does not promise every request is executable.
+
+**Assembled acceptance:** a valid above-64-KiB request/planning case reaches freeze and its real consumer;
+over-limit input fails before effects; historical payloads still reopen. Depends only on the selected
+payload representation, not a general protocol rewrite.
+
+### Report freshness
+
+**Files:** `packages/cloudflare-navigation/src/source-revision-freshness.ts`,
+`packages/pwa-research-workspace/src/research-run-api.ts`, shared owner-client decoder and report consumer.
+
+C05/C10: align member/byte bounds across the server and the one shared decoder. A saved scope with
+65 changed sources must not make the report unreadable. If the full list is bounded by a cursor/sample,
+return explicit count and incompleteness; never silently slice it. Replace redundant repeated
+`refs.includes` scans with the existing set-based membership proof. Preserve old response versions.
+
+**Assembled acceptance:** the same saved report opens with 0, 64 and 65 changed sources and honest freshness.
+This is independent of model setup and deep-research branch work.
+
+### Fast owner reads
+
+**Files:** select one existing owner catalog/history/guide reader and its HTTP/client call path under
+`apps/eliotr-core`, `packages/cloudflare-navigation`, research/artifact readers and `owner-api-client`.
+
+Apply ADR-0018 to one endpoint at a time. Resolve the owner at ingress, read bounded indexed summaries
+without per-row R2/grant/qualification work, and preserve the last observed value on transient read failure.
+Maintain needed summary fields in the existing write transaction; do not add a summary service, cache
+database or new authority. Align capabilities/availability with the selected profile as each route changes;
+do not mark broad scaffold slices implemented merely to silence `launch:code`.
+
+**Assembled acceptance:** count actual SQL/R2/request calls and measure p50/p95 on the same project; citation
+opening still resolves exact evidence. Deployment renewal retains the same owner's draft; sign-out/principal
+change clears private data. Multi-client contracts are not silently changed.
+
+### One ordinary streamed answer
+
+**Files:** existing run admission/Workflow composition; `packages/policy/src/context-compiler.ts`,
+`packages/cloudflare-model-control/src/research-model-prompt.ts`,
+`packages/cloudflare-research-runtime/src/research-answer-text.ts`, provider transport and owner client.
+
+Implement the ADR-0019 four-responsibility E0/E1 path with one streamed synthesis. Use existing context
+selection, request encoding, attempt/spend ledger, exact quote matching and artifact saving. Keep provisional
+text separate from saved/cited output. The optional semantic audit is background work.
+
+**Assembled acceptance:** question to first text to saved report/citation to reopen uses one paid synthesis
+attempt; disconnect/retry does not create another; context omissions remain visible; E2/E3 is still explicit.
+Measure context/provider/save time separately against ADR-0018 targets. The input/receipt representation
+must support this path, but it does not depend on all optional source/retrieval lanes.
+
+### Local preflight before the existing section verifier
+
+**File:** `packages/cloudflare-research/src/artifact-cow-section-producer.ts` and its existing input contract.
+
+C06: normalize and encode the section once; validate its local byte/cardinality bounds before invoking
+the existing independent verifier, then reuse those bytes. Preserve the verifier's semantic decision and
+the final authority/commit checks in this COW section path.
+
+**Assembled acceptance:** an oversized or structurally invalid section fails before a paid verification
+call. This bounded fix is independent of ordinary E0/E1 synthesis; it does not add the COW verifier to
+that answer path.
+
+### One React deployment path and existing agent paths
+
+**Files:** `apps/eliotr-web`, `packages/ui`, `packages/owner-api-client`, then manager-owned root/build/
+Wrangler integration and bounded legacy compatibility.
+
+Continue [the UI execution map](../agent-work/frontend-owner-execution-map.md) for feature behavior, not
+claim ancestry. Reuse existing Query/Router/client and native UI primitives. Complete the five owner
+paths, including connected agents and assignment through the existing COMPUTER/MCP dispatch lifecycle.
+No local swarm or new transcript store. Model and agent connection settings remain distinct.
+
+**Assembled acceptance:** one integrated Vite/Worker artifact, all five owner journeys, standalone inbox,
+old-tab/service-worker retirement and rollback. FINAL-UI/U6 retain their actual review/cutover boundary.
+After cutover remove Astro dependencies and legacy renderers/adapters with their now-unused callers.
+Do not merely change `assets.directory` to an unreviewed build.
+
+### Consolidation and deferred acceptance
+
+As each path is replaced, migrate callers and delete its redundant forwarding/decoder/decision code.
+Keep only retained-run compatibility that still has a reader/recovery obligation. Consolidate package
+boundaries after use-case ownership is clear, not in a preliminary mass move. Retirement of S52 data or
+old handlers is scoped to observed runtime/deployed state; no destructive migration is part of this plan.
+
+After product assembly, repair C07's exact expected-case membership in the existing Golden gate and run
+the applicable acceptance. Known existing assertion/story work stays in #378/#379; it does not create
+a separate preimplementation test campaign. Optional Rust promotion is selected only for a concrete
+deterministic operation; see the language contract, not the archived all-family queue.
+
+## Donors and managed components: decisions, not new packages
+
+Rechecked against the current code on October 17. The two
+[October 8 playbooks](../../.github/audits/2026-10-08/README.md#detailed-donor-evidence) retain pinned source
+references and cautions; literal reuse still needs file/dependency license review. Their cited landscape
+registry is absent from this repository snapshot;
+no claim is made to have reviewed that missing file. Do not treat those snapshots as current releases or
+benchmarks. No donor code or new runtime dependency is imported by this documentation change.
+
+| Source/mechanism | Use in this refactor | Current status / do not repeat |
 |---|---|---|
-| A | [#209](https://github.com/UnknownAlienHuman/eliot-research/pull/209) | Shared first-cause/citation outcome vocabulary aligned across TypeScript and SQL |
-| B | [#321](https://github.com/UnknownAlienHuman/eliot-research/pull/321) → [#331](https://github.com/UnknownAlienHuman/eliot-research/pull/331) | Common bounded reader fixed, callers migrated, weaker private readers deleted |
-| C | [#322](https://github.com/UnknownAlienHuman/eliot-research/pull/322) + [#323](https://github.com/UnknownAlienHuman/eliot-research/pull/323) | Ordered direct lanes and collision-free compound identity ready for #242 |
-| D | [#324](https://github.com/UnknownAlienHuman/eliot-research/pull/324) → [#320](https://github.com/UnknownAlienHuman/eliot-research/pull/320) | Decoder compatibility and scoped provider prefilter ready for the #242 integrator |
-| E | [#332](https://github.com/UnknownAlienHuman/eliot-research/pull/332) | Ledger event read bound to the head frontier actually observed |
-| F | [#282](https://github.com/UnknownAlienHuman/eliot-research/pull/282) | Real emitted Worker/owner-web build budgets before formatting or size claims |
+| [Cloudflare R2 conditions](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/#conditional-operations) | Native conditional create and bounded reconciliation in existing R2/payload owners. | C01/C11 remain; no HEAD-then-unconditional-PUT substitute. |
+| [Cloudflare Workflows events](https://developers.cloudflare.com/workflows/build/events-and-parameters/) | Existing R05 Research external-task W2 wait/event helper, if that Research flow is selected. | The graph is unactivated. Computer-agent assignment stays in its existing dispatch lifecycle; no new workflow engine. |
+| [DocsGPT attachment budget](https://github.com/arc53/DocsGPT/blob/0d994485d2ac5e3a1eff6020ccbe7d4f99adc612/docsgpt/agents/attachment_budget.py) | Reuse the bounded prepare-once idea through Eliot's existing context/prompt compiler. | Eliot already prepares the selection/manifest/request; connect it to the short answer, not a second planner. |
+| [WeKnora fusion](https://github.com/Tencent/WeKnora/blob/005627b180c6c7509660b0a14401e463f48d53f8/internal/application/service/knowledgebase_search_fusion.go) / existing `retrieval/src/fusion.ts` | Preserve deterministic per-list identity deduplication. | Already implemented; no new RRF port, and no extra ranking layer for the canceled S52 path. |
+| Open Notebook / RAGFlow branch findings | Candidate findings may inform a selected explicit deep-research task. | Deferred from the ordinary E0/E1 path; do not import their server/orchestrator. |
+| [React](https://react.dev/), [TanStack Query](https://tanstack.com/query/latest/docs/framework/react/guides/query-cancellation), [React Router](https://reactrouter.com/start/modes) | Existing rendering, read cache/cancellation and browser navigation. | Repository pins: React 19.3.0, Query 5.104.1, Router 7.18.4. No second cache/router/HTTP decoder or unselected MUI stack. |
+| [Cloudflare Vite assets](https://developers.cloudflare.com/workers/vite-plugin/reference/static-assets/) | One existing Worker + React static build. | Repository Vite 8.2.2 / Cloudflare plugin 1.54.11; finish the build/deploy bridge, no extra service. |
+| [Agents callable methods](https://developers.cloudflare.com/agents/runtime/lifecycle/callable-methods/) | Retain the bounded projection transport; simplify only against supported pinned hooks. | `agents@0.27.0` is pinned. Current online docs alone do not prove hook availability/behavior in that version. No blind monkey-patch deletion, upgrade or new SSE journal. |
 
-Current owner-directed source state is recorded in
-[the October 8 checkpoint](backend-checkpoint-2026-10-08.md). Compilation,
-source/native reproductions and exact-SHA review are reported separately there.
-The earlier audit handoff state below is retained as historical evidence:
+## How to finish a task
 
-```text
-#320 reconciled to current main; scoped workspace checks pending
-#321 reconciled to current main; scoped workspace checks pending
-#322 current-main source patch; focused package checks pending
-#323 current-main source patch; focused package checks pending
-#328 bounded source repair complete; repository-pinned checks pending; #285 owns expected-set/Golden v2
-```
-
-Do not start shared #242 integration before #324/#320/#322/#323 are reconciled in its manager worktree.
-Do not let separate managers edit #325/#214/#233 shared branch/product contracts concurrently.
-
-## 3. Manager launch protocol
-
-Create exactly one worktree for the manager. Subagents do not create additional worktrees; they work
-inside that manager-owned tree under disjoint exact-path ownership or remain read-only.
-
-```bash
-git fetch origin --prune
-git worktree add ../eliot-research-mgr-<manager> \
-  -b manager/<manager>/<pr>-<slug> origin/main
-cd ../eliot-research-mgr-<manager>
-git status --short
-git log --oneline -5
-```
-
-Before editing, record in the active PR:
-
-```text
-Baseline: <exact origin/main SHA>
-Manager/worktree: <manager ID and branch>
-Checkpoint: <one bounded result>
-Owned files: <exact paths>
-Shared files: <none, or named integrator handoff>
-Dependencies: <accepted predecessor SHAs or PENDING>
-Cloudflare primitive reused: <binding/API or none>
-Duplicate to remove/retire: <exact function/path>
-Build gate: <TypeScript compile/scoped lint; minimal Clippy for Rust>
-Deferred: <focused/full/native/live checks not executed yet>
-```
-
-Rules:
-
-1. One manager has one worktree and one checkpoint. Finish or explicitly hand off before another lane.
-2. One named integrator owns shared contracts, composition, migrations, manifests, lockfiles, barrels,
-   generated bindings and CI.
-3. Never force-push over another manager. Reconcile the refreshed expected head before publication.
-4. Code first during assembly: compile and scoped lint; Rust also gets minimal Clippy; SQL uses the
-   installed D1 depth/target compiler. Run only narrow reproductions required by the active PR.
-5. Mark every unexecuted gate `PENDING`, never implied `PASS`.
-6. A historical branch is evidence, not a tree to merge wholesale.
-7. A donor invariant is implemented only inside the existing Eliot owner named by the card/PR.
-
-## 4. Integrator entry point
-
-The integrator uses one dedicated integration worktree and is the only writer for shared surfaces named
-by more than one manager.
-
-First-wave order:
-
-```text
-#209
-#321 → #331
-#322 + #323
-#324 + #320 → #242
-#332 independently
-#282 independently
-```
-
-For every integration:
-
-1. refresh `origin/main` and the manager head;
-2. compare the exact diff and file list;
-3. verify that no unrelated planning/history tree entered the change;
-4. run the scoped compiler/lint/Clippy gate and named narrow reproduction;
-5. preserve persisted identities and legacy codecs unless an explicit migration exists;
-6. verify the implementation uses the Cloudflare primitive named by the card rather than replacing it;
-7. verify all callers moved and the duplicate path is deleted or provably retired;
-8. publish without rewriting history and read the resulting ref back;
-9. record exact SHA, commands, pending tests and released downstream owners in the PR.
-
-A policy wrapper over two active engines/readers/retry paths is not consolidation.
-
-## 5. Reviewer entry point
-
-A backend PR is reviewable only when its body answers:
-
-```text
-Which callers moved?
-Which duplicate functions, branches or engines were deleted or retired?
-Which legacy bytes/codecs remain readable?
-Which Cloudflare primitive owns the commodity mechanism?
-Which Eliot semantic checks still run after external I/O?
-What is the net production LOC and emitted bundle delta?
-What is the D1/R2/provider-call delta?
-Which negative, replay, lost-ACK and bound cases were executed?
-Which compiler/lint/Clippy/test/native/live gates remain PENDING?
-```
-
-Reject:
-
-- a wrapper over two unchanged execution engines;
-- a new generic framework where Cloudflare already owns the primitive;
-- a donor store/registry/runtime beside an existing Eliot owner;
-- provider success treated as evidence, coverage, permission or publication authority;
-- retryability treated as permission to repeat an unknown paid effect;
-- a source-only refactor presented as emitted-size/runtime improvement;
-- model-authored citation, contradiction or completion state treated as canonical;
-- a deferred donor feature promoted to a core blocker without benchmark evidence.
-
-## 6. Authority and precedence
-
-When documents disagree:
-
-1. current `origin/main` code and installed schemas;
-2. active implementation PR/passport and accepted predecessor SHAs;
-3. this router, implementation cards and final PR matrix;
-4. owning ER packet and manifest ownership;
-5. normative architecture, language/runtime contract and accepted ADRs;
-6. dated audits, old launch plans and closed PRs as historical evidence only.
-
-A leaf task may not resolve a shared-contract conflict by inventing a private schema, registry, retry
-engine or compatibility exception.
-
-## 7. Core dependency graph
-
-```text
-#209
-├─ #261 / #262 / #263 / #256
-└─ shared failure vocabulary for later lanes
-
-#321 → #331
-#322 + #323
-#324 + #320 → #242
-#332 independently
-
-#242 + #209 → #325 → #214
-#209 + #330 → #326 / #264
-#209 + #242 + #325 → #233
-#233 → #246 → #247 → #255
-
-#209 → #231 → #239 → #240 → #241
-                    └→ #244
-#239 + #240 → #248
-#240 + #247 + #248 → #249
-
-#328 → #285
-#282 → #268
-```
-
-Optional Google/federation profiles, optional Rust/Wasm promotion, UI completion, staging and paid
-quality runs do not block deterministic backend core work unless the active PR names a concrete
-cross-owner dependency.
-
-## 8. Donor use rule
-
-The implementation cards are the decision register. The long donor playbooks supply evidence and exact
-pinned functions. They do not authorize importing donor frameworks.
-
-```text
-Cloudflare commodity mechanism
-  → native binding/API
-  → thin Eliot adapter and receipt
-
-Missing semantic guarantee
-  → one existing Eliot owner
-  → isolated donor invariant
-  → migrate callers
-  → delete duplicate
-```
-
-Anything else requires a measured gap and an explicit architecture/integrator decision.
-
-### October 9 actual product Workflow qualification checkpoint
-
-Published admission/event status is present in `d1d80a01`/`2607583d`; fresh fetch
-and exact four document blobs confirm remote `2607583d`. Subsequent private work
-loads its actual Core exports in a custom esbuild candidate and passes health,
-four real product Workflow preparation negatives with zero business/R2 effects,
-and native execution of 18 existing deterministic confirmatory stages plus
-durable replay without new effects. This is product binding qualification at
-that bounded scope. Official Wrangler artifact, actual product external-task
-wait/scientific pipeline, DO RPC, selected production/live/release remain open.
-Read the [qualification record](r05-local-native-qualification-2026-10-09.md#actual-core-candidate-and-product-workflow--added-bounded-qualification)
-and continue those existing boundaries without repeating the retained passes.
+Use the [source-phase procedure](../START-HERE.md#code-and-verification): scoped compile/lint and minimal
+Clippy when Rust changes. Tests and broader product checks follow assembly. Record the concrete result,
+deleted/reused code and remaining acceptance in the PR; do not invent passed checks. Update runtime status
+only for actual state/behavior changes. A blocked consumer never freezes independent ready work.
