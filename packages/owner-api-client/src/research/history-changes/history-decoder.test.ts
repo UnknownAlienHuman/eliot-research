@@ -63,7 +63,11 @@ describe("decoder-only research history seam", () => {
     expect(() => decodeHistory(page({ protocol }), generation)).toThrowError();
   });
 
-  it("preserves the expected deployment-generation fence", () => {
-    expect(() => decodeHistory(page(), "other-generation")).toThrowError();
+  it("preserves the current response generation when the cached UI generation differs", () => {
+    expect(decodeHistory(page(), "older-ui-generation")).toMatchObject({ deployment_generation: generation });
+  });
+
+  it.each(["", null])("still rejects malformed response generation %s", value => {
+    expect(() => decodeHistory({ ...page(), deployment_generation: value }, generation)).toThrowError();
   });
 });
