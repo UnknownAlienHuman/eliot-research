@@ -99,6 +99,7 @@ export type { InstalledSemanticConfigurationEnvironment } from "./installed-sema
 
 export * from "./research-provider-key-model-use-service.js";
 export * from "./research-provider-key-model-use-plan.js";
+export * from "./research-provider-key-model-use-qualification-template.js";
 export * from "./research-provider-key-model-use-store.js";
 export * from "./research-provider-key-model-use-progress.js";
 export * from "./research-provider-key-model-use-current-scope.js";

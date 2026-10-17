@@ -11,6 +11,7 @@ import {
   type ModelRouteDeployment,
 } from "@eliotr/platform-cloudflare";
 import {
+  createResearchSemanticConfigRevisionStore,
   createModelProfileDefinition,
   createOwnerModelProfileTemplateV2,
   decodeResearchProjectModelConfigurationBundle,
@@ -20,6 +21,7 @@ import {
   type ResearchProjectModelSelection,
   type ResearchOwnerSpendPolicyTemplate,
 } from "@eliotr/cloudflare-research";
+import { evidenceSha256Bytes, evidenceUtf8Bytes } from "@eliotr/cloudflare-evidence";
 import {
   PROVIDER_NATIVE_MODEL_PROBE_PROMPT,
   PROVIDER_NATIVE_MODEL_PROBE_MAX_TOKENS,
@@ -35,6 +37,13 @@ import type { SelectedResearchProjectConfiguration } from "./research-project-co
 import type { ConfiguredResearchProviderKeyOperation } from "@eliotr/cloudflare-model-control";
 import { ServiceModelProviderCreateRequestSchema } from "@eliotr/contracts";
 import type { ResearchProviderKeyModelUseStage, ResearchProviderKeyModelUseStagePlan } from "./research-provider-key-model-use-store.js";
+import {
+  parseResearchProviderKeyModelUseQualificationTemplate,
+  researchProviderKeyModelUseQualificationTemplateAlreadyApplied,
+  type ResearchProviderKeyModelUseQualificationTemplateIdentityV1,
+  validateResearchProviderKeyModelUseBranchBudgetProfile,
+} from "./research-provider-key-model-use-qualification-template.js";
+import { RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON_KEY } from "./research-branch-query-budget-selection.js";
 
 export const RESEARCH_PROVIDER_KEY_MODEL_USE_BASIS_PROTOCOL = "eliotr.research.provider-key-model-use-basis.v1" as const;
 const LEGACY_MODEL_ID = "stealth/space-bunny-alpha" as const;
@@ -81,6 +90,7 @@ export interface ResearchProviderKeyModelUseRuntimePolicyV1 {
   readonly ELIOTR_RESEARCH_REPORT_CONFIG_JSON?: string;
   readonly ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF?: string;
   readonly ELIOTR_RESEARCH_MODEL_TRANSPORT_POLICIES_JSON?: string;
+  readonly ELIOTR_RESEARCH_PROVIDER_KEY_MODEL_USE_QUALIFICATION_TEMPLATE_JSON?: string;
 }
 
 export interface ResearchProviderKeyModelUseSemanticConfigurationV1 {
@@ -424,11 +434,80 @@ export async function createResearchProviderKeyModelUseBasis(input: {
   readonly catalog_selection?: ResearchProviderKeyModelUseCatalogSelectionV1;
 }): Promise<ResearchProviderKeyModelUseBasisV1> {
   let semanticRevision: ResearchProviderKeyModelUseSemanticConfigurationV1;
-  try { semanticRevision = await input.semantic_source.resolve(input.database); }
+  try {
+    if (input.selected === null) {
+      semanticRevision = await input.semantic_source.resolve(input.database);
+    } else {
+      const selectedRevision = input.selected.configuration.semantic_revision;
+      const selectedJson = input.selected.configuration.vars.ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON;
+      const stored = await createResearchSemanticConfigRevisionStore(input.database).getRevision(selectedRevision.revision_ref);
+      const rawSha = await evidenceSha256Bytes(evidenceUtf8Bytes(selectedJson));
+      if (stored === null || stored.config_sha256 !== selectedRevision.config_sha256 ||
+          stored.config_json !== selectedJson || rawSha !== selectedRevision.config_sha256 ||
+          selectedRevision.revision_ref !== `scr-${selectedRevision.config_sha256.slice(0, 12)}`) {
+        return fail("Selected project semantic revision does not match its immutable D1 bytes");
+      }
+      semanticRevision = Object.freeze({ config_json: stored.config_json,
+        revision_ref: stored.revision_ref, config_sha256: stored.config_sha256 });
+    }
+  }
   catch (cause) { return fail("Current immutable semantic configuration cannot be resolved", cause); }
-  const vars = readBaseVars(input.runtime_policy, input.selected, semanticRevision);
+  let vars = readBaseVars(input.runtime_policy, input.selected, semanticRevision);
+  let revision = assertSameSemanticRevision(vars, semanticRevision, input.selected);
+  const templateRaw = input.runtime_policy.ELIOTR_RESEARCH_PROVIDER_KEY_MODEL_USE_QUALIFICATION_TEMPLATE_JSON;
+  if (templateRaw !== undefined && input.selected !== null && input.catalog_selection !== undefined &&
+      input.selected.project_id === input.key.project_id) {
+    let target: unknown;
+    try { target = JSON.parse(templateRaw) as unknown; }
+    catch (cause) { return fail("Server qualification template is invalid JSON", cause); }
+    if (typeof target === "object" && target !== null && !Array.isArray(target) &&
+        (target as Record<string, unknown>).project_id === input.key.project_id &&
+        (target as Record<string, unknown>).provider_id === input.catalog_selection.provider_id &&
+        (target as Record<string, unknown>).provider_operation_id === input.catalog_selection.provider_operation_id &&
+        (target as Record<string, unknown>).model_id === input.catalog_selection.model_id) {
+      const identity: ResearchProviderKeyModelUseQualificationTemplateIdentityV1 = Object.freeze({
+        project_id: input.key.project_id,
+        provider_id: input.catalog_selection.provider_id,
+        provider_operation_id: input.catalog_selection.provider_operation_id,
+        route_provider_id: input.catalog_selection.route_provider_id,
+        model_id: input.catalog_selection.model_id,
+        alias: input.key.alias,
+        provider_config_id: input.key.provider_config_id,
+        binding_metadata_sha256: input.key.metadata_sha256,
+      });
+      let resolved;
+      try {
+        const alreadyApplied = await researchProviderKeyModelUseQualificationTemplateAlreadyApplied({
+          raw: templateRaw, expected: identity, selected: input.selected, database: input.database,
+        });
+        if (alreadyApplied) resolved = null;
+        else resolved = await parseResearchProviderKeyModelUseQualificationTemplate({ raw: templateRaw,
+          expected: identity, selected: input.selected, database: input.database });
+      } catch (cause) { return fail("Server qualification template does not match the exact selected baseline", cause); }
+      if (resolved === null) {
+        // The exact four-stage target is already selected. Use its D1-pinned
+        // semantic/spend/budget basis directly; the template is one-shot.
+      } else {
+      const originalSpend = readResearchOwnerSpendPolicyTemplate(vars.ELIOTR_MODEL_SPEND_POLICY_JSON,
+        vars.ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF);
+      const mergedSpend = readResearchOwnerSpendPolicyTemplate(canonicalModelGatewayJson({
+        ...originalSpend,
+        rules: [...originalSpend.rules, ...resolved.branch_spend_rules],
+      }), vars.ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF);
+      vars = Object.freeze({ ...vars,
+        ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON: resolved.semantic_config_json,
+        ELIOTR_MODEL_SPEND_POLICY_JSON: canonicalModelGatewayJson(mergedSpend),
+        [RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON_KEY]: resolved.branch_query_budget_profile_json,
+      });
+      semanticRevision = Object.freeze({ config_json: resolved.semantic_config_json,
+        revision_ref: resolved.template.semantic_revision_ref,
+        config_sha256: resolved.template.semantic_config_sha256 });
+      revision = Object.freeze({ revision_ref: semanticRevision.revision_ref as string,
+        config_sha256: semanticRevision.config_sha256 });
+      }
+    }
+  }
   const semantic = parseResearchSemanticConfiguration(vars.ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON);
-  const revision = assertSameSemanticRevision(vars, semanticRevision, input.selected);
   let spend: ResearchOwnerSpendPolicyTemplate;
   try { spend = readResearchOwnerSpendPolicyTemplate(vars.ELIOTR_MODEL_SPEND_POLICY_JSON, vars.ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF); }
   catch (cause) { return fail("The exact installed owner spend-policy template is unavailable", cause); }
@@ -492,8 +571,11 @@ export function parseResearchProviderKeyModelUseBasis(raw: string): ResearchProv
     fail("Stored semantic revision identity is invalid");
   }
   const vars = exactPlain(record.vars, "Stored project configuration variables");
-  if (Object.keys(vars).length !== REQUIRED_VARS.length || Object.entries(vars).some(([key, value]) =>
-    !REQUIRED_VARS.includes(key as typeof REQUIRED_VARS[number]) || typeof value !== "string" || value.length > 262_144) ||
+  const optionalVars = ["ELIOTR_RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON"] as const;
+  if (Object.keys(vars).length < REQUIRED_VARS.length || Object.keys(vars).length > REQUIRED_VARS.length + optionalVars.length ||
+      Object.entries(vars).some(([key, value]) =>
+    !REQUIRED_VARS.includes(key as typeof REQUIRED_VARS[number]) && !optionalVars.includes(key as typeof optionalVars[number]) ||
+    typeof value !== "string" || value.length > 262_144) ||
       REQUIRED_VARS.some((key) => typeof vars[key] !== "string" || vars[key].length === 0)) {
     fail("Stored project configuration variables are invalid");
   }
@@ -573,6 +655,16 @@ export function parseResearchProviderKeyModelUseBasis(raw: string): ResearchProv
       !stages.some((stage) => stage.stage === "SYNTHESIZE") || !stages.some((stage) => stage.stage === "AUDIT_CLAIMS")) {
     fail("Stored stage set is duplicated or missing a required stage");
   }
+  const hasAnalyze = stages.some((stage) => stage.stage === "ANALYZE_BRANCHES");
+  const hasCounter = stages.some((stage) => stage.stage === "COUNTER_SEARCH");
+  const budgetProfile = vars.ELIOTR_RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON;
+  if (hasAnalyze !== hasCounter || hasAnalyze !== (typeof budgetProfile === "string")) {
+    fail("Stored branch stages and their immutable query-budget profile must be present together");
+  }
+  if (typeof budgetProfile === "string") {
+    try { validateResearchProviderKeyModelUseBranchBudgetProfile(budgetProfile); }
+    catch (cause) { return fail("Stored branch query-budget profile is invalid", cause); }
+  }
   return Object.freeze({
     protocol: RESEARCH_PROVIDER_KEY_MODEL_USE_BASIS_PROTOCOL,
     semantic_revision: Object.freeze({ revision_ref: semanticRevision.revision_ref, config_sha256: semanticRevision.config_sha256 }),
@@ -584,6 +676,9 @@ export function parseResearchProviderKeyModelUseBasis(raw: string): ResearchProv
       ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF: requireStoredVar(vars, "ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF"),
       ELIOTR_RESEARCH_REPORT_CONFIG_JSON: requireStoredVar(vars, "ELIOTR_RESEARCH_REPORT_CONFIG_JSON"),
       ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF: requireStoredVar(vars, "ELIOTR_RESEARCH_REPORT_POLICY_PROVENANCE_REF"),
+      ...(typeof vars.ELIOTR_RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON === "string" ? {
+        ELIOTR_RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON: vars.ELIOTR_RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON,
+      } : {}),
     }),
     stages: Object.freeze(stages),
   });

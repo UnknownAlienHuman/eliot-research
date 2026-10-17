@@ -35,6 +35,8 @@ import {
   type RetrievalQueryInput,
   type RetrievalQueryExecutionV1,
   type RetrievalQueryAdmissionReceiptV1,
+  type RetrievalLaneExecutor,
+  type ManagedSearchPort,
   type ManagedSearchExecution,
   type ManagedSearchOutcomeDraft,
   type RetrievalResultStore,
@@ -213,6 +215,146 @@ function fail(code: "RETRIEVAL_RESOLUTION_UNCERTAIN" | "RETRIEVAL_AUTHORITY_STAL
   throw new RetrievalQueryError(code, message, code === "RETRIEVAL_RESOLUTION_UNCERTAIN");
 }
 
+/** @internal Shared SEM composition seam; managed outcome hooks exist only for server-owned V9 budgets. */
+export function createProjectSearchSemLaneExecutor(input: {
+  readonly namespace: AiSearchNamespaceLike;
+  readonly core_database: D1Database;
+  readonly search_database: D1Database;
+  readonly project_id: string;
+  readonly budgets?: RetrievalRequest["budgets"];
+  readonly dispatch_proof: RetrievalDispatchProof;
+}): RetrievalLaneExecutor {
+  const managedPort: Pick<ManagedSearchPort, "preflightSearchManaged" | "searchManaged"> =
+    input.budgets === undefined ? {} : {
+      async preflightSearchManaged(request, lanes, _expansion, context) {
+        if (lanes.length !== 1 || lanes[0] !== "SEM") {
+          throw Object.assign(new Error("managed project search supports only the SEM lane"), {
+            code: "AI_SEARCH_MANAGED_CAPABILITY_UNAVAILABLE",
+          });
+        }
+        const providerLimit = managedProjectSearchProviderLimit({ request,
+          ...(context?.provider_candidate_limit === undefined ? {} : {
+            provider_candidate_limit: context.provider_candidate_limit,
+          }) });
+        if (providerLimit > 0 && request.scope_snapshot.member_source_revision_refs.length > 0) {
+          try { await assertProjectSearchManagedPrimaryAvailable({
+            search_database: input.search_database, namespace: input.namespace,
+          }); }
+          catch (error) { managedSearchAuthorityFailure(error); }
+        }
+      },
+      async searchManaged(request, lanes, expansion, _admission, context): Promise<ManagedSearchExecution> {
+        if (lanes.length !== 1 || lanes[0] !== "SEM") {
+          throw Object.assign(new Error("managed project search supports only the SEM lane"), {
+            code: "AI_SEARCH_MANAGED_CAPABILITY_UNAVAILABLE",
+          });
+        }
+        const providerLimit = managedProjectSearchProviderLimit({ request,
+          ...(context?.provider_candidate_limit === undefined ? {} : {
+            provider_candidate_limit: context.provider_candidate_limit,
+          }) });
+        if (providerLimit === 0 || request.scope_snapshot.member_source_revision_refs.length === 0) {
+          return { execution_state: "NOT_EXECUTED", submitted_query: request.raw_query, candidates: [], outcome: null };
+        }
+        // Reads registry authority before the provider and again after response/D1 readback.
+        input.dispatch_proof.effect_dispatched = true;
+        let readback: Awaited<ReturnType<typeof searchProjectManaged>>;
+        try {
+          readback = await searchProjectManaged({
+            namespace: input.namespace,
+            core_database: input.core_database,
+            search_database: input.search_database,
+            project_id: input.project_id,
+            source_revision_refs: request.scope_snapshot.member_source_revision_refs,
+            query: request.raw_query,
+            max_num_results: providerLimit,
+            context_expansion: expansion,
+          });
+        } catch (error) { managedSearchAuthorityFailure(error); }
+        const response = readback.response as { readonly chunks?: readonly unknown[] };
+        if (!Array.isArray(response.chunks)) {
+          throw Object.assign(new Error("managed AI Search response is invalid"), {
+            code: "AI_SEARCH_MANAGED_PROVIDER_RESPONSE_INVALID",
+          });
+        }
+        const candidates = decodeAiSearchSearchResult(request, readback.response, providerLimit).map((candidate, index) => {
+          const chunk = response.chunks?.[index];
+          const scoring = typeof chunk === "object" && chunk !== null && !Array.isArray(chunk)
+            ? (chunk as Record<string, unknown>).scoring_details : undefined;
+          const details = typeof scoring === "object" && scoring !== null && !Array.isArray(scoring)
+            ? scoring as Record<string, unknown> : {};
+          return Object.freeze({ ...candidate, metadata: Object.freeze({
+            ...candidate.metadata,
+            provider_index_generation: readback.authority.index_generation,
+            ...(typeof details.vector_score === "number" && Number.isFinite(details.vector_score)
+              ? { provider_vector_score: details.vector_score } : {}),
+            ...(typeof details.vector_rank === "number" && Number.isSafeInteger(details.vector_rank) && details.vector_rank > 0
+              ? { provider_vector_rank: details.vector_rank } : {}),
+            ...(typeof details.keyword_score === "number" && Number.isFinite(details.keyword_score)
+              ? { provider_keyword_score: details.keyword_score } : {}),
+            ...(typeof details.keyword_rank === "number" && Number.isSafeInteger(details.keyword_rank) && details.keyword_rank > 0
+              ? { provider_keyword_rank: details.keyword_rank } : {}),
+            ...(details.fusion_method === "rrf" || details.fusion_method === "max"
+              ? { provider_fusion_method: details.fusion_method } : {}),
+            ...(typeof details.reranking_score === "number" && Number.isFinite(details.reranking_score)
+              ? { provider_reranking_score: details.reranking_score } : {}),
+          }) });
+        });
+        const signals: ManagedSearchOutcomeDraft["contributing_signals"] = [
+          { signal: "VECTOR", basis: "EXECUTED_QUERY" },
+          { signal: "KEYWORD", basis: "EXECUTED_QUERY" },
+          { signal: "NATIVE_FUSION", basis: "EXECUTED_QUERY" },
+          { signal: "RERANK", basis: "EXECUTED_QUERY" },
+        ];
+        const hasRerankingScore = candidates.some((candidate) =>
+          typeof candidate.metadata.provider_reranking_score === "number");
+        const outcome: ManagedSearchOutcomeDraft = {
+          protocol: "eliotr.managed-ranking-outcome.v1",
+          provider: "cloudflare_ai_search",
+          provider_execution_identity: { available: false, provider_execution_id: null,
+            reason: "BINDING_RESPONSE_HAS_NO_EXECUTION_ID" },
+          provider_authority: { namespace: readback.authority.namespace,
+            instance_id: readback.authority.instance_id,
+            registry_revision: readback.authority.registry_revision,
+            registry_artifact_sha256: readback.authority.registry_artifact_sha256 },
+          authority_generations: { policy_generation: null, execution_generation: null,
+            index_generation: readback.authority.index_generation, query_compiler_generation: null },
+          executed_query: request.raw_query,
+          contributing_signals: signals,
+          list_semantics: "ONE_PHYSICAL_MANAGED_LIST",
+          scope_absence_proven: false,
+          rerank_requested: true,
+          rerank_attempted: true,
+          rerank_succeeded: hasRerankingScore ? true : null,
+          rerank_provider: "cloudflare_ai_search",
+          rerank_model: null,
+          fallback_used: false,
+          failure_class: null,
+          processing_state: candidates.length === 0 ? "NO_HIT" : "COMPLETE",
+        };
+        return { execution_state: "EXECUTED", submitted_query: request.raw_query, candidates, outcome };
+      },
+    };
+  return createSemLaneExecutor({
+    ...managedPort,
+    async search(request, _lanes, expansion) {
+      // Legacy SEM dispatch remains visible to the existing effect tracker.
+      input.dispatch_proof.effect_dispatched = true;
+      const raw = await searchProject({
+        namespace: input.namespace,
+        core_database: input.core_database,
+        search_database: input.search_database,
+        project_id: input.project_id,
+        source_revision_refs: request.scope_snapshot.member_source_revision_refs,
+        lane: "prose",
+        query: request.raw_query,
+        context_expansion: expansion,
+      });
+      return decodeAiSearchSearchResult(request, raw);
+    },
+  });
+}
+
 function projectIdForScopeExpression(expression: unknown): string | null {
   if (typeof expression !== "object" || expression === null || Array.isArray(expression)) return null;
   const record = expression as Record<string, unknown>;
@@ -370,128 +512,13 @@ async function createHeldScopeRetrievalQuery(
   const aiSearch = env.AI_SEARCH;
   const sem = aiSearch === undefined || projectId === null
     ? null
-    : createSemLaneExecutor({
-        async preflightSearchManaged(request, lanes, _expansion, context) {
-          if (lanes.length !== 1 || lanes[0] !== "SEM") {
-            throw Object.assign(new Error("managed project search supports only the SEM lane"), {
-              code: "AI_SEARCH_MANAGED_CAPABILITY_UNAVAILABLE",
-            });
-          }
-          const providerLimit = managedProjectSearchProviderLimit({ request,
-            ...(context?.provider_candidate_limit === undefined ? {} : {
-              provider_candidate_limit: context.provider_candidate_limit,
-            }) });
-          if (providerLimit > 0 && request.scope_snapshot.member_source_revision_refs.length > 0) {
-            try { await assertProjectSearchManagedPrimaryAvailable({ search_database: env.SEARCH_DB, namespace: aiSearch }); }
-            catch (error) { managedSearchAuthorityFailure(error); }
-          }
-        },
-        async searchManaged(request, lanes, expansion, _admission, context): Promise<ManagedSearchExecution> {
-          if (lanes.length !== 1 || lanes[0] !== "SEM") {
-            throw Object.assign(new Error("managed project search supports only the SEM lane"), {
-              code: "AI_SEARCH_MANAGED_CAPABILITY_UNAVAILABLE",
-            });
-          }
-          const providerLimit = managedProjectSearchProviderLimit({ request,
-            ...(context?.provider_candidate_limit === undefined ? {} : {
-              provider_candidate_limit: context.provider_candidate_limit,
-            }) });
-          if (providerLimit === 0 || request.scope_snapshot.member_source_revision_refs.length === 0) {
-            return { execution_state: "NOT_EXECUTED", submitted_query: request.raw_query, candidates: [], outcome: null };
-          }
-          // Reads registry authority before the provider and again after response/D1 readback.
-          proof.effect_dispatched = true;
-          let readback: Awaited<ReturnType<typeof searchProjectManaged>>;
-          try {
-            readback = await searchProjectManaged({
-              namespace: aiSearch,
-              core_database: env.CORE_DB,
-              search_database: env.SEARCH_DB,
-              project_id: projectId,
-              source_revision_refs: request.scope_snapshot.member_source_revision_refs,
-              query: request.raw_query,
-              max_num_results: providerLimit,
-              context_expansion: expansion,
-            });
-          } catch (error) { managedSearchAuthorityFailure(error); }
-          const response = readback.response as { readonly chunks?: readonly unknown[] };
-          if (!Array.isArray(response.chunks)) {
-            throw Object.assign(new Error("managed AI Search response is invalid"), {
-              code: "AI_SEARCH_MANAGED_PROVIDER_RESPONSE_INVALID",
-            });
-          }
-          const candidates = decodeAiSearchSearchResult(request, readback.response, providerLimit).map((candidate, index) => {
-            const chunk = response.chunks?.[index];
-            const scoring = typeof chunk === "object" && chunk !== null && !Array.isArray(chunk)
-              ? (chunk as Record<string, unknown>).scoring_details : undefined;
-            const details = typeof scoring === "object" && scoring !== null && !Array.isArray(scoring)
-              ? scoring as Record<string, unknown> : {};
-            return Object.freeze({ ...candidate, metadata: Object.freeze({
-              ...candidate.metadata,
-              provider_index_generation: readback.authority.index_generation,
-              ...(typeof details.vector_score === "number" && Number.isFinite(details.vector_score)
-                ? { provider_vector_score: details.vector_score } : {}),
-              ...(typeof details.vector_rank === "number" && Number.isSafeInteger(details.vector_rank) && details.vector_rank > 0
-                ? { provider_vector_rank: details.vector_rank } : {}),
-              ...(typeof details.keyword_score === "number" && Number.isFinite(details.keyword_score)
-                ? { provider_keyword_score: details.keyword_score } : {}),
-              ...(typeof details.keyword_rank === "number" && Number.isSafeInteger(details.keyword_rank) && details.keyword_rank > 0
-                ? { provider_keyword_rank: details.keyword_rank } : {}),
-              ...(details.fusion_method === "rrf" || details.fusion_method === "max"
-                ? { provider_fusion_method: details.fusion_method } : {}),
-              ...(typeof details.reranking_score === "number" && Number.isFinite(details.reranking_score)
-                ? { provider_reranking_score: details.reranking_score } : {}),
-            }) });
-          });
-          const signals: ManagedSearchOutcomeDraft["contributing_signals"] = [
-            { signal: "VECTOR", basis: "EXECUTED_QUERY" },
-            { signal: "KEYWORD", basis: "EXECUTED_QUERY" },
-            { signal: "NATIVE_FUSION", basis: "EXECUTED_QUERY" },
-            { signal: "RERANK", basis: "EXECUTED_QUERY" },
-          ];
-          const hasRerankingScore = candidates.some((candidate) =>
-            typeof candidate.metadata.provider_reranking_score === "number");
-          const outcome: ManagedSearchOutcomeDraft = {
-            protocol: "eliotr.managed-ranking-outcome.v1",
-            provider: "cloudflare_ai_search",
-            provider_execution_identity: { available: false, provider_execution_id: null,
-              reason: "BINDING_RESPONSE_HAS_NO_EXECUTION_ID" },
-            provider_authority: { namespace: readback.authority.namespace,
-              instance_id: readback.authority.instance_id,
-              registry_revision: readback.authority.registry_revision,
-              registry_artifact_sha256: readback.authority.registry_artifact_sha256 },
-            authority_generations: { policy_generation: null, execution_generation: null,
-              index_generation: readback.authority.index_generation, query_compiler_generation: null },
-            executed_query: request.raw_query,
-            contributing_signals: signals,
-            list_semantics: "ONE_PHYSICAL_MANAGED_LIST",
-            scope_absence_proven: false,
-            rerank_requested: true,
-            rerank_attempted: true,
-            rerank_succeeded: hasRerankingScore ? true : null,
-            rerank_provider: "cloudflare_ai_search",
-            rerank_model: null,
-            fallback_used: false,
-            failure_class: null,
-            processing_state: candidates.length === 0 ? "NO_HIT" : "COMPLETE",
-          };
-          return { execution_state: "EXECUTED", submitted_query: request.raw_query, candidates, outcome };
-        },
-        async search(request) {
-          // The native SEM lane is not managed_outcome_capable, so it reaches the
-          // provider without any q4 admission row; mark the dispatch here.
-          proof.effect_dispatched = true;
-          const raw = await searchProject({
-            namespace: aiSearch,
-            core_database: env.CORE_DB,
-            search_database: env.SEARCH_DB,
-            project_id: projectId,
-            source_revision_refs: request.scope_snapshot.member_source_revision_refs,
-            lane: "prose",
-            query: request.raw_query,
-          });
-          return decodeAiSearchSearchResult(request, raw);
-        },
+    : createProjectSearchSemLaneExecutor({
+        namespace: aiSearch,
+        core_database: env.CORE_DB,
+        search_database: env.SEARCH_DB,
+        project_id: projectId,
+        budgets: input.budgets,
+        dispatch_proof: proof,
       });
   const sourceLanes: RetrievalQueryPorts["lanes"] = {
     executorFor(lane: RetrievalLane) {

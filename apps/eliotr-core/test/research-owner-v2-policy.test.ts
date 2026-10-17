@@ -153,6 +153,7 @@ describe("owner v2 permanent settings and prepared transport", () => {
 
   it("uses the explicit shared branch-role parameters for both branch spend digests", async () => {
     const input = v2Input(generation);
+    const { transport_policies: _preparedTransportPolicies, ...inputWithoutPreparedTransport } = input;
     const synthesisRule = input.spend_policy.rules.find((rule) => rule.stage === "SYNTHESIZE");
     if (synthesisRule === undefined) throw new Error("fixture synthesis spend rule is missing");
     const branchRules = (["ANALYZE_BRANCHES", "COUNTER_SEARCH"] as const).map((stage) => ({
@@ -163,7 +164,7 @@ describe("owner v2 permanent settings and prepared transport", () => {
     const roleSettings = { prompt: "existing shared branch-role prompt template settings",
       max_tokens: 256, request_timeout_ms: 1_500, reasoning_effort: "high" as const };
     const compiled = await createResearchOwnerRuntimeConfiguration({
-      ...input,
+      ...inputWithoutPreparedTransport,
       semantic: { ...input.semantic, roles: roleSettings },
       spend_policy: { ...input.spend_policy, rules: [...input.spend_policy.rules, ...branchRules] },
     });
@@ -190,20 +191,70 @@ describe("owner v2 permanent settings and prepared transport", () => {
     }
 
     await expect(createResearchOwnerRuntimeConfiguration({
-      ...input,
+      ...inputWithoutPreparedTransport,
       spend_policy: { ...input.spend_policy, rules: [...input.spend_policy.rules, ...branchRules] },
     })).rejects.toThrow("the installed owner branch-role template and both branch spend stages must be configured together");
     await expect(createResearchOwnerRuntimeConfiguration({
-      ...input,
+      ...inputWithoutPreparedTransport,
       semantic: { ...input.semantic, roles: roleSettings },
     })).rejects.toThrow("the installed owner branch-role template and both branch spend stages must be configured together");
 
     for (const response_format of [null, "bad", { type: "unknown" }]) {
       await expect(createResearchOwnerRuntimeConfiguration({
-        ...input,
+        ...inputWithoutPreparedTransport,
         semantic: { ...input.semantic,
           roles: { ...roleSettings, response_format } as never },
       })).rejects.toThrow("roles contains unsupported fields");
+    }
+  });
+
+  it("hashes branch spend parameters with each exact prepared transport", async () => {
+    const input = v2Input(generation);
+    const synthesisRule = input.spend_policy.rules.find((rule) => rule.stage === "SYNTHESIZE");
+    const prepared = input.transport_policies;
+    const synthesisTransport = prepared?.model_selections.find((selection) => selection.stage === "SYNTHESIZE");
+    if (synthesisRule === undefined || prepared === undefined || synthesisTransport === undefined) {
+      throw new Error("fixture synthesis spend or transport binding is missing");
+    }
+    const branchRules = (["ANALYZE_BRANCHES", "COUNTER_SEARCH"] as const).map((stage) => ({
+      ...synthesisRule,
+      stage,
+      deployment: { ...synthesisRule.deployment, route_version: `${tag}-${stage.toLowerCase()}` },
+    }));
+    const roleSettings = { prompt: "existing shared branch-role prompt template settings",
+      max_tokens: 256, request_timeout_ms: 1_500, reasoning_effort: "high" as const };
+    const branchTransport = branchRules.map((rule) => ({
+      ...synthesisTransport,
+      stage: rule.stage,
+      route_ref: rule.deployment.route_ref,
+      route_version: rule.deployment.route_version,
+    }));
+    const stageOrder = ["ANALYZE_BRANCHES", "COUNTER_SEARCH", "SYNTHESIZE", "AUDIT_CLAIMS"];
+    const transport_policies: ResearchPreparedModelTransportPoliciesV1 = {
+      ...prepared,
+      model_selections: [...branchTransport, ...prepared.model_selections]
+        .sort((left, right) => stageOrder.indexOf(left.stage) - stageOrder.indexOf(right.stage)),
+    };
+    const compiled = await createResearchOwnerRuntimeConfiguration({
+      ...input,
+      semantic: { ...input.semantic, roles: roleSettings },
+      spend_policy: { ...input.spend_policy, rules: [...input.spend_policy.rules, ...branchRules] },
+      transport_policies,
+    });
+    const spend = JSON.parse(requiredRuntimeVar(compiled.vars, "ELIOTR_MODEL_SPEND_POLICY_JSON")) as {
+      readonly rules: readonly { readonly stage: string; readonly deployment: { readonly route_ref: string;
+        readonly parameters_digest: string } }[];
+    };
+    const rolePolicy = synthesisTransport.transport_policy;
+    const branchSpend = spend.rules.filter((rule) =>
+      rule.stage === "ANALYZE_BRANCHES" || rule.stage === "COUNTER_SEARCH");
+    for (const rule of branchSpend) {
+      const expected = await modelGatewayRequestParametersSha256({
+        model: rule.deployment.route_ref, messages: [],
+        [rolePolicy.capabilities.max_output_tokens_field]: roleSettings.max_tokens,
+        reasoning_effort: roleSettings.reasoning_effort, stream: false,
+      }, rolePolicy.capabilities, rolePolicy.api);
+      expect(rule.deployment.parameters_digest).toBe(expected);
     }
   });
 

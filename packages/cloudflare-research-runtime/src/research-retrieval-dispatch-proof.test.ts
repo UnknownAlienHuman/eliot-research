@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { WorkflowFailureOutcomeSchema } from "@eliotr/cloudflare-workflows";
+import type { AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
+import { compileQueryPlan, executePlannedLanes, type RetrievalRequest } from "@eliotr/retrieval";
 import {
+  createProjectSearchSemLaneExecutor,
   annotateNoRetrievalEffectDispatched,
   managedProjectSearchProviderLimit,
   retrievalEffectNotDispatched,
@@ -106,5 +109,128 @@ describe("retrieval dispatch proof gate", () => {
     expect(retrievalEffectNotDispatched(dispatched)).toBe(false);
     expect(settledReadOnlyRetrievalStop({ error: dispatched, code: dispatched.code, stage: "RETRIEVE_BRANCHES" }))
       .toBeNull();
+  });
+});
+
+describe("held-scope SEM managed-mode selection", () => {
+  const request = {
+    raw_query: "How do positional encodings work?",
+    product: "RESEARCH",
+    scope_snapshot: {
+      member_source_revision_refs: ["revision-1"],
+      source_owner_generations: { "revision-1": "owner-generation-1" },
+    },
+    literals: ["positional"],
+    requested_limit: 4,
+    deadline_ms: Date.now() + 5_000,
+  } as unknown as RetrievalRequest;
+
+  function database(kind: "core" | "search", registryAvailable = false) {
+    const projection = {
+      item_key: "projection-item-1",
+      source_revision_ref: "revision-1",
+      title: "Positional encodings",
+      document_context_header: "",
+      section_text: "Canonical indexed section.",
+      canonical_section_id: "section-1",
+      content_sha256: "a".repeat(64),
+      instruction_taint: "DATA_ONLY",
+      projection_generation: "projection-generation-1",
+    };
+    return {
+      prepare(sql: string) {
+        return {
+          bind() {
+            return {
+              all: async () => {
+                if (kind === "core" && sql.includes("FROM project_source_membership m")) {
+                  return { success: true, results: [{ source_id: "source-1", source_revision_ref: "revision-1" }] };
+                }
+                if (kind === "search" && sql.includes("FROM projection_item WHERE source_revision_ref")) {
+                  return { success: true, results: [projection] };
+                }
+                return { success: true, results: [] };
+              },
+              first: async () => {
+                if (kind === "core" && sql.includes("SELECT 1 AS current FROM project_source_membership")) {
+                  return { current: 1 };
+                }
+                if (kind === "search" && sql.includes("FROM ai_search_generation_registry")) {
+                  return registryAvailable ? {} : null;
+                }
+                return null;
+              },
+              run: async () => ({ success: true }),
+            };
+          },
+        };
+      },
+    } as unknown as D1Database;
+  }
+
+  it("keeps the legacy LEX then native SEM path when no server-owned budgets are present", async () => {
+    const providerCalls: Record<string, unknown>[] = [];
+    const namespace = {
+      get(instanceId: string) {
+        return {
+          search: async (request: Record<string, unknown>) => {
+            providerCalls.push({ instance_id: instanceId, request });
+            return { chunks: [] };
+          },
+        };
+      },
+    } as unknown as AiSearchNamespaceLike;
+    const dispatchProof = { effect_dispatched: false };
+    const sem = createProjectSearchSemLaneExecutor({
+      namespace,
+      core_database: database("core"),
+      search_database: database("search"),
+      project_id: "project-1",
+      dispatch_proof: dispatchProof,
+    });
+    expect(sem.managed_outcome_capable).toBe(false);
+
+    const lanes: string[] = [];
+    const plan = compileQueryPlan(request);
+    const receipts = await executePlannedLanes(plan, request, {
+      executorFor(lane) {
+        if (lane === "IDENT" || lane === "EXACT" || lane === "LEX") {
+          return { execute: async () => { lanes.push(lane); return []; } };
+        }
+        if (lane === "SEM") return sem;
+        return null;
+      },
+    });
+
+    expect(lanes).toEqual(["IDENT", "EXACT", "LEX"]);
+    expect(plan.lanes.indexOf("LEX")).toBeLessThan(plan.lanes.indexOf("SEM"));
+    expect(plan.lanes.indexOf("EXACT")).toBeLessThan(plan.lanes.indexOf("SEM"));
+    expect(receipts.find((receipt) => receipt.lane === "LEX")?.disposition).toBe("EXECUTED");
+    expect(receipts.find((receipt) => receipt.lane === "SEM")?.disposition).toBe("EXECUTED");
+    expect(providerCalls).toHaveLength(1);
+    expect((providerCalls[0]?.request as { ai_search_options?: { retrieval?: { context_expansion?: number } } })
+      .ai_search_options?.retrieval?.context_expansion).toBe(2);
+    expect(dispatchProof.effect_dispatched).toBe(true);
+  });
+
+  it("keeps V9 managed execution fail-closed when the canonical registry is absent", async () => {
+    const providerCalls: unknown[] = [];
+    const namespace = {
+      get() { return { search: async (request: unknown) => { providerCalls.push(request); return { chunks: [] }; } }; },
+    } as unknown as AiSearchNamespaceLike;
+    const dispatchProof = { effect_dispatched: false };
+    const sem = createProjectSearchSemLaneExecutor({
+      namespace,
+      core_database: database("core"),
+      search_database: database("search"),
+      project_id: "project-1",
+      budgets: { candidate_limit: 12, scan_limit: 24, evidence_limit: 2, max_evidence_bytes: 4096 },
+      dispatch_proof: dispatchProof,
+    });
+    expect(sem.managed_outcome_capable).toBe(true);
+    await expect(sem.preflightManagedCall?.(request, { provider_candidate_limit: 12 }))
+      .rejects.toMatchObject({ code: "AI_SEARCH_MANAGED_NOT_PROMOTED" });
+    expect(providerCalls).toHaveLength(0);
+    expect(dispatchProof.effect_dispatched).toBe(false);
   });
 });

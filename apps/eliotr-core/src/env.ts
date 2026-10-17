@@ -43,6 +43,8 @@ export interface Env extends InstalledSemanticConfigurationEnvironment {
   readonly ELIOTR_MODEL_PROFILE_PROVENANCE_REF?: string | undefined;
   /** Operator-approved transport policies used before exact model qualification. */
   readonly ELIOTR_RESEARCH_MODEL_TRANSPORT_POLICIES_JSON?: string;
+  /** Optional compact server-only delta for one exact project's model qualification; max 5 KB. */
+  readonly ELIOTR_RESEARCH_PROVIDER_KEY_MODEL_USE_QUALIFICATION_TEMPLATE_JSON?: string;
   /** Explicit approved model spend policy; no browser field selects it. */
   readonly ELIOTR_MODEL_SPEND_POLICY_JSON?: string | undefined;
   readonly ELIOTR_MODEL_SPEND_POLICY_PROVENANCE_REF?: string | undefined;

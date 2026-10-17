@@ -29,6 +29,11 @@ import type { ResearchCatalogModelUseV2Driver, ResearchCatalogModelUseV2Receipt,
   "./research-catalog-model-use-v2-driver.js";
 import type { ResearchProviderKeyModelUseCatalogSelectionV1 } from
   "@eliotr/cloudflare-research-configuration/research-provider-key-model-use-plan.js";
+import {
+  parseResearchProviderKeyModelUseQualificationTemplate,
+  researchProviderKeyModelUseQualificationTemplateAlreadyApplied,
+  researchProviderKeyModelUseQualificationTemplateTargets,
+} from "@eliotr/cloudflare-research-configuration/research-provider-key-model-use-qualification-template.js";
 import type { Env } from "./env.js";
 
 export type { ResearchCatalogModelUseV2Driver } from "./research-catalog-model-use-v2-driver.js";
@@ -527,6 +532,27 @@ export function createResearchCatalogModelUseService(input: {
       const requestSha = await modelGatewaySha256(canonicalModelGatewayJson(identity));
       let row = await store.read(input.context.principal_ref, input.project_id, request.operation_id);
       if (row === null) {
+        const templateRaw = input.env.ELIOTR_RESEARCH_PROVIDER_KEY_MODEL_USE_QUALIFICATION_TEMPLATE_JSON;
+        if (templateRaw !== undefined && configuredProvider !== null && request.provider_operation_id !== null &&
+            await researchProviderKeyModelUseQualificationTemplateTargets({ raw: templateRaw, project_id: input.project_id,
+              provider_id: request.provider_id, provider_operation_id: request.provider_operation_id, model_id: request.model_id })) {
+          try {
+            const expected = Object.freeze({ project_id: input.project_id, provider_id: request.provider_id,
+                provider_operation_id: request.provider_operation_id, route_provider_id: routeProviderId,
+                model_id: request.model_id, alias: configuredProvider.binding.alias,
+                provider_config_id: configuredProvider.binding.provider_config_id,
+                binding_metadata_sha256: configuredProvider.binding.metadata_sha256 });
+            const alreadyApplied = await researchProviderKeyModelUseQualificationTemplateAlreadyApplied({
+              raw: templateRaw, expected, selected, database: input.env.CORE_DB,
+            });
+            if (!alreadyApplied) await parseResearchProviderKeyModelUseQualificationTemplate({
+              raw: templateRaw, expected, selected, database: input.env.CORE_DB,
+            });
+          } catch (cause) {
+            throw new ResearchCatalogModelUseServiceError("RESEARCH_CATALOG_MODEL_USE_STORAGE_UNAVAILABLE", 503,
+              "The server qualification template is invalid for the current selected configuration", false, cause);
+          }
+        }
         const project = await input.env.CORE_DB.prepare(
           "SELECT generation FROM project WHERE project_id=?1 LIMIT 1",
         ).bind(input.project_id).first<{ readonly generation: number }>();

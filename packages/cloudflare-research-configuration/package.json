@@ -23,6 +23,7 @@
     "./research-semantic-configuration-schema.js": "./src/research-semantic-configuration-schema.ts",
     "./research-provider-key-model-use-service.js": "./src/research-provider-key-model-use-service.ts",
     "./research-provider-key-model-use-plan.js": "./src/research-provider-key-model-use-plan.ts",
+    "./research-provider-key-model-use-qualification-template.js": "./src/research-provider-key-model-use-qualification-template.ts",
     "./research-provider-key-model-use-store.js": "./src/research-provider-key-model-use-store.ts",
     "./research-provider-key-model-use-progress.js": "./src/research-provider-key-model-use-progress.ts",
     "./research-provider-key-model-use-current-scope.js": "./src/research-provider-key-model-use-current-scope.ts",

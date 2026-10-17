@@ -28,6 +28,7 @@ import {
 import { RESEARCH_OWNER_MODEL_PROFILE } from "./research-owner-profile.js";
 import {
   parseResearchPreparedModelTransportPolicies,
+  type ResearchPreparedModelTransportStage,
   type ResearchPreparedModelTransportPoliciesV1,
   type ResearchPreparedModelTransportSelectionV1,
 } from "@eliotr/cloudflare-model-control/research-prepared-model-transport-policies.js";
@@ -165,7 +166,7 @@ export async function createResearchOwnerRuntimeConfiguration(
   }
   const transportPolicies = input.transport_policies === undefined ? undefined :
     parseResearchPreparedModelTransportPolicies(canonicalJson(input.transport_policies));
-  const transportFor = (stage: "SYNTHESIZE" | "AUDIT_CLAIMS", deployment: ResearchOwnerDeploymentInput) => {
+  const transportFor = (stage: ResearchPreparedModelTransportStage, deployment: ResearchOwnerDeploymentInput) => {
     const selection = transportPolicies?.model_selections.find((entry) => entry.stage === stage);
     if (transportPolicies !== undefined && selection === undefined) {
       invalid(`prepared transport policy is missing ${stage}`);
@@ -202,8 +203,7 @@ export async function createResearchOwnerRuntimeConfiguration(
     const configured = rule.stage === "SYNTHESIZE" ? semantic.synthesis :
       rule.stage === "AUDIT_CLAIMS" ? semantic.audit : semantic.roles;
     if (configured === undefined) invalid("branch spend rules require the installed owner branch-role template");
-    const selection = rule.stage === "SYNTHESIZE" || rule.stage === "AUDIT_CLAIMS"
-      ? transportFor(rule.stage, rule.deployment) : undefined;
+    const selection = transportFor(rule.stage, rule.deployment);
     const parametersDigest = await semanticParametersDigest(rule.deployment.route_ref, configured, selection);
     spendRules.push({
       ...rule,

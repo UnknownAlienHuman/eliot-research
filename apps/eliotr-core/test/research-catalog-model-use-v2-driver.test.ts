@@ -3,6 +3,7 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   SERVICE_MODEL_PROVIDER_CREATE_PROTOCOL,
 } from "@eliotr/contracts";
+import { canonicalModelGatewayJson, modelGatewaySha256 } from "@eliotr/cloudflare-ai";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { createServiceModelProviderService, type ServiceModelProviderManagementPort } from
   "@eliotr/cloudflare-model-control/service-model-provider-service.js";
@@ -13,7 +14,7 @@ import { createResearchCatalogModelTransportPolicyV2 } from "../src/research-cat
 import { createOwnerResearchProjectConfigurationService, readOwnerProjectResearchReadiness } from
   "../src/research-project-configuration-composition.js";
 import { createResearchSemanticNativeModelRuntime } from "../src/research-semantic-native-model-runtime.js";
-import { decodeResearchProjectModelConfigurationBundle } from "@eliotr/cloudflare-research";
+import { createResearchSemanticConfigRevisionStore, decodeResearchProjectModelConfigurationBundle } from "@eliotr/cloudflare-research";
 import type { Env } from "../src/env.js";
 import { createNativeUseEnvironment } from "./research-provider-key-model-use-fixture.js";
 
@@ -35,24 +36,30 @@ function advertised(apiMode: ResearchCatalogAdvertisedCapabilities["api_mode"]):
 }
 
 function providerCatalog(sdk = "@ai-sdk/openai"): string {
+  const model = {
+    attachment: true,
+    reasoning: true,
+    tool_call: true,
+    structured_output: false,
+    temperature: false,
+    modalities: { input: ["text"], output: ["text"] },
+    limit: { context: 1_048_576, input: 900_000, output: 131_072 },
+    cost: { input: 0.1, output: 0.2, cache_read: 0.002 },
+  };
   return JSON.stringify({
     "opencode-go": {
       id: "opencode-go",
       models: {
         [MODEL]: {
           id: MODEL,
-          attachment: true,
-          reasoning: true,
-          tool_call: true,
-          structured_output: false,
-          temperature: false,
-          modalities: { input: ["text"], output: ["text"] },
-          limit: { context: 1_048_576, input: 900_000, output: 131_072 },
-          cost: { input: 0.1, output: 0.2, cache_read: 0.002 },
+          ...model,
           provider: { npm: sdk, api: ADVERTISED_GO_BASE },
         },
       },
     },
+    openai: { id: "openai", models: { "gpt-4.1-mini": {
+      id: "gpt-4.1-mini", ...model, provider: { npm: "@ai-sdk/openai", api: "https://api.openai.com/v1" },
+    } } },
   });
 }
 
@@ -60,6 +67,13 @@ function ownerContext(owner: string): AuthenticatedRequestContext {
   return { request: new Request("https://eliot.test/owner", { method: "POST" }), principal_ref: owner,
     credential_generation: `catalog-v2-credential-${crypto.randomUUID()}`, client_class: "owner_pwa",
     trace_id: crypto.randomUUID() };
+}
+
+function modelProfileWithoutStageIdentity(raw: string): unknown {
+  const profile = JSON.parse(raw) as Record<string, unknown>;
+  const { deployment: _deployment, definition_ref: _definitionRef, definition_sha256: _definitionSha,
+    ...stableProfile } = profile;
+  return stableProfile;
 }
 
 describe("catalog v2 SDK transport mapping", () => {
@@ -147,7 +161,7 @@ describe("default generic catalog model-use composition", () => {
         available: true,
         create: vi.fn(async (input: Parameters<ServiceModelProviderManagementPort["create"]>[0]) => ({
           provider_config_id: `catalog-v2-config-${input.operation_id}`,
-          provider_slug: "custom-opencode-go",
+          provider_slug: input.provider_id === "opencode-go" ? "custom-opencode-go" : input.provider_id,
           alias: input.alias,
         })),
         read: vi.fn(async () => null),
@@ -198,7 +212,7 @@ describe("default generic catalog model-use composition", () => {
         object: "response",
         id: `catalog-v2-response-${ordinal}`,
         created_at: 1_760_000_000,
-        model: MODEL,
+        model: String(body.model),
         status: "completed",
         output: [{ id: `catalog-v2-output-${ordinal}`, type: "message", role: "assistant", status: "completed",
           content: [{ type: "output_text", text: JSON.stringify({ connected: true,
@@ -275,6 +289,189 @@ describe("default generic catalog model-use composition", () => {
       readonly provider_operation_id: string; readonly model_id: string; readonly state: string }>();
     expect(evidence.results).toEqual([{ provider_id: "opencode-go", provider_slug: "custom-opencode-go",
       provider_operation_id: providerOperation, model_id: MODEL, state: "COMPLETED" }]);
+
+    const baselineSemantic = JSON.parse(bundle.vars.ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON) as Record<string, unknown>;
+    const auditSemantic = baselineSemantic.audit as Record<string, unknown>;
+    const auditParameters = auditSemantic.trusted_parameters as Record<string, unknown>;
+    baselineSemantic.roles = Object.freeze({
+      trusted_parameters: Object.freeze({ ...auditParameters }),
+      request_timeout_ms: auditSemantic.request_timeout_ms,
+    });
+    const targetSemantic = canonicalModelGatewayJson(baselineSemantic);
+    const targetSemanticRevision = await createResearchSemanticConfigRevisionStore(testEnv.CORE_DB).putImmutable({
+      config_json: targetSemantic, created_by_principal_ref: owner,
+    });
+    const selectedSpend = JSON.parse(bundle.vars.ELIOTR_MODEL_SPEND_POLICY_JSON) as {
+      rules: Array<Record<string, unknown>>;
+    };
+    const synthesisRule = selectedSpend.rules.find((rule) => rule.stage === "SYNTHESIZE");
+    if (synthesisRule === undefined) throw new Error("selected synthesis spend rule missing");
+    const branchRules = ["ANALYZE_BRANCHES", "COUNTER_SEARCH"].map((stage) => ({ ...synthesisRule, stage }));
+    const budgetProfile = canonicalModelGatewayJson({
+      protocol: "eliotr.research.branch-query-budget-profile.v1",
+      profile_id: "owner-research-existing-bounds-v1",
+      profile_generation: 1,
+      budgets: { candidate_limit: 200, scan_limit: 100, evidence_limit: 16,
+        max_evidence_bytes: 65_536, max_query_legs: 1 },
+    });
+    const providerIdentity = await testEnv.CORE_DB.prepare(
+      "SELECT provider_config_id,metadata_sha256 FROM service_model_provider_operation WHERE owner_id=?1 AND operation_id=?2",
+    ).bind(owner, providerOperation).first<{ readonly provider_config_id: string; readonly metadata_sha256: string }>();
+    if (providerIdentity === null) throw new Error("saved provider binding missing");
+    const templateWithoutDigest = {
+      protocol: "eliotr.research.provider-key-model-use-qualification-template.v1",
+      project_id: project,
+      provider_id: "opencode-go",
+      provider_operation_id: providerOperation,
+      route_provider_id: "custom-opencode-go",
+      model_id: MODEL,
+      alias: connection.receipt.alias,
+      provider_config_id: providerIdentity.provider_config_id,
+      binding_metadata_sha256: providerIdentity.metadata_sha256,
+      baseline: { configuration_ref: receipt.selected_configuration_ref,
+        configuration_sha256: receipt.selected_configuration_sha256, selection_revision: receipt.selection_revision,
+        semantic_revision_ref: bundle.semantic_revision.revision_ref,
+        semantic_config_sha256: bundle.semantic_revision.config_sha256 },
+      semantic_revision_ref: targetSemanticRevision.revision_ref,
+      semantic_config_sha256: targetSemanticRevision.config_sha256,
+      branch_spend_rules: branchRules,
+      branch_query_budget_profile_json: budgetProfile,
+    };
+    const template = canonicalModelGatewayJson({ ...templateWithoutDigest,
+      template_sha256: await modelGatewaySha256(canonicalModelGatewayJson(templateWithoutDigest)) });
+    expect(new TextEncoder().encode(template).byteLength).toBeLessThanOrEqual(5_000);
+    const staleBaseline = { ...templateWithoutDigest,
+      baseline: { ...templateWithoutDigest.baseline, selection_revision: 99 } };
+    const badBudget = JSON.parse(budgetProfile) as Record<string, unknown>;
+    badBudget.budgets = { ...(badBudget.budgets as Record<string, unknown>), candidate_limit: 201 };
+    const badVariants = [
+      canonicalModelGatewayJson({ ...staleBaseline,
+        template_sha256: await modelGatewaySha256(canonicalModelGatewayJson(staleBaseline)) }),
+      canonicalModelGatewayJson({ ...templateWithoutDigest, branch_spend_rules: [],
+        template_sha256: await modelGatewaySha256(canonicalModelGatewayJson({ ...templateWithoutDigest,
+          branch_spend_rules: [] })) }),
+      canonicalModelGatewayJson({ ...templateWithoutDigest, branch_query_budget_profile_json: canonicalModelGatewayJson(badBudget),
+        template_sha256: await modelGatewaySha256(canonicalModelGatewayJson({ ...templateWithoutDigest,
+          branch_query_budget_profile_json: canonicalModelGatewayJson(badBudget) })) }),
+      "{malformed",
+    ];
+    for (const invalidTemplate of badVariants) {
+      const rejectedOperation = crypto.randomUUID();
+      const badTemplateEnv = { ...installedEnv,
+        ELIOTR_RESEARCH_PROVIDER_KEY_MODEL_USE_QUALIFICATION_TEMPLATE_JSON: invalidTemplate,
+      } as Env;
+      const badApi = createResearchCatalogModelUseComposition(badTemplateEnv, context, project);
+      await expect(badApi.start({ protocol: "eliotr.research.catalog-model-use-request.v1",
+        operation_id: rejectedOperation, expected_selection_revision: receipt.selection_revision,
+        provider_id: "opencode-go", model_id: MODEL, provider_operation_id: providerOperation })).rejects.toThrow();
+      const rejectedRow = await testEnv.CORE_DB.prepare(
+        "SELECT operation_id FROM research_catalog_model_use_authorization WHERE operation_id=?1 LIMIT 1",
+      ).bind(rejectedOperation).first();
+      expect(rejectedRow).toBeNull();
+    }
+
+    const fourStageOperation = crypto.randomUUID();
+    const templateEnv = { ...installedEnv,
+      ELIOTR_RESEARCH_PROVIDER_KEY_MODEL_USE_QUALIFICATION_TEMPLATE_JSON: template,
+    } as Env;
+    const fourStageApi = createResearchCatalogModelUseComposition(templateEnv, context, project);
+    const fourStageReceipt = await fourStageApi.start({ protocol: "eliotr.research.catalog-model-use-request.v1",
+      operation_id: fourStageOperation, expected_selection_revision: receipt.selection_revision,
+      provider_id: "opencode-go", model_id: MODEL, provider_operation_id: providerOperation });
+    expect(fourStageReceipt).toMatchObject({ state: "selected", phase: "complete", failure_code: null,
+      selected_configuration_ref: `rpmc-${fourStageReceipt.selected_configuration_sha256}` });
+    const fourStageRow = await testEnv.CORE_DB.prepare(
+      "SELECT configuration_json FROM research_project_model_configuration_revision WHERE configuration_ref=?1 LIMIT 1",
+    ).bind(fourStageReceipt.selected_configuration_ref).first<{ readonly configuration_json: string }>();
+    if (fourStageRow === null) throw new Error("four-stage configuration revision missing");
+    const { bundle: fourStageBundle } = await decodeResearchProjectModelConfigurationBundle(
+      JSON.parse(fourStageRow.configuration_json) as unknown);
+    expect(fourStageBundle.model_selections.map((selection) => selection.stage).sort()).toEqual([
+      "ANALYZE_BRANCHES", "AUDIT_CLAIMS", "COUNTER_SEARCH", "SYNTHESIZE",
+    ]);
+    expect(fourStageBundle.semantic_revision).toEqual({ revision_ref: targetSemanticRevision.revision_ref,
+      config_sha256: targetSemanticRevision.config_sha256 });
+    expect(fourStageBundle.vars.ELIOTR_RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON).toBe(budgetProfile);
+    expect(fourStageBundle.vars.ELIOTR_RESEARCH_REPORT_CONFIG_JSON).toBe(bundle.vars.ELIOTR_RESEARCH_REPORT_CONFIG_JSON);
+    expect(fourStageBundle.vars.ELIOTR_MODEL_PROFILE_PROVENANCE_REF).toBe(bundle.vars.ELIOTR_MODEL_PROFILE_PROVENANCE_REF);
+    expect(requests.slice(2).map((request) => request.body.model)).toEqual([MODEL, MODEL, MODEL, MODEL]);
+    expect(requests.slice(2).every((request) => request.alias === connection.receipt.alias)).toBe(true);
+    const selectedAfterUpgrade = await createOwnerResearchProjectConfigurationService(templateEnv, context, project)
+      .readSelected(context, project);
+    expect(selectedAfterUpgrade?.selection_revision).toBe((receipt.selection_revision ?? 0) + 1);
+
+    const repeatOperation = crypto.randomUUID();
+    const repeatReceipt = await fourStageApi.start({ protocol: "eliotr.research.catalog-model-use-request.v1",
+      operation_id: repeatOperation, expected_selection_revision: selectedAfterUpgrade?.selection_revision ?? null,
+      provider_id: "opencode-go", model_id: MODEL, provider_operation_id: providerOperation });
+    expect(repeatReceipt).toMatchObject({ state: "selected", phase: "complete", failure_code: null });
+    const repeatedSelection = await createOwnerResearchProjectConfigurationService(templateEnv, context, project)
+      .readSelected(context, project);
+    if (repeatedSelection === null) throw new Error("repeated Go qualification did not retain a selected configuration");
+    const repeatedBundle = repeatedSelection.configuration;
+    expect(repeatedBundle.model_selections).toHaveLength(4);
+    expect(repeatedBundle.semantic_revision).toEqual(fourStageBundle.semantic_revision);
+    expect(repeatedBundle.vars).toMatchObject({
+      ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON: fourStageBundle.vars.ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON,
+      ELIOTR_MODEL_PROFILE_PROVENANCE_REF: fourStageBundle.vars.ELIOTR_MODEL_PROFILE_PROVENANCE_REF,
+      ELIOTR_RESEARCH_REPORT_CONFIG_JSON: fourStageBundle.vars.ELIOTR_RESEARCH_REPORT_CONFIG_JSON,
+      ELIOTR_RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON: budgetProfile,
+    });
+    expect(modelProfileWithoutStageIdentity(repeatedBundle.vars.ELIOTR_MODEL_PROFILE_DEFINITION_JSON)).toEqual(
+      modelProfileWithoutStageIdentity(fourStageBundle.vars.ELIOTR_MODEL_PROFILE_DEFINITION_JSON));
+    expect(requests.slice(6, 10).map((request) => request.body.model)).toEqual([MODEL, MODEL, MODEL, MODEL]);
+
+    const malformedTarget = { ...templateWithoutDigest,
+      branch_query_budget_profile_json: canonicalModelGatewayJson(badBudget) };
+    const malformedGoTemplate = canonicalModelGatewayJson({ ...malformedTarget,
+      template_sha256: await modelGatewaySha256(canonicalModelGatewayJson(malformedTarget)) });
+    const malformedTemplateEnv = { ...installedEnv,
+      ELIOTR_RESEARCH_PROVIDER_KEY_MODEL_USE_QUALIFICATION_TEMPLATE_JSON: malformedGoTemplate,
+    } as Env;
+    const matchingRejectedOperation = crypto.randomUUID();
+    const matchingRejectedApi = createResearchCatalogModelUseComposition(malformedTemplateEnv, context, project);
+    await expect(matchingRejectedApi.start({ protocol: "eliotr.research.catalog-model-use-request.v1",
+      operation_id: matchingRejectedOperation, expected_selection_revision: repeatedSelection.selection_revision,
+      provider_id: "opencode-go", model_id: MODEL, provider_operation_id: providerOperation })).rejects.toThrow();
+    const matchingRejectedRow = await testEnv.CORE_DB.prepare(
+      "SELECT operation_id FROM research_catalog_model_use_authorization WHERE operation_id=?1 LIMIT 1",
+    ).bind(matchingRejectedOperation).first();
+    expect(matchingRejectedRow).toBeNull();
+
+    const otherProviderOperation = crypto.randomUUID();
+    const otherModel = "gpt-4.1-mini";
+    const otherConnection = await globalProviders.create(context, {
+      protocol: SERVICE_MODEL_PROVIDER_CREATE_PROTOCOL,
+      operation_id: otherProviderOperation,
+      provider_id: "openai",
+      display_name: "Existing OpenAI connection",
+      model_ids: [otherModel],
+      api_key: "synthetic-openai-secret-for-test-only",
+    });
+    const otherOperation = crypto.randomUUID();
+    const otherApi = createResearchCatalogModelUseComposition(malformedTemplateEnv, context, project);
+    const otherReceipt = await otherApi.start({ protocol: "eliotr.research.catalog-model-use-request.v1",
+      operation_id: otherOperation, expected_selection_revision: repeatedSelection.selection_revision,
+      provider_id: "openai", model_id: otherModel, provider_operation_id: otherProviderOperation });
+    expect(otherReceipt).toMatchObject({ state: "selected", phase: "complete", failure_code: null,
+      provider_id: "openai", provider_operation_id: otherProviderOperation, model_id: otherModel });
+    const otherSelected = await createOwnerResearchProjectConfigurationService(templateEnv, context, project)
+      .readSelected(context, project);
+    if (otherSelected === null) throw new Error("different-provider qualification did not retain a selected configuration");
+    expect(otherSelected.configuration.model_selections).toHaveLength(4);
+    expect(otherSelected.configuration.model_selections.every((selection) =>
+      selection.transport_policy.provider === "openai" && selection.transport_policy.model === otherModel &&
+      selection.transport_policy.billing.alias === otherConnection.receipt.alias)).toBe(true);
+    expect(otherSelected.configuration.semantic_revision).toEqual(fourStageBundle.semantic_revision);
+    expect(otherSelected.configuration.vars).toMatchObject({
+      ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON: fourStageBundle.vars.ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON,
+      ELIOTR_MODEL_PROFILE_PROVENANCE_REF: fourStageBundle.vars.ELIOTR_MODEL_PROFILE_PROVENANCE_REF,
+      ELIOTR_RESEARCH_REPORT_CONFIG_JSON: fourStageBundle.vars.ELIOTR_RESEARCH_REPORT_CONFIG_JSON,
+      ELIOTR_RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON: budgetProfile,
+    });
+    expect(modelProfileWithoutStageIdentity(otherSelected.configuration.vars.ELIOTR_MODEL_PROFILE_DEFINITION_JSON)).toEqual(
+      modelProfileWithoutStageIdentity(fourStageBundle.vars.ELIOTR_MODEL_PROFILE_DEFINITION_JSON));
+    expect(requests.slice(10, 14).map((request) => request.body.model)).toEqual([otherModel, otherModel, otherModel, otherModel]);
 
     const sentCount = requests.length;
     await expect(api.read(catalogOperation)).resolves.toMatchObject({ state: "selected", model_id: MODEL });
