@@ -395,14 +395,24 @@ export class WorkflowCheckpointStore {
     return this.nativeCompletion.commitNativeStage(input);
   }
   async current(request: StageRequest, principal: WorkflowPrincipal): Promise<void> {
-    const run = await this.run(request.operation_id);
+    const run = await this.db.prepare(`SELECT r.*,
+      current_run.operation_id AS current_operation_id,
+      current_run.ledger_revision AS current_ledger_revision,
+      current_run.state AS current_state
+      FROM research_workflow_run r
+      LEFT JOIN research_workflow_current current_run ON current_run.operation_id = r.operation_id
+      WHERE r.operation_id = ?1 LIMIT 1`)
+      .bind(request.operation_id).first<RunRow & {
+        current_operation_id: string | null;
+        current_ledger_revision: number | null;
+        current_state: RunRow["state"] | null;
+      }>();
     if (run === null) fail("WORKFLOW_AUTHORITY_STALE");
     this.samePrincipal(run, principal);
     if (run.state === "CANCELLED") fail("WORKFLOW_CANCELLED");
-    const current = await this.db.prepare("SELECT * FROM research_workflow_current WHERE operation_id = ?1")
-      .bind(request.operation_id).first<RunRow>();
-    if (current === null || current.ledger_revision !== current.current_revision) fail("WORKFLOW_AUTHORITY_STALE");
-    if (current.state === "CANCELLED") fail("WORKFLOW_CANCELLED");
+    if (run.current_operation_id === null || run.current_ledger_revision === null ||
+        run.current_ledger_revision !== run.current_revision) fail("WORKFLOW_AUTHORITY_STALE");
+    if (run.current_state === "CANCELLED") fail("WORKFLOW_CANCELLED");
   }
   async ensureRun(request: StageRequest, principal: WorkflowPrincipal): Promise<void> {
     let run = await this.run(request.operation_id);

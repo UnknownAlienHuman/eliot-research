@@ -1,7 +1,10 @@
 import type { LocatorCandidate } from "@eliotr/contracts";
 
 export interface FusedCandidate {
+  /** Rank/provenance representative; this remains the source of ordering and lane provenance. */
   readonly candidate: LocatorCandidate;
+  /** Full-section locator used only for a digest-bound identity present in both SEM and LEX. */
+  readonly resolution_candidate?: LocatorCandidate;
   readonly fused_score: number;
   readonly contributing_lanes: readonly string[];
 }
@@ -60,14 +63,33 @@ function compareRepresentatives(left: LocatorCandidate, right: LocatorCandidate)
     metadataKey(left).localeCompare(metadataKey(right));
 }
 
+function authoritativeContentDigest(candidate: LocatorCandidate): string | undefined {
+  const value = candidate.metadata["content_sha256"];
+  return typeof value === "string" && /^[a-f0-9]{64}$/u.test(value) ? value : undefined;
+}
+
 function requireCompatibleAuthority(candidates: readonly LocatorCandidate[]): void {
   const digests = new Set(candidates
-    .map((candidate) => candidate.metadata["content_sha256"])
-    .filter((digest): digest is string => typeof digest === "string"));
+    .map(authoritativeContentDigest)
+    .filter((digest): digest is string => digest !== undefined));
   const first = candidates[0];
   if (digests.size > 1 && first !== undefined) {
     throw new FusionIdentityConflictError(first.source_revision_ref, first.canonical_section_id);
   }
+}
+
+function fullLexicalResolutionCandidate(
+  byLane: ReadonlyMap<LocatorCandidate["lane"], LocatorCandidate>,
+): LocatorCandidate | undefined {
+  const semantic = byLane.get("SEM");
+  const lexical = byLane.get("LEX");
+  if (semantic === undefined || lexical === undefined) return undefined;
+  const lexicalDigest = authoritativeContentDigest(lexical);
+  const semanticDigest = authoritativeContentDigest(semantic);
+  if (lexicalDigest === undefined || semanticDigest === undefined || lexicalDigest !== semanticDigest) {
+    return undefined;
+  }
+  return lexical;
 }
 
 export function reciprocalRankFuse(
@@ -162,9 +184,17 @@ export function reciprocalRankFuse(
     perSource.set(entry.candidate.source_revision_ref, count + 1);
     selected.push(entry);
   }
-  return selected.map((entry) => ({
-    candidate: entry.candidate,
-    fused_score: entry.score,
-    contributing_lanes: [...entry.lanes].sort(),
-  }));
+  return selected.map((entry) => {
+    const identityKey = JSON.stringify([entry.candidate.source_revision_ref, entry.candidate.canonical_section_id]);
+    const identity = identities.get(identityKey);
+    const resolutionCandidate = identity === undefined
+      ? undefined
+      : fullLexicalResolutionCandidate(identity.byLane);
+    return {
+      candidate: entry.candidate,
+      ...(resolutionCandidate === undefined ? {} : { resolution_candidate: resolutionCandidate }),
+      fused_score: entry.score,
+      contributing_lanes: [...entry.lanes].sort(),
+    };
+  });
 }

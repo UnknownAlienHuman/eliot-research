@@ -676,6 +676,15 @@ export function createRetrievalQueryService(ports: RetrievalQueryPorts): Retriev
           (!managedPrimaryExecuted || receipt.lane !== "SEM"))
         .reduce((total, receipt) => total + receipt.candidates.length, 0);
       const fusedIds = new Set(fused.map((entry) => entry.candidate.candidate_id));
+      const fusedIdentityKeys = new Set(fused.map((entry) =>
+        JSON.stringify([entry.candidate.source_revision_ref, entry.candidate.canonical_section_id]),
+      ));
+      const fullLexicalResolutionByIdentity = new Map(fused.flatMap((entry) => {
+        const candidate = entry.resolution_candidate;
+        return candidate === undefined ? [] : [[
+          JSON.stringify([candidate.source_revision_ref, candidate.canonical_section_id]), candidate,
+        ] as const];
+      }));
       const fusionDroppedIds = new Set(fusionDrops.map((drop) => drop.candidate.candidate_id));
       for (const drop of fusionDrops) {
         if (fusedIds.has(drop.candidate.candidate_id)) continue;
@@ -693,6 +702,7 @@ export function createRetrievalQueryService(ports: RetrievalQueryPorts): Retriev
         for (const candidate of receipt.candidates) {
           if (
             !fusedIds.has(candidate.candidate_id) &&
+            !fusedIdentityKeys.has(JSON.stringify([candidate.source_revision_ref, candidate.canonical_section_id])) &&
             !fusionDroppedIds.has(candidate.candidate_id) &&
             !budgetDroppedCandidateIds.has(candidate.candidate_id)
           ) {
@@ -767,6 +777,12 @@ export function createRetrievalQueryService(ports: RetrievalQueryPorts): Retriev
       // Preserve provider/fusion rank provenance. Only Research's bounded exact
       // selection prefers one locator per canonical source before extra excerpts.
       const rankedForSelection = request.product === "RESEARCH" ? sourceDiverseEvidenceOrder(ranked) : ranked;
+      const resolutionCandidateFor = (candidate: LocatorCandidate): LocatorCandidate =>
+        request.product === "RESEARCH"
+          ? fullLexicalResolutionByIdentity.get(
+            JSON.stringify([candidate.source_revision_ref, candidate.canonical_section_id]),
+          ) ?? candidate
+          : candidate;
       const exactScan = rankedForSelection.slice(0, exactResolutionScanLimit);
       const resolved: ResolvedEvidence[] = [];
       let exactResolverScanUnitsUsed = 0;
@@ -780,26 +796,27 @@ export function createRetrievalQueryService(ports: RetrievalQueryPorts): Retriev
         if (entry === undefined) continue;
         if (resolved.length >= limit) {
           for (const remaining of exactScan.slice(index)) {
-            addOmission(remaining.candidate_id, "EVIDENCE_LIMIT");
+            addOmission(resolutionCandidateFor(remaining).candidate_id, "EVIDENCE_LIMIT");
           }
           break;
         }
         ports.checkBudget();
         await ports.requireCurrentScope(scope);
         exactResolverScanUnitsUsed += 1;
-        const evidence = await ports.resolveEvidence(entry, scope);
+        const resolutionCandidate = resolutionCandidateFor(entry);
+        const evidence = await ports.resolveEvidence(resolutionCandidate, scope);
         if (evidence === null) {
-          addOmission(entry.candidate_id, "EVIDENCE_UNRESOLVED");
+          addOmission(resolutionCandidate.candidate_id, "EVIDENCE_UNRESOLVED");
           continue;
         }
         evidenceItemsUsed += 1;
         const evidenceBytes = new TextEncoder().encode(evidence.exact_excerpt).byteLength;
         evidenceBytesUsed += evidenceBytes;
         if (evidenceBytes > evidenceByteLimit - totalUtf8Bytes) {
-          addOmission(entry.candidate_id, "EVIDENCE_UTF8_LIMIT");
+          addOmission(resolutionCandidate.candidate_id, "EVIDENCE_UTF8_LIMIT");
           byteLimitReached = true;
           for (const remaining of exactScan.slice(index + 1)) {
-            addOmission(remaining.candidate_id, "EVIDENCE_UTF8_LIMIT");
+            addOmission(resolutionCandidateFor(remaining).candidate_id, "EVIDENCE_UTF8_LIMIT");
           }
           break;
         }
@@ -809,11 +826,11 @@ export function createRetrievalQueryService(ports: RetrievalQueryPorts): Retriev
       const evidenceLimitReached = resolved.length >= limit;
       if (evidenceLimitReached) {
         for (const entry of rankedForSelection.slice(exactScan.length)) {
-          addOmission(entry.candidate_id, "EVIDENCE_LIMIT");
+          addOmission(resolutionCandidateFor(entry).candidate_id, "EVIDENCE_LIMIT");
         }
       } else {
         for (const entry of rankedForSelection.slice(exactResolutionScanLimit)) {
-          addOmission(entry.candidate_id, "EXACT_RESOLUTION_SCAN_LIMIT");
+          addOmission(resolutionCandidateFor(entry).candidate_id, "EXACT_RESOLUTION_SCAN_LIMIT");
         }
       }
       for (const candidate of rankedBeforeFusionLimit.slice(fusionCandidateLimit)) {

@@ -11,6 +11,7 @@ import {
   compileQueryPlan,
   createRetrievalQueryService,
   directLanesPrecedeSemantic,
+  FusionIdentityConflictError,
   reciprocalRankFuse,
   RetrievalQueryError,
 } from "./index.js";
@@ -65,6 +66,77 @@ describe("retrieval planning", () => {
       candidate.source_revision_ref,
       candidate.canonical_section_id,
     ])).toEqual([["a:b", "c"], ["a", "b:c"]]);
+  });
+
+  it("keeps SEM as the scoring representative while carrying a digest-bound LEX resolution locator", () => {
+    const digest = "d1c0497dd7b0ac59a49478f7994c160ada6dfd3b2d11c420e652f7ae12aa76eb";
+    const identity = {
+      source_revision_ref: "raw-revision-6a1a9fe11297fb0b28e3478cdc31a380392c41bd8de4a7ad",
+      canonical_section_id: "section-d210dbb88ea7df835ba960ab34997eabc96e5bcba63e2ab9",
+    };
+    const lexical: LocatorCandidate = {
+      candidate_id: "projection-dcff075d54fc60624ed7e56366da590c8a75b8b5e0510b6d",
+      ...identity, lane: "LEX", preview: "full canonical section", raw_score: 0.8, rank: 6,
+      index_generation: "projection-7cf0734aebc024e787e70da92f582522375dca134e4ceb0f",
+      metadata: { content_sha256: digest },
+    };
+    const semantic: LocatorCandidate = {
+      ...lexical, candidate_id: "native-sem-alternate-id", lane: "SEM", preview: "provider excerpt",
+      raw_score: 0.99, rank: 1,
+      metadata: { content_sha256: digest, provider: "cloudflare_ai_search", provider_chunk_type: "text" },
+    };
+    const options = { reciprocal_rank_constant: 60, lane_weights: {}, maxPerSourceRevision: 16 };
+    const result = reciprocalRankFuse(new Map([
+      ["LEX", [lexical]],
+      ["SEM", [semantic]],
+    ]), options);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      candidate: semantic,
+      resolution_candidate: lexical,
+      fused_score: 1 / 61 + 1 / 66,
+      contributing_lanes: ["LEX", "SEM"],
+    });
+
+    const withoutLexical = reciprocalRankFuse(new Map([["SEM", [semantic]]]), options);
+    expect(withoutLexical[0]).not.toHaveProperty("resolution_candidate");
+
+    for (const lane of ["IDENT", "EXACT"] as const) {
+      const otherLane = { ...lexical, candidate_id: `${lane.toLowerCase()}-locator`, lane };
+      const withoutLexicalLane = reciprocalRankFuse(new Map([
+        [lane, [otherLane]],
+        ["SEM", [semantic]],
+      ]), options);
+      expect(withoutLexicalLane[0]).not.toHaveProperty("resolution_candidate");
+    }
+
+    const missingSemanticDigest = {
+      ...semantic,
+      metadata: { provider: "cloudflare_ai_search", provider_chunk_type: "text" },
+    };
+    const withoutBoundSemanticDigest = reciprocalRankFuse(new Map([
+      ["LEX", [lexical]],
+      ["SEM", [missingSemanticDigest]],
+    ]), options);
+    expect(withoutBoundSemanticDigest[0]).toMatchObject({ candidate: missingSemanticDigest });
+    expect(withoutBoundSemanticDigest[0]).not.toHaveProperty("resolution_candidate");
+
+    const invalidSemanticDigest = {
+      ...semantic, metadata: { content_sha256: "not-a-sha256", provider: "cloudflare_ai_search", provider_chunk_type: "text" },
+    };
+    const withoutValidAuthorityDigests = reciprocalRankFuse(new Map([
+      ["LEX", [lexical]],
+      ["SEM", [invalidSemanticDigest]],
+    ]), options);
+    expect(withoutValidAuthorityDigests[0]).toMatchObject({ candidate: invalidSemanticDigest });
+    expect(withoutValidAuthorityDigests[0]).not.toHaveProperty("resolution_candidate");
+
+    const conflictingLexical = { ...lexical, metadata: { content_sha256: "a".repeat(64) } };
+    expect(() => reciprocalRankFuse(new Map([
+      ["LEX", [conflictingLexical]],
+      ["SEM", [semantic]],
+    ]), options)).toThrow(FusionIdentityConflictError);
   });
 
   it("checks every direct lane placement and repeated direct lanes after semantic", () => {
