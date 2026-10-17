@@ -377,7 +377,7 @@ describe("Cloudflare service-model provider management", () => {
       id: "custom-provider-fixture",
       name: "OpenCode Go",
       slug: "custom-opencode-go",
-      base_url: "https://opencode.ai/inference/go/v1",
+      base_url: "https://opencode.ai",
       created_at: "2026-10-15T14:00:00.000Z",
       modified_at: "2026-10-15T14:00:00.000Z",
       enable: true,
@@ -416,7 +416,7 @@ describe("Cloudflare service-model provider management", () => {
       operation_id: "c0a8012e-0f58-4e7b-8dd2-c8bfdf8b5ad4",
       provider_id: "opencode-go",
       display_name: "OpenCode Go",
-      base_url: "https://opencode.ai/inference/go/v1",
+      base_url: "https://opencode.ai",
       model_registration_mode: "catalog_managed",
       model_ids: [],
       alias,
@@ -428,7 +428,7 @@ describe("Cloudflare service-model provider management", () => {
     const keyBody = JSON.parse(String(requests.find(({ url, init }) => url.includes("/provider_configs") && init.method === "POST")?.init.body)) as Record<string, unknown>;
     const secretBody = JSON.parse(String(requests.find(({ url, init }) => url.includes("/secrets_store/") && init.method === "POST")?.init.body)) as Array<Record<string, unknown>>;
     expect(customBody.slug).toBe(keyBody.provider_slug);
-    expect(customBody.base_url).toBe("https://opencode.ai/inference/go/v1");
+    expect(customBody.base_url).toBe("https://opencode.ai");
     expect(keyBody).toEqual({ alias, provider_slug: "custom-opencode-go", default_config: false, secret_id: SECRET_ID });
     expect(secretBody).toEqual([{ name: customSecretName, value: API_KEY, scopes: ["ai_gateway"] }]);
     expect(requests.map(({ init }) => init.method)).toEqual([
@@ -463,6 +463,71 @@ describe("Cloudflare service-model provider management", () => {
       api_key: API_KEY,
     })).rejects.toMatchObject({ code: "PROVIDER_CONFIG_INPUT_INVALID", effect: "NONE" });
     expect(invalidRequests).toHaveLength(0);
+  });
+
+  it.each([
+    { providerId: "opencode-go", baseUrl: "https://opencode.ai/inference/go/v1" },
+    { providerId: "opencode-zen", baseUrl: "https://opencode.ai/zen/v1" },
+    { providerId: "opencode-go", baseUrl: "https://provider.example/v1" },
+    { providerId: "opencode-zen", baseUrl: "https://provider.example/v1" },
+  ])("rejects noncanonical official OpenCode base URLs for $providerId before any Cloudflare effect", async ({ providerId, baseUrl }) => {
+    const requests: CapturedRequest[] = [];
+    const port = createCloudflareServiceModelProviderManagementPort({
+      account_id: ACCOUNT_ID,
+      gateway_id: GATEWAY_ID,
+      available: true,
+      credentials: { async readApiToken() { return TOKEN; } },
+      fetch: { async fetch(url, init) { requests.push({ url, init }); throw new Error("unexpected Cloudflare effect"); } },
+    });
+
+    await expect(port.create({
+      protocol: "eliotr.service-model-provider-catalog-connect.v2",
+      operation_id: "c0a8012e-0f58-4e7b-8dd2-c8bfdf8b5ad4",
+      provider_id: providerId,
+      display_name: providerId === "opencode-go" ? "OpenCode Go" : "OpenCode Zen",
+      base_url: baseUrl,
+      model_registration_mode: "catalog_managed",
+      model_ids: [],
+      alias: "eliotr-dddddddddddddddddddddddddddddddddddddddddddddddd",
+      api_key: API_KEY,
+    })).rejects.toMatchObject({ code: "PROVIDER_CONFIG_INPUT_INVALID", effect: "NONE" });
+    expect(requests).toHaveLength(0);
+  });
+
+  it("preserves a generic compatible provider's custom base URL", async () => {
+    const alias = "eliotr-eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+    const customProvider = {
+      id: "custom-compatible-fixture",
+      name: "Compatible fixture",
+      slug: "custom-compatible-fixture",
+      base_url: "https://provider.example/v1",
+      created_at: "2026-10-15T14:00:00.000Z",
+      modified_at: "2026-10-15T14:00:00.000Z",
+      enable: true,
+      beta: false,
+    };
+    const customConfig = config(alias, "custom-compatible-fixture", SECRET_ID);
+    const requests: CapturedRequest[] = [];
+    const port = portWithQueue([
+      page([]), envelope(customProvider), envelope(customProvider), gateway(), secretPage([]), page([]),
+      envelope([secretMetadata(secretName(alias, "custom-compatible-fixture"))]), envelope(customConfig), page([customConfig]),
+    ], requests);
+
+    const receipt = await port.create({
+      protocol: "eliotr.service-model-provider-catalog-connect.v2",
+      operation_id: "c0a8012e-0f58-4e7b-8dd2-c8bfdf8b5ad4",
+      provider_id: "compatible-fixture",
+      display_name: "Compatible fixture",
+      base_url: "https://provider.example/v1",
+      model_registration_mode: "catalog_managed",
+      model_ids: [],
+      alias,
+      api_key: API_KEY,
+    });
+
+    expect(receipt.provider_slug).toBe("custom-compatible-fixture");
+    expect(JSON.parse(String(requests.find(({ url, init }) => url.endsWith("/custom-providers") && init.method === "POST")?.init.body)))
+      .toMatchObject({ base_url: "https://provider.example/v1" });
   });
 
   it.each(["custom-opencode-go", "custom-compatible-fixture"])("reads existing %s key identity without any create or rename", async providerSlug => {
@@ -512,7 +577,7 @@ describe("Cloudflare service-model provider management", () => {
       operation_id: "c0a8012e-0f58-4e7b-8dd2-c8bfdf8b5ad4",
       provider_id: "opencode-go",
       display_name: "OpenCode Go",
-      base_url: "https://provider.example/v1",
+      base_url: "https://opencode.ai",
       model_registration_mode: "explicit_allowlist",
       model_ids: ["step-5-preview-free"],
       alias: "eliotr-cccccccccccccccccccccccccccccccccccccccccccccccccccc",

@@ -215,11 +215,20 @@ function customProviderNeeded(providerId: string, baseUrl: string | null): boole
   return !KNOWN_NATIVE_PROVIDERS.has(providerId) || baseUrl !== null;
 }
 
+const OPENCODE_COMMON_BASE_URL = "https://opencode.ai";
+const OPENCODE_PROVIDER_IDS = new Set(["opencode-go", "opencode-zen"]);
+
 function requireCustomBaseUrl(providerId: string, baseUrl: string | null): string {
   if (baseUrl === null) {
     providerConfigRestFailure(
       "PROVIDER_CONFIG_INPUT_INVALID",
       `Provider ${providerId} requires an HTTPS custom-provider base URL`,
+    );
+  }
+  if (OPENCODE_PROVIDER_IDS.has(providerId) && baseUrl !== OPENCODE_COMMON_BASE_URL) {
+    providerConfigRestFailure(
+      "PROVIDER_CONFIG_INPUT_INVALID",
+      `Provider ${providerId} must use the canonical OpenCode base URL`,
     );
   }
   return baseUrl;

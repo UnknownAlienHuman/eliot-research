@@ -45,9 +45,8 @@ const copy = {
 type Feedback = "idle" | "saving" | "checking" | "configured" | "unknown" | "invalid" | "unavailable" | "rejected";
 type ProviderKind = "openrouter" | "openai" | "anthropic" | "opencode-go" | "opencode-zen" | "compatible";
 
-const OPENCODE_GO_BASE_URL = "https://opencode.ai/inference/go/openai/v1";
-const OPENCODE_ZEN_BASE_URL = "https://opencode.ai/inference/openai/v1";
-const needsBaseUrl = (kind: ProviderKind): boolean => kind === "compatible" || kind === "opencode-go" || kind === "opencode-zen";
+const OPENCODE_COMMON_BASE_URL = "https://opencode.ai";
+const needsBaseUrl = (kind: ProviderKind): boolean => kind === "compatible";
 const defaultDisplayName = (kind: ProviderKind): string => ({ openrouter: "OpenRouter", openai: "OpenAI", anthropic: "Anthropic",
   "opencode-go": "OpenCode Go", "opencode-zen": "OpenCode Zen", compatible: "" })[kind];
 
@@ -119,8 +118,8 @@ export function SettingsPanel({ locale, apis, privacy, context }: { readonly loc
       }
       const displayName = name.trim() || defaultDisplayName(providerKind);
       const baseUrl = typeof base === "string" ? base.trim() : "";
-      const effectiveBaseUrl = baseUrl || (providerKind === "opencode-go" ? OPENCODE_GO_BASE_URL
-        : providerKind === "opencode-zen" ? OPENCODE_ZEN_BASE_URL : "");
+      const effectiveBaseUrl = providerKind === "opencode-go" || providerKind === "opencode-zen"
+        ? OPENCODE_COMMON_BASE_URL : baseUrl;
       let providerId: string = providerKind;
       if (providerKind === "compatible") {
         const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${displayName}\n${baseUrl}`));
@@ -203,8 +202,7 @@ export function SettingsPanel({ locale, apis, privacy, context }: { readonly loc
         <Field key={`${providerKind}-name`} label={text.name} name="display_name" maxLength={128}
           required={providerKind === "compatible"} disabled={!canConnect} defaultValue={defaultDisplayName(providerKind)} />
         {needsBaseUrl(providerKind) && <Field key={`${providerKind}-base`} label={text.base} type="url" name="base_url" maxLength={2048}
-          required disabled={!canConnect} defaultValue={providerKind === "opencode-go" ? OPENCODE_GO_BASE_URL
-            : providerKind === "opencode-zen" ? OPENCODE_ZEN_BASE_URL : undefined} />}
+          required disabled={!canConnect} />}
         <Field label={text.key} placeholder={text.keyHint} type="password" name="api_key" autoComplete="new-password" maxLength={4096} required disabled={!canConnect} />
         <div className="er-settings__actions">
           <Button variant="primary" icon="add" type="submit" disabled={!canConnect} loading={feedback === "saving"}>
