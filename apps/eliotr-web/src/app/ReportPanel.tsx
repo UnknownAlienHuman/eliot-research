@@ -11,6 +11,7 @@ import { protectedQueryKey } from '../query/client';
 import { OperationFeedback } from './OperationFeedback';
 import { ArtifactActions } from './ArtifactActions';
 import { ReportMarkdown, StatementChecks, type AnswerCitations } from './ReportAnswer';
+import { reportParagraphCitationNumbers } from './reportParagraphCitations';
 
 const refKey = (ref: VersionedRef) => `${ref.id}:${ref.revision}`;
 const sameRef = (left: VersionedRef, right: VersionedRef) => left.id === right.id && left.revision === right.revision;
@@ -153,24 +154,11 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
       else setPicked(citation);
     }
   };
-  // Inline quote numbers: a paragraph that states an audited claim points at the quotes that support it.
+  // Inline quote numbers require one exact normalized claim; the rail retains every audit disposition.
   const audit = citations.data?.semantic_verification === 'EXECUTED' && !citations.isError ? citations.data.audit : undefined;
   const cited: readonly (CitedEvidence | ReauthorizedCitedEvidence)[] = citations.data?.cited_evidence ?? [];
-  const words = (value: string) => value.replace(/\s+/gu, ' ').trim();
   const cite: AnswerCitations | undefined = audit === undefined || cited.length === 0 ? undefined : {
-    numbersFor: paragraph => {
-      const plain = words(paragraph);
-      const numbers = new Set<number>();
-      for (const claim of audit.claims) {
-        const claimText = words(claim.claim_text);
-        if (claimText.length === 0 || !plain.includes(claimText)) continue;
-        for (const ref of claim.support_handle_refs) {
-          const index = cited.findIndex(row => sameRef('original_handle_ref' in row ? row.original_handle_ref : row.handle_ref, ref));
-          if (index >= 0) numbers.add(index + 1);
-        }
-      }
-      return [...numbers].sort((left, right) => left - right);
-    },
+    numbersFor: paragraph => reportParagraphCitationNumbers(paragraph, audit.claims, cited),
     label: text.quote,
     open: number => { const citation = cited[number - 1]; if (citation) openQuote(citation); },
   };
