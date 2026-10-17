@@ -30,6 +30,7 @@
    provider, and a quiet search for long catalogs. Status appears only while something is happening. */
 .er-chat-model-picker {
   position: relative;
+  flex: 0 1 auto;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -50,7 +51,9 @@
   align-items: center;
   gap: var(--eliot-space-tight);
   min-block-size: var(--eliot-size-control);
-  max-inline-size: 18rem;
+  flex: 0 1 auto;
+  max-inline-size: min(18rem, 100%);
+  min-inline-size: 8rem;
   padding-inline: var(--eliot-space-block-control) var(--eliot-space-tight);
   border-radius: var(--eliot-shape-full);
   color: var(--md-sys-color-on-surface-variant);
@@ -61,6 +64,9 @@
 .er-chat-model-picker__chip > svg { flex: none; pointer-events: none; }
 .er-chat-model-picker__select {
   appearance: none;
+  /* Size to the chosen model, not to the longest name in the menu. */
+  field-sizing: content;
+  flex: 1 1 auto;
   min-inline-size: 0;
   max-inline-size: 100%;
   border: 0;
@@ -110,6 +116,7 @@
 .er-live-method-selector {
   display: inline-flex;
   align-items: center;
+  max-inline-size: 100%;
   gap: 0;
   margin: 0;
   padding: 0;
@@ -130,14 +137,18 @@
   display: inline-flex;
   align-items: center;
   min-block-size: var(--eliot-size-control-small);
-  padding-inline: var(--eliot-space-gutter);
+  padding-inline: var(--eliot-space-block-control);
   border-radius: var(--eliot-shape-full);
   color: var(--md-sys-color-on-surface-variant);
   font-size: var(--eliot-type-label-large-size);
   font-weight: var(--eliot-type-font-weight-medium);
   white-space: nowrap;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   cursor: pointer;
 }
+.er-live-method-selector > label > span { min-inline-size: 0; overflow: hidden; text-overflow: ellipsis; }
 .er-live-method-selector > label > input {
   position: absolute;
   inset: 0;

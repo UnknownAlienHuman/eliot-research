@@ -309,8 +309,13 @@
   background: linear-gradient(to bottom, transparent, var(--eliot-color-pane) var(--eliot-space-section));
 }
 
+/* Grid items default to their content's width; a long held question or a wide model menu must never
+   push the composer past a phone's edge. */
+.er-research-run__dock { grid-template-columns: minmax(0, 1fr); }
 .er-research-run__composer {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  min-inline-size: 0;
   gap: var(--eliot-space-block-control);
   padding: var(--eliot-space-gutter) var(--eliot-space-gutter) var(--eliot-space-gutter) var(--eliot-space-group);
   border-radius: var(--eliot-shape-extra-large);
@@ -365,15 +370,20 @@
   gap: var(--eliot-space-block-control);
 }
 
-.er-research-run__composer-bar > .er-research-run__scope { flex: 1 1 auto; }
+.er-research-run__composer-bar > .er-research-run__scope { flex: 1 1 0; min-inline-size: 0; }
 
-/* Next-question controls (model, method) sit in the bar between the scope chip and Ask. */
+/* Next-question controls (model, method) take their own line under the scope chip and Ask, as Gemini
+   keeps its tools under the field; on any width they wrap instead of squeezing or overlapping. */
 .er-research-run__tools {
   display: flex;
+  order: 3;
+  flex: 1 1 100%;
+  justify-content: flex-start;
   flex-wrap: wrap;
   align-items: center;
   gap: var(--eliot-space-tight);
   min-inline-size: 0;
+  max-inline-size: 100%;
 }
 
 /* Scope: an assist-chip summary; the frozen labels open beneath it as small chips. */
@@ -478,7 +488,7 @@
 
 /* Compact composer: the scope chip shows only its count; its heading stays the accessible name. */
 @media (max-width: 48rem) {
-  .er-research-run__composer-bar { flex-wrap: nowrap; }
+  .er-research-run__composer-bar { flex-wrap: wrap; }
   .er-research-run__composer-bar .er-research-run__scope-heading {
     position: absolute;
     inline-size: 1px;
