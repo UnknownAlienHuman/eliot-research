@@ -49,6 +49,7 @@ import { WorkspaceLinkPreview, playWorkspaceLinkJourney } from "./WorkspaceLinkJ
 import type { ServiceModelCatalogPage } from "@eliotr/owner-api-client";
 import { ChatModelPicker } from "./ChatModelPicker";
 import { ModelCatalogFilter, modelCatalogEntryKey } from "./ModelCatalogFilter";
+import { withRecordedCatalogReadiness } from "./catalogReadinessPreview";
 import { setAllModelCatalogEntriesVisible, setModelCatalogEntryVisibility,
   type ModelCatalogEntry, type ModelCatalogVisibility } from "../query/modelCatalog";
 import type { ChatModelOption } from "../query/chatModelCatalog";
@@ -191,7 +192,7 @@ function LiveSourcesPreview({ erasureJourney = false, importJourney = false, era
           ...(statusCount > 1 ? { receipt: erasureReceipt } : {}) });
       }
       if (url.pathname === "/api/v1/research/projects") return json({ protocol: "eliotr.project-owner-list.v1", projects: [{ protocol: "eliotr.project-owner.v1", project_ref: { id: "project-live-1", revision: 1 }, title: "Evidence in context", revision: 1, owner_principal_ref: "live-owner", deployment_generation: generation, source_ids: [source], created_at: stamp }] });
-      if (url.pathname === "/api/v1/research/catalog") return json({ projects: [{ id: "project-live-1", title: "Evidence in context", generation }], sources: [{ id: source, title: "How source versions preserve evidence", readiness_ref: "readiness:source-live-1:observation-1" }] });
+      if (url.pathname === "/api/v1/research/catalog") return json(withRecordedCatalogReadiness(url, { projects: [{ id: "project-live-1", title: "Evidence in context", generation }], sources: [{ id: source, title: "How source versions preserve evidence", readiness_ref: "readiness:source-live-1:observation-1" }] }, stamp));
       if (url.pathname === "/api/v1/library/readiness") return json({
         protocol: "eliotr.library-readiness.v1", source_id: source, source_revision_ref: revision,
         deployment_generation: generation, catalog_generation: "1", observed_at: stamp, quality_state: "high_fidelity", readiness_basis: "ACTIVE_VERIFIED",
