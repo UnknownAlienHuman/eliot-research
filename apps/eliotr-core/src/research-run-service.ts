@@ -3,9 +3,11 @@ import { EXACT_VERIFICATION_BOUNDS, createD1ScopePorts, createD1ScopeProfilePort
 import type { ScopeProfileBinding } from "@eliotr/retrieval";
 import { createD1EvidenceAuthorityPort } from "@eliotr/cloudflare-evidence";
 import { loadHeldResearchScope } from "@eliotr/cloudflare-research-runtime/research-retrieval-composition.js";
+import { assertProjectSearchManagedPrimaryAvailable } from "@eliotr/cloudflare-ai/project-search";
 import {
   digest,
   RESEARCH_RUN_REQUEST_V2,
+  INSTALLED_INQUIRY_PROTOCOL_REFS,
   compileInquiryLedgerObligations,
   installedInquiryProtocolDefinition,
   createResearchPlanningManifest,
@@ -92,19 +94,50 @@ export function selectResearchRunHandlerGeneration(input: {
   }
   return SERVER_OWNED_BRANCH_HANDLER_GENERATION;
 }
+
+/** Evidence review always needs real bindings for each substantive stage. */
+export function assertResearchEvidenceReviewStageBindings(
+  modelSelections: readonly { readonly stage: string }[],
+): void {
+  const requiredStages = ["ANALYZE_BRANCHES", "COUNTER_SEARCH", "SYNTHESIZE", "AUDIT_CLAIMS"] as const;
+  if (requiredStages.some((stage) => !modelSelections.some((selection) => selection.stage === stage))) {
+    fail("RESEARCH_AGENT_NOT_CONFIGURED",
+      "evidence review requires qualified bindings for all four stages", 503);
+  }
+}
 export const ID_RE = /^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/u;
 export function checkId(value: unknown, label: string): string { if (typeof value !== "string" || !ID_RE.test(value)) fail("RESEARCH_INPUT_INVALID", `${label} is invalid`); return value as string; }
 function checkQuery(value: unknown): string { if (!isResearchQuestionText(value)) fail("RESEARCH_INPUT_INVALID", "query is invalid"); return value; }
 function checkScope(value: unknown, maximumSelectedSources = 64): QueryRequest["scope_expression"] { const parsed = ScopeExpressionSchema.safeParse(value); if (!parsed.success) fail("RESEARCH_INPUT_INVALID", "scope_expression is invalid"); const m = inspectScopeExpression(parsed.data); if (m.depth > 8 || m.atom_count > 16 || m.selected_source_count > maximumSelectedSources) fail("RESEARCH_INPUT_LIMIT", "scope_expression exceeds its bounds", 413); return parsed.data; }
+function projectIdForResearchScope(expression: unknown): string | null {
+  if (typeof expression !== "object" || expression === null || Array.isArray(expression)) return null;
+  const record = expression as Record<string, unknown>;
+  if (record.kind === "PROJECT") return typeof record.project_id === "string" ? record.project_id : null;
+  if (record.kind === "EXCEPT") return projectIdForResearchScope(record.left);
+  if (record.kind === "INTERSECT") {
+    const left = projectIdForResearchScope(record.left);
+    const right = projectIdForResearchScope(record.right);
+    if (left !== null && right !== null && left !== right) return null;
+    return left ?? right;
+  }
+  if (record.kind === "UNION") {
+    const left = projectIdForResearchScope(record.left);
+    const right = projectIdForResearchScope(record.right);
+    return left !== null && left === right ? left : null;
+  }
+  return null;
+}
 const BASE_REQUEST_KEYS = ["query", "product", "scope_expression", "literals", "evidence_grade", "budget_ref", "max_results"] as const;
 const RUN_V2_REQUEST_KEYS = [...BASE_REQUEST_KEYS, "request_version", "inquiry_protocol_ref"] as const;
 const RUN_V3_REQUEST_KEYS = [...BASE_REQUEST_KEYS, "request_version", "configuration_project_id"] as const;
 const RUN_V4_REQUEST_KEYS = [...BASE_REQUEST_KEYS, "request_version", "selection"] as const;
 const RUN_V4_LANGUAGE_REQUEST_KEYS = [...RUN_V4_REQUEST_KEYS, "output_language"] as const;
+const RUN_V5_REQUEST_KEYS = [...BASE_REQUEST_KEYS, "request_version", "method", "selection"] as const;
 /** Strictly additive version tag; v1 and v2 never carry configuration_project_id. */
 export const RESEARCH_RUN_REQUEST_V3 = "eliotr.research-run-request.v3" as const;
 /** Owner v4 pins one immutable qualified project model configuration per run. */
 export const RESEARCH_RUN_REQUEST_V4 = "eliotr.research-run-request.v4" as const;
+export const RESEARCH_RUN_REQUEST_V5 = "eliotr.research-run-request.v5" as const;
 function exactKeys(record: Record<string, unknown>, expected: readonly string[] = BASE_REQUEST_KEYS): void {
   if (Object.keys(record).length !== expected.length || expected.some((key) => !Object.hasOwn(record, key))) {
     fail("RESEARCH_INPUT_INVALID", "request has unknown or missing fields");
@@ -328,6 +361,29 @@ export interface ParsedResearchRunTransportRequest {
 export function parseResearchRunTransportRequest(raw: unknown): ParsedResearchRunTransportRequest {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) fail("RESEARCH_INPUT_INVALID", "run request must be an object");
   const r = raw as Record<string, unknown>;
+  if (r.request_version === RESEARCH_RUN_REQUEST_V5) {
+    const keys = [...RUN_V5_REQUEST_KEYS,
+      ...(Object.hasOwn(r, "output_language") ? ["output_language"] : [])];
+    exactKeys(r, keys);
+    if (r.method !== "lookup" && r.method !== "evidence_review") fail("RESEARCH_INPUT_INVALID", "method is invalid");
+    const ref = r.method === "lookup" ? INSTALLED_INQUIRY_PROTOCOL_REFS.lookup : INSTALLED_INQUIRY_PROTOCOL_REFS.evidence_review;
+    const expectedGrade = r.evidence_grade;
+    if ((r.method === "lookup" && r.evidence_grade !== "E0") ||
+        (r.method === "evidence_review" && (!Object.hasOwn(r, "evidence_grade") ||
+          (expectedGrade !== "E1" && expectedGrade !== "E2"))) ||
+        (Object.hasOwn(r, "output_language") && r.output_language !== "en" && r.output_language !== "ru")) {
+      fail("RESEARCH_PROFILE_UNSUPPORTED", "method grade or output language is unsupported", 422);
+    }
+    const selection = parseResearchRunSelectionV4(r.selection);
+    if ("kind" in selection) fail("RESEARCH_INPUT_INVALID", "v5 requires a pinned project model configuration");
+    const requestBody = { query: r.query, product: r.product, scope_expression: r.scope_expression,
+      literals: r.literals, evidence_grade: expectedGrade, budget_ref: r.budget_ref,
+      max_results: r.max_results, request_version: RESEARCH_RUN_REQUEST_V2, inquiry_protocol_ref: ref };
+    return { request: parseResearchRunRequest(requestBody), selection: Object.freeze({
+      request_version: RESEARCH_RUN_REQUEST_V4, selection,
+      ...(Object.hasOwn(r, "output_language") ? { output_language: r.output_language as "en" | "ru" } : {}),
+    }) };
+  }
   const selection = parseResearchRunTransportSelection(r);
   if (selection === null) return { request: parseResearchRunRequest(raw), selection: null };
   // The exact v3 key set is validated, so only the seven shared keys are handed
@@ -545,8 +601,24 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
       if (pre !== null && lane === "confirmatory" && priorWorkflow?.handler_generation !== HANDLER_GEN) {
         fail("RESEARCH_CONFLICT", "confirmatory workflow uses a server-owned handler generation", 409);
       }
+      if (request.inquiry_protocol_ref?.id === INSTALLED_INQUIRY_PROTOCOL_REFS.evidence_review.id &&
+          request.inquiry_protocol_ref.revision === INSTALLED_INQUIRY_PROTOCOL_REFS.evidence_review.revision) {
+        // V7 remains valid with the existing research budget. A captured branch
+        // query profile selects V9 below and is required for V9 replays there.
+        assertResearchEvidenceReviewStageBindings(admissionConfiguration.model_selections);
+      }
       // Resolve profile/generation compatibility before writing the run payload or
       // binding an external route. The captured selection must have a consumer.
+      let managedPrimaryAvailable = false;
+      if (admissionConfiguration.branch_query_budget_selection !== undefined &&
+          projectIdForResearchScope(request.scope_expression) !== null && typeof env.AI_SEARCH?.get === "function") {
+        try {
+          await assertProjectSearchManagedPrimaryAvailable({ search_database: env.SEARCH_DB, namespace: env.AI_SEARCH });
+          managedPrimaryAvailable = true;
+        } catch {
+          managedPrimaryAvailable = false;
+        }
+      }
       const handlerGeneration = selectResearchRunHandlerGeneration({
         lane,
         prior_handler_generation: priorWorkflow?.handler_generation ?? null,
@@ -556,7 +628,7 @@ export function createResearchRunService(env: Env): { run(context: Authenticated
         ...(admissionConfiguration.branch_query_budget_selection === undefined ? {} : {
           branch_query_budget_selection: admissionConfiguration.branch_query_budget_selection,
         }),
-        managed_primary_available: env.AI_SEARCH !== undefined,
+        managed_primary_available: managedPrimaryAvailable,
       });
       if (currentPolicy === null) {
         await db.prepare("INSERT OR IGNORE INTO investigation_current_policy (policy_generation, policy_authority_ref, state, created_at) VALUES (?1,?2,'ACTIVE',?3)").bind(newPolicyGeneration, snapshotRow.policy_authority_ref, now).run().catch(mapLedger);

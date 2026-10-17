@@ -40,10 +40,11 @@ function managedCandidate(candidateId: string, sectionId: string, rank: number):
     preview: "provider preview",
     raw_score: 0.9 - rank / 100,
     rank,
-    index_generation: "generation-1",
+    index_generation: "projection-1",
     metadata: {
       provider_item_key: `item-${rank}`,
       provider_chunk_type: "text",
+      provider_index_generation: "generation-1",
       content_sha256: String(rank).repeat(64),
       instruction_taint: "DATA_ONLY",
       provider_rerank_requested: true,
@@ -123,7 +124,7 @@ describe("managed retrieval admission and physical-list rank", () => {
     expect(admissionCalls).toBe(0);
   });
 
-  it("admits once before one managed call, skips phase-only LEX, and backfills exact evidence in provider order", async () => {
+  it("keeps a 50-candidate provider allowance at evidence_limit 1 and backfills past an unresolved top candidate", async () => {
     const scope = scopeFixture();
     const top = managedCandidate("managed-top", "section-top", 1);
     const tail = managedCandidate("managed-tail", "section-tail", 2);
@@ -172,10 +173,11 @@ describe("managed retrieval admission and physical-list rank", () => {
       async search() {
         throw new Error("legacy managed call must not be used");
       },
-      async searchManaged(_request, _lanes, _expansion, admission) {
+      async searchManaged(_request, _lanes, _expansion, admission, context) {
         providerCalls += 1;
         callOrder.push("provider");
         expect(admission).toEqual(receipt);
+        expect(context?.provider_candidate_limit).toBe(50);
         return {
           execution_state: "EXECUTED",
           submitted_query: "needle",
@@ -283,6 +285,9 @@ describe("managed retrieval admission and physical-list rank", () => {
     }
     expect(result.trace.managed_ranking_outcomes[0]?.ordered_candidates.map((item) => item.provider_rank))
       .toEqual([1, 2]);
+    expect(result.trace.managed_ranking_outcomes[0]?.ordered_candidates.map((item) => item.locator.index_generation))
+      .toEqual(["generation-1", "generation-1"]);
+    expect(result.trace.index_generations).toEqual(expect.arrayContaining(["projection-1", "generation-1"]));
     expect(result.trace.managed_ranking_outcomes[0]?.rerank_succeeded).toBe(true);
     // Read the settled row back out of the result store rather than holding a closure
     // reference, whose assignment TypeScript cannot see for control-flow narrowing.

@@ -1,5 +1,6 @@
 import { researchModelCatalogAdapterForRouteProvider, type ResearchModelConfigurationRevision,
-  type ResearchRunBuiltinCloudflareSelectionV4, type ResearchRunProjectConfigurationPinV4, type ResearchRunV4Request } from "@eliotr/owner-api-client";
+  type ResearchRunBuiltinCloudflareSelectionV4, type ResearchRunProjectConfigurationPinV4, type ResearchRunV4Request,
+  type ResearchRunV5Request } from "@eliotr/owner-api-client";
 import type { BoundWorkspaceApis } from "../app/runtime";
 import type { ModelCatalogEntry } from "./modelCatalog";
 import { chatCatalogProviderForRouteProvider } from './chatModelProviderIdentity';
@@ -48,18 +49,19 @@ export function configurationMatchesChatModel(
 }
 
 /**
- * Select one saved model configuration and build the strict v4 run body only after readback proves
+ * Select one saved model configuration and build the strict v5 run body only after readback proves
  * the exact synthesis candidate, qualified configuration digest, and selection revision. An
  * unqualified configuration can run only through the caller's existing protected model-use API.
  */
-export async function prepareChatModelRunV4(input: {
+export async function prepareChatModelRunV5(input: {
   readonly models: ModelApi;
   readonly runs: RunsApi;
   readonly projectId: string;
   readonly generation: string;
   readonly candidate: ResearchModelConfigurationRevision;
   readonly modelChoice: Pick<ModelCatalogEntry, "provider_id" | "model_id">;
-  readonly request: Omit<ResearchRunV4Request, "selection">;
+  readonly request: Omit<ResearchRunV5Request, "selection" | "method">;
+  readonly method?: ResearchRunV5Request["method"];
   readonly signal: AbortSignal;
   readonly isCurrent: () => boolean;
   readonly mintSelectionOperation: () => string;
@@ -176,9 +178,37 @@ export async function prepareChatModelRunV4(input: {
     selection_revision: selectionRevision,
   };
   assertCurrent(input.signal, input.isCurrent);
-  const body = input.runs.researchRunBodyV4({ ...input.request, selection });
+  const body = input.runs.researchRunBodyV5({ ...input.request, method: input.method ?? "lookup", selection });
   assertCurrent(input.signal, input.isCurrent);
   return Object.freeze({ body, selection: Object.freeze(selection) });
+}
+
+/** Legacy v4 helper retained for existing callers; new ResearchPanel launches use the v5 method path. */
+export function prepareChatModelRunV4(input: {
+  readonly models: ModelApi;
+  readonly runs: RunsApi;
+  readonly projectId: string;
+  readonly generation: string;
+  readonly candidate: ResearchModelConfigurationRevision;
+  readonly modelChoice: Pick<ModelCatalogEntry, "provider_id" | "model_id">;
+  readonly request: Omit<ResearchRunV4Request, "selection">;
+  readonly signal: AbortSignal;
+  readonly isCurrent: () => boolean;
+  readonly mintSelectionOperation: () => string;
+  readonly modelUse?: {
+    readonly api: Pick<BoundWorkspaceApis["connections"]["modelUse"],
+      "startResearchProviderKeyModelUse" | "readResearchProviderKeyModelUse">;
+    readonly keyOperationId: string;
+    readonly mintOperationId: () => string;
+  };
+}): Promise<{ readonly body: string; readonly selection: ResearchRunProjectConfigurationPinV4 }> {
+  const runs: RunsApi = { ...input.runs, researchRunBodyV5: request => {
+    return input.runs.researchRunBodyV4({ query: request.query, scope_expression: request.scope_expression,
+      selection: request.selection,
+      ...(request.output_language === undefined ? {} : { output_language: request.output_language }),
+      ...(request.max_results === undefined ? {} : { max_results: request.max_results }) });
+  } };
+  return prepareChatModelRunV5({ ...input, runs, request: input.request, method: "lookup" });
 }
 
 /** Build the no-key Cloudflare run only for the exact installed model observed in owner Settings. */

@@ -30,7 +30,9 @@
     "./research-semantic-server.js": "./src/research-semantic-server.ts",
     "./research-session-application.js": "./src/research-session-application.ts",
     "./research-session-status-application.js": "./src/research-session-status-application.ts",
-    "./research-workflow-application.js": "./src/research-workflow-application.ts"
+    "./research-workflow-application.js": "./src/research-workflow-application.ts",
+    "./project-guide-service.js": "./src/project-guide-service.ts",
+    "./project-guide-projection.js": "./src/project-guide-projection.ts"
   },
   "types": "./src/index.ts",
   "scripts": {

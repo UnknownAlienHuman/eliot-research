@@ -147,3 +147,18 @@ evidence/revocation history. Their backup specs cover every persisted column and
 when the corresponding migrations are present; earlier backup inventories retain their existing
 shape. Registering metadata or retaining a qualification record does not grant inference permission
 or renew execution authority.
+
+## Persisted project guide registration
+
+Registry generation 15 adds the five existing project guide language, request, claim, document and view
+schemas to the `research` family at version 1, generation 1. Each receives an `INITIAL` entry. All 276
+previous schema identities and digests, compatibility entries and canonical fixtures remain unchanged.
+The request fixture admits only protocol and language. The partial-view fixture retains three represented
+sources out of ten, seven explicit omissions, evidence references and the saved report locator; it cannot
+be relabeled `READY`. Runtime Zod refinements enforce audited claim roles, distinct claims, exact source
+basis and current report requirements beyond the generated JSON Schema's closed structural shape.
+
+Migration 0166 separately introduces the durable `project_guide_binding` reservation and report locator.
+Its backup entry exports all sixteen columns and is selected only when that migration is present.
+Registering these contracts does not dispatch a guide, renew execution authority or change existing
+Research admission, model, spend, source-currentness or report-read validation.

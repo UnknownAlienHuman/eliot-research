@@ -12,6 +12,7 @@ import type { EpochPort } from '../../transport/client';
 
 const RESEARCH_CONFIGURATION_PATH = "/api/v1/system/research-configuration";
 const RESEARCH_CONFIGURATION_PROTOCOL = "eliotr.research-configuration-readiness.v1";
+const RESEARCH_METHOD_READINESS_PROTOCOL = "eliotr.research-configuration-method-readiness.v1";
 const LEGACY_RESEARCH_CONFIGURATION_PROTOCOL = "eliotr.research-configuration-status.v1";
 const SAFE_GENERATION = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const SAFE_TRACE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
@@ -49,6 +50,29 @@ export interface ResearchConfigurationView {
 export interface ReadResearchConfigurationOptions {
   readonly projectId?: string;
   readonly signal?: AbortSignal;
+}
+
+export interface ResearchConfigurationMethodReadinessPin {
+  readonly configuration_project_id: string;
+  readonly configuration_ref: string;
+  readonly configuration_sha256: string;
+  readonly selection_revision: number;
+}
+
+export type EvidenceReviewHandlerGeneration = "V7" | "V9";
+export type EvidenceReviewUnavailableReason = "CURRENT_SELECTION_REQUIRED" | "MODEL_READINESS_UNAVAILABLE" |
+  "STAGE_BINDINGS_UNAVAILABLE" | "V9_BRANCH_BUDGET_UNAVAILABLE" | "V9_MANAGED_SEARCH_UNAVAILABLE";
+
+export interface ResearchConfigurationMethodReadinessView {
+  readonly protocol: typeof RESEARCH_METHOD_READINESS_PROTOCOL;
+  readonly project_id: string;
+  readonly selected_pin: ResearchConfigurationMethodReadinessPin;
+  readonly evidence_review_ready: boolean;
+  readonly evidence_review_handler_generation: EvidenceReviewHandlerGeneration | null;
+  readonly evidence_review_unavailable_reason: EvidenceReviewUnavailableReason | null;
+  readonly checked_at: string;
+  readonly trace_id: string;
+  readonly deployment_generation: string;
 }
 
 export type ReadinessHttp = Pick<LegacyHttpAdapter, 'requestApi'>;
@@ -261,6 +285,58 @@ export function createResearchConfigurationApi(
     };
   }
 
+  function decodeMethodReadiness(value: unknown, expected: string, expectedProjectId: string,
+    expectedPin: ResearchConfigurationMethodReadinessPin): ResearchConfigurationMethodReadinessView {
+    const envelope = exactRecord(value, ["data", "trace_id", "deployment_generation"], "research method readiness envelope");
+    const envelopeGeneration = generation(envelope.deployment_generation, "deployment_generation");
+    if (envelopeGeneration !== expected) generationMismatch("The application changed; refresh method readiness.");
+    const trace = traceId(envelope.trace_id);
+    const data = exactRecord(envelope.data, ["protocol", "project_id", "selected_pin", "evidence_review_ready",
+      "evidence_review_handler_generation", "evidence_review_unavailable_reason", "checked_at"],
+      "research method readiness data");
+    if (data.protocol !== RESEARCH_METHOD_READINESS_PROTOCOL) schemaMismatch("research method readiness protocol is invalid");
+    const projectId = boundedText(data.project_id, "project_id", 256);
+    if (!SAFE_GENERATION.test(projectId) || projectId !== expectedProjectId) {
+      schemaMismatch("research method readiness belongs to a different project");
+    }
+    const rawPin = exactRecord(data.selected_pin, ["configuration_project_id", "configuration_ref",
+      "configuration_sha256", "selection_revision"], "research method readiness pin");
+    const pinProject = boundedText(rawPin.configuration_project_id, "configuration_project_id", 256);
+    const pinRef = boundedText(rawPin.configuration_ref, "configuration_ref", 256);
+    const pinSha = boundedText(rawPin.configuration_sha256, "configuration_sha256", 64);
+    const revision = rawPin.selection_revision;
+    if (!SAFE_GENERATION.test(pinProject) || !/^rpmc-[a-f0-9]{64}$/u.test(pinRef) ||
+        !/^[a-f0-9]{64}$/u.test(pinSha) || !Number.isSafeInteger(revision) || (revision as number) < 1 ||
+        (revision as number) > 1_000_000 || pinProject !== expectedProjectId ||
+        pinProject !== expectedPin.configuration_project_id || pinRef !== expectedPin.configuration_ref ||
+        pinSha !== expectedPin.configuration_sha256 || revision !== expectedPin.selection_revision) {
+      schemaMismatch("research method readiness pin does not match the requested current selection");
+    }
+    if (typeof data.evidence_review_ready !== "boolean") schemaMismatch("evidence review readiness is invalid");
+    const handlerGeneration = data.evidence_review_handler_generation;
+    if (handlerGeneration !== null && handlerGeneration !== "V7" && handlerGeneration !== "V9") {
+      schemaMismatch("evidence review handler generation is invalid");
+    }
+    const unavailableReason = data.evidence_review_unavailable_reason;
+    const unavailableReasons: readonly EvidenceReviewUnavailableReason[] = ["CURRENT_SELECTION_REQUIRED", "MODEL_READINESS_UNAVAILABLE",
+      "STAGE_BINDINGS_UNAVAILABLE", "V9_BRANCH_BUDGET_UNAVAILABLE", "V9_MANAGED_SEARCH_UNAVAILABLE"];
+    if (unavailableReason !== null && (typeof unavailableReason !== "string" ||
+        !unavailableReasons.includes(unavailableReason as EvidenceReviewUnavailableReason))) {
+      schemaMismatch("evidence review unavailability reason is invalid");
+    }
+    if (data.evidence_review_ready !== (handlerGeneration !== null) ||
+        (handlerGeneration === null) !== (unavailableReason !== null)) {
+      schemaMismatch("evidence review availability fields are inconsistent");
+    }
+    return { protocol: RESEARCH_METHOD_READINESS_PROTOCOL, project_id: projectId,
+      selected_pin: { configuration_project_id: pinProject, configuration_ref: pinRef,
+        configuration_sha256: pinSha, selection_revision: revision as number },
+      evidence_review_ready: data.evidence_review_ready, evidence_review_handler_generation: handlerGeneration,
+      evidence_review_unavailable_reason: unavailableReason as EvidenceReviewUnavailableReason | null,
+      checked_at: timestamp(data.checked_at),
+      trace_id: trace, deployment_generation: envelopeGeneration };
+  }
+
   /** Reads readiness for the selected project, or owner-installed readiness when no project is supplied. */
   async function readResearchConfiguration(
     expectedDeploymentGeneration: string,
@@ -295,6 +371,43 @@ export function createResearchConfigurationApi(
     return view;
   }
 
+  /** Explicit opt-in read for V5 methods; it never changes the strict V1 response contract. */
+  async function readResearchMethodReadiness(
+    expectedDeploymentGeneration: string,
+    projectId: string,
+    selectionPin: ResearchConfigurationMethodReadinessPin,
+    options: { readonly signal?: AbortSignal } = {},
+  ): Promise<ResearchConfigurationMethodReadinessView> {
+    const preflight = epoch.capture();
+    if (!epoch.isCurrent(preflight)) {
+      throw errors({ code: "API_SESSION_CLOSED", status: 503, message: "Response belongs to a closed owner session",
+        traceId: null, retryable: false });
+    }
+    const expected = expectedGeneration(expectedDeploymentGeneration);
+    const pinKeys = ["configuration_project_id", "configuration_ref", "configuration_sha256", "selection_revision"];
+    if (typeof projectId !== "string" || projectId.length === 0 || projectId.length > 256 ||
+        projectId !== projectId.trim() || !SAFE_GENERATION.test(projectId) ||
+        !isRecord(selectionPin) || Object.keys(selectionPin).length !== pinKeys.length ||
+        Object.keys(selectionPin).some(key => !pinKeys.includes(key)) ||
+        selectionPin.configuration_project_id !== projectId ||
+        !/^rpmc-[a-f0-9]{64}$/u.test(selectionPin.configuration_ref) ||
+        !/^[a-f0-9]{64}$/u.test(selectionPin.configuration_sha256) ||
+        !Number.isSafeInteger(selectionPin.selection_revision) || selectionPin.selection_revision < 1 ||
+        selectionPin.selection_revision > 1_000_000) {
+      throw errors({ status: 400, code: "RESEARCH_METHOD_SELECTION_INVALID",
+        message: "The method readiness selection is invalid.", traceId: null, retryable: false });
+    }
+    const query = new URLSearchParams({ project_id: projectId, capability: "research-methods-v1",
+      configuration_project_id: selectionPin.configuration_project_id,
+      configuration_ref: selectionPin.configuration_ref, configuration_sha256: selectionPin.configuration_sha256,
+      selection_revision: String(selectionPin.selection_revision) });
+    const raw = await http.requestApi(`${RESEARCH_CONFIGURATION_PATH}?${query.toString()}`,
+      options.signal === undefined ? {} : { signal: options.signal });
+    const view = decodeMethodReadiness(raw, expected, projectId, selectionPin);
+    if (!epoch.isCurrent(preflight)) stale();
+    return view;
+  }
+
   function stale(): never {
     throw errors({
       code: "API_SESSION_CLOSED",
@@ -305,5 +418,5 @@ export function createResearchConfigurationApi(
     });
   }
 
-  return { decode, readResearchConfiguration };
+  return { decode, readResearchConfiguration, readResearchMethodReadiness };
 }

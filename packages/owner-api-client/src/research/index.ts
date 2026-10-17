@@ -8,15 +8,19 @@ export { createResearchCatalogModelUseApi } from './catalog-model-use';
 export type { ResearchCatalogModelUseApi } from './catalog-model-use';
 export type { ResearchCatalogModelUseRequest, ResearchCatalogModelUseReceipt } from '@eliotr/contracts';
 export { createRunHistoryApi, createRunHistoryDecoder } from './history-changes/history';
+export { createProjectGuideApi } from './project-guide';
+export type { ProjectGuideApi, ProjectGuideLanguage, ProjectGuideView } from './project-guide';
 export { createChangesApi } from './history-changes/changes';
 export { createResearchSessionProjectionAdapter } from './session-projection/adapter';
 export { PROJECTION_METHOD } from './session-projection/session';
 
 export type { ResearchModelCatalogPage, ServiceModelCatalogPage, ResearchProjectModelConfiguration, ResearchModelConfigurationRevision } from './configuration/models';
-export type { ResearchConfigurationView, ResearchRunReadiness, ResearchConfigurationState } from './configuration/readiness';
+export type { ResearchConfigurationView, ResearchRunReadiness, ResearchConfigurationState,
+  ResearchConfigurationMethodReadinessPin, ResearchConfigurationMethodReadinessView,
+  EvidenceReviewHandlerGeneration, EvidenceReviewUnavailableReason } from './configuration/readiness';
 export type { ResearchRunRequest, ResearchRunsApi, ResearchRunStatusView, ResearchRunLaunchView, ResearchRunStatusDecoder,
   ResearchRunV3Request, ResearchRunV4Request, ResearchRunConfigurationPinV4,
-  ResearchRunProjectConfigurationPinV4, ResearchRunBuiltinCloudflareSelectionV4 } from './runs/authority';
+  ResearchRunProjectConfigurationPinV4, ResearchRunBuiltinCloudflareSelectionV4, ResearchRunV5Request } from './runs/authority';
 export type { ResearchRunWire } from './runs/wire';
 export type { ResearchRunFailureDecoder, ResearchRunFailureView, ResearchRunFailureContext, ResearchEngineStatus, ResearchRunFailureCode } from './runs/failure';
 export type { RunHistoryApi, RunHistoryApiPorts, RunHistoryDependencies, ResearchRunHistoryDecoder, ResearchRunHistoryView, ResearchRunHistoryEntry, ResearchRunSavedDraft } from './history-changes/history';

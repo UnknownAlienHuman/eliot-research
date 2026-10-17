@@ -227,3 +227,27 @@ describe('Research RUN v4 exact model pin', () => {
       selection: { ...builtin, configuration_ref: 'rpmc-unexpected' } as never })).toThrow();
   });
 });
+
+describe('Research RUN v5 installed method selection', () => {
+  const selection = { configuration_project_id: 'project-chat', configuration_ref: `rpmc-${'a'.repeat(64)}`,
+    configuration_sha256: 'a'.repeat(64), selection_revision: 4 } as const;
+
+  it('encodes the plain method, grade, immutable model pin, and output language', () => {
+    const { api } = build(null, [200], createSessionEpoch());
+    const body = JSON.parse(api.researchRunBodyV5({ query: 'Compare both papers',
+      scope_expression: { kind: 'PROJECT', project_id: 'project-chat' }, method: 'evidence_review',
+      evidence_grade: 'E2', selection, output_language: 'en' }));
+    expect(body).toMatchObject({ request_version: 'eliotr.research-run-request.v5', method: 'evidence_review',
+      evidence_grade: 'E2', selection, output_language: 'en' });
+  });
+
+  it('keeps lookup at E0 and rejects unsupported grade, method, or fields', () => {
+    const { api } = build(null, [200], createSessionEpoch());
+    const base = { query: 'q', scope_expression: { kind: 'GLOBAL_LIBRARY' } as const, selection };
+    expect(JSON.parse(api.researchRunBodyV5({ ...base, method: 'lookup' })).evidence_grade).toBe('E0');
+    expect(() => api.researchRunBodyV5({ ...base, method: 'lookup', evidence_grade: 'E1' } as never)).toThrow();
+    expect(() => api.researchRunBodyV5({ ...base, method: 'evidence_review', evidence_grade: 'E0' } as never)).toThrow();
+    expect(() => api.researchRunBodyV5({ ...base, method: 'other' } as never)).toThrow();
+    expect(() => api.researchRunBodyV5({ ...base, method: 'lookup', hidden: true } as never)).toThrow();
+  });
+});

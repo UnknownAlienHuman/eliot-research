@@ -1,4 +1,5 @@
 import type { AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
+import { canonicalModelGatewayJson, modelGatewaySha256 } from "@eliotr/cloudflare-model-transport/model-gateway-request.js";
 import { ensureProjectSearchItem, ProjectSearchItemError } from "./project-search-item.js";
 
 export const PROJECT_SEARCH_GENERATION = "v1" as const;
@@ -24,7 +25,11 @@ export type ProjectSearchErrorCode =
   | "PROJECT_SEARCH_MEMBERSHIP_STALE"
   | "PROJECT_SEARCH_SOURCE_NOT_READY"
   | "PROJECT_SEARCH_STORAGE_UNAVAILABLE"
-  | "PROJECT_SEARCH_PROVIDER_RESPONSE_INVALID";
+  | "PROJECT_SEARCH_PROVIDER_RESPONSE_INVALID"
+  | "PROJECT_SEARCH_MANAGED_NOT_PROMOTED"
+  | "PROJECT_SEARCH_MANAGED_REGISTRY_INVALID"
+  | "PROJECT_SEARCH_MANAGED_REGISTRY_CHANGED"
+  | "PROJECT_SEARCH_MANAGED_CAPABILITY_UNAVAILABLE";
 
 export class ProjectSearchError extends Error {
   public readonly code: ProjectSearchErrorCode;
@@ -53,6 +58,118 @@ export interface ProjectSearchBindings {
   readonly namespace: AiSearchNamespaceLike;
   readonly core_database: D1Database;
   readonly search_database: D1Database;
+}
+
+export interface ProjectSearchManagedAuthority {
+  readonly namespace: "eliotr";
+  readonly instance_id: "private-prose-g2";
+  readonly index_generation: string;
+  readonly registry_revision: number;
+  readonly registry_artifact_sha256: string;
+  readonly max_num_results: number;
+}
+
+interface ProjectSearchGenerationRegistryRow {
+  readonly revision: unknown;
+  readonly artifact_sha256: unknown;
+  readonly artifact_json: unknown;
+}
+
+/** Reads the canonical active provider identity; desired-state JSON is not authority. */
+export async function readProjectSearchManagedAuthority(database: D1Database): Promise<ProjectSearchManagedAuthority> {
+  let row: ProjectSearchGenerationRegistryRow | null;
+  try {
+    row = await database.prepare(
+      "SELECT revision,artifact_sha256,artifact_json FROM ai_search_generation_registry WHERE namespace=?1 LIMIT 1",
+    ).bind("eliotr").first<ProjectSearchGenerationRegistryRow>();
+  } catch (cause) {
+    throw new ProjectSearchError("PROJECT_SEARCH_STORAGE_UNAVAILABLE", "AI Search generation authority is unavailable", cause);
+  }
+  if (row === null) fail("PROJECT_SEARCH_MANAGED_NOT_PROMOTED", "AI Search has no authoritative active generation");
+  if (!Number.isSafeInteger(row.revision) || (row.revision as number) < 1 ||
+      typeof row.artifact_sha256 !== "string" || !/^[a-f0-9]{64}$/u.test(row.artifact_sha256) ||
+      typeof row.artifact_json !== "string" || new TextEncoder().encode(row.artifact_json).byteLength > 262_144) {
+    fail("PROJECT_SEARCH_MANAGED_REGISTRY_INVALID", "AI Search generation authority row is malformed");
+  }
+  let artifact: Record<string, unknown>;
+  try {
+    const decoded = JSON.parse(row.artifact_json) as unknown;
+    const parsed = record(decoded);
+    if (parsed === null || canonicalModelGatewayJson(parsed) !== row.artifact_json ||
+        await modelGatewaySha256(row.artifact_json) !== row.artifact_sha256 ||
+        parsed.schema !== "eliotr.ai-search-generation-registry.v1" || parsed.namespace !== "eliotr" ||
+        parsed.revision !== row.revision) {
+      fail("PROJECT_SEARCH_MANAGED_REGISTRY_INVALID", "AI Search generation authority digest or identity is invalid");
+    }
+    artifact = parsed;
+  } catch (cause) {
+    if (cause instanceof ProjectSearchError) throw cause;
+    throw new ProjectSearchError("PROJECT_SEARCH_MANAGED_REGISTRY_INVALID", "AI Search generation authority artifact is invalid", cause);
+  }
+  const registry = record(artifact.registry);
+  const generations = registry?.generations;
+  const generation = registry?.active_head_generation;
+  if (typeof generation !== "string" || !Array.isArray(generations)) {
+    fail("PROJECT_SEARCH_MANAGED_NOT_PROMOTED", "AI Search registry has no active generation");
+  }
+  const active = generations.map(record).find((entry) => entry?.generation === generation) ?? null;
+  const profile = active === null ? null : record(active.profile);
+  const method = profile === null ? null : record(profile.index_method);
+  if (active === null || active.state !== "ACTIVE" || active.namespace !== "eliotr" || profile?.id !== "private-prose-g2" ||
+      profile.generation !== generation || method?.vector !== true || method.keyword !== true ||
+      profile.fusion_method !== "rrf" || profile.reranking !== true ||
+      typeof profile.max_num_results !== "number" || !Number.isSafeInteger(profile.max_num_results) ||
+      profile.max_num_results < 1 || profile.max_num_results > 50 ||
+      !Number.isSafeInteger(active.expected_item_count) || !Number.isSafeInteger(active.indexed_item_count) ||
+      !Number.isSafeInteger(active.readback_item_count) || active.expected_item_count !== active.indexed_item_count ||
+      active.expected_item_count !== active.readback_item_count || active.failed_item_count !== 0 || active.mismatch_count !== 0) {
+    fail("PROJECT_SEARCH_MANAGED_REGISTRY_INVALID", "active registry generation does not qualify the installed prose search profile");
+  }
+  return Object.freeze({ namespace: "eliotr", instance_id: "private-prose-g2", index_generation: generation,
+    registry_revision: row.revision as number, registry_artifact_sha256: row.artifact_sha256,
+    max_num_results: profile.max_num_results });
+}
+
+/** Read-only preflight shared by run admission and owner readiness surfaces. */
+export async function assertProjectSearchManagedPrimaryAvailable(input: {
+  readonly search_database: D1Database;
+  readonly namespace: AiSearchNamespaceLike;
+}): Promise<ProjectSearchManagedAuthority> {
+  const authority = await readProjectSearchManagedAuthority(input.search_database);
+  let instance;
+  try { instance = input.namespace.get(authority.instance_id); }
+  catch (cause) {
+    throw new ProjectSearchError("PROJECT_SEARCH_MANAGED_CAPABILITY_UNAVAILABLE",
+      "the registered AI Search instance is unavailable through the namespace binding", cause);
+  }
+  if (typeof instance?.search !== "function") {
+    fail("PROJECT_SEARCH_MANAGED_CAPABILITY_UNAVAILABLE", "the registered AI Search instance has no search method");
+  }
+  return authority;
+}
+
+/** One native search call fenced by the exact registry authority before and after dispatch. */
+export async function searchProjectManaged(input: Pick<ProjectSearchBindings, "namespace" | "core_database" | "search_database"> & {
+  readonly project_id: string;
+  readonly query: string;
+  readonly source_revision_refs: readonly string[];
+  readonly max_num_results: number;
+  readonly context_expansion: 0 | 1 | 2 | 3;
+}): Promise<{ readonly response: unknown; readonly authority: ProjectSearchManagedAuthority }> {
+  const authority = await assertProjectSearchManagedPrimaryAvailable(input);
+  const maxNumResults = Math.min(input.max_num_results, authority.max_num_results, 50);
+  if (!Number.isSafeInteger(maxNumResults) || maxNumResults < 1) {
+    fail("PROJECT_SEARCH_INPUT_INVALID", "managed provider result limit is invalid");
+  }
+  const response = await searchProject({ ...input, lane: "prose", max_num_results: maxNumResults,
+    context_expansion: input.context_expansion });
+  const current = await readProjectSearchManagedAuthority(input.search_database);
+  if (authority.registry_revision !== current.registry_revision ||
+      authority.registry_artifact_sha256 !== current.registry_artifact_sha256 ||
+      authority.index_generation !== current.index_generation) {
+    fail("PROJECT_SEARCH_MANAGED_REGISTRY_CHANGED", "AI Search active generation changed during the provider call");
+  }
+  return Object.freeze({ response, authority });
 }
 
 function fail(code: ProjectSearchErrorCode, message: string): never {
@@ -349,6 +466,8 @@ export async function searchProject(
     readonly lane: ProjectSearchLane;
     readonly query: string;
     readonly source_revision_refs?: readonly string[];
+    readonly max_num_results?: number;
+    readonly context_expansion?: 0 | 1 | 2 | 3;
   },
 ): Promise<unknown> {
   const projectId = identifier(input.project_id, "project_id");
@@ -359,13 +478,21 @@ export async function searchProject(
   const folderEnd = `${folder.slice(0, -1)}0`;
   const allowedRevisions = input.source_revision_refs === undefined ? undefined
     : new Set(input.source_revision_refs.map((ref) => identifier(ref, "source revision scope")));
+  const maxNumResults = input.max_num_results;
+  if (maxNumResults !== undefined && (!Number.isSafeInteger(maxNumResults) || maxNumResults < 1 || maxNumResults > 50)) {
+    fail("PROJECT_SEARCH_INPUT_INVALID", "max_num_results is invalid");
+  }
+  if (input.context_expansion !== undefined && ![0, 1, 2, 3].includes(input.context_expansion)) {
+    fail("PROJECT_SEARCH_INPUT_INVALID", "context_expansion is invalid");
+  }
   if (allowedRevisions?.size === 0) return { chunks: [] };
   const raw = await input.namespace.get(PROJECT_SEARCH_INSTANCES[input.lane]).search({
     messages: [{ role: "user", content: input.query }],
     // Use native prose relevance ordering without its implicit 0.4 rerank floor:
     // low-scored multilingual hits must retain the existing zero retrieval floor.
     // Literal lookup stays unrewritten and unreranked. D1 remains the authority.
-    ai_search_options: { query_rewrite: { enabled: false },
+    ai_search_options: { ...(maxNumResults === undefined ? {} : { cache: { enabled: false } }),
+      query_rewrite: { enabled: false },
       reranking: input.lane === "prose" ? { enabled: true, match_threshold: 0 } : { enabled: false },
       retrieval: { ...(input.lane === "prose" ? {
         // Preserve native hybrid recall when a paper uses different wording
@@ -373,7 +500,10 @@ export async function searchProject(
         retrieval_type: "hybrid",
         fusion_method: "rrf",
         keyword_match_mode: "or",
-      } : {}), filters: {
+      } : {}),
+      ...(maxNumResults === undefined ? {} : { max_num_results: maxNumResults }),
+      ...(input.context_expansion === undefined ? {} : { context_expansion: input.context_expansion }),
+      filters: {
       folder: { $gte: folder, $lt: folderEnd },
       // Native text filters index the first 64 UTF-8 bytes. IDs are ASCII; D1 checks full identities below.
       ...(allowedRevisions === undefined ? {} : {

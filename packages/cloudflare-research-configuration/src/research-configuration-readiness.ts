@@ -16,6 +16,13 @@ import type {
 } from "@eliotr/cloudflare-native-models";
 import type { ResearchRunModelSelection } from "./research-run-model-selection-codec.js";
 import {
+  captureResearchBranchQueryBudgetSelection,
+  branchQueryBudgetSelectionMatchesRun,
+  type SelectedResearchProjectConfigurationProvenance,
+  type ResearchBranchQueryBudgetSelection,
+} from "./research-branch-query-budget-selection.js";
+import { RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON_KEY } from "./research-branch-query-budget-selection.js";
+import {
   readResearchConfigurationStatus,
   type ResearchConfigurationRuntimeValues,
   type ResearchConfigurationStatus,
@@ -48,6 +55,108 @@ export interface ResearchConfigurationReadiness {
   readonly missing_fields: readonly string[];
   readonly invalid_fields: readonly string[];
   readonly checked_at: string;
+}
+
+export const RESEARCH_CONFIGURATION_METHOD_READINESS_PROTOCOL =
+  "eliotr.research-configuration-method-readiness.v1" as const;
+
+export interface ResearchConfigurationMethodReadinessPin {
+  readonly configuration_project_id: string;
+  readonly configuration_ref: string;
+  readonly configuration_sha256: string;
+  readonly selection_revision: number;
+}
+
+export type EvidenceReviewHandlerGeneration = "V7" | "V9";
+export type EvidenceReviewUnavailableReason = "CURRENT_SELECTION_REQUIRED" | "MODEL_READINESS_UNAVAILABLE" |
+  "STAGE_BINDINGS_UNAVAILABLE" | "V9_BRANCH_BUDGET_UNAVAILABLE" | "V9_MANAGED_SEARCH_UNAVAILABLE";
+export interface EvidenceReviewMethodDecision {
+  readonly handler_generation: EvidenceReviewHandlerGeneration | null;
+  readonly unavailable_reason: EvidenceReviewUnavailableReason | null;
+}
+
+/** Opt-in capability response; V1 readiness remains an unchanged wire contract. */
+export interface ResearchConfigurationMethodReadiness {
+  readonly protocol: typeof RESEARCH_CONFIGURATION_METHOD_READINESS_PROTOCOL;
+  readonly project_id: string;
+  readonly selected_pin: ResearchConfigurationMethodReadinessPin;
+  readonly evidence_review_ready: boolean;
+  readonly evidence_review_handler_generation: EvidenceReviewHandlerGeneration | null;
+  readonly evidence_review_unavailable_reason: EvidenceReviewUnavailableReason | null;
+  readonly checked_at: string;
+}
+
+/** Minimal structural evidence injected by Core after its authoritative managed-search preflight. */
+export interface ManagedPrimaryReadinessEvidence {
+  readonly namespace: "eliotr";
+  readonly instance_id: "private-prose-g2";
+  readonly index_generation: string;
+  readonly registry_revision: number;
+  readonly registry_artifact_sha256: string;
+}
+
+/** Capture the budget profile through the same strict provenance binder used by run snapshots. */
+export function captureEvidenceReviewBudgetSelection(input: {
+  readonly profile_json: unknown;
+  readonly selected_configuration: SelectedResearchProjectConfigurationProvenance;
+  readonly expected_owner_ref: string;
+}): ResearchBranchQueryBudgetSelection | undefined {
+  if (typeof input.profile_json !== "string") return undefined;
+  try {
+    return captureResearchBranchQueryBudgetSelection({ profile_json: input.profile_json,
+      selected_configuration: input.selected_configuration, expected_owner_ref: input.expected_owner_ref });
+  } catch {
+    return undefined;
+  }
+}
+
+export { RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON_KEY };
+
+/** Select V7 when no V9 branch profile is configured; V9 requires its captured budget and managed registry. */
+export function resolveEvidenceReviewMethod(input: {
+  readonly readiness: ResearchConfigurationReadiness;
+  readonly expected_pin: ResearchConfigurationMethodReadinessPin;
+  readonly selected_pin: ResearchConfigurationMethodReadinessPin;
+  readonly selected_provenance: SelectedResearchProjectConfigurationProvenance;
+  readonly model_selections: readonly Pick<ResearchRunModelSelection, "stage">[];
+  readonly branch_query_budget_profile_present: boolean;
+  readonly branch_query_budget_selection?: ResearchBranchQueryBudgetSelection;
+  readonly managed_primary?: ManagedPrimaryReadinessEvidence;
+}): EvidenceReviewMethodDecision {
+  const unavailable = (reason: EvidenceReviewUnavailableReason): EvidenceReviewMethodDecision =>
+    Object.freeze({ handler_generation: null, unavailable_reason: reason });
+  const samePin = input.expected_pin.configuration_project_id === input.selected_pin.configuration_project_id &&
+    input.expected_pin.configuration_ref === input.selected_pin.configuration_ref &&
+    input.expected_pin.configuration_sha256 === input.selected_pin.configuration_sha256 &&
+    input.expected_pin.selection_revision === input.selected_pin.selection_revision &&
+    input.selected_provenance.project_id === input.selected_pin.configuration_project_id &&
+    input.selected_provenance.configuration_ref === input.selected_pin.configuration_ref &&
+    input.selected_provenance.configuration_sha256 === input.selected_pin.configuration_sha256 &&
+    input.selected_provenance.selection_revision === input.selected_pin.selection_revision;
+  if (!samePin) return unavailable("CURRENT_SELECTION_REQUIRED");
+  if (input.readiness.run_readiness !== "ready" || input.readiness.qualification_state !== "current" ||
+      input.readiness.readiness_reason !== "QUALIFICATION_PROOFS_CURRENT") return unavailable("MODEL_READINESS_UNAVAILABLE");
+  const requiredStages = ["ANALYZE_BRANCHES", "COUNTER_SEARCH", "SYNTHESIZE", "AUDIT_CLAIMS"] as const;
+  const stagesComplete = requiredStages.every(stage => input.model_selections.filter(selection => selection.stage === stage).length === 1);
+  if (!stagesComplete) return unavailable("STAGE_BINDINGS_UNAVAILABLE");
+  if (!input.branch_query_budget_profile_present) {
+    return Object.freeze({ handler_generation: "V7", unavailable_reason: null });
+  }
+  const budget = input.branch_query_budget_selection;
+  const budgetMatches = budget !== undefined && budget.budgets.evidence_limit <= 16 &&
+    branchQueryBudgetSelectionMatchesRun({ selection: budget, owner_ref: input.selected_provenance.owner_ref,
+      project_configuration: input.selected_provenance });
+  if (!budgetMatches) return unavailable("V9_BRANCH_BUDGET_UNAVAILABLE");
+  const managed = input.managed_primary;
+  const managedReady = managed?.namespace === "eliotr" && managed.instance_id === "private-prose-g2" &&
+    managed.index_generation.length > 0 && Number.isSafeInteger(managed.registry_revision) &&
+    /^[a-f0-9]{64}$/u.test(managed.registry_artifact_sha256);
+  if (!managedReady) return unavailable("V9_MANAGED_SEARCH_UNAVAILABLE");
+  return Object.freeze({ handler_generation: "V9", unavailable_reason: null });
+}
+
+export function isEvidenceReviewMethodReady(input: Parameters<typeof resolveEvidenceReviewMethod>[0]): boolean {
+  return resolveEvidenceReviewMethod(input).handler_generation !== null;
 }
 
 type InstalledSpendPolicy = ResearchModelSpendPolicy | ResearchOwnerSpendPolicyTemplate;

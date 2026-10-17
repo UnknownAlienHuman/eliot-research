@@ -44,6 +44,7 @@ const CATALOG_MODEL_USE_TABLES = [
   "provider_native_model_catalog_v2_unverified_execution",
 ] as const;
 const RECENT_CANONICAL_TABLES = [
+  "project_guide_binding",
   "doctor_delivery_outbox",
   "projection_managed_item_effect",
   "queue_owner_replay",
@@ -198,6 +199,7 @@ describe("ER-34 O2 full Core migration coverage", () => {
       ["research_workflow_authorized_read_stage_completion", "0137_research_workflow_authorized_read_stage_completion.sql"],
       ["doctor_delivery_outbox", "0153_doctor_state.sql"],
       ["research_provider_key_model_use_unverified_execution", "0165_provider_key_model_use_unverified_execution.sql"],
+      ["project_guide_binding", "0166_project_guide_binding.sql"],
     ] as const;
     for (const [table, introduction] of newTableIntroductions) {
       const beforeIntroduction = migrations.filter((name) => name < introduction);
@@ -242,6 +244,15 @@ describe("ER-34 O2 full Core migration coverage", () => {
     )).not.toThrow();
     expect(() => assertCoreTableMigrationPresence(
       ["research_provider_key_model_use_unverified_execution"], [],
+    )).toThrowError(expect.objectContaining({ code: "BACKUP_COVERAGE_GAP" }));
+    expect(() => assertCoreTableMigrationPresence(
+      ["project_guide_binding"], ["0166_project_guide_binding.sql"],
+    )).not.toThrow();
+    expect(() => assertCoreTableMigrationPresence(
+      ["project_guide_binding"], [],
+    )).toThrowError(expect.objectContaining({ code: "BACKUP_COVERAGE_GAP" }));
+    expect(() => assertCoreTableMigrationPresence(
+      [], ["0166_project_guide_binding.sql"],
     )).toThrowError(expect.objectContaining({ code: "BACKUP_COVERAGE_GAP" }));
     const restoreAuthority = [
       "backup_restore_target_profile", "backup_restore_target_profile_revocation", "backup_restore_permission",

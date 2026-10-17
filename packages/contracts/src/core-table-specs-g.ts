@@ -3,6 +3,12 @@ import type { TableSpec } from "./backup-table-spec-types.js";
 // Exact owner-selected catalog model authority. The provider alias is metadata only;
 // no provider secret or secret-store identifier is stored or exported here.
 export const DURABLE_CORE_TABLE_SPECS_G: readonly TableSpec[] = [
+  { manifest: "heads", table: "project_guide_binding", order_by: "identity_digest", columns: {
+      identity_digest: "text", owner_principal_ref: "text", project_id: "text", language: "text",
+      prompt_revision: "text", corpus_digest: "text", corpus_json: "text", selection_json: "text",
+      idempotency_key: "text", request_body: "text", workflow_instance_id: "text", state: "text",
+      artifact_id: "text-or-null", artifact_revision: "int-or-null", created_at: "text", updated_at: "text",
+    }, required: true },
   { manifest: "generations", table: "research_provider_key_model_use_unverified_execution",
     order_by: "owner_id, project_id, operation_id", columns: {
       owner_id: "text", project_id: "text", operation_id: "text", stage: "text",

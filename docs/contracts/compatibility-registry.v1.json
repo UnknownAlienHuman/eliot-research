@@ -4195,8 +4195,68 @@
       "schema_version": 2,
       "structural_strictness": "CLOSED_OBJECT",
       "supersedes_schema_id": "urn:eliotr:contracts:model:service-model-settings:v1:g1"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "ProjectGuideClaimSchema",
+      "family": "research",
+      "json_schema_sha256": "5310a67d4295e161410db81f7c0d6c40e536d100a92b41efce6487fc1fd5aaea",
+      "kind": "OBJECT",
+      "note": "Registry 15: initial persisted Research-backed project guide metadata; strict protocol/language request, evidence-linked claims, actual coverage and report locator. Runtime refinements retain currentness and partial-coverage semantics; registration grants no execution authority.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:project-guide-claim:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "ProjectGuideDocumentSchema",
+      "family": "research",
+      "json_schema_sha256": "d87d078befd37fe11ef9ee6a6d566f57f7d0964a7aacb49c384e4748b0e9a97b",
+      "kind": "OBJECT",
+      "note": "Registry 15: initial persisted Research-backed project guide metadata; strict protocol/language request, evidence-linked claims, actual coverage and report locator. Runtime refinements retain currentness and partial-coverage semantics; registration grants no execution authority.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:project-guide-document:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "ProjectGuideLanguageSchema",
+      "family": "research",
+      "json_schema_sha256": "5182db8f5b7464a0b5975cf1ee5735716b9fb78a8be5f70e5355a4df757f165f",
+      "kind": "ENUM",
+      "note": "Registry 15: initial persisted Research-backed project guide metadata; strict protocol/language request, evidence-linked claims, actual coverage and report locator. Runtime refinements retain currentness and partial-coverage semantics; registration grants no execution authority.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:project-guide-language:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "ProjectGuideRequestSchema",
+      "family": "research",
+      "json_schema_sha256": "61acd389fe1e1b0c8acb1b30db51069362d70c3fd67f2ee7fe09b9eac7ea648a",
+      "kind": "OBJECT",
+      "note": "Registry 15: initial persisted Research-backed project guide metadata; strict protocol/language request, evidence-linked claims, actual coverage and report locator. Runtime refinements retain currentness and partial-coverage semantics; registration grants no execution authority.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:project-guide-request:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "ProjectGuideViewSchema",
+      "family": "research",
+      "json_schema_sha256": "51eae2c310e1f2b480b696d3e37e3d77bb1677d2529b61dc307f2a3064425ca1",
+      "kind": "OBJECT",
+      "note": "Registry 15: initial persisted Research-backed project guide metadata; strict protocol/language request, evidence-linked claims, actual coverage and report locator. Runtime refinements retain currentness and partial-coverage semantics; registration grants no execution authority.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:project-guide-view:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
     }
   ],
   "protocol": "eliotr.contract-compatibility-registry.v1",
-  "registry_generation": 14
+  "registry_generation": 15
 }

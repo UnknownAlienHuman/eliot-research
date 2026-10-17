@@ -36,7 +36,8 @@ import { HttpRequestError } from "./http-errors.js";
 import { readPrimaryWriterInventory } from "./backup-primary-composition.js";
 import { createAiUsageObservation } from "./ai-usage-http.js";
 import { issuePrimaryWriterBootstrapAdmissionRoute } from "@eliotr/cloudflare-backup";
-import { readOwnerProjectResearchReadiness } from "./research-project-configuration-composition.js";
+import { handleResearchConfigurationReadiness } from "./research-method-readiness-http.js";
+export { parseResearchMethodReadinessQuery } from "./research-method-readiness-http.js";
 import { parseWikiProposalFromResearchRunRequest, parseWikiProposalRef } from "./wiki-service.js";
 import {
   reopenOwnerArtifactDraft,
@@ -59,6 +60,7 @@ export interface HttpRouteMatch {
   readonly route: RouteDefinition;
   readonly params: Readonly<Record<string, string>>;
 }
+
 async function requireApplicationReady(
   request: Request,
   application: ApplicationLifecycle,
@@ -114,12 +116,7 @@ export async function dispatchHttpApiRoute(
       return apiResult(request, env, outcome.data);
     }
     case "system.research.configuration": {
-      for (const key of url.searchParams.keys()) {
-        if (key !== "project_id") throw new HttpRequestError("UNKNOWN_QUERY_PARAMETER", 400,
-          "Research configuration query contains an unknown parameter");
-      }
-      return apiResult(request, env, await readOwnerProjectResearchReadiness(env, context,
-        singleQueryValue(url, "project_id")));
+      return handleResearchConfigurationReadiness({ request, env, context, url });
     }
     case "system.ai-usage.read": {
       requireNoQuery(url);

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { canonicalModelGatewayJson, modelGatewaySha256 } from "@eliotr/cloudflare-model-transport/model-gateway-request.js";
 import type { AiSearchNamespaceLike } from "@eliotr/platform-cloudflare";
-import { projectSearchFolderPrefix, searchProject } from "./project-search.js";
+import { projectSearchFolderPrefix, readProjectSearchManagedAuthority, searchProject, searchProjectManaged } from "./project-search.js";
 
 const canonical = { item_key: "projection-item-1", source_revision_ref: "revision-1",
   canonical_section_id: "section-1", content_sha256: "a".repeat(64),
@@ -10,7 +11,66 @@ function database(rows: readonly unknown[]): D1Database {
   return { prepare: () => ({ bind: () => ({ all: async () => ({ success: true, results: rows }) }) }) } as unknown as D1Database;
 }
 
+async function managedRegistryRow() {
+  const generation = "g2-qwen3-2026-09-03";
+  const artifact = { schema: "eliotr.ai-search-generation-registry.v1", namespace: "eliotr", revision: 4,
+    registry: { active_head_generation: generation, generations: [{ namespace: "eliotr", generation, state: "ACTIVE",
+      profile: { id: "private-prose-g2", generation, index_method: { vector: true, keyword: true },
+        fusion_method: "rrf", reranking: true, max_num_results: 50,
+        embedding_model: "@cf/qwen/qwen3-embedding-0.6b", keyword_tokenizer: "porter",
+        keyword_match_mode: "and", metadata_fields: ["canonical_section_id", "content_sha256",
+          "instruction_taint", "projection_generation", "source_revision_ref"] },
+      expected_item_count: 1, indexed_item_count: 1, readback_item_count: 1, failed_item_count: 0, mismatch_count: 0 }] } };
+  const artifact_json = canonicalModelGatewayJson(artifact);
+  return { revision: 4, artifact_json, artifact_sha256: await modelGatewaySha256(artifact_json) };
+}
+
 describe("native scoped search relevance and authority", () => {
+  it("accepts only the exact canonical promoted registry identity", async () => {
+    const row = await managedRegistryRow();
+    const registry = database([]) as unknown as { prepare: (sql: string) => { bind: (...args: unknown[]) => { first: () => Promise<unknown> } } };
+    registry.prepare = () => ({ bind: () => ({ first: async () => row }) });
+    await expect(readProjectSearchManagedAuthority(registry as unknown as D1Database)).resolves.toMatchObject({
+      namespace: "eliotr", instance_id: "private-prose-g2", index_generation: "g2-qwen3-2026-09-03",
+      registry_revision: 4, registry_artifact_sha256: row.artifact_sha256,
+    });
+    const corrupt = { ...row, artifact_sha256: "b".repeat(64) };
+    registry.prepare = () => ({ bind: () => ({ first: async () => corrupt }) });
+    await expect(readProjectSearchManagedAuthority(registry as unknown as D1Database))
+      .rejects.toMatchObject({ code: "PROJECT_SEARCH_MANAGED_REGISTRY_INVALID" });
+  });
+
+  it("uses one native provider call under matching pre/post registry readback and keeps its result cap", async () => {
+    const registryRow = await managedRegistryRow();
+    const registryDb = database([canonical]) as unknown as {
+      prepare: (sql: string) => { bind: (...args: unknown[]) => { first: () => Promise<unknown>; all: () => Promise<unknown> } };
+    };
+    registryDb.prepare = (sql: string) => ({ bind: () => ({
+      first: async () => registryRow,
+      all: async () => sql.includes("projection_item")
+        ? { success: true, results: [canonical] }
+        : { success: true, results: [{ source_revision_ref: canonical.source_revision_ref }] },
+    }) });
+    const folder = await projectSearchFolderPrefix("project-1", "prose");
+    const search = vi.fn(async (request: Record<string, unknown>) => ({ chunks: [{ id: "chunk-1", type: "text",
+      score: 0.8, text: "preview", item: { key: `${folder}${canonical.item_key}.md`, metadata: canonical },
+      scoring_details: { vector_score: 0.8, keyword_score: 3, vector_rank: 1, keyword_rank: 1, fusion_method: "rrf" } }], request }));
+    const result = await searchProjectManaged({
+      namespace: { get: () => ({ search }) } as unknown as AiSearchNamespaceLike,
+      core_database: registryDb as unknown as D1Database, search_database: registryDb as unknown as D1Database,
+      project_id: "project-1", source_revision_refs: [canonical.source_revision_ref],
+      query: "Explain the methods", max_num_results: 4, context_expansion: 1,
+    });
+    expect(result.authority.registry_revision).toBe(4);
+    expect((result.response as { chunks: unknown[] }).chunks).toHaveLength(1);
+    expect(search).toHaveBeenCalledOnce();
+    expect(search.mock.calls[0]?.[0]).toMatchObject({ ai_search_options: {
+      cache: { enabled: false }, query_rewrite: { enabled: false },
+      retrieval: { max_num_results: 4, context_expansion: 1,
+        retrieval_type: "hybrid", fusion_method: "rrf" },
+    } });
+  });
+
   it.each([true, false])("keeps native hits and D1 membership fences when membership is %s", async member => {
     const folder = await projectSearchFolderPrefix("project-1", "prose");
     const nativeSearch = vi.fn(async (request: Record<string, unknown>) => {

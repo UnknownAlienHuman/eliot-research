@@ -16,12 +16,29 @@ import {
 import { MCP_DIAGNOSTIC_PROTOCOL } from "./mcp-diagnostic.js";
 import { CONTRACT_SCHEMA_REGISTRY_GENERATION } from "./schema-registry.js";
 import { RESEARCH_CATALOG_MODEL_USE_REQUEST_PROTOCOL } from "./research-catalog-model-use.js";
+import { PROJECT_GUIDE_PROTOCOL } from "./project-guide.js";
 
 export const CANONICAL_FIXTURE_REGISTRY =
   CanonicalFixtureRegistryDocumentSchema.parse({
     protocol: CANONICAL_FIXTURE_REGISTRY_PROTOCOL,
     registry_generation: CONTRACT_SCHEMA_REGISTRY_GENERATION,
     fixtures: [
+      {
+        fixture_id: "project-guide-request-v1",
+        protocol: PROJECT_GUIDE_PROTOCOL,
+        schema_export: "ProjectGuideRequestSchema",
+        fixture_path: "docs/contracts/fixtures/eliotr.project-guide.request.v1.json",
+        media_type: "application/json",
+        canonical_body_sha256: "4faaa2558673c237530555d1f0e561640b073025938b39e27e8e638a7b401549",
+      },
+      {
+        fixture_id: "project-guide-partial-v1",
+        protocol: PROJECT_GUIDE_PROTOCOL,
+        schema_export: "ProjectGuideViewSchema",
+        fixture_path: "docs/contracts/fixtures/eliotr.project-guide.partial.v1.json",
+        media_type: "application/json",
+        canonical_body_sha256: "c875bec8035558d975755d785312c940e7a06736ca4ecbd1baf5938b994a7fa8",
+      },
       {
         fixture_id: "research-catalog-model-use-tilde-v1",
         protocol: RESEARCH_CATALOG_MODEL_USE_REQUEST_PROTOCOL,

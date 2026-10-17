@@ -5,6 +5,8 @@ import { createSessionEpoch } from '../../transport/session/epoch';
 import { createResearchConfigurationApi } from './readiness';
 
 const deploymentGeneration = 'deploy-1';
+const selectionPin = { configuration_project_id: 'project-1', configuration_ref: `rpmc-${'a'.repeat(64)}`,
+  configuration_sha256: 'a'.repeat(64), selection_revision: 3 } as const;
 
 const errors: LegacyErrorFactory = (detail) => new Error(`${detail.code}:${detail.status}`);
 
@@ -137,5 +139,60 @@ describe('research configuration readiness', () => {
     await expect(api.readResearchConfiguration(deploymentGeneration))
       .rejects.toThrow('API_SESSION_CLOSED:503');
     expect(calls).toHaveLength(0);
+  });
+
+  it('reads opt-in V5 method readiness with the exact selected pin while preserving V1', async () => {
+    const body = { protocol: 'eliotr.research-configuration-method-readiness.v1', project_id: 'project-1',
+      selected_pin: selectionPin, evidence_review_ready: true, evidence_review_handler_generation: 'V9',
+      evidence_review_unavailable_reason: null, checked_at: '2026-10-17T12:00:00.000Z' };
+    const { http, calls } = recorder(envelope(body));
+    const api = createResearchConfigurationApi(http, errors, createSessionEpoch());
+    const view = await api.readResearchMethodReadiness(deploymentGeneration, 'project-1', selectionPin);
+    expect(calls).toEqual([{ path: `/api/v1/system/research-configuration?project_id=project-1&capability=research-methods-v1&configuration_project_id=project-1&configuration_ref=${selectionPin.configuration_ref}&configuration_sha256=${selectionPin.configuration_sha256}&selection_revision=3` }]);
+    expect(view).toMatchObject({ evidence_review_ready: true, evidence_review_handler_generation: 'V9',
+      selected_pin: selectionPin, deployment_generation: deploymentGeneration });
+  });
+
+  it('fails closed on a method response bound to another configuration pin or with unknown fields', async () => {
+    const base = { protocol: 'eliotr.research-configuration-method-readiness.v1', project_id: 'project-1',
+      selected_pin: selectionPin, evidence_review_ready: true, evidence_review_handler_generation: 'V9',
+      evidence_review_unavailable_reason: null, checked_at: '2026-10-17T12:00:00.000Z' };
+    const mismatch = recorder(envelope({ ...base, selected_pin: { ...selectionPin, selection_revision: 4 } }));
+    await expect(createResearchConfigurationApi(mismatch.http, errors, createSessionEpoch())
+      .readResearchMethodReadiness(deploymentGeneration, 'project-1', selectionPin))
+      .rejects.toThrow('API_RESPONSE_SCHEMA_MISMATCH:502');
+    const unknown = recorder(envelope({ ...base, extra: true }));
+    await expect(createResearchConfigurationApi(unknown.http, errors, createSessionEpoch())
+      .readResearchMethodReadiness(deploymentGeneration, 'project-1', selectionPin))
+      .rejects.toThrow('API_RESPONSE_SCHEMA_MISMATCH:502');
+  });
+
+  it('preserves the explicit legacy V7 availability path when V9 registry readiness is unavailable', async () => {
+    const { http } = recorder(envelope({ protocol: 'eliotr.research-configuration-method-readiness.v1', project_id: 'project-1',
+      selected_pin: selectionPin, evidence_review_ready: true, evidence_review_handler_generation: 'V7',
+      evidence_review_unavailable_reason: null, checked_at: '2026-10-17T12:00:00.000Z' }));
+    const view = await createResearchConfigurationApi(http, errors, createSessionEpoch())
+      .readResearchMethodReadiness(deploymentGeneration, 'project-1', selectionPin);
+    expect(view.evidence_review_handler_generation).toBe('V7');
+  });
+
+  it('rejects contradictory V9-unavailable and review-ready fields', async () => {
+    const { http } = recorder(envelope({ protocol: 'eliotr.research-configuration-method-readiness.v1', project_id: 'project-1',
+      selected_pin: selectionPin, evidence_review_ready: true, evidence_review_handler_generation: null,
+      evidence_review_unavailable_reason: 'V9_MANAGED_SEARCH_UNAVAILABLE', checked_at: '2026-10-17T12:00:00.000Z' }));
+    await expect(createResearchConfigurationApi(http, errors, createSessionEpoch())
+      .readResearchMethodReadiness(deploymentGeneration, 'project-1', selectionPin))
+      .rejects.toThrow('API_RESPONSE_SCHEMA_MISMATCH:502');
+  });
+
+  it('rejects a method-readiness result that crossed an owner-session epoch change', async () => {
+    const epoch = createSessionEpoch();
+    const { http } = recorder(envelope({ protocol: 'eliotr.research-configuration-method-readiness.v1', project_id: 'project-1',
+      selected_pin: selectionPin, evidence_review_ready: true, evidence_review_handler_generation: 'V9',
+      evidence_review_unavailable_reason: null, checked_at: '2026-10-17T12:00:00.000Z' }));
+    const pending = createResearchConfigurationApi(http, errors, epoch)
+      .readResearchMethodReadiness(deploymentGeneration, 'project-1', selectionPin);
+    epoch.advance();
+    await expect(pending).rejects.toThrow('API_SESSION_CLOSED:503');
   });
 });

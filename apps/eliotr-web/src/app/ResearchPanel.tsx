@@ -2,7 +2,8 @@ import { useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState
 import { skipToken, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { WorkspaceLink } from '../routes/WorkspaceLink';
 import { Button, MaterialSymbol, OperationAnnouncement, ResearchRunFeature, Status } from '@eliotr/ui';
-import type { ResearchCatalogModelUseReceipt, ResearchProjectModelConfiguration, ResearchRunLaunchView, ResearchRunProjectConfigurationPinV4, ResearchRunV4Request, VersionedRef } from '@eliotr/owner-api-client';
+import type { ResearchCatalogModelUseReceipt, ResearchConfigurationMethodReadinessPin, ResearchProjectModelConfiguration,
+  ResearchRunLaunchView, ResearchRunProjectConfigurationPinV4, ResearchRunV5Request, VersionedRef } from '@eliotr/owner-api-client';
 import { chatCatalogProviderForRouteProvider } from '../query/chatModelProviderIdentity';
 import type { BoundWorkspaceApis } from './runtime';
 import type { PrivacyController, SessionContext } from './privacy';
@@ -18,7 +19,7 @@ import { buildChatModelOptions, preferredChatModelIdentity,
 import { chatCatalogModelOperationQueryOptions, chatCurrentCatalogModelOperationQueryOptions, chatPreferredModelCatalogQueryOptions,
   chatProjectModelConfigurationQueryOptions } from '../query/chatModelQueries';
 import { ChatModelSelectionClosedError,
-  ChatModelSelectionUnconfirmedError, configurationMatchesChatModel, prepareChatModelRunV4 }
+  ChatModelSelectionUnconfirmedError, configurationMatchesChatModel, prepareChatModelRunV5 }
   from '../query/chatModelSelection';
 import { catalogModelUseReceiptProblem, chatCatalogModelUseMatches, chatCatalogModelUseNeedsReadback, prepareCatalogChatModelSelection,
   readDiscoveredCatalogModelOperation, ChatCatalogModelUseDiscoveredError,
@@ -35,6 +36,7 @@ import { canRequestResearchRecovery, recoverExistingResearchRun, researchRecover
 
 interface ResearchIntent {
   readonly body: string; readonly key: string; readonly question: string;
+  readonly method?: ResearchRunV5Request["method"];
   readonly scope: readonly { readonly id: string; readonly label: string }[];
   readonly wholeScope?: string;
   readonly phase: 'pending' | 'unknown' | 'admitted';
@@ -59,6 +61,18 @@ interface ChatCatalogTarget {
 const copy = {
   en: { statusUnavailable: 'The research status could not be read.', working: 'Researching your question.', runRead: 'Status updated.', runFailed: 'The research ended with an error.', runComplete: 'The engine finished. Review its result.', cancelled: 'Research cancelled.', historyLoaded: 'Recent research loaded.', scope: 'Choose sources', scopeStale: 'Review your selected sources again before asking a new question.', scopeEmpty: 'Choose the sources for your next question first.', noProject: 'Open a project to choose its sources.', projects: 'Open projects', blocked: 'Research settings need a check before you ask.', check: 'Check research readiness', connections: 'Review connections', history: 'Recent research', readHistory: 'Refresh recent research', openRun: 'Read this run', report: 'Open saved report', unknown: 'The launch outcome is unknown. The original question and request identity are preserved.', recover: 'Reconcile this question', same: 'If the research started, it opens; if not, the same request is sent again without a duplicate.', next: 'Ask another question', stopFailed: 'Stop and close failed run', checkStop: 'Check stop status', stopUnknown: 'The stop is not confirmed. The original run is still held.', input: 'The question could not be prepared. Review its text and source selection.', unavailable: 'Recent research could not be read. Refresh it.', noRuns: 'Your questions and saved reports will appear here.', incomplete: 'No draft report yet.', modelConfigurationReading: 'Checking model availability…', modelConfigurationFailed: 'Model availability could not be checked.', modelConfigurationsPartial: 'Some model options may be missing.', modelRunUnavailable: 'No model is currently available for this chat.', providerListIncomplete: 'Some provider connections could not be checked.' },
   ru: { statusUnavailable: 'Не удалось узнать статус исследования.', working: 'Исследую ваш вопрос.', runRead: 'Статус обновлён.', runFailed: 'Исследование завершилось с ошибкой.', runComplete: 'Исследование завершено. Посмотрите результат.', cancelled: 'Исследование отменено.', historyLoaded: 'Последние исследования прочитаны.', scope: 'Выбрать источники', scopeStale: 'Перед новым вопросом проверьте выбранные источники ещё раз.', scopeEmpty: 'Сначала выберите источники для следующего вопроса.', noProject: 'Откройте проект, чтобы выбрать его источники.', projects: 'Открыть проекты', blocked: 'Перед вопросом нужно проверить настройки исследования.', check: 'Проверить готовность исследования', connections: 'Проверить подключения', history: 'Последние исследования', readHistory: 'Обновить список', openRun: 'Открыть исследование', report: 'Открыть отчёт', unknown: 'Не удалось подтвердить запуск исследования. Вопрос сохранён.', recover: 'Проверить этот вопрос', same: 'Если исследование началось; если нет — тот же запрос уйдёт ещё раз, без дубликата.', next: 'Задать другой вопрос', stopFailed: 'Остановить и закрыть запуск', checkStop: 'Проверить остановку', stopUnknown: 'Остановка не подтверждена. Исходный запуск остаётся закреплённым.', input: 'Не удалось подготовить вопрос. Проверьте текст и выбранные источники.', unavailable: 'Не удалось загрузить последние исследования. Обновите список.', noRuns: 'Здесь появятся ваши вопросы и сохранённые отчёты.', incomplete: 'Черновика отчёта пока нет.', modelConfigurationReading: 'Проверяем доступность моделей…', modelConfigurationFailed: 'Не удалось проверить доступность моделей.', modelConfigurationsPartial: 'Некоторые варианты моделей могут отсутствовать.', modelRunUnavailable: 'Для этого чата сейчас нет доступных моделей.', providerListIncomplete: 'Не удалось проверить некоторые подключения провайдеров.' },
+} as const;
+const savedCatalogStatusCopy = {
+  en: { detail: 'An earlier model availability check is unresolved. Read its saved status; this does not start another check.', button: 'Check saved status' },
+  ru: { detail: 'Предыдущая проверка модели не завершена. Прочитайте её сохранённый статус — новая проверка не запускается.', button: 'Проверить сохранённый статус' },
+} as const;
+const runMethodCopy = {
+  en: { legend: 'Research method', lookup: 'Answer from sources', review: 'Evidence review',
+    unavailable: 'Evidence review is available when this model setup is ready.',
+    managedSearchUnavailable: 'Evidence review is unavailable for this model setup because managed search is not ready.' },
+  ru: { legend: 'Метод исследования', lookup: 'Ответ по источникам', review: 'Исследование',
+    unavailable: 'Исследование доступно, когда эта конфигурация модели готова.',
+    managedSearchUnavailable: 'Исследование недоступно для этой конфигурации модели: управляемый поиск не готов.' },
 } as const;
 
 /** One explicit intent owns admission. Polling, navigation and history never allocate a run. */
@@ -165,6 +179,7 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
   const [busy, setBusy] = useState(false), [inputError, setInputError] = useState(false);
   const [selectedChatModelKey, setSelectedChatModelKey] = useState("");
   const [selectedChatModelIdentity, setSelectedChatModelIdentity] = useState<Pick<ChatModelOption["model"], "provider_id" | "model_id">>();
+  const [runMethod, setRunMethod] = useState<ResearchRunV5Request["method"]>("lookup");
   const [modelQualificationState, setModelQualificationState] = useState<ChatModelQualificationState>("idle");
   const [modelSelectionUnknown, setModelSelectionUnknown] = useState(false);
   const [heldModelChoice, setHeldModelChoice] = useState<ChatModelOption>();
@@ -174,6 +189,46 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
   const nextQuestionDraft = heldDraft !== undefined && heldDraft.context === context && privacy.isCurrent(context)
     ? heldDraft.text : '';
   const selectedChatModel = chatModelOptions.find(choice => choice.key === selectedChatModelKey);
+  const selectedProjectPin = projectModels.data?.selected;
+  const reviewReadinessPin: ResearchConfigurationMethodReadinessPin | undefined = projectId !== undefined &&
+    projectModels.isSuccess && !projectModels.isFetching && selectedProjectPin?.qualification_state === 'qualified' &&
+    selectedChatModel?.candidate?.configuration_ref === selectedProjectPin.configuration_ref &&
+    selectedChatModel.candidate.configuration_sha256 === selectedProjectPin.configuration_sha256 &&
+    projectModels.data.selection_revision !== null && projectModels.data.selection_revision > 0
+      ? { configuration_project_id: projectId, configuration_ref: selectedProjectPin.configuration_ref,
+        configuration_sha256: selectedProjectPin.configuration_sha256, selection_revision: projectModels.data.selection_revision }
+      : undefined;
+  const methodReadinessQuery = useQuery({
+    queryKey: [...protectedQueryKey(context, 'research-method-readiness'), projectId ?? null,
+      reviewReadinessPin?.configuration_ref ?? null, reviewReadinessPin?.configuration_sha256 ?? null,
+      reviewReadinessPin?.selection_revision ?? null],
+    enabled: reviewReadinessPin !== undefined && privacy.isCurrent(context) && isProjectCurrent(),
+    retry: false, staleTime: 0, gcTime: 0, refetchOnMount: 'always', refetchOnReconnect: true, refetchOnWindowFocus: true,
+    queryFn: ({ signal }) => runProtectedRead(privacy, context, signal, async readSignal => {
+      if (projectId === undefined || reviewReadinessPin === undefined || !isProjectCurrent()) {
+        throw new ChatModelSelectionClosedError();
+      }
+      const result = await apis.connections.configuration.readResearchMethodReadiness(context.deploymentGeneration,
+        projectId, reviewReadinessPin, { signal: readSignal });
+      if (!privacy.isCurrent(context) || !isProjectCurrent() || result.project_id !== projectId ||
+          result.deployment_generation !== context.deploymentGeneration ||
+          result.selected_pin.configuration_ref !== reviewReadinessPin.configuration_ref ||
+          result.selected_pin.configuration_sha256 !== reviewReadinessPin.configuration_sha256 ||
+          result.selected_pin.selection_revision !== reviewReadinessPin.selection_revision) {
+        throw new ChatModelSelectionClosedError();
+      }
+      return result;
+    }),
+  });
+  const evidenceReviewReady = reviewReadinessPin !== undefined && methodReadinessQuery.isSuccess &&
+    !methodReadinessQuery.isFetching && methodReadinessQuery.data?.evidence_review_ready === true &&
+    methodReadinessQuery.data.project_id === projectId &&
+    methodReadinessQuery.data.deployment_generation === context.deploymentGeneration &&
+    methodReadinessQuery.data.selected_pin.configuration_project_id === reviewReadinessPin.configuration_project_id &&
+    methodReadinessQuery.data.selected_pin.configuration_ref === reviewReadinessPin.configuration_ref &&
+    methodReadinessQuery.data.selected_pin.configuration_sha256 === reviewReadinessPin.configuration_sha256 &&
+    methodReadinessQuery.data.selected_pin.selection_revision === reviewReadinessPin.selection_revision &&
+    privacy.isCurrent(context) && isProjectCurrent();
   const localCatalogModelUseHeld = chatCatalogModelUseNeedsReadback(saved?.catalogModelUse);
   const discoveredCatalogOperation = saved?.discoveredCatalogModelUse ?? currentCatalogOperation.data ?? undefined;
   const catalogOperationId = localCatalogModelUseHeld ? saved?.catalogModelUse?.request.operation_id : discoveredCatalogOperation?.operation_id;
@@ -223,7 +278,7 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
   useEffect(() => {
     explicitChatSelection.current = false;
     preparingModel.current = false;
-    setSelectedChatModelKey(""); setModelQualificationState("idle"); setModelSelectionUnknown(false);
+    setSelectedChatModelKey(""); setRunMethod("lookup"); setModelQualificationState("idle"); setModelSelectionUnknown(false);
     setSelectedChatModelIdentity(undefined); setHeldModelChoice(undefined);
   }, [projectId, context]);
   useEffect(() => {
@@ -397,8 +452,9 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
       projectModels.isError || projectModels.isFetching || !projectModels.data ||
       client.getQueryData(projectModelQuery.queryKey) !== projectModels.data || !selectedChatModel?.canRun ||
       modelSelectionLocked || catalogModelProblem !== undefined || selectedModelQueriesPending || selectedModelQueriesFailed) return;
+    if (runMethod === "evidence_review" && !evidenceReviewReady) return;
     const selectedChoice = selectedChatModel;
-    const scopeExpression: ResearchRunV4Request["scope_expression"] = wholeProject
+    const scopeExpression: ResearchRunV5Request["scope_expression"] = wholeProject
       ? { kind: "PROJECT", project_id: projectId }
       : { kind: "INTERSECT", left: { kind: "PROJECT", project_id: projectId },
         right: { kind: "SELECTED_SOURCES", source_ids: scope.map(source => source.id) } };
@@ -412,21 +468,41 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
       try {
         const request = { query: question, scope_expression: scopeExpression, output_language: locale };
         let body: string;
+        let selection: ResearchRunV5Request["selection"];
         if (selectedChoice.candidate?.qualification_state === 'qualified') {
-          const prepared = await prepareChatModelRunV4({ models: apis.connections.models, runs: apis.research.runs,
+          const prepared = await prepareChatModelRunV5({ models: apis.connections.models, runs: apis.research.runs,
             projectId, generation: context.deploymentGeneration, candidate: selectedChoice.candidate,
-            modelChoice: selectedChoice.model, request, signal, isCurrent: isSelectionCurrent,
+            modelChoice: selectedChoice.model, request, method: runMethod, signal, isCurrent: isSelectionCurrent,
             mintSelectionOperation: () => crypto.randomUUID(),
           });
           await confirmModelSelection(prepared.selection, selectedChoice.model, signal, isSelectionCurrent);
-          body = prepared.body;
+          selection = prepared.selection; body = prepared.body;
         } else {
-          const selection = await prepareCatalogChoice(selectedChoice, signal, isSelectionCurrent);
+          selection = await prepareCatalogChoice(selectedChoice, signal, isSelectionCurrent);
           if (!isSelectionCurrent()) throw new ChatModelSelectionClosedError();
-          body = apis.research.runs.researchRunBodyV4({ ...request, selection });
+          body = apis.research.runs.researchRunBodyV5({ ...request, method: runMethod, selection });
+        }
+        if (runMethod === "evidence_review") {
+          if (!("configuration_project_id" in selection)) throw new ChatModelSelectionUnconfirmedError();
+          const readiness = await runProtectedRead(privacy, context, signal, async readSignal => {
+            if (!isSelectionCurrent()) throw new ChatModelSelectionClosedError();
+            const result = await apis.connections.configuration.readResearchMethodReadiness(context.deploymentGeneration,
+              projectId, selection, { signal: readSignal });
+            if (!isSelectionCurrent()) throw new ChatModelSelectionClosedError();
+            return result;
+          });
+          if (!readiness.evidence_review_ready || readiness.project_id !== projectId ||
+              readiness.deployment_generation !== context.deploymentGeneration ||
+              readiness.selected_pin.configuration_project_id !== selection.configuration_project_id ||
+              readiness.selected_pin.configuration_ref !== selection.configuration_ref ||
+              readiness.selected_pin.configuration_sha256 !== selection.configuration_sha256 ||
+              readiness.selected_pin.selection_revision !== selection.selection_revision) {
+            throw new ChatModelSelectionUnconfirmedError();
+          }
         }
         if (!isSelectionCurrent()) throw new ChatModelSelectionClosedError();
         const intent: ResearchIntent = Object.freeze({ body, key: apis.sources.mintIntent(), question,
+          method: runMethod,
           scope: Object.freeze(scope.map(source => Object.freeze({ id: source.id, label: source.label }))), phase: 'pending',
           ...(scope.length === 0 && wholeScope !== undefined ? { wholeScope } : {}) });
         write(old => ({ ...old, intent }));
@@ -736,6 +812,10 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     {projectId !== undefined && !modelCatalogLoading && !modelCatalogFailed && chatModelOptions.every(choice => !choice.canRun) &&
       <Status>{text.modelRunUnavailable}</Status>}
     <div ref={composer} className="er-live-research">
+      {catalogModelUseHeld && catalogOperationId !== undefined && <div className="er-live-callout">
+        <p>{savedCatalogStatusCopy[locale].detail}</p>
+        <Button variant="tonal" disabled={busy} onClick={() => checkModelSelection()}>{savedCatalogStatusCopy[locale].button}</Button>
+      </div>}
       {projectId !== undefined && <><ChatModelPicker locale={locale} choices={chatModelOptions} selected={selectedChatModelIdentity}
         qualificationState={currentCatalogOperation.isFetching || catalogOperationReadback.isFetching ? 'qualifying'
           : modelSelectionLocked && !busy ? 'unknown' : modelQualificationState} search={modelSearch} page={modelCatalogPage}
@@ -745,7 +825,7 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
         checkDisabled={busy || projectId === undefined || !privacy.isCurrent(context) || !isProjectCurrent()}
         onSearchChange={value => { setModelSearch(value); setModelCatalogPage(1); }}
         onPageChange={setModelCatalogPage}
-        onCheck={() => checkModelSelection()}
+        {...(catalogModelUseHeld ? {} : { onCheck: () => checkModelSelection() })}
         onSelect={chooseChatModel} />
       {failedCatalogTargets.length > 0 && <div className="er-live-callout">
         <p>{locale === 'ru' ? 'Не удалось прочитать списки моделей: ' : 'Model lists unavailable: '}{failedCatalogTargets.map(target => target.label).join(', ')}.</p>
@@ -766,6 +846,18 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
           {locale === 'ru' ? 'Проверить доступность ещё раз' : 'Check availability again'}</Button>
       </div>}
       </>}
+      {projectId !== undefined && <fieldset className="er-live-method-selector" disabled={busy || modelSelectionLocked ||
+        saved?.intent !== undefined || saved?.observedLaunch !== undefined || !privacy.isCurrent(context) || !isProjectCurrent()}>
+        <legend>{runMethodCopy[locale].legend}</legend>
+        <label><input type="radio" name="research-method" value="lookup" checked={(saved?.intent?.method ?? runMethod) === 'lookup'}
+          onChange={() => setRunMethod('lookup')} /> {runMethodCopy[locale].lookup}</label>
+        <label><input type="radio" name="research-method" value="evidence_review" checked={(saved?.intent?.method ?? runMethod) === 'evidence_review'}
+          disabled={!evidenceReviewReady} onChange={() => { if (evidenceReviewReady) setRunMethod('evidence_review'); }} /> {runMethodCopy[locale].review}</label>
+        {!evidenceReviewReady && <Status>{methodReadinessQuery.isFetching
+          ? locale === 'ru' ? 'Проверяем готовность проверки доказательств…' : 'Checking evidence-review readiness…'
+          : methodReadinessQuery.data?.evidence_review_unavailable_reason === 'V9_MANAGED_SEARCH_UNAVAILABLE'
+            ? runMethodCopy[locale].managedSearchUnavailable : runMethodCopy[locale].unavailable}</Status>}
+      </fieldset>}
       <ResearchRunFeature key={saved?.intent?.key ?? 'next-question'} locale={locale} state={state}
       {...(cover ? { cover } : {})}
       scope={saved?.intent?.scope ?? scope} busy={researchBusy}
@@ -777,7 +869,8 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
       canSubmit={!busy && !saved?.intent && !saved?.observedLaunch && projectId !== undefined && (scope.length === 0 || scopeCurrent) &&
         !configuration.isError && !configuration.isFetching && configuration.data !== undefined && configuration.data.run_readiness !== 'blocked' &&
         !modelSelectionLocked && catalogModelProblem === undefined && !selectedModelQueriesPending && !selectedModelQueriesFailed && selectedChatModel?.canRun === true &&
-          projectModels.isSuccess && !projectModels.isFetching && projectModels.data !== undefined}
+          projectModels.isSuccess && !projectModels.isFetching && projectModels.data !== undefined &&
+          (runMethod !== 'evidence_review' || evidenceReviewReady)}
       {...(saved?.intent ? { question: saved.intent.question } : {})}
       {...(progress ? { progress, ...(displayedFailure ? { firstCause: displayedFailure } : {}) } : {})}
       onAsk={ask} {...(launch ? { onReadStatus: () => { if (recoveryHeld) recoverResearch('readback'); else void status.refetch(); } } : {})}
@@ -794,7 +887,15 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
         {historyTerminal && <Button variant="text" onClick={dismissHistory}>{text.next}</Button>}
         </div> : undefined}
       conversation={<>
-        {projectId !== undefined && !researchBusy && <ProjectOverview locale={locale} onSuggest={question => {
+        {projectId !== undefined && !researchBusy && <ProjectOverview locale={locale} guide={{
+          api: apis.research.guide, privacy, context, projectId,
+          hasSourceEvidence: wholeScope !== undefined && isProjectCurrent(), isProjectCurrent,
+          onOpenReport: artifact => {
+            if (mounted.current && privacy.isCurrent(context) && isProjectCurrent() && !running.current) {
+              write(old => ({ ...old, artifact }));
+            }
+          },
+        }} onSuggest={question => {
           if (mounted.current && privacy.isCurrent(context) && isProjectCurrent()) setHeldDraft({ context, text: question });
         }} />}
         {saved?.intent?.phase === 'unknown' && <div className="er-live-callout er-live-callout--attention"><Status>{text.unknown}</Status>

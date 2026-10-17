@@ -21,6 +21,7 @@ const RUN_PATH = "/api/v1/research/run";
 /** Strictly additive owner transport version tag; v1 and v2 never carry a selector. */
 export const RESEARCH_RUN_REQUEST_V3 = "eliotr.research-run-request.v3" as const;
 export const RESEARCH_RUN_REQUEST_V4 = "eliotr.research-run-request.v4" as const;
+export const RESEARCH_RUN_REQUEST_V5 = "eliotr.research-run-request.v5" as const;
 
 /**
  * Owner v3 transport selection. The named owned configuration project is caller-supplied
@@ -68,6 +69,13 @@ export interface ResearchRunV4Request {
   readonly selection: ResearchRunConfigurationPinV4;
   readonly output_language?: "en" | "ru";
   readonly max_results?: number;
+}
+
+/** V5 selects an installed method while retaining the existing immutable model pin. */
+export interface ResearchRunV5Request extends Omit<ResearchRunV4Request, "selection"> {
+  readonly method: "lookup" | "evidence_review";
+  readonly selection: ResearchRunConfigurationPinV4;
+  readonly evidence_grade?: "E1" | "E2";
 }
 
 /** Counts every selected source across a whole scope tree, wherever the caller placed them. */
@@ -131,6 +139,8 @@ export interface ResearchRunsApi {
   researchRunBodyV3(request: ResearchRunV3Request): string;
   /** Owner v4 body pins the exact selected configuration for this chat run. */
   researchRunBodyV4(request: ResearchRunV4Request): string;
+  /** Owner v5 binds an installed plain method to the existing V4 model pin. */
+  researchRunBodyV5(request: ResearchRunV5Request): string;
   decodeResearchRunLaunch(raw: unknown, expectedDeploymentGeneration?: string): ResearchRunLaunchView;
   decodeResearchRunStatus: ResearchRunStatusDecoder;
   startResearchRun(body: string, idempotencyKey: string, expectedDeploymentGeneration?: string, signal?: AbortSignal): Promise<ResearchRunLaunchView>;
@@ -360,6 +370,40 @@ export function createResearchRunsApi(ports: ResearchRunsApiPorts): ResearchRuns
     return body;
   };
 
+  const researchRunBodyV5 = (request: ResearchRunV5Request): string => {
+    if (typeof request !== "object" || request === null) invalid("v5 request is invalid");
+    const allowed = ["query", "scope_expression", "method", "selection", "evidence_grade", "max_results", "output_language"];
+    const rawRequest: Record<string, unknown> = { ...request };
+    if (!Object.hasOwn(rawRequest, "query") || !Object.hasOwn(rawRequest, "scope_expression") ||
+        !Object.hasOwn(rawRequest, "method") || !Object.hasOwn(rawRequest, "selection") ||
+        Object.keys(rawRequest).some((key) => !allowed.includes(key))) invalid("v5 request is invalid");
+    if (request.method !== "lookup" && request.method !== "evidence_review") invalid("method is invalid");
+    if (request.method === "lookup" && request.evidence_grade !== undefined) invalid("lookup does not accept an evidence grade");
+    if (request.method === "evidence_review" && request.evidence_grade !== undefined &&
+        request.evidence_grade !== "E1" && request.evidence_grade !== "E2") invalid("evidence_grade is invalid");
+    const selection = parseSelectionV4(request.selection);
+    if ("kind" in selection) invalid("v5 requires a pinned project model configuration");
+    if (!isResearchQuestionText(request.query)) {
+      throw errors({ code: "RESEARCH_INPUT_INVALID", status: 400, message: "query is invalid", traceId: null, retryable: false });
+    }
+    const maxResults = request.max_results === undefined ? MAX_RESULTS : request.max_results;
+    if (!Number.isSafeInteger(maxResults) || maxResults < 1 || maxResults > MAX_RESULTS) invalid("max_results is invalid");
+    const parsedScope = ScopeExpressionSchema.safeParse(request.scope_expression);
+    if (!parsedScope.success || countSelectedSources(parsedScope.data) > OWNER_RESEARCH_MAX_SELECTED_SOURCES) invalid("source scope is invalid");
+    const outputLanguage = request.output_language;
+    if (outputLanguage !== undefined && outputLanguage !== "en" && outputLanguage !== "ru") invalid("output_language is invalid");
+    const body = JSON.stringify({ query: request.query, product: "RESEARCH", scope_expression: parsedScope.data,
+      literals: [], evidence_grade: request.method === "evidence_review" ? request.evidence_grade ?? "E1" : "E0",
+      budget_ref: "research-budget-v1", max_results: maxResults, request_version: RESEARCH_RUN_REQUEST_V5,
+      method: request.method, selection,
+      ...(outputLanguage === undefined ? {} : { output_language: outputLanguage }) });
+    if (new TextEncoder().encode(body).byteLength > RESEARCH_REQUEST_MAX_BYTES) {
+      throw errors({ code: "RESEARCH_INPUT_LIMIT", status: 413,
+        message: `Research HTTP request exceeds ${RESEARCH_REQUEST_MAX_BYTES} UTF-8 bytes`, traceId: null, retryable: false });
+    }
+    return body;
+  };
+
   const control = (action: "cancel" | "recover", workflowInstanceId: string, expectedDeploymentGeneration?: string, signal?: AbortSignal) => {
     const id = checkWorkflowId(workflowInstanceId);
     return fenced(() => request(`${RUN_PATH}/${encodeURIComponent(id)}/${action}`, {
@@ -374,6 +418,7 @@ export function createResearchRunsApi(ports: ResearchRunsApiPorts): ResearchRuns
     researchRunBody,
     researchRunBodyV3,
     researchRunBodyV4,
+    researchRunBodyV5,
     decodeResearchRunLaunch,
     decodeResearchRunStatus,
     cancelResearchRun: (id, generation, signal) => control("cancel", id, generation, signal),

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ResearchModelConfigurationRevision, ResearchProjectModelConfiguration } from "@eliotr/owner-api-client";
 import { ChatModelQualificationRequiredError, ChatModelSelectionUnconfirmedError, prepareBuiltinChatModelRunV4,
-  prepareChatModelRunV4 } from "./chatModelSelection";
+  prepareChatModelRunV5 } from "./chatModelSelection";
 import { readWorkersAiCatalogFixture } from "./workersAiCatalog.test-fixture";
 
 const projectId = "project-chat";
@@ -29,7 +29,7 @@ const configuration = (selectionRevision: number, selected: ResearchModelConfigu
 const request = { query: "Compare the selected sources", scope_expression: { kind: "PROJECT" as const, project_id: projectId },
   output_language: "ru" as const, max_results: 8 };
 
-describe("chat model selection and v4 run pin", () => {
+describe("chat model selection and v5 method pin", () => {
   it("builds a builtin v4 selection from a canonical Workers AI catalog model", async () => {
     const { catalog } = await readWorkersAiCatalogFixture();
     const choice = catalog.models[0];
@@ -63,16 +63,16 @@ describe("chat model selection and v4 run pin", () => {
   it("pins the exact already-selected qualified configuration without mutating it", async () => {
     const models = { readResearchProjectModelConfiguration: vi.fn().mockResolvedValue(configuration(4, candidate)),
       selectResearchProjectModelConfiguration: vi.fn() };
-    const runs = { researchRunBodyV4: vi.fn().mockReturnValue("exact-v4-body") };
-    const result = await prepareChatModelRunV4({ models: models as never, runs: runs as never, projectId,
-      generation: "deployment-1", candidate, modelChoice, request, signal: new AbortController().signal,
+    const runs = { researchRunBodyV5: vi.fn().mockReturnValue("exact-v5-body") };
+    const result = await prepareChatModelRunV5({ models: models as never, runs: runs as never, projectId,
+      generation: "deployment-1", candidate, modelChoice, request, method: "evidence_review", signal: new AbortController().signal,
       isCurrent: () => true, mintSelectionOperation: () => "unused-selection-op" });
-    expect(result).toEqual({ body: "exact-v4-body", selection: {
+    expect(result).toEqual({ body: "exact-v5-body", selection: {
       configuration_project_id: projectId, configuration_ref: candidate.configuration_ref,
       configuration_sha256: sha, selection_revision: 4,
     } });
     expect(models.selectResearchProjectModelConfiguration).not.toHaveBeenCalled();
-    expect(runs.researchRunBodyV4).toHaveBeenCalledExactlyOnceWith({ ...request, selection: result.selection });
+    expect(runs.researchRunBodyV5).toHaveBeenCalledExactlyOnceWith({ ...request, method: "evidence_review", selection: result.selection });
   });
 
   it("selects one qualified candidate, reads it back, then builds v4 from the receipt-matched revision", async () => {
@@ -82,27 +82,27 @@ describe("chat model selection and v4 run pin", () => {
         protocol: "eliotr.research-project-model-configuration.v1", project_id: projectId,
         selection_revision: 4, selected: candidate,
       }) };
-    const runs = { researchRunBodyV4: vi.fn().mockReturnValue("exact-v4-body") };
-    const result = await prepareChatModelRunV4({ models: models as never, runs: runs as never, projectId,
+    const runs = { researchRunBodyV5: vi.fn().mockReturnValue("exact-v5-body") };
+    const result = await prepareChatModelRunV5({ models: models as never, runs: runs as never, projectId,
       generation: "deployment-1", candidate, modelChoice, request, signal: new AbortController().signal,
       isCurrent: () => true, mintSelectionOperation: () => "selection-operation-1" });
     expect(models.selectResearchProjectModelConfiguration).toHaveBeenCalledExactlyOnceWith(
       projectId, "deployment-1", 3, candidate.configuration_ref, "selection-operation-1", expect.any(AbortSignal));
     expect(result.selection.selection_revision).toBe(4);
-    expect(runs.researchRunBodyV4).toHaveBeenCalledExactlyOnceWith({ ...request, selection: result.selection });
+    expect(runs.researchRunBodyV5).toHaveBeenCalledExactlyOnceWith({ ...request, method: "lookup", selection: result.selection });
   });
 
   it("does not build or submit a run when the selected configuration readback differs", async () => {
     const models = { readResearchProjectModelConfiguration: vi.fn()
       .mockResolvedValueOnce(configuration(3, another)).mockResolvedValueOnce(configuration(4, another)),
       selectResearchProjectModelConfiguration: vi.fn().mockRejectedValue(new Error("selection acknowledgement unknown")) };
-    const runs = { researchRunBodyV4: vi.fn() };
-    await expect(prepareChatModelRunV4({ models: models as never, runs: runs as never, projectId,
+    const runs = { researchRunBodyV5: vi.fn() };
+    await expect(prepareChatModelRunV5({ models: models as never, runs: runs as never, projectId,
       generation: "deployment-1", candidate, modelChoice, request, signal: new AbortController().signal,
       isCurrent: () => true, mintSelectionOperation: () => "selection-operation-1" }))
       .rejects.toBeInstanceOf(ChatModelSelectionUnconfirmedError);
     expect(models.selectResearchProjectModelConfiguration).toHaveBeenCalledTimes(1);
-    expect(runs.researchRunBodyV4).not.toHaveBeenCalled();
+    expect(runs.researchRunBodyV5).not.toHaveBeenCalled();
   });
 
   it("qualifies only the selected unqualified configuration through model-use, then pins its exact readback", async () => {
@@ -119,8 +119,8 @@ describe("chat model selection and v4 run pin", () => {
     const modelUse = { startResearchProviderKeyModelUse: vi.fn().mockResolvedValue({
       state: "selected", selected_configuration_ref: qualifiedAfterUse.configuration_ref, selection_revision: 5,
     }) };
-    const runs = { researchRunBodyV4: vi.fn().mockReturnValue("exact-v4-body") };
-    const result = await prepareChatModelRunV4({ models: models as never, runs: runs as never, projectId,
+    const runs = { researchRunBodyV5: vi.fn().mockReturnValue("exact-v5-body") };
+    const result = await prepareChatModelRunV5({ models: models as never, runs: runs as never, projectId,
       generation: "deployment-1", candidate: unqualified, modelChoice, request, signal: new AbortController().signal,
       isCurrent: () => true, mintSelectionOperation: () => "selection-operation-1",
       modelUse: { api: modelUse as never, keyOperationId: "provider-key-operation-1",
@@ -130,7 +130,7 @@ describe("chat model selection and v4 run pin", () => {
     expect(result.selection).toEqual({ configuration_project_id: projectId,
       configuration_ref: qualifiedAfterUse.configuration_ref, configuration_sha256: qualifiedAfterUse.configuration_sha256,
       selection_revision: 5 });
-    expect(runs.researchRunBodyV4).toHaveBeenCalledExactlyOnceWith({ ...request, selection: result.selection });
+    expect(runs.researchRunBodyV5).toHaveBeenCalledExactlyOnceWith({ ...request, method: "lookup", selection: result.selection });
   });
 
   it("reconciles a lost model-use acknowledgement by reading the same operation without reposting", async () => {
@@ -151,8 +151,8 @@ describe("chat model selection and v4 run pin", () => {
       updated_at: "2026-10-16T12:01:00.000Z" };
     const modelUse = { startResearchProviderKeyModelUse: vi.fn().mockRejectedValue(new Error("lost acknowledgement")),
       readResearchProviderKeyModelUse: vi.fn().mockResolvedValue(operation) };
-    const runs = { researchRunBodyV4: vi.fn().mockReturnValue("exact-v4-body") };
-    const result = await prepareChatModelRunV4({ models: models as never, runs: runs as never, projectId,
+    const runs = { researchRunBodyV5: vi.fn().mockReturnValue("exact-v5-body") };
+    const result = await prepareChatModelRunV5({ models: models as never, runs: runs as never, projectId,
       generation: "deployment-1", candidate: unqualified, modelChoice, request, signal: new AbortController().signal,
       isCurrent: () => true, mintSelectionOperation: () => "selection-operation-1",
       modelUse: { api: modelUse as never, keyOperationId: "provider-key-operation-1",
@@ -161,12 +161,13 @@ describe("chat model selection and v4 run pin", () => {
     expect(modelUse.readResearchProviderKeyModelUse).toHaveBeenCalledExactlyOnceWith(projectId, "deployment-1",
       "provider-key-operation-1", "model-use-operation-1", expect.any(AbortSignal));
     expect(result.selection.selection_revision).toBe(5);
+    expect(runs.researchRunBodyV5).toHaveBeenCalledExactlyOnceWith({ ...request, method: "lookup", selection: result.selection });
   });
 
   it("refuses an unqualified candidate before any selection mutation", async () => {
     const models = { readResearchProjectModelConfiguration: vi.fn(), selectResearchProjectModelConfiguration: vi.fn() };
-    const runs = { researchRunBodyV4: vi.fn() };
-    await expect(prepareChatModelRunV4({ models: models as never, runs: runs as never, projectId,
+    const runs = { researchRunBodyV5: vi.fn() };
+    await expect(prepareChatModelRunV5({ models: models as never, runs: runs as never, projectId,
       generation: "deployment-1", candidate: { ...candidate, qualification_state: "qualification_required" }, modelChoice, request,
       signal: new AbortController().signal, isCurrent: () => true, mintSelectionOperation: () => "selection-operation-1" }))
       .rejects.toBeInstanceOf(ChatModelQualificationRequiredError);

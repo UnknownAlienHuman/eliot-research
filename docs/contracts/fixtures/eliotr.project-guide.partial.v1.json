@@ -1,0 +1,78 @@
+{
+  "protocol": "eliotr.project-guide.v1",
+  "project_id": "project-guide-example",
+  "language": "en",
+  "state": "PARTIAL",
+  "identity_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "corpus_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "source_count": 10,
+  "workflow_instance_id": "guide-example-run",
+  "artifact_ref": { "id": "guide-example-report", "revision": 1 },
+  "reason_code": "INCOMPLETE_COVERAGE",
+  "guide": {
+    "summary": [{
+      "claim_ref": { "id": "summary-claim", "revision": 1 },
+      "section_ref": { "id": "guide-section", "revision": 1 },
+      "text": "The sampled sources describe temperature measurements and calibration methods.",
+      "label": "SOURCE_SUPPORTED",
+      "support_handle_refs": [{ "id": "evidence-1", "revision": 1 }],
+      "counterevidence_handle_refs": []
+    }],
+    "questions": [{
+      "claim_ref": { "id": "question-1", "revision": 1 },
+      "section_ref": { "id": "guide-section", "revision": 1 },
+      "text": "Which calibration method does the first sampled study use?",
+      "label": "EDITORIAL_RECOMMENDATION",
+      "support_handle_refs": [{ "id": "evidence-1", "revision": 1 }],
+      "counterevidence_handle_refs": []
+    }, {
+      "claim_ref": { "id": "question-2", "revision": 1 },
+      "section_ref": { "id": "guide-section", "revision": 1 },
+      "text": "How does the second sampled study measure temperature?",
+      "label": "EDITORIAL_RECOMMENDATION",
+      "support_handle_refs": [{ "id": "evidence-2", "revision": 1 }],
+      "counterevidence_handle_refs": []
+    }, {
+      "claim_ref": { "id": "question-3", "revision": 1 },
+      "section_ref": { "id": "guide-section", "revision": 1 },
+      "text": "Which measurement limitations does the third sampled study report?",
+      "label": "EDITORIAL_RECOMMENDATION",
+      "support_handle_refs": [{ "id": "evidence-3", "revision": 1 }],
+      "counterevidence_handle_refs": []
+    }],
+    "coverage": {
+      "receipt_ref": { "id": "guide-coverage", "revision": 1 },
+      "requested_scope_expression": { "kind": "PROJECT", "project_id": "project-guide-example" },
+      "frozen_scope_snapshot_ref": { "id": "guide-scope", "revision": 1 },
+      "coverage_denominator_ref": { "id": "guide-denominator", "revision": 1 },
+      "denominator_kind": "sampled_with_method",
+      "eligible_source_refs": ["revision-1", "revision-2", "revision-3", "revision-4", "revision-5", "revision-6", "revision-7", "revision-8", "revision-9", "revision-10"],
+      "represented_source_refs": ["revision-1", "revision-2", "revision-3"],
+      "cited_source_refs": ["revision-1", "revision-2", "revision-3"],
+      "omitted_sources": [
+        { "source_ref": "revision-4", "reason": "BUDGET_LIMIT" },
+        { "source_ref": "revision-5", "reason": "BUDGET_LIMIT" },
+        { "source_ref": "revision-6", "reason": "BUDGET_LIMIT" },
+        { "source_ref": "revision-7", "reason": "BUDGET_LIMIT" },
+        { "source_ref": "revision-8", "reason": "BUDGET_LIMIT" },
+        { "source_ref": "revision-9", "reason": "BUDGET_LIMIT" },
+        { "source_ref": "revision-10", "reason": "BUDGET_LIMIT" }
+      ],
+      "source_families_and_independence_profile_ref": "guide-source-families",
+      "lanes_used": ["semantic"],
+      "stale_or_skipped_lanes": [],
+      "failed_acquisition_refs": [],
+      "provider_degradation_refs": [],
+      "parser_degradation_refs": [],
+      "redacted_dependency_refs": [],
+      "counter_search_status": "NOT_REQUIRED",
+      "budget_limitations": ["Existing Research limits restricted the evidence basis to 3 of 10 eligible sources."],
+      "terminal_disposition": "INCOMPLETE_COVERAGE"
+    },
+    "source_basis": [
+      { "source_revision_ref": "revision-1", "title": "Example calibration study" },
+      { "source_revision_ref": "revision-2", "title": "Example temperature study" },
+      { "source_revision_ref": "revision-3", "title": "Example measurement limitations" }
+    ]
+  }
+}

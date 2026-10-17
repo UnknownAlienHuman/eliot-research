@@ -61,6 +61,7 @@ export const CANONICAL_EXPORTED_TABLES: ReadonlySet<string> = new Set([
   "artifact_draft_head",
   "artifact_draft_binding",
   "artifact_draft_object",
+  "project_guide_binding",
   "research_model_attempt",
   "research_reference_manifest",
   "research_model_fingerprint",

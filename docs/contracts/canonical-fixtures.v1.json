@@ -1,6 +1,22 @@
 {
   "fixtures": [
     {
+      "canonical_body_sha256": "4faaa2558673c237530555d1f0e561640b073025938b39e27e8e638a7b401549",
+      "fixture_id": "project-guide-request-v1",
+      "fixture_path": "docs/contracts/fixtures/eliotr.project-guide.request.v1.json",
+      "media_type": "application/json",
+      "protocol": "eliotr.project-guide.v1",
+      "schema_export": "ProjectGuideRequestSchema"
+    },
+    {
+      "canonical_body_sha256": "c875bec8035558d975755d785312c940e7a06736ca4ecbd1baf5938b994a7fa8",
+      "fixture_id": "project-guide-partial-v1",
+      "fixture_path": "docs/contracts/fixtures/eliotr.project-guide.partial.v1.json",
+      "media_type": "application/json",
+      "protocol": "eliotr.project-guide.v1",
+      "schema_export": "ProjectGuideViewSchema"
+    },
+    {
       "canonical_body_sha256": "ad51264c0ebd3ed9489e1b6796440e94373ad5a80699bba039974745cf2d4f5d",
       "fixture_id": "research-catalog-model-use-tilde-v1",
       "fixture_path": "docs/contracts/fixtures/eliotr.research.catalog-model-use-tilde.v1.json",
@@ -106,5 +122,5 @@
     }
   ],
   "protocol": "eliotr.contract-canonical-fixtures.v1",
-  "registry_generation": 14
+  "registry_generation": 15
 }

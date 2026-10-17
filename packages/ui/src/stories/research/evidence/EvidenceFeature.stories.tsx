@@ -219,7 +219,7 @@ export const ResolutionNeverBecomesSupport: Story = {
 
     // The rail states the separation explicitly rather than leaving it implied.
     await expect(
-      canvas.getByText('Readback confirmed. This still says nothing about whether the claim holds.'),
+      canvas.getByText('Quote matches the source.'),
     ).toBeVisible();
   },
 };

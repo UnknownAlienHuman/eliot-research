@@ -7,7 +7,7 @@ import {
 } from "@eliotr/cloudflare-research-runtime/research-stage-handlers.js";
 import type { ResearchBranchQueryBudgetSelection } from
   "@eliotr/cloudflare-research-configuration/research-run-configuration.js";
-import { selectResearchRunHandlerGeneration } from "./research-run-service.js";
+import { assertResearchEvidenceReviewStageBindings, selectResearchRunHandlerGeneration } from "./research-run-service.js";
 
 const selectedBudgetProfile: ResearchBranchQueryBudgetSelection = {
   protocol: "eliotr.research.branch-query-budget-selection.v1",
@@ -39,6 +39,22 @@ const newExplicitOwnerBranch = {
 };
 
 describe("new-run branch handler generation admission", () => {
+  it("permits the existing V7 evidence-review path without a V9 branch-budget profile when all four stage bindings exist", () => {
+    const fourStageBindings = ["ANALYZE_BRANCHES", "COUNTER_SEARCH", "SYNTHESIZE", "AUDIT_CLAIMS"]
+      .map((stage) => ({ stage }));
+    expect(() => assertResearchEvidenceReviewStageBindings(fourStageBindings)).not.toThrow();
+    expect(selectResearchRunHandlerGeneration(newExplicitOwnerBranch)).toBe(SERVER_OWNED_BRANCH_HANDLER_GENERATION);
+    expect(selectResearchRunHandlerGeneration({ ...newExplicitOwnerBranch,
+      prior_handler_generation: SERVER_OWNED_BRANCH_HANDLER_GENERATION }))
+      .toBe(SERVER_OWNED_BRANCH_HANDLER_GENERATION);
+  });
+
+  it("fails evidence-review preflight when one qualified stage binding is absent", () => {
+    expect(() => assertResearchEvidenceReviewStageBindings([
+      { stage: "ANALYZE_BRANCHES" }, { stage: "SYNTHESIZE" }, { stage: "AUDIT_CLAIMS" },
+    ])).toThrow(expect.objectContaining({ code: "RESEARCH_AGENT_NOT_CONFIGURED", status: 503 }));
+  });
+
   it("selects V9 only after capture supplied a complete owner profile and managed primary", () => {
     expect(selectResearchRunHandlerGeneration({
       ...newExplicitOwnerBranch,

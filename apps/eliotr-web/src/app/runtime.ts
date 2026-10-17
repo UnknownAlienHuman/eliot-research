@@ -8,7 +8,7 @@ import {
   createComputerAgentTaskApi,
   createMcpDiagnosticApi, createResearchModelConfigurationApi, createResearchConfigurationApi, createServiceModelSettingsApi,
   createNamespacesApi, createRawFileApi, createBundleInputApi, createBundleWireApi, createBundleImportApi,
-  createResearchRunWire, createResearchRunsApi, createRunHistoryApi, createResearchSessionProjectionAdapter,
+  createResearchRunWire, createResearchRunsApi, createRunHistoryApi, createResearchSessionProjectionAdapter, createProjectGuideApi,
   createManifestApi, createSectionApi, createCitationAuditHelpers, createCitationApi, createReauthorizationApi, createEvidenceBytesApi,
   createWikiReadApi, createWikiCreateApi, createWikiPublishApi, createArtifactApi,
   type TimerPort, type LegacyErrorDetails,
@@ -47,6 +47,7 @@ export interface BoundWorkspaceApis {
   readonly research: {
     readonly runs: ReturnType<typeof createResearchRunsApi>;
     readonly history: ReturnType<typeof createRunHistoryApi>;
+    readonly guide: ReturnType<typeof createProjectGuideApi>;
     readonly projection: ReturnType<typeof createResearchSessionProjectionAdapter>;
   };
   readonly evidence: {
@@ -121,7 +122,8 @@ function createBoundApis(ports: WorkspaceRuntimePorts, epoch: ReturnType<typeof 
     http, binary,
     health: createHealthApi(http, errorFactory, epoch),
     session: createOwnerSessionApi(http, errorFactory, epoch, { now: ports.now }),
-    research: { runs, history: createRunHistoryApi(researchPorts, { wire, decodeStatus: runs.decodeResearchRunStatus }), projection },
+    research: { runs, history: createRunHistoryApi(researchPorts, { wire, decodeStatus: runs.decodeResearchRunStatus }),
+      guide: createProjectGuideApi(http, errorFactory, epoch), projection },
     evidence: {
       manifest, sections: createSectionApi({ http, errors: errorFactory, epoch, sha256: ports.sha256 }), citations,
       reauthorization: createReauthorizationApi(researchPorts, { wire, audit, decodeSectionCitations: citations.decodeSectionCitations, readSectionCitations: citations.readSectionCitations }),

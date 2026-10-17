@@ -232,11 +232,11 @@ const EvidenceOutcomeLine = (props: { readonly outcome: CitationResolutionOutcom
   const indeterminate = isIndeterminateOutcome(outcome);
   const note = russian ? rejected ? "Эту цитату нельзя использовать. Это не означает, что утверждение не подтверждено."
     : indeterminate ? "Цитата не подтверждена и не отклонена. Это ничего не доказывает об утверждении."
-    : "Точные байты прочитаны. Это ещё не означает, что утверждение подтверждено." : rejected
+    : "Цитата сверена с источником." : rejected
     ? "This citation cannot be used. It is not evidence that the claim is unsupported."
     : indeterminate
       ? "This citation is neither confirmed nor rejected. It is not evidence about the claim either way."
-      : "Readback confirmed. This still says nothing about whether the claim holds.";
+      : "Quote matches the source.";
   return (
     <p className="evidence__outcome">
       <span className={rejected ? "evidence__status evidence__status--error" : "evidence__status"}>
@@ -339,8 +339,8 @@ export const EvidenceFeature = (props: EvidenceFeatureProps): React.ReactElement
       </h2>
       {operationAnnouncement === undefined ? null : <OperationAnnouncement>{operationAnnouncement}</OperationAnnouncement>}
       <p className="evidence__hint">
-        {russian ? "Открытая цитата сверяется с текстом источника. Верно ли утверждение, проверяется отдельно."
-          : "An opened quote is checked against the source text. Whether the claim holds is checked separately."}
+        {russian ? "Здесь можно открыть цитаты и посмотреть результаты проверки утверждений."
+          : "Open cited excerpts and review the claim checks."}
       </p>
       <ul className="evidence__list">
         {citations.map((row, index) => {

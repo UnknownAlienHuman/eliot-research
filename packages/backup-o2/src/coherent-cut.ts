@@ -114,6 +114,7 @@ const AUTHORITY_TABLE_INTRODUCTIONS: Readonly<Record<string, string>> = {
   provider_native_model_catalog_v2_failure: "0161_catalog_qualification_failure_reconciliation.sql",
   provider_native_model_catalog_v2_unverified_execution: "0162_catalog_qualification_unverified_execution.sql",
   research_provider_key_model_use_unverified_execution: "0165_provider_key_model_use_unverified_execution.sql",
+  project_guide_binding: "0166_project_guide_binding.sql",
 };
 
 const AUTHORITY_COLUMN_INTRODUCTIONS: Readonly<Record<string, Readonly<Record<string, string>>>> = {

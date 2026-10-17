@@ -1,8 +1,8 @@
 {
   "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "protocol": "eliotr.contract-schema-corpus.v1",
-  "registry_generation": 14,
-  "schema_count": 276,
+  "registry_generation": 15,
+  "schema_count": 281,
   "schemas": [
     {
       "export_name": "AiUsageObservationSchema",
@@ -25519,6 +25519,983 @@
       "kind": "OBJECT",
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:computer-agent:project-computer-agent-route:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ProjectGuideClaimSchema",
+      "family": "research",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "maxLength": 256,
+                "minLength": 1,
+                "type": "string"
+              },
+              "revision": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "revision"
+            ],
+            "type": "object"
+          }
+        },
+        "$id": "urn:eliotr:contracts:research:project-guide-claim:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "claim_ref": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "counterevidence_handle_refs": {
+            "items": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "type": "array"
+          },
+          "label": {
+            "enum": [
+              "SOURCE_SUPPORTED",
+              "DERIVED_INFERENCE",
+              "EDITORIAL_RECOMMENDATION"
+            ],
+            "type": "string"
+          },
+          "section_ref": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "support_handle_refs": {
+            "items": {
+              "$ref": "#/$defs/__schema0"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "text": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "claim_ref",
+          "section_ref",
+          "text",
+          "label",
+          "support_handle_refs",
+          "counterevidence_handle_refs"
+        ],
+        "title": "ProjectGuideClaim",
+        "type": "object",
+        "x-eliotr-family": "research",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:project-guide-claim:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ProjectGuideDocumentSchema",
+      "family": "research",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "items": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "__schema1": {
+            "additionalProperties": false,
+            "properties": {
+              "claim_ref": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "counterevidence_handle_refs": {
+                "items": {
+                  "$ref": "#/$defs/__schema2"
+                },
+                "type": "array"
+              },
+              "label": {
+                "enum": [
+                  "SOURCE_SUPPORTED",
+                  "DERIVED_INFERENCE",
+                  "EDITORIAL_RECOMMENDATION"
+                ],
+                "type": "string"
+              },
+              "section_ref": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "support_handle_refs": {
+                "items": {
+                  "$ref": "#/$defs/__schema2"
+                },
+                "minItems": 1,
+                "type": "array"
+              },
+              "text": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "claim_ref",
+              "section_ref",
+              "text",
+              "label",
+              "support_handle_refs",
+              "counterevidence_handle_refs"
+            ],
+            "type": "object"
+          },
+          "__schema10": {
+            "items": {
+              "$ref": "#/$defs/__schema3"
+            },
+            "type": "array"
+          },
+          "__schema11": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "reason": {
+                  "$ref": "#/$defs/__schema3"
+                },
+                "source_ref": {
+                  "$ref": "#/$defs/__schema3"
+                }
+              },
+              "required": [
+                "source_ref",
+                "reason"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "__schema12": {
+            "type": "string"
+          },
+          "__schema13": {
+            "items": {
+              "$ref": "#/$defs/__schema3"
+            },
+            "type": "array"
+          },
+          "__schema14": {
+            "items": {
+              "$ref": "#/$defs/__schema3"
+            },
+            "type": "array"
+          },
+          "__schema15": {
+            "items": {
+              "$ref": "#/$defs/__schema3"
+            },
+            "type": "array"
+          },
+          "__schema16": {
+            "items": {
+              "$ref": "#/$defs/__schema3"
+            },
+            "type": "array"
+          },
+          "__schema17": {
+            "items": {
+              "$ref": "#/$defs/__schema3"
+            },
+            "type": "array"
+          },
+          "__schema18": {
+            "items": {
+              "$ref": "#/$defs/__schema3"
+            },
+            "type": "array"
+          },
+          "__schema19": {
+            "enum": [
+              "NOT_REQUIRED",
+              "NOT_RUN",
+              "PARTIAL",
+              "COMPLETE"
+            ],
+            "type": "string"
+          },
+          "__schema2": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/__schema3"
+              },
+              "revision": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "revision"
+            ],
+            "type": "object"
+          },
+          "__schema20": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "__schema21": {
+            "enum": [
+              "ANSWERED_WITH_SUPPORTED_RESULT",
+              "NO_MATCH_IN_COMPLETE_SCOPE",
+              "NO_NEW_USEFUL_EVIDENCE",
+              "SOURCE_UNAVAILABLE",
+              "STALE_SOURCE_OR_INDEX",
+              "POLICY_OR_DISCLOSURE_DENIED",
+              "INCOMPLETE_COVERAGE",
+              "INCONCLUSIVE",
+              "CANCELLED"
+            ],
+            "type": "string"
+          },
+          "__schema22": {
+            "items": {
+              "$ref": "#/$defs/__schema23"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "__schema23": {
+            "additionalProperties": false,
+            "properties": {
+              "source_revision_ref": {
+                "$ref": "#/$defs/__schema3"
+              },
+              "title": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "source_revision_ref",
+              "title"
+            ],
+            "type": "object"
+          },
+          "__schema3": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "__schema4": {
+            "items": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "maxItems": 5,
+            "minItems": 3,
+            "type": "array"
+          },
+          "__schema5": {
+            "additionalProperties": false,
+            "properties": {
+              "budget_limitations": {
+                "$ref": "#/$defs/__schema20"
+              },
+              "cited_source_refs": {
+                "$ref": "#/$defs/__schema10"
+              },
+              "counter_search_status": {
+                "$ref": "#/$defs/__schema19"
+              },
+              "coverage_denominator_ref": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "denominator_kind": {
+                "$ref": "#/$defs/__schema7"
+              },
+              "eligible_source_refs": {
+                "$ref": "#/$defs/__schema8"
+              },
+              "failed_acquisition_refs": {
+                "$ref": "#/$defs/__schema15"
+              },
+              "frozen_scope_snapshot_ref": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "lanes_used": {
+                "$ref": "#/$defs/__schema13"
+              },
+              "omitted_sources": {
+                "$ref": "#/$defs/__schema11"
+              },
+              "parser_degradation_refs": {
+                "$ref": "#/$defs/__schema17"
+              },
+              "provider_degradation_refs": {
+                "$ref": "#/$defs/__schema16"
+              },
+              "receipt_ref": {
+                "$ref": "#/$defs/__schema2"
+              },
+              "redacted_dependency_refs": {
+                "$ref": "#/$defs/__schema18"
+              },
+              "represented_source_refs": {
+                "$ref": "#/$defs/__schema9"
+              },
+              "requested_scope_expression": {
+                "$ref": "#/$defs/__schema6"
+              },
+              "source_families_and_independence_profile_ref": {
+                "$ref": "#/$defs/__schema3"
+              },
+              "stale_or_skipped_lanes": {
+                "$ref": "#/$defs/__schema14"
+              },
+              "terminal_disposition": {
+                "$ref": "#/$defs/__schema21"
+              },
+              "unknown_coverage_reason": {
+                "$ref": "#/$defs/__schema12"
+              }
+            },
+            "required": [
+              "receipt_ref",
+              "requested_scope_expression",
+              "frozen_scope_snapshot_ref",
+              "coverage_denominator_ref",
+              "denominator_kind",
+              "eligible_source_refs",
+              "represented_source_refs",
+              "cited_source_refs",
+              "omitted_sources",
+              "source_families_and_independence_profile_ref",
+              "lanes_used",
+              "stale_or_skipped_lanes",
+              "failed_acquisition_refs",
+              "provider_degradation_refs",
+              "parser_degradation_refs",
+              "redacted_dependency_refs",
+              "counter_search_status",
+              "budget_limitations",
+              "terminal_disposition"
+            ],
+            "type": "object"
+          },
+          "__schema6": {},
+          "__schema7": {
+            "enum": [
+              "complete_scope",
+              "sampled_with_method",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "__schema8": {
+            "items": {
+              "$ref": "#/$defs/__schema3"
+            },
+            "type": "array"
+          },
+          "__schema9": {
+            "items": {
+              "$ref": "#/$defs/__schema3"
+            },
+            "type": "array"
+          }
+        },
+        "$id": "urn:eliotr:contracts:research:project-guide-document:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "coverage": {
+            "$ref": "#/$defs/__schema5"
+          },
+          "questions": {
+            "$ref": "#/$defs/__schema4"
+          },
+          "source_basis": {
+            "$ref": "#/$defs/__schema22"
+          },
+          "summary": {
+            "$ref": "#/$defs/__schema0"
+          }
+        },
+        "required": [
+          "summary",
+          "questions",
+          "coverage",
+          "source_basis"
+        ],
+        "title": "ProjectGuideDocument",
+        "type": "object",
+        "x-eliotr-family": "research",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:project-guide-document:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ProjectGuideLanguageSchema",
+      "family": "research",
+      "json_schema": {
+        "$id": "urn:eliotr:contracts:research:project-guide-language:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "enum": [
+          "en",
+          "ru"
+        ],
+        "title": "ProjectGuideLanguage",
+        "type": "string",
+        "x-eliotr-family": "research",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "ENUM",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:project-guide-language:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "NON_OBJECT"
+    },
+    {
+      "export_name": "ProjectGuideRequestSchema",
+      "family": "research",
+      "json_schema": {
+        "$id": "urn:eliotr:contracts:research:project-guide-request:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "language": {
+            "enum": [
+              "en",
+              "ru"
+            ],
+            "type": "string"
+          },
+          "protocol": {
+            "const": "eliotr.project-guide.v1",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocol",
+          "language"
+        ],
+        "title": "ProjectGuideRequest",
+        "type": "object",
+        "x-eliotr-family": "research",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:project-guide-request:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "ProjectGuideViewSchema",
+      "family": "research",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "const": "eliotr.project-guide.v1",
+            "type": "string"
+          },
+          "__schema1": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "__schema10": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/__schema1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "__schema11": {
+            "anyOf": [
+              {
+                "additionalProperties": false,
+                "properties": {
+                  "coverage": {
+                    "$ref": "#/$defs/__schema15"
+                  },
+                  "questions": {
+                    "$ref": "#/$defs/__schema14"
+                  },
+                  "source_basis": {
+                    "$ref": "#/$defs/__schema32"
+                  },
+                  "summary": {
+                    "$ref": "#/$defs/__schema12"
+                  }
+                },
+                "required": [
+                  "summary",
+                  "questions",
+                  "coverage",
+                  "source_basis"
+                ],
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "__schema12": {
+            "items": {
+              "$ref": "#/$defs/__schema13"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "__schema13": {
+            "additionalProperties": false,
+            "properties": {
+              "claim_ref": {
+                "$ref": "#/$defs/__schema9"
+              },
+              "counterevidence_handle_refs": {
+                "items": {
+                  "$ref": "#/$defs/__schema9"
+                },
+                "type": "array"
+              },
+              "label": {
+                "enum": [
+                  "SOURCE_SUPPORTED",
+                  "DERIVED_INFERENCE",
+                  "EDITORIAL_RECOMMENDATION"
+                ],
+                "type": "string"
+              },
+              "section_ref": {
+                "$ref": "#/$defs/__schema9"
+              },
+              "support_handle_refs": {
+                "items": {
+                  "$ref": "#/$defs/__schema9"
+                },
+                "minItems": 1,
+                "type": "array"
+              },
+              "text": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "claim_ref",
+              "section_ref",
+              "text",
+              "label",
+              "support_handle_refs",
+              "counterevidence_handle_refs"
+            ],
+            "type": "object"
+          },
+          "__schema14": {
+            "items": {
+              "$ref": "#/$defs/__schema13"
+            },
+            "maxItems": 5,
+            "minItems": 3,
+            "type": "array"
+          },
+          "__schema15": {
+            "additionalProperties": false,
+            "properties": {
+              "budget_limitations": {
+                "$ref": "#/$defs/__schema30"
+              },
+              "cited_source_refs": {
+                "$ref": "#/$defs/__schema20"
+              },
+              "counter_search_status": {
+                "$ref": "#/$defs/__schema29"
+              },
+              "coverage_denominator_ref": {
+                "$ref": "#/$defs/__schema9"
+              },
+              "denominator_kind": {
+                "$ref": "#/$defs/__schema17"
+              },
+              "eligible_source_refs": {
+                "$ref": "#/$defs/__schema18"
+              },
+              "failed_acquisition_refs": {
+                "$ref": "#/$defs/__schema25"
+              },
+              "frozen_scope_snapshot_ref": {
+                "$ref": "#/$defs/__schema9"
+              },
+              "lanes_used": {
+                "$ref": "#/$defs/__schema23"
+              },
+              "omitted_sources": {
+                "$ref": "#/$defs/__schema21"
+              },
+              "parser_degradation_refs": {
+                "$ref": "#/$defs/__schema27"
+              },
+              "provider_degradation_refs": {
+                "$ref": "#/$defs/__schema26"
+              },
+              "receipt_ref": {
+                "$ref": "#/$defs/__schema9"
+              },
+              "redacted_dependency_refs": {
+                "$ref": "#/$defs/__schema28"
+              },
+              "represented_source_refs": {
+                "$ref": "#/$defs/__schema19"
+              },
+              "requested_scope_expression": {
+                "$ref": "#/$defs/__schema16"
+              },
+              "source_families_and_independence_profile_ref": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "stale_or_skipped_lanes": {
+                "$ref": "#/$defs/__schema24"
+              },
+              "terminal_disposition": {
+                "$ref": "#/$defs/__schema31"
+              },
+              "unknown_coverage_reason": {
+                "$ref": "#/$defs/__schema22"
+              }
+            },
+            "required": [
+              "receipt_ref",
+              "requested_scope_expression",
+              "frozen_scope_snapshot_ref",
+              "coverage_denominator_ref",
+              "denominator_kind",
+              "eligible_source_refs",
+              "represented_source_refs",
+              "cited_source_refs",
+              "omitted_sources",
+              "source_families_and_independence_profile_ref",
+              "lanes_used",
+              "stale_or_skipped_lanes",
+              "failed_acquisition_refs",
+              "provider_degradation_refs",
+              "parser_degradation_refs",
+              "redacted_dependency_refs",
+              "counter_search_status",
+              "budget_limitations",
+              "terminal_disposition"
+            ],
+            "type": "object"
+          },
+          "__schema16": {},
+          "__schema17": {
+            "enum": [
+              "complete_scope",
+              "sampled_with_method",
+              "unknown"
+            ],
+            "type": "string"
+          },
+          "__schema18": {
+            "items": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "type": "array"
+          },
+          "__schema19": {
+            "items": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "type": "array"
+          },
+          "__schema2": {
+            "enum": [
+              "en",
+              "ru"
+            ],
+            "type": "string"
+          },
+          "__schema20": {
+            "items": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "type": "array"
+          },
+          "__schema21": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "reason": {
+                  "$ref": "#/$defs/__schema1"
+                },
+                "source_ref": {
+                  "$ref": "#/$defs/__schema1"
+                }
+              },
+              "required": [
+                "source_ref",
+                "reason"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "__schema22": {
+            "type": "string"
+          },
+          "__schema23": {
+            "items": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "type": "array"
+          },
+          "__schema24": {
+            "items": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "type": "array"
+          },
+          "__schema25": {
+            "items": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "type": "array"
+          },
+          "__schema26": {
+            "items": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "type": "array"
+          },
+          "__schema27": {
+            "items": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "type": "array"
+          },
+          "__schema28": {
+            "items": {
+              "$ref": "#/$defs/__schema1"
+            },
+            "type": "array"
+          },
+          "__schema29": {
+            "enum": [
+              "NOT_REQUIRED",
+              "NOT_RUN",
+              "PARTIAL",
+              "COMPLETE"
+            ],
+            "type": "string"
+          },
+          "__schema3": {
+            "enum": [
+              "EMPTY",
+              "MISSING",
+              "BLOCKED",
+              "PENDING",
+              "UNKNOWN",
+              "FAILED",
+              "STALE",
+              "INVALID",
+              "PARTIAL",
+              "READY"
+            ],
+            "type": "string"
+          },
+          "__schema30": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "__schema31": {
+            "enum": [
+              "ANSWERED_WITH_SUPPORTED_RESULT",
+              "NO_MATCH_IN_COMPLETE_SCOPE",
+              "NO_NEW_USEFUL_EVIDENCE",
+              "SOURCE_UNAVAILABLE",
+              "STALE_SOURCE_OR_INDEX",
+              "POLICY_OR_DISCLOSURE_DENIED",
+              "INCOMPLETE_COVERAGE",
+              "INCONCLUSIVE",
+              "CANCELLED"
+            ],
+            "type": "string"
+          },
+          "__schema32": {
+            "items": {
+              "$ref": "#/$defs/__schema33"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "__schema33": {
+            "additionalProperties": false,
+            "properties": {
+              "source_revision_ref": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "title": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "source_revision_ref",
+              "title"
+            ],
+            "type": "object"
+          },
+          "__schema4": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/__schema5"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "__schema5": {
+            "pattern": "^[a-f0-9]{64}$",
+            "type": "string"
+          },
+          "__schema6": {
+            "maximum": 9007199254740991,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "__schema7": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/__schema1"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "__schema8": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/__schema9"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "__schema9": {
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "revision": {
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "id",
+              "revision"
+            ],
+            "type": "object"
+          }
+        },
+        "$id": "urn:eliotr:contracts:research:project-guide-view:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "artifact_ref": {
+            "$ref": "#/$defs/__schema8"
+          },
+          "corpus_digest": {
+            "$ref": "#/$defs/__schema5"
+          },
+          "guide": {
+            "$ref": "#/$defs/__schema11"
+          },
+          "identity_digest": {
+            "$ref": "#/$defs/__schema4"
+          },
+          "language": {
+            "$ref": "#/$defs/__schema2"
+          },
+          "project_id": {
+            "$ref": "#/$defs/__schema1"
+          },
+          "protocol": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "reason_code": {
+            "$ref": "#/$defs/__schema10"
+          },
+          "source_count": {
+            "$ref": "#/$defs/__schema6"
+          },
+          "state": {
+            "$ref": "#/$defs/__schema3"
+          },
+          "workflow_instance_id": {
+            "$ref": "#/$defs/__schema7"
+          }
+        },
+        "required": [
+          "protocol",
+          "project_id",
+          "language",
+          "state",
+          "identity_digest",
+          "corpus_digest",
+          "source_count",
+          "workflow_instance_id",
+          "artifact_ref",
+          "reason_code",
+          "guide"
+        ],
+        "title": "ProjectGuideView",
+        "type": "object",
+        "x-eliotr-family": "research",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:research:project-guide-view:v1:g1",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
     },

@@ -17,6 +17,15 @@ import { readResearchConfigurationReadiness } from "./research-configuration-rea
 import { readInstalledNativeResearchRunConfiguration } from "./research-run-configuration.js";
 import { createOwnerResearchProviderNativeModelAuthority } from "./research-provider-native-model-authority.js";
 import type { ResearchProviderKeyModelUseDbPhase } from "@eliotr/cloudflare-research-configuration/research-provider-key-model-use-store.js";
+import { assertProjectSearchManagedPrimaryAvailable, type ProjectSearchManagedAuthority } from "@eliotr/cloudflare-ai/project-search";
+import {
+  RESEARCH_CONFIGURATION_METHOD_READINESS_PROTOCOL,
+  RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON_KEY,
+  captureEvidenceReviewBudgetSelection,
+  resolveEvidenceReviewMethod,
+  type ResearchConfigurationMethodReadiness,
+  type ResearchConfigurationMethodReadinessPin,
+} from "@eliotr/cloudflare-research-configuration/research-configuration-readiness.js";
 
 const LEGACY_SEMANTIC_CONFIGURATION_KEYS = [
   "ELIOTR_RESEARCH_SEMANTIC_CONFIG_JSON",
@@ -141,4 +150,92 @@ export async function readOwnerProjectResearchReadiness(
       ...(bundle.model_selections.some((selection) => selection.candidate_kind === "provider-native-v2")
         ? { catalog_native_model_authority_v2: catalogAuthorityFactory(context, selected.project_id) }
         : {}) });
+}
+
+/** Opt-in method capability read, bound to the exact currently selected project configuration pin. */
+export async function readOwnerProjectResearchMethodReadiness(
+  env: Env,
+  context: AuthenticatedRequestContext,
+  expectedPin: ResearchConfigurationMethodReadinessPin,
+  catalogNativeModelV2Authority?: ResearchProjectCatalogNativeModelV2AuthorityFactory,
+): Promise<ResearchConfigurationMethodReadiness> {
+  const projectId = expectedPin.configuration_project_id;
+  if (context.client_class !== "owner_pwa" ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u.test(projectId) ||
+      !/^rpmc-[a-f0-9]{64}$/u.test(expectedPin.configuration_ref) ||
+      !/^[a-f0-9]{64}$/u.test(expectedPin.configuration_sha256) ||
+      !Number.isSafeInteger(expectedPin.selection_revision) || expectedPin.selection_revision < 1 ||
+      expectedPin.selection_revision > 1_000_000) {
+    throw new HttpRequestError("RESEARCH_PROJECT_MODEL_CONFIGURATION_INPUT_INVALID", 400,
+      "The method readiness selection pin is invalid");
+  }
+  const catalogAuthorityFactory = catalogNativeModelV2Authority ??
+    createResearchProjectCatalogNativeModelV2AuthorityFactory(env);
+  const service = createOwnerResearchProjectConfigurationService(env, context, projectId, catalogAuthorityFactory);
+  const readSelected = () => readSelectedResearchProjectConfiguration(service, context, projectId);
+  const selected = await readSelected();
+  if (selected === null || selected.project_id !== projectId || selected.owner_id !== context.principal_ref) {
+    throw new HttpRequestError("RESEARCH_AUTHORITY_STALE", 409,
+      "The selected model configuration changed before method readiness could be read");
+  }
+  const selectedPin: ResearchConfigurationMethodReadinessPin = Object.freeze({
+    configuration_project_id: selected.project_id,
+    configuration_ref: selected.configuration_ref,
+    configuration_sha256: selected.configuration_sha256,
+    selection_revision: selected.selection_revision,
+  });
+  if (selectedPin.configuration_ref !== expectedPin.configuration_ref ||
+      selectedPin.configuration_sha256 !== expectedPin.configuration_sha256 ||
+      selectedPin.selection_revision !== expectedPin.selection_revision) {
+    throw new HttpRequestError("RESEARCH_AUTHORITY_STALE", 409,
+      "The requested model selection is no longer current");
+  }
+
+  const bundle = selected.configuration;
+  const readiness = await readResearchConfigurationReadiness(composeSelectedProjectResearchReadinessEnv(env, bundle), context,
+    { selected_model_selections: bundle.model_selections, project_owner_ref: selected.owner_id, project_id: selected.project_id,
+      ...(bundle.model_selections.some(selection => selection.candidate_kind === "provider-native-v1")
+        ? { native_model_authority: createOwnerResearchProviderNativeModelAuthority(env, context, selected.project_id,
+          ["CONFIGURATION_IMPORT", "SELECTION_READBACK", "COMPLETE"] satisfies readonly ResearchProviderKeyModelUseDbPhase[]) }
+        : {}),
+      ...(bundle.model_selections.some(selection => selection.candidate_kind === "provider-native-v2")
+        ? { catalog_native_model_authority_v2: catalogAuthorityFactory(context, selected.project_id) }
+        : {}) });
+
+  const branchQueryBudgetProfilePresent = Object.hasOwn(bundle.vars, RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON_KEY);
+  const branchQueryBudgetSelection = captureEvidenceReviewBudgetSelection({
+    profile_json: bundle.vars[RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON_KEY],
+    selected_configuration: { owner_ref: selected.owner_id, project_id: selected.project_id,
+      configuration_ref: selected.configuration_ref, configuration_sha256: selected.configuration_sha256,
+      selection_revision: selected.selection_revision }, expected_owner_ref: context.principal_ref });
+
+  let managedPrimary: ProjectSearchManagedAuthority | undefined;
+  if (branchQueryBudgetProfilePresent && typeof env.AI_SEARCH?.get === "function") {
+    try {
+      managedPrimary = await assertProjectSearchManagedPrimaryAvailable({ search_database: env.SEARCH_DB,
+        namespace: env.AI_SEARCH });
+    } catch {
+      // Registry, generation, or namespace uncertainty fails closed for evidence review.
+    }
+  }
+  const evidenceReviewDecision = resolveEvidenceReviewMethod({ readiness, expected_pin: expectedPin, selected_pin: selectedPin,
+    selected_provenance: { owner_ref: selected.owner_id, project_id: selected.project_id,
+      configuration_ref: selected.configuration_ref, configuration_sha256: selected.configuration_sha256,
+      selection_revision: selected.selection_revision }, model_selections: bundle.model_selections,
+    branch_query_budget_profile_present: branchQueryBudgetProfilePresent,
+    ...(branchQueryBudgetSelection === undefined ? {} : { branch_query_budget_selection: branchQueryBudgetSelection }),
+    ...(managedPrimary === undefined ? {} : { managed_primary: managedPrimary }) });
+
+  const finalSelection = await readSelected();
+  if (context.request.signal.aborted || finalSelection === null || finalSelection.project_id !== projectId ||
+      finalSelection.owner_id !== context.principal_ref || finalSelection.configuration_ref !== selectedPin.configuration_ref ||
+      finalSelection.configuration_sha256 !== selectedPin.configuration_sha256 ||
+      finalSelection.selection_revision !== selectedPin.selection_revision) {
+    throw new HttpRequestError("RESEARCH_AUTHORITY_STALE", 409,
+      "The selected model configuration changed during method readiness");
+  }
+  return Object.freeze({ protocol: RESEARCH_CONFIGURATION_METHOD_READINESS_PROTOCOL, project_id: projectId,
+    selected_pin: selectedPin, evidence_review_ready: evidenceReviewDecision.handler_generation !== null,
+    evidence_review_handler_generation: evidenceReviewDecision.handler_generation,
+    evidence_review_unavailable_reason: evidenceReviewDecision.unavailable_reason, checked_at: new Date().toISOString() });
 }

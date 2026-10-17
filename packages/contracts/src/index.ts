@@ -19,6 +19,7 @@ export * from "./retrieval-managed-ranking.js";
 export * from "./research.js";
 export * from "./research-branch-relation-pending.js";
 export * from "./research-session-binding.js";
+export * from "./project-guide.js";
 export * from "./research-branch.js";
 export * from "./research-branch-query.js";
 export * from "./research-branch-finding.js";

@@ -6,6 +6,7 @@ import type {
 import type { AccessIdentity } from "@eliotr/cloudflare-access";
 import { apiResult, HttpRequestError, requireNoQuery, type HttpDependencies } from "./http.js";
 import { handleClientGrantHttp } from "./client-grant-http.js";
+import { handleProjectGuideHttp } from "./project-guide-http.js";
 import { handleResearchSessionTransport } from "./research-session-transport.js";
 import { handleGoogleOAuthBegin } from "./google-oauth-begin.js";
 import { handleGoogleOAuthCallback } from "./google-oauth-callback.js";
@@ -195,6 +196,9 @@ export async function dispatchHttpSpecialRoute(input: {
       requireNoQuery(input.url);
       return handleResearchModelQualification(input.request, input.env, input.context,
         input.match.route.maximum_request_bytes);
+    case "research.project-guide.read":
+    case "research.project-guide.ensure":
+      return handleProjectGuideHttp(input.request, input.env, input.context, input.match.params.project_id ?? "");
     case "research.runs": {
       if ([...input.url.searchParams.keys()].some(key => key !== "project_id") || input.url.searchParams.getAll("project_id").length > 1) {
         throw new HttpRequestError("RESEARCH_INPUT_INVALID", 400, "Only one project_id is supported");

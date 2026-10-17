@@ -190,6 +190,8 @@ const MODEL_TRANSPORT_IMPORTS = [
   "@eliotr/cloudflare-model-transport/model-gateway-transport-policy.js"
 ];
 const RESEARCH_RUNTIME_IMPORTS = [
+  "@eliotr/cloudflare-research-runtime/project-guide-service.js",
+  "@eliotr/cloudflare-research-runtime/project-guide-projection.js",
   "@eliotr/cloudflare-research-runtime/research-semantic-composition.js",
   "@eliotr/cloudflare-research-runtime",
   "@eliotr/cloudflare-research-runtime/research-stage-handlers.js",
@@ -254,6 +256,7 @@ const PACKAGE_RULES = new Map([
   ])],
 ["packages/cloudflare-research-configuration", new Set(["@eliotr/cloudflare-ai","@eliotr/cloudflare-evidence","@eliotr/cloudflare-model-control","@eliotr/cloudflare-model-control/research-prepared-model-transport-policies.js","@eliotr/cloudflare-model-control/research-model-pricing-store.js","@eliotr/cloudflare-model-transport/model-gateway-http-request.js","@eliotr/cloudflare-model-transport/model-gateway-provider-native-response.js","@eliotr/cloudflare-model-transport/opencode-http-routing.js","@eliotr/cloudflare-model-transport/opencode-model-routing.js","@eliotr/cloudflare-native-models","@eliotr/cloudflare-research","@eliotr/cloudflare-research-stages","@eliotr/cloudflare-workflows","@eliotr/contracts","@eliotr/interfaces","@eliotr/platform-cloudflare","zod"])],
   ["packages/cloudflare-research-runtime", new Set([
+    "@eliotr/contracts/project-guide",
     "@eliotr/cloudflare-artifacts/artifact-draft-reauthorization.js",
     "@eliotr/cloudflare-ai", "@eliotr/cloudflare-ai/project-search", "@eliotr/cloudflare-evidence", "@eliotr/cloudflare-navigation",
     "@eliotr/cloudflare-projection", "@eliotr/cloudflare-research", "@eliotr/cloudflare-research-stages",
@@ -311,7 +314,7 @@ const PACKAGE_RULES = new Map([
   ["packages/interfaces", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/policy", "@eliotr/retrieval", "@eliotr/research", "@eliotr/google-drive-exchange"])],
   ["packages/testkit", new Set(["@eliotr/contracts", "@eliotr/domain", "@eliotr/policy", "@eliotr/retrieval", "@eliotr/research", "@eliotr/google-drive-exchange", "@eliotr/interfaces"])],
   ["packages/pwa-http-client", new Set(["@eliotr/contracts"])],
-  ["packages/owner-api-client", new Set(["@eliotr/contracts", "@eliotr/contracts/runtime-config"])],
+  ["packages/owner-api-client", new Set(["@eliotr/contracts", "@eliotr/contracts/runtime-config", "@eliotr/contracts/project-guide"])],
   ["packages/pwa-source-workspace", new Set(["@eliotr/contracts", "@eliotr/owner-api-client", "@eliotr/pwa-http-client"])],
   ["packages/pwa-research-workspace", new Set(["@eliotr/contracts", "@eliotr/owner-api-client", "@eliotr/pwa-http-client", "@eliotr/pwa-source-workspace"])],
   ["packages/pwa-knowledge-workspace", new Set(["@eliotr/contracts", "@eliotr/pwa-http-client", "@eliotr/pwa-source-workspace"])],
@@ -319,6 +322,7 @@ const PACKAGE_RULES = new Map([
   ["apps/eliotr-web", new Set(["@eliotr/ui", "@eliotr/owner-api-client", "@eliotr/owner-api-client/research-session-projection", "@eliotr/owner-api-client/runtime-config", "@tanstack/react-query", "react", "react-dom", "react-router"])],
   ["apps/eliotr-pwa", new Set([...RESEARCH_UI_IMPORTS, "@eliotr/contracts", "@eliotr/pwa-http-client", "@eliotr/pwa-source-workspace", "@eliotr/pwa-source-workspace/navigation-expand-api", "@eliotr/pwa-research-workspace", "@eliotr/pwa-knowledge-workspace"])],
   ["apps/eliotr-core", new Set([
+    "@eliotr/contracts/project-guide",
     "@eliotr/cloudflare-artifacts",
     "@eliotr/cloudflare-artifacts/artifact-draft-read-service.js",
     "@eliotr/cloudflare-artifacts/artifact-draft-reader.js",

@@ -8,6 +8,8 @@ import researchBranchBudgetFixtureRaw from "../../../tests/fixtures/contracts/el
 import schemaCorpusRaw from "../../../docs/contracts/schema-corpus.v1.json?raw";
 import catalogModelUseFixtureRaw from "../../../docs/contracts/fixtures/eliotr.research.catalog-model-use-request.v1.json?raw";
 import catalogModelUseTildeFixtureRaw from "../../../docs/contracts/fixtures/eliotr.research.catalog-model-use-tilde.v1.json?raw";
+import guideRequestFixtureRaw from "../../../docs/contracts/fixtures/eliotr.project-guide.request.v1.json?raw";
+import guidePartialFixtureRaw from "../../../docs/contracts/fixtures/eliotr.project-guide.partial.v1.json?raw";
 import libraryReadinessFixtureRaw from "../../../tests/fixtures/contracts/eliotr.library-readiness.v1.json?raw";
 import workspaceMcpFixtureRaw from "../../../tests/fixtures/contracts/eliotr.workspace-mcp-plan-input.v2.json?raw";
 import * as computerAgentConnection from "./computer-agent-connection.js";
@@ -23,6 +25,7 @@ import * as retrievalManagedRanking from "./retrieval-managed-ranking.js";
 import * as researchProviderKey from "./research-provider-key.js";
 import * as researchProviderKeyModelUse from "./research-provider-key-model-use.js";
 import * as researchCatalogModelUse from "./research-catalog-model-use.js";
+import * as projectGuide from "./project-guide.js";
 import * as publicContracts from "./index.js";
 import {
   CompletionDispositionSchema,
@@ -115,6 +118,7 @@ describe("ER-01 public contract registry", () => {
       ["research", researchProviderKey],
       ["research", researchProviderKeyModelUse],
       ["research", researchCatalogModelUse],
+      ["research", projectGuide],
       ["retrieval", retrievalManagedRanking],
     ] as const;
     for (const [family, schemaModule] of additiveSchemaFamilies) {
@@ -220,6 +224,8 @@ describe("ER-01 public contract registry", () => {
   });
 
   it.each([
+    ["project-guide-request-v1", guideRequestFixtureRaw],
+    ["project-guide-partial-v1", guidePartialFixtureRaw],
     ["research-catalog-model-use-request-v1", catalogModelUseFixtureRaw],
     ["research-catalog-model-use-tilde-v1", catalogModelUseTildeFixtureRaw],
     ["library-readiness-v1", libraryReadinessFixtureRaw],
@@ -242,6 +248,18 @@ describe("ER-01 public contract registry", () => {
     expect(researchCatalogModelUse.ResearchCatalogModelUseRequestSchema.parse(request)).toEqual(request);
     for (const field of ["api_key", "alias", "owner_credential_generation", "qualification_ref"]) {
       expect(researchCatalogModelUse.ResearchCatalogModelUseRequestSchema.safeParse({ ...request, [field]: "forged" }).success)
+        .toBe(false);
+    }
+  });
+
+  it("registers partial guide evidence without granting completeness or caller execution controls", () => {
+    const view = projectGuide.ProjectGuideViewSchema.parse(parseJson(guidePartialFixtureRaw));
+    expect(view.source_count).toBe(10);
+    expect(view.guide?.source_basis).toHaveLength(3);
+    expect(projectGuide.ProjectGuideViewSchema.safeParse({ ...view, state: "READY" }).success).toBe(false);
+    const request = projectGuide.ProjectGuideRequestSchema.parse(parseJson(guideRequestFixtureRaw));
+    for (const field of ["provider_id", "scope_expression", "max_results", "api_key"]) {
+      expect(requireContractSchemaDescriptor("ProjectGuideRequestSchema").schema.safeParse({ ...request, [field]: "forged" }).success)
         .toBe(false);
     }
   });

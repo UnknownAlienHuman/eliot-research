@@ -325,7 +325,11 @@ function projectManagedCandidates(
         candidate_id: candidate.candidate_id,
         source_revision_ref: candidate.source_revision_ref,
         canonical_section_id: candidate.canonical_section_id,
-        index_generation: candidate.index_generation,
+        // Keep source projection identity on the locator used by EvidenceResolver;
+        // the managed outcome records the independently registry-bound AI Search generation.
+        index_generation: typeof metadata["provider_index_generation"] === "string"
+          ? metadata["provider_index_generation"]
+          : candidate.index_generation,
         metadata: {
           provider_item_key: metadata["provider_item_key"],
           provider_chunk_type: metadata["provider_chunk_type"],

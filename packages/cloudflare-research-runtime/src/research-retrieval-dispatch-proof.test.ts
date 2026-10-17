@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { WorkflowFailureOutcomeSchema } from "@eliotr/cloudflare-workflows";
 import {
   annotateNoRetrievalEffectDispatched,
+  managedProjectSearchProviderLimit,
   retrievalEffectNotDispatched,
   settleRetrievalFailure,
   settledReadOnlyRetrievalStop,
@@ -18,6 +19,15 @@ function budgetStop() {
 }
 
 describe("retrieval dispatch proof gate", () => {
+  it("keeps the provider candidate cap independent from a smaller resolved-evidence limit", () => {
+    expect(managedProjectSearchProviderLimit({
+      request: { requested_limit: 16, budgets: {
+        candidate_limit: 50, scan_limit: 100, evidence_limit: 16, max_evidence_bytes: 65_536,
+      } },
+      provider_candidate_limit: 50,
+    })).toBe(50);
+  });
+
   it("refuses to settle an unannotated stop even for a mapped read-only code", () => {
     const error = budgetStop();
     expect(retrievalEffectNotDispatched(error)).toBe(false);

@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./registry": "./src/registry-index.ts",
-    "./runtime-config": "./src/runtime-config.ts"
+    "./runtime-config": "./src/runtime-config.ts",
+    "./project-guide": "./src/project-guide.ts"
   },
   "types": "./src/index.ts",
   "scripts": {

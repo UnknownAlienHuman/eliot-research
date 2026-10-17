@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": false, "declaration": false, "declarationMap": false, "noEmit": true,
+    "jsx": "react-jsx", "types": ["node", "@cloudflare/workers-types", "vite/client"]
+  },
+  "include": [
+    "src/project-guide*.ts", "../contracts/src/project-guide.ts", "../owner-api-client/src/research/project-guide*.ts",
+    "../../apps/eliotr-core/src/project-guide*.ts", "../../apps/eliotr-web/src/query/projectGuide*.ts",
+    "../../apps/eliotr-web/src/app/ProjectOverview.tsx", "../../apps/eliotr-web/src/app/ProjectOverview.stories.tsx"
+  ]
+}
