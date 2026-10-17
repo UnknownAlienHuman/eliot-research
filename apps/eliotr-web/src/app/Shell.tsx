@@ -1,4 +1,4 @@
-import { Suspense, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ComponentType } from "react";
+import { Suspense, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type ComponentType } from "react";
 import { useLocation } from "react-router";
 import { WorkspaceLink } from "../routes/WorkspaceLink";
 import { Button, MaterialSymbol, Status } from "@eliotr/ui";
@@ -66,6 +66,14 @@ export function Shell({ privacy, fixture, fixtureOutlet: FixtureOutlet, runtime,
     if (preferences.current) preferences.current.open = false;
     if (privacy.commitVisible(snapshot)) heading.current?.focus();
   }, [privacy, snapshot, destination]);
+  // The real app renews an expired or lost session by itself once a minute at most; the owner only
+  // sees the access screen if that renewal fails too. Previews keep the manual screen.
+  const lastRenewal = useRef(0);
+  useEffect(() => {
+    if (!rememberPreferences || snapshot.phase !== "unavailable" || Date.now() - lastRenewal.current < 60_000) return;
+    lastRenewal.current = Date.now();
+    void privacy.refresh();
+  }, [privacy, rememberPreferences, snapshot]);
   if (snapshot.phase === "verifying") return null;
   if (snapshot.phase === "unavailable") return (
     <main className="er-access" lang={locale}>
@@ -73,7 +81,8 @@ export function Shell({ privacy, fixture, fixtureOutlet: FixtureOutlet, runtime,
       <p className="er-shell-eyebrow">Eliot Research</p>
       <h1 ref={heading} tabIndex={-1}>{text.unknown}</h1>
       <p>{text.unavailable}</p>
-      <Button onClick={() => { void privacy.refresh(); }}>{text.retry}</Button>
+      {/* A page load is a top-level request, so Cloudflare Access can sign the owner in again on its own. */}
+      <Button onClick={() => { if (rememberPreferences) window.location.reload(); else void privacy.refresh(); }}>{text.retry}</Button>
     </main>
   );
   const body = { projects: text.projectsBody, inbox: text.inboxBody, sources: text.sourceBody, research: text.researchBody, studio: text.studioBody, settings: text.settingsBody, connections: text.connectionsBody }[destination];

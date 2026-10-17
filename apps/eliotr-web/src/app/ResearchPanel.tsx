@@ -76,6 +76,13 @@ const runMethodCopy = {
     managedSearchUnavailable: 'Исследование недоступно для этой конфигурации модели: управляемый поиск не готов.' },
 } as const;
 
+/**
+ * The owner's own unsent question, kept in page memory across a silent session renewal (a deploy or an
+ * expired session) and offered back only to the same signed-in owner of the same app session (keyed by its
+ * privacy controller). Never stored, never sent.
+ */
+const carriedDrafts = new WeakMap<PrivacyController, { readonly principal: string; readonly text: string }>();
+
 /** One explicit intent owns admission. Polling, navigation and history never allocate a run. */
 export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurrent, isScopeCurrent, projectId, isProjectCurrent,
   cover, wholeScope }: {
@@ -188,7 +195,8 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
   const preparingModel = useRef(false);
   const [heldDraft, setHeldDraft] = useState<{ readonly context: SessionContext; readonly text: string } | undefined>(undefined);
   const nextQuestionDraft = heldDraft !== undefined && heldDraft.context === context && privacy.isCurrent(context)
-    ? heldDraft.text : '';
+    ? heldDraft.text : carriedDrafts.get(privacy)?.principal === context.principal && privacy.isCurrent(context)
+      ? carriedDrafts.get(privacy)?.text ?? '' : '';
   const selectedChatModel = chatModelOptions.find(choice => choice.key === selectedChatModelKey);
   const selectedProjectPin = projectModels.data?.selected;
   const reviewReadinessPin: ResearchConfigurationMethodReadinessPin | undefined = projectId !== undefined &&
@@ -510,7 +518,7 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
         if (read().intent?.key !== intent.key) throw new ChatModelSelectionClosedError();
         intentCommitted = true;
         preparingModel.current = false;
-        setModelQualificationState("ready"); setHeldModelChoice(undefined); setHeldDraft(undefined);
+        setModelQualificationState("ready"); setHeldModelChoice(undefined); setHeldDraft(undefined); carriedDrafts.delete(privacy);
         await admit(intent, signal);
       } catch (error) {
         if (!intentCommitted) {
@@ -864,7 +872,11 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
       scope={saved?.intent?.scope ?? scope} busy={researchBusy}
       questionHeld={saved?.intent !== undefined || saved?.observedLaunch !== undefined || preparingModel.current}
       draftQuestion={nextQuestionDraft} onDraftQuestionChange={value => {
-        if (mounted.current && privacy.isCurrent(context) && !preparingModel.current) setHeldDraft({ context, text: value });
+        if (mounted.current && privacy.isCurrent(context) && !preparingModel.current) {
+          setHeldDraft({ context, text: value });
+          if (value.trim() === '') carriedDrafts.delete(privacy);
+          else carriedDrafts.set(privacy, { principal: context.principal, text: value });
+        }
       }}
       {...(projectId !== undefined && displayedWholeScope !== undefined ? { wholeScope: displayedWholeScope } : {})}
       canSubmit={!busy && !saved?.intent && !saved?.observedLaunch && projectId !== undefined && (scope.length === 0 || scopeCurrent) &&

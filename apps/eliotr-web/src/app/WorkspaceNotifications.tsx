@@ -40,6 +40,9 @@ function failedRead(resource: unknown, ru: boolean): string {
 }
 type Notify = (message: string, action?: NoticeAction) => void;
 const NoticeContext = createContext<Notify>(() => {});
+// Page-lifetime memory: at most one automatic session renewal per minute, so a rollout cannot loop.
+const AUTOMATIC_RENEWAL_INTERVAL_MS = 60_000;
+let lastAutomaticRenewal = 0;
 export function useWorkspaceNotice(): Notify { return useContext(NoticeContext); }
 
 /** Ephemeral notices. Retry actions here are canonical GET reads, never mutation replays. */
@@ -63,6 +66,13 @@ export function WorkspaceNotifications({ children, locale, privacy, context }: {
       if (event.action.type === "error") {
         const resource = query.queryKey[prefix.length], ru = locale === "ru";
         if (isDeploymentChange(event.action.error)) {
+          // A new Eliot was deployed: renew the session for it and let every read start again, with no
+          // owner step. Only if that already happened a moment ago (a mixed rollout) ask for a reload.
+          if (Date.now() - lastAutomaticRenewal > AUTOMATIC_RENEWAL_INTERVAL_MS) {
+            lastAutomaticRenewal = Date.now();
+            void privacy.refresh();
+            return;
+          }
           setNotice({ sticky: true, message: ru ? "Eliot обновился. Перезагрузите страницу, чтобы продолжить."
             : "Eliot was updated. Reload the page to continue.", action: { label: ru ? "Перезагрузить" : "Reload",
             run: () => { window.location.reload(); } } });
