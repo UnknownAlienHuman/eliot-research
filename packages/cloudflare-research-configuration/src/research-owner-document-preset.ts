@@ -118,6 +118,24 @@ function explicitRef(value: unknown, label: string): string {
   return parsed.data;
 }
 
+function documentClaimAuditPolicy(value: unknown): ResearchClaimAuditPolicy {
+  let policy: ResearchClaimAuditPolicy;
+  try {
+    policy = parseResearchClaimAuditPolicy(value);
+  } catch {
+    invalid("audit policy is invalid");
+  }
+  // Document facts must pass source and exact-excerpt checks; method/artifact
+  // alignment remains available to the generic methodology evaluator only.
+  return Object.freeze({
+    ...policy,
+    required_dimensions: Object.freeze(policy.required_dimensions.filter((dimension) =>
+      dimension !== "method_artifact_alignment")),
+    source_requirement_applicable: true,
+    excerpt_requirement_applicable: true,
+  });
+}
+
 /**
  * Build the ordinary owner document-Q&A configuration from explicit authority
  * inputs. Prompts, response schemas, and claim-audit semantics remain pinned
@@ -129,12 +147,7 @@ export function createResearchOwnerDocumentPreset(
 ): ResearchOwnerDocumentPreset {
   if (input === null || typeof input !== "object") invalid("preset input is invalid");
   const owner = boundAuthority(input);
-  let auditPolicy: ResearchClaimAuditPolicy;
-  try {
-    auditPolicy = parseResearchClaimAuditPolicy(input.audit.policy);
-  } catch {
-    invalid("audit policy is invalid");
-  }
+  const auditPolicy = documentClaimAuditPolicy(input.audit.policy);
   const semantic: ResearchOwnerSemanticConfigurationInput = {
     ...(input.output_format === undefined ? {} : { output_format: input.output_format }),
     synthesis: {
