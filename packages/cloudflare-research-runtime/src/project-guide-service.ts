@@ -13,6 +13,9 @@ export { runControlStatus } from "./research-run-control.js";
 export { createProjectGuideStore } from "./project-guide-store.js";
 export type { ProjectGuideRecord } from "./project-guide-store.js";
 function fail(code: string): never { throw new CatalogInputError(code, "Project guide could not be verified", 503); }
+export const PROJECT_GUIDE_REQUEST_CONTRACT = Object.freeze({
+  request_version: "eliotr.research-run-request.v5", method: "lookup",
+} as const);
 
 export interface ProjectGuideModelPin {
   readonly configuration_project_id: string; readonly configuration_ref: string;
@@ -34,8 +37,12 @@ export interface ProjectGuidePorts {
   readonly store: ProjectGuideStore;
   readonly observe: (context: AuthenticatedRequestContext, project: string) => Promise<ProjectGuideObservation>;
   readonly prepare: (context: AuthenticatedRequestContext, project: string, language: ProjectGuideLanguage,
-    identity: string, observation: ProjectGuideObservation) => Promise<{ body: string; key: string; workflow_instance_id: string }>;
+    identity: string, observation: ProjectGuideObservation,
+    persistedRequestBody?: string) => Promise<{ body: string; key: string; workflow_instance_id: string }>;
   readonly launch: (context: AuthenticatedRequestContext, record: ProjectGuideRecord) => Promise<{ workflow_instance_id: string }>;
+  /** Pure legacy preflight rejection plus read-only absence of its run/investigation. Never a NO_EFFECT receipt. */
+  readonly legacyContractBlocked?: (context: AuthenticatedRequestContext, record: ProjectGuideRecord,
+    observation: ProjectGuideObservation) => Promise<boolean>;
   readonly readRun: (context: AuthenticatedRequestContext, record: ProjectGuideRecord) => Promise<{
     status: ResearchRunStatus; scope_matches: boolean; requireCurrent: () => Promise<void>;
   } | null>;
@@ -68,18 +75,43 @@ export function createProjectGuideService(ports: ProjectGuidePorts) {
         artifact_ref: artifact, reason_code: reason, guide });
     if (sourceCount === 0) { await observed.requireCurrent(); return view("EMPTY"); }
     if (observed.selection === null) { await observed.requireCurrent(); return view("BLOCKED", null, "QUALIFIED_PROJECT_MODEL_REQUIRED"); }
-    const identity = await evidenceSha256({ owner: context.principal_ref, project, corpus: observed.corpus.digest,
-      model: observed.selection, language, prompt: PROJECT_GUIDE_PROMPT_REVISION });
+    const identityBasis = { owner: context.principal_ref, project, corpus: observed.corpus.digest,
+      model: observed.selection, language, prompt: PROJECT_GUIDE_PROMPT_REVISION };
+    const legacyIdentity = await evidenceSha256(identityBasis);
+    const identity = await evidenceSha256({ ...identityBasis, request_contract: PROJECT_GUIDE_REQUEST_CONTRACT });
     observedIdentity = identity;
+    const verifyRecord = async (candidate: ProjectGuideRecord, expectedIdentity: string, legacy = false) => {
+      const expected = await ports.prepare(context, project, language, expectedIdentity, observed,
+        legacy ? candidate.request_body : undefined);
+      if (candidate.identity_digest !== expectedIdentity || candidate.owner_principal_ref !== context.principal_ref ||
+          candidate.corpus_digest !== observed.corpus.digest || candidate.corpus_json !== canonicalEvidenceJson(observed.corpus) ||
+          candidate.selection_json !== canonicalEvidenceJson(observed.selection) || candidate.project_id !== project ||
+          candidate.language !== language || candidate.prompt_revision !== PROJECT_GUIDE_PROMPT_REVISION ||
+          candidate.idempotency_key !== expected.key || candidate.request_body !== expected.body ||
+          candidate.workflow_instance_id !== expected.workflow_instance_id) fail("PROJECT_GUIDE_STORAGE_CORRUPT");
+    };
     let record = await ports.store.read(identity, context.principal_ref);
     if (record === null) {
       // An unacknowledged earlier launch remains discoverable even if the project/model changed.
-      const held = await ports.store.held(context.principal_ref, project);
+      let held = await ports.store.held(context.principal_ref, project);
+      if (held?.identity_digest === legacyIdentity && held.state === "UNKNOWN") {
+        await verifyRecord(held, legacyIdentity, true);
+        await observed.requireCurrent();
+        if (await ports.legacyContractBlocked?.(context, held, observed)) {
+          const run = await ports.readRun(context, held);
+          await run?.requireCurrent();
+          await observed.requireCurrent();
+          if (run === null) {
+            // Preserve the legacy UNKNOWN verbatim. Inspect the next hold, never treat it as absent.
+            held = await ports.store.held(context.principal_ref, project, legacyIdentity);
+          }
+        }
+      }
       if (held !== null) {
         const run = await ports.readRun(context, held);
         await run?.requireCurrent();
         if (run === null) { await observed.requireCurrent(); return view("UNKNOWN", held, "GUIDE_LAUNCH_UNCONFIRMED"); }
-        await ports.store.update(held, run.status.execution_state === "ACTIVE" ? "RUNNING" : "STALE");
+        // A different intent is a read-only blocker; only its own current-identity path may settle it.
         await observed.requireCurrent();
         return view(run.status.execution_state === "ACTIVE" ? "PENDING" : "STALE", held, "PREVIOUS_GUIDE_ATTEMPT_HELD");
       }
@@ -110,12 +142,7 @@ export function createProjectGuideService(ports: ProjectGuidePorts) {
         }
       }
     }
-    const expected = await ports.prepare(context, project, language, identity, observed);
-    if (record.corpus_json !== canonicalEvidenceJson(observed.corpus) ||
-        record.selection_json !== canonicalEvidenceJson(observed.selection) || record.project_id !== project ||
-        record.language !== language || record.prompt_revision !== PROJECT_GUIDE_PROMPT_REVISION ||
-        record.idempotency_key !== expected.key || record.request_body !== expected.body ||
-        record.workflow_instance_id !== expected.workflow_instance_id) fail("PROJECT_GUIDE_STORAGE_CORRUPT");
+    await verifyRecord(record, identity);
     const run = await ports.readRun(context, record);
     if (run === null) {
       if (!["HELD", "UNKNOWN"].includes(record.state)) fail("PROJECT_GUIDE_RUN_MISSING");

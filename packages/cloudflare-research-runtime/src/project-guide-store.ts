@@ -13,7 +13,7 @@ export interface ProjectGuideRecord {
 }
 export interface ProjectGuideStore {
   read(identity: string, owner: string): Promise<ProjectGuideRecord | null>;
-  held(owner: string, project: string): Promise<ProjectGuideRecord | null>;
+  held(owner: string, project: string, excludedIdentity?: string): Promise<ProjectGuideRecord | null>;
   reserve(record: ProjectGuideRecord): Promise<boolean>;
   update(record: ProjectGuideRecord, state: ProjectGuideStoredState, artifact?: { id: string; revision: number }): Promise<void>;
 }
@@ -35,10 +35,10 @@ export function createProjectGuideStore(database: D1Database, now = () => new Da
       return decode(await database.prepare("SELECT * FROM project_guide_binding WHERE identity_digest=?1 AND owner_principal_ref=?2")
         .bind(identity, owner).first<ProjectGuideRecord>());
     },
-    async held(owner, project) {
+    async held(owner, project, excludedIdentity) {
       return decode(await database.prepare("SELECT * FROM project_guide_binding WHERE owner_principal_ref=?1 AND project_id=?2 " +
-        "AND state IN ('HELD','UNKNOWN') ORDER BY created_at,identity_digest LIMIT 1")
-        .bind(owner, project).first<ProjectGuideRecord>());
+        "AND state IN ('HELD','UNKNOWN') AND (?3 IS NULL OR identity_digest<>?3) ORDER BY created_at,identity_digest LIMIT 1")
+        .bind(owner, project, excludedIdentity ?? null).first<ProjectGuideRecord>());
     },
     async reserve(record) {
       const row = await database.prepare("INSERT INTO project_guide_binding " +

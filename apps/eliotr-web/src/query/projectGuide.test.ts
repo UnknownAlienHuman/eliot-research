@@ -21,6 +21,21 @@ async function fixture() {
   return { connection, ensure, read, close: () => privacy.close(), stale: () => { current = false; } };
 }
 describe("guide project-open coordination", () => {
+  it("admits one server-approved new contract identity without replaying the prior UNKNOWN on renders", async () => {
+    const f = await fixture(), client = createWorkspaceQueryClient(), signal = new AbortController().signal;
+    await ensureProjectGuideOnOpen(f.connection, missing, signal);
+    const corrected = { ...missing, identity_digest: "c".repeat(64) };
+    f.read.mockResolvedValue(corrected);
+    const current = await client.fetchQuery(projectGuideQueryOptions(f.connection, "en"));
+    expect(f.ensure).toHaveBeenCalledTimes(1);
+    f.ensure.mockResolvedValue({ ...corrected, state: "UNKNOWN", workflow_instance_id: "run-corrected" });
+    const opening = ensureProjectGuideOnOpen(f.connection, current, signal);
+    expect(ensureProjectGuideOnOpen(f.connection, current, signal)).toBe(opening);
+    await opening;
+    expect(ensureProjectGuideOnOpen(f.connection, current, signal)).toBeUndefined();
+    expect(ensureProjectGuideOnOpen(f.connection, missing, signal)).toBeUndefined();
+    expect(f.ensure).toHaveBeenCalledTimes(2); f.close(); client.clear();
+  });
   it("reconciles rejection before reservation by GET and retries only after a fresh same-identity MISSING read", async () => {
     const f = await fixture(), client = createWorkspaceQueryClient(), signal = new AbortController().signal;
     f.ensure.mockRejectedValueOnce(new Error("failed before reservation"));

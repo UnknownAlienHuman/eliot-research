@@ -4,6 +4,7 @@ import { OWNER_RESEARCH_SCOPE_PROFILE } from "@eliotr/cloudflare-navigation";
 import { readHistoricalResearchCoverage } from "@eliotr/cloudflare-research-stages";
 import {
   createProjectGuideService, createProjectGuideStore, projectGuideQuestion,
+  PROJECT_GUIDE_REQUEST_CONTRACT,
   prepareReauthenticatedRunMetadataRead, runControlStatus,
   type ProjectGuideCorpus, type ProjectGuideObservation, type ProjectGuideRecord,
 } from "@eliotr/cloudflare-research-runtime/project-guide-service.js";
@@ -12,7 +13,11 @@ import type { ArtifactRevision, ScopeSnapshot, VersionedRef } from "@eliotr/cont
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { createOwnerResearchProjectConfigurationService } from "./research-project-configuration-composition.js";
 import { ResearchProjectModelConfigurationAuthorityError } from "./research-project-configuration.js";
-import { createResearchRunService, parseResearchRunTransportRequest, researchRunIdentityDigest } from "./research-run-service.js";
+import { createResearchRunService, parseResearchRunTransportRequest, researchRunIdentityDigest,
+  selectResearchRunHandlerGeneration } from "./research-run-service.js";
+import { RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON_KEY,
+  type ResearchBranchQueryBudgetSelection } from "@eliotr/cloudflare-research-configuration/research-run-configuration.js";
+import { ResearchServiceError } from "./research-service-error.js";
 import { createResearchRunReadEnvironment } from "./research-run-read-authorization.js";
 import { prepareArtifactReadReauthorization, reopenOwnerArtifactDraft, reopenOwnerArtifactSectionCitations } from "./research-artifact-reauthorization-http.js";
 import { HttpRequestError } from "./http-errors.js";
@@ -99,18 +104,69 @@ export function createOwnerProjectGuideService(env: Env) {
   }
   return createProjectGuideService({
     store: createProjectGuideStore(env.CORE_DB), observe,
-    async prepare(context, project, language, identity, observation) {
+    async prepare(context, project, language, identity, observation, persistedRequestBody) {
       if (observation.selection === null) fail("PROJECT_GUIDE_MODEL_REQUIRED");
-      const body = canonicalEvidenceJson({ query: projectGuideQuestion(language), product: "RESEARCH",
+      const legacyRequest = { query: projectGuideQuestion(language), product: "RESEARCH",
         scope_expression: { kind: "PROJECT", project_id: project }, literals: [], evidence_grade: "E0",
         budget_ref: "research-budget-v1", max_results: OWNER_RESEARCH_SCOPE_PROFILE.max_results,
-        request_version: "eliotr.research-run-request.v4", selection: observation.selection, output_language: language });
+        request_version: "eliotr.research-run-request.v4", selection: observation.selection, output_language: language };
+      const legacyBody = canonicalEvidenceJson(legacyRequest);
+      // Only byte-exact legacy reservations retain their original envelope/derived run ID.
+      // New admissions use the existing explicit lookup method so captured branch budgets have a consumer.
+      const body = persistedRequestBody === legacyBody ? legacyBody : canonicalEvidenceJson({ ...legacyRequest,
+        ...PROJECT_GUIDE_REQUEST_CONTRACT });
       const key = `project-guide:${identity}`;
       const parsed = parseResearchRunTransportRequest(JSON.parse(body));
       const digest = await researchRunIdentityDigest(parsed.request, parsed.selection);
       const hash = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`${context.principal_ref}|${key}|${digest}`));
       const hex = [...new Uint8Array(hash)].map(value => value.toString(16).padStart(2, "0")).join("");
       return { body, key, workflow_instance_id: `run-${hex.slice(0, 48)}` };
+    },
+    async legacyContractBlocked(context, record, observation) {
+      active(context);
+      await observation.requireCurrent();
+      const selected = await createOwnerResearchProjectConfigurationService(env, context, record.project_id)
+        .readSelected(context, record.project_id);
+      if (selected === null || observation.selection === null) return false;
+      if (!same(observation.selection, { configuration_project_id: selected.project_id,
+        configuration_ref: selected.configuration_ref, configuration_sha256: selected.configuration_sha256,
+        selection_revision: selected.selection_revision })) fail("PROJECT_GUIDE_AUTHORITY_CHANGED");
+      const profileJson = selected.configuration.vars[RESEARCH_BRANCH_QUERY_BUDGET_PROFILE_JSON_KEY];
+      if (profileJson === undefined) return false;
+      // readSelected has strictly validated the canonical profile and exact qualified bundle.
+      const profile = JSON.parse(profileJson) as Pick<ResearchBranchQueryBudgetSelection, "profile_id" | "profile_generation" | "budgets">;
+      const parsed = parseResearchRunTransportRequest(JSON.parse(record.request_body));
+      if (parsed.selection?.request_version !== "eliotr.research-run-request.v4" || parsed.request.inquiry_protocol_ref !== undefined) return false;
+      let rejected = false;
+      try {
+        selectResearchRunHandlerGeneration({ lane: "exploratory", prior_handler_generation: null,
+          explicit_protocol: false, delegated: false, request_max_results: parsed.request.max_results,
+          managed_primary_available: false, branch_query_budget_selection: { ...profile,
+            protocol: "eliotr.research.branch-query-budget-selection.v1", selected_configuration: {
+              owner_ref: context.principal_ref, project_id: selected.project_id, configuration_ref: selected.configuration_ref,
+              configuration_sha256: selected.configuration_sha256, selection_revision: selected.selection_revision } } });
+      } catch (error) {
+        if (!(error instanceof ResearchServiceError) || error.code !== "RESEARCH_CONFLICT" || error.status !== 409 ||
+            error.message !== "the selected branch budget profile requires a new explicit exploratory protocol run") throw error;
+        rejected = true;
+      }
+      if (!rejected) return false;
+      const row = await env.CORE_DB.prepare("SELECT (EXISTS(SELECT 1 FROM research_workflow_run WHERE operation_id=?1 OR idempotency_key=?2) " +
+        "OR EXISTS(SELECT 1 FROM investigation_ledger_head WHERE investigation_id=?3)) AS present")
+        .bind(record.workflow_instance_id, record.idempotency_key, `research-${record.workflow_instance_id.slice(4)}`)
+        .first<{ present: number }>();
+      if (row === null || (row.present !== 0 && row.present !== 1)) fail("PROJECT_GUIDE_ADMISSION_UNAVAILABLE");
+      if (row.present !== 0) return false;
+      try {
+        const instance = await env.RESEARCH_WORKFLOW.get(record.workflow_instance_id);
+        if (instance.id !== record.workflow_instance_id) fail("PROJECT_GUIDE_RUN_IDENTITY_CHANGED");
+        return false;
+      } catch (error) {
+        // The binding's exact missing-instance error is distinct from an unavailable status read.
+        if (!(error instanceof Error) || error.message !== "instance.not_found") throw error;
+      }
+      await observation.requireCurrent(); active(context);
+      return true;
     },
     async launch(context, record) {
       const headers = new Headers(context.request.headers);

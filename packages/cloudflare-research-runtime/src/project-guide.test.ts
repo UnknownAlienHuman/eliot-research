@@ -2,12 +2,12 @@
 /// <reference types="vite/client" />
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { canonicalEvidenceJson, evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
+import { canonicalEvidenceJson, evidenceSha256, evidenceSha256Bytes } from "@eliotr/cloudflare-evidence";
 import type { CoverageReceipt } from "@eliotr/contracts";
 import type { AuthenticatedRequestContext, ResearchRunStatus } from "@eliotr/interfaces";
 import migration from "../../../infra/d1/core/migrations/0166_project_guide_binding.sql?raw";
-import { createProjectGuideService, type ProjectGuideObservation, type ProjectGuidePorts } from "./project-guide-service.js";
-import { createProjectGuideStore } from "./project-guide-store.js";
+import { createProjectGuideService, PROJECT_GUIDE_REQUEST_CONTRACT, type ProjectGuideObservation, type ProjectGuidePorts } from "./project-guide-service.js";
+import { createProjectGuideStore, type ProjectGuideRecord } from "./project-guide-store.js";
 import { projectGuideFromReport, type ProjectGuideVerifiedSection } from "./project-guide-projection.js";
 
 const databases: DatabaseSync[] = [];
@@ -59,24 +59,135 @@ function fixture() {
     source_titles: { "revision-1": "Measured study", "revision-2": "Second study" }, requireCurrent: current,
   }));
   let launched = false, completed = false;
-  const launch = vi.fn(async () => { launched = true; return { workflow_instance_id: "run-guide" }; });
+  const launch = vi.fn<ProjectGuidePorts["launch"]>(async () => { launched = true; return { workflow_instance_id: "run-guide" }; });
+  const legacyContractBlocked = vi.fn(async () => false);
   const ports: ProjectGuidePorts = {
     store: createProjectGuideStore(database), observe,
-    prepare: async (_actor, _project, language, identity, observation) => ({ body: canonicalEvidenceJson({ language, selection: observation.selection }),
-      key: `project-guide:${identity}`, workflow_instance_id: "run-guide" }), launch,
-    readRun: vi.fn(async () => launched ? { status: { protocol: "eliotr.research-run-status.v1", workflow_instance_id: "run-guide",
+    prepare: async (_actor, _project, language, identity, observation, persistedBody) => {
+      const legacyBody = canonicalEvidenceJson({ language, selection: observation.selection, request_version: "eliotr.research-run-request.v4" });
+      return { body: persistedBody === legacyBody ? legacyBody : canonicalEvidenceJson({ language, selection: observation.selection,
+        ...PROJECT_GUIDE_REQUEST_CONTRACT }), key: `project-guide:${identity}`,
+      workflow_instance_id: persistedBody === legacyBody ? "run-legacy-guide" : "run-guide" };
+    }, launch, legacyContractBlocked,
+    readRun: vi.fn(async (_actor, record) => launched && record.workflow_instance_id === "run-guide" ? { status: { protocol: "eliotr.research-run-status.v1", workflow_instance_id: "run-guide",
       investigation_ref: { id: "investigation", revision: completed ? 19 : 1 }, next_stage_index: completed ? 18 : 0,
       execution_state: completed ? "ENGINE_COMPLETED" : "ACTIVE", answer: { availability: "unavailable" } } as ResearchRunStatus,
     scope_matches: true, requireCurrent: runCurrent } : null),
     readReport: vi.fn(async () => ({ artifact_ref: { id: "report", revision: 1 }, sections: [await reportFixture()], coverage, requireCurrent: reportCurrent })),
   };
-  return { db, ports, service: createProjectGuideService(ports), launch, current, reportCurrent,
+  return { db, ports, service: createProjectGuideService(ports), launch, legacyContractBlocked, current, reportCurrent,
     complete: () => { completed = true; }, disappear: () => { launched = false; },
     scope: (value: string, refs = ["revision-1"]) => { digest = value; sourceRefs = refs; },
     model: (value: string) => { config = value; }, unavailable: () => { selectionAvailable = false; } };
 }
 
+async function seedLegacy(f: ReturnType<typeof fixture>) {
+  const observed = await f.ports.observe(context, "project");
+  const identity = await evidenceSha256({ owner: context.principal_ref, project: "project", corpus: observed.corpus.digest,
+    model: observed.selection, language: "en", prompt: "project-guide-evidence-v1" });
+  const body = canonicalEvidenceJson({ language: "en", selection: observed.selection, request_version: "eliotr.research-run-request.v4" });
+  const prepared = await f.ports.prepare(context, "project", "en", identity, observed, body);
+  const record: ProjectGuideRecord = { identity_digest: identity, owner_principal_ref: context.principal_ref, project_id: "project",
+    language: "en", prompt_revision: "project-guide-evidence-v1", corpus_digest: observed.corpus.digest,
+    corpus_json: canonicalEvidenceJson(observed.corpus), selection_json: canonicalEvidenceJson(observed.selection),
+    idempotency_key: prepared.key, request_body: prepared.body, workflow_instance_id: prepared.workflow_instance_id,
+    state: "UNKNOWN", artifact_id: null, artifact_revision: null, created_at: "2026-10-17T00:00:00.000Z", updated_at: "2026-10-17T00:00:00.000Z" };
+  await f.ports.store.reserve(record); await f.ports.store.update(record, "UNKNOWN");
+  const retained = await f.ports.store.read(identity, context.principal_ref);
+  if (retained === null) throw new Error("missing legacy fixture");
+  return retained;
+}
+
 describe("persisted project guide admission", () => {
+  it("binds the corrected wire/method into one new intent while retaining the exact legacy UNKNOWN", async () => {
+    const f = fixture(), legacy = await seedLegacy(f); f.legacyContractBlocked.mockResolvedValue(true);
+    const missing = await f.service.read(context, "project", "en");
+    expect(missing.state).toBe("MISSING"); expect(missing.identity_digest).not.toBe(legacy.identity_digest);
+    const observed = await f.ports.observe(context, "project");
+    const basis = { owner: context.principal_ref, project: "project", corpus: observed.corpus.digest,
+      model: observed.selection, language: "en", prompt: "project-guide-evidence-v1" };
+    expect(missing.identity_digest).toBe(await evidenceSha256({ ...basis, request_contract: PROJECT_GUIDE_REQUEST_CONTRACT }));
+    for (const contract of [{ ...PROJECT_GUIDE_REQUEST_CONTRACT, method: "evidence_review" },
+      { ...PROJECT_GUIDE_REQUEST_CONTRACT, request_version: "eliotr.research-run-request.v6" }]) {
+      expect(missing.identity_digest).not.toBe(await evidenceSha256({ ...basis, request_contract: contract }));
+    }
+    expect(f.launch).not.toHaveBeenCalled();
+    const results = await Promise.all([f.service.ensure(context, "project", "en"), f.service.ensure(context, "project", "en")]);
+    expect(results.every(view => view.identity_digest === missing.identity_digest)).toBe(true);
+    const reload = createProjectGuideService(f.ports);
+    await reload.read(context, "project", "en"); await reload.ensure(context, "project", "en");
+    expect(f.launch).toHaveBeenCalledTimes(1);
+    expect(f.launch.mock.calls[0]?.[1]?.identity_digest).toBe(missing.identity_digest);
+    expect(await f.ports.store.read(legacy.identity_digest, context.principal_ref)).toEqual(legacy);
+    expect(f.db.prepare("SELECT COUNT(*) AS n FROM project_guide_binding").get()).toEqual({ n: 2 });
+  });
+  it("keeps the corrected V5 UNKNOWN latched across fresh service instances and repeated reloads", async () => {
+    const f = fixture(), legacy = await seedLegacy(f); f.legacyContractBlocked.mockResolvedValue(true);
+    f.launch.mockRejectedValue(new Error("lost V5 launch response"));
+    const current = await f.service.ensure(context, "project", "en");
+    expect(current.state).toBe("UNKNOWN"); expect(current.identity_digest).not.toBe(legacy.identity_digest);
+    for (let i = 0; i < 3; i++) {
+      const reload = createProjectGuideService(f.ports);
+      expect((await reload.read(context, "project", "en")).identity_digest).toBe(current.identity_digest);
+      expect((await reload.ensure(context, "project", "en")).state).toBe("UNKNOWN");
+    }
+    expect(f.launch).toHaveBeenCalledTimes(1);
+    expect(await f.ports.store.read(legacy.identity_digest, context.principal_ref)).toEqual(legacy);
+  });
+  it("does not bypass a legacy HELD record, an unproven failure, or a changed scope/model identity", async () => {
+    const f = fixture(), legacy = await seedLegacy(f);
+    expect((await f.service.ensure(context, "project", "en")).identity_digest).toBe(legacy.identity_digest);
+    f.legacyContractBlocked.mockResolvedValue(true);
+    await f.ports.store.update(legacy, "HELD"); f.legacyContractBlocked.mockClear();
+    expect((await f.service.ensure(context, "project", "en")).state).toBe("UNKNOWN");
+    expect(f.legacyContractBlocked).not.toHaveBeenCalled();
+    await f.ports.store.update(legacy, "UNKNOWN");
+    f.scope("c".repeat(64)); f.model("d".repeat(64));
+    expect((await f.service.ensure(context, "project", "en")).identity_digest).toBe(legacy.identity_digest);
+    expect(f.legacyContractBlocked).not.toHaveBeenCalled(); expect(f.launch).not.toHaveBeenCalled();
+  });
+  it("inspects the next held intent after excluding exactly the proven legacy identity", async () => {
+    const f = fixture(), legacy = await seedLegacy(f); f.legacyContractBlocked.mockResolvedValue(true);
+    const observed = await f.ports.observe(context, "project");
+    const otherIdentity = await evidenceSha256({ owner: context.principal_ref, project: "project", corpus: observed.corpus.digest,
+      model: observed.selection, language: "ru", prompt: "project-guide-evidence-v1", request_contract: PROJECT_GUIDE_REQUEST_CONTRACT });
+    const other = await f.ports.prepare(context, "project", "ru", otherIdentity, observed);
+    const held: ProjectGuideRecord = { ...legacy, identity_digest: otherIdentity, language: "ru", idempotency_key: other.key,
+      request_body: other.body, workflow_instance_id: other.workflow_instance_id, created_at: "2026-10-17T00:01:00.000Z" };
+    await f.ports.store.reserve(held); await f.ports.store.update(held, "UNKNOWN");
+    const result = await f.service.ensure(context, "project", "en");
+    expect(result.state).toBe("UNKNOWN"); expect(result.identity_digest).toBe(otherIdentity);
+    expect(f.launch).not.toHaveBeenCalled();
+    expect(await f.ports.store.read(legacy.identity_digest, context.principal_ref)).toEqual(legacy);
+    expect(f.db.prepare("SELECT COUNT(*) AS n FROM project_guide_binding").get()).toEqual({ n: 2 });
+  });
+  it("preserves a blocking legacy UNKNOWN verbatim even when a run is observed", async () => {
+    const f = fixture(), legacy = await seedLegacy(f);
+    vi.mocked(f.ports.readRun).mockResolvedValue({ status: { protocol: "eliotr.research-run-status.v1",
+      workflow_instance_id: legacy.workflow_instance_id, investigation_ref: { id: "prior-investigation", revision: 1 },
+      execution_state: "ACTIVE", next_stage_index: 0, answer: { availability: "unavailable" } } as ResearchRunStatus,
+    scope_matches: true, requireCurrent: async () => undefined });
+    expect((await f.service.ensure(context, "project", "en")).state).toBe("PENDING");
+    expect(await f.ports.store.read(legacy.identity_digest, context.principal_ref)).toEqual(legacy);
+    expect(f.launch).not.toHaveBeenCalled();
+    expect(f.db.prepare("SELECT COUNT(*) AS n FROM project_guide_binding").get()).toEqual({ n: 1 });
+  });
+  it("rejects corrupted legacy bytes before consulting the recovery gate", async () => {
+    const f = fixture(), legacy = await seedLegacy(f); f.legacyContractBlocked.mockResolvedValue(true);
+    vi.spyOn(f.ports.store, "held").mockResolvedValue({ ...legacy,
+      request_body: canonicalEvidenceJson({ ...JSON.parse(legacy.request_body), unexpected_authority: "forged" }) });
+    await expect(f.service.ensure(context, "project", "en")).rejects.toMatchObject({ code: "PROJECT_GUIDE_STORAGE_CORRUPT" });
+    expect(f.legacyContractBlocked).not.toHaveBeenCalled(); expect(f.launch).not.toHaveBeenCalled();
+    expect(await f.ports.store.read(legacy.identity_digest, context.principal_ref)).toEqual(legacy);
+  });
+  it("denies recovery when authority changes after preflight proof", async () => {
+    const f = fixture(), legacy = await seedLegacy(f);
+    f.legacyContractBlocked.mockImplementation(async () => { f.current.mockRejectedValue(new Error("authority revoked")); return true; });
+    await expect(f.service.ensure(context, "project", "en")).rejects.toThrow("authority revoked");
+    expect(f.launch).not.toHaveBeenCalled();
+    expect(await f.ports.store.read(legacy.identity_digest, context.principal_ref)).toEqual(legacy);
+    expect(f.db.prepare("SELECT COUNT(*) AS n FROM project_guide_binding").get()).toEqual({ n: 1 });
+  });
   it("coalesces concurrent openings and reopen reads into one ordinary Research attempt", async () => {
     const f = fixture();
     const results = await Promise.all([f.service.ensure(context, "project", "en"), f.service.ensure(context, "project", "en")]);
@@ -97,6 +208,28 @@ describe("persisted project guide admission", () => {
     await f.service.ensure(context, "project", "en");
     f.scope("c".repeat(64), ["revision-new"]); f.model("e".repeat(64));
     expect((await f.service.ensure(context, "project", "ru")).state).toBe("UNKNOWN");
+    expect(f.launch).toHaveBeenCalledTimes(1);
+  });
+  it("fails closed if current-contract request bytes change under an unchanged intent", async () => {
+    const f = fixture(); f.launch.mockRejectedValue(new Error("pre-dispatch conflict"));
+    const held = await f.service.ensure(context, "project", "en");
+    if (held.identity_digest === null) throw new Error("missing guide identity");
+    const original = await f.ports.store.read(held.identity_digest, context.principal_ref);
+    if (original === null) throw new Error("missing held guide");
+    const prepare = vi.fn<ProjectGuidePorts["prepare"]>(async (_actor, _project, _language, identity) => ({
+      body: "changed-current-envelope",
+      key: `project-guide:${identity}`, workflow_instance_id: "run-guide",
+    }));
+    const service = createProjectGuideService({ ...f.ports, prepare });
+    await expect(service.read(context, "project", "en")).rejects.toMatchObject({ code: "PROJECT_GUIDE_STORAGE_CORRUPT" });
+    await expect(service.ensure(context, "project", "en")).rejects.toMatchObject({ code: "PROJECT_GUIDE_STORAGE_CORRUPT" });
+    expect(prepare.mock.calls.every(call => call[5] === undefined)).toBe(true);
+    expect(f.launch).toHaveBeenCalledTimes(1);
+    const after = await f.ports.store.read(original.identity_digest, context.principal_ref);
+    expect(after).toEqual(original);
+    expect(f.db.prepare("SELECT COUNT(*) AS n FROM project_guide_binding").get()).toEqual({ n: 1 });
+    vi.spyOn(f.ports.store, "read").mockResolvedValue({ ...original, request_body: "corrupted-envelope" });
+    await expect(service.read(context, "project", "en")).rejects.toMatchObject({ code: "PROJECT_GUIDE_STORAGE_CORRUPT" });
     expect(f.launch).toHaveBeenCalledTimes(1);
   });
   it("never prepares or launches an empty project or an unqualified model", async () => {
