@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 describe("typed read-only retrieval storage failure", () => {
   it("distinguishes a failed result SELECT from integrity refusals", async () => {
@@ -69,7 +69,9 @@ interface RawDatabase {
   close(): void;
 }
 const openedDatabases = new Set<RawDatabase>();
+let preparedDatabase: RawDatabase | undefined;
 afterEach(() => {
+  preparedDatabase = undefined;
   for (const database of openedDatabases) database.close();
   openedDatabases.clear();
 });
@@ -149,12 +151,23 @@ function scopeFixture(overrides: Partial<ScopeSnapshot> = {}): ScopeSnapshot {
   };
 }
 
-function openDatabase(): { raw: RawDatabase; d1: RetrievalQueryD1 } {
+// Full native schema migration is fixture setup, not part of the query's 5s
+// assertion budget. Keep a fresh database per case and the exact migration stream.
+const SCHEMA_SETUP_TIMEOUT_MS = 20_000;
+function prepareDatabase(): void {
+  if (preparedDatabase !== undefined || openedDatabases.size !== 0) throw new Error("previous SQLite fixture was not released");
   const raw = new DatabaseSync(":memory:") as unknown as RawDatabase;
   openedDatabases.add(raw);
   for (const name of Object.keys(CORE_MIGRATIONS).sort()) {
     raw.exec(CORE_MIGRATIONS[name] as string);
   }
+  preparedDatabase = raw;
+}
+
+function openDatabase(): { raw: RawDatabase; d1: RetrievalQueryD1 } {
+  const raw = preparedDatabase;
+  if (raw === undefined) throw new Error("SQLite fixture must be prepared by its lifecycle hook and opened once");
+  preparedDatabase = undefined;
   return { raw, d1: makeD1(raw) };
 }
 
@@ -326,6 +339,8 @@ async function queryError(promise: Promise<unknown>): Promise<RetrievalQueryErro
 }
 
 describe("Q3 D1 query persistence over migration 0021", () => {
+  beforeEach(prepareDatabase, SCHEMA_SETUP_TIMEOUT_MS);
+
   it("applies the migration stream on a fresh database with the new tables", () => {
     const { raw } = openDatabase();
     const tables = (raw.prepare(
@@ -515,6 +530,8 @@ describe("Q3 D1 query persistence over migration 0021", () => {
 // SQL compatibility fixtures preserve the real immutable original row and all
 // migration triggers. This rejection matrix does not admit legacy data.
 describe("S08 unprovable historical scope identity", () => {
+  beforeEach(prepareDatabase, SCHEMA_SETUP_TIMEOUT_MS);
+
   it.each(["missing-expression", "wrong-digest", "null-expression", "unknown-scope-field", "unknown-result-field", "wrong-pack-ref"] as const)(
     "classifies %s without weakening canonical decoding or changing bytes", async (kind) => {
       const { raw, d1 } = openDatabase();
