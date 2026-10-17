@@ -168,6 +168,24 @@ export function createResearchCatalogModelUseService(input: {
     }
   }
 
+  async function reconcileStaleIntent(row: ResearchCatalogModelUseAuthorizationRow): Promise<ResearchCatalogModelUseAuthorizationRow> {
+    if (row.state !== "ACCEPTED" || row.phase !== "INTENT" ||
+        (row.owner_credential_generation === input.context.credential_generation &&
+          row.deployment_generation === input.env.DEPLOYMENT_GENERATION)) return row;
+    requireCurrentOwner();
+    await store.closeStaleIntentIfUnstarted({ row,
+      current_owner_credential_generation: input.context.credential_generation,
+      current_deployment_generation: input.env.DEPLOYMENT_GENERATION,
+      updated_at: now(),
+    });
+    const current = await store.read(row.owner_id, row.project_id, row.operation_id);
+    if (current === null) throw new ResearchCatalogModelUseServiceError(
+      "RESEARCH_CATALOG_MODEL_USE_AUTHORITY_CHANGED", 409, "Catalog model-use intent changed during reconciliation");
+    await requireCurrentStatusOwner(current);
+    requireCurrentOwner();
+    return current;
+  }
+
   function policyForOpenRouter(modelId: string, alias: string): ModelGatewayTransportPolicyV1 {
     return validateModelGatewayTransportPolicy({
       version: 1,
@@ -547,11 +565,27 @@ export function createResearchCatalogModelUseService(input: {
       if (isBuiltin) return selectInstalledBuiltinDefault(request, row);
       const service = await useService(request, row);
       if (service.kind === "provider-native-v2") return persistV2Receipt(row, await service.service.start(), request);
-      const keyReceipt = await service.service.start(request.provider_operation_id as string, {
-        protocol: RESEARCH_PROVIDER_KEY_MODEL_USE_PROTOCOL,
-        operation_id: request.operation_id,
-        expected_selection_revision: request.expected_selection_revision,
-      });
+      let keyReceipt: ResearchProviderKeyModelUseReceipt;
+      try {
+        keyReceipt = await service.service.start(request.provider_operation_id as string, {
+          protocol: RESEARCH_PROVIDER_KEY_MODEL_USE_PROTOCOL,
+          operation_id: request.operation_id,
+          expected_selection_revision: request.expected_selection_revision,
+        });
+      } catch (cause) {
+        if (!(cause instanceof ResearchProviderKeyModelUseServiceError) ||
+            cause.code !== "PROVIDER_KEY_MODEL_USE_OPERATION_UNRESOLVED") throw cause;
+        requireCurrentOwner();
+        await requireCurrentStatusOwner(row);
+        const closed = await store.blockIntentIfLegacyChildAbsent({ row, updated_at: now() });
+        const readback = await store.read(row.owner_id, row.project_id, row.operation_id);
+        if (readback === null) unavailable();
+        await requireCurrentStatusOwner(readback);
+        requireCurrentOwner();
+        if (!closed || readback.state !== "BLOCKED" || readback.phase !== "PROVIDER_RESOLUTION" ||
+            readback.failure_code !== "SERVER_POLICY_UNAVAILABLE") throw cause;
+        return receiptFromAuthorization(readback);
+      }
       return persistReceipt(row, keyReceipt, request);
     },
     async readCurrent(): Promise<ResearchCatalogModelUseReceipt | null> {
@@ -559,8 +593,9 @@ export function createResearchCatalogModelUseService(input: {
       const row = await store.readUnresolved(input.context.principal_ref, input.project_id);
       if (row === null) return null;
       await requireCurrentStatusOwner(row);
-      const reconciled = row.state === "UNCERTAIN" && input.reconcile_failed_qualification !== undefined
-        ? await input.reconcile_failed_qualification(row) : row;
+      const current = await reconcileStaleIntent(row);
+      const reconciled = current.state === "UNCERTAIN" && input.reconcile_failed_qualification !== undefined
+        ? await input.reconcile_failed_qualification(current) : current;
       return receiptFromAuthorization(reconciled);
     },
     async read(operationId: string): Promise<ResearchCatalogModelUseReceipt> {
@@ -571,13 +606,14 @@ export function createResearchCatalogModelUseService(input: {
       if (row === null) throw new ResearchCatalogModelUseServiceError("RESEARCH_CATALOG_MODEL_USE_NOT_FOUND", 404,
         "Catalog model-use operation was not found");
       await requireCurrentStatusOwner(row);
+      const current = await reconcileStaleIntent(row);
       const request: ResearchCatalogModelUseRequest = {
-        protocol: RESEARCH_CATALOG_MODEL_USE_REQUEST_PROTOCOL, operation_id: row.operation_id,
-        expected_selection_revision: row.expected_selection_revision, provider_id: row.provider_id,
-        model_id: row.model_id, provider_operation_id: row.provider_operation_id,
+        protocol: RESEARCH_CATALOG_MODEL_USE_REQUEST_PROTOCOL, operation_id: current.operation_id,
+        expected_selection_revision: current.expected_selection_revision, provider_id: current.provider_id,
+        model_id: current.model_id, provider_operation_id: current.provider_operation_id,
       };
-      if (row.provider_operation_id === null) {
-        if (row.state === "IMPORTING") {
+      if (current.provider_operation_id === null) {
+        if (current.state === "IMPORTING") {
           try {
             const installed = await installedBuiltinConfiguration(request);
             if (installed !== null) {
@@ -585,28 +621,28 @@ export function createResearchCatalogModelUseService(input: {
               if (selected?.configuration_ref === installed.target.configuration_ref &&
                   selected.configuration_sha256 === installed.target.configuration_sha256) {
                 const readback = await readBuiltinSelection(request);
-                return receiptFromAuthorization(await transitionAuthorization(row, "SELECTED", "COMPLETE", null, readback));
+                return receiptFromAuthorization(await transitionAuthorization(current, "SELECTED", "COMPLETE", null, readback));
               }
             }
           } catch { /* Status reads never retry the configuration import. */ }
         }
-        return receiptFromAuthorization(row);
+        return receiptFromAuthorization(current);
       }
-      if (row.state === "UNCERTAIN" && input.reconcile_failed_qualification !== undefined) {
-        return receiptFromAuthorization(await input.reconcile_failed_qualification(row));
+      if (current.state === "UNCERTAIN" && input.reconcile_failed_qualification !== undefined) {
+        return receiptFromAuthorization(await input.reconcile_failed_qualification(current));
       }
-      if (["SELECTED", "BLOCKED", "UNCERTAIN", "CONFLICT"].includes(row.state)) return receiptFromAuthorization(row);
+      if (["SELECTED", "BLOCKED", "UNCERTAIN", "CONFLICT"].includes(current.state)) return receiptFromAuthorization(current);
       // Original credential/deployment generations remain execution provenance.
       // A status read under a fresh context never resumes an old preparation.
-      if (row.owner_credential_generation !== input.context.credential_generation ||
-          row.deployment_generation !== input.env.DEPLOYMENT_GENERATION) return receiptFromAuthorization(row);
-      const service = await useService(request, row);
-      if (service.kind === "provider-native-v2") return persistV2Receipt(row, await service.service.read(), request);
+      if (current.owner_credential_generation !== input.context.credential_generation ||
+          current.deployment_generation !== input.env.DEPLOYMENT_GENERATION) return receiptFromAuthorization(current);
+      const service = await useService(request, current);
+      if (service.kind === "provider-native-v2") return persistV2Receipt(current, await service.service.read(), request);
       try {
         const keyReceipt = await service.service.read(operationId);
-        return persistReceipt(row, keyReceipt, request);
+        return persistReceipt(current, keyReceipt, request);
       } catch (error) {
-        if (error instanceof ResearchProviderKeyModelUseServiceError && error.status === 404) return receiptFromAuthorization(row);
+        if (error instanceof ResearchProviderKeyModelUseServiceError && error.status === 404) return receiptFromAuthorization(current);
         throw error;
       }
     },

@@ -5,8 +5,15 @@ import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { SERVICE_MODEL_PROVIDER_CREATE_PROTOCOL } from "@eliotr/contracts";
 import { createServiceModelProviderService, type ServiceModelProviderManagementPort } from
   "@eliotr/cloudflare-model-control/service-model-provider-service.js";
+import { canonicalModelGatewayJson, modelGatewaySha256 } from "@eliotr/cloudflare-ai";
+import { createD1ResearchCatalogModelUseStore, type ResearchCatalogModelUseIntent } from
+  "@eliotr/cloudflare-research-configuration/research-catalog-model-use-store.js";
+import { createResearchProviderKeyModelUseStore, type ResearchProviderKeyModelUseIntent } from
+  "@eliotr/cloudflare-research-configuration/research-provider-key-model-use-store.js";
 import type { ResearchProjectModelConfigurationService } from "@eliotr/cloudflare-research-configuration/research-project-configuration.js";
 import { createResearchCatalogModelUseService } from "../src/research-catalog-model-use-service.js";
+import { ResearchProviderKeyModelUseServiceError, type ResearchProviderKeyModelUseService } from
+  "../src/research-provider-key-model-use-service.js";
 import { createResearchProviderKeyModelUseComposition } from "../src/research-provider-key-model-use-composition.js";
 import { createOwnerResearchProjectConfigurationService } from "../src/research-project-configuration-composition.js";
 import type { Env } from "../src/env.js";
@@ -143,6 +150,132 @@ function service(inputModelId = MODEL) {
   return { api, projectConfiguration, externalUse };
 }
 
+async function staleIntentFixture(input: {
+  readonly credential_matches?: boolean;
+  readonly deployment_matches?: boolean;
+} = {}) {
+  const owner = `catalog-recovery-owner-${crypto.randomUUID()}`;
+  const project = `catalog-recovery-project-${crypto.randomUUID()}`;
+  const operationId = crypto.randomUUID();
+  const providerOperationId = crypto.randomUUID();
+  const currentCredential = `credential-current-${crypto.randomUUID()}`;
+  const currentDeployment = `deployment-current-${crypto.randomUUID()}`;
+  const accountId = "a".repeat(32);
+  const parentCredential = input.credential_matches === true ? currentCredential : `credential-old-${crypto.randomUUID()}`;
+  const parentDeployment = input.deployment_matches === true ? currentDeployment : `deployment-old-${crypto.randomUUID()}`;
+  const signalController = new AbortController();
+  const ownerContext: AuthenticatedRequestContext = { request: new Request("https://eliot.test/owner", { signal: signalController.signal }),
+    principal_ref: owner, credential_generation: currentCredential, client_class: "owner_pwa" };
+  const createdAt = new Date().toISOString();
+  await testEnv.CORE_DB.prepare(
+    "INSERT INTO project(project_id,title,default_disclosure,retention_policy_ref,default_source_policy_ref," +
+    "default_model_profile_ref,default_depth_profile_ref,generation,created_at) " +
+    "VALUES (?1,'Catalog recovery test','private','retention','source','profile','depth',1,?2)",
+  ).bind(project, createdAt).run();
+  await testEnv.CORE_DB.prepare(
+    "INSERT INTO project_owner(project_id,principal_ref,deployment_generation,created_at,updated_at) VALUES (?1,?2,?3,?4,?4)",
+  ).bind(project, owner, currentDeployment, createdAt).run();
+
+  const providerService = createServiceModelProviderService({ database: testEnv.CORE_DB, now: () => Date.parse(createdAt),
+    managementPort: {
+      available: true,
+      create: vi.fn(async (request: Parameters<ServiceModelProviderManagementPort["create"]>[0]) => ({
+        provider_config_id: `catalog-config-${request.operation_id}`, provider_slug: "openrouter", alias: request.alias,
+      })),
+      read: vi.fn(async () => null),
+    } });
+  await providerService.create(ownerContext, { protocol: SERVICE_MODEL_PROVIDER_CREATE_PROTOCOL,
+    operation_id: providerOperationId, provider_id: "openrouter", display_name: "OpenRouter",
+    model_ids: [DOTS], api_key: "synthetic-recovery-test-key" });
+  const binding = await providerService.resolveConfiguredProvider(ownerContext, "openrouter", { operation_id: providerOperationId });
+  if (binding === null) throw new Error("missing configured OpenRouter test binding");
+  const requestSha = await modelGatewaySha256(canonicalModelGatewayJson({
+    protocol: "eliotr.research.catalog-model-use-request.v1", operation_id: operationId,
+    expected_selection_revision: null, provider_id: "openrouter", provider_operation_id: providerOperationId,
+    route_provider_id: binding.provider_slug, model_id: DOTS,
+  }));
+  const store = createD1ResearchCatalogModelUseStore(testEnv.CORE_DB);
+  const intent: ResearchCatalogModelUseIntent = {
+    owner_id: owner, project_id: project, operation_id: operationId, provider_id: "openrouter",
+    provider_operation_id: providerOperationId, route_provider_id: binding.provider_slug, model_id: DOTS,
+    account_id: accountId, gateway_id: "eliotr-reasoning", alias: binding.alias,
+    provider_config_id: binding.provider_config_id, configuration_metadata_sha256: binding.metadata_sha256,
+    request_sha256: requestSha, owner_credential_generation: parentCredential, project_generation: 1,
+    deployment_generation: parentDeployment, expected_selection_revision: null,
+    source_configuration_ref: null, source_configuration_sha256: null, created_at: createdAt,
+  };
+  await store.insertIntent(intent);
+
+  const runtimeEnv = { ...testEnv, DEPLOYMENT_GENERATION: currentDeployment,
+    AI_GATEWAY_REASONING_URL: `https://gateway.ai.cloudflare.com/v1/${accountId}/eliotr-reasoning` } as Env;
+  const modelUse = vi.fn((): ResearchProviderKeyModelUseService => {
+    throw new Error("stale read must not dispatch model use");
+  });
+  const api = createResearchCatalogModelUseService({ env: runtimeEnv, context: ownerContext, project_id: project,
+    project_configuration: makeProjectConfiguration().service, model_use: modelUse, now: () => createdAt });
+  return { api, store, owner, project, operationId, providerOperationId, binding, intent, createdAt, currentCredential,
+    currentDeployment, parentCredential, parentDeployment, accountId, signalController, modelUse };
+}
+
+async function insertLegacyModelUseChild(f: Awaited<ReturnType<typeof staleIntentFixture>>): Promise<void> {
+  const stage = (sequence_number: number, stageName: "SYNTHESIZE" | "AUDIT_CLAIMS") => ({
+    sequence_number, stage: stageName,
+    route_ref: stageName === "SYNTHESIZE" ? "dynamic/eliotr-balanced" : "dynamic/eliotr-audit-verifier",
+    route_version: "catalog-recovery-test", prompt_sha256: "1".repeat(64), schema_sha256: "2".repeat(64),
+    parameters_sha256: "3".repeat(64), probe_prompt_sha256: "4".repeat(64),
+    probe_schema_sha256: "5".repeat(64), probe_parameters_sha256: "6".repeat(64),
+  });
+  const intent: ResearchProviderKeyModelUseIntent = {
+    owner_id: f.owner, project_id: f.project, operation_id: f.operationId, key_operation_id: f.providerOperationId,
+    account_id: f.accountId, gateway_id: "eliotr-reasoning", alias: f.binding.alias,
+    provider_config_id: f.binding.provider_config_id, configuration_metadata_sha256: f.binding.metadata_sha256,
+    request_sha256: "7".repeat(64), configuration_basis_json: JSON.stringify({
+      protocol: "eliotr.research.provider-key-model-use-basis.v1",
+      stages: ["SYNTHESIZE", "AUDIT_CLAIMS"].map(() => ({ transport_policy: {
+        provider: "openrouter", model: DOTS, api: "openrouter-chat-completions",
+        billing: { mode: "byok", alias: f.binding.alias, free_only: true },
+      } })),
+    }),
+    owner_credential_generation: f.parentCredential, project_generation: 1,
+    deployment_generation: f.parentDeployment, deadline_at: f.createdAt,
+    expected_selection_revision: null, source_configuration_ref: null, source_configuration_sha256: null,
+    planned_stage_set_sha256: "8".repeat(64), plan_sha256: "9".repeat(64),
+    stages: [stage(0, "SYNTHESIZE"), stage(1, "AUDIT_CLAIMS")], created_at: f.createdAt,
+  };
+  await createResearchProviderKeyModelUseStore(testEnv.CORE_DB).insertIntent(intent);
+}
+
+async function insertV2Evidence(f: Awaited<ReturnType<typeof staleIntentFixture>>): Promise<void> {
+  const stage = "SYNTHESIZE";
+  const pricingRef = `pricing-${f.operationId}`;
+  const pricingSha = "a".repeat(64);
+  const preparationRef = `preparation-${f.operationId}`;
+  const preparationSha = "b".repeat(64);
+  const preparation = {
+    protocol: "eliotr.provider-native-model-preparation.v2", owner_ref: f.owner, project_id: f.project,
+    owner_operation_id: f.operationId, consent_operation_id: f.operationId, stage,
+    provider_id: "openrouter", provider_slug: "openrouter", provider_operation_id: f.providerOperationId,
+    model_id: DOTS, pricing_snapshot_ref: pricingRef, pricing_snapshot_sha256: pricingSha,
+    request_sha256: f.intent.request_sha256, catalog_sdk: "test-sdk", sdk_base_url: "https://openrouter.ai/api/v1",
+    catalog_metadata_sha256: f.binding.metadata_sha256,
+    key_binding: { operation_id: f.providerOperationId, owner_ref: f.owner, project_id: f.project,
+      provider_id: "openrouter", provider_slug: "openrouter", alias: f.binding.alias,
+      provider_config_id: f.binding.provider_config_id, configuration_metadata_sha256: f.binding.metadata_sha256 },
+    transport_policy: { api: "openrouter-chat-completions", provider: "openrouter", model: DOTS,
+      billing: { mode: "byok", alias: f.binding.alias } },
+    prepared_at: f.createdAt, preparation_expires_at: "2027-01-01T00:00:00.000Z",
+    pricing_snapshot_expires_at: "2027-02-01T00:00:00.000Z",
+  };
+  await testEnv.CORE_DB.prepare(
+    "INSERT INTO provider_native_model_catalog_v2_evidence (owner_ref,project_id,consent_operation_id,stage,provider_id," +
+    "provider_slug,provider_operation_id,model_id,alias,provider_config_id,configuration_metadata_sha256,request_sha256," +
+    "pricing_snapshot_ref,pricing_snapshot_sha256,preparation_ref,preparation_sha256,preparation_json,state,created_at,updated_at) " +
+    "VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,'PREPARED',?18,?18)",
+  ).bind(f.owner, f.project, f.operationId, stage, "openrouter", "openrouter", f.providerOperationId, DOTS,
+    f.binding.alias, f.binding.provider_config_id, f.binding.metadata_sha256, f.intent.request_sha256,
+    pricingRef, pricingSha, preparationRef, preparationSha, JSON.stringify(preparation), f.createdAt).run();
+}
+
 describe("catalog model use with the installed Workers AI default", () => {
   it("imports only the already-qualified exact native model through project validation and CAS", async () => {
     const fixture = service();
@@ -239,4 +372,108 @@ describe("catalog model use with an exact saved global operation", () => {
     ).bind(owner, project, operationId).first()).toEqual({ provider_operation_id: providerOperationId,
       model_id: DOTS, state: "SELECTED" });
   }, 20_000);
+});
+
+describe("stale accepted catalog intent status reconciliation", () => {
+  it.each(["credential", "deployment"] as const)("closes an unstarted intent after %s generation changes", async changed => {
+    const f = await staleIntentFixture({ credential_matches: changed === "deployment", deployment_matches: changed === "credential" });
+    const result = changed === "credential" ? await f.api.readCurrent() : await f.api.read(f.operationId);
+
+    expect(result).toMatchObject({ state: "blocked", phase: "provider_resolution", failure_code: "AUTHORITY_CHANGED",
+      operation_id: f.operationId, provider_id: "openrouter", model_id: DOTS });
+    expect(await f.store.read(f.owner, f.project, f.operationId)).toMatchObject({
+      state: "BLOCKED", phase: "PROVIDER_RESOLUTION", failure_code: "AUTHORITY_CHANGED",
+      request_sha256: f.intent.request_sha256, owner_credential_generation: f.parentCredential,
+      deployment_generation: f.parentDeployment, project_generation: 1,
+    });
+    expect(await f.api.readCurrent()).toBeNull();
+    expect(f.modelUse).not.toHaveBeenCalled();
+  });
+
+  it("leaves an intent pending while its original credential and deployment remain current", async () => {
+    const f = await staleIntentFixture({ credential_matches: true, deployment_matches: true });
+
+    await expect(f.api.readCurrent()).resolves.toMatchObject({ state: "accepted", phase: "intent" });
+    expect(await f.store.read(f.owner, f.project, f.operationId)).toMatchObject({ state: "ACCEPTED", phase: "INTENT" });
+    expect(f.modelUse).not.toHaveBeenCalled();
+  });
+
+  it("does not close prepared or qualifying work even after its authority generation changes", async () => {
+    const f = await staleIntentFixture();
+    await f.store.transition({ owner_id: f.owner, project_id: f.project, operation_id: f.operationId,
+      expected_state: "ACCEPTED", expected_phase: "INTENT", state: "PREPARING", phase: "PROVIDER_RESOLUTION",
+      updated_at: f.createdAt });
+    await f.store.transition({ owner_id: f.owner, project_id: f.project, operation_id: f.operationId,
+      expected_state: "PREPARING", expected_phase: "PROVIDER_RESOLUTION", state: "QUALIFYING", phase: "QUALIFICATION",
+      updated_at: f.createdAt });
+
+    await expect(f.api.readCurrent()).resolves.toMatchObject({ state: "qualifying", phase: "qualification" });
+    expect(await f.store.read(f.owner, f.project, f.operationId)).toMatchObject({ state: "QUALIFYING", phase: "QUALIFICATION" });
+    expect(f.modelUse).not.toHaveBeenCalled();
+  });
+
+  it.each(["legacy-child", "v2-evidence"] as const)("does not close an intent with %s", async effect => {
+    const f = await staleIntentFixture();
+    if (effect === "legacy-child") await insertLegacyModelUseChild(f);
+    else await insertV2Evidence(f);
+
+    await expect(f.api.readCurrent()).resolves.toMatchObject({ state: "accepted", phase: "intent" });
+    expect(await f.store.read(f.owner, f.project, f.operationId)).toMatchObject({ state: "ACCEPTED", phase: "INTENT" });
+    expect(f.modelUse).not.toHaveBeenCalled();
+  });
+
+  it("SQL-fences recovery when the current project generation changes", async () => {
+    const f = await staleIntentFixture();
+    await testEnv.CORE_DB.prepare("UPDATE project SET generation=2 WHERE project_id=?1").bind(f.project).run();
+    const row = await f.store.read(f.owner, f.project, f.operationId);
+    if (row === null) throw new Error("missing recovery test intent");
+
+    await expect(f.store.closeStaleIntentIfUnstarted({ row,
+      current_owner_credential_generation: f.currentCredential,
+      current_deployment_generation: f.currentDeployment, updated_at: f.createdAt,
+    })).resolves.toBe(false);
+    expect(await f.store.read(f.owner, f.project, f.operationId)).toMatchObject({ state: "ACCEPTED", phase: "INTENT" });
+  });
+
+  it("does not reconcile after the owner read is cancelled", async () => {
+    const f = await staleIntentFixture();
+    f.signalController.abort();
+
+    await expect(f.api.readCurrent()).rejects.toMatchObject({ code: "RESEARCH_CATALOG_MODEL_USE_AUTHORITY_CHANGED" });
+    expect(await f.store.read(f.owner, f.project, f.operationId)).toMatchObject({ state: "ACCEPTED", phase: "INTENT" });
+    expect(f.modelUse).not.toHaveBeenCalled();
+  });
+});
+
+describe("pre-child legacy unresolved start failure", () => {
+  async function prepare(f: Awaited<ReturnType<typeof staleIntentFixture>>) {
+    f.modelUse.mockReturnValue({
+      start: async () => { throw new ResearchProviderKeyModelUseServiceError(
+        "PROVIDER_KEY_MODEL_USE_OPERATION_UNRESOLVED", 409, "existing operation unresolved"); },
+      read: async () => { throw new Error("unexpected child read"); },
+    });
+    return f.api.start({ protocol: "eliotr.research.catalog-model-use-request.v1", operation_id: f.operationId,
+      expected_selection_revision: null, provider_id: "openrouter", model_id: DOTS,
+      provider_operation_id: f.providerOperationId });
+  }
+
+  it("returns a persisted blocked receipt only when the exact legacy child is absent", async () => {
+    const f = await staleIntentFixture({ credential_matches: true, deployment_matches: true });
+
+    await expect(prepare(f)).resolves.toMatchObject({ state: "blocked", phase: "provider_resolution",
+      failure_code: "SERVER_POLICY_UNAVAILABLE", operation_id: f.operationId });
+    expect(await f.store.read(f.owner, f.project, f.operationId)).toMatchObject({ state: "BLOCKED",
+      phase: "PROVIDER_RESOLUTION", failure_code: "SERVER_POLICY_UNAVAILABLE",
+      request_sha256: f.intent.request_sha256, owner_credential_generation: f.parentCredential,
+      project_generation: 1, deployment_generation: f.parentDeployment });
+  });
+
+  it.each(["legacy-child", "v2-evidence"] as const)("preserves an intent when %s exists and returns no synthetic receipt", async effect => {
+    const f = await staleIntentFixture({ credential_matches: true, deployment_matches: true });
+    if (effect === "legacy-child") await insertLegacyModelUseChild(f);
+    else await insertV2Evidence(f);
+
+    await expect(prepare(f)).rejects.toMatchObject({ code: "PROVIDER_KEY_MODEL_USE_OPERATION_UNRESOLVED" });
+    expect(await f.store.read(f.owner, f.project, f.operationId)).toMatchObject({ state: "ACCEPTED", phase: "INTENT" });
+  });
 });

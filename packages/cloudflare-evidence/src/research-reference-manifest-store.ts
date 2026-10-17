@@ -389,46 +389,128 @@ function validatePostModelReadback(context: PostModelReadbackManifestContext, st
   }
 }
 
+const RETAINED_MANIFEST_READ_PHASES = [
+  "manifest_row_read", "manifest_row_validation", "manifest_binding", "current_grant_before",
+  "current_sources_before", "r2_binding", "r2_read", "r2_hash", "r2_decode",
+  "current_sources_after", "current_grant_after", "manifest_decode",
+] as const;
+
+type RetainedManifestReadPhase = typeof RETAINED_MANIFEST_READ_PHASES[number];
+type RetainedManifestReadPhaseStatus = "NOT_RUN" | "OK" | "FAILED";
+interface RetainedManifestReadDiagnostic {
+  readonly operation_id: string;
+  readonly stage: PostModelReadbackManifestContext["stage"];
+  outcome: "IN_PROGRESS" | "READ" | "NOT_FOUND" | "FAILED";
+  failure_phase: RetainedManifestReadPhase | "manifest_validation" | null;
+  readonly status: Record<RetainedManifestReadPhase, RetainedManifestReadPhaseStatus>;
+  readonly duration_ms: Record<RetainedManifestReadPhase, number>;
+}
+
+function retainedManifestReadDiagnostic(context: PostModelReadbackManifestContext): RetainedManifestReadDiagnostic {
+  return {
+    operation_id: context.operation_id,
+    stage: context.stage,
+    outcome: "IN_PROGRESS",
+    failure_phase: null,
+    status: Object.fromEntries(RETAINED_MANIFEST_READ_PHASES.map((phase) => [phase, "NOT_RUN"])) as
+      Record<RetainedManifestReadPhase, RetainedManifestReadPhaseStatus>,
+    duration_ms: Object.fromEntries(RETAINED_MANIFEST_READ_PHASES.map((phase) => [phase, 0])) as
+      Record<RetainedManifestReadPhase, number>,
+  };
+}
+
+async function measureRetainedManifestReadPhase<T>(
+  diagnostic: RetainedManifestReadDiagnostic | undefined,
+  phase: RetainedManifestReadPhase,
+  work: () => Promise<T>,
+): Promise<T> {
+  if (diagnostic === undefined) return work();
+  const startedAt = Date.now();
+  try {
+    const result = await work();
+    diagnostic.status[phase] = "OK";
+    return result;
+  } catch (cause) {
+    diagnostic.status[phase] = "FAILED";
+    diagnostic.failure_phase ??= phase;
+    throw cause;
+  } finally {
+    diagnostic.duration_ms[phase] += Math.max(0, Date.now() - startedAt);
+  }
+}
+
+function emitRetainedManifestReadDiagnostic(diagnostic: RetainedManifestReadDiagnostic): void {
+  try {
+    console.warn(JSON.stringify({
+      event: "research_reference_manifest_post_model_read",
+      operation_id: diagnostic.operation_id,
+      stage: diagnostic.stage,
+      outcome: diagnostic.outcome,
+      failure_phase: diagnostic.failure_phase,
+      phases: Object.fromEntries(RETAINED_MANIFEST_READ_PHASES.map((phase) => [phase, {
+        status: diagnostic.status[phase], duration_ms: diagnostic.duration_ms[phase],
+      }])),
+    }));
+  } catch { /* Diagnostic logging must not replace the retained-read outcome. */ }
+}
+
 async function readR2(
   store: ReturnType<typeof createR2EvidenceObjectStore>,
   row: ValidatedManifestRow,
+  diagnostic?: RetainedManifestReadDiagnostic,
 ): Promise<ReferenceManifestReceipt & { readonly json: string; readonly manifest: AllowedReferenceManifest }> {
-  let residency: ObjectResidencyKey;
-  try { residency = ObjectResidencyKeySchema.parse(JSON.parse(row.r2_residency_key_json)); }
-  catch (cause) { fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest residency binding is invalid", true, cause); }
-  if (canonicalEvidenceJson(residency) !== row.r2_residency_key_json ||
-      await objectResidencyKeyDigest(residency) !== row.r2_residency_key_digest ||
-      residency.content_digest.digest !== row.r2_content_sha256) {
-    fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest residency binding differs from D1 content", true);
-  }
-  const expectedKey = await canonicalEvidenceObjectKey(residency, "research/reference-manifest", row.r2_content_sha256);
-  if (expectedKey !== row.r2_key) fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest R2 key differs from its residency binding", true);
-  const object = await store.open(row.r2_key);
-  if (object === null) fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest object is missing", true);
-  if (object.etag !== row.r2_etag || object.size !== row.r2_size_bytes || object.httpMetadata?.contentType !== "application/json") {
-    fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest object metadata differs from D1", true);
-  }
-  const metadata = object.customMetadata ?? {};
-  if (Object.keys(metadata).length !== 3 || metadata.eliotr_sha256 !== row.r2_content_sha256 || metadata.eliotr_size_bytes !== String(row.r2_size_bytes) || metadata.eliotr_immutable !== "true") {
-    fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest immutable metadata differs from D1", true);
-  }
-  const bytes = new Uint8Array(await object.arrayBuffer());
-  if (bytes.byteLength !== row.r2_size_bytes || await evidenceSha256Bytes(bytes) !== row.r2_content_sha256) {
-    fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest R2 readback digest differs from D1", true);
-  }
-  const json = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-  let parsed: AllowedReferenceManifest;
-  try { parsed = AllowedReferenceManifestSchema.parse(JSON.parse(json)); }
-  catch (cause) { fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest R2 readback is not a valid contract", true, cause); }
+  await measureRetainedManifestReadPhase(diagnostic, "r2_binding", async () => {
+    let residency: ObjectResidencyKey;
+    try { residency = ObjectResidencyKeySchema.parse(JSON.parse(row.r2_residency_key_json)); }
+    catch (cause) { fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest residency binding is invalid", true, cause); }
+    if (canonicalEvidenceJson(residency) !== row.r2_residency_key_json ||
+        await objectResidencyKeyDigest(residency) !== row.r2_residency_key_digest ||
+        residency.content_digest.digest !== row.r2_content_sha256) {
+      fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest residency binding differs from D1 content", true);
+    }
+    const expectedKey = await canonicalEvidenceObjectKey(residency, "research/reference-manifest", row.r2_content_sha256);
+    if (expectedKey !== row.r2_key) fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest R2 key differs from its residency binding", true);
+  });
+  const { bytes } = await measureRetainedManifestReadPhase(diagnostic, "r2_read", async () => {
+    const object = await store.open(row.r2_key);
+    if (object === null) fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest object is missing", true);
+    if (object.etag !== row.r2_etag || object.size !== row.r2_size_bytes || object.httpMetadata?.contentType !== "application/json") {
+      fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest object metadata differs from D1", true);
+    }
+    const metadata = object.customMetadata ?? {};
+    if (Object.keys(metadata).length !== 3 || metadata.eliotr_sha256 !== row.r2_content_sha256 || metadata.eliotr_size_bytes !== String(row.r2_size_bytes) || metadata.eliotr_immutable !== "true") {
+      fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest immutable metadata differs from D1", true);
+    }
+    return { bytes: new Uint8Array(await object.arrayBuffer()) };
+  });
+  await measureRetainedManifestReadPhase(diagnostic, "r2_hash", async () => {
+    if (bytes.byteLength !== row.r2_size_bytes || await evidenceSha256Bytes(bytes) !== row.r2_content_sha256) {
+      fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest R2 readback digest differs from D1", true);
+    }
+  });
+  const { json, parsed } = await measureRetainedManifestReadPhase(diagnostic, "r2_decode", async () => {
+    const json = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    let parsed: AllowedReferenceManifest;
+    try { parsed = AllowedReferenceManifestSchema.parse(JSON.parse(json)); }
+    catch (cause) { fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest R2 readback is not a valid contract", true, cause); }
+    return { json, parsed };
+  });
   const { manifest_digest: _digest, ...manifestDigestPayload } = parsed;
-  const computedManifestDigest = await evidenceSha256(manifestDigestPayload);
-  if (canonicalEvidenceJson(parsed) !== json || parsed.manifest_digest !== row.manifest_digest ||
-      computedManifestDigest !== row.manifest_digest || refKey(parsed.manifest_ref) !== refKey(row.manifest_ref) ||
-      parsed.scope_snapshot_ref.id !== row.scope_snapshot_id ||
-      parsed.scope_snapshot_ref.revision !== row.scope_snapshot_revision ||
-      parsed.client_fence_ref !== row.credential_generation || parsed.expires_at !== row.expires_at) {
-    fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest R2 readback is not canonical", true);
-  }
+  await measureRetainedManifestReadPhase(diagnostic, "r2_hash", async () => {
+    const computedManifestDigest = await evidenceSha256(manifestDigestPayload);
+    if (computedManifestDigest !== row.manifest_digest) {
+      fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest R2 readback is not canonical", true);
+    }
+  });
+  await measureRetainedManifestReadPhase(diagnostic, "r2_decode", async () => {
+    if (canonicalEvidenceJson(parsed) !== json || parsed.manifest_digest !== row.manifest_digest ||
+        refKey(parsed.manifest_ref) !== refKey(row.manifest_ref) ||
+        parsed.scope_snapshot_ref.id !== row.scope_snapshot_id ||
+        parsed.scope_snapshot_ref.revision !== row.scope_snapshot_revision ||
+        parsed.client_fence_ref !== row.credential_generation || parsed.expires_at !== row.expires_at) {
+      fail("REFERENCE_MANIFEST_PERSISTENCE_UNCERTAIN", "reference manifest R2 readback is not canonical", true);
+    }
+  });
   return { manifest_ref: row.manifest_ref, manifest_digest: row.manifest_digest, r2_content_sha256: row.r2_content_sha256, r2_key: row.r2_key, r2_etag: row.r2_etag, r2_size_bytes: row.r2_size_bytes, existed_identically: true, json, manifest: parsed };
 }
 
@@ -569,29 +651,50 @@ export function createResearchReferenceManifestStore(input: {
 
   async function readManifest(refValue: VersionedRef, retained?: PostModelReadbackManifestContext): Promise<AllowedReferenceManifest | null> {
     if (retained !== undefined) validatePostModelReadback(retained, input.context);
-    const found = await find(refValue);
-    if (found === null || found.state !== "COMMITTED") return null;
-    const row = validateRow(found);
-    const residencyDigest = await objectResidencyKeyDigest(input.context.manifest_residency_key);
-    if (!contextMatchesRow(row, input.context, residencyDigest)) fail("REFERENCE_MANIFEST_INPUT_INVALID", "manifest read is outside its exact authority binding");
-    const before = await ensureCurrent();
-    const sourcesBefore = retained === undefined ? undefined
-      : await currentSources(before);
-    const readback = await readR2(store, row);
-    if (retained !== undefined && readback.manifest.allowed_source_revision_refs.some((source) =>
-      !input.navigation.scope.member_source_revision_refs.includes(source))) {
-      fail("REFERENCE_MANIFEST_SCOPE_STALE", "retained manifest source is outside the current frozen scope", true);
+    const diagnostic = retained === undefined ? undefined : retainedManifestReadDiagnostic(retained);
+    try {
+      const found = await measureRetainedManifestReadPhase(diagnostic, "manifest_row_read", () => find(refValue));
+      if (found === null || found.state !== "COMMITTED") {
+        if (diagnostic !== undefined) diagnostic.outcome = "NOT_FOUND";
+        return null;
+      }
+      const row = await measureRetainedManifestReadPhase(diagnostic, "manifest_row_validation", async () => validateRow(found));
+      await measureRetainedManifestReadPhase(diagnostic, "manifest_binding", async () => {
+        const residencyDigest = await objectResidencyKeyDigest(input.context.manifest_residency_key);
+        if (!contextMatchesRow(row, input.context, residencyDigest)) {
+          fail("REFERENCE_MANIFEST_INPUT_INVALID", "manifest read is outside its exact authority binding");
+        }
+      });
+      const before = await measureRetainedManifestReadPhase(diagnostic, "current_grant_before", () => ensureCurrent());
+      const sourcesBefore = retained === undefined ? undefined
+        : await measureRetainedManifestReadPhase(diagnostic, "current_sources_before", () => currentSources(before));
+      const readback = await readR2(store, row, diagnostic);
+      if (retained !== undefined && readback.manifest.allowed_source_revision_refs.some((source) =>
+        !input.navigation.scope.member_source_revision_refs.includes(source))) {
+        fail("REFERENCE_MANIFEST_SCOPE_STALE", "retained manifest source is outside the current frozen scope", true);
+      }
+      const sourcesAfter = retained === undefined ? undefined
+        : await measureRetainedManifestReadPhase(diagnostic, "current_sources_after", () => currentSources(before));
+      const after = await measureRetainedManifestReadPhase(diagnostic, "current_grant_after", () => ensureCurrent());
+      if (canonicalEvidenceJson(before) !== canonicalEvidenceJson(after) ||
+          (retained !== undefined && canonicalEvidenceJson(sourcesBefore) !== canonicalEvidenceJson(sourcesAfter))) {
+        fail("REFERENCE_MANIFEST_SCOPE_STALE", "manifest authorization changed during readback", true);
+      }
+      validateManifestGrant(readback.manifest, before, input.navigation.scope, input.navigation.timestamp(), retained?.purpose);
+      validateManifestGrant(readback.manifest, after, input.navigation.scope, input.navigation.timestamp(), retained?.purpose);
+      const manifest = await measureRetainedManifestReadPhase(diagnostic, "manifest_decode", async () =>
+        AllowedReferenceManifestSchema.parse(JSON.parse(readback.json)));
+      if (diagnostic !== undefined) diagnostic.outcome = "READ";
+      return manifest;
+    } catch (cause) {
+      if (diagnostic !== undefined) {
+        diagnostic.outcome = "FAILED";
+        diagnostic.failure_phase ??= "manifest_validation";
+      }
+      throw cause;
+    } finally {
+      if (diagnostic !== undefined) emitRetainedManifestReadDiagnostic(diagnostic);
     }
-    const sourcesAfter = retained === undefined ? undefined
-      : await currentSources(before);
-    const after = await ensureCurrent();
-    if (canonicalEvidenceJson(before) !== canonicalEvidenceJson(after) ||
-        (retained !== undefined && canonicalEvidenceJson(sourcesBefore) !== canonicalEvidenceJson(sourcesAfter))) {
-      fail("REFERENCE_MANIFEST_SCOPE_STALE", "manifest authorization changed during readback", true);
-    }
-    validateManifestGrant(readback.manifest, before, input.navigation.scope, input.navigation.timestamp(), retained?.purpose);
-    validateManifestGrant(readback.manifest, after, input.navigation.scope, input.navigation.timestamp(), retained?.purpose);
-    return AllowedReferenceManifestSchema.parse(JSON.parse(readback.json));
   }
 
   return {

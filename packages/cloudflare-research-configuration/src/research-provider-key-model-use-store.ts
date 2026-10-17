@@ -5,6 +5,11 @@ const OPERATION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const SHA256 = /^[0-9a-f]{64}$/u;
 const CONFIGURATION_REF = /^rpmc-[a-f0-9]{64}$/u;
+export { createResearchProviderKeyModelUseUnverifiedExecutionReconciler } from
+  "./research-provider-key-model-use-unverified-execution.js";
+export type { ResearchProviderKeyModelUseUnverifiedExecutionReconciler } from
+  "./research-provider-key-model-use-unverified-execution.js";
+
 const STAGES = ["ANALYZE_BRANCHES", "COUNTER_SEARCH", "SYNTHESIZE", "AUDIT_CLAIMS"] as const;
 const ROUTES = new Set<string>(APPLICATION_MODEL_ROUTES);
 const STATES = new Set(["ACCEPTED", "PREPARING", "QUALIFYING", "IMPORTING", "SELECTED", "BLOCKED", "UNCERTAIN", "CONFLICT"]);
@@ -120,6 +125,28 @@ export interface ResearchProviderKeyModelUseIntent {
   readonly plan_sha256: string;
   readonly stages: readonly ResearchProviderKeyModelUseStagePlan[];
   readonly created_at: string;
+}
+
+export interface ResearchProviderKeyModelUseUnverifiedExecutionReceiptRow {
+  readonly owner_id: string;
+  readonly project_id: string;
+  readonly operation_id: string;
+  readonly stage: ResearchProviderKeyModelUseStage;
+  readonly preparation_ref: string;
+  readonly preparation_sha256: string;
+  readonly account_id: string;
+  readonly gateway_id: string;
+  readonly gateway_log_id: string;
+  readonly http_status: 200;
+  readonly logged_at: string;
+  readonly observed_at: string;
+  readonly receipt_json: string;
+  readonly receipt_sha256: string;
+}
+
+export interface ResearchProviderKeyModelUseUnverifiedExecutionReceiptInput
+  extends ResearchProviderKeyModelUseUnverifiedExecutionReceiptRow {
+  readonly project_generation: number;
 }
 
 export class ResearchProviderKeyModelUseStoreError extends Error {
@@ -444,6 +471,70 @@ export function createResearchProviderKeyModelUseStore(database: D1Database) {
         return result[0]?.meta.changes === 1;
       } catch (cause) {
         storage("model-use operation intent could not be recorded", cause);
+      }
+    },
+    async appendUnverifiedExecution(input: ResearchProviderKeyModelUseUnverifiedExecutionReceiptInput): Promise<boolean> {
+      if (!(STAGES as readonly string[]).includes(input.stage) || !OPERATION_ID.test(input.operation_id) ||
+          !IDENTIFIER.test(input.owner_id) || !IDENTIFIER.test(input.project_id) ||
+          !IDENTIFIER.test(input.preparation_ref) || !SHA256.test(input.preparation_sha256) ||
+          !/^[a-f0-9]{32}$/u.test(input.account_id) || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/u.test(input.gateway_id) ||
+          !IDENTIFIER.test(input.gateway_log_id) || input.http_status !== 200 ||
+          !Number.isSafeInteger(input.project_generation) || input.project_generation < 1 ||
+          !Number.isFinite(Date.parse(input.logged_at)) || !Number.isFinite(Date.parse(input.observed_at)) ||
+          new TextEncoder().encode(input.receipt_json).byteLength > 16_384 || !SHA256.test(input.receipt_sha256)) {
+        storage("unverified execution receipt input is invalid");
+      }
+      try {
+        const result = await database.batch([
+          database.prepare(
+            "INSERT INTO research_provider_key_model_use_unverified_execution(owner_id,project_id,operation_id,stage," +
+            "preparation_ref,preparation_sha256,account_id,gateway_id,gateway_log_id,http_status,logged_at,observed_at,receipt_json,receipt_sha256) " +
+            "VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,200,?10,?11,?12,?13) " +
+            "ON CONFLICT(owner_id,project_id,operation_id) DO NOTHING",
+          ).bind(input.owner_id, input.project_id, input.operation_id, input.stage, input.preparation_ref,
+            input.preparation_sha256, input.account_id, input.gateway_id, input.gateway_log_id, input.logged_at,
+            input.observed_at, input.receipt_json, input.receipt_sha256),
+          database.prepare(
+            "INSERT INTO provider_native_model_qualification_revocation(qualification_ref,qualification_sha256,owner_ref,project_id,reason,revoked_by,revoked_at) " +
+            "SELECT q.qualification_ref,q.qualification_sha256,q.owner_ref,q.project_id," +
+            "'Authenticated Gateway execution completed but native qualification is unverified',q.owner_ref,?4 " +
+            "FROM research_provider_key_model_use_stage_operation s " +
+            "JOIN provider_native_model_qualification_proof q ON q.qualification_ref=s.qualification_ref " +
+            "AND q.qualification_sha256=s.qualification_sha256 AND q.owner_ref=s.owner_id AND q.project_id=s.project_id " +
+            "JOIN research_provider_key_model_use_unverified_execution r ON r.owner_id=s.owner_id AND r.project_id=s.project_id " +
+            "AND r.operation_id=s.operation_id AND r.receipt_sha256=?5 " +
+            "WHERE s.owner_id=?1 AND s.project_id=?2 AND s.operation_id=?3 AND s.state='QUALIFIED' " +
+            "AND s.qualification_ref IS NOT NULL ON CONFLICT(qualification_ref,qualification_sha256) DO NOTHING",
+          ).bind(input.owner_id, input.project_id, input.operation_id, input.observed_at, input.receipt_sha256),
+          database.prepare(
+            "UPDATE research_provider_key_model_use_operation SET state='BLOCKED',failure_code='NATIVE_RECEIPT_INVALID',updated_at=?1 " +
+            "WHERE owner_id=?2 AND project_id=?3 AND operation_id=?4 AND state='UNCERTAIN' AND phase='NATIVE_QUALIFY' " +
+            "AND active_stage=?5 AND project_generation=?6 AND EXISTS(" +
+            "SELECT 1 FROM research_provider_key_model_use_unverified_execution r WHERE r.owner_id=?2 AND r.project_id=?3 " +
+            "AND r.operation_id=?4 AND r.stage=?5 AND r.receipt_sha256=?7)",
+          ).bind(input.observed_at, input.owner_id, input.project_id, input.operation_id, input.stage,
+            input.project_generation, input.receipt_sha256),
+        ]);
+        if (result[0]?.meta.changes !== 1) {
+          const existing = await database.prepare(
+            "SELECT receipt_sha256 FROM research_provider_key_model_use_unverified_execution " +
+            "WHERE owner_id=?1 AND project_id=?2 AND operation_id=?3 LIMIT 1",
+          ).bind(input.owner_id, input.project_id, input.operation_id).first<{ receipt_sha256: string }>();
+          return existing?.receipt_sha256 === input.receipt_sha256;
+        }
+        const [operation, receipt] = await Promise.all([
+          read(input.owner_id, input.project_id, input.operation_id),
+          database.prepare("SELECT receipt_sha256 FROM research_provider_key_model_use_unverified_execution " +
+            "WHERE owner_id=?1 AND project_id=?2 AND operation_id=?3 LIMIT 1")
+            .bind(input.owner_id, input.project_id, input.operation_id).first<{ receipt_sha256: string }>(),
+        ]);
+        if (operation?.state !== "BLOCKED" || operation.phase !== "NATIVE_QUALIFY" ||
+            operation.active_stage !== input.stage || operation.failure_code !== "NATIVE_RECEIPT_INVALID" ||
+            receipt?.receipt_sha256 !== input.receipt_sha256) storage("unverified execution reconciliation readback differs");
+        return true;
+      } catch (cause) {
+        if (cause instanceof ResearchProviderKeyModelUseStoreError) throw cause;
+        storage("unverified execution reconciliation could not be persisted", cause);
       }
     },
     async transitionOperation(input: {

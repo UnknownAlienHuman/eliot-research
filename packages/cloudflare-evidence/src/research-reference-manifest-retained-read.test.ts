@@ -91,6 +91,70 @@ describe("retained post-model manifest readback", () => {
     expect(f.run).not.toHaveBeenCalled();
   });
 
+  it("emits one closed metadata diagnostic for a validated retained read", async () => {
+    const f = await fixture();
+    const write = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      await f.store.getForPostModelReadback(f.manifest.manifest_ref, f.retained);
+      expect(write).toHaveBeenCalledTimes(1);
+      const raw = write.mock.calls[0]?.[0];
+      expect(typeof raw).toBe("string");
+      const event = JSON.parse(raw as string) as Record<string, unknown>;
+      expect(Object.keys(event).sort()).toEqual([
+        "event", "failure_phase", "operation_id", "outcome", "phases", "stage",
+      ]);
+      expect(event).toMatchObject({
+        event: "research_reference_manifest_post_model_read",
+        operation_id: f.retained.operation_id,
+        stage: f.retained.stage,
+        outcome: "READ",
+        failure_phase: null,
+      });
+      const phases = event.phases as Record<string, { status: string; duration_ms: number }>;
+      expect(phases.current_grant_before?.status).toBe("OK");
+      expect(phases.current_sources_before?.status).toBe("OK");
+      expect(phases.r2_read?.status).toBe("OK");
+      expect(phases.r2_hash?.status).toBe("OK");
+      expect(phases.r2_decode?.status).toBe("OK");
+      expect(phases.current_sources_after?.status).toBe("OK");
+      expect(phases.current_grant_after?.status).toBe("OK");
+      for (const phase of Object.values(phases)) {
+        expect(Number.isFinite(phase.duration_ms)).toBe(true);
+        expect(phase.duration_ms).toBeGreaterThanOrEqual(0);
+      }
+      for (const privateValue of ["manifest-1", "scope-1", "revision-1", "handle-1", "grant-1", "credential-1", "etag-1"]) {
+        expect(raw).not.toContain(privateValue);
+      }
+    } finally {
+      write.mockRestore();
+    }
+  });
+
+  it("does not log unvalidated lineage and a logger failure cannot replace the authority error", async () => {
+    const invalid = await fixture();
+    const invalidLog = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const unvalidatedContext = { ...invalid.retained, stage: "AUDIT_CLAIMS" } as unknown as PostModelReadbackManifestContext;
+      await expect(invalid.store.getForPostModelReadback(invalid.manifest.manifest_ref, {
+        ...unvalidatedContext,
+      })).rejects.toMatchObject({ code: "REFERENCE_MANIFEST_INPUT_INVALID" });
+      expect(invalidLog).not.toHaveBeenCalled();
+    } finally {
+      invalidLog.mockRestore();
+    }
+
+    const f = await fixture();
+    f.navigation.current.mockRejectedValue(Object.assign(new Error("revoked"), { code: "NAVIGATION_SCOPE_NOT_CURRENT" }));
+    const brokenLog = vi.spyOn(console, "warn").mockImplementation(() => { throw new Error("logger failure"); });
+    try {
+      await expect(f.store.getForPostModelReadback(f.manifest.manifest_ref, f.retained))
+        .rejects.toMatchObject({ code: "REFERENCE_MANIFEST_SCOPE_STALE" });
+      expect(brokenLog).toHaveBeenCalledTimes(1);
+    } finally {
+      brokenLog.mockRestore();
+    }
+  });
+
   it.each(["purpose", "stage", "missing-audit", "operation", "stage-five", "principal"])("rejects invalid retained proof: %s", async (fault) => {
     const f = await fixture();
     const proof = { ...f.retained };

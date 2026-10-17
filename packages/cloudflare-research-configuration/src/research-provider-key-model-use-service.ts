@@ -52,6 +52,7 @@ import {
   type ResearchProviderKeyModelUseStage,
 } from "./research-provider-key-model-use-store.js";
 import { readResearchProviderKeyModelUseNativeScope } from "./research-provider-key-model-use-current-scope.js";
+import type { ResearchProviderKeyModelUseUnverifiedExecutionReconciler } from "./research-provider-key-model-use-unverified-execution.js";
 import {
   createResearchProviderKeyModelUseProgress,
   ResearchProviderKeyModelUseServiceError,
@@ -108,6 +109,8 @@ export function createResearchProviderKeyModelUseService(input: {
   readonly catalog_selection?: ResearchProviderKeyModelUseCatalogSelectionV1;
   readonly now?: () => number;
   readonly fetcher?: typeof fetch;
+  /** Optional metadata-only status reconciliation; never resumes or starts a native probe. */
+  readonly reconcile_unverified_execution?: ResearchProviderKeyModelUseUnverifiedExecutionReconciler;
 }): ResearchProviderKeyModelUseService {
   if (input.database === undefined || input.project_id.length === 0 ||
       typeof input.key_configuration?.readConfiguredOperation !== "function" ||
@@ -225,7 +228,12 @@ export function createResearchProviderKeyModelUseService(input: {
       throw new ResearchProviderKeyModelUseServiceError("PROVIDER_KEY_MODEL_USE_INPUT_INVALID", 400,
         "Provider-key operation ID is invalid");
     }
-    const unresolved = await store.readUnresolved(input.context.principal_ref, input.project_id);
+    let unresolved = await store.readUnresolved(input.context.principal_ref, input.project_id);
+    if (unresolved !== null && unresolved.operation_id !== request.operation_id &&
+        unresolved.state === "UNCERTAIN" && input.reconcile_unverified_execution !== undefined) {
+      await input.reconcile_unverified_execution(unresolved);
+      unresolved = await store.readUnresolved(input.context.principal_ref, input.project_id);
+    }
     if (unresolved !== null && unresolved.operation_id !== request.operation_id) {
       throw new ResearchProviderKeyModelUseServiceError("PROVIDER_KEY_MODEL_USE_OPERATION_UNRESOLVED", 409,
         "Another model-key use operation is unresolved; reconcile that operation before starting another");
@@ -539,9 +547,14 @@ export function createResearchProviderKeyModelUseService(input: {
       return advance(row);
     },
     async read(operationId: string) {
-      return mapReceipt(await readResearchProviderKeyModelUseOperation({
+      let row = await readResearchProviderKeyModelUseOperation({
         store, database: input.database, context: input.context, project_id: input.project_id, operation_id: operationId,
-      }));
+      });
+      if (row.state === "UNCERTAIN" && input.reconcile_unverified_execution !== undefined) {
+        await input.reconcile_unverified_execution(row);
+        row = await store.read(row.owner_id, row.project_id, row.operation_id) ?? row;
+      }
+      return mapReceipt(row);
     },
   });
 }

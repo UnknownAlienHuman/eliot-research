@@ -11,6 +11,8 @@ import type { ResearchProviderKeyModelUseCatalogSelectionV1 } from
   "@eliotr/cloudflare-research-configuration/research-provider-key-model-use-plan.js";
 import { createResearchProviderNativeModelAuthority } from "./research-provider-native-model-authority.js";
 import { createResearchProviderKeyModelUsePlanInputsFromEnv } from "./research-provider-key-model-use-plan.js";
+import type { ResearchProviderKeyModelUseUnverifiedExecutionReconciler } from
+  "@eliotr/cloudflare-research-configuration/research-provider-key-model-use-store.js";
 
 export { ResearchProviderKeyModelUseServiceError };
 export type { ResearchProviderKeyModelUseService };
@@ -24,6 +26,7 @@ export function createResearchProviderKeyModelUseService(input: {
   readonly catalog_selection?: ResearchProviderKeyModelUseCatalogSelectionV1;
   readonly now?: () => number;
   readonly fetcher?: typeof fetch;
+  readonly reconcile_unverified_execution?: ResearchProviderKeyModelUseUnverifiedExecutionReconciler;
 }): ResearchProviderKeyModelUseService {
   if (input.env.CORE_DB === undefined) {
     throw new ResearchProviderKeyModelUseServiceError(
@@ -55,5 +58,8 @@ export function createResearchProviderKeyModelUseService(input: {
     }),
     ...(input.now === undefined ? {} : { now: input.now }),
     ...(input.fetcher === undefined ? {} : { fetcher: input.fetcher }),
+    ...(input.reconcile_unverified_execution === undefined ? {} : {
+      reconcile_unverified_execution: input.reconcile_unverified_execution,
+    }),
   });
 }

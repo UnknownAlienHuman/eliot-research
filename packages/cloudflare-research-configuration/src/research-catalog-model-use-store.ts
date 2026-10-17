@@ -224,6 +224,60 @@ export function createD1ResearchCatalogModelUseStore(database: D1Database) {
         fail("catalog model-use intent could not be persisted", cause);
       }
     },
+    async closeStaleIntentIfUnstarted(input: {
+      readonly row: ResearchCatalogModelUseAuthorizationRow;
+      readonly current_owner_credential_generation: string;
+      readonly current_deployment_generation: string;
+      readonly updated_at: string;
+    }): Promise<boolean> {
+      const row = input.row;
+      try {
+        const result = await database.prepare(
+          "UPDATE research_catalog_model_use_authorization SET state='BLOCKED',phase='PROVIDER_RESOLUTION'," +
+          "failure_code='AUTHORITY_CHANGED',updated_at=?1 " +
+          "WHERE owner_id=?2 AND project_id=?3 AND operation_id=?4 AND request_sha256=?5 " +
+          "AND owner_credential_generation=?6 AND project_generation=?7 AND deployment_generation=?8 " +
+          "AND state='ACCEPTED' AND phase='INTENT' " +
+          "AND (owner_credential_generation<>?9 OR deployment_generation<>?10) " +
+          "AND EXISTS (SELECT 1 FROM project p JOIN project_owner o ON o.project_id=p.project_id " +
+          "WHERE p.project_id=?3 AND p.generation=?7 AND o.principal_ref=?2) " +
+          "AND NOT EXISTS (SELECT 1 FROM research_provider_key_model_use_operation u " +
+          "WHERE u.owner_id=?2 AND u.project_id=?3 AND u.operation_id=?4) " +
+          "AND NOT EXISTS (SELECT 1 FROM provider_native_model_catalog_v2_evidence e " +
+          "WHERE e.owner_ref=?2 AND e.project_id=?3 AND e.consent_operation_id=?4)",
+        ).bind(input.updated_at, row.owner_id, row.project_id, row.operation_id, row.request_sha256,
+          row.owner_credential_generation, row.project_generation, row.deployment_generation,
+          input.current_owner_credential_generation, input.current_deployment_generation).run();
+        return result.meta.changes === 1;
+      } catch (cause) {
+        fail("stale catalog model-use intent reconciliation is unavailable", cause);
+      }
+    },
+    async blockIntentIfLegacyChildAbsent(input: {
+      readonly row: ResearchCatalogModelUseAuthorizationRow;
+      readonly updated_at: string;
+    }): Promise<boolean> {
+      const row = input.row;
+      try {
+        const result = await database.prepare(
+          "UPDATE research_catalog_model_use_authorization SET state='BLOCKED',phase='PROVIDER_RESOLUTION'," +
+          "failure_code='SERVER_POLICY_UNAVAILABLE',updated_at=?1 " +
+          "WHERE owner_id=?2 AND project_id=?3 AND operation_id=?4 AND request_sha256=?5 " +
+          "AND owner_credential_generation=?6 AND project_generation=?7 AND deployment_generation=?8 " +
+          "AND state='ACCEPTED' AND phase='INTENT' " +
+          "AND EXISTS (SELECT 1 FROM project p JOIN project_owner o ON o.project_id=p.project_id " +
+          "WHERE p.project_id=?3 AND p.generation=?7 AND o.principal_ref=?2) " +
+          "AND NOT EXISTS (SELECT 1 FROM research_provider_key_model_use_operation u " +
+          "WHERE u.owner_id=?2 AND u.project_id=?3 AND u.operation_id=?4) " +
+          "AND NOT EXISTS (SELECT 1 FROM provider_native_model_catalog_v2_evidence e " +
+          "WHERE e.owner_ref=?2 AND e.project_id=?3 AND e.consent_operation_id=?4)",
+        ).bind(input.updated_at, row.owner_id, row.project_id, row.operation_id, row.request_sha256,
+          row.owner_credential_generation, row.project_generation, row.deployment_generation).run();
+        return result.meta.changes === 1;
+      } catch (cause) {
+        fail("pre-child catalog model-use failure reconciliation is unavailable", cause);
+      }
+    },
     async transition(input: {
       readonly owner_id: string; readonly project_id: string; readonly operation_id: string;
       readonly expected_state: ResearchCatalogModelUseDbState; readonly expected_phase: ResearchCatalogModelUseDbPhase;

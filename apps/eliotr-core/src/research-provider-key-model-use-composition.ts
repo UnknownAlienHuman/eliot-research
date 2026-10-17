@@ -14,6 +14,10 @@ import type { ServiceModelProviderService } from "@eliotr/cloudflare-model-contr
 import { createServiceModelSettingsComposition } from "./service-model-settings-composition.js";
 import type { ResearchProviderKeyModelUseCatalogSelectionV1 } from
   "@eliotr/cloudflare-research-configuration/research-provider-key-model-use-plan.js";
+import { createResearchProviderKeyModelUseUnverifiedExecutionReconciler } from
+  "@eliotr/cloudflare-research-configuration/research-provider-key-model-use-store.js";
+import { createCatalogQualificationGatewayLogReader } from
+  "@eliotr/cloudflare-research-configuration/research-catalog-model-use-store.js";
 
 /**
  * The old project-key operation remains authoritative when present. A global
@@ -97,6 +101,14 @@ export function createResearchProviderKeyModelUseComposition(
     project_keys: createResearchProviderKeyConfigurationComposition(env).service,
     service_models: createServiceModelSettingsComposition(env).service,
   });
+  const gateway = installedGatewayIdentity(env.AI_GATEWAY_REASONING_URL);
+  const reconcile = gateway === undefined ? undefined : createResearchProviderKeyModelUseUnverifiedExecutionReconciler({
+    database: env.CORE_DB, context, deployment_generation: env.DEPLOYMENT_GENERATION,
+    read_logs: createCatalogQualificationGatewayLogReader({
+      account_id: gateway.account_id, gateway_id: gateway.gateway_id,
+      control_token: env.ELIOTR_MODEL_PROVIDER_CONTROL_TOKEN, signal: context.request.signal,
+    }),
+  });
   return createResearchProviderKeyModelUseService({
     env,
     context,
@@ -104,5 +116,6 @@ export function createResearchProviderKeyModelUseComposition(
     key_configuration: keyConfiguration,
     project_configuration: projectConfiguration,
     ...(catalogSelection === undefined ? {} : { catalog_selection: catalogSelection }),
+    ...(reconcile === undefined ? {} : { reconcile_unverified_execution: reconcile }),
   });
 }
