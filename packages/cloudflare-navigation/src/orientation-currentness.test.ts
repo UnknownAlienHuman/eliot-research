@@ -39,4 +39,26 @@ describe("request-local currentness fence", () => {
     const f = fixture(); await f.read(snapshot); f.state.time -= 1;
     await f.read(snapshot); expect(f.deep).toHaveBeenCalledTimes(2);
   });
+  it("fully revalidates once when another authorized request advances the epoch", async () => {
+    const f = fixture();
+    f.deep.mockImplementationOnce(async scope => { f.state.epoch += 1; return scope; });
+    await expect(f.read(snapshot)).resolves.toBe(snapshot);
+    expect(f.deep).toHaveBeenCalledTimes(2);
+    await f.read(snapshot);
+    expect(f.deep).toHaveBeenCalledTimes(2);
+  });
+  it("still rejects actual revocation when revalidating after epoch churn", async () => {
+    const f = fixture();
+    const revoked = new Error("scope revoked");
+    f.deep.mockImplementationOnce(async scope => { f.state.epoch += 1; return scope; })
+      .mockRejectedValueOnce(revoked);
+    await expect(f.read(snapshot)).rejects.toBe(revoked);
+    expect(f.deep).toHaveBeenCalledTimes(2);
+  });
+  it("bounds revalidation and fails closed when authority keeps changing", async () => {
+    const f = fixture();
+    f.deep.mockImplementation(async scope => { f.state.epoch += 1; return scope; });
+    await expect(f.read(snapshot)).rejects.toMatchObject({ code: "ORIENTATION_AUTHORITY_CHANGED" });
+    expect(f.deep).toHaveBeenCalledTimes(2);
+  });
 });

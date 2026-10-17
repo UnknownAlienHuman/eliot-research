@@ -431,7 +431,10 @@ export function createWorkflowCheckpointExecutor(
         if (recoveringExistingAttempt) await recoveryGuard(request, principal, measure);
         else await guard(request, principal, budget, measure);
         const checkpointAttempt = attempt as AttemptRow;
-        const receipt = await measure("checkpoint_commit", () => store.commit(request, checkpointAttempt, output));
+        const receipt = await measure("checkpoint_commit", () => store.commit(request, checkpointAttempt, output, async () => {
+          if (recoveringExistingAttempt) await recoveryGuard(request, principal, measure);
+          else await guard(request, principal, budget, measure);
+        }));
         return await finishReadback(request, principal, receipt, measure);
       } catch (error) {
         const failure = workflowFailure(error, failurePhase, request.stage);

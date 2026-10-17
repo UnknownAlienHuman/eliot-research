@@ -522,6 +522,7 @@ async function retainedFixture(stage: "SYNTHESIZE" | "VERIFY" | "AUDIT_CLAIMS" |
   const reader = stage === "SYNTHESIZE" ? createEvidenceFreezeSynthesisContextReader(environment, navigation, readers)
     : createEvidenceFreezePostSynthesisContextReader(environment, navigation, readers, stage);
   return { reader, input: { request: invocation.request, principal, input_bytes: stage === "SYNTHESIZE" ? frozenBytes : modelBytes },
+    stageEleven, stageTenOutput,
     manifest, profile, commits, retainedGet, get, binding, environment, navigation, readers,
     changeAuthority: () => { currentAuthority = { policy_authority_ref: "revoked" }; } };
 }
@@ -544,7 +545,7 @@ describe("materialize context request-local lineage reuse", () => {
       "RESOLVE_CITATIONS", "CALCULATE_COVERAGE"] as const) {
       expect(stages.filter(value => value === stage)).toHaveLength(1);
     }
-    expect(readWorkflowObject).toHaveBeenCalledTimes(3);
+    expect(readWorkflowObject).toHaveBeenCalledTimes(2);
     expect(f.navigation.current).toHaveBeenCalledTimes(4);
     expect(f.readers.read_authorization_receipt_ref).toHaveBeenCalledTimes(2);
     expect(f.readers.read_w1_head).toHaveBeenCalledTimes(3);
@@ -558,7 +559,7 @@ describe("materialize context request-local lineage reuse", () => {
     await reader.read(f.input);
     await reader.read(f.input);
     expect(readCommittedStageLineage).toHaveBeenCalledTimes(14);
-    expect(readWorkflowObject).toHaveBeenCalledTimes(6);
+    expect(readWorkflowObject).toHaveBeenCalledTimes(4);
     expect(f.navigation.current).toHaveBeenCalledTimes(8);
     expect(f.retainedGet).toHaveBeenCalledTimes(2);
     expect(f.binding).toHaveBeenCalledTimes(2);
@@ -618,6 +619,26 @@ describe("materialize context request-local lineage reuse", () => {
 });
 
 describe("post-model retained context purpose", () => {
+  it("reuses the verified stage-eleven output within one post-model context", async () => {
+    const f = await retainedFixture("RESOLVE_CITATIONS");
+
+    await f.reader.read(f.input);
+
+    expect(vi.mocked(readWorkflowObject).mock.calls.map((call) => call[1].object_ref)).toEqual([
+      f.commits.get("SYNTHESIZE")?.request.input_manifest.object_ref,
+      f.stageTenOutput.object_ref,
+    ]);
+  });
+
+  it("requires complete stage-eleven manifest identity before reusing bytes", async () => {
+    const f = await retainedFixture("RESOLVE_CITATIONS");
+    Object.assign(f.stageEleven.receipt.output_manifest, { byte_length: 2 });
+
+    await expect(f.reader.read(f.input)).rejects.toMatchObject({ code: "WORKFLOW_OUTPUT_CORRUPT" });
+    expect(readWorkflowObject).toHaveBeenCalledOnce();
+    expect(f.readers.read_stage_zero).not.toHaveBeenCalled();
+  });
+
   it.each(["RESOLVE_CITATIONS", "CALCULATE_COVERAGE", "MATERIALIZE"] as const)("admits original expired artifacts for %s after all model commits", async stage => {
     const f = await retainedFixture(stage);
     const context = await f.reader.read(f.input);

@@ -106,6 +106,15 @@ function mapFailure(error: unknown): never {
   if (isWorkflowErrorCode(code)) fail(code);
   return fail("WORKFLOW_EFFECT_UNCERTAIN");
 }
+function ledgerEpochChanged(error: unknown): boolean {
+  let current = error;
+  for (let depth = 0; depth < 4 && current !== null && typeof current === "object"; depth += 1) {
+    const message = Object.getOwnPropertyDescriptor(current, "message")?.value;
+    if (typeof message === "string" && message.includes("LEDGER_STALE_HEAD: ledger authority epoch changed")) return true;
+    current = Object.getOwnPropertyDescriptor(current, "cause")?.value;
+  }
+  return false;
+}
 export function workflowStageIndex(request: StageRequest): number {
   return RESEARCH_WORKFLOW_STAGES.indexOf(request.stage);
 }
@@ -511,7 +520,8 @@ export class WorkflowCheckpointStore {
         JSON.stringify(receipt.output_manifest) !== row.output_json) fail("WORKFLOW_OUTPUT_CORRUPT");
     return receipt;
   }
-  async commit(request: StageRequest, attempt: AttemptRow, output: WorkflowObject): Promise<StageReceipt> {
+  async commit(request: StageRequest, attempt: AttemptRow, output: WorkflowObject,
+    revalidate?: () => Promise<void>): Promise<StageReceipt> {
     const existing = await this.receipt(request, attempt.request_sha256);
     if (existing !== null) return existing;
     const head = await this.head(request.investigation_ref.id);
@@ -533,30 +543,40 @@ export class WorkflowCheckpointStore {
       kind: "CHECKPOINT", payload_handle_ref: output.object_ref, payload_digest: output.sha256,
       actor_ref: head.principal_ref, verifier_ref: null, created_at: now,
     };
-    const epoch = await this.db.prepare(COMMAND_SQL.selectEpoch).first<{ generation: number }>();
-    const purge = await this.db.prepare(`SELECT s.purge_ledger_revision AS scope_revision,
-      COALESCE((SELECT MAX(ledger_revision) FROM purge_ledger),0) AS global_revision
-      FROM scope_snapshot s WHERE s.snapshot_id = ?1 AND s.revision = ?2`)
-      .bind(head.scope_snapshot_id, head.scope_snapshot_revision).first<{ scope_revision: number; global_revision: number }>();
-    if (epoch === null || purge === null) fail("WORKFLOW_AUTHORITY_STALE");
-    const command = buildAppendCommand(next, head.revision, event, {
-      principal_ref: head.principal_ref, scope_snapshot_id: head.scope_snapshot_id,
-      scope_snapshot_revision: head.scope_snapshot_revision, policy_generation: head.policy_generation,
-      policy_authority_ref: head.policy_authority_ref, deployment_generation: head.deployment_generation,
-      purge_revision: purge.global_revision, scope_purge_revision: purge.scope_revision,
-    }, epoch.generation, now);
-    try {
-      await this.db.batch([
-        this.db.prepare(COMMAND_SQL.insertCommand).bind(...command.params),
-        this.db.prepare(`INSERT INTO research_workflow_checkpoint
-          (operation_id, stage_index, request_sha256, receipt_json, receipt_sha256, ledger_event_id, created_at)
-          VALUES (?1,?2,?3,?4,?5,?6,?7)`).bind(request.operation_id, attempt.stage_index, attempt.request_sha256,
-            text, await textDigest(text), event.event_id, now),
-      ]);
-    } catch (error) {
-      const reconciled = await this.receipt(request, attempt.request_sha256);
-      if (reconciled !== null) return reconciled;
-      mapFailure(error);
+    for (let commitAttempt = 0; commitAttempt < 2; commitAttempt += 1) {
+      const epoch = await this.db.prepare(COMMAND_SQL.selectEpoch).first<{ generation: number }>();
+      const purge = await this.db.prepare(`SELECT s.purge_ledger_revision AS scope_revision,
+        COALESCE((SELECT MAX(ledger_revision) FROM purge_ledger),0) AS global_revision
+        FROM scope_snapshot s WHERE s.snapshot_id = ?1 AND s.revision = ?2`)
+        .bind(head.scope_snapshot_id, head.scope_snapshot_revision).first<{ scope_revision: number; global_revision: number }>();
+      if (epoch === null || purge === null) fail("WORKFLOW_AUTHORITY_STALE");
+      const command = buildAppendCommand(next, head.revision, event, {
+        principal_ref: head.principal_ref, scope_snapshot_id: head.scope_snapshot_id,
+        scope_snapshot_revision: head.scope_snapshot_revision, policy_generation: head.policy_generation,
+        policy_authority_ref: head.policy_authority_ref, deployment_generation: head.deployment_generation,
+        purge_revision: purge.global_revision, scope_purge_revision: purge.scope_revision,
+      }, epoch.generation, now);
+      try {
+        await this.db.batch([
+          this.db.prepare(COMMAND_SQL.insertCommand).bind(...command.params),
+          this.db.prepare(`INSERT INTO research_workflow_checkpoint
+            (operation_id, stage_index, request_sha256, receipt_json, receipt_sha256, ledger_event_id, created_at)
+            VALUES (?1,?2,?3,?4,?5,?6,?7)`).bind(request.operation_id, attempt.stage_index, attempt.request_sha256,
+              text, await textDigest(text), event.event_id, now),
+        ]);
+      } catch (error) {
+        const reconciled = await this.receipt(request, attempt.request_sha256);
+        if (reconciled !== null) return reconciled;
+        // A known epoch rejection rolls the whole batch back. Refresh every
+        // existing authority/budget fence before capturing another epoch; never
+        // replay the handler, output persistence, or an ambiguous write failure.
+        if (commitAttempt === 0 && revalidate !== undefined && ledgerEpochChanged(error)) {
+          await revalidate();
+          continue;
+        }
+        mapFailure(error);
+      }
+      break;
     }
     const readback = await this.receipt(request, attempt.request_sha256);
     if (readback === null) fail("WORKFLOW_EFFECT_UNCERTAIN");

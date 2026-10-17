@@ -15,18 +15,26 @@ export function orientationCurrentness(db: D1Database, scopes: ScopeService, pri
     return row.generation;
   }
   return async (scope: ScopeSnapshot): Promise<ScopeSnapshot> => {
-    const identity = canonicalEvidenceJson(scope); const start = now(); const before = await generation();
-    const observed = now();
-    if (!Number.isSafeInteger(start) || observed < start) orientationFail("ORIENTATION_AUTHORITY_CHANGED", 409, true);
-    if (cached?.identity === identity && cached.generation === before && start >= cached.checkedAt && observed < cached.validUntil) return scope;
-    // Read the time frontier BEFORE deep validation: a boundary crossed during validation must not be missed.
-    const validUntil = await nextOrientationBoundary(db, principal, scope, start);
-    const checked = await scopes.requireCurrent(scope);
-    if (await generation() !== before || now() < start || now() >= validUntil) {
-      cached = undefined; orientationFail("ORIENTATION_AUTHORITY_CHANGED", 409, true);
+    const identity = canonicalEvidenceJson(scope);
+    // A separate authorized read can insert its own scope/grant and advance the
+    // global epoch. Revalidate once from scratch; never reuse the old observation.
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const start = now(); const before = await generation();
+      const observed = now();
+      if (!Number.isSafeInteger(start) || observed < start) orientationFail("ORIENTATION_AUTHORITY_CHANGED", 409, true);
+      if (cached?.identity === identity && cached.generation === before && start >= cached.checkedAt && observed < cached.validUntil) return scope;
+      // Read the time frontier BEFORE deep validation: a boundary crossed during validation must not be missed.
+      const validUntil = await nextOrientationBoundary(db, principal, scope, start);
+      const checked = await scopes.requireCurrent(scope);
+      const after = await generation();
+      if (now() < start || now() >= validUntil) {
+        cached = undefined; orientationFail("ORIENTATION_AUTHORITY_CHANGED", 409, true);
+      }
+      if (after !== before) { cached = undefined; continue; }
+      cached = { identity, generation: before, checkedAt: start, validUntil };
+      return checked;
     }
-    cached = { identity, generation: before, checkedAt: start, validUntil };
-    return checked;
+    orientationFail("ORIENTATION_AUTHORITY_CHANGED", 409, true);
   };
 }
 

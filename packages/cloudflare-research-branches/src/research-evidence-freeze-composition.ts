@@ -276,6 +276,8 @@ interface EvidenceFreezeSynthesisReaderOptions {
   readonly expected_head_revision?: number;
   /** Materialize validates its own committed input through the stage receipt. */
   readonly verify_input_bytes?: boolean;
+  /** Reuse an immutable read already verified against the same full stage-eleven manifest. */
+  readonly reuse_verified_stage_eleven_output?: boolean;
   readonly post_model_readback?: Pick<PostModelReadbackManifestContext,
     "purpose" | "stage" | "operation_id" | "investigation_id" | "committed_model_stages">;
 }
@@ -368,6 +370,11 @@ function createSynthesisContextReader(
       const stageTenReceipt = stageTen.receipt;
       const stageElevenReceipt = stageEleven.receipt;
       assertSynthesisLineage(input.request, stageTen, stageTenReceipt, stageEleven, stageElevenReceipt);
+      const reuseStageElevenOutput = options.reuse_verified_stage_eleven_output === true;
+      if (reuseStageElevenOutput && (options.verify_input_bytes === false ||
+          !sameJson(stageElevenReceipt.output_manifest, input.request.input_manifest))) {
+        fail("WORKFLOW_OUTPUT_CORRUPT");
+      }
       const authorizationReceiptRef = await readers.read_authorization_receipt_ref(
         input.request.operation_id, input.request.investigation_ref.id, input.principal,
       );
@@ -385,7 +392,9 @@ function createSynthesisContextReader(
       const [stageZero, stageTenBytes, stageElevenBytes] = await readConcurrentInOrder([
         () => stageZeroRead,
         () => readWorkflowObject(environment.work_bucket, stageTenReceipt.output_manifest, true),
-        () => readWorkflowObject(environment.work_bucket, stageElevenReceipt.output_manifest, true),
+        () => reuseStageElevenOutput
+          ? Promise.resolve(input.input_bytes)
+          : readWorkflowObject(environment.work_bucket, stageElevenReceipt.output_manifest, true),
       ] as const);
       if (options.verify_input_bytes !== false && !sameBytes(stageElevenBytes, input.input_bytes)) fail("WORKFLOW_OUTPUT_CORRUPT");
       let stageTenInput: EvidenceFreezeStageInput;
@@ -598,6 +607,7 @@ function createPostSynthesisContextReadbackReader(
       const context = await createSynthesisContextReader(environment, navigation, readers, {
         expected_head_revision: input.request.investigation_ref.revision,
         verify_input_bytes: true,
+        reuse_verified_stage_eleven_output: true,
         ...(retained ? { post_model_readback: { purpose: "POST_MODEL_READBACK" as const, stage,
           operation_id: input.request.operation_id, investigation_id: input.request.investigation_ref.id,
           committed_model_stages: committedModels } } : {}),
