@@ -47,6 +47,40 @@ describe("workflow current read query boundary — real D1", () => {
     });
   });
 
+  it("retains only the authority payload from a real D1 run row", async () => {
+    const complete = await fixture.db.prepare(`SELECT r.*,
+      current_run.operation_id AS current_operation_id,
+      current_run.ledger_revision AS current_ledger_revision,
+      current_run.state AS current_state
+      FROM research_workflow_run r
+      LEFT JOIN research_workflow_current current_run ON current_run.operation_id = r.operation_id
+      WHERE r.operation_id = ?1 LIMIT 1`)
+      .bind(fixture.request.operation_id).first<Record<string, unknown>>();
+    expect(complete).not.toBeNull();
+
+    const observed = observeCurrentRead(fixture.db);
+    await new WorkflowCheckpointStore(observed.db).current(fixture.request, principal);
+    const projected = observed.reads[0].row;
+    expect(projected).not.toBeNull();
+    const requiredKeys = ["operation_id", "principal_ref", "credential_generation", "deployment_generation",
+      "current_revision", "state", "current_operation_id", "current_ledger_revision", "current_state"];
+    expect(Object.keys(projected ?? {}).sort()).toEqual([...requiredKeys].sort());
+    const retainedFromComplete = Object.fromEntries(requiredKeys.map((key) => [key, complete?.[key]]));
+    expect(projected).toEqual(retainedFromComplete);
+
+    const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+    expect(bytes(projected)).toBeLessThan(bytes(complete));
+    expect(bytes(projected)).toBeLessThan(bytes(complete) * 0.75);
+    expect(complete).toHaveProperty("initial_manifest_json");
+    expect(complete).toHaveProperty("first_failure_json");
+    expect(complete).toHaveProperty("latest_failure_json");
+    expect(complete).toHaveProperty("failure_history_json");
+    expect(projected).not.toHaveProperty("initial_manifest_json");
+    expect(projected).not.toHaveProperty("first_failure_json");
+    expect(projected).not.toHaveProperty("latest_failure_json");
+    expect(projected).not.toHaveProperty("failure_history_json");
+  });
+
   it("distinguishes an absent run row from a run excluded by current authority", async () => {
     const missingRun = { ...fixture.request, operation_id: "workflow-run-missing-current-read" } as StageRequest;
     const missing = observeCurrentRead(fixture.db);

@@ -98,6 +98,17 @@ interface StoredCurrentRunRow {
   readonly next_stage_index: number;
   readonly ledger_revision: number;
 }
+interface StoredCurrentAuthorityRow {
+  readonly operation_id: string;
+  readonly principal_ref: string;
+  readonly credential_generation: string;
+  readonly deployment_generation: string;
+  readonly current_revision: number;
+  readonly state: RunRow["state"];
+  readonly current_operation_id: string | null;
+  readonly current_ledger_revision: number | null;
+  readonly current_state: RunRow["state"] | null;
+}
 function mapFailure(error: unknown): never {
   if (error instanceof WorkflowCheckpointError) throw error;
   const code = error !== null && typeof error === "object"
@@ -395,18 +406,15 @@ export class WorkflowCheckpointStore {
     return this.nativeCompletion.commitNativeStage(input);
   }
   async current(request: StageRequest, principal: WorkflowPrincipal): Promise<void> {
-    const run = await this.db.prepare(`SELECT r.*,
+    const run = await this.db.prepare(`SELECT r.operation_id, r.principal_ref, r.credential_generation,
+      r.deployment_generation, r.current_revision, r.state,
       current_run.operation_id AS current_operation_id,
       current_run.ledger_revision AS current_ledger_revision,
       current_run.state AS current_state
       FROM research_workflow_run r
       LEFT JOIN research_workflow_current current_run ON current_run.operation_id = r.operation_id
       WHERE r.operation_id = ?1 LIMIT 1`)
-      .bind(request.operation_id).first<RunRow & {
-        current_operation_id: string | null;
-        current_ledger_revision: number | null;
-        current_state: RunRow["state"] | null;
-      }>();
+      .bind(request.operation_id).first<StoredCurrentAuthorityRow>();
     if (run === null) fail("WORKFLOW_AUTHORITY_STALE");
     this.samePrincipal(run, principal);
     if (run.state === "CANCELLED") fail("WORKFLOW_CANCELLED");
