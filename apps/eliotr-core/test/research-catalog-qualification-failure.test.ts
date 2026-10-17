@@ -3,7 +3,9 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { SERVICE_MODEL_PROVIDER_CREATE_PROTOCOL } from "@eliotr/contracts";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { createServiceModelProviderService } from "@eliotr/cloudflare-model-control/service-model-provider-service.js";
-import { createD1ProviderNativeModelCatalogV2Authority } from "@eliotr/cloudflare-native-models";
+import { createD1ProviderNativeModelCatalogV2Authority, decodeProviderNativeModelCatalogPreparationV2 } from "@eliotr/cloudflare-native-models";
+import { createResearchCatalogModelV2ProbeExecutor } from
+  "@eliotr/cloudflare-research-configuration/research-catalog-model-v2-probe-executor.js";
 import { createCatalogQualificationFailureReconciler, createD1ResearchCatalogModelUseStore } from
   "@eliotr/cloudflare-research-configuration/research-catalog-model-use-store.js";
 import { createResearchCatalogModelUseComposition } from "../src/research-catalog-model-use-composition.js";
@@ -51,7 +53,7 @@ async function fixture(status = 400) {
       [MODEL]: { id: MODEL, cost: { input: 0.1, output: 0.2 }, reasoning: true, temperature: false,
         provider: { npm: "@ai-sdk/openai", api: "https://opencode.ai/inference/go/openai/v1" } },
     } } });
-    expect(request.url).toBe(`${GATEWAY}/custom-opencode-go/responses`);
+    expect(request.url).toBe(`${GATEWAY}/custom-custom-opencode-go/responses`);
     models += 1;
     const id = crypto.randomUUID();
     const sentMetadata = JSON.parse(String(request.headers.get("cf-aig-metadata"))) as Record<string, string>;
@@ -65,7 +67,7 @@ async function fixture(status = 400) {
       status: "completed", output: [{ id: "probe-message", type: "message", role: "assistant", status: "completed",
         content: [{ type: "output_text", text: JSON.stringify({ connected: true, qualification_purpose: "structured-output-connectivity" }),
           annotations: [] }] }], usage: { input_tokens: 11, output_tokens: 7, total_tokens: 18 } },
-    { headers: { "cf-aig-log-id": id } });
+    { headers: { "cf-aig-log-id": id, "cf-aig-provider": "custom-custom-opencode-go", "cf-aig-model": MODEL } });
   });
   const api = createResearchCatalogModelUseComposition(installedEnv, context, project);
   const receipt = await api.start({ protocol: "eliotr.research.catalog-model-use-request.v1", operation_id: operation,
@@ -86,6 +88,18 @@ describe("authenticated failed catalog qualification reconciliation", () => {
     await applyD1Migrations(db, [migration]);
     const original = await f.readRows();
     const uncertain = required(original.find(row => row.state === "UNCERTAIN"));
+    const nativePreparation = decodeProviderNativeModelCatalogPreparationV2(JSON.parse(String(uncertain.preparation_json)) as unknown);
+    const forbiddenFetch = vi.fn(async () => new Response("must not dispatch"));
+    const executor = createResearchCatalogModelV2ProbeExecutor({ gateway_base_url: GATEWAY,
+      gateway_token: "synthetic-gateway-only", signal: new AbortController().signal, maximum_input_bytes: 32_768,
+      maximum_output_bytes: 262_144, assert_current_authority: async () => undefined, fetcher: forbiddenFetch });
+    await expect(executor.executeOnce({ ...nativePreparation,
+      transport_policy: { ...nativePreparation.transport_policy, provider: "custom-custom-opencode-go" } }))
+      .rejects.toMatchObject({ code: "SERVER_POLICY_UNAVAILABLE" });
+    await expect(executor.executeOnce({ ...nativePreparation,
+      key_binding: { ...nativePreparation.key_binding, alias: `eliotr-${"f".repeat(48)}` } }))
+      .rejects.toMatchObject({ code: "SERVER_POLICY_UNAVAILABLE" });
+    expect(forbiddenFetch).not.toHaveBeenCalled();
     const preparation = JSON.parse(String(uncertain.preparation_json)) as {
       prepared_at: string; preparation_expires_at: string;
     };
@@ -101,7 +115,7 @@ describe("authenticated failed catalog qualification reconciliation", () => {
     let loggedAt = publishedAt;
     const freshContext = { ...f.context, credential_generation: "refreshed-owner-after-4091" };
     const readLogs = vi.fn(async () => ({ account_id: ACCOUNT, gateway_id: "eliotr-reasoning",
-      logs: [{ ...failureLog, created_at: loggedAt }] }));
+      logs: [{ ...failureLog, created_at: loggedAt, provider: "custom-custom-opencode-go" }] }));
     const reconcile = createCatalogQualificationFailureReconciler({ database: db, context: freshContext,
       deployment_generation: "release-after-4091", read_logs: readLogs, now: () => observedAt });
     const authorization = required(await createD1ResearchCatalogModelUseStore(db).read(f.owner, f.project, f.operation));
@@ -124,6 +138,7 @@ describe("authenticated failed catalog qualification reconciliation", () => {
     expect(receipt.logged_at).toBe(publishedAt);
     expect(receipt.observed_at).toBe(observedAt);
     expect(JSON.parse(receipt.receipt_json)).toMatchObject({ provider_effects: "UNKNOWN", original_state: "UNCERTAIN",
+      provider_slug: "custom-opencode-go", gateway_provider: "custom-custom-opencode-go",
       reader_credential_generation: freshContext.credential_generation, reader_deployment_generation: "release-after-4091" });
     expect(await f.readRows()).toEqual(original);
     expect(f.modelCalls()).toBe(2);

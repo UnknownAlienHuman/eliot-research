@@ -1,4 +1,6 @@
 import { modelGatewayExecutionFailure } from "./model-gateway-execution-contract.js";
+import { modelGatewayCustomProviderRoutingId } from "./model-gateway-provider-namespace.js";
+export { modelGatewayCustomProviderRoutingId, modelGatewayObservedProviderMatches } from "./model-gateway-provider-namespace.js";
 import type {
   ModelGatewayApi,
   ModelGatewayRequestCapabilitiesV1,
@@ -96,7 +98,7 @@ export function modelGatewayProviderNativePath(api: ModelGatewayApi, provider?: 
       }
       const endpoint = api === "custom-responses" ? "responses"
         : api === "custom-anthropic-messages" ? "v1/messages" : "chat/completions";
-      return `/${provider}/${endpoint}`;
+      return `/${modelGatewayCustomProviderRoutingId(provider)}/${endpoint}`;
     }
   }
 }

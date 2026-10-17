@@ -49,6 +49,8 @@ export {
   modelGatewayProviderNativePath,
   modelGatewayProviderNativeParameterProjection,
   modelGatewayProviderNativeRequest,
+  modelGatewayCustomProviderRoutingId,
+  modelGatewayObservedProviderMatches,
 } from "./model-gateway-provider-native-request.js";
 export {
   createModelGatewayFetchAdapter,

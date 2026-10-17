@@ -1,4 +1,4 @@
-import { canonicalModelGatewayJson, modelGatewaySha256 } from "@eliotr/cloudflare-ai";
+import { canonicalModelGatewayJson, modelGatewaySha256, modelGatewayObservedProviderMatches } from "@eliotr/cloudflare-ai";
 import { decodeProviderNativeModelCatalogPreparationV2 } from "@eliotr/cloudflare-native-models";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { createD1ResearchCatalogModelUseStore, type ResearchCatalogModelUseAuthorizationRow } from
@@ -143,7 +143,8 @@ export function createCatalogQualificationFailureReconciler(input: Readonly<{
       const log = stageLogs[0];
       if (!record(log) || typeof log.id !== "string" || !LOG_ID.test(log.id) || log.success !== false || log.cached !== false ||
           typeof log.status_code !== "number" || !TERMINAL_HTTP_FAILURES.has(log.status_code) ||
-          log.provider !== row.route_provider_id || log.model !== row.model_id || typeof log.created_at !== "string") return row;
+          !modelGatewayObservedProviderMatches(log.provider, row.route_provider_id, "failed-history") ||
+          log.model !== row.model_id || typeof log.created_at !== "string") return row;
       const observedAt = (input.now ?? (() => new Date().toISOString()))();
       const loggedMs = Date.parse(log.created_at), observedMs = Date.parse(observedAt);
       // Gateway log publication can follow the local UNCERTAIN update. Only
@@ -169,7 +170,7 @@ export function createCatalogQualificationFailureReconciler(input: Readonly<{
         ...(input.deployment_generation === undefined ? {} : { reader_deployment_generation: input.deployment_generation }),
         preparation_ref: e.preparation_ref, preparation_sha256: e.preparation_sha256,
         pricing_snapshot_sha256: preparation.pricing_snapshot_sha256, gateway_metadata: expected,
-        gateway_log_id: log.id, http_status: log.status_code, gateway_authenticated: true,
+        gateway_log_id: log.id, gateway_provider: log.provider, http_status: log.status_code, gateway_authenticated: true,
         success: false, original_state: "UNCERTAIN", original_failure_code: row.failure_code,
         original_updated_at: row.updated_at, provider_effects: "UNKNOWN", classification: "GATEWAY_HTTP_REJECTED",
         logged_at: new Date(loggedMs).toISOString(), observed_at: observedAt };

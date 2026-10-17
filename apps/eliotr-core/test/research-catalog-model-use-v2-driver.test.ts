@@ -209,7 +209,7 @@ describe("default generic catalog model-use composition", () => {
       provider_operation_id: providerOperation, model_id: MODEL });
     expect(receipt.selected_configuration_ref).toBe(`rpmc-${receipt.selected_configuration_sha256}`);
     expect(requests.length).toBeGreaterThan(0);
-    expect(requests.every((request) => request.url === `${GATEWAY_BASE}/custom-opencode-go/responses`)).toBe(true);
+    expect(requests.every((request) => request.url === `${GATEWAY_BASE}/custom-custom-opencode-go/responses`)).toBe(true);
     expect(requests.every((request) => request.body.model === MODEL && request.alias === connection.receipt.alias)).toBe(true);
     expect(requests.every((request) => request.client === "EliotResearch/1.0" &&
       /^eliotr_[a-f0-9]{32}$/u.test(request.session ?? ""))).toBe(true);

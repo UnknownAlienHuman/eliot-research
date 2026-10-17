@@ -605,7 +605,7 @@ export function createCloudflareServiceModelProviderManagementPort(
           await ensureCloudflareCustomProvider({
             protocol: "eliotr.custom-provider.v1",
             name: input.display_name,
-            slug: providerId,
+            slug: providerSlug,
             base_url: customBaseUrl,
             enable: true,
             beta: false,

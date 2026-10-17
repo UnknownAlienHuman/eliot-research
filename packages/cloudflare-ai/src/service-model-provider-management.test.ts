@@ -376,7 +376,7 @@ describe("Cloudflare service-model provider management", () => {
     const customProvider = {
       id: "custom-provider-fixture",
       name: "OpenCode Go",
-      slug: "opencode-go",
+      slug: "custom-opencode-go",
       base_url: "https://opencode.ai/inference/go/v1",
       created_at: "2026-10-15T14:00:00.000Z",
       modified_at: "2026-10-15T14:00:00.000Z",
@@ -424,6 +424,13 @@ describe("Cloudflare service-model provider management", () => {
     });
 
     expect(receipt.provider_slug).toBe("custom-opencode-go");
+    const customBody = JSON.parse(String(requests.find(({ url, init }) => url.endsWith("/custom-providers") && init.method === "POST")?.init.body)) as Record<string, unknown>;
+    const keyBody = JSON.parse(String(requests.find(({ url, init }) => url.includes("/provider_configs") && init.method === "POST")?.init.body)) as Record<string, unknown>;
+    const secretBody = JSON.parse(String(requests.find(({ url, init }) => url.includes("/secrets_store/") && init.method === "POST")?.init.body)) as Array<Record<string, unknown>>;
+    expect(customBody.slug).toBe(keyBody.provider_slug);
+    expect(customBody.base_url).toBe("https://opencode.ai/inference/go/v1");
+    expect(keyBody).toEqual({ alias, provider_slug: "custom-opencode-go", default_config: false, secret_id: SECRET_ID });
+    expect(secretBody).toEqual([{ name: customSecretName, value: API_KEY, scopes: ["ai_gateway"] }]);
     expect(requests.map(({ init }) => init.method)).toEqual([
       "GET", "POST", "GET", "GET", "GET", "GET", "POST", "POST", "GET",
     ]);
@@ -456,6 +463,31 @@ describe("Cloudflare service-model provider management", () => {
       api_key: API_KEY,
     })).rejects.toMatchObject({ code: "PROVIDER_CONFIG_INPUT_INVALID", effect: "NONE" });
     expect(invalidRequests).toHaveLength(0);
+  });
+
+  it.each(["custom-opencode-go", "custom-compatible-fixture"])("reads existing %s key identity without any create or rename", async providerSlug => {
+    const alias = "eliotr-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const requests: CapturedRequest[] = [];
+    const providerId = providerSlug.slice("custom-".length);
+    const port = portWithQueue([page([config(alias, providerSlug, SECRET_ID)])], requests);
+    await expect(port.read({ provider_id: providerId, provider_slug: providerSlug, alias,
+      provider_config_id: "provider-config-fixture" })).resolves.toEqual({
+      provider_config_id: "provider-config-fixture", provider_slug: providerSlug, alias,
+    });
+    expect(requests.map(request => request.init.method)).toEqual(["GET"]);
+    expect(requests[0]?.url).toContain("/provider_configs");
+  });
+
+  it("refuses a transport-prefixed key namespace instead of treating it as the saved credential binding", async () => {
+    const alias = "eliotr-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const requests: CapturedRequest[] = [];
+    const port = portWithQueue([page([config(alias, "custom-custom-opencode-go", SECRET_ID)])], requests);
+    await expect(port.read({ provider_id: "opencode-go", provider_slug: "custom-opencode-go", alias,
+      provider_config_id: "provider-config-fixture" })).resolves.toBeNull();
+    expect(requests.map(request => request.init.method)).toEqual(["GET"]);
+    await expect(port.read({ provider_id: "opencode-go", provider_slug: "custom-custom-opencode-go", alias,
+      provider_config_id: "provider-config-fixture" })).rejects.toMatchObject({ code: "PROVIDER_CONFIG_INPUT_INVALID" });
+    expect(requests).toHaveLength(1);
   });
 
   it("aborts custom-provider preflight before any provider-key POST", async () => {

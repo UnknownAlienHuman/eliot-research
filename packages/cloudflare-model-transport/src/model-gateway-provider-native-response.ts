@@ -13,6 +13,7 @@ import {
 import type { ModelGatewayApi, ModelGatewayTransportPolicyV1 } from "./model-gateway-transport-policy.js";
 import { modelGatewaySha256 } from "./model-gateway-request.js";
 import { decodeModelGatewayOpenRouterBody } from "./model-gateway-openrouter-response.js";
+import { modelGatewayObservedProviderMatches } from "./model-gateway-provider-namespace.js";
 
 const CHAT_RESPONSE_KEYS = new Set(["choices", "created", "id", "model", "object", "service_tier", "system_fingerprint", "usage"]);
 const CHAT_CHOICE_KEYS = new Set(["finish_reason", "index", "logprobs", "message"]);
@@ -304,7 +305,8 @@ function assertResponseHeaders(response: Response, policy: ModelGatewayTransport
   const logId = identifier(header(response.headers, "cf-aig-log-id", true, "LOG_ID_INVALID"), "AI Gateway log identifier", "LOG_ID_INVALID");
   for (const [name, expected] of [["cf-aig-provider", policy.provider], ["cf-aig-model", policy.model]] as const) {
     const observed = header(response.headers, name, false, "MODEL_ID_INVALID");
-    if (observed !== undefined && observed !== expected) invalid(`AI Gateway ${name} differs from the selected transport policy`, "MODEL_ID_INVALID");
+    const matches = name === "cf-aig-provider" ? modelGatewayObservedProviderMatches(observed, expected) : observed === expected;
+    if (observed !== undefined && !matches) invalid(`AI Gateway ${name} differs from the selected transport policy`, "MODEL_ID_INVALID");
   }
   const rawCache = header(response.headers, "cf-aig-cache-status", false, "CACHE_INVALID");
   if (rawCache !== undefined && rawCache.toUpperCase() !== "MISS" && rawCache.toUpperCase() !== "HIT") invalid("AI Gateway cache status is unsupported", "CACHE_INVALID");

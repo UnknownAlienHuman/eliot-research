@@ -160,22 +160,29 @@ describe("model gateway transport policy", () => {
     };
     const { deployment, compiled } = await fixture(policy);
     const request = await prepareModelGatewayHttpRequest(input, deployment, compiled, BASE_URL, "gateway-secret", policy);
-    expect(request.url).toBe(`${BASE_URL}/custom-${provider}/chat/completions`);
+    expect(request.url).toBe(`${BASE_URL}/custom-custom-${provider}/chat/completions`);
+    const nativeRequest = new Request(request.url, { method: request.method, headers: request.headers, body: request.body });
+    expect(nativeRequest.url).toBe(request.url);
+    expect(nativeRequest.headers.get("cf-aig-byok-alias")).toBe("one-saved-provider-key");
     expect(JSON.parse(request.body)).toMatchObject({ model: policy.model, max_completion_tokens: 32 });
     expect(request.headers["cf-aig-byok-alias"]).toBe("one-saved-provider-key");
     expect(request.headers["cf-aig-no-wholesale"]).toBe("true");
     expect(request.headers).not.toHaveProperty("authorization");
     expect(request.parameters_sha256).toBe(deployment.parameters_digest);
-    const response = (model: string) => new Response(JSON.stringify({
+    const response = (model: string, observedProvider = `custom-${policy.provider}`) => new Response(JSON.stringify({
       id: "custom-result", object: "chat.completion", created: 1, model,
       choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant", content: "ok" } }],
       usage: { prompt_tokens: 2, completion_tokens: 3, total_tokens: 5 },
-    }), { headers: { "content-type": "application/json", "cf-aig-log-id": "custom-log" } });
+    }), { headers: { "content-type": "application/json", "cf-aig-log-id": "custom-log", "cf-aig-provider": observedProvider } });
     const decoded = await decodeSelectedModelGatewayResponse(response(policy.model), deployment, 4096, policy);
     expect(decoded.assistant_content).toBe("ok");
     expect(decoded.fingerprint).toMatchObject({ provider: policy.provider, exact_model_id: policy.model });
     await expect(decodeSelectedModelGatewayResponse(response("unselected-model"), deployment, 4096, policy))
       .rejects.toMatchObject({ code: "MODEL_GATEWAY_RESPONSE_INVALID" });
+    for (const wrong of [policy.provider, provider, "custom-custom-compatible-other", `custom-custom-${policy.provider}`]) {
+      await expect(decodeSelectedModelGatewayResponse(response(policy.model, wrong), deployment, 4096, policy))
+        .rejects.toMatchObject({ code: "MODEL_GATEWAY_RESPONSE_INVALID" });
+    }
     await expect(prepareModelGatewayBindingRequest(input, deployment, compiled, BASE_URL, policy))
       .rejects.toMatchObject({ code: "MODEL_GATEWAY_REQUEST_INVALID" });
     const probeBody = { ...compiled.request_body, model: policy.model,
@@ -206,8 +213,8 @@ describe("model gateway transport policy", () => {
     [OPENAI_CHAT_POLICY, "/openai/chat/completions"],
     [OPENAI_RESPONSES_POLICY, "/openai/responses"],
     [ANTHROPIC_POLICY, "/anthropic/v1/messages"],
-    [{ ...OPENAI_RESPONSES_POLICY, api: "custom-responses", provider: "custom-opencode-go" }, "/custom-opencode-go/responses"],
-    [{ ...ANTHROPIC_POLICY, api: "custom-anthropic-messages", provider: "custom-opencode-go" }, "/custom-opencode-go/v1/messages"],
+    [{ ...OPENAI_RESPONSES_POLICY, api: "custom-responses", provider: "custom-opencode-go" }, "/custom-custom-opencode-go/responses"],
+    [{ ...ANTHROPIC_POLICY, api: "custom-anthropic-messages", provider: "custom-opencode-go" }, "/custom-custom-opencode-go/v1/messages"],
   ] as const)("keeps catalog qualification on the selected %s provider API", async (base, path) => {
     const policy: ModelGatewayTransportPolicyV1 = { ...base, billing: { mode: "byok", alias: "saved-provider" } };
     const { deployment, compiled } = await fixture(policy);
