@@ -1,6 +1,6 @@
 import type { ScopeSnapshot } from "@eliotr/contracts";
 import { NavigationError } from "@eliotr/retrieval";
-import { authorizeScopeAuthority, loadScopeAuthority, loadSourceAuthorities } from "./authority-load.js";
+import { loadScopeCurrentness, loadSourceAuthorities } from "./authority-load.js";
 import { assertEvidenceIdentifier, assertEvidenceIso, canonicalEvidenceJson, evidenceSha256 } from "./canonical.js";
 import { boundedScopeValue, validateStoredScope } from "./scope-codec.js";
 import { navigationStorageFailure } from "./navigation-storage-codec.js";
@@ -60,21 +60,17 @@ export function createNavigationReadAuthority(input: D1NavigationStoreInput): Na
     const observed = await requireCurrent(JSON.parse(pinned) as ScopeSnapshot);
     boundedScopeValue(observed);
     if (canonicalEvidenceJson(observed) !== pinned) navigationStorageFailure("scope currentness readback changed identity");
-    const stored = await loadScopeAuthority(database, { id: scope.snapshot_id, revision: scope.revision });
+    const currentAuthority = await loadScopeCurrentness(
+      database,
+      { id: scope.snapshot_id, revision: scope.revision },
+      access,
+    );
+    const stored = currentAuthority.scope;
     if (!stored || canonicalEvidenceJson(stored.snapshot) !== pinned) {
       throw new NavigationError("NAVIGATION_SCOPE_NOT_CURRENT", "persisted navigation scope unavailable or changed");
     }
-    const unavailable = await database.prepare(
-      "SELECT 1 AS unavailable FROM scope_snapshot snapshot, json_each(snapshot.member_source_revision_refs_json) member " +
-      "WHERE snapshot.snapshot_id=?1 AND snapshot.revision=?2 AND NOT EXISTS (" +
-      "SELECT 1 FROM source_revision sr JOIN source s ON s.source_id=sr.source_id " +
-      "JOIN source_namespace_ownership o ON o.source_namespace_id=s.source_namespace_id AND o.status='ACTIVE' " +
-      "JOIN json_each(snapshot.source_owner_generations_json) gen ON gen.key=member.value " +
-      "WHERE sr.source_revision_ref=member.value AND sr.purge_state='LIVE' " +
-      "AND sr.source_owner_generation=o.source_owner_generation AND gen.value=sr.source_owner_generation) LIMIT 1"
-    ).bind(scope.snapshot_id, scope.revision).first();
-    if (unavailable !== null) throw new NavigationError("NAVIGATION_SCOPE_NOT_CURRENT", "snapshot member no longer live or current");
-    const grant = await authorizeScopeAuthority(database, stored, access, Date.parse(timestamp()));
+    if (!currentAuthority.members_current) throw new NavigationError("NAVIGATION_SCOPE_NOT_CURRENT", "snapshot member no longer live or current");
+    const grant = currentAuthority.authorize(Date.parse(timestamp()));
     if (!grant.allowed_use.includes("research")) {
       throw new NavigationError("NAVIGATION_SCOPE_NOT_CURRENT", "scope grant does not permit research navigation");
     }

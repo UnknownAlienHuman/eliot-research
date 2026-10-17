@@ -25,6 +25,7 @@ import {
   type ScopeAuthority,
   type ScopeAuthorization,
 } from "./types.js";
+import { SCOPE_COLUMNS, decodeStoredScopeRow } from "./scope-codec.js";
 
 interface GrantRow {
   readonly authorization_receipt_ref: unknown;
@@ -142,6 +143,39 @@ export async function authorizeScopeAuthority(
   access: EvidenceAccessContext,
   nowMs: number,
 ): Promise<ScopeAuthorization> {
+  assertScopeAuthorizationCurrent(scope, access, nowMs);
+  const row = await database.prepare(
+    scopeAuthorizationSql,
+  ).bind(
+    scope.snapshot.snapshot_id,
+    scope.snapshot.revision,
+    access.principal_ref,
+    access.client_class,
+    access.credential_generation,
+  ).first<GrantRow>();
+  return decodeScopeAuthorizationRow(scope, nowMs, row);
+}
+
+const scopeAuthorizationSql =
+  "SELECT authorization_receipt_ref, policy_authority_ref, allowed_use_json, " +
+  "disclosure_ceiling, expires_at, state FROM scope_access_grant_effective " +
+  "WHERE snapshot_id = ?1 AND snapshot_revision = ?2 AND principal_ref = ?3 " +
+  "AND client_class = ?4 AND credential_generation = ?5 LIMIT 1";
+
+const scopeMembersCurrentSql =
+  "SELECT 1 AS unavailable FROM scope_snapshot snapshot, json_each(snapshot.member_source_revision_refs_json) member " +
+  "WHERE snapshot.snapshot_id=?1 AND snapshot.revision=?2 AND NOT EXISTS (" +
+  "SELECT 1 FROM source_revision sr JOIN source s ON s.source_id=sr.source_id " +
+  "JOIN source_namespace_ownership o ON o.source_namespace_id=s.source_namespace_id AND o.status='ACTIVE' " +
+  "JOIN json_each(snapshot.source_owner_generations_json) gen ON gen.key=member.value " +
+  "WHERE sr.source_revision_ref=member.value AND sr.purge_state='LIVE' " +
+  "AND sr.source_owner_generation=o.source_owner_generation AND gen.value=sr.source_owner_generation) LIMIT 1";
+
+function assertScopeAuthorizationCurrent(
+  scope: ScopeAuthority,
+  access: EvidenceAccessContext,
+  nowMs: number,
+): void {
   if (scope.invalidated_at !== null) {
     fail("EVIDENCE_SCOPE_INVALIDATED", "ScopeSnapshot is invalidated", { invalidation_state: "STALE" });
   }
@@ -154,18 +188,13 @@ export async function authorizeScopeAuthority(
   ) {
     fail("EVIDENCE_AUTHORIZATION_DENIED", "client fence does not match current credential generation");
   }
-  const row = await database.prepare(
-    "SELECT authorization_receipt_ref, policy_authority_ref, allowed_use_json, " +
-    "disclosure_ceiling, expires_at, state FROM scope_access_grant_effective " +
-    "WHERE snapshot_id = ?1 AND snapshot_revision = ?2 AND principal_ref = ?3 " +
-    "AND client_class = ?4 AND credential_generation = ?5 LIMIT 1",
-  ).bind(
-    scope.snapshot.snapshot_id,
-    scope.snapshot.revision,
-    access.principal_ref,
-    access.client_class,
-    access.credential_generation,
-  ).first<GrantRow>();
+}
+
+function decodeScopeAuthorizationRow(
+  scope: ScopeAuthority,
+  nowMs: number,
+  row: GrantRow | null,
+): ScopeAuthorization {
   if (row === null || row.state !== "ACTIVE") {
     fail("EVIDENCE_AUTHORIZATION_DENIED", "no active exact ScopeSnapshot authorization exists");
   }
@@ -195,6 +224,62 @@ export async function authorizeScopeAuthority(
       "scope authorization disclosure ceiling",
     ),
     expires_at: expiresAt,
+  };
+}
+
+/** One primary-D1 transaction per fence: scope, live members, then the exact grant. */
+export async function loadScopeCurrentness(
+  database: D1Database,
+  ref: VersionedRef,
+  access: EvidenceAccessContext,
+): Promise<{ readonly scope: ScopeAuthority | null; readonly members_current: boolean; authorize(nowMs: number): ScopeAuthorization }> {
+  let results: D1Result<unknown>[];
+  try {
+    results = await database.batch([
+      database.prepare(`SELECT ${SCOPE_COLUMNS} FROM scope_snapshot WHERE snapshot_id = ?1 AND revision = ?2 LIMIT 1`)
+        .bind(ref.id, ref.revision),
+      database.prepare(scopeMembersCurrentSql).bind(ref.id, ref.revision),
+      database.prepare(scopeAuthorizationSql).bind(
+        ref.id, ref.revision, access.principal_ref, access.client_class, access.credential_generation,
+      ),
+    ]);
+  } catch (cause) {
+    fail("EVIDENCE_SETTLEMENT_UNCERTAIN", "scope currentness batch read is unavailable", { retryable: true, cause });
+  }
+  const scopeResult = results[0];
+  const membersResult = results[1];
+  const grantResult = results[2];
+  if (results.length !== 3 || scopeResult?.success !== true || membersResult?.success !== true || grantResult?.success !== true ||
+      !Array.isArray(scopeResult.results) || !Array.isArray(membersResult.results) || !Array.isArray(grantResult.results) ||
+      scopeResult.results.length > 1 || membersResult.results.length > 1 || grantResult.results.length > 1) {
+    fail("EVIDENCE_SETTLEMENT_UNCERTAIN", "scope currentness batch read is incomplete", { retryable: true });
+  }
+  const membersCurrent = membersResult.results.length === 0;
+  const rawScope = scopeResult.results[0] as Record<string, unknown> | undefined;
+  if (rawScope === undefined) return {
+    scope: null,
+    members_current: membersCurrent,
+    authorize: () => fail("EVIDENCE_SCOPE_NOT_FOUND", "persisted ScopeSnapshot is missing"),
+  };
+  let scope: ScopeAuthority;
+  try { scope = await decodeStoredScopeRow(rawScope); }
+  catch (cause) {
+    if (cause instanceof ScopePersistenceError) {
+      fail("EVIDENCE_INPUT_INVALID", "stored ScopeSnapshot failed integrity validation", { cause });
+    }
+    fail("EVIDENCE_SETTLEMENT_UNCERTAIN", "ScopeSnapshot authority decode is unavailable", { retryable: true, cause });
+  }
+  if (scope.snapshot.snapshot_id !== ref.id || scope.snapshot.revision !== ref.revision) {
+    fail("EVIDENCE_INPUT_INVALID", "ScopeSnapshot authority identity mismatch");
+  }
+  const grantRow = (grantResult.results[0] as GrantRow | undefined) ?? null;
+  return {
+    scope,
+    members_current: membersCurrent,
+    authorize: (nowMs) => {
+      assertScopeAuthorizationCurrent(scope, access, nowMs);
+      return decodeScopeAuthorizationRow(scope, nowMs, grantRow);
+    },
   };
 }
 
