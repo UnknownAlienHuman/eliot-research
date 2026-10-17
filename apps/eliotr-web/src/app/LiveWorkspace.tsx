@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type Ref, ty
 import { skipToken, useQueries, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 import { useLocation, useNavigate } from "react-router";
 import { WorkspaceLink } from "../routes/WorkspaceLink";
-import { AgentWorkPane, Button, Dialog, DocumentReader, IconButton, MaterialSymbol, OperationAnnouncement, ProjectsLibraryFeature, type AgentSummary, type AgentTaskState, type AgentTaskSummary, type ResearchToolId } from "@eliotr/ui";
+import { AgentWorkPane, Button, Dialog, DocumentReader, IconButton, MaterialSymbol, OperationAnnouncement, ProjectsLibraryFeature, SourceReadinessSummary, type AgentSummary, type AgentTaskState, type AgentTaskSummary, type ResearchToolId } from "@eliotr/ui";
 import type { LibraryPage, ProjectListView, SourceRevisionPage } from "@eliotr/owner-api-client";
 import type { PrivacyController, SessionContext } from "./privacy";
 import type { BoundWorkspaceApis } from "./runtime";
@@ -273,11 +273,12 @@ export function LiveWorkspace({ destination, locale, onLocaleChange, headingRef,
             <MaterialSymbol name="file" /><span title={source.title}>{source.title}</span>
             <input type="checkbox" checked={checked} disabled={!checked && scope.length >= selectedSourceLimit}
               onChange={event => { if (library.data) toggleScope(library.data, source.id, event.target.checked); }} />
-          </label></li>;
+          </label><SourceReadinessSummary summary={source.readiness_summary} locale={locale} /></li>;
         })}
       </ul> : null}
       <ul className="er-live-source-context">{scope.filter(source => !library.data?.sources.some(row => row.id === source.id)).map(source => <li key={source.id}>
         <MaterialSymbol name="file" /><span>{source.label}</span>
+        <SourceReadinessSummary summary={source.page.sources.find(row => row.id === source.id)?.readiness_summary} locale={locale} />
       </li>)}</ul>
     </aside>
     <aside className="er-shell-tools" hidden={destination !== "research"} aria-label={text.tools} data-tab-active={researchTab === "tools"} data-folded={folded.tools}>

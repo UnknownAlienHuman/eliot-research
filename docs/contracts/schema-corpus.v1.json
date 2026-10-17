@@ -1,8 +1,8 @@
 {
   "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "protocol": "eliotr.contract-schema-corpus.v1",
-  "registry_generation": 15,
-  "schema_count": 281,
+  "registry_generation": 16,
+  "schema_count": 282,
   "schemas": [
     {
       "export_name": "AiUsageObservationSchema",
@@ -20909,6 +20909,157 @@
       "kind": "OBJECT",
       "schema_generation": 1,
       "schema_id": "urn:eliotr:contracts:library-readiness:library-readiness:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "export_name": "LibraryRowReadinessSchema",
+      "family": "library-readiness",
+      "json_schema": {
+        "$defs": {
+          "__schema0": {
+            "const": "eliotr.library-row-readiness.v1",
+            "type": "string"
+          },
+          "__schema1": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "__schema2": {
+            "const": "RECORDED_ONLY",
+            "type": "string"
+          },
+          "__schema3": {
+            "const": "SOURCE_PROJECTION",
+            "type": "string"
+          },
+          "__schema4": {
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$",
+            "type": "string"
+          },
+          "__schema5": {
+            "enum": [
+              "high_fidelity",
+              "standard",
+              "degraded",
+              "unqualified"
+            ],
+            "type": "string"
+          },
+          "__schema6": {
+            "items": {
+              "$ref": "#/$defs/__schema7"
+            },
+            "maxItems": 3,
+            "type": "array"
+          },
+          "__schema7": {
+            "additionalProperties": false,
+            "properties": {
+              "channel": {
+                "enum": [
+                  "captured",
+                  "normalized",
+                  "structure_qualified",
+                  "exact_ready",
+                  "lexical_ready",
+                  "semantic_ready",
+                  "sourcecard_ready",
+                  "atlas_included",
+                  "distillates_ready",
+                  "wiki_published"
+                ],
+                "type": "string"
+              },
+              "generation": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "observed_at": {
+                "$ref": "#/$defs/__schema4"
+              },
+              "reason_codes": {
+                "items": {
+                  "$ref": "#/$defs/__schema1"
+                },
+                "type": "array"
+              },
+              "receipt_ref": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "source_revision_ref": {
+                "$ref": "#/$defs/__schema1"
+              },
+              "state": {
+                "enum": [
+                  "not_requested",
+                  "queued",
+                  "running",
+                  "ready",
+                  "degraded",
+                  "failed",
+                  "stale",
+                  "redacted"
+                ],
+                "type": "string"
+              }
+            },
+            "required": [
+              "source_revision_ref",
+              "channel",
+              "state",
+              "reason_codes",
+              "observed_at"
+            ],
+            "type": "object"
+          }
+        },
+        "$id": "urn:eliotr:contracts:library-readiness:library-row-readiness:v1:g1",
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "$ref": "#/$defs/__schema2"
+          },
+          "channels": {
+            "$ref": "#/$defs/__schema6"
+          },
+          "observed_at": {
+            "$ref": "#/$defs/__schema4"
+          },
+          "protocol": {
+            "$ref": "#/$defs/__schema0"
+          },
+          "quality_state": {
+            "$ref": "#/$defs/__schema5"
+          },
+          "scope": {
+            "$ref": "#/$defs/__schema3"
+          },
+          "source_revision_ref": {
+            "$ref": "#/$defs/__schema1"
+          }
+        },
+        "required": [
+          "protocol",
+          "source_revision_ref",
+          "basis",
+          "scope",
+          "observed_at",
+          "quality_state",
+          "channels"
+        ],
+        "title": "LibraryRowReadiness",
+        "type": "object",
+        "x-eliotr-family": "library-readiness",
+        "x-eliotr-schema-generation": 1,
+        "x-eliotr-schema-version": 1,
+        "x-eliotr-semantic-authority": "zod-runtime"
+      },
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:library-readiness:library-row-readiness:v1:g1",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
     },

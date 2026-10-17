@@ -162,6 +162,41 @@ export const Populated: StoryObj<typeof ProjectsLibraryFeature> = {
   args: base({}),
 };
 
+const recordedRows: LibraryPage = { ...library, sources: ["ready", "queued", "failed", "stale", "unknown"].map((state, index) => {
+  const id = SOURCE_ID + "-" + index, ref = "recorded-revision-" + index;
+  return { id, title: "Source with " + state + " observations", readiness_ref: "readiness:" + id + ":" + ref,
+    readiness_summary: { protocol: "eliotr.library-row-readiness.v1", source_revision_ref: ref, basis: "RECORDED_ONLY",
+      scope: "SOURCE_PROJECTION", observed_at: "2026-10-17T12:00:00Z", quality_state: "standard",
+      channels: state === "unknown" ? [] : (["exact_ready", "lexical_ready", "semantic_ready"] as const).map(name => ({
+        source_revision_ref: ref, channel: name, state: state as "ready" | "queued" | "failed" | "stale",
+        generation: "recorded-generation", receipt_ref: "recorded-receipt", reason_codes: [], observed_at: "2026-10-16T10:00:00Z",
+      })) } };
+}) };
+export const RecordedRowReadiness: StoryObj<typeof ProjectsLibraryFeature> = {
+  args: base({ library: recordedRows, selectedSourceId: undefined, readiness: undefined, readinessState: "idle",
+    revisions: undefined, revisionsState: "idle" }),
+  play: ({ canvasElement }) => {
+    const rows = canvasElement.querySelectorAll(".er-projects-library__source");
+    assert(rows.length === 5, "Every source needs its own summary.");
+    for (const text of ["Ready at last check", "Indexing queued", "Needs attention", "Readiness unknown"]) {
+      assert(canvasElement.textContent?.includes(text), "Missing recorded row label: " + text);
+    }
+    assert(canvasElement.querySelectorAll("time").length === 5, "Each observation needs a timestamp.");
+    assert(canvasElement.querySelector('[data-state="stale"]') !== null, "Stale observation must stay distinct.");
+    requireNoAnnouncingElement(canvasElement);
+  },
+};
+export const RecordedRowReadinessRussian: StoryObj<typeof ProjectsLibraryFeature> = {
+  args: { ...RecordedRowReadiness.args, locale: "ru" },
+  play: ({ canvasElement }) => {
+    for (const text of ["Готов при последней проверке", "В очереди на индексацию", "Требует внимания", "Готовность неизвестна"]) {
+      assert(canvasElement.textContent?.includes(text), "Missing Russian recorded row label: " + text);
+    }
+    assert(canvasElement.querySelectorAll("time").length === 5, "Russian row timestamps must remain visible.");
+    requireNoAnnouncingElement(canvasElement);
+  },
+};
+
 export const Loading: StoryObj<typeof ProjectsLibraryFeature> = {
   args: base({ state: "loading", projects: [], selectedProjectId: undefined, library: undefined,
     readiness: undefined, readinessState: "idle", revisions: undefined, revisionsState: "idle", selectedSourceId: undefined }),

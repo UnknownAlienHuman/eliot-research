@@ -1401,6 +1401,16 @@
       "structural_strictness": "CLOSED_OBJECT"
     },
     {
+      "export_name": "LibraryRowReadinessSchema",
+      "family": "library-readiness",
+      "json_schema_sha256": "6c9cf97ed410cf3eefce99fcad6f1e13de9186b38cc23fc7ef2505a30991f0c4",
+      "kind": "OBJECT",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:library-readiness:library-row-readiness:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
       "export_name": "LocatorCandidateSchema",
       "family": "retrieval",
       "json_schema_sha256": "46bb0c80e7d444ddf2cb1b068f35f6f34168c4a11528a1ae2cc0672ddd3da895",
@@ -2813,6 +2823,6 @@
   ],
   "json_schema_dialect": "https://json-schema.org/draft/2020-12/schema",
   "protocol": "eliotr.contract-schema-index.v1",
-  "registry_generation": 15,
-  "schema_count": 281
+  "registry_generation": 16,
+  "schema_count": 282
 }

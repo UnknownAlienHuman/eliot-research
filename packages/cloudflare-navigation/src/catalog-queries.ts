@@ -27,6 +27,7 @@ const membership = "julianday(m.valid_from)<=julianday(?2) AND (m.valid_to IS NU
 
 export function catalogStatements(db: D1Database, input: {
   principal: string; observed: string; project: string | null; projectAfter: string; sourceAfter: string; limit: number;
+  recordedReadiness?: boolean;
 }): D1PreparedStatement[] {
   const projects = db.prepare(`${eligible}, visible_projects AS (
     SELECT p.project_id AS id,
@@ -36,11 +37,26 @@ export function catalogStatements(db: D1Database, input: {
     FROM project p WHERE (?3 IS NULL OR p.project_id=?3) AND p.project_id>?4
   ) SELECT * FROM visible_projects WHERE witness_revision IS NOT NULL ORDER BY id LIMIT ?5`)
     .bind(input.principal, input.observed, input.project, input.projectAfter, input.limit);
-  const sources = db.prepare(`${eligible} SELECT e.source_id AS id, e.title, e.head_rev FROM eligible e
+  const sourcePage = `SELECT e.source_id AS id, e.title, e.head_rev FROM eligible e
     WHERE e.source_id>?4 AND (?3 IS NULL OR EXISTS (SELECT 1 FROM project_source_membership m
-      WHERE m.source_id=e.source_id AND m.project_id=?3 AND ${membership})) ORDER BY e.source_id LIMIT ?5`)
+      WHERE m.source_id=e.source_id AND m.project_id=?3 AND ${membership})) ORDER BY e.source_id LIMIT ?5`;
+  const sources = db.prepare(`${eligible} ${sourcePage}`)
     .bind(input.principal, input.observed, input.project, input.sourceAfter, input.limit);
-  return [projects, sources];
+  if (!input.recordedReadiness) return [projects, sources];
+  // One bounded SELECT over the identical page, including its lookahead row.
+  const readiness = db.prepare(`${eligible}, source_page AS (${sourcePage})
+    SELECT x.source_revision_ref,x.channel,x.state,
+      CASE WHEN length(CAST(x.generation AS BLOB))<=256 THEN x.generation ELSE NULL END AS generation,
+      CASE WHEN length(CAST(x.receipt_ref AS BLOB))<=256 THEN x.receipt_ref ELSE NULL END AS receipt_ref,
+      CASE WHEN (x.generation IS NOT NULL AND length(CAST(x.generation AS BLOB))>256)
+        OR (x.receipt_ref IS NOT NULL AND length(CAST(x.receipt_ref AS BLOB))>256) THEN NULL
+        WHEN length(CAST(x.reason_codes_json AS BLOB))<=1024 THEN x.reason_codes_json ELSE NULL END AS reason_codes_json,
+      CASE WHEN length(CAST(x.updated_at AS BLOB))<=64 THEN x.updated_at ELSE NULL END AS updated_at
+    FROM source_readiness x JOIN source_page p ON p.head_rev=x.source_revision_ref
+    WHERE x.channel IN ('exact_ready','lexical_ready','semantic_ready')
+    ORDER BY x.source_revision_ref,x.channel LIMIT ?6`)
+    .bind(input.principal, input.observed, input.project, input.sourceAfter, input.limit, input.limit * 3 + 1);
+  return [projects, sources, readiness];
 }
 
 export async function catalogTimeFrontier(db: D1Database, principal: string, instant: number): Promise<number> {

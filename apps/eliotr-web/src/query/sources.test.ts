@@ -34,6 +34,14 @@ const projects: ProjectListView = {
 const page: LibraryPage = { projects: [], sources: [{ id: "current-source", title: "Current source", readiness_ref: "readiness-ref" }], generation: "deployment", trace: "trace" };
 
 describe("Sources Query current scope", () => {
+  it("opts the shared Sources and Research catalog page into one recorded-readiness request", async () => {
+    const test = await fixture();
+    test.request.mockResolvedValueOnce({ data: { projects: [], sources: [] }, deployment_generation: "deployment", trace_id: "trace" });
+    await test.client.fetchQuery(test.options.library(projects, "current-project"));
+    expect(test.request).toHaveBeenCalledTimes(1);
+    expect(test.request.mock.calls[0]?.[0]).toBe("/api/v1/research/catalog?limit=20&readiness=recorded-v1&project_id=current-project");
+    test.client.clear();
+  });
   it("rejects a library result when the current project page changes during the request", async () => {
     const test = await fixture();
     test.request.mockImplementationOnce(async () => {

@@ -4255,8 +4255,20 @@
       "schema_id": "urn:eliotr:contracts:research:project-guide-view:v1:g1",
       "schema_version": 1,
       "structural_strictness": "CLOSED_OBJECT"
+    },
+    {
+      "compatibility": "INITIAL",
+      "export_name": "LibraryRowReadinessSchema",
+      "family": "library-readiness",
+      "json_schema_sha256": "6c9cf97ed410cf3eefce99fcad6f1e13de9186b38cc23fc7ef2505a30991f0c4",
+      "kind": "OBJECT",
+      "note": "Initial recorded-only Library row readiness; active readiness and legacy catalog contracts remain unchanged.",
+      "schema_generation": 1,
+      "schema_id": "urn:eliotr:contracts:library-readiness:library-row-readiness:v1:g1",
+      "schema_version": 1,
+      "structural_strictness": "CLOSED_OBJECT"
     }
   ],
   "protocol": "eliotr.contract-compatibility-registry.v1",
-  "registry_generation": 15
+  "registry_generation": 16
 }

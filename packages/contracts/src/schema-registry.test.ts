@@ -11,6 +11,7 @@ import catalogModelUseTildeFixtureRaw from "../../../docs/contracts/fixtures/eli
 import guideRequestFixtureRaw from "../../../docs/contracts/fixtures/eliotr.project-guide.request.v1.json?raw";
 import guidePartialFixtureRaw from "../../../docs/contracts/fixtures/eliotr.project-guide.partial.v1.json?raw";
 import libraryReadinessFixtureRaw from "../../../tests/fixtures/contracts/eliotr.library-readiness.v1.json?raw";
+import libraryRowReadinessFixtureRaw from "../../../tests/fixtures/contracts/eliotr.library-row-readiness.v1.json?raw";
 import workspaceMcpFixtureRaw from "../../../tests/fixtures/contracts/eliotr.workspace-mcp-plan-input.v2.json?raw";
 import * as computerAgentConnection from "./computer-agent-connection.js";
 import * as computerAgentDispatch from "./computer-agent-dispatch.js";
@@ -229,6 +230,7 @@ describe("ER-01 public contract registry", () => {
     ["research-catalog-model-use-request-v1", catalogModelUseFixtureRaw],
     ["research-catalog-model-use-tilde-v1", catalogModelUseTildeFixtureRaw],
     ["library-readiness-v1", libraryReadinessFixtureRaw],
+    ["library-row-readiness-v1", libraryRowReadinessFixtureRaw],
     ["workspace-mcp-plan-input-v2", workspaceMcpFixtureRaw],
     ["research-branch-query-budget-exhaustion-v1", researchBranchBudgetFixtureRaw],
     ["mcp-client-diagnostic-issued-v1", diagnosticIssuedFixtureRaw],

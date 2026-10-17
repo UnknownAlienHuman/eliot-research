@@ -33,7 +33,7 @@ export function singleQueryValue(url: URL, key: string): string | undefined {
   return value;
 }
 export function parseCatalogRequest(url: URL): CatalogRequest {
-  const allowed = new Set(["project_id", "cursor", "limit"]);
+  const allowed = new Set(["project_id", "cursor", "limit", "readiness"]);
   for (const key of url.searchParams.keys()) {
     if (!allowed.has(key)) {
       throw new HttpRequestError("UNKNOWN_QUERY_PARAMETER", 400, "catalog query contains an unknown parameter");
@@ -42,6 +42,10 @@ export function parseCatalogRequest(url: URL): CatalogRequest {
   const projectId = singleQueryValue(url, "project_id");
   const cursor = singleQueryValue(url, "cursor");
   const rawLimit = singleQueryValue(url, "limit");
+  const readiness = singleQueryValue(url, "readiness");
+  if (url.searchParams.has("readiness") && readiness !== "recorded-v1") {
+    throw new HttpRequestError("CATALOG_READINESS_INVALID", 400, "catalog readiness mode is invalid");
+  }
   if (rawLimit !== undefined && !/^[1-9][0-9]{0,2}$/u.test(rawLimit)) {
     throw new HttpRequestError("CATALOG_LIMIT_INVALID", 400, "catalog limit must be an integer in [1, 100]");
   }
@@ -51,6 +55,7 @@ export function parseCatalogRequest(url: URL): CatalogRequest {
   }
   return {
     limit,
+    ...(readiness === undefined ? {} : { readiness: "recorded-v1" as const }),
     ...(projectId === undefined ? {} : { project_id: projectId }),
     ...(cursor === undefined ? {} : { cursor }),
   };

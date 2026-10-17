@@ -3,6 +3,7 @@ export type { ButtonProps, ButtonVariant, IconButtonProps, FieldProps, StatusPro
 export { MaterialSymbol } from "./catalog/MaterialSymbol";
 export type { MaterialSymbolName } from "./catalog/MaterialSymbol";
 export { ProjectsLibraryFeature } from "./features/sources/projects/ProjectsLibraryFeature";
+export { SourceReadinessSummary } from "./features/sources/projects/SourceReadinessSummary";
 export type { ProjectsLibraryFeatureProps } from "./features/sources/projects/ProjectsLibraryFeature";
 export { DocumentReader } from "./features/sources/document/DocumentReader";
 export type { DocumentReaderProps } from "./features/sources/document/DocumentReader";

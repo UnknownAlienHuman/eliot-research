@@ -11,6 +11,7 @@ export interface SourceRow {
   readonly sourceId: string;
   readonly title: string;
   readonly readinessRef: string;
+  readonly readinessSummary?: LibraryPage["sources"][number]["readiness_summary"];
 }
 
 export interface ProjectRow {
@@ -115,6 +116,7 @@ export function toSourceRows(page: LibraryPage | undefined): readonly SourceRow[
     sourceId: source.id,
     title: source.title,
     readinessRef: source.readiness_ref,
+    ...(source.readiness_summary === undefined ? {} : { readinessSummary: source.readiness_summary }),
   }));
 }
 

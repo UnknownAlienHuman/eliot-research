@@ -5,6 +5,7 @@ import {
 } from "./orientation-authority.js";
 import { evidenceSha256 } from "@eliotr/cloudflare-evidence";
 import { catalogStatements, catalogTimeFrontier } from "./catalog-queries.js";
+import { ChannelReadinessSchema, LibraryRowReadinessSchema, type LibraryRowReadiness } from "@eliotr/contracts";
 
 export class CatalogInputError extends Error {
   public readonly code: string;
@@ -44,6 +45,42 @@ interface SourceRow {
   readonly id: unknown;
   readonly title: unknown;
   readonly head_rev: unknown;
+}
+
+interface ReadinessRow {
+  readonly source_revision_ref: unknown; readonly channel: unknown; readonly state: unknown;
+  readonly generation: unknown; readonly receipt_ref: unknown; readonly reason_codes_json: unknown; readonly updated_at: unknown;
+}
+
+function invalidReadiness(): never {
+  throw new CatalogInputError("CATALOG_READINESS_INVALID", "Recorded source readiness is invalid", 503, true);
+}
+
+function decodeRecordedReadiness(rows: readonly ReadinessRow[], sources: readonly SourceRow[],
+  qualities: ReadonlyMap<string, unknown>, observedAt: string): ReadonlyMap<string, LibraryRowReadiness> {
+  const byRef = new Map(sources.map(source => [validateAuthorityIdentifier(source.head_rev, "source revision"),
+    [] as LibraryRowReadiness["channels"]]));
+  for (const row of rows) {
+    if (typeof row.source_revision_ref !== "string") invalidReadiness();
+    const channels = byRef.get(row.source_revision_ref);
+    if (channels === undefined || channels.some(channel => channel.channel === row.channel)) invalidReadiness();
+    let reasons: unknown;
+    try { reasons = typeof row.reason_codes_json === "string" ? JSON.parse(row.reason_codes_json) : null; }
+    catch { invalidReadiness(); }
+    const channel = ChannelReadinessSchema.safeParse({ source_revision_ref: row.source_revision_ref,
+      channel: row.channel, state: row.state, reason_codes: reasons, observed_at: row.updated_at,
+      ...(row.generation === null ? {} : { generation: row.generation }),
+      ...(row.receipt_ref === null ? {} : { receipt_ref: row.receipt_ref }) });
+    if (!channel.success) invalidReadiness();
+    channels.push(channel.data);
+  }
+  return new Map([...byRef].map(([ref, channels]) => {
+    const summary = LibraryRowReadinessSchema.safeParse({ protocol: "eliotr.library-row-readiness.v1",
+      source_revision_ref: ref, basis: "RECORDED_ONLY", scope: "SOURCE_PROJECTION", observed_at: observedAt,
+      quality_state: qualities.get(ref), channels });
+    if (!summary.success) invalidReadiness();
+    return [ref, summary.data];
+  }));
 }
 
 function utf8Length(value: string): number {
@@ -164,6 +201,9 @@ function validateCatalogRequest(request: CatalogRequest): {
   readonly projectId?: string;
   readonly cursor: CatalogCursorV2 | null;
 } {
+  if (request.readiness !== undefined && request.readiness !== "recorded-v1") {
+    throw new CatalogInputError("CATALOG_READINESS_INVALID", "catalog readiness mode is invalid");
+  }
   if (!Number.isSafeInteger(request.limit) || request.limit < 1 || request.limit > MAX_CATALOG_LIMIT) {
     throw new CatalogInputError(
       "CATALOG_LIMIT_INVALID",
@@ -192,14 +232,17 @@ function decodeProjects(rows: readonly ProjectRow[]): CatalogResult["projects"] 
   });
 }
 
-function decodeSources(rows: readonly SourceRow[]): CatalogResult["sources"] {
+function decodeSources(rows: readonly SourceRow[], summaries?: ReadonlyMap<string, LibraryRowReadiness>): CatalogResult["sources"] {
   return rows.map((row) => {
     const id = validateAuthorityIdentifier(row.id, "source id");
     const headRevision = validateAuthorityIdentifier(row.head_rev, "source head revision");
+    const summary = summaries?.get(headRevision);
+    if (summaries !== undefined && summary === undefined) invalidReadiness();
     return {
       id,
       title: validateAuthorityString(row.title, "source title", MAX_TITLE_BYTES),
       readiness_ref: `readiness:${id}:${headRevision}`,
+      ...(summary === undefined ? {} : { readiness_summary: summary }),
     };
   });
 }
@@ -276,14 +319,21 @@ export async function readCatalog(database: D1Database, context: AuthenticatedRe
     throw new CatalogInputError("CATALOG_CURSOR_STALE", "Catalog changed; reload the first page", 409, true);
   }
   await authority.requireReadPolicy();
-  const [projectResult, sourceResult] = await database.batch<ProjectRow | SourceRow>(catalogStatements(database, {
+  const recorded = request.readiness === "recorded-v1";
+  const results = await database.batch<ProjectRow | SourceRow | ReadinessRow>(catalogStatements(database, {
     principal: fence.policy_principal_ref, observed: new Date(started).toISOString(), project: validated.projectId ?? null,
     projectAfter: cursor?.project_after ?? "", sourceAfter: cursor?.source_after ?? "", limit: validated.limit + 1,
+    recordedReadiness: recorded,
   }));
+  const [projectResult, sourceResult, readinessResult] = results;
   if (!projectResult?.success || !sourceResult?.success || !Array.isArray(projectResult.results) ||
       !Array.isArray(sourceResult.results) || projectResult.results.length > validated.limit + 1 ||
       sourceResult.results.length > validated.limit + 1) {
     throw new CatalogInputError("CATALOG_AUTHORITY_UNAVAILABLE", "Catalog query failed", 503, true);
+  }
+  if (results.length !== (recorded ? 3 : 2) || (recorded && (!readinessResult?.success ||
+      !Array.isArray(readinessResult.results) || readinessResult.results.length > (validated.limit + 1) * 3))) {
+    throw new CatalogInputError("CATALOG_AUTHORITY_UNAVAILABLE", "Catalog readiness query failed", 503, true);
   }
   const projectRows = projectResult.results as ProjectRow[];
   const sourceRows = sourceResult.results as SourceRow[];
@@ -291,10 +341,14 @@ export async function readCatalog(database: D1Database, context: AuthenticatedRe
   // title is returned merely because the browser guessed its ID. Include the lookahead rows too.
   const refs = [...new Set([...projectRows.map((row) => validateAuthorityIdentifier(row.witness_revision, "project witness")),
     ...sourceRows.map((row) => validateAuthorityIdentifier(row.head_rev, "source revision"))])];
+  const qualities = new Map<string, unknown>();
   for (let offset = 0; offset < refs.length; offset += 64) {
-    await authority.sources(refs.slice(offset, offset + 64));
+    const authorized = await authority.sources(refs.slice(offset, offset + 64));
+    if (recorded) for (const source of authorized) qualities.set(source.revision.source_revision_ref, source.revision.quality_state);
   }
-  const allProjects = decodeProjects(projectRows); const allSources = decodeSources(sourceRows);
+  const summaries = recorded ? decodeRecordedReadiness(readinessResult?.results as ReadinessRow[], sourceRows,
+    qualities, new Date(now()).toISOString()) : undefined;
+  const allProjects = decodeProjects(projectRows); const allSources = decodeSources(sourceRows, summaries);
   if (new Set(allProjects.map((item) => item.id)).size !== allProjects.length ||
       new Set(allSources.map((item) => item.id)).size !== allSources.length) {
     throw new CatalogInputError("CATALOG_AUTHORITY_UNAVAILABLE", "Catalog returned duplicate identities", 503);

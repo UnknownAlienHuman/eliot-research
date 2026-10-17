@@ -7,6 +7,7 @@ import type {
   ResearchWorkflowStage,
   VerifyEvidenceRequest,
   VerifyEvidenceResult,
+  LibraryRowReadiness,
 } from "@eliotr/contracts";
 import type {
   EvidencePack,
@@ -45,13 +46,14 @@ export const SEMANTIC_API_OPERATIONS = [
 export type SemanticOperation = typeof SEMANTIC_API_OPERATIONS[number];
 
 export interface CatalogRequest {
+  readonly readiness?: "recorded-v1";
   readonly project_id?: string;
   readonly cursor?: string;
   readonly limit: number;
 }
 export interface CatalogResult {
   readonly projects: readonly { id: string; title: string; generation: string }[];
-  readonly sources: readonly { id: string; title: string; readiness_ref: string }[];
+  readonly sources: readonly { id: string; title: string; readiness_ref: string; readiness_summary?: LibraryRowReadiness }[];
   readonly next_cursor?: string;
 }
 

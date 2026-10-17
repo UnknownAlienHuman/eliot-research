@@ -59,3 +59,25 @@ export const LibraryReadinessSchema = z.object({
   }
 });
 export type LibraryReadiness = z.infer<typeof LibraryReadinessSchema>;
+
+/** Saved source-projection observations, never a current project-index probe. */
+export const LibraryRowReadinessSchema = z.object({
+  protocol: z.literal("eliotr.library-row-readiness.v1"),
+  source_revision_ref: IdentifierSchema,
+  basis: z.literal("RECORDED_ONLY"),
+  scope: z.literal("SOURCE_PROJECTION"),
+  observed_at: IsoDateTimeSchema,
+  quality_state: SourceRevisionSchema.shape.quality_state,
+  channels: z.array(ChannelReadinessSchema).max(3),
+}).strict().superRefine((value, ctx) => {
+  const seen = new Set<string>();
+  for (const [index, channel] of value.channels.entries()) {
+    if (!["exact_ready", "lexical_ready", "semantic_ready"].includes(channel.channel) || seen.has(channel.channel) ||
+        channel.source_revision_ref !== value.source_revision_ref ||
+        (channel.state === "ready" && (channel.generation === undefined || channel.receipt_ref === undefined))) {
+      ctx.addIssue({ code: "custom", path: ["channels", index], message: "Recorded channel identity or ready receipt is invalid" });
+    }
+    seen.add(channel.channel);
+  }
+});
+export type LibraryRowReadiness = z.infer<typeof LibraryRowReadinessSchema>;

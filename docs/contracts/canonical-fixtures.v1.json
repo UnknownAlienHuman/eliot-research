@@ -81,6 +81,14 @@
       "schema_export": "LibraryReadinessSchema"
     },
     {
+      "canonical_body_sha256": "3457bf536131108f8ae06b23722a43d692a129dc81bf68f47daaedfa76e1f5bb",
+      "fixture_id": "library-row-readiness-v1",
+      "fixture_path": "tests/fixtures/contracts/eliotr.library-row-readiness.v1.json",
+      "media_type": "application/json",
+      "protocol": "eliotr.library-row-readiness.v1",
+      "schema_export": "LibraryRowReadinessSchema"
+    },
+    {
       "canonical_body_sha256": "3a5f9fd2b254eebe574b2c4a28f9804df0da9df359e59ceee125fa7da90fef22",
       "fixture_id": "normalized-bundle-v1",
       "fixture_path": "tests/fixtures/contracts/eliotr.normalized.v1.yaml",
@@ -122,5 +130,5 @@
     }
   ],
   "protocol": "eliotr.contract-canonical-fixtures.v1",
-  "registry_generation": 15
+  "registry_generation": 16
 }

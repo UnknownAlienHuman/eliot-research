@@ -11,10 +11,11 @@
 
 import type { LegacyErrorFactory, LegacyHttpAdapter } from '../../legacy/http';
 import type { EpochPort } from '../../transport/client';
+import { LibraryRowReadinessSchema, type LibraryRowReadiness } from '@eliotr/contracts';
 
 export interface LibraryPage {
   readonly projects: readonly { id: string; title: string; generation: string }[];
-  readonly sources: readonly { id: string; title: string; readiness_ref: string }[];
+  readonly sources: readonly { id: string; title: string; readiness_ref: string; readiness_summary?: LibraryRowReadiness }[];
   readonly next_cursor?: string;
   readonly generation: string;
   readonly trace: string;
@@ -92,7 +93,7 @@ export function createLibraryApi(
   }
 
   /** Unchanged strict decoder. Exported through the factory so callers keep the original name. */
-  function decodeLibraryPage(raw: unknown, expectedGeneration?: string): LibraryPage {
+  function decodeLibraryPage(raw: unknown, expectedGeneration?: string, readinessMode?: 'recorded-v1'): LibraryPage {
     const envelope = record(raw, ['data', 'trace_id', 'deployment_generation']);
     const generation = id(envelope.deployment_generation);
     const trace = id(envelope.trace_id);
@@ -111,13 +112,16 @@ export function createLibraryApi(
       return { id: id(row.id), title: text(row.title, 4096), generation: id(row.generation) };
     });
     const sources = list(data.sources).map((raw) => {
-      const row = record(raw, ['id', 'title', 'readiness_ref']);
+      const row = record(raw, ['id', 'title', 'readiness_ref', ...(readinessMode === undefined ? [] : ['readiness_summary'])]);
       const sourceId = id(row.id);
       const readiness = text(row.readiness_ref, 1024);
       const prefix = `readiness:${sourceId}:`;
       if (!readiness.startsWith(prefix)) invalid();
       id(readiness.slice(prefix.length));
-      return { id: sourceId, title: text(row.title, 4096), readiness_ref: readiness };
+      const summary = readinessMode === undefined ? undefined : LibraryRowReadinessSchema.safeParse(row.readiness_summary);
+      if (summary !== undefined && (!summary.success || summary.data.source_revision_ref !== readiness.slice(prefix.length))) invalid();
+      return { id: sourceId, title: text(row.title, 4096), readiness_ref: readiness,
+        ...(summary?.success ? { readiness_summary: summary.data } : {}) };
     });
     ordered(projects);
     ordered(sources);
@@ -133,10 +137,14 @@ export function createLibraryApi(
   }
 
   async function readLibraryPage(
-    input: { project?: string; cursor?: string; generation?: string } = {},
+    input: { project?: string; cursor?: string; generation?: string; readiness?: 'recorded-v1' } = {},
     signal?: AbortSignal,
   ): Promise<LibraryPage> {
     const query = new URLSearchParams({ limit: String(LIBRARY_PAGE_SIZE) });
+    if (input.readiness !== undefined) {
+      if (input.readiness !== 'recorded-v1') invalid();
+      query.set('readiness', input.readiness);
+    }
     if (input.project !== undefined) {
       id(input.project);
       query.set('project_id', input.project);
@@ -150,6 +158,7 @@ export function createLibraryApi(
     const page = decodeLibraryPage(
       await http.requestApi(`/api/v1/research/catalog?${query}`, signal ? { signal } : {}),
       input.generation,
+      input.readiness,
     );
     if (page.next_cursor !== undefined && page.next_cursor === input.cursor) invalid();
     if (!epoch.isCurrent(captured)) stale();

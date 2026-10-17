@@ -1,0 +1,28 @@
+{
+  "protocol": "eliotr.library-row-readiness.v1",
+  "source_revision_ref": "revision-1",
+  "basis": "RECORDED_ONLY",
+  "scope": "SOURCE_PROJECTION",
+  "observed_at": "2026-10-17T12:00:00Z",
+  "quality_state": "standard",
+  "channels": [
+    {
+      "source_revision_ref": "revision-1",
+      "channel": "exact_ready",
+      "state": "ready",
+      "generation": "generation-1",
+      "receipt_ref": "receipt-1",
+      "reason_codes": [],
+      "observed_at": "2026-10-16T10:00:00Z"
+    },
+    {
+      "source_revision_ref": "revision-1",
+      "channel": "lexical_ready",
+      "state": "queued",
+      "reason_codes": [
+        "PROJECTION_PENDING"
+      ],
+      "observed_at": "2026-10-16T10:00:00Z"
+    }
+  ]
+}

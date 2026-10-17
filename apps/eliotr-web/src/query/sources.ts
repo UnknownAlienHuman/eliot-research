@@ -41,7 +41,8 @@ export function sourcesQueryOptions(apis: SourcesQueryApis, privacy: PrivacyCont
         queryKey: [...key, "library", projectId, cursor ?? null],
         queryFn: ({ signal }) => runProtectedRead(privacy, context, signal, async readSignal => {
           currentProject(projects, projectId);
-          const result = await apis.library.readLibraryPage({ project: projectId, generation, ...(cursor === undefined ? {} : { cursor }) }, readSignal);
+          const result = await apis.library.readLibraryPage({ project: projectId, generation, readiness: "recorded-v1",
+            ...(cursor === undefined ? {} : { cursor }) }, readSignal);
           currentProject(projects, projectId);
           return result;
         }),

@@ -1,5 +1,5 @@
 import { useId } from 'react';
-import { Button, Status } from '@eliotr/ui';
+import { Button, SourceReadinessSummary, Status } from '@eliotr/ui';
 import type { LibraryPage } from '@eliotr/owner-api-client';
 
 /** Selection is an explicit future intent. Server run snapshots never read this mutable list. */
@@ -35,7 +35,7 @@ export function NextQuestionScope({ locale, page, projectSelected, isLoading, is
         disabled={selected.length >= selectionLimit && !selected.some(item => item.id === source.id)}
         onChange={event => onToggle(page, source.id, event.target.checked)} />
       <span>{source.title}</span>
-    </label></li>)}</ul> : <Status tone={isError && !isLoading ? "error" : "neutral"}>{missingPage}</Status>}
+    </label><SourceReadinessSummary summary={source.readiness_summary} locale={locale} /></li>)}</ul> : <Status tone={isError && !isLoading ? "error" : "neutral"}>{missingPage}</Status>}
     <div className="er-live-scope-footer">
       <p>{count}</p>
       {!wholeProject && page && page.sources.length > 0 && <Button variant="text" onClick={() => {

@@ -40,6 +40,22 @@ function recorder(responder: (path: string) => unknown): { http: LibraryHttp; ca
 }
 
 describe('createLibraryApi decode boundaries', () => {
+  it('requests recorded readiness explicitly and retains observation times without additional reads', async () => {
+    const summary = { protocol: 'eliotr.library-row-readiness.v1', source_revision_ref: 'ra1', basis: 'RECORDED_ONLY',
+      scope: 'SOURCE_PROJECTION', observed_at: '2026-10-17T12:00:00Z', quality_state: 'standard', channels: [] };
+    const { http, calls } = recorder(() => libraryEnvelope({ sources: [{ id: 'source:a', title: 'Field notes',
+      readiness_ref: 'readiness:source:a:ra1', readiness_summary: summary }] }));
+    const api = createLibraryApi(http, failing, createSessionEpoch());
+    const page = await api.readLibraryPage({ readiness: 'recorded-v1' });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.path).toBe('/api/v1/research/catalog?limit=20&readiness=recorded-v1');
+    expect(page.sources[0]?.readiness_summary).toEqual(summary);
+    const envelope = libraryEnvelope({ sources: [{ id: 'source:a', title: 'Field notes', readiness_ref: 'readiness:source:a:ra1',
+      readiness_summary: { ...summary, source_revision_ref: 'other-head' } }] });
+    expect(() => api.decodeLibraryPage(envelope, GEN, 'recorded-v1')).toThrow('CATALOG_RESPONSE_INVALID');
+    expect(() => api.decodeLibraryPage(libraryEnvelope(), GEN, 'recorded-v1')).toThrow('CATALOG_RESPONSE_INVALID');
+    expect(() => api.decodeLibraryPage(envelope, GEN)).toThrow('CATALOG_RESPONSE_INVALID');
+  });
   it('rejects a foreign deployment generation with 409', () => {
     const { http } = recorder(() => libraryEnvelope());
     const api = createLibraryApi(http, failing, createSessionEpoch());

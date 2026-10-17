@@ -15,6 +15,7 @@ import {
   type ReadinessPresentation,
 } from "./controller";
 import "./projects-library.css";
+import { SourceReadinessSummary } from "./SourceReadinessSummary";
 
 export interface ProjectsLibraryFeatureProps {
   readonly locale: "en" | "ru";
@@ -297,6 +298,7 @@ export function ProjectsLibraryFeature(props: ProjectsLibraryFeatureProps) {
                   onClick={() => props.onLoadRevisions(row.sourceId)}
                 />
               </div>
+              <SourceReadinessSummary summary={row.readinessSummary} locale={props.locale} />
             </li>
           ))}
         </ul>

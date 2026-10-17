@@ -108,6 +108,14 @@ export const CANONICAL_FIXTURE_REGISTRY =
           "88967c62c196dbb7f0babd89236830eb432e33ded20b539c1f78a3e4abce94f6",
       },
       {
+        fixture_id: "library-row-readiness-v1",
+        protocol: "eliotr.library-row-readiness.v1",
+        schema_export: "LibraryRowReadinessSchema",
+        fixture_path: "tests/fixtures/contracts/eliotr.library-row-readiness.v1.json",
+        media_type: "application/json",
+        canonical_body_sha256: "3457bf536131108f8ae06b23722a43d692a129dc81bf68f47daaedfa76e1f5bb",
+      },
+      {
         fixture_id: "normalized-bundle-v1",
         protocol: NORMALIZED_BUNDLE_PROTOCOL,
         schema_export: "NormalizedBundleManifestSchema",

@@ -54,7 +54,7 @@ import {
   type ContractStructuralStrictness,
 } from "./registry-contracts.js";
 
-export const CONTRACT_SCHEMA_REGISTRY_GENERATION = 15 as const;
+export const CONTRACT_SCHEMA_REGISTRY_GENERATION = 16 as const;
 
 export type ContractJsonPrimitive = string | number | boolean | null;
 export type ContractJsonValue =
