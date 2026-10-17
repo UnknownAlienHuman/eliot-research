@@ -15,6 +15,18 @@ This repository is governed by:
 
 Start from the work packet, then read only contracts/modules named by exact checkpoint.
 
+## Current service profile
+
+[ADR-0018](docs/adr/0018-owner-single-function-first-profile.md) selects the
+owner-single, function-first profile for this service. It supersedes conflicting
+rules below for owner reads and ordinary E0/E1 answers: Access is the entry gate;
+lists and drafts do not reopen evidence or repeat per-item grants; complete
+selected sources may be read within the captured model/runtime budget; one
+streamed synthesis precedes optional background audit. Exact evidence checks
+remain at citation opening. Mutations retain idempotency, spend bounds and CAS.
+E2/E3 and other deployment profiles retain their separate deep-research rules.
+Implementation and live acceptance of this profile are still in progress.
+
 ## Non-negotiable boundaries
 
 1. One deployable Worker (`apps/eliotr-core`) + static owner-web assets; packages are libraries, not services.

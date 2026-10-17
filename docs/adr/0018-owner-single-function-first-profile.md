@@ -1,6 +1,6 @@
 # ADR-0018: Owner-single, function-first deployment profile
 
-- Status: proposed by the owner's explicit directives of 2026-10-17; awaiting the manager's acceptance.
+- Status: accepted for this service on 2026-10-17. Runtime cutover is in progress; acceptance targets below remain unverified until measured.
 - Date: 2026-10-17.
 - Scope: access, read paths, interactive answers, model qualification and deployment behaviour for this
   service's single owner and the owner's own agents.
