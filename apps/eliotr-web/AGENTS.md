@@ -1,23 +1,27 @@
 # ER-47 — React owner workspace rules
 
-`apps/eliotr-web` is owned by ER-47 manager. ER-25 owns served legacy until cutover. ER-48 owns owner-client
-extraction/legacy compatibility. ER-49 owns static checkpoint definitions and claim-history validation.
+`apps/eliotr-web` is the React/Vite target UI. `apps/eliotr-pwa` remains served compatibility until the
+authorized cutover. Use the compact implementation authority in [ADR-0019](../../docs/adr/0019-compact-refactoring.md)
+and [the current router](../../docs/implementation/backend-entrypoints.md). The historical ER-47/48/49 packet
+and claim files do not gate current implementation.
 
 ## Read before editing
 
-A manager first reads `docs/agent-work/frontend-material-agent-playbook.md`, then
-`docs/agent-work/frontend-autonomous-manager-runbook.md`. A UI leaf reads only:
+A manager reads `docs/agent-work/frontend-material-agent-playbook.md` and
+`docs/agent-work/frontend-autonomous-manager-runbook.md`. Each task receives exact paths, relevant contracts,
+acceptance evidence and scoped commands. Parallel tasks may touch disjoint paths only; the manager serializes
+shared roots, manifests, routes, barrels, fixtures and handoffs. A task reads only relevant sources:
 
-1. exact checkpoint in `docs/agent-work/frontend-owner-execution-map.md`;
+1. exact task scope in the current implementation router;
 2. the applicable sections of `docs/agent-work/frontend-material-agent-playbook.md`;
 3. `docs/agent-work/ER-47-owner-web-interface.md`;
 4. `docs/agent-work/frontend-notebooklm-material-reference.md` for U1-R and rendered-product review;
-4. `docs/agent-work/frontend-current-contract-amendment-2026-10-09.md` when named by the checkpoint;
-5. affected catalog/story/scenario and exact client/DTO contract;
-6. its exact claim after ER-49 acceptance.
+5. `docs/agent-work/frontend-current-contract-amendment-2026-10-09.md` when relevant;
+6. affected catalog/story/scenario and exact client/DTO contract;
+7. directly relevant implementation sources.
 
-Manager reads ER-49 result but never edits scheduler definitions or ER-48 claims. Registry never replaces
-packet/execution map.
+Do not create new JSON claims or ancestry receipts. The old registry/checker/claims are optional historical audit
+material only; they do not replace task authorization or code review.
 
 Conditional references:
 
@@ -34,36 +38,26 @@ Do not preload complete frontend corpus for a small checkpoint.
 
 ## Mandatory UI tool order
 
-For rendered UI work: exact checkpoint → Material agent playbook → U1-R receipt → Storybook `docs-list`/
-`docs-show` → accepted catalog/story → implementation → real Chrome inspection → Storybook `test-run` → scoped
-Playwright interaction/a11y/visual checks → receipt. Google Design MCP is mandatory for U1.2 proposals. Random
-design search and undocumented component props are prohibited.
+For UI implementation, use scoped compile/lint first. Do not run browser or test suites after every edit. At
+assembled UI acceptance use: task scope → Material agent playbook → U1-R observations → Storybook
+`docs-list`/`docs-show` → accepted catalog/story → implementation → real Chrome inspection → Storybook
+`test-run` → scoped Playwright interaction/a11y/visual checks → receipt. Google Design MCP is mandatory for U1.2
+proposals. Random design search and undocumented component props are prohibited.
 
-## Manager, leaf and claim boundaries
+## Manager and path boundaries
 
-- One ER-47 manager owns direct-main context or single owner-authorized worktree/review branch.
-- Manager context does not lift stop, expand ownership, satisfy prerequisites or authorize merge/deploy/account
-  mutation.
-- Leaf edits only exact checkpoint/claim paths and creates no branch/worktree/manifest/barrel/route root/new
-  framework.
-- Before ER-49, one frontend leaf maximum.
-- After ER-49:
-  - claim-introduction commit is a strict ancestor of source edits;
-  - same-commit claim+source is prohibited;
-  - each source commit has exactly one active covering claim in parent tree;
-  - one active claim per checkpoint, one manager context per packet, disjoint parallel paths;
-  - predecessor refs name checkpoint + ancestor commit and gate approval reference where required.
-- ER-49 proves mechanics, not truth of human approval/test evidence; manager/operator validates substance.
-- ER-47 never edits static registry or ER-48 claims.
-- Manager serializes package-local integration and ER-00/24/26 handoffs.
-
-ER-49 is optional for parallelism. Sequential one-manager/one-leaf mode remains valid.
+- One authorized manager works in the existing checkout/worktree and assigns exact allowed paths.
+- Parallel tasks use disjoint paths; shared package/root integration points are serialized by the manager.
+- Do not create a branch, worktree, manifest, barrel, route root or framework for process compliance.
+- Manager ownership does not authorize merge, deploy, account mutation or cutover.
+- Paths outside the authorized scope go through the smallest handoff to their existing owner.
 
 ## Autonomous manager behavior
 
-When a durable owner comment authorizes a tranche, the manager selects and executes the next dependency-ready
-checkpoint without asking whether to continue. It repairs routine compile/test/dependency/layout/a11y/CSP/visual
-failures, prepares bounded B-U/B-C handoffs, reviews rendered output and advances until the tranche human gate.
+When owner authorization covers the programme, the manager selects and executes the next ready task without
+asking whether to continue. During implementation it repairs scoped compile/lint/dependency failures; after
+assembly it repairs applicable test/layout/a11y/CSP/visual failures,
+coordinates any necessary root integration with its owner, reviews rendered output and advances to the human gate.
 
 The manager does not ask the owner at U1-D or U2-X. It asks only for a real contract/security/ownership
 conflict, unavailable required authenticated browser after recovery attempts, unauthorized deploy/account/
@@ -71,20 +65,19 @@ irreversible action, or FINAL-UI after U5-X. After two materially different fail
 and changes approach instead of adding another local patch. Progress comments are limited to tranche start, a
 human gate, an exhausted hard blocker and tranche completion.
 
-## Repository bootstrap
+## Repository integration
 
-Workspace glob discovery is not integration.
-
-- U1.1a creates only package-local manifests/config/dependency proposal.
-- ER-00 B-U owns frozen lockfile, root TS refs, boundary rules/negatives, root scripts/tests and budgets.
-- U1.1b starts from accepted B-U SHA and runs sibling Worker/config/routing parity probe.
-- Package-local Vite/editor/story success before B-U releases nothing.
-- Unknown workspace source package must fail root gates.
+The existing React app and packages are registered in the workspace. When a task adds a workspace package or
+changes root manifests, lockfile, TypeScript references, boundaries, scripts, budgets or CI, coordinate that
+shared integration with its existing owner and verify the resulting root graph. No historical B-U receipt or
+checkpoint is required for ordinary work in already registered packages.
 
 ## Architecture
 
 - React owns presentation; Worker owns authority.
 - Data arrives only through `@eliotr/owner-api-client`, decoded from `unknown`.
+- For owner list/draft reads, validate known fields while tolerating additive fields as ADR-0018 specifies.
+  Mutation requests and evidence-resolution contracts keep strict, versioned decoding.
 - TanStack Query owns in-memory read lifecycle; URL/router owns navigable selection.
 - `@eliotr/ui` owns tokens/primitives/patterns.
 - Prefer native HTML semantics for ordinary controls; use one qualified external composite foundation.
@@ -102,7 +95,8 @@ Workspace glob discovery is not integration.
 5. Separate client/query/view-model from components.
 6. One scroll owner per pane; native platform scrolling by default.
 7. Never reparent mounted feature roots responsively.
-8. Preserve request signal, route, session/lifecycle/deployment epochs after awaits.
+8. Preserve request signals and route/session/lifecycle identity after awaits. A deployment-generation change is
+   not itself an authorization-loss or data-wipe event; follow ADR-0018 read renewal and compatibility behavior.
 9. Loading, empty, offline, denied, stale, unknown, degraded and failed remain distinct.
 10. IDs/hashes/traces appear only in bounded technical disclosure.
 11. Show only accepted public stages/receipts/limitations; never hidden reasoning/prompts/provider payloads.
@@ -136,8 +130,8 @@ and undiscoverable controls, then continue to real feature wiring.
 
 ### Final owner review
 
-The owner is shown the completed U5-X interface once. Internal library, token, screenshot and checkpoint
-choices do not require owner interruption. No deployment, cutover or final merge follows without separate
+The owner is shown the completed U5-X interface once. Internal library, token and screenshot choices do not
+require owner interruption. No deployment, cutover or final merge follows without separate
 authorization.
 
 ## Owner-client and ResearchSession boundary
@@ -157,7 +151,7 @@ authorization.
 - Projection is snapshot-on-request, not proactive streaming progress. Missing/stale projection stays degraded
   until canonical HTTP readback.
 - Duplicate/gapped/late HTTP or projection data never allocates a run, repeats mutation or invents completion.
-- A future event/push protocol requires a new accepted versioned server contract and checkpoint; no ad hoc
+- A future event/push protocol requires a separately accepted versioned server contract and scoped task; no ad hoc
   SSE/WebSocket/Agents channel is allowed.
 - Exact document ranges use one immutable admitted representation: exact revision, strong validator/
   conditional, single untransformed range and length/digest/currentness recheck; otherwise bounded whole read.
@@ -165,8 +159,11 @@ authorization.
 ## Query and mutation policy
 
 - Every query consumes supplied `AbortSignal`.
-- Protected keys include session/principal epoch and deployment generation.
-- Logout/auth loss/revoke/purge/generation/pagehide cancels and **removes** protected Query/local data.
+- Protected query state is scoped to the authenticated principal/session. A deployment-generation change
+  renews/reconciles the session and retries reads without losing the owner's draft or clearing protected UI state.
+- Sign-out/auth loss/principal change/revoke/purge cancels and **removes** affected protected data. Deployment
+  generation renewal preserves the draft and does not itself clear protected UI state; pagehide masks the page
+  and aborts pending reads while suspended.
 - No persisted Query/private disk cache.
 - Global focus/reconnect/mount refetch/retries off; safe read classes opt in.
 - Mutations `retry:false`; uncertain retry preserves original operation/body after readback.
@@ -175,11 +172,14 @@ authorization.
 ## Page lifecycle and bfcache
 
 One root controller owns `pagehide`/`pageshow`. Shell contains pre-existing non-private privacy mask/inert guard.
-On `pagehide`, synchronously set guard and close epoch before React/Query cleanup; then abort/pause/remove
-protected state with no mutation/retry/settlement/new operation ID. Do not use `unload`.
+On `pagehide`, synchronously set the non-private guard and close the lifecycle epoch before React/Query cleanup;
+then abort pending reads and pause polling without mutation, retry, settlement or new operation ID. Keep the
+page masked while suspended. Do not treat deployment-generation change alone as a reason to delete owner data.
 
-Persisted `pageshow` remains masked from first restored paint until fresh no-store session/health/deployment
-verification. Test mask before first frame/screenshot, not after React commit.
+Persisted `pageshow` remains masked from first restored paint until session renewal and health/currentness
+reconciliation. Accept the previous deployment generation for owner reads as specified by ADR-0018; retain the
+owner's draft across that renewal. Clear protected data on sign-out, principal change, revoke or purge. Test the
+mask before first frame/screenshot, not after React commit.
 
 ## Rendering, scroll and CSP
 
@@ -204,8 +204,10 @@ Preflight rejects wrong env, remote/production resources, unapproved AI/Browser/
 routes/domains/hooks/credentials. Every binding is local simulation, fixture, remote non-production or pending.
 Storybook loads no Worker plugin. Local Explorer follows preflight only.
 
-`cf init/dev/build/deploy` and generated `cloudflare.config.ts` are outside ER-47 authority. Wrangler + official
-Vite plugin remain authority. Existing deploy script cannot consume Vite output unchanged.
+Do not introduce a competing `cf init/dev/build/deploy` toolchain or generated `cloudflare.config.ts`.
+Wrangler + the official Vite plugin remain authoritative. The manager prepares the bridge through their
+existing files within the current refactor, before FINAL-UI; the legacy deploy script cannot consume Vite
+output unchanged. Running a production deploy command requires the owner's authorization for that action.
 
 ## React, primitive and performance
 
@@ -238,7 +240,7 @@ Vite plugin remain authority. Existing deploy script cannot consume Vite output 
 
 ## Completion
 
-Package-local build, claim, DOM snapshot, MCP response, click flow, screenshot, benchmark or Preview URL alone
-is insufficient. Checkpoint satisfies temporal claim validation, B-U where applicable, typed tests, stories,
+Package-local build, DOM snapshot, MCP response, click flow, screenshot, benchmark or Preview URL alone is
+insufficient. Acceptance uses applicable typed checks, stories,
 browser/visual/a11y/CSP/network/lifecycle/build/binding/performance evidence, named human gate and explicit
 `PENDING` items.

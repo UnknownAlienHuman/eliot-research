@@ -1,208 +1,111 @@
 # ELIOT Research
 
-> **Working on this repository?** Start at [docs/START-HERE.md](docs/START-HERE.md) — read order,
-> authority map, how to claim work, verification gates and branch discipline. The non-negotiable
-> boundaries are in [AGENTS.md](AGENTS.md).
+Cloud-hosted source library, cited answers, research reports and Wiki, with human and agent interfaces.
+One Cloudflare Worker plus static owner-web assets; D1/R2 hold canonical records and bytes.
 
-**Private owner workspace is deployed** (owner-only URL, not published).
-The live owner path imports and reads TXT, Markdown, PDF and DOCX documents, saves projects,
-supports exact and lexical search, and runs a full scan of the selected scope. Owner research
-executes the 18-stage workflow through an owner-qualified model route, saves a DRAFT,
-reopens it from Research history, and verifies its citations against current owner evidence.
-The recorded two-document project run produced four `SUPPORTED` claim assessments while
-retaining incomplete scope coverage. Research drafts can also be saved as Wiki proposals,
-reviewed, published and reopened through the owner interface. The published Wiki page retains
-its coverage limits and the underlying artifact remains a DRAFT. See the
-[live document/project acceptance](docs/implementation/live-document-project-acceptance-2026-09-14.md).
-Release `8b418fe` adds Recent work with the latest 20 owner-authorized report,
-research completion and Wiki publication events. A new two-document run completed in
-about 125 seconds, opened a saved DRAFT and displayed its events in this view. Historical
-Wiki events remain readable through current owner reauthorization after the original scope expires.
-Release `6f14c0c`, with D1 migration fix `acebeb9`, adds owner editing of published Wiki pages.
-Saving creates a separate draft revision; publishing preserves the previous version and records
-the edit as unresolved. Both versions of the Orbit page were reopened in the live owner interface.
-The Library now shows the project title, with technical scope identifiers in collapsed details.
-This establishes the bounded owner path, not full production readiness. Qualification renewal
-and policy/pricing expiry constraints are documented in
-[the local launch checkpoint](docs/implementation/local-launch.md). Managed semantic retrieval,
-Google/MCP admission, the accepted-artifact lifecycle, erasure, federation, recovery and broader
-production workloads remain open.
+**Status: active implementation, not production-ready.** The source reviewed on 2026-10-17 is
+[`4e53d5e2`](https://github.com/UnknownAlienHuman/eliot-research/commit/4e53d5e2296e7f4ed3ed29cef2f049891c5d20c0).
+The [delivery record](docs/implementation/backend-delivery-plan.md) retains bounded October 16 live
+receipts for questions, saved reports, exact citations, Inbox publication, model settings and MCP.
+They do not establish the new owner-profile performance targets or completion of all features.
 
-**Pluggable external research federation for ELIOT Memory OS.**
+**Working here?** Start at [docs/START-HERE.md](docs/START-HERE.md) and
+[the current tasks](docs/implementation/backend-entrypoints.md). Repository boundaries are in
+[AGENTS.md](AGENTS.md).
 
-> **Status: active implementation; not production-ready.** The authoritative standalone contract is
-> [Eliot Research Cloud 29.1](docs/architecture/ELIOT_RESEARCH.md), and the language boundary is governed
-> by [eliotr.language-runtime.v1](docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md). Several authority
-> paths are implemented and pass deterministic CI, but mandatory product routes and real Cloudflare,
-> Google, provider, recovery and workload qualification remain open. See the
-> [machine-readable implementation status](docs/implementation/implementation-status.json),
-> [gap register](docs/implementation/gap-register.md), and
-> [production readiness plan](docs/implementation/production-readiness-plan.md).
+## Current direction
 
----
+The owner selected five working paths in [#377](https://github.com/UnknownAlienHuman/eliot-research/issues/377):
 
-## What this is
+- project and sources → question → report with citations → reopen;
+- project upload to Cloudflare AI Search;
+- draft publication through Inbox;
+- connected agents;
+- task assignment to an agent.
 
-A cloud-hosted evidence library and controlled research system: sources with revisions, a corpus lens,
-an evidence-linked research wiki, and governed investigations with explicit coverage accounting.
+[ADR-0018](docs/adr/0018-owner-single-function-first-profile.md) selects `OWNER_SINGLE`: fast summary
+reads, one streamed synthesis for ordinary E0/E1 questions, and explicit deep E2/E3 research.
+[ADR-0019](docs/adr/0019-compact-refactoring.md) defines the compact refactor, including the
+[rechecked audit findings](.github/audits/2026-10-17/README.md).
 
-Four user-facing surfaces:
+The target UI is the existing **React/Vite** app, `@eliotr/ui` and one `owner-api-client`.
+**Astro is no longer a target.** Wrangler still serves the legacy `eliotr-pwa` assets at this baseline;
+the integrated React build/deploy bridge and browser retirement remain to be completed.
 
-```text
-LIBRARY    sources, originals, revisions, web snapshots, exports, repositories
-LENS       exact, lexical and semantic retrieval; structure; source cards; project atlas
-WIKI       versioned research wiki with evidence, hypotheses and stated limitations
-RESEARCH   investigations, deep research, comparisons, fact checks, audits and reports
-```
+Search uses **Cloudflare AI Search or the model provider's search**. S52's custom index, generation
+registry, target manifests and promotion/rollback layer are canceled. Rust migrations and the archived
+44-PR program do not block the owner product. Backup/export/restore execution remains deferred; retained
+data and erasure obligations remain.
 
-It serves three genuinely different products that one retrieval pipeline cannot cover:
+## Product
 
-| Product | Question it answers |
+| Surface | Purpose |
 |---|---|
-| **Orientation** | What is in this corpus, how is it connected, where should I read next? |
-| **Precision** | Give me the exact fragment, number, table, row, page, event or handle. |
-| **Materialization** | Assemble an investigation, audit, wiki page or report of practical size. |
+| Library | Sources, original bytes, revisions, project membership and imports |
+| Lens | Find and navigate relevant or exact source material |
+| Research | Ordinary cited answers, explicit deep investigations, comparisons and reports |
+| Wiki / Inbox | Review, publish and reopen versioned research material with its limitations |
 
-## What this is not
+Orientation, exact retrieval and report construction need different behavior. A relevance hit is a
+locator; an exact citation resolves the admitted revision and bytes. Completeness and absence require
+a known scope and honest coverage. A model cannot create citation authority or promote a draft to an
+accepted conclusion by claiming success.
 
-- **Not a second Memory OS.** It does not own cognitive inheritance, epistemic position, task
-  authority, canonical decisions or procedures.
-- **Not an authority.** Every intelligent result crosses the boundary as an evidence bundle or as
-  synthesis marked candidate. Nothing promotes itself to truth in ELIOT.
-- **Not required.** ELIOT works without it. An absent or degraded federation narrows declared coverage
-  and is reported as a gap.
-- **Not a heavy-preprocessing host.** Document engines, OCR, layout analysis and code analyzers stay
-  outside this runtime; it consumes a versioned normalized bundle instead.
+ELIOT Research owns its sources, investigations and published artifacts. An optional consuming client,
+including ELIOT Memory OS, owns its own task, memory, policy and decisions. There is no shared canonical
+database, reverse authority channel or local copy of Eliot Swarm Controller. External agents use the
+existing bounded task/MCP interfaces.
 
-## Ownership split
+## Architecture
 
-```text
-ELIOT Research     acquires, parses, indexes, retrieves, investigates and publishes
-ELIOT Memory OS    interprets research in the context of the active task and system state
-                   and decides what enters cognitive inheritance, position and policy
-ELIOT Search       prepares and retrieves local data, separately and independently
-```
+- **One application:** `apps/eliotr-core` composes HTTP/MCP, Queue, Scheduled, Workflow and bounded session
+  transports. Packages are libraries, not services.
+- **Managed infrastructure:** Workers, D1, R2, Queues, Workflows, AI Search, model gateways and conversion
+  capabilities are used through their native interfaces. No custom vector database or workflow server.
+- **Coherent owners:** source identity, exact evidence, artifacts, Wiki heads, tasks and receipts each use
+  their existing writer and lifecycle. UI, indexes and transport caches do not become separate truth stores.
+- **Language by responsibility:** TypeScript owns Cloudflare I/O and React; promoted pure Rust operations own
+  deterministic decisions; SQL enforces storage constraints and atomic changes. There are three Rust crates
+  today and no Worker product ABI caller yet. The former 17-crate target is a capability map, not a quota.
+- **Short owner paths:** ordinary reads avoid per-item evidence reopening; evidence is verified on citation
+  open. Mutations retain idempotency, spend bounds and atomic expected-state checks.
+- **Measured simplification:** reuse existing code and donor primitives, migrate callers, remove duplicates.
+  Source-size counters never justify wrapper packages or splitting one capability mechanically.
 
-The federation is asynchronous and durable: jobs expose progress, cancellation, partial results,
-source coverage and a terminal disposition. There is no reverse authority channel — this service never
-requests ELIOT agents, never mutates ELIOT state, never shares its database or provider credentials,
-and never receives task authority.
+Detailed semantics remain in [ELIOT_RESEARCH.md](docs/architecture/ELIOT_RESEARCH.md); read its current
+applicability table first. [LANGUAGE_RUNTIME_CONTRACT.md](docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md)
+covers the Rust/TypeScript/SQL boundary. [ADR-0016](docs/adr/0016-react-cloudflare-owner-ui.md) and
+[ADR-0017](docs/adr/0017-owner-web-browser-runtime-and-tooling.md) cover React and browser cutover.
 
-## Design commitments
+## Source layout
 
-**Managed where managed is better.** Runtime, static assets, access, metadata database, object storage,
-queues, durable coordination, workflows, managed retrieval, embeddings, reranking, conversion, browser
-capture and model gateways are used as products. No self-built vector database, embedding runtime,
-ranking engine, crawler platform, workflow server or agent framework.
-
-**First-party where nothing managed exists.** Source identity and revisions, evidence handles, project
-and scope algebra, qualification and readiness, exact and high-recall guarantees, corpus lens
-semantics, investigation and protocol model, hypothesis and evidence ledgers, controlled distillation,
-coverage receipts, wiki contract, artifact compiler, federation, disclosure and budget policy.
-
-**Hybrid runtime by responsibility.** TypeScript owns the fast-moving Cloudflare control plane, product
-transports, PWA and deployment integration. Rust owns the pure deterministic kernel and native
-verification tools. SQL owns D1 schema, constraints and executable transaction fixtures. Language
-percentage is not an architectural objective, and permanent duplicate TypeScript/Rust authority is
-forbidden.
-
-**One owner per state family.** Original bytes, source identity, normalized artifacts, projects,
-evidence handle mapping, investigations, wiki heads, jobs and receipts, erasure cases and the purge
-ledger each have exactly one owner. Anything needed to reconstruct evidence, a wiki page, an
-investigation, erasure history or an artifact may never exist only in an index, a queue, a live
-session or a transport copy.
-
-**Immutable does not mean legally undeletable.** Ordinary mutation creates a new revision. Deletion
-happens only through a dedicated, fenced erasure process with a non-revealing purge ledger entry and a
-terminal handle state. Maintenance jobs, agents and the ordinary owner API have no hard-delete
-capability. Content addressing is scoped by erasure and retention domain, because identical bytes may
-simultaneously belong to a source that must be kept and a source that must be deleted.
-
-**Retrieval is not proof.** A managed relevance engine finds relevant material. Completeness and
-absence require a declared, frozen, recheckable denominator. Every material statement resolves to an
-evidence handle against a pinned revision, and a model may never mint a citation identifier.
-
-**Injection safety is executable, not prose.** Source content enters a model only inside a typed
-untrusted-data envelope carrying taint and an effect ceiling. Research generation receives read-only
-tools; side-effect-capable tools are absent from the surface, not merely discouraged. Every
-membership-changing transformation records whether untrusted structure changed the selection.
-
-## Repository layout
-
-```text
-apps/
-  eliotr-core/            the single deployable Worker application
-  eliotr-pwa/             owner-facing progressive web app
-
-packages/
-  contracts/              versioned wire and domain types, incl. the ELIOT federation contract
-  domain/                 transitional TypeScript domain implementation
-  policy/                 transitional TypeScript policy implementation
-  platform-cloudflare/    thin adapters over managed platform primitives
-  retrieval/              lanes, query products, evidence handle resolution
-  research/               investigations, protocols, hypotheses, coverage, artifact compilation
-  interfaces/             owner API, private agent surface, federation endpoint
-  google-drive-exchange/  bounded external-client transport — class Experiment, has an expiry
-  testkit/                shared fixtures, fakes and assertion helpers
-
-crates/                    target Rust deterministic-kernel workspace; introduced by migration M1+
-
-infra/
-  d1/                     metadata schema migrations and named query registry
-  r2/                     object storage layout, storage and erasure domains, retention
-  ai-search/              managed retrieval instance profiles and capacity plan
-  workflows/              durable workflow stage definitions
-
-docs/
-  START-HERE.md           the entry point for anyone working on this repository
-  architecture/           the authoritative contracts
-  adr/                    accepted decisions that qualify them
-  agent-work/             work packets: who owns which path, and what each must deliver
-  implementation/         status registry, gap register, runtime/failure contracts, runbooks
-  contracts/  generated/
-
-tests/
-  golden-corpus/          versioned real-document corpus
-  fixtures/               recorded deterministic fixtures
-```
-
-A package or crate is not a service. Everything deploys as one Worker application plus static assets;
-the Rust kernel is embedded as Wasm or used by offline native verification tools.
-
-## Delivery order
-
-Vertical slices, each producing a working user loop before the next layer of research machinery.
-
-| Slice | Delivers |
+| Path | Role |
 |---|---|
-| **0** | Platform skeleton, resource profile, access, federation fixtures, one real write and readback |
-| **1** | Evidence-grade retrieval and grounded chat: sources, revisions, normalization, qualification, evidence handles, exact and semantic lanes |
-| **2** | Minimum wiki and ELIOT federation: statement labels, evidence map, agent surface, ranged reads, draft inbox |
-| **3** | Corpus lens: source cards, document maps, project atlas, multi-project scopes, readiness and coverage |
-| **4** | Controlled investigation: protocols, question graph, hypothesis cards, source portfolio, branches, coverage receipts |
-| **5** | Distillation, audits and the artifact compiler |
-| **6** | Hardening; optional replacement of the external client transport |
-| **7** | Specialist profiles: code intelligence, scholarly metadata, conversation episodes, structured data |
+| `apps/eliotr-core` | Single deployable Worker and composition |
+| `apps/eliotr-web` | Target React/Vite owner interface |
+| `apps/eliotr-pwa` | Served compatibility UI pending cutover; no new Astro design work |
+| `packages/ui`, `packages/owner-api-client` | Shared UI primitives and one browser transport/decoder layer |
+| Other `packages/` | Contracts, application capabilities and Cloudflare adapters |
+| `crates/` | Existing pure kernel, Wasm adapter and vector support |
+| `infra/d1` | Canonical/search schema history; actual deployed ledger governs migration decisions |
+| `docs/` | Current decisions, source contracts, operational evidence and bounded tasks |
+| `.github/audits/` | Dated source findings and donor snapshots |
 
-A slice is not complete until a real round trip through the real platform has executed. A passing type
-check is not a deployment gate. The ordered closure criteria are maintained in the
-[production readiness plan](docs/implementation/production-readiness-plan.md).
+## Development and acceptance
 
-## Continuous integration
+Use one manager checkout/worktree and disjoint leaf assignments. Old ER-49 claim JSON and Git ancestry
+tools are optional historical audit, not a prerequisite for source edits. During implementation use scoped
+compilation/lint and minimal Clippy for changed Rust. Tests and broad product/platform acceptance follow
+assembly; a pending check is never a passing result.
 
-GitHub Actions are manual-only (`workflow_dispatch`): no automatic PR/push/schedule triggers, per
-owner policy. When dispatched, CI installs the frozen pnpm graph and runs contract fixtures, package
-boundaries, source budgets, work-packet validation, D1 authority fixtures, lint, strict TypeScript,
-unit and Workers-runtime tests, PWA build, generated Cloudflare binding types and a Wrangler deployment
-dry-run. Branch hygiene runs independently on `main` when dispatched. See
-[docs/START-HERE.md](docs/START-HERE.md) §6.
+The narrow [frontend workflow](.github/workflows/frontend-owner.yml) has push/PR product checks and a
+separate manual/advisory provenance job. Other workflows retain their configured triggers; do not infer
+their behavior from an old blanket “manual-only” statement. This documentation refactor changes no CI.
 
-Rust gates become mandatory when migration M1 introduces the Cargo workspace. No green local or CI gate
-is represented as live Cloudflare, Google, provider, recovery or workload qualification.
+Performance goals remain **unverified**: owner lists below 500 ms, first token below 4 seconds, ordinary
+answers within 30 seconds on the specified comparison workload. Code compilation, a fixture build, a
+provider response or Workflow completion alone does not establish those results or production readiness.
 
 ## License
 
 MIT. See [LICENSE](LICENSE).
-
-The repository is public under the MIT license. Contracts and implementation status remain explicitly
-versioned while the product is not production-ready.

@@ -1,8 +1,9 @@
 # Toolchain contract
 
-This file is the implementation authority for repository bootstrap. Leaf agents must not upgrade or
-replace these tools inside their packets. Toolchain changes belong to **ER-00** and require regenerated
-lockfiles plus all repository gates.
+This file records the pinned tools and bootstrap commands. The manager serializes toolchain changes and
+regenerates affected lockfiles; leaves do not upgrade tools incidentally. **ER-00** retains the capability
+map. Use [scoped verification](scoped-verification.md) during implementation and the applicable toolchain
+acceptance after assembly; this inventory does not require a full setup or test campaign before each task.
 
 ## Pinned baseline
 
@@ -18,8 +19,8 @@ lockfiles plus all repository gates.
 | @eslint/js | `10.0.1` | Published flat JavaScript config package. |
 | Wrangler | `4.143.1` | Worker build, generated binding types, dry-run, migrations and deploy. |
 | @cloudflare/vitest-plugin | `1.3.2` | Workers runtime integration tests. Do not restore the retired pool package. |
-| @cloudflare/workers-types | `5.20260827.1` | Compile-time Worker API declarations. Generated binding types remain authoritative for `Env`. |
-| Vite | `8.2.2` | PWA build. |
+| @cloudflare/workers-types | `5.20260926.1` | Compile-time Worker API declarations, matching current manifests. Generated binding types remain authoritative for `Env`. |
+| Vite | `8.2.2` | Selected React owner-web build and current PWA compatibility tooling. |
 | Vitest | `4.1.11` | Node and browser-independent unit harness. |
 | sharp (workspace override) | `0.35.4` | Transitive security floor for Astro and Wrangler/Miniflare until upstream dependency pins are patched. |
 | Zod | `4.4.3` | Strict wire validation; load-bearing objects use `.strict()`. |
@@ -78,7 +79,11 @@ Both artifacts must have zero runtime imports and remain under the compressed M1
 requires the self-test's `no_mangle` attribute to be acknowledged as unsafe; the adapter contains no
 unsafe block or memory access. Pure crates use `#![forbid(unsafe_code)]`.
 
-## Bootstrap
+## Complete environment bootstrap
+
+This is the complete environment/reference sequence. An already provisioned checkout uses only the
+tools needed by its current task. Run `pnpm check` and runtime acceptance after product assembly as
+described in the current implementation router.
 
 ```bash
 corepack enable

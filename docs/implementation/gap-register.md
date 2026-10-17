@@ -1,5 +1,24 @@
 # Implementation gap register
 
+## Current scope — 2026-10-17
+
+Use [backend-entrypoints.md](backend-entrypoints.md) for current tasks and
+[ADR-0019](../adr/0019-compact-refactoring.md) for the compact implementation direction.
+The [October 17 source review](../../.github/audits/2026-10-17/README.md) rechecks C01–C11 at `4e53d5e2`:
+payload immutability/digest observation, input/receipt bounds, freshness and pre-verifier local checks
+remain concrete work; the two AI readers and observation-container decoder are already repaired.
+
+[#377](https://github.com/UnknownAlienHuman/eliot-research/issues/377) archived the old 44-PR queue and
+canceled S52's custom index/generation/target/promotion system. Those tasks and Rust family migration
+are not launch prerequisites. [ADR-0018](../adr/0018-owner-single-function-first-profile.md) selects the
+owner read/ordinary-answer profile; its performance targets and runtime cutover are still pending.
+React/Vite is the target; Astro remains only served compatibility until actual cutover. Backup/export/
+restore execution remains deferred; historical data/erasure obligations are retained.
+
+The entries below preserve dated implementation/gap evidence. Their old priorities, stops and broad
+profile requirements do not override these current decisions. This documentation update does not change
+`implementation-status.json` or claim a runtime/live promotion.
+
 ## Owner configuration checkpoint — 2026-10-03
 
 The current source assembly adds owner model catalog/project revisions, durable
@@ -57,8 +76,8 @@ It supplements the per-agent packets; it does not create a second ownership syst
 production definition and final exit evidence are specified in
 [`production-readiness-plan.md`](production-readiness-plan.md).
 
-Current owner priority (2026-09-13): finish the document-to-question-to-answer path with verified
-sources, the Astro interface and Cloudflare delivery. New financial budget, pricing and accounting
+Historical owner priority (2026-09-13): finish the document-to-question-to-answer path with verified
+sources and Cloudflare delivery; the then-served Astro interface is now compatibility only. New financial budget, pricing and accounting
 features are deferred; they must not displace that product work. Existing authorization and replay
 guards remain in force, and this ordering does not qualify an untested provider or deployment.
 
