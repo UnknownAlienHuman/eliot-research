@@ -325,7 +325,10 @@
   transition: background-color var(--eliot-motion-effects) var(--eliot-motion-standard-easing);
 }
 .er-live-source-pick label:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 6%, transparent); }
-.er-live-source-pick label:has(input:checked) { background: color-mix(in srgb, var(--md-sys-color-primary) 10%, transparent); }
+/* Every source is ticked by default, so a ticked row stays untinted; the checkbox carries the state. */
+.er-live-source-pick__all { padding-block-end: var(--eliot-space-hairline); border-block-end: var(--eliot-divider-width) solid var(--md-sys-color-outline-variant); }
+.er-live-source-pick__all label { font-weight: var(--eliot-type-font-weight-medium); }
+.er-live-source-pick input { accent-color: var(--md-sys-color-primary); }
 .er-live-source-pick .er-symbol { inline-size: var(--eliot-icon-small-size); block-size: var(--eliot-icon-small-size); color: var(--md-sys-color-primary); }
 /* One line per source with an ellipsis, as NotebookLM lists them; the full title shows on hover. */
 .er-live-source-pick span { flex: 1 1 auto; min-inline-size: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -256,29 +256,26 @@ export function LiveWorkspace({ destination, locale, onLocaleChange, headingRef,
           aria-expanded={!folded.sources} onClick={() => setFolded(old => ({ ...old, sources: !old.sources }))} /></div>
       <p className="er-shell-eyebrow" title={selected?.title}>{selected?.title ?? text.untitled}</p>
       <WorkspaceLink className="er-shell-link" to="/sources" title={text.addSources}><MaterialSymbol name="add" /><span>{text.addSources}</span></WorkspaceLink>
-      <p>{text.selected(scope.length)}</p>
-      {library.data && <div className="er-live-actions">
-        <Button variant="text" disabled={library.isFetching || library.data.sources.length === 0}
-          onClick={() => {
-            const page = library.data;
-            if (!page || !privacy.isCurrent(context) ||
-                client.getQueryData([...key, "library", projectId, cursor ?? null]) !== page) return;
-            setScope(page.sources.slice(0, selectedSourceLimit).map(source => ({
-              id: source.id, label: source.title, page, ...(cursor === undefined ? {} : { cursor }),
-            })));
-          }}>{locale === "ru" ? library.data.next_cursor ? "Выбрать страницу" : "Выбрать все" : library.data.next_cursor ? "Select page" : "Select all"}</Button>
-        <Button variant="text" disabled={scope.length === 0} onClick={() => { if (privacy.isCurrent(context)) setScope([]); }}>
-          {locale === "ru" ? "Снять все" : "Clear all"}</Button>
-      </div>}
-      {/* Choose the next question's sources beside the conversation, as in NotebookLM; the same guarded toggle as Sources. */}
-      {selected && library.data ? <ul className="er-live-source-pick" aria-label={text.sourceScope}>{library.data.sources.map(source => {
-        const checked = scope.some(item => item.id === source.id);
-        return <li key={source.id}><label>
-          <MaterialSymbol name="file" /><span title={source.title}>{source.title}</span>
-          <input type="checkbox" checked={checked} disabled={!checked && scope.length >= selectedSourceLimit}
-            onChange={event => { if (library.data) toggleScope(library.data, source.id, event.target.checked); }} />
-        </label></li>;
-      })}</ul> : null}
+      {/* "All sources" on top is the whole project (no source ticked); ticking sources narrows the next
+          question to them, and ticking "All sources" again returns to the whole project. */}
+      {selected && library.data ? <ul className="er-live-source-pick" aria-label={text.sourceScope}>
+        <li className="er-live-source-pick__all"><label title={locale === "ru" ? "Отметьте отдельные источники, чтобы сузить вопрос" : "Tick single sources to narrow the question"}>
+          <MaterialSymbol name="folder" /><span>{library.data.next_cursor
+            ? locale === "ru" ? "Все источники проекта" : "All project sources"
+            : locale === "ru" ? `Все источники (${library.data.sources.length})` : `All sources (${library.data.sources.length})`}</span>
+          <input type="checkbox" checked={scope.length === 0} onChange={event => {
+            if (event.target.checked && privacy.isCurrent(context)) setScope([]);
+          }} />
+        </label></li>
+        {library.data.sources.map(source => {
+          const checked = scope.some(item => item.id === source.id);
+          return <li key={source.id}><label>
+            <MaterialSymbol name="file" /><span title={source.title}>{source.title}</span>
+            <input type="checkbox" checked={checked} disabled={!checked && scope.length >= selectedSourceLimit}
+              onChange={event => { if (library.data) toggleScope(library.data, source.id, event.target.checked); }} />
+          </label></li>;
+        })}
+      </ul> : null}
       <ul className="er-live-source-context">{scope.filter(source => !library.data?.sources.some(row => row.id === source.id)).map(source => <li key={source.id}>
         <MaterialSymbol name="file" /><span>{source.label}</span>
       </li>)}</ul>
@@ -481,7 +478,7 @@ function ActiveSources({ locale, apis, privacy, context, projectId, projects, af
         }} />}
       scopeActions={
         <NextQuestionScope locale={locale} page={library.data} projectSelected={projectId !== undefined} isLoading={pending} isError={error}
-          selected={scope} selectionLimit={selectedSourceLimit} onToggle={onScope} onClear={onClearScope} />
+          selected={scope} selectionLimit={selectedSourceLimit} onToggle={onScope} onClear={onClearScope} wholeProject />
       }
       projects={projects.data?.projects ?? []} selectedProjectId={projectId} onSelectProject={id => { if (projects.data?.projects.some(row => row.project_id === id)) onProject(id); }}
       library={library.data} readiness={readiness.isError ? undefined : readiness.data} readinessState={!source ? "idle" : readiness.isPending ? "loading" : readiness.isError ? "degraded" : "useful"}
