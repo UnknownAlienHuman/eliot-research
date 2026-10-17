@@ -1,10 +1,9 @@
-import { beforeAll, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { createD1ModelGatewayDeploymentRegistry } from "../../../packages/cloudflare-research/src/model-gateway-deployment-registry-d1.js";
 import { createResearchModelStageHandler } from "../../../packages/cloudflare-research/src/research-model-stage-handler.js";
 import { readCommittedResearchSynthesisOutput } from "../../../packages/cloudflare-research/src/research-synthesis-output-reader.js";
 import { digest } from "@eliotr/cloudflare-workflows";
 import type { ModelRouteDeployment } from "@eliotr/platform-cloudflare";
-import { initializeModelAttemptRuntime } from "./model-attempt-fixture.js";
 import { principal } from "./research-workflow-fixture.js";
 import {
   BASE_URL,
@@ -15,9 +14,17 @@ import {
   promptDependencies,
 } from "./research-synthesis-fixture.js";
 
-beforeAll(initializeModelAttemptRuntime);
-
 type CompositionFixture = Awaited<ReturnType<typeof compositionFixture>>;
+
+function preparedCase(name: string, setup: () => Promise<CompositionFixture>, verify: (fixture: CompositionFixture) => Promise<void>) {
+  describe("fresh canonical fixture", () => {
+    let fixture: CompositionFixture;
+    // Full schema installation can take about 10s cold. Keep it outside the
+    // unchanged 5s operation budget, with a bounded 20s fixture hook.
+    beforeEach(async () => { fixture = await setup(); }, 20_000);
+    it(name, async () => { await verify(fixture); });
+  });
+}
 
 function alternateDigest(value: string): string {
   const zero = "0".repeat(64);
@@ -98,8 +105,8 @@ const DEPLOYMENT_PIN_MISMATCHES = [
 ] as const;
 
 describe("composed research model stage handler", () => {
-  it("reads the committed SYNTHESIZE output from its W2 stage binding and replays exactly", async () => {
-    const fixture = await compositionFixture("synthesis-output", "TEST", false, "FIXTURE", "approved", false, false);
+  preparedCase("reads the committed SYNTHESIZE output from its W2 stage binding and replays exactly",
+    () => compositionFixture("synthesis-output", "TEST", false, "FIXTURE", "approved", false, false), async (fixture) => {
     const scopeId = fixture.workflow.request.input_manifest.residency.scope_domain_id;
     const authority = async () => ({
       investigation_id: fixture.workflow.request.investigation_ref.id,
@@ -137,8 +144,8 @@ describe("composed research model stage handler", () => {
     })).resolves.toBeNull();
   });
 
-  it("executes through real deployment, prompt, output, fingerprint, and pricing seams and replays durably", async () => {
-    const fixture = await compositionFixture("success");
+  preparedCase("executes through real deployment, prompt, output, fingerprint, and pricing seams and replays durably",
+    () => compositionFixture("success"), async (fixture) => {
     const input = fixture.base.invocation("FREEZE_PROTOCOL_AND_SCOPE", fixture.base.stageAttemptRef);
     const first = await fixture.handler.handler(input);
     expect(first).toBeInstanceOf(Uint8Array);
@@ -164,8 +171,8 @@ describe("composed research model stage handler", () => {
     expect(fixture.pricingCalls()).toBe(1);
   });
 
-  it("does no fresh gateway work for a terminal replay with unusable credentials", async () => {
-    const fixture = await compositionFixture("terminal-replay");
+  preparedCase("does no fresh gateway work for a terminal replay with unusable credentials",
+    () => compositionFixture("terminal-replay"), async (fixture) => {
     const input = fixture.base.invocation("FREEZE_PROTOCOL_AND_SCOPE", fixture.base.stageAttemptRef);
     const expected = await fixture.handler.handler(input);
     const replay = createResearchModelStageHandler({
@@ -178,8 +185,8 @@ describe("composed research model stage handler", () => {
     await expect(replay.handler(input)).resolves.toEqual(expected);
   });
 
-  it("does no fresh preparation or gateway work when an UNKNOWN attempt is replayed", async () => {
-    const fixture = await compositionFixture("unknown-replay", "TEST", true);
+  preparedCase("does no fresh preparation or gateway work when an UNKNOWN attempt is replayed",
+    () => compositionFixture("unknown-replay", "TEST", true), async (fixture) => {
     const input = fixture.base.invocation("FREEZE_PROTOCOL_AND_SCOPE", fixture.base.stageAttemptRef);
     await expect(fixture.handler.handler(input)).rejects.toMatchObject({ code: "WORKFLOW_EFFECT_UNCERTAIN" });
     expect(fixture.providerCalls()).toBe(1);
@@ -198,8 +205,8 @@ describe("composed research model stage handler", () => {
     expect(fixture.providerCalls()).toBe(1);
   });
 
-  it("rejects a fixture-only route under the production default before provider execution", async () => {
-    const fixture = await compositionFixture("production-gate");
+  preparedCase("rejects a fixture-only route under the production default before provider execution",
+    () => compositionFixture("production-gate"), async (fixture) => {
     await expect(createD1ModelGatewayDeploymentRegistry(fixture.workflow.db).resolve(ROUTE))
       .rejects.toMatchObject({ code: "DYNAMIC_ROUTE_LIVE_GATE_REQUIRED" });
     let productionProviderCalls = 0;
@@ -215,8 +222,8 @@ describe("composed research model stage handler", () => {
     await expectPreProviderSettlement(fixture.workflow.db, fixture.base.stageAttemptRef, "WORKFLOW_AUTHORITY_STALE");
   });
 
-  it("propagates a LIVE approved deployment through the production fetch pin", async () => {
-    const fixture = await compositionFixture("approved-live", "PRODUCTION", false, "LIVE");
+  preparedCase("propagates a LIVE approved deployment through the production fetch pin",
+    () => compositionFixture("approved-live", "PRODUCTION", false, "LIVE"), async (fixture) => {
     const input = fixture.base.invocation("FREEZE_PROTOCOL_AND_SCOPE", fixture.base.stageAttemptRef);
     const result = await fixture.handler.handler(input);
     expect(result).toBeInstanceOf(Uint8Array);
@@ -233,8 +240,8 @@ describe("composed research model stage handler", () => {
     });
   });
 
-  it("refuses a registry rotation after approved revalidation before transport", async () => {
-    const fixture = await compositionFixture("approved-rotation", "PRODUCTION", false, "LIVE", "approved", true);
+  preparedCase("refuses a registry rotation after approved revalidation before transport",
+    () => compositionFixture("approved-rotation", "PRODUCTION", false, "LIVE", "approved", true), async (fixture) => {
     const input = fixture.base.invocation("FREEZE_PROTOCOL_AND_SCOPE", fixture.base.stageAttemptRef);
     await expect(fixture.handler.handler(input)).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
     expect(fixture.revalidateCalls()).toBe(2);
@@ -242,29 +249,30 @@ describe("composed research model stage handler", () => {
     await expectPreProviderSettlement(fixture.workflow.db, fixture.base.stageAttemptRef, "WORKFLOW_AUTHORITY_STALE");
   });
 
-  it.each(["missing", "malformed"] as const)("refuses %s approval before transport", async (approvalMode) => {
-    const fixture = await compositionFixture(`approval-${approvalMode}`, "PRODUCTION", false, "LIVE", approvalMode);
+  describe.each(["missing", "malformed"] as const)("%s approval fixture", (approvalMode) => {
+    preparedCase(`refuses ${approvalMode} approval before transport`,
+      () => compositionFixture(`approval-${approvalMode}`, "PRODUCTION", false, "LIVE", approvalMode), async (fixture) => {
     const input = fixture.base.invocation("FREEZE_PROTOCOL_AND_SCOPE", fixture.base.stageAttemptRef);
     await expect(fixture.handler.handler(input)).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
     expect(fixture.providerCalls()).toBe(0);
     await expectPreProviderSettlement(fixture.workflow.db, fixture.base.stageAttemptRef, "WORKFLOW_AUTHORITY_STALE");
+    });
   });
 
-  it.each(DEPLOYMENT_PIN_MISMATCHES)(
-    "refuses a full deployment pin when $field differs before provider execution",
-    async ({ field, apply }) => {
-      const fixture = await compositionFixture(`expected-pin-${field}`);
+  describe.each(DEPLOYMENT_PIN_MISMATCHES)("$field pin fixture", ({ field, apply }) => {
+    preparedCase(`refuses a full deployment pin when ${field} differs before provider execution`,
+      () => compositionFixture(`expected-pin-${field}`), async (fixture) => {
       const handler = pinnedHandler(fixture, `expected-pin-${field}`, apply(fixture.deployment));
       const input = fixture.base.invocation("FREEZE_PROTOCOL_AND_SCOPE", fixture.base.stageAttemptRef);
       await expect(handler.handler.handler(input)).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
       expect(handler.providerCalls()).toBe(0);
       expect(fixture.revalidateCalls()).toBe(1);
       await expectPreProviderSettlement(fixture.workflow.db, fixture.base.stageAttemptRef, "WORKFLOW_AUTHORITY_STALE");
-    },
-  );
+    });
+  });
 
-  it("keeps a detached expected deployment pin after caller mutation", async () => {
-    const fixture = await compositionFixture("expected-pin-caller-mutation");
+  preparedCase("keeps a detached expected deployment pin after caller mutation",
+    () => compositionFixture("expected-pin-caller-mutation"), async (fixture) => {
     const expected = { ...fixture.deployment };
     const handler = pinnedHandler(fixture, "expected-pin-caller-mutation", expected);
     expected.route_version = `${expected.route_version}-caller-mutated`;

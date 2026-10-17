@@ -40,7 +40,8 @@ describe("native scoped search relevance and authority", () => {
     }
     expect(nativeSearch).toHaveBeenCalledOnce();
     expect(nativeSearch.mock.calls[0]?.[0]).toMatchObject({ ai_search_options: {
-      reranking: { enabled: true, match_threshold: 0 }, query_rewrite: { enabled: false }, retrieval: { filters: {
+      reranking: { enabled: true, match_threshold: 0 }, query_rewrite: { enabled: false },
+      retrieval: { retrieval_type: "hybrid", fusion_method: "rrf", keyword_match_mode: "or", filters: {
       folder: { $gte: folder, $lt: `${folder.slice(0, -1)}0` },
       source_revision_ref: { $in: [canonical.source_revision_ref] },
     } } } });
@@ -48,7 +49,7 @@ describe("native scoped search relevance and authority", () => {
 
   it("keeps literal lookup unrewritten and unreranked", async () => {
     const folder = await projectSearchFolderPrefix("project-1", "literal");
-    const search = vi.fn(async () => ({ chunks: [{ score: 0.01,
+    const search = vi.fn(async (_request: Record<string, unknown>) => ({ chunks: [{ score: 0.01,
       item: { key: `${folder}${canonical.item_key}.md`, metadata: { source_revision_ref: "forged" } } }] }));
     const result = await searchProject({
       namespace: { get: () => ({ search }) } as unknown as AiSearchNamespaceLike,
@@ -59,6 +60,9 @@ describe("native scoped search relevance and authority", () => {
     expect(search).toHaveBeenCalledWith(expect.objectContaining({ ai_search_options: expect.objectContaining({
       query_rewrite: { enabled: false }, reranking: { enabled: false },
     }) }));
+    expect(search.mock.calls[0]?.[0]).not.toMatchObject({ ai_search_options: { retrieval: expect.objectContaining({
+      retrieval_type: "hybrid", keyword_match_mode: "or",
+    }) } });
   });
 
   it("retains native result order and overwrites provider authority metadata with D1 identities", async () => {
@@ -92,7 +96,8 @@ describe("native scoped search relevance and authority", () => {
     }) as { chunks: unknown[] };
     expect(result.chunks).toEqual([]);
     expect(search).toHaveBeenCalledWith(expect.objectContaining({ ai_search_options: expect.objectContaining({
-      retrieval: { filters: { folder: { $gte: folder, $lt: `${folder.slice(0, -1)}0` }, source_revision_ref: { $in: [prefix] } } },
+      retrieval: { retrieval_type: "hybrid", fusion_method: "rrf", keyword_match_mode: "or",
+        filters: { folder: { $gte: folder, $lt: `${folder.slice(0, -1)}0` }, source_revision_ref: { $in: [prefix] } } },
     }) }));
   });
 

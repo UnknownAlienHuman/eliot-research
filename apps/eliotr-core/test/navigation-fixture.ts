@@ -108,12 +108,25 @@ export async function seedHandle(snapshot: ScopeSnapshot): Promise<void> {
 }
 export const countArtifacts = () => db.prepare("SELECT COUNT(*) AS n FROM navigation_artifact").first<number>("n");
 export function wrappedDatabase(hook: (sql: string, phase: "before" | "after") => Promise<void>): D1Database {
-  return { prepare(sql: string) {
-    const statement = db.prepare(sql);
-    return { bind(...values: (string | number | null)[]) {
-      const bound = statement.bind(...values);
-      return { async first() { await hook(sql, "before"); const value = await bound.first(); await hook(sql, "after"); return value; },
-        async all() { await hook(sql, "before"); const value = await bound.all(); await hook(sql, "after"); return value; } };
-    } };
-  } } as unknown as D1Database;
+  const originals = new WeakMap<D1PreparedStatement, D1PreparedStatement>();
+  const wrap = (statement: D1PreparedStatement, sql: string): D1PreparedStatement => {
+    const proxy = new Proxy(statement, { get(target, key) {
+      const value = Reflect.get(target, key, target);
+      if (key === "bind") return (...values: unknown[]) => wrap(target.bind(...values), sql);
+      if (typeof value !== "function") return value;
+      return async (...args: unknown[]) => {
+        await hook(sql, "before"); const result: unknown = await Reflect.apply(value, target, args);
+        await hook(sql, "after"); return result;
+      };
+    } });
+    originals.set(proxy, statement); return proxy;
+  };
+  return new Proxy(db, { get(target, key) {
+    if (key === "prepare") return (sql: string) => wrap(target.prepare(sql), sql);
+    // Currentness reads use one native transaction. Forward the original D1
+    // statement handles rather than splitting that fence into individual calls.
+    if (key === "batch") return (statements: D1PreparedStatement[]) =>
+      target.batch(statements.map(statement => originals.get(statement) ?? statement));
+    const value = Reflect.get(target, key, target); return typeof value === "function" ? value.bind(target) : value;
+  } });
 }

@@ -7,6 +7,8 @@ import { body, count, credential, db, insert, observeDatabase, principal, reques
 
 beforeAll(setupOrientationDatabase);
 const traceRequest = (id: string) => new Request(`https://research.example/api/v1/research/trace/${id}`);
+const navigationBatch = (sql: string, batchSql: readonly string[]) => sql === "BATCH" &&
+  batchSql.some(statement => statement.startsWith("INSERT INTO navigation_artifact"));
 
 describe("orientation restart, input and authority races through real HTTP", () => {
   it("runs the PWA client/decoder/rendering against the real Worker application", async () => {
@@ -37,9 +39,10 @@ describe("orientation restart, input and authority races through real HTTP", () 
   it.each(["INSERT INTO orientation_request", "UPDATE orientation_request SET state='COMPLETE'", "BATCH"])( "reconciles one lost acknowledgement for %s without replaying the mutation", async (prefix) => {
     const id = prefix === "BATCH" ? "lost-batch" : prefix.startsWith("INSERT") ? "lost-reserve" : "lost-complete";
     await seedSource(id); let fired = false; let mutations = 0;
-    const database = observeDatabase(async (sql, phase) => {
-      if (sql.startsWith(prefix) && phase === "before") mutations += 1;
-      if (!fired && phase === "after" && sql.startsWith(prefix)) { fired = true; throw new Error("simulated lost ACK"); }
+    const database = observeDatabase(async (sql, phase, batchSql = []) => {
+      const target = prefix === "BATCH" ? navigationBatch(sql, batchSql) : sql.startsWith(prefix);
+      if (target && phase === "before") mutations += 1;
+      if (!fired && phase === "after" && target) { fired = true; throw new Error("simulated lost ACK"); }
     });
     const response = await handleHttp(request(id), { ...runtime, CORE_DB: database }, {} as ExecutionContext, { accessVerifier: verifier() });
     const result = await body(response); expect(response.status, JSON.stringify(result)).toBe(200);
@@ -48,7 +51,7 @@ describe("orientation restart, input and authority races through real HTTP", () 
   });
   it("does not finish after cancellation before the navigation batch", async () => {
     await seedSource("cancel"); const controller = new AbortController(); let fired = false;
-    const database = observeDatabase(async (sql, phase) => { if (!fired && sql === "BATCH" && phase === "before") {
+    const database = observeDatabase(async (sql, phase, batchSql = []) => { if (!fired && navigationBatch(sql, batchSql) && phase === "before") {
       fired = true; controller.abort(); throw new Error("cancelled before batch");
     } });
     const req = new Request(request("cancel"), { signal: controller.signal });
@@ -58,7 +61,7 @@ describe("orientation restart, input and authority races through real HTTP", () 
   });
   it("rejects a read-policy revocation during materialization and clears dependent payloads", async () => {
     await seedSource("race"); let fired = false;
-    const database = observeDatabase(async (sql, phase) => { if (!fired && sql === "BATCH" && phase === "before") {
+    const database = observeDatabase(async (sql, phase, batchSql = []) => { if (!fired && navigationBatch(sql, batchSql) && phase === "before") {
       fired = true; await db.prepare("UPDATE scope_read_policy SET state='REVOKED',generation=2 WHERE source_namespace_id='ns-race'").run();
     } });
     const response = await handleHttp(request("race"), { ...runtime, CORE_DB: database }, {} as ExecutionContext, { accessVerifier: verifier() });

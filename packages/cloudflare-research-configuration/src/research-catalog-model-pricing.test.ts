@@ -72,6 +72,30 @@ async function expectReaderError(
 }
 
 describe("readVerifiedCatalogModelPricing", () => {
+  it("keeps the logical generic identity while hashing the exact OpenRouter source record", async () => {
+    const provider = `compatible-${"a".repeat(24)}`;
+    const model = '{ "id": "vendor/model", "cost": { "input": 0.125, "output": 0.25 }, "provider": { "npm": "@openrouter/ai-sdk-provider", "api": "https://openrouter.ai/api/v1" } }';
+    const source = `{ "openrouter": { "id": "openrouter", "models": { "vendor/model": ${model} } } }`;
+    const result = await readVerifiedCatalogModelPricing(makeInput(source, { provider_id: provider, model_id: "vendor/model",
+      registered_provider: { slug: `custom-${provider}`, base_url: "https://openrouter.ai/api/v1" } }));
+    const digest = async (value: string) => Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",
+      new TextEncoder().encode(value))), byte => byte.toString(16).padStart(2, "0")).join("");
+    expect(result).toMatchObject({ provider_id: provider, source_provider_id: "openrouter", model_id: "vendor/model",
+      source_url: "https://models.dev/api.json", source_sha256: await digest(source), model_record_sha256: await digest(model),
+      advertised_sdk: "@openrouter/ai-sdk-provider", rates_usd_per_1k_tokens: { input: "0.000125", output: "0.00025" } });
+  });
+
+  it.each([undefined, { slug: "custom-other", base_url: "https://openrouter.ai/api/v1" },
+    { slug: `custom-compatible-${"a".repeat(24)}`, base_url: "https://evil.example/api/v1" }])(
+    "rejects generic pricing without an exact known registered source binding before fetching", async registered => {
+      let calls = 0;
+      await expectReaderError(makeInput("{}", { provider_id: `compatible-${"a".repeat(24)}`,
+        ...(registered === undefined ? {} : { registered_provider: registered }),
+        fetch: async () => { calls++; throw new Error("No fetch"); } }), "UNSUPPORTED_PROVIDER");
+      expect(calls).toBe(0);
+    },
+  );
+
   it("converts the published Muse rates exactly and marks capability metadata unverified", async () => {
     const result = await readVerifiedCatalogModelPricing(makeInput(catalogFixture()));
 

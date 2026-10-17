@@ -271,5 +271,5 @@ export interface ResearchSemanticWorkflowDependencies extends ResearchSemanticCo
   /** Native transports and owner capability; never selected by a request or model. */
   readonly native_acquisition_runtime?: Omit<Parameters<typeof createResearchNativeAcquisitionStageRoute>[0], "selection">;
   readonly report: Pick<ResearchCoverageMaterializeStageDependencies,
-    "policy_source" | "report_policy" | "expected_draft_head_revision">;
+    "policy_source" | "report_policy" | "expected_draft_head_revision" | "output_language">;
 }

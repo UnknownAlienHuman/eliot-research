@@ -203,14 +203,18 @@ describe("persisted Corpus Lens in local Workers/D1", () => {
   it("refuses a multi-artifact load beyond its aggregate budget before fetching bodies", async () => {
     const f = await fixture(); await grant(f.snapshot); const { card } = await artifacts(f.snapshot);
     let payloadFetched = false;
-    const tooLarge = { prepare(sql: string) {
-      if (!sql.includes("FROM navigation_artifact")) return db.prepare(sql);
-      return { bind() { return { async all() {
-        if (sql.includes(", body_json,")) { payloadFetched = true; throw new Error("must not fetch bodies"); }
-        return { success: true, results: Array.from({ length: 5 }, (_, i) => ({ artifact_kind: "SOURCE_CARD", subject_id: `revision-${i}`,
-          subject_revision: 1, artifact_id: `card-${i}`, artifact_revision: 1, body_digest: "a".repeat(64), stored_bytes: 1_000_000 })) };
-      } }; } };
-    } } as unknown as D1Database;
+    const tooLarge = new Proxy(db, { get(target, key) {
+      if (key === "prepare") return (sql: string) => {
+        if (!sql.includes("FROM navigation_artifact")) return target.prepare(sql);
+        return { bind() { return { async all() {
+          if (sql.includes(", body_json,")) { payloadFetched = true; throw new Error("must not fetch bodies"); }
+          return { success: true, results: Array.from({ length: 5 }, (_, i) => ({ artifact_kind: "SOURCE_CARD", subject_id: `revision-${i}`,
+            subject_revision: 1, artifact_id: `card-${i}`, artifact_revision: 1, body_digest: "a".repeat(64), stored_bytes: 1_000_000 })) };
+        } }; } };
+      };
+      // Preserve native currentness batches; only the metadata-size response is synthetic.
+      const value = Reflect.get(target, key, target); return typeof value === "function" ? value.bind(target) : value;
+    } });
     await expect(createD1NavigationStore({ ...f.input, database: tooLarge }).getSourceCardsByRefs(
       Array.from({ length: 5 }, (_, i) => ({ ...card.card_ref, id: `card-${i}` }))))
       .rejects.toMatchObject({ code: "NAVIGATION_LIMIT_EXCEEDED" });

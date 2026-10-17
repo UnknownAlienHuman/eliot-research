@@ -76,11 +76,9 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
   const memory = useQuery<ResearchMemory>({ queryKey: memoryKey, queryFn: skipToken, gcTime: Infinity });
   const options = researchQueryOptions({ ...apis.research, configuration: apis.connections.configuration }, privacy, context,
     projectId === undefined ? undefined : { id: projectId, isCurrent: isProjectCurrent },
-    import.meta.env.VITE_ELIOTR_RECENT_DIAGNOSTIC === 'true' ? {
-      onRecentHistoryRead: event => {
-        if (event.outcome !== 'resolved') console.warn('[eliotr-recent-read]', JSON.stringify(event));
-      },
-    } : undefined);
+    { onRecentHistoryRead: event => {
+      if (event.outcome !== 'resolved') console.warn(JSON.stringify(event));
+    } });
   const configuration = useQuery(options.configuration());
   const history = useQuery({ ...options.history(), enabled: projectId !== undefined && isProjectCurrent() });
   const projectModelQuery = chatProjectModelConfigurationQueryOptions(apis.connections.models, privacy, context, projectId, isProjectCurrent);

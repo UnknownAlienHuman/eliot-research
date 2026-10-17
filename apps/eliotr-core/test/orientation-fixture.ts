@@ -77,8 +77,9 @@ export async function successful(req: Request) {
   const response = await run(req); const value = await body(response);
   expect(response.status, JSON.stringify(value)).toBe(200); return value.data;
 }
-export function observeDatabase(hook: (sql: string, phase: "before" | "after") => Promise<void>): D1Database {
+export function observeDatabase(hook: (sql: string, phase: "before" | "after", batchSql?: readonly string[]) => Promise<void>): D1Database {
   const originals = new WeakMap<D1PreparedStatement, D1PreparedStatement>();
+  const queries = new WeakMap<D1PreparedStatement, string>();
   const wrap = (statement: D1PreparedStatement, sql: string): D1PreparedStatement => {
     const proxy = new Proxy(statement, { get(target, key) {
       const value = Reflect.get(target, key, target);
@@ -89,14 +90,15 @@ export function observeDatabase(hook: (sql: string, phase: "before" | "after") =
         await hook(sql, "after"); return result;
       };
     } });
-    originals.set(proxy, statement); return proxy;
+    originals.set(proxy, statement); queries.set(proxy, sql); return proxy;
   };
   const wrapSession = (session: D1DatabaseSession) => new Proxy(session, { get(target, key) {
     if (key === "prepare") return (sql: string) => wrap(target.prepare(sql), sql);
     if (key === "batch") return async (statements: D1PreparedStatement[]) => {
-      await hook("BATCH", "before");
+      const batchSql = statements.map(statement => queries.get(statement) ?? "");
+      await hook("BATCH", "before", batchSql);
       const result = await target.batch(statements.map((item) => originals.get(item) ?? item));
-      await hook("BATCH", "after"); return result;
+      await hook("BATCH", "after", batchSql); return result;
     };
     const value = Reflect.get(target, key, target); return typeof value === "function" ? value.bind(target) : value;
   } });
@@ -104,9 +106,10 @@ export function observeDatabase(hook: (sql: string, phase: "before" | "after") =
     if (key === "withSession") return (constraint: "first-primary") => wrapSession(target.withSession(constraint));
     if (key === "prepare") return (sql: string) => wrap(target.prepare(sql), sql);
     if (key === "batch") return async (statements: D1PreparedStatement[]) => {
-      await hook("BATCH", "before");
+      const batchSql = statements.map(statement => queries.get(statement) ?? "");
+      await hook("BATCH", "before", batchSql);
       const result = await target.batch(statements.map((item) => originals.get(item) ?? item));
-      await hook("BATCH", "after"); return result;
+      await hook("BATCH", "after", batchSql); return result;
     };
     const value = Reflect.get(target, key, target); return typeof value === "function" ? value.bind(target) : value;
   } });

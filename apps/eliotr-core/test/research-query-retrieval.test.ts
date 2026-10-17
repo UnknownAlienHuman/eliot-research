@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { ORIENTATION_PROFILE } from "@eliotr/cloudflare-navigation";
 import type { AuthenticatedRequestContext, QueryRequest, QueryResult } from "@eliotr/interfaces";
 import { EXACT_VERIFICATION_BOUNDS } from "@eliotr/retrieval";
@@ -70,6 +70,16 @@ async function worldWithPolicy(owner: string): Promise<Q1Namespace> {
   return world;
 }
 
+function preparedCase<T>(name: string, setup: () => Promise<T>, verify: (fixture: T) => Promise<void>) {
+  describe("fresh imported fixture", () => {
+    let fixture: T;
+    // Core/Search migration installation and Q1 import/projection are setup.
+    // Allow their ~10s cold start a bounded 20s hook; query cases retain 5s.
+    beforeEach(async () => { fixture = await setup(); }, 20_000);
+    it(name, async () => { await verify(fixture); });
+  });
+}
+
 function contextFor(owner: string, key: string): AuthenticatedRequestContext {
   const request = new Request("https://research.example/api/v1/research/query", {
     method: "POST",
@@ -129,9 +139,9 @@ async function persistedTrace(result: QueryResult): Promise<PersistedRetrievalTr
 }
 
 describe("research.query retrieval over real D1/R2", () => {
-  it("serves FAST_SEARCH through the owner HTTP route over the imported/projected Q1 source", async () => {
+  preparedCase("serves FAST_SEARCH through the owner HTTP route over the imported/projected Q1 source",
+    () => worldWithPolicy("rq-fast-search-owner"), async (world) => {
     const owner = "rq-fast-search-owner";
-    const world = await worldWithPolicy(owner);
     const request = fastSearchQueryFor(world, "Pinned", ["Pinned"]);
     const result = await q1Transport(runtime, owner)("/api/v1/research/query", {
       method: "POST",
@@ -229,9 +239,9 @@ describe("research.query retrieval over real D1/R2", () => {
     })).rejects.toMatchObject({ status: 422 });
   });
 
-  it("persists FAST_SEARCH EXACT hit and miss counts for literal whitespace and punctuation", async () => {
+  preparedCase("persists FAST_SEARCH EXACT hit and miss counts for literal whitespace and punctuation",
+    () => worldWithPolicy("rq-fast-exact-literal-owner"), async (world) => {
     const owner = "rq-fast-exact-literal-owner";
-    const world = await worldWithPolicy(owner);
     const transport = q1Transport(runtime, owner);
     const run = async (key: string, query: string): Promise<QueryResult> => {
       const response = await transport("/api/v1/research/query", {
@@ -267,9 +277,9 @@ describe("research.query retrieval over real D1/R2", () => {
     expect(punctuationMissTrace.candidates_by_lane.EXACT).toBe(0);
   });
 
-  it("rejects mismatched, multiple and over-bound FAST_SEARCH literals before persistence", async () => {
+  preparedCase("rejects mismatched, multiple and over-bound FAST_SEARCH literals before persistence",
+    () => worldWithPolicy("rq-fast-exact-literal-invalid-owner"), async (world) => {
     const owner = "rq-fast-exact-literal-invalid-owner";
-    const world = await worldWithPolicy(owner);
     const transport = q1Transport(runtime, owner);
     const before = await Promise.all([
       "scope_access_grant",
@@ -299,9 +309,9 @@ describe("research.query retrieval over real D1/R2", () => {
     ].map((table) => tableCount(table)))).toEqual(before);
   });
 
-  it("refuses a FAST_SEARCH replay after its source authority is invalidated", async () => {
+  preparedCase("refuses a FAST_SEARCH replay after its source authority is invalidated",
+    () => worldWithPolicy("rq-fast-authority-owner"), async (world) => {
     const owner = "rq-fast-authority-owner";
-    const world = await worldWithPolicy(owner);
     const transport = q1Transport(runtime, owner);
     const key = "rq-fast-authority-replay";
     const first = await transport("/api/v1/research/query", {
@@ -327,9 +337,9 @@ describe("research.query retrieval over real D1/R2", () => {
     expect(await tableCount("retrieval_query_trace")).toBe(persistedBeforeInvalidation.trace);
   });
 
-  it("binds replay to the normalized requested expression, not just its old member set", async () => {
+  preparedCase("binds replay to the normalized requested expression, not just its old member set",
+    () => worldWithPolicy("rq-scope-replay-owner"), async (world) => {
     const owner = "rq-scope-replay-owner";
-    const world = await worldWithPolicy(owner);
     const transport = q1Transport(runtime, owner);
     const key = "rq-scope-replay";
     const request = fastSearchQueryFor(world, "Pinned");
@@ -371,9 +381,9 @@ describe("research.query retrieval over real D1/R2", () => {
     expect(await counts()).toEqual(before);
   });
 
-  it("persists an empty-project NONE result with trace and profile row; replays without duplication and conflicts on changed input", async () => {
+  preparedCase("persists an empty-project NONE result with trace and profile row; replays without duplication and conflicts on changed input",
+    () => worldWithPolicy("rq-retrieval-owner"), async (world) => {
     const owner = "rq-retrieval-owner";
-    const world = await worldWithPolicy(owner);
     const emptyProject = await createProjectOwnerService({ database: db, deployment_generation: runtime.DEPLOYMENT_GENERATION })
       .create(contextFor(owner, "rq-empty-project"), { idempotency_key: "rq-empty-project", title: "Empty research scope", source_ids: [] });
     const request: QueryRequest = { ...queryFor(world, "absent"),
@@ -436,9 +446,9 @@ describe("research.query retrieval over real D1/R2", () => {
     expect(await tableCount("retrieval_query_result")).toBe(after.result);
   });
 
-  it("resolves a real LEX hit to real R2 bytes and persists result+trace; replay returns the identical pack without a second row", async () => {
+  preparedCase("resolves a real LEX hit to real R2 bytes and persists result+trace; replay returns the identical pack without a second row",
+    () => worldWithPolicy("rq-hit-owner"), async (world) => {
     const owner = "rq-hit-owner";
-    const world = await worldWithPolicy(owner);
     const service = createResearchQueryService({ CORE_DB: db, SEARCH_DB: searchDb, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET });
     const before = {
       result: await tableCount("retrieval_query_result"),
@@ -492,9 +502,9 @@ describe("research.query retrieval over real D1/R2", () => {
     expect(await tableCount("retrieval_query_trace")).toBe(after.trace);
   });
 
-  it("persists nothing and mints no grant for a denied scope", async () => {
+  preparedCase("persists nothing and mints no grant for a denied scope",
+    () => prepareQ1Namespace(runtime, db, searchDb, "rq-denied-owner"), async () => {
     const owner = "rq-denied-owner";
-    await prepareQ1Namespace(runtime, db, searchDb, owner);
     const service = createResearchQueryService({ CORE_DB: db, SEARCH_DB: searchDb, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET });
     const before = {
       result: await tableCount("retrieval_query_result"),
@@ -521,9 +531,9 @@ describe("research.query retrieval over real D1/R2", () => {
     expect(await tableCount("scope_access_grant")).toBe(before.grant);
   });
 
-  it("persists no retrieval rows and mints no grant once the frozen scope expires", async () => {
+  preparedCase("persists no retrieval rows and mints no grant once the frozen scope expires",
+    () => worldWithPolicy("rq-expiry-owner"), async (world) => {
     const owner = "rq-expiry-owner";
-    const world = await worldWithPolicy(owner);
     const service = createResearchQueryService({ CORE_DB: db, SEARCH_DB: searchDb, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET });
     const first = await service.query(contextFor(owner, "rq-expiry-first"), queryFor(world, "Pinned"));
     expectPinnedContext(first, world);
@@ -542,9 +552,9 @@ describe("research.query retrieval over real D1/R2", () => {
     expect(await tableCount("scope_access_grant")).toBe(before.grant);
   });
 
-  it("does not replay a scope frozen under one profile version under another", async () => {
+  preparedCase("does not replay a scope frozen under one profile version under another",
+    () => worldWithPolicy("rq-profile-owner"), async (world) => {
     const owner = "rq-profile-owner";
-    const world = await worldWithPolicy(owner);
     const v1 = createResearchQueryService({ CORE_DB: db, SEARCH_DB: searchDb, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET });
     const first = await v1.query(contextFor(owner, "rq-profile-first"), queryFor(world, "Pinned"));
     expectPinnedContext(first, world);
@@ -559,9 +569,9 @@ describe("research.query retrieval over real D1/R2", () => {
     expect(await tableCount("retrieval_query_result")).toBe(resultsBefore);
   });
 
-  it("stores nothing on a substituted trace cursor through the real D1 binding trigger", async () => {
+  preparedCase("stores nothing on a substituted trace cursor through the real D1 binding trigger",
+    () => worldWithPolicy("rq-trace-owner"), async (world) => {
     const owner = "rq-trace-owner";
-    const world = await worldWithPolicy(owner);
     const service = createResearchQueryService({ CORE_DB: db, SEARCH_DB: searchDb, EVIDENCE_BUCKET: runtime.EVIDENCE_BUCKET });
     const first = await service.query(contextFor(owner, "rq-trace-first"), queryFor(world, "Pinned"));
     expectPinnedContext(first, world);

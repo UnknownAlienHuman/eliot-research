@@ -52,6 +52,9 @@ import { createServiceModelSettingsComposition } from "./service-model-settings-
 import type { Env } from "./env.js";
 import { createOpenCodeRegisteredProviderReader } from "./research-opencode-routing.js";
 import { planOpenCodeModelRoute } from "@eliotr/cloudflare-model-transport/opencode-model-routing.js";
+import { createGenericCatalogRegisteredProviderReader, isGenericOpenRouterCatalogBinding } from
+  "@eliotr/cloudflare-model-control/research-model-catalog.js";
+import { installedGatewayIdentity } from "./research-provider-key-configuration-composition.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -59,6 +62,7 @@ const ALIAS = /^eliotr-[a-f0-9]{48}$/u;
 const CATALOG_METADATA_PROTOCOL = "eliotr.research.catalog-model-use-pricing-metadata.v1" as const;
 const CATALOG_PRICING_TTL_MS = 24 * 60 * 60 * 1000;
 const REASONING_EFFORTS = Object.freeze(["low", "medium", "high", "max"] as const);
+const GENERIC_PROVIDER = /^compatible-[a-f0-9]{24}$/u;
 type ResearchProviderKeyModelUseStageV1 = ResearchProviderKeyModelUseStagePlanV1["stage"];
 
 class UnsupportedCatalogTransportError extends Error {}
@@ -77,6 +81,7 @@ interface CatalogModelUsePricingMetadataV1 {
   readonly configuration_metadata_sha256: string;
   readonly request_sha256: string;
   readonly source_url: "https://models.dev/api.json";
+  readonly source_provider_id?: "openrouter";
   readonly source_sha256: string;
   readonly model_record_sha256: string;
   readonly observed_at: string;
@@ -187,6 +192,10 @@ function decodeMetadata(raw: unknown): CatalogModelUsePricingMetadataV1 {
   const observedAt = iso(raw.observed_at, "catalog observation time");
   const expiresAt = iso(raw.expires_at, "catalog pricing expiry");
   if (Date.parse(expiresAt) <= Date.parse(observedAt)) return failMetadata("catalog pricing expiry is stale");
+  if (GENERIC_PROVIDER.test(raw.provider_id) && (raw.source_provider_id !== "openrouter" ||
+      !isGenericOpenRouterCatalogBinding(raw.provider_id, { slug: raw.provider_slug, base_url: String(raw.advertised_api_base) }))) {
+    return failMetadata("generic catalog pricing has no exact OpenRouter source binding");
+  }
   return Object.freeze({
     protocol: CATALOG_METADATA_PROTOCOL,
     owner_ref: raw.owner_ref,
@@ -201,6 +210,7 @@ function decodeMetadata(raw: unknown): CatalogModelUsePricingMetadataV1 {
     configuration_metadata_sha256: raw.configuration_metadata_sha256,
     request_sha256: raw.request_sha256,
     source_url: "https://models.dev/api.json",
+    ...(raw.source_provider_id === "openrouter" ? { source_provider_id: "openrouter" as const } : {}),
     source_sha256: raw.source_sha256,
     model_record_sha256: raw.model_record_sha256,
     observed_at: observedAt,
@@ -218,6 +228,9 @@ function decodeMetadata(raw: unknown): CatalogModelUsePricingMetadataV1 {
 
 function metadataForConsent(input: ResearchCatalogModelUseV2DriverSelection,
   observation: ResearchCatalogModelPricingObservation, expiresAt: string): CatalogModelUsePricingMetadataV1 {
+  if (observation.provider_id !== input.request.provider_id || observation.model_id !== input.request.model_id) {
+    return failMetadata("catalog pricing observation differs from the exact owner selection");
+  }
   return decodeMetadata({
     protocol: CATALOG_METADATA_PROTOCOL,
     owner_ref: input.binding.owner_id,
@@ -232,6 +245,7 @@ function metadataForConsent(input: ResearchCatalogModelUseV2DriverSelection,
     configuration_metadata_sha256: input.binding.metadata_sha256,
     request_sha256: input.request_sha256,
     source_url: observation.source_url,
+    ...(observation.source_provider_id === undefined ? {} : { source_provider_id: observation.source_provider_id }),
     source_sha256: observation.source_sha256,
     model_record_sha256: observation.model_record_sha256,
     observed_at: observation.observed_at,
@@ -250,6 +264,8 @@ function transportPolicy(metadata: CatalogModelUsePricingMetadataV1): ModelGatew
     model_id: metadata.model_id,
     alias: metadata.alias,
     advertised_sdk: metadata.advertised_sdk,
+    advertised_api_base: metadata.advertised_api_base,
+    ...(metadata.source_provider_id === undefined ? {} : { source_provider_id: metadata.source_provider_id }),
     advertised_capabilities: metadata.advertised_capabilities,
   });
 }
@@ -260,6 +276,8 @@ export interface ResearchCatalogModelUseV2TransportInput {
   readonly model_id: string;
   readonly alias: string;
   readonly advertised_sdk: string;
+  readonly advertised_api_base?: string;
+  readonly source_provider_id?: "openrouter";
   readonly advertised_capabilities: ResearchCatalogAdvertisedCapabilities;
 }
 
@@ -270,8 +288,16 @@ export function createResearchCatalogModelTransportPolicyV2(
   const sdk = input.advertised_sdk;
   const mode = input.advertised_capabilities.api_mode;
   const isCustom = input.provider_slug === `custom-${input.provider_id}`;
+  const genericOpenRouter = GENERIC_PROVIDER.test(input.provider_id);
   let api: ModelGatewayApi;
-  if (isCustom) {
+  if (genericOpenRouter) {
+    if (input.source_provider_id !== "openrouter" || !isGenericOpenRouterCatalogBinding(input.provider_id,
+      { slug: input.provider_slug, base_url: input.advertised_api_base ?? "" }) ||
+      (sdk !== "@openrouter/ai-sdk-provider" && sdk !== "@ai-sdk/openai-compatible") || mode !== "chat") {
+      throw new UnsupportedCatalogTransportError("Generic OpenRouter SDK, source or exact base is unsupported");
+    }
+    api = "custom-chat-completions";
+  } else if (isCustom) {
     if (sdk === "@ai-sdk/openai" && mode === "responses") api = "custom-responses";
     else if (sdk === "@ai-sdk/openai-compatible" && mode === "chat") api = "custom-chat-completions";
     else if (sdk === "@ai-sdk/anthropic" && mode === "messages") api = "custom-anthropic-messages";
@@ -293,7 +319,8 @@ export function createResearchCatalogModelTransportPolicyV2(
     max_output_tokens_field: api === "custom-responses" || api === "openai-responses" ? "max_output_tokens" :
       api === "custom-anthropic-messages" || api === "anthropic-messages" ? "max_tokens" : "max_tokens",
     reasoning_efforts: input.advertised_capabilities.reasoning === true ? REASONING_EFFORTS : Object.freeze([]),
-    ...(api === "openrouter-chat-completions" ? { response_format_normalization: "json-schema-to-json-object" as const } : {}),
+    ...(api === "openrouter-chat-completions" || genericOpenRouter
+      ? { response_format_normalization: "json-schema-to-json-object" as const } : {}),
   });
   return validateModelGatewayTransportPolicy({
     version: 1,
@@ -455,6 +482,12 @@ export function createResearchCatalogModelUseV2Driver(input: Readonly<{
   const authStore = createD1ResearchCatalogModelUseStore(input.env.CORE_DB);
   const pricingStore = createD1ResearchModelPricingSnapshotStore(input.env.CORE_DB, { now: () => new Date(now()).toISOString() });
   const providers = createServiceModelSettingsComposition(input.env).service;
+  const gateway = installedGatewayIdentity(input.env.AI_GATEWAY_REASONING_URL);
+  const readGenericRegisteredProvider = createGenericCatalogRegisteredProviderReader({
+    ...(gateway === undefined ? {} : { account_id: gateway.account_id, gateway_id: gateway.gateway_id }),
+    ...(input.env.ELIOTR_MODEL_PROVIDER_CONTROL_TOKEN === undefined ? {} : { control_token: input.env.ELIOTR_MODEL_PROVIDER_CONTROL_TOKEN }),
+    ...(input.fetcher === undefined ? {} : { fetcher: input.fetcher }),
+  });
   const planInputs = createResearchProviderKeyModelUsePlanInputsFromEnv(input.env);
 
   return Object.freeze({
@@ -485,6 +518,10 @@ export function createResearchCatalogModelUseV2Driver(input: Readonly<{
             binding.provider_slug !== selection.route_provider_id || binding.alias !== selection.binding.alias ||
             binding.provider_config_id !== selection.binding.provider_config_id ||
             binding.metadata_sha256 !== selection.binding.metadata_sha256) throw new Error("saved provider authority changed");
+        if (GENERIC_PROVIDER.test(selection.request.provider_id) && !isGenericOpenRouterCatalogBinding(selection.request.provider_id,
+          await readGenericRegisteredProvider(selection.route_provider_id, input.context.request.signal))) {
+          throw new UnsupportedCatalogTransportError("The exact registered generic OpenRouter base is unavailable");
+        }
         const selected = await input.project_configuration.readSelected(input.context, input.project_id);
         if ((selected?.selection_revision ?? null) !== row.expected_selection_revision ||
             (selected?.configuration_ref ?? null) !== row.source_configuration_ref ||
@@ -495,7 +532,10 @@ export function createResearchCatalogModelUseV2Driver(input: Readonly<{
       async function pricingMetadata(): Promise<CatalogModelUsePricingMetadataV1> {
         const existing = await modelUseMetadataRows(input.env.CORE_DB, selection, now);
         if (existing !== null) return existing;
+        const registered = GENERIC_PROVIDER.test(selection.request.provider_id)
+          ? await readGenericRegisteredProvider(selection.route_provider_id, input.context.request.signal) : undefined;
         const observation = await readVerifiedCatalogModelPricing({ provider_id: selection.request.provider_id,
+          ...(registered == null ? {} : { registered_provider: registered }),
           model_id: selection.request.model_id, ...(input.fetcher === undefined ? {} : { fetch: input.fetcher }),
           signal: input.context.request.signal,
           now: () => new Date(now()) });

@@ -507,7 +507,8 @@ export async function assembleResearchSemanticServerHandlers(
         },
       },
     },
-    report: { policy_source: reportSource, report_policy: boundReportPolicy, expected_draft_head_revision: null },
+    report: { policy_source: reportSource, report_policy: boundReportPolicy, expected_draft_head_revision: null,
+      ...(input.output_language === undefined ? {} : { output_language: input.output_language }) },
   });
   if (input.handler_generation !== SERVER_OWNED_BRANCH_HANDLER_GENERATION &&
       input.handler_generation !== SERVER_OWNED_EXTERNAL_AGENT_HANDLER_GENERATION &&

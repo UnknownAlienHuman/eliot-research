@@ -367,7 +367,13 @@ export async function searchProject(
     // Literal lookup stays unrewritten and unreranked. D1 remains the authority.
     ai_search_options: { query_rewrite: { enabled: false },
       reranking: input.lane === "prose" ? { enabled: true, match_threshold: 0 } : { enabled: false },
-      retrieval: { filters: {
+      retrieval: { ...(input.lane === "prose" ? {
+        // Preserve native hybrid recall when a paper uses different wording
+        // from the question; Cloudflare's reranker then restores precision.
+        retrieval_type: "hybrid",
+        fusion_method: "rrf",
+        keyword_match_mode: "or",
+      } : {}), filters: {
       folder: { $gte: folder, $lt: folderEnd },
       // Native text filters index the first 64 UTF-8 bytes. IDs are ASCII; D1 checks full identities below.
       ...(allowedRevisions === undefined ? {} : {

@@ -150,7 +150,7 @@ async function supportedAudit(): Promise<Audited> {
   return { fixture, stage14, auditHandler, auditProviderCalls: () => calls };
 }
 
-async function throughCoverage(audited: Audited, synthesisBodyApi?: ModelGatewayApi) {
+async function throughCoverage(audited: Audited, synthesisBodyApi?: ModelGatewayApi, outputLanguage?: "en" | "ru") {
   const freeze = audited.fixture.freeze;
   const environment = { database: freeze.db, work_bucket: freeze.bucket, manifest_store: freeze.freeze_store, read_stage_five: freeze.readers.read_stage_five };
   const status = new WorkflowCheckpointStore(freeze.db);
@@ -160,7 +160,7 @@ async function throughCoverage(audited: Audited, synthesisBodyApi?: ModelGateway
   };
   const domains = { scope_domain_id: freeze.scope.snapshot_id, access_domain_id: principal.principal_ref,
     confidentiality_domain_id: "stage17-private", encryption_key_domain_id: "stage17-key", retention_domain_id: "stage17-retention", erasure_domain_id: "stage17-erasure" };
-  const policy: ResearchArtifactReportPolicy = { kind: "technical_audit", title: "Direct audited native report", audience: "owner", language: "en",
+  const policy: ResearchArtifactReportPolicy = { kind: "technical_audit", title: "Direct audited native report", audience: "owner", language: "ru",
     section_contract: { section_id: "summary", title: "Summary", purpose: "Bound claim audit", required_claim_kinds: ["observation"], required_evidence_classes: ["source"], maximum_utf8_bytes: 4096 },
     statement_labels: { observation: "UNRESOLVED" }, citation_policy_ref: "stage17-citations", verification_policy_ref: "stage17-verification",
     length_policy_ref: "stage17-length", export_formats: ["markdown"], include_counterevidence: true, include_methodology: true,
@@ -178,6 +178,7 @@ async function throughCoverage(audited: Audited, synthesisBodyApi?: ModelGateway
     calculate_coverage: createResearchCoverageStageHandlerFromFreeze(environment, freeze.navigation, freeze.readers, { ledger: freeze.ledger }),
     materialize_handler: createResearchCoverageMaterializeStageHandlerFromFreeze(environment, freeze.navigation, freeze.readers, {
       database: freeze.db, work_bucket: freeze.bucket, evidence_resolver: freeze.resolver, recheck_authority: recheck, report_policy: policy, policy_source: policySource,
+      ...(outputLanguage === undefined ? {} : { output_language: outputLanguage }),
       ...(synthesisBodyApi === undefined ? {} : { synthesis_body_api: synthesisBodyApi }) }) });
   let previous = await freeze.executor.execute(audited.stage14, principal, audited.auditHandler);
   const auditReceipt = previous;
@@ -372,5 +373,34 @@ describe("Stored SYNTH API through final MATERIALIZE", () => {
     expect(beforeDraft.counts).toMatchObject({ drafts: 0, publications: 0, models: 2 });
     expect(data.audited.fixture.provider_calls()).toBe(1);
     expect(data.audited.auditProviderCalls()).toBe(1);
+  }, 120_000);
+});
+
+describe("run-frozen language through the actual coverage and report materializer", () => {
+  it("writes the selected language into the new spec and deterministic coverage footer", async () => {
+    const data = await throughCoverage(await supportedAudit(), undefined, "en");
+    const output = await materialized(data);
+    const binding = await data.freeze.db.prepare(
+      "SELECT manifest_r2_key FROM artifact_draft_head WHERE artifact_id=(SELECT artifact_id FROM artifact_draft_binding WHERE intent_id=(SELECT intent_id FROM research_report_admission WHERE operation_id=?1)) LIMIT 1",
+    ).bind(data.freeze.operation_id).first<{ manifest_r2_key: string }>();
+    if (binding === null) throw new Error("Actual report manifest missing");
+    const object = await data.freeze.bucket.get(binding.manifest_r2_key);
+    if (object === null) throw new Error("Actual report manifest object missing");
+    const manifest = JSON.parse(await object.text()) as { spec: { language: string }; revision: { sections: { body_object_ref: string }[] } };
+    expect(manifest.spec.language).toBe("en");
+    const bodyRef = manifest.revision.sections[0]?.body_object_ref;
+    if (bodyRef === undefined) throw new Error("Actual report body reference missing");
+    const bodyRow = await data.freeze.db.prepare(
+      "SELECT receipt_json FROM artifact_draft_object WHERE artifact_id=(SELECT artifact_id FROM artifact_draft_binding WHERE intent_id=(SELECT intent_id FROM research_report_admission WHERE operation_id=?1)) AND object_ref=?2 AND object_kind='SECTION_BODY' LIMIT 1",
+    ).bind(data.freeze.operation_id, bodyRef).first<{ receipt_json: string }>();
+    if (bodyRow === null) throw new Error("Actual report body object missing");
+    const bodyReceipt = JSON.parse(bodyRow.receipt_json) as { key: string };
+    const body = await data.freeze.bucket.get(bodyReceipt.key);
+    if (body === null) throw new Error("Actual report body bytes missing");
+    const text = await body.text();
+    expect(text).toContain("## Coverage and method");
+    expect(text).not.toContain("## Охват и метод");
+    expect(data.policy.language).toBe("ru");
+    expect(output.receipt.stage).toBe("MATERIALIZE");
   }, 120_000);
 });

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
   WORKFLOW_FAILURE_CODES,
   WorkflowFailureSchema,
@@ -22,8 +22,11 @@ async function failureRow(db: D1Database, operationId: string) {
 }
 
 describe("persisted workflow failure shape contract", () => {
+  let fixture: Awaited<ReturnType<typeof workflowFixture>>;
+  // Every case still resets real bindings and installs the canonical schema.
+  // Cold installation (~10s) has a 20s hook cap; operation cases retain 5s.
+  beforeEach(async () => { fixture = await workflowFixture("failure-shape-contract"); }, 20_000);
   it.each(WORKFLOW_FAILURE_CODES)("round-trips %s through D1 and refuses unknown or malformed JSON", async (code) => {
-    const fixture = await workflowFixture("failure-shape-contract");
     await new WorkflowCheckpointStore(fixture.db).ensureRun(fixture.request, principal);
 
     const failureFor = (code: (typeof WORKFLOW_FAILURE_CODES)[number]) => ({
@@ -57,7 +60,6 @@ describe("persisted workflow failure shape contract", () => {
   });
 
   it("retains the first cause and tail when a prior failure is replayed after a lost write acknowledgement", async () => {
-    const fixture = await workflowFixture("failure-history-replay");
     await new WorkflowCheckpointStore(fixture.db).ensureRun(fixture.request, principal);
     const first = WorkflowFailureOutcomeSchema.parse({
       protocol: "eliotr.workflow-failure-outcome.v1",
@@ -81,7 +83,6 @@ describe("persisted workflow failure shape contract", () => {
   });
 
   it("declines an unretained seventeenth consequence without corrupting the stored tail", async () => {
-    const fixture = await workflowFixture("failure-history-capacity");
     await new WorkflowCheckpointStore(fixture.db).ensureRun(fixture.request, principal);
     const failures = WORKFLOW_FAILURE_CODES.slice(0, 18).map((code) => ({
       code, phase: "STAGE" as const, stage: fixture.request.stage, retryable: false,
@@ -104,7 +105,6 @@ describe("persisted workflow failure shape contract", () => {
   });
 
   it("reports an unavailable read acknowledgement without claiming the write had no effect", async () => {
-    const fixture = await workflowFixture("failure-history-read-ack");
     await new WorkflowCheckpointStore(fixture.db).ensureRun(fixture.request, principal);
     const failure = { code: "EVIDENCE_FREEZE_SETTLEMENT_UNCERTAIN" as const,
       phase: "STAGE" as const, stage: fixture.request.stage, retryable: false };
@@ -134,7 +134,6 @@ describe("persisted workflow failure shape contract", () => {
   });
 
   it("refuses replacing a legacy first cause while initializing matching new history", async () => {
-    const fixture = await workflowFixture("failure-legacy-bootstrap");
     await new WorkflowCheckpointStore(fixture.db).ensureRun(fixture.request, principal);
     const original = { code: "EVIDENCE_FREEZE_EVIDENCE_INVALID" as const, phase: "STAGE" as const,
       stage: fixture.request.stage, retryable: false };

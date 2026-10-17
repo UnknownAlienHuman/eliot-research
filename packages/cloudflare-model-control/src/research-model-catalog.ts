@@ -1,5 +1,8 @@
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 
+export { createGenericCatalogRegisteredProviderReader, createGenericOpenRouterCatalogResolver,
+  isGenericOpenRouterCatalogBinding, type RegisteredGenericCatalogProvider } from "./research-model-catalog-generic.js";
+
 export const RESEARCH_MODEL_CATALOG_PROTOCOL = "eliotr.research-model-catalog.v1" as const;
 export const SERVICE_MODEL_CATALOG_PROTOCOL = "eliotr.service-model-catalog.v1" as const;
 export const RESEARCH_MODEL_CATALOG_TASK = "text-generation" as const;
@@ -140,6 +143,10 @@ export interface ResearchModelCatalogServiceOptions {
   readonly database: D1Database;
   readonly workersAi?: WorkersAiModelCatalogBinding;
   readonly externalProviders?: readonly ExternalProviderCatalogTransport[];
+  /** Optional owner-scoped binding for a registered generic provider; never a caller URL. */
+  readonly resolveExternalProvider?: (
+    context: AuthenticatedRequestContext, providerId: string,
+  ) => Promise<ExternalProviderCatalogTransport | null>;
 }
 
 export interface ResearchModelCatalogService {
@@ -585,10 +592,15 @@ export function createResearchModelCatalogService(
     } catch {
       throw new ResearchModelCatalogError("MODEL_CATALOG_REQUEST_INVALID", 400, "provider id is invalid");
     }
-    const provider = options.externalProviders?.find((candidate) => candidate.provider_id === providerId);
-    if (provider === undefined) {
+    const provider = options.externalProviders?.find((candidate) => candidate.provider_id === providerId) ??
+      await options.resolveExternalProvider?.(context, providerId);
+    if (provider === undefined || provider === null) {
       throw new ResearchModelCatalogError("MODEL_CATALOG_PROVIDER_UNAVAILABLE", 503,
-        "no official provider catalog transport is configured", true);
+        "no supported provider catalog transport is configured");
+    }
+    if (provider.provider_id !== providerId) {
+      throw new ResearchModelCatalogError("MODEL_CATALOG_RESPONSE_INVALID", 502,
+        "provider catalog binding has a different identity");
     }
     if (typeof provider.listTextGeneration !== "function") {
       throw new ResearchModelCatalogError("MODEL_CATALOG_PROVIDER_UNAVAILABLE", 503,

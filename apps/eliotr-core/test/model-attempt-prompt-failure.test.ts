@@ -1,19 +1,17 @@
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   canonicalModelGatewayJson, createModelGatewayFetchAdapter, ModelGatewayExecutionError,
   modelGatewayDynamicRouteTarget, modelGatewayRequestParametersSha256, modelGatewaySha256,
   type ModelGatewayPromptCompilerPort,
 } from "@eliotr/cloudflare-ai";
-import { createWorkflowCheckpointExecutor, digest, workflowFailure } from "@eliotr/cloudflare-workflows";
+import { createWorkflowCheckpointExecutor, digest, workflowFailure, WorkflowCheckpointStore } from "@eliotr/cloudflare-workflows";
 import { ReferenceManifestError } from "@eliotr/cloudflare-evidence";
 import {
   createGovernedModelAttemptHandler, deriveModelAttemptIdentity,
 } from "../../../packages/cloudflare-research/src/model-attempt-handler.js";
 import type { ModelRoutePort } from "@eliotr/research";
-import { governedModelAttemptFixture as baseFixture, initializeModelAttemptRuntime } from "./model-attempt-fixture.js";
+import { governedModelAttemptFixture as baseFixture, runtime } from "./model-attempt-fixture.js";
 import { principal, workflowFixture } from "./research-workflow-fixture.js";
-
-beforeAll(initializeModelAttemptRuntime);
 
 const code = "MODEL_GATEWAY_PROMPT_COMPILE_FAILED";
 const settledFailure = { code, retryable: false, dispatch_state: "NOT_STARTED",
@@ -28,6 +26,16 @@ async function governedModelAttemptFixture(...args: Parameters<typeof baseFixtur
     return { ...prepared, call: { ...prepared.call, route_ref: "dynamic/eliotr-balanced" },
       quote: { ...prepared.quote, selected_routes: ["dynamic/eliotr-balanced"] } };
   } } };
+}
+
+function preparedCase<T>(name: string, setup: () => Promise<T>, verify: (fixture: T) => Promise<void>) {
+  describe("fresh canonical fixture", () => {
+    let fixture: T;
+    // Schema reset/installation takes about 10s cold; only setup gets 20s.
+    // Provider failure, settlement and replay assertions keep the default 5s.
+    beforeEach(async () => { fixture = await setup(); }, 20_000);
+    it(name, async () => { await verify(fixture); });
+  });
 }
 
 function gateway(compile?: ModelGatewayPromptCompilerPort["compile"], remoteFailure?: unknown) {
@@ -68,9 +76,9 @@ async function readAttempt(fixture: Awaited<ReturnType<typeof governedModelAttem
 }
 
 describe("prompt compilation failure settlement over local D1/R2", () => {
-  it.each(["throw", "malformed", "missing-reference", "stale-reference", "corrupt-reference"])(
-    "settles %s before dispatch without claiming reference integrity on replay or recovery", async (mode) => {
-    const fixture = await governedModelAttemptFixture(`prompt-${mode}`);
+  describe.each(["throw", "malformed", "missing-reference", "stale-reference", "corrupt-reference"])("%s compiler fixture", (mode) => {
+    preparedCase(`settles ${mode} before dispatch without claiming reference integrity on replay or recovery`,
+      () => governedModelAttemptFixture(`prompt-${mode}`), async (fixture) => {
     const compile = vi.fn(async () => {
       if (mode === "throw") throw new Error("REQUIRED_CONTEXT_BYTE_BUDGET_EXCEEDED: private context");
       if (mode === "missing-reference") throw new ReferenceManifestError(
@@ -93,8 +101,14 @@ describe("prompt compilation failure settlement over local D1/R2", () => {
     const prepare = vi.fn(fixture.dependencies.prepare);
     const replay = createGovernedModelAttemptHandler({ ...fixture.dependencies, route: local.route, prepare });
     await expect(replay.handler(input)).rejects.toMatchObject({ failure: settledFailure });
-    const recovery = { request: input.request, request_sha256: await digest(new TextEncoder().encode(JSON.stringify(input.request))),
+    const requestSha = await digest(new TextEncoder().encode(JSON.stringify(input.request)));
+    const stored = await new WorkflowCheckpointStore(runtime.CORE_DB).attempt(input.request, requestSha);
+    if (stored === null || stored.output_json === null) throw new Error("missing committed fixture stage for recovery");
+    const output: { object_ref: string } = JSON.parse(stored.output_json);
+    const recovery = { request: input.request, request_sha256: requestSha,
       attempt_ref: input.attempt_ref, budget_receipt_ref: input.budget_receipt_ref,
+      stage_index: stored.stage_index, expected_revision: stored.expected_revision,
+      budget_expires_at_ms: stored.budget_expires_at_ms, output_object_ref: output.object_ref,
       principal_ref: input.principal.principal_ref, credential_generation: input.principal.credential_generation,
       deployment_generation: input.principal.deployment_generation };
     await expect(replay.recoverStartedAttempt(recovery)).rejects.toMatchObject({ failure: settledFailure });
@@ -104,15 +118,17 @@ describe("prompt compilation failure settlement over local D1/R2", () => {
     expect(prepare).not.toHaveBeenCalled();
     expect(local.fetch).not.toHaveBeenCalled();
     expect(local.put).not.toHaveBeenCalled();
+    });
   });
 
-  it.each([
+  describe.each([
     ["spoofed", Object.assign(new Error("private remote failure"), { code, dispatch_state: "NOT_STARTED" })],
     ["typed-spoofed", new ModelGatewayExecutionError(code, "remote code is not local compiler proof")],
     ["timeout", new DOMException("remote deadline exceeded", "TimeoutError")],
     ["unknown", new Error("provider may have completed")],
-  ])("keeps %s transport failure uncertain and never redispatches", async (tag, error) => {
-    const fixture = await governedModelAttemptFixture(`prompt-remote-${tag}`);
+  ])("%s transport fixture", (tag, error) => {
+    preparedCase(`keeps ${tag} transport failure uncertain and never redispatches`,
+      () => governedModelAttemptFixture(`prompt-remote-${tag}`), async (fixture) => {
     const remote = gateway(undefined, error);
     const handler = createGovernedModelAttemptHandler({ ...fixture.dependencies, route: remote.route });
     const input = fixture.invocation(fixture.request.stage, fixture.stageAttemptRef);
@@ -122,10 +138,12 @@ describe("prompt compilation failure settlement over local D1/R2", () => {
     await expect(handler.handler(input)).rejects.toMatchObject({ code: "WORKFLOW_EFFECT_UNCERTAIN" });
     expect(remote.fetch).toHaveBeenCalledTimes(1);
     expect(remote.put).not.toHaveBeenCalled();
+    });
   });
 
-  it.each(["unwritten", "lost-ack", "wrong-binding", "unmarked"])("preserves uncertainty for %s settlement", async (mode) => {
-    const fixture = await governedModelAttemptFixture(`prompt-settle-${mode}`);
+  describe.each(["unwritten", "lost-ack", "wrong-binding", "unmarked"])("%s settlement fixture", (mode) => {
+    preparedCase(`preserves uncertainty for ${mode} settlement`,
+      () => governedModelAttemptFixture(`prompt-settle-${mode}`), async (fixture) => {
     const local = gateway(async () => { throw new Error("REQUIRED_CONTEXT_BYTE_BUDGET_EXCEEDED"); });
     const handler = createGovernedModelAttemptHandler({ ...fixture.dependencies, route: local.route, attempts: {
       ...fixture.dependencies.attempts,
@@ -145,13 +163,16 @@ describe("prompt compilation failure settlement over local D1/R2", () => {
       ? { code: "WORKFLOW_EFFECT_UNCERTAIN" } : { failure: settledFailure });
     expect(local.fetch).not.toHaveBeenCalled();
     expect(local.put).not.toHaveBeenCalled();
+    });
   });
 
-  it("retains the settled no-effect outcome through W2 failure retention", async () => {
+  preparedCase("retains the settled no-effect outcome through W2 failure retention", async () => {
     const workflow = await workflowFixture("prompt-w2");
     const fixture = await governedModelAttemptFixture("prompt-w2", {
       database: workflow.db, bucket: workflow.bucket, request: workflow.request, principal, inputBytes: workflow.bytes,
     });
+    return { workflow, fixture };
+  }, async ({ workflow, fixture }) => {
     const local = gateway(async () => { throw new Error("REQUIRED_CONTEXT_BYTE_BUDGET_EXCEEDED"); });
     const handler = createGovernedModelAttemptHandler({ ...fixture.dependencies, route: local.route });
     const executor = createWorkflowCheckpointExecutor(workflow.db, workflow.bucket, {

@@ -42,6 +42,8 @@ export interface ResearchArtifactMetadataProducerInput {
   readonly intent: OperationIntent;
   readonly expected_draft_head_revision: number | null;
   readonly policy: ResearchArtifactReportPolicy;
+  /** Frozen per-run presentation choice; absent for legacy and MCP runs with no explicit choice. */
+  readonly output_language?: "en" | "ru";
 }
 
 export type ResearchArtifactMetadataProducerRequest = {
@@ -124,6 +126,10 @@ export function createResearchArtifactMetadataProducer(input: ResearchArtifactMe
   }
   const intent = immutableSnapshot(input.intent, "server operation intent");
   const policy = immutableSnapshot(input.policy, "report policy");
+  const outputLanguage = input.output_language;
+  if (outputLanguage !== undefined && outputLanguage !== "en" && outputLanguage !== "ru") {
+    fail("RESEARCH_ARTIFACT_METADATA_INPUT_INVALID", "run output language is invalid");
+  }
   const expectedDraftHeadRevision = input.expected_draft_head_revision;
   return async ({ request, principal, context }) => {
     if (request.stage !== "MATERIALIZE" || principal.principal_ref !== intent.principal_ref ||
@@ -143,7 +149,7 @@ export function createResearchArtifactMetadataProducer(input: ResearchArtifactMe
       investigation_id: context.investigation_id, freeze_ref: context.freeze.freeze_ref,
       manifest_ref: context.manifest.manifest_ref, stage_five_attempt_ref: context.stage_five.stage_attempt_ref,
       stage_ten_attempt_ref: context.stage_ten_attempt_ref, intent_ref: intent.intent_ref,
-      idempotency_key: intent.idempotency_key, policy,
+      idempotency_key: intent.idempotency_key, policy, ...(outputLanguage === undefined ? {} : { output_language: outputLanguage }),
     });
     const artifactRef: VersionedRef = { id: `eliotr.research.artifact-${identity}`, revision: 1 };
     const specRef: VersionedRef = { id: `eliotr.research.artifact-spec-${identity}`, revision: 1 };
@@ -151,7 +157,7 @@ export function createResearchArtifactMetadataProducer(input: ResearchArtifactMe
     const spec = ArtifactSpecSchema.parse({
       spec_ref: specRef, kind: policy.kind, title: policy.title, scope_snapshot_ref: scope,
       inquiry_protocol_ref: context.stage_ten_input.protocol_profile.profile_ref, audience: policy.audience,
-      language: policy.language, section_contracts: [policy.section_contract],
+      language: outputLanguage ?? policy.language, section_contracts: [policy.section_contract],
       citation_policy_ref: policy.citation_policy_ref, verification_policy_ref: policy.verification_policy_ref,
       include_counterevidence: policy.include_counterevidence, include_methodology: policy.include_methodology,
       length_policy_ref: policy.length_policy_ref, export_formats: [...policy.export_formats], budget_ref: policy.budget_ref,

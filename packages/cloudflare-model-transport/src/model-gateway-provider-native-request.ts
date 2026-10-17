@@ -50,7 +50,7 @@ function chatResponseFormat(
       "selected response format normalization is unsupported",
     );
   }
-  if (api !== "openai-chat-completions" && api !== "openrouter-chat-completions") {
+  if (api !== "openai-chat-completions" && api !== "openrouter-chat-completions" && api !== "custom-chat-completions") {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_REQUEST_INVALID",
       "JSON schema response format normalization requires a documented JSON-object-capable Chat API",

@@ -25,7 +25,9 @@ import {
   type NavigationReadAuthority,
   type ScopeAuthorization,
   type EvidenceSourceAuthority,
+  type CandidateAnchorAuthority,
 } from "@eliotr/cloudflare-evidence";
+import { savedCitationParentSpan, savedCitationAnchor, materializeSavedCitationRange } from "./artifact-saved-citation-range.js";
 import {
   ArtifactDraftReadError,
   readArtifactDraftReauthorizedInternal,
@@ -171,6 +173,7 @@ async function pinnedCandidate(
   if (handle.anchor.kind !== "normalized_byte_range") {
     fail("ARTIFACT_DRAFT_READ_STALE", 410, "saved citation precision cannot be reauthorized");
   }
+  const parentSpan = savedCitationParentSpan(handle);
   let result: D1Result<ProjectionCitationRow>;
   try {
     result = await database.prepare(
@@ -183,14 +186,13 @@ async function pinnedCandidate(
       "AND g.projection_generation = p.projection_generation " +
       "JOIN projection_activation_guard a ON a.source_revision_ref = p.source_revision_ref " +
       "AND a.projection_generation = p.projection_generation " +
-      "WHERE p.source_revision_ref = ?1 AND p.active = 1 AND p.content_sha256 = ?2 " +
-      "AND s.normalized_start_byte = ?3 AND s.normalized_end_byte = ?4 " +
+      "WHERE p.source_revision_ref = ?1 AND p.active = 1 " +
+      "AND s.normalized_start_byte = ?2 AND s.normalized_end_byte = ?3 " +
       "AND s.precision_kind = 'normalized_bytes' AND g.state = 'READY' AND a.verified = 1 LIMIT 2",
     ).bind(
       handle.source_revision_ref,
-      handle.excerpt_sha256,
-      handle.anchor.start,
-      handle.anchor.end,
+      parentSpan.start,
+      parentSpan.end,
     ).all<ProjectionCitationRow>();
   } catch {
     fail("ARTIFACT_DRAFT_READ_UNAVAILABLE", 503, "fresh citation projection is unavailable", true);
@@ -214,8 +216,7 @@ async function pinnedCandidate(
     const contentSha = assertEvidenceSha256(row.content_sha256, "projection content digest");
     const start = assertEvidenceInteger(row.normalized_start_byte, "projection start");
     const end = assertEvidenceInteger(row.normalized_end_byte, "projection end", start + 1);
-    if (sourceRevisionRef !== handle.source_revision_ref || contentSha !== handle.excerpt_sha256 ||
-        start !== handle.anchor.start || end !== handle.anchor.end) {
+    if (sourceRevisionRef !== handle.source_revision_ref || start !== parentSpan.start || end !== parentSpan.end) {
       fail("ARTIFACT_DRAFT_READ_STALE", 410, "saved citation projection changed");
     }
     return LocatorCandidateSchema.parse({
@@ -311,15 +312,29 @@ export async function resolveReauthorizedArtifactEvidence(input: Pick<ArtifactDr
     fail("ARTIFACT_DRAFT_READ_STALE", 410, "saved evidence source authority changed");
   }
   const scopeRef = { id: navigation.scope.snapshot_id, revision: navigation.scope.revision };
+  const baseAuthority = createD1EvidenceAuthorityPort({ core_database: input.database, search_database: input.search_database,
+    ...(input.now === undefined ? {} : { now: input.now }) });
+  const baseContent = createR2EvidenceContentPort({ evidence_bucket: input.evidence_bucket });
+  const savedOriginal = original;
+  let parentAuthority: CandidateAnchorAuthority | undefined;
   const resolver = createCloudflareEvidenceResolver({
-    authority: createD1EvidenceAuthorityPort({ core_database: input.database, search_database: input.search_database,
-      ...(input.now === undefined ? {} : { now: input.now }) }),
-    content: createR2EvidenceContentPort({ evidence_bucket: input.evidence_bucket }),
+    authority: { ...baseAuthority, async resolveCandidate(candidate, source, scope) {
+      parentAuthority = await baseAuthority.resolveCandidate(candidate, source, scope);
+      return savedCitationAnchor(parentAuthority, savedOriginal);
+    } },
+    content: { async materialize(source) {
+      if (parentAuthority === undefined) fail("ARTIFACT_DRAFT_READ_INTEGRITY", 409, "saved citation parent is unavailable");
+      const whole = await baseContent.materialize(source, parentAuthority.anchor);
+      return materializeSavedCitationRange(parentAuthority, whole, savedOriginal);
+    } },
     ...(input.now === undefined ? {} : { now: input.now }),
   });
   const candidate = await pinnedCandidate(input.search_database, original);
   let fresh: ResolvedEvidence;
-  try { fresh = await resolver.resolveCandidate({ candidate, scope_snapshot_ref: scopeRef, access }); }
+  // The saved leaf digest is checked above and below. The containing locator's digest
+  // is checked against the full canonical parent before its exact subrange is derived.
+  const exactCandidate = { ...candidate, metadata: { item_key: candidate.candidate_id } };
+  try { fresh = await resolver.resolveCandidate({ candidate: exactCandidate, scope_snapshot_ref: scopeRef, access }); }
   catch (error) { mapEvidenceError(error); }
   const bytes = evidenceUtf8Bytes(fresh.exact_excerpt);
   if (bytes.byteLength !== original.excerpt_byte_length || await evidenceSha256Bytes(bytes) !== original.excerpt_sha256) {

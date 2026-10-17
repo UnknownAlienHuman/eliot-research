@@ -327,8 +327,9 @@ describe("S04 Wiki owner edits on actual Workers D1", () => {
     it("lets exactly one owner edit publish when the head changes immediately before the native batch", async () => {
       let batches = 0;
       let winningState: Awaited<ReturnType<typeof publicationSnapshot>> | undefined;
-      const racing = observeDatabase(async (sql, phase) => {
-        if (sql !== "BATCH" || phase !== "before") return;
+      const racing = observeDatabase(async (sql, phase, batchSql = []) => {
+        if (sql !== "BATCH" || phase !== "before" ||
+            !batchSql.some(statement => statement.startsWith("INSERT OR IGNORE INTO wiki_publication_revision "))) return;
         batches += 1;
         expect(batches).toBe(1);
         // Both callers have already read head 1. Only scheduling is controlled:

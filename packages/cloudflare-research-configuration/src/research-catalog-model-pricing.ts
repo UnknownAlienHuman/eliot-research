@@ -1,3 +1,6 @@
+import { isGenericOpenRouterCatalogBinding, type RegisteredGenericCatalogProvider } from
+  "@eliotr/cloudflare-model-control";
+
 const SOURCE_URL = "https://models.dev/api.json" as const;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 const MAX_JSON_DEPTH = 128;
@@ -13,7 +16,8 @@ const SOURCE_PROVIDER_BY_LOGICAL_PROVIDER = {
   openrouter: "openrouter",
 } as const;
 
-export type ResearchCatalogModelPricingProviderId = keyof typeof SOURCE_PROVIDER_BY_LOGICAL_PROVIDER;
+type NamedPricingProviderId = keyof typeof SOURCE_PROVIDER_BY_LOGICAL_PROVIDER;
+export type ResearchCatalogModelPricingProviderId = NamedPricingProviderId | `compatible-${string}`;
 export type ResearchCatalogAdvertisedApiMode = "chat" | "responses" | "messages" | "unsupported";
 
 export type ResearchCatalogModelPricingFailureCode =
@@ -80,6 +84,8 @@ export interface ResearchCatalogModelPricingObservation {
   readonly observed_at: string;
   /** The caller-facing logical provider ID, including opencode-zen for models.dev's opencode key. */
   readonly provider_id: ResearchCatalogModelPricingProviderId;
+  /** Explicit source key when a verified generic connection uses the fixed OpenRouter directory. */
+  readonly source_provider_id?: "openrouter";
   readonly model_id: string;
   readonly rates_usd_per_1k_tokens: ResearchCatalogModelPricingRates;
   readonly advertised_sdk: string | null;
@@ -89,6 +95,7 @@ export interface ResearchCatalogModelPricingObservation {
 
 export interface ReadVerifiedCatalogModelPricingInput {
   readonly provider_id: string;
+  readonly registered_provider?: RegisteredGenericCatalogProvider;
   readonly model_id: string;
   readonly fetch?: typeof globalThis.fetch;
   readonly signal?: AbortSignal;
@@ -450,14 +457,18 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
  * Read exact public model metadata. Returned API modes and feature flags are
  * catalog advertisements only, not account access, billing, or qualification proof.
  */
-async function loadCatalogProvider(input: Pick<ReadVerifiedCatalogModelPricingInput, "provider_id" | "fetch" | "signal">) {
-  if (typeof input !== "object" || input === null || typeof input.provider_id !== "string" ||
-      !Object.prototype.hasOwnProperty.call(SOURCE_PROVIDER_BY_LOGICAL_PROVIDER, input.provider_id)) {
-    fail("UNSUPPORTED_PROVIDER", "logical provider is not supported by this reader");
+function sourceProviderIdFor(input: Pick<ReadVerifiedCatalogModelPricingInput, "provider_id" | "registered_provider">): string {
+  if (typeof input === "object" && input !== null && typeof input.provider_id === "string") {
+    if (Object.prototype.hasOwnProperty.call(SOURCE_PROVIDER_BY_LOGICAL_PROVIDER, input.provider_id)) {
+      return SOURCE_PROVIDER_BY_LOGICAL_PROVIDER[input.provider_id as NamedPricingProviderId];
+    }
+    if (isGenericOpenRouterCatalogBinding(input.provider_id, input.registered_provider)) return "openrouter";
   }
-  const sourceProviderId = SOURCE_PROVIDER_BY_LOGICAL_PROVIDER[
-    input.provider_id as ResearchCatalogModelPricingProviderId
-  ];
+  return fail("UNSUPPORTED_PROVIDER", "logical provider has no verified supported source binding");
+}
+
+async function loadCatalogProvider(input: Pick<ReadVerifiedCatalogModelPricingInput, "provider_id" | "registered_provider" | "fetch" | "signal">) {
+  const sourceProviderId = sourceProviderIdFor(input);
 
   const fetcher = input.fetch ?? globalThis.fetch;
   let response: Response;
@@ -535,10 +546,7 @@ export async function readVerifiedCatalogModelMetadataBatch(input: Pick<ReadVeri
 }
 
 export async function readVerifiedCatalogModelPricing(input: ReadVerifiedCatalogModelPricingInput): Promise<ResearchCatalogModelPricingObservation> {
-  if (typeof input !== "object" || input === null || typeof input.provider_id !== "string" ||
-      !Object.prototype.hasOwnProperty.call(SOURCE_PROVIDER_BY_LOGICAL_PROVIDER, input.provider_id)) {
-    fail("UNSUPPORTED_PROVIDER", "logical provider is not supported by this reader");
-  }
+  const sourceProviderId = sourceProviderIdFor(input);
   if (typeof input.model_id !== "string" || !MODEL_ID_PATTERN.test(input.model_id)) {
     fail("INVALID_MODEL_ID", "model ID is not a valid exact catalog identity");
   }
@@ -581,6 +589,7 @@ export async function readVerifiedCatalogModelPricing(input: ReadVerifiedCatalog
     model_record_sha256: modelRecordSha,
     observed_at: observedAt,
     provider_id: input.provider_id as ResearchCatalogModelPricingProviderId,
+    ...(input.provider_id.startsWith("compatible-") ? { source_provider_id: sourceProviderId as "openrouter" } : {}),
     model_id: input.model_id,
     rates_usd_per_1k_tokens: rates,
     advertised_sdk: sdk,

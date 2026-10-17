@@ -1,10 +1,12 @@
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { apiResult, HttpRequestError } from "./http.js";
-import { createResearchModelCatalogService, ResearchModelCatalogError } from "@eliotr/cloudflare-model-control/research-model-catalog.js";
+import { createResearchModelCatalogService, ResearchModelCatalogError, createGenericCatalogRegisteredProviderReader,
+  createGenericOpenRouterCatalogResolver } from "@eliotr/cloudflare-model-control/research-model-catalog.js";
 import { createResearchProviderModelCatalogTransports } from "@eliotr/cloudflare-model-control/research-provider-model-catalog.js";
 import type { Env } from "./env.js";
 import { createServiceModelSettingsComposition } from "./service-model-settings-composition.js";
 import { createOpenCodeDiscoveryRouting } from "./research-opencode-routing.js";
+import { installedGatewayIdentity } from "./research-provider-key-configuration-composition.js";
 
 /** The catalog is descriptive; this read never installs or qualifies a model. */
 export async function handleResearchModelCatalog(
@@ -41,9 +43,7 @@ export async function handleResearchModelCatalog(
   };
   const workersAi = typeof env.AI?.models === "function" ? env.AI as Pick<Ai, "models"> : undefined;
   const serviceProviders = createServiceModelSettingsComposition(env).service;
-  const service = createResearchModelCatalogService({ database: env.CORE_DB,
-    ...(workersAi === undefined ? {} : { workersAi }),
-    externalProviders: createResearchProviderModelCatalogTransports({
+  const externalProviders = createResearchProviderModelCatalogTransports({
       gateway_base_url: env.AI_GATEWAY_REASONING_URL,
       ...(env.ELIOTR_MODEL_GATEWAY_TOKEN === undefined ? {} : { gateway_token: env.ELIOTR_MODEL_GATEWAY_TOKEN }),
       ...(env.ELIOTR_RESEARCH_MODEL_TRANSPORT_POLICIES_JSON === undefined ? {} : {
@@ -51,7 +51,18 @@ export async function handleResearchModelCatalog(
       }),
       resolve_service_provider: (provider) => serviceProviders.resolveConfiguredProvider(context, provider),
       resolve_opencode_routes: createOpenCodeDiscoveryRouting(env, request.signal),
-    }),
+    });
+  const openrouter = externalProviders.find(provider => provider.provider_id === "openrouter");
+  const gateway = installedGatewayIdentity(env.AI_GATEWAY_REASONING_URL);
+  const service = createResearchModelCatalogService({ database: env.CORE_DB,
+    ...(workersAi === undefined ? {} : { workersAi }), externalProviders,
+    ...(openrouter === undefined ? {} : { resolveExternalProvider: createGenericOpenRouterCatalogResolver({
+      openrouter, resolve_connection: (owner, provider) => serviceProviders.resolveConfiguredProvider(owner, provider),
+      read_registered_provider: createGenericCatalogRegisteredProviderReader({
+        ...(gateway === undefined ? {} : { account_id: gateway.account_id, gateway_id: gateway.gateway_id }),
+        ...(env.ELIOTR_MODEL_PROVIDER_CONTROL_TOKEN === undefined ? {} : { control_token: env.ELIOTR_MODEL_PROVIDER_CONTROL_TOKEN }),
+      }),
+    }) }),
   });
   const providerId = query.get("provider_id");
   try {

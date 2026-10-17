@@ -249,7 +249,8 @@ export function validateModelGatewayTransportPolicy(
     );
   }
   if (capabilities.response_format_normalization !== undefined &&
-      api !== "openai-chat-completions" && api !== "openrouter-chat-completions") {
+      api !== "openai-chat-completions" && api !== "openrouter-chat-completions" &&
+      !(api === "custom-chat-completions" && /^custom-compatible-[a-f0-9]{24}$/u.test(provider))) {
     modelGatewayExecutionFailure(
       "MODEL_GATEWAY_REQUEST_INVALID",
       "JSON schema response format normalization requires a documented JSON-object-capable Chat API",

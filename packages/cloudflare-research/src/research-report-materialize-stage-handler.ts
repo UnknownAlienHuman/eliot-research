@@ -16,6 +16,7 @@ import {
 export interface ResearchReportMaterializeStageDependencies extends Omit<ResearchMaterializeStageDependencies, "admission" | "metadata"> {
   readonly policy_source: ResearchReportAdmissionPolicySource;
   readonly report_policy: ResearchArtifactReportPolicy;
+  readonly output_language?: "en" | "ru";
   readonly expected_draft_head_revision?: number | null;
   readonly now?: () => number;
 }
@@ -31,6 +32,7 @@ export function createResearchReportMaterializeStageHandler(
   const {
     policy_source,
     report_policy,
+    output_language,
     expected_draft_head_revision,
     now,
     ...stageDependencies
@@ -49,6 +51,7 @@ export function createResearchReportMaterializeStageHandler(
       intent: admission.intent,
       expected_draft_head_revision: expected_draft_head_revision ?? null,
       policy: report_policy,
+      ...(output_language === undefined ? {} : { output_language }),
     });
     const native = createResearchMaterializeStageHandler({
       ...stageDependencies,

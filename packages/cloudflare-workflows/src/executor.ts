@@ -11,6 +11,9 @@ import {
 import type { ResearchWorkflowStage } from "@eliotr/contracts";
 import { workflowFailure, retainWorkflowFailure, WorkflowFailureOutcomeSchema, type WorkflowFailure } from "./failures.js";
 import { ExternalAgentTaskStore } from "./external-agent-task-store.js";
+import { measureWorkflowCheckpointPhase, type WorkflowCheckpointPhase } from "./checkpoint-performance.js";
+
+type CheckpointPhaseMeasure = <T>(phase: WorkflowCheckpointPhase, action: () => Promise<T>) => Promise<T>;
 
 /** Internal same-task publication port. It must not invoke an external computer/model effect. */
 export type WorkflowExternalTaskPrepare = (input: {
@@ -52,28 +55,42 @@ export function createWorkflowCheckpointExecutor(
   database: D1Database, bucket: R2Bucket, ports: WorkflowExecutionPorts,
 ) {
   const store = new WorkflowCheckpointStore(database);
-  async function beforeEffect(request: StageRequest, principal: WorkflowPrincipal): Promise<void> {
+  async function beforeEffect(
+    request: StageRequest, principal: WorkflowPrincipal, measure?: CheckpointPhaseMeasure,
+  ): Promise<void> {
     if (principal.signal?.aborted) {
       await store.cancel(request.operation_id, principal);
       fail("WORKFLOW_CANCELLED");
     }
-    await store.current(request, principal);
-    await ports.authorizeResidency(request, principal);
+    if (measure === undefined) await store.current(request, principal);
+    else await measure("current_read", () => store.current(request, principal));
+    if (measure === undefined) await ports.authorizeResidency(request, principal);
+    else await measure("authority", () => ports.authorizeResidency(request, principal));
   }
-  async function afterEffect(request: StageRequest, principal: WorkflowPrincipal): Promise<void> {
-    await store.current(request, principal);
+  async function afterEffect(
+    request: StageRequest, principal: WorkflowPrincipal, measure?: CheckpointPhaseMeasure,
+  ): Promise<void> {
+    if (measure === undefined) await store.current(request, principal);
+    else await measure("current_read", () => store.current(request, principal));
     if (principal.signal?.aborted) {
       await store.cancel(request.operation_id, principal);
       fail("WORKFLOW_CANCELLED");
     }
   }
-  async function recoveryGuard(request: StageRequest, principal: WorkflowPrincipal): Promise<void> {
-    await beforeEffect(request, principal);
-    await afterEffect(request, principal);
+  async function recoveryGuard(
+    request: StageRequest, principal: WorkflowPrincipal, measure?: CheckpointPhaseMeasure,
+  ): Promise<void> {
+    await beforeEffect(request, principal, measure);
+    await afterEffect(request, principal, measure);
   }
-  async function guard(request: StageRequest, principal: WorkflowPrincipal, expected?: WorkflowBudgetGrant): Promise<WorkflowBudgetGrant> {
-    await beforeEffect(request, principal);
-    const rawBudget = await ports.checkBudget(request, principal);
+  async function guard(
+    request: StageRequest, principal: WorkflowPrincipal, expected?: WorkflowBudgetGrant,
+    measure?: CheckpointPhaseMeasure,
+  ): Promise<WorkflowBudgetGrant> {
+    await beforeEffect(request, principal, measure);
+    const rawBudget = measure === undefined
+      ? await ports.checkBudget(request, principal)
+      : await measure("budget_check", () => ports.checkBudget(request, principal));
     const budget = Object.freeze({ receipt_ref: rawBudget.receipt_ref, expires_at_ms: rawBudget.expires_at_ms });
     if (typeof budget.receipt_ref !== "string" || budget.receipt_ref.length < 1 || budget.receipt_ref.length > 256 ||
         !Number.isSafeInteger(budget.expires_at_ms) || budget.expires_at_ms <= Date.now() ||
@@ -81,7 +98,7 @@ export function createWorkflowCheckpointExecutor(
     if (expected !== undefined && (expected.receipt_ref !== budget.receipt_ref || expected.expires_at_ms !== budget.expires_at_ms)) {
       fail("WORKFLOW_BUDGET_STOP");
     }
-    await afterEffect(request, principal);
+    await afterEffect(request, principal, measure);
     return budget;
   }
   function storedBudget(attempt: AttemptRow): WorkflowBudgetGrant {
@@ -90,12 +107,19 @@ export function createWorkflowCheckpointExecutor(
         attempt.budget_expires_at_ms <= 0) fail("WORKFLOW_OUTPUT_CORRUPT");
     return Object.freeze({ receipt_ref: attempt.budget_receipt_ref, expires_at_ms: attempt.budget_expires_at_ms });
   }
-  async function finishReadback(request: StageRequest, principal: WorkflowPrincipal, receipt: StageReceipt): Promise<StageReceipt> {
+  async function finishReadback(
+    request: StageRequest, principal: WorkflowPrincipal, receipt: StageReceipt,
+    measure?: CheckpointPhaseMeasure,
+  ): Promise<StageReceipt> {
     // Replaying already-paid work never needs a fresh spending reservation.
-    await store.current(request, principal);
-    await ports.authorizeResidency(request, principal);
-    await readWorkflowObject(bucket, receipt.output_manifest, true);
-    await store.current(request, principal);
+    if (measure === undefined) await store.current(request, principal);
+    else await measure("current_read", () => store.current(request, principal));
+    if (measure === undefined) await ports.authorizeResidency(request, principal);
+    else await measure("authority", () => ports.authorizeResidency(request, principal));
+    if (measure === undefined) await readWorkflowObject(bucket, receipt.output_manifest, true);
+    else await measure("readback", () => readWorkflowObject(bucket, receipt.output_manifest, true));
+    if (measure === undefined) await store.current(request, principal);
+    else await measure("current_read", () => store.current(request, principal));
     if (principal.signal?.aborted) {
       try { await store.cancel(request.operation_id, principal); } catch (error) {
         if (!(error instanceof WorkflowCheckpointError) || error.code !== "WORKFLOW_CONFLICT") throw error;
@@ -269,6 +293,9 @@ export function createWorkflowCheckpointExecutor(
     async execute(raw: unknown, actor: WorkflowPrincipal, handler: WorkflowStageHandler): Promise<StageReceipt> {
       const request = parseRequest(raw);
       const principal = snapshotPrincipal(actor);
+      const measure: CheckpointPhaseMeasure = (phase, action) => measureWorkflowCheckpointPhase(
+        { operation_id: request.operation_id, stage: request.stage }, phase, action,
+      );
       let failurePhase: WorkflowFailure["phase"] = "STAGE";
       try {
         // Snapshot caller-owned objects before any await; neither a handler nor a browser can rebind this operation.
@@ -279,24 +306,24 @@ export function createWorkflowCheckpointExecutor(
           }
           fail("WORKFLOW_CANCELLED");
         }
-        await ports.authorizeResidency(request, principal);
-        await store.ensureRun(request, principal);
-        const requestDigest = await textDigest(JSON.stringify(request));
-        let attempt = await store.attempt(request, requestDigest);
-        const previous = await store.receipt(request, requestDigest);
-        if (previous !== null) return await finishReadback(request, principal, previous);
+        await measure("authority", () => ports.authorizeResidency(request, principal));
+        await measure("prepare", () => store.ensureRun(request, principal));
+        const requestDigest = await measure("prepare", () => textDigest(JSON.stringify(request)));
+        let attempt = await measure("prepare", () => store.attempt(request, requestDigest));
+        const previous = await measure("prepare", () => store.receipt(request, requestDigest));
+        if (previous !== null) return await finishReadback(request, principal, previous, measure);
         const recoveringExistingAttempt = attempt !== null;
         if (recoveringExistingAttempt) failurePhase = "RECOVERY";
         let budget: WorkflowBudgetGrant;
         if (attempt === null) {
-          budget = await guard(request, principal);
+          budget = await guard(request, principal, undefined, measure);
         } else {
           budget = storedBudget(attempt);
           if (budget.expires_at_ms > Date.now()) {
-            budget = await guard(request, principal, budget);
+            budget = await guard(request, principal, budget, measure);
           } else {
-            await recoveryGuard(request, principal);
-            await store.requireRecoveryAuthorization(request, principal);
+            await recoveryGuard(request, principal, measure);
+            await measure("authority", () => store.requireRecoveryAuthorization(request, principal));
           }
         }
         async function recoverKnownOutput(recoveryAttempt: AttemptRow, existing?: WorkflowObject): Promise<WorkflowObject> {
@@ -304,7 +331,9 @@ export function createWorkflowCheckpointExecutor(
           if (recoverStartedAttempt === undefined) fail("WORKFLOW_EFFECT_UNCERTAIN");
           let recovered: Uint8Array | null;
           try {
-            recovered = await recoverStartedAttempt(workflowAttemptRecoveryInput(request, principal, recoveryAttempt, existing));
+            recovered = await measure("output_recovery", () => recoverStartedAttempt(
+              workflowAttemptRecoveryInput(request, principal, recoveryAttempt, existing),
+            ));
           } catch (error) {
             throw new WorkflowCheckpointError("WORKFLOW_EFFECT_UNCERTAIN", workflowFailure(error, "RECOVERY", request.stage));
           }
@@ -326,28 +355,29 @@ export function createWorkflowCheckpointExecutor(
               existing.byte_length !== reconstructed.byte_length || JSON.stringify(existing.residency) !== JSON.stringify(reconstructed.residency))) {
             fail("WORKFLOW_OUTPUT_CORRUPT");
           }
-          await recoveryGuard(request, principal);
-          await store.recordOutput(request, recoveryAttempt, reconstructed);
-          await recoveryGuard(request, principal);
-          await writeWorkflowObject(bucket, reconstructed, recoveredBytes);
+          await recoveryGuard(request, principal, measure);
+          await measure("output_intent", () => store.recordOutput(request, recoveryAttempt, reconstructed));
+          await recoveryGuard(request, principal, measure);
+          await measure("output_persist", () => writeWorkflowObject(bucket, reconstructed, recoveredBytes));
           return reconstructed;
         }
         let output: WorkflowObject;
         if (attempt === null) {
-          const inputBytes = await readWorkflowObject(bucket, request.input_manifest);
-          await guard(request, principal, budget);
+          const inputBytes = await measure("input_read", () => readWorkflowObject(bucket, request.input_manifest));
+          await guard(request, principal, budget, measure);
           const nonce = crypto.randomUUID();
-          attempt = await store.reserve(request, requestDigest, nonce, budget);
-          if (attempt.attempt_ref !== nonce) fail("WORKFLOW_EFFECT_UNCERTAIN");
-          await guard(request, principal, budget);
+          const reservedAttempt = await measure("prepare", () => store.reserve(request, requestDigest, nonce, budget));
+          attempt = reservedAttempt;
+          if (reservedAttempt.attempt_ref !== nonce) fail("WORKFLOW_EFFECT_UNCERTAIN");
+          await guard(request, principal, budget, measure);
           // STARTED is durable before the handler. A crash/throw here requires W3 reconciliation, not another call.
           let bytes: Uint8Array;
           try {
-            bytes = await handler({
-              request: structuredClone(request), principal, input_bytes: inputBytes, attempt_ref: attempt.attempt_ref,
-              budget_receipt_ref: attempt.budget_receipt_ref,
+            bytes = await measure("handler", () => handler({
+              request: structuredClone(request), principal, input_bytes: inputBytes, attempt_ref: reservedAttempt.attempt_ref,
+              budget_receipt_ref: reservedAttempt.budget_receipt_ref,
               ...(principal.signal === undefined ? {} : { signal: principal.signal }),
-            });
+            }));
           } catch (error) {
             const originalFailure = workflowFailure(error, "STAGE", request.stage);
             if (principal.signal?.aborted) {
@@ -376,13 +406,13 @@ export function createWorkflowCheckpointExecutor(
           bytes = new Uint8Array(bytes);
           const hash = await digest(bytes);
           output = WorkflowObjectSchema.parse({
-            object_ref: `workflow/${requestDigest}/${attempt.attempt_ref}`, sha256: hash, byte_length: bytes.byteLength,
+            object_ref: `workflow/${requestDigest}/${reservedAttempt.attempt_ref}`, sha256: hash, byte_length: bytes.byteLength,
             residency: { ...request.input_manifest.residency, content_digest: { algorithm: "sha256", digest: hash } },
           });
-          await guard(request, principal, budget);
-          await store.recordOutput(request, attempt, output);
-          await guard(request, principal, budget);
-          await writeWorkflowObject(bucket, output, bytes);
+          await guard(request, principal, budget, measure);
+          await measure("output_intent", () => store.recordOutput(request, reservedAttempt, output));
+          await guard(request, principal, budget, measure);
+          await measure("output_persist", () => writeWorkflowObject(bucket, output, bytes));
         } else {
           if (attempt.state === "STARTED" || attempt.output_json === null) {
             output = await recoverKnownOutput(attempt);
@@ -390,7 +420,7 @@ export function createWorkflowCheckpointExecutor(
             try { output = WorkflowObjectSchema.parse(JSON.parse(attempt.output_json)); }
             catch { return fail("WORKFLOW_OUTPUT_CORRUPT"); }
             // Lost output/checkpoint ACK: recover exact persisted bytes without invoking the handler.
-            try { await readWorkflowObject(bucket, output, true); }
+            try { await measure("readback", () => readWorkflowObject(bucket, output, true)); }
             catch (error) {
               if (error instanceof WorkflowCheckpointError && error.code === "WORKFLOW_OUTPUT_UNAVAILABLE" && ports.recoverStartedAttempt !== undefined) {
                 output = await recoverKnownOutput(attempt, output);
@@ -398,10 +428,11 @@ export function createWorkflowCheckpointExecutor(
             }
           }
         }
-        if (recoveringExistingAttempt) await recoveryGuard(request, principal);
-        else await guard(request, principal, budget);
-        const receipt = await store.commit(request, attempt, output);
-        return await finishReadback(request, principal, receipt);
+        if (recoveringExistingAttempt) await recoveryGuard(request, principal, measure);
+        else await guard(request, principal, budget, measure);
+        const checkpointAttempt = attempt as AttemptRow;
+        const receipt = await measure("checkpoint_commit", () => store.commit(request, checkpointAttempt, output));
+        return await finishReadback(request, principal, receipt, measure);
       } catch (error) {
         const failure = workflowFailure(error, failurePhase, request.stage);
         await retainWorkflowFailure(database, request.operation_id, principal, failure);
