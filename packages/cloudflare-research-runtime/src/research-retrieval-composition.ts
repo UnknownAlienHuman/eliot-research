@@ -374,12 +374,13 @@ async function createHeldScopeRetrievalQuery(
       const executor = sourceLanes.executorFor(lane);
       if (executor === null || input.timing === undefined) return executor;
       const observedLane = timingLane(lane);
+      const preflightManagedCall = executor.preflightManagedCall?.bind(executor);
       return {
         ...executor,
-        ...(executor.preflightManagedCall === undefined ? {} : {
+        ...(preflightManagedCall === undefined ? {} : {
           async preflightManagedCall(request, context) {
             return measureResearchRetrievalPhase(input.timing, "lane_preflight",
-              () => executor.preflightManagedCall!(request, context), observedLane);
+              () => preflightManagedCall(request, context), observedLane);
           },
         }),
         async execute(executedLane, request, context) {
@@ -426,14 +427,15 @@ async function createHeldScopeRetrievalQuery(
       const baseResults = wrapResultStoreWithDispatchProof(
         createD1RetrievalResultStore(env.CORE_DB, access, undefined, createD1RetrievalSettlementOwnerPort()), proof);
       if (input.timing === undefined) return baseResults;
+      const settle = baseResults.settle?.bind(baseResults);
       return {
         ...baseResults,
         async store(record) {
           return measureResearchRetrievalPhase(input.timing, "finalize_io", () => baseResults.store(record));
         },
-        ...(baseResults.settle === undefined ? {} : {
+        ...(settle === undefined ? {} : {
           async settle(record, admission) {
-            return measureResearchRetrievalPhase(input.timing, "finalize_io", () => baseResults.settle!(record, admission));
+            return measureResearchRetrievalPhase(input.timing, "finalize_io", () => settle(record, admission));
           },
         }),
       };
