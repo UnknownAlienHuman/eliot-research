@@ -2,6 +2,7 @@ import { applyD1Migrations, env as generatedEnv, reset, type D1Migration } from 
 import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { RESEARCH_PROVIDER_KEY_CONFIGURATION_PROTOCOL, RESEARCH_PROVIDER_KEY_MODEL_USE_PROTOCOL,
   SERVICE_MODEL_PROVIDER_CREATE_PROTOCOL } from "@eliotr/contracts";
+import type { ResearchProviderKeyModelUseReceipt } from "@eliotr/contracts";
 import { createResearchProviderKeyModelUseUnverifiedExecutionReconciler } from
   "@eliotr/cloudflare-research-configuration/research-provider-key-model-use-store.js";
 import { createCatalogQualificationGatewayLogReader } from
@@ -29,6 +30,31 @@ const TEST_ENV = {
   AI_GATEWAY_REASONING_URL: `https://gateway.ai.cloudflare.com/v1/${GATEWAY_ACCOUNT_ID}/eliotr-reasoning`,
 } as unknown as Env;
 
+type ModelUseService = ReturnType<typeof createPackageModelUseService>;
+type SharedFixture = {
+  readonly owner: string;
+  readonly project: string;
+  readonly context: AuthenticatedRequestContext;
+  readonly keyOperationId: string;
+  readonly operationId: string;
+  readonly service: ModelUseService;
+  readonly getNativeCalls: () => number;
+  readonly getGatewayReads: () => number;
+  readonly getReconcilerCalls: () => number;
+};
+type CompletedFixture = SharedFixture & {
+  readonly logs: readonly unknown[];
+  readonly preparations: readonly Record<string, string>[];
+  readonly before: Record<string, unknown> | null;
+  readonly uncertainStageBefore: Record<string, unknown> | null;
+  readonly attemptBefore: Record<string, unknown> | null;
+};
+type PendingFixture = SharedFixture & {
+  readonly pendingStart: Promise<ResearchProviderKeyModelUseReceipt>;
+  readonly setPastDeadline: () => void;
+  readonly releaseFirstProbe: () => void;
+};
+
 beforeAll(async () => { await reset(); await applyD1Migrations(database, env.CORE_MIGRATIONS); });
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
@@ -42,7 +68,9 @@ function ownerContext(owner: string, project: string): AuthenticatedRequestConte
   };
 }
 
-async function setupUncertainOperation(options: Readonly<{ globalBinding?: boolean }> = {}) {
+async function setupUncertainOperation(options: Readonly<{ globalBinding?: boolean; holdFirstProbe: true }>): Promise<PendingFixture>;
+async function setupUncertainOperation(options?: Readonly<{ globalBinding?: boolean; holdFirstProbe?: false }>): Promise<CompletedFixture>;
+async function setupUncertainOperation(options: Readonly<{ globalBinding?: boolean; holdFirstProbe?: boolean }> = {}) {
   const owner = `unverified-owner-${crypto.randomUUID()}`;
   const project = `unverified-project-${crypto.randomUUID()}`;
   const timestamp = new Date().toISOString();
@@ -55,6 +83,7 @@ async function setupUncertainOperation(options: Readonly<{ globalBinding?: boole
     "INSERT INTO project_owner(project_id,principal_ref,deployment_generation,created_at,updated_at) VALUES(?1,?2,?3,?4,?4)",
   ).bind(project, owner, TEST_ENV.DEPLOYMENT_GENERATION, timestamp).run();
   const context = ownerContext(owner, project);
+  const testNow = { value: Date.now() };
   const runtimeEnv = await createNativeUseEnvironment(owner, database, TEST_ENV);
   const keyOperationId = crypto.randomUUID();
   const managementPort: ResearchProviderKeyManagementPort = {
@@ -102,15 +131,23 @@ async function setupUncertainOperation(options: Readonly<{ globalBinding?: boole
   }
   vi.stubGlobal("fetch", async () => freeOnlyCatalogResponse());
   let nativeCalls = 0;
+  let resolveProbeStarted: (() => void) | undefined;
+  const probeStarted = new Promise<void>((resolve) => { resolveProbeStarted = resolve; });
+  let releaseProbe: ((response: Response) => void) | undefined;
+  const probeResponse = (call: number) => new Response(JSON.stringify({
+    id: `fixture-chat-${call}`, object: "chat.completion", created: 1_759_000_000, model: MODEL_ID,
+    choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant",
+      content: JSON.stringify({ connected: true, qualification_purpose: "structured-output-connectivity" }) } }],
+    usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
+  }), { status: 200, headers: { "content-type": "application/json", "cf-aig-log-id": `fixture-log-${call}` } });
   const modelFetcher: typeof fetch = async () => {
     nativeCalls += 1;
+    if (options.holdFirstProbe === true && nativeCalls === 1) {
+      resolveProbeStarted?.();
+      return await new Promise<Response>((resolve) => { releaseProbe = resolve; });
+    }
     if (nativeCalls === 2) throw new Error("original probe response body read failed");
-    return new Response(JSON.stringify({
-      id: `fixture-chat-${nativeCalls}`, object: "chat.completion", created: 1_759_000_000, model: MODEL_ID,
-      choices: [{ index: 0, finish_reason: "stop", message: { role: "assistant",
-        content: JSON.stringify({ connected: true, qualification_purpose: "structured-output-connectivity" }) } }],
-      usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
-    }), { status: 200, headers: { "content-type": "application/json", "cf-aig-log-id": `fixture-log-${nativeCalls}` } });
+    return probeResponse(nativeCalls);
   };
   let logs: readonly unknown[] = [];
   let gatewayReads = 0;
@@ -151,12 +188,31 @@ async function setupUncertainOperation(options: Readonly<{ globalBinding?: boole
     native_authority_factory: (authority) => createResearchProviderNativeModelAuthority({ env: runtimeEnv,
       current_scope: authority.current_scope, readConfiguredOperation: authority.readConfiguredOperation }),
     fetcher: modelFetcher,
-    reconcile_unverified_execution: async (row) => { reconcilerCalls += 1; await reconciler(row); },
+    ...(options.holdFirstProbe === true ? {} : {
+      reconcile_unverified_execution: async (row) => { reconcilerCalls += 1; await reconciler(row); },
+    }),
+    ...(options.holdFirstProbe === true ? { now: () => testNow.value } : {}),
   });
   const operationId = crypto.randomUUID();
   const request = { protocol: RESEARCH_PROVIDER_KEY_MODEL_USE_PROTOCOL, operation_id: operationId,
     expected_selection_revision: null } as const;
-  let uncertain = await service.start(keyOperationId, request);
+  const pendingStart = service.start(keyOperationId, request);
+  if (options.holdFirstProbe === true) {
+    await probeStarted;
+    const operation = await database.prepare("SELECT deadline_at FROM research_provider_key_model_use_operation " +
+      "WHERE owner_id=?1 AND project_id=?2 AND operation_id=?3").bind(owner, project, operationId)
+      .first<{ readonly deadline_at: string }>();
+    if (operation === null) throw new Error("held qualification operation was not written");
+    return { owner, project, context, keyOperationId, operationId, service,
+      getNativeCalls: () => nativeCalls, getGatewayReads: () => gatewayReads, getReconcilerCalls: () => reconcilerCalls,
+      pendingStart, setPastDeadline: () => { testNow.value = Date.parse(operation.deadline_at) + 1; },
+      releaseFirstProbe: () => {
+        if (releaseProbe === undefined) throw new Error("held first native probe has not started");
+        releaseProbe(probeResponse(nativeCalls));
+      },
+    };
+  }
+  let uncertain = await pendingStart;
   if (uncertain.state === "qualifying") uncertain = await service.start(keyOperationId, request);
   expect(uncertain.state).toBe("uncertain");
   expect(nativeCalls).toBe(2);
@@ -295,6 +351,48 @@ it("reconciles an existing uncertain owner row before rejecting a new intent, wi
   ]);
   expect(oldState).toEqual({ state: "BLOCKED", failure_code: "NATIVE_RECEIPT_INVALID" });
   expect(newParent).toBeNull();
+});
+
+it("reconciles only an expired exact STARTED attempt to UNCERTAIN and never replays it", async () => {
+  const fixture = await setupUncertainOperation({ holdFirstProbe: true });
+  const attemptSql = "SELECT state,observation_ref,observation_sha256,candidate_ref,qualification_ref,completed_at " +
+    "FROM provider_native_model_qualification_attempt WHERE owner_ref=?1 AND project_id=?2 " +
+    "AND owner_operation_id=?3 AND stage='SYNTHESIZE'";
+  const stageSql = "SELECT state,failure_code,preparation_ref,preparation_sha256,candidate_ref,qualification_ref " +
+    "FROM research_provider_key_model_use_stage_operation WHERE owner_id=?1 AND project_id=?2 " +
+    "AND operation_id=?3 AND stage='SYNTHESIZE'";
+
+  expect(await fixture.service.read(fixture.operationId)).toMatchObject({ state: "qualifying", failure_code: null });
+  expect((await database.prepare(attemptSql).bind(fixture.owner, fixture.project, fixture.operationId)
+    .first<Record<string, unknown>>())).toMatchObject({ state: "STARTED", observation_ref: null });
+
+  fixture.setPastDeadline();
+  const expired = await fixture.service.read(fixture.operationId);
+  expect(expired).toMatchObject({ state: "uncertain", phase: "native_qualify",
+    failure_code: "QUALIFICATION_OUTCOME_UNCERTAIN" });
+  expect(await database.prepare(stageSql).bind(fixture.owner, fixture.project, fixture.operationId)
+    .first<Record<string, unknown>>()).toMatchObject({ state: "UNCERTAIN",
+      failure_code: "QUALIFICATION_OUTCOME_UNCERTAIN", candidate_ref: null, qualification_ref: null });
+  expect(await database.prepare(attemptSql).bind(fixture.owner, fixture.project, fixture.operationId)
+    .first<Record<string, unknown>>()).toMatchObject({ state: "STARTED", observation_ref: null,
+      observation_sha256: null, candidate_ref: null, qualification_ref: null, completed_at: null });
+  expect(fixture.getNativeCalls()).toBe(1);
+  expect(fixture.getGatewayReads()).toBe(0);
+
+  const nextOperation = crypto.randomUUID();
+  await expect(fixture.service.start(fixture.keyOperationId, { protocol: RESEARCH_PROVIDER_KEY_MODEL_USE_PROTOCOL,
+    operation_id: nextOperation, expected_selection_revision: null })).rejects.toMatchObject({
+    code: "PROVIDER_KEY_MODEL_USE_OPERATION_UNRESOLVED",
+  });
+  expect(await database.prepare("SELECT operation_id FROM research_provider_key_model_use_operation " +
+    "WHERE owner_id=?1 AND project_id=?2 AND operation_id=?3").bind(fixture.owner, fixture.project, nextOperation)
+    .first()).toBeNull();
+  expect(fixture.getNativeCalls()).toBe(1);
+
+  fixture.releaseFirstProbe();
+  await expect(fixture.pendingStart).resolves.toMatchObject({ state: "uncertain",
+    failure_code: "QUALIFICATION_OUTCOME_UNCERTAIN" });
+  expect(fixture.getNativeCalls()).toBe(1);
 });
 
 it("does not fall back to a global binding when a pending project key row exists", async () => {

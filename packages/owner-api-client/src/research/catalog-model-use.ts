@@ -11,6 +11,9 @@ const PATH = "/api/v1/research/projects";
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u;
 const OPERATION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const TRACE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+// Match the server-owned provider-key operation window; the default 30s client
+// timeout can abort a valid multi-stage preparation and qualification.
+const MODEL_USE_START_TIMEOUT_MS = 10 * 60 * 1000;
 
 export interface ResearchCatalogModelUseApi {
   /** GET the active unresolved operation for this owner/project; null permits a new choice. */
@@ -108,7 +111,7 @@ export function createResearchCatalogModelUseApi(
           "x-eliotr-csrf": "1" },
         body: JSON.stringify(body),
         ...(signal === undefined ? {} : { signal }),
-      }, [200, 202]);
+      }, [200, 202], MODEL_USE_START_TIMEOUT_MS);
       assertCurrent(captured);
       return decode(raw, projectId, expectedGeneration);
     },

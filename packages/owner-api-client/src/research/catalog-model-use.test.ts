@@ -54,3 +54,16 @@ describe('current catalog model operation read contract', () => {
     expect(late.request).toHaveBeenCalledTimes(1);
   });
 });
+
+it('gives the explicit catalog qualification POST the existing ten-minute operation window', async () => {
+  const test = fixture(envelope(receipt));
+  const signal = new AbortController().signal;
+  const request = { protocol: 'eliotr.research.catalog-model-use-request.v1' as const,
+    operation_id: operationId, expected_selection_revision: null, provider_id: 'opencode-go',
+    model_id: 'step-5-preview-free', provider_operation_id: receipt.provider_operation_id };
+  await test.api.startResearchCatalogModelUse('project-chat', 'deploy-1', request, signal);
+  expect(test.request).toHaveBeenCalledExactlyOnceWith('/api/v1/research/projects/project-chat/catalog-model-use', {
+    method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': operationId,
+      'x-eliotr-csrf': '1' }, body: JSON.stringify(request), signal,
+  }, [200, 202], 600_000);
+});

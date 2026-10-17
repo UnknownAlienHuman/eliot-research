@@ -222,6 +222,34 @@ export function createResearchProviderKeyModelUseService(input: {
     return row;
   }
 
+  /** Status-only expiry recovery. It never retries qualification or infers no effect. */
+  async function reconcileExpiredStartedQualification(
+    row: ResearchProviderKeyModelUseRow,
+  ): Promise<ResearchProviderKeyModelUseRow> {
+    if (row.state !== "QUALIFYING" || row.phase !== "NATIVE_QUALIFY" || row.active_stage === null ||
+        Date.parse(row.deadline_at) > now()) return row;
+    const stages = await store.readStages(row.owner_id, row.project_id, row.operation_id);
+    const stage = stages.find((entry) => entry.stage === row.active_stage);
+    if (stage?.state !== "QUALIFYING" || stage.preparation_ref === null || stage.preparation_sha256 === null) return row;
+    let attempt;
+    try {
+      attempt = await native.readQualificationOperation({ owner_ref: row.owner_id, project_id: row.project_id,
+        owner_operation_id: row.operation_id, stage: stage.stage,
+        preparation_ref: stage.preparation_ref, preparation_sha256: stage.preparation_sha256 });
+    } catch {
+      return row;
+    }
+    if (attempt.status !== "STARTED") return row;
+    await store.reconcileExpiredStartedQualification({
+      owner: row.owner_id, project: row.project_id, operation_id: row.operation_id, stage: stage.stage,
+      preparation_ref: stage.preparation_ref, preparation_sha256: stage.preparation_sha256,
+      request_sha256: row.request_sha256, owner_credential_generation: row.owner_credential_generation,
+      project_generation: row.project_generation, deployment_generation: row.deployment_generation,
+      deadline_at: row.deadline_at, now: new Date(now()).toISOString(), updated_at: new Date(now()).toISOString(),
+    });
+    return await store.read(row.owner_id, row.project_id, row.operation_id) ?? row;
+  }
+
   async function createIntent(keyOperationId: string, request: ResearchProviderKeyModelUseRequest): Promise<ResearchProviderKeyModelUseRow> {
     requireResearchProviderKeyModelUseOwner(input.context);
     if (!OPERATION_ID.test(keyOperationId)) {
@@ -229,8 +257,17 @@ export function createResearchProviderKeyModelUseService(input: {
         "Provider-key operation ID is invalid");
     }
     let unresolved = await store.readUnresolved(input.context.principal_ref, input.project_id);
+    let expiredAttemptReconciled = false;
+    if (unresolved !== null && unresolved.operation_id !== request.operation_id && unresolved.state === "QUALIFYING" &&
+        Date.parse(unresolved.deadline_at) <= now()) {
+      const priorState = unresolved.state;
+      unresolved = await reconcileExpiredStartedQualification(unresolved);
+      expiredAttemptReconciled = priorState === "QUALIFYING" && unresolved.state === "UNCERTAIN";
+      unresolved = await store.readUnresolved(input.context.principal_ref, input.project_id) ?? unresolved;
+    }
     if (unresolved !== null && unresolved.operation_id !== request.operation_id &&
-        unresolved.state === "UNCERTAIN" && input.reconcile_unverified_execution !== undefined) {
+        unresolved.state === "UNCERTAIN" && !expiredAttemptReconciled &&
+        input.reconcile_unverified_execution !== undefined) {
       await input.reconcile_unverified_execution(unresolved);
       unresolved = await store.readUnresolved(input.context.principal_ref, input.project_id);
     }
@@ -531,6 +568,9 @@ export function createResearchProviderKeyModelUseService(input: {
             "This model-key use operation ID is already bound to a different request");
         }
       }
+      if (row.state === "QUALIFYING" && Date.parse(row.deadline_at) <= now()) {
+        return mapReceipt(await reconcileExpiredStartedQualification(row));
+      }
       if (["SELECTED", "BLOCKED", "UNCERTAIN", "CONFLICT"].includes(row.state)) return mapReceipt(row);
       if (row.state === "IMPORTING") {
         const selected = await input.project_configuration.readSelected(input.context, input.project_id).catch(() => null);
@@ -550,7 +590,14 @@ export function createResearchProviderKeyModelUseService(input: {
       let row = await readResearchProviderKeyModelUseOperation({
         store, database: input.database, context: input.context, project_id: input.project_id, operation_id: operationId,
       });
-      if (row.state === "UNCERTAIN" && input.reconcile_unverified_execution !== undefined) {
+      let expiredAttemptReconciled = false;
+      if (row.state === "QUALIFYING" && Date.parse(row.deadline_at) <= now()) {
+        const priorState = row.state;
+        row = await reconcileExpiredStartedQualification(row);
+        expiredAttemptReconciled = priorState === "QUALIFYING" && row.state === "UNCERTAIN";
+      }
+      if (row.state === "UNCERTAIN" && !expiredAttemptReconciled &&
+          input.reconcile_unverified_execution !== undefined) {
         await input.reconcile_unverified_execution(row);
         row = await store.read(row.owner_id, row.project_id, row.operation_id) ?? row;
       }

@@ -629,5 +629,75 @@ export function createResearchProviderKeyModelUseStore(database: D1Database) {
         storage("model-use stage transition could not be persisted", cause);
       }
     },
+    /** Expire only the exact active native attempt that remains STARTED and unobserved. */
+    async reconcileExpiredStartedQualification(input: {
+      readonly owner: string;
+      readonly project: string;
+      readonly operation_id: string;
+      readonly stage: ResearchProviderKeyModelUseStage;
+      readonly preparation_ref: string;
+      readonly preparation_sha256: string;
+      readonly request_sha256: string;
+      readonly owner_credential_generation: string;
+      readonly project_generation: number;
+      readonly deployment_generation: string;
+      readonly deadline_at: string;
+      readonly now: string;
+      readonly updated_at: string;
+    }): Promise<boolean> {
+      try {
+        const results = await database.batch([
+          database.prepare(
+            "UPDATE research_provider_key_model_use_stage_operation SET state='UNCERTAIN'," +
+            "failure_code='QUALIFICATION_OUTCOME_UNCERTAIN',updated_at=?1 " +
+            "WHERE owner_id=?2 AND project_id=?3 AND operation_id=?4 AND stage=?5 AND state='QUALIFYING' " +
+            "AND preparation_ref=?6 AND preparation_sha256=?7 AND EXISTS (" +
+            "SELECT 1 FROM research_provider_key_model_use_operation u " +
+            "JOIN project p ON p.project_id=u.project_id JOIN project_owner o ON o.project_id=p.project_id " +
+            "WHERE u.owner_id=?2 AND u.project_id=?3 AND u.operation_id=?4 AND u.request_sha256=?8 " +
+            "AND u.owner_credential_generation=?9 AND u.project_generation=?10 AND p.generation=?10 " +
+            "AND u.deployment_generation=?11 AND u.deadline_at=?12 AND julianday(u.deadline_at)<=julianday(?13) " +
+            "AND u.state='QUALIFYING' AND u.phase='NATIVE_QUALIFY' AND u.active_stage=?5 " +
+            "AND u.failure_code IS NULL AND o.principal_ref=u.owner_id) AND EXISTS (" +
+            "SELECT 1 FROM provider_native_model_qualification_attempt a " +
+            "WHERE a.owner_ref=?2 AND a.project_id=?3 AND a.owner_operation_id=?4 AND a.stage=?5 " +
+            "AND a.preparation_ref=?6 AND a.preparation_sha256=?7 AND a.state='STARTED' " +
+            "AND a.observation_ref IS NULL AND a.observation_sha256 IS NULL " +
+            "AND a.candidate_ref IS NULL AND a.candidate_sha256 IS NULL " +
+            "AND a.qualification_ref IS NULL AND a.qualification_sha256 IS NULL AND a.completed_at IS NULL)",
+          ).bind(input.updated_at, input.owner, input.project, input.operation_id, input.stage,
+            input.preparation_ref, input.preparation_sha256, input.request_sha256,
+            input.owner_credential_generation, input.project_generation, input.deployment_generation,
+            input.deadline_at, input.now),
+          database.prepare(
+            "UPDATE research_provider_key_model_use_operation SET state='UNCERTAIN'," +
+            "failure_code='QUALIFICATION_OUTCOME_UNCERTAIN',updated_at=?1 " +
+            "WHERE owner_id=?2 AND project_id=?3 AND operation_id=?4 AND request_sha256=?8 " +
+            "AND owner_credential_generation=?9 AND project_generation=?10 AND deployment_generation=?11 " +
+            "AND deadline_at=?12 AND julianday(deadline_at)<=julianday(?13) " +
+            "AND state='QUALIFYING' AND phase='NATIVE_QUALIFY' AND active_stage=?5 AND failure_code IS NULL " +
+            "AND EXISTS (SELECT 1 FROM project p JOIN project_owner o ON o.project_id=p.project_id " +
+            "WHERE p.project_id=?3 AND p.generation=?10 AND o.principal_ref=?2) " +
+            "AND EXISTS (SELECT 1 FROM research_provider_key_model_use_stage_operation s " +
+            "WHERE s.owner_id=?2 AND s.project_id=?3 AND s.operation_id=?4 AND s.stage=?5 " +
+            "AND s.state='UNCERTAIN' AND s.failure_code='QUALIFICATION_OUTCOME_UNCERTAIN' " +
+            "AND s.preparation_ref=?6 AND s.preparation_sha256=?7) " +
+            "AND EXISTS (SELECT 1 FROM provider_native_model_qualification_attempt a " +
+            "WHERE a.owner_ref=?2 AND a.project_id=?3 AND a.owner_operation_id=?4 AND a.stage=?5 " +
+            "AND a.preparation_ref=?6 AND a.preparation_sha256=?7 AND a.state='STARTED' " +
+            "AND a.observation_ref IS NULL AND a.observation_sha256 IS NULL " +
+            "AND a.candidate_ref IS NULL AND a.candidate_sha256 IS NULL " +
+            "AND a.qualification_ref IS NULL AND a.qualification_sha256 IS NULL AND a.completed_at IS NULL)",
+          ).bind(input.updated_at, input.owner, input.project, input.operation_id, input.stage,
+            input.preparation_ref, input.preparation_sha256, input.request_sha256,
+            input.owner_credential_generation, input.project_generation, input.deployment_generation,
+            input.deadline_at, input.now),
+        ]);
+        return results.length === 2 && results[1]?.meta.changes === 1;
+      } catch (cause) {
+        if (cause instanceof ResearchProviderKeyModelUseStoreError) throw cause;
+        storage("expired native qualification reconciliation could not be persisted", cause);
+      }
+    },
   });
 }
