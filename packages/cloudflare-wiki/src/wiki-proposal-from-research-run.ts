@@ -34,7 +34,26 @@ import type { WikiProposalResult } from "./wiki-service.js";
 
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9:._/@-]{0,255}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
-export const GENERATOR = "wiki-from-research-run-v1";
+export const GENERATOR = "wiki-from-research-run-v2";
+const MAX_TITLE_CODE_UNITS = 512;
+
+export function researchWikiDraftTitle(goal: string | undefined, createdAt: string): string {
+  const fallback = `Research draft · ${createdAt.slice(0, 10)}`;
+  const normalized = goal?.trim().replace(/\s+/gu, " ");
+  if (normalized === undefined || normalized.length === 0) return fallback;
+  let title = "";
+  for (const point of normalized) {
+    if (title.length + point.length > MAX_TITLE_CODE_UNITS) {
+      const lastPoint = Array.from(title).at(-1);
+      const boundedPrefix = title.length > MAX_TITLE_CODE_UNITS - 1 && lastPoint !== undefined
+        ? title.slice(0, -lastPoint.length) : title;
+      const prefix = boundedPrefix.trimEnd();
+      return prefix.length === 0 ? fallback : `${prefix}…`;
+    }
+    title += point;
+  }
+  return title.length === 0 ? fallback : title;
+}
 
 interface DependencyObjectReceipt {
   readonly key: string;
@@ -422,7 +441,7 @@ export async function proposeWikiFromResearchRun(
     const page: WikiPageRevision = {
       page_ref: { id: pageId, revision: 1 },
       page_type: "Report",
-      title: `Research draft · ${artifact.created_at.slice(0, 10)}`,
+      title: researchWikiDraftTitle(historical.goal, artifact.created_at),
       scope_snapshot_ref: { ...historical.coverage_receipt.frozen_scope_snapshot_ref },
       body_object_ref: bodyKey,
       body_sha256: bodyDigest,

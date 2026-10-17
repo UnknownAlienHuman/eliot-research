@@ -200,8 +200,10 @@ export async function dispatchHttpSpecialRoute(input: {
     case "research.project-guide.ensure":
       return handleProjectGuideHttp(input.request, input.env, input.context, input.match.params.project_id ?? "");
     case "research.runs": {
-      if ([...input.url.searchParams.keys()].some(key => key !== "project_id") || input.url.searchParams.getAll("project_id").length > 1) {
-        throw new HttpRequestError("RESEARCH_INPUT_INVALID", 400, "Only one project_id is supported");
+      if ([...input.url.searchParams.keys()].some(key => key !== "project_id" && key !== "format") ||
+          input.url.searchParams.getAll("project_id").length > 1 || input.url.searchParams.getAll("format").length > 1 ||
+          (input.url.searchParams.has("format") && input.url.searchParams.get("format") !== "v6")) {
+        throw new HttpRequestError("RESEARCH_INPUT_INVALID", 400, "Expected one project_id and optional format=v6");
       }
       const projectId = input.url.searchParams.get("project_id") ?? undefined;
       if (projectId !== undefined && !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/u.test(projectId)) {
@@ -209,7 +211,8 @@ export async function dispatchHttpSpecialRoute(input: {
       }
       const readiness = await readReadiness(input.env);
       if (!readiness.ready) throw new HttpRequestError("SCHEMA_NOT_READY", 503, "Required D1 migrations are not applied", true);
-      return apiResult(input.request, input.env, await readOwnerResearchRuns(input.env, input.context, projectId));
+      const format = input.url.searchParams.get("format") === "v6" ? "v6" : "v5";
+      return apiResult(input.request, input.env, await readOwnerResearchRuns(input.env, input.context, projectId, format));
     }
     case "system.mcp-diagnostic.issue":
       return handleMcpClientDiagnosticIssue(

@@ -9,6 +9,7 @@ import type { LibraryPage } from '@eliotr/owner-api-client';
 import type { playResearchJourney } from './ResearchPreview';
 import { paneAnnouncement, announcementUntil, unchangedChannel } from './announcementAssertions';
 import { researchPreviewModelRead } from './researchModelPreview';
+import { withRecordedCatalogReadiness } from './catalogReadinessPreview';
 
 /** Synthetic contract fixture. Only stories import it; every interaction uses the real workspace. */
 export function IntegrationRepairsPreview({ stalePage = false }: { readonly stalePage?: boolean }) {
@@ -31,7 +32,7 @@ export function IntegrationRepairsPreview({ stalePage = false }: { readonly stal
       if (url.pathname === '/api/v1/research/catalog') {
         catalogReads++;
         const second = url.searchParams.get('cursor') === 'page_two';
-        return json({ projects: [{ id: 'integration-project', title: 'Sources across pages', generation }], sources: [{ id: `integration-source-${second ? 2 : 1}`, title: second ? 'Second selected source' : 'First selected source', readiness_ref: `readiness:integration-source-${second ? 2 : 1}:observation-1` }], ...(second ? {} : { next_cursor: 'page_two' }) });
+        return json(withRecordedCatalogReadiness(url, { projects: [{ id: 'integration-project', title: 'Sources across pages', generation }], sources: [{ id: `integration-source-${second ? 2 : 1}`, title: second ? 'Second selected source' : 'First selected source', readiness_ref: `readiness:integration-source-${second ? 2 : 1}:observation-1` }], ...(second ? {} : { next_cursor: 'page_two' }) }, stamp));
       }
       if (url.pathname === '/api/v1/system/research-configuration') return json({ protocol: 'eliotr.research-configuration-readiness.v1', configuration: 'present', model_transport: 'available', qualification_state: 'current', run_readiness: 'ready', readiness_reason: 'QUALIFICATION_PROOFS_CURRENT', model_route: 'integration-route', qualification_expires_at: '2027-01-01T00:00:00.000Z', missing_fields: [], invalid_fields: [], checked_at: stamp });
       // History failure must not prevent same-key recovery of the independently acknowledged run.

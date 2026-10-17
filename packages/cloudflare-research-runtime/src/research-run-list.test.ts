@@ -56,6 +56,7 @@ function makePorts(input: {
   projectGeneration?: number;
 } = {}) {
   let historySql = "";
+  let workflowBindingQueries = 0;
   const database = {
     prepare(query: string) {
       return {
@@ -73,6 +74,7 @@ function makePorts(input: {
                 return { success: true, results: [...(input.draftRows ?? [])] as T[] };
               }
               if (query.includes("FROM research_report_admission r")) {
+                workflowBindingQueries += 1;
                 return { success: true, results: (input.workflowBindingRows ?? []).filter(row => row.intent_id === values[0]) as T[] };
               }
               return { success: true, results: [] as T[] };
@@ -98,7 +100,8 @@ function makePorts(input: {
     reopen_owner_artifact_draft: vi.fn(async () => { throw new Error("draft reopen is outside this locator test"); }),
     semantic_configuration_installed: () => true,
   } satisfies ResearchRunListPorts;
-  return { ports, prepare_artifact_read, getHistorySql: () => historySql };
+  return { ports, prepare_artifact_read, getHistorySql: () => historySql,
+    getWorkflowBindingQueries: () => workflowBindingQueries };
 }
 
 function makeHistoryBeyondDraftWindow() {
@@ -493,14 +496,16 @@ describe("owner research history", () => {
       admission_scope_snapshot_id: "scope-1", admission_scope_snapshot_revision: 2,
       workflow_operation_id: "completed-run", workflow_principal_ref: "owner-1",
       workflow_scope_snapshot_id: "scope-1", workflow_scope_snapshot_revision: 2,
+      query: "Why did the saved source revisions change?",
     }];
-    const { ports, prepare_artifact_read } = makePorts({ runRows, draftRows, workflowBindingRows });
+    const { ports, prepare_artifact_read, getWorkflowBindingQueries } = makePorts({ runRows, draftRows, workflowBindingRows });
     const requireCurrent = vi.fn(async () => undefined);
     prepareReadMock.mockResolvedValue({ status: workflowStatus("completed-run"), requireCurrent });
     historicalLocatorMock.mockResolvedValue({ operation_id: "completed-run", artifact_ref: artifactRef });
 
-    const history = await readOwnerResearchRuns(ports, context);
+    const history = await readOwnerResearchRuns(ports, context, undefined, "v6");
 
+    expect(history.protocol).toBe("eliotr.research-runs.v6");
     expect(prepare_artifact_read).toHaveBeenCalledWith(context, artifactRef, "report");
     expect(readHistoricalResearchArtifactLocator).toHaveBeenCalledWith(expect.objectContaining({
       operation_id: "completed-run", artifact_ref: artifactRef,
@@ -509,8 +514,35 @@ describe("owner research history", () => {
     }));
     expect(history.saved_drafts).toContainEqual(expect.objectContaining({
       artifact_ref: artifactRef, workflow_instance_id: "completed-run",
+      query: "Why did the saved source revisions change?",
     }));
+    expect(getWorkflowBindingQueries()).toBe(1);
     expect(history.runs[0]?.status.answer).toEqual({ availability: "draft", artifact_ref: artifactRef });
     expect(requireCurrent).toHaveBeenCalled();
+
+    const legacy = await readOwnerResearchRuns(ports, context);
+    expect(legacy.protocol).toBe("eliotr.research-runs.v5");
+    expect(legacy.saved_drafts[0]).not.toHaveProperty("query");
+    expect(legacy.saved_drafts[0]).toMatchObject({ artifact_ref: artifactRef, workflow_instance_id: "completed-run" });
+  });
+
+  it("does not disclose a saved-draft question when its artifact/workflow locator is not verified", async () => {
+    const artifactRef = { id: "artifact-unverified", revision: 1 };
+    const draftRows = [{ origin_client_class: "owner_pwa", artifact_id: artifactRef.id, revision: artifactRef.revision,
+      principal_ref: "owner-1", scope_snapshot_id: "scope-1", scope_snapshot_revision: 2,
+      intent_id: "intent-unverified", intent_revision: 1, created_at: "2026-10-15T12:02:00.000Z" }];
+    const workflowBindingRows = [{ intent_id: "intent-unverified", admission_operation_id: "unverified-run",
+      admission_principal_ref: "owner-1", admission_scope_snapshot_id: "scope-1", admission_scope_snapshot_revision: 2,
+      workflow_operation_id: "unverified-run", workflow_principal_ref: "owner-1",
+      workflow_scope_snapshot_id: "scope-1", workflow_scope_snapshot_revision: 2,
+      query: "Question that must remain hidden" }];
+    const { ports } = makePorts({ draftRows, workflowBindingRows });
+    historicalLocatorMock.mockResolvedValue(null);
+
+    const history = await readOwnerResearchRuns(ports, context);
+
+    expect(history.saved_drafts).toEqual([expect.objectContaining({ artifact_ref: artifactRef })]);
+    expect(history.saved_drafts[0]).not.toHaveProperty("query");
+    expect(history.saved_drafts[0]).not.toHaveProperty("workflow_instance_id");
   });
 });

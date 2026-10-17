@@ -44,5 +44,9 @@ test("Recent verifies exact materialized association without reopening the artif
   });
   expect(coverage?.artifact_ref).toEqual(data.artifact_ref);
   expect(coverage?.provenance.operation_id).toBe(input.operation_id);
+  const ledgerGoal = await database.prepare("SELECT goal FROM investigation_ledger_head WHERE investigation_id=?1 AND principal_ref=?2")
+    .bind(coverage?.provenance.investigation_ref.id, data.context.principal_ref).first<{ readonly goal: string }>();
+  expect(coverage?.protocol).toBe("eliotr.research.historical-coverage.v2");
+  expect(coverage?.goal).toBe(ledgerGoal?.goal);
   expect(data.original_model_calls).toBe(2);
 }, 120_000);

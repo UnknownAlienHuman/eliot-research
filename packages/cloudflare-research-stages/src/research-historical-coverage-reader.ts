@@ -2,6 +2,7 @@ import {
   canonicalEvidenceJson, type EvidenceAccessContext,
 } from "@eliotr/cloudflare-evidence";
 import {
+  ResearchRunHistoryQuerySchema,
   VersionedRefSchema,
   type CoverageReceipt,
   type VersionedRef,
@@ -84,8 +85,9 @@ export interface HistoricalResearchCoverageProvenance {
 }
 
 export interface HistoricalResearchCoverageReadback {
-  readonly protocol: "eliotr.research.historical-coverage.v1";
+  readonly protocol: "eliotr.research.historical-coverage.v2";
   readonly artifact_ref: VersionedRef;
+  readonly goal?: string;
   readonly coverage_receipt: CoverageReceipt;
   readonly coverage_receipt_ref: VersionedRef;
   readonly provenance: HistoricalResearchCoverageProvenance;
@@ -104,6 +106,7 @@ interface StoredRunRow {
   readonly next_stage_index: unknown;
   readonly state: unknown;
   readonly handler_generation: unknown;
+  readonly goal: unknown;
 }
 
 interface StoredArtifactManifestRow {
@@ -139,13 +142,21 @@ async function readCompletedHistoricalRun(database: D1Database, operationId: str
   let row: StoredRunRow | null;
   try {
     row = await database.prepare(
-      "SELECT operation_id, investigation_id, initial_revision, current_revision, principal_ref, " +
-      "credential_generation, deployment_generation, scope_snapshot_id, scope_snapshot_revision, " +
-      "next_stage_index, state, handler_generation FROM research_workflow_run " +
-      "WHERE operation_id=?1 AND principal_ref=?2 LIMIT 1",
+      "SELECT r.operation_id, r.investigation_id, r.initial_revision, r.current_revision, r.principal_ref, " +
+      "r.credential_generation, r.deployment_generation, r.scope_snapshot_id, r.scope_snapshot_revision, " +
+      "r.next_stage_index, r.state, r.handler_generation, h.goal " +
+      "FROM research_workflow_run r LEFT JOIN investigation_ledger_head h " +
+      "ON h.investigation_id=r.investigation_id AND h.principal_ref=r.principal_ref " +
+      "WHERE r.operation_id=?1 AND r.principal_ref=?2 LIMIT 1",
     ).bind(operationId, originalPrincipal).first<StoredRunRow>();
   } catch { unavailable(); }
   if (row === null) return null;
+  let goal: string | undefined;
+  if (row.goal !== null && row.goal !== undefined) {
+    const parsedGoal = ResearchRunHistoryQuerySchema.safeParse(row.goal);
+    if (!parsedGoal.success) corrupt();
+    goal = parsedGoal.data;
+  }
   const result = {
     operationId: text(row.operation_id, "operation_id"), investigationId: text(row.investigation_id, "investigation_id"),
     principalRef: text(row.principal_ref, "principal_ref"), credentialGeneration: text(row.credential_generation, "credential_generation"),
@@ -153,6 +164,7 @@ async function readCompletedHistoricalRun(database: D1Database, operationId: str
     scope: VersionedRefSchema.parse({ id: text(row.scope_snapshot_id, "scope_snapshot_id"), revision: positive(row.scope_snapshot_revision) }),
     initialRevision: positive(row.initial_revision), currentRevision: positive(row.current_revision),
     nextStageIndex: Number(row.next_stage_index), handlerGeneration: text(row.handler_generation, "handler_generation"),
+    ...(goal === undefined ? {} : { goal }),
   };
   if (result.operationId !== operationId || result.principalRef !== originalPrincipal ||
       row.state !== "ENGINE_COMPLETED" || result.nextStageIndex !== RESEARCH_WORKFLOW_STAGES.length ||
@@ -409,8 +421,9 @@ async function readHistoricalCoverage(
   await requireStoredArtifactManifest(input.database, artifactRef, originalPrincipal, scope, materialized);
   await input.require_current();
   return Object.freeze({
-    protocol: "eliotr.research.historical-coverage.v1" as const,
+    protocol: "eliotr.research.historical-coverage.v2" as const,
     artifact_ref: Object.freeze({ ...artifactRef }),
+    ...(completed.goal === undefined ? {} : { goal: completed.goal }),
     coverage_receipt: coverage.coverage_receipt,
     coverage_receipt_ref: Object.freeze({ ...coverage.coverage_receipt.receipt_ref }),
     provenance: Object.freeze({

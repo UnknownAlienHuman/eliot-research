@@ -13,6 +13,7 @@ import { ErasurePanel } from "./ErasurePanel";
 import { ImportPanel } from "./ImportPanel";
 import { createPrivacyController, type PrivacyController, type SessionContext } from "./privacy";
 import { createWorkspaceRuntime, type BoundWorkspaceApis } from "./runtime";
+import { withRecordedCatalogReadiness } from "./catalogReadinessPreview";
 
 const generation = "issue335-panel-regression";
 const stamp = "2026-10-13T12:00:00.000Z";
@@ -540,12 +541,14 @@ async function buildEnvironment(projectSelected = false): Promise<PanelEnvironme
   const apis = runtime.read(verified.context);
   if (!apis) throw new Error("Panel fixture runtime did not bind");
 
-  const page: LibraryPage = {
-    projects: [{ id: "project-panel-1", title: "Panel regression", generation }],
-    sources: [{ id: sourceId, title: "Panel regression source", readiness_ref: "readiness-panel-1" }],
-    generation,
-    trace: "panel-regression-trace",
-  };
+  const page: LibraryPage = apis.sources.library.decodeLibraryPage({
+    data: withRecordedCatalogReadiness(new URL("https://panel-regression.invalid/api/v1/research/catalog?readiness=recorded-v1"), {
+      projects: [{ id: "project-panel-1", title: "Panel regression", generation }],
+      sources: [{ id: sourceId, title: "Panel regression source", readiness_ref: `readiness:${sourceId}:source-panel-revision-1` }],
+    }, stamp),
+    deployment_generation: generation,
+    trace_id: "panel-regression-trace",
+  }, generation, "recorded-v1");
 
   const probe: PanelRegressionProbe = {
     counts() {

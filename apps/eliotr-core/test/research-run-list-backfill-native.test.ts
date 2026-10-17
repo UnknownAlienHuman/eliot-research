@@ -1,9 +1,18 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { env } from "cloudflare:workers";
 import { reset } from "cloudflare:test";
+import { vi } from "vitest";
 import { readOwnerResearchRuns } from "@eliotr/cloudflare-research-runtime";
 import { CatalogInputError } from "@eliotr/cloudflare-navigation";
-import { ArtifactReadNotFoundError, type AuthenticatedRequestContext, type ResearchRunStatus } from "@eliotr/interfaces";
+import { ArtifactReadNotFoundError, type AuthenticatedRequestContext } from "@eliotr/interfaces";
+import type { WorkflowRunStatus } from "@eliotr/cloudflare-workflows";
+import type * as RunReadAuthorization from "../../../packages/cloudflare-research-runtime/src/research-run-read-authorization.js";
+
+const { prepareMetadataReadMock } = vi.hoisted(() => ({ prepareMetadataReadMock: vi.fn() }));
+vi.mock("../../../packages/cloudflare-research-runtime/src/research-run-read-authorization.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof RunReadAuthorization>();
+  return { ...actual, prepareReauthenticatedRunMetadataRead: prepareMetadataReadMock };
+});
 
 // Actual native D1 candidate SQL, with explicit synthetic upstream tables and
 // controlled authority ports. Existing full-schema/current-authority receipts
@@ -69,21 +78,21 @@ function ports(input: { deniedRuns?: ReadonlySet<string>; deniedDrafts?: Readonl
     const value: unknown = Reflect.get(target, key, target);
     return typeof value === "function" ? value.bind(target) : value;
   } });
-  const status = (operation: string): ResearchRunStatus => ({
-    protocol: "eliotr.research-run-status.v1", workflow_instance_id: operation,
-    investigation_ref: { id: "recent-investigation", revision: 1 }, execution_state: "ACTIVE",
-    next_stage_index: 0, answer: { availability: "unavailable" },
-  });
+  const status = (operation: string): WorkflowRunStatus => ({
+    operation_id: operation, investigation_id: `investigation-${operation}`, current_revision: 1,
+    scope_snapshot_id: scope.id, scope_snapshot_revision: scope.revision,
+    state: "ACTIVE", next_stage_index: 0, cancellation_receipt_ref: null,
+  } as unknown as WorkflowRunStatus);
   const value: Parameters<typeof readOwnerResearchRuns>[0] = {
     database, work_bucket: bindings.WORK_BUCKET, deployment_generation: generation,
     run_read: { database, work_bucket: bindings.WORK_BUCKET, active_deployment_generation: generation,
-      require_deployment_compatibility: async () => {}, reopen_owner_artifact_draft: async () => { throw new Error("unused owner draft port"); } },
+      require_deployment_compatibility: async () => {}, reopen_owner_artifact_draft: async () => { throw new Error("unused owner draft port"); },
+      run_status: async (actor: AuthenticatedRequestContext, operation: string) => {
+        expect(actor.principal_ref).toBe(principal); counts.run_authorizations += 1;
+        if (input.deniedRuns?.has(operation)) throw new CatalogInputError("RESEARCH_HISTORY_AUTHORITY_STALE", "denied", 403);
+        return status(operation);
+      } },
     authorize_owner_read: actor => { expect(actor.client_class).toBe("owner_pwa"); },
-    run_status: async (actor, operation) => {
-      expect(actor.principal_ref).toBe(principal); counts.run_authorizations += 1;
-      if (input.deniedRuns?.has(operation)) throw new CatalogInputError("RESEARCH_HISTORY_AUTHORITY_STALE", "denied", 403);
-      return status(operation);
-    },
     prepare_artifact_read: async (actor, ref) => {
       expect(actor.principal_ref).toBe(principal); counts.draft_authorizations += 1;
       if (input.deniedDrafts?.has(ref.id) || input.deniedDraftRevisions?.has(ref.revision)) throw new ArtifactReadNotFoundError();
@@ -95,6 +104,12 @@ function ports(input: { deniedRuns?: ReadonlySet<string>; deniedDrafts?: Readonl
     reopen_owner_artifact_draft: async () => { throw new Error("unused owner draft port"); },
     semantic_configuration_installed: () => true,
   };
+  prepareMetadataReadMock.mockImplementation(async (runRead: { run_status: (actor: AuthenticatedRequestContext, operation: string) => Promise<ResearchRunStatus> },
+    actor: AuthenticatedRequestContext, operation: string) => ({
+    status: await runRead.run_status(actor, operation),
+    handler_generation: "recent-controlled-handler",
+    requireCurrent: async () => undefined,
+  }));
   return { value, counts, currentCalls };
 }
 
@@ -109,8 +124,8 @@ describe("bounded Recent visible history over native D1 candidate SQL", () => {
     expect(result.runs.map(row => row.status.workflow_instance_id)).toEqual([id("run", 1)]);
     expect(result.saved_drafts.map(row => row.artifact_ref.id)).toEqual([id("draft", 1)]);
     expect(result.visibility_scan).toEqual({ runs: "SOURCE_EXHAUSTED", saved_drafts: "SOURCE_EXHAUSTED" });
-    // Nine candidates plus the final authority recheck for the one visible run.
-    expect(reads.counts).toEqual({ run_candidate_queries: 2, draft_candidate_queries: 2, run_authorizations: 10, draft_authorizations: 9 });
+    // The final currentness recheck is separate from the nine candidate reads.
+    expect(reads.counts).toEqual({ run_candidate_queries: 2, draft_candidate_queries: 2, run_authorizations: 9, draft_authorizations: 9 });
     for (const denied of [...deniedRuns, ...deniedDrafts]) expect(JSON.stringify(result)).not.toContain(denied);
   });
 

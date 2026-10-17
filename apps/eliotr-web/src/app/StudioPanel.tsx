@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { skipToken, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from 'react-router';
 import { Button, OperationAnnouncement, Status, StudioFeature, STUDIO_COPY } from '@eliotr/ui';
-import type { VersionedRef, WikiProposalReadView, WikiProposalFromRunView, WikiPublicationView } from '@eliotr/owner-api-client';
+import type { ResearchRunHistoryView, VersionedRef, WikiProposalReadView, WikiProposalFromRunView, WikiPublicationView } from '@eliotr/owner-api-client';
 import { classifyMutationOutcome } from '@eliotr/owner-api-client';
 import type { BoundWorkspaceApis } from './runtime';
 import { isWorkspaceRequestError } from './runtime';
@@ -24,6 +24,50 @@ interface StudioMemory {
   readonly reviewedEdit?: Extract<StudioIntent, { readonly kind: 'edit' }>;
 }
 const sameRef = (left: VersionedRef, right: VersionedRef) => left.id === right.id && left.revision === right.revision;
+const savedReportTitleCopy = { en: 'Research report', ru: 'Отчёт исследования' } as const;
+const savedReportDateCopy = {
+  en: { artifact: 'Saved', run: 'Research started' },
+  ru: { artifact: 'Сохранён', run: 'Исследование начато' },
+} as const;
+
+interface StudioSavedReportRow {
+  readonly artifact_ref: VersionedRef;
+  readonly created_at: string;
+  readonly query?: string;
+  readonly date_source: 'artifact' | 'run';
+}
+
+/** Combine the two bounded, already-authorized history projections without another read. */
+export function studioSavedReports(history: ResearchRunHistoryView): StudioSavedReportRow[] {
+  const reports = new Map<string, StudioSavedReportRow>();
+  for (const draft of history.saved_drafts) {
+    const key = `${draft.artifact_ref.id}:${draft.artifact_ref.revision}`;
+    reports.set(key, { artifact_ref: draft.artifact_ref, created_at: draft.created_at,
+      ...(draft.query === undefined ? {} : { query: draft.query }), date_source: 'artifact' });
+  }
+  for (const run of history.runs) {
+    if (run.status.execution_state !== 'ENGINE_COMPLETED' || run.status.answer.availability !== 'draft') continue;
+    const artifactRef = run.status.answer.artifact_ref;
+    const key = `${artifactRef.id}:${artifactRef.revision}`;
+    const saved = reports.get(key);
+    if (saved !== undefined) {
+      if (saved.query === undefined && run.query !== undefined) reports.set(key, { ...saved, query: run.query });
+      continue;
+    }
+    reports.set(key, { artifact_ref: artifactRef, created_at: run.created_at,
+      ...(run.query === undefined ? {} : { query: run.query }), date_source: 'run' });
+  }
+  return [...reports.values()]
+    .sort((left, right) => Date.parse(right.created_at) - Date.parse(left.created_at) ||
+      left.artifact_ref.id.localeCompare(right.artifact_ref.id) || left.artifact_ref.revision - right.artifact_ref.revision)
+    .slice(0, 8);
+}
+
+export function savedReportTitle(query: string | undefined, locale: 'en' | 'ru'): string {
+  const normalized = query?.trim().replace(/\s+/gu, ' ');
+  return normalized || savedReportTitleCopy[locale];
+}
+
 const copy = {
   en: { working: 'Checking the current action.', reading: 'Reading saved work.', loaded: 'Saved work loaded.', drafts: 'Wiki drafts', read: 'Refresh saved work', previous: 'Previous page', next: 'More drafts', recent: 'Saved reports', report: 'Open saved report', unknown: 'The last action has no confirmed outcome. Its original draft, content and request identity are preserved.', recover: 'Check the same action', inputs: 'The edit could not be prepared. Review its title and text.', review: 'Review the edit again', published: 'Publication confirmed for this Wiki page.', edited: 'A new draft revision was returned. The previous page was preserved.', failed: 'The selected draft could not be read. No saved text is shown.', reread: 'Read the selected draft again' },
   ru: { working: 'Выполняется действие.', reading: 'Читаются сохранённые материалы.', loaded: 'Сохранённые материалы прочитаны.', drafts: 'Черновики Wiki', read: 'Обновить', previous: 'Предыдущая страница', next: 'Другие черновики', recent: 'Сохранённые отчёты', report: 'Открыть отчёт', unknown: 'Последнее действие не подтвердилось. Черновик сохранён — проверьте действие, повтор не создаст дубликат.', recover: 'Проверить то же действие', inputs: 'Не удалось подготовить правку. Проверьте заголовок и текст.', review: 'Проверить правку ещё раз', published: 'Публикация этой страницы Wiki подтверждена.', edited: 'Получена новая версия черновика. Предыдущая страница сохранена.', failed: 'Не удалось прочитать выбранный черновик.', reread: 'Прочитать выбранный черновик снова' },
@@ -352,8 +396,10 @@ export function StudioPanel({ apis, privacy, context, locale }: {
       {history.isError ? <Status tone="error">{reportText.failed}</Status>
         : history.isPending ? <LoadingRows label={reportText.reading} />
         : history.data?.saved_drafts.length === 0 ? <p>{reportText.empty}</p> : null}
-      <ul>{!history.isError && history.data?.saved_drafts.map(draft => <li key={`${draft.artifact_ref.id}:${draft.artifact_ref.revision}`}>
-      <time dateTime={draft.created_at}>{displayTime(draft.created_at)}</time><Button variant="tonal" onClick={() => write(old => ({ ...old, artifact: draft.artifact_ref }))}>{text.report}</Button>
+      <ul>{!history.isError && history.data && studioSavedReports(history.data).map(report => <li key={`${report.artifact_ref.id}:${report.artifact_ref.revision}`}>
+      <strong>{savedReportTitle(report.query, locale)}</strong>
+      <small>{savedReportDateCopy[locale][report.date_source]} · <time dateTime={report.created_at}>{displayTime(report.created_at)}</time></small>
+      <Button variant="tonal" onClick={() => write(old => ({ ...old, artifact: report.artifact_ref }))}>{text.report}</Button>
       </li>)}</ul>
     </section>
     <fieldset className="er-live-plain-fieldset" disabled={blocked} aria-label={text.drafts}>

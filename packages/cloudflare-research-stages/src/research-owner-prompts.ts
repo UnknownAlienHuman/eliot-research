@@ -3,7 +3,7 @@ import { canonicalModelGatewayJson } from "@eliotr/cloudflare-ai";
 /** JSON Schema suitable for a model gateway response_format value. */
 export type ResearchOwnerJsonSchema = Readonly<Record<string, unknown>>;
 
-export interface ResearchOwnerJsonResponseFormat {
+interface ResearchOwnerJsonSchemaResponseFormat {
   readonly type: "json_schema";
   readonly json_schema: {
     readonly name: string;
@@ -12,13 +12,16 @@ export interface ResearchOwnerJsonResponseFormat {
   };
 }
 
-export type ResearchOwnerOutputFormat = "json_schema" | "prompt_json";
+export type ResearchOwnerJsonResponseFormat = ResearchOwnerJsonSchemaResponseFormat |
+  Readonly<{ type: "json_object" }>;
+
+export type ResearchOwnerOutputFormat = "json_schema" | "prompt_json" | "json_object";
 export type ResearchOwnerPromptStage = "SYNTHESIZE" | "AUDIT_CLAIMS";
 export type ResearchOwnerPromptRevision = "v1" | "v2";
 
 export interface ResearchOwnerPromptDefinition {
   readonly prompt: string;
-  readonly response_format: ResearchOwnerJsonResponseFormat;
+  readonly response_format: ResearchOwnerJsonSchemaResponseFormat;
   readonly output_schema: ResearchOwnerJsonSchema;
 }
 
@@ -93,7 +96,7 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-function responseFormat(name: string, schema: ResearchOwnerJsonSchema): ResearchOwnerJsonResponseFormat {
+function responseFormat(name: string, schema: ResearchOwnerJsonSchema): ResearchOwnerJsonSchemaResponseFormat {
   return deepFreeze({
     type: "json_schema" as const,
     json_schema: { name, strict: true as const, schema },
@@ -356,7 +359,7 @@ export const RESEARCH_OWNER_PROMPTS: ResearchOwnerPromptConfiguration = deepFree
 
 export function parseResearchOwnerOutputFormat(value: unknown): ResearchOwnerOutputFormat {
   if (value === undefined || value === "json_schema") return "json_schema";
-  if (value === "prompt_json") return value;
+  if (value === "prompt_json" || value === "json_object") return value;
   throw new Error("research owner output_format is invalid");
 }
 
@@ -391,9 +394,10 @@ export function selectResearchOwnerPrompt(
     stage === "AUDIT_CLAIMS" ? (selectedRevision === "v1" ? RESEARCH_OWNER_PROMPTS.audit : auditV2Definition) : undefined;
   if (base === undefined) throw new Error("research owner prompt stage is invalid");
   if (outputFormat === "json_schema") return base;
-  if (outputFormat !== "prompt_json") throw new Error("research owner output_format is invalid");
+  if (outputFormat !== "prompt_json" && outputFormat !== "json_object") throw new Error("research owner output_format is invalid");
   return deepFreeze({
     prompt: `${base.prompt} ${PROMPT_JSON_SCHEMA_INSTRUCTION}${canonicalModelGatewayJson(base.output_schema)}`,
+    ...(outputFormat === "json_object" ? { response_format: { type: "json_object" as const } } : {}),
     output_schema: base.output_schema,
   });
 }
@@ -412,7 +416,7 @@ export function matchResearchOwnerPrompt(
   const revisions: readonly ResearchOwnerPromptRevision[] = stage === "AUDIT_CLAIMS" ? ["v1", "v2"] : ["v1"];
   try {
     for (const revision of revisions) {
-      for (const outputFormat of ["prompt_json", "json_schema"] as const) {
+      for (const outputFormat of ["prompt_json", "json_schema", "json_object"] as const) {
         const definition = selectResearchOwnerPrompt(stage, outputFormat, revision);
         if (definition.prompt === configured.prompt &&
             (definition.response_format === undefined

@@ -7,6 +7,7 @@ import { paneAnnouncement, announcementUntil, unchangedChannel } from './announc
 import { createWorkspaceRuntime } from './runtime';
 import { createPrivacyController, type SessionContext } from './privacy';
 import { clearWorkspaceQueries, createWorkspaceQueryClient, protectedQueryKey } from '../query/client';
+import { withRecordedCatalogReadiness } from './catalogReadinessPreview';
 
 const generation = 'live-fixture', stamp = '2026-10-09T12:00:00.000Z';
 const project = 'project-live-1', source = 'source-live-1', revision = 'revision-live-1';
@@ -43,7 +44,7 @@ function createFixture(readFailure?: ReadFailure) {
     if (url.pathname === '/api/v1/system/health') return json({ ready: true, deployment_generation: generation, core_schema_generation: 'schema-1', search_schema_generation: 'schema-1', blocking_reason_codes: [], checked_at: stamp });
     if (url.pathname === '/api/v1/system/session') return json({ protocol: 'eliotr.owner-session.v1', principal_ref: 'live-owner', credential_generation: 'live-credential', client_class: 'owner_pwa', expires_at: '2027-01-01T00:00:00.000Z' });
     if (url.pathname === '/api/v1/research/projects') return json({ protocol: 'eliotr.project-owner-list.v1', projects: [{ protocol: 'eliotr.project-owner.v1', project_ref: { id: project, revision: 1 }, title: 'Evidence in context', revision: 1, owner_principal_ref: 'live-owner', deployment_generation: generation, source_ids: [source], created_at: stamp }] });
-    if (url.pathname === '/api/v1/research/catalog') return json({ projects: [{ id: project, title: 'Evidence in context', generation }], sources: [{ id: source, title: sourceTitle, readiness_ref: 'readiness:source-live-1:observation-1' }] });
+    if (url.pathname === '/api/v1/research/catalog') return json(withRecordedCatalogReadiness(url, { projects: [{ id: project, title: 'Evidence in context', generation }], sources: [{ id: source, title: sourceTitle, readiness_ref: 'readiness:source-live-1:observation-1' }] }, stamp));
     if (url.pathname === '/api/v1/library/readiness') {
       if (url.searchParams.get('project_id') !== project || url.searchParams.get('source_id') !== source)
         throw new Error('Readiness escaped the selected fixture project/source');

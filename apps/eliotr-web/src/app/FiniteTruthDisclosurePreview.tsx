@@ -13,6 +13,7 @@ import { createWorkspaceRuntime } from './runtime';
 import { createPrivacyController } from './privacy';
 import { clearWorkspaceQueries, createWorkspaceQueryClient } from '../query/client';
 import { researchPreviewModelRead } from './researchModelPreview';
+import { withRecordedCatalogReadiness } from './catalogReadinessPreview';
 
 type Scenario = 'capability' | 'disclosure';
 const origin = 'https://fixture.invalid';
@@ -154,7 +155,7 @@ function createEnvironment(scenario: Scenario, holdDiagnostic: boolean) {
       }],
     });
     if (url.pathname === '/api/v1/research/catalog' && url.searchParams.get('project_id') === projectId) {
-      return json({ projects: [{ id: projectId, title: projectTitle, generation }], sources: [] });
+      return json(withRecordedCatalogReadiness(url, { projects: [{ id: projectId, title: projectTitle, generation }], sources: [] }, stamp));
     }
     if (url.pathname === '/api/v1/system/mcp-diagnostics') {
       audit.diagnostics += 1;
@@ -225,12 +226,15 @@ function createEnvironment(scenario: Scenario, holdDiagnostic: boolean) {
         'x-eliotr-section-sha256': await reportHash, 'x-eliotr-deployment-generation': generation,
       } });
     }
+    if (scenario === 'disclosure' && url.pathname === reportPath + '/sections/section-safe%3A1/citations' && !url.search) {
+      return json({ protocol: 'eliotr.artifact-section-citations.v1', artifact_ref: artifactRef,
+        section_ref: { id: 'section-safe', revision: 1 }, scope_snapshot_ref: { id: 'scope-safe', revision: 1 },
+        verification_receipt_ref: 'verification-safe', semantic_verification: 'NOT_EXECUTED', cited_evidence: [] });
+    }
     if (scenario === 'disclosure' && url.pathname === reportPath + '/publication' && !url.search) {
       audit.publications += 1;
       // First read exposes bounded public receipt facts; second read exercises strict rejection.
-      const sha = await reportHash;
-      const currentPublication = { ...publication, revision: { ...publication.revision,
-        sections: publication.revision.sections.map(section => ({ ...section, body_sha256: sha })) } };
+      const currentPublication = { ...publication, revision: { ...await manifest(), status: 'ACCEPTED' } };
       if (audit.publications === 1) return json(currentPublication);
       if (audit.publications === 2) return json({ ...currentPublication, ...rawMaterial });
     }
@@ -335,7 +339,7 @@ function readOnlyAudit(root: HTMLElement) {
   const audit = fixtureAudits.get(root);
   assert(audit, 'Fixture request observation is unavailable');
   assert(audit.mutations === 0 && audit.mints === 0, 'Composition started an automatic operation or minted an intent');
-  assert(audit.unexpected.length === 0, 'Composition called an unlisted endpoint or changed owner transport policy');
+  assert(audit.unexpected.length === 0, 'Composition called an unlisted endpoint or changed owner transport policy: ' + audit.unexpected.join('; '));
   assert(audit.calls.every(call => call.method === 'GET'), 'A non-read transport call was attempted');
   return audit;
 }
@@ -357,7 +361,7 @@ function commonFacts(root: HTMLElement) {
     'Server and API', 'Owner session', 'Project permission', 'Google transport routing', 'Observed client call',
   ]), 'Agents rendered facts outside its access and diagnostic responsibilities');
   assert(root.querySelector('.er-agent-connect__value code')?.textContent === origin + '/mcp', 'The guide did not use the published MCP address');
-  assert(root.querySelector('.er-agent-connections')?.textContent?.includes('No computer-agent connections are saved for this owner.'), 'A valid empty agent list did not stay distinct from a failed read');
+  assert(root.querySelector('.er-agent-connections')?.textContent?.includes('No agents are connected yet.'), 'A valid empty agent list did not stay distinct from a failed read');
   assert(!root.querySelector('.er-agent-connections form'), 'An agent registration form opened automatically');
   assert(!root.querySelector('dialog[open]'), 'A mutation dialog opened automatically');
   assert(root.querySelector<HTMLAnchorElement>('.er-shell-reading a[href="/settings"]')?.textContent === 'Open settings', 'Global provider setup did not remain in Settings');

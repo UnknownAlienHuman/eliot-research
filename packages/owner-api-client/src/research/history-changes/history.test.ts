@@ -100,6 +100,33 @@ describe("history decoder boundaries", () => {
     expect(decoded.runs[0]).not.toHaveProperty("query");
   });
 
+  it("decodes v6 saved-draft questions only with a verified workflow binding", () => {
+    const api = decodeOnly();
+    const visibility_scan = { runs: "SOURCE_EXHAUSTED", saved_drafts: "SOURCE_EXHAUSTED" };
+    const query = "Why did the saved source revisions change?";
+    const valid = historyFor(baseData({ protocol: "eliotr.research-runs.v6", visibility_scan,
+      saved_drafts: [{ created_at: "2026-10-09T12:00:00.000Z", artifact_ref: { id: "draft-1", revision: 1 },
+        workflow_instance_id: "run-1", query }] }));
+    expect(api.decodeResearchRunHistory(valid).saved_drafts[0]?.query).toBe(query);
+
+    const noWorkflowBinding = historyFor(baseData({ protocol: "eliotr.research-runs.v6", visibility_scan,
+      saved_drafts: [{ created_at: "2026-10-09T12:00:00.000Z", artifact_ref: { id: "draft-1", revision: 1 }, query }] }));
+    expect(thrown(() => api.decodeResearchRunHistory(noWorkflowBinding)))
+      .toMatchObject({ code: "RESEARCH_RUN_RESPONSE_INVALID" });
+
+    const invalidQuery = historyFor(baseData({ protocol: "eliotr.research-runs.v6", visibility_scan,
+      saved_drafts: [{ created_at: "2026-10-09T12:00:00.000Z", artifact_ref: { id: "draft-1", revision: 1 },
+        workflow_instance_id: "run-1", query: "" }] }));
+    expect(thrown(() => api.decodeResearchRunHistory(invalidQuery)))
+      .toMatchObject({ code: "RESEARCH_RUN_RESPONSE_INVALID" });
+
+    const v5WithNewField = historyFor(baseData({ protocol: "eliotr.research-runs.v5", visibility_scan,
+      saved_drafts: [{ created_at: "2026-10-09T12:00:00.000Z", artifact_ref: { id: "draft-1", revision: 1 },
+        workflow_instance_id: "run-1", query }] }));
+    expect(thrown(() => api.decodeResearchRunHistory(v5WithNewField)))
+      .toMatchObject({ code: "RESEARCH_RUN_RESPONSE_INVALID" });
+  });
+
   it("caps runs and rejects a duplicate run id", () => {
     const api = decodeOnly();
     const many = historyFor(baseData({ runs: Array.from({ length: 9 }, (_unused, index) =>
@@ -210,7 +237,7 @@ describe("history transport fence across a deferred request", () => {
     );
     await expect(api.readResearchRunHistory("deployment-1"))
       .resolves.toMatchObject({ protocol: "eliotr.research-runs.v3" });
-    expect(seenPath).toBe("/api/v1/research/runs");
+    expect(seenPath).toBe("/api/v1/research/runs?format=v6");
     expect(Object.keys(seenInit as object)).not.toContain("method");
   });
 

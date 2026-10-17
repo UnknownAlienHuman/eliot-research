@@ -123,6 +123,19 @@ function sameManifest(left: unknown, right: unknown): boolean {
   return canonicalEvidenceJson(left) === canonicalEvidenceJson(right);
 }
 
+/** Ordered bounded join: start every immutable read, inspect all results, throw the first failure in caller order. */
+async function readOrderedJoin<T extends readonly unknown[]>(
+  reads: { readonly [Index in keyof T]: () => Promise<T[Index]> },
+): Promise<T> {
+  const settled = await Promise.allSettled(reads.map((read) => Promise.resolve().then(read)));
+  const values: unknown[] = [];
+  for (const result of settled) {
+    if (result.status === "rejected") throw result.reason;
+    values.push(result.value);
+  }
+  return values as unknown as T;
+}
+
 async function decodeOrCorrupt<T>(read: () => T | Promise<T>): Promise<T> {
   try {
     return await read();
@@ -413,10 +426,13 @@ export async function readCommittedResearchMaterializeAudit(
   }
 
   const checkpoints = new WorkflowCheckpointStore(input.database);
-  const verify = await readCommittedStageLineage(checkpoints, input.request.operation_id, VERIFY_STAGE);
-  const auditLineage = await readCommittedStageLineage(checkpoints, input.request.operation_id, AUDIT_STAGE);
-  const citationsLineage = await readCommittedStageLineage(checkpoints, input.request.operation_id, CITATIONS_STAGE);
-  const coverageLineage = await readCommittedStageLineage(checkpoints, input.request.operation_id, COVERAGE_STAGE);
+  // Four independent committed lineage reads in one ordered join; validators below run in the original order.
+  const [verify, auditLineage, citationsLineage, coverageLineage] = await readOrderedJoin([
+    () => readCommittedStageLineage(checkpoints, input.request.operation_id, VERIFY_STAGE),
+    () => readCommittedStageLineage(checkpoints, input.request.operation_id, AUDIT_STAGE),
+    () => readCommittedStageLineage(checkpoints, input.request.operation_id, CITATIONS_STAGE),
+    () => readCommittedStageLineage(checkpoints, input.request.operation_id, COVERAGE_STAGE),
+  ] as const);
   requireWorkflowLineage(input.request, verify, VERIFY_STAGE);
   requireWorkflowLineage(input.request, auditLineage, AUDIT_STAGE);
   requireWorkflowLineage(input.request, citationsLineage, CITATIONS_STAGE);
@@ -429,8 +445,11 @@ export async function readCommittedResearchMaterializeAudit(
     failCorrupt();
   }
 
-  const auditBytes = await readOutput(input.work_bucket, auditLineage);
-  const citationsBytes = await readOutput(input.work_bucket, citationsLineage);
+  // Two independent R2 output reads in one ordered join; digest checks stay inside readOutput.
+  const [auditBytes, citationsBytes] = await readOrderedJoin([
+    () => readOutput(input.work_bucket, auditLineage),
+    () => readOutput(input.work_bucket, citationsLineage),
+  ] as const);
   const audit = await decodeOrCorrupt(() => decodeResearchClaimAuditResult(auditBytes));
   const citations = await decodeOrCorrupt(() => decodeResearchCitationsResult(citationsBytes));
   const coverage = await decodeOrCorrupt(() => decodeResearchCoverageResult(new Uint8Array(input.input_bytes)));

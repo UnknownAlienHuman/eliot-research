@@ -53,6 +53,12 @@ interface HistoricalWorkflowRow {
   readonly workflow_principal_ref: unknown;
   readonly workflow_scope_snapshot_id: unknown;
   readonly workflow_scope_snapshot_revision: unknown;
+  readonly query: unknown;
+}
+
+interface HistoricalWorkflowBinding {
+  readonly operation_id: string;
+  readonly query?: string;
 }
 
 function sameRef(left: VersionedRef, right: VersionedRef): boolean {
@@ -73,12 +79,12 @@ function expectedSavedDraftDenial(error: unknown): boolean {
     [403, 404, 409, 410].includes(error.status);
 }
 
-async function readHistoricalWorkflowId(
+async function readHistoricalWorkflowBinding(
   ports: ResearchRunListPorts,
   draft: SavedDraftRow,
   principalRef: string,
   scope: VersionedRef,
-): Promise<string | null> {
+): Promise<HistoricalWorkflowBinding | null> {
   if (typeof draft.intent_id !== "string" || !Number.isSafeInteger(draft.intent_revision) ||
       (draft.intent_revision as number) < 1) invalidHistory("Saved report intent binding is invalid");
   let result: D1Result<HistoricalWorkflowRow>;
@@ -87,10 +93,12 @@ async function readHistoricalWorkflowId(
       "SELECT r.operation_id AS admission_operation_id,r.principal_ref AS admission_principal_ref," +
       "r.scope_snapshot_id AS admission_scope_snapshot_id,r.scope_snapshot_revision AS admission_scope_snapshot_revision," +
       "w.operation_id AS workflow_operation_id,w.principal_ref AS workflow_principal_ref," +
-      "w.scope_snapshot_id AS workflow_scope_snapshot_id,w.scope_snapshot_revision AS workflow_scope_snapshot_revision " +
+      "w.scope_snapshot_id AS workflow_scope_snapshot_id,w.scope_snapshot_revision AS workflow_scope_snapshot_revision," +
+      "h.goal AS query " +
       "FROM research_report_admission r JOIN research_workflow_run w " +
       "ON w.operation_id=r.operation_id AND w.principal_ref=r.principal_ref " +
       "AND w.scope_snapshot_id=r.scope_snapshot_id AND w.scope_snapshot_revision=r.scope_snapshot_revision " +
+      "LEFT JOIN investigation_ledger_head h ON h.investigation_id=w.investigation_id AND h.principal_ref=w.principal_ref " +
       "WHERE r.intent_id=?1 AND r.intent_revision=?2 AND r.principal_ref=?3 " +
       "AND r.client_class=?6 AND r.scope_snapshot_id=?4 AND r.scope_snapshot_revision=?5 " +
       "LIMIT 2",
@@ -110,7 +118,13 @@ async function readHistoricalWorkflowId(
       row.workflow_scope_snapshot_id !== scope.id || row.workflow_scope_snapshot_revision !== scope.revision) {
     invalidHistory("Saved report workflow binding is inconsistent");
   }
-  return row.admission_operation_id;
+  let query: string | undefined;
+  if (row.query !== null && row.query !== undefined) {
+    const parsedQuery = ResearchRunHistoryQuerySchema.safeParse(row.query);
+    if (!parsedQuery.success) invalidHistory("Saved report question is invalid");
+    query = parsedQuery.data;
+  }
+  return { operation_id: row.admission_operation_id, ...(query === undefined ? {} : { query }) };
 }
 
 async function readHistoricalRunReportLocator(
@@ -154,8 +168,8 @@ async function readHistoricalRunReportLocator(
     const reportRead = await ports.prepare_artifact_read(context, artifactRef, "report");
     if (!sameRef(reportRead.original_scope_snapshot_ref, scopeRef)) invalidHistory("Run report origin changed");
     await reportRead.requireCurrent();
-    const admittedOperation = await readHistoricalWorkflowId(ports, draft, draft.principal_ref, scopeRef);
-    if (admittedOperation !== operationId) invalidHistory("Run report admission changed");
+    const admittedWorkflow = await readHistoricalWorkflowBinding(ports, draft, draft.principal_ref, scopeRef);
+    if (admittedWorkflow?.operation_id !== operationId) invalidHistory("Run report admission changed");
     const historical = await readHistoricalResearchArtifactLocator({
       database: ports.database, work_bucket: ports.work_bucket, operation_id: operationId,
       owner: { principal_ref: context.principal_ref, client_class: "owner_pwa" },
@@ -215,7 +229,8 @@ async function scanVisibleRecent<Row, Entry>(
 }
 
 /** Recent locators use the same current read authority as an opened run/report. */
-export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context: AuthenticatedRequestContext, projectId?: string) {
+export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context: AuthenticatedRequestContext,
+  projectId?: string, format: "v5" | "v6" = "v5") {
   ports.authorize_owner_read(context);
   const projectOwner = () => ports.database.prepare("SELECT p.generation FROM project p JOIN project_owner o ON o.project_id=p.project_id WHERE p.project_id=?1 AND o.principal_ref=?2")
     .bind(projectId ?? "", context.principal_ref).first<{ generation: number }>();
@@ -276,7 +291,7 @@ export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context
     }
   });
 
-  type DraftEntry = { artifact_ref: VersionedRef; created_at: string; workflow_instance_id?: string };
+  type DraftEntry = { artifact_ref: VersionedRef; created_at: string; workflow_instance_id?: string; query?: string };
   const draftsRead = scanVisibleRecent<SavedDraftRow, DraftEntry>(async (after, limit) => {
     try {
       const result = await ports.database.prepare(
@@ -308,9 +323,11 @@ export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context
       const read = await ports.prepare_artifact_read(context, ref, "report");
       if (!sameRef(read.original_scope_snapshot_ref, originalRef)) invalidHistory("Saved report origin changed");
       await read.requireCurrent();
-      const operationId = await readHistoricalWorkflowId(ports, row, row.principal_ref, originalRef);
+      const workflowBinding = await readHistoricalWorkflowBinding(ports, row, row.principal_ref, originalRef);
       let workflowInstanceId: string | undefined;
-      if (operationId !== null) {
+      let query: string | undefined;
+      if (workflowBinding !== null) {
+        const operationId = workflowBinding.operation_id;
         const historical = await readHistoricalResearchArtifactLocator({
           database: ports.database, work_bucket: ports.work_bucket, operation_id: operationId,
           owner: { principal_ref: context.principal_ref, client_class: "owner_pwa" }, require_current: read.requireCurrent,
@@ -321,10 +338,12 @@ export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context
             invalidHistory("Saved report workflow artifact binding is inconsistent");
           }
           workflowInstanceId = operationId;
+          query = workflowBinding.query;
         }
       }
       return { entry: { artifact_ref: ref, created_at: row.created_at,
-        ...(workflowInstanceId === undefined ? {} : { workflow_instance_id: workflowInstanceId }) }, require_current: read.requireCurrent };
+        ...(workflowInstanceId === undefined ? {} : { workflow_instance_id: workflowInstanceId }),
+        ...(query === undefined ? {} : { query }) }, require_current: read.requireCurrent };
     } catch (error) {
       if (expectedSavedDraftDenial(error)) return null;
       throw error;
@@ -358,13 +377,13 @@ export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context
     throw new CatalogInputError("RESEARCH_PROJECT_CHANGED", "Project changed while reading history", 409, true);
   }
   return {
-    protocol: "eliotr.research-runs.v5" as const,
+    protocol: format === "v6" ? "eliotr.research-runs.v6" as const : "eliotr.research-runs.v5" as const,
     runs: runs.entries.map(({ original_scope_snapshot_ref: _scopeRef, ...entry }) => {
       const artifact = reportsByRun.get(entry.status.workflow_instance_id);
       return artifact === undefined || entry.status.execution_state !== "ENGINE_COMPLETED" ? entry : {
         ...entry, status: { ...entry.status, answer: { availability: "draft" as const, artifact_ref: artifact } },
       };
-    }), saved_drafts: drafts.entries,
+    }), saved_drafts: format === "v6" ? drafts.entries : drafts.entries.map(({ query: _query, ...entry }) => entry),
     visibility_scan: { runs: runs.state, saved_drafts: drafts.state },
     configuration_state: ports.semantic_configuration_installed() ? "INSTALLED" as const : "MISSING" as const,
     checked_at: new Date().toISOString(),

@@ -25,6 +25,7 @@ export interface ResearchRunSavedDraft {
   readonly created_at: string;
   readonly artifact_ref: { readonly id: string; readonly revision: number };
   readonly workflow_instance_id?: string;
+  readonly query?: string;
 }
 
 export interface ResearchRunHistoryEntry {
@@ -35,7 +36,7 @@ export interface ResearchRunHistoryEntry {
 }
 
 export interface ResearchRunHistoryView {
-  readonly protocol: "eliotr.research-runs.v1" | "eliotr.research-runs.v2" | "eliotr.research-runs.v3" | "eliotr.research-runs.v4" | "eliotr.research-runs.v5";
+  readonly protocol: "eliotr.research-runs.v1" | "eliotr.research-runs.v2" | "eliotr.research-runs.v3" | "eliotr.research-runs.v4" | "eliotr.research-runs.v5" | "eliotr.research-runs.v6";
   readonly visibility_scan?: ResearchRunHistoryVisibility;
   readonly runs: readonly ResearchRunHistoryEntry[];
   readonly saved_drafts: readonly ResearchRunSavedDraft[];
@@ -67,7 +68,7 @@ export interface RunHistoryDependencies {
 }
 
 type DraftEntry = { readonly created_at: string; readonly artifact_ref: { readonly id: string; readonly revision: number };
-  readonly workflow_instance_id?: string };
+  readonly workflow_instance_id?: string; readonly query?: string };
 
 export type ResearchRunHistoryDecoder = (
   raw: unknown,
@@ -92,11 +93,11 @@ export function createRunHistoryDecoder(
     const protocol: ResearchRunHistoryView["protocol"] = data.protocol as ResearchRunHistoryView["protocol"];
     if (protocol !== "eliotr.research-runs.v1" && protocol !== "eliotr.research-runs.v2" &&
         protocol !== "eliotr.research-runs.v3" && protocol !== "eliotr.research-runs.v4" &&
-        protocol !== "eliotr.research-runs.v5") {
+        protocol !== "eliotr.research-runs.v5" && protocol !== "eliotr.research-runs.v6") {
       wire.invalid("research run history protocol is invalid");
     }
     let visibilityScan: ResearchRunHistoryVisibility | undefined;
-    if (protocol === "eliotr.research-runs.v4" || protocol === "eliotr.research-runs.v5") {
+    if (protocol === "eliotr.research-runs.v4" || protocol === "eliotr.research-runs.v5" || protocol === "eliotr.research-runs.v6") {
       const result = ResearchRunHistoryVisibilitySchema.safeParse(data.visibility_scan);
       if (!result.success) wire.invalid("research run visibility scan is invalid");
       visibilityScan = result.data;
@@ -112,11 +113,11 @@ export function createRunHistoryDecoder(
     if (!Array.isArray(data.runs) || (data.runs as unknown[]).length > MAX_RUNS) wire.invalid("research run history is invalid");
     const seen = new Set<string>();
     const runEntries = (data.runs as unknown[]).map((value: unknown, index: number) => {
-      const entry = wire.record(value, ["created_at", "status"],
-        protocol === "eliotr.research-runs.v5" ? ["query"] : []);
+      const hasQuery = protocol === "eliotr.research-runs.v5" || protocol === "eliotr.research-runs.v6";
+      const entry = wire.record(value, ["created_at", "status"], hasQuery ? ["query"] : []);
       const createdAt = wire.isoTimestamp(entry.created_at, `runs[${index}].created_at`);
       let query: string | undefined;
-      if (protocol === "eliotr.research-runs.v5" && Object.hasOwn(entry, "query")) {
+      if (hasQuery && Object.hasOwn(entry, "query")) {
         const parsedQuery = ResearchRunHistoryQuerySchema.safeParse(entry.query);
         if (!parsedQuery.success) wire.invalid(`runs[${index}].query is invalid`);
         query = parsedQuery.data;
@@ -136,20 +137,30 @@ export function createRunHistoryDecoder(
       }
       const draftRefs = new Set<string>();
       (data.saved_drafts as unknown[]).forEach((value: unknown, index: number) => {
-        const entry = wire.record(value, ["created_at", "artifact_ref"], ["workflow_instance_id"]);
+        const entry = wire.record(value, ["created_at", "artifact_ref"], protocol === "eliotr.research-runs.v6"
+          ? ["workflow_instance_id", "query"] : ["workflow_instance_id"]);
         const createdAt = wire.isoTimestamp(entry.created_at, `saved_drafts[${index}].created_at`);
         const artifactRef = wire.versionedRef(entry.artifact_ref, `saved_drafts[${index}].artifact_ref`);
         const workflowInstanceId = Object.hasOwn(entry, "workflow_instance_id")
           ? wire.identifier(entry.workflow_instance_id, `saved_drafts[${index}].workflow_instance_id`)
           : undefined;
+        let query: string | undefined;
+        if (protocol === "eliotr.research-runs.v6" && Object.hasOwn(entry, "query")) {
+          if (workflowInstanceId === undefined) wire.invalid(`saved_drafts[${index}].query requires a workflow binding`);
+          const parsedQuery = ResearchRunHistoryQuerySchema.safeParse(entry.query);
+          if (!parsedQuery.success) wire.invalid(`saved_drafts[${index}].query is invalid`);
+          query = parsedQuery.data;
+        }
         const key = `${artifactRef.id}:${artifactRef.revision}`;
         if (draftRefs.has(key)) wire.invalid("saved research drafts contain a duplicate artifact");
         draftRefs.add(key);
         savedDrafts.push({ created_at: createdAt, artifact_ref: artifactRef,
-          ...(workflowInstanceId === undefined ? {} : { workflow_instance_id: workflowInstanceId }) });
+          ...(workflowInstanceId === undefined ? {} : { workflow_instance_id: workflowInstanceId }),
+          ...(query === undefined ? {} : { query }) });
       });
     }
-    if ((protocol === "eliotr.research-runs.v2" || protocol === "eliotr.research-runs.v3" || protocol === "eliotr.research-runs.v4" || protocol === "eliotr.research-runs.v5") &&
+    if ((protocol === "eliotr.research-runs.v2" || protocol === "eliotr.research-runs.v3" || protocol === "eliotr.research-runs.v4" ||
+        protocol === "eliotr.research-runs.v5" || protocol === "eliotr.research-runs.v6") &&
         !Object.hasOwn(data, "saved_drafts")) {
       wire.invalid("research run history is missing saved drafts");
     }
@@ -199,8 +210,8 @@ export function createRunHistoryApi(
     // Preflight: an already-closed or missing epoch never dispatches.
     const captured = epoch.capture();
     if (captured === undefined || !epoch.isCurrent(captured)) closed();
-    const path = projectId === undefined ? "/api/v1/research/runs"
-      : `/api/v1/research/runs?project_id=${encodeURIComponent(wire.identifier(projectId, "project_id"))}`;
+    const path = projectId === undefined ? "/api/v1/research/runs?format=v6"
+      : `/api/v1/research/runs?project_id=${encodeURIComponent(wire.identifier(projectId, "project_id"))}&format=v6`;
     const raw = await request(path, signal === undefined ? {} : { signal }, [200]);
     const view = decodeResearchRunHistory(raw);
     // Post-await/post-decode fence: a stale response never reaches the caller.
