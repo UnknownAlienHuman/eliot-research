@@ -20,6 +20,7 @@ import {
 } from "@eliotr/retrieval";
 import { createD1RetrievalSettlementOwnerPort } from "./research-retrieval-settlement-owner.js";
 import {
+  BRANCH_QUERY_HANDLER_GENERATION,
   MAX_WORKFLOW_OUTPUT_BYTES,
   readFreezeProtocolAndScopeCheckpoint,
   readWorkflowObject,
@@ -50,13 +51,20 @@ export const SEMANTIC_PROTOCOL_HANDLER_GENERATION = "research-handlers.explorato
 export const BRANCH_EXECUTION_HANDLER_GENERATION = "research-handlers.exploratory.v7";
 /** Provider-neutral external computer-agent branch analysis. */
 export const EXTERNAL_AGENT_BRANCH_HANDLER_GENERATION = "research-handlers.exploratory.v8";
-function retrievalProduct(handlerGeneration: string): "FAST_SEARCH" | "RESEARCH" {
+export function researchRetrievalProductForGeneration(handlerGeneration: string): "FAST_SEARCH" | "RESEARCH" {
   return handlerGeneration === SEMANTIC_RETRIEVAL_HANDLER_GENERATION ||
     handlerGeneration === SEMANTIC_PROTOCOL_HANDLER_GENERATION ||
     handlerGeneration === BRANCH_EXECUTION_HANDLER_GENERATION ||
     handlerGeneration === NATIVE_EXTERNAL_TASK_HANDLER_GENERATION ||
-    handlerGeneration === EXTERNAL_AGENT_BRANCH_HANDLER_GENERATION
+    handlerGeneration === EXTERNAL_AGENT_BRANCH_HANDLER_GENERATION ||
+    handlerGeneration === BRANCH_QUERY_HANDLER_GENERATION
     ? "RESEARCH" : "FAST_SEARCH";
+}
+
+/** Called only for a committed checkpoint, whose exact receipt and stored result are checked below. */
+export function committedResearchRetrievalProductMatches(handlerGeneration: string, product: string): boolean {
+  return product === researchRetrievalProductForGeneration(handlerGeneration) ||
+    (handlerGeneration === BRANCH_QUERY_HANDLER_GENERATION && product === "FAST_SEARCH");
 }
 
 const RETRIEVE_BRANCHES_PROTOCOL = "eliotr.research.retrieve-branches.v1" as const;
@@ -202,7 +210,7 @@ export async function readRetrieveBranchesCheckpoint(
       checkpoint.protocol_digest !== protocolScope.protocol_digest ||
       checkpoint.denominator_digest !== protocolScope.denominator_digest ||
       checkpoint.coverage_claim === "COMPLETE_SCOPE" ||
-      checkpoint.trace.query_product !== retrievalProduct(persisted.stage_request.handler_generation) ||
+      !committedResearchRetrievalProductMatches(persisted.stage_request.handler_generation, checkpoint.trace.query_product) ||
       checkpoint.trace.raw_query !== protocolScope.protocol_profile.question ||
       (checkpoint.trace.evidence_pack_ref !== undefined && checkpoint.trace.evidence_pack_ref !== checkpoint.evidence_pack.pack_ref.id)) {
     fail("WORKFLOW_AUTHORITY_STALE");
@@ -303,7 +311,7 @@ export function createRetrieveBranchesStageHandler(
         access: dependencies.access,
         scope_snapshot: held.scope_snapshot,
         raw_query: checkpoint.protocol_profile.question,
-        product: retrievalProduct(request.handler_generation),
+        product: researchRetrievalProductForGeneration(request.handler_generation),
         literals: [],
         requested_limit: dependencies.profile.max_results,
         deadline_ms: Date.now() + 30_000,
