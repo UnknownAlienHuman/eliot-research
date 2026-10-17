@@ -26,7 +26,6 @@ const ROUTES = [
 // an explicit current project selection; no unscoped readiness request is sent.
 const STARTUP_GETS = new Set([
   "/api/v1/system/health", "/api/v1/system/session", "/api/v1/research/projects",
-  "/api/v1/research/runs",
 ]);
 const ALLOWED_STARTUP_GETS = new Set(ownerWebStartupReadOnlyPaths);
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");

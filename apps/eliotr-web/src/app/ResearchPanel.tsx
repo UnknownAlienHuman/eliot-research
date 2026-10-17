@@ -101,13 +101,13 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
   const [modelCatalogPage, setModelCatalogPage] = useState(1);
   const catalogPreferences = useQueries({ queries: catalogTargets.map(target => ({
     ...serviceModelCatalogPreferencesQueryOptions(apis.settings.models, privacy, context, target.preferenceProviderId),
-    enabled: privacy.isCurrent(context),
+    enabled: projectId !== undefined && privacy.isCurrent(context) && isProjectCurrent(),
   })) });
   const modelCatalogs = useQueries({ queries: catalogTargets.map(target => ({
     ...serviceModelCatalogQueryOptions(apis.connections.models, privacy, context, {
       providerId: target.catalogProviderId, search: deferredModelSearch, page: modelCatalogPage,
     }),
-    enabled: privacy.isCurrent(context) && (target.builtin || serviceProviders.isSuccess),
+    enabled: projectId !== undefined && privacy.isCurrent(context) && isProjectCurrent() && (target.builtin || serviceProviders.isSuccess),
   })) });
   const preferredModel = preferredChatModelIdentity(projectModels.isSuccess ? projectModels.data : undefined,
     providerSettings.data?.cloudflare.default_model_id);

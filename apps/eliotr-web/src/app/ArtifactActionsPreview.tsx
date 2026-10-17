@@ -2,7 +2,7 @@ import { paneAnnouncement, announcementUntil, unchangedChannel } from './announc
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { Button } from '@eliotr/ui';
-import type { ArtifactRevision, VersionedRef } from '@eliotr/owner-api-client';
+import type { ArtifactRevision, ArtifactRevisionRead, VersionedRef } from '@eliotr/owner-api-client';
 import { ArtifactActions } from './ArtifactActions';
 import { createPrivacyController } from './privacy';
 import { createWorkspaceRuntime } from './runtime';
@@ -17,6 +17,10 @@ const draft = (id: string): ArtifactRevision => ({ artifact_ref: { id, revision:
     verification_receipt_ref: 'verified-section' }], dependency_manifest_ref: 'dependencies',
   deterministic_export_refs: {}, status: 'DRAFT', created_at: stamp });
 const first = draft('report-a'), second = draft('report-b');
+// Publication reads carry display titles from the verified spec, independently
+// of the canonical revision used by the mutation's original identity/CAS.
+const acceptedReadback: ArtifactRevisionRead = { ...first, status: 'ACCEPTED', title: 'First report',
+  sections: first.sections.map(section => ({ ...section, title: 'Summary' })) };
 
 /** Real runtime/client/Query and action component; synthetic HTTP loses one acknowledgement. */
 export function ArtifactActionsPreview() {
@@ -32,7 +36,7 @@ export function ArtifactActionsPreview() {
           title: 'No publication is recorded', status: 404, code: 'ARTIFACT_PUBLICATION_NOT_FOUND', trace_id: 'artifact-trace', retryable: false }),
           { status: 404, headers: { 'content-type': 'application/json' } });
         if (!path.includes('report-a%3A1') || acceptancePosts !== 1) throw new Error('Recovery changed the accepted artifact or repeated acceptance');
-        return json({ protocol: 'eliotr.artifact-publication.v1', revision: { ...first, status: 'ACCEPTED' },
+        return json({ protocol: 'eliotr.artifact-publication.v1', revision: acceptedReadback,
           receipt: { publication_ref: 'publication', artifact_ref: first.artifact_ref, publication_revision: 1,
             manifest_sha256: digest, verification_set_sha256: digest, evidence_currentness_sha256: digest,
             acceptance_decision_ref: 'decision', acceptance_provenance_ref: 'provenance', acceptance_decision_sha256: digest,
