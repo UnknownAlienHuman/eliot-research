@@ -1,0 +1,40 @@
+/* The answer of a saved report: statement checks and inline quote numbers. */
+/* Saved statement checks: one plain line with a fact-check glyph above the answer. */
+.er-live-report-checks {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--eliot-space-tight);
+  margin: 0 0 var(--eliot-space-block-control);
+  color: var(--md-sys-color-on-surface-variant);
+  font-size: var(--eliot-type-label-large-size);
+  line-height: var(--eliot-type-label-large-line-height);
+}
+.er-live-report-checks > .er-symbol { inline-size: var(--eliot-icon-small-size); block-size: var(--eliot-icon-small-size); }
+.er-live-report-checks[data-all-supported="true"] > .er-symbol { color: var(--md-sys-color-primary); }
+
+/* Inline quote numbers after a claim paragraph, like NotebookLM's citation chips. */
+.er-live-report-cited > .er-safe-markdown,
+.er-live-report-cited > .er-safe-markdown > :last-child { display: inline; }
+.er-live-report-cited { margin-block-end: var(--eliot-space-block-control); }
+.er-live-report-cite-marks { display: inline-flex; gap: var(--eliot-space-hairline); margin-inline-start: var(--eliot-space-tight); vertical-align: baseline; }
+.er-live-report-cite-mark {
+  display: inline-grid;
+  place-items: center;
+  min-inline-size: var(--eliot-type-label-small-line-height);
+  block-size: var(--eliot-type-label-small-line-height);
+  padding-inline: var(--eliot-space-tight);
+  border: 0;
+  border-radius: var(--eliot-shape-full);
+  background: var(--md-sys-color-secondary-container);
+  color: var(--md-sys-color-on-secondary-container);
+  font: inherit;
+  font-size: var(--eliot-type-label-small-size);
+  font-weight: var(--eliot-type-font-weight-medium);
+  font-variant-numeric: var(--eliot-type-numerals);
+  cursor: pointer;
+}
+.er-live-report-cite-mark:hover { background: color-mix(in srgb, var(--md-sys-color-on-secondary-container) 12%, var(--md-sys-color-secondary-container)); }
+.er-live-report-cite-mark:focus-visible { outline: var(--eliot-focus-width) solid var(--md-sys-color-primary); outline-offset: var(--eliot-focus-offset); }
+@media (forced-colors: active) {
+  .er-live-report-cite-mark { border: var(--eliot-divider-width) solid ButtonText; }
+}

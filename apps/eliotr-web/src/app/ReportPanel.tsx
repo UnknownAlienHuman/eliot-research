@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { skipToken, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Button, EvidenceFeature, ReportFeature, REPORT_COPY, SafeMarkdown, Status } from '@eliotr/ui';
+import { Button, EvidenceFeature, ReportFeature, REPORT_COPY, Status } from '@eliotr/ui';
 import { assembleResearchDraftMarkdown, type ArtifactRevisionRead, type ArtifactSectionResponse,
   type CitedEvidence, type DeclaredSection, type ResearchArtifactDraftReauthorizationView,
   type ReauthorizedCitedEvidence, type VerifiedEvidence, type VersionedRef } from '@eliotr/owner-api-client';
@@ -10,55 +10,14 @@ import { reportQueryOptions } from '../query/reports';
 import { protectedQueryKey } from '../query/client';
 import { OperationFeedback } from './OperationFeedback';
 import { ArtifactActions } from './ArtifactActions';
+import { ReportMarkdown, StatementChecks, type AnswerCitations } from './ReportAnswer';
 
 const refKey = (ref: VersionedRef) => `${ref.id}:${ref.revision}`;
 const sameRef = (left: VersionedRef, right: VersionedRef) => left.id === right.id && left.revision === right.revision;
 const copy = {
-  en: { readingCitations: 'Reading citations for this section.', readingReport: 'Reading the saved report.', reportReady: 'Saved report loaded.', sectionReady: 'The selected section was read and verified.', readingEvidence: 'Reading the selected cited excerpt.', evidenceReady: 'The selected cited excerpt was verified.', title: 'Saved report', back: 'Close report', outline: 'Contents', backToSections: 'Back to the report', read: 'Refresh', reauthorize: 'Read with current access', access: 'Read with your current access. The report keeps its original sources.', evidence: 'Evidence for this section', quotes: 'Quotes and sources', method: 'How it was researched', exportShort: 'Export', document: 'Report text', pending: 'Reading this section…', noAudit: 'Claims in this section were not checked against the sources.', unknown: 'This section could not be read or verified.', legacyRead: 'This report response has no section titles. Refresh after the application updates.', exportError: 'The export could not be prepared. Read all sections again.', reading: 'Reading the selected section.', noEvidence: 'No citations are declared for this section.', evidenceError: 'This quote could not be verified against its source.' },
-  ru: { readingCitations: 'Читаем цитаты для этого раздела.', readingReport: 'Читаем сохранённый отчёт.', reportReady: 'Сохранённый отчёт прочитан.', sectionReady: 'Выбранный раздел прочитан и проверен.', readingEvidence: 'Читаем цитату.', evidenceReady: 'Цитата сверена с источником.', title: 'Сохранённый отчёт', back: 'Закрыть отчёт', outline: 'Содержание', backToSections: 'Назад к отчёту', read: 'Обновить', reauthorize: 'Прочитать с текущим доступом', access: 'Чтение с вашим текущим доступом. Источники отчёта остаются прежними.', evidence: 'Доказательства этого раздела', quotes: 'Цитаты и источники', method: 'Как проводилось исследование', exportShort: 'Экспорт', document: 'Текст отчёта', pending: 'Читаем раздел…', noAudit: 'Утверждения этого раздела не проверялись по источникам.', unknown: 'Не удалось прочитать или проверить этот раздел.', legacyRead: 'В этом ответе нет названий разделов. Обновите приложение и повторите чтение.', exportError: 'Не удалось подготовить экспорт. Прочитайте все разделы ещё раз.', reading: 'Читаем выбранный раздел.', noEvidence: 'Для этого раздела не объявлены цитаты.', evidenceError: 'Не удалось сверить эту цитату с источником.' },
+  en: { readingCitations: 'Reading citations for this section.', readingReport: 'Reading the saved report.', reportReady: 'Saved report loaded.', sectionReady: 'The selected section was read and verified.', readingEvidence: 'Reading the selected cited excerpt.', evidenceReady: 'The selected cited excerpt was verified.', title: 'Saved report', back: 'Close report', outline: 'Contents', backToSections: 'Back to the report', read: 'Refresh', reauthorize: 'Read with current access', access: 'Read with your current access. The report keeps its original sources.', evidence: 'Evidence for this section', quotes: 'Quotes and sources', method: 'How it was researched', exportShort: 'Export', document: 'Report text', pending: 'Reading this section…', noAudit: 'Claims in this section were not checked against the sources.', unknown: 'This section could not be read or verified.', legacyRead: 'This report response has no section titles. Refresh after the application updates.', exportError: 'The export could not be prepared. Read all sections again.', reading: 'Reading the selected section.', noEvidence: 'No citations are declared for this section.', evidenceError: 'This quote could not be verified against its source.', quote: (n: number) => `Quote ${n}` },
+  ru: { readingCitations: 'Читаем цитаты для этого раздела.', readingReport: 'Читаем сохранённый отчёт.', reportReady: 'Сохранённый отчёт прочитан.', sectionReady: 'Выбранный раздел прочитан и проверен.', readingEvidence: 'Читаем цитату.', evidenceReady: 'Цитата сверена с источником.', title: 'Сохранённый отчёт', back: 'Закрыть отчёт', outline: 'Содержание', backToSections: 'Назад к отчёту', read: 'Обновить', reauthorize: 'Прочитать с текущим доступом', access: 'Чтение с вашим текущим доступом. Источники отчёта остаются прежними.', evidence: 'Доказательства этого раздела', quotes: 'Цитаты и источники', method: 'Как проводилось исследование', exportShort: 'Экспорт', document: 'Текст отчёта', pending: 'Читаем раздел…', noAudit: 'Утверждения этого раздела не проверялись по источникам.', unknown: 'Не удалось прочитать или проверить этот раздел.', legacyRead: 'В этом ответе нет названий разделов. Обновите приложение и повторите чтение.', exportError: 'Не удалось подготовить экспорт. Прочитайте все разделы ещё раз.', reading: 'Читаем выбранный раздел.', noEvidence: 'Для этого раздела не объявлены цитаты.', evidenceError: 'Не удалось сверить эту цитату с источником.', quote: (n: number) => `Цитата ${n}` },
 } as const;
-
-/**
- * The draft writer appends a "Coverage and method" part (scope, encountered and cited revisions, limits).
- * It is the record of how the answer was found, not the answer: it stays one tap away, folded.
- */
-const METHOD_HEADING = /^#{1,3}[ \t]+(?:Coverage and method|Охват и метод)[ \t]*$/mu;
-function StatementChecks({ labels, locale }: {
-  readonly labels: ArtifactRevisionRead['sections'][number]['statement_labels']; readonly locale: 'en' | 'ru';
-}) {
-  const names = locale === 'ru' ? {
-    SOURCE_SUPPORTED: 'Подтверждены источниками', DERIVED_INFERENCE: 'Выводы на основе источников',
-    HYPOTHESIS: 'Гипотезы', CONTESTED: 'Оспариваются', UNRESOLVED: 'Не удалось проверить по доступным источникам',
-    EDITORIAL_RECOMMENDATION: 'Редакционные рекомендации', REDACTED_DEPENDENCY: 'Зависят от недоступных данных',
-  } : {
-    SOURCE_SUPPORTED: 'Supported by sources', DERIVED_INFERENCE: 'Inferences from sources',
-    HYPOTHESIS: 'Hypotheses', CONTESTED: 'Contested', UNRESOLVED: 'Could not be verified from available sources',
-    EDITORIAL_RECOMMENDATION: 'Editorial recommendations', REDACTED_DEPENDENCY: 'Depend on unavailable evidence',
-  };
-  const values = Object.values(labels);
-  if (values.length === 0) return null;
-  const counts = (Object.keys(names) as (keyof typeof names)[]).flatMap(label => {
-    const count = values.filter(value => value === label).length;
-    return count === 0 ? [] : [`${names[label]}: ${count}`];
-  });
-  return <p className="er-shell-note" role="note">{locale === 'ru' ? 'Сохранённая проверка утверждений. ' : 'Saved statement checks. '}{counts.join('; ')}.</p>;
-}
-
-function ReportMarkdown({ body, method, locale }: { readonly body: string; readonly method: string; readonly locale: 'en' | 'ru' }) {
-  const match = METHOD_HEADING.exec(body);
-  if (match === null) return <SafeMarkdown text={body} />;
-  const answer = body.slice(0, match.index).trimEnd(), record = body.slice(match.index + match[0].length).trim();
-  const counts = /Evidence uses (\d+) sources; (\d+) sources are cited\./u.exec(record)
-    ?? /В доказательствах использовано источников: (\d+); процитировано: (\d+)\./u.exec(record);
-  const sampled = /Coverage is sampled|Охват выборочный/u.test(record);
-  const localizedRecord = counts === null ? record : locale === 'ru'
-    ? `В доказательствах использовано источников: ${counts[1]}; процитировано: ${counts[2]}.\n\n${sampled ? 'Охват выборочный; полнота корпуса не установлена.' : 'Область исследования зафиксирована.'} Метод и ограничения сохранены в квитанции охвата.`
-    : `Evidence uses ${counts[1]} sources; ${counts[2]} sources are cited.\n\n${sampled ? 'Coverage is sampled; corpus completeness is not established.' : 'The research scope is fixed.'} The coverage receipt retains the method and limitations.`;
-  return <>
-    {answer ? <SafeMarkdown text={answer} /> : null}
-    {record ? <details className="er-live-report-method"><summary>{method}</summary><SafeMarkdown text={localizedRecord} /></details> : null}
-  </>;
-}
 
 /** One requested section at a time. Exact verified bytes remain in protected memory-only Query. */
 export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClose, onOpenDraft }: {
@@ -140,6 +99,11 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
     try { return new TextDecoder('utf-8', { fatal: true }).decode(read.bytes); } catch { return undefined; }
   };
   const single = artifact !== undefined && artifact.sections.length === 1;
+  // A one-section report is its answer: open it right away with its quotes beside it, as NotebookLM does.
+  const onlySection = single ? artifact.sections[0] : undefined;
+  useEffect(() => {
+    if (onlySection !== undefined && selected === undefined && privacy.isCurrent(context)) { setSelected(onlySection); setOutlineOpen(false); }
+  }, [onlySection, selected, privacy, context]);
   const rows = artifact?.sections.map(declared => ({ section: declared,
     read: client.getQueryState(sectionOptions(artifact, declared).queryKey)?.status === 'success'
       ? client.getQueryData<ArtifactSectionResponse>(sectionOptions(artifact, declared).queryKey) : undefined,
@@ -182,6 +146,34 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
       state: isSelected ? evidence.isFetching ? 'loading' as const : evidence.isError ? 'failed' as const : opened ? 'loaded' as const : 'idle' as const : 'idle' as const,
     };
   }) ?? [];
+  const openQuote = (citation: CitedEvidence | ReauthorizedCitedEvidence) => {
+    if (privacy.isCurrent(context) && !citations.isError && citations.data?.cited_evidence.some(row =>
+      sameRef(row.handle_ref, citation.handle_ref) && row.excerpt_sha256 === citation.excerpt_sha256)) {
+      if (currentCitation && sameRef(currentCitation.handle_ref, citation.handle_ref) && evidence.isError) void evidence.refetch();
+      else setPicked(citation);
+    }
+  };
+  // Inline quote numbers: a paragraph that states an audited claim points at the quotes that support it.
+  const audit = citations.data?.semantic_verification === 'EXECUTED' && !citations.isError ? citations.data.audit : undefined;
+  const cited: readonly (CitedEvidence | ReauthorizedCitedEvidence)[] = citations.data?.cited_evidence ?? [];
+  const words = (value: string) => value.replace(/\s+/gu, ' ').trim();
+  const cite: AnswerCitations | undefined = audit === undefined || cited.length === 0 ? undefined : {
+    numbersFor: paragraph => {
+      const plain = words(paragraph);
+      const numbers = new Set<number>();
+      for (const claim of audit.claims) {
+        const claimText = words(claim.claim_text);
+        if (claimText.length === 0 || !plain.includes(claimText)) continue;
+        for (const ref of claim.support_handle_refs) {
+          const index = cited.findIndex(row => sameRef('original_handle_ref' in row ? row.original_handle_ref : row.handle_ref, ref));
+          if (index >= 0) numbers.add(index + 1);
+        }
+      }
+      return [...numbers].sort((left, right) => left - right);
+    },
+    label: text.quote,
+    open: number => { const citation = cited[number - 1]; if (citation) openQuote(citation); },
+  };
   const operationMessage = exportError ? text.exportError
     : manifest.isFetching ? text.readingReport : manifest.isError ? text.unknown
     : unsupportedLegacyRead ? text.legacyRead
@@ -231,23 +223,17 @@ export function ReportPanel({ apis, privacy, context, locale, artifactRef, onClo
     {active && <section className="er-live-report-section" aria-label={active.title}>
       <h2 ref={sectionHeading} tabIndex={-1}>{active.title}</h2>
       <div className="er-live-report-layout"><div className="er-live-report-body">
-      {section.isFetching ? <Status>{text.reading}</Status> : section.isError || body === undefined ? <Status tone="error">{text.unknown}</Status> : <><StatementChecks labels={active.statement_labels} locale={locale} /><ReportMarkdown body={body} method={text.method} locale={locale} /></>}
+      {section.isFetching ? <Status>{text.reading}</Status> : section.isError || body === undefined ? <Status tone="error">{text.unknown}</Status> : <><StatementChecks labels={active.statement_labels} locale={locale} /><ReportMarkdown body={body} method={text.method} locale={locale} cite={cite} /></>}
       {citations.data?.semantic_verification === 'NOT_EXECUTED' && <p className="er-shell-note">{text.noAudit}</p>}
       </div><aside className="er-live-report-evidence" aria-label={text.evidence}><EvidenceFeature citations={evidenceRows}
         loading={citations.isFetching} emptyMessage={text.noEvidence} longLocale={locale}
         {...(citations.isError ? { errorMessage: text.evidenceError } : {})}
-        onOpenExcerpt={citation => {
-          if (privacy.isCurrent(context) && !citations.isError && citations.data?.cited_evidence.some(row =>
-            sameRef(row.handle_ref, citation.handle_ref) && row.excerpt_sha256 === citation.excerpt_sha256)) {
-            if (currentCitation && sameRef(currentCitation.handle_ref, citation.handle_ref) && evidence.isError) void evidence.refetch();
-            else setPicked(citation);
-          }
-        }}
+        onOpenExcerpt={openQuote}
         onRetry={() => { if (citations.isError) void citations.refetch(); else if (currentCitation) void evidence.refetch(); }} />
       </aside></div>
-      <div className="er-live-actions">
+      {!single && <div className="er-live-actions">
         <Button variant="text" onClick={() => { setSelected(undefined); setPicked(undefined); reportHeading.current?.focus(); }}>{text.backToSections}</Button>
-      </div>
+      </div>}
     </section>}
     {mode === 'author' && artifact && <ArtifactActions apis={apis} privacy={privacy} context={context}
       locale={locale} artifact={artifact} currentArtifact={currentArtifact}
