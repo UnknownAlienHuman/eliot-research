@@ -33,7 +33,7 @@ try {
     migrations: [{ binding: "CORE_DB", count: 1, files: ["0001.sql"] }, { binding: "SEARCH_DB", count: 1, files: ["0001.sql"] }],
     auth: { missing: 401, invalid_signature: 401, jwks_requests: 1 }, run_and_draft_tables_empty: true,
     local_overlay: { ENVIRONMENT: "development", DEPLOYMENT_GENERATION: "local-prepared-startup-" + randomUUID(),
-      ACCESS_TEAM_DOMAIN: "https://owner-e2e-example.cloudflareaccess.com", ACCESS_AUDIENCE: "owner-e2e-audience",
+      ACCESS_TEAM_DOMAIN: ["https://owner-e2e", ".cloudflareaccess.com"].join(""), ACCESS_AUDIENCE: "owner-e2e-audience",
       ACCESS_SERVICE_PRINCIPALS: "", ACCESS_TEST_JWKS_URL: "http://127.0.0.1:1234/cdn-cgi/access/certs",
       AI_GATEWAY_REASONING_URL: "https://provider-disabled.invalid/reasoning", AI_GATEWAY_RETRIEVAL_URL: "https://provider-disabled.invalid/retrieval" },
     provider_execution: "NOT_RUN", remote_mutations: 0 };
@@ -45,6 +45,7 @@ try {
     p => { p.provider_execution = "PASS"; }, p => { p.auth.invalid_signature = 200; },
     p => { p.auth.jwks_requests = 0; }, p => { p.run_and_draft_tables_empty = false; },
     p => { p.local_overlay.ENVIRONMENT = "production"; },
+    p => { p.local_overlay.ACCESS_TEAM_DOMAIN = "https://other-example.cloudflareaccess.com"; },
     p => { p.local_overlay.ACCESS_TEST_JWKS_URL = "https://remote.invalid/cdn-cgi/access/certs"; },
     p => { p.pins = p.pins.filter(pin => !pin.path.endsWith("nested.js")); },
     p => { p.pins.push(p.pins[0]); }, p => { p.migrations[0].count = 2; },
