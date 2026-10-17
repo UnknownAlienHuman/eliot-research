@@ -10,6 +10,8 @@ import type { ResearchCatalogAdvertisedCapabilities } from
   "@eliotr/cloudflare-research-configuration/research-catalog-model-pricing.js";
 import { createResearchCatalogModelUseComposition } from "../src/research-catalog-model-use-composition.js";
 import { createResearchCatalogModelTransportPolicyV2 } from "../src/research-catalog-model-use-v2-driver.js";
+import { createOwnerResearchProjectConfigurationService, readOwnerProjectResearchReadiness } from
+  "../src/research-project-configuration-composition.js";
 import type { Env } from "../src/env.js";
 import { createNativeUseEnvironment } from "./research-provider-key-model-use-fixture.js";
 
@@ -213,6 +215,12 @@ describe("default generic catalog model-use composition", () => {
     expect(receipt).toMatchObject({ state: "selected", phase: "complete", failure_code: null, provider_id: "opencode-go",
       provider_operation_id: providerOperation, model_id: MODEL });
     expect(receipt.selected_configuration_ref).toBe(`rpmc-${receipt.selected_configuration_sha256}`);
+    const beforeReadbackCalls = requests.length;
+    const readbackService = createOwnerResearchProjectConfigurationService(installedEnv, context, project);
+    const page = await readbackService.readPage(context, project, { limit: 50 });
+    expect(page.selected?.qualification_state).toBe("qualified");
+    expect((await readOwnerProjectResearchReadiness(installedEnv, context, project)).run_readiness).toBe("ready");
+    expect(requests.length).toBe(beforeReadbackCalls);
     expect(requests.length).toBeGreaterThan(0);
     expect(requests.every((request) => request.url === `${GATEWAY_BASE}/custom-custom-opencode-go/responses`)).toBe(true);
     expect(requests.every((request) => request.body.model === MODEL && request.alias === connection.receipt.alias)).toBe(true);

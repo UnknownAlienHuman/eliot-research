@@ -13,6 +13,8 @@ import { fail } from "@eliotr/cloudflare-research-configuration/research-project
 import type { Env } from "./env.js";
 import { createOwnerResearchProviderNativeModelAuthority } from "./research-provider-native-model-authority.js";
 import type { ResearchProviderKeyModelUseDbPhase } from "@eliotr/cloudflare-research-configuration/research-provider-key-model-use-store.js";
+import { createD1ProviderNativeModelCatalogV2Authority } from "@eliotr/cloudflare-native-models";
+import { createResearchCatalogModelUseV2PricingReader } from "./research-catalog-model-use-v2-driver.js";
 
 export {
   readSelectedResearchProjectConfiguration,
@@ -49,6 +51,13 @@ export function createResearchProjectModelConfigurationService(options: {
   return createConfigurationService(implementationOptions);
 }
 
+export function createResearchProjectCatalogNativeModelV2AuthorityFactory(
+  env: Pick<Env, "CORE_DB">,
+): ResearchProjectCatalogNativeModelV2AuthorityFactory {
+  return () => createD1ProviderNativeModelCatalogV2Authority({ database: env.CORE_DB,
+    pricing_snapshots: createResearchCatalogModelUseV2PricingReader({ database: env.CORE_DB }) });
+}
+
 export function createResearchProjectModelConfigurationServiceFromEnv(
   env: Env,
   assertCurrentProjectAuthority?: AssertCurrentResearchProjectAuthority,
@@ -65,9 +74,8 @@ export function createResearchProjectModelConfigurationServiceFromEnv(
       env, context, projectId,
       ["CONFIGURATION_IMPORT", "SELECTION_READBACK", "COMPLETE"] satisfies readonly ResearchProviderKeyModelUseDbPhase[],
     )),
-    ...(catalogNativeModelV2Authority === undefined ? {} : {
-      catalog_native_model_authority_v2: catalogNativeModelV2Authority,
-    }),
+    catalog_native_model_authority_v2: catalogNativeModelV2Authority ??
+      createResearchProjectCatalogNativeModelV2AuthorityFactory(env),
     ...(assertCurrentProjectAuthority === undefined ? {} : { assertCurrentProjectAuthority }),
     deployment_environment: env.ENVIRONMENT === "development" ? "TEST" : "PRODUCTION",
     deployment_generation: env.DEPLOYMENT_GENERATION,

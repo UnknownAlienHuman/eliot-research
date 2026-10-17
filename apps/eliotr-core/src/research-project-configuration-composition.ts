@@ -9,6 +9,7 @@ import type { Env } from "./env.js";
 import { HttpRequestError } from "./http-errors.js";
 import {
   createResearchProjectModelConfigurationServiceFromEnv,
+  createResearchProjectCatalogNativeModelV2AuthorityFactory,
   readSelectedResearchProjectConfiguration,
   ResearchProjectModelConfigurationAuthorityError,
 } from "./research-project-configuration.js";
@@ -91,6 +92,8 @@ export async function readOwnerProjectResearchReadiness(
   env: Env, context: AuthenticatedRequestContext, projectId: string | undefined,
   catalogNativeModelV2Authority?: ResearchProjectCatalogNativeModelV2AuthorityFactory,
 ) {
+  const catalogAuthorityFactory = catalogNativeModelV2Authority ??
+    createResearchProjectCatalogNativeModelV2AuthorityFactory(env);
   const unavailable = async () => ({
     ...await readResearchConfigurationReadiness(env, context),
     qualification_state: "unavailable" as const,
@@ -110,7 +113,7 @@ export async function readOwnerProjectResearchReadiness(
     }
   };
   if (projectId === undefined) return installedDefault();
-  const service = createOwnerResearchProjectConfigurationService(env, context, projectId);
+  const service = createOwnerResearchProjectConfigurationService(env, context, projectId, catalogAuthorityFactory);
   let selected: Awaited<ReturnType<typeof readSelectedResearchProjectConfiguration>>;
   try {
     selected = await readSelectedResearchProjectConfiguration(service, context, projectId);
@@ -135,8 +138,7 @@ export async function readOwnerProjectResearchReadiness(
         ? { native_model_authority: createOwnerResearchProviderNativeModelAuthority(env, context, selected.project_id,
           ["CONFIGURATION_IMPORT", "SELECTION_READBACK", "COMPLETE"] satisfies readonly ResearchProviderKeyModelUseDbPhase[]) }
         : {}),
-      ...(bundle.model_selections.some((selection) => selection.candidate_kind === "provider-native-v2") &&
-          catalogNativeModelV2Authority !== undefined
-        ? { catalog_native_model_authority_v2: catalogNativeModelV2Authority(context, selected.project_id) }
+      ...(bundle.model_selections.some((selection) => selection.candidate_kind === "provider-native-v2")
+        ? { catalog_native_model_authority_v2: catalogAuthorityFactory(context, selected.project_id) }
         : {}) });
 }

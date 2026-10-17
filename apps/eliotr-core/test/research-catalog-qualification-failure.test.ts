@@ -45,7 +45,7 @@ async function fixture(status = 400) {
     api_key: "synthetic-test-key" });
   const installed = await createNativeUseEnvironment(owner, db, { ...env, ENVIRONMENT: "development",
     DEPLOYMENT_GENERATION: "failure-test", AI_GATEWAY_REASONING_URL: GATEWAY });
-  const installedEnv = { ...installed, ELIOTR_MODEL_PROVIDER_CONTROL_TOKEN: "synthetic-control-only" } as Env;
+  const installedEnv = { ...installed, ELIOTR_MODEL_PROVIDER_CONTROL_TOKEN: "test-control" } as Env;
   let models = 0;
   const logs: Record<string, unknown>[] = [];
   vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -257,7 +257,7 @@ describe("authenticated failed catalog qualification reconciliation", () => {
       expect(url.origin).toBe("https://api.cloudflare.com");
       expect(url.pathname).toBe(`/client/v4/accounts/${ACCOUNT}/ai-gateway/gateways/eliotr-reasoning/logs`);
       expect(request.method).toBe("GET");
-      expect(request.headers.get("authorization")).toBe("Bearer synthetic-control-only");
+      expect(request.headers.get("authorization")).toBe("Bearer test-control");
       expect(request.redirect).toBe("manual");
       expect(request.body).toBeNull();
       reads += 1;

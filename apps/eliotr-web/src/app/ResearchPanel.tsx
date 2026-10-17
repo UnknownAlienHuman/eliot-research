@@ -645,10 +645,10 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     {projectId !== undefined && projectModels.data?.next_cursor !== null && projectModels.data?.next_cursor !== undefined &&
       <Status>{text.modelConfigurationsPartial}</Status>}
     {serviceProviders.data?.truncated && <Status>{text.providerListIncomplete}</Status>}
-    {!modelCatalogLoading && !modelCatalogFailed && chatModelOptions.every(choice => !choice.canRun) &&
+    {projectId !== undefined && !modelCatalogLoading && !modelCatalogFailed && chatModelOptions.every(choice => !choice.canRun) &&
       <Status>{text.modelRunUnavailable}</Status>}
     <div ref={composer} className="er-live-research">
-      <ChatModelPicker locale={locale} choices={chatModelOptions} selected={selectedChatModelIdentity}
+      {projectId !== undefined && <><ChatModelPicker locale={locale} choices={chatModelOptions} selected={selectedChatModelIdentity}
         qualificationState={currentCatalogOperation.isFetching || catalogOperationReadback.isFetching ? 'qualifying'
           : modelSelectionLocked && !busy ? 'unknown' : modelQualificationState} search={modelSearch} page={modelCatalogPage}
         loading={pickerCatalogLoading} failed={pickerCatalogFailed} hasMore={modelCatalogHasMore}
@@ -677,6 +677,7 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
         <Button variant="text" disabled={busy} onClick={() => chooseChatModel(selectedChatModel)}>
           {locale === 'ru' ? 'Проверить доступность ещё раз' : 'Check availability again'}</Button>
       </div>}
+      </>}
       <ResearchRunFeature key={saved?.intent?.key ?? 'next-question'} locale={locale} state={state}
       {...(cover ? { cover } : {})}
       scope={saved?.intent?.scope ?? scope} busy={researchBusy}
