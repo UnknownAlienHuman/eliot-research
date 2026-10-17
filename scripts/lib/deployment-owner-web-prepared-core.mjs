@@ -6,11 +6,12 @@ import {once} from 'node:events';
 import {readFile,realpath,lstat,readdir} from 'node:fs/promises';
 import path from 'node:path';
 import {readD1Migrations} from '@cloudflare/vitest-plugin';
+import {ownerWebStartupReadOnlyPaths} from './deployment-owner-web-startup-routes.mjs';
 
 const WORKER='apps/eliotr-web/dist/eliotr_core',CLIENT='apps/eliotr-web/dist/client';
 // Exact existing development-only Core profile; all production auth guards remain active.
 const ISSUER=['https://owner-e2e','.cloudflareaccess.com'].join(''),AUDIENCE='owner-e2e-audience';
-const GETS=new Set(['/api/v1/system/health','/api/v1/system/session','/api/v1/research/projects','/api/v1/system/research-configuration','/api/v1/research/runs']);
+const GETS=new Set(ownerWebStartupReadOnlyPaths);
 const sha=b=>createHash('sha256').update(b).digest('hex');
 
 /** Genuine prepared Core, disposable local D1/R2, RS256/JWKS, no product seed or provider egress. */

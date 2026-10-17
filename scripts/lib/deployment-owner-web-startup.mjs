@@ -8,6 +8,7 @@ import { chromium } from "playwright-core";
 import { admitStartupObservation } from "./emitted-route-membership.mjs";
 import { scrubTokenEnv } from "./cloudflare-wrangler-oauth.mjs";
 import { createPreparedCoreStartupRuntime, readPreparedCoreRuntimeProof } from "./deployment-owner-web-prepared-core.mjs";
+import { ownerWebStartupReadOnlyPaths } from "./deployment-owner-web-startup-routes.mjs";
 
 const PROFILE = "LOCAL_PREPARED_CLIENT_CURRENT_LIVE_BACKEND_READONLY";
 const SCOPE = "Prepared client bytes with the current live backend, read-only; does not qualify prepared Core, deployment or live cutover";
@@ -27,6 +28,7 @@ const STARTUP_GETS = new Set([
   "/api/v1/system/health", "/api/v1/system/session", "/api/v1/research/projects",
   "/api/v1/research/runs",
 ]);
+const ALLOWED_STARTUP_GETS = new Set(ownerWebStartupReadOnlyPaths);
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const fail = message => { throw new Error("Owner-web startup: " + message); };
 const relativePath = value => typeof value === "string" && value.length > 0 &&
@@ -143,7 +145,7 @@ function diagnosticGet({ origin, environment, signal, remaining, children }) {
   for (const key of ["ELIOTR_ACCESS_SMOKE_COOKIE", "CF_ACCESS_CLIENT_ID", "CF_ACCESS_CLIENT_SECRET",
     "CLOUDFLARE_ACCESS_CLIENT_ID", "CLOUDFLARE_ACCESS_CLIENT_SECRET"]) delete env[key];
   return pathname => {
-    if (!STARTUP_GETS.has(pathname) || signal.aborted) fail("diagnostic GET outside allowlist or deadline");
+    if (!ALLOWED_STARTUP_GETS.has(pathname) || signal.aborted) fail("diagnostic GET outside allowlist or deadline");
     // An observed current-backend GET exceeded 15 seconds. Keep the transport
     // window within the observer's existing total deadline and cleanup bounds.
     const timeout = Math.min(45_000, remaining()), trailer = "\nELIOTR_OWNER_HTTP:";
@@ -179,7 +181,7 @@ function resource(url, origin, entry, files) {
   if (url.origin !== origin || url.username || url.password || url.search || url.hash ||
       url.pathname.includes("%") || url.pathname.includes("\\")) return undefined;
   if (url.pathname.startsWith("/api/")) {
-    return entry.route === "/" && STARTUP_GETS.has(url.pathname) ? { api: url.pathname } : undefined;
+    return entry.route === "/" && ALLOWED_STARTUP_GETS.has(url.pathname) ? { api: url.pathname } : undefined;
   }
   const artifact = url.pathname === entry.route ? entry.htmlPath : url.pathname.slice(1);
   if (!relativePath(artifact) || hidden(artifact) || ["_headers", "_redirects"].includes(artifact) ||
