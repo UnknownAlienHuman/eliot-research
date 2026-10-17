@@ -3,19 +3,26 @@
 import { DatabaseSync, type SQLInputValue } from "node:sqlite";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { WorkflowCheckpointError, WorkflowCheckpointStore, type WorkflowRunStatus } from "@eliotr/cloudflare-research";
-import { CatalogInputError, ScopeServiceError } from "@eliotr/cloudflare-navigation";
+import { ScopeServiceError } from "@eliotr/cloudflare-navigation";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import type { ScopeSnapshot } from "@eliotr/contracts";
 import type * as Evidence from "@eliotr/cloudflare-evidence";
 import type * as Navigation from "@eliotr/cloudflare-navigation";
+import type * as ResearchStages from "@eliotr/cloudflare-research-stages";
 import compatibilityMigration from "../../../infra/d1/core/migrations/0068_research_deployment_compatibility.sql?raw";
-import { prepareReauthenticatedRunRead, type ResearchRunReadEnvironment } from "./research-run-read-authorization.js";
+import { prepareReauthenticatedRunMetadataRead, prepareReauthenticatedRunRead, readReauthenticatedRunAnswer,
+  type ReauthenticatedRunRead, type ResearchRunReadEnvironment } from "./research-run-read-authorization.js";
 import { readOwnerResearchRuns, type ResearchRunListPorts } from "./research-run-list.js";
 import { recoverResearchRun, type ResearchRunControlEnvironment } from "./research-run-control.js";
 
 const authority = vi.hoisted(() => ({
   load: vi.fn(), navigation: vi.fn(), current: vi.fn(), sources: vi.fn(),
   owner: vi.fn(), machine: vi.fn(), requireCurrent: vi.fn(),
+}));
+const { historicalCoverageMock } = vi.hoisted(() => ({ historicalCoverageMock: vi.fn() }));
+vi.mock("@eliotr/cloudflare-research-stages", async importOriginal => ({
+  ...await importOriginal<typeof ResearchStages>(),
+  readHistoricalResearchCoverage: historicalCoverageMock,
 }));
 vi.mock("@eliotr/cloudflare-evidence", async importOriginal => ({
   ...await importOriginal<typeof Evidence>(), loadScopeAuthority: authority.load,
@@ -134,7 +141,6 @@ function setup() {
     reopen_owner_artifact_draft: vi.fn(async () => { throw new Error("No report payload read in history"); }) };
   const list: ResearchRunListPorts = { database, work_bucket: read.work_bucket, run_read: read,
     deployment_generation: "active-generation", authorize_owner_read: () => undefined,
-    run_status: vi.fn(async () => { throw new CatalogInputError("RESEARCH_RUN_NOT_FOUND", "No direct origin", 404); }),
     prepare_artifact_read: vi.fn(async () => { throw new Error("No drafts in this fixture"); }),
     reopen_owner_artifact_draft: read.reopen_owner_artifact_draft, semantic_configuration_installed: () => true };
   const workflow = { get: vi.fn(async () => { throw new Error("Recovery must be denied before native Workflow I/O"); }) };
@@ -144,6 +150,34 @@ function setup() {
 }
 
 describe("read-only owner run provenance versus execution compatibility", () => {
+  it("keeps detailed completed-run reads on full coverage and report validation", async () => {
+    const f = setup();
+    const artifactRef = { id: "detail-artifact", revision: 2 };
+    const scopeRef = { id: "scope-1", revision: 1 };
+    const reopen = vi.fn(async () => ({ artifact_ref: artifactRef, original_scope_snapshot_ref: scopeRef,
+      artifact: { status: "DRAFT", sections: [], evidence_freeze_ref: { id: "freeze-1", revision: 1 },
+        dependency_manifest_ref: "manifest-1:1" } }));
+    const runRead = { ...f.read, reopen_owner_artifact_draft: reopen } as unknown as ResearchRunReadEnvironment;
+    const requireCurrent = vi.fn(async () => undefined);
+    const read = { status: { ...f.status, state: "ENGINE_COMPLETED" }, handler_generation: "detail-generation",
+      requireCurrent, controlFence: vi.fn() } as unknown as ReauthenticatedRunRead;
+    historicalCoverageMock.mockReset();
+    historicalCoverageMock.mockImplementation(async (input: { require_artifact: (refs: {
+      artifact_ref: typeof artifactRef; original_scope_snapshot_ref: typeof scopeRef;
+    }) => Promise<unknown>; require_current: () => Promise<void> }) => {
+      await input.require_current();
+      await input.require_artifact({ artifact_ref: artifactRef, original_scope_snapshot_ref: scopeRef });
+      return { artifact_ref: artifactRef };
+    });
+
+    const answer = await readReauthenticatedRunAnswer(runRead, f.context, read, "detail-generation");
+
+    expect(answer).toEqual({ availability: "draft", artifact_ref: artifactRef });
+    expect(historicalCoverageMock).toHaveBeenCalledTimes(1);
+    expect(reopen).toHaveBeenCalledWith(f.context, artifactRef);
+    expect(requireCurrent).toHaveBeenCalledTimes(2);
+  });
+
   it("lists a retained incompatible origin under current rights while recovery remains forbidden", async () => {
     const f = setup();
     const before = sqlite.prepare("SELECT total_changes() AS n").get();
@@ -163,12 +197,30 @@ describe("read-only owner run provenance versus execution compatibility", () => 
     expect(sqlite.prepare("SELECT total_changes() AS n").get()).toEqual(before);
   });
 
-  it("leaves same-owner current-credential current-generation reads to the canonical direct port", async () => {
+  it("keeps the detailed status reader fast path for same-owner current runs", async () => {
     const f = setup();
     sqlite.exec("UPDATE research_workflow_run SET credential_generation='current-credential',deployment_generation='active-generation';" +
       "UPDATE scope_access_grant SET credential_generation='current-credential'");
     await expect(prepareReauthenticatedRunRead(f.read, f.context, "old-run")).resolves.toBeNull();
     expect(authority.owner).not.toHaveBeenCalled();
+    expect(f.compatible).not.toHaveBeenCalled();
+  });
+
+  it("history metadata still checks current owner and source rights for same-owner current runs", async () => {
+    const f = setup();
+    sqlite.exec("UPDATE research_workflow_run SET credential_generation='current-credential',deployment_generation='active-generation';" +
+      "UPDATE scope_access_grant SET credential_generation='current-credential'");
+    f.head.deployment_generation = "active-generation";
+    vi.spyOn(WorkflowCheckpointStore.prototype, "readRunStatus").mockResolvedValue({
+      ...f.status, credential_generation: "current-credential", deployment_generation: "active-generation",
+    });
+
+    const read = await prepareReauthenticatedRunMetadataRead(f.read, f.context, "old-run");
+
+    expect(read).not.toBeNull();
+    expect(authority.owner).toHaveBeenCalledWith(expect.objectContaining({ access: f.context,
+      original_ref: { id: "scope-1", revision: 1 } }));
+    expect(authority.sources).toHaveBeenCalledWith(["original-revision"], expect.anything());
     expect(f.compatible).not.toHaveBeenCalled();
   });
 
@@ -179,7 +231,6 @@ describe("read-only owner run provenance versus execution compatibility", () => 
     expect(history.runs).toEqual([]);
     expect(JSON.stringify(history)).not.toContain("Retained failed O1 question");
     expect(authority.owner).not.toHaveBeenCalled();
-    expect(f.list.run_status).not.toHaveBeenCalled();
   });
 
   it("does not issue a control fence from a read-only authorization and rechecks retained provenance", async () => {

@@ -618,8 +618,16 @@ export function createRetrievalQueryService(ports: RetrievalQueryPorts): Retriev
       const managedPrimaryScanCount = managedPrimaryExecuted
         ? (semanticReceipt?.candidates.length ?? 0)
         : 0;
+      const requestedLimit = Number.isSafeInteger(request.requested_limit) && request.requested_limit > 0
+        ? request.requested_limit
+        : 1;
+      const limit = Math.min(requestedLimit, executionBounds.evidence_limit);
       const fusionOptions: FusionOptions = {
         ...ports.fusion,
+        // Do not discard candidates from a source before selection can fill the
+        // already-authorized evidence pack. The final item cap remains the
+        // controlling bound on how many exact excerpts can be returned.
+        maxPerSourceRevision: Math.max(ports.fusion.maxPerSourceRevision, limit),
         maxDiversityScanCandidates: Math.max(0, diversityScanLimit - managedPrimaryScanCount),
         onDroppedCandidate: (candidate, reason) => {
           fusionDrops.push({ candidate, reason });
@@ -755,10 +763,6 @@ export function createRetrievalQueryService(ports: RetrievalQueryPorts): Retriev
           addOmission(candidate.candidate_id, "FUSION_CANDIDATE_LIMIT");
         }
       }
-      const requestedLimit = Number.isSafeInteger(request.requested_limit) && request.requested_limit > 0
-        ? request.requested_limit
-        : 1;
-      const limit = Math.min(requestedLimit, executionBounds.evidence_limit);
       const exactResolutionScanLimit = executionBounds.exact_resolution_scan_limit;
       // Preserve provider/fusion rank provenance. Only Research's bounded exact
       // selection prefers one locator per canonical source before extra excerpts.

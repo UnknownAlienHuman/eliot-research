@@ -80,11 +80,12 @@ export { requireRunStatusContinuity };
  * The stored credential is provenance only. All authorization uses the current caller.
  * Historical provenance and current read rights are independent of the stronger
  * deployment compatibility required for execution control. */
-export async function prepareReauthenticatedRunRead(
+async function prepareReauthenticatedRunReadWithMode(
 	ports: ResearchRunReadEnvironment,
   context: AuthenticatedRequestContext,
   operationId: string,
   forControl = false,
+  forceHistoryRead = false,
 ): Promise<ReauthenticatedRunRead | null> {
   if (context.client_class !== "owner_pwa") stale();
   requireActiveRequest(context);
@@ -104,7 +105,7 @@ export async function prepareReauthenticatedRunRead(
       await ports.require_deployment_compatibility(binding.deployment_generation, ports.active_deployment_generation);
     } catch { stale(); }
   }
-  if (!forControl && binding.origin_client_class === "owner_pwa" && binding.credential_generation === context.credential_generation &&
+	if (!forControl && !forceHistoryRead && binding.origin_client_class === "owner_pwa" && binding.credential_generation === context.credential_generation &&
 		binding.deployment_generation === ports.active_deployment_generation) return null;
   if (typeof binding.credential_generation !== "string" || typeof binding.handler_generation !== "string") corrupt();
 
@@ -199,6 +200,24 @@ export async function prepareReauthenticatedRunRead(
   await requireCurrent();
   return { status, handler_generation: binding.handler_generation, requireCurrent, controlFence,
     ...(machine === undefined ? {} : { owner_machine: machine.origin }) };
+}
+
+export async function prepareReauthenticatedRunRead(
+  ports: ResearchRunReadEnvironment,
+  context: AuthenticatedRequestContext,
+  operationId: string,
+  forControl = false,
+): Promise<ReauthenticatedRunRead | null> {
+  return prepareReauthenticatedRunReadWithMode(ports, context, operationId, forControl);
+}
+
+/** History needs current scope/source fences even when the run uses this exact credential. */
+export async function prepareReauthenticatedRunMetadataRead(
+  ports: ResearchRunReadEnvironment,
+  context: AuthenticatedRequestContext,
+  operationId: string,
+): Promise<ReauthenticatedRunRead | null> {
+  return prepareReauthenticatedRunReadWithMode(ports, context, operationId, false, true);
 }
 
 /** Current caller authorization stays in the shared artifact service. */

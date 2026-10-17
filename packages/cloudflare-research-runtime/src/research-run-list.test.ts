@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { AuthenticatedRequestContext, ResearchRunStatus } from "@eliotr/interfaces";
+import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import { CatalogInputError } from "@eliotr/cloudflare-navigation";
 import { WorkflowCheckpointError } from "@eliotr/cloudflare-research";
 import { readHistoricalResearchArtifactLocator } from "@eliotr/cloudflare-research-stages";
 import { readOwnerResearchRuns, type ResearchRunListPorts } from "./research-run-list.js";
-import { prepareReauthenticatedRunRead } from "./research-run-read-authorization.js";
+import { prepareReauthenticatedRunMetadataRead } from "./research-run-read-authorization.js";
 import { SERVER_OWNED_SEMANTIC_HANDLER_GENERATION } from "./research-stage-handlers.js";
 import type { ResearchRunReadEnvironment } from "./research-run-read-authorization.js";
 import type * as RunReadAuthorization from "./research-run-read-authorization.js";
@@ -19,6 +19,7 @@ const { prepareReadMock, readAnswerMock, historicalLocatorMock } = vi.hoisted(()
 vi.mock("./research-run-read-authorization.js", async (importOriginal) => {
   const actual = await importOriginal<typeof RunReadAuthorization>();
   return { ...actual, prepareReauthenticatedRunRead: prepareReadMock,
+    prepareReauthenticatedRunMetadataRead: prepareReadMock,
     readReauthenticatedRunAnswer: readAnswerMock };
 });
 
@@ -38,6 +39,8 @@ function workflowStatus(operationId: string) {
   return {
     operation_id: operationId,
     investigation_id: `investigation-${operationId}`,
+    principal_ref: "owner-1", credential_generation: "credential-1", deployment_generation: "deployment-1",
+    scope_snapshot_id: "scope-1", scope_snapshot_revision: 2,
     current_revision: 4,
     state: "ENGINE_COMPLETED",
     next_stage_index: 18,
@@ -49,15 +52,19 @@ function makePorts(input: {
   runRows?: readonly { operation_id: string; created_at: string; query: unknown; scope_expression?: unknown }[];
   draftRows?: readonly Record<string, unknown>[];
   workflowBindingRows?: readonly Record<string, unknown>[];
+  historicalBindingRows?: readonly Record<string, unknown>[];
   projectGeneration?: number;
 } = {}) {
   let historySql = "";
   const database = {
     prepare(query: string) {
       return {
-        bind(..._values: unknown[]) {
+        bind(...values: unknown[]) {
           return {
             all: async <T>() => {
+              if (query.includes("FROM research_workflow_run w JOIN research_report_admission r")) {
+                return { success: true, results: (input.historicalBindingRows ?? []).filter(row => row.operation_id === values[0]) as T[] };
+              }
               if (query.includes("FROM research_workflow_run r") && query.includes("investigation_ledger_head")) {
                 historySql = query;
                 return { success: true, results: [...(input.runRows ?? [])] as T[] };
@@ -66,7 +73,7 @@ function makePorts(input: {
                 return { success: true, results: [...(input.draftRows ?? [])] as T[] };
               }
               if (query.includes("FROM research_report_admission r")) {
-                return { success: true, results: [...(input.workflowBindingRows ?? [])] as T[] };
+                return { success: true, results: (input.workflowBindingRows ?? []).filter(row => row.intent_id === values[0]) as T[] };
               }
               return { success: true, results: [] as T[] };
             },
@@ -77,11 +84,6 @@ function makePorts(input: {
       };
     },
   } as unknown as D1Database;
-  const run_status = vi.fn(async (_actor: AuthenticatedRequestContext, operationId: string): Promise<ResearchRunStatus> => ({
-    protocol: "eliotr.research-run-status.v1", workflow_instance_id: operationId,
-    investigation_ref: { id: `investigation-${operationId}`, revision: 4 }, execution_state: "ACTIVE",
-    engine_status: "errored", next_stage_index: 3, answer: { availability: "unavailable" },
-  }));
   const prepare_artifact_read = vi.fn(async () => ({
     original_scope_snapshot_ref: { id: "scope-1", revision: 2 },
     requireCurrent: async () => undefined,
@@ -92,12 +94,30 @@ function makePorts(input: {
     deployment_generation: "deployment-1",
     run_read: { database } as ResearchRunReadEnvironment,
     authorize_owner_read: vi.fn(),
-    run_status,
     prepare_artifact_read,
     reopen_owner_artifact_draft: vi.fn(async () => { throw new Error("draft reopen is outside this locator test"); }),
     semantic_configuration_installed: () => true,
   } satisfies ResearchRunListPorts;
-  return { ports, run_status, prepare_artifact_read, getHistorySql: () => historySql };
+  return { ports, prepare_artifact_read, getHistorySql: () => historySql };
+}
+
+function makeHistoryBeyondDraftWindow() {
+  const runRows = Array.from({ length: 8 }, (_item, index) => ({ operation_id: `bounded-run-${index}`,
+    created_at: `2026-10-15T12:0${7 - index}:00.000Z`, query: `Question ${index}` }));
+  const draftRows = Array.from({ length: 8 }, (_item, index) => ({ artifact_id: `unrelated-cow-${index}`,
+    revision: 1, scope_snapshot_id: "scope-1", scope_snapshot_revision: 2, origin_client_class: "owner_pwa",
+    principal_ref: "owner-1", intent_id: `unrelated-intent-${index}`, intent_revision: 1,
+    created_at: `2026-10-15T12:1${7 - index}:00.000Z` }));
+  const hiddenArtifact = { id: "older-run-report", revision: 4 };
+  const historicalBindingRows = [{ operation_id: "bounded-run-7", artifact_id: hiddenArtifact.id,
+    revision: hiddenArtifact.revision, scope_snapshot_id: "scope-1", scope_snapshot_revision: 2,
+    principal_ref: "owner-1", intent_id: "older-report-intent", intent_revision: 1,
+    origin_client_class: "owner_pwa" }];
+  const workflowBindingRows = [{ intent_id: "older-report-intent", admission_operation_id: "bounded-run-7",
+    admission_principal_ref: "owner-1", admission_scope_snapshot_id: "scope-1", admission_scope_snapshot_revision: 2,
+    workflow_operation_id: "bounded-run-7", workflow_principal_ref: "owner-1",
+    workflow_scope_snapshot_id: "scope-1", workflow_scope_snapshot_revision: 2 }];
+  return { ...makePorts({ runRows, draftRows, workflowBindingRows, historicalBindingRows }), draftRows, hiddenArtifact };
 }
 
 describe("owner research history", () => {
@@ -107,33 +127,107 @@ describe("owner research history", () => {
     historicalLocatorMock.mockReset();
   });
 
-  it("reattaches a completed historical draft under the current owner credential", async () => {
-    const artifactRef = { id: "artifact-current-read", revision: 3 };
-    const { ports, run_status, prepare_artifact_read } = makePorts({ runRows: [
-      { operation_id: "old-completed-run", created_at: "2026-10-15T12:01:00.000Z", query: "Current question" },
-    ] });
-    const read = { status: workflowStatus("old-completed-run"), handler_generation: SERVER_OWNED_SEMANTIC_HANDLER_GENERATION,
-      requireCurrent: vi.fn(async () => undefined) };
-    prepareReadMock.mockResolvedValue(read);
-    readAnswerMock.mockResolvedValue({ availability: "draft", artifact_ref: artifactRef });
+  it("attaches eight completed report locators without opening their body graphs", async () => {
+    const runRows = Array.from({ length: 8 }, (_item, index) => ({ operation_id: `completed-${index}`,
+      created_at: `2026-10-15T12:0${7 - index}:00.000Z`, query: `Question ${index}` }));
+    const draftRows = runRows.map((_run, index) => ({
+      artifact_id: `artifact-${index}`, revision: 2, scope_snapshot_id: "scope-1", scope_snapshot_revision: 2,
+      origin_client_class: "owner_pwa", principal_ref: "owner-1", intent_id: `intent-${index}`,
+      intent_revision: 1, created_at: `2026-10-15T12:1${7 - index}:00.000Z`,
+    }));
+    const workflowBindingRows = draftRows.map((draft, index) => ({
+      intent_id: draft.intent_id,
+      admission_operation_id: `completed-${index}`, admission_principal_ref: "owner-1",
+      admission_scope_snapshot_id: "scope-1", admission_scope_snapshot_revision: 2,
+      workflow_operation_id: `completed-${index}`, workflow_principal_ref: "owner-1",
+      workflow_scope_snapshot_id: "scope-1", workflow_scope_snapshot_revision: 2,
+    }));
+    const { ports } = makePorts({ runRows, draftRows, workflowBindingRows });
+    prepareReadMock.mockImplementation(async (_environment, _actor, operationId: string) => ({
+      status: workflowStatus(operationId), handler_generation: SERVER_OWNED_SEMANTIC_HANDLER_GENERATION,
+      requireCurrent: vi.fn(async () => undefined),
+    }));
+    historicalLocatorMock.mockImplementation(async (input: { operation_id: string; artifact_ref: { id: string; revision: number } }) => input);
 
     const history = await readOwnerResearchRuns(ports, context);
 
-    expect(readAnswerMock).toHaveBeenCalledWith(ports.run_read, context, read, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION);
-    expect(history.runs[0]?.status.answer).toEqual({ availability: "draft", artifact_ref: artifactRef });
-    expect(run_status).not.toHaveBeenCalled();
-    expect(prepare_artifact_read).not.toHaveBeenCalled();
-    expect(read.requireCurrent).toHaveBeenCalledTimes(2);
+    expect(history.runs).toHaveLength(8);
+    expect(history.runs.map(run => run.status.answer)).toEqual(draftRows.map(draft => ({
+      availability: "draft", artifact_ref: { id: draft.artifact_id, revision: draft.revision },
+    })));
+    expect(prepareReauthenticatedRunMetadataRead).toHaveBeenCalledTimes(8);
+    expect(readAnswerMock).not.toHaveBeenCalled();
+    expect(ports.reopen_owner_artifact_draft).not.toHaveBeenCalled();
+  });
+
+  it("finds a completed run's report when eight newer unrelated drafts exhaust the draft scan", async () => {
+    const { ports, draftRows, hiddenArtifact } = makeHistoryBeyondDraftWindow();
+    prepareReadMock.mockImplementation(async (_environment, _actor, operationId: string) => ({
+      status: workflowStatus(operationId), handler_generation: SERVER_OWNED_SEMANTIC_HANDLER_GENERATION,
+      requireCurrent: vi.fn(async () => undefined),
+    }));
+    historicalLocatorMock.mockImplementation(async (input: { operation_id: string; artifact_ref: { id: string; revision: number } }) => input);
+
+    const history = await readOwnerResearchRuns(ports, context);
+
+    expect(history.visibility_scan).toEqual({ runs: "TARGET_REACHED", saved_drafts: "TARGET_REACHED" });
+    expect(history.saved_drafts.map(draft => draft.artifact_ref.id)).toEqual(draftRows.map(draft => draft.artifact_id));
+    expect(history.runs[7]?.status.answer).toEqual({ availability: "draft", artifact_ref: hiddenArtifact });
+  });
+
+  it("does not disclose a fallback report without current report read rights", async () => {
+    const { ports, hiddenArtifact } = makeHistoryBeyondDraftWindow();
+    prepareReadMock.mockImplementation(async (_environment, _actor, operationId: string) => ({
+      status: workflowStatus(operationId), handler_generation: SERVER_OWNED_SEMANTIC_HANDLER_GENERATION,
+      requireCurrent: vi.fn(async () => undefined),
+    }));
+    const deniedPorts = { ...ports, prepare_artifact_read: vi.fn(async () => {
+      throw new CatalogInputError("RESEARCH_HISTORY_AUTHORITY_STALE", "report read denied", 404);
+    }) };
+
+    const history = await readOwnerResearchRuns(deniedPorts, context);
+
+    expect(history.runs[7]?.status.answer).toEqual({ availability: "unavailable" });
+    expect(JSON.stringify(history)).not.toContain(hiddenArtifact.id);
+  });
+
+  it("rechecks fallback report rights after locator discovery", async () => {
+    const { ports } = makeHistoryBeyondDraftWindow();
+    prepareReadMock.mockImplementation(async (_environment, _actor, operationId: string) => ({
+      status: workflowStatus(operationId), handler_generation: SERVER_OWNED_SEMANTIC_HANDLER_GENERATION,
+      requireCurrent: vi.fn(async () => undefined),
+    }));
+    const revoked = new CatalogInputError("RESEARCH_HISTORY_AUTHORITY_STALE", "report permission changed", 409);
+    const requireCurrent = vi.fn().mockResolvedValueOnce(undefined).mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(revoked);
+    const checkedPorts = { ...ports, prepare_artifact_read: vi.fn(async (_actor, ref) => ref.id === "older-run-report"
+      ? { original_scope_snapshot_ref: { id: "scope-1", revision: 2 }, requireCurrent }
+      : { original_scope_snapshot_ref: { id: "scope-1", revision: 2 }, requireCurrent: async () => undefined }) };
+    historicalLocatorMock.mockImplementation(async (input: { operation_id: string; require_current: () => Promise<void> }) => {
+      await input.require_current();
+      return input;
+    });
+
+    await expect(readOwnerResearchRuns(checkedPorts, context)).rejects.toBe(revoked);
+    expect(requireCurrent).toHaveBeenCalledTimes(3);
+  });
+
+  it("fails closed when a fallback report has invalid materialization lineage", async () => {
+    const { ports } = makeHistoryBeyondDraftWindow();
+    prepareReadMock.mockImplementation(async (_environment, _actor, operationId: string) => ({
+      status: workflowStatus(operationId), handler_generation: SERVER_OWNED_SEMANTIC_HANDLER_GENERATION,
+      requireCurrent: vi.fn(async () => undefined),
+    }));
+    historicalLocatorMock.mockRejectedValue(new WorkflowCheckpointError("WORKFLOW_OUTPUT_CORRUPT"));
+
+    await expect(readOwnerResearchRuns(ports, context)).rejects.toMatchObject({ code: "WORKFLOW_OUTPUT_CORRUPT" });
   });
 
   it("omits the historical draft when the current source authority is revoked", async () => {
     const { ports } = makePorts({ runRows: [
       { operation_id: "revoked-source-run", created_at: "2026-10-15T12:01:00.000Z", query: "Revoked source question" },
     ] });
-    const read = { status: workflowStatus("revoked-source-run"), handler_generation: SERVER_OWNED_SEMANTIC_HANDLER_GENERATION,
-      requireCurrent: vi.fn(async () => undefined) };
-    prepareReadMock.mockResolvedValue(read);
-    readAnswerMock.mockRejectedValue(new WorkflowCheckpointError("WORKFLOW_AUTHORITY_STALE"));
+    prepareReadMock.mockRejectedValue(new WorkflowCheckpointError("WORKFLOW_AUTHORITY_STALE"));
 
     const history = await readOwnerResearchRuns(ports, context);
 
@@ -142,17 +236,23 @@ describe("owner research history", () => {
     expect(JSON.stringify(history)).not.toContain("Revoked source question");
   });
 
-  it("does not convert unknown historical report storage failure into a draft", async () => {
-    const { ports } = makePorts({ runRows: [
-      { operation_id: "unavailable-report-run", created_at: "2026-10-15T12:01:00.000Z", query: "Unavailable report question" },
-    ] });
-    const read = { status: workflowStatus("unavailable-report-run"), handler_generation: SERVER_OWNED_SEMANTIC_HANDLER_GENERATION,
-      requireCurrent: vi.fn(async () => undefined) };
-    prepareReadMock.mockResolvedValue(read);
-    const failure = new WorkflowCheckpointError("WORKFLOW_OUTPUT_UNAVAILABLE");
-    readAnswerMock.mockRejectedValue(failure);
+  it("denies a report whose canonical materialization lineage is invalid", async () => {
+    const runRows = [{ operation_id: "wrong-lineage-run", created_at: "2026-10-15T12:01:00.000Z", query: "Wrong lineage" }];
+    const draftRows = [{ artifact_id: "wrong-lineage-artifact", revision: 1, scope_snapshot_id: "scope-1",
+      scope_snapshot_revision: 2, origin_client_class: "owner_pwa", principal_ref: "owner-1", intent_id: "intent-1",
+      intent_revision: 1, created_at: "2026-10-15T12:02:00.000Z" }];
+    const workflowBindingRows = [{ intent_id: "intent-1", admission_operation_id: "wrong-lineage-run", admission_principal_ref: "owner-1",
+      admission_scope_snapshot_id: "scope-1", admission_scope_snapshot_revision: 2,
+      workflow_operation_id: "wrong-lineage-run", workflow_principal_ref: "owner-1",
+      workflow_scope_snapshot_id: "scope-1", workflow_scope_snapshot_revision: 2 }];
+    const { ports } = makePorts({ runRows, draftRows, workflowBindingRows });
+    prepareReadMock.mockResolvedValue({ status: workflowStatus("wrong-lineage-run"),
+      requireCurrent: vi.fn(async () => undefined) });
+    historicalLocatorMock.mockRejectedValue(new WorkflowCheckpointError("WORKFLOW_OUTPUT_CORRUPT"));
 
-    await expect(readOwnerResearchRuns(ports, context)).rejects.toBe(failure);
+    await expect(readOwnerResearchRuns(ports, context)).rejects.toMatchObject({ code: "WORKFLOW_OUTPUT_CORRUPT" });
+    expect(ports.prepare_artifact_read).toHaveBeenCalledWith(context,
+      { id: "wrong-lineage-artifact", revision: 1 }, "report");
   });
 
   it("uses reauthenticated metadata for historical runs and retains valid history metadata", async () => {
@@ -161,15 +261,14 @@ describe("owner research history", () => {
       { operation_id: "current-run", created_at: "2026-10-15T12:01:00.000Z", query: question },
       { operation_id: "legacy-run", created_at: "2026-10-15T12:00:00.000Z", query: null },
     ];
-    const { ports, run_status, getHistorySql } = makePorts({ runRows: rows });
+    const { ports, getHistorySql } = makePorts({ runRows: rows });
     prepareReadMock.mockImplementation(async (_environment, _requestContext, operationId: string) => ({
       status: workflowStatus(operationId), requireCurrent: async () => undefined,
     }));
 
     const history = await readOwnerResearchRuns(ports, context);
 
-    expect(run_status).not.toHaveBeenCalled();
-    expect(prepareReauthenticatedRunRead).toHaveBeenCalledTimes(2);
+    expect(prepareReauthenticatedRunMetadataRead).toHaveBeenCalledTimes(2);
     expect(history.runs).toHaveLength(2);
     expect(history.runs[0]).toMatchObject({
       created_at: rows[0]?.created_at, query: question,
@@ -183,70 +282,71 @@ describe("owner research history", () => {
     expect(getHistorySql()).not.toContain("research_deployment_compatible");
   });
 
-  it("uses the canonical direct status port when current owner reauthentication is unnecessary", async () => {
-    const { ports, run_status } = makePorts({ runRows: [
+  it("uses the current-fenced metadata reader for same-owner current runs", async () => {
+    const { ports } = makePorts({ runRows: [
       { operation_id: "current-run", created_at: "2026-10-15T12:01:00.000Z", query: "Authorized current question" },
     ] });
-    prepareReadMock.mockResolvedValue(null);
+    prepareReadMock.mockResolvedValue({
+      status: { ...workflowStatus("current-run"), state: "ACTIVE", next_stage_index: 3 },
+      requireCurrent: vi.fn(async () => undefined),
+    });
 
     const history = await readOwnerResearchRuns(ports, context);
 
-    expect(run_status).toHaveBeenCalledTimes(2);
-    expect(run_status).toHaveBeenCalledWith(context, "current-run");
+    expect(prepareReauthenticatedRunMetadataRead).toHaveBeenCalledWith(ports.run_read, context, "current-run");
     expect(history.runs).toEqual([expect.objectContaining({
       query: "Authorized current question",
-      status: expect.objectContaining({ workflow_instance_id: "current-run", engine_status: "errored" }),
+      status: expect.objectContaining({ workflow_instance_id: "current-run", execution_state: "ACTIVE" }),
     })]);
   });
 
   it("omits denied direct-owner candidates without disclosing their questions", async () => {
-    const { ports, run_status } = makePorts({ runRows: [
+    const { ports } = makePorts({ runRows: [
       { operation_id: "denied-run", created_at: "2026-10-15T12:01:00.000Z", query: "Sensitive denied question" },
     ] });
-    prepareReadMock.mockResolvedValue(null);
-    run_status.mockRejectedValue(new CatalogInputError("RESEARCH_AUTHORITY_STALE", "denied", 409));
+    prepareReadMock.mockRejectedValue(new CatalogInputError("RESEARCH_AUTHORITY_STALE", "denied", 409));
 
     const history = await readOwnerResearchRuns(ports, context);
 
     expect(history.runs).toEqual([]);
     expect(JSON.stringify(history)).not.toContain("Sensitive denied question");
-    expect(run_status).toHaveBeenCalledTimes(1);
   });
 
   it("fails the whole result when a selected direct-owner run loses read rights before disclosure", async () => {
-    const { ports, run_status } = makePorts({ runRows: [
+    const { ports } = makePorts({ runRows: [
       { operation_id: "current-run", created_at: "2026-10-15T12:01:00.000Z", query: "No late disclosure" },
     ] });
-    prepareReadMock.mockResolvedValue(null);
-    const status = await run_status(context, "current-run");
-    run_status.mockClear();
     const denial = new CatalogInputError("RESEARCH_AUTHORITY_STALE", "revoked", 409);
-    run_status.mockResolvedValueOnce(status).mockRejectedValueOnce(denial);
+    const requireCurrent = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(denial);
+    prepareReadMock.mockResolvedValue({ status: workflowStatus("current-run"), requireCurrent });
 
     await expect(readOwnerResearchRuns(ports, context)).rejects.toBe(denial);
-    expect(run_status).toHaveBeenCalledTimes(2);
+    expect(requireCurrent).toHaveBeenCalledTimes(2);
   });
 
   it("preserves canonical project filtering before any question or run read", async () => {
-    const { ports, run_status } = makePorts({ projectGeneration: 1, runRows: [
+    const { ports } = makePorts({ projectGeneration: 1, runRows: [
       { operation_id: "excluded-run", created_at: "2026-10-15T12:02:00.000Z", query: "Excluded project question",
         scope_expression: { kind: "EXCEPT", left: { kind: "PROJECT", project_id: "other-project" },
           right: { kind: "PROJECT", project_id: "selected-project" } } },
       { operation_id: "selected-run", created_at: "2026-10-15T12:01:00.000Z", query: "Selected project question",
         scope_expression: { kind: "PROJECT", project_id: "selected-project" } },
     ] });
-    prepareReadMock.mockResolvedValue(null);
+    prepareReadMock.mockImplementation(async (_environment, _actor, operationId: string) => ({
+      status: { ...workflowStatus(operationId), state: "ACTIVE", next_stage_index: 3 },
+      requireCurrent: async () => undefined,
+    }));
 
     const history = await readOwnerResearchRuns(ports, context, "selected-project");
 
     expect(history.runs.map(row => row.status.workflow_instance_id)).toEqual(["selected-run"]);
     expect(prepareReadMock).toHaveBeenCalledTimes(1);
-    expect(run_status).not.toHaveBeenCalledWith(context, "excluded-run");
+    expect(prepareReadMock).not.toHaveBeenCalledWith(expect.anything(), context, "excluded-run");
     expect(JSON.stringify(history)).not.toContain("Excluded project question");
   });
 
   it("fails the whole history response when a selected run loses current authority", async () => {
-    const { ports, run_status } = makePorts({ runRows: [
+    const { ports } = makePorts({ runRows: [
       { operation_id: "revoked-run", created_at: "2026-10-15T12:01:00.000Z", query: "Current query" },
     ] });
     const revoked = new Error("current authority was revoked");
@@ -255,7 +355,6 @@ describe("owner research history", () => {
 
     await expect(readOwnerResearchRuns(ports, context)).rejects.toBe(revoked);
     expect(requireCurrent).toHaveBeenCalledTimes(2);
-    expect(run_status).not.toHaveBeenCalled();
   });
 
   it("overlaps eight candidate reads while retaining SQL order after reverse completion", async () => {
@@ -304,10 +403,10 @@ describe("owner research history", () => {
     expect(history.visibility_scan.saved_drafts).toBe("TARGET_REACHED");
   });
 
-  it("waits for concurrent final direct/historical fences and fails the response on revocation", async () => {
-    const { ports, run_status } = makePorts({ runRows: [
-      { operation_id: "direct-run", created_at: "2026-10-15T12:01:00.000Z", query: "Private direct question" },
-      { operation_id: "historical-run", created_at: "2026-10-15T12:00:00.000Z", query: "Private old question" },
+  it("waits for concurrent final history fences and fails the response on revocation", async () => {
+    const { ports } = makePorts({ runRows: [
+      { operation_id: "first-run", created_at: "2026-10-15T12:01:00.000Z", query: "Private first question" },
+      { operation_id: "second-run", created_at: "2026-10-15T12:00:00.000Z", query: "Private second question" },
     ] });
     const directFence = Promise.withResolvers<void>();
     const historyFence = Promise.withResolvers<void>();
@@ -317,16 +416,13 @@ describe("owner research history", () => {
       if (++finalStarted === 2) allFinalStarted.resolve();
       await gate;
     };
-    const requireCurrent = vi.fn().mockResolvedValueOnce(undefined)
+    const firstCurrent = vi.fn().mockResolvedValueOnce(undefined)
+      .mockImplementationOnce(() => finalCheck(directFence.promise));
+    const secondCurrent = vi.fn().mockResolvedValueOnce(undefined)
       .mockImplementationOnce(() => finalCheck(historyFence.promise));
-    prepareReadMock.mockImplementation(async (_environment, _actor, operationId: string) => operationId === "direct-run"
-      ? null : { status: workflowStatus(operationId), requireCurrent });
-    const initial = await run_status(context, "direct-run");
-    run_status.mockClear();
-    run_status.mockResolvedValueOnce(initial).mockImplementationOnce(async () => {
-      await finalCheck(directFence.promise);
-      return initial;
-    });
+    prepareReadMock.mockImplementation(async (_environment, _actor, operationId: string) => ({
+      status: workflowStatus(operationId), requireCurrent: operationId === "first-run" ? firstCurrent : secondCurrent,
+    }));
     let disclosed = false;
     const response = readOwnerResearchRuns(ports, context).then(value => { disclosed = true; return value; });
     const denied = new CatalogInputError("RESEARCH_HISTORY_AUTHORITY_STALE", "revoked", 409);
@@ -337,7 +433,8 @@ describe("owner research history", () => {
     historyFence.reject(denied);
     await rejected;
     expect(disclosed).toBe(false);
-    expect(requireCurrent).toHaveBeenCalledTimes(2);
+    expect(firstCurrent).toHaveBeenCalledTimes(2);
+    expect(secondCurrent).toHaveBeenCalledTimes(2);
   });
 
   it("fails closed on an unexpected error in a concurrent candidate read", async () => {
@@ -389,19 +486,19 @@ describe("owner research history", () => {
       intent_id: "intent-1", intent_revision: 3, created_at: "2026-10-15T12:02:00.000Z",
     }];
     const workflowBindingRows = [{
+      intent_id: "intent-1",
       admission_operation_id: "completed-run", admission_principal_ref: "owner-1",
       admission_scope_snapshot_id: "scope-1", admission_scope_snapshot_revision: 2,
       workflow_operation_id: "completed-run", workflow_principal_ref: "owner-1",
       workflow_scope_snapshot_id: "scope-1", workflow_scope_snapshot_revision: 2,
     }];
-    const { ports, run_status, prepare_artifact_read } = makePorts({ runRows, draftRows, workflowBindingRows });
+    const { ports, prepare_artifact_read } = makePorts({ runRows, draftRows, workflowBindingRows });
     const requireCurrent = vi.fn(async () => undefined);
     prepareReadMock.mockResolvedValue({ status: workflowStatus("completed-run"), requireCurrent });
     historicalLocatorMock.mockResolvedValue({ operation_id: "completed-run", artifact_ref: artifactRef });
 
     const history = await readOwnerResearchRuns(ports, context);
 
-    expect(run_status).not.toHaveBeenCalled();
     expect(prepare_artifact_read).toHaveBeenCalledWith(context, artifactRef, "report");
     expect(readHistoricalResearchArtifactLocator).toHaveBeenCalledWith(expect.objectContaining({
       operation_id: "completed-run", artifact_ref: artifactRef,

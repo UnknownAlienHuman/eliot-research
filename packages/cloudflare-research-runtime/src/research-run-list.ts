@@ -5,9 +5,8 @@ import { ArtifactDraftReadError } from "@eliotr/cloudflare-research";
 import {
   readHistoricalResearchArtifactLocator,
 } from "@eliotr/cloudflare-research-stages";
-import { prepareReauthenticatedRunRead, readReauthenticatedRunAnswer } from "./research-run-read-authorization.js";
+import { prepareReauthenticatedRunMetadataRead } from "./research-run-read-authorization.js";
 import { runControlStatus } from "./research-run-control.js";
-import { isSemanticResearchHandlerGeneration } from "./research-stage-handlers.js";
 import { WorkflowCheckpointError } from "@eliotr/cloudflare-workflows";
 import type { ResearchRunReadEnvironment, ReopenedResearchRunDraft } from "./research-run-read-authorization.js";
 import { scopeIncludesProject } from "./research-history-project.js";
@@ -23,7 +22,6 @@ export interface ResearchRunListPorts {
   readonly deployment_generation: string;
   readonly run_read: ResearchRunReadEnvironment;
   readonly authorize_owner_read: (context: AuthenticatedRequestContext) => void;
-  readonly run_status: (context: AuthenticatedRequestContext, operation_id: string) => Promise<ResearchRunStatus>;
   readonly prepare_artifact_read: (
     context: AuthenticatedRequestContext, artifact_ref: VersionedRef, operation: "report",
   ) => Promise<ResearchArtifactReadAuthorization>;
@@ -115,6 +113,66 @@ async function readHistoricalWorkflowId(
   return row.admission_operation_id;
 }
 
+async function readHistoricalRunReportLocator(
+  ports: ResearchRunListPorts,
+  context: AuthenticatedRequestContext,
+  operationId: string,
+  originalScope: VersionedRef,
+): Promise<{ artifact_ref: VersionedRef; require_current: () => Promise<void> } | null> {
+  let result: D1Result<SavedDraftRow>;
+  try {
+    result = await ports.database.prepare(
+      "SELECT b.scope_snapshot_id,b.scope_snapshot_revision,o.origin_client_class,b.principal_ref," +
+      "b.artifact_id,b.revision,b.intent_id,b.intent_revision FROM research_workflow_run w " +
+      "JOIN research_report_admission r ON r.operation_id=w.operation_id AND r.principal_ref=w.principal_ref " +
+      "AND r.scope_snapshot_id=w.scope_snapshot_id AND r.scope_snapshot_revision=w.scope_snapshot_revision " +
+      "JOIN artifact_draft_binding b ON b.intent_id=r.intent_id AND b.intent_revision=r.intent_revision " +
+      "AND b.principal_ref=r.principal_ref AND b.scope_snapshot_id=r.scope_snapshot_id " +
+      "AND b.scope_snapshot_revision=r.scope_snapshot_revision " +
+      "JOIN artifact_revision a ON a.artifact_id=b.artifact_id AND a.revision=b.revision AND a.status='DRAFT' " +
+      "JOIN owner_artifact_read_origin o ON o.artifact_id=b.artifact_id AND o.artifact_revision=b.revision " +
+      "AND o.reader_principal_ref=?2 AND o.origin_client_class=r.client_class " +
+      "WHERE w.operation_id=?1 AND (w.principal_ref=?2 OR EXISTS " +
+      "(SELECT 1 FROM owner_machine_run_origin m WHERE m.operation_id=w.operation_id " +
+      "AND m.principal_ref=w.principal_ref AND m.reader_principal_ref=?2)) LIMIT 2",
+    ).bind(operationId, context.principal_ref).all<SavedDraftRow>();
+  } catch {
+    throw new CatalogInputError("RESEARCH_HISTORY_UNAVAILABLE", "Saved reports are temporarily unavailable", 503, true);
+  }
+  if (!result.success) throw new CatalogInputError("RESEARCH_HISTORY_UNAVAILABLE", "Saved reports are temporarily unavailable", 503, true);
+  if (result.results.length > 1) invalidHistory("Run has multiple admitted report locators");
+  const draft = result.results[0];
+  if (draft === undefined) return null;
+  const artifactRef = VersionedRefSchema.parse({ id: draft.artifact_id, revision: draft.revision });
+  const scopeRef = VersionedRefSchema.parse({ id: draft.scope_snapshot_id, revision: draft.scope_snapshot_revision });
+  if (!sameRef(scopeRef, originalScope) || typeof draft.principal_ref !== "string" || draft.principal_ref.length < 1 ||
+      typeof draft.intent_id !== "string" || !Number.isSafeInteger(draft.intent_revision) ||
+      (draft.intent_revision as number) < 1 || !["owner_pwa", "trusted_agent", "named_api_client"].includes(String(draft.origin_client_class))) {
+    invalidHistory("Run report binding is inconsistent");
+  }
+  try {
+    const reportRead = await ports.prepare_artifact_read(context, artifactRef, "report");
+    if (!sameRef(reportRead.original_scope_snapshot_ref, scopeRef)) invalidHistory("Run report origin changed");
+    await reportRead.requireCurrent();
+    const admittedOperation = await readHistoricalWorkflowId(ports, draft, draft.principal_ref, scopeRef);
+    if (admittedOperation !== operationId) invalidHistory("Run report admission changed");
+    const historical = await readHistoricalResearchArtifactLocator({
+      database: ports.database, work_bucket: ports.work_bucket, operation_id: operationId,
+      owner: { principal_ref: context.principal_ref, client_class: "owner_pwa" },
+      require_current: reportRead.requireCurrent, artifact_ref: artifactRef,
+      original_scope_snapshot_ref: scopeRef,
+    });
+    if (historical === null) return null;
+    if (historical.operation_id !== operationId || !sameRef(historical.artifact_ref, artifactRef)) {
+      invalidHistory("Run report materialization binding is inconsistent");
+    }
+    return { artifact_ref: artifactRef, require_current: reportRead.requireCurrent };
+  } catch (error) {
+    if (expectedSavedDraftDenial(error)) return null;
+    throw error;
+  }
+}
+
 
 // The v4 read has independent bounds for each collection. Candidate budgets do
 // not replace any authority check or claim a bound on internal reader queries.
@@ -169,7 +227,7 @@ export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context
     catch { return false; }
   };
   type RunRow = { operation_id: string; created_at: string; query: unknown; scope_expression?: unknown };
-  type RunEntry = { created_at: string; query?: string; status: ResearchRunStatus };
+  type RunEntry = { created_at: string; query?: string; status: ResearchRunStatus; original_scope_snapshot_ref: VersionedRef };
   const runsRead = scanVisibleRecent<RunRow, RunEntry>(async (after, limit) => {
     try {
       const result = await ports.database.prepare(
@@ -194,46 +252,24 @@ export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context
     if (typeof row.operation_id !== "string" || row.operation_id.length < 1 || typeof row.created_at !== "string" ||
         !Number.isFinite(Date.parse(row.created_at))) invalidHistory("Stored research history is invalid");
     try {
-      const read = await prepareReauthenticatedRunRead(ports.run_read, context, row.operation_id);
-      let status: ResearchRunStatus;
-      let requireCurrent: () => Promise<void>;
-      if (read === null) {
-        // Same-owner/current-credential runs deliberately use the canonical
-        // direct reader, which independently checks the current held scope.
-        status = await ports.run_status(context, row.operation_id);
-        const initial = status;
-        requireCurrent = async () => {
-          const current = await ports.run_status(context, row.operation_id);
-          if (current.workflow_instance_id !== initial.workflow_instance_id ||
-              current.investigation_ref.id !== initial.investigation_ref.id) invalidHistory("Run history identity changed");
-        };
-      } else {
-        // Historical metadata remains a locator. Detailed reads independently
-        // verify coverage and report lineage under the current reader's rights.
-        await read.requireCurrent();
-        status = runControlStatus(read.status);
-        if (status.execution_state === "ENGINE_COMPLETED" &&
-            isSemanticResearchHandlerGeneration(read.handler_generation)) {
-          status = {
-            ...status,
-            answer: await readReauthenticatedRunAnswer(
-              ports.run_read,
-              context,
-              read,
-              read.handler_generation,
-            ),
-          };
-        }
-        requireCurrent = read.requireCurrent;
-      }
+      // History is a locator surface. Always apply current owner/source checks,
+      // including for runs whose original credential is still current; report
+      // locators are attached below from the independently authorized draft scan.
+      const read = await prepareReauthenticatedRunMetadataRead(ports.run_read, context, row.operation_id);
+      if (read === null) return null;
+      await read.requireCurrent();
+      const status = runControlStatus(read.status);
       if (status.workflow_instance_id !== row.operation_id) invalidHistory("Run history status has a different origin");
       let query: string | undefined;
       if (row.query !== null && row.query !== undefined) {
         try { query = ResearchRunHistoryQuerySchema.parse(row.query); }
         catch { invalidHistory("Stored research query is invalid"); }
       }
-      return { entry: { created_at: row.created_at, ...(query === undefined ? {} : { query }), status },
-        require_current: requireCurrent };
+      return { entry: { created_at: row.created_at, ...(query === undefined ? {} : { query }), status,
+        original_scope_snapshot_ref: VersionedRefSchema.parse({
+          id: read.status.scope_snapshot_id, revision: read.status.scope_snapshot_revision,
+        }) },
+        require_current: read.requireCurrent };
     } catch (error) {
       if (error instanceof CatalogInputError && [403, 404, 409, 410].includes(error.status)) return null;
       if (error instanceof WorkflowCheckpointError && error.code === "WORKFLOW_AUTHORITY_STALE") return null;
@@ -304,15 +340,27 @@ export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context
     if (prior !== undefined && !sameRef(prior, draft.artifact_ref)) invalidHistory("Saved run has conflicting report locators");
     reportsByRun.set(operationId, draft.artifact_ref);
   }
+  const fallbackChecks: (() => Promise<void>)[] = [];
+  const fallbackLocators = await Promise.all(runs.entries.map(async (entry) => {
+    if (entry.status.execution_state !== "ENGINE_COMPLETED" || reportsByRun.has(entry.status.workflow_instance_id)) return null;
+    return readHistoricalRunReportLocator(ports, context, entry.status.workflow_instance_id, entry.original_scope_snapshot_ref);
+  }));
+  for (let index = 0; index < fallbackLocators.length; index += 1) {
+    const fallback = fallbackLocators[index];
+    const run = runs.entries[index];
+    if (fallback === null || fallback === undefined || run === undefined) continue;
+    reportsByRun.set(run.status.workflow_instance_id, fallback.artifact_ref);
+    fallbackChecks.push(fallback.require_current);
+  }
   // A changed authority invalidates the whole response; it never silently turns
   // a previously selected locator into a complete short list.
-  await Promise.all([...runs.checks, ...drafts.checks].map((requireCurrent) => requireCurrent()));
+  await Promise.all([...runs.checks, ...drafts.checks, ...fallbackChecks].map((requireCurrent) => requireCurrent()));
   if (projectId !== undefined && (await projectOwner())?.generation !== project?.generation) {
     throw new CatalogInputError("RESEARCH_PROJECT_CHANGED", "Project changed while reading history", 409, true);
   }
   return {
     protocol: "eliotr.research-runs.v5" as const,
-    runs: runs.entries.map((entry) => {
+    runs: runs.entries.map(({ original_scope_snapshot_ref: _scopeRef, ...entry }) => {
       const artifact = reportsByRun.get(entry.status.workflow_instance_id);
       return artifact === undefined || entry.status.execution_state !== "ENGINE_COMPLETED" ? entry : {
         ...entry, status: { ...entry.status, answer: { availability: "draft" as const, artifact_ref: artifact } },

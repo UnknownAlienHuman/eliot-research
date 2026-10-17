@@ -29,6 +29,7 @@ import { ReferenceManifestError, type NavigationReadAuthority } from "@eliotr/cl
 import {
   createEvidenceFreezePostSynthesisContextReader,
   createEvidenceFreezeMaterializeContextReader,
+  createEvidenceFreezePredecessorReader,
   createEvidenceFreezeSynthesisContextReader,
   type EvidenceFreezeCommittedReaders,
   type EvidenceFreezeSynthesisReaderEnvironment,
@@ -135,6 +136,143 @@ function synthesisLineageFixtures(inputManifest: WorkflowObject) {
 }
 
 beforeEach(() => vi.resetAllMocks());
+
+function predecessorReaderFixture() {
+  const authority = { policy_authority_ref: "policy-1" };
+  const scope = { snapshot_id: "scope-1", revision: 2, digest: "scope-digest" };
+  const principal = { principal_ref: "owner-1", credential_generation: "credential-1", deployment_generation: "deployment-1" };
+  const stageZero = {
+    operation_id: "operation-1", investigation_ref: { id: "investigation-1", revision: 7 },
+    principal_ref: "owner-1", scope_snapshot_ref: { id: "scope-1", revision: 2 },
+  };
+  const stageFive = {
+    operation_id: "operation-1", investigation_ref: { id: "investigation-1", revision: 7 },
+    principal_ref: "owner-1", scope_snapshot_ref: { id: "scope-1", revision: 2 },
+  };
+  const head = {
+    investigation_id: "investigation-1", revision: 7, principal_ref: "owner-1",
+    deployment_generation: "deployment-1", scope_snapshot_id: "scope-1", scope_snapshot_revision: 2,
+  };
+  const navigation = {
+    access: { principal_ref: principal.principal_ref, credential_generation: principal.credential_generation },
+    scope,
+    current: vi.fn(async () => authority),
+  } as unknown as NavigationReadAuthority;
+  const readers = {
+    read_stage_zero: vi.fn(async () => stageZero),
+    read_stage_five: vi.fn(async () => stageFive),
+    read_w1_head: vi.fn(async () => head),
+    read_authorization_receipt_ref: vi.fn(async () => "authorization-1"),
+  } as unknown as EvidenceFreezeCommittedReaders;
+  const reader = createEvidenceFreezePredecessorReader(navigation, readers);
+  const stageRequest = request("RECONCILE", 7, workflowObject("reconcile-input", "1".repeat(64)));
+  return { authority, navigation, readers, reader, stageRequest, principal, stageZero, stageFive, head };
+}
+
+describe("evidence-freeze predecessor read concurrency", () => {
+  it("starts independent stage-zero and stage-five reads together after initial authority", async () => {
+    const f = predecessorReaderFixture();
+    const stageZeroRead = deferred<typeof f.stageZero>();
+    const stageFiveRead = deferred<typeof f.stageFive>();
+    const started = new Set<string>();
+    const bothStarted = deferred<void>();
+    vi.mocked(f.readers.read_stage_zero).mockImplementation(() => {
+      started.add("stage-zero");
+      if (started.size === 2) bothStarted.resolve();
+      return stageZeroRead.promise as never;
+    });
+    vi.mocked(f.readers.read_stage_five).mockImplementation(() => {
+      started.add("stage-five");
+      if (started.size === 2) bothStarted.resolve();
+      return stageFiveRead.promise as never;
+    });
+
+    let finished = false;
+    const result = f.reader(f.stageRequest, f.principal).then((value) => { finished = true; return value; });
+    await bothStarted.promise;
+    expect(f.navigation.current).toHaveBeenCalledOnce();
+    expect(finished).toBe(false);
+
+    stageZeroRead.resolve(f.stageZero);
+    await Promise.resolve();
+    expect(finished).toBe(false);
+    stageFiveRead.resolve(f.stageFive);
+    await result;
+
+    expect(f.readers.read_stage_zero).toHaveBeenCalledOnce();
+    expect(f.readers.read_stage_five).toHaveBeenCalledOnce();
+    expect(f.readers.read_w1_head).toHaveBeenCalledTimes(2);
+    expect(f.readers.read_authorization_receipt_ref).toHaveBeenCalledOnce();
+    expect(f.navigation.current).toHaveBeenCalledTimes(2);
+  });
+
+  it("joins both reads and reports the earlier stage-zero failure first", async () => {
+    const f = predecessorReaderFixture();
+    const stageZeroRead = deferred<typeof f.stageZero>();
+    const stageFiveRead = deferred<typeof f.stageFive>();
+    const bothStarted = deferred<void>();
+    const zeroError = new WorkflowCheckpointError("WORKFLOW_OUTPUT_CORRUPT");
+    const fiveError = new WorkflowCheckpointError("WORKFLOW_STORAGE_UNAVAILABLE");
+    let starts = 0;
+    vi.mocked(f.readers.read_stage_zero).mockImplementation(() => {
+      if (++starts === 2) bothStarted.resolve();
+      return stageZeroRead.promise as never;
+    });
+    vi.mocked(f.readers.read_stage_five).mockImplementation(() => {
+      if (++starts === 2) bothStarted.resolve();
+      return stageFiveRead.promise as never;
+    });
+
+    let finished = false;
+    const result = f.reader(f.stageRequest, f.principal).then(
+      () => { finished = true; return null; },
+      (error: unknown) => { finished = true; return error; },
+    );
+    await bothStarted.promise;
+    stageFiveRead.reject(fiveError);
+    await Promise.resolve();
+    expect(finished).toBe(false);
+    stageZeroRead.reject(zeroError);
+
+    expect(await result).toBe(zeroError);
+    expect(f.readers.read_w1_head).not.toHaveBeenCalled();
+    expect(f.readers.read_authorization_receipt_ref).not.toHaveBeenCalled();
+  });
+
+  it("rejects authority revoked while both predecessor reads are in flight", async () => {
+    const f = predecessorReaderFixture();
+    const stageZeroRead = deferred<typeof f.stageZero>();
+    const stageFiveRead = deferred<typeof f.stageFive>();
+    const bothStarted = deferred<void>();
+    vi.mocked(f.navigation.current).mockResolvedValueOnce(f.authority as never)
+      .mockResolvedValue({ policy_authority_ref: "revoked" } as never);
+    vi.mocked(f.readers.read_stage_zero).mockImplementation(() => {
+      bothStarted.resolve();
+      return stageZeroRead.promise as never;
+    });
+    vi.mocked(f.readers.read_stage_five).mockImplementation(() => stageFiveRead.promise as never);
+
+    const result = f.reader(f.stageRequest, f.principal);
+    await bothStarted.promise;
+    stageZeroRead.resolve(f.stageZero);
+    stageFiveRead.resolve(f.stageFive);
+
+    await expect(result).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+    expect(f.navigation.current).toHaveBeenCalledTimes(2);
+    expect(f.readers.read_w1_head).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a stage-five predecessor from a different operation", async () => {
+    const f = predecessorReaderFixture();
+    vi.mocked(f.readers.read_stage_five).mockResolvedValue({ ...f.stageFive, operation_id: "foreign-operation" } as never);
+
+    await expect(f.reader(f.stageRequest, f.principal)).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+    expect(f.readers.read_stage_zero).toHaveBeenCalledOnce();
+    expect(f.readers.read_stage_five).toHaveBeenCalledOnce();
+    expect(f.readers.read_w1_head).toHaveBeenCalledOnce();
+    expect(f.navigation.current).toHaveBeenCalledOnce();
+  });
+});
 
 describe("evidence-freeze context read concurrency", () => {
   it("joins predecessor reads and reports earlier corrupt lineage before a later read failure", async () => {

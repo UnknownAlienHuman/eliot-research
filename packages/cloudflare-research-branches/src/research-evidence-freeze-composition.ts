@@ -140,8 +140,10 @@ export function createEvidenceFreezePredecessorReader(
     if (request.investigation_ref.id.length === 0 || principal.principal_ref.length === 0) fail("WORKFLOW_INPUT_INVALID");
     const before = await navigation.current();
     const readerInput = { operation_id: request.operation_id, investigation_id: request.investigation_ref.id, principal };
-    const stageZero = await readers.read_stage_zero(readerInput);
-    const stageFive = await readers.read_stage_five(readerInput);
+    const [stageZero, stageFive] = await readConcurrentInOrder([
+      () => readers.read_stage_zero(readerInput),
+      () => readers.read_stage_five(readerInput),
+    ] as const);
     const requiresBranch = options.requires_branch_reconciliation?.(request.handler_generation) ?? false;
     const branchReconciliation = requiresBranch && readers.read_branch_reconciliation !== undefined
       ? await readers.read_branch_reconciliation(readerInput)

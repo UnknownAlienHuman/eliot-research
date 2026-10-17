@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LocatorCandidate, ResolvedEvidence, ScopeSnapshot } from "@eliotr/contracts";
 import type { RetrievalRequest } from "./ports.js";
-import { sourceDiverseEvidenceOrder } from "./evidence-selection.js";
 import { createRetrievalQueryService, RetrievalQueryError, type RetrievalQueryPorts, type StoredRetrievalResult } from "./service.js";
 
 const AT = "2026-10-16T16:38:36.071Z";
@@ -99,16 +98,6 @@ function harness(rows: readonly LocatorCandidate[], options: {
 }
 
 describe("Research evidence selection after fusion", () => {
-  it("covers canonical sources before extras without changing locators or within-source rank", () => {
-    const rows = candidates(3, 3);
-    const before = JSON.stringify(rows);
-    const ordered = sourceDiverseEvidenceOrder(rows);
-    expect(ordered.map((candidate) => candidate.rank)).toEqual([1, 4, 7, 2, 3, 5, 6, 8, 9]);
-    expect(JSON.stringify(rows)).toBe(before);
-    for (const candidate of ordered) expect(rows.find((row) => row.candidate_id === candidate.candidate_id)).toBe(candidate);
-    expect(sourceDiverseEvidenceOrder(rows)).toEqual(ordered);
-  });
-
   it("retains all ten represented sources within a sixteen-item/scan bound and replays the same canonical handles", async () => {
     const world = harness(candidates());
     const input = { request: world.request, idempotency_key: "research-source-selection" };
@@ -132,6 +121,47 @@ describe("Research evidence selection after fusion", () => {
     expect(world.laneCalls()).toBe(1);
   });
 
+  it("keeps a high-ranked same-source passage through the source, scan, and evidence caps", async () => {
+    const rows = candidates(3, 6).map((row, index) => ({
+      ...row,
+      source_revision_ref: index === 1
+        ? "revision-side-a"
+        : index === 2
+          ? "revision-side-b"
+          : index <= 11
+            ? "revision-adam"
+            : row.source_revision_ref,
+    }));
+    const algorithmOne = rows[11];
+    if (algorithmOne === undefined) throw new Error("missing target passage");
+    const pageTwo = "### Page 2\nAlgorithm 1: Adam. Good default settings include alpha, beta1, beta2, and epsilon.";
+    const world = harness(rows, {
+      maxPerSource: 8,
+      excerpt: (candidate) => candidate.candidate_id === algorithmOne.candidate_id
+        ? pageTwo
+        : `exact ${candidate.candidate_id}`,
+    });
+
+    const execution = await world.service.queryWithBudgetSettlement({
+      request: world.request,
+      idempotency_key: "research-same-source-evidence-cap",
+    });
+
+    expect(execution.budget_settlement?.usage).toMatchObject({
+      exactResolverScanUnitsUsed: 16,
+      evidenceItemsUsed: 16,
+    });
+    expect(execution.result.evidence_pack.resolved_evidence.map((item) => item.exact_excerpt))
+      .toContain(pageTwo);
+    expect(execution.result.evidence_pack.resolved_evidence).toHaveLength(16);
+    expect(execution.result.evidence_pack.total_utf8_bytes).toBe(
+      execution.result.evidence_pack.resolved_evidence.reduce(
+        (total, item) => total + encoder.encode(item.exact_excerpt).byteLength,
+        0,
+      ),
+    );
+  });
+
   it("leaves FAST_SEARCH selection in rank order", async () => {
     const world = harness(candidates(3, 3, "LEX"));
     const result = await world.service.query({ request: { ...world.request, product: "FAST_SEARCH", requested_limit: 2 }, idempotency_key: "fast-selection" });
@@ -139,7 +169,7 @@ describe("Research evidence selection after fusion", () => {
     expect(result.evidence_pack.resolved_evidence.map((value) => value.handle.source_revision_ref)).toEqual(["revision-0", "revision-0"]);
   });
 
-  it("counts unresolved reads against the same scan cap and retains source caps", async () => {
+  it("counts unresolved reads against the same scan cap and honors source caps up to the output limit", async () => {
     const world = harness(candidates(), { unresolved: new Set(["candidate-01"]) });
     const execution = await world.service.queryWithBudgetSettlement({
       request: { ...world.request, budgets: { ...world.request.budgets, candidate_limit: 50, scan_limit: 10, evidence_limit: 16, max_evidence_bytes: 4096 } },
@@ -150,8 +180,15 @@ describe("Research evidence selection after fusion", () => {
     expect(execution.budget_settlement?.usage).toMatchObject({ exactResolverScanUnitsUsed: 10, evidenceItemsUsed: 9 });
     expect(execution.result.evidence_pack.omitted_candidates.filter((item) => item.reason_code === "EXACT_RESOLUTION_SCAN_LIMIT")).toHaveLength(40);
     const capped = harness(candidates(3, 3), { maxPerSource: 1 });
-    const result = await capped.service.query({ request: capped.request, idempotency_key: "source-cap" });
-    expect(result.evidence_pack.resolved_evidence).toHaveLength(3);
+    const result = await capped.service.query({
+      request: {
+        ...capped.request,
+        requested_limit: 1,
+        budgets: { candidate_limit: 50, scan_limit: 16, evidence_limit: 1, max_evidence_bytes: 4096 },
+      },
+      idempotency_key: "source-cap",
+    });
+    expect(result.evidence_pack.resolved_evidence).toHaveLength(1);
     expect(result.evidence_pack.omitted_candidates.filter((item) => item.reason_code === "DIVERSITY_LIMIT")).toHaveLength(6);
   });
 
