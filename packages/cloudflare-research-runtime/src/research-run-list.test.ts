@@ -1,21 +1,25 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AuthenticatedRequestContext, ResearchRunStatus } from "@eliotr/interfaces";
 import { CatalogInputError } from "@eliotr/cloudflare-navigation";
+import { WorkflowCheckpointError } from "@eliotr/cloudflare-research";
 import { readHistoricalResearchArtifactLocator } from "@eliotr/cloudflare-research-stages";
 import { readOwnerResearchRuns, type ResearchRunListPorts } from "./research-run-list.js";
 import { prepareReauthenticatedRunRead } from "./research-run-read-authorization.js";
+import { SERVER_OWNED_SEMANTIC_HANDLER_GENERATION } from "./research-stage-handlers.js";
 import type { ResearchRunReadEnvironment } from "./research-run-read-authorization.js";
 import type * as RunReadAuthorization from "./research-run-read-authorization.js";
 import type * as ResearchStages from "@eliotr/cloudflare-research-stages";
 
-const { prepareReadMock, historicalLocatorMock } = vi.hoisted(() => ({
+const { prepareReadMock, readAnswerMock, historicalLocatorMock } = vi.hoisted(() => ({
   prepareReadMock: vi.fn(),
+  readAnswerMock: vi.fn(),
   historicalLocatorMock: vi.fn(),
 }));
 
 vi.mock("./research-run-read-authorization.js", async (importOriginal) => {
   const actual = await importOriginal<typeof RunReadAuthorization>();
-  return { ...actual, prepareReauthenticatedRunRead: prepareReadMock };
+  return { ...actual, prepareReauthenticatedRunRead: prepareReadMock,
+    readReauthenticatedRunAnswer: readAnswerMock };
 });
 
 vi.mock("@eliotr/cloudflare-research-stages", async (importOriginal) => {
@@ -99,7 +103,56 @@ function makePorts(input: {
 describe("owner research history", () => {
   beforeEach(() => {
     prepareReadMock.mockReset();
+    readAnswerMock.mockReset();
     historicalLocatorMock.mockReset();
+  });
+
+  it("reattaches a completed historical draft under the current owner credential", async () => {
+    const artifactRef = { id: "artifact-current-read", revision: 3 };
+    const { ports, run_status, prepare_artifact_read } = makePorts({ runRows: [
+      { operation_id: "old-completed-run", created_at: "2026-10-15T12:01:00.000Z", query: "Current question" },
+    ] });
+    const read = { status: workflowStatus("old-completed-run"), handler_generation: SERVER_OWNED_SEMANTIC_HANDLER_GENERATION,
+      requireCurrent: vi.fn(async () => undefined) };
+    prepareReadMock.mockResolvedValue(read);
+    readAnswerMock.mockResolvedValue({ availability: "draft", artifact_ref: artifactRef });
+
+    const history = await readOwnerResearchRuns(ports, context);
+
+    expect(readAnswerMock).toHaveBeenCalledWith(ports.run_read, context, read, SERVER_OWNED_SEMANTIC_HANDLER_GENERATION);
+    expect(history.runs[0]?.status.answer).toEqual({ availability: "draft", artifact_ref: artifactRef });
+    expect(run_status).not.toHaveBeenCalled();
+    expect(prepare_artifact_read).not.toHaveBeenCalled();
+    expect(read.requireCurrent).toHaveBeenCalledTimes(2);
+  });
+
+  it("omits the historical draft when the current source authority is revoked", async () => {
+    const { ports } = makePorts({ runRows: [
+      { operation_id: "revoked-source-run", created_at: "2026-10-15T12:01:00.000Z", query: "Revoked source question" },
+    ] });
+    const read = { status: workflowStatus("revoked-source-run"), handler_generation: SERVER_OWNED_SEMANTIC_HANDLER_GENERATION,
+      requireCurrent: vi.fn(async () => undefined) };
+    prepareReadMock.mockResolvedValue(read);
+    readAnswerMock.mockRejectedValue(new WorkflowCheckpointError("WORKFLOW_AUTHORITY_STALE"));
+
+    const history = await readOwnerResearchRuns(ports, context);
+
+    expect(history.runs).toEqual([]);
+    expect(history.saved_drafts).toEqual([]);
+    expect(JSON.stringify(history)).not.toContain("Revoked source question");
+  });
+
+  it("does not convert unknown historical report storage failure into a draft", async () => {
+    const { ports } = makePorts({ runRows: [
+      { operation_id: "unavailable-report-run", created_at: "2026-10-15T12:01:00.000Z", query: "Unavailable report question" },
+    ] });
+    const read = { status: workflowStatus("unavailable-report-run"), handler_generation: SERVER_OWNED_SEMANTIC_HANDLER_GENERATION,
+      requireCurrent: vi.fn(async () => undefined) };
+    prepareReadMock.mockResolvedValue(read);
+    const failure = new WorkflowCheckpointError("WORKFLOW_OUTPUT_UNAVAILABLE");
+    readAnswerMock.mockRejectedValue(failure);
+
+    await expect(readOwnerResearchRuns(ports, context)).rejects.toBe(failure);
   });
 
   it("uses reauthenticated metadata for historical runs and retains valid history metadata", async () => {

@@ -5,8 +5,9 @@ import { ArtifactDraftReadError } from "@eliotr/cloudflare-research";
 import {
   readHistoricalResearchArtifactLocator,
 } from "@eliotr/cloudflare-research-stages";
-import { prepareReauthenticatedRunRead } from "./research-run-read-authorization.js";
+import { prepareReauthenticatedRunRead, readReauthenticatedRunAnswer } from "./research-run-read-authorization.js";
 import { runControlStatus } from "./research-run-control.js";
+import { isSemanticResearchHandlerGeneration } from "./research-stage-handlers.js";
 import { WorkflowCheckpointError } from "@eliotr/cloudflare-workflows";
 import type { ResearchRunReadEnvironment, ReopenedResearchRunDraft } from "./research-run-read-authorization.js";
 import { scopeIncludesProject } from "./research-history-project.js";
@@ -211,6 +212,18 @@ export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context
         // verify coverage and report lineage under the current reader's rights.
         await read.requireCurrent();
         status = runControlStatus(read.status);
+        if (status.execution_state === "ENGINE_COMPLETED" &&
+            isSemanticResearchHandlerGeneration(read.handler_generation)) {
+          status = {
+            ...status,
+            answer: await readReauthenticatedRunAnswer(
+              ports.run_read,
+              context,
+              read,
+              read.handler_generation,
+            ),
+          };
+        }
         requireCurrent = read.requireCurrent;
       }
       if (status.workflow_instance_id !== row.operation_id) invalidHistory("Run history status has a different origin");
