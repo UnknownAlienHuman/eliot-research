@@ -45,6 +45,11 @@ import { createExactPhraseVerifier } from "./research-exact-search.js";
 import { settledReadOnlyWorkflowFailure, settledReadOnlyWorkflowFailureCode, type WorkflowFailureOutcome } from "@eliotr/cloudflare-workflows";
 import { createD1RetrievalQueryAdmissionPort } from "./research-retrieval-admission.js";
 import { createD1RetrievalSettlementOwnerPort } from "./research-retrieval-settlement-owner.js";
+import {
+  measureResearchRetrievalPhase,
+  type ResearchRetrievalTimingLane,
+  type ResearchRetrievalTimingSink,
+} from "./research-retrieval-timing.js";
 
 export interface ResearchRetrievalEnvironment {
   readonly CORE_DB: D1Database;
@@ -158,6 +163,8 @@ export interface HeldScopeRetrievalInput {
   readonly signal: AbortSignal;
   /** Server-selected immutable profile; never sourced from a public request. */
   readonly profile: ScopeProfileBinding;
+  /** Internal metadata-only timing sink; never comes from a public request. */
+  readonly timing?: ResearchRetrievalTimingSink;
   /** Server-owned query-plan limits; historical requests omit this field. */
   readonly budgets?: RetrievalRequest["budgets"];
 }
@@ -231,9 +238,50 @@ async function createHeldScopeRetrievalQuery(
 ): Promise<{ readonly service: RetrievalQueryService; readonly input: RetrievalQueryInput }> {
   const access = input.access;
   const scopePorts = createD1ScopePorts(env.CORE_DB, access);
+  let currentnessDurationMs = 0;
+  let currentnessAtLastLaneEndMs = 0;
+  let lastLaneEndedAt: number | undefined;
+  let locatorMappingRecorded = false;
+  const requireCurrentScope = async (scope: ScopeSnapshot): Promise<void> => {
+    if (input.timing === undefined) return scopePorts.requireCurrentScope(scope);
+    const startedAt = Date.now();
+    let succeeded = false;
+    try {
+      await scopePorts.requireCurrentScope(scope);
+      succeeded = true;
+    } finally {
+      const durationMs = Math.max(0, Date.now() - startedAt);
+      currentnessDurationMs += durationMs;
+      try { input.timing.record({ phase: "currentness", duration_ms: durationMs, succeeded }); } catch { /* telemetry is best-effort */ }
+    }
+  };
+  const freezeScope = async (request: RetrievalRequest): Promise<ScopeSnapshot> => {
+    if (input.timing === undefined) return scopePorts.freezeScope(request);
+    const startedAt = Date.now();
+    let succeeded = false;
+    try {
+      const scope = await scopePorts.freezeScope(request);
+      succeeded = true;
+      return scope;
+    } finally {
+      const durationMs = Math.max(0, Date.now() - startedAt);
+      currentnessDurationMs += durationMs;
+      try { input.timing.record({ phase: "currentness", duration_ms: durationMs, succeeded }); } catch { /* telemetry is best-effort */ }
+    }
+  };
+  const timedScopePorts = { ...scopePorts, freezeScope, requireCurrentScope };
+  const recordLocatorMapping = (succeeded: boolean): void => {
+    if (input.timing === undefined || locatorMappingRecorded || lastLaneEndedAt === undefined) return;
+    locatorMappingRecorded = true;
+    // The interval ends at first evidence resolution (or trace persistence when
+    // the scan is empty) and excludes measured scope-currentness spans.
+    const currentnessAfterLastLane = Math.max(0, currentnessDurationMs - currentnessAtLastLaneEndMs);
+    const durationMs = Math.max(0, Date.now() - lastLaneEndedAt - currentnessAfterLastLane);
+    try { input.timing.record({ phase: "locator_mapping", duration_ms: durationMs, succeeded }); } catch { /* telemetry is best-effort */ }
+  };
   // Validate the held scope and its owner grant before creating any retrieval
   // profile row. This keeps revoked or foreign workflow scopes read-only.
-  await scopePorts.requireCurrentScope(input.scope_snapshot);
+  await requireCurrentScope(input.scope_snapshot);
   if (input.scope_snapshot.member_source_revision_refs.length > input.profile.max_sources ||
       input.requested_limit > input.profile.max_results) {
     throw new RetrievalQueryError("RETRIEVAL_INPUT_INVALID", "retrieval request exceeds its server-selected scope profile");
@@ -250,7 +298,7 @@ async function createHeldScopeRetrievalQuery(
     scope_snapshot: input.scope_snapshot,
     access,
     require_current: async (scope) => {
-      await scopePorts.requireCurrentScope(scope);
+      await requireCurrentScope(scope);
       return scope;
     },
   });
@@ -259,11 +307,12 @@ async function createHeldScopeRetrievalQuery(
     try {
       // Handle/evidence persistence is a durable effect even though it creates no q4 row.
       proof.effect_dispatched = true;
-      return await resolver.resolveCandidate({
+      recordLocatorMapping(true);
+      return await measureResearchRetrievalPhase(input.timing, "evidence_resolution", () => resolver.resolveCandidate({
         candidate,
         scope_snapshot_ref: { id: scope.snapshot_id, revision: scope.revision },
         access,
-      });
+      }));
     } catch (error) {
       if (error instanceof EvidenceRuntimeError) {
         if (!STALE_AUTHORITY_CODES.has(error.code) && OMITTED_CANDIDATE_CODES.has(error.code)) return null;
@@ -309,7 +358,7 @@ async function createHeldScopeRetrievalQuery(
           return decodeAiSearchSearchResult(request, raw);
         },
       });
-  const lanes = {
+  const sourceLanes: RetrievalQueryPorts["lanes"] = {
     executorFor(lane: RetrievalLane) {
       if (lane === "IDENT") return ident;
       if (lane === "EXACT") return exact;
@@ -318,25 +367,77 @@ async function createHeldScopeRetrievalQuery(
       return null;
     },
   };
+  const timingLane = (lane: RetrievalLane): ResearchRetrievalTimingLane | undefined =>
+    lane === "IDENT" || lane === "LEX" || lane === "SEM" ? lane : undefined;
+  const lanes: RetrievalQueryPorts["lanes"] = {
+    executorFor(lane) {
+      const executor = sourceLanes.executorFor(lane);
+      if (executor === null || input.timing === undefined) return executor;
+      const observedLane = timingLane(lane);
+      return {
+        ...executor,
+        ...(executor.preflightManagedCall === undefined ? {} : {
+          async preflightManagedCall(request, context) {
+            return measureResearchRetrievalPhase(input.timing, "lane_preflight",
+              () => executor.preflightManagedCall!(request, context), observedLane);
+          },
+        }),
+        async execute(executedLane, request, context) {
+          const startedAt = Date.now();
+          let succeeded = false;
+          try {
+            const result = await executor.execute(executedLane, request, context);
+            succeeded = true;
+            return result;
+          } finally {
+            if (observedLane !== undefined) {
+              try {
+                input.timing?.record({ phase: "lane", lane: observedLane,
+                  duration_ms: Math.max(0, Date.now() - startedAt), succeeded });
+              } catch { /* telemetry is best-effort */ }
+            }
+            lastLaneEndedAt = Date.now();
+            currentnessAtLastLaneEndMs = currentnessDurationMs;
+          }
+        },
+      };
+    },
+  };
   const ports: RetrievalQueryPorts = {
-    ...scopePorts,
+    ...timedScopePorts,
     admission: createD1RetrievalQueryAdmissionPort({
       database: env.CORE_DB,
       access,
       scope_snapshot: input.scope_snapshot,
       deadline_ms: input.deadline_ms,
       signal: input.signal,
-      require_current_scope: scopePorts.requireCurrentScope,
+      require_current_scope: requireCurrentScope,
     }),
     lanes,
     fusion: { reciprocal_rank_constant: 60, lane_weights: { IDENT: 2, EXACT: 2, LEX: 1, SEM: 1 }, maxPerSourceRevision: 8 },
     resolveEvidence,
     persistTrace: (trace, options) => {
+      recordLocatorMapping(true);
       proof.effect_dispatched = true;
-      return createD1RetrievalTracePort(env.CORE_DB, access).persistTrace(trace, options);
+      return measureResearchRetrievalPhase(input.timing, "finalize_io",
+        () => createD1RetrievalTracePort(env.CORE_DB, access).persistTrace(trace, options));
     },
-    results: wrapResultStoreWithDispatchProof(
-      createD1RetrievalResultStore(env.CORE_DB, access, undefined, createD1RetrievalSettlementOwnerPort()), proof),
+    results: (() => {
+      const baseResults = wrapResultStoreWithDispatchProof(
+        createD1RetrievalResultStore(env.CORE_DB, access, undefined, createD1RetrievalSettlementOwnerPort()), proof);
+      if (input.timing === undefined) return baseResults;
+      return {
+        ...baseResults,
+        async store(record) {
+          return measureResearchRetrievalPhase(input.timing, "finalize_io", () => baseResults.store(record));
+        },
+        ...(baseResults.settle === undefined ? {} : {
+          async settle(record, admission) {
+            return measureResearchRetrievalPhase(input.timing, "finalize_io", () => baseResults.settle!(record, admission));
+          },
+        }),
+      };
+    })(),
     checkBudget: () => queryBudget.checkBudget(),
   };
   const request: RetrievalRequest = {
@@ -356,11 +457,19 @@ export async function retrieveWithHeldScope(
   input: HeldScopeRetrievalInput,
 ): Promise<RetrievalResult> {
   const proof: RetrievalDispatchProof = { effect_dispatched: false };
-  const query = await createHeldScopeRetrievalQuery(env, input, proof);
+  const startedAt = Date.now();
+  let succeeded = false;
   try {
-    return await query.service.query(query.input);
+    const query = await createHeldScopeRetrievalQuery(env, input, proof);
+    const result = await query.service.query(query.input);
+    succeeded = true;
+    return result;
   } catch (error) {
-    settleRetrievalFailure(proof, error);
+    return settleRetrievalFailure(proof, error);
+  } finally {
+    try {
+      input.timing?.record({ phase: "service_total", duration_ms: Math.max(0, Date.now() - startedAt), succeeded });
+    } catch { /* telemetry is best-effort */ }
   }
 }
 

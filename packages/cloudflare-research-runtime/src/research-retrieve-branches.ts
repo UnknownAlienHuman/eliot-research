@@ -37,6 +37,10 @@ import {
   retrieveWithHeldScope,
   type ResearchRetrievalEnvironment,
 } from "./research-retrieval-composition.js";
+import {
+  createResearchRetrievalTimingRecorder,
+  measureResearchRetrievalPhase,
+} from "./research-retrieval-timing.js";
 
 /** First generation whose retrieval plan includes managed SEM. Legacy runs retain FAST_SEARCH. */
 export const SEMANTIC_RETRIEVAL_HANDLER_GENERATION = "research-handlers.exploratory.v4";
@@ -265,66 +269,83 @@ export function createRetrieveBranchesStageHandler(
   dependencies: RetrieveBranchesStageDependencies,
 ): WorkflowStageHandler {
   return async ({ request, principal, signal }: RetrieveBranchesInput & { readonly budget_receipt_ref: string; readonly signal?: AbortSignal }) => {
-    if (request.stage !== "RETRIEVE_BRANCHES" || dependencies.access.principal_ref !== principal.principal_ref ||
-        dependencies.access.credential_generation !== principal.credential_generation ||
-        dependencies.navigation.access.principal_ref !== principal.principal_ref ||
-        dependencies.navigation.access.credential_generation !== principal.credential_generation) {
-      fail("WORKFLOW_AUTHORITY_STALE");
+    const timing = createResearchRetrievalTimingRecorder(request.operation_id);
+    const handlerStartedAt = Date.now();
+    let handlerSucceeded = false;
+    try {
+      if (request.stage !== "RETRIEVE_BRANCHES" || dependencies.access.principal_ref !== principal.principal_ref ||
+          dependencies.access.credential_generation !== principal.credential_generation ||
+          dependencies.navigation.access.principal_ref !== principal.principal_ref ||
+          dependencies.navigation.access.credential_generation !== principal.credential_generation) {
+        fail("WORKFLOW_AUTHORITY_STALE");
+      }
+      if (!Number.isSafeInteger(dependencies.profile.max_sources) || dependencies.profile.max_sources < 1 ||
+          !Number.isSafeInteger(dependencies.profile.max_results) || dependencies.profile.max_results < 1) {
+        fail("WORKFLOW_INPUT_INVALID");
+      }
+      const { checkpoint, held } = await measureResearchRetrievalPhase(timing, "stage_setup", async () => {
+        const checkpoint = await persistedStageZero(dependencies, request, principal);
+        const held = await loadHeldResearchScope(
+          { CORE_DB: dependencies.database, SEARCH_DB: dependencies.search_database },
+          dependencies.access,
+          request.operation_id,
+          principal.deployment_generation,
+        );
+        return { checkpoint, held };
+      });
+      if (!sameRef(held.scope_snapshot_ref, checkpoint.scope_snapshot_ref) ||
+          !sameScope(held.scope_snapshot, dependencies.navigation.scope) ||
+          checkpoint.coverage_denominator.expires_at !== held.scope_snapshot.expires_at ||
+          checkpoint.coverage_denominator.eligible_source_revision_refs.length > dependencies.profile.max_sources) {
+        fail("WORKFLOW_AUTHORITY_STALE");
+      }
+      const retrievalInput = {
+        access: dependencies.access,
+        scope_snapshot: held.scope_snapshot,
+        raw_query: checkpoint.protocol_profile.question,
+        product: retrievalProduct(request.handler_generation),
+        literals: [],
+        requested_limit: dependencies.profile.max_results,
+        deadline_ms: Date.now() + 30_000,
+        idempotency_key: `retrieve-branches:${await textDigest(JSON.stringify(request))}`,
+        signal: signal ?? principal.signal ?? new AbortController().signal,
+        profile: dependencies.profile,
+        timing,
+      } as const;
+      const result = await retrieveWithHeldScope(
+        { CORE_DB: dependencies.database, SEARCH_DB: dependencies.search_database, EVIDENCE_BUCKET: dependencies.evidence_bucket,
+          ...(dependencies.ai_search === undefined ? {} : { AI_SEARCH: dependencies.ai_search }) } satisfies ResearchRetrievalEnvironment,
+        retrievalInput,
+      );
+      const requestDigest = await retrievalRequestDigest({
+        raw_query: retrievalInput.raw_query,
+        product: retrievalInput.product,
+        literals: retrievalInput.literals,
+        requested_limit: retrievalInput.requested_limit,
+        scope_digest: held.scope_snapshot.digest,
+      });
+      const output = await measureResearchRetrievalPhase(timing, "stage_finalize", async () =>
+        serializeRetrieveBranchesCheckpoint({
+          protocol: RETRIEVE_BRANCHES_PROTOCOL,
+          workflow_stage: "RETRIEVE_BRANCHES",
+          operation_id: request.operation_id,
+          investigation_ref: request.investigation_ref,
+          principal_ref: principal.principal_ref,
+          scope_snapshot_ref: held.scope_snapshot_ref,
+          protocol_digest: checkpoint.protocol_digest,
+          denominator_digest: checkpoint.denominator_digest,
+          retrieval_request_digest: requestDigest,
+          evidence_pack: result.evidence_pack,
+          trace: result.trace,
+          coverage_claim: result.coverage_claim,
+        }));
+      handlerSucceeded = true;
+      return output;
+    } finally {
+      try {
+        timing.record({ phase: "stage_handler", duration_ms: Math.max(0, Date.now() - handlerStartedAt), succeeded: handlerSucceeded });
+      } catch { /* telemetry is best-effort */ }
+      timing.flush();
     }
-    if (!Number.isSafeInteger(dependencies.profile.max_sources) || dependencies.profile.max_sources < 1 ||
-        !Number.isSafeInteger(dependencies.profile.max_results) || dependencies.profile.max_results < 1) {
-      fail("WORKFLOW_INPUT_INVALID");
-    }
-    const checkpoint = await persistedStageZero(dependencies, request, principal);
-    const held = await loadHeldResearchScope(
-      { CORE_DB: dependencies.database, SEARCH_DB: dependencies.search_database },
-      dependencies.access,
-      request.operation_id,
-      principal.deployment_generation,
-    );
-    if (!sameRef(held.scope_snapshot_ref, checkpoint.scope_snapshot_ref) ||
-        !sameScope(held.scope_snapshot, dependencies.navigation.scope) ||
-        checkpoint.coverage_denominator.expires_at !== held.scope_snapshot.expires_at ||
-        checkpoint.coverage_denominator.eligible_source_revision_refs.length > dependencies.profile.max_sources) {
-      fail("WORKFLOW_AUTHORITY_STALE");
-    }
-    const retrievalInput = {
-      access: dependencies.access,
-      scope_snapshot: held.scope_snapshot,
-      raw_query: checkpoint.protocol_profile.question,
-      product: retrievalProduct(request.handler_generation),
-      literals: [],
-      requested_limit: dependencies.profile.max_results,
-      deadline_ms: Date.now() + 30_000,
-      idempotency_key: `retrieve-branches:${await textDigest(JSON.stringify(request))}`,
-      signal: signal ?? principal.signal ?? new AbortController().signal,
-      profile: dependencies.profile,
-    } as const;
-    const result = await retrieveWithHeldScope(
-      { CORE_DB: dependencies.database, SEARCH_DB: dependencies.search_database, EVIDENCE_BUCKET: dependencies.evidence_bucket,
-        ...(dependencies.ai_search === undefined ? {} : { AI_SEARCH: dependencies.ai_search }) } satisfies ResearchRetrievalEnvironment,
-      retrievalInput,
-    );
-    const requestDigest = await retrievalRequestDigest({
-      raw_query: retrievalInput.raw_query,
-      product: retrievalInput.product,
-      literals: retrievalInput.literals,
-      requested_limit: retrievalInput.requested_limit,
-      scope_digest: held.scope_snapshot.digest,
-    });
-    return serializeRetrieveBranchesCheckpoint({
-      protocol: RETRIEVE_BRANCHES_PROTOCOL,
-      workflow_stage: request.stage,
-      operation_id: request.operation_id,
-      investigation_ref: request.investigation_ref,
-      principal_ref: principal.principal_ref,
-      scope_snapshot_ref: held.scope_snapshot_ref,
-      protocol_digest: checkpoint.protocol_digest,
-      denominator_digest: checkpoint.denominator_digest,
-      retrieval_request_digest: requestDigest,
-      evidence_pack: result.evidence_pack,
-      trace: result.trace,
-      coverage_claim: result.coverage_claim,
-    });
   };
 }
