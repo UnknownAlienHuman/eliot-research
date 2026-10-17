@@ -9,6 +9,7 @@ import {
   type ExternalProviderCatalogTransport,
 } from "./research-model-catalog.js";
 import type { ConfiguredServiceModelProviderBinding } from "./service-model-provider-service.js";
+import type { OpenCodeModelRoutePlan } from "@eliotr/cloudflare-ai/opencode-model-routing.js";
 
 const PROVIDERS = ["openai", "anthropic", "openrouter", "opencode-go", "opencode-zen"] as const;
 type Provider = typeof PROVIDERS[number];
@@ -34,6 +35,8 @@ const OPENCODE_ZEN_CATALOG_URL = `${OPENCODE_ZEN_INFERENCE_BASE_URL}/models`;
 const OPENROUTER_CATALOG_URL = "https://openrouter.ai/api/v1/models";
 
 export interface ResearchProviderModelCatalogOptions {
+  readonly resolve_opencode_routes?: (provider: "opencode-go" | "opencode-zen", models: readonly string[]) =>
+    Promise<ReadonlyMap<string, OpenCodeModelRoutePlan>>;
   /** The configured AI Gateway base URL, normally the reasoning gateway binding. */
   readonly gateway_base_url: string;
   /** Server-held data-plane Gateway authorization; never from an HTTP request. */
@@ -509,7 +512,14 @@ function openCodeTransport(
       const start = (input.page - 1) * input.per_page;
       if (!Number.isSafeInteger(start)) throw invalidPage("provider catalog page is outside its bounded range");
       const end = start + input.per_page;
-      return Object.freeze({ models: Object.freeze(allModels.slice(start, end)), has_more: allModels.length > end });
+      const page = allModels.slice(start, end);
+      const routes = await options.resolve_opencode_routes?.(provider, page.map(model => model.model_id)).catch(() => undefined);
+      return Object.freeze({ models: Object.freeze(page.map(model => {
+        const route = routes?.get(model.model_id);
+        return Object.freeze({ ...model, properties: Object.freeze([...(model.properties ?? []),
+          { property_id: "opencode_transport", value: route?.status === "eligible_unverified"
+            ? { status: route.status, api: route.api } : { status: "blocked", reason: route?.status === "blocked" ? route.reason : "METADATA_UNVERIFIED" } }]) });
+      })), has_more: allModels.length > end });
     },
   });
 }

@@ -19,6 +19,7 @@ const MODEL = "muse-spark-1.3-contributor";
 const ACCOUNT = "a".repeat(32);
 const GATEWAY = `https://gateway.ai.cloudflare.com/v1/${ACCOUNT}/eliotr-reasoning`;
 const migration = env.CORE_MIGRATIONS.find(item => item.name.startsWith("0161_"));
+const unverifiedMigration = env.CORE_MIGRATIONS.find(item => item.name.startsWith("0162_"));
 function required<T>(value: T | null | undefined): T {
   if (value === null || value === undefined) throw new Error("required native fixture value missing");
   return value;
@@ -49,6 +50,10 @@ async function fixture(status = 400) {
   const logs: Record<string, unknown>[] = [];
   vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
     const request = new Request(input, init);
+    if (request.url.startsWith("https://api.cloudflare.com/")) {
+      return Response.json({ success: true, result: [{ slug: "custom-opencode-go", enable: true,
+        base_url: "https://opencode.ai/inference/go/openai/v1" }], result_info: { page: 1, total_count: 1 } });
+    }
     if (request.url === "https://models.dev/api.json") return Response.json({ "opencode-go": { id: "opencode-go", models: {
       [MODEL]: { id: MODEL, cost: { input: 0.1, output: 0.2 }, reasoning: true, temperature: false,
         provider: { npm: "@ai-sdk/openai", api: "https://opencode.ai/inference/go/openai/v1" } },
@@ -81,11 +86,94 @@ async function fixture(status = 400) {
 }
 
 describe("authenticated failed catalog qualification reconciliation", () => {
+  it("terminally blocks an authenticated exact 200 without qualifying it or replaying the operation", async () => {
+    const f = await fixture();
+    if (migration === undefined || unverifiedMigration === undefined) throw new Error("0161/0162 migration missing");
+    await applyD1Migrations(db, [migration, unverifiedMigration]);
+    const originalEvidence = await f.readRows();
+    const uncertain = required(originalEvidence.find(row => row.state === "UNCERTAIN"));
+    const preparation = JSON.parse(String(uncertain.preparation_json)) as {
+      prepared_at: string; probe_parameters_sha256: string; pricing_snapshot_ref: string;
+      probe_deployment: { prompt_generation: string; route_ref: string };
+    };
+    const unverifiedExecutionLog = required(f.logs.find(log => log.success === false));
+    const stageMetadata = { operation_id: f.operation, parameters_digest: preparation.probe_parameters_sha256,
+      pricing_snapshot_ref: preparation.pricing_snapshot_ref,
+      prompt_generation: preparation.probe_deployment.prompt_generation, route_ref: preparation.probe_deployment.route_ref };
+    const returnedLog: Record<string, unknown> = { ...unverifiedExecutionLog, success: true, status_code: 200,
+      metadata: JSON.stringify(stageMetadata) };
+    let reads = 0;
+    vi.stubGlobal("fetch", async () => {
+      reads += 1;
+      return Response.json({ success: true, result: [returnedLog], result_info: { page: 1, total_count: 1 } });
+    });
+    const directReconcile = createCatalogQualificationFailureReconciler({ database: db, context: f.context,
+      read_logs: async () => { reads += 1; return { account_id: ACCOUNT, gateway_id: "eliotr-reasoning", logs: [returnedLog] }; },
+      now: () => new Date().toISOString() });
+    const priorRow = required(await createD1ResearchCatalogModelUseStore(db).read(f.owner, f.project, f.operation));
+    await expect(directReconcile(priorRow)).resolves.toMatchObject({ state: "BLOCKED", failure_code: "NATIVE_RECEIPT_INVALID" });
+    const first = await f.api.read(f.operation);
+    expect(first).toMatchObject({ state: "blocked", phase: "qualification", failure_code: "NATIVE_RECEIPT_INVALID" });
+    const stored = required(await db.prepare("SELECT http_status,gateway_log_id,receipt_json FROM provider_native_model_catalog_v2_unverified_execution " +
+      "WHERE consent_operation_id=?1").bind(f.operation).first<{ http_status: number; gateway_log_id: string; receipt_json: string }>());
+    expect(stored.http_status).toBe(200);
+    expect(stored.gateway_log_id).toBe(unverifiedExecutionLog.id);
+    expect(JSON.parse(stored.receipt_json)).toMatchObject({ protocol: "eliotr.catalog-model-unverified-execution.v1",
+      success: true, provider_effects: "UNKNOWN",
+      classification: "EXECUTION_COMPLETED_QUALIFICATION_UNVERIFIED",
+      disposition: "EXECUTION_COMPLETED_QUALIFICATION_UNVERIFIED", original_state: "UNCERTAIN" });
+    expect(await f.readRows()).toEqual(originalEvidence);
+    expect(await db.prepare("SELECT count(*) AS n FROM provider_native_model_catalog_v2_revocation WHERE consent_operation_id=?1")
+      .bind(f.operation).first("n")).toBe(originalEvidence.filter(row => row.state === "COMPLETED").length);
+    await expect(db.prepare("UPDATE provider_native_model_catalog_v2_unverified_execution SET http_status=400 WHERE consent_operation_id=?1")
+      .bind(f.operation).run()).rejects.toThrow();
+    await expect(db.prepare("DELETE FROM provider_native_model_catalog_v2_unverified_execution WHERE consent_operation_id=?1")
+      .bind(f.operation).run()).rejects.toThrow();
+    expect(await db.prepare("SELECT selected_configuration_ref,selection_revision FROM research_catalog_model_use_authorization " +
+      "WHERE operation_id=?1").bind(f.operation).first()).toMatchObject({ selected_configuration_ref: null, selection_revision: null });
+    expect(f.modelCalls()).toBe(2);
+    await expect(f.api.read(f.operation)).resolves.toMatchObject({ state: "blocked" });
+    expect(reads).toBe(1);
+    expect(f.modelCalls()).toBe(2);
+  }, 30_000);
+
+  it("rejects success logs with wrong identity, provider, model, metadata or expiry with one metadata fetch each", async () => {
+    const f = await fixture();
+    if (migration === undefined || unverifiedMigration === undefined) throw new Error("0161/0162 migration missing");
+    await applyD1Migrations(db, [migration, unverifiedMigration]);
+    const uncertain = required((await f.readRows()).find(row => row.state === "UNCERTAIN"));
+    const preparation = JSON.parse(String(uncertain.preparation_json)) as { prepared_at: string; preparation_expires_at: string };
+    const successLog = { ...required(f.logs.find(log => log.success === false)), success: true, status_code: 200 };
+    const inWindow = preparation.prepared_at;
+    const rawMetadata = JSON.parse(String(successLog.metadata)) as Record<string, unknown>;
+    const rejected = [
+      { ...successLog, provider: "wrong-provider", created_at: inWindow },
+      { ...successLog, model: "wrong-model", created_at: inWindow },
+      { ...successLog, metadata: JSON.stringify({ ...rawMetadata, parameters_digest: "wrong" }), created_at: inWindow },
+      { ...successLog, metadata: JSON.stringify({ ...rawMetadata, operation_id: "wrong-operation" }), created_at: inWindow },
+      { ...successLog, created_at: preparation.preparation_expires_at },
+    ];
+    let reads = 0;
+    let current: Record<string, unknown> = required(rejected[0]);
+    vi.stubGlobal("fetch", async () => {
+      reads += 1;
+      return Response.json({ success: true, result: [current], result_info: { page: 1, total_count: 1 } });
+    });
+    for (const candidate of rejected) {
+      current = candidate;
+      await expect(f.api.read(f.operation)).resolves.toMatchObject({ state: "uncertain" });
+    }
+    expect(reads).toBe(rejected.length);
+    expect(await db.prepare("SELECT count(*) AS n FROM provider_native_model_catalog_v2_unverified_execution WHERE consent_operation_id=?1")
+      .bind(f.operation).first("n")).toBe(0);
+    expect(f.modelCalls()).toBe(2);
+  }, 30_000);
+
   it("accepts Gateway publication 396ms after the uncertain update while rejecting future and out-of-window logs", async () => {
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     const f = await fixture();
-    if (migration === undefined) throw new Error("0161 migration missing");
-    await applyD1Migrations(db, [migration]);
+    if (migration === undefined || unverifiedMigration === undefined) throw new Error("0161/0162 migration missing");
+    await applyD1Migrations(db, [migration, unverifiedMigration]);
     const original = await f.readRows();
     const uncertain = required(original.find(row => row.state === "UNCERTAIN"));
     const nativePreparation = decodeProviderNativeModelCatalogPreparationV2(JSON.parse(String(uncertain.preparation_json)) as unknown);
@@ -152,8 +240,8 @@ describe("authenticated failed catalog qualification reconciliation", () => {
     expect(original.some(row => row.state === "COMPLETED")).toBe(true);
     await expect(db.prepare("UPDATE research_catalog_model_use_authorization SET state='BLOCKED',failure_code='NATIVE_RECEIPT_INVALID' " +
       "WHERE owner_id=?1 AND project_id=?2 AND operation_id=?3").bind(f.owner, f.project, f.operation).run()).rejects.toThrow();
-    if (migration === undefined) throw new Error("0161 migration missing");
-    await applyD1Migrations(db, [migration]);
+    if (migration === undefined || unverifiedMigration === undefined) throw new Error("0161/0162 migration missing");
+    await applyD1Migrations(db, [migration, unverifiedMigration]);
     expect(await f.readRows()).toEqual(original);
     expect(await createD1ResearchCatalogModelUseStore(db).read(f.owner, f.project, f.operation)).toEqual(originalAuthorization);
     await expect(db.prepare("UPDATE research_catalog_model_use_authorization SET state='BLOCKED',failure_code='NATIVE_RECEIPT_INVALID' " +

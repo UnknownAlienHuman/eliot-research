@@ -10,6 +10,17 @@ const MAX_READ_BYTES = 65_536;
 type RecordValue = Record<string, unknown>;
 const record = (value: unknown): value is RecordValue => typeof value === "object" && value !== null && !Array.isArray(value);
 
+export type CatalogQualificationReconciliationDisposition =
+  | "GATEWAY_HTTP_REJECTED"
+  | "EXECUTION_COMPLETED_QUALIFICATION_UNVERIFIED";
+
+export interface CatalogQualificationReconciliationOutcomeDto {
+  readonly success: boolean;
+  readonly provider_effects: "UNKNOWN";
+  readonly classification: CatalogQualificationReconciliationDisposition;
+  readonly disposition: CatalogQualificationReconciliationDisposition;
+}
+
 export interface CatalogQualificationGatewayLogRead {
   readonly account_id: string;
   readonly gateway_id: string;
@@ -141,8 +152,11 @@ export function createCatalogQualificationFailureReconciler(input: Readonly<{
       }
       if (stageLogs.length !== 1) return row;
       const log = stageLogs[0];
-      if (!record(log) || typeof log.id !== "string" || !LOG_ID.test(log.id) || log.success !== false || log.cached !== false ||
-          typeof log.status_code !== "number" || !TERMINAL_HTTP_FAILURES.has(log.status_code) ||
+      const executionCompletedUnverified = record(log) && log.success === true && log.status_code === 200;
+      const terminalHttpFailure = record(log) && log.success === false && log.cached === false &&
+        typeof log.status_code === "number" && TERMINAL_HTTP_FAILURES.has(log.status_code);
+      if (!record(log) || typeof log.id !== "string" || !LOG_ID.test(log.id) || log.cached !== false ||
+          (!executionCompletedUnverified && !terminalHttpFailure) ||
           !modelGatewayObservedProviderMatches(log.provider, row.route_provider_id, "failed-history") ||
           log.model !== row.model_id || typeof log.created_at !== "string") return row;
       const observedAt = (input.now ?? (() => new Date().toISOString()))();
@@ -160,7 +174,13 @@ export function createCatalogQualificationFailureReconciler(input: Readonly<{
         parameters_digest: preparation.probe_parameters_sha256, pricing_snapshot_ref: preparation.pricing_snapshot_ref,
         prompt_generation: deployment.prompt_generation, route_ref: deployment.route_ref };
       if (!record(metadata) || canonicalModelGatewayJson(metadata) !== canonicalModelGatewayJson(expected)) return row;
-      const receipt = { protocol: "eliotr.catalog-model-qualification-failure.v1", owner_ref: row.owner_id,
+      const disposition: CatalogQualificationReconciliationDisposition = executionCompletedUnverified
+        ? "EXECUTION_COMPLETED_QUALIFICATION_UNVERIFIED" : "GATEWAY_HTTP_REJECTED";
+      const outcome: CatalogQualificationReconciliationOutcomeDto = {
+        success: executionCompletedUnverified, provider_effects: "UNKNOWN", classification: disposition, disposition,
+      };
+      const receipt = { protocol: executionCompletedUnverified ? "eliotr.catalog-model-unverified-execution.v1" :
+        "eliotr.catalog-model-qualification-failure.v1", owner_ref: row.owner_id,
         project_id: row.project_id, operation_id: row.operation_id, stage: preparation.stage,
         account_id: row.account_id, gateway_id: row.gateway_id, provider_id: row.provider_id,
         provider_operation_id: row.provider_operation_id, provider_slug: row.route_provider_id, model_id: row.model_id,
@@ -171,22 +191,24 @@ export function createCatalogQualificationFailureReconciler(input: Readonly<{
         preparation_ref: e.preparation_ref, preparation_sha256: e.preparation_sha256,
         pricing_snapshot_sha256: preparation.pricing_snapshot_sha256, gateway_metadata: expected,
         gateway_log_id: log.id, gateway_provider: log.provider, http_status: log.status_code, gateway_authenticated: true,
-        success: false, original_state: "UNCERTAIN", original_failure_code: row.failure_code,
-        original_updated_at: row.updated_at, provider_effects: "UNKNOWN", classification: "GATEWAY_HTTP_REJECTED",
+        ...outcome, original_state: "UNCERTAIN", original_failure_code: row.failure_code,
+        original_updated_at: row.updated_at,
         logged_at: new Date(loggedMs).toISOString(), observed_at: observedAt };
       const receiptJson = canonicalModelGatewayJson(receipt);
       const receiptSha = await modelGatewaySha256(receiptJson);
       if (input.context.request.signal.aborted) return row;
+      const receiptTable = executionCompletedUnverified
+        ? "provider_native_model_catalog_v2_unverified_execution" : "provider_native_model_catalog_v2_failure";
       await db.batch([
-        db.prepare("INSERT INTO provider_native_model_catalog_v2_failure(owner_ref,project_id,consent_operation_id,stage," +
+        db.prepare(`INSERT INTO ${receiptTable}(owner_ref,project_id,consent_operation_id,stage,` +
           "preparation_ref,preparation_sha256,account_id,gateway_id,gateway_log_id,http_status,logged_at,observed_at,receipt_json,receipt_sha256) " +
           "VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14) ON CONFLICT(owner_ref,project_id,consent_operation_id) DO NOTHING")
           .bind(row.owner_id, row.project_id, row.operation_id, e.stage, e.preparation_ref, e.preparation_sha256,
             row.account_id, row.gateway_id, log.id, log.status_code, receipt.logged_at, observedAt, receiptJson, receiptSha),
         db.prepare("INSERT INTO provider_native_model_catalog_v2_revocation(owner_ref,project_id,consent_operation_id,stage," +
           "qualification_ref,qualification_sha256,revoked_by,reason,revoked_at) SELECT e.owner_ref,e.project_id,e.consent_operation_id,e.stage," +
-          "e.qualification_ref,e.qualification_sha256,e.owner_ref,'Authenticated Gateway qualification failure',?4 " +
-          "FROM provider_native_model_catalog_v2_evidence e JOIN provider_native_model_catalog_v2_failure f " +
+          "e.qualification_ref,e.qualification_sha256,e.owner_ref,'Authenticated Gateway qualification not established',?4 " +
+          `FROM provider_native_model_catalog_v2_evidence e JOIN ${receiptTable} f ` +
           "ON f.owner_ref=e.owner_ref AND f.project_id=e.project_id AND f.consent_operation_id=e.consent_operation_id " +
           "WHERE e.owner_ref=?1 AND e.project_id=?2 AND e.consent_operation_id=?3 AND e.state='COMPLETED' AND f.receipt_sha256=?5 " +
           "ON CONFLICT(owner_ref,project_id,qualification_ref,qualification_sha256) DO NOTHING")
@@ -194,12 +216,12 @@ export function createCatalogQualificationFailureReconciler(input: Readonly<{
         db.prepare("UPDATE research_catalog_model_use_authorization SET state='BLOCKED',phase='QUALIFICATION'," +
           "failure_code='NATIVE_RECEIPT_INVALID',updated_at=?4 WHERE owner_id=?1 AND project_id=?2 AND operation_id=?3 " +
           "AND state='UNCERTAIN' AND phase='QUALIFICATION' AND owner_credential_generation=?5 " +
-          "AND EXISTS(SELECT 1 FROM provider_native_model_catalog_v2_failure f WHERE f.owner_ref=?1 AND f.project_id=?2 " +
+          `AND EXISTS(SELECT 1 FROM ${receiptTable} f WHERE f.owner_ref=?1 AND f.project_id=?2 ` +
           "AND f.consent_operation_id=?3 AND f.receipt_sha256=?6)")
           .bind(row.owner_id, row.project_id, row.operation_id, observedAt, row.owner_credential_generation, receiptSha),
       ]);
       const [persisted, updated] = await Promise.all([
-        db.prepare("SELECT receipt_json,receipt_sha256 FROM provider_native_model_catalog_v2_failure " +
+        db.prepare(`SELECT receipt_json,receipt_sha256 FROM ${receiptTable} ` +
           "WHERE owner_ref=?1 AND project_id=?2 AND consent_operation_id=?3").bind(row.owner_id, row.project_id, row.operation_id)
           .first<{ receipt_json: string; receipt_sha256: string }>(),
         store.read(row.owner_id, row.project_id, row.operation_id),

@@ -56,7 +56,9 @@ const project = (revision: ResearchModelConfigurationRevision): ResearchProjectM
 
 describe("chat model catalog eligibility", () => {
   it('retains an included Go Muse option when another configured provider has no readable catalog', () => {
-    const muse = entry('opencode-go', 'muse-spark-1.3');
+    const muse = { ...entry('opencode-go', 'muse-spark-1.3'), properties: [
+      { property_id: 'opencode_transport', value: { status: 'eligible_unverified', api: 'custom-responses' } },
+    ] };
     const external = externalSlice([]);
     if (!external.connection) throw new Error('Expected saved connection');
     const options = buildChatModelOptions({ slices: [external, { catalogProviderId: 'opencode-go', preferenceProviderId: 'opencode-go',
@@ -119,6 +121,11 @@ describe("chat model catalog eligibility", () => {
 
   it.each(['opencode-go', 'opencode-zen', 'openai', 'anthropic'])("offers %s catalog models for a selected-model check without project setup", providerId => {
     const model = entry(providerId, "discovered-model"), source = externalSlice([model]);
+    if (providerId === 'opencode-go' || providerId === 'opencode-zen') {
+      (model as { properties: ModelCatalogEntry['properties'] }).properties = [
+        { property_id: 'opencode_transport', value: { status: 'eligible_unverified', api: 'custom-responses' } },
+      ];
+    }
     if (!source.connection) throw new Error("Missing configured provider fixture");
     const options = buildChatModelOptions({ slices: [{ ...source, catalogProviderId: providerId, preferenceProviderId: providerId,
       connection: { ...source.connection, provider_id: providerId }, catalog: catalog(providerId, [model]),
@@ -126,6 +133,21 @@ describe("chat model catalog eligibility", () => {
     expect(options[0]).toMatchObject({ canRun: true, availabilityCheckRequired: true,
       providerOperationId: "11111111-1111-4111-8111-111111111111" });
   });
+
+  it.each([undefined, { status: 'blocked', reason: 'SDK_UNSUPPORTED' }, { status: 'blocked', reason: 'REGISTERED_BASE_INCOMPATIBLE' }])(
+    'keeps an incompatible or unverified Go model visible but not callable', readiness => {
+      const model = { ...entry('opencode-go', 'discovered-model'), properties: readiness === undefined ? [] : [
+        { property_id: 'opencode_transport', value: readiness },
+      ] };
+      const source = externalSlice([model]);
+      if (!source.connection) throw new Error('Missing connection');
+      const options = buildChatModelOptions({ slices: [{ ...source, catalogProviderId: 'opencode-go', preferenceProviderId: 'opencode-go',
+        connection: { ...source.connection, provider_id: 'opencode-go' }, catalog: catalog('opencode-go', [model]),
+        preferences: preferences('opencode-go', { mode: 'all' }) }] });
+      expect(options).toHaveLength(1);
+      expect(options[0]).toMatchObject({ canRun: false, availabilityCheckRequired: true });
+    },
+  );
 
   it("offers a newly discovered model on a legacy connection for exact qualification without changing its allowlist", () => {
     const model = entry('openrouter', 'outside-allowlist'), source = externalSlice([model]);

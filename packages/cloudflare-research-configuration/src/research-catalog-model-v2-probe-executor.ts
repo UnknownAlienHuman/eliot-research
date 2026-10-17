@@ -9,10 +9,14 @@ import {
   PROVIDER_NATIVE_MODEL_PROBE_MAX_TOKENS,
   PROVIDER_NATIVE_MODEL_PROBE_PROMPT,
   PROVIDER_NATIVE_MODEL_PROBE_TEMPERATURE,
+  providerNativeModelProbeResponseFormat,
   type ProviderNativeModelCatalogObservationV2,
   type ProviderNativeModelCatalogPreparationV2,
 } from "@eliotr/cloudflare-native-models";
 import { decodeModelGatewayProviderNativeResponse } from "@eliotr/cloudflare-model-transport/model-gateway-provider-native-response.js";
+import { resolveOpenCodePreparedRequest } from "@eliotr/cloudflare-model-transport/opencode-http-routing.js";
+import type { ReadOpenCodeRegisteredProvider } from "@eliotr/cloudflare-model-transport/opencode-model-routing.js";
+import { catalogModelProbeValidationMessage } from "./research-catalog-model-probe-validation-diagnostic.js";
 
 const MAX_REQUEST_BYTES = 32_768;
 const MAX_RESPONSE_BYTES = 262_144;
@@ -84,6 +88,7 @@ export class ResearchCatalogModelV2ProbeExecutorError extends Error {
 
 /** Calls the generic provider-native qualification helper with the exact saved alias and physical provider slug. */
 export function createResearchCatalogModelV2ProbeExecutor(input: Readonly<{
+  read_opencode_provider?: ReadOpenCodeRegisteredProvider;
   gateway_base_url: string;
   gateway_token: string | undefined;
   signal: AbortSignal;
@@ -113,7 +118,7 @@ export function createResearchCatalogModelV2ProbeExecutor(input: Readonly<{
         messages: Object.freeze([Object.freeze({ role: "user", content: PROVIDER_NATIVE_MODEL_PROBE_PROMPT })]),
         [tokenField]: PROVIDER_NATIVE_MODEL_PROBE_MAX_TOKENS,
         temperature: PROVIDER_NATIVE_MODEL_PROBE_TEMPERATURE,
-        response_format: Object.freeze({ type: "json_object" }),
+        response_format: providerNativeModelProbeResponseFormat(policy.api),
         stream: false,
       });
       const compiledJson = canonicalModelGatewayJson(compiledBody);
@@ -124,7 +129,7 @@ export function createResearchCatalogModelV2ProbeExecutor(input: Readonly<{
         throw new ResearchCatalogModelV2ProbeExecutorError("AUTHORITY_CHANGED",
           "Owner consent or catalog preparation expired before qualification");
       }
-      const prepared = await prepareCatalogModelQualificationHttpRequest({
+      const compiledRequest = await prepareCatalogModelQualificationHttpRequest({
         deployment: preparation.probe_deployment,
         transport_policy: policy,
         compiled: Object.freeze({ request_body: compiledBody, request_body_sha256: compiledSha, request_timeout_ms: timeoutMs }),
@@ -134,6 +139,7 @@ export function createResearchCatalogModelV2ProbeExecutor(input: Readonly<{
         maximum_output_bytes: input.maximum_output_bytes,
         gateway_metadata: Object.freeze({ operation_id: preparation.consent_operation_id, stage_id: preparation.stage }),
       });
+      const prepared = await resolveOpenCodePreparedRequest(compiledRequest, policy, input.read_opencode_provider);
       if (prepared.parameters_sha256 !== preparation.probe_parameters_sha256 ||
           prepared.parameters_sha256 !== preparation.probe_deployment.parameters_digest) {
         throw new ResearchCatalogModelV2ProbeExecutorError("SERVER_POLICY_UNAVAILABLE",
@@ -217,7 +223,8 @@ export function createResearchCatalogModelV2ProbeExecutor(input: Readonly<{
         if (cause instanceof ResearchCatalogModelV2ProbeExecutorError) throw cause;
         if (cause instanceof ModelGatewayExecutionError) {
           console.warn(JSON.stringify({ event: "eliotr.catalog_native_v2_probe.rejected", stage: preparation.stage,
-            code: cause.code, safe_response_reason: cause.safe_response_reason ?? "UNCLASSIFIED" }));
+            code: cause.code, safe_response_reason: cause.safe_response_reason ?? "UNCLASSIFIED",
+            validation_message: catalogModelProbeValidationMessage(cause) }));
         }
         throw new ResearchCatalogModelV2ProbeExecutorError("PROBE_UNVERIFIED",
           "The selected provider call did not produce a verified one-shot qualification result", cause);

@@ -25,6 +25,7 @@ import {
   PROVIDER_NATIVE_MODEL_PROBE_MAX_TOKENS,
   PROVIDER_NATIVE_MODEL_PROBE_TEMPERATURE,
   providerNativeModelProbeInputDigests,
+  providerNativeModelProbeResponseFormat,
 } from "@eliotr/cloudflare-native-models";
 import { APPLICATION_MODEL_ROUTES } from "@eliotr/platform-cloudflare";
 import { parseResearchPreparedModelTransportPolicies } from "@eliotr/cloudflare-model-control/research-prepared-model-transport-policies.js";
@@ -334,7 +335,7 @@ async function buildStagePlan(
       messages: [{ role: "user", content: PROVIDER_NATIVE_MODEL_PROBE_PROMPT }],
       max_tokens: PROVIDER_NATIVE_MODEL_PROBE_MAX_TOKENS,
       temperature: PROVIDER_NATIVE_MODEL_PROBE_TEMPERATURE,
-      response_format: { type: "json_object" },
+      response_format: providerNativeModelProbeResponseFormat(input.transport_policy.api),
       stream: false,
     }, input.transport_policy.capabilities, input.transport_policy.api),
   ]);

@@ -112,6 +112,7 @@ const AUTHORITY_TABLE_INTRODUCTIONS: Readonly<Record<string, string>> = {
   provider_native_model_catalog_v2_evidence: "0159_provider_native_model_catalog_v2.sql",
   provider_native_model_catalog_v2_revocation: "0159_provider_native_model_catalog_v2.sql",
   provider_native_model_catalog_v2_failure: "0161_catalog_qualification_failure_reconciliation.sql",
+  provider_native_model_catalog_v2_unverified_execution: "0162_catalog_qualification_unverified_execution.sql",
 };
 
 const AUTHORITY_COLUMN_INTRODUCTIONS: Readonly<Record<string, Readonly<Record<string, string>>>> = {

@@ -450,9 +450,7 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
  * Read exact public model metadata. Returned API modes and feature flags are
  * catalog advertisements only, not account access, billing, or qualification proof.
  */
-export async function readVerifiedCatalogModelPricing(
-  input: ReadVerifiedCatalogModelPricingInput,
-): Promise<ResearchCatalogModelPricingObservation> {
+async function loadCatalogProvider(input: Pick<ReadVerifiedCatalogModelPricingInput, "provider_id" | "fetch" | "signal">) {
   if (typeof input !== "object" || input === null || typeof input.provider_id !== "string" ||
       !Object.prototype.hasOwnProperty.call(SOURCE_PROVIDER_BY_LOGICAL_PROVIDER, input.provider_id)) {
     fail("UNSUPPORTED_PROVIDER", "logical provider is not supported by this reader");
@@ -460,9 +458,6 @@ export async function readVerifiedCatalogModelPricing(
   const sourceProviderId = SOURCE_PROVIDER_BY_LOGICAL_PROVIDER[
     input.provider_id as ResearchCatalogModelPricingProviderId
   ];
-  if (typeof input.model_id !== "string" || !MODEL_ID_PATTERN.test(input.model_id)) {
-    fail("INVALID_MODEL_ID", "model ID is not a valid exact catalog identity");
-  }
 
   const fetcher = input.fetch ?? globalThis.fetch;
   let response: Response;
@@ -517,6 +512,37 @@ export async function readVerifiedCatalogModelPricing(
   const modelsSpan = findObjectPropertySpan(source, sourceProviderSpan, "models");
   if (modelsSpan === undefined) fail("MODEL_NOT_FOUND", "the source provider has no model catalog");
   const models = asRecord(provider.models, "source provider models", "SOURCE_INVALID");
+  return { source, sourceSha, provider, modelsSpan, models };
+}
+
+/** One immutable source read for a bounded discovery page. Pricing remains the
+ * separate exact-token reader below; missing metadata never invents a codec. */
+export async function readVerifiedCatalogModelMetadataBatch(input: Pick<ReadVerifiedCatalogModelPricingInput,
+  "provider_id" | "fetch" | "signal"> & { readonly model_ids: readonly string[] }) {
+  if (input.model_ids.length > 50 || new Set(input.model_ids).size !== input.model_ids.length ||
+      input.model_ids.some(id => !MODEL_ID_PATTERN.test(id))) fail("INVALID_MODEL_ID", "discovery model identities are invalid");
+  const { source, sourceSha, provider, modelsSpan, models } = await loadCatalogProvider(input);
+  return Object.freeze(input.model_ids.map(modelId => {
+    const span = findObjectPropertySpan(source, modelsSpan, modelId);
+    if (span === undefined) return Object.freeze({ model_id: modelId, advertised_sdk: null, advertised_api_base: null, source_sha256: sourceSha });
+    assertUniqueJsonKeys(source, span);
+    const model = asRecord(models[modelId], "selected discovery model", "SOURCE_INVALID");
+    if (model.id !== modelId) fail("MODEL_ID_MISMATCH", "discovery model ID differs from its exact catalog key");
+    const metadata = hasOwn(model, "provider") ? asRecord(model.provider, "model provider metadata", "INVALID_MODEL_METADATA") : null;
+    return Object.freeze({ model_id: modelId, advertised_sdk: optionalProviderString(metadata, "npm") ?? optionalProviderString(provider, "npm"),
+      advertised_api_base: optionalProviderString(metadata, "api") ?? optionalProviderString(provider, "api"), source_sha256: sourceSha });
+  }));
+}
+
+export async function readVerifiedCatalogModelPricing(input: ReadVerifiedCatalogModelPricingInput): Promise<ResearchCatalogModelPricingObservation> {
+  if (typeof input !== "object" || input === null || typeof input.provider_id !== "string" ||
+      !Object.prototype.hasOwnProperty.call(SOURCE_PROVIDER_BY_LOGICAL_PROVIDER, input.provider_id)) {
+    fail("UNSUPPORTED_PROVIDER", "logical provider is not supported by this reader");
+  }
+  if (typeof input.model_id !== "string" || !MODEL_ID_PATTERN.test(input.model_id)) {
+    fail("INVALID_MODEL_ID", "model ID is not a valid exact catalog identity");
+  }
+  const { source, sourceSha, provider, modelsSpan, models } = await loadCatalogProvider(input);
   const modelSpan = findObjectPropertySpan(source, modelsSpan, input.model_id);
   if (modelSpan === undefined) fail("MODEL_NOT_FOUND", "the exact model ID is absent from the selected source provider");
   const exactModelRecord = source.slice(modelSpan.start, modelSpan.end);

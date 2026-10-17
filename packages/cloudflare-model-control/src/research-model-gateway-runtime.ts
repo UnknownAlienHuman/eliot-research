@@ -9,9 +9,11 @@ import {
   type ModelGatewayApi,
   type ModelGatewayTransportPolicyV1,
   type ModelGatewayTokenTransport,
+  type PreparedModelGatewayHttpRequest,
   validateModelGatewayTransportPolicy,
 } from "@eliotr/cloudflare-ai";
 import { createResearchModelGatewayBindingFetch, type ResearchModelGatewayBinding } from "./research-model-gateway-binding.js";
+import { resolveOpenCodePreparedRequest, type ReadOpenCodeRegisteredProvider } from "@eliotr/cloudflare-ai/opencode-model-routing.js";
 
 const REQUEST_TIMEOUT_HEADER = "cf-aig-request-timeout";
 const MAX_REQUEST_TIMEOUT_MS = 300_000;
@@ -19,6 +21,7 @@ const MAX_SUCCESS_BODY_BYTES = 256 * 1024;
 const MAX_ERROR_BODY_BYTES = 64 * 1024;
 
 interface ResearchModelGatewayRuntimeOptions {
+  readonly read_opencode_provider?: ReadOpenCodeRegisteredProvider;
   /** The configured server-owned reasoning gateway base URL. */
   readonly reasoning_gateway_base_url: string;
   /** Server-owned API, provider, billing and selected-model capability policy. */
@@ -301,6 +304,8 @@ export function createResearchModelGatewayRuntime(
     : validateModelGatewayTransportPolicy(input.transport_policy);
   const api: ModelGatewayApi = transportPolicy?.api ?? "compat-chat-completions";
   const endpoint = resolveModelGatewayReasoningEndpoint(input.reasoning_gateway_base_url, api, transportPolicy?.provider);
+  const needsOpenCodeRoute = transportPolicy?.provider === "custom-opencode-go" || transportPolicy?.provider === "custom-opencode-zen";
+  let preparedEndpoint: string | undefined = needsOpenCodeRoute ? undefined : endpoint;
   const binding = input.ai_gateway_binding;
   if (binding !== undefined && transportPolicy?.billing.mode === "byok") {
     requestInvalid("BYOK aliases require direct AI Gateway passthrough transport");
@@ -313,7 +318,7 @@ export function createResearchModelGatewayRuntime(
   const bindingBase = binding === undefined ? undefined : endpoint.slice(0, -modelGatewayProviderNativePath(api, transportPolicy?.provider).length);
   const transport: ModelGatewayFetchPort = Object.freeze({
     async fetch(url: string, init: RequestInit): Promise<Response> {
-      if (url !== endpoint) requestInvalid("model gateway transport destination differs from configured reasoning gateway");
+      if (url !== preparedEndpoint) requestInvalid("model gateway transport destination differs from configured reasoning gateway");
       if (init.method !== "POST" || init.redirect !== "error") {
         requestInvalid("model gateway transport requires the canonical POST and redirect:error request");
       }
@@ -343,7 +348,7 @@ export function createResearchModelGatewayRuntime(
       try {
         const response = await Promise.race([fetchPromise, lifecycle.abortPromise]);
         if (!(response instanceof Response)) requestInvalid("model gateway transport returned a non-Response value");
-        const completed = await readResponseWithDeadline(response, lifecycle, endpoint, bindingBase);
+        const completed = await readResponseWithDeadline(response, lifecycle, url, bindingBase);
         lifecycle.finish();
         return completed;
       } catch (cause) {
@@ -362,6 +367,12 @@ export function createResearchModelGatewayRuntime(
     endpoint,
     credentials,
     transport,
+    async prepare_request(request: PreparedModelGatewayHttpRequest) {
+      if (needsOpenCodeRoute) preparedEndpoint = undefined;
+      const prepared = await resolveOpenCodePreparedRequest(request, transportPolicy, input.read_opencode_provider);
+      preparedEndpoint = prepared.url;
+      return prepared;
+    },
     ...(transportPolicy === undefined ? {} : { transport_policy: transportPolicy }),
   });
 }

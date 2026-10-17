@@ -27,6 +27,14 @@ export const PROVIDER_NATIVE_MODEL_PROBE_SCHEMA = Object.freeze({
   }),
 });
 
+/** Codec-specific representation of the same immutable connectivity schema. */
+export function providerNativeModelProbeResponseFormat(api: ModelGatewayTransportPolicyV1["api"]) {
+  return api === "anthropic-messages" || api === "custom-anthropic-messages"
+    ? Object.freeze({ type: "json_schema" as const, json_schema: Object.freeze({ name: "connectivity",
+      strict: true, schema: PROVIDER_NATIVE_MODEL_PROBE_SCHEMA }) })
+    : Object.freeze({ type: "json_object" as const });
+}
+
 export interface ProviderNativeModelProbeInputDigestsV1 {
   readonly probe_prompt_sha256: string;
   readonly probe_schema_sha256: string;

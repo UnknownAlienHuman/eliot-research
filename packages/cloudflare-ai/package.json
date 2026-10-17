@@ -5,6 +5,7 @@
   "type": "module",
   "sideEffects": false,
   "exports": {
+    "./opencode-model-routing.js": "./src/opencode-model-routing.ts",
     ".": "./src/index.ts",
     "./project-search": "./src/project-search.ts",
     "./service-model-provider-management.js": "./src/service-model-provider-management.ts"

@@ -164,6 +164,7 @@ describe("default generic catalog model-use composition", () => {
       ENVIRONMENT: "development",
       DEPLOYMENT_GENERATION: DEPLOYMENT,
       AI_GATEWAY_REASONING_URL: GATEWAY_BASE,
+      ELIOTR_MODEL_PROVIDER_CONTROL_TOKEN: "synthetic-control",
     });
     const requests: Array<{ url: string; body: Record<string, unknown>; alias: string | null;
       client: string | null; session: string | null }> = [];
@@ -178,6 +179,10 @@ describe("default generic catalog model-use composition", () => {
         throw error;
       }
       const url = request.url;
+      if (url.startsWith("https://api.cloudflare.com/")) {
+        return Response.json({ success: true, result: [{ slug: "custom-opencode-go", enable: true, base_url: ADVERTISED_GO_BASE }],
+          result_info: { page: 1, total_count: 1 } });
+      }
       if (url === "https://models.dev/api.json") {
         return new Response(providerCatalog(), { status: 200, headers: { "content-type": "application/json" } });
       }

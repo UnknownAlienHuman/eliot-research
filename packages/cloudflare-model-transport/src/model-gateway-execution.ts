@@ -430,6 +430,10 @@ async function executeObservedModelGatewayCall(
     : validateModelGatewayTransportPolicy(dependencies.transport_policy);
   const binding = dependencies.binding_transport;
   validateModelGatewayTransportSelection(transportPolicy, binding !== undefined);
+  if ((transportPolicy?.provider === "custom-opencode-go" || transportPolicy?.provider === "custom-opencode-zen") &&
+      (binding !== undefined || dependencies.prepare_request === undefined)) {
+    modelGatewayExecutionFailure("MODEL_GATEWAY_REQUEST_INVALID", "OpenCode execution requires verified request-local routing");
+  }
   try {
     prepareModelGatewayCall(input, deployment);
   } catch (cause) {
@@ -465,7 +469,7 @@ async function executeObservedModelGatewayCall(
       );
     }
   }
-  const request = binding === undefined ? await prepareModelGatewayHttpRequest(
+  const compiledRequest = binding === undefined ? await prepareModelGatewayHttpRequest(
     input,
     deployment,
     compiled,
@@ -479,6 +483,9 @@ async function executeObservedModelGatewayCall(
       dependencies.reasoning_gateway_base_url,
       transportPolicy,
     );
+
+  const request = binding === undefined && dependencies.prepare_request !== undefined
+    ? await dependencies.prepare_request(compiledRequest) : compiledRequest;
 
   let rawResponse: unknown;
   try {

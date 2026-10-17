@@ -113,7 +113,11 @@ export function buildChatModelOptions(input: {
       const connection = slice.connection;
       // 0158 records fresh consent for this exact catalog pair against the saved connection.
       // Legacy registrations remain unchanged; their allowlist is not the consent for this new flow.
-      const canRun = connection?.operation_id !== undefined;
+      const openCode = providerId === "opencode-go" || providerId === "opencode-zen";
+      const route = model.properties.find(property => property.property_id === "opencode_transport")?.value;
+      const transportEligible = !openCode || (typeof route === "object" && route !== null && !Array.isArray(route) &&
+        "status" in route && route.status === "eligible_unverified");
+      const canRun = connection?.operation_id !== undefined && transportEligible;
       options.set(key, Object.freeze({ model, providerLabel, key, canRun, builtin: false,
         ...(candidate === undefined ? {} : { candidate }),
         ...(connection?.operation_id === undefined ? {} : { providerOperationId: connection.operation_id }),

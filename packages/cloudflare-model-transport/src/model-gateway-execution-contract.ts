@@ -143,6 +143,8 @@ export interface ModelGatewayPricingPort {
 }
 
 export interface ModelGatewayTokenTransport {
+  /** Request-local route resolution; no serialized policy or credential authority. */
+  readonly prepare_request?: (request: PreparedModelGatewayHttpRequest) => Promise<PreparedModelGatewayHttpRequest>;
   readonly credentials: ModelGatewayCredentialPort;
   readonly transport: ModelGatewayFetchPort;
   readonly binding_transport?: never;

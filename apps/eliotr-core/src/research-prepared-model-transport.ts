@@ -9,12 +9,13 @@ import {
   type ResearchPreparedModelTransportSelectionV1,
 } from "@eliotr/cloudflare-model-control/research-prepared-model-transport-policies.js";
 import type { ConfiguredServiceModelProviderBinding } from "@eliotr/cloudflare-model-control/service-model-provider-service.js";
+import { createOpenCodeRegisteredProviderReader } from "./research-opencode-routing.js";
 
 export * from "@eliotr/cloudflare-model-control/research-prepared-model-transport-policies.js";
 
 /** Select credentials only for the server-selected provider; builtin calls never inspect an external token. */
 export function composeResearchModelGatewayConfiguration(
-  env: Pick<Env, "AI" | "AI_GATEWAY_REASONING_URL" | "ELIOTR_MODEL_GATEWAY_TOKEN">,
+  env: Pick<Env, "AI" | "AI_GATEWAY_REASONING_URL" | "ELIOTR_MODEL_GATEWAY_TOKEN" | "ELIOTR_MODEL_PROVIDER_CONTROL_TOKEN">,
   provider = "workers-ai",
 ): ResearchModelGatewayRuntimeConfig {
   if (provider === "workers-ai") {
@@ -29,7 +30,8 @@ export function composeResearchModelGatewayConfiguration(
   }
   try { validateModelGatewayToken(token); }
   catch { throw new WorkflowCheckpointError("WORKFLOW_CREDENTIALS_INVALID"); }
-  return Object.freeze({ reasoning_gateway_base_url: env.AI_GATEWAY_REASONING_URL, gateway_token: token });
+  return Object.freeze({ reasoning_gateway_base_url: env.AI_GATEWAY_REASONING_URL, gateway_token: token,
+    read_opencode_provider: createOpenCodeRegisteredProviderReader(env) });
 }
 
 function required(message: string): never {

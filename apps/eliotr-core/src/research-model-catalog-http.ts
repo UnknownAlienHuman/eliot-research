@@ -4,6 +4,7 @@ import { createResearchModelCatalogService, ResearchModelCatalogError } from "@e
 import { createResearchProviderModelCatalogTransports } from "@eliotr/cloudflare-model-control/research-provider-model-catalog.js";
 import type { Env } from "./env.js";
 import { createServiceModelSettingsComposition } from "./service-model-settings-composition.js";
+import { createOpenCodeDiscoveryRouting } from "./research-opencode-routing.js";
 
 /** The catalog is descriptive; this read never installs or qualifies a model. */
 export async function handleResearchModelCatalog(
@@ -49,6 +50,7 @@ export async function handleResearchModelCatalog(
         prepared_transport_policies_json: env.ELIOTR_RESEARCH_MODEL_TRANSPORT_POLICIES_JSON,
       }),
       resolve_service_provider: (provider) => serviceProviders.resolveConfiguredProvider(context, provider),
+      resolve_opencode_routes: createOpenCodeDiscoveryRouting(env, request.signal),
     }),
   });
   const providerId = query.get("provider_id");

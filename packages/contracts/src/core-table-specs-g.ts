@@ -10,6 +10,13 @@ export const DURABLE_CORE_TABLE_SPECS_G: readonly TableSpec[] = [
       gateway_log_id: "text", http_status: "int", logged_at: "text", observed_at: "text",
       receipt_json: "text", receipt_sha256: "text",
     }, required: true },
+  { manifest: "generations", table: "provider_native_model_catalog_v2_unverified_execution",
+    order_by: "owner_ref, project_id, consent_operation_id", columns: {
+      owner_ref: "text", project_id: "text", consent_operation_id: "text", stage: "text",
+      preparation_ref: "text", preparation_sha256: "text", account_id: "text", gateway_id: "text",
+      gateway_log_id: "text", http_status: "int", logged_at: "text", observed_at: "text",
+      receipt_json: "text", receipt_sha256: "text",
+    }, required: true },
   { manifest: "heads", table: "research_catalog_model_use_authorization",
     order_by: "owner_id, project_id, operation_id", columns: {
       owner_id: "text", project_id: "text", operation_id: "text", provider_id: "text",

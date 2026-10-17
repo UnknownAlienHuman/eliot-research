@@ -50,6 +50,8 @@ import { createResearchCatalogModelV2ProbeExecutor, ResearchCatalogModelV2ProbeE
   "@eliotr/cloudflare-research-configuration/research-catalog-model-v2-probe-executor.js";
 import { createServiceModelSettingsComposition } from "./service-model-settings-composition.js";
 import type { Env } from "./env.js";
+import { createOpenCodeRegisteredProviderReader } from "./research-opencode-routing.js";
+import { planOpenCodeModelRoute } from "@eliotr/cloudflare-model-transport/opencode-model-routing.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u;
 const SHA256 = /^[a-f0-9]{64}$/u;
@@ -508,6 +510,12 @@ export function createResearchCatalogModelUseV2Driver(input: Readonly<{
 
       async function stagePlan(metadata: CatalogModelUsePricingMetadataV1) {
         await currentIntent();
+        if (metadata.provider_id === "opencode-go" || metadata.provider_id === "opencode-zen") {
+          const route = planOpenCodeModelRoute({ provider_id: metadata.provider_id, provider_slug: metadata.provider_slug,
+            model_id: metadata.model_id, advertised_sdk: metadata.advertised_sdk, advertised_api_base: metadata.advertised_api_base,
+            registered_provider: await createOpenCodeRegisteredProviderReader(input.env, input.context.request.signal, input.fetcher)(metadata.provider_slug) });
+          if (route.status !== "eligible_unverified") throw new UnsupportedCatalogTransportError("OpenCode registered base or SDK is incompatible");
+        }
         const policy = transportPolicy(metadata);
         const selected = await input.project_configuration.readSelected(input.context, input.project_id);
         const key: ResearchProviderKeyModelUseCatalogProviderBinding = Object.freeze({
@@ -691,6 +699,7 @@ export function createResearchCatalogModelUseV2Driver(input: Readonly<{
             const prep = prepared.find((entry) => entry.stage === planned.stage);
             if (prep === undefined) return receipt("blocked", "native_prepare", "NATIVE_RECEIPT_INVALID");
             const executor = createResearchCatalogModelV2ProbeExecutor({
+              read_opencode_provider: createOpenCodeRegisteredProviderReader(input.env, input.context.request.signal, input.fetcher),
               gateway_base_url: input.env.AI_GATEWAY_REASONING_URL,
               gateway_token: input.env.ELIOTR_MODEL_GATEWAY_TOKEN,
               signal: input.context.request.signal,

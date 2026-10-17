@@ -5,6 +5,8 @@
   "type": "module",
   "sideEffects": false,
   "exports": {
+    "./opencode-model-routing.js": "./src/opencode-model-routing.ts",
+    "./opencode-http-routing.js": "./src/opencode-http-routing.ts",
     "./model-gateway-execution-contract.js": "./src/model-gateway-execution-contract.ts",
     "./model-gateway-execution.js": "./src/model-gateway-execution.ts",
     "./model-gateway-http-failure.js": "./src/model-gateway-http-failure.ts",
