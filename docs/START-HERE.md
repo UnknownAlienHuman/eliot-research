@@ -3,6 +3,8 @@
 The current task is to finish and simplify the owner product. Begin with
 [backend-entrypoints.md](implementation/backend-entrypoints.md), choose one bounded outcome, then read
 [AGENTS.md](../AGENTS.md) and the exact source/contracts for that outcome.
+The router names the large implementations to consolidate or retire, their current callers and the
+source-size objective. A pass-through cleanup alone does not resolve the measured 283,671-line footprint.
 
 ## Current decisions, in order
 

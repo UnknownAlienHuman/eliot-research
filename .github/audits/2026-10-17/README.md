@@ -37,4 +37,76 @@ The second `createManagedOAuthOwnerContext` at [`apps/eliotr-core/src/index.ts:1
 | Delete old worktrees or infer architectural waste from their count. | #380’s worktree/uncommitted-file counts describe a local environment, not this source baseline. This reconciliation did not inspect that environment; counts do not authorize deletion. |
 | “150 migrations produced >150 tables.” | **Unverified; omitted as fact.** No reproducible schema inventory was established in this source review. |
 
-No new LOC quotas or repository metrics are introduced here. This source review does not implement the runtime fixes, execute tests or qualify production behavior.
+This source review does not implement runtime fixes, execute tests or qualify production behavior. The
+owner's subsequent request to leave the hundreds-of-thousands scale prompted the inventory and structural
+reduction pass below; it is not a new source-size CI gate.
+
+## Source footprint and reduction evidence
+
+Measured at documentation head `3cd2d44c520b945d86ebd0018ca7fbaae5197bd9`; application source is unchanged
+from the baseline `4e53d5e2296e7f4ed3ed29cef2f049891c5d20c0`. Count tracked UTF-8 text with `splitlines()`:
+physical lines include comments and blanks; nonblank lines remove only whitespace-only lines.
+
+| Inventory class | Files | Physical lines | Nonblank lines |
+|---|---:|---:|---:|
+| Authored application/library source | 1,464 | **283,671** | **268,545** |
+| Tests, stories and fixtures | 808 | 182,952 | 171,740 |
+| Tooling and other source | 282 | 70,203 | 66,773 |
+| SQL migration history | 154 | 25,327 | 24,145 |
+| Documentation and audit evidence | 410 | 104,663 | 96,598 |
+
+Selection is path-based, not a reachability proof. Source extensions are `.ts`, `.tsx`, `.js`, `.jsx`,
+`.mjs`, `.cjs`, `.astro`, `.rs`, `.css`, `.html`, `.sql`. All Markdown and `docs/`/`.github/audits/`
+content belongs to documentation/evidence. Generated/build/dist/target directories and
+`worker-configuration.d.ts` are separate; `infra/d1/*.sql` is migration history. Then classify as tests
+paths containing `test`, `tests`, `__tests__`, `fixtures`, `__fixtures__`, `stories`, `test-vectors`, `fuzz`,
+filenames containing `.test.`, `.spec.`, `.stories.`, `.fixture.`, and `packages/testkit/` or
+`crates/eliotr-test-vectors/`. Remaining source under `apps/`, `packages/` and `crates/` is application/library
+source; other source is tooling. Lockfiles/config/data are outside these five rows.
+
+This counts maintained authored source, including compatibility/unactivated code and any inline tests not
+distinguishable by this path rule. It does not count deployed JavaScript, live features, database tables,
+provider costs or proven dead code. A shorter minified file or a move between categories is not savings.
+
+| Structural evidence | Current caller and bounded retirement conclusion |
+|---|---|
+| 21,137 lines in the old PWA/client cohort | `apps/eliotr-pwa` (9,504), `pwa-source-workspace` (5,771), `pwa-research-workspace` (5,291), `pwa-http-client` (571). Wrangler still serves this UI. React cutover, standalone inbox/SW retirement, rollback and Core fixture imports must be resolved before deleting the superseded presentation. This is cohort size, not a net deletion estimate. |
+| Two owner HTTP client instances and repeated raw-upload implementation | [React runtime](https://github.com/UnknownAlienHuman/eliot-research/blob/4e53d5e2296e7f4ed3ed29cef2f049891c5d20c0/apps/eliotr-web/src/app/runtime.ts#L102-L111) creates a legacy adapter plus another client; the adapter [constructs a client internally](https://github.com/UnknownAlienHuman/eliot-research/blob/4e53d5e2296e7f4ed3ed29cef2f049891c5d20c0/packages/owner-api-client/src/legacy/http.ts#L121-L123). Legacy raw upload has 544 lines and the owner-client counterpart 587; both have live consumers. One canonical client/decoder path can replace the duplicate, preserving error/event adaptation. |
+| Canceled generation authority remains in live search | [project-search.ts](https://github.com/UnknownAlienHuman/eliot-research/blob/4e53d5e2296e7f4ed3ed29cef2f049891c5d20c0/packages/cloudflare-ai/src/project-search.ts#L79-L173) reads/hashes the registry and fences search before/after dispatch. Run admission, project readiness and SEM retrieval consume it. Replace this overlay with the existing native instance/filter adapter while preserving source membership/outbox/evidence; do not delete canonical source state. |
+| Managed projection writer is outside the installed execution path | [executor.ts](https://github.com/UnknownAlienHuman/eliot-research/blob/4e53d5e2296e7f4ed3ed29cef2f049891c5d20c0/packages/cloudflare-projection/src/executor.ts#L211-L249) executes R2 work and D1 lexical activation; the installed profile disables managed generations. Core still contains managed metadata/writer methods. The three managed item/intent/receipt files total 1,297 lines, but shared terminal/generation readers prevent wholesale deletion. Retire exclusive writer methods; keep projection delivery and retained readers. |
+| Model renewal is repeated during execution | [research-run-service.ts](https://github.com/UnknownAlienHuman/eliot-research/blob/4e53d5e2296e7f4ed3ed29cef2f049891c5d20c0/apps/eliotr-core/src/research-run-service.ts#L520-L526) checks model/configuration pins; [research-workflow.ts](https://github.com/UnknownAlienHuman/eliot-research/blob/4e53d5e2296e7f4ed3ed29cef2f049891c5d20c0/apps/eliotr-core/src/research-workflow.ts#L108-L114) wires renewal. ADR-0018 moves qualification to connection/selection. Remove new-run renewal markers/proof gates, retaining attempt model identity, spend limits and old-run readers where required. |
+| Ordinary work inherits the deep stage chain | [investigation.ts](https://github.com/UnknownAlienHuman/eliot-research/blob/4e53d5e2296e7f4ed3ed29cef2f049891c5d20c0/packages/domain/src/investigation.ts#L5-L10) enumerates 18 stages. A short E0/E1 path can remove deep planning from ordinary execution, but keeping E2/E3 means those modules are not automatically deleted. Record execution reduction separately from source removal. |
+| Deferred backup is mixed with live erasure | [backup-primary-composition.ts](https://github.com/UnknownAlienHuman/eliot-research/blob/4e53d5e2296e7f4ed3ed29cef2f049891c5d20c0/apps/eliotr-core/src/backup-primary-composition.ts) exposes an uncalled export factory; selected restore modules have no production application caller found. [erasure-runtime.ts](https://github.com/UnknownAlienHuman/eliot-research/blob/4e53d5e2296e7f4ed3ed29cef2f049891c5d20c0/apps/eliotr-core/src/erasure-runtime.ts) still uses purge replay/offsite cleanup. Remove unselected execution after registration review; do not treat the two packages' 11,374 lines as deletable. |
+| Optional profiles are not synonymous with dead code | Old Drive Exchange OAuth/status routes and scheduled intent expiry remain; Workspace/MCP is separate. Federation has actual registered HTTP callers. A profile retirement must name the selected configuration, retained record readers and removed route/export consumers; optionality alone is not proof of absence. |
+
+The [implementation router](../../../docs/implementation/backend-entrypoints.md) owns the changes and
+the below-100,000-line design objective. These first cohorts do not establish that the objective is already
+reachable by deletion alone. Small forwarding-shim removal is useful local cleanup, not a sufficient answer
+to this footprint. No source-line or performance savings have occurred in this documentation-only pass.
+
+## Donor reconciliation
+
+Recovered the original `AI_knowledge_RAG_NotebookLM_Dify_landscape_2026-10-08.md`, 284,288 bytes and 4,439
+lines, with SHA-256 `d5da24be9b6167301a475e40652866943d43d7679d0ed099515e8a4dfa4c08be`, matching
+[the pinned October 8 playbook](../2026-10-08/BACKEND-DONOR-PLAYBOOK.md). Reconciled its implementation
+maps and reference-architecture proposals with #377 and ADR-0018/0019. Selected primary files were reopened
+as recorded below; this does not claim a fresh code/runtime audit of every project in the catalogue.
+
+| Primary source inspected | Consequence for Eliot |
+|---|---|
+| [DocsGPT attachment_budget.py](https://github.com/arc53/DocsGPT/blob/0d994485d2ac5e3a1eff6020ccbe7d4f99adc612/docsgpt/agents/attachment_budget.py) and [attachment_context.py](https://github.com/arc53/DocsGPT/blob/0d994485d2ac5e3a1eff6020ccbe7d4f99adc612/docsgpt/agents/attachment_context.py) | A turn-local attachment/token plan and untrusted-data fencing overlap existing context/prompt preparation. Eliot already binds selected/rejected evidence and serialized request-byte bounds. No equivalent implementation deletion was demonstrated; a second planner or `F#` registry is rejected. Token capacity and transport bytes remain distinct limits. |
+| [Open Notebook ask.py](https://github.com/lfnovo/open-notebook/blob/a0f6f3081ae06328f0a451b3a3ef2959ca25721d/open_notebook/graphs/ask.py) | Strategy, up to five search branches with top-10 vector results, and final synthesis involve three model-call stages. It is not a one-call ordinary-answer implementation to import. Keep only the idea of a bounded, use-case-specific composition. |
+| [WeKnora wiki_page.go](https://github.com/Tencent/WeKnora/blob/005627b180c6c7509660b0a14401e463f48d53f8/internal/application/repository/wiki_page.go) | `UpdateWithRevision` groups snapshot/update transactionally with expected-version matching; revision/index summaries omit heavy content. Preserve these narrow ideas through Eliot's existing Wiki head/outbox and summary owners. `ListByTypeLight` performs a count plus page query; it does not itself meet the owner one-query target. No GORM or second revision engine is indicated. |
+| [OpenViking abstract_overview.py](https://github.com/volcengine/OpenViking/blob/76511554eee2c2efb0ae08f9a2284041aed39840/openviking/storage/abstract_overview.py) | Derived abstract/overview documents have their own metadata/writeback. Existing Eliot guides can support progressive disclosure; this is not justification for a new context filesystem, memory service or source authority. |
+| [Agents SDK 0.27.0 index.ts](https://github.com/cloudflare/agents/blob/e335186331f99be12609a5eb0c64c7863c3ccafd/packages/agents/src/index.ts) | `shouldConnectionBeReadonly` prevents connection state writes, while callable RPC and `shouldSendProtocolMessages` remain separate. It can replace only the corresponding state-change override, not Eliot's method/frame, currentness or send boundary. A tiny simplification, not a reason to replace ResearchSession. |
+| [AI Search Items](https://developers.cloudflare.com/ai-search/api/items/workers-binding/) and [search](https://developers.cloudflare.com/ai-search/api/search/workers-binding/) Worker APIs, checked October 17 | Native upload/status/search already supply the managed mechanism. Keep the installed API generation and original item identity; remove the canceled custom promotion layer. `uploadAndPoll` waits for processing and does not establish durable acknowledgement reconciliation. |
+
+Catalogue §§21–31 and 35.6–35.12 describe enterprise ACL/connector families, index generations, universal
+workflow layers and donor acceptance programmes. Those are rejected as default Eliot scope; #377 already
+cancels the generation overlay. §§37.3/37.5/37.8/37.12/37.14/37.16–37.20 propose further context, component,
+process and vector contracts, but no inspected import removes an identified Eliot implementation.
+They stay reference material, not mandatory new interfaces. UI donor ideas are limited to legible evidence,
+answer/limitations and server-issued citation identity; desktop/local-index architecture is not transferred.
+
+The useful distillation is fewer owners and existing platform primitives. No donor code, dependency,
+licensing conclusion or benchmark result is introduced by this pass.

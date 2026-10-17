@@ -65,6 +65,9 @@ Dependencies follow responsibilities: contracts and pure decisions below applica
 adapters implement their ports; Worker composes; owner-api-client supplies transport/decoders; React
 consumes that client and UI components; UI has no network or backend authority. Keep imports and manifests
 consistent when moving code. Do not split a capability or move tests to satisfy source-size counters.
+Use the router's source-size objective: name the surviving implementation and remove its superseded
+callers/decoders/dispatch layers in the same bounded integration. A new abstraction that leaves both old
+implementations maintained is not completed consolidation.
 
 ## Owner web
 

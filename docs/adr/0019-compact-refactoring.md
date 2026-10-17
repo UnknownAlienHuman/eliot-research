@@ -49,6 +49,20 @@ boundaries together; do not create new scaffolding for every row in this table.
 Rust remains the owner of promoted pure decisions; TypeScript owns platform I/O and the currently unported
 decisions. SQL remains the atomic storage boundary. There is no permanent duplicate decision engine.
 
+The owner's follow-up rejects maintaining hundreds of thousands of source lines. The current
+[implementation router](../implementation/backend-entrypoints.md#size-and-outcome) records the source
+inventory and a working design ceiling below 100,000 application/library lines, including supported
+compatibility and explicit deep research. This is an architectural objective, not a new CI gate or a
+claim that the first identified deletions reach it. A smaller bundle, shorter request path, renamed
+package or Rust translation does not by itself reduce maintained source.
+
+Prefer removal of superseded implementations and unused execution paths over additional abstraction.
+A replacement names its existing consumer, surviving implementation and code removed. Share a helper
+only when the callers have the same data/lifecycle contract; do not generalize one operation for imagined
+future consumers. Dormant exports are not a reason to retain a whole deferred subsystem. Keep the specific
+registered path or retained-data reader that still needs it, with an actual retirement condition; otherwise
+the old implementation remains recoverable in Git history.
+
 ## 3. Owner reads and ordinary answers
 
 Apply ADR-0018 at composition, not as a bypass scattered through readers. The ingress establishes the
@@ -164,7 +178,8 @@ Measure ADR-0018's targets on the same named project/model/build: list latency b
 below 4 s, ordinary answer at most 30 s. Record request/query counts and provider/context/save timing so
 overhead is attributable; record cold/warm runs and p50/p95 rather than a single best result. The targets
 remain unverified. Quality comparison retains the same source set, questions, citations and omissions.
-Do not infer a required LOC/table count or a percentage of agent time from repository size.
+The source-size objective comes from the owner's direction and the reproducible inventory. It does not
+establish latency, a table count, a deletion estimate or a percentage of agent time saved.
 
 Current bounded work and donor choices live in [backend-entrypoints.md](../implementation/backend-entrypoints.md).
 The source reconciliation is [the October 17 audit](../../.github/audits/2026-10-17/README.md).

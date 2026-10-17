@@ -1,385 +1,81 @@
-# Frontend agent harness — executable evidence contract
-
-**Product owner:** ER-47
-**Client input:** ER-48
-**Task coordination:** one manager checkout; see [ADR-0019](../adr/0019-compact-refactoring.md)
-**Root integration:** bounded ER-00 handoffs
-**Autonomous manager:** [frontend-autonomous-manager-runbook.md](../agent-work/frontend-autonomous-manager-runbook.md)
-**Material UI procedure:** [frontend-material-agent-playbook.md](../agent-work/frontend-material-agent-playbook.md)
-**Status:** target specification; no harness tool or test is implemented by this documentation PR.
-
-The harness lets a constrained agent discover one permitted component/state, reproduce it, render it and
-publish bounded evidence. It is not a second frontend framework, generic design-management platform, workflow
-engine or screenshot factory. Repository files and CLI remain authoritative; MCP is optional convenience.
-
-## 1. Entry conditions
-
-A bounded UI task starts when:
-
-1. the existing owner authorization covers the work;
-2. the manager assigns exact allowed paths, relevant contracts and acceptance evidence;
-3. parallel tasks have disjoint paths; shared files are serialized by the manager;
-4. root/package/build integration is reviewed by its existing owner where needed;
-5. the manager reviews the implementation and verifies that evidence matches the result.
-
-New JSON claims and Git-ancestry receipts are not required. A package-local build, screenshot or green component
-test alone is not completion evidence. Existing ER-49 claims are historical audit records only.
-
-## Exact agent tool order
-
-The harness implements the commands and MCP sequence defined by the Material UI agent playbook. During code
-implementation, use scoped compile/lint first; do not run browser or test suites after every edit. At assembled
-UI acceptance, query Storybook manifests/docs before component use, use Google Design MCP for U1.2 proposals,
-inspect actual rendering through Chrome, and run scoped Playwright interaction/a11y/visual checks. Repository
-files and CLI remain authoritative; no second catalog or random design search is created.
-
-## 2. Repository shape
-
-```text
-packages/ui/
-  src/{tokens,primitives,patterns,content}/
-  stories/
-  registry/
-  catalog/
-  design-literals.json
-
-apps/eliotr-web/
-  src/{app,routes,features,query}/
-  fixtures/scenarios/
-
-tests/ui-owner/
-  components/
-  flows/
-  visual/
-  visual-direction/
-  accessibility/
-  fixtures/
-  receipts/
-
-scripts/ui-owner/
-  build-catalog.mjs
-  check-design-system.mjs
-  check-stories.mjs
-  check-binding-safety.mjs
-  check-screenshots.mjs
-  collect-browser-evidence.mjs
-  seed-local-explorer.mjs
-  print-review-receipt.mjs
-```
-
-Exact names may change in U1. Boundaries do not:
-
-- product source owns behavior;
-- catalog/registry describes accepted consumption;
-- scenarios describe product state, never DOM markup;
-- tests execute behavior;
-- receipts bind results to source/build/environment;
-- the legacy ER-49 checker records former scheduling mechanics; it is not an active product gate;
-- ER-00 owns root registration/CI, not component contracts.
-
-Only components needed by an accepted slice enter the catalog.
-
-## 3. Component catalog and primitive policy
-
-Every shared component/pattern has one deterministic entry:
-
-```text
-component ID and import path
-experimental | approved | deprecated
-native semantic or external primitive family + exact version
-owner and real consumers
-implemented variants/sizes only
-accessibility and CSP contract
-allowed content/slots
-tokens consumed
-stable stories/scenarios
-known limitations
-replacement/deprecation target
-```
-
-The catalog fails when an approved component lacks a stable story, names unknown variants/tokens, duplicates a
-product role, exports a shared-looking feature primitive, uses deprecated/unapproved foundation, or has no real
-consumer/U1 role.
-
-Use native HTML semantics first for buttons, inputs, checkboxes, headings, links and ordinary disclosure when
-they satisfy product behavior. “One primitive family” means one external composite foundation for dialogs,
-menus, popovers, comboboxes and similar behavior—not wrapping every native element or mixing libraries per
-component.
-
-The private shadcn-compatible registry contains reviewed source-owned items. Public registry search is research
-only; agents never install arbitrary remote items directly into product paths.
-
-## 4. Token and authored-style gate
-
-`token-roles.json` records deterministic light/dark/high-contrast semantic values. CSS/token source is
-authoritative, not screenshots.
-
-Reject unapproved:
-
-- raw color literals;
-- Tailwind arbitrary color/spacing/radius/shadow/z-index/font/animation values;
-- application-authored inline visual styles;
-- hard-coded motion durations/easings;
-- raw SVG fill/stroke outside icon/token components;
-- direct third-party primitive imports from features;
-- global feature selectors or specificity escalation;
-- `dangerouslySetInnerHTML` outside audited SafeMarkdown;
-- generic `overflow:auto` outside named scroll contracts.
-
-`design-literals.json` is a small reviewed allowlist for mathematical layout relations with path, reason, owner
-and expiry/review condition. It is not an escape hatch.
-
-Source lint does not prove dependency CSP behavior. Primitive, popper, pane and Markdown candidates are
-accepted only after actual browser output records style elements/attributes, CSP violations, narrow policy and
-fallback/rejection decision.
-
-## 5. Story and scenario contracts
-
-Stable CSF stories cover only applicable states:
-
-```text
-default / focus-visible / pressed
-selected / disabled / loading
-empty / validation / server error
-offline / denied / stale / unknown / degraded
-long RU / long EN / narrow container
-light / dark / reduced motion
-keyboard and screen-reader relationships
-```
-
-Do not multiply every primitive by every state, viewport, theme and browser. Hover-only pixels are usually an
-interaction assertion, not a durable baseline.
-
-Story fixtures are deterministic/private-data-free and make no owner API, Cloudflare binding, external font,
-analytics or provider request. Storybook does not load the Cloudflare plugin by default.
-
-A product scenario describes typed state:
-
-```text
-scenario/version
-authenticated session and deployment generation (the previous generation remains valid for owner reads)
-project/source catalog and selected scope
-readiness/currentness
-run stages/status
-report manifest/sections/citations
-evidence excerpt/coordinates/verification
-connection observations
-allowed actions
-expected protected-data clearing events (sign-out/principal change/revoke/purge; deployment renewal preserves the draft)
-```
-
-Canonical families are added only as slices need them: empty project, shared source, uncertain import,
-not-search-ready selection, sampled no-hit, waiting/degraded/failed/completed run, 40-section lazy report,
-coordinate quality variants, late response after principal change/revoke/purge/lifecycle close, deployment renewal
-with draft retained, Studio states, server-ready without
-client observation, measured large list and long RU/EN.
-
-Fixtures pass through strict client/view-model decoders where practical. Impossible authority states are
-adversarial and labeled.
-
-## 6. Live NotebookLM reference U1-R and visual-direction gate U1-D
-
-Tokens and isolated components do not define a product. First, U1-R opens the current live NotebookLM in an
-authenticated browser and records the reference matrix required by
-`../agent-work/frontend-notebooklm-material-reference.md`. Then the manager creates one canonical Eliot
-composition story and bounded visual-direction set using deterministic fixture data.
-
-Required review states:
-
-```text
-1440 wide desktop + 390 phone
-light + dark
-long Russian + long English
-Sources / question-first Research / contextual evidence
-loading, useful content and one degraded state
-```
-
-The manager's internal review records one coherent direction:
-
-- typography and reading measure;
-- information density and whitespace;
-- surface hierarchy/elevation;
-- navigation and pane proportions;
-- primary action hierarchy;
-- token/primitive visual language;
-- whether the product looks like Eliot rather than generic shadcn/admin or a copied NotebookLM skin.
-
-A green visual regression, token swatches, individual attractive components, generic shadcn output or a
-NotebookLM pixel copy cannot pass U1-D. The manager records an internal decision, removes rejected alternatives
-and continues. Later shell-level changes require a new internal comparison rather than silent baseline
-replacement.
-
-## 7. Evidence layers
-
-### A — component
-
-Stories run interaction, accessibility and CSP assertions without Worker startup.
-
-### B — fixture app
-
-Playwright verifies routes, Back, keyboard, focus, responsive composition, scroll ownership, SafeMarkdown,
-protected-state clearing, console/CSP failures, unexpected requests and bounded canonical screenshots.
-
-### C — local Vite/workerd
-
-Run the local Worker integration only after the workspace is registered and the local safety preflight passes:
-
-```text
-CLOUDFLARE_ENV=test
-remoteBindings:false
-normalized input/output contain no remote/production/effectful binding
-```
-
-Exercise same-origin API/SPA separation, headers, restart and supported local D1/R2/Queue/DO/Workflow behavior.
-Workers AI/AI Search/provider states remain fixtures unless a separately authorized non-production profile is
-selected.
-
-### D — safe Worker Preview
-
-Only supported isolated/read paths. Receipt classifies every binding as preview-isolated, dedicated
-non-production, shared read-only or unavailable. Any production/effectful binding fails preflight.
-
-### E — serialized staging
-
-Queue-consumer, deployed Workflow retry/resume, Access/OAuth and external-provider behavior. Separately
-authorized, budgeted and tied to exact candidate build.
-
-No layer is mislabeled as another.
-
-## 8. Visual evidence
-
-Each approved baseline entry records:
-
-```text
-story/route/scenario and why pixels matter
-source commit and build digest
-browser revision and OS/container
-viewport/device scale and locale/timezone
-theme/contrast/reduced-motion
-font digest
-fixture clock/random seed
-reviewed masks
-baseline digest and approval reference
-```
-
-Coverage is layered:
-
-1. stories own state variants;
-2. a small app set owns 1440/1024/768/390 geometry;
-3. major surfaces get representative light/dark/long-content evidence;
-4. keyboard/high-contrast/reduced-motion/Firefox/WebKit/most errors are functional/a11y unless pixels are
-   load-bearing;
-5. integrated screenshots prove only cross-component contracts.
-
-Rules:
-
-- one pinned Chromium environment owns canonical pixels;
-- fonts are ready; caret/clocks/random IDs/animation are controlled;
-- masks are narrow and reviewed;
-- baseline updates require explicit review and cannot replace U1-D approval;
-- image count/bytes are budgeted;
-- a new baseline names replaced image or justifies coverage growth.
-
-## 9. Independent usability audit and final owner review
-
-U2-X uses a fresh-context tester who did not implement the screen. The tester completes project, source,
-question, exact citation/evidence, supported artifact and Connections recovery without hints. Record wrong
-turns, backtracking, accidental scope changes, undiscoverable controls and backend terminology. The manager
-fixes failures and reruns the audit, then continues automatically through U3-U5.
-
-The final owner UI review occurs after U5-X on the complete integrated review build. It is not replaced by
-Playwright, screenshots or the independent audit, but it no longer interrupts the program at U1-D or U2-X.
-
-## 10. Review evidence
-
-The bounded JSON/Markdown receipt includes:
-
-```text
-task scope and changed paths
-source/build identity and lockfile state
-exact dependency/browser versions
-build/output-config digests
-environment and binding disposition
-commands and exit statuses
-stories/components/scenarios exercised
-U1-D manager decision or fresh-context U2-X internal audit reference when applicable
-screenshots/diffs and visual-budget delta
-accessibility/CSP findings
-console errors/unhandled rejections
-unexpected failed requests
-scroll/focus/keyboard/touch results
-design/catalog changes
-PENDING native/staging/live gates
-```
-
-It excludes source/evidence text, prompts, credentials, cookies and provider payloads. Evidence is reviewed
-against the actual behavior; a receipt alone does not establish acceptance.
-
-## 11. Local Explorer
-
-After binding preflight, the helper verifies origin, Worker identity, environment and binding disposition;
-seeds bounded D1/R2/DO/Workflow fixtures; reads exact post-state/traces; removes only owned fixture identities;
-and never discovers/mutates remote resources. Automated acceptance uses explicit API operations, not Explorer
-screenshots.
-
-## 12. Agent workflow
-
-The manager repeats this workflow across ready tasks in the authorized programme. Task completion returns
-control to the manager; it is not a prompt to ask the owner what to do next.
-Routine failures are repaired locally. After two failed approaches, the manager records a failure audit and
-selects a different approach.
-
-1. **Orient:** read the task scope, affected catalog/story/scenario and client/DTO contract.
-2. **Reproduce:** choose the smallest failing story/scenario.
-3. **Constrain:** identify the affected behavior and exact paths; serialize shared integration files.
-4. **Implement:** reuse approved UI/client boundaries; no direct fetch/global event/design literal.
-5. **Inspect:** render actual states; inspect layout/accessibility/CSP.
-6. **Verify:** run scoped type/lint during implementation; run component/flow/design/CSP/visual and applicable integration checks after assembly.
-7. **Compare:** review rendering, budget, console/network/focus/scroll.
-8. **Internal gate:** complete U1-D or U2-X evidence when required and continue automatically after repair.
-9. **Record:** publish concise evidence and PENDING gates.
-10. **Advance:** select the next ready task in the same authorized programme; stop only at a named human
-    gate or a hard authority/security/ownership blocker.
-
-“Looks good,” DOM snapshot or mocked story alone is not acceptance.
-
-## 13. CI and merge policy
-
-Use scoped commands during implementation. Coordinate any new root command or CI integration with ER-00 only
-when the task actually changes shared root configuration; do not require a historical bootstrap receipt.
-
-Shared UI blockers:
-
-- root integration only when a task adds or changes a workspace package or shared build configuration;
-- typecheck/scoped lint;
-- catalog/registry consistency;
-- design-literal/primitive-family gate;
-- component interaction/a11y/CSP;
-- U1-R live reference and U1-D internal acceptance before shell assembly;
-- affected fixture flows and fresh-context U2-X audit;
-- bounded visual review;
-- no unexpected console/network failure;
-- exact receipt.
-
-Integrated features add local workerd and strongest supported Preview/staging layer. Full owner browser and
-repository/release acceptance remain ordered assembly gates.
-
-## 14. U1 harness exit
-
-Before U2:
-
-- the existing workspace/build tuple is verified for the active UI;
-- minimum catalog/private registry builds deterministically;
-- native-first policy and one external composite family are locked after a11y/CSP comparison;
-- design gate catches seeded violations;
-- deterministic Playwright baseline/receipt works;
-- screenshot count/bytes are bounded;
-- fixture app/SafeMarkdown makes no production request;
-- binding preflight catches unsafe config;
-- Local Explorer works only after preflight;
-- U1-R evidence exists and U1-D canonical direction has manager-recorded internal acceptance;
-- MCP-disabled workflow remains usable;
-- package/browser versions, runtime/flakiness and limitations are recorded.
-
-No tool, test, package install, browser result, aesthetic acceptance or runtime qualification is claimed by
-this document.
+# Frontend agent harness — UI evidence contracts
+
+**Authority:** [ADR-0019](../adr/0019-compact-refactoring.md), the [owner execution map](../agent-work/frontend-owner-execution-map.md),
+the [Material UI playbook](../agent-work/frontend-material-agent-playbook.md), and the relevant client/product contracts.
+**Manager and implementation workflow:** [root instructions](../../AGENTS.md) and [START-HERE](../START-HERE.md).
+**Browser tooling:** `scripts/ui-owner/verify.mjs`, exposed by `packages/ui/package.json` scripts.
+
+This document records UI-specific acceptance boundaries. It does not define another scheduler, component framework,
+registry or task gate. Old ER-49 claims/checkers are historical audits. Root instructions define exact-path
+assignment, scoped compile/lint, and assembled verification timing.
+
+## Component and token boundaries
+
+`@eliotr/ui` owns shared tokens, primitives and patterns; product features own behavior. Use native HTML semantics
+for ordinary controls and one qualified external composite primitive family. Reuse an existing shared role before
+adding one; do not promote a feature-only abstraction or install unreviewed remote registry code. CSS/token sources
+are authoritative. Keep semantic light/dark/high-contrast roles, and do not add arbitrary visual literals or
+feature-authored inline styles. Source lint does not prove dependency CSP behavior: qualification uses actual
+browser output and preserves CSP.
+
+## Story and scenario contracts
+
+Stories and fixtures cover only states relevant to the slice: interaction/focus, selected/disabled/loading,
+empty/validation/error, offline/denied/stale/unknown/degraded, long RU/EN, narrow layout, themes and reduced
+motion. Fixtures are deterministic and private-data-free; they make no owner API, Worker binding, analytics,
+provider or font-CDN request. Storybook does not load the Cloudflare plugin by default.
+
+Scenarios describe typed product state, not DOM markup. Include session/deployment generation, scope and
+readiness, canonical run status, citations/evidence and allowed actions when relevant. Deployment renewal
+alone preserves the owner's draft and last known read. On `pagehide`, [ADR-0017 §5](../adr/0017-owner-web-browser-runtime-and-tooling.md)
+requires synchronous masking/epoch closure, read abort, and removal of protected Query, report, evidence and
+source-byte views; only safe route IDs, permitted non-sensitive drafts, theme and validated pane geometry remain.
+Sign-out, principal change, revoke or purge clears affected protected state. Impossible authority states are
+adversarial fixtures, not product states.
+
+For research views, keep scope, evidence and answer legible. Where the slice supports it, show available evidence
+and warnings distinctly from the answer and make no-results/low-evidence states explicit. The server resolves
+citation handles to exact immutable evidence; model-authored IDs or quotes never define evidence identity.
+
+## Live reference, visual direction and usability
+
+U1-R uses the current live NotebookLM in an authenticated browser and the official Material guidance, following
+the [reference protocol](../agent-work/frontend-notebooklm-material-reference.md). Do not upload Eliot private
+material or expose account identifiers. Record only private-data-free observations and accepted artifacts.
+
+U1-D compares one canonical Eliot composition against those observations at 1440/390, light/dark, long RU/EN,
+and useful/loading/degraded states. It must read as Eliot, not generic admin/shadcn and not a NotebookLM copy.
+U2-X is a fresh-context no-hint journey through project, source, question, exact evidence, supported artifact
+and Connections recovery. Repair material confusion and continue; these internal reviews do not interrupt the
+authorized programme. FINAL-UI reviews the complete U5-X interface once.
+
+## Evidence layers
+
+`@eliotr/ui` stories cover component interaction and accessibility. Fixture-app checks cover routes, keyboard,
+focus, responsive composition, scroll, SafeMarkdown, protected-state clearing, console/CSP and unexpected
+requests. Local Vite/workerd runs require `CLOUDFLARE_ENV=test`, `remoteBindings:false` and a preflight proving
+there are no production/effectful bindings. Provider and AI states remain fixtures unless an independently
+authorized non-production profile applies. Preview and staging receipts identify each binding's disposition;
+staging/external-provider behavior is serialized and authorized separately. No evidence layer stands in for
+another.
+
+Keep existing browser verification behavior and commands in `packages/ui/package.json` and
+`scripts/ui-owner/verify.mjs` (`browser`, `a11y`, `visual`, `csp`, `receipt`). Browser receipts identify source,
+build, browser, fixture inputs and pending native/staging/live limitations. Baselines require review; they do not
+auto-accept. Screenshots and receipts exclude source/evidence text, prompts, credentials, cookies and provider
+payloads. Mark unavailable native, Preview, staging or live acceptance `PENDING`.
+
+## Local Explorer
+
+The Local Explorer is available only after binding preflight. It uses the expected local Worker/origin and
+owned fixture identities, reads bounded exact post-state and traces, removes only its own fixtures, and never
+discovers or mutates remote resources. Automated acceptance uses explicit API operations; a screenshot is not
+proof of state.
+
+## Final owner review
+
+Present the assembled U5-X product and its applicable behavioral, accessibility, visual, CSP, lifecycle,
+binding and performance evidence. Include exact build/environment identity, changed paths, commands and pending
+acceptance. Preserve privacy and safe-local/non-production review. The integrated build/deploy bridge and
+rollback preparation belong to the authorized refactor; deployment, account mutation and cutover follow the
+applicable existing authorization.

@@ -1,36 +1,13 @@
-# ER-48: Owner API client extraction and legacy compatibility
+# ER-48: Owner API client extraction and transport reference
 
-**Slice:** owner-interface migration
-**Packet completion dependencies:** none
-**Coordination inputs:** accepted current ER-00 package/tooling rules and ER-21/ER-24 owner API contracts; their
-whole packets need not be complete.
-**Coordination:** current refactor work follows ADR-0019 and the owner-web execution map; ER-49 is historical audit material.
-**Compatibility baseline:** ER-25 consumes legacy adapters until cutover; it is not a completion prerequisite.
-**Consumers:** ER-47 U3-U6
-**Architecture:** ADR-0015, ADR-0016 and ADR-0017
-**Leaf dispatch:** [frontend-owner-execution-map.md](frontend-owner-execution-map.md)
-**Autonomous manager:** [frontend-autonomous-manager-runbook.md](frontend-autonomous-manager-runbook.md)
-**Current contract amendment:**
-[frontend-current-contract-amendment-2026-10-09.md](frontend-current-contract-amendment-2026-10-09.md)
-**Transport evidence:**
-[frontend-transport-audit-2026-10-08.md](../implementation/frontend-transport-audit-2026-10-08.md)
-
-**Status:** historical extraction and transport contract. Current refactor tasks are assigned by the manager from
-the implementation router; no named C checkpoint, claim or ER-49 handoff is a prerequisite. Missing contracts,
-unsafe authority changes and release work still require their existing owners or separate authorization.
+**Status:** historical extraction/transport contract. Current scope and order come from [the implementation router](../implementation/backend-entrypoints.md); ER-49 claims and C-checkpoints are not gates.
+**Target:** one browser-safe, React-independent `@eliotr/owner-api-client`.
+**Architecture:** [ADR-0015](../adr/0015-browser-capability-libraries.md), [ADR-0016](../adr/0016-react-cloudflare-owner-ui.md), [ADR-0017](../adr/0017-owner-web-browser-runtime-and-tooling.md), [ADR-0018](../adr/0018-owner-single-function-first-profile.md), [ADR-0019](../adr/0019-compact-refactoring.md).
+**Transport evidence:** [audit](../implementation/frontend-transport-audit-2026-10-08.md); feature slices and UI acceptance: [execution map](frontend-owner-execution-map.md).
 
 ## Objective
 
-Create one browser-safe, React-independent `@eliotr/owner-api-client` that preserves strict decoders, request
-bounds, currentness, error and mutation semantics without legacy DOM renderers, global browser events, HTML
-helpers or persistence side effects.
-
-React imports neither legacy browser package roots nor copied wire schemas. ER-25 continues through explicit
-compatibility adapters until accepted cutover.
-
-Canonical Research progress remains owner HTTP status/history/readback. Current ResearchSession adds only a
-strict read-only RPC snapshot accelerator; it is not chat, transcript, push progress, run admission,
-cancellation, completion or provider-effect authority.
+Keep strict transport/decoder, currentness, request-bound, error and mutation semantics in one client without DOM renderers, global browser events or browser persistence. React does not import legacy package roots or copy wire schemas. Legacy adapters remain only through accepted cutover.
 
 ## Owned paths
 
@@ -40,274 +17,56 @@ cancellation, completion or provider-effect authority.
 - `packages/pwa-research-workspace/**`
 - `docs/agent-work/frontend-owner-claims/ER-48/**`
 
-These paths record the historical ER-48 ownership boundary; the current task manager assigns exact paths from the
-implementation router. Preserve the canonical server feed and erasure callback under their existing owners.
+These are historical packet paths, not current locks. The manager assigns exact paths; current server feed, erasure callback and shared integration remain with their existing owners.
 
-One manager uses one checkout. Parallel tasks may edit disjoint exact paths; serialize package-local manifests,
-barrels, shared test utilities and compatibility exports. ER-49 registry/checker and claim files are optional
-historical audit material. Root integration files follow the current implementation router.
+## HTTP transport
 
-## Read only unless explicitly delegated
+The client uses normalized same-origin `/api/v1/` paths, same-origin credentials, manual redirects and `no-store`. Normalize `HeadersInit` through `Headers`; required CSRF, idempotency and media headers cannot be removed or overridden. Every request accepts the caller's `AbortSignal`. Keep caller abort, deadline, network failure and interrupted body distinct. Login/redirect HTML never decodes as success. Bound success and problem bodies separately, check available length/media before large reads, and enforce limits while streaming. Endpoint methods own their finite status/body/range/validator semantics; callers cannot broaden accepted statuses.
 
-- `apps/eliotr-pwa/**`
-- `apps/eliotr-web/**`
-- `packages/ui/**`
-- `packages/contracts/**`
-- `apps/eliotr-core/**`
-- `docs/agent-work/frontend-owner-checkpoints.json`
-- `docs/agent-work/frontend-owner-claims/ER-47/**`
-- root workspace, lockfile, TypeScript, lint, boundary, CI and deployment files
-- integration fixtures outside owned packages
+Owner list/draft reads validate known fields and tolerate additive fields and prior deployment generations per ADR-0018. Mutations and evidence keep strict versioned decoding. Mutations and paid/provider effects do not auto-retry; after uncertain acknowledgement, read back and reuse the exact operation/idempotency identity and frozen request body.
 
-Missing endpoint, DTO, representation validator, projection field or effect contract returns to ER-21/24. A
-client leaf never fills the gap with a local schema, guessed enum, direct provider call or copied decoder.
+### Whole-object and range reads
 
-## Reviewed legacy facts
+`requestWholeObject` is an ordinary GET accepting 200 only. `requestObjectRange` sends one exact single range and accepts 206 only; validate `Content-Range` start/end, delivered length and numeric total. A range is bound to one immutable admitted representation using exact revision/object identity, strong validator, endpoint-approved conditional, untransformed representation and post-read digest/currentness check. Missing, weak or changed validators; multipart/content-coding mismatch; 412/416; or revision/digest drift are typed currentness failures. Never silently fall back to a whole 200 response; without the required range contract, use a bounded whole-object read. The problem reader has its own small JSON budget and rejects HTML/wrong media before document-sized buffering.
 
-- `@eliotr/pwa-http-client` has useful strict transport/decoder safeguards but emits global
-  `eliotr:authorization-cleared` from request paths.
-- source/research workspace packages mix API/value logic with DOM panels, HTML helpers and direct browser
-  effects.
-- current Research progress has canonical run status/history/readback.
-- current ResearchSession exposes only `readResearchSessionProjection()` through official `agents/client`
-  `AgentClient`; `get-messages` is deliberately disabled.
-- proposed `pwa-knowledge-workspace` does not exist and is not created to satisfy stale prose.
+## Authorization and lifecycle seam
 
-## Target package boundary
+The client owns no application state and reports bounded authorization-loss observations through an injected hook. Legacy adapters may coalesce that observation into the existing ER-25 event; React advances session/lifecycle epochs and cancels reads/projection requests. A `401` or typed access-loss `403` is authorization loss. A policy or resource `403` is not and must not clear the owner session.
 
-```text
-transport/
-  same-origin path and header policy
-  bounded JSON/problem/whole-object/range readers
-  typed abort/deadline/network/body causes
-  redirect/auth-loss observations
-session/
-  health, owner-session and authority epochs
-sources/
-  projects, library, import/recovery, revisions/readiness, document, erasure
-research/
-  configuration, runs/status/actions/history, strict session projection adapter
-studio/
-  implemented artifact and Wiki operations
-connections/
-  grants, provider/transport/client diagnostics
-```
-
-The package root exports finite client/decoder/value types only. It imports no React, TanStack Query, UI, DOM
-renderer, browser persistence, service worker or Cloudflare binding. A transport-specific ResearchSession
-submodule may depend on the exact approved `agents/client` surface only after its dependency and bundle behavior
-are verified at assembly; that dependency never leaks into unrelated HTTP-only consumers or UI components.
-
-`sideEffects:false` must be truthful. During implementation, compile and lint the affected scope. Package-local
-compilation does not establish root integration; tests and browser acceptance run after assembly, with root
-references and fail-closed boundaries integrated by their current owner when needed.
-
-## HTTP transport contract
-
-Conceptual construction:
-
-```ts
-createOwnerApiClient({
-  fetch,
-  baseUrl,
-  onAuthorizationLoss,
-  defaultTimeoutMs,
-  timers,
-})
-```
-
-Fixed invariants:
-
-- normalized same-origin `/api/v1/` paths only;
-- same-origin credentials, manual redirects and `no-store`;
-- normalize all `HeadersInit` through `Headers`;
-- required CSRF/idempotency/media headers cannot disappear or be overridden;
-- core emits typed observations and no global event;
-- caller abort, deadline, network failure and interrupted body read remain distinct;
-- every request accepts caller `AbortSignal`;
-- login/redirect HTML never decodes as success;
-- separate media and byte budgets for success and problem bodies;
-- inspect available Content-Length/media before large reads while streaming limits remain authoritative;
-- known fields remain validated. Owner list/draft reads tolerate additive fields and previous deployment
-  generations as specified by ADR-0018; mutation and evidence contracts retain strict versioned decoding;
-- endpoint methods own finite status/body/range/validator semantics;
-- mutations and paid/provider effects never auto-retry;
-- uncertain retry reuses exact operation/idempotency identity and frozen body after readback.
-
-### Whole-object, range and problem reads
-
-```text
-requestWholeObject
-  ordinary GET
-  accepts 200 only
-
-requestObjectRange
-  sends one exact single Range
-  accepts 206 only
-  validates Content-Range start/end/delivered length/numeric total
-  binds bytes to one immutable admitted representation
-
-problemReader
-  small fixed JSON budget independent of object maximum
-  rejects HTML/wrong media before document-sized buffering
-```
-
-Range endpoints require exact admitted revision/object identity, strong validator, endpoint-approved
-conditional, one untransformed representation and post-read digest/currentness checks. Missing/weak/changed
-validator, multipart, content coding mismatch, 412/416 or revision/digest drift is a typed currentness failure,
-never silent 200 fallback. Without that contract the feature uses bounded whole-object read.
+Follow [ADR-0017 §5](../adr/0017-owner-web-browser-runtime-and-tooling.md): the root controller synchronously masks on `pagehide` and closes the lifecycle epoch, then aborts reads, pauses polling and removes protected Query/report/evidence/source-byte views. Retain only safe route IDs, permitted non-sensitive drafts, theme and validated pane geometry. Deployment-generation renewal alone preserves the same owner's draft and last known read; reconcile/refresh reads with stale indication, never blindly replay a write. Sign-out, principal change, revoke or purge clears affected protected state. Late old-epoch responses cannot restore data after those authority/lifecycle changes.
 
 ## ResearchSession projection boundary
 
-Current protocol is `eliotr.research-session-projection.v1` and is
-`IMPLEMENTED_NOT_LIVE`.
-
-The exact transport contract is:
+The only accepted protocol is `eliotr.research-session-projection.v1` (`IMPLEMENTED_NOT_LIVE`):
 
 ```text
 AgentClient callable: readResearchSessionProjection()
 arguments: none
-successful result: one strict ResearchSessionProjection union
+success: one strict ResearchSessionProjection union
 get-messages: 410 SESSION_CHAT_HISTORY_DISABLED
-all chat/history/state/MCP/other WebSocket frames: rejected
+chat/history/state/MCP/other WebSocket frames: rejected
 proactive progress push: none
 ```
 
-Strict result states:
+The successful union contains exactly these variants and fields:
 
 ```text
-ACTIVE
-  session_id
-  operation_id
-  investigation_ref
-  run_status.execution_state = ACTIVE
-  run_status.engine_status
-  run_status.next_stage_index
-
-CANCELLED
-  session_id
-  operation_id
-  investigation_ref
-  cancellation_receipt_ref
-
-ENGINE_COMPLETED
-  session_id
-  operation_id
-  investigation_ref
-  completion_receipt_ref
-  output_manifest_ref
+ACTIVE: session_id, operation_id, investigation_ref,
+        run_status.execution_state=ACTIVE, run_status.engine_status,
+        run_status.next_stage_index
+CANCELLED: session_id, operation_id, investigation_ref, cancellation_receipt_ref
+ENGINE_COMPLETED: session_id, operation_id, investigation_ref,
+                  completion_receipt_ref, output_manifest_ref
 ```
 
-No unknown field is accepted. The projection deliberately omits answer/report bytes, failure detail, prompt,
-provider payload, transcript and all receipts except the terminal references listed above.
+Reject unknown/nested extra fields and identity/authority mismatch. The projection omits answer/report bytes, prompts, provider payloads, failure detail and transcript; only the listed terminal receipt references are present. The adapter calls `readResearchSessionProjection()` with no arguments through the approved `AgentClient`; UI components never import `agents/client` or open the socket. The 410 is intentional, not a fallback trigger.
 
-Rules:
+This is a read-only snapshot accelerator, not detailed progress, push, run admission, cancellation, completion or provider-effect authority. Canonical HTTP status/history/readback owns progress and reconciliation. Missing/stale/unknown/inconsistent projection remains degraded until HTTP readback. `ENGINE_COMPLETED` does not mean artifact acceptance/publication. Disconnect, reconnect, disposal, hibernation or adapter close never starts, cancels or repeats a run/effect. Bind results to exact session, operation, investigation, handler, principal, credential, deployment and lifecycle epochs, plus authority expiry; recheck after awaits. Any future event protocol requires a separately versioned server contract.
 
-- ER-48 owns the exact `AgentClient` adapter and strict decoder;
-- ER-47 components/hooks never import `agents/client` or open the socket directly;
-- only `readResearchSessionProjection()` with no arguments is sent;
-- client state updates, chat/history messages and generic protocol frames are never used;
-- `get-messages` returning 410 is expected protocol behavior, not a fallback trigger;
-- projection is snapshot-on-request, not streaming or proactive Workflow progress;
-- canonical HTTP status/history/readback owns detailed progress, failure, report and reconciliation;
-- missing/stale/unknown/inconsistent projection remains `UNKNOWN`/degraded until HTTP readback;
-- `ENGINE_COMPLETED` is not artifact acceptance/publication;
-- disconnect, disposal, hibernation or adapter close never cancels the run;
-- reconnect creates no run, mutation, operation ID, transcript or paid effect;
-- old principal/session/credential/deployment/lifecycle projection cannot repopulate protected state.
+## Other client-specific boundaries
 
-The adapter binds exact session, operation, investigation, handler generation, principal, credential generation,
-deployment generation and authority expiry. It rechecks caller/session/lifecycle epochs after every await.
+Preserve separate capture, conversion, admission, readiness and scope operations; do not infer source identity or silently change a frozen run scope. Do not invent endpoint/DTO/representation/projection/effect contracts: unresolved server contracts return to their owner. Keep Markdown parsing pure and bounded; React's `@eliotr/ui` owns SafeMarkdown and typed citations.
 
-If future server work introduces a different push/event protocol, it receives a new versioned contract and
-checkpoint. It cannot silently broaden this projection adapter.
+## Acceptance reference
 
-## Authorization and lifecycle seam
-
-Core client reports bounded authorization-loss observations through an injected hook and owns no application
-state.
-
-```text
-legacy adapter
-  → coalesces per legacy epoch
-  → emits existing ER-25 event
-
-React adapter (ER-47)
-  → advances session/lifecycle epoch
-  → cancels reads and projection requests
-  → removes protected Query/view state
-  → reauthenticates or shows recovery
-```
-
-Late old-epoch HTTP or projection response cannot clear a newly verified owner, restore bytes or advance
-completion after logout, pagehide, revoke, purge or deployment change.
-
-## Workflow admission boundary
-
-The owner client preserves separate capture, conversion, admission, readiness and scope operations. Current
-Workflow normalized admission requires explicit selected conversion profile/request authority and does not
-extend the active run's frozen scope.
-
-The client must not:
-
-- invent conversion bounds/options;
-- infer logical source identity from filename, URL or capture ID;
-- auto-add an admitted source to current/historical run scope;
-- replace an uncertain operation with a new identity.
-
-## Markdown boundary
-
-Existing reading limits byte/tree/depth/node/time, disables raw HTML, validates AST and filters URLs. DOM
-renderer remains legacy. ER-48 may extract a pure versioned AST/worker parser only when ER-47 needs it.
-`@eliotr/ui` owns React SafeMarkdown. Generated HTML never crosses the client boundary; citations use typed
-server identities.
-
-## Required order
-
-The C0-C3 labels below preserve the former extraction sequence as a contract map, not as a scheduler or queue.
-Current work follows the implementation router; compile/lint the affected scope first, then integrate and run
-relevant API/client and browser acceptance after assembly. Retire compatibility only after the authorized UI
-cutover and rollback conditions are met. A family is incomplete while two maintained endpoint/decoder
-implementations remain.
-
-## Mandatory negative case
-
-Hold a protected source/report/range/projection response, change owner session or lifecycle, then release it.
-Client/React cannot restore bytes or advance completion; legacy adapter emits one clear transition; uncertain
-mutation retry retains original identity/body. Deployment-generation change alone retains owner reads/draft and
-triggers stale indication/reconciliation under ADR-0018.
-
-## Additional acceptance
-
-- package import without DOM globals creates no listener, worker, network or storage effect;
-- unregistered workspace package fails root boundaries/type ownership;
-- all legal `HeadersInit` forms preserve required headers;
-- malformed/oversized/wrong-media/HTML/redirect bodies fail before domain use;
-- caller abort, deadline, network and body interruption remain distinct;
-- hostile cancellation releases reader lock without unhandled rejection;
-- 401 and typed access-loss 403 clear authorization; policy/resource 403 does not;
-- whole 206 and range 200/bad range/validator/transformed representation fail;
-- problem body cannot consume success-object ceiling;
-- endpoint status policy cannot be widened by caller allowlist;
-- strict ResearchSession projection rejects unknown/nested extra fields, identity mismatch and stale authority;
-- owner list/draft responses tolerate additive fields while validating known fields;
-- projection adapter sends no args and no frame other than the callable RPC;
-- `get-messages` 410 is decoded as intentional disabled history, never SPA HTML or retry loop;
-- no chat transcript/state is stored or rendered;
-- projection disconnect/reconnect creates no run/cancel/effect;
-- `ENGINE_COMPLETED` does not imply report accepted/published;
-- canonical HTTP readback reconciles missing/stale projection;
-- legacy/new client preserve accepted values/errors for retained fixtures;
-- React graph excludes legacy panels and DOM Markdown renderer;
-- absent `pwa-knowledge-workspace` remains absent.
-
-## Verification
-
-During implementation: scoped TypeScript compilation and lint for changed code. After assembly: run applicable
-HTTP/source/research and ResearchSession contract tests, API and protected-query lifecycle tests, import/bundle
-checks, and relevant browser acceptance. Run full repository/release acceptance at its actual release boundary;
-do not run tests or browser checks for every edit. Historical claims and B-C labels are not gates.
-
-No extraction or acceptance is implied by this historical contract. During code work, use scoped compile/lint;
-perform applicable tests, projection checks and browser acceptance after assembly. No JSON claim or ancestry
-receipt is required.
+At assembled acceptance, cover the transport and lifecycle behaviors above, including malformed/oversized/wrong-media/HTML/redirect bodies, abort/deadline/network/body distinctions, `401` versus resource `403`, whole-object versus range status/validator failures, strict projection decoding and no-argument RPC, stale/old-epoch response rejection, no retry/replay of mutations, and no chat/transcript persistence. Package import must have no DOM/listener/network/storage effects. See the transport audit and current router for the relevant feature-specific evidence; root workflow defines check timing.

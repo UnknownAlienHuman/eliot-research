@@ -1,5 +1,5 @@
 ---
-title: "Backend implementation entry points"
+title: "Compact refactoring: implementation and removal"
 date: 2026-10-17
 status: "current owner-product refactoring router"
 source_baseline: "4e53d5e2296e7f4ed3ed29cef2f049891c5d20c0"
@@ -7,190 +7,200 @@ source_baseline: "4e53d5e2296e7f4ed3ed29cef2f049891c5d20c0"
 
 # Current implementation work
 
-The owner requested preparation for a compact refactor in [#380](https://github.com/UnknownAlienHuman/eliot-research/issues/380).
-[ADR-0019](../adr/0019-compact-refactoring.md) defines the implementation boundaries;
-[ADR-0018](../adr/0018-owner-single-function-first-profile.md) defines the selected owner behavior.
-This document replaces the historical October 8 backend queue.
+Finish the five owner paths selected in [#377](https://github.com/UnknownAlienHuman/eliot-research/issues/377)
+under [ADR-0018](../adr/0018-owner-single-function-first-profile.md) and
+[ADR-0019](../adr/0019-compact-refactoring.md). This is the single current implementation router.
+[AGENTS.md](../../AGENTS.md) owns agent coordination and verification timing; archived packets locate
+contracts, not a second task queue. Astro is rejected; the target is the existing React/Vite application.
 
-## What is already decided
+## Size and outcome
 
-[#377](https://github.com/UnknownAlienHuman/eliot-research/issues/377) archived 44 draft PRs on October 15.
-Closure did not mean implementation. Their old dependency graph is not a prerequisite for current work.
+The [source inventory](../../.github/audits/2026-10-17/README.md#source-footprint-and-reduction-evidence)
+found **283,671 physical lines of authored application/library source**, excluding separately classified
+tests, tooling and migration history. This is maintained source, including compatibility and unactivated
+implementations, not a deployed-bundle or dead-code measurement.
 
-- Finish the five selected paths: sources/project/question/cited report/reopen; project upload to managed
-  search; Inbox publication; connected agents; assignment of a task to an agent.
-- Use Cloudflare AI Search or provider-native search. S52 custom index, generation registry, target
-  manifests, required-set promotion and rollback are canceled.
-- React/Vite is the owner-web target. Astro is served compatibility until the integrated cutover.
-- Rust ports and historical audit programs do not block these paths. Pure Rust stays available for a
-  concrete selected operation, with a real ABI/caller and eventual removal of its old TS decision.
-- Existing backup/export/restore work is deferred; do not start a replacement system. Preserve retained
-  data, erasure and recovery obligations during code retirement.
-- One manager checkout/worktree, exact disjoint leaf files, manager-owned shared-file integration.
-  No new JSON claims, ancestry gate, scheduler or per-checkpoint owner confirmation.
+The working design ceiling is **fewer than 100,000 application/library source lines** for the maintained
+product, including explicit deep research and compatibility that remains supported. This translates the
+owner's request to leave the hundreds-of-thousands scale into an architectural objective; it is not a new
+CI gate or a claim that a complete deletion plan already reaches it. The first candidates below are
+insufficient on their own. Consolidate remaining capabilities around their actual callers as well.
 
-The latest recorded live evidence is in [backend-delivery-plan.md](backend-delivery-plan.md), including
-the October 16 source/report/citation/Inbox/model/MCP receipts. Those are bounded observations, not proof
-that ADR-0018, React cutover or all production capabilities are complete.
+A refactoring result names the surviving implementation, callers moved, superseded implementation removed,
+and any compatibility reader still required. Count readable source with the same inventory method; moving
+it to Rust, another package, tests or generated files is not a reduction. Do not minify code or erase useful
+checks/comments to improve the number. Reducing ordinary-path work and deleting maintained source are
+separate outcomes: retaining a deep Workflow can leave its source count unchanged.
 
-## Baseline: code versus target
+## Structural changes
 
-| Area | Observed at the baseline | Refactor consequence |
-|---|---|---|
-| UI delivery | Wrangler assets still point to `../eliotr-pwa/dist`; the separate React/Vite app and owner client exist. | Build one integrated React + existing Worker release path; fixture output alone cannot replace deployed assets. |
-| Ordinary answers | The current public path retains the deep Workflow; streamed-answer text extraction already exists in `research-answer-text.ts`. | Reuse its pieces for one E0/E1 synthesis, preserving explicit E2/E3. |
-| Rust | Three crates exist; the default Wasm ABI has stamps and no product operation called by the Worker. | No 17-crate scaffold campaign and no claim that authority already moved. |
-| Native wait | `native-external-task-step.ts` implements `waitForEvent` for the unactivated R05 Research external-task W2 graph. | Reuse it if that Research flow is selected; generic computer-agent assignment has its own existing lifecycle. Implementation is not activation or live acceptance. |
-| Process | The frontend provenance CI job is already manual/advisory; active prose still required prior claims. | ADR-0019 and updated entrypoints remove that stale prerequisite. Product CI is separate. |
-| Old SQL | The repository retains migration history for both active and canceled paths. October 15 records 0141 applied and 0142–0151 absent remotely. | Runtime retirement needs actual ledger/caller evidence, not blanket apply/drop/squash. |
+Select one bounded caller/family from these changes. Independent changes can proceed together; package
+roots, manifests, routes, migration decisions and composition remain manager-owned.
 
-The [October 17 audit](../../.github/audits/2026-10-17/README.md) contains exact source links and
-C01–C11 statuses. C04's two provider readers and C08's observation decoder are fixed. C07 is partially
-fixed. The old claim of a second Session stage executor no longer matches current code. The repeated
-Managed OAuth context check is functional in the current path, not dead code.
+### Managed search without the canceled registry
 
-## Small implementation outcomes
+**Current callers:** [project-search.ts](../../packages/cloudflare-ai/src/project-search.ts) reads and hashes
+`ai_search_generation_registry`, verifies generation-wide item counts, and rereads its revision after search.
+Run admission, project model readiness and
+[SEM retrieval](../../packages/cloudflare-research-runtime/src/research-retrieval-composition.ts) call these
+checks. This is live application coupling to the generation overlay canceled by #377.
 
-These are bounded outcomes, not a new numbered issue program. Assign one at a time, splitting a row by
-endpoint or representation when necessary. Historical PR numbers in the audit supply source context;
-do not reopen their entire archived scope.
+Use the existing configured AI Search instance and native search adapter. Remove
+`readProjectSearchManagedAuthority`, registry-dependent `assertProjectSearchManagedPrimaryAvailable`
+and the registry fences in `searchProjectManaged`, updating those three consumers together. Preserve
+project/source filters, bounded provider calls, current membership, admitted-revision locator mapping and
+honest partial/unavailable results. The existing Items upload/membership outbox is the delivery path;
+do not introduce a replacement index, provider registry or blocking upload-and-poll orchestration.
 
-### Immutable payload and digest observation
+The [projection executor](../../packages/cloudflare-projection/src/executor.ts) materializes R2 work and
+activates D1 lexical search; it does not call the managed-item writer. Its
+[installed profile](../../apps/eliotr-core/src/projection-execution-handler.ts) sets
+`managed_generation_active: false`, but
+[Core authority](../../packages/cloudflare-projection/src/core-authority.ts) still prepares managed-target
+metadata. Retire the unused managed writer/intent methods and exclusive helpers in
+`core-managed-items.ts`, `core-managed-item-intent.ts` and `core-managed-item-receipts.ts`.
+Their combined 1,297 lines are an inspection surface, not all deletable: terminal/generation readers use
+some definitions. Keep source delivery leases, current R2/D1 projection settlement and retained receipts.
+Search 0004 and Core migration files remain history; this code change does not drop tables or data.
 
-**Files:** `packages/cloudflare-research-runtime/src/research-session-application.ts`,
-`packages/platform-cloudflare/src/r2.ts`; the relevant payload consumer.
+**Assembled result:** project upload/search/readiness and ordinary admission work through native managed
+search without a custom promotion registry; canonical citation opening and deletion/purge behavior remain.
 
-C01/C02/C11: use conditional absent-key R2 writes; reconcile race/lost ACK by exact bounded readback;
-bind digest observations to the requested object. Same bytes recover the original result, different
-bytes conflict, unavailable reads remain unknown. Correct the shared helper's distinction between
-integrity mismatch and verifier unavailability before reusing it. Preserve pre-ledger payload metadata
-and the original attempt; do not add a second storage abstraction.
+### One model check at connection, one ordinary-answer path
 
-**Assembled acceptance:** existing conflicting object survives a failed HEAD; committed-but-unacknowledged
-write reopens once; missing checksum does not become the expected hash. This can proceed independently
-of the UI and ordinary-answer redesign.
+**Current callers:** [run admission](../../apps/eliotr-core/src/research-run-service.ts) checks installed
+model/configuration pins and emits `include_qualification_renewal`;
+[Workflow composition](../../apps/eliotr-core/src/research-workflow.ts) installs `renew_qualifications`.
+[Qualification renewal](../../packages/cloudflare-research-configuration/src/research-qualification-renewal.ts)
+and [semantic runtime](../../packages/cloudflare-research-runtime/src/research-semantic-server.ts) resolve
+proofs again. These execution-time renewals are superseded for OWNER_SINGLE by ADR-0018.
 
-### Input and checkpoint limits
+Keep the existing provider/model connection and selection check, selected model/transport identity for
+the original attempt, and spend/cancellation bounds. Remove per-run proof expiry/revocation/renewal
+requirements from new owner admissions and handlers, including the extra callback/dispatch marker.
+Update the request/configuration producer and consumers together; keep historical pin/marker readers
+only where retained runs need read/resume/settlement. A changed setting does not silently redirect an
+already admitted paid attempt to a different model. Do not add another configuration service.
 
-**Files:** `packages/contracts/src/research.ts`,
-`cloudflare-research-runtime/src/research-session-application.ts`,
-`cloudflare-research-branches/src/research-protocol-freeze.ts`,
-`cloudflare-workflows/src/types.ts` (all under `packages/`) and their actual client/codecs.
+The current [stage list](../../packages/domain/src/investigation.ts) has **18 stages**. New E0/E1 questions
+use ADR-0019's admit → prepare once → stream synthesis → save/cite responsibilities, within 4–5 durable
+steps. Reuse the existing context compiler, model prompt/transport, attempt ledger,
+[streamed answer extraction](../../packages/cloudflare-research-runtime/src/research-answer-text.ts),
+exact quote matching and artifact writer. Honor actual model token capacity as well as HTTP/body/runtime
+budgets; a UTF-8 byte ceiling is not a tokenizer.
 
-C03: separate the HTTP envelope (262144 bytes), R2 query/planning object and 64 KiB checkpoint receipt.
-Choose one bounded persisted-input representation; version its writer and all readers together. Reuse
-immutable planning data plus a compact descriptor when the manifest dominates the checkpoint. Keep
-legacy run codecs readable. A larger HTTP ceiling alone does not promise every request is executable.
+New ordinary runs do not create deep-only branch plans, obligation graphs, counter-search or freeze/audit
+stage chains. Optional semantic audit is background work; invalid audit format leaves claims unverified.
+Keep E2/E3 explicit and reuse its one existing Workflow. Delete ordinary-path dispatch/codec/adapter copies
+as consumers move; do not count preserved E2/E3 modules as removed or create a second generic graph engine.
 
-**Assembled acceptance:** a valid above-64-KiB request/planning case reaches freeze and its real consumer;
-over-limit input fails before effects; historical payloads still reopen. Depends only on the selected
-payload representation, not a general protocol rewrite.
+**Assembled result:** one paid streamed synthesis attempt through report/citations/reopen; reconnect
+observes the same attempt. Record context, provider and save timings separately. This path needs a
+coherent input/receipt representation, not every historical retrieval lane or Rust port.
 
-### Report freshness
+### Owner summaries through their existing writers and readers
 
-**Files:** `packages/cloudflare-navigation/src/source-revision-freshness.ts`,
-`packages/pwa-research-workspace/src/research-run-api.ts`, shared owner-client decoder and report consumer.
+Take one catalog, history, project-guide, Studio or Inbox endpoint and its client at a time.
+Pass the ingress-established owner context into one bounded indexed SQL summary query per page. Maintain
+summary columns in the underlying write transaction; display stored draft/report content without opening
+every citation or requalifying models. Remove the superseded per-item grant/R2/readback chain for this
+profile, including now-unused local wrappers. Do not add a summary service, cache database or permission
+compiler. The current generic Managed OAuth final check is functional; its replacement requires the
+explicit OWNER_SINGLE transition, not a dead-code claim.
 
-C05/C10: align member/byte bounds across the server and the one shared decoder. A saved scope with
-65 changed sources must not make the report unreadable. If the full list is bounded by a cursor/sample,
-return explicit count and incompleteness; never silently slice it. Replace redundant repeated
-`refs.includes` scans with the existing set-based membership proof. Preserve old response versions.
+Return the same owner's last observed read with a timestamp/stale indication on a transient failure.
+No previous observation means unavailable, not fabricated success. Previous-deployment reads retain the
+draft; sign-out/principal change and applicable revoke/purge clear protected data. Exact evidence checks
+remain on citation opening.
 
-**Assembled acceptance:** the same saved report opens with 0, 64 and 65 changed sources and honest freshness.
-This is independent of model setup and deep-research branch work.
+**Assembled result:** record actual query/R2/request counts and latency for the changed endpoint; keep
+citation resolution and unrelated client-profile semantics. Do not infer speed from source-line savings.
 
-### Fast owner reads
+### One client and retirement of the old presentation
 
-**Files:** select one existing owner catalog/history/guide reader and its HTTP/client call path under
-`apps/eliotr-core`, `packages/cloudflare-navigation`, research/artifact readers and `owner-api-client`.
+The legacy UI/client cohort contains **21,137 source lines** across `apps/eliotr-pwa`,
+`pwa-http-client`, `pwa-source-workspace` and `pwa-research-workspace`. Retirement is a whole
+consumer migration, not renaming these packages or adding another adapter layer.
 
-Apply ADR-0018 to one endpoint at a time. Resolve the owner at ingress, read bounded indexed summaries
-without per-row R2/grant/qualification work, and preserve the last observed value on transient read failure.
-Maintain needed summary fields in the existing write transaction; do not add a summary service, cache
-database or new authority. Align capabilities/availability with the selected profile as each route changes;
-do not mark broad scaffold slices implemented merely to silence `launch:code`.
+- [React runtime](../../apps/eliotr-web/src/app/runtime.ts) creates a legacy HTTP adapter that constructs
+  an OwnerApiClient, then creates another OwnerApiClient for binary operations over the same ports/epoch.
+  Adapt JSON/legacy-shaped methods over one existing client instance; keep error conversion, abort,
+  authority epoch, immutable mutation identity and disposal behavior.
+- Raw upload has a live 544-line [legacy implementation](../../packages/pwa-source-workspace/src/raw-file-api.ts)
+  and a live 587-line [owner-client implementation](../../packages/owner-api-client/src/sources/import/raw.ts).
+  Move both UIs to the owner-client implementation, then delete the duplicate legacy protocol/decoders,
+  leaving only required error/event adaptation until cutover.
+- [Legacy research-run API](../../packages/pwa-research-workspace/src/research-run-api.ts) duplicates launch
+  and status behavior; its history already delegates to the owner client. Move the remaining callers to
+  canonical run methods while preserving scope/body bounds, freshness, reauthorization and section APIs.
+  Its 593 lines are not all proved redundant.
+- Complete the existing [UI execution map](../agent-work/frontend-owner-execution-map.md) and integrated
+  Vite/Worker build bridge. After cutover and the bounded safe rollback period, remove Astro, the old
+  renderers/controllers/styles and unused package dependencies. Migrate
+  [the Core retrieval fixture's imports](../../apps/eliotr-core/test/retrieval-q1-fixture.ts) from legacy
+  bundle input/import APIs before deleting those packages.
 
-**Assembled acceptance:** count actual SQL/R2/request calls and measure p50/p95 on the same project; citation
-opening still resolves exact evidence. Deployment renewal retains the same owner's draft; sign-out/principal
-change clears private data. Multi-client contracts are not silently changed.
+Keep the separately served agent inbox/recovery, permanent inert `/sw.js`, old-tab privacy and retirement-safe
+rollback from ADR-0016/0017. The 21,137-line cohort includes pieces that must move or remain; it is not a
+promised net deletion. Final handoff names the removed implementations and any remaining compatibility
+reader, with its actual retirement condition. No permanent dual UI or parallel wire decoder is accepted.
 
-### One ordinary streamed answer
+### Deferred export/restore and Drive Exchange
 
-**Files:** existing run admission/Workflow composition; `packages/policy/src/context-compiler.ts`,
-`packages/cloudflare-model-control/src/research-model-prompt.ts`,
-`packages/cloudflare-research-runtime/src/research-answer-text.ts`, provider transport and owner client.
+The export/restore execution work is deferred. Current source exposes
+`createPrimaryBackupPort` in [Core composition](../../apps/eliotr-core/src/backup-primary-composition.ts)
+and `createQualifiedPrimaryBackupPort` in the backup package, with no production caller found for that
+composition. In `packages/backup-o2/src`, `restore-admission.ts`, `restore-store.ts`,
+`restore-executor.ts`, `restore-erasure-gate.ts`, `restore-native-history.ts` and
+`isolated-restore-preflight.ts` have no production application caller found; the barrel also exposes
+the throw-only `createPendingRestorePort`.
 
-Implement the ADR-0019 four-responsibility E0/E1 path with one streamed synthesis. Use existing context
-selection, request encoding, attempt/spend ledger, exact quote matching and artifact saving. Keep provisional
-text separate from saved/cited output. The optional semantic audit is background work.
+Remove these unselected execution exports/implementations and exclusively used epoch/planning helpers
+once their operator/scheduled registrations are reconciled. **Do not delete both backup packages wholesale:**
+[erasure runtime](../../apps/eliotr-core/src/erasure-runtime.ts) uses purge replay/offsite cleanup;
+primary-writer qualification/verifier, inventory/bootstrap, retention and relevant codecs/readers remain.
+No dropped data or new backup system is part of this retirement.
 
-**Assembled acceptance:** question to first text to saved report/citation to reopen uses one paid synthesis
-attempt; disconnect/retry does not create another; context omissions remain visible; E2/E3 is still explicit.
-Measure context/provider/save time separately against ADR-0018 targets. The input/receipt representation
-must support this path, but it does not depend on all optional source/retrieval lanes.
+The selected Google profile is `gemini-mcp`. Old `google-drive-exchange` OAuth/status handlers and scheduled
+intent expiry still exist behind the profile boundary. Retire that unselected profile as a bounded cohort
+after checking deployed selection and retained credential/receipt/erasure readers; keep Workspace/MCP and
+computer-agent assignment. Optional federation has actual registered HTTP callers and is not proved dead.
+An unselected feature can return from Git history when requested; speculative implementations do not need
+permanent maintenance merely because an archived packet describes them.
 
-### Local preflight before the existing section verifier
+## Bounded correctness work
 
-**File:** `packages/cloudflare-research/src/artifact-cow-section-producer.ts` and its existing input contract.
+The [source reconciliation](../../.github/audits/2026-10-17/README.md) owns C01–C11 evidence and statuses.
+These fixes can proceed independently of broad consolidation.
 
-C06: normalize and encode the section once; validate its local byte/cardinality bounds before invoking
-the existing independent verifier, then reuse those bytes. Preserve the verifier's semantic decision and
-the final authority/commit checks in this COW section path.
-
-**Assembled acceptance:** an oversized or structurally invalid section fails before a paid verification
-call. This bounded fix is independent of ordinary E0/E1 synthesis; it does not add the COW verifier to
-that answer path.
-
-### One React deployment path and existing agent paths
-
-**Files:** `apps/eliotr-web`, `packages/ui`, `packages/owner-api-client`, then manager-owned root/build/
-Wrangler integration and bounded legacy compatibility.
-
-Continue [the UI execution map](../agent-work/frontend-owner-execution-map.md) for feature behavior, not
-claim ancestry. Reuse existing Query/Router/client and native UI primitives. Complete the five owner
-paths, including connected agents and assignment through the existing COMPUTER/MCP dispatch lifecycle.
-No local swarm or new transcript store. Model and agent connection settings remain distinct.
-
-**Assembled acceptance:** one integrated Vite/Worker artifact, all five owner journeys, standalone inbox,
-old-tab/service-worker retirement and rollback. FINAL-UI/U6 retain their actual review/cutover boundary.
-After cutover remove Astro dependencies and legacy renderers/adapters with their now-unused callers.
-Do not merely change `assets.directory` to an unreviewed build.
-
-### Consolidation and deferred acceptance
-
-As each path is replaced, migrate callers and delete its redundant forwarding/decoder/decision code.
-Keep only retained-run compatibility that still has a reader/recovery obligation. Consolidate package
-boundaries after use-case ownership is clear, not in a preliminary mass move. Retirement of S52 data or
-old handlers is scoped to observed runtime/deployed state; no destructive migration is part of this plan.
-
-After product assembly, repair C07's exact expected-case membership in the existing Golden gate and run
-the applicable acceptance. Known existing assertion/story work stays in #378/#379; it does not create
-a separate preimplementation test campaign. Optional Rust promotion is selected only for a concrete
-deterministic operation; see the language contract, not the archived all-family queue.
+| Work | Existing implementation and assembled result |
+|---|---|
+| C01/C02/C11: immutable payload and observation | `research-session-application.ts` and `platform-cloudflare/src/r2.ts`: conditional absent-key write, bounded exact readback on race/lost ACK; preserve original attempt/pre-ledger metadata. Same bytes recover, different bytes conflict, unavailable observation remains unknown; expected hash is never observed hash. Fix shared error classification before reuse. |
+| C03: input/checkpoint representation | HTTP permits 262144 bytes; stored query/planning and freeze currently use the 64 KiB receipt bound. Version one coherent immutable input/compact receipt representation across contracts, Session, branch freeze and consumers. Keep old codecs readable; exercise valid above-64-KiB input and early over-limit rejection after assembly. |
+| C05/C10: one freshness contract | Navigation freshness, owner client and legacy consumer must agree for scopes up to 4096. A 65-source change cannot break a report because one decoder caps at 64. Use a shared decoder and set-based membership; a bounded sample/cursor declares total/incompleteness. Reopen with 0, 64 and 65 changed sources. |
+| C06: cheap checks before paid COW verification | `artifact-cow-section-producer.ts`: normalize/encode once, check local byte/cardinality/claim bounds, then call its independent verifier. Reuse bytes and preserve final authority/commit checks. This does not add that verifier to E0/E1. |
+| C07 after product assembly | Existing Golden gate must bind exactly one result to every expected case ID, rejecting duplicates/missing/unexpected IDs. Existing #378/#379 assertion/story work stays scoped; no new preimplementation test programme. |
 
 ## Donors and managed components: decisions, not new packages
 
-Rechecked against the current code on October 17. The two
-[October 8 playbooks](../../.github/audits/2026-10-08/README.md#detailed-donor-evidence) retain pinned source
-references and cautions; literal reuse still needs file/dependency license review. Their cited landscape
-registry is absent from this repository snapshot;
-no claim is made to have reviewed that missing file. Do not treat those snapshots as current releases or
-benchmarks. No donor code or new runtime dependency is imported by this documentation change.
+The original `AI_knowledge_RAG_NotebookLM_Dify_landscape_2026-10-08.md` was recovered and reconciled
+against this service. Its SHA-256 matches the October 8 playbook:
+`d5da24be9b6167301a475e40652866943d43d7679d0ed099515e8a4dfa4c08be`.
+The [October 17 record](../../.github/audits/2026-10-17/README.md#donor-reconciliation) distinguishes
+catalogue recommendations from selected pinned source checks. It is a dated landscape, not today's
+dependency list, performance evidence or mandatory implementation programme.
 
-| Source/mechanism | Use in this refactor | Current status / do not repeat |
-|---|---|---|
-| [Cloudflare R2 conditions](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/#conditional-operations) | Native conditional create and bounded reconciliation in existing R2/payload owners. | C01/C11 remain; no HEAD-then-unconditional-PUT substitute. |
-| [Cloudflare Workflows events](https://developers.cloudflare.com/workflows/build/events-and-parameters/) | Existing R05 Research external-task W2 wait/event helper, if that Research flow is selected. | The graph is unactivated. Computer-agent assignment stays in its existing dispatch lifecycle; no new workflow engine. |
-| [DocsGPT attachment budget](https://github.com/arc53/DocsGPT/blob/0d994485d2ac5e3a1eff6020ccbe7d4f99adc612/docsgpt/agents/attachment_budget.py) | Reuse the bounded prepare-once idea through Eliot's existing context/prompt compiler. | Eliot already prepares the selection/manifest/request; connect it to the short answer, not a second planner. |
-| [WeKnora fusion](https://github.com/Tencent/WeKnora/blob/005627b180c6c7509660b0a14401e463f48d53f8/internal/application/service/knowledgebase_search_fusion.go) / existing `retrieval/src/fusion.ts` | Preserve deterministic per-list identity deduplication. | Already implemented; no new RRF port, and no extra ranking layer for the canceled S52 path. |
-| Open Notebook / RAGFlow branch findings | Candidate findings may inform a selected explicit deep-research task. | Deferred from the ordinary E0/E1 path; do not import their server/orchestrator. |
-| [React](https://react.dev/), [TanStack Query](https://tanstack.com/query/latest/docs/framework/react/guides/query-cancellation), [React Router](https://reactrouter.com/start/modes) | Existing rendering, read cache/cancellation and browser navigation. | Repository pins: React 19.3.0, Query 5.104.1, Router 7.18.4. No second cache/router/HTTP decoder or unselected MUI stack. |
-| [Cloudflare Vite assets](https://developers.cloudflare.com/workers/vite-plugin/reference/static-assets/) | One existing Worker + React static build. | Repository Vite 8.2.2 / Cloudflare plugin 1.54.11; finish the build/deploy bridge, no extra service. |
-| [Agents callable methods](https://developers.cloudflare.com/agents/runtime/lifecycle/callable-methods/) | Retain the bounded projection transport; simplify only against supported pinned hooks. | `agents@0.27.0` is pinned. Current online docs alone do not prove hook availability/behavior in that version. No blind monkey-patch deletion, upgrade or new SSE journal. |
+| Donor/mechanism | Decision and code consequence |
+|---|---|
+| Cloudflare AI Search Items/search bindings | Keep the native upload/search/status adapter; remove the canceled custom generation authority above it. Preserve original item identity and bounded reconciliation; `uploadAndPoll` is not a replacement for durable lost-ACK handling. |
+| Cloudflare Workflows / Agents SDK 0.27.0 | Use native durability already present. The pinned SDK's readonly hook can replace only `ResearchSession.validateStateChange`; callable RPC and outgoing protocol are separate. Keep the explicit method/frame allowlist and lifecycle/send checks. Tiny SDK glue savings do not justify a transport rewrite. |
+| DocsGPT attachment budget/context | Already overlaps Eliot's prepare-once compiler/prompt path. Importing its token planner or `F#` citation registry adds another mechanism; neither replaces exact EvidenceHandles or request-byte limits. No donor planner/package is needed. |
+| Open Notebook Ask | Pinned code uses strategy, fan-out search and final synthesis across three model-call stages. Do not copy it into one-call E0/E1. Its bounded route composition is a design reference for explicit deeper work only. |
+| WeKnora Wiki/retrieval | Keep summary-only paged reads and atomic revision/head changes through existing Eliot owners. Its summary method is not itself a one-query implementation. Eliot already has deterministic fusion and Wiki head/outbox commitment; no new RRF or revision engine. |
+| Onyx / PipesHub / RAGFlow / Dify | Reject enterprise ACL/connector frameworks, index promotion registry and generic graph runtime for this scope. Retain narrow exact-evidence, atomic update and durable-resume principles through existing code. Their platform topology and donor P0/test lists do not override #377 or ADR-0018. |
+| AnythingLLM / Haystack / LightRAG / Agentset catalogue additions | No demonstrated Eliot implementation deletion from importing their context/component/process/vector abstractions. Defer them; do not turn proposed donor contracts into another subsystem backlog. |
 
-## How to finish a task
-
-Use the [source-phase procedure](../START-HERE.md#code-and-verification): scoped compile/lint and minimal
-Clippy when Rust changes. Tests and broader product checks follow assembly. Record the concrete result,
-deleted/reused code and remaining acceptance in the PR; do not invent passed checks. Update runtime status
-only for actual state/behavior changes. A blocked consumer never freezes independent ready work.
+Literal code reuse still needs the chosen file/dependency license checked. No donor code or new dependency
+is imported by this documentation change. After implementing a selected family, use the existing
+[scoped verification procedure](scoped-verification.md) and its assembled acceptance; publish the measured
+source change and remaining limitations in the same PR.

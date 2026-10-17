@@ -1,56 +1,29 @@
 ---
-title: "Eliot Research Cloud — standalone research-grade system on Cloudflare"
+title: "Eliot Research Cloud — product and protocol reference"
 short_name: "ERC"
 version: "29.1"
 date: 2026-08-28
-status: "standalone normative and implementation-ready contract; historical deployment status (2026-08-28): live deployment not completed"
-authority: "normative for the Eliot Research repository; external client architectures are optional compatibility profiles, not runtime dependencies"
-product_role: "external research federation: acquisition, evidence library, retrieval, controlled investigations, Wiki, and publication"
+status: "historical full-product reference; apply the current service applicability table first"
+authority: "detailed contracts for selected capabilities; current owner decisions and ADR-0018/0019 supersede conflicting historical requirements"
+current_service_profile: "OWNER_SINGLE"
+current_google_transport: "gemini-mcp"
+current_runtime: "one Cloudflare Worker plus React/Vite owner assets; legacy PWA is served compatibility pending cutover"
+implementation_status: "recorded in docs/implementation/backend-delivery-plan.md, not inferred from this specification"
+platform_facts_checked: 2026-08-28
 eliot_compatibility_baseline:
   date: 2026-08-28
   architecture_sha256: "c6932eaf26935e752eefb4de591afc91ea1a7180be5a8ff0005554b8029bac1a"
   implementation_sha256: "7805bf238fe91819aba50d7e13aa86a8b977561195dbb98aa979f986e2fab063"
   role: "optional external research-federation provider; never the internal Researcher plane"
-platform: "Cloudflare Workers Paid + managed services; the OpenAI-built Google Drive app is the selected Day-0 ChatGPT exchange transport, subject to exact account/action/write-readback qualification; heavy preprocessing is supplied by qualified external providers"
-cloudflare_platform_facts_checked: 2026-08-28
-chatgpt_google_drive_docs_checked: 2026-08-28
-account_specific_drive_observation: "historical 2026-08-27 session observation; not reusable conformance"
 original_donor_sha256: "406080157b5dec8a3194e0adfa0c34b39c3e4296e829f96727563fc5415ce4cb"
 aligned_english_donor_sha256: "96cdbb52f71c2dc4eb231d327f5b8c1586514e28249e90e4bc6c25904e83d346"
-supersedes:
-  - "ELIOT_RESEARCH_CLOUDFLARE.md v24.1, blob da1eb64a03c73f0bd631a959a5113ab3be00c5c6"
-  - "all previous Eliot Research Cloudflare profiles v13–v29"
-  - "separate Cloudflare architecture audits, deltas, resource maps, and bridge registries"
-implementation_status: "historical readiness statement (2026-08-28): ready for Slice 0 implementation at that date; live Cloudflare and Google Drive write/readback remain mandatory gates"
-revision_29:
-  - "made ERC a standalone external product rather than the ELIOT Researcher plane or module"
-  - "isolated ELIOT integration behind one optional generated-schema adapter with no ELIOT runtime dependency"
-  - "added one authoritative mutable source owner per namespace and an explicit source-owner cutover"
-  - "expanded ObjectResidencyKey to scope, access, confidentiality, encryption-key, retention, erasure, and content-digest domains"
-  - "prohibited cross-domain co-residency, ciphertext/key reuse, and implicit unsaved-buffer persistence"
-  - "aligned Evidence Grade, inquiry protocol, confirmatory/exploratory lanes, evidence freeze, claim audit, research debt, and honest closure"
-  - "made normalized-bundle imports preserve origin owner, source view, exact revision, residency, and disclosure lineage"
-  - "replaced legacy internal-module dependencies with generic provider/client boundaries and optional compatibility profiles"
-revision_29_1:
-  - "made the eliotr.normalized.v1 ownership-cutover mode and receipt identical to the Search export contract"
-  - "assigned owner-cutover, complete-residency, unsaved-content, normalized-bundle, and federation mappings to explicit implementation slices and tests"
-  - "separated official platform facts from historical account observations and rechecked Cloudflare/OpenAI documentation on 2026-08-28"
-  - "removed unsupported or over-precise model facts and corrected current reranker pricing"
-  - "made Evidence Grade lowering an explicit supersession and kept required rigor separate from observed execution/status axes"
-  - "typed untrusted acquisition candidates and unsupported precision so prose cannot create sources or exactness"
-  - "separated federation transport completion from the exact nine-value research completion disposition"
-  - "made source-owner generation an explicit wire-stable token with fence/incarnation/cutover invalidation semantics"
-  - "defined exact source.owner-cutover.v1 receipt semantics with bilateral authorization and revision-set/view bindings"
-  - "completed the reference firewall with tool/verifier allowlists, stale entries, expansion routes, and a manifest digest/fence"
-  - "made claim audit verify references, values, specifications, method/artifact alignment, and source-versus-excerpt sufficiency separately"
-  - "required explicit EvidenceFreeze reopen/revision before post-freeze material can affect synthesis"
-  - "bound CoverageReceipt to the frozen denominator and made complete/sampled/unknown coverage explicit"
 ---
 
-> **Status note (2026-10-10):** The `status` deployment statement and the `implementation_status`
-> readiness statement above are historical 2026-08-28 records, not current deployment or
-> implementation state. The normative contract and its requirements remain authoritative.
-> Backend delivery state is tracked in [backend-delivery-plan.md](../implementation/backend-delivery-plan.md).
+> **Reading boundary:** the August full-product contract and platform snapshot below are reference
+> material for selected capabilities. Start with the current applicability table, not the historical
+> all-feature topology or delivery order. The original revision history remains in
+> [Git](https://github.com/UnknownAlienHuman/eliot-research/blob/4e53d5e2296e7f4ed3ed29cef2f049891c5d20c0/docs/architecture/ELIOT_RESEARCH.md).
+> Actual implementation/live evidence is recorded in [backend-delivery-plan.md](../implementation/backend-delivery-plan.md).
 
 ## Current service applicability — 2026-10-17
 
