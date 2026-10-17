@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import { createResearchRunsApi, createSessionEpoch, type ResearchRunStatusView } from "@eliotr/owner-api-client";
 import { createPrivacyController } from "../app/privacy";
 import { WorkspaceRequestError } from "../app/runtime";
-import { canRequestResearchRecovery, recoverExistingResearchRun, researchRecoveryFirstCause,
-  type ResearchRunRecoveryMemory } from "./researchRunRecovery";
+import { canRequestResearchRecovery, canStopFailedResearchRun, recoverExistingResearchRun, rememberFailedResearchRun,
+  hasCanonicalResearchCancellation, researchRecoveryFirstCause, stopFailedResearchRun,
+  type ResearchRunRecoveryMemory, type ResearchRunStopMemory } from
+  "./researchRunRecovery";
 
 const generation = "deployment-1";
 const launch = { workflow_instance_id: "run-recovery-1", investigation_ref: { id: "investigation-1", revision: 1 },
@@ -13,6 +15,12 @@ const stopped: ResearchRunStatusView = { ...launch, investigation_ref: { id: "in
   execution_state: "ACTIVE", engine_status: "errored", next_stage_index: 15, answer: { availability: "unavailable" }, failure };
 const running: ResearchRunStatusView = { ...launch, investigation_ref: stopped.investigation_ref,
   execution_state: "ACTIVE", engine_status: "running", next_stage_index: 15, answer: { availability: "unavailable" } };
+const detached: ResearchRunStatusView = { ...launch, investigation_ref: stopped.investigation_ref,
+  execution_state: "ACTIVE", engine_status: "unknown", next_stage_index: 15, answer: { availability: "unavailable" } };
+const { failure: _stoppedFailure, ...stoppedWithoutFailure } = stopped;
+const cancelled: ResearchRunStatusView = { ...stoppedWithoutFailure, investigation_ref: stopped.investigation_ref,
+  execution_state: "CANCELLED", engine_status: "unknown", next_stage_index: 15, answer: { availability: "unavailable" },
+  cancellation_receipt_ref: `workflow-cancelled:${launch.workflow_instance_id}` };
 const envelope = (view: ResearchRunStatusView) => {
   const { deployment_generation, ...status } = view;
   return { data: { protocol: "eliotr.research-run-status.v2", ...status }, trace_id: "recovery-trace", deployment_generation };
@@ -20,6 +28,7 @@ const envelope = (view: ResearchRunStatusView) => {
 
 async function fixture() {
   let memory: ResearchRunRecoveryMemory | undefined;
+  let stopMemory: ResearchRunStopMemory | undefined;
   let current = true;
   const published: ResearchRunStatusView[] = [];
   let reply = async (_path: string, init: RequestInit | undefined) => envelope(init?.method === "POST" ? running : stopped);
@@ -27,7 +36,7 @@ async function fixture() {
   const runs = createResearchRunsApi({ request, epoch: createSessionEpoch(), errors: details => new WorkspaceRequestError(details) });
   const start = vi.spyOn(runs, "startResearchRun");
   const privacy = createPrivacyController({ mask() {}, reveal() {}, cancelReads() {},
-    clearProtected() { memory = undefined; published.length = 0; }, now: () => Date.parse("2026-10-16T12:00:00.000Z"),
+    clearProtected() { memory = undefined; stopMemory = undefined; published.length = 0; }, now: () => Date.parse("2026-10-16T12:00:00.000Z"),
     timers: { setTimeout: () => 0, clearTimeout() {} }, verify: async () => ({ principal: "owner-1",
       credentialGeneration: "credential-1", deploymentGeneration: generation, expiresAt: "2027-01-01T00:00:00.000Z" }) });
   await privacy.refresh();
@@ -38,7 +47,12 @@ async function fixture() {
   const invoke = (action: "recover" | "readback" = "recover") => recoverExistingResearchRun({ runs, privacy,
     context: snapshot.context, launch, status: stopped, action, signal: controller.signal, isCurrent: () => current,
     readMemory: () => memory, writeMemory: writes, onStatus: async view => { published.push(view); } });
+  const invokeStop = (action: "stop" | "readback" = "stop", status: ResearchRunStatusView = stopped) =>
+    stopFailedResearchRun({ runs, privacy, context: snapshot.context, launch, status, failedRunObserved: true, action,
+      signal: controller.signal, isCurrent: () => current, readMemory: () => stopMemory,
+      writeMemory: next => { stopMemory = next; }, onStatus: async view => { published.push(view); } });
   return { request, start, privacy, controller, published, writes, invoke, memory: () => memory,
+    invokeStop, stopMemory: () => stopMemory,
     loseCurrentness: () => { current = false; }, reply: (next: typeof reply) => { reply = next; } };
 }
 
@@ -56,7 +70,8 @@ describe("existing research run recovery", () => {
     const control = test.request.mock.calls[1]?.[1];
     expect(control?.body).toBe("{}");
     expect(new Headers(control?.headers).get("idempotency-key")).toBe("research-recover:run-recovery-1");
-    expect(test.memory()).toEqual({ workflowInstanceId: launch.workflow_instance_id, phase: "observed", firstCause: failure });
+    expect(test.memory()).toEqual({ workflowInstanceId: launch.workflow_instance_id, phase: "observed",
+      failedRunObserved: true, firstCause: failure });
     expect(test.published.at(-1)?.engine_status).toBe("running");
     expect(test.start).not.toHaveBeenCalled();
     test.privacy.dispose();
@@ -187,6 +202,118 @@ describe("existing research run recovery", () => {
     expect(test.memory()?.phase).toBe("unknown");
     expect(test.published.map(view => view.investigation_ref.revision)).toEqual([17]);
     expect(test.request.mock.calls.filter(([, init]) => init?.method === "POST")).toHaveLength(1);
+    expect(test.start).not.toHaveBeenCalled();
+    test.privacy.dispose();
+  });
+
+  it("keeps the first failed-run facts when the native engine later becomes unknown", () => {
+    const unknownReferences = { ...failure, dispatch_state: "OUTCOME_UNKNOWN" as const,
+      references_intact: "UNKNOWN" as const };
+    const first = rememberFailedResearchRun(undefined, launch, { ...stopped, failure: unknownReferences });
+    expect(first).toMatchObject({ workflowInstanceId: launch.workflow_instance_id, failedRunObserved: true,
+      firstCause: unknownReferences });
+    expect(rememberFailedResearchRun(first, launch, detached)).toBe(first);
+    expect(canStopFailedResearchRun(detached, launch, first?.failedRunObserved === true)).toBe(true);
+    expect(canStopFailedResearchRun({ ...detached, workflow_instance_id: "foreign-run" }, launch,
+      first?.failedRunObserved === true)).toBe(false);
+    expect(first?.firstCause?.references_intact).toBe("UNKNOWN");
+    expect(researchRecoveryFirstCause(first, { ...stopped,
+      failure: { ...unknownReferences, references_intact: "INTACT" } })).toMatchObject({
+      references_intact: "UNKNOWN", dispatch_state: "OUTCOME_UNKNOWN",
+    });
+  });
+
+  it("closes only after cancel and exact canonical CANCELLED readback for the same run", async () => {
+    const test = await fixture(); let reads = 0;
+    test.reply(async (path, init) => {
+      if (path.endsWith("/cancel") && init?.method === "POST") return envelope(cancelled);
+      return envelope(++reads === 1 ? stopped : cancelled);
+    });
+
+    await expect(test.invokeStop()).resolves.toMatchObject({ execution_state: "CANCELLED",
+      cancellation_receipt_ref: `workflow-cancelled:${launch.workflow_instance_id}` });
+    expect(test.request.mock.calls.map(([path, init]) => [path, init?.method ?? "GET"])).toEqual([
+      [`/api/v1/research/run/${launch.workflow_instance_id}`, "GET"],
+      [`/api/v1/research/run/${launch.workflow_instance_id}/cancel`, "POST"],
+      [`/api/v1/research/run/${launch.workflow_instance_id}`, "GET"],
+    ]);
+    expect(new Headers(test.request.mock.calls[1]?.[1]?.headers).get("idempotency-key"))
+      .toBe(`research-cancel:${launch.workflow_instance_id}`);
+    expect(test.start).not.toHaveBeenCalled();
+    test.privacy.dispose();
+  });
+
+  it("allows Retry to proceed only after re-reading the exact prior CANCELLED receipt", async () => {
+    const test = await fixture();
+    test.reply(async () => envelope(cancelled));
+
+    expect(hasCanonicalResearchCancellation(cancelled, launch)).toBe(true);
+    expect(hasCanonicalResearchCancellation({ ...cancelled, cancellation_receipt_ref: "workflow-cancelled:other-run" }, launch)).toBe(false);
+    await expect(test.invokeStop("stop", cancelled)).resolves.toMatchObject({
+      execution_state: "CANCELLED", cancellation_receipt_ref: `workflow-cancelled:${launch.workflow_instance_id}`,
+    });
+    expect(test.request).toHaveBeenCalledTimes(1);
+    expect(test.request.mock.calls[0]?.[0]).toBe(`/api/v1/research/run/${launch.workflow_instance_id}`);
+    expect(test.start).not.toHaveBeenCalled();
+    test.privacy.dispose();
+  });
+
+  it("keeps cancellation-dispatched uncertainty sticky and makes both later controls GET-only", async () => {
+    const test = await fixture(); let reads = 0;
+    test.reply(async (path, init) => {
+      if (path.endsWith("/cancel") && init?.method === "POST") {
+        throw new TypeError("lost cancel acknowledgement");
+      }
+      reads += 1;
+      if (reads === 1) return envelope(stopped);
+      if (reads === 2) throw new TypeError("cancel readback unavailable");
+      if (reads === 3) return envelope(detached);
+      return envelope(cancelled);
+    });
+
+    await expect(test.invokeStop()).resolves.toBeUndefined();
+    expect(test.stopMemory()?.phase).toBe("unknown");
+    expect(test.stopMemory()?.cancel_dispatched).toBe(true);
+    await expect(test.invokeStop("readback", detached)).resolves.toBeUndefined();
+    expect(test.stopMemory()?.phase).toBe("unknown");
+    expect(test.request.mock.calls.filter(([path, init]) => path.endsWith("/cancel") && init?.method === "POST")).toHaveLength(1);
+    // Retry/Stop after a dispatch may only read; the exact cancellation receipt closes the hold.
+    await expect(test.invokeStop("stop", detached)).resolves.toMatchObject({ execution_state: "CANCELLED",
+      cancellation_receipt_ref: `workflow-cancelled:${launch.workflow_instance_id}` });
+    const controls = test.request.mock.calls.filter(([path, init]) => path.endsWith("/cancel") && init?.method === "POST");
+    expect(controls).toHaveLength(1);
+    expect(controls.map(([, init]) => new Headers(init?.headers).get("idempotency-key")))
+      .toEqual([`research-cancel:${launch.workflow_instance_id}`]);
+    expect(test.start).not.toHaveBeenCalled();
+    test.privacy.dispose();
+  });
+
+  it("does not post or publish after the owner/run currentness fence closes", async () => {
+    const test = await fixture();
+    test.reply(async (path, init) => {
+      if (path.endsWith("/cancel") && init?.method === "POST") {
+        test.loseCurrentness();
+        return envelope(cancelled);
+      }
+      return envelope(stopped);
+    });
+    const before = test.published.length;
+    await expect(test.invokeStop()).rejects.toThrow();
+    expect(test.published).toHaveLength(before + 1); // The pre-cancel canonical status only.
+    expect(test.stopMemory()?.phase).toBe("stopping");
+    expect(test.request.mock.calls.filter(([path, init]) => path.endsWith("/cancel") && init?.method === "POST")).toHaveLength(1);
+    expect(test.start).not.toHaveBeenCalled();
+    test.privacy.dispose();
+  });
+
+  it("rejects a foreign investigation readback before issuing the cancel control", async () => {
+    const test = await fixture();
+    test.reply(async () => envelope({ ...stopped, investigation_ref: { id: "foreign-investigation", revision: 16 } }));
+
+    await expect(test.invokeStop()).resolves.toBeUndefined();
+    expect(test.stopMemory()?.phase).toBe("unknown");
+    expect(test.request.mock.calls).toHaveLength(1);
+    expect(test.request.mock.calls.some(([path, init]) => path.endsWith("/cancel") && init?.method === "POST")).toBe(false);
     expect(test.start).not.toHaveBeenCalled();
     test.privacy.dispose();
   });

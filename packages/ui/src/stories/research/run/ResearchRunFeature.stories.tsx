@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, userEvent, within } from 'storybook/test';
+import { Button } from '../../../primitives/primitives';
 import {
   ResearchRunFeature,
   type ResearchRunFeatureProps,
@@ -63,6 +64,13 @@ const FIRST_CAUSE_UNKNOWN: ResearchRunFirstCause = {
   recovery_action: 'RECONCILE',
   consequences: [],
 };
+const FAILED_RUN_AFTER_ENGINE_DETACH: ResearchRunFirstCause = {
+  code: 'WORKFLOW_CONFIGURATION_MISSING',
+  retryable: false,
+  dispatch_state: 'OUTCOME_UNKNOWN',
+  references_intact: 'UNKNOWN',
+  consequences: [],
+};
 const SNAPSHOT_ACTIVE: ResearchRunSnapshot = {
   protocol: 'eliotr.research-session-projection.v1', session_id: 'session-fixture', operation_id: 'operation-fixture',
   state: 'ACTIVE', investigation_ref: PROGRESS_ACTIVE.investigation_ref,
@@ -104,6 +112,27 @@ export const Error: Story = {
 
 export const Cancelled: Story = {
   args: { state: 'cancelled', scope: SCOPE, snapshot: SNAPSHOT_CANCELLED },
+};
+
+/** The original failure remains visible and offers Stop even after a native status read detaches. */
+export const FailedRunCanBeStoppedAfterEngineDetach: Story = {
+  args: {
+    state: 'degraded',
+    scope: SCOPE,
+    question: 'Keep the original run and its evidence history.',
+    questionHeld: true,
+    progress: { ...PROGRESS_ACTIVE, engine_status: 'unknown' },
+    firstCause: FAILED_RUN_AFTER_ENGINE_DETACH,
+    answerActions: <Button variant="tonal" onClick={() => {}}>Stop and close failed run</Button>,
+  },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    expect(canvas.getByText(/Status unknown/u)).toBeInTheDocument();
+    expect(canvas.getByText('The outcome of this run is not yet known.')).toBeInTheDocument();
+    expect(canvas.getAllByText('WORKFLOW_CONFIGURATION_MISSING')).toHaveLength(2);
+    expect(canvas.getByText('references unknown')).toBeInTheDocument();
+    expect(canvas.getByRole('button', { name: 'Stop and close failed run' })).toBeEnabled();
+  },
 };
 
 export const LongRussian: Story = {

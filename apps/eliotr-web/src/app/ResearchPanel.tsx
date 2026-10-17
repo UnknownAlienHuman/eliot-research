@@ -30,7 +30,8 @@ import { ProjectOverview } from './ProjectOverview';
 import { usePaneAnnouncement } from './usePaneAnnouncement';
 import { researchHistoryLabel } from './researchHistoryLabel';
 import { canRequestResearchRecovery, recoverExistingResearchRun, researchRecoveryCopy, researchRecoveryFirstCause,
-  type ResearchRunRecoveryMemory } from '../query/researchRunRecovery';
+  canStopFailedResearchRun, hasCanonicalResearchCancellation, rememberFailedResearchRun, stopFailedResearchRun,
+  type ResearchRunRecoveryMemory, type ResearchRunStopMemory } from '../query/researchRunRecovery';
 
 interface ResearchIntent {
   readonly body: string; readonly key: string; readonly question: string;
@@ -44,6 +45,7 @@ interface ResearchMemory {
   readonly discoveredCatalogModelUse?: ResearchCatalogModelUseReceipt;
   readonly catalogModelUse?: ChatCatalogModelUseIntent;
   readonly recovery?: ResearchRunRecoveryMemory;
+  readonly stop?: ResearchRunStopMemory;
   readonly intent?: ResearchIntent;
   readonly observedLaunch?: ResearchRunLaunchView;
   readonly artifact?: VersionedRef;
@@ -55,8 +57,8 @@ interface ChatCatalogTarget {
   readonly connection?: ServiceModelProviderConnectionV2;
 }
 const copy = {
-  en: { statusUnavailable: 'The research status could not be read.', working: 'Researching your question.', runRead: 'Status updated.', runFailed: 'The research ended with an error.', runComplete: 'The engine finished. Review its result.', cancelled: 'Research cancelled.', historyLoaded: 'Recent research loaded.', scope: 'Choose sources', scopeStale: 'Review your selected sources again before asking a new question.', scopeEmpty: 'Choose the sources for your next question first.', noProject: 'Open a project to choose its sources.', projects: 'Open projects', blocked: 'Research settings need a check before you ask.', check: 'Check research readiness', connections: 'Review connections', history: 'Recent research', readHistory: 'Refresh recent research', openRun: 'Read this run', report: 'Open saved report', unknown: 'The launch outcome is unknown. The original question and request identity are preserved.', recover: 'Reconcile this question', same: 'If the research started, it opens; if not, the same request is sent again without a duplicate.', next: 'Ask another question', input: 'The question could not be prepared. Review its text and source selection.', unavailable: 'Recent research could not be read. Refresh it.', noRuns: 'Your questions and saved reports will appear here.', incomplete: 'No draft report yet.', modelConfigurationReading: 'Checking model availability…', modelConfigurationFailed: 'Model availability could not be checked.', modelConfigurationsPartial: 'Some model options may be missing.', modelRunUnavailable: 'No model is currently available for this chat.', providerListIncomplete: 'Some provider connections could not be checked.' },
-  ru: { statusUnavailable: 'Не удалось узнать статус исследования.', working: 'Исследую ваш вопрос.', runRead: 'Статус обновлён.', runFailed: 'Исследование завершилось с ошибкой.', runComplete: 'Исследование завершено. Посмотрите результат.', cancelled: 'Исследование отменено.', historyLoaded: 'Последние исследования прочитаны.', scope: 'Выбрать источники', scopeStale: 'Перед новым вопросом проверьте выбранные источники ещё раз.', scopeEmpty: 'Сначала выберите источники для следующего вопроса.', noProject: 'Откройте проект, чтобы выбрать его источники.', projects: 'Открыть проекты', blocked: 'Перед вопросом нужно проверить настройки исследования.', check: 'Проверить готовность исследования', connections: 'Проверить подключения', history: 'Последние исследования', readHistory: 'Обновить список', openRun: 'Открыть исследование', report: 'Открыть отчёт', unknown: 'Не удалось подтвердить запуск исследования. Вопрос сохранён.', recover: 'Проверить этот вопрос', same: 'Если исследование началось, оно откроется; если нет — тот же запрос уйдёт ещё раз, без дубликата.', next: 'Задать другой вопрос', input: 'Не удалось подготовить вопрос. Проверьте текст и выбранные источники.', unavailable: 'Не удалось загрузить последние исследования. Обновите список.', noRuns: 'Здесь появятся ваши вопросы и сохранённые отчёты.', incomplete: 'Черновика отчёта пока нет.', modelConfigurationReading: 'Проверяем доступность моделей…', modelConfigurationFailed: 'Не удалось проверить доступность моделей.', modelConfigurationsPartial: 'Некоторые варианты моделей могут отсутствовать.', modelRunUnavailable: 'Для этого чата сейчас нет доступных моделей.', providerListIncomplete: 'Не удалось проверить некоторые подключения провайдеров.' },
+  en: { statusUnavailable: 'The research status could not be read.', working: 'Researching your question.', runRead: 'Status updated.', runFailed: 'The research ended with an error.', runComplete: 'The engine finished. Review its result.', cancelled: 'Research cancelled.', historyLoaded: 'Recent research loaded.', scope: 'Choose sources', scopeStale: 'Review your selected sources again before asking a new question.', scopeEmpty: 'Choose the sources for your next question first.', noProject: 'Open a project to choose its sources.', projects: 'Open projects', blocked: 'Research settings need a check before you ask.', check: 'Check research readiness', connections: 'Review connections', history: 'Recent research', readHistory: 'Refresh recent research', openRun: 'Read this run', report: 'Open saved report', unknown: 'The launch outcome is unknown. The original question and request identity are preserved.', recover: 'Reconcile this question', same: 'If the research started, it opens; if not, the same request is sent again without a duplicate.', next: 'Ask another question', stopFailed: 'Stop and close failed run', checkStop: 'Check stop status', stopUnknown: 'The stop is not confirmed. The original run is still held.', input: 'The question could not be prepared. Review its text and source selection.', unavailable: 'Recent research could not be read. Refresh it.', noRuns: 'Your questions and saved reports will appear here.', incomplete: 'No draft report yet.', modelConfigurationReading: 'Checking model availability…', modelConfigurationFailed: 'Model availability could not be checked.', modelConfigurationsPartial: 'Some model options may be missing.', modelRunUnavailable: 'No model is currently available for this chat.', providerListIncomplete: 'Some provider connections could not be checked.' },
+  ru: { statusUnavailable: 'Не удалось узнать статус исследования.', working: 'Исследую ваш вопрос.', runRead: 'Статус обновлён.', runFailed: 'Исследование завершилось с ошибкой.', runComplete: 'Исследование завершено. Посмотрите результат.', cancelled: 'Исследование отменено.', historyLoaded: 'Последние исследования прочитаны.', scope: 'Выбрать источники', scopeStale: 'Перед новым вопросом проверьте выбранные источники ещё раз.', scopeEmpty: 'Сначала выберите источники для следующего вопроса.', noProject: 'Откройте проект, чтобы выбрать его источники.', projects: 'Открыть проекты', blocked: 'Перед вопросом нужно проверить настройки исследования.', check: 'Проверить готовность исследования', connections: 'Проверить подключения', history: 'Последние исследования', readHistory: 'Обновить список', openRun: 'Открыть исследование', report: 'Открыть отчёт', unknown: 'Не удалось подтвердить запуск исследования. Вопрос сохранён.', recover: 'Проверить этот вопрос', same: 'Если исследование началось; если нет — тот же запрос уйдёт ещё раз, без дубликата.', next: 'Задать другой вопрос', stopFailed: 'Остановить и закрыть запуск', checkStop: 'Проверить остановку', stopUnknown: 'Остановка не подтверждена. Исходный запуск остаётся закреплённым.', input: 'Не удалось подготовить вопрос. Проверьте текст и выбранные источники.', unavailable: 'Не удалось загрузить последние исследования. Обновите список.', noRuns: 'Здесь появятся ваши вопросы и сохранённые отчёты.', incomplete: 'Черновика отчёта пока нет.', modelConfigurationReading: 'Проверяем доступность моделей…', modelConfigurationFailed: 'Не удалось проверить доступность моделей.', modelConfigurationsPartial: 'Некоторые варианты моделей могут отсутствовать.', modelRunUnavailable: 'Для этого чата сейчас нет доступных моделей.', providerListIncomplete: 'Не удалось проверить некоторые подключения провайдеров.' },
 } as const;
 
 /** One explicit intent owns admission. Polling, navigation and history never allocate a run. */
@@ -302,9 +304,16 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     return () => {
       unsubscribe();
       mounted.current = false; controller.current?.abort();
-      if (running.current && privacy.isCurrent(context)) client.setQueryData<ResearchMemory>(memoryKey, old =>
-        recoveryInFlight.current ? old?.recovery ? { ...old, recovery: { ...old.recovery, phase: 'unknown' } } : old
-          : old?.intent ? { ...old, intent: { ...old.intent, phase: 'unknown' } } : old);
+      if (running.current && privacy.isCurrent(context)) client.setQueryData<ResearchMemory>(memoryKey, old => {
+        if (old === undefined) return old;
+        let next = old;
+        if (recoveryInFlight.current && old.recovery) next = { ...next, recovery: { ...old.recovery, phase: 'unknown' } };
+        if (old.stop && (old.stop.phase === 'stopping' || old.stop.phase === 'reading')) {
+          next = { ...next, stop: { ...old.stop, phase: 'unknown' } };
+        }
+        if (!recoveryInFlight.current && old.intent) next = { ...next, intent: { ...old.intent, phase: 'unknown' } };
+        return next;
+      });
     };
   }, [client, context, privacy, projectId]);
   const run = (action: (signal: AbortSignal) => Promise<void>, recovering = false) => {
@@ -512,9 +521,27 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
   };
   const progress = status.isError ? undefined : status.data;
   const recovery = saved?.recovery?.workflowInstanceId === launch?.workflow_instance_id ? saved?.recovery : undefined;
+  useEffect(() => {
+    if (!launch || status.data === undefined || !privacy.isCurrent(context) || !isProjectCurrent() ||
+        rememberFailedResearchRun(undefined, launch, status.data) === undefined) return;
+    write(old => {
+      const current = old.intent?.launch ?? old.observedLaunch;
+      if (current === undefined || current.workflow_instance_id !== launch.workflow_instance_id ||
+          current.investigation_ref.id !== launch.investigation_ref.id) return old;
+      const held = old.recovery?.workflowInstanceId === launch.workflow_instance_id ? old.recovery : undefined;
+      const next = rememberFailedResearchRun(held, launch, status.data);
+      return next === undefined || next === held ? old : { ...old, recovery: next };
+    });
+  }, [status.data, launch, context, privacy, projectId]);
   const recoveryText = researchRecoveryCopy[locale];
   const displayedFailure = researchRecoveryFirstCause(recovery, progress);
   const recoveryHeld = recovery?.phase === 'unknown' || recovery?.phase === 'recovering' || recovery?.phase === 'reading';
+  const stopMemory = saved?.stop?.workflowInstanceId === launch?.workflow_instance_id ? saved?.stop : undefined;
+  const canStopRun = launch !== undefined && canStopFailedResearchRun(status.data, launch,
+    recovery?.failedRunObserved === true);
+  const canRetryFailedRun = launch !== undefined && saved?.intent !== undefined &&
+    (canStopRun || hasCanonicalResearchCancellation(status.data, launch)) &&
+    (!recoveryHeld || stopMemory?.cancel_dispatched === true || hasCanonicalResearchCancellation(status.data, launch));
   const recoveryMessage = recovery && recovery.phase !== 'observed' &&
     (recoveryHeld || launch && canRequestResearchRecovery(status.data, launch)) ? recoveryText[recovery.phase] : '';
   const recoverResearch = (action: 'recover' | 'readback') => {
@@ -549,32 +576,88 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
     void refreshHistory();
   }, [terminalObservation, privacy, context, refreshHistory]);
   const displayedWholeScope = saved?.intent?.wholeScope ?? wholeScope;
-  const failedActiveRun = launch !== undefined && progress?.execution_state === 'ACTIVE' &&
-    ['errored', 'terminated'].includes(progress.engine_status) && !status.isFetching;
-  const finishFailedRun = (retry: boolean) => {
+  const retryFailedRun = () => {
     const original = read().intent;
-    if (!launch || !failedActiveRun || running.current || recoveryHeld || !privacy.isCurrent(context)) return;
+    if (!launch || !original || !canRetryFailedRun || running.current || !privacy.isCurrent(context) || !isProjectCurrent()) return;
     const selected = launch;
     run(async signal => {
-      await runProtectedRead(privacy, context, signal, readSignal =>
-        apis.research.runs.cancelResearchRun(selected.workflow_instance_id, context.deploymentGeneration, readSignal));
-      const confirmed = await runProtectedRead(privacy, context, signal, readSignal =>
-        apis.research.runs.readResearchRunStatus(selected.workflow_instance_id, context.deploymentGeneration, readSignal));
-      if (!matchesResearchRunLaunch(confirmed, selected) || confirmed.execution_state !== 'CANCELLED') {
-        throw new Error('Research cancellation is not confirmed');
-      }
-      client.setQueryData(options.status(selected).queryKey, confirmed);
-      if (retry && original) {
-        const { launch: _launch, ...request } = original;
-        const next: ResearchIntent = { ...request, key: apis.sources.mintIntent(), phase: 'pending' };
-        write(old => ({ ...old, intent: next }));
-        await admit(next, signal);
-      } else {
-        returningToComposer.current = true;
-        write(old => { const { intent: _intent, observedLaunch: _launch, ...rest } = old; return rest; });
-      }
+      const cancelled = await stopFailedResearchRun({ runs: apis.research.runs, privacy, context, launch: selected,
+        ...(status.data === undefined ? {} : { status: status.data }),
+        failedRunObserved: recovery?.failedRunObserved === true || canStopFailedResearchRun(status.data, selected,
+          recovery?.failedRunObserved === true) || hasCanonicalResearchCancellation(status.data, selected),
+        action: hasCanonicalResearchCancellation(status.data, selected) || stopMemory?.cancel_dispatched === true || stopMemory?.phase === 'unknown' ||
+          stopMemory?.phase === 'stopping' || stopMemory?.phase === 'reading' ? 'readback' : 'stop',
+        signal, isCurrent: () => {
+          const current = read().intent?.launch ?? read().observedLaunch;
+          return mounted.current && privacy.isCurrent(context) && isProjectCurrent() && current !== undefined &&
+            current.workflow_instance_id === selected.workflow_instance_id &&
+            current.investigation_ref.id === selected.investigation_ref.id;
+        },
+        readMemory: () => read().stop,
+        writeMemory: next => write(old => old.intent?.launch?.workflow_instance_id === selected.workflow_instance_id ||
+          old.observedLaunch?.workflow_instance_id === selected.workflow_instance_id ? { ...old, stop: next } : old),
+        onStatus: async view => {
+          await client.cancelQueries({ queryKey: options.status(selected).queryKey, exact: true });
+          if (!signal.aborted) client.setQueryData(options.status(selected).queryKey, view);
+        },
+      });
+      if (cancelled?.execution_state !== 'CANCELLED' ||
+          cancelled.cancellation_receipt_ref !== `workflow-cancelled:${selected.workflow_instance_id}`) return;
+      const { launch: _launch, ...request } = original;
+      const next: ResearchIntent = { ...request, key: apis.sources.mintIntent(), phase: 'pending' };
+      write(old => {
+        if (old.intent?.key !== original.key) return old;
+        const { stop: _stop, ...rest } = old;
+        return { ...rest, intent: next };
+      });
+      if (read().intent?.key === next.key) await admit(next, signal);
       void history.refetch();
     });
+  };
+  const closeFailedRun = (action: 'stop' | 'readback') => {
+    const selected = launch;
+    if (!selected || !canStopRun || running.current || !privacy.isCurrent(context) || !isProjectCurrent()) return;
+    const originalIntentKey = read().intent?.key;
+    const isStopCurrent = () => {
+      const current = read().intent?.launch ?? read().observedLaunch;
+      return mounted.current && privacy.isCurrent(context) && isProjectCurrent() && current !== undefined &&
+        current.workflow_instance_id === selected.workflow_instance_id &&
+        current.investigation_ref.id === selected.investigation_ref.id;
+    };
+    run(async signal => {
+      const cancelled = await stopFailedResearchRun({ runs: apis.research.runs, privacy, context, launch: selected,
+        ...(status.data === undefined ? {} : { status: status.data }),
+        failedRunObserved: canStopFailedResearchRun(status.data, selected, recovery?.failedRunObserved === true),
+        action, signal, isCurrent: isStopCurrent,
+        readMemory: () => read().stop,
+        writeMemory: next => write(old => old.intent?.launch?.workflow_instance_id === selected.workflow_instance_id ||
+          old.observedLaunch?.workflow_instance_id === selected.workflow_instance_id ? { ...old, stop: next } : old),
+        onStatus: async view => {
+          await client.cancelQueries({ queryKey: options.status(selected).queryKey, exact: true });
+          if (!signal.aborted && isStopCurrent()) client.setQueryData(options.status(selected).queryKey, view);
+        },
+      });
+      if (cancelled?.execution_state !== 'CANCELLED' ||
+          cancelled.cancellation_receipt_ref !== `workflow-cancelled:${selected.workflow_instance_id}` || !isStopCurrent()) return;
+      const current = read();
+      if (originalIntentKey !== undefined && current.intent?.key === originalIntentKey &&
+          current.intent.launch?.workflow_instance_id === selected.workflow_instance_id) {
+        returningToComposer.current = true;
+        write(old => {
+          if (old.intent?.key !== originalIntentKey || old.intent.launch?.workflow_instance_id !== selected.workflow_instance_id) return old;
+          const { intent: _intent, stop: _stop, ...rest } = old;
+          return rest;
+        });
+      } else if (current.intent === undefined && current.observedLaunch?.workflow_instance_id === selected.workflow_instance_id) {
+        returningToComposer.current = true;
+        write(old => {
+          if (old.intent || old.observedLaunch?.workflow_instance_id !== selected.workflow_instance_id) return old;
+          const { observedLaunch: _launch, stop: _stop, ...rest } = old;
+          return rest;
+        });
+      } else return;
+      void history.refetch();
+    }, true);
   };
   const terminal = saved?.intent?.launch && progress?.workflow_instance_id === saved.intent.launch.workflow_instance_id &&
     progress.execution_state !== 'ACTIVE' && !status.isError && !status.isFetching;
@@ -597,6 +680,7 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
   const researchBusy = busy && (preparingModel.current || saved?.intent !== undefined || launch !== undefined);
   const state = saved?.intent?.phase === 'unknown' || status.isError || recovery?.phase === 'unknown' ? 'degraded'
     : progress?.execution_state === 'CANCELLED' ? 'cancelled'
+    : recovery?.failedRunObserved && progress?.execution_state === 'ACTIVE' && progress.engine_status === 'unknown' ? 'degraded'
     : progress?.failure ? 'error' : progress?.execution_state === 'ENGINE_COMPLETED' ? 'useful'
     : launch || researchBusy ? 'loading' : 'empty';
   const launchFailure = saved?.intent?.phase === 'unknown' ? saved.intent.launchFailure : undefined;
@@ -634,9 +718,15 @@ export function ResearchPanel({ apis, privacy, context, locale, scope, scopeCurr
           onClick={() => recoverResearch('recover')}>{recoveryText.recover}</Button>}
       {recoveryMessage && <p>{recoveryMessage}</p>}
     </div>}
-    {failedActiveRun && <div className="er-live-actions">
-      {saved?.intent && <Button variant="tonal" disabled={busy || recoveryHeld} onClick={() => finishFailedRun(true)}>{locale === 'ru' ? 'Повторить вопрос' : 'Retry question'}</Button>}
-      <Button variant="text" disabled={busy || recoveryHeld} onClick={() => finishFailedRun(false)}>{text.next}</Button>
+    {(canRetryFailedRun || canStopRun) && <div className="er-live-actions">
+      {canRetryFailedRun && <Button variant="tonal" disabled={busy} onClick={retryFailedRun}>{locale === 'ru' ? 'Повторить вопрос' : 'Retry question'}</Button>}
+      {canStopRun && <Button variant="text" disabled={busy} onClick={() => closeFailedRun(
+        stopMemory?.cancel_dispatched === true || stopMemory?.phase === 'unknown' ||
+          stopMemory?.phase === 'stopping' || stopMemory?.phase === 'reading' ? 'readback' : 'stop')}>{
+          stopMemory?.cancel_dispatched === true || stopMemory?.phase === 'unknown' ||
+            stopMemory?.phase === 'stopping' || stopMemory?.phase === 'reading'
+            ? text.checkStop : text.stopFailed}</Button>}
+      {stopMemory?.phase === 'unknown' && canStopRun && <p>{text.stopUnknown}</p>}
     </div>}
     {projectId !== undefined && projectModels.isPending && <Status>{text.modelConfigurationReading}</Status>}
     {projectId !== undefined && projectModels.isError && <Status tone="error">{text.modelConfigurationFailed}</Status>}
