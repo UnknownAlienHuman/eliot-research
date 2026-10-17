@@ -46,6 +46,7 @@ const HOST_TOOL_IMPORTS = new Map([
   ["packages/cloudflare-model-control/src/research-model-qualification-renewal.test.ts", new Set(["node:fs"])],
   ["packages/cloudflare-model-control/src/research-model-qualification-failure-summary.test.ts", new Set(["node:fs/promises"])],
   ["packages/cloudflare-model-control/src/service-model-provider-service.test.ts", new Set(["node:fs/promises"])],
+  ["packages/cloudflare-model-execution/src/research-native-spend-admission-sql.test.ts", new Set(["node:fs"])],
   ["packages/cloudflare-research/src/research-model-spend-admission-branch-stages.test.ts", new Set(["node:fs"])],
   ["packages/cloudflare-research/src/research-project-configuration-store.test.ts", new Set(["node:fs"])],
   ["packages/cloudflare-workflows/src/research-run-configuration-store.test.ts", new Set(["node:fs"])],

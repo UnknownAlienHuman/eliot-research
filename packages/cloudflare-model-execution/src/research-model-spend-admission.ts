@@ -14,6 +14,7 @@ import {
 import { modelGatewaySha256 } from "@eliotr/cloudflare-ai";
 import { StageRequestSchema, textDigest, type StageRequest } from "@eliotr/cloudflare-workflows";
 import { ModelAttemptError, type ModelAttemptAuthority, type ModelCostQuote } from "./model-attempt-types.js";
+import { researchSpendWriteDenial } from "./research-spend-write-denial.js";
 import type {
   ResearchNativeModelAuthorityBinding,
   ResearchModelPinnedSelection,
@@ -536,6 +537,8 @@ export function createD1ResearchModelSpendAdmissionPort(database: D1Database, op
       if (row === null) {
         const sameAuthorization = await database.prepare("SELECT authorization_ref FROM research_model_spend_admission WHERE authorization_ref=?1 LIMIT 1").bind(input.decision.authorization_ref).first<{ readonly authorization_ref: unknown }>();
         if (sameAuthorization !== null) fail("MODEL_ATTEMPT_IDENTITY_CONFLICT", "spend authorization is already bound to another operation");
+        const denied = researchSpendWriteDenial(writeError);
+        if (denied !== undefined) throw denied;
         fail("MODEL_ATTEMPT_SETTLEMENT_UNCERTAIN", "spend admission write readback is missing", true, writeError);
       }
       const record = await decodeRow(row);

@@ -84,7 +84,7 @@ function policy(over: Partial<BackupDestinationPolicy> = {}): BackupDestinationP
   return { destination_id: "offsite-1", failure_domain: "domain-remote", endpoint_identity: "endpoint-1", supports_deletion_journal: true, supports_expiry: true, retention_locked: false, retention_policy_ref: "retention-1", expiry_identity: "expiry-1", policy_version: "v1", owner_ref: "owner-1", authorization_receipt_ref: "auth-1", ...over };
 }
 type Harness = Awaited<ReturnType<typeof setup>>;
-async function setup() {
+async function setup(partBytes = 512) {
   const db = new DatabaseSync(":memory:");
   applyCanonicalCoreMigrations(db);
   recordCanonicalCoreMigrationLedger(db, T);
@@ -96,7 +96,7 @@ async function setup() {
   const evidence = shimBucket(); const work = shimBucket(); const parts = shimBucket();
   const coreDb = d1Database(db);
   const ports: BackupSourcePorts = { core_db: coreDb, evidence_bucket: evidence.bucket, work_bucket: work.bucket, part_sink: testPartSink(parts.bucket), create_sha256_sink: sink };
-  const port = createBackupPort(ports, { limits: { r2_list_page_size: 50, part_bytes: 512 } });
+  const port = createBackupPort(ports, { limits: { r2_list_page_size: 50, part_bytes: partBytes } });
   await authorizeBackupDestination(coreDb, { destination_id: "offsite-1", principal_ref: "tester", policy_decision_ref: "policy-1", policy: policy(), authorization_receipt_ref: "auth-1" });
   const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
   return { db, coreDb, ports, port, key };
@@ -208,15 +208,19 @@ describe("ER-34 O2 FIX4 globally-unique nonce authority", () => {
     expect(adapter.puts).toBe(0);
   });
   it("restart resumes from the durable owner mapping and lost acknowledgements reconcile exactly", async () => {
-    const h = await setup();
+    // Exercise multipart restart without encrypting the growing canonical schema
+    // in hundreds of 512-byte fragments. The multipart boundary stays explicit.
+    const partBytes = 16 * 1024;
+    const h = await setup(partBytes);
     const draft = await draftFor(h, "fix4-nonce-restart");
+    expect(draft.part_index.length).toBeGreaterThanOrEqual(2);
     const adapter = createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote" });
     const controller = new AbortController();
     let puts = 0;
     const crashing: OffsiteCopyAdapter = { ...adapter, put: async (r, b, s) => { const out = await adapter.put(r, b, s); puts += 1; if (puts >= 2) controller.abort(); return out; } };
     await expect(h.port.copyOffsite({ draft, intent: intent("fix4-nonce-restart"), encryption_key: h.key, key_generation: "key-gen-1", primary_failure_domain: "domain-primary", destination_policy: policy(), adapter: crashing, signal: controller.signal, now_ms: Date.now() })).rejects.toMatchObject({ code: "BACKUP_CANCELLED" });
     const rowsBeforeResume = nonceCount(h);
-    const fresh = createBackupPort(h.ports, { limits: { r2_list_page_size: 50, part_bytes: 512 } });
+    const fresh = createBackupPort(h.ports, { limits: { r2_list_page_size: 50, part_bytes: partBytes } });
     const resumed = await fresh.copyOffsite({ draft, intent: intent("fix4-nonce-restart"), encryption_key: h.key, key_generation: "key-gen-1", primary_failure_domain: "domain-primary", destination_policy: policy(), adapter, now_ms: Date.now() });
     expect(resumed.receipt.outcome).toBe("SUCCEEDED");
     expect(nonceCount(h)).toBe(draft.part_index.length);
@@ -227,7 +231,7 @@ describe("ER-34 O2 FIX4 globally-unique nonce authority", () => {
     expect(adapter.puts).toBe(putsAfterCommit);
     expect(nonceCount(h)).toBe(draft.part_index.length);
     // Lost acknowledgement reconciles to the same durable owner mapping.
-    const h2 = await setup();
+    const h2 = await setup(partBytes);
     const draft2 = await draftFor(h2, "fix4-nonce-ack");
     const flaky = createControlledOffsiteAdapter({ destination_id: "offsite-1", failure_domain: "domain-remote", faults: { lose_ack_after_puts: 1 } });
     const acked = await h2.port.copyOffsite({ draft: draft2, intent: intent("fix4-nonce-ack"), encryption_key: h2.key, key_generation: "key-gen-1", primary_failure_domain: "domain-primary", destination_policy: policy(), adapter: flaky, now_ms: Date.now() });
