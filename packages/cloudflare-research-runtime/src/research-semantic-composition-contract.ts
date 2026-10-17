@@ -3,7 +3,7 @@ import type { ModelGatewayPricingPort, ModelGatewayRequestCapabilitiesV1 } from 
 import type { ReferenceManifestStore } from "@eliotr/policy";
 import type { InvestigationLedgerStore } from "@eliotr/research";
 import type { ResearchNativeAcquisitionSelection } from "@eliotr/cloudflare-research";
-import type { ScopeProfileBinding } from "@eliotr/retrieval";
+import type { RetrievalRequestBudgets, ScopeProfileBinding } from "@eliotr/retrieval";
 import type { ResearchBranchRole } from "@eliotr/contracts";
 import type { WorkflowPrincipal } from "@eliotr/cloudflare-workflows";
 import type {
@@ -191,6 +191,8 @@ export interface ResearchSemanticCompositionDependencies {
   }>;
   /** Scope profile is read from the server-owned retrieval policy. */
   readonly retrieval_profile: ScopeProfileBinding;
+  /** Exact V9 query limits supplied by the workflow factory to committed stage-5 readers. */
+  readonly retrieval_budgets?: RetrievalRequestBudgets;
   /** Explicit installed model definition; no production default is allowed. */
   readonly model_profile: ModelProfileDefinitionConfigSourceOptions;
   /**

@@ -49,7 +49,7 @@ import {
 import { createResearchClaimAuditPromptDependencies } from "./research-claim-audit-prompt.js";
 import { createResearchSynthesisPromptDependencies } from "./research-synthesis-prompt.js";
 import { createResearchBranchRolePromptDependencies } from "./research-branch-role-prompt.js";
-import type { RetrieveBranchesStageDependencies } from "./research-retrieve-branches.js";
+import { researchRetrievalBudgetsForGeneration, type RetrieveBranchesStageDependencies } from "./research-retrieve-branches.js";
 import { createResearchBranchQueryExecutionAdapter } from "./research-branch-query-execution.js";
 import { createResearchNativeAcquisitionStageRoute } from "./research-native-acquisition.js";
 import {
@@ -232,6 +232,7 @@ export function createResearchSemanticComposition(
     evidence_bucket: input.evidence_bucket,
     access: navigationAccess,
     profile: input.retrieval_profile,
+    ...(input.retrieval_budgets === undefined ? {} : { budgets: input.retrieval_budgets }),
   };
   const readers = createEvidenceFreezeWorkflowReaders({
     database: input.database,
@@ -395,7 +396,10 @@ export function createResearchSemanticWorkflowHandlerFactory(
       fail("WORKFLOW_AUTHORITY_STALE");
     }
   }
-  const semantic = createResearchSemanticComposition(input);
+  const retrievalBudgets = researchRetrievalBudgetsForGeneration(input.handler_generation, branchQueryBudgetSelection?.budgets);
+  const semantic = createResearchSemanticComposition({ ...input,
+    ...(retrievalBudgets === undefined ? {} : { retrieval_budgets: retrievalBudgets }),
+  });
   const roles = input.model.roles;
   if (roles !== undefined && input.run_configuration !== undefined && input.run_configuration.mode !== "legacy-installed" &&
       (roles.gateway_for_stage === undefined || roles.prompt_for_stage === undefined)) {

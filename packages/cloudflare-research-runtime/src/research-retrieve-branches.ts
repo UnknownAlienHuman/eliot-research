@@ -3,6 +3,7 @@ import {
   type NavigationReadAuthority,
 } from "@eliotr/cloudflare-evidence";
 import {
+  MANAGED_RETRIEVAL_TRACE_PROTOCOL,
   type ScopeSnapshot,
 } from "@eliotr/contracts";
 import type { InvestigationLedgerStore } from "@eliotr/research";
@@ -15,6 +16,7 @@ import {
   RetrievalQueryError,
   RetrievalResultReadUnavailable,
   type RetrievalQueryAccess,
+  type RetrievalRequestBudgets,
   type ScopeProfileBinding,
   type StoredRetrievalResult,
 } from "@eliotr/retrieval";
@@ -67,6 +69,21 @@ export function committedResearchRetrievalProductMatches(handlerGeneration: stri
     (handlerGeneration === BRANCH_QUERY_HANDLER_GENERATION && product === "FAST_SEARCH");
 }
 
+/** Only the forward generation consumes the immutable server-selected query limits. */
+export function researchRetrievalBudgetsForGeneration(
+  handlerGeneration: string | undefined,
+  budgets: RetrievalRequestBudgets | undefined,
+): RetrievalRequestBudgets | undefined {
+  if (handlerGeneration !== BRANCH_QUERY_HANDLER_GENERATION) return undefined;
+  if (budgets === undefined) throw new WorkflowCheckpointError("WORKFLOW_CONFIGURATION_MISSING");
+  return {
+    candidate_limit: budgets.candidate_limit,
+    scan_limit: budgets.scan_limit,
+    evidence_limit: budgets.evidence_limit,
+    max_evidence_bytes: budgets.max_evidence_bytes,
+  };
+}
+
 const RETRIEVE_BRANCHES_PROTOCOL = "eliotr.research.retrieve-branches.v1" as const;
 
 export interface RetrieveBranchesStageDependencies {
@@ -83,6 +100,8 @@ export interface RetrieveBranchesStageDependencies {
   readonly ledger: Pick<InvestigationLedgerStore, "read">;
   /** Server-selected retrieval profile, not a public request field. */
   readonly profile: ScopeProfileBinding;
+  /** Immutable server-owned V9 limits; legacy requests and committed legacy traces omit them. */
+  readonly budgets?: RetrievalRequestBudgets;
 }
 
 export type { RetrieveBranchesCheckpoint } from "@eliotr/retrieval";
@@ -220,13 +239,30 @@ export async function readRetrieveBranchesCheckpoint(
   } catch {
     fail("WORKFLOW_AUTHORITY_STALE");
   }
-  const expectedRequestDigest = await retrievalRequestDigest({
+  const managedTrace = "protocol" in checkpoint.trace && checkpoint.trace.protocol === MANAGED_RETRIEVAL_TRACE_PROTOCOL;
+  if (managedTrace && (persisted.stage_request.handler_generation !== BRANCH_QUERY_HANDLER_GENERATION ||
+      checkpoint.trace.query_product !== "RESEARCH")) {
+    fail("WORKFLOW_AUTHORITY_STALE");
+  }
+  const budgets = persisted.stage_request.handler_generation === BRANCH_QUERY_HANDLER_GENERATION
+    ? dependencies.budgets : undefined;
+  if (managedTrace && budgets === undefined) throw new WorkflowCheckpointError("WORKFLOW_CONFIGURATION_MISSING");
+  const digestInput = {
     raw_query: checkpoint.trace.raw_query,
     product: checkpoint.trace.query_product,
     literals: [],
     requested_limit: dependencies.profile.max_results,
     scope_digest: held.scope_snapshot.digest,
+  };
+  const expectedRequestDigest = await retrievalRequestDigest({
+    ...digestInput,
+    ...(budgets === undefined ? {} : { budgets }),
   });
+  // A new budgeted request may have no managed execution (for example an empty scope),
+  // and therefore a legacy trace. Only committed legacy traces may also match the old
+  // no-budget bytes; the receipt/R2/result equality checks below still bind that history.
+  const historicalRequestDigest = !managedTrace && budgets !== undefined
+    ? await retrievalRequestDigest(digestInput) : expectedRequestDigest;
   const retrievalIdempotencyKey = `retrieve-branches:${await textDigest(JSON.stringify(persisted.stage_request))}`;
   let storedResult: StoredRetrievalResult | null;
   try {
@@ -245,7 +281,7 @@ export async function readRetrieveBranchesCheckpoint(
     fail("WORKFLOW_OUTPUT_CORRUPT");
   }
   if (storedResult === null || storedResult.idempotency_key !== retrievalIdempotencyKey ||
-      storedResult.request_digest !== expectedRequestDigest ||
+      (storedResult.request_digest !== expectedRequestDigest && storedResult.request_digest !== historicalRequestDigest) ||
       storedResult.request_digest !== checkpoint.retrieval_request_digest ||
       canonicalRetrievalJson(storedResult.result) !== canonicalRetrievalJson({
         evidence_pack: checkpoint.evidence_pack, trace: checkpoint.trace, coverage_claim: checkpoint.coverage_claim,
@@ -307,6 +343,7 @@ export function createRetrieveBranchesStageHandler(
           checkpoint.coverage_denominator.eligible_source_revision_refs.length > dependencies.profile.max_sources) {
         fail("WORKFLOW_AUTHORITY_STALE");
       }
+      const budgets = researchRetrievalBudgetsForGeneration(request.handler_generation, dependencies.budgets);
       const retrievalInput = {
         access: dependencies.access,
         scope_snapshot: held.scope_snapshot,
@@ -319,6 +356,7 @@ export function createRetrieveBranchesStageHandler(
         signal: signal ?? principal.signal ?? new AbortController().signal,
         profile: dependencies.profile,
         timing,
+        ...(budgets === undefined ? {} : { budgets }),
       } as const;
       const result = await retrieveWithHeldScope(
         { CORE_DB: dependencies.database, SEARCH_DB: dependencies.search_database, EVIDENCE_BUCKET: dependencies.evidence_bucket,
@@ -331,6 +369,7 @@ export function createRetrieveBranchesStageHandler(
         literals: retrievalInput.literals,
         requested_limit: retrievalInput.requested_limit,
         scope_digest: held.scope_snapshot.digest,
+        ...(retrievalInput.budgets === undefined ? {} : { budgets: retrievalInput.budgets }),
       });
       const output = await measureResearchRetrievalPhase(timing, "stage_finalize", async () =>
         serializeRetrieveBranchesCheckpoint({

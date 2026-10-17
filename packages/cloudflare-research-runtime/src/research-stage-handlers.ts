@@ -35,6 +35,7 @@ import {
 } from "@eliotr/cloudflare-research-stages";
 import {
   createRetrieveBranchesStageHandler,
+  researchRetrievalBudgetsForGeneration,
   SEMANTIC_RETRIEVAL_HANDLER_GENERATION,
   SEMANTIC_PROTOCOL_HANDLER_GENERATION,
   BRANCH_EXECUTION_HANDLER_GENERATION,
@@ -222,7 +223,10 @@ export function createResearchStageHandlerFactory(
       }
       try { requireOwnerScopeProfile(profile, navigation.scope); }
       catch { fail("WORKFLOW_AUTHORITY_STALE"); }
-      return createRetrieveBranchesStageHandler({ ...retrieval, navigation, ledger, profile })(input);
+      const budgets = researchRetrievalBudgetsForGeneration(mode.generation, mode.branch_execution?.query_plan_budgets);
+      return createRetrieveBranchesStageHandler({ ...retrieval, navigation, ledger, profile,
+        ...(budgets === undefined ? {} : { budgets }),
+      })(input);
     };
   }
   const freezeComposition = mode.kind === "server-owned-exploratory" &&
