@@ -30,6 +30,7 @@ import { usePaneAnnouncement } from "./usePaneAnnouncement";
 import { WorkspaceNotifications } from "./WorkspaceNotifications";
 import { LanguageSettings } from "./LanguageSettings";
 import { AiUsagePanel } from "./AiUsagePanel";
+import { findCurrentOwnerProjectPage } from "./lastProjectLookup";
 
 const copy = {
   en: { tabs: "Research panes", tabSources: "Sources", tabChat: "Chat", tabTools: "Agents", tools: "Agents and tools", toolsLead: "Open a tool for the selected project and sources.", toolIndex: "Search index", toolVersions: "Source versions", toolReports: "Saved reports", toolWiki: "Wiki drafts", toolImport: "Import sources", toolModel: "Model and connections", toolIndexHint: "How sources are indexed for search", toolVersionsHint: "Saved versions of a source", toolReportsHint: "Reports saved from earlier research", toolWikiHint: "Review and publish Wiki drafts", toolImportHint: "Add documents to this project", toolModelHint: "Choose the model and check access", collapseSources: "Collapse sources", expandSources: "Expand sources", collapseTools: "Collapse research tools", expandTools: "Expand research tools", projects: "Projects", inbox: "Inbox", sources: "Sources", research: "Research", studio: "Studio", connections: "Agents", choose: "Choose a project to get started", detail: "Keep sources, questions and their evidence together.", next: "Next page", previous: "Previous page", versions: "Choose a version to read", document: "Source document", close: "Back to sources", untitled: "No project selected", researchPrompt: "Choose the sources for your next question", researchDetail: "The question will keep the exact source scope you choose.", studioEmpty: "Your saved work belongs here", studioDetail: "Reports and artifacts will keep the sources they were created from.", connectionsDetail: "Review owner access and research configuration.", review: "Review connections", selected: (count: number) => count === 0 ? 'All project sources' : count === 1 ? '1 source selected' : `${count} sources selected`, allSources: (count: number) => count === 1 ? 'The project source' : `All ${count} sources`, addSources: "Add sources", sourceScope: "For your next question", openSources: "All sources", sourceCount: (count: number) => count === 1 ? "1 source" : `${count} sources`, version: (index: number) => `Version ${index + 1}`, settings: "Settings", settingsDetail: "Model and provider settings are shared by the whole service. Cloudflare is built in and default.", scopeNote: "Readiness and recorded versions are separate observations." },
@@ -45,6 +46,10 @@ function readLastProject(): string | undefined {
 }
 function writeLastProject(id: string): void {
   try { window.localStorage.setItem(LAST_PROJECT_KEY, id); } catch { /* storage unavailable */ }
+}
+function clearLastProject(expectedId: string): void {
+  try { if (window.localStorage.getItem(LAST_PROJECT_KEY) === expectedId) window.localStorage.removeItem(LAST_PROJECT_KEY); }
+  catch { /* storage unavailable */ }
 }
 
 export function LiveWorkspace({ destination, locale, onLocaleChange, headingRef, apis, privacy, context, rememberProject = false }: {
@@ -79,6 +84,14 @@ export function LiveWorkspace({ destination, locale, onLocaleChange, headingRef,
   const [sourceId, setSourceId] = useState<string>();
   const [libraryPages, setLibraryPages] = useState<readonly (string | undefined)[]>([undefined]);
   const [scope, setScope] = useState<readonly NextQuestionSource[]>([]);
+  const selectionContext = useRef(context);
+  const projectRestoreAttempted = useRef(false);
+  useEffect(() => {
+    if (selectionContext.current === context) return;
+    selectionContext.current = context;
+    projectRestoreAttempted.current = false;
+    setProjectPages([undefined]); setProjectId(undefined); setSourceId(undefined); setLibraryPages([undefined]); setScope([]);
+  }, [context]);
   // One explicit New Project action. Its controller is created by the panel for the live session,
   // holds the frozen request identity and reports back here, which refreshes the projects read this
   // workspace already owns. This workspace dispatches nothing, reads nothing back and commits nothing
@@ -100,16 +113,49 @@ export function LiveWorkspace({ destination, locale, onLocaleChange, headingRef,
     library: () => client.getQueryData<LibraryPage>([...key, "library", projectId, cursor ?? null]),
   });
   const projects = useQuery(options.projects(after));
-  const reopened = useRef(false);
-  useEffect(() => {
-    if (!rememberProject || reopened.current || projectId !== undefined || after !== undefined ||
-        !projects.isSuccess || !privacy.isCurrent(context)) return;
-    reopened.current = true;
-    const last = readLastProject();
-    if (last !== undefined && projects.data.projects.some(project => project.project_id === last)) setProjectId(last);
-  }, [after, context, privacy, projectId, projects.data, projects.isSuccess, rememberProject]);
-  useEffect(() => { if (rememberProject && projectId !== undefined) writeLastProject(projectId); }, [projectId, rememberProject]);
+  const readProjectPage = useCallback((afterProjectId?: string) => {
+    const projectQueries = sourcesQueryOptions(apis.sources, privacy, context, {
+      projects: () => undefined, library: () => undefined,
+    });
+    return client.fetchQuery({ ...projectQueries.projects(afterProjectId), staleTime: 0 });
+  }, [apis.sources, client, context, privacy]);
   const selected = projects.data?.projects.find(project => project.project_id === projectId);
+  useEffect(() => {
+    if (!rememberProject || projectRestoreAttempted.current || projectId !== undefined || after !== undefined ||
+        !privacy.isCurrent(context)) return;
+    const last = readLastProject();
+    if (last === undefined) { projectRestoreAttempted.current = true; return; }
+    let active = true;
+    let firstPage: ProjectListView | undefined;
+    const isCurrent = () => active && privacy.isCurrent(context) && firstPage !== undefined &&
+      firstPage.deployment_generation === context.deploymentGeneration &&
+      client.getQueryData<ProjectListView>([...protectedQueryKey(context, "sources"), "projects", null]) === firstPage;
+    void readProjectPage(undefined).then(page => {
+      firstPage = page;
+      if (!isCurrent()) return { state: "stale" as const };
+      return findCurrentOwnerProjectPage({ project_id: last, deployment_generation: context.deploymentGeneration,
+        first_page: page, read_page: readProjectPage, is_current: isCurrent });
+    }).then(result => {
+      if (!active || !privacy.isCurrent(context)) return;
+      projectRestoreAttempted.current = true;
+      if (result.state === "found") {
+        setProjectPages(result.page_cursors);
+        setProjectId(last);
+      } else if (result.state === "absent") {
+        clearLastProject(last);
+      }
+      // Stale, failed, or page-bound-limited reads do not restore or erase the saved ID.
+    }).catch(() => {
+      if (active) projectRestoreAttempted.current = true;
+    });
+    return () => { active = false; };
+  }, [after, client, context, privacy, projectId, readProjectPage, rememberProject]);
+  useEffect(() => {
+    if (!rememberProject || projectId === undefined || !privacy.isCurrent(context) || !projects.isSuccess || projects.isFetching ||
+        projects.data.deployment_generation !== context.deploymentGeneration ||
+        !projects.data.projects.some(project => project.project_id === projectId)) return;
+    writeLastProject(projectId);
+  }, [after, context, privacy, projectId, projects.data, projects.isFetching, projects.isSuccess, rememberProject]);
   const [taskCursor, setTaskCursor] = useState<{ readonly projectId: string; readonly after: string }>();
   const taskAfter = taskCursor?.projectId === selected?.project_id ? taskCursor?.after : undefined;
   const taskOptions = selected && projects.data ? computerAgentDispatchQueryOptions(apis, privacy, context,
@@ -165,6 +211,7 @@ export function LiveWorkspace({ destination, locale, onLocaleChange, headingRef,
   const chooseProject = (id: string) => {
     const projectPage = projects.data;
     if (projectPage?.projects.some(project => project.project_id === id) && privacy.isCurrent(context)) {
+      projectRestoreAttempted.current = true;
       if (destination === "sources" && id !== projectId &&
         client.getQueryData<ProjectListView>([...key, "projects", after ?? null]) === projectPage) {
         projectSelectFocus.current = { projectId: id, context, projectPage, after };
@@ -297,6 +344,7 @@ export function LiveWorkspace({ destination, locale, onLocaleChange, headingRef,
         onProjectCommitted={(project, readback) => {
           if (!privacy.isCurrent(context) || readback.deployment_generation !== context.deploymentGeneration ||
               !readback.projects.some(row => row.project_id === project.project_id)) return;
+          projectRestoreAttempted.current = true;
           client.setQueryData([...key, "projects", null], readback);
           setProjectPages([undefined]); setProjectId(project.project_id); setSourceId(undefined);
           setLibraryPages([undefined]); setScope([]); setNewProjectOpen(false);

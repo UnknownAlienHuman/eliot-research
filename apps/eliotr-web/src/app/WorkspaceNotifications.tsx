@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import type { PrivacyController, SessionContext } from "./privacy";
 import { protectedQueryKey } from "../query/client";
+import { shouldPreserveStickyWorkspaceNotice } from "./workspaceNotice";
 import "./workspace-notifications.css";
 
 interface NoticeAction { readonly label: string; readonly run: () => void }
@@ -50,7 +51,8 @@ export function WorkspaceNotifications({ children, locale, privacy, context }: {
   const [notice, setNotice] = useState<Notice>();
   const seen = useRef(new Map<string, string>());
   const notify: Notify = useCallback((message, action) => {
-    if (privacy.isCurrent(context)) setNotice({ message, ...(action ? { action } : {}) });
+    if (privacy.isCurrent(context)) setNotice(old => shouldPreserveStickyWorkspaceNotice(old)
+      ? old : { message, ...(action ? { action } : {}) });
   }, [context, privacy]);
   useEffect(() => {
     const prefix = protectedQueryKey(context, "").slice(0, -1);
@@ -67,7 +69,7 @@ export function WorkspaceNotifications({ children, locale, privacy, context }: {
           return;
         }
         if (QUIET.has(String(resource))) return;
-        setNotice(old => old?.sticky ? old : { message: failedRead(resource, ru), action: { label: ru ? "Повторить" : "Try again", run: () => {
+        setNotice(old => shouldPreserveStickyWorkspaceNotice(old) ? old : { message: failedRead(resource, ru), action: { label: ru ? "Повторить" : "Try again", run: () => {
           if (privacy.isCurrent(context)) void client.refetchQueries({ queryKey: query.queryKey, exact: true });
         } } });
         return;
@@ -82,7 +84,7 @@ export function WorkspaceNotifications({ children, locale, privacy, context }: {
       const message = outcome === "complete"
         ? locale === "ru" ? "Исследование завершено." : "Research completed."
         : locale === "ru" ? "Исследование остановлено. Откройте его состояние." : "Research stopped. Open its status.";
-      setNotice(old => old?.sticky ? old : { message, action: { label: locale === "ru" ? "Открыть" : "Open", run: () => {
+      setNotice(old => shouldPreserveStickyWorkspaceNotice(old) ? old : { message, action: { label: locale === "ru" ? "Открыть" : "Open", run: () => {
         if (privacy.isCurrent(context)) void navigate("/research");
       } } });
     });
