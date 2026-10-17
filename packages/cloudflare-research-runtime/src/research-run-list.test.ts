@@ -143,9 +143,10 @@ describe("owner research history", () => {
       workflow_scope_snapshot_id: "scope-1", workflow_scope_snapshot_revision: 2,
     }));
     const { ports } = makePorts({ runRows, draftRows, workflowBindingRows });
+    const runFences = runRows.map(() => vi.fn(async () => undefined));
     prepareReadMock.mockImplementation(async (_environment, _actor, operationId: string) => ({
       status: workflowStatus(operationId), handler_generation: SERVER_OWNED_SEMANTIC_HANDLER_GENERATION,
-      requireCurrent: vi.fn(async () => undefined),
+      requireCurrent: runFences[runRows.findIndex(row => row.operation_id === operationId)],
     }));
     historicalLocatorMock.mockImplementation(async (input: { operation_id: string; artifact_ref: { id: string; revision: number } }) => input);
 
@@ -156,6 +157,9 @@ describe("owner research history", () => {
       availability: "draft", artifact_ref: { id: draft.artifact_id, revision: draft.revision },
     })));
     expect(prepareReauthenticatedRunMetadataRead).toHaveBeenCalledTimes(8);
+    // Preparation already completed its final currentness check. The list adds
+    // exactly one run check per candidate, after both scans, before disclosure.
+    for (const requireCurrent of runFences) expect(requireCurrent).toHaveBeenCalledTimes(1);
     expect(readAnswerMock).not.toHaveBeenCalled();
     expect(ports.reopen_owner_artifact_draft).not.toHaveBeenCalled();
   });
@@ -317,11 +321,11 @@ describe("owner research history", () => {
       { operation_id: "current-run", created_at: "2026-10-15T12:01:00.000Z", query: "No late disclosure" },
     ] });
     const denial = new CatalogInputError("RESEARCH_AUTHORITY_STALE", "revoked", 409);
-    const requireCurrent = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(denial);
+    const requireCurrent = vi.fn().mockRejectedValue(denial);
     prepareReadMock.mockResolvedValue({ status: workflowStatus("current-run"), requireCurrent });
 
     await expect(readOwnerResearchRuns(ports, context)).rejects.toBe(denial);
-    expect(requireCurrent).toHaveBeenCalledTimes(2);
+    expect(requireCurrent).toHaveBeenCalledTimes(1);
   });
 
   it("preserves canonical project filtering before any question or run read", async () => {
@@ -350,11 +354,11 @@ describe("owner research history", () => {
       { operation_id: "revoked-run", created_at: "2026-10-15T12:01:00.000Z", query: "Current query" },
     ] });
     const revoked = new Error("current authority was revoked");
-    const requireCurrent = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(revoked);
+    const requireCurrent = vi.fn().mockRejectedValue(revoked);
     prepareReadMock.mockResolvedValue({ status: workflowStatus("revoked-run"), requireCurrent });
 
     await expect(readOwnerResearchRuns(ports, context)).rejects.toBe(revoked);
-    expect(requireCurrent).toHaveBeenCalledTimes(2);
+    expect(requireCurrent).toHaveBeenCalledTimes(1);
   });
 
   it("overlaps eight candidate reads while retaining SQL order after reverse completion", async () => {
@@ -416,10 +420,8 @@ describe("owner research history", () => {
       if (++finalStarted === 2) allFinalStarted.resolve();
       await gate;
     };
-    const firstCurrent = vi.fn().mockResolvedValueOnce(undefined)
-      .mockImplementationOnce(() => finalCheck(directFence.promise));
-    const secondCurrent = vi.fn().mockResolvedValueOnce(undefined)
-      .mockImplementationOnce(() => finalCheck(historyFence.promise));
+    const firstCurrent = vi.fn(() => finalCheck(directFence.promise));
+    const secondCurrent = vi.fn(() => finalCheck(historyFence.promise));
     prepareReadMock.mockImplementation(async (_environment, _actor, operationId: string) => ({
       status: workflowStatus(operationId), requireCurrent: operationId === "first-run" ? firstCurrent : secondCurrent,
     }));
@@ -433,8 +435,8 @@ describe("owner research history", () => {
     historyFence.reject(denied);
     await rejected;
     expect(disclosed).toBe(false);
-    expect(firstCurrent).toHaveBeenCalledTimes(2);
-    expect(secondCurrent).toHaveBeenCalledTimes(2);
+    expect(firstCurrent).toHaveBeenCalledTimes(1);
+    expect(secondCurrent).toHaveBeenCalledTimes(1);
   });
 
   it("fails closed on an unexpected error in a concurrent candidate read", async () => {

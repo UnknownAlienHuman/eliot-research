@@ -12,6 +12,7 @@ import type * as ResearchStages from "@eliotr/cloudflare-research-stages";
 import compatibilityMigration from "../../../infra/d1/core/migrations/0068_research_deployment_compatibility.sql?raw";
 import { prepareReauthenticatedRunCancellation, prepareReauthenticatedRunMetadataRead, prepareReauthenticatedRunRead, readReauthenticatedRunAnswer,
   type ReauthenticatedRunRead, type ResearchRunReadEnvironment } from "./research-run-read-authorization.js";
+import * as RunReadAuthorization from "./research-run-read-authorization.js";
 import { readOwnerResearchRuns, type ResearchRunListPorts } from "./research-run-list.js";
 import { recoverResearchRun, type ResearchRunControlEnvironment } from "./research-run-control.js";
 
@@ -178,6 +179,35 @@ describe("read-only owner run provenance versus execution compatibility", () => 
     expect(requireCurrent).toHaveBeenCalledTimes(2);
   });
 
+  it("rejects a detailed completed answer when source rights are revoked while opening its report graph", async () => {
+    const f = setup();
+    vi.spyOn(WorkflowCheckpointStore.prototype, "readRunStatus").mockResolvedValue({ ...f.status, state: "ENGINE_COMPLETED" });
+    const read = await prepareReauthenticatedRunRead(f.read, f.context, "old-run");
+    if (read === null) throw new Error("Expected detailed historical read authorization");
+    const artifactRef = { id: "detail-artifact", revision: 2 };
+    const scopeRef = { id: "scope-1", revision: 1 };
+    const reopen = vi.fn(async () => {
+      authority.sources.mockRejectedValue(new ScopeServiceError("SCOPE_SNAPSHOT_STALE", "Source read revoked"));
+      return { artifact_ref: artifactRef, original_scope_snapshot_ref: scopeRef,
+        artifact: { status: "DRAFT", sections: [], evidence_freeze_ref: { id: "freeze-1", revision: 1 },
+          dependency_manifest_ref: "manifest-1:1" } };
+    });
+    historicalCoverageMock.mockReset();
+    historicalCoverageMock.mockImplementation(async (input: { require_current: () => Promise<void>;
+      require_artifact: (refs: { artifact_ref: typeof artifactRef; original_scope_snapshot_ref: typeof scopeRef }) => Promise<unknown> }) => {
+      await input.require_current();
+      await input.require_artifact({ artifact_ref: artifactRef, original_scope_snapshot_ref: scopeRef });
+      return { artifact_ref: artifactRef };
+    });
+
+    await expect(readReauthenticatedRunAnswer({ ...f.read, reopen_owner_artifact_draft: reopen } as unknown as ResearchRunReadEnvironment,
+      f.context, read, read.handler_generation)).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+
+    expect(historicalCoverageMock).toHaveBeenCalledTimes(1);
+    expect(reopen).toHaveBeenCalledWith(f.context, artifactRef);
+    expect(authority.sources).toHaveBeenLastCalledWith(["original-revision"], expect.anything());
+  });
+
   it("lists a retained incompatible origin under current rights while recovery remains forbidden", async () => {
     const f = setup();
     const before = sqlite.prepare("SELECT total_changes() AS n").get();
@@ -296,15 +326,54 @@ describe("read-only owner run provenance versus execution compatibility", () => 
     expect(JSON.stringify(history)).not.toContain("Retained failed O1 question");
   });
 
-  it("fails the whole result on a late source denial or changed project generation", async () => {
+  it.each(["source", "policy", "head", "origin-deployment", "active-deployment"] as const)(
+    "rejects the whole result when %s authority changes during the remaining scan", async changed => {
     const f = setup();
-    let reads = 0;
-    authority.sources.mockImplementation(async () => {
-      if (++reads === 4) throw new WorkflowCheckpointError("WORKFLOW_AUTHORITY_STALE");
-      return [];
+    const prepared = Promise.withResolvers<ReauthenticatedRunRead | null>();
+    const finishDraftScan = Promise.withResolvers<void>();
+    const actualPrepare = RunReadAuthorization.prepareReauthenticatedRunMetadataRead;
+    vi.spyOn(RunReadAuthorization, "prepareReauthenticatedRunMetadataRead").mockImplementation(async (...args) => {
+      const read = await actualPrepare(...args);
+      prepared.resolve(read);
+      return read;
     });
-    await expect(readOwnerResearchRuns(f.list, f.context, "6668"))
-      .rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+    const database = { prepare(sql: string) {
+      const statement = f.database.prepare(sql);
+      if (!sql.includes("FROM artifact_draft_binding b JOIN owner_artifact_read_origin o")) return statement;
+      return { bind(...values: unknown[]) {
+        const bound = statement.bind(...values);
+        return { all: async () => { await finishDraftScan.promise; return bound.all(); } };
+      } };
+    } } as unknown as D1Database;
+    let disclosed = false;
+    const response = readOwnerResearchRuns({ ...f.list, database }, f.context, "6668")
+      .then(history => { disclosed = true; return history; });
+    const rejected = expect(response).rejects.toMatchObject({ code: "WORKFLOW_AUTHORITY_STALE" });
+
+    expect(await prepared.promise).not.toBeNull();
+    // Both real preparation fences passed; the independent draft scan is held.
+    expect(authority.current).toHaveBeenCalledTimes(2);
+    expect(authority.sources).toHaveBeenCalledTimes(2);
+    expect(disclosed).toBe(false);
+    const denial = new ScopeServiceError("SCOPE_SNAPSHOT_STALE", "Current read authority revoked");
+    if (changed === "source") authority.sources.mockRejectedValue(denial);
+    else if (changed === "policy") authority.requireCurrent.mockRejectedValue(denial);
+    else if (changed === "head") f.head.scope_snapshot_revision += 1;
+    else if (changed === "origin-deployment") {
+      sqlite.exec("DELETE FROM investigation_current_deployment WHERE deployment_generation='origin-generation'");
+    } else sqlite.exec("UPDATE investigation_current_deployment SET state='RETIRED' WHERE deployment_generation='active-generation'");
+    const before = sqlite.prepare("SELECT total_changes() AS n").get();
+    finishDraftScan.resolve();
+
+    await rejected;
+    expect(disclosed).toBe(false);
+    expect(sqlite.prepare("SELECT total_changes() AS n").get()).toEqual(before);
+    expect(f.read.reopen_owner_artifact_draft).not.toHaveBeenCalled();
+    expect(f.compatible).not.toHaveBeenCalled();
+  });
+
+  it("fails the whole result on a changed project generation", async () => {
+    const f = setup();
     authority.sources.mockImplementation(async () => {
       sqlite.exec("UPDATE project SET generation=2 WHERE project_id='6668'");
       return [];

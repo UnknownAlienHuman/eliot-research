@@ -257,7 +257,6 @@ export async function readOwnerResearchRuns(ports: ResearchRunListPorts, context
       // locators are attached below from the independently authorized draft scan.
       const read = await prepareReauthenticatedRunMetadataRead(ports.run_read, context, row.operation_id);
       if (read === null) return null;
-      await read.requireCurrent();
       const status = runControlStatus(read.status);
       if (status.workflow_instance_id !== row.operation_id) invalidHistory("Run history status has a different origin");
       let query: string | undefined;
