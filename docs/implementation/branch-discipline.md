@@ -1,58 +1,22 @@
----
-title: "Eliot Research branch discipline"
-protocol: "eliotr.branch-discipline.v2"
-version: "2.2"
-date: 2026-10-17
-status: "normative"
----
-
 # Branch discipline
 
-## Owner-directed implementation
+Updated 2026-10-17. One manager uses one existing checkout/worktree and one publication branch/context.
+Leaves work on disjoint assigned paths without their own branches/worktrees. The manager serializes shared
+files. No claim-only commit, ancestry ceremony or package reservation is required for current development.
 
-[ADR-0019](../adr/0019-compact-refactoring.md) selects one checkout/worktree per manager. Use the existing
-authorized direct-main context or one review branch for a coherent PR; do not create leaf worktrees or
-branches. The manager assigns exact disjoint paths and serializes shared files. No JSON claim, prior
-claim commit, ancestry gate or packet reservation is required for current refactoring work.
+Read the remote head before publishing. Preserve concurrent changes and use an expected-head update;
+do not force over another writer. A review branch does not authorize deployment, live data changes or secret deletion.
+A failed publication lease means inspect the new head before retrying, not overwrite it.
 
-Start from current main and preserve concurrent changes. Refresh before publication; never force an update
-over shared work. Record the implementation result and scoped checks in the PR. Tests and assembled
-acceptance follow the source phase; documentation does not establish runtime readiness.
+Old prototypes need not be merged or maintained in the product. Git history and existing archived PRs
+can retain source without compatibility wrappers, live route registrations or duplicated docs. Keep unique
+wanted work before removing its last useful ref; a canceled requirement does not become wanted just because
+its PR is unmerged. Do not delete another manager's active checkout or uncommitted work.
 
-A review branch isolates a change; it does not expand the task into deployment, account mutation or data
-deletion. The 44 former draft PRs are archived in
-[#377](https://github.com/UnknownAlienHuman/eliot-research/issues/377). They supply reusable requirements
-or source when a current task needs them, not a competing queue or permission to merge stale trees.
+Branch deletion is a separate explicit operation. Existing branch-hygiene automation is unchanged by this
+documentation pass; its configured safeguards remain in effect until its own reviewed change. Do not start
+a branch/worktree purge to satisfy a source-size target or turn archival reconciliation into a coding prerequisite.
 
-## Cleanup authority
-
-There is no numeric quota, expiry, or named/dated exception list. Branch age, count, and a closed PR
-are not evidence of integration. In particular, closed-but-unmerged work must survive.
-
-Automated cleanup must establish all of the following:
-
-1. The configured default branch is still the repository's actual default branch.
-2. The candidate is neither the default nor a protected branch and has no open same-repository PR.
-3. The exact candidate head is an ancestor of the observed default-branch head. A squash/rebase merge
-   without this ancestry is conservatively preserved for explicit operator review.
-4. Immediately before deletion, repeat default/integration, head, protection and open-PR observations.
-   Any changed head, new PR or protection cancels that candidate.
-5. Delete only the named ref under an explicit expected-SHA lease. REST DELETE has no such precondition
-   and is not used. Confirm absence before recording a successful deletion; do not blindly retry an
-   unknown outcome or a recreated branch.
-
-The lease is limited to deletion of the exact candidate; it is not permission to rewrite `main` or
-force-update another branch. GitHub protection remains enforced by the server. PR metadata and Git refs
-are separate resources: PR protection is an observation immediately before deletion, not an atomic
-cross-resource lock. A branch-head race after observation is rejected by the Git server's exact lease.
-
-## Automation and evidence
-
-`.github/workflows/branch-hygiene.yml` runs on main, hourly, and manually. The planner, executable API
-rechecks, and real local Git lease behavior are covered by `node scripts/test-branch-hygiene.mjs`.
-The job reports confirmed deletions and preserved/skipped work; branch count is informational only.
-It does not replace data/security/runtime checks or qualify product launch. The cleanup job creates no
-implementation branch or worktree.
-
-Archive explicitly required non-integrated evidence before an operator-directed removal. Never infer
-that a branch is disposable merely because its PR was closed or its commit is old.
+[AGENTS.md](../../AGENTS.md) owns implementation/verification procedure;
+[the current plan](backend-entrypoints.md) owns selected work. Old Issue/PR bodies are historical where
+superseded, not a second queue that must be completed before shipping the owner product.

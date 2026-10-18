@@ -1,68 +1,50 @@
-# Full-source answer interface
+# Ordinary answer and whole-source context
 
-Status: implementation contract, 2026-10-17. Not deployed. The current v1-v4 run
-requests and historical generations keep their existing meaning. A UI must use
-the new path only when the server advertises `full_source_answer_v1`.
+Updated 2026-10-17. Target behavior, not a deployed API advertisement.
+Use the [current architecture](../architecture/ELIOT_RESEARCH.md) and existing run/client/result owners.
+The old proposal's settings endpoints, token journal and new use of `research-run-request.v5` are withdrawn.
 
-## Context settings
+## One request and one result
 
-Target owner route: `GET/PUT /api/v2/projects/{project_id}/answer-settings`.
-GET returns `{ protocol: "eliotr.answer-settings.v1", project_id, revision,
-context_mode: "AUTO"|"FULL"|"FRAGMENTS" }`.
-PUT takes `{ protocol: "eliotr.answer-settings-update.v1", expected_revision,
-context_mode }`. The server uses CAS; it never resets the model configuration.
-This stores a preference. Each run freezes its effective settings and model.
+Extend the actual current owner-run schema and its client together. `research-run-request.v5` already
+exists in Core `research-run-service.ts` and owner-client `research/runs/authority.ts`; do not redefine it
+as though unused. Add a new incompatible wire version only when needed for a real boundary, not because
+this document's filename contains v1. No second run API, persistent settings service or capability registry
+is a prerequisite to implementing the answer path. Do not advertise an unimplemented feature.
 
-The new run request version is `eliotr.research-run-request.v5`, retaining v4
-fields and adding `context_mode`. The chat's selected provider/model stays in
-the existing `selection`. AUTO reads all selected admitted normalized documents
-when the captured model budget permits. FULL rejects a budget overflow; it never
-silently truncates a document. FRAGMENTS uses retrieval. Readiness of a search
-projection is not a prerequisite for whole-source reads.
+Capture the selected source revisions, model and context choice once with the original request/attempt.
+AUTO uses whole selected sources when they fit; otherwise it uses existing retrieval and reports omissions.
+FULL rejects overflow instead of truncating; FRAGMENTS uses retrieval. These are context behaviors, not
+separate pipelines. A UI preference may reuse existing configuration; it does not need another data owner.
+Reading admitted whole sources does not depend on search projection readiness.
 
-## Answer stream
+Token capacity, serialized provider-request bytes, receipt size and memory are independent bounds.
+Honor each without loading the whole corpus or repeatedly encoding the same bodies. Large immutable
+inputs live behind an existing locator; compact checkpoints do not repeat source bodies or full planning manifests.
 
-Target read route: `GET /api/v1/research/run/{workflow_instance_id}/answer-events?after={sequence}`.
-The response is SSE, `Cache-Control: no-store, no-transform`. Each event's `id`
-is a monotonic positive integer and its JSON `sequence` equals that ID. Every
-event has `protocol: "eliotr.answer-event.v1"`, `workflow_instance_id`,
-`sequence`, `created_at`, and `type`. Event-specific fields are:
+## Streaming and saving
 
-| type | Fields |
-| --- | --- |
-| `answer.context` | `requested_mode`, `effective_mode` (FULL or FRAGMENTS), `source_count`, `full_source_count`, `context_bytes`, `source_snapshot_sha256`, `provider`, `model` |
-| `answer.delta` | `text` (only public answer Markdown; provisional) |
-| `answer.saved` | `artifact_ref`, `section_refs`, `first_text_ms` (nullable), `answer_ms`, `citation_status` (COMPLETE/PARTIAL/NONE), `audit_status` (PENDING/NOT_REQUESTED) |
-| `answer.audit` | `state` (VERIFIED/PARTIAL/NOT_VERIFIED), `reason_code` (nullable), `audit_ms` |
-| `answer.failed` | `code`, `message`, `phase` (PREPARE/CONTEXT/ANSWER/SAVE/AUDIT), `dispatch_state` (NOT_STARTED/STARTED/SETTLED/UNKNOWN) |
+Use one synthesis call through the existing transport. Align the selected prompt/output schema, parser and
+materializer: the `answer_markdown` extraction path and deep `material_claims` response are not automatically
+the same format. Read their actual callers, choose one coherent ordinary representation and delete replaced
+bridges/decoders. No second generic parser or speculative fallback between incompatible shapes.
 
-`answer.context` precedes text. `answer.saved` means the draft and exact citation
-bindings have been read back, not that semantic claims have passed an audit.
-The UI shows the answer while audit is PENDING, then its actual result.
-Invalid verifier JSON produces NOT_VERIFIED, never a contradicted claim.
+Only public answer text reaches the browser. Do not expose reasoning, prompts, credentials or raw provider
+frames. Label partial text provisional until stored. The existing evidence resolver issues references after
+matching quote candidates to exact source revisions/ranges; quote matching alone is not an EvidenceHandle.
+Ambiguous or missing matches stay explicitly unresolved. Save answer, citations and summary in existing report storage.
 
-Reconnect reads retained events after the last applied sequence. Duplicate
-sequences are ignored. A reconnect cannot dispatch a model, create a run or
-retry an uncertain effect. Current source/owner/purge access is checked before
-streaming and at each retained batch; authority loss clears protected UI data.
-Expired execution authority does not by itself expire historical read access.
+Reconnect reads the same run's current projection and saved result. It must not create a run or re-dispatch
+an uncertain effect. Replaying every provisional token is not required; disclose a provisional-text gap
+instead of adding a persisted per-token journal. Transport can use the existing stream/session primitives;
+there is no mandatory new `answer-events` database, monotonic global event protocol or transcript service.
 
-Only provider output-text deltas may reach `answer.delta`. Reasoning, provider
-events, prompts, credentials and raw verification payloads are never public
-events. Partial output is labelled provisional until saved. If the connection
-closes without saved/failed, the client reads the same run; it does not resubmit.
+## Optional audit and completion
 
-## Execution
+An explicitly requested audit follows the usable saved answer and does not gate first text.
+Invalid/missing verifier output means unverified, not refuted or successful. Local size/shape checks precede
+any paid verification. Preserve cancellation, the selected attempt/model and a practical spend bound.
 
-Five durable primary steps: PREPARE, CONTEXT, ANSWER, SAVE, AUDIT. Audit is
-optional and follows visible/saved answer. PREPARE freezes scope, selected
-configuration, captured capacity and idempotency identity. CONTEXT reads bounded
-complete source bytes concurrently (at most four), with hash/residency bindings.
-ANSWER dispatches one synthesis attempt. SAVE matches quote text against its
-exact source snapshot, maps whitespace-tolerant matches to original UTF-8 byte
-offsets, issues existing EvidenceHandles, and saves the draft. Ambiguous or
-missing quotes cannot receive handles. AUDIT cannot delay initial answer text.
-
-Provider quotas are independent GET reads; no quota network probe is added to
-the answer path. Reranking settings are a separate versioned selection and must
-not claim an adapter is available until that adapter is connected and qualified.
+Done means an integrated ask → stream → save → reopen → exact citation path in the existing app,
+with honest omissions and no duplicate paid effect. During implementation compile/lint; execute applicable
+product checks after assembly. Do not infer success from a fixture screen, provider response or this document.
