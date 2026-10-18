@@ -1,18 +1,19 @@
 # Implementation
 
-The [product manifesto](docs/architecture/ELIOT_RESEARCH.md) answers why this product exists and what
-must remain true. Keep it in the lead developer's context; do not copy it into each task.
+The [product manifesto](docs/architecture/ELIOT_RESEARCH.md) defines why Eliot Research exists and what must
+remain true. Keep it in the lead developer's context; do not copy it into each task.
 
 | Question | Read |
 |---|---|
 | What should change, and what should disappear? | [Implementation plan](docs/implementation/backend-entrypoints.md) |
-| How should an ordinary source-backed answer work? | [Ordinary answer](docs/implementation/research-full-answer-v1.md) |
-| How should explicitly requested deep research work? | [Deep research](docs/implementation/deep-research.md) |
-| Which existing code owns the behavior and data? | [Code and responsibility map](docs/implementation/dependency-map.md) |
-| Which storage/execution details matter for this change? | [Runtime integration](docs/implementation/runtime-contract.md) |
-| What may be reused from Perplexity and other systems? | [Donor register](docs/implementation/donors.md), [Perplexity review](docs/implementation/perplexity-donor.md) |
-| Which other technical note is relevant? | [Reference index](docs/implementation/README.md) |
+| How are sources stored, indexed and cited? | [Source lifecycle](docs/implementation/source-lifecycle.md) |
+| How does an ordinary answer work? | [Ordinary answer](docs/implementation/research-full-answer-v1.md) |
+| How does explicit deep research work? | [Deep research](docs/implementation/deep-research.md) |
+| Which existing code owns behavior/data? | [Code map](docs/implementation/dependency-map.md) |
+| Which storage/effect/access details matter? | [Runtime notes](docs/implementation/runtime-contract.md) |
+| What may be reused from donors? | [Donor register](docs/implementation/donors.md) |
+| Which other current note is relevant? | [Reference index](docs/implementation/README.md) |
 
-Select one outcome, inspect its callers, implement the smallest complete change and remove its predecessor.
-These are navigation links, not a sequence of approvals or a requirement to read every linked document.
-[AGENTS.md](AGENTS.md) owns coordination and check timing; [START-HERE](docs/START-HERE.md) explains context use.
+Select one complete outcome, inspect its real callers, implement the smallest replacement and remove its
+predecessor. These links are navigation, not approvals or a requirement to read historical files.
+[AGENTS.md](AGENTS.md) owns coordination/check timing; [START-HERE](docs/START-HERE.md) explains context use.
