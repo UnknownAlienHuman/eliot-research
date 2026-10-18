@@ -64,8 +64,11 @@ selected vendor's AI SDK provider.
 **Write/move:**
 
 - add one small AI SDK turn adapter inside `packages/cloudflare-model-transport`;
-- declare `@ai-sdk/provider` directly plus only selected provider packages, initially `@ai-sdk/openai` and
-  `@ai-sdk/anthropic`; add `@ai-sdk/openai-compatible` only for an actual retained route;
+- declare `@ai-sdk/provider` directly and only provider packages used by retained current routes:
+  `@ai-sdk/openai`, `@ai-sdk/anthropic`, `@openrouter/ai-sdk-provider` and
+  `@ai-sdk/openai-compatible` where selected;
+- reuse the current closed mapping of registered provider, `advertised_sdk`, API mode and exact custom/base
+  identity to construct the model; never dynamically import a catalog string;
 - extend `model-gateway-execution-contract.ts` with one action/final result and ordinary public text events;
 - add exact SDK/model-constructor, tool and stream capability to `model-gateway-transport-policy.ts`;
 - move existing stage-bound model-attempt reservation to stable run-turn identity in
@@ -85,17 +88,19 @@ Store every deep tool result by Eliot `turn_id` plus AI SDK `toolCallId`; never 
 normalized completed model outcome before executing a tool/report effect. Unknown paid outcome is not an automatic
 retry. A failed search/read/save never repeats the preceding model call.
 
-Pin/qualify exact package versions. Construct models from a closed switch over selected routes; never import a
-package named by catalog data. A custom route not representable through a qualified provider adapter is not eligible
-for deep tools or ordinary streaming yet. No raw-protocol fallback inside the loop.
+Pin/qualify exact package versions. Native OpenAI Responses, Anthropic Messages and OpenRouter chat are different
+route families. Generic/custom compatible routes remain eligible only after the pinned Cloudflare provider proves it
+reaches the exact registered provider/base with the required tools, usage and stream semantics. Retain one narrow raw
+adapter for a selected custom route the SDK cannot represent; it is not a fallback inside the ordinary/deep loop.
 
-For private-source traffic, disable Gateway payload logging. Response DLP buffers SSE; ordinary low-latency
-streaming uses request-only DLP or a separate streaming gateway. Store route capability once at admission; remove
-recurring qualification renewal after callers move.
+For the first implementation set AI SDK `maxRetries:0`, Gateway `retries.maxAttempts:1`, no fallback/dynamic route,
+paid Workflow-step retries zero and `skipCache:true` for private/dynamic research. Use bounded timeout/cancellation.
+Disable Gateway payload logging while retaining metadata. Response DLP buffers SSE; ordinary low-latency streaming
+uses request-only DLP or a separate streaming gateway. Store route capability once at admission; remove recurring
+qualification renewal after callers move.
 
 **Remove after migration:** selected-route callers of raw provider request/response projection, JSON-only
-compatibility readers, inner-JSON answer parsing and their exclusive fixtures. Retain one raw adapter only for an
-actual selected non-tool route the AI SDK cannot represent; it is not a universal fallback.
+compatibility readers, inner-JSON answer parsing and exclusive fixtures.
 
 **Result:** one small durable layer around the official SDK, not another provider framework.
 
