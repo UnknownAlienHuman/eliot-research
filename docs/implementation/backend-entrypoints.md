@@ -32,6 +32,25 @@ it to Rust, another package, tests or generated files is not a reduction. Do not
 checks/comments to improve the number. Reducing ordinary-path work and deleting maintained source are
 separate outcomes: retaining a deep Workflow can leave its source count unchanged.
 
+## Deletion-first rules (new work)
+
+The current profile is pre-release OWNER_SINGLE. **Git history is the archive**, not a mandate to ship every prototype decoder, protocol generation or inactive executor. Keep backward reading only for **observed retained production data or live in-flight work**, with a named consumer and a dated removal condition. No hypothetical clients, old test fixtures or unpublished proposals justify indefinite compatibility. Never delete actual user data, erasure records or a running paid attempt merely to reduce lines.
+
+For each bounded change: (1) identify active route, writer, reader and persisted data; (2) choose the one surviving implementation; (3) migrate live callers; (4) remove old exports, adapters, schemas/dispatch variants where no persisted reader needs them; (5) compile/lint affected code and report actual source delta. Avoid "compatibility wrappers" that simply forward old APIs. Existing migration files remain historical; do not add compensating migrations just to erase old migration history. For an unlaunched schema, simplify the next fresh-install baseline only when deployment/data status is proven.
+
+**Do not invent security theater.** Use Cloudflare Access identity, TLS, native R2 conditional writes, D1 constraints, provider credentials and existing exact citation digests where they solve concrete boundaries. No bespoke encryption/key rotation, signature registry, seven-dimensional access graph, duplicate hash proofs or per-list cryptographic validation without a demonstrated adversary and live consumer. Preserve required authentication, ownership separation, source integrity and deletion semantics; "remove crypto" is not permission to weaken those boundaries blindly.
+
+**Do not game counters.** 600-line file and 10k-package budgets are advisory maintainability signals, not reasons to create another npm package. Prefer deleting an entire unselected execution family to splitting it. For every new module, table, adapter or protocol version, name the existing code it replaces or the concrete selected feature that needs it. Otherwise do not add it.
+
+## Candidate order and retirement decisions
+
+1. **Remove canceled index-generation authority** from native search consumers; retire only writer-exclusive helpers. Do not preserve generation protocol solely for tests.
+2. **Collapse model renewal and ordinary-answer execution**; use one request/response contract and one original paid attempt. Do not reserve an already-used protocol version or introduce token replay storage.
+3. **Finish React/Vite cutover, then delete Astro/PWA and duplicate clients**, not merely hide them behind adapters. Keep a short rollback artifact, not permanently maintained dual source.
+4. **Retire unselected backup/restore execution and Drive Exchange**, keeping only actual erasure/retention readers and registered jobs.
+5. **Prune old exploratory stage executors** after checking persisted stage versions and running work; retain minimal read/settle adapters only for proven data. Old report viewing is not evidence that the old executor must stay.
+6. **Reduce bespoke governance/AST gates** that test source shape rather than observable behavior; retain TypeScript, lint, affected SQL integrity checks and product acceptance. Do not make agents generate claims or lineage commits.
+
 ## Structural changes
 
 Select one bounded caller/family from these changes. Independent changes can proceed together; package
