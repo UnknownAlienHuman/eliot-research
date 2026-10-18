@@ -1,6 +1,6 @@
 # Implementation references
 
-Keep the [product manifesto](../architecture/ELIOT_RESEARCH.md) in the lead developer's context. For one task,
+[START-HERE](../START-HERE.md) explains how to use the documentation without loading the archive. Keep the [product manifesto](../architecture/ELIOT_RESEARCH.md) in the lead developer's context. For one task,
 open the relevant row below and its actual source callers. Do not load every old audit, launch packet or status file.
 
 ## Current route
