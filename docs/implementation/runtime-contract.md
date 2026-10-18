@@ -1,92 +1,102 @@
 # Runtime integration notes
 
-Read only for changes involving these boundaries. Product scope lives in the
-[manifesto](../architecture/ELIOT_RESEARCH.md); [the plan](backend-entrypoints.md) selects implementation and
-[source lifecycle](source-lifecycle.md) owns intake/search/citation details.
+Read only for changes at these boundaries. Product purpose lives in the
+[manifesto](../architecture/ELIOT_RESEARCH.md); [the plan](backend-entrypoints.md) selects implementation;
+[source lifecycle](source-lifecycle.md) and [ordinary answer](research-full-answer-v1.md) own their flows.
 
-## Place work at its actual boundary
+## Authentication and untrusted data
 
-Authenticate owner requests through the existing Cloudflare Access/ingress verifier, including alternate entry
-routes; do not trust an asserted identity header. Connected clients retain their selected project/operation access.
-Use platform/library TLS and secret handling, not a custom credential or cryptographic proof system.
+Authenticate owner requests through the existing Cloudflare Access/ingress verifier, including alternate routes.
+Do not trust caller identity headers. Connected clients retain current project/operation disclosure checks.
 
-Validate untrusted request/provider data at entry and use typed values internally. Recheck mutable state only where
-a write, cancellation or actual disclosure can be invalidated. Do not pass a model/grant/deployment proof chain
-through every owner list. Keep private provider frames, reasoning and credentials out of browser output.
+Validate external request/provider data at entry and use typed values internally. Recheck mutable state only where
+a write, cancellation, deletion or actual disclosure can change the result. Do not pass a model/grant/deployment
+proof chain through every owner list.
 
-Source text is untrusted data. It cannot add tools, expand scope, change budgets/system instructions or mint a
-citation. Put stable application instructions before dynamic excerpts, generate citation labels on the server and
-validate every model-selected action against runtime scope/capability. Escaping prompt envelope syntax is useful;
-it is not the authorization boundary.
+Source text is untrusted data. It cannot add tools, change scope/budget/model/system instructions, create citation
+labels or authorize an effect. Keep prompts, reasoning, credentials and raw provider frames out of browser output.
+Escaping the prompt envelope is useful but is not authorization.
 
-Owner lists read a bounded indexed summary page. Their existing writer updates needed summary fields in the same
-change, without another summary service/database. Open report bodies and source bytes on demand. Preserve the same
-owner's observed draft on transient failure with a stale indication; no prior observation means unavailable.
-Sign-out/principal change and applicable deletion invalidate private state. Deployment renewal alone is not identity
-loss. Browser retirement belongs to [the cutover note](frontend-platform-migration.md).
+## Source and citation lifetime
 
-## Source revision and citation lifetime
+A run captures exact selected source revisions. A newer head or project detach does not rewrite an active owner's
+selection or a saved report. Purge/redaction/deletion can make bytes unavailable. External clients are rechecked at
+their current disclosure boundary.
 
-A run captures exact selected source revision refs. A newer source head or project detach does not silently replace
-those revisions for the owner. Purge/redaction/deletion can make them unavailable. An external connected client is
-rechecked at its real project/operation disclosure boundary.
+A citation is the retained readable revision plus exact byte range and optional display coordinate. Opening it
+authenticates the reader, loads that revision, applies current deletion/disclosure state and reads one bounded range.
+Never substitute the latest head. Content checksums identify observed stored bytes, not every function call.
 
-Use source/revision and the actual stored raw/readable locators. Keep existing locator strings or backfill them once;
-do not rename all objects to simplify a key builder. Project detach is not source deletion. Search/index state is
-derived and may be rebuilt without changing the source revision.
+## D1 and R2
 
-An ordinary citation is the retained readable revision plus exact UTF-8 byte range and optional display coordinate.
-Opening it authenticates the reader, loads those bytes and validates the range. Missing/ambiguous/purged content is
-unavailable; never substitute a newer revision. Keep a content checksum where it identifies real stored bytes, not
-as an envelope for every function, authorization or response.
+D1 keeps prepared statements, uniqueness/FK constraints and atomic expected-revision transitions. Dependent writes
+must share the successful predicate; zero changed rows is not an SQL error and must not leave partial metadata.
+No model/HTTP/R2 operation runs inside a D1 transaction.
 
-## Storage and effects
+Use native R2 conditional create for immutable data. Reconcile uncertain acknowledgement by observing the exact key
+and distinguishing same bytes, conflict and unavailable observation. Never substitute the expected checksum for an
+observed one or invent a signed-receipt service around a narrow storage operation.
 
-D1 keeps prepared statements, unique/FK constraints and atomic expected-revision changes. Dependent publication or
-outbox writes require a successful update: zero changed rows is not a SQL error and does not automatically roll back
-later statements. Use the existing writer/batch and predicates, not an application-only preflight or a new
-transaction framework. No model/HTTP/R2 operation runs inside the D1 transaction.
+Large immutable input/output is stored once behind a locator. Do not repeat source bodies, provider responses or
+complete candidate lists in every Workflow checkpoint.
 
-Use native R2 conditional create where overwrite would corrupt immutable data. R2 evaluates conditional writes
-atomically; a failed or uncertain acknowledgement is reconciled with bounded actual observation. Distinguish matching
-bytes, an observed conflict and unavailability. Never replace an observed checksum with the expected value. Reuse
-this narrow operation rather than signed receipts or another immutable-object service.
+## Provider execution and streaming
 
-Cloudflare AI Search upload/indexing is asynchronous. Its per-item status is projection readiness, not canonical
-source state. Direct readable-source operations do not wait for indexing. Provider snippets/scores locate candidates;
-exact bytes and current disclosure come from D1/R2.
+Use the existing model pin, route, operation and attempt identity. Cloudflare AI Gateway supports request retries,
+but Eliot's selected paid-call path currently sets `cf-aig-max-attempts: 1`; preserve that for ordinary/deep model
+effects unless the exact provider offers a proven idempotent continuation. Workflow retry is not permission to
+redispatch an uncertain provider call.
 
-Use the existing run/operation/attempt IDs. Native Workflow retry does not make arbitrary paid HTTP effects
-exactly-once. Recover the original attempt/output where possible or report unknown rather than silently invoke again.
-Cancellation prevents new work; retain a practical spend bound. A failed report save retries the save from retained
-output, not the model call.
+For ordinary answers, consume the selected provider stream incrementally, normalize public text/final usage and
+retain completed public Markdown once. Require a valid terminal provider event. HTTP 200, socket EOF or a browser
+disconnect alone is not completion.
 
-Queue accelerates existing persisted work. ResearchSession projects the same Workflow's state; it neither executes
-another graph nor stores a canonical transcript. Completed reports use saved-result readers or one-time conversion,
-not their historical executor.
+A failed browser delivery does not fail generation. A failed report save retries from retained public output.
+Raw provider payload logging stays disabled for private material. Semantic caching stays disabled unless exact
+scope/model/settings isolation is established; reopening a saved report already avoids regeneration.
 
-## Derived content and revisions
+## Workflow, Queue and ResearchSession
 
-Persisted report/Wiki text and its supporting source refs change through one expected-revision/head transition.
-Automatic link decoration is render-time or a new revision; it never rewrites old visible text by ID. Derived content
-whose contributors changed is marked stale/unavailable until deliberately refreshed. A threshold-only background
-refresh also needs a maximum age; otherwise rare changes can remain stale indefinitely.
+One Workflow owns a run. Queue accelerates existing persisted work. ResearchSession carries authorized coarse
+progress and provisional public text; it owns neither execution nor canonical output.
 
-Do not copy source bodies, every candidate or every token into checkpoints. Store a large immutable value once and
-carry its locator. Compact state may retain unresolved questions, accepted citation refs, counters and the original
-paid-output locator.
+Ordinary execution chooses its path before old handler/checkpoint assembly. Explicit deep research uses one bounded
+search/read/finish loop. Old executors serve only already-admitted runs while they settle; completed reports are
+read directly.
 
-## Limits are integration inputs
+A slow/disconnected ResearchSession subscriber cannot block generation or save. Do not persist every token/event.
+Reconnect reads canonical status/result and may resume new provisional deltas with an explicit gap.
 
-The source audit at `4e53d5e2` recorded 256-KiB research HTTP input against a 64-KiB persisted planning/receipt
-boundary (C03). Recheck actual constants in the changed path. Align producer, stored input, compact checkpoint and
-readers; a large input uses a stored reference rather than repeated embedded copies.
+## Run status and retained result
 
-Model token capacity, provider-request bytes, response bytes, checkpoint size and aggregate memory are different
-constraints. Reserve answer/output capacity before filling context. Do not load an entire corpus, encode it
-repeatedly or silently truncate FULL context. Whole admitted sources can be read without managed-search readiness.
+Status describes product behavior, not internal graph topology:
 
-C01/C02/C11 storage observation and C05/C10 freshness bounds remain source findings until implementation. They do
-not justify retaining unrelated audited subsystems. The [ordinary answer](research-full-answer-v1.md),
-[deep research](deep-research.md) and [TS/Rust/SQL note](../architecture/LANGUAGE_RUNTIME_CONTRACT.md) own their
-specific integration; none requires an all-family port or compatibility platform.
+- run kind: ordinary or deep;
+- phase: queued, preparing, generating, saving, completed, cancelled or failed;
+- safe failure/cancellation;
+- terminal result availability and report reference.
+
+Do not expose `next_stage_index`, stage 18, handler generation or a provider frame as the durable public contract.
+A temporary old-run adapter is removed after active old runs settle.
+
+Owner lists read bounded metadata. Report bodies and citation bytes load on demand. A freshness comparison is
+optional information and cannot hide an otherwise readable report.
+
+## Derived content
+
+Report/Wiki text and supporting citations change through one expected-revision/head transition. Automatic link
+decoration is render-time or a new revision. When a contributor changes/deletes, mark affected derived content
+stale and refresh on explicit request, selected maintenance or next meaningful reuse. Threshold-based maintenance
+also needs a maximum age.
+
+## Limits
+
+Model token window, serialized request bytes, response bytes, Workflow checkpoint size and Worker memory are
+different limits. Reserve output capacity before filling context. FULL rejects overflow; it never silently truncates.
+Whole selected sources can be read before search indexing finishes.
+
+The earlier C03 256-KiB HTTP versus 64-KiB persisted-input mismatch is a source finding, not a desired limit.
+Align the actual producer, stored locator/checkpoint and readers in the changed path.
+
+C01/C02/C11 storage observation and C05/C10 freshness findings remain bounded retained-code work. They do not
+justify preserving unrelated proof, generation or compatibility systems.
