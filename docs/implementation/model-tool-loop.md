@@ -47,21 +47,25 @@ is not eligible for deep tools/streaming yet; do not keep a speculative raw-prot
 Retain current route/model/billing selection and spend accounting around the call. The SDK handles provider wire
 formats; Eliot owns admission, durability, source scope, budgets, cancellation, evidence and saved output.
 
-## Do not use an SDK-owned agent loop
+## Do not add another harness
 
-Do **not** use `ToolLoopAgent`, `stopWhen` multi-step execution, automatic tool `execute` callbacks or a Cloudflare
-opinionated harness for the first implementation. They are useful general facilities, but Eliot needs a durable
-Workflow boundary between paid model turns and host-owned search/read effects.
+Do **not** use `ToolLoopAgent`, AI SDK `stopWhen` multi-step execution, automatic tool `execute` callbacks,
+`@cloudflare/think` or another Cloudflare agent harness for the first implementation.
+
+Think deliberately owns an agentic loop, conversation persistence, streaming recovery and Durable Object SQLite.
+Those are useful for a standalone chat agent but duplicate Eliot's current Workflow, D1/R2 run/result state and
+ResearchSession projection. `ThinkWorkflow` can run model reasoning inside Workflows, but adding it beside the
+existing research runtime still introduces a second harness. Reconsider only as a complete replacement after the
+selected simple path is measured—not as another layer.
 
 Use AI SDK as a **single-turn codec and transport**:
 
 - ordinary answer: one `streamText` call, no tools;
-- deep action/final decision: one `generateText` call with `search` and `read` tools that have schemas but no
-  automatic `execute` function;
-- Workflow validates/persists the returned action, executes the tool through existing code, persists the result,
-  then makes the next single model call.
+- deep decision: one `generateText` call with `search` and `read` schemas but no automatic `execute`;
+- Workflow validates/persists the action, executes one tool through existing code, persists the result, then makes
+  the next single model call.
 
-No recurring planning call, hidden SDK transcript owner or automatic internal retry loop.
+No recurring planning call, hidden SDK transcript owner or automatic internal loop.
 
 ## Normalized turn
 
@@ -100,7 +104,7 @@ Expose only `search` and `read` in the first deep slice. Final assistant text en
 - malformed/oversized arguments;
 - a call outside admitted scope;
 - incomplete/truncated tool input;
-- final classification when a client call remains pending.
+- final classification while a client call remains pending.
 
 A provider may include commentary beside one valid tool call. The turn is `action`; preserve the AI SDK response
 message for continuation and treat commentary only as optional progress, never final report text.
@@ -108,16 +112,17 @@ message for continuation and treat commentary only as optional progress, never f
 ## Ordinary answer streaming
 
 Use `streamText` without tools for the ordinary answer. Consume AI SDK's typed full stream, not a browser-specific
-second parser. Append text deltas to one retained output object and emit bounded public batches to ResearchSession.
-Completion requires the SDK terminal finish plus final usage; HTTP 200 or EOF alone is not completion.
+second parser. The paid model call remains inside the existing Workflow step. Its code appends public text deltas to
+one retained output and sends bounded provisional batches to ResearchSession; the DO is a relay, not the invocation
+owner. Cloudflare Workflows do not become a WebSocket transport merely because a step returns a stream.
 
-Retain provider/gateway metadata only for diagnostics and cost correlation. Do not forward raw events, reasoning,
-prompts or source bodies. A slow/disconnected subscriber cannot backpressure canonical output saving.
+Completion requires the SDK terminal finish plus final usage; HTTP 200 or EOF alone is not completion. Retain
+provider/gateway metadata only for diagnostics/cost correlation. Do not forward raw events, reasoning, prompts or
+source bodies. A slow/disconnected subscriber cannot backpressure canonical output saving.
 
-The first deep implementation does **not** stream its final report token by token. `generateText` returns either one
-action or final text atomically; Workflow progress remains visible and the saved report appears at completion. This
-avoids exposing prose that later turns out to precede a tool call. Add deep final streaming later only if a measured
-UX need justifies a separately constrained final-only call; do not add an extra call by default.
+The first deep implementation does **not** stream its final report token by token. `generateText` returns one action
+or final text atomically; Workflow progress remains visible and the saved report appears at completion. Add deep
+final streaming later only if a measured UX need justifies it; do not add an extra call by default.
 
 ## Manual continuation
 
@@ -126,8 +131,8 @@ For an action turn:
 1. persist the normalized action and bounded AI SDK response message;
 2. validate and execute one host-owned search/read;
 3. store the result by `(turn_id, call_id)` with normalized input, outcome and source/result locators;
-4. build the next AI SDK messages from compact current task state, the stored assistant tool-call message and the
-   matching tool result;
+4. build the next AI SDK messages from compact current task state, stored assistant tool-call message and matching
+   tool result;
 5. call `generateText` once again.
 
 Correlate by `call_id`, never array position or completion order. Replaying an observed action returns the same
@@ -143,7 +148,7 @@ Before dispatching a model turn, atomically reserve:
 - run/operation and original paid-attempt identity;
 - monotonic `turn_index` and Eliot `turn_id`;
 - selected model/provider/AI SDK driver and tool-schema revision;
-- digest of the normalized request and current budget counters.
+- digest of normalized request and current budget counters.
 
 Extend the existing model-attempt owner; do not create another ledger. Current attempt rows are tied to old stages,
 so move their useful reservation/result semantics to run-turn identity rather than preserving stage receipts.
@@ -154,9 +159,10 @@ the outcome is unknown. `providerMetadata.cloudflare` request/log/event IDs are 
 recoverable answer. Use exact provider readback only when the selected API actually supplies it; otherwise require an
 explicit new attempt. Never automatically pay again.
 
-AI SDK has its own transient retry behavior. Set/qualify it so a retry is allowed only before an outcome can be
-ambiguous and within the original Eliot turn reservation. A tool failure, ResearchSession failure or report-save
-failure never repeats the preceding model call.
+For the first implementation set AI SDK `maxRetries: 0`, use a non-fallback selected gateway/model route and set the
+paid Workflow step retry limit to zero. A network error after dispatch can be ambiguous; generic SDK/Workflow retry
+cannot prove safety. Enable a retry/fallback later only for a qualified exact idempotency/readback contract inside
+the same Eliot turn reservation. Tool, ResearchSession or report-save failure never repeats the model call.
 
 ## Context and compaction
 
@@ -199,11 +205,11 @@ are not a transparent substitute for provider-native tool semantics.
 
 Cloudflare AI Gateway response DLP buffers a complete SSE response before release. For ordinary low-latency
 streaming, use request-only DLP or a separately configured streaming gateway. Set
-`cf-aig-collect-log-payload: false` for private-source calls while retaining metadata/usage. Record the chosen
-gateway and payload-logging policy in route qualification.
+`cf-aig-collect-log-payload: false` for private-source calls while retaining metadata/usage. Record the selected
+gateway, no-fallback behavior and payload-logging policy in route qualification.
 
 `createAI` exposes `providerMetadata.cloudflare` including model/gateway and optional log/request/trace identifiers.
-Use these as diagnostics; do not create a second telemetry owner or infer saved completion from a gateway log.
+Use these as diagnostics; do not create a telemetry owner or infer completion from a gateway log.
 
 ## Route qualification
 
@@ -213,7 +219,7 @@ Qualify once when a route is connected/selected:
 - client-tool support, strict-schema behavior and parallel-call control;
 - ordinary `streamText` behavior and finish/usage metadata;
 - body/schema/output/context limits;
-- gateway, payload logging and DLP configuration;
+- gateway fallback/retry, payload logging and DLP configuration;
 - actual selected custom/base route support.
 
 Store the capability snapshot with the admitted run. Do not renew proof every turn. If a route cannot satisfy the
@@ -231,8 +237,8 @@ required behavior through the pinned SDK, do not offer that mode. No speculative
 6. Connect ordinary `streamText` to retained output/ResearchSession and deep `generateText` to
    `deep-research-loop.ts`.
 7. Delete selected-route callers of `model-gateway-provider-native-request.ts`,
-   `model-gateway-provider-native-response.ts` and other JSON-only readers. Retain a raw adapter only for an actual
-   selected route the AI SDK cannot represent; it is not a fallback inside ordinary/deep execution.
+   `model-gateway-provider-native-response.ts` and JSON-only readers. Retain a raw adapter only for an actual
+   selected route AI SDK cannot represent; it is not a fallback inside ordinary/deep execution.
 
 Do not create a provider-agnostic event framework, transcript database, tool marketplace, SDK wrapper package or
 another executor.
@@ -245,7 +251,7 @@ Exercise at least:
 - duplicate action/result replay;
 - multiple/unknown/malformed/oversized calls;
 - partial ordinary stream, disconnect, refusal, truncation and context exhaustion;
-- unknown paid-call outcome and exact readback where supported;
+- unknown paid-call outcome with SDK/Workflow retries disabled;
 - save failure after completed generation without a second model call;
 - source deletion/permission change between action and read;
 - document/tool-result prompt injection and private/public scope mixing;
