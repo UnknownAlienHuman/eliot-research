@@ -197,11 +197,15 @@ positive project relation, not a new report graph.
 
 1. read retained completed public output and the server label map;
 2. resolve only issued unambiguous labels; leave unknown labels unresolved;
-3. encode one bounded research-report object and its hash;
-4. conditionally create the deterministic R2 key;
-5. in one D1 transaction insert the immutable `GENERATED` revision, conditionally advance
+3. canonicalize/deduplicate accepted compact citations and derive `source_revision_refs_json` from them;
+4. encode one bounded research-report object and its hash;
+5. conditionally create the deterministic R2 key;
+6. in one D1 transaction insert the immutable `GENERATED` revision, conditionally advance
    `research_report.head_revision` and attach the exact revision to the originating run;
-6. read back revision/head/run result before marking the run completed.
+7. read back revision/head/run result before marking the run completed.
+
+The model cannot mint citations by printing a label that was not in the server map. Display anchors and quoted text
+are not authority; the exact server revision/range is canonical.
 
 D1 cannot transact with R2. If D1 fails after the object write, the object is unreferenced and may be reused by the
 same deterministic retry or cleaned later. Do not add two-phase commit, operation receipts, residency records or an
@@ -253,15 +257,21 @@ artifact objects, calls a model and reconciles another attempt. Replace it with 
 Manual edit:
 
 1. reads the exact current research-report revision;
-2. writes one complete bounded Markdown/citation object;
-3. inserts `origin_kind=MANUAL_EDIT` with no origin operation;
-4. conditionally advances `research_report.head_revision`.
+2. submits complete bounded Markdown, citation references and the expected head;
+3. server-resolves every citation against retained representation/range bounds and current owner/deletion/disclosure;
+4. rejects unknown, inaccessible, malformed or out-of-range refs;
+5. canonicalizes/deduplicates accepted citations and derives `source_revision_refs_json` from them;
+6. writes one immutable object;
+7. inserts `origin_kind=MANUAL_EDIT` with no origin operation and conditionally advances the head.
 
-A zero-row update is a conflict. The prior revision remains immutable. This avoids partially coherent section graphs.
+The browser may preserve/remove current report citations and add only references obtained through an explicit
+server source/citation selection path. It never supplies an authoritative source set, arbitrary byte range or quoted
+text. A zero-row head update is a conflict; the prior revision remains immutable.
 
 If AI-assisted revision is selected later, admit one normal model attempt over the chosen report/source refs, retain
-completed Markdown and write `origin_kind=AI_EDIT` with the exact origin operation. It does not get another section
-Workflow, report admission, child artifact graph or acceptance prerequisite.
+completed Markdown, resolve only the server-issued label map and write `origin_kind=AI_EDIT` with the actual origin
+operation. It does not get another section Workflow, report admission, child artifact graph or acceptance
+prerequisite.
 
 ## Presentation and reconnect
 
@@ -305,9 +315,10 @@ Inventory deployed retained reports. Convert each real saved report once:
 
 - preserve stable report ID/revision where practical;
 - read the existing verified Markdown;
-- convert EvidenceHandles to compact citation ranges;
+- convert and server-validate EvidenceHandles into compact citation ranges;
 - preserve originating operation, title, language and creation time;
 - assign `origin_kind=GENERATED` for existing generated results;
+- derive the saved source set from canonical converted citations;
 - do not invent an operation for a later manual revision;
 - write the one report object and new research-report rows;
 - verify hashes, counts and run/report associations.
@@ -350,8 +361,8 @@ Complete when a real owner journey proves:
 3. Disconnect/reconnect does not duplicate the provider call.
 4. Save failure retries from retained output.
 5. One research-report object/revision opens directly with compact citations.
-6. Manual edit creates one expected-head `MANUAL_EDIT` revision without a fake run; optional AI edit uses the same
-   generation/report owners and records its real origin operation.
+6. Manual edit creates one expected-head `MANUAL_EDIT` revision without a fake run or caller-minted citation; optional
+   AI edit uses the same generation/report owners and records its real origin operation.
 7. Status/history contain no stage-18, handler-generation, report-admission or publication-acceptance dependency.
 8. Retained reports are converted and the superseded ordinary/report/acceptance/COW cohorts are removed.
 
