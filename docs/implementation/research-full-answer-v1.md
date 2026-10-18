@@ -1,4 +1,4 @@
-# Ordinary answer: direct execution and compact report
+# Ordinary answer: direct execution and compact research report
 
 Checked 2026-10-18 against Eliot source at `3dd3a028`. This is the implementation contract for
 **Answer from sources**. It defines no new wire version, generic engine or compatibility family.
@@ -16,7 +16,7 @@ admit exact request and source revisions
 → prepare context once
 → one streamed model attempt
 → retain completed public Markdown once
-→ save one compact report revision
+→ save one research-report revision
 → reopen/edit the same report and exact citations
 ```
 
@@ -25,24 +25,24 @@ not construct the deep-research graph and does not require an inquiry protocol, 
 ledger, evidence freeze, qualification renewal, coverage ceremony or claim-audit pass.
 
 `method: "evidence_review"` selects [explicit deep research](deep-research.md). Deep and ordinary work share source
-reads, model transport, compact citations and the final report writer—not the old stage graph.
+reads, model transport, compact citations and the research-report writer—not the old stage graph.
 
 ## What the current code actually does
 
 | Current source | Observed behavior | Selected replacement |
 |---|---|---|
 | `apps/eliotr-web/src/app/ResearchPanel.tsx` | UI already distinguishes `lookup` and `evidence_review`. | Preserve that product choice; no new mode selector. |
-| owner client `research/runs/authority.ts` | V5 carries `method`, while status requires `next_stage_index=18`. | Keep V5; use run kind, product phase and report ref. |
+| owner client `research/runs/authority.ts` | V5 carries `method`, while status requires `next_stage_index=18`. | Keep V5; use run kind, product phase and research-report ref. |
 | Core `research-run-service.ts` | `lookup` becomes an installed inquiry protocol, planning sources/manifest, obligations and branch-handler generation. | Persist `ordinary` directly and skip that construction. |
 | Core `research-workflow.ts` | Every run calls `executeResearchWorkflowApplication`. | Dispatch ordinary/deep before old handler/checkpoint assembly. |
 | `research-workflow-application.ts` and `WorkflowCheckpointStore` | Investigation/scope/qualification replay and 18 stage attempts/checkpoints. | No new ordinary caller. Drain old admitted runs, then delete ordinary use. |
 | `research-model-prompt.ts` | Nested control/evidence JSON and `stream: false`. | Small prompt/request builder over admitted blocks and short labels. |
 | `model-gateway-execution.ts` and response decoders | Buffer and persist complete provider JSON, then decode it again downstream. | Normalize one provider stream and retain public Markdown once. |
-| `publication.ts`, `research-artifact-draft.ts`, `artifact-draft*.ts` | Reports require ArtifactSpec, EvidenceFreeze, dependency/allowed-reference manifests, section ledgers and verification receipts. | Replace report use with one report revision and one R2 object. |
+| `publication.ts`, `research-artifact-draft.ts`, `artifact-draft*.ts` | Reports require ArtifactSpec, EvidenceFreeze, dependency/allowed-reference manifests, section ledgers and verification receipts. | Replace report use with one research-report revision and one R2 object. |
 | migration `0041_research_report_admission.sql` | Report save is a policy-decision/outbox surface fenced to active stage 17. | Direct report commit after completed output; no dummy stage/admission. |
-| `artifact-publication*.ts`, migration `0098`, `ArtifactActions.tsx` | Separate acceptance decision, verification/currentness receipts, operation records/outbox and publication head synthesize `VERIFIED/ACCEPTED` from a DRAFT; base artifact storage separately retains `PUBLISHED`. | Delete. A saved report is usable; no truth-acceptance ceremony. |
-| Core `artifact-section-revise.ts` and COW packages | “Revise section” launches another Workflow, REPORT witness renewal, model call and child artifact graph. | Full report revision through the same writer; optional AI generation is one normal model attempt. |
-| `artifact-draft-read-service.ts` and client `evidence/report/manifest.ts` | Reconstruct historical scope/authorization and decode three reauthorization protocols. | Direct report authorization/read; freshness and citation opening separate. |
+| `artifact-publication*.ts`, migration `0098`, `ArtifactActions.tsx` | Separate acceptance decision, verification/currentness receipts, operation records/outbox and publication head synthesize `VERIFIED/ACCEPTED` from a DRAFT; base artifact storage separately retains `PUBLISHED`. | Delete. A saved research report is usable; no truth-acceptance ceremony. |
+| Core `artifact-section-revise.ts` and COW packages | “Revise section” launches another Workflow, REPORT witness renewal, model call and child artifact graph. | Full research-report revision through the same writer; optional AI generation is one normal model attempt. |
+| `artifact-draft-read-service.ts` and client `evidence/report/manifest.ts` | Reconstruct historical scope/authorization and decode three reauthorization protocols. | Direct research-report authorization/read; freshness and citation opening separate. |
 | `research-session.ts` | Only successful snapshot RPC replies can be sent. | Add one bounded typed phase/text channel; no transcript store. |
 
 ## Admission and dispatch
@@ -79,8 +79,8 @@ The ordinary Workflow needs four responsibilities, not eighteen stages:
    retrieval and exact bounded reads; build context once.
 2. **Generate** — execute one provider attempt, stream public Markdown, require a valid terminal event and retain the
    completed public output once.
-3. **Save** — resolve supplied labels, write one report object and commit one report revision/head/result.
-4. **Finish** — expose the report ref and terminal run state.
+3. **Save** — resolve supplied labels, write one research-report object and commit one revision/head/result.
+4. **Finish** — expose the research-report ref and terminal run state.
 
 They may be four durable steps or fewer when one atomic owner already combines work. Do not create a configurable
 step graph. Generate and save are separate retry units: a save failure must not repeat a paid model attempt.
@@ -144,9 +144,9 @@ event or repeat the body in Workflow state.
 
 A generation failure before recoverable completed output is failed/unknown and is not automatically redispatched.
 A bounded terminal partial output may be retained for honest cancellation/error display, but it is not a completed
-report.
+research report.
 
-## Replace the artifact proof bundle with one report revision
+## Replace the artifact proof bundle with one research-report revision
 
 The current report stack is not a generic writer worth preserving:
 
@@ -158,38 +158,49 @@ The current report stack is not a generic writer worth preserving:
 
 Do not fabricate these inputs for ordinary or deep reports.
 
-Add a direct report store inside the existing artifacts package, for example
-`packages/cloudflare-artifacts/src/report-store.ts`, with a current contract in
-`packages/contracts/src/report.ts`. Use the next D1 migration to create only:
+Add `packages/cloudflare-artifacts/src/research-report-store.ts` and one current contract in
+`packages/contracts/src/research-report.ts`. Use the next D1 migration to create only:
 
 ```text
-report
-  report_id, owner_principal_ref, head_revision, deleted_at, created_at, updated_at
+research_report
+  report_id, owner_principal_ref, head_revision,
+  deleted_at, created_at, updated_at
 
-report_revision
-  report_id, revision, run_id, title, summary, language,
+research_report_revision
+  report_id, revision,
+  origin_kind: GENERATED | MANUAL_EDIT | AI_EDIT,
+  origin_operation_id,
+  title, summary, language,
   object_key, object_sha256, object_size,
   source_revision_refs_json, created_at
 ```
 
-The immutable R2 report object contains:
+Constraints:
+
+- `origin_operation_id` is required for `GENERATED` and `AI_EDIT`;
+- it is absent for `MANUAL_EDIT`;
+- each non-null origin operation belongs to one research-report revision;
+- a manual edit never fabricates a research run;
+- a generated/AI-edited revision attaches its exact ref to the originating operation in the commit transaction.
+
+The immutable R2 object contains:
 
 - Markdown;
 - compact citation refs (`source_revision_ref`, representation, byte range, optional display anchor);
-- bounded generation metadata needed for inspection (provider/model/usage/finished time).
+- bounded generation/edit metadata needed for inspection.
 
 Use one object, not manifest + per-section body + dependency manifest + verification + export objects. Markdown
 headings provide sections in the view. Export renders the same Markdown. Project attribution is the admitted run's
 positive project relation, not a new report graph.
 
-### Save algorithm
+### Generated save algorithm
 
 1. read retained completed public output and the server label map;
 2. resolve only issued unambiguous labels; leave unknown labels unresolved;
-3. encode the one bounded report object and its hash;
+3. encode one bounded research-report object and its hash;
 4. conditionally create the deterministic R2 key;
-5. in one D1 transaction insert immutable `report_revision`, conditionally advance `report.head_revision` and
-   attach the exact report ref to the originating run;
+5. in one D1 transaction insert the immutable `GENERATED` revision, conditionally advance
+   `research_report.head_revision` and attach the exact revision to the originating run;
 6. read back revision/head/run result before marking the run completed.
 
 D1 cannot transact with R2. If D1 fails after the object write, the object is unreferenced and may be reused by the
@@ -199,16 +210,16 @@ outbox around an internal same-Worker save.
 A save retry starts from the retained public-output locator. It never calls the model. A head conflict is explicit;
 a zero-row expected-head update is not success.
 
-## Direct report read
+## Direct research-report read
 
 Change Core report routes, `ReportPanel.tsx` and the owner client together.
 
 Owner read:
 
 1. authenticate current owner;
-2. select exact non-deleted report revision owned by them;
-3. read exact R2 object and verify stored hash/size;
-4. return report ref, title, summary, language, Markdown and compact citations;
+2. select an exact `research_report_revision` through owner and non-deleted report state;
+3. read the exact R2 object and verify stored hash/size;
+4. return report ref, origin, title, summary, language, Markdown and compact citations;
 5. calculate source freshness separately and optionally.
 
 A connected client must prove a current explicit report/operation/project grant. Neither owner nor client read
@@ -225,26 +236,32 @@ acceptance decision, operation intent/attempt/receipt/outbox, publication receip
 base artifact schema separately includes `PUBLISHED`; the publication subsystem instead starts from a DRAFT and
 synthesizes `VERIFIED/ACCEPTED` through its own receipt and head.
 
-Remove this path. A generated report is a saved generated report, not an accepted fact. It is usable immediately.
-Editing it creates another revision; proposing selected material to Wiki/Inbox is a separate explicit action.
-Advisory freshness and inspectable citations expose uncertainty better than an “accepted” badge. Repository search
-finds no consumer for the `artifact.accepted` topic beyond its producer, so no integration must be replaced.
+Remove this path. A generated research report is a saved generated report, not an accepted fact. It is usable
+immediately. Editing it creates another revision; proposing selected material to Wiki/Inbox is a separate explicit
+action. Advisory freshness and inspectable citations expose uncertainty better than an “accepted” badge. Repository
+search finds no consumer for `artifact.accepted` beyond its producer, so no integration must be replaced.
 
 Delete `ArtifactActions`, artifact-product acceptance routes/client methods, `artifact-publication*.ts`, publication
 policy/readiness, migration `0098` report use and publication-only operation/outbox fixtures after conversion. Do not
 replace them with `accepted_at` or another status layer.
 
-## Full report revisions, not section COW
+## Full research-report revisions, not section COW
 
 Current “Revise this section” launches its own Workflow, renews REPORT/scope/source witnesses, creates COW child
 artifact objects, calls a model and reconciles another attempt. Replace it with one expected-head report revision.
 
-Manual edit writes one complete bounded Markdown/citation object and conditionally advances `report.head_revision`.
-A zero-row head update is a conflict. This preserves the old revision and avoids partially coherent sections.
+Manual edit:
 
-If AI-assisted revision is selected later, admit one ordinary model attempt over the chosen report/source refs,
-retain completed Markdown, and call the same report writer. It does not get another section Workflow, report
-admission, child artifact graph or acceptance prerequisite.
+1. reads the exact current research-report revision;
+2. writes one complete bounded Markdown/citation object;
+3. inserts `origin_kind=MANUAL_EDIT` with no origin operation;
+4. conditionally advances `research_report.head_revision`.
+
+A zero-row update is a conflict. The prior revision remains immutable. This avoids partially coherent section graphs.
+
+If AI-assisted revision is selected later, admit one normal model attempt over the chosen report/source refs, retain
+completed Markdown and write `origin_kind=AI_EDIT` with the exact origin operation. It does not get another section
+Workflow, report admission, child artifact graph or acceptance prerequisite.
 
 ## Presentation and reconnect
 
@@ -256,7 +273,7 @@ ResearchSession relays bounded public phase/text batches.
 - no per-token D1/R2 journal or permanent transcript;
 - a monotonic offset detects a presentation gap but is not an authority receipt;
 - reconnect reads canonical status/report and may receive only new deltas with an explicit gap;
-- once saved, provisional text is replaced by the canonical report.
+- once saved, provisional text is replaced by the canonical research report.
 
 SurfSense's current local chat is useful only for execution/presentation separation, disconnect-safe finalization and
 batching. Do not copy its transcript database, local model/index stack or in-memory replay list of every frame.
@@ -276,7 +293,7 @@ Current status exposes the retired graph. Replace it with:
 - `run_kind: ordinary | deep`;
 - `phase: queued | preparing | generating | saving | completed | cancelled | failed`;
 - safe failure/cancellation;
-- report availability/reference.
+- research-report availability/reference.
 
 Status reads the canonical run/result owner directly. It does not require stage 18, handler-generation membership or
 historical executor reconstruction. History reads bounded D1 summary fields and never opens report R2 or calculates
@@ -286,11 +303,13 @@ freshness.
 
 Inventory deployed retained reports. Convert each real saved report once:
 
-- preserve stable report ID/revision when practical;
+- preserve stable report ID/revision where practical;
 - read the existing verified Markdown;
 - convert EvidenceHandles to compact citation ranges;
-- preserve run, title, language and creation time;
-- write the one report object and new report/revision rows;
+- preserve originating operation, title, language and creation time;
+- assign `origin_kind=GENERATED` for existing generated results;
+- do not invent an operation for a later manual revision;
+- write the one report object and new research-report rows;
 - verify hashes, counts and run/report associations.
 
 Old acceptance/publication receipts are not migrated as product truth. Retain a bounded conversion diagnostic only
@@ -314,7 +333,7 @@ behavior remain until their own callers move.
 
 - **WeKnora:** expected-version update and body-free revision history; reject blind auto-link/meta writes.
 - **ThinkEx:** readable fallback is useful, but provider extraction and publication share one retryable Workflow step.
-  Eliot separates paid generation and save.
+  Eliot separates paid generation and report save.
 - **SurfSense:** run outlives follower, finalization survives disconnect, adjacent deltas batch; reject transcript and
   replay machinery.
 - **Cloudflare:** conditional R2 write + short D1 transaction + granular Workflow steps are sufficient. They do not
@@ -330,8 +349,9 @@ Complete when a real owner journey proves:
 2. One provider attempt emits progressive public text and retains one completed Markdown object.
 3. Disconnect/reconnect does not duplicate the provider call.
 4. Save failure retries from retained output.
-5. One report object/revision opens directly with compact citations.
-6. Manual edit creates one expected-head full revision; optional AI edit uses the same generation/report owners.
+5. One research-report object/revision opens directly with compact citations.
+6. Manual edit creates one expected-head `MANUAL_EDIT` revision without a fake run; optional AI edit uses the same
+   generation/report owners and records its real origin operation.
 7. Status/history contain no stage-18, handler-generation, report-admission or publication-acceptance dependency.
 8. Retained reports are converted and the superseded ordinary/report/acceptance/COW cohorts are removed.
 
