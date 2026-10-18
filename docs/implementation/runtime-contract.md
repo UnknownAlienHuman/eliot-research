@@ -107,10 +107,10 @@ Markdown output and then calls this same writer. It does not create a section CO
 A report revision may record origin metadata such as generated/edited and the producing model/run. It must not expose
 `VERIFIED`, `ACCEPTED` or `PUBLISHED` as claims that the prose is true.
 
-The current artifact stack stores `PUBLISHED` and then runs a second publication system with owner acceptance
-decisions, verification/currentness arrays, operation receipts/outbox and a publication head whose disposition is
-`ACCEPTED`. Repository search finds the `artifact.accepted` topic only at its producer. Remove this system during
-report cutover.
+The base artifact schema separately contains a stored `PUBLISHED` status. The publication subsystem instead starts
+from a DRAFT and adds owner acceptance decisions, verification/currentness arrays, operation receipts/outbox and a
+publication head whose public disposition is `VERIFIED/ACCEPTED`. These are parallel status systems. Repository
+search finds the `artifact.accepted` topic only at its producer. Remove the publication system during report cutover.
 
 A completed report is usable immediately. User confidence comes from citations, visible limitations, freshness and
 edits. Explicitly proposing content to Wiki/Inbox is a separate target-specific action. Do not replace publication
