@@ -14,7 +14,7 @@ responsible for an operation, not an agent reservation or permission gate.
 | Citation / EvidenceHandle | Server-resolved source revision/range, not a model assertion or second knowledge database |
 | Run | User-requested research job and durable status/result identity |
 | Paid model turn | One reserved provider invocation inside a run; reconnect/reopen does not allocate another turn |
-| Tool call/result | Provider call identity plus one host-validated search/read result; never correlated by array position |
+| Tool call/result | AI SDK `toolCallId` plus one host-validated search/read result; never correlated by array position |
 | Report / Wiki / Inbox | Saved output, reusable knowledge and proposal review sharing content/revision machinery |
 | Connected agent / task | External worker and assigned work/result, not distributed source ownership |
 | ResearchSession | Authorized progress/provisional-text projection, not executor or canonical answer |
@@ -32,12 +32,13 @@ All paths are repository-relative. Inspect imports from these anchors instead of
 | Report reopen / freshness | `packages/cloudflare-artifacts/src/artifact-draft-read-service.ts`; navigation `source-revision-freshness.ts` | Authorize/read saved report separately from optional head comparison; citation open is another operation |
 | Run admission | `apps/eliotr-core/src/research-run-service.ts`; `packages/owner-api-client/src/research/runs/authority.ts` | Current v5 request, selected scope/route/budgets and original attempt identity |
 | Durable execution | `apps/eliotr-core/src/research-workflow.ts`; `packages/cloudflare-research-runtime/src/research-workflow-application.ts` | One native Workflow; branch ordinary/deep work before obsolete handler assembly |
-| Model request/response | `packages/cloudflare-model-transport/src/model-gateway-provider-native-request.ts`; `model-gateway-provider-native-response.ts`; `model-gateway-execution-contract.ts` | One provider-native action/final seam for atomic tool turns and final SSE; replace the completed-text-only contract |
-| Paid-turn reservation | `packages/cloudflare-model-execution/src/model-attempt-reservation-store.ts` and D1 attempt writer | Stable run-turn identity, normalized request digest and captured result locator; remove old stage coupling rather than add a ledger |
+| AI SDK model turn | new small adapter in `packages/cloudflare-model-transport`; `agents/models/ai-sdk`; `ai` `generateText`/`streamText` | One single-turn codec/transport through existing `AI` binding; Workflow owns multi-turn durability |
+| Raw legacy model transport | `model-gateway-provider-native-request.ts`; `model-gateway-provider-native-response.ts` | Migrate selected routes to AI SDK, then delete their raw projections/readers. Retain only an observed unsupported route, never a loop fallback |
+| Paid-turn reservation | `packages/cloudflare-model-execution/src/model-attempt-reservation-store.ts` and D1 attempt writer | Stable run-turn identity, normalized request digest and result/continuation locators; remove old stage coupling rather than add a ledger |
 | Context and prompt | `packages/policy/src/context-compiler.ts`; `packages/cloudflare-model-control/src/research-model-prompt.ts` | Prepare admitted passages once; extract useful packing from freeze/proof requirements |
-| Ordinary answer | `research-full-answer-v1.md`; existing output/artifact writers | One synthesis, retained final output, exact citations and reopen |
-| Explicit deep loop | new `packages/cloudflare-research-runtime/src/deep-research-loop.ts`; `deep-research.md` | One bounded reasoning controller using current Workflow/search/read/model/save owners |
-| Progress / provisional text | `apps/eliotr-core/src/research-session.ts`; owner-client session projection | Snapshot plus authorized bounded events; no dispatch/retry or token journal |
+| Ordinary answer | `research-full-answer-v1.md`; existing output/artifact writers | One `streamText` synthesis, retained output, exact citations and reopen |
+| Explicit deep loop | new `packages/cloudflare-research-runtime/src/deep-research-loop.ts`; `deep-research.md` | Bounded manual loop of single `generateText` turns using current Workflow/search/read/save owners |
+| Progress / provisional ordinary text | `apps/eliotr-core/src/research-session.ts`; owner-client session projection | Snapshot plus authorized bounded events; no dispatch/retry or token journal |
 | Citation resolution | `packages/cloudflare-evidence/src/`; resolver composition in `research-semantic-server.ts` | Resolve actual source ranges through existing evidence/content adapters, not a donor registry |
 | Managed search | `packages/cloudflare-ai/src/project-search.ts`; `research-retrieval-composition.ts` | Native search plus source/project filtering; remove canceled generation registry/duplicate lanes |
 | Reports / Wiki | `packages/cloudflare-artifacts/src/`; `packages/cloudflare-wiki/src/` | Existing body/revision/head writers used by run materialization and Inbox publication |
@@ -52,7 +53,7 @@ seven-domain identities, historical codecs or package layers. [Owner reads](owne
 D1 Core holds source/project metadata, run/task state, model-turn reservation/result references and mutable heads.
 R2 holds source/report/large output bytes. AI Search and retained lexical views are derived locators. Queue delivers
 persisted work. Workflow owns durable run progression. ResearchSession and browser query state are projections,
-not durable authorities.
+not durable authorities. AI SDK/provider objects are transport code, not state owners.
 
 Core is the sole deployable Worker and binds platform I/O. Browser code calls the owner API client; it does not
 import server bindings. Pure algorithms need no I/O types. A small application function may live with its callers;
