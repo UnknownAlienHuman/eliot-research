@@ -14,7 +14,8 @@ It is not a package blueprint and does not require preserving every named layer.
 | Citation | Compact source-revision/range reference stored with retained output |
 | Run / provider attempt | Requested work and its actual paid invocation; reconnect does not allocate another |
 | Public output | Completed model Markdown retained before report saving |
-| Report | Revisioned saved Markdown plus compact citations; not an execution manifest or proof bundle |
+| Report | Revisioned saved Markdown plus compact citations; not an execution manifest, proof bundle or truth certificate |
+| Report edit | A new full report revision under expected-head CAS; not section COW or another research engine |
 | Wiki / Inbox | Reused content and proposed changes; they may share simple revision helpers, not the old artifact proof graph |
 | ResearchSession | Authorized progress/provisional-text projection, not executor or result store |
 | Connected agent / task | External worker and task/result, not a source-ownership federation protocol |
@@ -35,6 +36,8 @@ It is not a package blueprint and does not require preserving every named layer.
 | Current report materialization | `packages/cloudflare-research/src/research-artifact-draft.ts`, `research-materialize-result.ts`; `packages/cloudflare-artifacts/src/artifact-draft*.ts`; migrations `0032`, `0041` | Replace, do not wrap. Add a small report writer/reader in `packages/cloudflare-artifacts/src/report-store.ts` and one current report DTO in `packages/contracts/src/report.ts` |
 | Current report contract | `packages/contracts/src/publication.ts` | Remove report dependence on ArtifactSpec, section contracts, EvidenceFreeze, dependency manifests and verification receipts |
 | Current report storage | `artifact_revision`, `artifact_draft_reservation/head/binding/object`, `research_report_admission` | Convert retained reports to `report` + `report_revision`; one R2 object contains Markdown/citations; one expected-head D1 commit |
+| Current report acceptance | `apps/eliotr-web/src/app/ArtifactActions.tsx`; owner client `studio/artifact.ts`; `artifact-publication*.ts`; migration `0098_artifact_publication_authority.sql` | Remove owner-acceptance decisions, verification/currentness receipts, publication head/mutation guard and `artifact.accepted` outbox. A saved report is usable; explicit Wiki/Inbox reuse is separate |
+| Current report revision | Core `artifact-section-revise.ts`; `artifact-report-admission.ts`; cloudflare-research/artifacts COW modules and revise Workflow tables | Replace section COW/model/proof workflow with a full report revision. AI-assisted revision, when selected, generates retained Markdown then calls the same report writer |
 | Current report read | `artifact-draft-read-service.ts`, `artifact-draft-reauthorization.ts`, `artifact-draft-read-authority.ts`; owner client `evidence/report/manifest.ts` | Direct report authorization/readback; optional freshness and citation opening are separate operations; remove v1/v2/v3 reauthorization DTOs |
 | Recent runs/reports | `packages/cloudflare-research-runtime/src/research-run-list.ts`; client history modules | Stored run/report summaries and continuation; no Workflow/checkpoint/admission reconstruction for a list |
 | Deep research | `packages/cloudflare-research-runtime/src/`; existing Workflow/search/read/model/save owners | Add one bounded search/read/finish loop and use the same report writer; delete old branch/stage graph after drain |
@@ -46,6 +49,11 @@ It is not a package blueprint and does not require preserving every named layer.
 The target report files above are concrete replacement locations inside existing packages, not a new content
 platform. Extract a shared revision helper only after report and Wiki both use the same small operation and the
 helper removes code.
+
+The old publication layer deliberately maps a stored `PUBLISHED` artifact to a separate public
+`VERIFIED/ACCEPTED` disposition. That second status system is not corruption to preserve: it is the acceptance
+platform being removed. The report DTO may record that a revision was generated or edited; neither label certifies
+truth.
 
 Names in current source describe the old implementation, not permanent product concepts. A replacement is complete
 only when callers move and the superseded exports, tests, packages and schema are removed.
@@ -60,7 +68,8 @@ Workflow owns durable execution; ResearchSession and browser query state are pro
 
 For a report, R2 immutable object creation precedes one D1 revision/head/result transaction. No D1 transaction
 contains network/R2/model work, and no report receipt/outbox is required when the same Worker is committing its own
-result. A queue outbox remains only for a real asynchronous delivery consumer.
+result. A queue outbox remains only for a real asynchronous delivery consumer. Repository search currently finds
+`artifact.accepted` only at its producer, not at a consuming integration.
 
 Core remains the sole deployable Worker. Browser code uses the one owner client and never imports server bindings.
 A pure helper needs no port, repository package or cryptographic envelope. When consolidating, update callers,
