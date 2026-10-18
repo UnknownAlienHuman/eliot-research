@@ -72,18 +72,20 @@ Use [the ordinary-answer contract](research-full-answer-v1.md).
 
 **Change**
 
-- `apps/eliotr-web/src/app/ResearchPanel.tsx`, `ReportPanel.tsx`;
-- owner client `research/runs/`, `research/session-projection/` and the current report client;
-- `apps/eliotr-core/src/research-run-service.ts`, `research-workflow.ts`, `research-session.ts`;
+- `apps/eliotr-web/src/app/ResearchPanel.tsx`, `ReportPanel.tsx`, `ArtifactActions.tsx`;
+- owner client `research/runs/`, `research/session-projection/`, report and artifact-product modules;
+- `apps/eliotr-core/src/research-run-service.ts`, `research-workflow.ts`, `research-session.ts`,
+  `artifact-product-http.ts`, `artifact-section-revise.ts` and report-admission composition;
 - `packages/cloudflare-research-runtime/src/` ordinary dispatch/status;
 - `packages/policy/src/context-compiler.ts`;
 - model prompt/HTTP/execution/response code under `cloudflare-model-control` and
   `cloudflare-model-transport`;
 - `packages/contracts/src/publication.ts` and the report DTO;
 - `packages/cloudflare-research/src/research-artifact-draft.ts`,
-  `research-materialize-result.ts`, report admission and their callers;
-- `packages/cloudflare-artifacts/src/artifact-draft*.ts`;
-- D1 report/artifact migrations and current owner/delegated report readers.
+  `research-materialize-result.ts`, report admission and artifact COW callers;
+- `packages/cloudflare-artifacts/src/artifact-draft*.ts`, `artifact-publication*.ts`,
+  `artifact-product-service.ts`;
+- D1 report/artifact/publication migrations and current owner/delegated report readers.
 
 Preserve V5 execution intent:
 
@@ -98,6 +100,12 @@ The current artifact writer is not reusable target infrastructure. `ArtifactRevi
 dependency manifest and section verification. `artifact_draft_*` adds reservations, planned-object receipts,
 residency records and an outbox. `research_report_admission` is fenced to stage 17. Replace this cohort instead of
 supplying dummy proof objects.
+
+The separate publication/acceptance layer is also not a retained product requirement. It adds owner acceptance
+decisions, verification/currentness arrays, operation intent/attempt/receipt/outbox, publication receipts and a
+second publication head. Its only repository-visible `artifact.accepted` topic has no consumer outside the producer.
+An “accepted” flag does not make model prose true. A completed generated report is saved and usable immediately;
+editing or explicitly proposing material to Wiki/Inbox are the meaningful owner actions.
 
 Selected report state:
 
@@ -123,10 +131,15 @@ Read the exact revision directly. Owner access checks current ownership/deletion
 check their current selected operation/project grant. Source freshness is optional. Citation opening is a separate
 bounded source-revision read. Neither read reconstructs the producing Workflow or original scope lease.
 
-After converting retained reports and switching current callers, delete the old artifact draft/admission/freeze/
-manifest/verification cohort and its protocol generations. Do not retain dual report readers.
+Manual editing writes a complete new report revision with expected-head CAS. An explicitly requested AI revision
+may generate new Markdown through the normal model-attempt owner and then use the same report writer; it does not
+need section COW, a separate revision Workflow or renewed historical proof witnesses.
 
-**Result:** source → progressive answer → one saved report object → exact citation → reopen.
+After converting retained reports and switching current callers, delete the old artifact draft/admission/freeze/
+manifest/verification/publication/COW cohort and its protocol generations. Do not retain dual report readers or an
+acceptance-status client.
+
+**Result:** source → progressive answer → one saved report object → exact citation → reopen/edit/reuse.
 
 ## 4. One explicit deep-research loop
 
@@ -160,6 +173,8 @@ Use [owner reads](owner-read-paths.md) as separate caller-complete changes.
 - **Report:** read the compact report revision directly. Freshness failure cannot hide content.
 - **Edit:** write a new full-body revision with one expected-head transition. Link decoration is render-time or
   another revision, never an in-place rewrite.
+- **Reuse:** an explicit Wiki/Inbox proposal is a separate product action; it does not require first minting an
+  artifact acceptance receipt.
 
 Mark affected derived output stale and refresh on explicit request, selected maintenance or meaningful reuse.
 Never substring-match or union contributor sets so deleted support reappears.
@@ -190,6 +205,8 @@ Each row is a caller-driven replacement, not a preservation list.
 |---|---|---|
 | Source residency/ownership | Source/revision + actual locators | Seven-domain derivation, transfer and proof machinery |
 | Report/artifact drafts | Report/revision/head, one R2 object, compact citations | EvidenceFreeze, manifests, section receipts, residency objects, stage-17 admission |
+| Artifact acceptance/publication | Direct saved report; explicit edit/Wiki proposal | Acceptance decisions, verification/currentness receipts, publication head/outbox/UI |
+| Artifact section revision | Full report revision through the same writer | Section COW Workflow, REPORT witness renewal and child artifact graph |
 | Historical research executors | Settle active attempts; direct saved-result readers | Old factories, dispatch, codecs and fixtures |
 | Ordinary inquiry protocol | Direct ordinary mode | Lookup obligations/planning/branch handler and stage-18 status |
 | Backup/restore | Ordinary downloads and credential/erasure work still used | Unselected backup/restore execution platform |
