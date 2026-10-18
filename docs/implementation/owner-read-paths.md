@@ -189,17 +189,25 @@ child artifact, invokes a model and reconciles another attempt state. That is an
 Selected manual edit:
 
 1. read exact current research-report revision;
-2. submit bounded complete Markdown/citation state plus expected head;
-3. create one immutable object;
-4. insert one `research_report_revision` with `origin_kind=MANUAL_EDIT` and no origin operation;
-5. conditionally move `research_report.head_revision`; zero affected rows is a conflict.
+2. submit bounded complete Markdown plus citation references and expected head;
+3. server-resolve every citation against the retained representation, range bounds, current report owner and actual
+   source deletion/disclosure; reject unknown, inaccessible, malformed or out-of-range references;
+4. canonicalize/deduplicate accepted citations and derive `source_revision_refs_json` from them—the browser never
+   supplies that source set as authority;
+5. create one immutable object;
+6. insert one `research_report_revision` with `origin_kind=MANUAL_EDIT` and no origin operation;
+7. conditionally move `research_report.head_revision`; zero affected rows is a conflict.
+
+The browser may preserve/remove citations from the current report and add only references obtained through an
+explicit server source/citation selection path. It cannot mint a citation by choosing bytes or supplying quoted
+text. Display text and anchors are presentation; the server's exact revision/range is canonical.
 
 No in-place mutation of body/provenance and no section child graph. Reports are bounded generated documents; a full
 body is the simplest coherent edit unit.
 
 If AI-assisted revision is selected, admit one explicit model attempt against the chosen report/source refs, retain
-its completed Markdown, then write `origin_kind=AI_EDIT` with the exact origin operation. It does not get a COW
-Workflow, report-admission witness, section ledger or acceptance prerequisite.
+its completed Markdown, resolve only the server-issued label map, then write `origin_kind=AI_EDIT` with the exact
+origin operation. It does not get a COW Workflow, report-admission witness, section ledger or acceptance prerequisite.
 
 Wiki should follow the same expected-version rule even before storage is consolidated. WeKnora's useful pattern is
 `expected version → snapshot/write atomically` and body-free revision listings. Do not copy its auto-link/meta
@@ -216,6 +224,7 @@ Before destructive migration, inspect deployed retained rows. Convert each real 
 - read the verified current Markdown and compact/convert its citations;
 - preserve originating operation for generated revisions, title, language and creation time;
 - assign `GENERATED`; do not fabricate an operation for later manual revisions;
+- derive the saved source revision set from converted canonical citations;
 - write the new immutable object and research-report rows;
 - verify object hashes/counts and run/report associations.
 
@@ -244,7 +253,8 @@ No donor code or dependency is imported.
 
 During implementation use scoped compile/lint. After assembly exercise empty projects, independent pagination,
 EXCEPT filtering, save failure after completed generation, report head conflicts, unavailable optional freshness,
-65 changed sources, actual access/deletion failures, manual edit conflict and conversion of retained reports.
+65 changed sources, forged/out-of-range edit citations, actual access/deletion failures, manual edit conflict and
+conversion of retained reports.
 
 Complete means the new writer/readers/edits work through real callers and the old report artifact, acceptance and COW
 cohorts are gone—not hidden behind adapters.
