@@ -40,7 +40,7 @@ reads, model transport, compact citations and the final report writer—not the 
 | `model-gateway-execution.ts` and response decoders | Buffer and persist complete provider JSON, then decode it again downstream. | Normalize one provider stream and retain public Markdown once. |
 | `publication.ts`, `research-artifact-draft.ts`, `artifact-draft*.ts` | Reports require ArtifactSpec, EvidenceFreeze, dependency/allowed-reference manifests, section ledgers and verification receipts. | Replace report use with one report revision and one R2 object. |
 | migration `0041_research_report_admission.sql` | Report save is a policy-decision/outbox surface fenced to active stage 17. | Direct report commit after completed output; no dummy stage/admission. |
-| `artifact-publication*.ts`, migration `0098`, `ArtifactActions.tsx` | Separate acceptance decision, verification/currentness receipts, operation records/outbox and publication head project stored `PUBLISHED` into `VERIFIED/ACCEPTED`. | Delete. A saved report is usable; no truth-acceptance ceremony. |
+| `artifact-publication*.ts`, migration `0098`, `ArtifactActions.tsx` | Separate acceptance decision, verification/currentness receipts, operation records/outbox and publication head synthesize `VERIFIED/ACCEPTED` from a DRAFT; base artifact storage separately retains `PUBLISHED`. | Delete. A saved report is usable; no truth-acceptance ceremony. |
 | Core `artifact-section-revise.ts` and COW packages | “Revise section” launches another Workflow, REPORT witness renewal, model call and child artifact graph. | Full report revision through the same writer; optional AI generation is one normal model attempt. |
 | `artifact-draft-read-service.ts` and client `evidence/report/manifest.ts` | Reconstruct historical scope/authorization and decode three reauthorization protocols. | Direct report authorization/read; freshness and citation opening separate. |
 | `research-session.ts` | Only successful snapshot RPC replies can be sent. | Add one bounded typed phase/text channel; no transcript store. |
@@ -222,7 +222,8 @@ from the browser contract. Citation opening remains a separate source-revision/r
 
 `ArtifactActions` currently asks the owner to accept a saved report, then rechecks all evidence and records an owner
 acceptance decision, operation intent/attempt/receipt/outbox, publication receipt and second publication head. The
-same report therefore has storage `PUBLISHED` and public `VERIFIED/ACCEPTED` status systems.
+base artifact schema separately includes `PUBLISHED`; the publication subsystem instead starts from a DRAFT and
+synthesizes `VERIFIED/ACCEPTED` through its own receipt and head.
 
 Remove this path. A generated report is a saved generated report, not an accepted fact. It is usable immediately.
 Editing it creates another revision; proposing selected material to Wiki/Inbox is a separate explicit action.
