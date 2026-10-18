@@ -1,29 +1,71 @@
-# Model tool loop: one action per turn, exact recovery
+# Model turns: AI SDK at the edge, durable state in Eliot
 
-Checked 2026-10-18 against Eliot `d1098123`, current Cloudflare AI Gateway documentation and the
-provider-native OpenAI Responses and Anthropic Messages contracts. This is implementation guidance for
+Checked 2026-10-18 against Eliot `d1098123`, Cloudflare Agents/AI Gateway documentation, AI SDK v7 and the
+provider-native OpenAI/Anthropic contracts. This is implementation guidance for
 [ordinary answers](research-full-answer-v1.md) and [explicit deep research](deep-research.md), not a new product
 layer. It changes no runtime by itself.
 
-## The current transport cannot run the selected design
+## Current gap
 
-The existing transport is a completed-text adapter:
+The existing Eliot transport is a completed-text compatibility adapter:
 
 - `model-gateway-provider-native-request.ts` accepts fixed message/request keys, forces OpenAI Responses
-  `stream: false`, and has no client-tool definitions or tool-result input;
-- `model-gateway-provider-native-response.ts` buffers `application/json`, accepts completed assistant text and
-  rejects OpenAI function-call items and Anthropic `tool_use` blocks;
-- `model-gateway-execution-contract.ts` returns only `assistant_content`, not an action/final union;
+  `stream: false`, and has no tools or tool-result input;
+- `model-gateway-provider-native-response.ts` buffers JSON, accepts completed assistant text and rejects OpenAI
+  function calls and Anthropic `tool_use` blocks;
+- `model-gateway-execution-contract.ts` returns only `assistant_content`;
 - `model-gateway-transport-policy.ts` does not qualify tool or stream capability;
-- `apps/eliotr-core/src/research-session.ts` only serves a read-only snapshot RPC and rejects arbitrary frames.
+- `apps/eliotr-core/src/research-session.ts` exposes only a read-only snapshot RPC.
 
-Therefore neither ordinary incremental text nor the deep search/read loop can be implemented by toggling one
-flag or repeatedly calling the current decoder. Replace the narrow request/response seam and its real callers;
-do not add a second transport beside it.
+Do not extend this by hand-writing another complete OpenAI/Anthropic request mapper and SSE parser. Eliot already
+pins `agents@0.27.0` and `ai@7.0.136`; the lock resolves `@ai-sdk/provider@4.0.26`; Core already has an `AI` binding.
+Cloudflare's `agents/models/ai-sdk` `createAI()` provider supports AI SDK v7 `generateText`, `streamText`, tools,
+structured output and routing vendor model objects through AI Gateway.
 
-## Selected turn contract
+## Selected stack
 
-A paid model turn produces exactly one normalized outcome:
+Use the installed official stack first:
+
+```text
+Eliot run/Workflow state
+  -> one small model-turn adapter in cloudflare-model-transport
+  -> AI SDK v7 generateText / streamText
+  -> agents/models/ai-sdk createAI({ binding: env.AI })
+  -> selected vendor AI SDK model
+  -> Cloudflare AI Gateway
+```
+
+Declare `@ai-sdk/provider` directly and add only the provider packages selected by current product routes, initially
+`@ai-sdk/openai` and `@ai-sdk/anthropic`. Add `@ai-sdk/openai-compatible` only for an actual retained compatible
+route. Pin exact versions in the lockfile. The Cloudflare provider is beta, so qualify the pinned versions; do not
+upgrade the agent/model stack as a side effect of this refactor.
+
+Construct vendor models from a closed switch over Eliot's selected/qualified route. Never import a package named by
+untrusted catalog data. A custom route that cannot be represented and qualified through the selected AI SDK adapter
+is not eligible for deep tools/streaming yet; do not keep a speculative raw-protocol fallback inside the loop.
+
+Retain current route/model/billing selection and spend accounting around the call. The SDK handles provider wire
+formats; Eliot owns admission, durability, source scope, budgets, cancellation, evidence and saved output.
+
+## Do not use an SDK-owned agent loop
+
+Do **not** use `ToolLoopAgent`, `stopWhen` multi-step execution, automatic tool `execute` callbacks or a Cloudflare
+opinionated harness for the first implementation. They are useful general facilities, but Eliot needs a durable
+Workflow boundary between paid model turns and host-owned search/read effects.
+
+Use AI SDK as a **single-turn codec and transport**:
+
+- ordinary answer: one `streamText` call, no tools;
+- deep action/final decision: one `generateText` call with `search` and `read` tools that have schemas but no
+  automatic `execute` function;
+- Workflow validates/persists the returned action, executes the tool through existing code, persists the result,
+  then makes the next single model call.
+
+No recurring planning call, hidden SDK transcript owner or automatic internal retry loop.
+
+## Normalized turn
+
+A paid deep turn produces exactly one Eliot outcome:
 
 ```ts
 type ResearchModelTurn =
@@ -33,193 +75,182 @@ type ResearchModelTurn =
       call_id: string;
       name: "search" | "read";
       arguments: unknown;
+      continuation_message_locator: string;
       usage: ModelUsage;
-      provider_response_ref?: string;
+      gateway?: GatewayMetadata;
     }
   | {
       kind: "final";
       turn_id: string;
       text_locator: string;
       usage: ModelUsage;
-      provider_response_ref?: string;
+      gateway?: GatewayMetadata;
     };
 ```
 
-This is a small internal union, not a public protocol family or generic agent framework. `turn_id` is Eliot-owned;
-`call_id` is the provider call identity retained for the corresponding result. The provider response reference is
-an optional recovery aid, never the sole canonical state.
+This is an internal union, not a public protocol family. Eliot creates `turn_id`; AI SDK supplies `toolCallId`,
+finish reason, response messages, usage and provider metadata. Persist the bounded response message needed for the
+next tool-result continuation behind `continuation_message_locator`; do not persist raw HTTP/SSE bodies.
 
-Expose only `search` and `read` in the first deep slice. Final assistant text completes the loop; do **not** add a
-fake `finish`/`done` tool. Where supported, request `parallel_tool_calls: false` so a turn returns zero or one client
-call. Still validate the response: multiple calls, unknown tools, malformed arguments or an incomplete call fail the
-turn before any tool executes. Never execute the first valid call while silently dropping the rest.
+Expose only `search` and `read` in the first deep slice. Final assistant text ends the loop; no fake
+`finish`/`done` tool. Configure the selected provider to disable parallel calls where supported, then still reject:
 
-A provider may include assistant commentary before one valid tool call. Normalize that turn as `action`, preserve
-the exact provider message required for continuation, and treat its text only as provisional progress—not final
-answer content. Final text is accepted only from a completed turn with no pending client call.
+- more than one client tool call;
+- an unknown tool;
+- malformed/oversized arguments;
+- a call outside admitted scope;
+- incomplete/truncated tool input;
+- final classification when a client call remains pending.
 
-Intermediate action turns are atomic and need not stream. Only the final public answer needs incremental text.
-This avoids persisting half-parsed tool arguments and greatly reduces recovery states.
+A provider may include commentary beside one valid tool call. The turn is `action`; preserve the AI SDK response
+message for continuation and treat commentary only as optional progress, never final report text.
 
-## Provider-native mapping
+## Ordinary answer streaming
 
-Use Cloudflare AI Gateway's current REST endpoints, not the deprecated Universal endpoint:
+Use `streamText` without tools for the ordinary answer. Consume AI SDK's typed full stream, not a browser-specific
+second parser. Append text deltas to one retained output object and emit bounded public batches to ResearchSession.
+Completion requires the SDK terminal finish plus final usage; HTTP 200 or EOF alone is not completion.
 
-- OpenAI-compatible agent turns: `POST /ai/v1/responses`;
-- Anthropic-compatible turns: `POST /ai/v1/messages`;
-- ordinary chat completion only where the selected model/path does not need tools.
+Retain provider/gateway metadata only for diagnostics and cost correlation. Do not forward raw events, reasoning,
+prompts or source bodies. A slow/disconnected subscriber cannot backpressure canonical output saving.
 
-Dynamic routes currently accept the Chat Completions shape only. They are not a transparent fallback for
-provider-native Responses/Messages continuations. Select the route at admission; do not silently move an in-flight
-research turn to another provider whose tool/result semantics differ.
+The first deep implementation does **not** stream its final report token by token. `generateText` returns either one
+action or final text atomically; Workflow progress remains visible and the saved report appears at completion. This
+avoids exposing prose that later turns out to precede a tool call. Add deep final streaming later only if a measured
+UX need justifies a separately constrained final-only call; do not add an extra call by default.
 
-### OpenAI Responses
+## Manual continuation
 
-Retain each output `function_call` item and its `call_id`. Return exactly one `function_call_output` with the same
-`call_id`; include the prior output items or a supported `previous_response_id` continuation. A provider response
-ID is useful only after the completed response was actually observed and stored.
+For an action turn:
 
-For the first slice, disable parallel calls and enable strict schemas where the selected model supports them.
-Arguments are still parsed and range-checked by Eliot. Unknown extra fields, overlong queries/ranges and a call
-outside the admitted scope are rejected before search/read.
+1. persist the normalized action and bounded AI SDK response message;
+2. validate and execute one host-owned search/read;
+3. store the result by `(turn_id, call_id)` with normalized input, outcome and source/result locators;
+4. build the next AI SDK messages from compact current task state, the stored assistant tool-call message and the
+   matching tool result;
+5. call `generateText` once again.
 
-The final turn may stream `response.output_text.delta`; completion requires the provider's terminal completed
-state plus retained final usage. EOF or HTTP 200 alone is not completion. Provider events, hidden reasoning,
-prompts and raw source bodies are not forwarded to the browser.
+Correlate by `call_id`, never array position or completion order. Replaying an observed action returns the same
+stored tool result; reconnecting a browser never runs it.
 
-### Anthropic Messages
+Keep only the latest protocol-required action/result pair plus compact accepted work. Older turns are represented by
+unresolved items, accepted evidence labels and concise facts, not a perpetually growing transcript.
 
-Retain the complete assistant content containing `tool_use`; return a user `tool_result` block with the matching
-`tool_use_id`. Client-tool stops use `stop_reason: "tool_use"`. Server-tool `pause_turn` is different: continue by
-sending the assistant response back as-is with the same declared tools. Bound such continuations and count them
-against the run budget.
+## Stable paid-turn identity and recovery
 
-Handle `max_tokens`, context-window exhaustion, refusal and incomplete tool blocks explicitly. Do not reinterpret a
-truncated tool call as final prose or guess missing JSON. Eliot initially uses client-owned `search`/`read`; native
-provider web search is a separately admitted external-source route, not a substitute for owner-corpus search.
-
-## Stable identity and paid-effect recovery
-
-Before dispatching a model turn, persist or atomically reserve:
+Before dispatching a model turn, atomically reserve:
 
 - run/operation and original paid-attempt identity;
 - monotonic `turn_index` and Eliot `turn_id`;
-- selected model, provider endpoint and tool schema revision;
-- digest of the exact normalized request and the current budget counters.
+- selected model/provider/AI SDK driver and tool-schema revision;
+- digest of the normalized request and current budget counters.
 
-Extend the existing model-attempt owner; do not create another ledger. Current `research_model_attempt` records are
-tied to old stages, so move their useful reservation/result semantics to a run-turn identity rather than keeping
-stage receipts alive.
+Extend the existing model-attempt owner; do not create another ledger. Current attempt rows are tied to old stages,
+so move their useful reservation/result semantics to run-turn identity rather than preserving stage receipts.
 
-After a completed response is observed, persist the normalized `action` or final-output locator **before** executing
-the client tool or publishing the report. A tool result is stored by `(turn_id, call_id)` with its normalized input,
-outcome and source/result locators. Replaying the same observed action returns the same stored tool result; it never
-starts another search/read because an SSE subscriber reconnected.
+After AI SDK reports a completed step, persist the normalized action or final-output locator before executing a tool
+or publishing a report. If the provider may have received the call but Eliot did not observe a completed result,
+the outcome is unknown. `providerMetadata.cloudflare` request/log/event IDs are diagnostics, not proof of a
+recoverable answer. Use exact provider readback only when the selected API actually supplies it; otherwise require an
+explicit new attempt. Never automatically pay again.
 
-If the provider call may have happened but no completed response was observed, the outcome is unknown. Use a
-provider-supported readback/reference only when the exact response can be recovered. Otherwise stop for explicit
-retry/new attempt; do not automatically pay again. A failed tool or report save never repeats the prior model turn.
+AI SDK has its own transient retry behavior. Set/qualify it so a retry is allowed only before an outcome can be
+ambiguous and within the original Eliot turn reservation. A tool failure, ResearchSession failure or report-save
+failure never repeats the preceding model call.
 
 ## Context and compaction
 
 Each turn receives only:
 
-- the immutable user request and explicit constraints;
-- the currently unresolved questions/required fields;
+- immutable user request and constraints;
+- unresolved questions/required fields;
 - accepted exact evidence labels and compact source metadata;
-- the last relevant action/result and a bounded relevant conversation summary;
-- current remaining budgets and available tools.
+- last relevant action/result pair;
+- bounded relevant conversation summary;
+- remaining budgets and available tools.
 
-Do not resend the complete transcript, all candidates, all source bodies, old provider events or every failed
-query. Large tables/results are stored once behind a locator and summarized for the next decision. Deterministic
-code performs joins, sorting, filtering, deduplication and coverage counts.
+Do not resend the full transcript, all candidates, all source bodies, raw events or every failed query. Store large
+tables/results once behind a locator and summarize them. Deterministic code performs joins, sorting, filtering,
+deduplication and coverage counts.
 
-Compaction may shorten prose, but cannot discard the admitted source scope, unresolved requirements, accepted exact
-passages, pending `(turn_id, call_id)`, tool-result locators, budget state, cancellation state or the final-output
-locator. A summary is context, not authority.
+Compaction may shorten prose, but cannot discard admitted scope, unresolved requirements, accepted exact passages,
+pending `(turn_id, call_id)`, tool-result locators, budgets, cancellation or final-output locator. A summary is
+context, not authority.
 
-## Source and tool-content boundary
+## Untrusted source and tool data
 
-All source text, search snippets, fetched pages and tool results are untrusted data. They may contain instructions
-addressed to the model. They cannot:
+Source text, search snippets, fetched pages and tool results may contain instructions addressed to the model. They
+cannot add tools, broaden scope, change provider/budget, request private data/external effects or mark themselves
+verified/complete.
 
-- add or rename tools;
-- broaden source/project scope;
-- alter credentials, provider, budget or cancellation;
-- request hidden prompts, private sources or arbitrary external calls;
-- mark themselves verified or complete.
+The host validates the AI SDK tool name/schema result again against exact scope and runtime bounds. Insert content as
+delimited data with provenance and explicit empty/partial/error state. Prompt wording is defense in depth, not the
+access boundary. Initially all research tools are read-only.
 
-The host validates action name, arguments, URL/domain rules, exact source membership and output bounds. Tool results
-are inserted as delimited data with explicit provenance and failure state. A prompt instruction is defense in depth,
-not the access boundary.
+External web search is separately admitted. A provider URL/snippet/citation is a candidate locator. Capture/import a
+stable permitted representation through existing intake before issuing an exact Eliot citation. If capture fails or
+is forbidden, keep a clearly external ephemeral reference.
 
-The initial deep slice searches only the admitted owner corpus. Optional external web search is enabled explicitly
-for a run and uses a selected provider/route. A URL/snippet/provider citation is only a candidate locator. Before it
-becomes an Eliot source citation, capture/import a stable representation through the existing intake path and
-resolve exact stored bytes/ranges. If capture is forbidden or fails, retain a clearly external ephemeral reference;
-do not present it as an immutable Eliot citation.
+## Cloudflare and privacy choices
 
-## Final streaming and browser delivery
+Use `createAI({ binding: env.AI })` and a selected vendor provider object rather than constructing REST URLs in the
+research loop. Current AI Gateway REST endpoints remain the underlying capability; dynamic Chat-Completions routes
+are not a transparent substitute for provider-native tool semantics.
 
-The Worker reads the provider SSE incrementally, appends public text to one retained output object and emits bounded
-text batches to the existing ResearchSession projection. The stream consumer and output writer share the same
-parser; there is no second browser-only decoder. A slow/disconnected browser cannot backpressure the canonical save.
+Cloudflare AI Gateway response DLP buffers a complete SSE response before release. For ordinary low-latency
+streaming, use request-only DLP or a separately configured streaming gateway. Set
+`cf-aig-collect-log-payload: false` for private-source calls while retaining metadata/usage. Record the chosen
+gateway and payload-logging policy in route qualification.
 
-ResearchSession requires an explicit authorized event method in addition to the snapshot RPC. It may deliver
-progress and provisional public text only. It cannot dispatch tools, create/retry runs or declare saved completion.
-Reconnect reads the current run/report and may disclose a provisional gap; no per-token durable journal.
-
-Cloudflare AI Gateway response DLP buffers a complete SSE response before releasing it. A gateway configured for
-response scanning therefore cannot simultaneously provide low-latency token streaming. For this path choose
-request-only DLP or a separately configured latency-sensitive gateway and record that operational choice. Set
-`cf-aig-collect-log-payload: false` for private source traffic while retaining metadata/usage logging.
+`createAI` exposes `providerMetadata.cloudflare` including model/gateway and optional log/request/trace identifiers.
+Use these as diagnostics; do not create a second telemetry owner or infer saved completion from a gateway log.
 
 ## Route qualification
 
-Qualify once when a model/route is connected or selected:
+Qualify once when a route is connected/selected:
 
-- endpoint shape (`responses`, `messages` or plain chat);
-- client-tool support and maximum schema/body sizes;
-- final text streaming/event types;
-- reasoning/output limits and usage reporting;
-- privacy/logging/DLP configuration.
+- exact AI SDK provider package and model constructor;
+- client-tool support, strict-schema behavior and parallel-call control;
+- ordinary `streamText` behavior and finish/usage metadata;
+- body/schema/output/context limits;
+- gateway, payload logging and DLP configuration;
+- actual selected custom/base route support.
 
-Store the selected capability snapshot with the admitted run. Do not renew proof on every turn. If the route cannot
-provide the required client-tool or stream behavior, do not offer that mode for the route. No speculative parser
-fallbacks across unrelated provider shapes.
+Store the capability snapshot with the admitted run. Do not renew proof every turn. If a route cannot satisfy the
+required behavior through the pinned SDK, do not offer that mode. No speculative parser fallbacks.
 
 ## Files to change
 
-1. Extend `model-gateway-execution-contract.ts` with the small action/final outcome and stream events.
-2. Replace fixed-key request projection in `model-gateway-provider-native-request.ts` with two selected native
-   adapters: Responses and Messages. Keep ordinary non-tool requests as a simpler subset.
-3. Replace buffered completed-text parsing in `model-gateway-provider-native-response.ts` with bounded provider
-   parsers for atomic action turns and final SSE text.
-4. Add tool/stream/API-shape capability to `model-gateway-transport-policy.ts`; remove old qualification renewal
-   callers after connection-time selection works.
-5. Move existing attempt reservation to stable run-turn identity in `cloudflare-model-execution`; retain normalized
-   turn/result locators and call-correlated tool results.
-6. Connect the result to `deep-research-loop.ts`, ordinary synthesis, ResearchSession and the owner client.
-7. Delete superseded JSON-only compatibility readers, inner-JSON answer parsing and exclusive fixtures after their
-   real callers move.
+1. Add one small AI SDK turn adapter inside `cloudflare-model-transport`; no new package.
+2. Declare `@ai-sdk/provider` and only selected vendor providers in Core/transport dependencies.
+3. Extend `model-gateway-execution-contract.ts` with action/final outcomes and ordinary public text events.
+4. Add SDK/tool/stream capability to `model-gateway-transport-policy.ts`; remove recurring qualification renewal
+   after connection-time selection works.
+5. Move attempt reservation to stable run-turn identity in `cloudflare-model-execution`; retain normalized outcome,
+   continuation-message and tool-result locators.
+6. Connect ordinary `streamText` to retained output/ResearchSession and deep `generateText` to
+   `deep-research-loop.ts`.
+7. Delete selected-route callers of `model-gateway-provider-native-request.ts`,
+   `model-gateway-provider-native-response.ts` and other JSON-only readers. Retain a raw adapter only for an actual
+   selected route the AI SDK cannot represent; it is not a fallback inside ordinary/deep execution.
 
-Do not create a provider-agnostic event framework, transcript database, tool marketplace, new SDK wrapper package or
+Do not create a provider-agnostic event framework, transcript database, tool marketplace, SDK wrapper package or
 another executor.
 
 ## Verification after assembly
 
 Exercise at least:
 
-- action result correlated by `call_id` despite out-of-order tool completion;
+- AI SDK tool result correlated by `toolCallId` despite out-of-order completion in a test adapter;
 - duplicate action/result replay;
-- unexpected multiple calls, unknown tool and malformed/oversized arguments;
-- partial SSE, disconnect, refusal, truncation and context exhaustion;
-- unknown paid-call outcome and provider readback where supported;
+- multiple/unknown/malformed/oversized calls;
+- partial ordinary stream, disconnect, refusal, truncation and context exhaustion;
+- unknown paid-call outcome and exact readback where supported;
 - save failure after completed generation without a second model call;
-- source deletion or permission change between action and read;
+- source deletion/permission change between action and read;
 - document/tool-result prompt injection and private/public scope mixing;
-- external page changing after candidate discovery but before snapshot;
+- external page changing between discovery and snapshot;
 - budget exhaustion producing an honest partial report.
 
-Compile/lint the changed transport/runtime paths during implementation. Product tests and donor-style evaluation
-follow assembly. This document does not claim the transport has been implemented.
+Compile/lint changed transport/runtime paths during implementation. Product tests and donor-style evaluation follow
+assembly. This document does not claim the adapter has been implemented.
