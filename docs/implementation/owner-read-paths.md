@@ -1,4 +1,4 @@
-# Owner reads: lists, history, reports and freshness
+# Owner reads: lists, history, research reports and freshness
 
 Implementation for the lightweight read/edit slice in [the plan](backend-entrypoints.md).
 Checked 2026-10-18 against source at `3dd3a028`. These are selected replacements, not completed runtime fixes.
@@ -44,7 +44,7 @@ Use the existing history surface with one compact row:
 
 ```text
 run id, created time, saved question, run kind, recorded phase,
-report ref/title/summary when present
+research-report ref/title/summary when present
 ```
 
 The list reads D1 only. It does not poll historical Workflows, open a report object, calculate freshness, reconstruct
@@ -65,7 +65,7 @@ retain JSON-tree post-filtering as a fallback.
 Order by `(created_at, operation_id)`. Keep independent continuations for runs and reports when both collections
 remain visible. It must be possible to reach older results; eight is a display default, not completeness.
 
-## 3. Replace artifact-draft reports with direct report revisions
+## 3. Replace artifact-draft reports with direct research-report revisions
 
 **Current cohort:**
 
@@ -85,21 +85,35 @@ This is not a reusable simple report store:
 - owner/delegated reads reconstruct original scope/grant/policy lineage;
 - the client decodes three reauthorization protocols and receives authorization receipts/policy authorities.
 
-Do not create placeholder freezes/manifests/receipts to call this writer. Replace it with the compact report state in
-[the ordinary-answer contract](research-full-answer-v1.md) and [runtime notes](runtime-contract.md):
+Do not create placeholder freezes/manifests/receipts to call this writer. Replace it with research-specific state:
 
 ```text
-report(report id, owner, head revision, deletion state, timestamps)
-report_revision(report/revision, run, title/summary/language,
-                one R2 object locator/hash/size, exact source revisions, created time)
+research_report(
+  report id, owner, head revision, deletion state, timestamps
+)
+
+research_report_revision(
+  report/revision,
+  origin kind: GENERATED | MANUAL_EDIT | AI_EDIT,
+  origin operation id: required for GENERATED/AI_EDIT and absent for MANUAL_EDIT,
+  title/summary/language,
+  one R2 object locator/hash/size,
+  exact source revisions,
+  created time
+)
 ```
 
-One immutable R2 object carries Markdown, compact citation refs and bounded generation metadata. Markdown headings
-are view structure, not durable section objects. A full-body revision is simpler and coherent for generated reports.
+A non-null origin operation is unique to one research-report revision. Generated/AI-edited revisions attach that
+exact revision to the operation. Manual edits do not invent a run.
 
-Create the object conditionally, then in one D1 transaction insert the revision, advance the expected head and attach
-the report ref to the run. No internal report admission decision, object residency graph, verification receipt or
-outbox is required. A real Queue consumer may still have a real outbox.
+One immutable R2 object carries Markdown, compact citation refs and bounded generation/edit metadata. Markdown
+headings are view structure, not durable section objects. A full-body revision is simpler and coherent for generated
+reports.
+
+Create the object conditionally, then in one D1 transaction insert the revision and advance the expected head.
+For `GENERATED`/`AI_EDIT`, attach the exact report revision to the originating operation in that transaction.
+No report admission decision, object residency graph, verification receipt or outbox is required. A real Queue
+consumer may still have a real outbox.
 
 ## 4. Remove the report acceptance/publication ceremony
 
@@ -122,14 +136,13 @@ integration.
 Selected behavior:
 
 - a completed generated report is saved and usable immediately;
-- UI labels it generated/edited, never “truth accepted”;
+- UI labels revision origin (`generated` or `edited`), never “truth accepted”;
 - owner may edit it, download it or explicitly propose derived material to Wiki/Inbox;
 - Wiki/Inbox proposal/review is its own meaningful action with its own target, not a prerequisite acceptance receipt;
 - source changes appear through advisory freshness and exact citations, not a publication disposition.
 
 Delete the acceptance button/status/receipt details and server/client routes after report cutover. Do not replace the
-system with `accepted_at`, another publication table or a new proof badge unless a concrete product action later
-requires a simple user-owned flag.
+system with `accepted_at`, another publication table or a proof badge absent a concrete product action.
 
 ## 5. Reopen the saved report before optional freshness
 
@@ -140,9 +153,9 @@ report also leaks internal authorization fields into the browser DTO.
 Selected owner read:
 
 1. authenticate the owner;
-2. select the exact report revision by owner and non-deleted state;
+2. select the exact `research_report_revision` through owner and non-deleted report state;
 3. read its exact R2 object and verify the stored hash/size;
-4. return report ref, title, summary, language, Markdown and compact citations;
+4. return report ref, origin, title, summary, language, Markdown and compact citations;
 5. calculate freshness separately and optionally.
 
 The owner does not need the producing credential generation, deployment generation, policy lease, original scope
@@ -160,9 +173,9 @@ A newer source revision makes the report historical, not invalid. Use one curren
 - `PREVIOUS_REVISIONS`: exact changed count plus up to 64 stable detail rows and an explicit truncation flag;
 - `UNKNOWN`: no successful currentness/count claim, with a bounded reason.
 
-Compare `report_revision.source_revision_refs_json` with current heads in D1. Compute total independently of the
-bounded detail sample. A missing expected head makes the result `UNKNOWN`, not current or a smaller exact count.
-Do not traverse R2, replay scopes, open every citation or compute freshness for every history row.
+Compare `research_report_revision.source_revision_refs_json` with current heads in D1. Compute total independently
+of the bounded detail sample. A missing expected head makes the result `UNKNOWN`, not current or a smaller exact
+count. Do not traverse R2, replay scopes, open every citation or compute freshness for every history row.
 
 Exact citation opening remains separate: authenticate, load the retained source revision/readable object, apply
 actual deletion/disclosure, and return the bounded range. Never redirect to the latest bytes.
@@ -175,24 +188,24 @@ child artifact, invokes a model and reconciles another attempt state. That is an
 
 Selected manual edit:
 
-1. read exact current report revision;
+1. read exact current research-report revision;
 2. submit bounded complete Markdown/citation state plus expected head;
 3. create one immutable object;
-4. insert one `report_revision` and conditionally move the report head;
-5. return conflict on zero affected rows.
+4. insert one `research_report_revision` with `origin_kind=MANUAL_EDIT` and no origin operation;
+5. conditionally move `research_report.head_revision`; zero affected rows is a conflict.
 
 No in-place mutation of body/provenance and no section child graph. Reports are bounded generated documents; a full
 body is the simplest coherent edit unit.
 
-If AI-assisted revision is later selected, admit one explicit model attempt against the chosen report/source refs,
-retain its completed Markdown, then call the same report writer. It does not get a COW Workflow, report-admission
-witness, section ledger or acceptance prerequisite.
+If AI-assisted revision is selected, admit one explicit model attempt against the chosen report/source refs, retain
+its completed Markdown, then write `origin_kind=AI_EDIT` with the exact origin operation. It does not get a COW
+Workflow, report-admission witness, section ledger or acceptance prerequisite.
 
 Wiki should follow the same expected-version rule even before storage is consolidated. WeKnora's useful pattern is
 `expected version → snapshot/write atomically` and body-free revision listings. Do not copy its auto-link/meta
 updates that write by page ID without the same expected version. Decoration is render-time or a new revision.
 
-Extract a shared revision helper only after both current report and Wiki callers use the same small operation and it
+Extract a shared revision helper only after both research reports and Wiki use the same small operation and it
 removes code. Do not build a generic content framework first.
 
 ## 8. Data transition and deletion
@@ -201,8 +214,9 @@ Before destructive migration, inspect deployed retained rows. Convert each real 
 
 - preserve stable report identity/revision where practical;
 - read the verified current Markdown and compact/convert its citations;
-- preserve originating run, title, language and creation time;
-- write the new immutable object and report/revision rows;
+- preserve originating operation for generated revisions, title, language and creation time;
+- assign `GENERATED`; do not fabricate an operation for later manual revisions;
+- write the new immutable object and research-report rows;
 - verify object hashes/counts and run/report associations.
 
 The conversion does not migrate artifact-publication receipts as product truth. If an old report was accepted,
@@ -220,7 +234,7 @@ decoders and fixtures. Do not keep a fallback reader; Git history is the archive
 - **WeKnora:** expected-version writes and body-free history. Do not copy GORM topology, COUNT+OFFSET or blind
   auto-link/meta writes.
 - **ThinkEx:** retaining a readable result when optional enhancement fails is useful. Its provider work and publish
-  occur in one Workflow step; Eliot splits paid generation from publication because the step can retry.
+  occur in one Workflow step; Eliot splits paid generation from report save because the step can retry.
 - **Cloudflare:** R2 conditional create and D1 batch transaction are sufficient. They do not form a distributed
   transaction; an unreferenced immutable object is reconciled/cleaned rather than wrapped in two-phase proof.
 
