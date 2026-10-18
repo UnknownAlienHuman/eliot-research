@@ -3,13 +3,17 @@
 Purpose and boundaries: [product manifesto](../architecture/ELIOT_RESEARCH.md).
 Existing names and source locations: [code map](dependency-map.md). Technical details: [runtime notes](runtime-contract.md).
 This plan explains what to write, where and what it replaces. It is not a second manifesto or an approval graph.
-Source anchors were reconciled against `de88154e`; targets below are not claims of completed runtime work.
+Source anchors were reconciled against `de88154e`; the ordinary execution chain was inspected again at
+`ba344566` on 2026-10-18. Targets below are not claims of completed runtime work.
 
 ## Choose a complete behavior, not a new foundation
 
 Start from an owner action and follow browser → API → application → stored result. Implement the smallest
 complete replacement with those callers. Remove the old logic, exports, decoders and obsolete fixtures in
 that integration. Moving a wrapper or creating a parallel “clean” implementation is not completion.
+“Reuse an existing owner” does not mean preserve its whole API/control chain. Extract the needed operation,
+move its actual callers and delete obsolete preconditions; never manufacture freeze/proof records to satisfy
+an old factory. Plain in-process data does not need another protocol or persistence layer.
 
 Prioritize a usable source → answer → citation → reopen path and responsive existing screens. Client cleanup,
 ordinary research and individual summary endpoints can proceed where their files do not overlap. Search work
@@ -37,35 +41,42 @@ and presentation code are gone. This requires actual integration, not just chang
 
 ## 2. One ordinary answer through the existing run/result path
 
-**Where:** Core `research-run-service.ts` and `research-workflow.ts` under `apps/eliotr-core/src/`;
-`packages/owner-api-client/src/research/runs/authority.ts`; `packages/cloudflare-research-runtime/src/`
-(`research-workflow-application.ts`, `research-semantic-server.ts`, `research-synthesis-prompt.ts`, `research-answer-text.ts`).
-Context already has `packages/policy/src/context-compiler.ts` and
-`packages/cloudflare-model-control/src/research-model-prompt.ts`; use those owners rather than another planner.
+**Where:** Core `research-run-service.ts`, `research-workflow.ts`, `research-session.ts`;
+`packages/owner-api-client/src/research/runs/authority.ts` and its `research/session-projection/` adapter;
+`packages/cloudflare-research-runtime/src/`, `packages/policy/src/context-compiler.ts`,
+`packages/cloudflare-model-control/src/research-model-prompt.ts` and `packages/cloudflare-model-transport/src/`.
 
-Align one ordinary request and result through admission, context preparation, provider transport, parsing and
-report materialization. `research-run-request.v5` already exists. The stream extractor expects `answer_markdown`;
-the deep response's `material_claims` is not a substitute. Choose a coherent ordinary output shape and change
-its real producer/readers together. [The answer note](research-full-answer-v1.md) covers the integration.
+[The answer implementation](research-full-answer-v1.md) now identifies the actual obstructing functions.
+The request compiler sets `stream: false`; a compatibility response reader buffers JSON; the inner-JSON
+`answer_markdown` reader has no production caller found by symbol search; the Session send guard permits
+only snapshot RPC replies. Adding a UI event handler or toggling one boolean cannot connect this chain.
 
-Prepare selected source material once, run one streamed synthesis, resolve citation candidates through the
-existing `cloudflare-evidence` resolver, and save answer/citations/summary through existing report storage.
-A quote matcher does not issue an EvidenceHandle and does not verify a conclusion's truth.
-Apply FULL/AUTO/FRAGMENTS behavior with honest omissions and actual token/byte/memory bounds. Reconcile C03's
-input/checkpoint representation along this path; do not copy the whole input into successive receipts.
+Select ordinary execution before generation-dependent handler/checkpoint assembly. Use direct application
+steps: capture input → prepare selected passages → stream one synthesis → save/reopen the result. Keep the
+native Workflow and original paid-attempt identity, not a second scheduler or dummy deep-stage records.
+Refactor the existing context/prompt functions to consume typed admitted passages without Stage 5/10 freeze
+lineage, expiring manifests or per-candidate hashed receipts. Size the selected request without serializing
+and hashing the entire growing envelope on every trial. Token capacity is not a byte count.
 
-Remove ordinary branch-plan, freeze, counter-search and mandatory audit dispatch. Retain explicitly selected
-deep work as one bounded execution sharing context/model/result code, not all historical graph generations.
-Reconnect observes the same attempt/result; no per-token durable journal, second executor or another run API.
+The ordinary model output is Markdown with server-mapped passage labels, not escaped Markdown inside JSON
+or a mandatory `material_claims` ledger. Align selected provider request validation, streaming decoding,
+[Session delivery](research-session-projection-protocol.md), client display and existing report writers together.
+No simulated streaming of a buffered answer; no new citation store. FULL/AUTO/FRAGMENTS select context, not
+separate execution engines. Whole-source reads do not wait for search indexing.
 
-**Model selection in the same path:** Core currently supplies `renew_qualifications`; its implementation is
-in `packages/cloudflare-research-configuration/src/research-qualification-renewal.ts`. Move qualification to
-connection/selection, capture the actual model/transport for the attempt and delete new-run renewal callbacks,
-markers and proof-expiry gates. Keep credentials, cancellation, spend bounds and uncertain-effect recovery.
-Changing current settings must not redirect an already admitted invocation to another paid model.
+Move model qualification to connection/selection: remove Core's `renew_qualifications` callback and new-run
+markers/proof-expiry gates from the ordinary path, including their implementation in
+`packages/cloudflare-research-configuration/src/research-qualification-renewal.ts`. Keep selected credentials,
+model/transport, spend bounds and cancellation. Current settings cannot redirect an already admitted call.
 
-**Result:** ask → provisional answer → saved report → exact citation → reopen, without ordinary deep stages
-or model requalification. Record real request/provider/save costs when exercising the assembled path.
+Store completed public output once; a failed report save reuses that output, never invokes synthesis again.
+Provisional delivery is transient and cannot create/cancel/retry a run or establish saved status. Reconnect
+reads the existing run/report. [Failure handling](failure-model.md) replaces the old universal receipt chain.
+
+**Result:** ask → progressive text → saved report → exact citation → reopen. Remove ordinary-only factory,
+inner-JSON and proof wrappers/fixtures with their callers. Retain only the explicitly requested deep behavior;
+removing it from the ordinary path is not the same as deleting its code. No additional approval graph or
+new foundational framework precedes this integration.
 
 ## 3. Lightweight owner lists and normal report/Wiki updates
 
@@ -119,7 +130,9 @@ Change internal formats and callers together. No compatibility for unpublished p
 Preserve actual data with one-time conversion when required. Inspect the deployed migration ledger before
 altering applied schema; unknown live state blocks only the destructive change. Do not replace one proof-heavy
 identity system with an equally large “simplification” service. C01/C02/C11 still require correct observation
-of actual R2 writes wherever the retained product uses immutable input.
+of actual R2 writes wherever the retained product uses immutable input. For an actual Rust operation,
+[the Wasm note](rust-kernel-abi-versioning.md) replaces universal envelopes and per-call version checks;
+existing self-test exports are not product integration or a reason to port canceled mechanisms.
 
 ## 6. Finish removing development machinery independently
 
@@ -135,7 +148,8 @@ readiness must describe selected working behavior. Tooling work never becomes th
 ## Donor choices tied to actual replacements
 
 These are pattern references, not new dependencies. Pinned source is intentionally dated; API docs were
-checked on 2026-10-17. Check the chosen source license before literal code reuse. A donor is useful when
+checked on 2026-10-17, with Streams/WebSockets/retry and SurfSense budgeting revisited on 2026-10-18.
+Check the chosen source license before literal code reuse. A donor is useful when
 it removes an identified Eliot implementation or supplies a selected missing behavior, not because it is popular.
 
 | Source | Take / apply here | Do not bring along |
@@ -144,6 +158,8 @@ it removes an identified Eliot implementation or supplies a selected missing beh
 | [Cloudflare D1 batch](https://developers.cloudflare.com/d1/worker-api/d1-database/) | Existing atomic writers in task 3, with expected-revision predicates and dependent-write conditions. | ORM migration, transaction framework, or an assumption that zero affected rows abort a batch. |
 | [Cloudflare R2 API](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/) and [Workflow retry](https://developers.cloudflare.com/workflows/build/sleeping-and-retrying/) | Native conditional storage and durable execution through existing adapters in tasks 2/5. | Bespoke receipt/signature engine, duplicate scheduler, or automatic replay of an uncertain paid invocation. |
 | [SurfSense `build_context` / `resolve_citations`](https://github.com/MODSetter/SurfSense/blob/7fb479c361414e1ffd180860eb0b5eb5afb0c4e3/surfsense_local/backend/modules/chat/prompt.py) | Group selected excerpts by source and map model-visible labels on the server in task 2. Reuse Eliot's context compiler and evidence resolver, including actual revision/range identity. | Its Python app, citation ID namespace, old-wrapper compatibility or regex as an injection boundary. An ordinal rewrite alone is not exact evidence. |
+| [SurfSense output reserve](https://github.com/MODSetter/SurfSense/blob/7fb479c361414e1ffd180860eb0b5eb5afb0c4e3/surfsense_local/backend/modules/chat/budget.py) | Reserve answer capacity before choosing context in task 2; keep token and serialized-byte bounds distinct. | Its fixed estimates, four-characters-per-token rule and legacy unknown-window fallback. They do not prove FULL context fits Eliot's selected model. |
+| [Cloudflare Streams](https://developers.cloudflare.com/workers/runtime-apis/streams/) and [Agent connections](https://developers.cloudflare.com/agents/runtime/communication/websockets/) | Incremental provider consumption and bounded public-text delivery through the existing Session in task 2. | A second executor, unrestricted broadcast, persisted token journal or an SDK upgrade merely to copy an example. |
 | [WeKnora `UpdateWithRevision` / `updateWikiPageRow`](https://github.com/Tencent/WeKnora/blob/005627b180c6c7509660b0a14401e463f48d53f8/internal/application/repository/wiki_page.go) | One transaction for the selected revision/update and explicit zero-row conflict handling in task 3; use existing D1 writers. | GORM, multi-dialect support, extra revision engine or enterprise policy topology. |
 
 The [earlier donor record](../../.github/audits/2026-10-17/README.md#donor-reconciliation) remains optional reference.

@@ -1,50 +1,111 @@
-# Ordinary answer and whole-source context
+# Ordinary answer: implement the whole path
 
-Updated 2026-10-17. Target behavior, not a deployed API advertisement.
-Use the [current architecture](../architecture/ELIOT_RESEARCH.md) and existing run/client/result owners.
-The old proposal's settings endpoints, token journal and new use of `research-run-request.v5` are withdrawn.
+Selected target, not a deployed API. Source inspected at `ba344566` on 2026-10-18.
+[The plan](backend-entrypoints.md) owns work ordering; this note specifies the ordinary-answer replacement.
+The filename is historical, not a new wire version. `research-run-request.v5` is already in use.
 
-## One request and one result
+## The actual obstacles
 
-Extend the actual current owner-run schema and its client together. `research-run-request.v5` already
-exists in Core `research-run-service.ts` and owner-client `research/runs/authority.ts`; do not redefine it
-as though unused. Add a new incompatible wire version only when needed for a real boundary, not because
-this document's filename contains v1. No second run API, persistent settings service or capability registry
-is a prerequisite to implementing the answer path. Do not advertise an unimplemented feature.
+Paths below are relative to the repository root. Reuse useful functions, not their entire control chain.
 
-Capture the selected source revisions, model and context choice once with the original request/attempt.
-AUTO uses whole selected sources when they fit; otherwise it uses existing retrieval and reports omissions.
-FULL rejects overflow instead of truncating; FRAGMENTS uses retrieval. These are context behaviors, not
-separate pipelines. A UI preference may reuse existing configuration; it does not need another data owner.
-Reading admitted whole sources does not depend on search projection readiness.
+| Existing source | What must change for ordinary answers |
+|---|---|
+| `packages/cloudflare-research-runtime/src/research-workflow-application.ts` | `executeResearchWorkflowApplication` assembles generation-dependent handlers and the checkpoint executor. Ordinary work must branch before that assembly, not execute the same graph with most stages disabled. |
+| `packages/cloudflare-research-runtime/src/research-synthesis-prompt.ts` | `createResearchSynthesisPromptDependencies` reads a STARTED stage, frozen Stage 5/10 context and manifest, then revalidates the binding. Do not fabricate those records merely to reuse its prompt formatting. |
+| `packages/policy/src/context-compiler.ts` | `createEvidenceContextCompiler` combines useful packing with expiring manifests, repeated evidence parsing/hashing and selection receipts. Its exact-body trial path builds a receipt and serializes the growing request for each optional candidate. Separate the packing operation from that protocol. |
+| `packages/cloudflare-model-control/src/research-model-prompt.ts` | `modelRequestBody` sets `stream: false`; `userPayload` sends route/generation/selection metadata as model context. Build the actual selected streaming request, not another wrapper over this non-streaming contract. |
+| `packages/cloudflare-model-transport/src/model-gateway-response.ts` and `model-gateway-provider-native-response.ts` | Both inspected response paths require `application/json` and buffer the body. Update request validation, provider adaptation and response consumption together; changing one boolean does not provide streaming. |
+| `packages/cloudflare-research-runtime/src/research-answer-text.ts` | The incremental inner-JSON reader expects `answer_markdown`. Default-branch symbol search found its definition and tests only; it is not evidence of a wired stream. The plain-text target below needs no such reader. |
+| `apps/eliotr-core/src/research-session.ts` | The current send guard accepts only snapshot RPC replies and discards other messages. A provider delta cannot reach the browser through this contract unchanged. See [session delivery](research-session-projection-protocol.md). |
 
-Token capacity, serialized provider-request bytes, receipt size and memory are independent bounds.
-Honor each without loading the whole corpus or repeatedly encoding the same bodies. Large immutable
-inputs live behind an existing locator; compact checkpoints do not repeat source bodies or full planning manifests.
+## One captured request, one ordinary execution
 
-## Streaming and saving
+Change Core `research-run-service.ts`, `research-workflow.ts` and the owner-client run methods together.
+Capture selected source revisions, question, output language, context choice, model/transport and the original
+attempt once. Keep existing run/status/cancel/report identities. No second admission API, settings service,
+operation registry or generic engine is required. The ordinary orchestration is direct application code in
+the existing research runtime; both modes share the operations below, not a mandatory stage-factory interface.
 
-Use one synthesis call through the existing transport. Align the selected prompt/output schema, parser and
-materializer: the `answer_markdown` extraction path and deep `material_claims` response are not automatically
-the same format. Read their actual callers, choose one coherent ordinary representation and delete replaced
-bridges/decoders. No second generic parser or speculative fallback between incompatible shapes.
+Use the existing native Workflow for execution lifetime, including after a tab closes. Its checkpoints hold
+small results or stored locators. Keep the record needed to identify a dispatched paid attempt and recover its
+output; do not mirror each native step in a new application scheduler. Remove ordinary qualification renewal,
+branch planning, evidence-freeze, claim-audit and historical-generation dispatch obligations. Deep research
+remains explicit; its actually used code is not falsely counted as deleted when only ordinary dispatch changes.
 
-Only public answer text reaches the browser. Do not expose reasoning, prompts, credentials or raw provider
-frames. Label partial text provisional until stored. The existing evidence resolver issues references after
-matching quote candidates to exact source revisions/ranges; quote matching alone is not an EvidenceHandle.
-Ambiguous or missing matches stay explicitly unresolved. Save answer, citations and summary in existing report storage.
+## Prepare context once
 
-Reconnect reads the same run's current projection and saved result. It must not create a run or re-dispatch
-an uncertain effect. Replaying every provisional token is not required; disclose a provisional-text gap
-instead of adding a persisted per-token journal. Transport can use the existing stream/session primitives;
-there is no mandatory new `answer-events` database, monotonic global event protocol or transcript service.
+Resolve selected material through the existing source/evidence readers. Keep source revision and passage
+coordinates with each admitted text block. For whole sources, use their existing representation/ranges and
+include all selected content; do not require semantic indexing or create a new chunking service to label it.
+FULL refuses overflow, AUTO may choose retrieval with stated omissions, FRAGMENTS uses existing retrieval.
+When there is no relevant material, say so; never manufacture citation labels to fill a required array.
 
-## Optional audit and completion
+Narrow the current compiler to typed admitted blocks, deterministic selection and request construction.
+Retain source grouping, useful diversity and explicit omissions; keep mutable access checks at the actual
+read/disclosure boundary. Do not rebuild manifests, policy generations, evidence digests or hashed selection
+receipts inside a pure packing loop. Selected references and omission facts belong in the existing run/result,
+not a new proof table. No fake legacy manifest should be needed to call the surviving packer.
 
-An explicitly requested audit follows the usable saved answer and does not gate first text.
-Invalid/missing verifier output means unverified, not refuted or successful. Local size/shape checks precede
-any paid verification. Preserve cancellation, the selected attempt/model and a practical spend bound.
+Reserve answer capacity before selecting input. Model tokens and serialized request bytes are separate
+bounds. Use the selected model's tokenizer/counting API when already available; otherwise use a documented
+conservative estimate and configured margin, clearly not an exact token count. No paid probe or calibration
+programme for each question. A donor's four-characters-per-token constant is not a multilingual guarantee.
+Unknown model capacity needs an explicit configured cap, not an assumption of zero or infinite capacity.
+Do not disable FULL merely because no tokenizer is installed when the configured estimate/cap supports it;
+refuse overflow without silently changing the selected mode.
+Pre-encode independent prompt blocks once, include wrapper/escaping overhead, maintain the running size and
+validate the final emitted body. Do not rebuild and hash the entire growing envelope per candidate. If exact
+tokenization is non-additive, perform the final selected-request check and bounded adjustment without restoring
+a per-candidate proof pipeline. Do not introduce a generalized optimizer to replace a straightforward packer.
 
-Done means an integrated ask → stream → save → reopen → exact citation path in the existing app,
-with honest omissions and no duplicate paid effect. During implementation compile/lint; execute applicable
-product checks after assembly. Do not infer success from a fixture screen, provider response or this document.
+## Stream plain answer text
+
+The ordinary model output is Markdown with labels for supplied passages, not JSON containing another escaped
+Markdown string or the deep `material_claims` schema. The application's saved report DTO is separate from the
+model's output format. Reuse the current Markdown parser/rendering path for label handling and safe display;
+code examples containing citation-like text are not automatically citations.
+
+Extend the selected provider adapter in `packages/cloudflare-model-transport/src/` to consume its actual
+stream protocol incrementally and yield public text plus final usage/termination facts. Preserve bounded
+frames, UTF-8 decoding, cancellation and selected provider/model identity. Do not forward raw provider events,
+reasoning or prompts. An HTTP 200 or socket EOF alone does not establish a complete provider response.
+A provider that cannot stream reports that capability honestly; do not emulate streaming by replaying a fully
+buffered answer or silently choose another paid model. No additional LLM call translates JSON into prose.
+
+Resolve model-visible labels through a server-owned map of the supplied source passages. Reuse the existing
+evidence issuer/resolver; labels alone neither issue EvidenceHandles nor prove support for a conclusion.
+Unknown labels stay unresolved. A source-wide label must not be presented as an exact quotation; quoted text
+must match the indicated representation/range. Do not manufacture claim-ledger rows to satisfy the old finalizer.
+
+## Save once; recover without paying again
+
+The model step retains its completed public output through the existing output store and returns its locator,
+not the body in every checkpoint. Report materialization then writes the saved text, resolved citation map and
+summary through existing artifact storage. Reuse those writers after removing deep-only preconditions from
+the ordinary call; do not invent a second result store. Metadata/publication changes remain atomic where needed.
+
+A failed report save retries that save from the captured output, not synthesis. A failure after provider
+dispatch with no recoverable output remains an uncertain attempt; do not re-send automatically. Cancellation
+stops further paid work and preserves honest partial status. Optional verification follows an explicit request
+and cannot delay or erase an already usable answer. See [failure handling](failure-model.md).
+
+Deliver provisional text through the existing ResearchSession binding. Only successful report readback makes
+it saved. Reconnect uses canonical HTTP run/report reads; no durable per-token journal or second transcript.
+The session's delivery failure must not turn a completed model call into an automatically retried paid step.
+
+## Completion and donors
+
+One connected source → question → progressive answer → saved report → exact citation → reopen path, with no
+dummy freeze/proof records. Then check interrupted delivery, oversized FULL input, missing citations, failed
+save and reconnect on the assembled product. During implementation use scoped compile/lint, not a new test campaign.
+Delete the unused inner-JSON reader and obsolete ordinary-only wrappers/fixtures when their remaining callers
+are accounted for. Do not keep an alternate ordinary executor merely to preserve its tests.
+
+[SurfSense prompt mapping](https://github.com/MODSetter/SurfSense/blob/7fb479c361414e1ffd180860eb0b5eb5afb0c4e3/surfsense_local/backend/modules/chat/prompt.py)
+is a model-visible-label pattern, not an Eliot evidence implementation.
+Its [budget module](https://github.com/MODSetter/SurfSense/blob/7fb479c361414e1ffd180860eb0b5eb5afb0c4e3/surfsense_local/backend/modules/chat/budget.py)
+reserves output first but uses fixed estimates and an unknown-window fallback: take the reserve principle,
+not those constants or compatibility behavior. Pattern study only; no donor code/dependency is imported.
+[Cloudflare Streams](https://developers.cloudflare.com/workers/runtime-apis/streams/) and
+[Workflow retry](https://developers.cloudflare.com/workflows/build/sleeping-and-retrying/) were checked 2026-10-18.
+They supply transport/durability primitives, not a guarantee against duplicate arbitrary provider effects.
