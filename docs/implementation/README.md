@@ -12,6 +12,7 @@ implementation inventory. Open the selected task and its relevant references bel
 | Existing vocabulary, source entrypoints and data owners | [Code map](dependency-map.md) |
 | Storage, execution, access and input integration | [Runtime notes](runtime-contract.md) |
 | Ordinary answer: actual producer/parser/result integration | [Answer note](research-full-answer-v1.md) |
+| Owner lists, history, report reopening and freshness | [Owner reads](owner-read-paths.md) |
 | React/Vite, served assets and old browser retirement | [Cutover note](frontend-platform-migration.md) |
 | Existing runs and retirement of old executors | [Execution note](workflow-checkpoints.md) |
 | Check commands for the selected change | [Scoped verification](scoped-verification.md) |

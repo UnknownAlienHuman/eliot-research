@@ -4,7 +4,8 @@ Purpose and boundaries: [product manifesto](../architecture/ELIOT_RESEARCH.md).
 Existing names and source locations: [code map](dependency-map.md). Technical details: [runtime notes](runtime-contract.md).
 This plan explains what to write, where and what it replaces. It is not a second manifesto or an approval graph.
 Source anchors were reconciled against `de88154e`; the ordinary execution chain was inspected again at
-`ba344566` on 2026-10-18. Targets below are not claims of completed runtime work.
+`ba344566` on 2026-10-18. Owner list/history/freshness paths were traced at `a5f53d0d` the same day.
+Targets below are not claims of completed runtime work.
 
 ## Choose a complete behavior, not a new foundation
 
@@ -80,22 +81,28 @@ new foundational framework precedes this integration.
 
 ## 3. Lightweight owner lists and normal report/Wiki updates
 
-**Where:** `packages/cloudflare-navigation/src/catalog-service.ts` and the selected history/guide endpoint's
-existing writer/client; `packages/cloudflare-wiki/src/` and `packages/cloudflare-artifacts/src/` for content/head updates.
+[Owner read implementation](owner-read-paths.md) defines three independent changes with current source
+anchors, writer/client changes and deletion boundaries:
 
-Take one endpoint, not the entire navigation layer. Return an indexed summary page and maintain those summary
-fields in its existing writer. Remove per-item R2 hydration and owner-path model/grant proof chains.
-Do not invent another summary service, cache database or independently synchronized read model.
-For freshness, align `source-revision-freshness.ts` in navigation with the current client decoder; replace
-repeated linear membership scans with a set. More than 64 changed sources must not break an allowed larger scope.
+- **Project/Library pages:** keep the owner's empty-project list distinct from the source-witness catalog.
+  Replace owner-only policy/fingerprint reloads with direct ownership/deletion predicates and keyset paging.
+  The catalog already avoids R2; its repeated D1/authority work is the target. Optional readiness is not access.
+- **Run/report history:** query stored D1 summaries instead of scanning candidates, reconstructing historical
+  checkpoints and reading R2 to recover locators. Capture positive project attribution; EXCEPT-only matches
+  must not consume the candidate budget. Replace six client history versions with the current summary shape
+  and real continuation, without hiding older saved work or re-running old executors.
+- **Report reopening/freshness:** authorize stored content separately from optional source-head comparison.
+  Share one server/client schema: exact change count, bounded detail sample, explicit truncation or UNKNOWN.
+  C05/C10 are not fixed by raising one array cap. Access/deletion failures must never become an advisory success.
 
-For a selected report/Wiki mutation, update content reference, revision/head and its delivery intent atomically
-through existing writers. Use the narrow WeKnora pattern below, not another artifact DSL/revision engine.
-Keep SQL expected-state predicates; a zero-row update must not publish a success/outbox record.
-C06's local shape/size check precedes a requested paid section verifier, never adding one to ordinary answers.
+For an actual report/Wiki edit, update the existing content reference/head and its delivery intent atomically.
+Keep SQL expected-state predicates: inspecting zero changed rows after commit cannot roll back companion writes.
+Use revisioned writes for persisted text; render-only link decoration must not rewrite an old revision.
+C06's cheap size/shape check precedes a requested verifier, never adding one to an ordinary answer.
 
-**Result:** list reads do not open every referenced object; normal edits have one clear write path and accurate
-conflict handling. Check query/R2/request counts, not just code volume. Final behavior checks follow assembly.
+**Result:** lists read metadata, reports read saved content, citations read exact source bytes. No new cache
+service, summary database, compatibility platform or universal read policy engine. Measure actual calls and
+latency when exercising the assembled paths; this documentation does not establish a speedup.
 
 ## 4. Native managed search without a second control system
 
@@ -149,6 +156,7 @@ readiness must describe selected working behavior. Tooling work never becomes th
 
 These are pattern references, not new dependencies. Pinned source is intentionally dated; API docs were
 checked on 2026-10-17, with Streams/WebSockets/retry and SurfSense budgeting revisited on 2026-10-18.
+SQLite pagination and WeKnora list/update paths were checked on 2026-10-18.
 Check the chosen source license before literal code reuse. A donor is useful when
 it removes an identified Eliot implementation or supplies a selected missing behavior, not because it is popular.
 
@@ -160,7 +168,7 @@ it removes an identified Eliot implementation or supplies a selected missing beh
 | [SurfSense `build_context` / `resolve_citations`](https://github.com/MODSetter/SurfSense/blob/7fb479c361414e1ffd180860eb0b5eb5afb0c4e3/surfsense_local/backend/modules/chat/prompt.py) | Group selected excerpts by source and map model-visible labels on the server in task 2. Reuse Eliot's context compiler and evidence resolver, including actual revision/range identity. | Its Python app, citation ID namespace, old-wrapper compatibility or regex as an injection boundary. An ordinal rewrite alone is not exact evidence. |
 | [SurfSense output reserve](https://github.com/MODSetter/SurfSense/blob/7fb479c361414e1ffd180860eb0b5eb5afb0c4e3/surfsense_local/backend/modules/chat/budget.py) | Reserve answer capacity before choosing context in task 2; keep token and serialized-byte bounds distinct. | Its fixed estimates, four-characters-per-token rule and legacy unknown-window fallback. They do not prove FULL context fits Eliot's selected model. |
 | [Cloudflare Streams](https://developers.cloudflare.com/workers/runtime-apis/streams/) and [Agent connections](https://developers.cloudflare.com/agents/runtime/communication/websockets/) | Incremental provider consumption and bounded public-text delivery through the existing Session in task 2. | A second executor, unrestricted broadcast, persisted token journal or an SDK upgrade merely to copy an example. |
-| [WeKnora `UpdateWithRevision` / `updateWikiPageRow`](https://github.com/Tencent/WeKnora/blob/005627b180c6c7509660b0a14401e463f48d53f8/internal/application/repository/wiki_page.go) | One transaction for the selected revision/update and explicit zero-row conflict handling in task 3; use existing D1 writers. | GORM, multi-dialect support, extra revision engine or enterprise policy topology. |
+| [WeKnora `ListRevisions` / `UpdateWithRevision`](https://github.com/Tencent/WeKnora/blob/005627b180c6c7509660b0a14401e463f48d53f8/internal/application/repository/wiki_page.go) | Body-free lists and atomic revision changes in task 3; use existing D1 writers. | GORM, COUNT+OFFSET paging, multi-dialect support or `UpdateAutoLinkedContent` rewriting content without a version check. See the owner-read note. |
 
 The [earlier donor record](../../.github/audits/2026-10-17/README.md#donor-reconciliation) remains optional reference.
 DocsGPT overlaps the existing context preparation; no second planner is selected. Open Notebook's multi-call

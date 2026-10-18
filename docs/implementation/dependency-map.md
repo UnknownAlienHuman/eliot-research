@@ -1,7 +1,8 @@
 # Code and responsibility map
 
 This locates existing code at source baseline `de88154e`; it is not a proposed package hierarchy or
-an instruction to preserve each layer. [The plan](backend-entrypoints.md) selects changes.
+an instruction to preserve each layer. Owner reads were traced again at `a5f53d0d`.
+[The plan](backend-entrypoints.md) selects changes.
 Here “owner” means the code/data responsible for an operation, not an agent reservation or permission gate.
 
 ## Product vocabulary
@@ -25,7 +26,9 @@ All paths below are repository-relative. Inspect imports from these anchors inst
 |---|---|---|
 | Browser composition and remote calls | `apps/eliotr-web/src/app/runtime.ts`; `packages/owner-api-client/src/legacy/http.ts` | React composition and one shared client; remove the duplicate client construction and legacy-shaped seam as callers move |
 | Raw sources | `packages/owner-api-client/src/sources/import/raw.ts`; `packages/pwa-source-workspace/src/raw-file-api.ts`; `packages/cloudflare-raw-ingest/src/` | One upload protocol and the actual admission writer; no client-side duplicate source authority |
-| Navigation and freshness | `packages/cloudflare-navigation/src/catalog-service.ts`; `source-revision-freshness.ts` in that directory | Bounded current summaries; open heavy source content only when requested |
+| Owner projects / catalog | `packages/cloudflare-navigation/src/project-owner-service.ts`; `catalog-service.ts`, `catalog-queries.ts` | Owned projects include empty ones; delegated/source-witness discovery is not the same list. Replace owner-only repeated authority loading, not legitimate query scoping |
+| Recent runs / saved reports | `packages/cloudflare-research-runtime/src/research-run-list.ts`; client `research/history-changes/history.ts` | Stored D1 summaries and continuation; do not reconstruct old Workflow lineage to list a report |
+| Report reopen / freshness | `packages/cloudflare-artifacts/src/artifact-draft-read-service.ts`; navigation `source-revision-freshness.ts` | Authorize/read the saved report separately from optional head comparison; exact citation opening is another operation |
 | Run admission | `apps/eliotr-core/src/research-run-service.ts`; `packages/owner-api-client/src/research/runs/authority.ts` | Current request, selected sources/model and original attempt identity |
 | Durable execution | `apps/eliotr-core/src/research-workflow.ts`; `packages/cloudflare-research-runtime/src/research-workflow-application.ts` | One native Workflow; Core binds it rather than hosting a second runner |
 | Context and synthesis | `packages/policy/src/context-compiler.ts`; `packages/cloudflare-model-control/src/research-model-prompt.ts`; `packages/cloudflare-research-runtime/src/research-semantic-server.ts` | Prepare the chosen material once; share provider/prompt/output machinery between ordinary and explicit deep work |
@@ -37,6 +40,7 @@ All paths below are repository-relative. Inspect imports from these anchors inst
 
 The namespace/type names in these files describe today's code, not a requirement to reproduce all of
 its model qualifications, seven-domain identities, historical codecs or declaration layers.
+[Owner read paths](owner-read-paths.md) specify the concrete list/reopen/freshness replacements.
 
 ## State and dependency direction
 
