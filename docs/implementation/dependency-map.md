@@ -40,6 +40,8 @@ It is not a package blueprint and does not require preserving every named layer.
 | Current report acceptance | `apps/eliotr-web/src/app/ArtifactActions.tsx`; owner client `studio/artifact.ts`; `artifact-publication*.ts`; migration `0098_artifact_publication_authority.sql` | Remove owner-acceptance decisions, verification/currentness receipts, publication head/mutation guard and `artifact.accepted` outbox. A saved report is usable; explicit Wiki/Inbox reuse is separate |
 | Current report revision | Core `artifact-section-revise.ts`; `artifact-report-admission.ts`; cloudflare-research/artifacts COW modules and revise Workflow tables | Replace section COW/model/proof workflow with a full report revision. AI-assisted revision, when selected, retains Markdown through the normal model owner then calls the same report writer |
 | Current report read | `artifact-draft-read-service.ts`, `artifact-draft-reauthorization.ts`, `artifact-draft-read-authority.ts`; owner client `evidence/report/manifest.ts` | Direct research-report authorization/readback; optional freshness and citation opening are separate operations; remove v1/v2/v3 reauthorization DTOs |
+| Backup inventory | `packages/backup-o2/src/coverage.ts`; `packages/contracts/src/core-table-specs-*.ts`; coherent-cut/restore fixtures | If this backup path remains selected, export `research_report`/`research_report_revision` and their exact R2 object locators. Remove old artifact/admission/publication/COW entries; inventory tests do not justify keeping dead schema |
+| Erasure/retention | `packages/cloudflare-erasure/src/`; `erasure_target`, `erasure_hold`, `purge_ledger`; artifact-publication erasure invalidation | Report deletion hides the report immediately. Physical object removal uses the existing exact target/hold/purge lifecycle after no live revision references the key. Remove publication-head invalidation; do not build a report-specific erasure engine |
 | Recent runs/reports | `packages/cloudflare-research-runtime/src/research-run-list.ts`; client history modules | Stored run/report summaries and continuation; no Workflow/checkpoint/admission reconstruction for a list |
 | Deep research | `packages/cloudflare-research-runtime/src/`; existing Workflow/search/read/model/save owners | Add one bounded search/read/finish loop and use the same research-report writer; delete old branch/stage graph after drain |
 | Progress/live text | `apps/eliotr-core/src/research-session.ts`; owner client `research/session-projection/` | One bounded typed presentation channel; no transcript or second executor |
@@ -72,6 +74,10 @@ revisions also attach the exact result to their originating operation in that tr
 No D1 transaction contains network/R2/model work, and no report receipt/outbox is required when the same Worker is
 committing its own result. A queue outbox remains only for a real asynchronous delivery consumer. Repository search
 currently finds `artifact.accepted` only at its producer, not at a consuming integration.
+
+Backup and erasure consumers move with the schema. An exhaustive table manifest or closure test is a caller to
+update, not a compatibility veto. Orphan cleanup only removes an old object after a grace period and a current D1
+check proves no `research_report_revision` references its key; it never bypasses an erasure hold.
 
 Core remains the sole deployable Worker. Browser code uses the one owner client and never imports server bindings.
 A pure helper needs no port, repository package or cryptographic envelope. When consolidating, update callers,
