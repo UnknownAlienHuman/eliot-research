@@ -192,6 +192,32 @@ Owner lists read D1 metadata only: run ID, time, question, recorded state and re
 Report bodies and citation bytes load on demand. Project attribution is captured at admission; do not infer it from
 today's attachments or post-filter a bounded candidate page. Acceptance/publication status is not part of the list.
 
+## Backup, deletion, erasure and orphan cleanup
+
+The current backup inventory explicitly exports `artifact_head`, `artifact_revision`, artifact-draft tables,
+`research_report_admission`, publication receipts/heads and section-revise runs. Those manifests, explicit table
+specs, coherent-cut readers and restore fixtures are callers of the old schema. Update or remove them with report
+cutover; do not keep dead tables because an exhaustive-inventory test still names them.
+
+If the retained backup path remains selected:
+
+- export `research_report` and `research_report_revision` plus the exact R2 object locator/checksum/size;
+- restore immutable objects before their D1 references and re-establish heads/result associations through the new
+  schema's ordinary integrity checks;
+- never restore old acceptance receipts as current product state;
+- classify retired artifact/admission/publication/COW tables as removed, not historical authority to recreate.
+
+Logical deletion sets `research_report.deleted_at` (or the selected equivalent) and immediately removes the report
+from owner/delegated reads. Physical R2 deletion is an existing erasure/retention operation over the exact object key:
+respect current holds, record the real target, and remove bytes only after no live `research_report_revision`
+references the key. The old publication-head `PENDING_REVALIDATION`/`REDACTED_DEPENDENCY` path disappears with the
+publication system; source erasure can make a compact citation unavailable without deleting unrelated report prose
+unless the actual erasure policy requires derived-content removal.
+
+Orphan cleanup is not erasure. It may delete an object only after a grace period and a fresh D1 check proves no live
+research-report revision references that exact key. It must not bypass an erasure hold or race a deterministic retry.
+No report-specific erasure coordinator, closure ledger or backup platform is added.
+
 ## Migration and deletion
 
 Inventory retained reports before changing schema. Convert each real saved report once, preserving stable identity/
@@ -207,6 +233,7 @@ switch current server/client reads and writes, then remove:
   only operation/outbox rows;
 - artifact acceptance routes/client/UI/policy/readiness code;
 - artifact section revise Workflow/COW/model/child-materialization code and tables;
+- old backup/table-spec/restore entries and publication erasure invalidation tied only to that cohort;
 - v1/v2/v3 report reauthorization DTOs and their fixtures.
 
 Old acceptance receipts are conversion diagnostics at most; they do not become product state in the new schema.
