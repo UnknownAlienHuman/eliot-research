@@ -114,7 +114,8 @@ outbox is required. A real Queue consumer may still have a real outbox.
 
 The current owner action says “Accept this report”. The server then revalidates section receipts and evidence
 currentness, records a signed-looking owner decision/provenance, appends operation/outbox records and advances a
-second publication head. Storage status `PUBLISHED` is projected as another `VERIFIED/ACCEPTED` status. This does not
+second publication head. Separately, the base artifact schema already contains a `PUBLISHED` status, while the
+publication subsystem starts from a DRAFT and synthesizes its own `VERIFIED/ACCEPTED` dispositions. This does not
 make model prose true, and repository search finds `artifact.accepted` only at its producer—not at a consuming
 integration.
 
