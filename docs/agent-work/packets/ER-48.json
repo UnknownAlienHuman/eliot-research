@@ -7,10 +7,9 @@
       "packages/owner-api-client/**",
       "packages/pwa-http-client/**",
       "packages/pwa-source-workspace/**",
-      "packages/pwa-research-workspace/**",
-      "docs/agent-work/frontend-owner-claims/ER-48/**"
+      "packages/pwa-research-workspace/**"
     ],
-    "mandatory_negative_case": "Hold a protected source/report response, change owner session, page lifecycle, or deployment generation, then release it; neither the client nor React adapter may restore protected data, the legacy adapter emits one clear transition, and uncertain mutation retry preserves the original effect identity.",
+    "mandatory_negative_case": "Reject malformed transport and late protected responses after principal/lifecycle loss. Reconcile uncertain mutations with the original identity; deployment change alone does not discard the same owner draft.",
     "document": "ER-48-owner-api-client-extraction.md",
     "max_package_source_lines": 10000
   }

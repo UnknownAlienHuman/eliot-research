@@ -7,10 +7,9 @@
       "apps/eliotr-web/**",
       "packages/ui/**",
       "tests/ui-owner/**",
-      "scripts/ui-owner/**",
-      "docs/agent-work/frontend-owner-claims/ER-47/**"
+      "scripts/ui-owner/**"
     ],
-    "mandatory_negative_case": "Bind a UI preview candidate to a production resource and inject a late protected response after logout, generation change, or pagehide; the binding gate rejects the resource and lifecycle/session epochs prevent protected content restoration.",
+    "mandatory_negative_case": "Reject production resources in local UI development and late protected responses after principal change, sign-out or pagehide. A same-owner deployment renewal preserves the draft while reads reconcile.",
     "document": "ER-47-owner-web-interface.md",
     "max_package_source_lines": 10000
   }

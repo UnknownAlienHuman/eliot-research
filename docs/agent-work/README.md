@@ -1,101 +1,72 @@
-# Agent work packets
+# Historical source map
 
-Start at [docs/START-HERE.md](../START-HERE.md) and the
-[current router](../implementation/backend-entrypoints.md). [ADR-0019](../adr/0019-compact-refactoring.md)
-supersedes the former mandatory claim/ancestry procedure.
+Start at [START-HERE](../START-HERE.md) and use [the current plan](../implementation/backend-entrypoints.md).
+These documents locate earlier implementations; their dependency lists and Owned paths are not task gates
+or permanent locks. Root rules and the selected architecture supersede canceled requirements.
 
-## Use the existing map, not a new scheduler
+Frontend ER-49's checker, diagnostics, self-tests, registry and claim files have been removed from this
+branch, including the optional CI provenance job and UI harness history command. Old material remains in
+[Git history](https://github.com/UnknownAlienHuman/eliot-research/tree/f0f2376570216dd987f213e62631764c2232ea98/docs/agent-work),
+not an optional legacy subsystem to maintain. Product/visual CI jobs remain.
 
-The manifest and fragments locate existing capability files and contracts. Their historical exclusive
-path lists are not permanent locks over an owner-authorized refactor. A new task is assigned by one
-manager with a bounded outcome and exact files. Independent leaves may work in parallel on disjoint
-files; the manager serializes shared roots, manifests, barrels, routes, migrations and publication.
+The generic work-packet manifest/checker still exists. Its coordinated retirement must remove root-script,
+negative-fixture and documentation-index dependencies together; this frontend cleanup does not complete that
+separate task. The remaining ER-47/48 fragment paths match their documents but reserve no current scope.
+Do not add packets, claim JSON, prerequisite commits or status manifests to start authorized work.
 
-Read the relevant packet's behavior and source, not all 49 packets. Existing packet metadata remains
-synchronized for repository checks. Do not add a packet, claim JSON or prerequisite commit merely to
-start current work. ER-49's checker/claims are optional historical audit, not an acceptance gate for
-new implementation. No fixed leaf cap or predecessor-approval protocol applies.
+For UI work use the [delivery map](frontend-owner-execution-map.md) and [Material guidance](frontend-material-agent-playbook.md).
+The owner reviews the integrated result, not each internal edit. Compile/lint during implementation;
+product tests follow assembly. Unrun checks and unavailable independent review remain explicit limitations.
 
-The five owner paths, #377 cancellations, OWNER_SINGLE profile and React/Vite target govern current work.
-Old packet dependencies do not reopen canceled S52 or turn all Rust families into release prerequisites.
-Record result and scoped compile/lint in the PR. Tests and product/platform acceptance follow assembly;
-an unexecuted check remains pending.
+## Historical documents
 
-For rendered UI work use the [Material playbook](frontend-material-agent-playbook.md) and
-[delivery map](frontend-owner-execution-map.md). U1-D/U2-X are internal manager quality reviews;
-the owner reviews the finished integrated interface at FINAL-UI. ADR-0016/0017 still govern actual
-React/Worker cutover, standalone inbox, service-worker retirement and rollback. Astro remains served
-compatibility until that switch.
-
-## Packet index
-
-| Packet | Slice | Title | Depends on |
-|---|---:|---|---|
-| [ER-00](ER-00-workspace-and-verification-gates.md) | 0 | Workspace and verification gates | — |
-| [ER-01](ER-01-versioned-contracts-and-schemas.md) | 0 | Versioned contracts and schemas | ER-00 |
-| [ER-02](ER-02-core-deterministic-domain-state-machines.md) | 1 | Core deterministic domain state machines | ER-01 |
-| [ER-03](ER-03-policy-disclosure-and-injection-boundary.md) | 1 | Policy disclosure and injection boundary | ER-01, ER-02 |
-| [ER-04](ER-04-query-planner-and-fusion.md) | 1 | Query planner and fusion | ER-03, ER-30 |
-| [ER-05](ER-05-structural-projector.md) | 1 | Structural projector | ER-01, ER-29 |
-| [ER-06](ER-06-retrieval-lane-adapters.md) | 1 | Retrieval lane adapters | ER-05, ER-13, ER-16 |
-| [ER-07](ER-07-exact-evidence-resolver-and-exhaustive-scan.md) | 1 | Exact evidence resolver and exhaustive scan | ER-02, ER-05, ER-06, ER-14 |
-| [ER-08](ER-08-investigation-ledger-and-protocol.md) | 4 | Investigation ledger and protocol | ER-02, ER-03, ER-04 |
-| [ER-09](ER-09-durable-research-workflow.md) | 4 | Durable research workflow | ER-08, ER-15, ER-16 |
-| [ER-10](ER-10-evidence-freeze-claim-audit-and-coverage.md) | 4 | Evidence freeze, claim audit and coverage | ER-07, ER-08 |
-| [ER-11](ER-11-artifact-compiler.md) | 5 | Artifact compiler | ER-09, ER-10 |
-| [ER-12](ER-12-research-wiki-and-draft-promotion.md) | 2 | Research Wiki and draft promotion | ER-10, ER-13, ER-14 |
-| [ER-13](ER-13-d1-authority-and-migrations.md) | 0 | D1 authority and migrations | ER-00, ER-01, ER-23 |
-| [ER-14](ER-14-r2-staging-residency-and-ingest.md) | 1 | R2 staging, residency and ingest | ER-01, ER-03, ER-13 |
-| [ER-15](ER-15-outbox-queue-and-retry-discipline.md) | 0 | Outbox Queue and retry discipline | ER-13 |
-| [ER-16](ER-16-ai-search-and-model-gateway-adapters.md) | 1 | AI Search and model gateway adapters | ER-00, ER-03 |
-| [ER-17](ER-17-access-observability-and-runtime-limits.md) | 0 | Access, observability and runtime limits | ER-00, ER-13 |
-| [ER-18](ER-18-drive-exchange-protocol-and-provisioner.md) | 0 | Drive exchange protocol and provisioner | ER-01, ER-03 |
-| [ER-19](ER-19-drive-cursor-reconciliation-and-tamper-audit.md) | 0 | Drive cursor reconciliation and tamper audit | ER-13, ER-14, ER-18 |
-| [ER-20](ER-20-google-oauth-port-and-result-publication.md) | 0 | Google OAuth port and result publication | ER-13, ER-14, ER-18 |
-| [ER-21](ER-21-owner-and-semantic-apis.md) | 1 | Owner and semantic APIs | ER-03, ER-04, ER-13 |
-| [ER-22](ER-22-generic-federation-boundary.md) | 2 | Generic federation boundary | ER-01, ER-03, ER-08, ER-21 |
-| [ER-23](ER-23-testkit-and-golden-corpus-harness.md) | 0 | Testkit and Golden Corpus harness | ER-00, ER-01, ER-02, ER-03 |
-| [ER-24](ER-24-worker-composition-do-queue-and-schedules.md) | 0 | Worker composition, DO, Queue and schedules | ER-13, ER-15, ER-17, ER-21 |
-| [ER-25](ER-25-owner-pwa.md) | 1 | Legacy owner PWA and accepted browser behavior | ER-21, ER-24 |
-| [ER-26](ER-26-cloudflare-provisioning-and-deployment.md) | 0 | Cloudflare provisioning and deployment | ER-00, ER-13, ER-16, ER-24 |
-| [ER-27](ER-27-vertical-integration-and-live-conformance.md) | 0 | Vertical integration and live conformance | ER-09, ER-12, ER-19, ER-20, ER-22, ER-24, ER-26 |
-| [ER-28](ER-28-privacy-erasure-and-purge-closure.md) | 6 | Privacy, erasure and purge closure | ER-02, ER-03, ER-13, ER-14, ER-34 |
-| [ER-29](ER-29-source-acquisition-admission-and-qualification.md) | 1 | Source acquisition, admission and qualification | ER-02, ER-03, ER-13, ER-14 |
-| [ER-30](ER-30-global-library-projects-and-scope-snapshots.md) | 1 | Global library, projects and scope snapshots | ER-02, ER-13, ER-29 |
-| [ER-31](ER-31-corpus-lens-navigation.md) | 3 | Corpus Lens navigation | ER-04, ER-05, ER-30 |
-| [ER-32](ER-32-selective-distillation-and-argument-maps.md) | 5 | Selective distillation and argument maps | ER-07, ER-10, ER-31 |
-| [ER-33](ER-33-research-steward.md) | 5 | Research Steward | ER-07, ER-12, ER-15, ER-17, ER-32 |
-| [ER-34](ER-34-backup-restore-and-platform-exit.md) | 6 | Backup, restore and platform exit | ER-13, ER-14, ER-17 |
-| [ER-35](ER-35-specialist-corpus-profiles.md) | 7 | Specialist corpus profiles | ER-07, ER-31, ER-32 |
-| [ER-40](ER-40-rust-canonical-identity-and-serialization.md) | — | Rust canonical identity and serialization | ER-00, ER-01, ER-02, ER-23 |
-
-## Additive packet fragments
-
-Fragments under [`packets/`](packets/) use protocol `eliotr.agent-work.packet.v1`.
-`scripts/check-work-packets.mjs` merges them after checking duplicate IDs, ownership overlap, document/path
-synchronization and dependency cycles. A fragment cannot override an existing packet.
-
-| Packet | Slice | Title | Depends on |
-|---|---:|---|---|
-| [ER-36](ER-36-gemini-spark-mcp-and-google-orchestration.md) | — | Gemini Spark / Antigravity MCP and Google orchestration | ER-17, ER-18, ER-20, ER-21, ER-24, ER-26 |
-| [ER-37](ER-37-governed-ingest-admission-composition.md) | — | Governed ingest admission composition | ER-13, ER-14, ER-21, ER-24, ER-29 |
-| [ER-38](ER-38-governed-projection-generation-execution.md) | — | Governed projection-generation execution | ER-05, ER-06, ER-13, ER-15, ER-16, ER-24, ER-29, ER-37 |
-| [ER-39](ER-39-exact-evidence-resolution.md) | — | Exact evidence resolution and citation gate | ER-01, ER-02, ER-03, ER-06, ER-07, ER-11, ER-13, ER-19, ER-21, ER-24, ER-37, ER-38 |
-| [ER-41](ER-41-federation-d1-runtime.md) | — | Federation D1 runtime authority | ER-13, ER-22, ER-24 |
-| [ER-43](ER-43-local-launch.md) | — | Local runtime isolation and restart regression | ER-00, ER-24, ER-26 |
-| [ER-44](ER-44-local-owner-session.md) | — | Local signed owner session and explicit read-policy setup | ER-21, ER-24, ER-26, ER-43 |
-| [ER-45](ER-45-authenticated-research-changes.md) | — | Authenticated research changes feed | ER-13, ER-21, ER-24, ER-36 |
-| [ER-46](ER-46-outbox-lifecycle-reconciliation.md) | — | Outbox lifecycle reconciliation | ER-13, ER-15, ER-24 |
-| [ER-47](ER-47-owner-web-interface.md) | — | React owner web manager packet | — |
-| [ER-48](ER-48-owner-api-client-extraction.md) | — | Owner API client manager packet and legacy compatibility | — |
-| [ER-49](ER-49-frontend-leaf-scheduler.md) | — | Frontend leaf scheduler and claim validation | — |
-
-ER-47/48 identify the React/UI and owner-client capability homes. ER-49 retains historical audit tooling.
-Shared root, Worker, CI and cutover changes are serialized by the manager; no new claims are required.
-
-## Before starting
-
-Use the current router to select the task and read its source and relevant contract. Check
-`../implementation/implementation-status.json` and the applicable gap entries for recorded implementation
-and qualification limits. A package-local build or component story establishes only that scope of evidence.
-For UI work, U1-D and U2-X are internal manager reviews; final owner review follows the complete U5-X interface.
+| Reference | Earlier capability |
+|---|---|
+| [ER-00](ER-00-workspace-and-verification-gates.md) | Workspace and verification |
+| [ER-01](ER-01-versioned-contracts-and-schemas.md) | Wire contracts |
+| [ER-02](ER-02-core-deterministic-domain-state-machines.md) | Pure domain logic |
+| [ER-03](ER-03-policy-disclosure-and-injection-boundary.md) | Disclosure boundaries |
+| [ER-04](ER-04-query-planner-and-fusion.md) | Query planning/fusion |
+| [ER-05](ER-05-structural-projector.md) | Source projections |
+| [ER-06](ER-06-retrieval-lane-adapters.md) | Retrieval adapters |
+| [ER-07](ER-07-exact-evidence-resolver-and-exhaustive-scan.md) | Exact evidence |
+| [ER-08](ER-08-investigation-ledger-and-protocol.md) | Research records |
+| [ER-09](ER-09-durable-research-workflow.md) | Research Workflow |
+| [ER-10](ER-10-evidence-freeze-claim-audit-and-coverage.md) | Deep audit/coverage |
+| [ER-11](ER-11-artifact-compiler.md) | Artifact writing |
+| [ER-12](ER-12-research-wiki-and-draft-promotion.md) | Wiki and drafts |
+| [ER-13](ER-13-d1-authority-and-migrations.md) | D1 schema |
+| [ER-14](ER-14-r2-staging-residency-and-ingest.md) | R2 and source ingest |
+| [ER-15](ER-15-outbox-queue-and-retry-discipline.md) | Outbox delivery |
+| [ER-16](ER-16-ai-search-and-model-gateway-adapters.md) | Model/search adapters |
+| [ER-17](ER-17-access-observability-and-runtime-limits.md) | Access and runtime limits |
+| [ER-18](ER-18-drive-exchange-protocol-and-provisioner.md) | Unselected Drive Exchange |
+| [ER-19](ER-19-drive-cursor-reconciliation-and-tamper-audit.md) | Old Drive reconciliation |
+| [ER-20](ER-20-google-oauth-port-and-result-publication.md) | Google transport/publication |
+| [ER-21](ER-21-owner-and-semantic-apis.md) | Owner APIs |
+| [ER-22](ER-22-generic-federation-boundary.md) | Unselected general federation |
+| [ER-23](ER-23-testkit-and-golden-corpus-harness.md) | Test utilities |
+| [ER-24](ER-24-worker-composition-do-queue-and-schedules.md) | Worker composition |
+| [ER-25](ER-25-owner-pwa.md) | Astro UI to retire |
+| [ER-26](ER-26-cloudflare-provisioning-and-deployment.md) | Deployment tooling |
+| [ER-27](ER-27-vertical-integration-and-live-conformance.md) | Earlier integration records |
+| [ER-28](ER-28-privacy-erasure-and-purge-closure.md) | Source cleanup |
+| [ER-29](ER-29-source-acquisition-admission-and-qualification.md) | Source admission |
+| [ER-30](ER-30-global-library-projects-and-scope-snapshots.md) | Library and projects |
+| [ER-31](ER-31-corpus-lens-navigation.md) | Lens navigation |
+| [ER-32](ER-32-selective-distillation-and-argument-maps.md) | Distillation |
+| [ER-33](ER-33-research-steward.md) | Earlier background research |
+| [ER-34](ER-34-backup-restore-and-platform-exit.md) | Unselected backup/restore |
+| [ER-35](ER-35-specialist-corpus-profiles.md) | Earlier specialist profiles |
+| [ER-36](ER-36-gemini-spark-mcp-and-google-orchestration.md) | Google/MCP integrations |
+| [ER-37](ER-37-governed-ingest-admission-composition.md) | Ingest composition |
+| [ER-38](ER-38-governed-projection-generation-execution.md) | Projection execution |
+| [ER-39](ER-39-exact-evidence-resolution.md) | Evidence resolution |
+| [ER-40](ER-40-rust-canonical-identity-and-serialization.md) | Earlier Rust integration |
+| [ER-41](ER-41-federation-d1-runtime.md) | Unselected federation runtime |
+| [ER-43](ER-43-local-launch.md) | Local runtime isolation |
+| [ER-44](ER-44-local-owner-session.md) | Local owner session |
+| [ER-45](ER-45-authenticated-research-changes.md) | Research changes feed |
+| [ER-46](ER-46-outbox-lifecycle-reconciliation.md) | Delivery reconciliation |
+| [ER-47](ER-47-owner-web-interface.md) | Current UI capability locations |
+| [ER-48](ER-48-owner-api-client-extraction.md) | Current client capability locations |

@@ -1,95 +1,35 @@
-# Owner-web delivery and acceptance map
+# Owner-web delivery map
 
-**Purpose:** preserve the product, browser and cutover acceptance for the React owner web.
-**Current refactor authority:** [ADR-0019](../adr/0019-compact-refactoring.md) and
-[`backend-entrypoints.md`](../implementation/backend-entrypoints.md).
-**Served compatibility UI:** `apps/eliotr-pwa` until the accepted React cutover.
-**Target:** `apps/eliotr-web` (React/Vite) with the existing Worker and owner API.
+Use [the current plan](../implementation/backend-entrypoints.md) for assignments and
+[the architecture](../architecture/ELIOT_RESEARCH.md) for product scope. This map describes UI outcomes,
+not a DAG of approvals. The frontend claim registry, files and ancestry tools have been removed from this branch.
+Their dated source remains in Git history; they are not an optional tool to keep running.
 
-For detailed historical C/U/B feature-contract rows, consult the [full execution-map baseline at
-`4e53d5e2`](https://github.com/UnknownAlienHuman/eliot-research/blob/4e53d5e2296e7f4ed3ed29cef2f049891c5d20c0/docs/agent-work/frontend-owner-execution-map.md).
-That map is a reference for prior UX, transport and feature contracts, not an active queue, leaf limit, claim
-protocol or prerequisite. The current acceptance points below remain active.
+## Build the selected interface
 
-This map records the owner-web sequence and its quality gates. It is not a scheduler, task registry or claim
-protocol. Use the current implementation router for active source tasks. Existing ER-47/ER-48 claims and
-ER-49 checkpoint history remain optional historical audit material; new work creates no JSON claims and has no
-Git-ancestry prerequisite.
+Use the existing React/Vite application, UI system and one owner client. Keep URL-owned navigation,
+bounded in-memory query state and native HTML semantics. Sources, Research/Evidence, Studio/Wiki/Inbox
+and Connections must expose the actual selected capabilities, not decorative unavailable features.
+The ordinary streamed answer is selected work: change its real server/client contract together;
+no separate approval queue for that integration and no invented completion or connection state.
 
-## Work ownership
+Review Material direction in the existing playbook before changing visual design. Keep coherent desktop
+and phone layouts, light/dark themes, long Russian/English text, and useful loading/error/degraded states.
+Do not repeat research or rebuild the design system merely because another agent starts work.
 
-One authorized manager uses the existing checkout/worktree and assigns each task exact allowed paths, inputs,
-acceptance evidence and a scoped verification command. Parallel work is allowed only on disjoint exact paths.
-The manager serializes shared manifests, lockfiles, root references, routes/query roots, barrels, catalogs,
-Worker composition, SQL, CI and common fixtures. Existing product/API/security owners retain their contracts;
-the manager hands off a path outside the authorized scope instead of editing it.
+Assemble project → source → question → report → exact citation → reopen, Inbox publication,
+and agent connection/task-result journeys. Prefer an independent no-hint usability review when available;
+otherwise state the review limitation. An unavailable reviewer is not a blocker to implementation.
 
-The manager prepares the integrated build and rollback within the authorized refactor. Actual deploy,
-production/account mutation, final merge and cutover require the owner's authorization for those actions;
-reuse authorization already given. The old claim checker is optional historical audit.
+## Review and cutover
 
-## Owner-web sequence
+During implementation use scoped compilation/lint. After assembly check selected browser journeys,
+keyboard/focus, responsive layout, accessibility, safe rendering, network behavior and private-data lifecycle.
+A screenshot or isolated story is not product acceptance. Record actual failures and unrun checks honestly.
+The owner reviews the finished integrated interface; internal edits need no separate approval receipt.
 
-### Visual direction and shell
-
-- **U1-R:** inspect live NotebookLM and current official Material 3 / M3 Expressive behavior before selecting
-  the shell or tokens. Record a private-data-free reference matrix and rendered observations.
-- **U1-D:** manager reviews a coherent Eliot composition at desktop and phone widths, light and dark themes,
-  long Russian and English text, and useful/loading/degraded states. Resolve the design direction before shell
-  assembly.
-- Build the React shell with one owner-client path, URL-owned navigation, in-memory query state and no service
-  worker. Ordinary integrated development uses `CLOUDFLARE_ENV=test` and `remoteBindings:false`.
-
-### Fixture journey and real features
-
-- **U2-X:** a fresh-context reviewer completes the no-hint project → source → question → exact evidence →
-  supported artifact → Connections recovery journey. Fix material wrong turns and continue.
-- Wire Sources, Research/Evidence, Studio and Connections through the existing owner API/client contracts.
-  Detailed Research status/history/readback remain canonical HTTP authority; any session projection stays a
-  bounded snapshot. Do not invent chat history, stream contracts, endpoints, or completion authority.
-- Verify exact evidence only when opened, mutations with their existing idempotency/readback behavior, and
-  current ingress, request, disclosure, lifecycle and byte-representation contracts.
-
-The active product scope remains projects/sources/question/report with exact citations and reopen; Cloudflare AI
-Search or provider-native search for uploaded project sources; draft publication through Inbox; connected agents
-and task assignment; and the existing Library, Lens, Wiki and explicit deep-research paths. Search uses the
-provider's index/ranking, with bounded project filtering and honest partial/unavailable results; do not add the
-canceled custom S52 index/generation machinery. Owner list/draft reads validate known fields
-while tolerating additive fields and previous deployment generations, preserving the draft/last read as stale
-through renewal. Clear protected data on sign-out or principal change. Mutations retain CSRF, idempotency, CAS,
-no-auto-retry and uncertain-acknowledgement readback. Citation open resolves the admitted representation,
-revision and digest through the evidence owner. Research progress uses HTTP status/history/readback; the optional
-ResearchSession reader remains a strict, bounded read-only snapshot and never admits/replays/completes a run.
-
-### Integrated interface and owner review
-
-- **U5-X:** review the complete integrated interface, feature boundaries, route behavior, responsive layouts,
-  keyboard/focus, loading/degraded/error states, network behavior and sensitive-data handling. Retain the
-  bounded review evidence.
-- **FINAL-UI:** show the finished integrated interface and evidence package to the owner for review. Internal
-  U1-D/U2-X choices do not interrupt implementation; the owner review follows U5-X.
-
-## Verification
-
-During implementation, run scoped TypeScript compilation and lint for changed code. After assembly, run the
-relevant component, API-client, browser, accessibility, CSP, performance and Worker integration checks for
-changed behavior. Record exact commands, results and unexecuted native/staging/live gates as `PENDING`. A
-screenshot, package build or isolated story alone does not establish feature acceptance. Do not run tests or
-browser checks after every edit; full repository and release checks remain at their defined boundary.
-
-## U6 — deploy bridge and compatibility retirement
-
-Prepare and verify the build/deploy bridge and rollback artifact during the authorized refactor, before
-FINAL-UI, so the owner reviews a concrete integrated result. Actual production deployment/cutover follows
-final interface review and the owner's authorization for that action. Keep `eliotr-pwa` served until the
-React/Vite output is attested and connected to the existing Worker's asset path. Use one build identity;
-do not add a second Worker, Pages service or database.
-
-Before switch, retain an accepted online legacy rollback artifact with no root service-worker registration.
-Preserve the `/agent-inbox/` isolation and exact retirement helper. Keep `/sw.js` as the permanent inert,
-no-fetch, non-claiming tombstone; neither React nor rollback registers it. Verify browser retirement/readback,
-first-paint privacy behavior, response headers, safe rollback and the actual deployed output. Remove replaced
-legacy UI code after cutover and rollback obligations are satisfied, within the already authorized refactor.
-
-Deployment, account mutation, final merge, cutover and destructive data operations need their own action
-authorization. Ordinary in-scope code retirement does not require another confirmation.
+Prepare the integrated Worker/assets build and rollback before final UI review. The
+[cutover contract](../implementation/frontend-platform-migration.md) owns deployment, standalone Inbox,
+service-worker retirement and lifecycle details; do not duplicate that machinery here.
+One manager assigns disjoint files and integrates shared paths under root rules. No claims, path-lock
+manifest or Git-history ceremony is required to edit an authorized file.

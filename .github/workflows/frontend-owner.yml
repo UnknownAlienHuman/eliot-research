@@ -11,9 +11,6 @@ on:
       - 'packages/pwa-research-workspace/**'
       - 'apps/eliotr-pwa/src/**'
       - 'packages/contracts/**'
-      - 'scripts/check-frontend-owner-checkpoints.mjs'
-      - 'scripts/diagnose-frontend-owner-checkpoints.mjs'
-      - 'scripts/test-frontend-owner-checkpoints.mjs'
       - 'scripts/ui-owner/verify.mjs'
       - 'pnpm-lock.yaml'
       - '.github/workflows/frontend-owner.yml'
@@ -25,9 +22,6 @@ on:
       - 'packages/pwa-research-workspace/**'
       - 'apps/eliotr-pwa/src/**'
       - 'packages/contracts/**'
-      - 'scripts/check-frontend-owner-checkpoints.mjs'
-      - 'scripts/diagnose-frontend-owner-checkpoints.mjs'
-      - 'scripts/test-frontend-owner-checkpoints.mjs'
       - 'scripts/ui-owner/verify.mjs'
       - 'pnpm-lock.yaml'
       - '.github/workflows/frontend-owner.yml'
@@ -40,37 +34,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  frontend-owner-provenance:
-    # Historical checkpoint ancestry is advisory under the owner directive of 2026-10-15.
-    if: github.event_name == 'workflow_dispatch'
-    continue-on-error: true
-    name: Frontend owner provenance
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 0
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
-        with:
-          node-version: 22.13.0
-      - name: Frontend owner checkpoint negative fixtures
-        run: node scripts/test-frontend-owner-checkpoints.mjs
-      - name: Frontend owner checkpoint mechanics
-        shell: bash
-        run: |
-          set -euo pipefail
-          if node scripts/check-frontend-owner-checkpoints.mjs \
-            --history-base c37e56e0ebdfc7f6d294879008a4036d1b95b985 \
-            --head "$GITHUB_SHA"; then
-            exit 0
-          fi
-          node scripts/diagnose-frontend-owner-checkpoints.mjs \
-            --history-base c37e56e0ebdfc7f6d294879008a4036d1b95b985 \
-            --head "$GITHUB_SHA" || true
-          exit 1
-
   frontend-owner:
     name: Frontend owner product
     runs-on: ubuntu-latest
