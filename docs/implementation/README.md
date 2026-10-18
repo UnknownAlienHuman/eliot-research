@@ -10,6 +10,8 @@ implementation inventory. Open the selected task and its relevant references bel
 |---|---|
 | What to implement, where, donors and removals | [Implementation plan](backend-entrypoints.md) |
 | All donor candidates, inspected evidence and exclusions | [Donor register](donors.md) |
+| Perplexity audits and selective reuse | [Perplexity donor](perplexity-donor.md) |
+| Explicit deep research through existing owners | [Deep research](deep-research.md) |
 | Native Cloudflare mechanisms and minimum-operation paths | [Native path](cloudflare-native-path.md) |
 | Existing vocabulary, source entrypoints and data owners | [Code map](dependency-map.md) |
 | Storage, execution, access and input integration | [Runtime notes](runtime-contract.md) |
@@ -94,7 +96,7 @@ results remain historical; no check is rerun or promoted by inclusion in this li
 - [computer-agent-web-inbox.md](computer-agent-web-inbox.md)
 - [d1-native-representation-operator-2026-10-11.md](d1-native-representation-operator-2026-10-11.md)
 - [d1-nullable-check-operator-2026-10-11.md](d1-nullable-check-operator-2026-10-11.md)
-- [d1-supported-schema-representation-2026-10-11.md](d1-supported-schema-representation-2026-10-11.md)
+- [d1-supported-schema-representation-2026-10-11.md](d1-supported-schema-representation-operator-2026-10-11.md)
 - [http-cache-semantics-advisory-2026-10-14.md](http-cache-semantics-advisory-2026-10-14.md)
 - [issue-282-cli-intake-2026-10-11.md](issue-282-cli-intake-2026-10-11.md)
 - [issue-282-legacy-startup-intake-2026-10-11.md](issue-282-legacy-startup-intake-2026-10-11.md)
