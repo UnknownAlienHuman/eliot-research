@@ -1,30 +1,62 @@
-# Runtime contract — OWNER_SINGLE
+# Runtime integration notes
 
-[ADR-0018](../adr/0018-owner-single-function-first-profile.md) and [ADR-0019](../adr/0019-compact-refactoring.md) govern new work. [Implementation router](backend-entrypoints.md) lists unfinished changes. One Cloudflare Worker hosts API, ResearchWorkflow and ResearchSession; React/Vite replaces the legacy PWA after cutover.
+Read only for a change involving these boundaries. Product scope lives in the
+[manifesto](../architecture/ELIOT_RESEARCH.md); [the plan](backend-entrypoints.md) selects implementation.
+These notes replace infrastructure details previously embedded in the manifesto.
 
-## Boundaries
+## Place work at its actual boundary
 
-- **Owner list/draft:** authenticate at ingress; bounded indexed summary read. No per-item model qualification, grant hydration or citation traversal. A missing observation is unavailable; the same owner's last observed value may be marked stale. Principal change, sign-out and purge invalidate protected state.
-- **Citation open:** resolve the admitted revision, exact bytes/range/digest, current membership and purge state. Search locators and model quotes are not evidence.
-- **Mutation/paid work:** validate cheap bounds first; capture original intent, selected model, spend and cancellation identity. Reconcile uncertain effects before retry. An expired execution grant does not erase historical owner-readable results.
-- **External client:** retain its explicit authorization/disclosure boundary. OWNER_SINGLE is not a universal bypass.
+Authenticate owner requests through the existing Cloudflare Access/ingress verifier, including alternate
+entry routes; do not trust an asserted identity header. Connected clients retain their selected project/
+operation access. Use platform/library TLS and secret handling, not a new credential cryptosystem.
 
-## Data movement
+Validate untrusted request/provider data at entry and use typed values internally. Recheck mutable state
+only where a write, cancellation or actual disclosure can be invalidated. Do not pass the full model/grant/
+deployment proof chain through every owner list. Keep private provider frames, reasoning and credentials
+out of browser output; source text is data, not instructions or permission to perform another operation.
 
-| Existing boundary | Limit |
-|---|---|
-| Serialized JSON request | 262,144 UTF-8 bytes |
-| Semantic/MCP response | 512 KiB |
-| Workflow receipt | 64 KiB; large results via immutable handles |
-| Persisted ResearchSession state | 256 KiB, presentation only |
-| Buffered R2 Workflow object | 8 MiB |
+Owner lists read a bounded indexed summary page. Its existing writer updates needed summary fields in the
+same change, without a new summary service/database. Open report bodies and citation bytes on demand.
+Preserve the same owner's observed draft on transient failure with a stale indication; no observation means
+unavailable. Sign-out/principal change and applicable deletion invalidate private state. Deployment renewal
+alone is not identity loss. Detailed browser retirement belongs to [the cutover note](frontend-platform-migration.md).
 
-C03 remains open: the research input/planning writer shares the 64-KiB receipt ceiling although HTTP allows 256 KiB. Current semantic context composition also caps context at 64 KiB. Token capacity, provider request bytes and aggregate memory are distinct; align producers, readers and compact receipts before advertising FULL context. See [full-source answer](research-full-answer-v1.md).
+## Storage and effects
 
-## State ownership
+Use source/revision/representation and a stored R2 locator. Keep existing locator strings or backfill them
+once; do not rename all objects to simplify a key builder. Project detach is not source deletion.
+An evidence reference resolves to that representation's actual passage; missing/ambiguous candidates stay
+unresolved. Use content checksums where they identify real stored bytes, not as an envelope for every function.
 
-D1 owns canonical records, expected-revision updates and atomic mutation/outbox commitment. No network/model/R2 effects inside D1 transactions. R2 staging is not evidence: conditional immutable writes require exact readback; failure to observe means unknown, not absent or conflicting. C01/C02/C11 remain open in the [audit](../../.github/audits/2026-10-17/README.md).
+D1 keeps prepared statements, unique/FK constraints and atomic expected-revision changes. Dependent
+publication/outbox writes must require the successful update: zero changed rows is not a SQL failure.
+Use the existing writer/batch and predicates, not an application-only preflight or a new transaction framework.
+No model/HTTP/R2 call runs inside the D1 transaction. [D1 batch semantics](https://developers.cloudflare.com/d1/worker-api/d1-database/)
+do not turn a zero-row update into a rollback automatically.
 
-Queue accelerates persisted outbox work, not authority. One ResearchWorkflow owns a research run; new E0/E1 targets prepare-once, one synthesis and save/cite within 4–5 durable steps, while explicit E2/E3 keeps deep execution. ResearchSession is a bounded connection/progress projection, never a second executor or result store. Preserve original paid-attempt identity and cancellation. See [checkpoint retirement](workflow-checkpoints.md).
+Use native R2 conditions where overwrite would corrupt immutable data. Reconcile a lost/uncertain write
+acknowledgement with bounded actual observation; distinguish matching bytes, an observed conflict and
+unavailability. Never substitute the expected checksum for an observed one. Reuse this narrow storage
+operation rather than introduce signed receipts or another immutable-object service.
 
-Use native Cloudflare AI Search/provider retrieval with existing source membership and delivery. Never rebuild the canceled generation registry. Top-k is not completeness; exact evidence remains canonical R2/D1.
+Use the existing run/operation/attempt IDs. Native Workflow retry does not make arbitrary paid HTTP effects
+exactly-once. Recover the original attempt where possible or report an unknown outcome, rather than silently
+invoke again under a new ID. Cancellation prevents new work; retain a practical spend bound.
+Queue accelerates the existing persisted intent; ResearchSession projects the same Workflow's state.
+It neither executes another graph nor stores a canonical transcript. [Execution retirement](workflow-checkpoints.md)
+handles actual running attempts; completed reports use saved-result readers or one-time conversion.
+
+## Limits are integration inputs, not product ideology
+
+The source audit at `4e53d5e2` recorded 256-KiB research HTTP input against a 64-KiB persisted planning/
+receipt boundary (C03). Do not treat that historical mismatch as a desired product limit or fix one constant
+in isolation. Align the producer, stored input, compact receipt and readers; large inputs need a stored
+reference rather than repeated embedded copies. Recheck actual constants in the changed path.
+
+Model token capacity, provider-request bytes, response bytes, checkpoint size and aggregate memory are
+different constraints. Bound the selected path; do not load an entire corpus, encode it repeatedly or silently
+truncate FULL context. Whole admitted sources can be read without waiting for managed search indexing.
+C01/C02/C11 storage observation and C05/C10 freshness bounds remain source findings until implementation,
+not a mandate to retain unrelated audited subsystems. [Answer integration](research-full-answer-v1.md)
+owns prompt/parser/materializer alignment. The existing
+[TS/Rust/SQL note](../architecture/LANGUAGE_RUNTIME_CONTRACT.md) is implementation guidance, not an all-family port requirement.

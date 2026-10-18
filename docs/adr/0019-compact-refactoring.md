@@ -1,59 +1,39 @@
-# ADR-0019: Delete superseded mechanisms, retain the product
+# ADR-0019: Keep the product, remove accumulated machinery
 
-Updated 2026-10-17 under the owner's explicit simplification direction. The selected design is in
-[ELIOT_RESEARCH.md](../architecture/ELIOT_RESEARCH.md); implementation and deployed acceptance remain open.
-[The plan](../implementation/backend-entrypoints.md) is the only current work queue.
-
-## Problem
-
-The old specification made discarded prototypes, protocol generations, signed/digested control records,
-package ownership and all-family Rust ports into permanent obligations. A short exception table above
-that specification still sent agents back to the same requirements. Adding another adapter did not remove
-its predecessor. The earlier source inventory counted 283,671 authored application/library lines;
-that is a dated maintained-source measure, not deployed bundle size or a dead-code count.
+The owner's direction selects a compact single-owner research product and rejects prototype compatibility,
+pervasive proof/crypto machinery and development bureaucracy. [#377](https://github.com/UnknownAlienHuman/eliot-research/issues/377)
+retired the old programme; [#380](https://github.com/UnknownAlienHuman/eliot-research/issues/380) records the audit.
+This decision does not claim runtime refactoring or deployment complete.
 
 ## Decision
 
-Keep the five owner paths from [#377](https://github.com/UnknownAlienHuman/eliot-research/issues/377),
-Library/Lens/Wiki, normal downloads and explicit deep research. Keep one Worker, React/Vite and the
-existing TS/Rust/SQL stack. There is no mandated 17-crate topology or requirement to port every rule.
+The [product manifesto](../architecture/ELIOT_RESEARCH.md) is the lead developer's persistent context:
+purpose, selected behavior, requirements and principles. [Implementation](../implementation/backend-entrypoints.md)
+contains the source map, concrete changes, donor choices and removal/integration details. It implements the
+manifesto; it is not another architecture or an opportunity to expand product scope.
 
-Retire custom search generations/promotion, bilateral source-owner transfer, general federation machinery,
-seven-domain residency keys, unselected Drive Exchange and backup/restore execution from the selected
-product. Keep the simple external task/MCP interfaces actually used by connected agents. Reachable code
-is not necessarily required code. Existing selected consumers must move before their old route is removed.
+One current implementation replaces its predecessor. Actual saved content and acknowledged work must
+survive deliberate transitions; historical executors, unpublished protocols and hypothetical consumers
+need not. No custom cryptographic/proof system, index-promotion platform, bilateral owner-transfer system,
+or speculative federation/backup/connector framework is part of the selected product.
+Standard authentication, credentials, actual source identity and necessary atomic writes remain.
 
-No bespoke cryptosystem, signed proof chain, universal canonicalization envelope or per-list verification
-pipeline. Retain ordinary ingress authentication, secret handling, exact source references and the checksums
-that actually identify stored bytes. Local function calls do not need hashed inputs/outputs or policy passports.
-
-Replace internal interfaces in place with their callers. Delete old exports, wrappers, tests/fixtures and
-instructions for canceled behavior. Git history is the archive. Keep real content and results through an
-ordinary locator or one-time conversion, not permanent historical executors. A running paid attempt needs
-settlement; an old completed report does not need its producing Workflow to remain executable.
-
-Unknown live data blocks destructive migration only. Applied SQL migrations need a data-safe transition;
-unapplied prototype migrations can be simplified once their deployment status is established. No mass
-production reset, secret deletion, automatic migration or branch purge is authorized by this ADR.
+The former below-100,000-line objective is withdrawn as a design requirement. Counts can reveal growth,
+but the decision criterion is whether a mechanism serves selected behavior and whether its responsibility
+can be removed or combined. Package moves, language ports, minification and deleting useful capabilities
+do not establish simplification. There is no replacement numeric quota or size gate.
 
 ## Consequences
 
-Current architecture replaces the long historical full-product document instead of layering exceptions.
-The old numbered contracts remain accessible at a pinned Git revision, not a second working-tree copy.
-Old packets/ADRs/audit matrices apply only where explicitly retained for a selected current behavior;
-they cannot require canceled features, replay compatibility or governance ceremonies.
+Old documents and tests are evidence of their versions, not obligations to retain canceled behavior.
+Use Git history for discarded specifications. Do not preserve a second working implementation for an
+imagined future client. Do not build a new governance system to enforce this decision.
 
-Ordinary answers prepare once, stream one synthesis and save/cite. Deep research is explicit and shares
-those primitives. Reconnect reads the same run/result; a full token-replay journal is not required.
-React cutover removes Astro and duplicate clients after caller migration; a rollback artifact is sufficient.
+The five owner journeys, Library/Lens/Wiki, ordinary downloads and explicit deep research remain.
+React/Vite replaces Astro; exact citations and existing agent task interfaces remain product behavior.
+Implementation decides the safe transition for actual data, running attempts and browser/deploy artifacts.
+Unknown deployed data stops its destructive migration, not independent development.
 
-The working source-size objective is below 100,000 application/library lines, not a quota or CI gate.
-A smaller bundle, package move, language translation or shorter request path is not itself source reduction.
-No net-deletion forecast is claimed before implementing the actual replacements.
-
-One manager/checkout, precise disjoint tasks, ordinary source review. No claim JSON, lineage-only commits,
-new status registry or full-repository reread before every edit. Compile/lint and minimal Clippy during
-implementation; tests and final acceptance follow the assembled product. Do not promote unrun checks to PASS.
-
-The earlier profile/UI decisions (ADR-0018/0016/0017) retain useful owner behavior and browser cutover
-requirements. Any contradictory mandate to maintain unselected legacy systems is superseded here.
+[AGENTS.md](../../AGENTS.md) owns coordination and verification timing. Older profile/UI decisions remain
+references for retained behavior; contradictory all-feature, proof, compatibility and ceremony requirements
+are superseded. This ADR is the reason for the change, not a duplicate implementation checklist.
