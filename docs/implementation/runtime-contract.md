@@ -19,8 +19,8 @@ labels or authorize an effect. Keep prompts, reasoning, credentials and raw prov
 ## Source and citation lifetime
 
 A run captures exact selected source revisions. A newer head or project detach does not rewrite an active owner's
-selection or a saved report. Purge/redaction/deletion can make bytes unavailable. External clients are rechecked at
-their current disclosure boundary.
+selection or a saved research report. Purge/redaction/deletion can make bytes unavailable. External clients are
+rechecked at their current disclosure boundary.
 
 A citation is the retained readable revision plus exact byte range and optional display coordinate. Opening it
 authenticates the reader, loads that revision, applies current deletion/disclosure state and performs one bounded
@@ -32,7 +32,7 @@ or function call.
 D1 owns short metadata transactions. R2 owns immutable large bytes. There is no cross-product transaction and no
 reason to simulate one with receipt graphs.
 
-For source, public output or report bytes:
+For source, public output or research-report bytes:
 
 1. choose a deterministic immutable object key;
 2. use conditional R2 create;
@@ -42,7 +42,7 @@ For source, public output or report bytes:
 
 R2 conditional writes are atomic and reads are strongly consistent after a successful write. D1 `batch()` is one
 SQL transaction: a failed statement rolls back the sequence. A successful zero-row `UPDATE` is not a failure, so
-revision insert, head change and dependent run/result update must share predicates or an explicit aborting guard.
+revision insert, head change and dependent result update must share predicates or an explicit aborting guard.
 No model, HTTP or R2 operation runs inside that D1 transaction.
 
 Do not create operation intents, outbox rows, residency receipts or per-object readback receipts for an internal
@@ -59,74 +59,90 @@ For ordinary answers, consume the selected provider stream incrementally, normal
 retain completed public Markdown once. Require a valid terminal provider event. HTTP 200, socket EOF or browser
 disconnect alone is not completion.
 
-A failed browser delivery does not fail generation. A failed report save retries from the retained public output.
-Raw provider payload logging stays disabled for private material. Semantic caching stays disabled unless exact
-scope/model/settings isolation is established; reopening a report already avoids regeneration.
+A failed browser delivery does not fail generation. A failed research-report save retries from the retained public
+output. Raw provider payload logging stays disabled for private material. Semantic caching stays disabled unless
+exact scope/model/settings isolation is established; reopening a report already avoids regeneration.
 
-A Workflow step is individually retryable. Do not combine a non-idempotent provider invocation and report
-publication in one retry unit. Generate/retain and save are separate durable responsibilities. A save retry must
-read the retained output locator, not call the model again.
+A Workflow step is individually retryable. Do not combine a non-idempotent provider invocation and report save in
+one retry unit. Generate/retain and save are separate durable responsibilities. A save retry must read the retained
+output locator, not call the model again.
 
-## Compact report storage
+## Compact research-report storage
 
-The target report has two D1 concepts and one R2 object:
+The target has two research-specific D1 concepts and one R2 object:
 
 ```text
-report
-  report_id, owner_principal_ref, head_revision, deleted_at, created_at, updated_at
+research_report
+  report_id, owner_principal_ref, head_revision,
+  deleted_at, created_at, updated_at
 
-report_revision
-  report_id, revision, run_id, title, summary, language,
+research_report_revision
+  report_id, revision,
+  origin_kind: GENERATED | MANUAL_EDIT | AI_EDIT,
+  origin_operation_id,
+  title, summary, language,
   object_key, object_sha256, object_size,
   source_revision_refs_json, created_at
 
-R2 report object
-  Markdown, compact citation refs, bounded generation metadata
+R2 research-report object
+  Markdown, compact citation refs, bounded generation/edit metadata
 ```
 
-The report object is one bounded canonical envelope or equivalent single immutable object. Markdown headings are
+Do not call these tables generic `report`/`content`: the product is a research report, and a generic content platform
+would recreate the abstraction being removed.
+
+Origin constraints are closed and local:
+
+- `GENERATED` and `AI_EDIT` require a real `origin_operation_id`;
+- `MANUAL_EDIT` forbids it;
+- each non-null origin operation belongs to one research-report revision;
+- no generic origin registry, polymorphic target table or fake run for a manual edit.
+
+The R2 object is one bounded canonical envelope or equivalent single immutable object. Markdown headings are
 presentation structure, not separate durable section objects. Export is derived from the same Markdown. Do not
 persist ArtifactSpec, section contracts, EvidenceFreeze, AllowedReferenceManifest, verification receipts,
-residency objects or deterministic export manifests for an ordinary report.
+residency objects or deterministic export manifests for a research report.
 
-Saving a generated report:
+Saving a generated/AI-edited revision:
 
 1. read the retained completed public output and label map;
 2. resolve only server-issued labels to compact citations;
-3. encode and conditionally create the report object;
-4. in one D1 transaction insert the immutable revision, conditionally advance the report head and attach the exact
-   report reference to the originating run;
-5. read back the revision/head/result before marking the run completed.
+3. encode and conditionally create the research-report object;
+4. in one D1 transaction insert the immutable revision, conditionally advance `research_report.head_revision` and
+   attach the exact revision to the originating operation;
+5. read back revision/head/result before marking that operation completed.
 
-Editing creates a full new revision under the expected head. Reports are bounded documents; use a complete coherent
-body rather than a section object graph. If AI assistance is selected, its provider attempt retains a complete new
-Markdown output and then calls this same writer. It does not create a section COW Workflow or child artifact.
+Saving a manual edit uses the same object/revision/head writer without an operation attachment.
 
-## Report state is not a truth certificate
+A failed D1 transaction after successful R2 create leaves an unreferenced immutable object. The deterministic retry
+may adopt the same bytes; bounded cleanup may remove an old orphan. Do not add distributed transaction emulation,
+receipts or a report outbox.
 
-A report revision may record origin metadata such as generated/edited and the producing model/run. It must not expose
-`VERIFIED`, `ACCEPTED` or `PUBLISHED` as claims that the prose is true.
+## Research-report state is not a truth certificate
+
+A revision records origin (`GENERATED`, `MANUAL_EDIT`, `AI_EDIT`) and, when applicable, the producing operation/model.
+It must not expose `VERIFIED`, `ACCEPTED` or `PUBLISHED` as claims that the prose is true.
 
 The base artifact schema separately contains a stored `PUBLISHED` status. The publication subsystem instead starts
 from a DRAFT and adds owner acceptance decisions, verification/currentness arrays, operation receipts/outbox and a
 publication head whose public disposition is `VERIFIED/ACCEPTED`. These are parallel status systems. Repository
-search finds the `artifact.accepted` topic only at its producer. Remove the publication system during report cutover.
+search finds `artifact.accepted` only at its producer. Remove the publication system during report cutover.
 
-A completed report is usable immediately. User confidence comes from citations, visible limitations, freshness and
-edits. Explicitly proposing content to Wiki/Inbox is a separate target-specific action. Do not replace publication
-receipts with `accepted_at` or another badge absent a concrete product need.
+A completed research report is usable immediately. User confidence comes from citations, visible limitations,
+freshness and edits. Explicitly proposing content to Wiki/Inbox is a separate target-specific action. Do not replace
+publication receipts with `accepted_at` or another badge absent a concrete product need.
 
-## Report access and reopening
+## Research-report access and reopening
 
-Owner report access checks the current authenticated owner, report ownership and report deletion state. It does not
-replay the original scope expression, credential generation, policy lease, deployment generation, stage lineage or
+Owner access checks the current authenticated owner, research-report ownership and deletion state. It does not replay
+the original scope expression, credential generation, policy lease, deployment generation, stage lineage or
 publication receipt. A connected client checks its current explicit report/operation/project grant.
 
-Reopening then:
+Reopening:
 
-1. reads the exact `report_revision` row;
+1. reads the exact `research_report_revision` row;
 2. loads the exact R2 object and verifies stored size/checksum;
-3. returns Markdown, compact citations and stable metadata;
+3. returns origin, Markdown, compact citations and stable metadata;
 4. computes source-head freshness separately and optionally;
 5. opens a citation only through the source-revision/range reader.
 
@@ -135,21 +151,30 @@ hiding readable content. A purged/deleted report or failed report authorization 
 authorization receipts, policy authorities, acceptance receipts or reauthorization protocol generations in the
 browser DTO.
 
+## Research-report edits
+
+Manual expected-head edits are ordinary request/application work:
+
+1. authorize the current owner/report head;
+2. validate one complete bounded Markdown/citation body;
+3. conditionally create one immutable object;
+4. insert `MANUAL_EDIT` with no origin operation and move the expected head atomically.
+
+An explicitly selected AI revision uses the normal model-attempt owner, retains completed public Markdown, then
+writes `AI_EDIT` with the actual operation. It does not use the current `artifact-section-revise` Workflow, REPORT
+witness renewal, COW child artifact or publication acceptance prerequisite.
+
 ## Workflow, Queue and ResearchSession
 
-One Workflow owns a run. Queue accelerates existing persisted work. ResearchSession carries authorized coarse
-progress and provisional public text; it owns neither execution nor canonical output.
+One Workflow owns a research run. Queue accelerates existing persisted work. ResearchSession carries authorized
+coarse progress and provisional public text; it owns neither execution nor canonical output.
 
 Ordinary execution chooses its path before old handler/checkpoint assembly. Explicit deep research uses one bounded
-search/read/finish loop. Both save through the same report writer. Old executors serve only already-admitted runs
-while they settle; completed reports are read directly.
+search/read/finish loop. Both save through the same research-report writer. Old executors serve only already-admitted
+runs while they settle; completed research reports are read directly.
 
 A slow/disconnected subscriber cannot block generation or save. Do not persist every token/event. Reconnect reads
 canonical status/result and may resume new provisional deltas with an explicit gap.
-
-Report edits are not another Workflow by default. Manual expected-head writes are ordinary request/application
-work. An explicitly selected AI revision uses the normal model-attempt owner and report writer, not the current
-`artifact-section-revise` Workflow, REPORT witness renewal and child-materialization graph.
 
 ## Run status and owner lists
 
@@ -158,20 +183,21 @@ Status describes product behavior, not internal graph topology:
 - run kind: ordinary or deep;
 - phase: queued, preparing, generating, saving, completed, cancelled or failed;
 - safe failure/cancellation;
-- terminal result availability and report reference.
+- terminal result availability and research-report reference.
 
 Do not expose `next_stage_index`, stage 18, handler generation or provider frames as the durable contract. A temporary
 old-run adapter is removed after real old runs settle.
 
-Owner lists read D1 metadata only: run ID, time, question, recorded state and report reference/title/summary.
+Owner lists read D1 metadata only: run ID, time, question, recorded state and research-report ref/title/summary.
 Report bodies and citation bytes load on demand. Project attribution is captured at admission; do not infer it from
 today's attachments or post-filter a bounded candidate page. Acceptance/publication status is not part of the list.
 
 ## Migration and deletion
 
-Inventory retained reports before changing schema. Convert each real saved report once, preserving stable report
-identity/revision where practical, body text, citations, originating run, title, language and creation time. Verify
-row/object counts and hashes, switch current server/client reads and writes, then remove:
+Inventory retained reports before changing schema. Convert each real saved report once, preserving stable identity/
+revision where practical, body text, citations, originating operation, title, language and creation time. Assign
+`GENERATED` to old generated reports; do not invent operations for manual edits. Verify row/object counts and hashes,
+switch current server/client reads and writes, then remove:
 
 - `artifact_revision` report use;
 - `artifact_draft_reservation`, `artifact_draft_head`, `artifact_draft_binding`, `artifact_draft_object` report use;
