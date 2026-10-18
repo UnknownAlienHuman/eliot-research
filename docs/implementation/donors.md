@@ -6,15 +6,17 @@ in the [manifesto](../architecture/ELIOT_RESEARCH.md). No donor is selected whol
 
 ## Coverage and evidence
 
-The baseline contains all **68 distinct GitHub repositories** named in the supplied
+The register contains **69 distinct repositories**: all **68** from the original landscape plus the
+user-selected **EdgeQuake**, reviewed below. The baseline remains the repositories named in the supplied
 `AI_knowledge_RAG_NotebookLM_Dify_landscape_2026-10-08.md`, including its smaller candidates, parsers and evaluation
 references. That dated catalogue and the [earlier reconciliation](../../.github/audits/2026-10-17/README.md#donor-reconciliation)
 are starting evidence, not current implementation guarantees. Repository renames stay on the original row.
 
-**C — 13:** specific implementation files read in this pass; links pin the inspected revision.
-**E — 9:** earlier pinned source review retained, not repeated here; the link identifies that older evidence.
-**O — 45:** current README/primary overview inspected, but no function-level behavior or rendered UX certified.
-**U — 1:** current content could not be read reliably. None means a complete codebase audit or an executed integration.
+**C — 14:** scoped source inspections recorded: 13 from the preceding October 18 pass plus EdgeQuake in
+this continuation; pinned links identify the inspected code, not a claim that all 14 were reread together.
+**E — 9:** earlier pinned source reviews retained; the link identifies the older evidence.
+**O — 45:** October 18 README/primary-overview inspections retained, not function-level or rendered UX certification.
+**U — 1:** content was not read reliably in that pass. None means a complete codebase audit or executed integration.
 Overview rows are candidates or rejections, not permission to assume their implementation works.
 
 For literal reuse, inspect the exact file/module license, required dependencies and deployment constraints first.
@@ -29,6 +31,9 @@ transfers are prepare-once context (DocsGPT/SurfSense), readable fallback after 
 (ThinkEx), body-free lists and expected-version edits (WeKnora), and scoped locate/read tools (Onyx/RAGFlow).
 Source-linked Markdown and on-demand detail are sufficient for useful reusable knowledge; an entity graph,
 continuous memory extraction or a second agent framework is not a prerequisite.
+[The EdgeQuake review](edgequake-donor.md) adds shared query preparation, unique-input batching and
+source-scoped derived-data updates, with counterexamples that must not be copied. Its graph modes are not
+Cloudflare's vector/BM25 hybrid; selectively using source-backed links does not require importing its server.
 
 ## Notebook and workspace products
 
@@ -55,6 +60,7 @@ continuous memory extraction or a second agent framework is not a prerequisite.
 
 | Donor / inspected source | Evidence | Apply in Eliot | Do not import / limitation |
 |---|---|---|---|
+| [raphaelmansuy/edgequake](https://github.com/raphaelmansuy/edgequake/blob/c8e84b832b47ccffcf94bcda97c9555a0158dcf7/edgequake/crates/edgequake-query/src/engine_impl/query_entry/query_pipeline.rs) | C | Shared context path, unique embedding batches where needed, graph-to-source lookup and source-scoped batch updates → tasks 2/3/4; [precise review](edgequake-donor.md). | No PostgreSQL/AGE server, six-mode engine, default gleaning, duplicate native fusion or cache-speedup assumption. Reject relation collapse and substring provenance; root Apache-2.0 checked, no code imported. |
 | [Tencent/WeKnora](https://github.com/Tencent/WeKnora/blob/005627b180c6c7509660b0a14401e463f48d53f8/internal/application/repository/wiki_page.go) | C | Body-free revision lists and one expected-version write → D1 owner reads and Wiki edits. | No GORM, COUNT+OFFSET default or multi-backend registry. Do not rewrite stored page text without a revision predicate. |
 | [onyx-dot-app/onyx](https://github.com/onyx-dot-app/onyx/blob/f858083d6cbe37c4146834d379e39511260a9879/backend/onyx/context/search/preprocessing/access_filters.py) | C | Build actual access filters before retrieval → selected-source native search. | No enterprise group/connector permission graph in the single-owner path. Post-filtering a global top-k is not equivalent. |
 | [pipeshub-ai/pipeshub-ai](https://github.com/pipeshub-ai/pipeshub-ai/blob/e598631009b22b64b60e4366803f11d9d958e5e7/backend/python/app/utils/text_fragments/generator.py) | C | Optional text-fragment highlighting can fail without losing the source link → source opening. | A highlight URL is not an immutable citation; do not copy the whole extraction/strategy registry or swallow actual access failures. |

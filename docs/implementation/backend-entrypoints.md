@@ -6,6 +6,7 @@ This plan explains what to write, where and what it replaces. It is not a second
 Source anchors were reconciled against `de88154e`; the ordinary execution chain was inspected again at
 `ba344566` on 2026-10-18. Owner list/history/freshness paths were traced at `a5f53d0d` the same day.
 Native search/upload code and current Cloudflare capabilities were reconciled at `68da28d8` on 2026-10-18.
+EdgeQuake and Eliot's existing fusion/structural-navigation paths were reviewed at `cd67c1cb` the same day.
 Targets below are not claims of completed runtime work.
 
 ## Choose a complete behavior, not a new foundation
@@ -59,6 +60,9 @@ native Workflow and original paid-attempt identity, not a second scheduler or du
 Refactor the existing context/prompt functions to consume typed admitted passages without Stage 5/10 freeze
 lineage, expiring manifests or per-candidate hashed receipts. Size the selected request without serializing
 and hashing the entire growing envelope on every trial. Token capacity is not a byte count.
+Choose the needed path before keyword/embedding work; “simple” must not execute deep-mode preparation first.
+Share prepared source passages across streaming and saved output. Batch only genuinely required unique inputs,
+and reuse existing bodies rather than repeatedly hydrating the same source. See [EdgeQuake's shared path](edgequake-donor.md).
 
 The ordinary model output is Markdown with server-mapped passage labels, not escaped Markdown inside JSON
 or a mandatory `material_claims` ledger. Align selected provider request validation, streaming decoding,
@@ -103,6 +107,11 @@ For an actual report/Wiki edit, update the existing content reference/head and i
 Keep SQL expected-state predicates: inspecting zero changed rows after commit cannot roll back companion writes.
 Use revisioned writes for persisted text; render-only link decoration must not rewrite an old revision.
 C06's cheap size/shape check precedes a requested verifier, never adding one to an ordinary answer.
+When a selected derived finding or link is written, retain its exact supporting revision/range through the
+existing artifact/Wiki owner. On source update/deletion, replace the affected contributor set, not a union that
+restores deleted support. Never match provenance by substring or call a changed source list a repaired summary.
+Opaque affected summaries need explicit stale/unavailable handling; follow the actual retention decision rather
+than automatically delete every historical report or start a full-library model rebuild.
 
 **Result:** lists read metadata, reports read saved content, citations read exact source bytes. No new cache
 service, summary database, compatibility platform or universal read policy engine. Measure actual calls and
@@ -117,6 +126,10 @@ latency when exercising the assembled paths; this documentation does not establi
 sends each section to two instances and repeats it per project; the prose lane already uses native hybrid search.
 Use one selected native retrieval configuration and remove the duplicate lane/fusion work where it is redundant.
 Prefer one item per useful representation and native chunking, not section copies with repeated context wrappers.
+`packages/retrieval/src/fusion.ts` already owns local fusion; retain it only for independent retained lists,
+not a second fusion of native hybrid components. Reuse structural-navigation headings/ranges and bounded
+source reads for context expansion. Graph-to-source lookup from EdgeQuake is a separate, task-specific option,
+not a reason to add entity extraction, PostgreSQL/AGE or all graph modes to the ordinary path.
 
 Keep canonical R2 content and D1 source/membership/deletion state. Use existing Items delivery; an R2-source feed
 is an alternative, not a second feed for the same content. Native upload acknowledgement is not completed indexing.
@@ -168,7 +181,9 @@ readiness must describe selected working behavior. Tooling work never becomes th
 
 ## Donor choices tied to actual replacements
 
-[The maintained donor register](donors.md) covers all 68 repositories in the original landscape. Each entry
+[The maintained donor register](donors.md) covers all 68 original repositories plus user-selected EdgeQuake.
+[Its scoped review](edgequake-donor.md) separates reusable operations, source-level counterexamples and
+cold/warm benchmark conditions; no full donor audit or speedup is implied. Each entry
 identifies inspected evidence, useful behavior, an Eliot destination and excluded machinery. Scoped source reads,
 older evidence, README-only inspection and unavailable content are explicitly different; none is a whole-repo audit.
 

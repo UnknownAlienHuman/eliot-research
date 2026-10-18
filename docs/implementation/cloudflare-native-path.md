@@ -1,6 +1,7 @@
 # Native Cloudflare path: fewer product-owned operations
 
-Checked 2026-10-18 against official documentation and Eliot source at `68da28d8`.
+Checked 2026-10-18 against official documentation and Eliot source at `68da28d8`, with retrieval fusion and
+structural navigation revisited at `cd67c1cb` for the [EdgeQuake review](edgequake-donor.md).
 This refines tasks 2/4 in [the implementation plan](backend-entrypoints.md), not the product manifesto.
 [The donor register](donors.md) records all candidates and the depth of inspection. The decisions below are
 implementation work: no installed-binding behavior, deployment, speedup or source reduction is declared complete.
@@ -19,6 +20,9 @@ The zero-search/one-synthesis and one-search/one-synthesis routes are design tar
 A native search can itself embed a query and rerank; rewriting can add generation. Count provider-side work too.
 Use an extra query only for a specific unresolved question or an explicit deep task, not to satisfy a stage list.
 A no-hit response must distinguish an empty search from failed/partial retrieval.
+Select direct reading, native retrieval or explicit deep work before keyword/model preparation. A mode labelled
+simple must not run the expensive common preparation of modes it will never use. Reuse request-local results
+and batch genuinely needed unique inputs; do not create extra embeddings around a native search call.
 
 ## 1. Let AI Search own retrieval, not source truth
 
@@ -38,6 +42,11 @@ Replace the canceled generation-registry authority and before/after proof reads 
 instance. Then remove the duplicate lane and project-copy work where the actual scope filter can replace them.
 Keep D1 source identity/membership/deletion and canonical R2 representations; a managed index is derived data.
 Provider item IDs and snippets locate candidates, not independently authoritative quotations.
+
+Cloudflare hybrid is vector + BM25 with native fusion, not the entity/relationship retrieval called hybrid/mix
+by EdgeQuake. Do not claim graph reasoning is provided by that switch. `packages/retrieval/src/fusion.ts` already
+has local fusion for separate lanes; do not re-fuse native score components as if they were independent lists
+or import EdgeQuake's fusion copy. Move the selected caller and remove only its superseded lane machinery.
 
 Prefer one item per useful source representation, not an item per arbitrary application chunk with repeated
 context headers. Let native chunking do its job. Split only for a real format/size/navigation requirement and
@@ -171,11 +180,29 @@ A short source index, titles/headings and already-saved findings can guide an ex
 pre-generating an entity graph. Load detailed material only when needed. Generate a new overview when requested
 or when it is a selected useful ingestion output; reuse it by source revision. An overview is never original evidence.
 Preserve source-linked disagreements and uncertainty rather than using a second model to stamp every answer true.
+`packages/retrieval/src/structural-navigation.ts` already derives a source outline and normalized ranges.
+Reuse this data for selective reading without preserving its obsolete outer identity/grant machinery.
+The [search binding](https://developers.cloudflare.com/ai-search/api/search/workers-binding/) supports
+`context_expansion` for surrounding chunks; that is local text expansion, not a graph walk. Reuse the bodies
+already loaded, bound additional bytes, and distinguish unavailable passages from an empty successful read.
+
+For a selected relation question, follow existing Wiki/source links to their supporting revisions first.
+A focused stored relation, if actually needed, belongs with the existing content owner and its source references;
+no graph database, whole-corpus extraction or PPR call is a prerequisite. Bound the neighborhood before loading it.
+Keep relation type/direction and relevant qualifiers distinct: a longer description is not a better-supported fact.
 
 For deep work, expose a small search/read tool set and let the chosen model pursue specific gaps within the run
-budget. Stop when no new relevant material is found, cancellation occurs or the chosen budget is reached.
+budget. Stop when no new relevant evidence is accepted after deduplication, cancellation occurs or the budget
+is reached. Nonempty duplicate model output does not justify another extraction pass.
 Do not run Mem0-style extraction/entity linking, GraphRAG indexing, multi-agent interviews or repeated verifier
 calls on every ordinary request. Surface useful output before optional enhancement and keep failure local to it.
+
+Source updates/deletions affect exact stored contributor references, not substring matches in summary text.
+Removing a contribution replaces the surviving set; an append/union merge must not resurrect it. An opaque mixed
+summary with lost support is stale or unavailable for affected uses, not silently relabelled to another source.
+Rebuild only affected derived content when needed, through the existing writer/cleanup path and actual retention
+choice. Do not automatically regenerate the library or add a generic provenance/proof subsystem.
+[EdgeQuake's inspected branches](edgequake-donor.md) explain the concrete mistakes this avoids.
 
 ## 7. Validate the reduction on the actual assembled path
 
