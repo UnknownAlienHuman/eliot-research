@@ -34,6 +34,16 @@ publisher per attempt; batch delivery instead of an RPC/database write per token
 not exactly-once event delivery. No claim signatures, token checksums, application event journal or independent
 completion state. Change server checks and client decoding together; no fallback guessing between message shapes.
 
+## Native execution progress is not an answer-token stream
+
+Use [native Workflow subscriptions](cloudflare-native-path.md#5-native-progress-and-checkpoints-not-a-second-orchestration-database)
+for the selected run's execution events instead of another status-polling loop. The current Cloudflare API supports
+retained/live events, a cursor and filters; use existing run bindings and verify the installed types. Relay only a
+small public projection through the chosen delivery path, never raw params, step output or provider errors.
+This does not supply model-token deltas or prove the report is saved. Do not introduce a second event journal.
+Dispose the subscription with its real connection lifetime; stop redundant polling after migrating the caller.
+Keep existing HTTP detail/result reads for reconciliation, not a permanently duplicated live-progress engine.
+
 ## Recovery and lifetime
 
 A lost/slow connection cannot block saving the answer or trigger a second model call. Bound outstanding

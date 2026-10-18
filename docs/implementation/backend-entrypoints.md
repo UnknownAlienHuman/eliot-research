@@ -5,6 +5,7 @@ Existing names and source locations: [code map](dependency-map.md). Technical de
 This plan explains what to write, where and what it replaces. It is not a second manifesto or an approval graph.
 Source anchors were reconciled against `de88154e`; the ordinary execution chain was inspected again at
 `ba344566` on 2026-10-18. Owner list/history/freshness paths were traced at `a5f53d0d` the same day.
+Native search/upload code and current Cloudflare capabilities were reconciled at `68da28d8` on 2026-10-18.
 Targets below are not claims of completed runtime work.
 
 ## Choose a complete behavior, not a new foundation
@@ -73,6 +74,9 @@ model/transport, spend bounds and cancellation. Current settings cannot redirect
 Store completed public output once; a failed report save reuses that output, never invokes synthesis again.
 Provisional delivery is transient and cannot create/cancel/retry a run or establish saved status. Reconnect
 reads the existing run/report. [Failure handling](failure-model.md) replaces the old universal receipt chain.
+For execution progress, use native Workflow event subscriptions rather than another polling/history loop;
+token delivery remains distinct. Evaluate native byte-stream step results instead of duplicating temporary
+checkpoints. [The native path](cloudflare-native-path.md) records APIs, retention and actual integration limits.
 
 **Result:** ask → progressive text → saved report → exact citation → reopen. Remove ordinary-only factory,
 inner-JSON and proof wrappers/fixtures with their callers. Retain only the explicitly requested deep behavior;
@@ -109,17 +113,27 @@ latency when exercising the assembled paths; this documentation does not establi
 **Where:** `packages/cloudflare-ai/src/project-search.ts`; callers in run admission, project readiness and
 `packages/cloudflare-research-runtime/src/research-retrieval-composition.ts`.
 
-Use the configured native instance and current source/project filters. Remove generation-registry readiness,
-hashing and before/after fences. Keep actual upload/membership delivery and mapping provider locators to admitted
-sources. Upload acknowledgement and completed indexing are different observations; reflect actual item status.
-Do not silently substitute provider-generated text for Eliot's selected synthesis/citation path.
+[The native path](cloudflare-native-path.md) defines the replacement and its limits. The inspected upload loop
+sends each section to two instances and repeats it per project; the prose lane already uses native hybrid search.
+Use one selected native retrieval configuration and remove the duplicate lane/fusion work where it is redundant.
+Prefer one item per useful representation and native chunking, not section copies with repeated context wrappers.
 
-Then delete writer-exclusive code from `packages/cloudflare-projection/src/core-managed-items.ts`,
-`core-managed-item-intent.ts` and `core-managed-item-receipts.ts`, moving any actual shared reader first.
-Retain the used R2/D1 projection delivery, not the canceled managed generation overlay.
+Keep canonical R2 content and D1 source/membership/deletion state. Use existing Items delivery; an R2-source feed
+is an alternative, not a second feed for the same content. Native upload acknowledgement is not completed indexing.
+Do not block whole-source questions on search readiness or run upload-and-poll during list/question reads.
 
-**Result:** project upload/search/readiness works without `ai_search_generation_registry` as an authority.
-Removing its code does not drop applied database tables or authorize deletion of source data.
+A source can be indexed once only where the real filter expresses its selected scope. Metadata has a small field
+budget, indexed strings have a prefix limit, and stored arrays are not filterable. Compact revision filters must
+fit the actual binding; oversized overlapping scopes need an explicit partition/projection decision, not a sliced
+source list or global top-k post-filter masquerading as complete project search. Preserve full D1 identity checks.
+
+Remove generation-registry readiness/hashing/fences, then writer-exclusive code in
+`packages/cloudflare-projection/src/core-managed-items.ts`, `core-managed-item-intent.ts` and
+`core-managed-item-receipts.ts`, moving shared readers first. Keep necessary source delivery and exact citation
+mapping. A native generated answer cannot silently replace the selected model or trigger a second synthesis.
+
+**Result:** upload/search/readiness without `ai_search_generation_registry` as authority or duplicate indexing
+without a demonstrated scope need. Do not drop applied data or declare a speedup before the assembled path runs.
 
 ## 5. Retire identities, integrations and executors that do not serve the product
 
@@ -154,25 +168,16 @@ readiness must describe selected working behavior. Tooling work never becomes th
 
 ## Donor choices tied to actual replacements
 
-These are pattern references, not new dependencies. Pinned source is intentionally dated; API docs were
-checked on 2026-10-17, with Streams/WebSockets/retry and SurfSense budgeting revisited on 2026-10-18.
-SQLite pagination and WeKnora list/update paths were checked on 2026-10-18.
-Check the chosen source license before literal code reuse. A donor is useful when
-it removes an identified Eliot implementation or supplies a selected missing behavior, not because it is popular.
+[The maintained donor register](donors.md) covers all 68 repositories in the original landscape. Each entry
+identifies inspected evidence, useful behavior, an Eliot destination and excluded machinery. Scoped source reads,
+older evidence, README-only inspection and unavailable content are explicitly different; none is a whole-repo audit.
 
-| Source | Take / apply here | Do not bring along |
-|---|---|---|
-| [Cloudflare Items API](https://developers.cloudflare.com/ai-search/api/items/workers-binding/) | Native upload/status/list/delete for item delivery in task 4; remove the custom managed-generation authority. | A replacement promotion registry or upload-and-poll coordinator for every request; lost ACK still needs reconciliation. |
-| [Cloudflare D1 batch](https://developers.cloudflare.com/d1/worker-api/d1-database/) | Existing atomic writers in task 3, with expected-revision predicates and dependent-write conditions. | ORM migration, transaction framework, or an assumption that zero affected rows abort a batch. |
-| [Cloudflare R2 API](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/) and [Workflow retry](https://developers.cloudflare.com/workflows/build/sleeping-and-retrying/) | Native conditional storage and durable execution through existing adapters in tasks 2/5. | Bespoke receipt/signature engine, duplicate scheduler, or automatic replay of an uncertain paid invocation. |
-| [SurfSense `build_context` / `resolve_citations`](https://github.com/MODSetter/SurfSense/blob/7fb479c361414e1ffd180860eb0b5eb5afb0c4e3/surfsense_local/backend/modules/chat/prompt.py) | Group selected excerpts by source and map model-visible labels on the server in task 2. Reuse Eliot's context compiler and evidence resolver, including actual revision/range identity. | Its Python app, citation ID namespace, old-wrapper compatibility or regex as an injection boundary. An ordinal rewrite alone is not exact evidence. |
-| [SurfSense output reserve](https://github.com/MODSetter/SurfSense/blob/7fb479c361414e1ffd180860eb0b5eb5afb0c4e3/surfsense_local/backend/modules/chat/budget.py) | Reserve answer capacity before choosing context in task 2; keep token and serialized-byte bounds distinct. | Its fixed estimates, four-characters-per-token rule and legacy unknown-window fallback. They do not prove FULL context fits Eliot's selected model. |
-| [Cloudflare Streams](https://developers.cloudflare.com/workers/runtime-apis/streams/) and [Agent connections](https://developers.cloudflare.com/agents/runtime/communication/websockets/) | Incremental provider consumption and bounded public-text delivery through the existing Session in task 2. | A second executor, unrestricted broadcast, persisted token journal or an SDK upgrade merely to copy an example. |
-| [WeKnora `ListRevisions` / `UpdateWithRevision`](https://github.com/Tencent/WeKnora/blob/005627b180c6c7509660b0a14401e463f48d53f8/internal/application/repository/wiki_page.go) | Body-free lists and atomic revision changes in task 3; use existing D1 writers. | GORM, COUNT+OFFSET paging, multi-dialect support or `UpdateAutoLinkedContent` rewriting content without a version check. See the owner-read note. |
-
-The [earlier donor record](../../.github/audits/2026-10-17/README.md#donor-reconciliation) remains optional reference.
-DocsGPT overlaps the existing context preparation; no second planner is selected. Open Notebook's multi-call
-Ask flow is not the ordinary one-call design. Do not turn rejected donor platforms into a new backlog.
+[The Cloudflare native path](cloudflare-native-path.md) selects native ingestion/retrieval, model-call boundaries,
+progress/checkpoints and operation accounting. Use it before importing a donor's equivalent infrastructure.
+DocsGPT/SurfSense inform prepare-once context, ThinkEx informs optional extraction failure handling, WeKnora
+informs body-free lists/atomic edits, and Onyx/RAGFlow inform scoped locate/read. No new runtime is selected.
+Check a specific source/license before literal reuse. Update this register instead of creating another landscape
+or importing every donor feature. Rejected platforms are not a new backlog.
 
 ## Handoff and checks
 

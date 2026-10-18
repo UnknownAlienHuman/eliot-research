@@ -9,6 +9,8 @@ implementation inventory. Open the selected task and its relevant references bel
 | Need | Reference |
 |---|---|
 | What to implement, where, donors and removals | [Implementation plan](backend-entrypoints.md) |
+| All donor candidates, inspected evidence and exclusions | [Donor register](donors.md) |
+| Native Cloudflare mechanisms and minimum-operation paths | [Native path](cloudflare-native-path.md) |
 | Existing vocabulary, source entrypoints and data owners | [Code map](dependency-map.md) |
 | Storage, execution, access and input integration | [Runtime notes](runtime-contract.md) |
 | Ordinary answer: actual producer/parser/result integration | [Answer note](research-full-answer-v1.md) |
