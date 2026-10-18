@@ -66,7 +66,7 @@ citation.
 
 **Result:** upload/read/search/cite without proof or promotion platforms.
 
-## 3. One ordinary answer and one compact report
+## 3. One ordinary answer and one compact research report
 
 Use [the ordinary-answer contract](research-full-answer-v1.md).
 
@@ -94,7 +94,7 @@ Preserve V5 execution intent:
 
 For `lookup`, dispatch before installed inquiry-protocol compilation and before the 18-stage application.
 The ordinary Workflow has four responsibilities: prepare, generate, save, finish. It performs one model attempt,
-retains completed public Markdown once and saves one report revision.
+retains completed public Markdown once and saves one research-report revision.
 
 The current artifact writer is not reusable target infrastructure. `ArtifactRevision` requires an evidence freeze,
 dependency manifest and section verification. `artifact_draft_*` adds reservations, planned-object receipts,
@@ -107,25 +107,33 @@ second publication head. Its only repository-visible `artifact.accepted` topic h
 An “accepted” flag does not make model prose true. A completed generated report is saved and usable immediately;
 editing or explicitly proposing material to Wiki/Inbox are the meaningful owner actions.
 
-Selected report state:
+Selected state is deliberately research-specific, not another generic content platform:
 
 ```text
-report
-  id, owner, head revision, deletion state, timestamps
+research_report
+  report id, owner, head revision, deletion state, timestamps
 
-report_revision
-  report + revision, originating run, title/summary/language,
+research_report_revision
+  report + revision,
+  origin kind: GENERATED | MANUAL_EDIT | AI_EDIT,
+  origin operation id: required for GENERATED/AI_EDIT, absent for MANUAL_EDIT,
+  title/summary/language,
   one immutable R2 report object locator + checksum + size,
   exact saved source revision set, created time
 ```
 
-The R2 report object contains Markdown, compact citation refs and bounded generation metadata. Head advancement is
-one expected-revision D1 transition. Project attribution belongs to the admitted run relation, not JSON-tree scans
+A non-null origin operation is unique to one report revision. Generated/AI-edited revisions attach that exact
+revision to their originating run; manual edits have no invented run. This removes the ambiguity of a mandatory
+`run_id` on every edit without introducing a generic origin registry.
+
+The R2 report object contains Markdown, compact citation refs and bounded generation/edit metadata. Head advancement
+is one expected-revision D1 transition. Project attribution belongs to the admitted run relation, not JSON-tree scans
 or a report-specific graph. A report export is rendered from the same Markdown; no export manifest is stored.
 
-Write immutable R2 bytes first with conditional create. Then atomically insert the revision, advance the head and
-attach the result to the run in one short D1 transaction. A failed D1 commit leaves an unreferenced immutable object
-that can be reconciled/cleaned; it does not justify two-phase commit, receipts or another outbox.
+Write immutable R2 bytes first with conditional create. Then atomically insert the revision and advance the head.
+For GENERATED/AI_EDIT, attach the result to the exact origin operation in that same short D1 transaction. A failed
+D1 commit leaves an unreferenced immutable object that can be reconciled/cleaned; it does not justify two-phase
+commit, receipts or another outbox.
 
 Read the exact revision directly. Owner access checks current ownership/deletion of the report; connected clients
 check their current selected operation/project grant. Source freshness is optional. Citation opening is a separate
@@ -204,7 +212,7 @@ Each row is a caller-driven replacement, not a preservation list.
 | Cohort | Keep / move | Remove after transition |
 |---|---|---|
 | Source residency/ownership | Source/revision + actual locators | Seven-domain derivation, transfer and proof machinery |
-| Report/artifact drafts | Report/revision/head, one R2 object, compact citations | EvidenceFreeze, manifests, section receipts, residency objects, stage-17 admission |
+| Report/artifact drafts | Research report/revision/head, one R2 object, compact citations | EvidenceFreeze, manifests, section receipts, residency objects, stage-17 admission |
 | Artifact acceptance/publication | Direct saved report; explicit edit/Wiki proposal | Acceptance decisions, verification/currentness receipts, publication head/outbox/UI |
 | Artifact section revision | Full report revision through the same writer | Section COW Workflow, REPORT witness renewal and child artifact graph |
 | Historical research executors | Settle active attempts; direct saved-result readers | Old factories, dispatch, codecs and fixtures |
