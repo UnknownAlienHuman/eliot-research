@@ -42,9 +42,16 @@ Keep the existing verified WebSocket/Agent route and add a small typed data chan
 - `gap` — the client did not receive an earlier provisional range;
 - `terminal` — the client should read canonical status/report.
 
-The concrete encoding should use the installed Agent/AI SDK primitive if its pinned types support these frames
-without message-history persistence. Otherwise add one narrow protocol branch to the existing session adapter.
-Do not add a second WebSocket route, generic event bus, provider-frame passthrough or durable message table.
+Use the existing Agent connection and owner-client adapter. The installed Agent client already supports raw typed
+WebSocket messages and reconnection; that is enough for this presentation channel. Add one narrow protocol branch
+to the current session adapter. Do not add a second WebSocket route, generic event bus, provider-frame passthrough
+or durable message table.
+
+Do **not** convert ResearchSession to `AIChatAgent/useAgentChat` merely for resumable text. Current Cloudflare Chat
+Agents documentation states that resumable streaming buffers all chunks in SQLite. That would create the token/
+event journal and transcript store this design intentionally avoids, duplicating the canonical output/report.
+If `@cloudflare/ai-chat` has no other real caller after the audit, remove that dependency rather than keeping it for
+hypothetical reuse.
 
 The offset/sequence detects order and gaps. It is not signed, globally unique or persisted as an audit log.
 Server and client reject malformed, oversized, wrong-run and stale-deployment frames.
@@ -101,11 +108,8 @@ Change together:
 - React research query/presentation code;
 - current run status DTO.
 
-Keep one connection/session lifetime in the owner client. Do not add `@ai-sdk/react` or a chat transcript solely
-for this feature if the existing adapter can carry typed data. If the installed `@cloudflare/ai-chat`/Agents
-primitive materially removes custom reconnect code, use that primitive narrowly and delete the replaced adapter;
-do not keep both.
-
+Keep one connection/session lifetime in the owner client. Use the existing Agent client/message events for typed
+presentation. Do not add `@ai-sdk/react`, `useAgentChat`, message persistence or a second reconnect implementation.
 After React cutover, delete the old PWA session/status consumers and tests. A rollback artifact does not justify
 two maintained live clients.
 
@@ -120,9 +124,9 @@ SurfSense `176aed2` demonstrates useful separation:
 
 Do not copy its in-memory replay list of every frame, local transcript database or local model/index architecture.
 
-Cloudflare Agents supports server-initiated streams and reconnect-oriented chat primitives in current public docs.
-Those are capability evidence, not a requirement to adopt message persistence. Use only the installed pinned API
-that removes Eliot code.
+Cloudflare Agent/AgentClient provides the connection and raw message surface we already use. Cloudflare's full chat
+recovery product solves a different problem by persisting chunks/messages; importing it here would increase durable
+state and failure modes rather than remove Eliot code.
 
 ## Completion
 
@@ -137,3 +141,7 @@ Done means:
 
 Run scoped compile/lint during implementation; assembled-product tests cover disconnect, reconnect, two tabs,
 slow subscriber, cancellation and completion without a subscriber.
+
+Cloudflare references checked 2026-10-18:
+[Agent client raw messaging](https://developers.cloudflare.com/agents/communication-channels/chat/client-sdk/) and
+[Chat Agents resumable streaming](https://developers.cloudflare.com/agents/communication-channels/chat/chat-agents/).
