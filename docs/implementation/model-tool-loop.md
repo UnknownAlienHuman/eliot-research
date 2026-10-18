@@ -51,9 +51,12 @@ an optional recovery aid, never the sole canonical state.
 
 Expose only `search` and `read` in the first deep slice. Final assistant text completes the loop; do **not** add a
 fake `finish`/`done` tool. Where supported, request `parallel_tool_calls: false` so a turn returns zero or one client
-call. Still validate the response: multiple calls, unknown tools, mixed final text plus an actionable call, malformed
-arguments or an incomplete call fail the turn before any tool executes. Never execute the first valid call while
-silently dropping the rest.
+call. Still validate the response: multiple calls, unknown tools, malformed arguments or an incomplete call fail the
+turn before any tool executes. Never execute the first valid call while silently dropping the rest.
+
+A provider may include assistant commentary before one valid tool call. Normalize that turn as `action`, preserve
+the exact provider message required for continuation, and treat its text only as provisional progress—not final
+answer content. Final text is accepted only from a completed turn with no pending client call.
 
 Intermediate action turns are atomic and need not stream. Only the final public answer needs incremental text.
 This avoids persisting half-parsed tool arguments and greatly reduces recovery states.
