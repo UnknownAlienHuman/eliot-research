@@ -50,10 +50,10 @@ The target report files above are concrete replacement locations inside existing
 platform. Extract a shared revision helper only after report and Wiki both use the same small operation and the
 helper removes code.
 
-The old publication layer deliberately maps a stored `PUBLISHED` artifact to a separate public
-`VERIFIED/ACCEPTED` disposition. That second status system is not corruption to preserve: it is the acceptance
-platform being removed. The report DTO may record that a revision was generated or edited; neither label certifies
-truth.
+The base artifact schema includes a stored `PUBLISHED` status. Separately, the publication subsystem starts from a
+DRAFT and synthesizes public `VERIFIED/ACCEPTED` dispositions from its own receipt and publication head. These are two
+status systems, not a mapping that must be preserved. The report DTO may record that a revision was generated or
+edited; neither label certifies truth.
 
 Names in current source describe the old implementation, not permanent product concepts. A replacement is complete
 only when callers move and the superseded exports, tests, packages and schema are removed.
