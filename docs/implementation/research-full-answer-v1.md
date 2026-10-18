@@ -1,6 +1,7 @@
 # Ordinary answer: implement the whole path
 
-Selected target, not a deployed API. Source inspected at `ba344566` on 2026-10-18.
+Selected target, not a deployed API. Source inspected at `ba344566` on 2026-10-18; source-selection and
+follow-up requirements were refined against `project-search.ts` at `aefca049` and the [NotebookLM review](notebooklm-donor.md).
 [The plan](backend-entrypoints.md) owns work ordering; this note specifies the ordinary-answer replacement.
 The filename is historical, not a new wire version. `research-run-request.v5` is already in use.
 
@@ -26,11 +27,38 @@ attempt once. Keep existing run/status/cancel/report identities. No second admis
 operation registry or generic engine is required. The ordinary orchestration is direct application code in
 the existing research runtime; both modes share the operations below, not a mandatory stage-factory interface.
 
+Selection is typed request intent, not substring matching on UI labels. Distinguish omitted selection (the
+explicitly defined default) from an empty selected set (no sources). Do not reinterpret empty as the whole Library.
+For source-backed work without usable selected material, report the missing/empty condition. A failed source
+read is not a successful empty search. When AUTO proceeds with partial material, retain the omission reason;
+FULL cannot silently omit a selected source. Existing access and deletion errors retain their actual meaning.
+
+The browser submits source/derived-note references and a relevant existing follow-up reference, not an assembled
+corpus to be sent back to the server. Resolve authorized revisions and prepare context on the server once.
+A token preview may return counts/selection information; it need not roundtrip all source bodies. Old assistant
+answers and selected Wiki/report notes remain derived context, with their references, not new primary evidence.
+
 Use the existing native Workflow for execution lifetime, including after a tab closes. Its checkpoints hold
 small results or stored locators. Keep the record needed to identify a dispatched paid attempt and recover its
 output; do not mirror each native step in a new application scheduler. Remove ordinary qualification renewal,
 branch planning, evidence-freeze, claim-audit and historical-generation dispatch obligations. Deep research
 remains explicit; its actually used code is not falsely counted as deleted when only ordinary dispatch changes.
+
+## Follow-up questions without a second planner
+
+A follow-up such as “what changed in its later version?” needs relevant conversation context; sending that sentence
+alone cannot establish its subject. Read the existing run/result relationship and pass a bounded relevant history
+through admission, retrieval and synthesis. Implement any missing relation with these callers, not a new thread
+service or a log of every token. Previous assistant text resolves conversation intent; source claims still use
+current permitted source references. Excluded or inaccessible material must not return through an old prompt body.
+
+`packages/cloudflare-ai/src/project-search.ts` currently sends one user message and `query_rewrite.enabled: false`.
+Cloudflare's [native rewrite](https://developers.cloudflare.com/ai-search/configuration/retrieval/query-rewriting/)
+requires the `messages` format, leaves the first message unchanged and uses history for subsequent turns
+(documentation checked 2026-10-18). Merely enabling it on that one-message caller does not supply missing history.
+Use native rewriting only when the selected follow-up needs retrieval disambiguation; no second local rewrite
+model or mandatory query planner. Whole-source reading does not need a search rewrite. Count history in the
+request budget and a native rewrite as real additional model work. Preserve the exact selected-source filter.
 
 ## Prepare context once
 
@@ -57,6 +85,11 @@ Pre-encode independent prompt blocks once, include wrapper/escaping overhead, ma
 validate the final emitted body. Do not rebuild and hash the entire growing envelope per candidate. If exact
 tokenization is non-additive, perform the final selected-request check and bounded adjustment without restoring
 a per-candidate proof pipeline. Do not introduce a generalized optimizer to replace a straightforward packer.
+
+A single synthesis is the normal output path, not a prohibition on obtaining necessary evidence. Use an already
+available outline, bounded neighboring passage or full selected source for a concrete gap. Additional retrieval
+serves an identified unresolved question or the explicit deep task, not a fixed panel of agents. A source guide
+or saved answer can help navigate, but cannot substitute for reading the material used to support a new claim.
 
 ## Stream plain answer text
 
@@ -98,6 +131,8 @@ The session's delivery failure must not turn a completed model call into an auto
 One connected source → question → progressive answer → saved report → exact citation → reopen path, with no
 dummy freeze/proof records. Then check interrupted delivery, oversized FULL input, missing citations, failed
 save and reconnect on the assembled product. During implementation use scoped compile/lint, not a new test campaign.
+For the selected-source/follow-up integration also exercise explicit-empty selection, unavailable selected material
+and changed source scope between turns. Do not preserve a donor's silent fallback to make these cases look successful.
 Delete the unused inner-JSON reader and obsolete ordinary-only wrappers/fixtures when their remaining callers
 are accounted for. Do not keep an alternate ordinary executor merely to preserve its tests.
 
@@ -106,6 +141,8 @@ is a model-visible-label pattern, not an Eliot evidence implementation.
 Its [budget module](https://github.com/MODSetter/SurfSense/blob/7fb479c361414e1ffd180860eb0b5eb5afb0c4e3/surfsense_local/backend/modules/chat/budget.py)
 reserves output first but uses fixed estimates and an unknown-window fallback: take the reserve principle,
 not those constants or compatibility behavior. Pattern study only; no donor code/dependency is imported.
+[NotebookLM's public mechanisms and Open Notebook's actual code](notebooklm-donor.md) inform source selection,
+follow-up context and explicit reuse of saved knowledge; they do not establish Google's internal implementation.
 [Cloudflare Streams](https://developers.cloudflare.com/workers/runtime-apis/streams/) and
 [Workflow retry](https://developers.cloudflare.com/workflows/build/sleeping-and-retrying/) were checked 2026-10-18.
 They supply transport/durability primitives, not a guarantee against duplicate arbitrary provider effects.

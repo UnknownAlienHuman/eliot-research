@@ -12,12 +12,15 @@ user-selected **EdgeQuake**, reviewed below. The baseline remains the repositori
 references. That dated catalogue and the [earlier reconciliation](../../.github/audits/2026-10-17/README.md#donor-reconciliation)
 are starting evidence, not current implementation guarantees. Repository renames stay on the original row.
 
-**C — 14:** scoped source inspections recorded: 13 from the preceding October 18 pass plus EdgeQuake in
-this continuation; pinned links identify the inspected code, not a claim that all 14 were reread together.
+**C — 14:** scoped source inspections recorded: 13 from the preceding October 18 pass plus EdgeQuake;
+pinned links identify inspected code, not a claim that all 14 were reread together. Open Notebook's ordinary
+chat/context functions and HTTP callers were additionally inspected in the NotebookLM continuation.
 **E — 9:** earlier pinned source reviews retained; the link identifies the older evidence.
 **O — 45:** October 18 README/primary-overview inspections retained, not function-level or rendered UX certification.
 **U — 1:** content was not read reliably in that pass. None means a complete codebase audit or executed integration.
 Overview rows are candidates or rejections, not permission to assume their implementation works.
+**P — public product/API documents:** the Google references below are outside the repository counts. Primary
+engineering descriptions, supported API behavior and our design inferences are separated in their review.
 
 For literal reuse, inspect the exact file/module license, required dependencies and deployment constraints first.
 A project's source license does not automatically cover its models, hosted service or example data.
@@ -34,12 +37,15 @@ continuous memory extraction or a second agent framework is not a prerequisite.
 [The EdgeQuake review](edgequake-donor.md) adds shared query preparation, unique-input batching and
 source-scoped derived-data updates, with counterexamples that must not be copied. Its graph modes are not
 Cloudflare's vector/BM25 hybrid; selectively using source-backed links does not require importing its server.
+[The NotebookLM review](notebooklm-donor.md) adds confirmed long-context plus retrieval/ranking behavior,
+source/notes selection, edition-specific refresh and targeted tool use. It does not disclose Google's backend
+or select a second provider/index. Open Notebook supplies independently inspected code patterns, not Google's code.
 
 ## Notebook and workspace products
 
 | Donor / inspected source | Evidence | Apply in Eliot | Do not import / limitation |
 |---|---|---|---|
-| [lfnovo/open-notebook](https://github.com/lfnovo/open-notebook/blob/a0f6f3081ae06328f0a451b3a3ef2959ca25721d/open_notebook/graphs/ask.py) | C | Question/source selection and readable results → Research UI. | Ask uses strategy + per-search answers + final synthesis; its five-search hint is not an enforced maximum. Do not import that graph for ordinary answers. |
+| [lfnovo/open-notebook](https://github.com/lfnovo/open-notebook/blob/a0f6f3081ae06328f0a451b3a3ef2959ca25721d/open_notebook/utils/context_builder.py) | C | Focused notebook/source context functions; ordinary Chat has one explicit answer-model invocation → existing context/answer owners. [Additional review](notebooklm-donor.md). | Distinguish Chat from Ask's strategy/per-search/final graph. Reject silent source omissions, display-string inclusion rules, empty-as-all ambiguity and assembled corpus roundtrips through the browser. |
 | [MODSetter/SurfSense](https://github.com/MODSetter/SurfSense/blob/7fb479c361414e1ffd180860eb0b5eb5afb0c4e3/surfsense_local/backend/modules/chat/prompt.py) | C | Group passages by document; server-map short citation labels → context preparation and evidence opening. | Ordinal mapping is not exact evidence. Do not copy old-wrapper support, silently lost references or regex-based instruction filtering as a security boundary. |
 | [arc53/DocsGPT](https://github.com/arc53/DocsGPT/blob/0d994485d2ac5e3a1eff6020ccbe7d4f99adc612/docsgpt/agents/attachment_budget.py) | C | One pure attachment plan consumed by prompt and transport; visible inclusion/omission → ordinary context packing. | No second planner. Fixed PDF/image estimates and filename/size deduplication are not exact capacity or identity guarantees. |
 | [Mintplex-Labs/anything-llm](https://github.com/Mintplex-Labs/anything-llm/blob/3c7e73b8104e25327b9db3c4a8eeaf3ac4af237f/server/utils/DocumentManager/index.js) | E | Document change detection and workspace attachment model → source ingestion. | Recheck the pinned helpers before reuse. No local vector-provider matrix or parallel embedding-worker service. |
@@ -165,18 +171,27 @@ This is a composition risk, not a reproduced billing incident. Eliot retains pai
 That is a source-level identity/equality concern, not an end-to-end failure reproduced here. A mature donor still
 needs its actual function read; conceptual similarity is not evidence that copying a class is correct.
 
-**Open Notebook and Mem0:** useful user-facing behavior can conceal extra model operations. Count planning,
-per-search synthesis, embedding, entity linking and fallback attempts, not only the outer API call. Their default
-execution topology is not the ordinary one-synthesis path selected for Eliot.
+**Open Notebook and Mem0:** useful behavior can conceal extra operations. Open Notebook's ordinary Chat and
+multi-call Ask are different paths; do not characterize the whole product from one graph. Mem0's inferred add
+can trigger extraction/entity work. Count actual planning, synthesis, embedding and retries, not just outer APIs.
+[The additional Open Notebook review](notebooklm-donor.md) traces context assembly through its real HTTP callers.
+
+## Google products and APIs, not source repositories
+
+| Reference | Evidence | Apply in Eliot | Do not infer / import |
+|---|---|---|---|
+| [NotebookLM / Gemini Notebook](notebooklm-donor.md) | P: official 2025–2026 engineering/product/help documents | Long context plus relevant retrieval, selected sources/notes, source-opening citations and request-specific tools → ordinary answer, Library and report reuse. | Undisclosed vector DB/chunk sizes, a mandatory GraphRAG backend, a fixed agent panel or Antigravity deployment. Rename and edition differences are dated in the note. |
+| [Gemini Notebook Enterprise](https://docs.cloud.google.com/gemini/enterprise/notebooklm-enterprise/docs/api-notebooks) | P: preview API and overview | Source IDs/readiness and captured-source transformations → existing intake/result lifecycle. | Consumer browser RPC as an official API; a general chat endpoint absent from the reviewed guides; enterprise permission/administration machinery. |
+| [Gemini API File Search](https://ai.google.dev/gemini-api/docs/file-search) | P: public managed API, checked 2026-10-18 | Compare native indexing/filtering/citation capabilities → selected provider boundary. | Proof of NotebookLM internals, duplicate default Cloudflare/Google indexes, incompatible grounding tools in one call, or matching consumer/API limits. |
 
 ## Other references, not source donors
 
 [Apache Tika](https://tika.apache.org/) remains a format-coverage reference; no Java service is selected.
-NotebookLM/Gemini Notebooks, Elicit, Consensus, SciSpace, Scite, ResearchRabbit, Litmaps, Connected Papers,
-Recall, YouMind, Tana, Heptabase, Capacities, Mem, Notion, Botpress, Voiceflow, StackAI, Relevance AI, Gumloop,
-Vellum, MindStudio, FlowHunt, Glean, Dust, Guru and Sourcegraph were product references in the original landscape.
-They are not counted as inspected source repositories or freshly tested interfaces. Their capabilities and limits
-must be checked separately before an actual integration or UI decision; no competitor feature list expands scope.
+Elicit, Consensus, SciSpace, Scite, ResearchRabbit, Litmaps, Connected Papers, Recall, YouMind, Tana, Heptabase,
+Capacities, Mem, Notion, Botpress, Voiceflow, StackAI, Relevance AI, Gumloop, Vellum, MindStudio, FlowHunt, Glean,
+Dust, Guru and Sourcegraph were product references in the original landscape. They are not counted as inspected
+source repositories or freshly tested interfaces. Their capabilities and limits must be checked separately before
+an actual integration or UI decision; no competitor feature list expands scope.
 
 ## Selection and removal
 
