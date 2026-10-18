@@ -448,10 +448,6 @@ async function main(args) {
   if (command === "design") return checkDesign();
   if (command === "props") return checkUndocumentedProp();
   if (command === "csp") return runCsp(options);
-  if (command === "history") {
-    const head = execFileSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).trim();
-    return execFileSync(process.execPath, [resolve(ROOT, "scripts/check-frontend-owner-checkpoints.mjs"), "--history-base", "c37e56e0ebdfc7f6d294879008a4036d1b95b985", "--head", head], { cwd: ROOT, encoding: "utf8" });
-  }
   if (["browser", "a11y", "visual", "receipt"].includes(command)) return runBrowser(command, options);
   if (command === "stories") {
     const base = requireLocalBaseUrl(options["base-url"] ?? "http://127.0.0.1:6006");
@@ -466,7 +462,7 @@ async function main(args) {
     const names = stories.map(story => requireKnownStory(story, catalog, index).name.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&") + "$" ).join("|");
     return execFileSync(process.execPath, [resolve(dirname(uiRequire.resolve("vitest/package.json")), "vitest.mjs"), "run", "--config", ".storybook/vitest.config.ts", "--testNamePattern", names, ...paths], { cwd: resolve(ROOT, "packages/ui"), encoding: "utf8" });
   }
-  throw new Error("Usage: node scripts/ui-owner/verify.mjs design|props|history|stories|browser|a11y|visual|receipt|csp [--base-url URL --scenario ID --story ID --output PRIVATE_PATH --baseline REVIEWED_RECEIPT --browser PINNED_EXECUTABLE --browser-version EXACT_VERSION]");
+  throw new Error("Usage: node scripts/ui-owner/verify.mjs design|props|stories|browser|a11y|visual|receipt|csp [--base-url URL --scenario ID --story ID --output PRIVATE_PATH --baseline REVIEWED_RECEIPT --browser PINNED_EXECUTABLE --browser-version EXACT_VERSION]");
 }
 
 if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {

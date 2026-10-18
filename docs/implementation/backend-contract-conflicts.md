@@ -1,73 +1,24 @@
-# Backend contract conflicts awaiting owner review
+# Backend contract reconciliation
 
-Recorded 2026-10-09; refreshed against main `73612d40c915006cbb6bd0d818ded5edd9b732fc` and the shared uncommitted implementation. These conflicts block only their named acceptance criteria. Independent backend work continues; the overall Goal remains active.
+**Current decision check: 2026-10-17, source `4e53d5e2`.** The owner decisions in
+[#377](https://github.com/UnknownAlienHuman/eliot-research/issues/377), ADR-0018 and
+[ADR-0019](../adr/0019-compact-refactoring.md) resolve the scope of the old conflict list.
+The [current router](backend-entrypoints.md) owns implementation order. No blanket owner-decision wait
+remains for the managed-search versus custom-index choice.
 
-## C1 — D1 lexical execution order versus managed hybrid primary
+| Former item | Current disposition | Implementation implication |
+|---|---|---|
+| C1: LEX-first versus managed hybrid | **Decision resolved for the selected service.** #377 selects Cloudflare AI Search or provider search and cancels the bespoke index overlay. | Use the managed/provider path; preserve exact source evidence. Align retained historical assertions through [#379](https://github.com/UnknownAlienHuman/eliot-research/issues/379) after source assembly. Do not restore a mandatory second relevance engine to make old tests pass. |
+| C2: READ_AND_EXTRACT model call cardinality | **Deferred deep-research detail.** It is not a dependency of E0/E1's one-call answer. | Reuse deterministic context preparation. If an explicit deep task needs model-assisted extraction, read [the original contract](read-extract-proposal-cutover.md) and provide that task's actual model/budget inputs. |
+| C3: selected conversion request | **Concrete input/wiring gap for the affected conversion path.** | Select documented converter output/byte/token/timeout bounds when wiring that path. Existing source ingestion and other independent paths continue. See [conversion note](workflow-conversion-admission-cutover.md). |
+| C4: target-wide required-set generation promotion | **Canceled for this service by #377.** | Do not implement S52 manifests/target assignment/generation registry/promotion/rollback from the old [fence note](managed-generation-promotion-fence.md). Preserve existing canonical source/project delivery and exact evidence. Inspect real deployed ledger/callers before retiring old code/data. |
+| C5: immutable branch-query budgets | **Deferred to explicit E2/E3 branch work.** | When a branch is selected, pass its actual candidate/scan/evidence/byte limits. Do not invent defaults or block ordinary owner answers. [Original budget note](branch-query-budget-selection.md). |
 
-Status: **OWNER_DECISION_PENDING**. Published main has not adopted the unresolved
-managed-primary cutover; neither regression assertion has been weakened. The
-unpublished working-tree service already selects SEM-primary behavior through
-`queryWithBudgetSettlement()`, so it cannot be published as a dormant API.
+The old October 9 analysis is preserved in
+[Git history](https://github.com/UnknownAlienHuman/eliot-research/blob/4e53d5e2296e7f4ed3ed29cef2f049891c5d20c0/docs/implementation/backend-contract-conflicts.md).
+It describes its baseline and is not evidence that the current owner decision is still pending.
 
-The current specifications disagree about actual lane execution when a plan contains both LEX and SEM:
-
-| Source | Required behavior |
-| --- | --- |
-| [PR #322](https://github.com/UnknownAlienHuman/eliot-research/pull/322), updated 2026-10-08T23:18:53Z | “The Q3 invariant requires every IDENT/EXACT/LEX direct lane to precede every SEM occurrence.” Its stated scope is planner/tests, without provider behavior changes. |
-| [PR #242](https://github.com/UnknownAlienHuman/eliot-research/pull/242), updated 2026-10-08T23:12:08Z | IDENT/EXACT → one scoped Cloudflare AI Search hybrid ranked list → Eliot diversity/currentness → bounded exact resolution/backfill. “D1 phrase-only LEX is not a second primary relevance engine.” It explicitly references #322. |
-| [Architecture §6.1](../architecture/ELIOT_RESEARCH.md), line 1567 | Lists lexical fallback. |
-| Architecture §6.7, lines 1786–1787 | Lists exact/lexical candidates before semantic/literal lanes. |
-
-The implementation exposes the disagreement rather than merely describing two compatible plan representations:
-
-- `packages/retrieval/src/service.ts`, lines 230–267: the plan is checked for direct-before-semantic order, but LEX is skipped when managed SEM is primary. D1 LEX executes after SEM only if SEM is unavailable. The public `query()` calls this path at line 609.
-- `packages/retrieval/src/retrieval.test.ts`, line 289: Q3 asserts actual `IDENT → LEX → SEM` calls.
-- `packages/retrieval/src/managed-hybrid.test.ts`, line 437: managed hybrid asserts SEM primary and D1 LEX only after SEM becomes unavailable.
-
-The prior focused consolidation run reported four passing checks and one failure at this lane-order assertion. It is not accepted as a passing retrieval gate.
-
-Owner review needs to settle whether the Q3 requirement governs planned lane order only, or mandates actual D1 LEX execution before SEM even for the managed hybrid product. The selected rule must identify any product-specific exception and align #242, #322, architecture prose, execution behavior and both regressions in one coherent change.
-
-Until that review, this acceptance criterion is deferred. Other retrieval, Session, acquisition, deployment and authority work can proceed independently.
-
-## C2 — READ_AND_EXTRACT proposal call cardinality
-
-Status: **OWNER_DECISION_PENDING** before activation. The concrete contract and stage-7 admission mismatch, normative sources and possible cutovers are recorded in [read-extract-proposal-cutover.md](read-extract-proposal-cutover.md). The existing deterministic direct plan continues without invented model calls, profiles or budgets; preparatory source work remains independent.
-
-## C3 — Selected Workflow conversion request
-
-Status: **INPUT_PENDING**, rather than a choice between contradictory policies.
-Native acquisition selection does not carry the separate converter's output,
-token and timeout bounds/options. The inspected Workflow has no documented
-producer of that selected request. The concrete missing inputs, reusable
-authority/policy seams and explicit subsequent scope cutover are recorded in
-[workflow-conversion-admission-cutover.md](workflow-conversion-admission-cutover.md).
-Automatic conversion is deferred; current-authority and admission infrastructure
-work continues independently.
-
-## C4 — Complete managed-generation membership
-
-Status: **IMPLEMENTATION_PENDING**. The prepared manifest proves equality to a
-selected retrieval snapshot, while #244 requires the complete target-wide
-required set. This is missing implementation evidence, not authorization to
-replace the SEARCH_DB pointer owner. The exact cutover, denominator and authority
-boundaries are recorded in [managed-generation-promotion-fence.md](managed-generation-promotion-fence.md).
-
-New item keys must be built in a selected shadow generation before promotion.
-The ACTIVE-target dispatch defect and exact configured-target preflight are
-source-published in `eda91106`; full required-set and promotion acceptance
-remain pending. The October 9 audit found no published rule assigning the
-complete canonical source/revision set to a managed target. The gap note
-records the exact tables and missing membership/revision fence for owner review.
-
-## C5 — Immutable branch-query budget selection
-
-Status: **INPUT_PENDING**. #325 requires explicit candidate/scan/evidence/byte
-budgets. The uncommitted planner previously chose 16/64/8/16 KiB/four legs with
-no identified normative selection. Those defaults have been removed from the
-prepared source. V9 now requires explicit validated budget input and denies a
-missing selection before invoking the query executor. The existing frozen
-scope profile records version, source count and result count; it does not
-select the complete branch-query budget. No production producer or new profile
-is invented. Exact source/contract boundaries and the pending immutable cutover
-are recorded in [branch-query-budget-selection.md](branch-query-budget-selection.md).
+Current cross-layer work is concrete: C03 HTTP/R2/checkpoint bounds and C05 report freshness, plus
+selected-profile route/capability alignment. The [source audit](../../.github/audits/2026-10-17/README.md)
+links the affected writers/readers. The manager resolves one bounded representation or endpoint at a
+time with the existing owners; no new permission round or generic contract registry is required.

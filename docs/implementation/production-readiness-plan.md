@@ -1,47 +1,50 @@
 ---
 title: "Eliot Research production readiness plan"
 protocol: "eliotr.production-readiness.v1"
-version: "1.0"
-date: 2026-09-01
-status: "normative execution plan"
+version: "1.1"
+date: 2026-10-17
+status: "selected-profile acceptance; historical full-product phases retained below"
 baseline_commit: "4e15fadfb3cf40285bdb55112abe5d91fc8af7b3"
-authority: "ordered closure plan for declaring Eliot Research production-ready"
-target: "production-ready v1"
+authority: "acceptance reference for enabled product paths; current work order is backend-entrypoints.md"
+target: "selected OWNER_SINGLE service; other profiles require their own applicable acceptance"
 ---
 
 # Eliot Research production readiness plan
 
 ## 0. What `production-ready` means
 
-Eliot Research may be called **production-ready** only when all mandatory conditions below are true.
+Eliot Research may be called **production-ready for a named profile** only when its enabled product paths
+and applicable acceptance are complete. [ADR-0018](../adr/0018-owner-single-function-first-profile.md),
+[ADR-0019](../adr/0019-compact-refactoring.md) and
+[#377](https://github.com/UnknownAlienHuman/eliot-research/issues/377) supersede the old all-slices/Rust-first
+launch order. Current source tasks are in [backend-entrypoints.md](backend-entrypoints.md).
 A green unit-test run, a local Wrangler dry-run, a successful provider request, or a deployed Worker by
 itself is not production readiness.
 
 ```text
 production-ready =
-  mandatory product paths implemented
-  + production-critical Rust authority migration completed
-  + real Cloudflare and Google/provider round trips retained as receipts
-  + T0–T6 gates passed for the enabled product profile
-  + security, erasure, backup, restore, observability and rollback proven
-  + owner PWA and API user loops usable end to end
+  selected product paths implemented and usable end to end
+  + actual platform/provider results for those paths
+  + applicable correctness, citation, replay, recovery and workload acceptance
+  + truthful capability/limitation reporting and a usable deployment rollback
 ```
 
 ### Mandatory launch profile
 
-The v1 production launch includes architecture Slices **0–6**:
+For this owner service the selected paths are sources/project/question/cited report/reopen; project upload
+to managed search; Inbox publication; connected agents; and task assignment. Measure ADR-0018's ordinary
+answer/read targets on the named corpus/model/build, with honest coverage and exact opened citations.
+The target UI is React/Vite; ADR-0016/0017's integrated build, inbox, service-worker retirement and rollback
+acceptance precede its actual cutover. Until then the served PWA remains compatibility.
 
-- platform and authority foundation;
-- source ingest and evidence-grade retrieval;
-- minimum Wiki and federation;
-- Corpus Lens and persisted scopes;
-- governed investigations and Research Workflow;
-- claim audit, artifact materialization and dependency tracking;
-- security, erasure, recovery and operational hardening.
+Rust M2–M7, optional federation/Drive Exchange, specialist research and the canceled S52 registry are not
+prerequisites for those paths. Backup/export/restore execution remains owner-deferred; existing retention,
+erasure and recovery duties still apply to retained data. Enabling a deferred feature later requires its
+actual acceptance; do not report it ready or advertise an unsupported endpoint now.
 
-Slice 7 specialist profiles are optional after launch unless explicitly enabled in the release profile.
-Browser Rendering, R2 Data Catalog/SQL and other optional Cloudflare products are not readiness blockers
-unless a selected production feature depends on them.
+The implementation phase is compile/lint first. Test suites and broader native/browser/live qualification
+follow assembly, not every edit. The historical phases below retain detailed acceptance references for a
+selected capability; they are not an active queue or a mandate to execute all of them before owner work.
 
 ### Mechanical release rule
 
@@ -53,8 +56,12 @@ Production release is blocked while any of the following is true:
 - TypeScript and Rust both remain permanent authority for the same promoted domain decision;
 - a live gate is represented only by a mock, local emulator, typecheck, dry-run, provider acceptance,
   Queue acknowledgement, D1 change count, or Workflow completion;
-- an overdue erasure case, unresolved material citation, schema drift, unknown denominator, partial index
-  generation, secret exposure, or untested rollback exists.
+- an enabled path exposes an unresolved material citation as verified, hides unknown coverage, resurrects
+  erased data, loses an uncertain mutation, exposes credentials, or lacks a viable deployment rollback.
+
+Current source capability/status checks must be reconciled with the selected profile as its routes are
+implemented. Do not remove a fail-closed sentinel or claim a broad slice LIVE just to silence an old
+full-profile gate. This documentation revision changes no runtime readiness state or CI behavior.
 
 ## 1. Historical baseline
 
@@ -107,9 +114,10 @@ during M1.
 
 ## 2. Ordered critical path
 
-The numbered phases below are the implementation order. Work may run in parallel only where the stated
-dependencies permit it. Each phase closes only when its exit evidence is retained in the repository or
-in an immutable named release receipt.
+The numbered phases below preserve the former full-product order and capability-specific acceptance.
+Select only what the current product task needs; #377's cancellations and ADR-0019 take precedence.
+Independent tasks use disjoint files in one manager checkout. A historical phase's remaining checkbox
+does not freeze the current owner product.
 
 ## 3. Phase 1 — keep the source of truth accurate
 

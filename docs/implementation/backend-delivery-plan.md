@@ -1,5 +1,12 @@
 # Backend delivery plan
 
+**Current work order (2026-10-17):** [backend-entrypoints.md](backend-entrypoints.md) and
+[ADR-0019](../adr/0019-compact-refactoring.md). This file preserves dated source/live evidence, including
+the October 15 cancellation of S52 and the October 16 owner-path receipts. Older stops, queues,
+manager/claim rules and “next” instructions below are historical, not current prerequisites. No new
+diary entry is needed for routine source edits; record the result in its PR and update actual runtime
+status when behavior changes.
+
 ## Durable model choices and live owner cycle, October 16, 2026, 09:14 UTC
 
 On `deea75bf9d26eb83541619dab09c867d6ef28603`, the real global OpenRouter
