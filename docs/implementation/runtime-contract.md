@@ -1,6 +1,6 @@
 # Runtime integration notes
 
-Read only for changes at these boundaries. Product purpose lives in the
+Read only for work at these boundaries. Product purpose lives in the
 [manifesto](../architecture/ELIOT_RESEARCH.md); [the plan](backend-entrypoints.md) selects implementation;
 [source lifecycle](source-lifecycle.md) and [ordinary answer](research-full-answer-v1.md) own their flows.
 
@@ -10,12 +10,11 @@ Authenticate owner requests through the existing Cloudflare Access/ingress verif
 Do not trust caller identity headers. Connected clients retain current project/operation disclosure checks.
 
 Validate external request/provider data at entry and use typed values internally. Recheck mutable state only where
-a write, cancellation, deletion or actual disclosure can change the result. Do not pass a model/grant/deployment
-proof chain through every owner list.
+a write, cancellation, deletion or actual disclosure can change the result. Do not carry grant/deployment proof
+chains through owner lists or private helper calls.
 
 Source text is untrusted data. It cannot add tools, change scope/budget/model/system instructions, create citation
 labels or authorize an effect. Keep prompts, reasoning, credentials and raw provider frames out of browser output.
-Escaping the prompt envelope is useful but is not authorization.
 
 ## Source and citation lifetime
 
@@ -24,36 +23,102 @@ selection or a saved report. Purge/redaction/deletion can make bytes unavailable
 their current disclosure boundary.
 
 A citation is the retained readable revision plus exact byte range and optional display coordinate. Opening it
-authenticates the reader, loads that revision, applies current deletion/disclosure state and reads one bounded range.
-Never substitute the latest head. Content checksums identify observed stored bytes, not every function call.
+authenticates the reader, loads that revision, applies current deletion/disclosure state and performs one bounded
+range read. Never substitute the latest head. A checksum identifies observed stored bytes, not every authorization
+or function call.
 
 ## D1 and R2
 
-D1 keeps prepared statements, uniqueness/FK constraints and atomic expected-revision transitions. Dependent writes
-must share the successful predicate; zero changed rows is not an SQL error and must not leave partial metadata.
-No model/HTTP/R2 operation runs inside a D1 transaction.
+D1 owns short metadata transactions. R2 owns immutable large bytes. There is no cross-product transaction and no
+reason to simulate one with receipt graphs.
 
-Use native R2 conditional create for immutable data. Reconcile uncertain acknowledgement by observing the exact key
-and distinguishing same bytes, conflict and unavailable observation. Never substitute the expected checksum for an
-observed one or invent a signed-receipt service around a narrow storage operation.
+For source, public output or report bytes:
 
-Large immutable input/output is stored once behind a locator. Do not repeat source bodies, provider responses or
-complete candidate lists in every Workflow checkpoint.
+1. choose a deterministic immutable object key;
+2. use conditional R2 create;
+3. on uncertain acknowledgement, read that exact key and distinguish same bytes, conflict and unavailable;
+4. commit the D1 pointer/head/result through one expected-state transaction;
+5. leave an unreferenced object for bounded reconciliation/cleanup if D1 does not commit.
+
+R2 conditional writes are atomic and reads are strongly consistent after a successful write. D1 `batch()` is one
+SQL transaction: a failed statement rolls back the sequence. A successful zero-row `UPDATE` is not a failure, so
+revision insert, head change and dependent run/result update must share predicates or an explicit aborting guard.
+No model, HTTP or R2 operation runs inside that D1 transaction.
+
+Do not create operation intents, outbox rows, residency receipts or per-object readback receipts for an internal
+same-Worker report save. Keep an outbox only when a real asynchronous consumer needs delivery. Store one checksum,
+size and locator per retained object; do not duplicate the body or its digest through every layer.
 
 ## Provider execution and streaming
 
-Use the existing model pin, route, operation and attempt identity. Cloudflare AI Gateway supports request retries,
-but Eliot's selected paid-call path currently sets `cf-aig-max-attempts: 1`; preserve that for ordinary/deep model
-effects unless the exact provider offers a proven idempotent continuation. Workflow retry is not permission to
-redispatch an uncertain provider call.
+Use the existing model pin, route, operation and attempt identity. The selected paid-call path sets
+`cf-aig-max-attempts: 1`; preserve one application attempt unless the exact provider offers a proven idempotent
+continuation. Workflow retry is not permission to redispatch an uncertain provider call.
 
 For ordinary answers, consume the selected provider stream incrementally, normalize public text/final usage and
-retain completed public Markdown once. Require a valid terminal provider event. HTTP 200, socket EOF or a browser
+retain completed public Markdown once. Require a valid terminal provider event. HTTP 200, socket EOF or browser
 disconnect alone is not completion.
 
-A failed browser delivery does not fail generation. A failed report save retries from retained public output.
+A failed browser delivery does not fail generation. A failed report save retries from the retained public output.
 Raw provider payload logging stays disabled for private material. Semantic caching stays disabled unless exact
-scope/model/settings isolation is established; reopening a saved report already avoids regeneration.
+scope/model/settings isolation is established; reopening a report already avoids regeneration.
+
+A Workflow step is individually retryable. Do not combine a non-idempotent provider invocation and report
+publication in one retry unit. Generate/retain and publish are separate durable responsibilities. A save retry must
+read the retained output locator, not call the model again.
+
+## Compact report storage
+
+The target report has two D1 concepts and one R2 object:
+
+```text
+report
+  report_id, owner_principal_ref, head_revision, deleted_at, created_at, updated_at
+
+report_revision
+  report_id, revision, run_id, title, summary, language,
+  object_key, object_sha256, object_size,
+  source_revision_refs_json, created_at
+
+R2 report object
+  Markdown, compact citation refs, bounded generation metadata
+```
+
+The report object is one bounded canonical envelope or equivalent single immutable object. Markdown headings are
+presentation structure, not separate durable section objects. Export is derived from the same Markdown. Do not
+persist ArtifactSpec, section contracts, EvidenceFreeze, AllowedReferenceManifest, verification receipts,
+residency objects or deterministic export manifests for an ordinary report.
+
+Saving a generated report:
+
+1. read the retained completed public output and label map;
+2. resolve only server-issued labels to compact citations;
+3. encode and conditionally create the report object;
+4. in one D1 transaction insert the immutable revision, conditionally advance the report head and attach the exact
+   report reference to the originating run;
+5. read back the revision/head/result before marking the run completed.
+
+Editing creates a full new revision under the expected head. Reports are small enough to prefer a complete coherent
+body over a section object graph. If later measurements justify partial editing, add it to this writer—not a second
+artifact engine.
+
+## Report access and reopening
+
+Owner report access checks the current authenticated owner, report ownership and report deletion state. It does not
+replay the original scope expression, credential generation, policy lease, deployment generation or stage lineage.
+A connected client checks its current explicit report/operation/project grant.
+
+Reopening then:
+
+1. reads the exact `report_revision` row;
+2. loads the exact R2 object and verifies stored size/checksum;
+3. returns Markdown, compact citations and stable metadata;
+4. computes source-head freshness separately and optionally;
+5. opens a citation only through the source-revision/range reader.
+
+A newer source head makes the report historical, not unauthorized. Freshness failure returns `UNKNOWN` without
+hiding readable content. A purged/deleted report or failed report authorization remains unavailable. Do not expose
+authorization receipts, policy authorities or reauthorization protocol generations in the browser DTO.
 
 ## Workflow, Queue and ResearchSession
 
@@ -61,13 +126,13 @@ One Workflow owns a run. Queue accelerates existing persisted work. ResearchSess
 progress and provisional public text; it owns neither execution nor canonical output.
 
 Ordinary execution chooses its path before old handler/checkpoint assembly. Explicit deep research uses one bounded
-search/read/finish loop. Old executors serve only already-admitted runs while they settle; completed reports are
-read directly.
+search/read/finish loop. Both save through the same report writer. Old executors serve only already-admitted runs
+while they settle; completed reports are read directly.
 
-A slow/disconnected ResearchSession subscriber cannot block generation or save. Do not persist every token/event.
-Reconnect reads canonical status/result and may resume new provisional deltas with an explicit gap.
+A slow/disconnected subscriber cannot block generation or save. Do not persist every token/event. Reconnect reads
+canonical status/result and may resume new provisional deltas with an explicit gap.
 
-## Run status and retained result
+## Run status and owner lists
 
 Status describes product behavior, not internal graph topology:
 
@@ -76,27 +141,38 @@ Status describes product behavior, not internal graph topology:
 - safe failure/cancellation;
 - terminal result availability and report reference.
 
-Do not expose `next_stage_index`, stage 18, handler generation or a provider frame as the durable public contract.
-A temporary old-run adapter is removed after active old runs settle.
+Do not expose `next_stage_index`, stage 18, handler generation or provider frames as the durable contract. A temporary
+old-run adapter is removed after real old runs settle.
 
-Owner lists read bounded metadata. Report bodies and citation bytes load on demand. A freshness comparison is
-optional information and cannot hide an otherwise readable report.
+Owner lists read D1 metadata only: run ID, time, question, recorded state and report reference/title/summary.
+Report bodies and citation bytes load on demand. Project attribution is captured at admission; do not infer it from
+today's attachments or post-filter a bounded candidate page.
 
-## Derived content
+## Migration and deletion
 
-Report/Wiki text and supporting citations change through one expected-revision/head transition. Automatic link
-decoration is render-time or a new revision. When a contributor changes/deletes, mark affected derived content
-stale and refresh on explicit request, selected maintenance or next meaningful reuse. Threshold-based maintenance
-also needs a maximum age.
+Inventory retained reports before changing schema. Convert each real saved report once, preserving stable report
+identity/revision where practical, body text, citations, originating run, title, language and creation time. Verify
+row/object counts and hashes, switch current server/client reads and writes, then remove:
+
+- `artifact_revision` report use;
+- `artifact_draft_reservation`, `artifact_draft_head`, `artifact_draft_binding`, `artifact_draft_object` report use;
+- `research_report_admission` and stage-17 report fences;
+- report EvidenceFreeze/manifest/verification/residency objects;
+- v1/v2/v3 report reauthorization DTOs and their fixtures.
+
+Do not keep a fallback reader after conversion. Git history is the archive.
 
 ## Limits
 
-Model token window, serialized request bytes, response bytes, Workflow checkpoint size and Worker memory are
-different limits. Reserve output capacity before filling context. FULL rejects overflow; it never silently truncates.
-Whole selected sources can be read before search indexing finishes.
+Model token window, serialized request bytes, response bytes, Workflow step result size, R2 object size and Worker
+memory are different limits. Reserve output capacity before filling context. FULL rejects overflow; it never silently
+truncates. Whole selected sources can be read before search indexing finishes.
 
-The earlier C03 256-KiB HTTP versus 64-KiB persisted-input mismatch is a source finding, not a desired limit.
-Align the actual producer, stored locator/checkpoint and readers in the changed path.
+The earlier C03 256-KiB HTTP versus 64-KiB persisted-input mismatch is a source finding, not a desired limit. Align
+the actual producer, stored locator and readers in the changed path.
 
-C01/C02/C11 storage observation and C05/C10 freshness findings remain bounded retained-code work. They do not
-justify preserving unrelated proof, generation or compatibility systems.
+Cloudflare references checked 2026-10-18:
+[R2 conditional writes and consistency](https://developers.cloudflare.com/r2/reference/consistency/),
+[R2 Workers API](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/),
+[D1 batch transactions](https://developers.cloudflare.com/d1/worker-api/d1-database/) and
+[Workflow retry rules](https://developers.cloudflare.com/workflows/build/rules-of-workflows/).
