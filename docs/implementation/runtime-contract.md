@@ -64,7 +64,7 @@ Raw provider payload logging stays disabled for private material. Semantic cachi
 scope/model/settings isolation is established; reopening a report already avoids regeneration.
 
 A Workflow step is individually retryable. Do not combine a non-idempotent provider invocation and report
-publication in one retry unit. Generate/retain and publish are separate durable responsibilities. A save retry must
+publication in one retry unit. Generate/retain and save are separate durable responsibilities. A save retry must
 read the retained output locator, not call the model again.
 
 ## Compact report storage
@@ -98,15 +98,29 @@ Saving a generated report:
    report reference to the originating run;
 5. read back the revision/head/result before marking the run completed.
 
-Editing creates a full new revision under the expected head. Reports are small enough to prefer a complete coherent
-body over a section object graph. If later measurements justify partial editing, add it to this writer—not a second
-artifact engine.
+Editing creates a full new revision under the expected head. Reports are bounded documents; use a complete coherent
+body rather than a section object graph. If AI assistance is selected, its provider attempt retains a complete new
+Markdown output and then calls this same writer. It does not create a section COW Workflow or child artifact.
+
+## Report state is not a truth certificate
+
+A report revision may record origin metadata such as generated/edited and the producing model/run. It must not expose
+`VERIFIED`, `ACCEPTED` or `PUBLISHED` as claims that the prose is true.
+
+The current artifact stack stores `PUBLISHED` and then runs a second publication system with owner acceptance
+decisions, verification/currentness arrays, operation receipts/outbox and a publication head whose disposition is
+`ACCEPTED`. Repository search finds the `artifact.accepted` topic only at its producer. Remove this system during
+report cutover.
+
+A completed report is usable immediately. User confidence comes from citations, visible limitations, freshness and
+edits. Explicitly proposing content to Wiki/Inbox is a separate target-specific action. Do not replace publication
+receipts with `accepted_at` or another badge absent a concrete product need.
 
 ## Report access and reopening
 
 Owner report access checks the current authenticated owner, report ownership and report deletion state. It does not
-replay the original scope expression, credential generation, policy lease, deployment generation or stage lineage.
-A connected client checks its current explicit report/operation/project grant.
+replay the original scope expression, credential generation, policy lease, deployment generation, stage lineage or
+publication receipt. A connected client checks its current explicit report/operation/project grant.
 
 Reopening then:
 
@@ -118,7 +132,8 @@ Reopening then:
 
 A newer source head makes the report historical, not unauthorized. Freshness failure returns `UNKNOWN` without
 hiding readable content. A purged/deleted report or failed report authorization remains unavailable. Do not expose
-authorization receipts, policy authorities or reauthorization protocol generations in the browser DTO.
+authorization receipts, policy authorities, acceptance receipts or reauthorization protocol generations in the
+browser DTO.
 
 ## Workflow, Queue and ResearchSession
 
@@ -131,6 +146,10 @@ while they settle; completed reports are read directly.
 
 A slow/disconnected subscriber cannot block generation or save. Do not persist every token/event. Reconnect reads
 canonical status/result and may resume new provisional deltas with an explicit gap.
+
+Report edits are not another Workflow by default. Manual expected-head writes are ordinary request/application
+work. An explicitly selected AI revision uses the normal model-attempt owner and report writer, not the current
+`artifact-section-revise` Workflow, REPORT witness renewal and child-materialization graph.
 
 ## Run status and owner lists
 
@@ -146,7 +165,7 @@ old-run adapter is removed after real old runs settle.
 
 Owner lists read D1 metadata only: run ID, time, question, recorded state and report reference/title/summary.
 Report bodies and citation bytes load on demand. Project attribution is captured at admission; do not infer it from
-today's attachments or post-filter a bounded candidate page.
+today's attachments or post-filter a bounded candidate page. Acceptance/publication status is not part of the list.
 
 ## Migration and deletion
 
@@ -158,8 +177,13 @@ row/object counts and hashes, switch current server/client reads and writes, the
 - `artifact_draft_reservation`, `artifact_draft_head`, `artifact_draft_binding`, `artifact_draft_object` report use;
 - `research_report_admission` and stage-17 report fences;
 - report EvidenceFreeze/manifest/verification/residency objects;
+- `artifact_publication_receipt`, `artifact_publication_head`, `artifact_publication_mutation_guard` and publication-
+  only operation/outbox rows;
+- artifact acceptance routes/client/UI/policy/readiness code;
+- artifact section revise Workflow/COW/model/child-materialization code and tables;
 - v1/v2/v3 report reauthorization DTOs and their fixtures.
 
+Old acceptance receipts are conversion diagnostics at most; they do not become product state in the new schema.
 Do not keep a fallback reader after conversion. Git history is the archive.
 
 ## Limits
