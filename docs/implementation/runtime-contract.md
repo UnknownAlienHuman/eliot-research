@@ -27,6 +27,11 @@ authenticates the reader, loads that revision, applies current deletion/disclosu
 range read. Never substitute the latest head. A checksum identifies observed stored bytes, not every authorization
 or function call.
 
+Neither a model nor a browser can mint a canonical citation. Generation resolves only labels from the server-owned
+context map. Manual edits may preserve/remove existing refs and add refs obtained through an explicit server
+source/citation selection path; the server still revalidates revision, representation, range bounds and current
+access/deletion before saving. Quoted/display text is not authority.
+
 ## D1 and R2
 
 D1 owns short metadata transactions. R2 owns immutable large bytes. There is no cross-product transaction and no
@@ -105,14 +110,17 @@ residency objects or deterministic export manifests for a research report.
 
 Saving a generated/AI-edited revision:
 
-1. read the retained completed public output and label map;
-2. resolve only server-issued labels to compact citations;
-3. encode and conditionally create the research-report object;
-4. in one D1 transaction insert the immutable revision, conditionally advance `research_report.head_revision` and
+1. read the retained completed public output and server label map;
+2. resolve only issued labels; reject/leave unresolved unknown labels;
+3. canonicalize/deduplicate accepted citation refs and derive `source_revision_refs_json` from them;
+4. encode and conditionally create the research-report object;
+5. in one D1 transaction insert the immutable revision, conditionally advance `research_report.head_revision` and
    attach the exact revision to the originating operation;
-5. read back revision/head/result before marking that operation completed.
+6. read back revision/head/result before marking that operation completed.
 
-Saving a manual edit uses the same object/revision/head writer without an operation attachment.
+Saving a manual edit uses the same object/revision/head writer without an operation attachment. Before encoding, the
+server resolves every submitted citation ref through the actual source reader and derives the source set; the
+browser cannot supply an authoritative source list, arbitrary byte range or quote.
 
 A failed D1 transaction after successful R2 create leaves an unreferenced immutable object. The deterministic retry
 may adopt the same bytes; bounded cleanup may remove an old orphan. Do not add distributed transaction emulation,
@@ -156,13 +164,16 @@ browser DTO.
 Manual expected-head edits are ordinary request/application work:
 
 1. authorize the current owner/report head;
-2. validate one complete bounded Markdown/citation body;
-3. conditionally create one immutable object;
-4. insert `MANUAL_EDIT` with no origin operation and move the expected head atomically.
+2. validate one complete bounded Markdown body, expected head and citation references;
+3. resolve each citation against retained representation/range bounds and current owner/deletion/disclosure;
+4. reject unknown, inaccessible, malformed or out-of-range refs;
+5. canonicalize/deduplicate accepted refs and derive the source-revision set;
+6. conditionally create one immutable object;
+7. insert `MANUAL_EDIT` with no origin operation and move the expected head atomically.
 
-An explicitly selected AI revision uses the normal model-attempt owner, retains completed public Markdown, then
-writes `AI_EDIT` with the actual operation. It does not use the current `artifact-section-revise` Workflow, REPORT
-witness renewal, COW child artifact or publication acceptance prerequisite.
+An explicitly selected AI revision uses the normal model-attempt owner, retains completed public Markdown, resolves
+only its server label map, then writes `AI_EDIT` with the actual operation. It does not use the current
+`artifact-section-revise` Workflow, REPORT witness renewal, COW child artifact or publication acceptance prerequisite.
 
 ## Workflow, Queue and ResearchSession
 
@@ -221,9 +232,10 @@ No report-specific erasure coordinator, closure ledger or backup platform is add
 ## Migration and deletion
 
 Inventory retained reports before changing schema. Convert each real saved report once, preserving stable identity/
-revision where practical, body text, citations, originating operation, title, language and creation time. Assign
-`GENERATED` to old generated reports; do not invent operations for manual edits. Verify row/object counts and hashes,
-switch current server/client reads and writes, then remove:
+revision where practical, body text, server-validated citations, originating operation, title, language and creation
+time. Assign `GENERATED` to old generated reports, derive the source set from canonical citations and do not invent
+operations for manual edits. Verify row/object counts and hashes, switch current server/client reads and writes, then
+remove:
 
 - `artifact_revision` report use;
 - `artifact_draft_reservation`, `artifact_draft_head`, `artifact_draft_binding`, `artifact_draft_object` report use;
