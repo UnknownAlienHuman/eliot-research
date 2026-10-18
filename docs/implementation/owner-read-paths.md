@@ -101,7 +101,36 @@ Create the object conditionally, then in one D1 transaction insert the revision,
 the report ref to the run. No internal report admission decision, object residency graph, verification receipt or
 outbox is required. A real Queue consumer may still have a real outbox.
 
-## 4. Reopen the saved report before optional freshness
+## 4. Remove the report acceptance/publication ceremony
+
+**Current cohort:**
+
+- React `ArtifactActions.tsx`;
+- owner client `studio/artifact.ts` and legacy PWA artifact-product modules;
+- `packages/cloudflare-artifacts/src/artifact-publication*.ts`, publication policy/product service;
+- migration `0098_artifact_publication_authority.sql` and later extensions;
+- operation intent/attempt/receipt/outbox rows used only for `ARTIFACT_PUBLISH`;
+- publication receipts, publication head and mutation guard.
+
+The current owner action says “Accept this report”. The server then revalidates section receipts and evidence
+currentness, records a signed-looking owner decision/provenance, appends operation/outbox records and advances a
+second publication head. Storage status `PUBLISHED` is projected as another `VERIFIED/ACCEPTED` status. This does not
+make model prose true, and repository search finds `artifact.accepted` only at its producer—not at a consuming
+integration.
+
+Selected behavior:
+
+- a completed generated report is saved and usable immediately;
+- UI labels it generated/edited, never “truth accepted”;
+- owner may edit it, download it or explicitly propose derived material to Wiki/Inbox;
+- Wiki/Inbox proposal/review is its own meaningful action with its own target, not a prerequisite acceptance receipt;
+- source changes appear through advisory freshness and exact citations, not a publication disposition.
+
+Delete the acceptance button/status/receipt details and server/client routes after report cutover. Do not replace the
+system with `accepted_at`, another publication table or a new proof badge unless a concrete product action later
+requires a simple user-owned flag.
+
+## 5. Reopen the saved report before optional freshness
 
 The current read path reauthorizes a historical scope, compares authorization snapshots, reads section/manifest
 objects and then awaits source freshness. Freshness failure can still hide otherwise readable content. A saved
@@ -122,7 +151,7 @@ its current explicit report/operation/project grant. Report deletion/purge remai
 Remove `artifact-draft-reauthorization.v1/v2/v3`, scope authorization objects and policy/receipt fields from the
 current client. Server and React change together; do not add another compatibility generation.
 
-## 5. Freshness is advisory
+## 6. Freshness is advisory
 
 A newer source revision makes the report historical, not invalid. Use one current schema:
 
@@ -137,19 +166,35 @@ Do not traverse R2, replay scopes, open every citation or compute freshness for 
 Exact citation opening remains separate: authenticate, load the retained source revision/readable object, apply
 actual deletion/disclosure, and return the bounded range. Never redirect to the latest bytes.
 
-## 6. Edits are expected-head revisions
+## 7. Edits are expected-head full revisions
 
-A report edit writes a complete new Markdown/citation object and one new `report_revision`, then conditionally moves
-the report head. Zero affected rows is a conflict. No in-place mutation of body or provenance.
+Current `artifact-section-revise.ts` starts another Workflow, renews REPORT admission/source witnesses, creates a COW
+child artifact, invokes a model and reconciles another attempt state. That is another research engine hidden behind
+“Revise this section”.
 
-Wiki should follow the same behavioral rule even before storage is consolidated. WeKnora's useful pattern is
+Selected manual edit:
+
+1. read exact current report revision;
+2. submit bounded complete Markdown/citation state plus expected head;
+3. create one immutable object;
+4. insert one `report_revision` and conditionally move the report head;
+5. return conflict on zero affected rows.
+
+No in-place mutation of body/provenance and no section child graph. Reports are bounded generated documents; a full
+body is the simplest coherent edit unit.
+
+If AI-assisted revision is later selected, admit one explicit model attempt against the chosen report/source refs,
+retain its completed Markdown, then call the same report writer. It does not get a COW Workflow, report-admission
+witness, section ledger or acceptance prerequisite.
+
+Wiki should follow the same expected-version rule even before storage is consolidated. WeKnora's useful pattern is
 `expected version → snapshot/write atomically` and body-free revision listings. Do not copy its auto-link/meta
 updates that write by page ID without the same expected version. Decoration is render-time or a new revision.
 
 Extract a shared revision helper only after both current report and Wiki callers use the same small operation and it
 removes code. Do not build a generic content framework first.
 
-## 7. Data transition and deletion
+## 8. Data transition and deletion
 
 Before destructive migration, inspect deployed retained rows. Convert each real saved report once:
 
@@ -159,9 +204,13 @@ Before destructive migration, inspect deployed retained rows. Convert each real 
 - write the new immutable object and report/revision rows;
 - verify object hashes/counts and run/report associations.
 
-Switch current writer, status, history, report read, export and React callers. Then delete the old report-specific
-artifact/admission/freeze/manifest/verification tables, code, contracts, protocol decoders and fixtures. Do not keep a
-fallback reader; Git history is the archive.
+The conversion does not migrate artifact-publication receipts as product truth. If an old report was accepted,
+preserve that only as bounded migration diagnostics when needed to audit the conversion; do not recreate the
+acceptance platform or expose the old receipt in the new product.
+
+Switch current writer, status, history, report read, export, edit and React callers. Then delete the old report-
+specific artifact/admission/freeze/manifest/verification/publication/COW tables, code, contracts, routes, protocol
+decoders and fixtures. Do not keep a fallback reader; Git history is the archive.
 
 ## Donor and platform decisions
 
@@ -180,7 +229,7 @@ No donor code or dependency is imported.
 
 During implementation use scoped compile/lint. After assembly exercise empty projects, independent pagination,
 EXCEPT filtering, save failure after completed generation, report head conflicts, unavailable optional freshness,
-65 changed sources, actual access/deletion failures and conversion of retained reports.
+65 changed sources, actual access/deletion failures, manual edit conflict and conversion of retained reports.
 
-Complete means the new writer/readers work through real callers and the old report artifact cohort is gone—not hidden
-behind an adapter.
+Complete means the new writer/readers/edits work through real callers and the old report artifact, acceptance and COW
+cohorts are gone—not hidden behind adapters.
