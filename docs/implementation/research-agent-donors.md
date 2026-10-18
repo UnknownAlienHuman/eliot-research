@@ -27,6 +27,7 @@ They do not imply a whole-repository audit.
 |---|---|---|
 | [Cloudflare Agents AI SDK provider](https://developers.cloudflare.com/agents/models/ai-sdk/) | Existing `AI` binding plus pinned AI SDK v7 supplies `generateText`, `streamText`, tools, vendor routing and gateway metadata. Use it as a single-turn codec/transport. | No hand-written OpenAI/Anthropic wire stack; no automatic upgrade of beta packages. |
 | [Cloudflare Think](https://developers.cloudflare.com/agents/harnesses/think/) | Confirms that loop, persistence, streaming recovery and tool lifecycle are separable harness responsibilities. | Think owns its own loop and Durable Object SQLite; adding it beside Eliot Workflow/D1/R2 would create another owner. Do not import it for this refactor. |
+| [Cloudflare Code Mode](https://developers.cloudflare.com/agents/tools/codemode/) | Candidate later for a measured broad collection task where generated sandboxed code can batch many independent reads, joins and filters outside model context. Its current SDK no longer owns the model call and can block outbound network in a Dynamic Worker. | Not the first two-tool loop. It adds generated code, Worker Loader, executor/dispatcher, logs, timeouts and another recovery/security boundary. No `LOADER` binding or arbitrary-code prerequisite until direct search/read is measured inadequate. |
 | [AI SDK tool calling](https://ai-sdk.dev/docs/ai-sdk-core/tools-and-tool-calling) | Tool schemas validate inputs; `execute` is optional, so Workflow can persist a call before host execution. `toolCallId` is available. | Do not enable SDK multi-step `stopWhen` or automatic `execute` around paid durable effects. |
 | [AI SDK manual loop](https://ai-sdk.dev/cookbook/node/manual-agent-loop) | One model call at a time with application-controlled messages/results is the appropriate low-level pattern. | The sample's in-memory history is not Eliot persistence/recovery. |
 | [OpenAI function calling](https://developers.openai.com/api/docs/guides/function-calling) | Correlate every function result by provider call identity; disable parallel calls for the first slice; use strict schemas where supported. | OpenAI server conversation state is Eliot's canonical state. |
@@ -75,6 +76,29 @@ Useful rule:
 Do not create a marketplace, Skill lifecycle, dynamic plugin loader or generic registry for two operations. One
 closed AI SDK tool object in the existing transport is enough.
 
+## Code Mode is an optimization threshold, not architecture
+
+Code Mode has a legitimate future use: broad structured collection may require dozens of independent lookups,
+filtering, joins and aggregation. Generated code can keep those intermediate rows out of model context and call a
+host-provided function set through an isolated executor. That is closer to Perplexity Search as Code than a normal
+single-tool ReAct loop.
+
+It is still the wrong starting point for Eliot. With only `search` and `read`, direct host code is shorter, easier to
+resume and easier to attribute. Code Mode would immediately add:
+
+- generated untrusted JavaScript as another input class;
+- a Worker Loader/Dynamic Worker binding and deployment surface;
+- an executor/dispatcher protocol and tool-name normalization;
+- code/output/log byte limits, timeout/cancellation and crash semantics;
+- another prompt-injection path from source data into generated control code;
+- another artifact whose partial/uncertain execution must be reconciled.
+
+Consider one bounded experiment only after assembled deep-research measurements show that repeated independent tool
+calls dominate tokens or latency. The experiment must expose a fixed read-only function set, keep outbound network
+disabled, bound code/output/logs/time, record every host tool call by stable ID, and treat generated code as
+replaceable execution input—not canonical knowledge or authorization. It must remove more direct-loop complexity
+than it adds. No Code Mode dependency or `worker_loaders` binding is selected now.
+
 ## Iteration and planning
 
 Fixed iteration counts and recurring planning calls are crude cost controls. Eliot carries budgets and unresolved
@@ -119,14 +143,14 @@ Use:
 - explicit budgets/no-progress stopping;
 - visible bounded progress and exact source-backed citations.
 
-Do not use:
+Do not use in the first implementation:
 
 - Think, ToolLoopAgent, LangGraph, smolagents or another generic loop runtime;
+- Code Mode, Dynamic Worker Loader or arbitrary generated code;
 - custom vendor parsers when the selected AI SDK adapter works;
 - fake completion tools;
 - framework-owned memory/database;
 - default multi-agent fan-out;
-- arbitrary code execution;
 - fixed stage/iteration topology;
 - URL or result-array position as evidence identity.
 
