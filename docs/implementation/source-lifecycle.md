@@ -38,7 +38,8 @@ retains more than raw bytes and one readable representation.
 
 ## Intake: store once, then derive
 
-Start at `packages/cloudflare-raw-ingest/src/`, the existing object writer and source/head D1 writer.
+Start at `packages/cloudflare-raw-ingest/src/`, `packages/platform-cloudflare/src/d1-ingest-commit.ts`, the object
+writer and source/head D1 writer.
 
 1. Authenticate at HTTP ingress. Validate name/type, declared size and request bounds once.
 2. Allocate source/revision and an immutable R2 key. Use native conditional create. `If-None-Match: *` is atomic;
@@ -52,6 +53,10 @@ Start at `packages/cloudflare-raw-ingest/src/`, the existing object writer and s
    length/checksum, quality and error. Optional enhancement may fail without destroying an already usable result.
 5. Derive headings and exact ranges from those stored bytes. Submit native-search work asynchronously. Direct
    reading is already available; indexing is not part of source admission.
+
+The current D1 writer protects a very large unconditional batch with a final cross-table commit guard. Preserve its
+real atomic outcome while replacing the receipt/policy/readiness fan-out with a few conditional source/revision/head
+statements. Do not merely wrap `commitAdmittedBundle` and leave the old batch as the hidden implementation.
 
 A create-once R2 object left after a failed D1 transaction is identifiable by the operation/revision key and can be
 cleaned without a backup platform. Useful public state is small: `stored`, `readable`, `search_pending`,
@@ -97,10 +102,15 @@ Scope is a query concern, not canonical identity:
   correctly—not two lanes and section copies for every project by default;
 - perform full D1 identity/disclosure readback before text reaches the model.
 
-Current readback joins `source.head_rev`. That is incorrect for an already admitted owner run: a newer head can
-make its selected old revision disappear. Search/read callers take the run's exact admitted revision set. A newer
-head or project detach does not rewrite that set. Purge/deletion, or an external client's current disclosure check,
-may make a revision unavailable and must be reported explicitly.
+Current search readback joins `source.head_rev`. That is incorrect for an already admitted owner run: a newer head
+can make its selected old revision disappear. Search/read callers take the run's exact admitted revision set. A
+newer head or project detach does not rewrite that set. Purge/deletion, or an external client's current disclosure
+check, may make a revision unavailable and must be reported explicitly.
+
+Move owner report/run reads off `packages/cloudflare-navigation/src/owner-historical-scope.ts` and its policy-lease
+history. A current owner does not need the original scope expression, participant generations and policy history
+reconstructed merely to read retained revisions the owner still owns. External clients retain current disclosure;
+purge/deletion remains authoritative.
 
 Keep an old revision's search item while an active run still needs retrieval over it. After those runs settle, the
 projection may be deleted; saved reports reopen retained bytes and do not need the old index item. Use existing
@@ -174,10 +184,11 @@ revision.
 
 | Current source | Keep/write | Remove after caller migration |
 |---|---|---|
-| `cloudflare-raw-ingest/raw-normalized-admission-service.ts` and related policy/snapshot files | Conditional R2 create, one D1 revision/head transition, one conversion result | Policy snapshots, witness digests, TTL reservation, residency/disclosure and receipt chain |
+| `cloudflare-raw-ingest/*`, `platform-cloudflare/d1-ingest-commit.ts` and related policy/snapshot files | Conditional R2 create; a few conditional D1 source/revision/head statements; one conversion result | Commit-guard fan-out, policy snapshots, witnesses, TTL reservation, residency/disclosure and receipt chain |
 | `retrieval/structural-projector.ts`, D1 Search section writers | Exact UTF-8 ranges and the projection actually used | Projection generation identity, item-set proof/activation and duplicate arbitrary chunks |
 | `cloudflare-ai/project-search.ts` | One native hybrid search, per-revision status, admitted revisions and D1 readback | Default prose+literal duplication, unneeded project copies, generation/promotion fences |
-| `contracts/evidence.ts`, `retrieval/evidence-resolver.ts`, `cloudflare-evidence/` | Compact citation create/open against immutable bytes | Global handle registry, V1/V2 receipts, authorization/verification and assurance/residency envelopes |
+| `cloudflare-navigation/owner-historical-scope.ts`, policy-lease history | Direct current owner entitlement to retained revisions; explicit purge/deletion | Scope replay, participant generations, lease-history and head-advance proof for owner reads |
+| `contracts/evidence.ts`, `retrieval/evidence-resolver.ts`, `cloudflare-evidence/*` | Compact citation create/open against immutable bytes | Global handle registry, V1/V2 receipts, authorization/verification and assurance/residency envelopes |
 | `source_readiness` callers | Concrete readable/search state needed by UI/admission | Unselected channels/generations and generic readiness orchestration |
 | Wiki/artifact writers | Expected-revision body/provenance write; body-free history | In-place text/provenance mutation without conflict detection |
 
@@ -209,7 +220,7 @@ Complete means:
 - native search locators resolve to exact permitted bytes;
 - all retained outputs store/open compact citations;
 - purge returns explicit unavailable and never substitutes another revision;
-- old ingest, evidence and generation code/schema/fixtures are removed after the one-time data transition.
+- old ingest, scope-replay, evidence and generation code/schema/fixtures are removed after the data transition.
 
 Run scoped TypeScript compile/lint and affected D1/query checks during implementation. Final product tests and
 measurements follow assembly. This document does not claim the runtime refactor or migration is complete.
