@@ -217,12 +217,17 @@ removed. First move the real caller to the small operation, then delete the supe
 
 | Donor | Take | Reject |
 |---|---|---|
-| SurfSense `176aed2` | Server labels, stable instruction vs dynamic excerpts, output reserve, embedder-independent citation identity, short atomic derived-index replacement | SQLite/vector stack, fixed token estimates, regex-only injection defense, chunk ID as canonical Eliot evidence |
-| OpenViking `9cd7786` | Overview before detail, one query embedding, dedupe before optional rerank, derived sidecar freshness metadata | Context filesystem, AGPL code reuse, global memory/graph platform, claim that its retriever recursively traverses a hierarchy |
-| WeKnora `2c0d838` | Expected-version page update, atomic snapshot+write and body-free revision listings | GORM/store topology, COUNT+OFFSET default, blind automatic link/meta rewrites |
+| [SurfSense `176aed2`](https://github.com/MODSetter/SurfSense/blob/176aed261a24a85d217538960e91c59746561bd2/surfsense_local/backend/worker/ingestion/chunking.py) | Server labels, stable instruction vs dynamic excerpts, output reserve, embedder-independent citation identity, short atomic derived-index replacement | SQLite/vector stack, fixed token estimates, regex-only injection defense, chunk ID as canonical Eliot evidence |
+| [OpenViking `9cd7786`](https://github.com/volcengine/OpenViking/blob/9cd7786176b005f33ba6ae6fc96f8bbac2455b7a/openviking/retrieve/hierarchical_retriever.py) | Overview before detail, one query embedding, dedupe before optional rerank, derived sidecar freshness metadata | Context filesystem, AGPL code reuse, global memory/graph platform, claim that its retriever recursively traverses a hierarchy |
+| [WeKnora `2c0d838`](https://github.com/Tencent/WeKnora/blob/2c0d8384398ca756ee414eef01b71caf91e2caa6/internal/application/repository/wiki_page.go) | Expected-version page update, atomic snapshot+write and body-free revision listings | GORM/store topology, COUNT+OFFSET default, blind automatic link/meta rewrites |
 | Cloudflare native APIs | Atomic R2 create-once, D1 short transactions, asynchronous per-item AI Search indexing and native hybrid retrieval | A second application index lifecycle, upload polling inside question/list reads or provider state as canonical source truth |
 
 These are independently implemented behaviors. No donor code or dependency is selected by this document.
+
+Cloudflare references checked 2026-10-18: [R2 conditional-write consistency](https://developers.cloudflare.com/r2/reference/consistency/),
+[D1 batch transactions](https://developers.cloudflare.com/d1/worker-api/d1-database/),
+[AI Search Items binding](https://developers.cloudflare.com/ai-search/api/items/workers-binding/) and
+[asynchronous indexing/querying](https://developers.cloudflare.com/ai-search/concepts/how-ai-search-works/).
 
 ## Completion
 
