@@ -4,7 +4,6 @@ import {
   createWikiPublisher,
   WikiPublicationError,
   type DraftRiskClass,
-  type WikiAutoPromotionReceipt,
   type WikiHeadCommit,
   type WikiHeadCommitDisposition,
   type WikiHeadReadback,
@@ -122,19 +121,6 @@ class MemoryWikiPort implements WikiPublicationPort {
   }
 }
 
-const autoAuthority: WikiAutoPromotionReceipt = {
-  publisher_ref: "wiki-auto-publisher-1",
-  explicit_project_policy: true,
-  policy_receipt_ref: "policy-receipt-1",
-  exact_evidence_complete: true,
-  evidence_receipt_ref: "evidence-receipt-1",
-  dependency_closure_complete: true,
-  coverage_complete: true,
-  independent_verifier_receipt_ref: "verifier-receipt-1",
-  conflict_count: 0,
-  changes_current_state: false,
-};
-
 describe("Wiki publisher", () => {
   it("publishes only after exact immutable readback and atomically records the head plus change", async () => {
     const port = new MemoryWikiPort();
@@ -165,29 +151,6 @@ describe("Wiki publisher", () => {
     expect(rejected?.reason).toBeInstanceOf(WikiPublicationError);
     expect(rejected?.reason).toMatchObject({ code: "WIKI_HEAD_CONFLICT", retryable: false });
     expect(port.commits).toHaveLength(1);
-  });
-
-  it("never auto-promotes D2/D3 and performs no immutable write when policy denies", async () => {
-    const port = new MemoryWikiPort();
-    const publisher = createWikiPublisher(port);
-    for (const risk of ["D2_ANALYTICAL", "D3_AUTHORITY_SENSITIVE"] as const) {
-      const proposalRef = await publisher.propose(page(risk === "D2_ANALYTICAL" ? "a" : "b"), risk);
-      await expect(publisher.autoPromote(proposalRef, 0, autoAuthority))
-        .rejects.toMatchObject({ code: "WIKI_POLICY_DENIED" });
-    }
-    expect(port.events.some((event) => event.startsWith("r2:write:"))).toBe(false);
-    expect(port.commits).toHaveLength(0);
-  });
-
-  it("auto-promotes an exact D1 draft only with its policy receipt bound into the commit", async () => {
-    const port = new MemoryWikiPort();
-    const publisher = createWikiPublisher(port);
-    const proposalRef = await publisher.propose(page(), "D1_LOW_RISK_ADDITIVE");
-    await expect(publisher.autoPromote(proposalRef, 0, autoAuthority)).resolves.toMatchObject({
-      status: "PUBLISHED",
-      reviewer_ref: autoAuthority.publisher_ref,
-    });
-    expect(port.commits[0]?.auto_promotion_policy_receipt_ref).toBe(autoAuthority.policy_receipt_ref);
   });
 
   it("blocks D1 head mutation when immutable R2 readback differs", async () => {

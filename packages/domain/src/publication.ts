@@ -27,18 +27,6 @@ export type WikiPublicationIssue =
   | "GENERATOR_INVALID"
   | "PUBLICATION_METADATA_INVALID";
 
-export interface WikiAutoPromotionAuthority {
-  readonly explicit_project_policy: boolean;
-  readonly policy_receipt_ref: string;
-  readonly exact_evidence_complete: boolean;
-  readonly evidence_receipt_ref: string;
-  readonly dependency_closure_complete: boolean;
-  readonly coverage_complete: boolean;
-  readonly independent_verifier_receipt_ref: string;
-  readonly conflict_count: number;
-  readonly changes_current_state: boolean;
-}
-
 const EVIDENCE_LABELS: readonly EvidenceLabel[] = [
   "SOURCE_SUPPORTED",
   "DERIVED_INFERENCE",
@@ -168,34 +156,4 @@ export function wikiTargetsExpectedHead(
     && validRef(page.supersedes_ref)
     && page.supersedes_ref.id === page.page_ref.id
     && page.supersedes_ref.revision === expectedRevision;
-}
-
-/** D2/D3 are unconditionally review-only. D0/D1 still require explicit, receipt-backed policy. */
-export function wikiMayAutoPromote(
-  page: WikiPageRevision,
-  riskClass: DraftRiskClass,
-  authority: WikiAutoPromotionAuthority,
-): boolean {
-  if (!wikiMayBePublished(page)) return false;
-  if (riskClass === "D2_ANALYTICAL" || riskClass === "D3_AUTHORITY_SENSITIVE") return false;
-  if (riskClass !== "D0_MECHANICAL" && riskClass !== "D1_LOW_RISK_ADDITIVE") return false;
-  if (!authority.explicit_project_policy
-    || !nonEmpty(authority.policy_receipt_ref)
-    || !authority.exact_evidence_complete
-    || !nonEmpty(authority.evidence_receipt_ref)
-    || !authority.dependency_closure_complete
-    || !authority.coverage_complete
-    || !nonEmpty(authority.independent_verifier_receipt_ref)
-    || !Number.isSafeInteger(authority.conflict_count)
-    || authority.conflict_count !== 0
-    || authority.changes_current_state) {
-    return false;
-  }
-  const labels = statementLabels(page);
-  if (labels === null || labels.length === 0) return false;
-  if (riskClass === "D0_MECHANICAL") {
-    return labels.every((label) => label === "SOURCE_SUPPORTED" || label === "EDITORIAL_RECOMMENDATION");
-  }
-  return (page.page_type === "Source" || page.page_type === "Glossary")
-    && labels.every((label) => label === "SOURCE_SUPPORTED");
 }
