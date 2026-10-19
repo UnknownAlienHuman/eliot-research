@@ -30,7 +30,7 @@ future optimizations only if measured tasks demonstrate that the single loop can
 | Scoped retrieval | simplify `research-retrieval-composition.ts` around native AI Search and exact/source readers |
 | Exact source passages and citations | retained source revision/range readers and compact citation contract |
 | Model/tool transport | current selected adapter under `packages/cloudflare-model-transport/src/` |
-| Progress and transient public text | ResearchSession Agent state plus bounded Workflow-to-Agent broadcasts |
+| Progress and transient public text | optional ResearchSession state plus bounded Workflow-to-Agent broadcasts |
 | Durable answer/report | compact `research_report` writer and R2/D1 references |
 
 Do not create a new service, database, scheduler, event journal, generic graph runtime or “research platform.”
@@ -100,8 +100,9 @@ The model may see a bounded relevant history and a compact summary of accepted w
 source identities, unresolved requirements, budget state or the locator of a paid result. A summary is convenient
 context, not a new authority.
 
-ResearchSession state is not this working state. It carries only a safe product phase and terminal result hint.
-Text byte ranges live only in non-durable broadcasts; the SDK workflow row is not working state or product history.
+ResearchSession state is not this working state. It carries only an optional safe product phase and terminal result
+hint. Text byte ranges live only in non-durable broadcasts; the SDK workflow row is not working state or product
+history.
 
 ## Loop behavior
 
@@ -113,7 +114,8 @@ For every iteration:
 4. Execute search/read once, normalize the result and resolve candidate passages to exact permitted source bytes.
 5. Deduplicate by exact source revision and range. Record only genuinely new accepted evidence or an explicit
    failed/empty/unavailable outcome.
-6. Persist compact state, update a coarse safe Agent phase when useful, then continue or finish.
+6. Persist compact state; after a real product phase change, best-effort wake the Agent presentation; then continue
+   or finish.
 
 Deterministic code performs batching, filtering, joins, sorting, counts and deduplication. Those operations do not
 need separate model turns or inclusion of every intermediate row in context. Batch independent queries only for a
@@ -158,19 +160,24 @@ provider effect remains tied to the original attempt and is reconciled rather th
 
 ## Native progress and reconnect
 
-Admission persists the canonical run, then invokes the ResearchSession named by `operation_id`; that Agent starts
-`RESEARCH_WORKFLOW` with the same ID. The Workflow extends `AgentWorkflow` and can use the installed native bridge.
+Admission persists the canonical run, then invokes the ResearchSession named by `operation_id`; that Agent starts or
+adopts `RESEARCH_WORKFLOW` with the same deterministic ID. The Workflow extends `AgentWorkflow`; recovery observes
+SDK tracking and then the direct Workflow binding, so the SDK's create-before-track window cannot duplicate work.
 
-A product phase is written/read back in canonical D1 first; only then use durable `step.mergeAgentState()` for its
-coarse presentation. Use non-durable `broadcastToClients()` only for bounded public final-generation text or a small
-user-useful progress message. Do not publish every iteration, candidate, tool argument or intermediate fact.
+A product phase is written/read back in canonical D1 first. Then call best-effort `reportProgress()` and catch
+presentation failure. The Agent callback re-reads D1 before updating state. Do not use retrying
+`step.mergeAgentState()` in the critical path; optional presentation cannot delay a model/tool/report operation.
 
-Broadcasts may repeat and are not replayed. Public text frames carry monotonic UTF-8 ranges; the client deduplicates
-or reports a provisional gap. Keep those offsets out of Agent state. Accepted evidence, compact state, completed
-public output and the final report remain durable independently of every subscriber.
+Use non-durable `broadcastToClients()` only for bounded public final-generation text or a small user-useful progress
+message. Do not publish every iteration, candidate, tool argument or intermediate fact. Broadcasts may repeat and
+are not replayed. Public text frames carry monotonic UTF-8 ranges; the client deduplicates or reports a provisional
+gap. Keep those offsets out of Agent state.
+
+Accepted evidence, compact state, completed public output and the final report remain durable independently of every
+subscriber. Agent unavailability, disconnect or a slow subscriber does not fail the research loop or save.
 
 The browser Agent connection is readonly and exposes no callable that can start/cancel/retry paid work. Disconnect
-is not cancellation. On reconnect, Access and run ownership are checked again, the client receives current small
+is not cancellation. On reconnect, Access and run ownership are checked again, the client receives any current small
 Agent state and then reads canonical D1 status/report. Agent workflow tracking is operational correlation only.
 
 For cutover, route new explicit-deep admissions to the new loop and native bridge, stop creating old stage-graph
@@ -194,7 +201,7 @@ parallel “clean” graph.
 | Anthropic Research | Scale effort to complexity, checkpoint long work, make tool purposes clear, start broad then focus when the task demands it. | Lead/worker swarm in the first implementation; Anthropic itself reports coordination, blocking and error-propagation complexity. |
 | Google Deep Research / NotebookLM | Explicit background work, progress, selected-source grounding, appropriate code/search tools and saved outputs. | Guessing Google's internal stores/agents, adding another managed research backend or passing every source in full. |
 | OpenAI Deep Research | One reasoning controller can adapt browser/search/computation steps and report progress/citations. | A second external research product as Eliot's canonical execution path or automatically broad browsing for owner-corpus questions. |
-| Cloudflare Agents + Workflows | Native one-Agent/one-Workflow correlation, readonly clients, coarse durable state and non-durable broadcasts. | Chat transcript storage, generic workflow list as product history, browser-triggered paid callables. |
+| Cloudflare Agents + Workflows | Native one-Agent/one-Workflow correlation, readonly clients, optional state sync and non-durable broadcasts. | Critical-path Agent state retries, chat transcript storage, generic workflow list as product history, browser-triggered paid callables. |
 | CCCC/Paseo/Goose and other field reports | Read only unread state, release observation on disconnect, validate inputs once and keep accepted work durable. | Filesystem ledger, stale scheduler flags, false success, actor runtime or protocol framework without a product need. |
 
 ## Verification after assembly
@@ -208,6 +215,8 @@ assembly. Start with a small retained set of real owner tasks:
 - interrupted/reconnected run and two tabs;
 - cancellation and exhausted budget;
 - failed search/read/provider/save paths;
+- Agent presentation unavailable during generation/save;
+- create-before-track recovery;
 - repeated live frame and forward gap;
 - source removed during a run;
 - completion with no subscriber.
