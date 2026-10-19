@@ -7,7 +7,6 @@
 -- detached from historical scope replay. The migration then removes outbox_ref
 -- from the Wiki head and drops the outbox table. Forward-only: a failed guard
 -- aborts the D1 migration and leaves the old schema intact.
-PRAGMA foreign_keys = OFF;
 
 -- The immutable-feed trigger is temporarily removed so old Wiki rows can be
 -- converted from scope-derived visibility to direct owner visibility.
@@ -81,5 +80,3 @@ DROP INDEX IF EXISTS idx_wiki_publication_outbox_pending;
 
 ALTER TABLE wiki_publication_head DROP COLUMN outbox_ref;
 DROP TABLE wiki_publication_outbox;
-
-PRAGMA foreign_keys = ON;
