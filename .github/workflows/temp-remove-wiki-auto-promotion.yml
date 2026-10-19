@@ -18,6 +18,18 @@ jobs:
         run: |
           set -euo pipefail
           python .github/refactor-380-remove-wiki-auto-promotion.py
+          python - <<'PY'
+          from pathlib import Path
+          for name in (
+              "packages/research/src/wiki.ts",
+              "packages/domain/src/publication.ts",
+              "packages/domain/src/publication.test.ts",
+              "packages/research/src/wiki.test.ts",
+              "docs/implementation/wiki-inbox.md",
+          ):
+              path = Path(name)
+              path.write_text(path.read_text(encoding="utf-8").rstrip() + "\n", encoding="utf-8")
+          PY
           if git grep -n -E 'autoPromote|WikiAutoPromotion|auto_promotion_policy_receipt_ref|wikiMayAutoPromote' -- '*.ts'; then
             echo 'Wiki auto-promotion code remains' >&2
             exit 1
