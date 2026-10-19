@@ -1,0 +1,30 @@
+name: temp-export-refactor-source
+on:
+  push:
+    branches:
+      - refactor/380-remove-wiki-fake-outbox
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Export checked source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/refactor-source
+          git archive --format=tar.gz --output=/tmp/refactor-source/source.tar.gz HEAD
+          git rev-parse HEAD > /tmp/refactor-source/SOURCE_SHA
+          (cd /tmp/refactor-source && sha256sum source.tar.gz > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: refactor-source
+          path: /tmp/refactor-source/
+          retention-days: 1
+          if-no-files-found: error
