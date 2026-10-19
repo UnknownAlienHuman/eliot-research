@@ -1,147 +1,275 @@
-# ResearchSession: bounded presentation, not another executor
+# ResearchSession: native Agent–Workflow presentation
 
-Checked 2026-10-18 against Eliot source at `8e245843`.
-This note owns browser delivery for [the ordinary answer](research-full-answer-v1.md) and progress for
-[explicit deep research](deep-research.md). It does not create a transcript service or another durable run.
+Checked 2026-10-18 against Eliot `main` at `19cf0b9d`, installed `agents 0.27.0`, current Cloudflare
+Agents/Workflows documentation and upstream Agents source. This note owns live research presentation for
+[ordinary answers](research-full-answer-v1.md) and [explicit deep research](deep-research.md). It does not create
+another run, transcript, event journal or result store.
 
-## Current state
+## Selected result
 
-`apps/eliotr-core/src/research-session.ts` is a read-only Agent projection:
+```text
+authenticated HTTP admission
+→ canonical D1 research run
+→ ResearchSession named by operation_id
+→ Agent.runWorkflow(RESEARCH_WORKFLOW, ..., id = operation_id)
+→ ResearchWorkflow extends AgentWorkflow
+→ durable coarse phase in Agent state
+→ non-durable bounded public-text broadcasts
+→ canonical D1/R2 status and research report
+```
 
-- one verified run binding is stored in the Durable Object;
-- `readResearchSessionProjection` is the only accepted RPC;
-- `send` forwards only the successful snapshot-RPC response;
-- chat/history/tool/state frames are rejected;
-- `/get-messages` returns `410`;
-- execution remains in the existing Cloudflare Workflow.
+Workflow owns durable execution. ResearchSession owns the authenticated real-time connection and a small
+presentation projection. D1/R2 remain canonical. Browser disconnect never cancels or repeats paid work.
 
-That boundary is useful. The missing behavior is a small authorized server-to-client stream for public progress
-and ordinary-answer text. Do not replace the object with a second Workflow or import a general chat product.
+## What the current code actually does
+
+| Current source | Observed behavior | Replacement |
+|---|---|---|
+| `research-run-service.ts` | Starts `env.RESEARCH_WORKFLOW.create()` directly. | Persist admission, then ask the run's ResearchSession to start the tracked Workflow with `runWorkflow()`. |
+| `research-workflow.ts` | Plain `WorkflowEntrypoint`; also hosts unrelated `EXHAUSTIVE_QUERY`. | Research runs use `AgentWorkflow`; exhaustive query moves to its own direct Workflow class/binding. |
+| `research-session-bootstrap.ts` | Rebuilds a session record from D1 stage-1 manifest, handler generation and investigation identity before every Agent route. | One Agent is named by `operation_id`; on connect it reads one bounded canonical run summary when presentation state needs hydration. |
+| `research-session-http-projection.ts` | Duplicates run state in DO storage and reconstructs stage/checkpoint/final-receipt authority. | Remove. Current D1 run phase/result is the reconnect truth. |
+| `research-session.ts` | Monkey-patches `connection.send`, suppresses SDK protocol messages and permits only one exact snapshot RPC response. | Use normal Agents state sync, readonly connections and bounded server broadcasts. |
+| owner client `research/session-projection/session.ts` | About 18 KiB of tuple freezing, custom RPC memoization, expiry fencing and call-only socket ownership. | Thin `AgentClient` connection using state updates and typed messages; HTTP client reads canonical status/report. |
+| `research-session-current-authority.ts` | Replays investigation scope, source authority and grant expiry to show owner progress. | Current Access identity plus current run ownership at connection time. Source disclosure remains on source/citation reads. |
+
+The current `ResearchSessionBindingDescriptor` already requires `session_id === operation_id`. Keep the one real
+identity and delete the alias.
 
 ## Ownership
 
-| Concern | Owner |
+| Fact or effect | Owner |
 |---|---|
-| Request, model attempt, cancellation and terminal run state | Existing run/Workflow state |
-| Completed public Markdown | Existing immutable output storage |
-| Saved report and citations | Existing artifact/report storage |
-| Execution progress | Native Workflow events mapped to a small public phase |
-| Live provisional text | ResearchSession connection only |
-| Browser rendering/query cache | Current React application |
-| Reconnect truth | Canonical run status and saved report |
+| Request, source selection, run kind, model pin, budget and cancellation | canonical D1 run/application state |
+| Paid model attempt and durable retry boundaries | Cloudflare Workflow |
+| Completed public Markdown | immutable public-output object |
+| Saved result | `research_report` / `research_report_revision` and R2 report object |
+| Coarse live phase, last public byte offset and terminal hint | ResearchSession Agent state |
+| Provisional Markdown batches | live Agent WebSocket broadcast only |
+| Browser rendering and local provisional buffer | React/query state |
+| SDK workflow tracking row | Agent↔Workflow operational correlation only |
 
-ResearchSession stores only the minimum binding/connection state needed to authorize and route presentation.
-It never becomes the canonical answer, source of cost/accounting truth or owner of model dispatch.
+The SDK's `cf_agents_workflows` row is not research history, billing truth or report authority. Do not expose its
+generic list as the product run list or copy it into another synchronized table. It may be pruned after bounded
+terminal retention; D1 history remains.
 
-## Selected wire behavior
+## One run, one Agent, one Workflow
 
-Keep the existing verified WebSocket/Agent route and add a small typed data channel. Conceptually it carries:
+Use `operation_id` for all three identities:
 
-- `phase` — run ID, `queued|preparing|generating|saving|completed|cancelled|failed`;
-- `text` — run ID, monotonic public UTF-8 offset and a bounded Markdown delta;
-- `gap` — the client did not receive an earlier provisional range;
-- `terminal` — the client should read canonical status/report.
+- D1 run ID;
+- ResearchSession Agent name;
+- Workflow instance ID.
 
-Use the existing Agent connection and owner-client adapter. The installed Agent client already supports raw typed
-WebSocket messages and reconnection; that is enough for this presentation channel. Add one narrow protocol branch
-to the current session adapter. Do not add a second WebSocket route, generic event bus, provider-frame passthrough
-or durable message table.
+Do not retain a separate `session_id`, an Agent-side investigation revision or handler generation. Those are old
+executor details. A presentation frame needs `operation_id`, protocol version and product phase, not the original
+credential/deployment proof chain.
 
-Do **not** convert ResearchSession to `AIChatAgent/useAgentChat` merely for resumable text. Current Cloudflare Chat
-Agents documentation states that resumable streaming buffers all chunks in SQLite. That would create the token/
-event journal and transcript store this design intentionally avoids, duplicating the canonical output/report.
-If `@cloudflare/ai-chat` has no other real caller after the audit, remove that dependency rather than keeping it for
-hypothetical reuse.
+Admission remains an authenticated HTTP operation:
 
-The offset/sequence detects order and gaps. It is not signed, globally unique or persisted as an audit log.
-Server and client reject malformed, oversized, wrong-run and stale-deployment frames.
+1. validate and persist the canonical run/request;
+2. obtain `RESEARCH_SESSION` by `operation_id`;
+3. invoke one server-only Agent method, not a browser `@callable`;
+4. the Agent verifies the exact admitted D1 row and calls
+   `runWorkflow("RESEARCH_WORKFLOW", params, { id: operation_id, metadata: { operation_id } })`;
+5. read back the tracked workflow ID/status or the canonical run dispatch binding before returning success.
 
-## Batching and backpressure
+A lost acknowledgement is reconciled with the Agent's tracked workflow (`getWorkflow` / `getWorkflowStatus`) and
+the D1 dispatch binding. It never calls `runWorkflow` again merely because the response was lost.
 
-Provider tokens are not browser messages one by one.
+Browser connections cannot start, restart, terminate or approve workflows. Cancellation remains the authenticated
+run mutation. After the canonical cancellation decision, the server may terminate the tracked Workflow through the
+Agent. Agent callbacks do not decide cancellation.
 
-- Accumulate a small bounded text batch by bytes and/or short time interval.
-- Preserve UTF-8 boundaries and order.
-- Send only public answer text; never prompts, reasoning, credentials or raw provider events.
-- A slow/closed connection may lose provisional batches. It must not block generation, output retention or report
-  publication.
-- Dispose subscriptions and connection work on disconnect and terminal completion.
-- Do not retain every frame in Durable Object memory for replay.
+## Split the overloaded Workflow binding
 
-Progress is similarly coarse. A visible phase change is useful; every internal Workflow step, D1 write and search
-candidate is not.
+`ResearchWorkflow` currently also handles `EXHAUSTIVE_QUERY`, which is not a ResearchSession-backed answer run.
+`AgentWorkflow` requires an originating Agent, so do not add optional fake Agent parameters or a hybrid base class.
 
-## Disconnect and reconnect
+Move Q8 to a small `ExhaustiveQueryWorkflow extends WorkflowEntrypoint` and an
+`EXHAUSTIVE_QUERY_WORKFLOW` binding. Keep `RESEARCH_WORKFLOW` for ordinary/deep runs and make it extend:
 
-The Workflow and provider attempt continue without a subscriber. Disconnect is not cancellation.
+```ts
+AgentWorkflow<ResearchSession, ResearchRunParams, ResearchProgress>
+```
 
-On reconnect:
+Update Wrangler/env/generated types and the exhaustive dispatch caller together, then remove `workflow_kind` from
+the research-run Workflow parameters. This is a responsibility split, not another execution framework.
 
-1. authenticate and verify the same run binding;
-2. read canonical run status;
-3. if a saved report exists, open it;
-4. if still active, subscribe to current progress/new deltas;
-5. if earlier provisional text was missed, show a gap and wait for the saved result rather than reconstructing a
-   token journal.
+## Presentation state
 
-The UI may discard provisional text and replace it with the saved report at completion. If the provider completed
-while no client was connected, the retained public-output object and materializer still finish normally.
+Keep one bounded state shape, for example:
 
-A terminal provider interruption may retain one bounded partial-output object for honest display. It is not a
-completed report and reconnect never turns it into another model invocation.
+```ts
+type ResearchPresentationState = {
+  protocol: "eliotr.research-presentation.v1";
+  operation_id: string;
+  run_kind: "ordinary" | "deep";
+  phase: "queued" | "preparing" | "generating" | "saving" |
+    "completed" | "cancelled" | "failed";
+  public_offset: number;
+  report_ref?: { id: string; revision: number };
+  safe_error?: string;
+  updated_at: string;
+};
+```
 
-## Native Workflow events
+This state contains no source bodies, prompts, provider frames, reasoning, complete answer, receipts, scope
+snapshots or policy authority. `public_offset` says how much provisional UTF-8 output the run has emitted; it is not
+a persisted transcript cursor.
 
-Use native Workflow instance subscriptions for execution progress where the deployed binding supports them.
-Filter and map events to safe phases; never forward raw params, output or error bodies. Event retention is not
-product result retention.
+At coarse durable milestones use `step.mergeAgentState()` or `step.updateAgentState()`. These are SDK-provided
+durable Workflow steps and broadcast state to connected clients. Do not persist a state update for every token,
+search result or internal step.
 
-Workflow events are not model text deltas. ResearchSession receives public text from the ordinary model execution
-path and coarse progress from Workflow state/events. Do not duplicate both streams into a D1 event journal.
+Use `step.reportComplete()` / `step.reportError()` for the SDK tracking lifecycle after the canonical D1 result or
+failure has settled. `onWorkflowComplete` and `onWorkflowError` may emit a safe terminal presentation hint; they do
+not write the canonical result.
+
+## Public text channel
+
+Workflow model execution receives one small presentation port. It batches only public Markdown and calls
+`broadcastToClients()` with frames such as:
+
+```ts
+type ResearchTextFrame = {
+  type: "research.text.v1";
+  operation_id: string;
+  from_byte: number;
+  to_byte: number;
+  markdown: string;
+};
+```
+
+Rules:
+
+- batch by a small byte threshold and/or short interval;
+- preserve UTF-8 boundaries and monotonic offsets;
+- never forward prompts, reasoning, raw provider events, credentials or tool payloads;
+- bound every frame and the aggregate public output independently;
+- do not await a browser acknowledgement before continuing generation;
+- do not store frames in Agent state, Agent SQLite, D1 or R2;
+- do not replay every frame after reconnect.
+
+`broadcastToClients()` is non-durable and may repeat when a Workflow attempt retries. The client accepts the exact
+next range, ignores a fully repeated range and marks a gap for a forward jump or overlap conflict. The immutable
+completed public-output object and saved report are the only complete text.
+
+Deep research uses the same channel only for bounded user-useful progress or final-generation text. It does not
+broadcast every search/read/tool event.
+
+## Access and connection lifetime
+
+Keep the existing outer Cloudflare Access verification before `routeAgentRequest`. At connection time:
+
+1. derive the Agent name from the validated path `operation_id`;
+2. require current owner Access identity;
+3. read one bounded D1 run row and require that principal to own/read the run;
+4. attach operation/principal/access-expiry metadata to the connection;
+5. mark the connection readonly with `shouldConnectionBeReadonly()`;
+6. close it at Access expiry; reconnect performs a new Access and D1 check.
+
+Readonly is useful but not a complete side-effect sandbox: the SDK blocks state writes, while side effects inside a
+callable could occur before `setState()`. Therefore expose no browser callable that starts/cancels/retries paid work.
+The presentation Agent needs no mutating browser RPC.
+
+Retain only a small nearest-expiry close schedule if the runtime requires it. Remove the stored session-authority
+record, original credential/deployment generation checks, scope replay and per-read policy/grant reconstruction.
+Actual report/source/citation reads independently enforce current ownership, deletion and delegated disclosure.
+
+Do not monkey-patch `connection.send`, disable the SDK protocol or parse private RPC response envelopes. Use the
+public readonly/state/message APIs of the installed SDK.
+
+## Reconnect
+
+`AgentClient` already reconnects and receives current Agent state. Reconnect behavior is:
+
+1. Access and current run ownership are checked again;
+2. receive the small current presentation state;
+3. read canonical D1 run status through the normal owner API;
+4. if completed, open the canonical research report;
+5. if active, accept only new text ranges;
+6. if the first new range starts after the local offset, show a provisional gap and wait for the report.
+
+If Agent state is absent or stale after deployment/eviction, ResearchSession hydrates only the safe phase/result
+projection from the canonical run row. It does not reconstruct old Workflow checkpoints or rematerialize text.
+
+Two tabs may receive the same broadcasts. Neither tab owns execution. Closing the last tab does not cancel the run.
 
 ## Client cutover
 
 Change together:
 
 - `apps/eliotr-core/src/research-session.ts`;
+- `research-session-transport.ts` and run dispatch composition;
+- `apps/eliotr-core/src/research-workflow.ts` plus the new exhaustive-only Workflow;
 - `packages/owner-api-client/src/research/session-projection/`;
-- React research query/presentation code;
-- current run status DTO.
+- React research presentation and canonical status/report queries;
+- Wrangler/env/generated bindings.
 
-Keep one connection/session lifetime in the owner client. Use the existing Agent client/message events for typed
-presentation. Do not add `@ai-sdk/react`, `useAgentChat`, message persistence or a second reconnect implementation.
-After React cutover, delete the old PWA session/status consumers and tests. A rollback artifact does not justify
-two maintained live clients.
+Replace the call-only adapter with one thin connection owner that:
 
-## Donor and platform lessons
+- opens `AgentClient` for `ResearchSession` named by `operation_id`;
+- consumes validated state updates;
+- consumes only the two selected custom frame types (text and terminal/gap hint);
+- closes on owner session disposal;
+- never calls `setState`, never starts a Workflow and never becomes a transcript store.
 
-SurfSense `176aed2` demonstrates useful separation:
+Do not use `AIChatAgent`, `useAgentChat`, `@ai-sdk/react` or resumable chat messages. Repository search finds
+`@cloudflare/ai-chat` only in dependency/configuration/documentation, not a runtime import; remove it from Core and
+the lockfile after the changed package builds without it.
 
-- generation outlives the HTTP follower;
-- disconnect-safe finalization stores the ending;
-- adjacent text deltas can be merged;
-- partial work is not silently discarded.
+## Delete after cutover
 
-Do not copy its in-memory replay list of every frame, local transcript database or local model/index architecture.
+After new admissions use the native bridge and real old runs settle, remove:
 
-Cloudflare Agent/AgentClient provides the connection and raw message surface we already use. Cloudflare's full chat
-recovery product solves a different problem by persisting chunks/messages; importing it here would increase durable
-state and failure modes rather than remove Eliot code.
+- `research-session-bootstrap.ts`;
+- `research-session-http-projection.ts`;
+- `research-session-current-authority.ts`;
+- snapshot-only callable and its exact response/send guards;
+- `ResearchSessionBindingDescriptor` fields and protocols tied to investigation/handler/credential/deployment;
+- custom `session:*` DO rows, terminal receipt arrays and output-manifest projection;
+- owner-client RPC-only tuple/memoization machinery;
+- old session projection protocol generations, PWA callers and cohort-only fixtures;
+- direct research-run `RESEARCH_WORKFLOW.create()` dispatch;
+- mixed research/exhaustive Workflow params and branch;
+- unused `@cloudflare/ai-chat` dependency.
+
+Keep current Access routing, the ResearchSession Agent itself, canonical run/cancellation APIs, the selected Workflow,
+public-output/report storage and exact citation reads.
+
+## Platform decision
+
+Cloudflare's installed stack already supplies the required operations:
+
+- `Agent.runWorkflow()` with explicit instance ID and metadata;
+- `AgentWorkflow` with typed Agent RPC;
+- durable `step.mergeAgentState()` / `step.reportComplete()`;
+- non-durable `broadcastToClients()` / `reportProgress()`;
+- lifecycle callbacks and workflow status reconciliation;
+- readonly connections that survive hibernation;
+- AgentClient state sync and reconnect.
+
+Use these operations, not a copied framework. The SDK's generic workflow tracking does not replace Eliot's D1 run
+model, and its chat/transcript products are not selected.
+
+Cloudflare references checked 2026-10-18:
+[Agents with Workflows](https://developers.cloudflare.com/agents/runtime/execution/run-workflows/),
+[readonly connections](https://developers.cloudflare.com/agents/runtime/lifecycle/readonly-connections/) and
+[Agent client SDK](https://developers.cloudflare.com/agents/communication-channels/chat/client-sdk/).
+Upstream implementation inspected at `cloudflare/agents@7dd51c5`, including `packages/agents/src/workflows.ts`.
 
 ## Completion
 
-Done means:
+Complete means:
 
-- one authenticated connection receives bounded phase/text data for its run;
-- disconnect does not stop or duplicate generation;
-- slow clients cannot block save;
-- reconnect resolves to the same run and canonical report;
-- no durable token journal or second executor exists;
-- old snapshot-only and legacy PWA branches no longer have live callers.
-
-Run scoped compile/lint during implementation; assembled-product tests cover disconnect, reconnect, two tabs,
-slow subscriber, cancellation and completion without a subscriber.
-
-Cloudflare references checked 2026-10-18:
-[Agent client raw messaging](https://developers.cloudflare.com/agents/communication-channels/chat/client-sdk/) and
-[Chat Agents resumable streaming](https://developers.cloudflare.com/agents/communication-channels/chat/chat-agents/).
+- new research admission starts one Agent-tracked Workflow with `operation_id` as the single identity;
+- ordinary/deep execution extends `AgentWorkflow`; Q8 uses its separate direct Workflow;
+- durable phase state and non-durable bounded text reach readonly clients;
+- disconnect/slow clients cannot stop generation or saving;
+- reconnect reads the same canonical run/report and detects provisional gaps;
+- no paid work is callable from the browser Agent connection;
+- no token/frame transcript or second run store exists;
+- old bootstrap, snapshot RPC, stage reconstruction and client wrapper are removed;
+- the changed Core/client packages compile and lint; assembled tests cover two tabs, expiry, disconnect, retry,
+  cancellation, repeated text frame, gap and completion without a subscriber.
