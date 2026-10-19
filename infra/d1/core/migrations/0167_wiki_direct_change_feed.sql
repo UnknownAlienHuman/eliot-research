@@ -1,5 +1,7 @@
 -- Remove the Wiki publication pseudo-outbox. It never had a delivery worker;
 -- its only effect was an insert trigger into research_change_feed.
+-- Existing change_ref values remain stable so acknowledged publication
+-- identities and same-identity readback continue to resolve after the table is gone.
 --
 -- Existing WIKI_PUBLISHED rows are first rebound to their owner directly and
 -- detached from historical scope replay. The migration then removes outbox_ref
