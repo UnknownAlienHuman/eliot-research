@@ -2,7 +2,8 @@
 
 Checked 2026-10-18. This is the selected implementation for explicitly requested deep research. It does not
 change the [product manifesto](../architecture/ELIOT_RESEARCH.md), advertise completed runtime work or replace
-the [ordinary answer path](research-full-answer-v1.md). Donor evidence is summarized in
+the [ordinary answer path](research-full-answer-v1.md). Live delivery follows
+[ResearchSession presentation](research-session-projection-protocol.md). Donor evidence is summarized in
 [Perplexity](perplexity-donor.md), [NotebookLM](notebooklm-donor.md), [EdgeQuake](edgequake-donor.md) and the
 [maintained register](donors.md).
 
@@ -14,8 +15,8 @@ that requires iterative discovery, cross-source comparison, broad collection or 
 It must show progress, accept cancellation, enforce a spend/time bound and produce a saved report with inspectable
 source references. It is not the default answer engine.
 
-The first implementation is **one research agent in one existing Workflow**. It may call tools over several model
-turns, but there is one run owner, one selected model/attempt at a time and one final report write. Do not start
+The first implementation is **one research agent in one Agent-tracked Workflow**. It may call tools over several
+model turns, but there is one run owner, one selected model/attempt at a time and one final report write. Do not start
 with a lead researcher, worker swarm, critic panel or permanent branch graph. Parallel search and subagents are
 future optimizations only if measured tasks demonstrate that the single loop cannot meet quality/cost targets.
 
@@ -24,17 +25,21 @@ future optimizations only if measured tasks demonstrate that the single loop can
 | Responsibility | Existing destination |
 |---|---|
 | Admit request, selected project/sources/model and budget | `apps/eliotr-core/src/research-run-service.ts`; owner client run methods |
-| Durable lifetime, cancellation and retry boundaries | `apps/eliotr-core/src/research-workflow.ts`; native Cloudflare Workflow |
-| Research loop | add one cohesive `packages/cloudflare-research-runtime/src/deep-research-loop.ts` and call it from the Workflow application |
-| Scoped retrieval | simplify `research-retrieval-composition.ts` around native AI Search and existing exact/source readers |
-| Exact source passages and citations | `packages/cloudflare-evidence/src/` plus current D1/R2 source authority |
+| Durable lifetime, cancellation and retry boundaries | `apps/eliotr-core/src/research-workflow.ts` converted to native `AgentWorkflow`; D1 remains canonical |
+| Research loop | add one cohesive `packages/cloudflare-research-runtime/src/deep-research-loop.ts` and call it before old handler assembly |
+| Scoped retrieval | simplify `research-retrieval-composition.ts` around native AI Search and exact/source readers |
+| Exact source passages and citations | retained source revision/range readers and compact citation contract |
 | Model/tool transport | current selected adapter under `packages/cloudflare-model-transport/src/` |
-| Progress and transient public text | existing ResearchSession binding; native Workflow events for execution progress |
-| Durable answer/report | existing research output/artifact writer and R2/D1 report references |
+| Progress and transient public text | ResearchSession Agent state plus bounded Workflow-to-Agent broadcasts |
+| Durable answer/report | compact `research_report` writer and R2/D1 references |
 
 Do not create a new service, database, scheduler, event journal, generic graph runtime or “research platform.”
 The deep loop is application code inside the current research runtime. Large bodies remain in canonical source or
 output storage; checkpoints carry compact values and locators.
+
+The current `ResearchWorkflow` also owns `EXHAUSTIVE_QUERY`. Move that unrelated job to its own direct
+`WorkflowEntrypoint`; do not retain mixed params or give Q8 fake Agent origin fields merely to adopt `AgentWorkflow`
+for research runs.
 
 ## Request and budget
 
@@ -67,9 +72,10 @@ The model receives only operations available to this run. The first slice needs 
    text/section expansion. A search snippet is a locator, not evidence.
 3. **Finish** — return the final public answer/report draft and identify the accepted source labels it uses.
 
-Saving is host-owned, not a model tool. Cancellation is an existing mutation. Optional computation or file work
-uses an already selected connected-agent/tool route only when a real task requires it; arbitrary Python execution
-is not a prerequisite for research over the owner's sources. No `spawn_agent` tool is exposed initially.
+Saving is host-owned, not a model tool. Cancellation is an authenticated canonical run mutation. Optional
+computation or file work uses an already selected connected-agent/tool route only when a real task requires it;
+arbitrary Python execution is not a prerequisite for research over the owner's sources. No `spawn_agent` tool is
+exposed initially.
 
 Use the selected provider's real tool-call/event format through the current transport. If a provider adapter lacks
 the required action shape, normalize one small internal union at that boundary. Do not build `SearchProgramIR`, a
@@ -86,13 +92,16 @@ The durable working state is the minimum needed to resume:
 - final model-output locator once generation completes.
 
 Do not persist every token, raw provider frame, complete candidate list or an unbounded transcript. Do not copy
-source bodies into every checkpoint. If a broad task produces a large table, store the table once as an artifact
+source bodies into every checkpoint. If a broad task produces a large table, store the table once as an output object
 and keep its locator. Explicit serialization is preferable to a hidden live interpreter namespace, but it uses
 existing output/checkpoint storage rather than a second trajectory database.
 
 The model may see a bounded relevant history and a compact summary of accepted work. Compaction cannot remove
 source identities, unresolved requirements, budget state or the locator of a paid result. A summary is convenient
 context, not a new authority.
+
+ResearchSession state is not this working state. It carries only a safe product phase, public output offset and
+terminal result hint. The SDK workflow-tracking row is also not the working state or product history.
 
 ## Loop behavior
 
@@ -104,7 +113,7 @@ For every iteration:
 4. Execute search/read once, normalize the result and resolve candidate passages to exact permitted source bytes.
 5. Deduplicate by exact source revision and range. Record only genuinely new accepted evidence or an explicit
    failed/empty/unavailable outcome.
-6. Persist compact state, publish safe progress, then continue or finish.
+6. Persist compact state, update a coarse safe Agent phase when useful, then continue or finish.
 
 Deterministic code performs batching, filtering, joins, sorting, counts and deduplication. Those operations do not
 need separate model turns or inclusion of every intermediate row in context. Batch independent queries only for a
@@ -135,34 +144,45 @@ procedure and denominator.
 ## Evidence and final synthesis
 
 Candidate ranking, model summaries and extracted relations help decide what to read; they are not citations.
-An accepted evidence record points to the existing admitted source revision and exact range. The final model sees
-short server-owned labels for accepted passages. The server maps labels through the existing evidence resolver,
+An accepted evidence record points to the admitted source revision and exact range. The final model sees short
+server-owned labels for accepted passages. The server maps labels through the same compact citation resolver,
 removes unknown labels and saves the resolved references with the report.
 
 Keep contradictory passages as separate source-backed observations. Do not merge them by choosing the longer
 text, a higher model confidence or a relation with the same endpoints. A derived note/report can be selected as
 context, but its primary claims retain links to original evidence and remain distinguishable from sources.
 
-Generate the final public report once from the accepted evidence state. If report publication fails, retry the
-save from the retained model output; never repeat the research/model call because a later D1/R2 write failed.
-An uncertain provider effect remains tied to the original attempt and is reconciled rather than duplicated.
+Generate the final public report once from the accepted evidence state. If report saving fails, retry the save from
+the retained model output; never repeat research/model work because a later D1/R2 write failed. An uncertain
+provider effect remains tied to the original attempt and is reconciled rather than duplicated.
 
-## Progress, resume and replacement
+## Native progress and reconnect
 
-Use native Workflow instance events for execution progress and ResearchSession for bounded authorized progress
-plus transient public text. Neither is the canonical report. Reconnect reads the same run and saved result; it does
-not start another research loop. Slow or disconnected subscribers cannot block saving.
+Admission persists the canonical run, then invokes the ResearchSession named by `operation_id`; that Agent starts
+`RESEARCH_WORKFLOW` with the same ID. The Workflow extends `AgentWorkflow` and can use the installed native bridge.
 
-For the cutover, route new explicit-deep admissions to the new loop, stop creating old stage-graph runs and let
-actual in-flight old attempts settle. Convert/read saved reports directly. Then remove obsolete handler factories,
-branch/stage packages, checkpoint codecs and fixtures whose only caller was the old 18-stage path. Do not keep an
-old executor solely to reopen its completed report.
+Use durable `step.mergeAgentState()` only for coarse product phases such as preparing, generating, saving and
+terminal state. Use non-durable `broadcastToClients()` only for bounded public final-generation text or a small
+user-useful progress message. Do not publish every iteration, candidate, tool argument or intermediate fact.
+
+Broadcasts may repeat and are not replayed. Public text frames carry monotonic UTF-8 ranges; the client deduplicates
+or reports a provisional gap. Accepted evidence, compact state, completed public output and the final report remain
+durable independently of every subscriber.
+
+The browser Agent connection is readonly and exposes no callable that can start/cancel/retry paid work. Disconnect
+is not cancellation. On reconnect, Access and run ownership are checked again, the client receives current small
+Agent state and then reads canonical D1 status/report. Agent workflow tracking is operational correlation only.
+
+For cutover, route new explicit-deep admissions to the new loop and native bridge, stop creating old stage-graph
+runs and let actual in-flight old attempts settle. Convert/read saved reports directly. Then remove obsolete handler
+factories, branch/stage packages, checkpoint codecs, custom ResearchSession snapshot reconstruction and fixtures
+whose only caller was the old path. Do not keep an old executor merely to reopen a completed report.
 
 Candidates for deletion after caller tracing include `packages/cloudflare-research-branches`,
 `packages/cloudflare-research-stages`, old generation dispatch in `research-stage-handlers.ts`, and the pieces of
-the investigation/checkpoint machinery used only to satisfy the former graph. Shared source, evidence, output,
-cancellation or agent-task code stays. Inspect imports before deleting a package; do not replace the old graph
-with a parallel “clean” graph.
+the investigation/checkpoint machinery used only to satisfy the former graph. Shared source, report, cancellation
+or connected-agent task code stays. Inspect imports before deleting a package; do not replace the old graph with a
+parallel “clean” graph.
 
 ## Donor decisions
 
@@ -174,20 +194,23 @@ with a parallel “clean” graph.
 | Anthropic Research | Scale effort to complexity, checkpoint long work, make tool purposes clear, start broad then focus when the task demands it. | Lead/worker swarm in the first implementation; Anthropic itself reports coordination, blocking and error-propagation complexity. |
 | Google Deep Research / NotebookLM | Explicit background work, progress, selected-source grounding, appropriate code/search tools and saved outputs. | Guessing Google's internal stores/agents, adding another managed research backend or passing every source in full. |
 | OpenAI Deep Research | One reasoning controller can adapt browser/search/computation steps and report progress/citations. | A second external research product as Eliot's canonical execution path or automatically broad browsing for owner-corpus questions. |
+| Cloudflare Agents + Workflows | Native one-Agent/one-Workflow correlation, readonly clients, coarse durable state and non-durable broadcasts. | Chat transcript storage, generic workflow list as product history, browser-triggered paid callables. |
 | CCCC/Paseo/Goose and other field reports | Read only unread state, release observation on disconnect, validate inputs once and keep accepted work durable. | Filesystem ledger, stale scheduler flags, false success, actor runtime or protocol framework without a product need. |
 
 ## Verification after assembly
 
-During implementation run scoped TypeScript compile/lint for the moved callers. Product tests and evaluation follow
+During implementation run scoped TypeScript compile/lint for moved callers. Product tests and evaluation follow
 assembly. Start with a small retained set of real owner tasks:
 
 - focused multi-source comparison;
 - broad collection with required fields and explicit target volume;
 - long report with conflicting sources;
-- interrupted/reconnected run;
+- interrupted/reconnected run and two tabs;
 - cancellation and exhausted budget;
 - failed search/read/provider/save paths;
-- source removed during a run.
+- repeated live frame and forward gap;
+- source removed during a run;
+- completion with no subscriber.
 
 Measure retrieval success separately from report quality: relevant-source recall, accepted-passage support,
 required-field/coverage completion, unresolved/unsupported claims, latency, model/search/read counts and cost.
@@ -195,5 +218,5 @@ Use WANDR-like record grading for broad collection and DRACO-like criterion grad
 provider/version/tool/scope/budget configuration with the result. No always-on judge, universal coverage target or
 new evaluation service belongs in the product runtime.
 
-Completion for this implementation means the explicit deep path works end to end through real callers and the
-superseded stage graph is removed. Documentation alone does not satisfy that result.
+Completion means the explicit deep path works end to end through real callers, the Agent–Workflow bridge is native,
+and the superseded stage/session projection graphs are removed. Documentation alone does not satisfy that result.
