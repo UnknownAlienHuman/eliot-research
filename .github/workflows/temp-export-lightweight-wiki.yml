@@ -1,10 +1,50 @@
-name: temp-stage-lightweight-wiki
+name: temp-apply-lightweight-wiki
 on:
-  workflow_dispatch:
+  push:
+    branches:
+      - refactor/380-lightweight-wiki-owner-reads
 permissions:
-  contents: read
+  contents: write
 jobs:
-  hold:
+  apply:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - run: echo staging
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Apply checked source archive and remove staging files
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .github/lightweight-wiki-stage/part*.b64 | base64 --decode > /tmp/lightweight-wiki-files.tar.gz
+          printf '%s  %s\n' '6ab4d60019c428edb3f15a8ae7bb81f6eaa0c561ef947314f03d7cdaab7d3047' '/tmp/lightweight-wiki-files.tar.gz' | sha256sum --check
+          python - <<'PY'
+          import tarfile
+          expected = {
+              'apps/eliotr-core/src/wiki-proposal-reauthorization.ts',
+              'apps/eliotr-core/test/wiki-service.test.ts',
+              'apps/eliotr-pwa/src/wiki-api.ts',
+              'infra/d1/core/migrations/0168_wiki_owner_proposal_list_index.sql',
+              'packages/cloudflare-wiki/src/wiki-proposal-reauthorization.ts',
+              'packages/cloudflare-wiki/src/wiki-publication-store-support.ts',
+              'packages/cloudflare-wiki/src/wiki-service.ts',
+              'packages/interfaces/src/semantic-api.ts',
+              'packages/owner-api-client/src/studio/wiki-read.test.ts',
+              'packages/owner-api-client/src/studio/wiki-read.ts',
+          }
+          with tarfile.open('/tmp/lightweight-wiki-files.tar.gz', 'r:gz') as archive:
+              names = {member.name for member in archive.getmembers() if member.isfile()}
+              if names != expected:
+                  raise SystemExit(f'unexpected archive members: {sorted(names ^ expected)}')
+          PY
+          tar -xzf /tmp/lightweight-wiki-files.tar.gz
+          rm -rf .github/lightweight-wiki-stage
+          rm -f .github/refactor-380-lightweight-wiki.patch
+          rm .github/workflows/temp-export-lightweight-wiki.yml
+          git add -A
+          git diff --cached --check
+          git config user.name "Iurii Lisenkov"
+          git config user.email "71514792+UnknownAlienHuman@users.noreply.github.com"
+          git commit -m "refactor: make Wiki owner reads direct (#380)"
+          git push origin HEAD:refactor/380-lightweight-wiki-owner-reads
