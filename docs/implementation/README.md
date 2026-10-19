@@ -1,7 +1,8 @@
 # Implementation references
 
-[START-HERE](../START-HERE.md) explains how to use the documentation without loading the archive. Keep the [product manifesto](../architecture/ELIOT_RESEARCH.md) in the lead developer's context. For one task,
-open the relevant row below and its actual source callers. Do not load every old audit, launch packet or status file.
+[START-HERE](../START-HERE.md) explains how to use the documentation without loading the archive. Keep the
+[product manifesto](../architecture/ELIOT_RESEARCH.md) in the lead developer's context. For one task, open the
+relevant row below and its actual source callers. Do not load every old audit, launch packet or status file.
 
 ## Current route
 
@@ -14,6 +15,7 @@ open the relevant row below and its actual source callers. Do not load every old
 | Native Cloudflare mechanisms | [Native path](cloudflare-native-path.md) |
 | Ordinary source-backed answer | [Ordinary answer](research-full-answer-v1.md) |
 | Explicit bounded deep research | [Deep research](deep-research.md) |
+| Wiki pages, Inbox proposals, acceptance and edits | [Wiki and Inbox](wiki-inbox.md) |
 | Owner lists, history and reopening | [Owner reads](owner-read-paths.md) |
 | React/Vite cutover and old UI removal | [Frontend cutover](frontend-platform-migration.md) |
 | Old run retirement | [Execution retirement](workflow-checkpoints.md) |
