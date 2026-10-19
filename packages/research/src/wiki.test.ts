@@ -102,17 +102,15 @@ class MemoryWikiPort implements WikiPublicationPort {
     return this.corruptImmutableReadback ? { ...clone(value), title: `${value.title} changed` } : clone(value);
   }
 
-  public async commitHeadAndOutbox(input: WikiHeadCommit): Promise<WikiHeadCommitDisposition> {
+  public async commitHead(input: WikiHeadCommit): Promise<WikiHeadCommitDisposition> {
     this.events.push(`d1:commit:${input.manifest_ref}`);
     const current = this.heads.get(input.page.page_ref.id);
     const currentRevision = current?.page_ref.revision ?? null;
     if (currentRevision !== input.expected_head_revision) return "CONFLICT";
-    const outboxRef = `outbox-${input.manifest_ref}`;
     this.commits.push(clone(input));
     this.heads.set(input.page.page_ref.id, {
       page_ref: clone(input.page.page_ref),
       manifest_ref: input.manifest_ref,
-      outbox_ref: outboxRef,
     });
     if (this.loseCommitAcknowledgement) throw new Error("lost commit acknowledgement");
     return "COMMITTED";
@@ -138,7 +136,7 @@ const autoAuthority: WikiAutoPromotionReceipt = {
 };
 
 describe("Wiki publisher", () => {
-  it("publishes only after exact immutable readback and atomically records the head plus outbox", async () => {
+  it("publishes only after exact immutable readback and atomically records the head plus change", async () => {
     const port = new MemoryWikiPort();
     const publisher = createWikiPublisher(port);
     const proposalRef = await publisher.propose(page(), "D1_LOW_RISK_ADDITIVE");
@@ -202,7 +200,7 @@ describe("Wiki publisher", () => {
     expect(port.commits).toHaveLength(0);
   });
 
-  it("reconciles a lost D1 acknowledgement through exact head, outbox and immutable readback", async () => {
+  it("reconciles a lost D1 acknowledgement through exact head, change and immutable readback", async () => {
     const port = new MemoryWikiPort();
     port.loseCommitAcknowledgement = true;
     const publisher = createWikiPublisher(port);

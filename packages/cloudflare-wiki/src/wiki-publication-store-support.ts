@@ -65,7 +65,6 @@ export interface HeadRow {
   page_id: string;
   revision: number;
   manifest_ref: string;
-  outbox_ref: string;
 }
 
 export interface WikiStoreContext {

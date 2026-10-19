@@ -132,22 +132,15 @@ const OPERATION_REJECTIONS: Readonly<
     WIKI_PUBLICATION_INCOMPLETE: "REVIEW_EVIDENCE_INCOMPLETE",
     WIKI_PROPOSAL_NOT_FOUND: "REVIEW_CURRENT_AUTHORITY",
     WIKI_PROPOSAL_READBACK_MISMATCH: "REVIEW_CONFLICT",
-    // WIKI_HEAD_CONFLICT is deliberately absent even though it is thrown twice before the durable
-    // effect, at packages/research/src/wiki.ts:360 when the expected head no longer matches and at
-    // packages/cloudflare-wiki/src/wiki-publication-store.ts:217 when the commit is not bound to
-    // the active proposal. The same code is also thrown three times after the durable effect on
-    // that same path: wiki.ts:398 and 402, when commitHeadAndOutbox at 394 returns CONFLICT or a
-    // DIFFERENT reconciliation, and wiki.ts:409, when the head readback belongs to another
-    // revision. All three run after port.writeImmutableRevision at wiki.ts:367 has already put the
-    // revision bytes in R2 at wiki-publication-store.ts:186. The code cannot be classified by code
-    // alone, so a publish failure preserves its frozen identity for same-identity readback instead
-    // of clearing the owner intent. See the HANDOFF audit and the
+    // WIKI_HEAD_CONFLICT is deliberately absent. The same code can be raised before the
+    // immutable R2 write (stale expected head or a proposal/commit mismatch) and after that write
+    // while the direct revision/head/proposal/change transaction is reconciled. The code alone
+    // therefore cannot prove that no durable effect occurred; preserve the frozen identity and
+    // recover by exact readback. See the HANDOFF audit and the
     // mutation-outcome-source-peer-luna-20261013 MO-001 finding.
     //
-    // WIKI_IMMUTABLE_READBACK_MISMATCH is deliberately absent for the same post-write reason.
-    // commitHeadAndOutbox writes the publication batch and only then calls readHead, which throws
-    // this code after the write. writeImmutableRevision throws the same code after bucket.put. Both
-    // are post-write readback mismatches, so the effect cannot be excluded.
+    // WIKI_IMMUTABLE_READBACK_MISMATCH is absent for the same reason. Both the immutable R2 write
+    // and the post-transaction head/closure readback can fail after bytes or D1 state changed.
     WIKI_INPUT_INVALID: "REVIEW_CONFLICT",
     WIKI_OWNER_REQUIRED: "REVIEW_CURRENT_AUTHORITY",
   }),

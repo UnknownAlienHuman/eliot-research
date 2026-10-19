@@ -205,7 +205,7 @@ function validateWitness(value: WikiOwnerPublicationGuardWitness): WikiOwnerPubl
 /**
  * Build the first statement of the Wiki publication D1 batch. The caller
  * must obtain this witness after R2 readback and place this statement before
- * revision/head/outbox/proposal writes; migration 0059 makes stale witness
+ * revision/head/proposal/change writes; migration 0059 makes stale witness
  * dimensions abort the entire transaction.
  */
 export function buildWikiOwnerPublicationGuardStatement(

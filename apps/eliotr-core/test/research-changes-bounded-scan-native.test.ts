@@ -66,8 +66,8 @@ interface Ports {
 }
 
 // Isolated synthetic upstream layout. research_change_feed carries the exact
-// columns the candidate SQL reads, and the three canonical Wiki join tables
-// exist so the unchanged LEFT JOINs resolve; they stay empty in every case.
+// columns the candidate SQL reads. Wiki changes now carry owner visibility in
+// the feed row, so the bounded scan has no publication-table joins.
 const CREATE_STATEMENTS: readonly string[] = [
   "CREATE TABLE research_change_feed(" +
   "sequence INTEGER PRIMARY KEY AUTOINCREMENT,change_ref TEXT NOT NULL UNIQUE,kind TEXT NOT NULL," +
@@ -76,13 +76,6 @@ const CREATE_STATEMENTS: readonly string[] = [
   "visibility_snapshot_revision INTEGER,occurred_at TEXT NOT NULL,metadata_json TEXT NOT NULL)",
   "CREATE TABLE scope_access_grant(snapshot_id TEXT,snapshot_revision INTEGER,principal_ref TEXT," +
   "client_class TEXT,credential_generation TEXT,authorization_receipt_ref TEXT,state TEXT)",
-  "CREATE TABLE wiki_publication_outbox(outbox_ref TEXT PRIMARY KEY,page_id TEXT,revision INTEGER," +
-  "manifest_ref TEXT,payload_sha256 TEXT,state TEXT,created_at TEXT)",
-  "CREATE TABLE wiki_publication_revision(page_id TEXT,revision INTEGER,proposal_id TEXT," +
-  "proposal_revision INTEGER,manifest_ref TEXT,page_sha256 TEXT,page_json TEXT,body_object_ref TEXT," +
-  "body_sha256 TEXT,committer_ref TEXT,created_at TEXT)",
-  "CREATE TABLE wiki_publication_proposal(proposal_id TEXT,proposal_revision INTEGER,principal_ref TEXT," +
-  "page_id TEXT,page_revision INTEGER,page_sha256 TEXT,page_json TEXT,state TEXT)",
 ];
 
 beforeEach(async () => {

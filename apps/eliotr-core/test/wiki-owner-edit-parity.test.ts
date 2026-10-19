@@ -106,10 +106,11 @@ describe("S25 actual owner-edit writer/commit/reader parity", () => {
     expect(Object.values(read.page.statement_labels)).toEqual(["UNRESOLVED"]);
     const head = await db.prepare("SELECT revision FROM wiki_publication_head WHERE page_id=?1")
       .bind(value.page.page_ref.id).first<number>("revision");
-    const outbox = await db.prepare("SELECT count(*) AS n FROM wiki_publication_outbox WHERE page_id=?1")
-      .bind(value.page.page_ref.id).first<number>("n");
+    const changes = await db.prepare(
+      "SELECT count(*) AS n FROM research_change_feed WHERE kind='WIKI_PUBLISHED' AND subject_ref=?1",
+    ).bind(`wiki-page:${value.page.page_ref.id}`).first<number>("n");
     expect(head).toBe(2);
-    expect(outbox).toBe(2);
+    expect(changes).toBe(2);
   });
 
   it("captures the legacy whitespace, metadata error mapping, and edit digests", async () => {
@@ -157,7 +158,7 @@ describe("S25 actual owner-edit writer/commit/reader parity", () => {
 
 async function effects() {
   const tables = ["wiki_publication_proposal", "wiki_owner_edit_binding", "wiki_publication_revision",
-    "wiki_publication_head", "wiki_publication_outbox", "wiki_publication_authority", "wiki_owner_publication_guard"];
+    "wiki_publication_head", "wiki_publication_authority", "wiki_owner_publication_guard", "research_change_feed"];
   const counts = await Promise.all(tables.map((table) => db.prepare(`SELECT count(*) AS n FROM ${table}`).first<number>("n")));
   const objects = await runtime.WORK_BUCKET.list({ limit: 1000 });
   expect(objects.truncated).toBe(false);
@@ -246,7 +247,7 @@ describe("S25 invalid inputs and safe readback", () => {
     }
   });
 
-  it("rejects corrupted stored evidence without creating a review, head or outbox", async () => {
+  it("rejects corrupted stored evidence without creating a review, head or change", async () => {
     const value = await base("corrupt");
     const input = edit(value, "original note");
     const ctx = context("edit-corrupt");
@@ -270,7 +271,7 @@ describe("S25 invalid inputs and safe readback", () => {
 
 
 async function publicationSnapshot() {
-  const tables = ["wiki_publication_revision", "wiki_publication_head", "wiki_publication_outbox",
+  const tables = ["wiki_publication_revision", "wiki_publication_head",
     "wiki_publication_proposal", "wiki_owner_edit_binding", "wiki_owner_publication_guard", "research_change_feed"] as const;
   return Promise.all(tables.map(async (table) => {
     const rows = await db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all();
@@ -349,11 +350,19 @@ describe("S04 Wiki owner edits on actual Workers D1", () => {
         .resolves.toMatchObject({ status: "PUBLISHED", page_ref: { id: value.page.page_ref.id, revision: 2 } });
       expect(await publicationSnapshot()).toEqual(committed);
       expect(await db.prepare("SELECT count(*) AS n FROM wiki_publication_revision").first<number>("n")).toBe(2);
-      expect(await db.prepare("SELECT count(*) AS n FROM wiki_publication_outbox").first<number>("n")).toBe(2);
-      const closure = await db.prepare("SELECT h.revision,h.manifest_ref,h.outbox_ref,r.proposal_id,o.payload_sha256,r.page_sha256 " +
-        "FROM wiki_publication_head h JOIN wiki_publication_revision r ON r.page_id=h.page_id AND r.revision=h.revision " +
-        "JOIN wiki_publication_outbox o ON o.outbox_ref=h.outbox_ref WHERE h.page_id=?1").bind(value.page.page_ref.id)
-        .first<{ revision: number; manifest_ref: string; outbox_ref: string; proposal_id: string; payload_sha256: string; page_sha256: string }>();
+      expect(await db.prepare(
+        "SELECT count(*) AS n FROM research_change_feed WHERE kind='WIKI_PUBLISHED'",
+      ).first<number>("n")).toBe(2);
+      const closure = await db.prepare(
+        "SELECT h.revision,h.manifest_ref,r.proposal_id,c.payload_sha256,r.page_sha256 " +
+        "FROM wiki_publication_head h JOIN wiki_publication_revision r " +
+        "ON r.page_id=h.page_id AND r.revision=h.revision " +
+        "JOIN research_change_feed c ON c.kind='WIKI_PUBLISHED' " +
+        "AND c.subject_ref='wiki-page:' || h.page_id AND c.subject_revision=h.revision " +
+        "AND c.payload_ref=h.manifest_ref WHERE h.page_id=?1",
+      ).bind(value.page.page_ref.id).first<{
+        revision: number; manifest_ref: string; proposal_id: string; payload_sha256: string; page_sha256: string;
+      }>();
       if (closure === null) throw new Error("missing published Wiki closure");
       expect(closure.revision).toBe(2);
       expect(closure.proposal_id).toBe(winner.proposal_ref.id);

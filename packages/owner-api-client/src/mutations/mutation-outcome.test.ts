@@ -292,14 +292,10 @@ const unknownCases: readonly Case[] = [
   });
 
   it("retains publication identity when WIKI_HEAD_CONFLICT follows the durable immutable write", () => {
-    // The publish path raises the same code before and after its durable effect, so the operation
-    // and code pair cannot prove the publication never happened. wiki.ts:360 refuses when the
-    // expected head no longer matches and wiki-publication-store.ts:217 refuses when the commit is
-    // not bound to the active proposal; both are pre-effect. wiki.ts:398, 402 and 409 raise the
-    // same code after commitHeadAndOutbox at 394 has already returned, which is after
-    // writeImmutableRevision at wiki.ts:367 wrote the revision bytes into R2 at
-    // wiki-publication-store.ts:186. The intent stays unknown so readback can reuse the exact
-    // identity instead of a reviewer being told the mutation never took effect.
+    // The publish path raises the same code before and after its durable effect. A stale expected
+    // head can refuse before the immutable write, while reconciliation can observe a conflicting
+    // head after R2 bytes or the direct D1 publication transaction changed state. The intent stays
+    // unknown so exact readback can reuse the same identity instead of claiming no effect occurred.
     const outcome = classifyMutationOutcome({
       operation: 'wiki.publish',
       code: 'WIKI_HEAD_CONFLICT',
