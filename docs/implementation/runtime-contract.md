@@ -178,9 +178,16 @@ only its server label map, then writes `AI_EDIT` with the actual operation. It d
 
 ## Native Agent–Workflow presentation
 
-One `operation_id` names the canonical D1 run, its ResearchSession Agent and its research Workflow instance.
-Admission persists D1 first, then invokes a server-only method on that Agent. The Agent validates the exact admitted
-row and starts `RESEARCH_WORKFLOW` with `runWorkflow(..., { id: operation_id })`.
+One `operation_id` names the canonical D1 run, its ResearchSession Agent and its research Workflow instance. The
+existing `research_workflow_run.operation_id` is already the binding; do not add another Workflow-ID table/field.
+Admission persists D1 first, then invokes a plain server RPC method on that Agent. The Agent validates the exact
+admitted row and starts/adopts `RESEARCH_WORKFLOW` with the same deterministic ID and explicit
+`agentBinding: "RESEARCH_SESSION"`.
+
+Exact `agents 0.27.0` creates the Workflow before inserting `cf_agents_workflows`. Recovery therefore checks native
+tracking first, then direct binding status by deterministic ID, and only creates when both establish absence. Failed
+observation is unknown, never absence. An existing untracked Workflow is adopted; it is not repeated merely to repair
+optional SDK tracking.
 
 `ResearchWorkflow` extends `AgentWorkflow<ResearchSession, ...>`. Move the unrelated `EXHAUSTIVE_QUERY` branch to a
 small direct `ExhaustiveQueryWorkflow`; do not pass fake Agent origin fields or retain mixed `workflow_kind` params.
@@ -189,18 +196,23 @@ Responsibilities remain distinct:
 
 - D1 run/application state: request, authority, budget, cancellation, terminal phase and result ref;
 - Workflow: durable execution and paid-effect retry boundaries;
-- Agent state: bounded phase and terminal report hint;
+- Agent state: optional bounded phase and terminal report hint, rehydratable from D1;
 - Agent broadcasts: provisional public Markdown with non-durable byte ranges;
 - browser: ephemeral buffer and rendering.
 
-Every product phase transition settles in canonical D1 first. Only then may the Workflow call durable
-`step.mergeAgentState()` / `step.updateAgentState()`. Agent projection can lag; it cannot lead or authorize an effect.
-Use `step.reportComplete()` / `step.reportError()` only after canonical D1 settlement. The SDK's tracked workflow row
-is Agent↔Workflow correlation, not product history or result authority.
+Every product phase transition settles in canonical D1 first. Then make one best-effort `reportProgress()` call;
+`onWorkflowProgress` re-reads D1 and updates Agent state. Catch presentation failure locally. Do not put durable
+`step.mergeAgentState()`/`updateAgentState()` in the critical path: exact 0.27.0 implements them as retrying
+`step.do` calls, so an optional projection could delay execution or saving.
 
-Public Markdown broadcasts are non-durable and may repeat. Batch them with explicit `from_byte`/`to_byte` ranges.
-The client ignores a fully repeated range and marks a forward/overlap gap. Keep current offsets out of durable Agent
-state. Never persist every frame, replay a token journal or derive completion from a broadcast.
+Use durable `step.reportComplete()`/`reportError()` only after canonical D1 settlement. Their retries may delay SDK
+tracking finalization but cannot repeat generation/save or hide the canonical result. Terminal Agent callbacks
+re-read D1; automatic callback error never mints product failure.
+
+Public Markdown broadcasts are non-durable and may repeat. Exact 0.27.0 does not await the Agent RPC. Batch frames
+with explicit `from_byte`/`to_byte`; the client ignores a full duplicate and marks a forward/overlap gap. Keep current
+offsets out of durable Agent state. Never persist every frame, replay a token journal or derive completion from a
+broadcast.
 
 The owner WebSocket is authenticated by the existing outer Access route and one bounded current-run ownership read.
 Mark it readonly with the SDK hook. Expose no browser callable that starts/cancels/retries paid work: readonly blocks
@@ -218,15 +230,16 @@ message events and reconnect. Do not use AIChatAgent/resumable chat storage; no 
 ## Queue and cancellation
 
 Queue accelerates existing persisted work; it does not own a run. The authenticated D1 cancellation mutation remains
-canonical. After that decision, the server may terminate the Agent-tracked Workflow. Workflow/Agent callbacks update
-presentation only and cannot reverse or mint cancellation.
+canonical. After that decision, terminate the exact Workflow through Agent tracking or the direct Workflow binding
+fallback. Workflow/Agent callbacks update presentation only and cannot reverse or mint cancellation.
 
 Ordinary execution chooses its path before old handler/checkpoint assembly. Explicit deep research uses one bounded
 search/read/finish loop. Both use the same Agent-tracked Workflow bridge and research-report writer. Old executors
 serve only already-admitted runs while they settle; completed research reports are read directly.
 
-A slow/disconnected subscriber cannot block generation or save. Reconnect reads Agent presentation state and then
-the canonical D1 status/result. It may receive only new provisional ranges with an explicit gap.
+A slow/disconnected subscriber or unavailable Agent projection cannot block generation or save. Reconnect reads any
+Agent presentation state and then canonical D1 status/result. It may receive only new provisional ranges with an
+explicit gap.
 
 ## Run status and owner lists
 
