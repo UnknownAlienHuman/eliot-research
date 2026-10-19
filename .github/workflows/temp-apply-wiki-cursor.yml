@@ -30,6 +30,11 @@ jobs:
           python - <<'PY'
           import subprocess
           expected = {
+              '.github/wiki-cursor-gz/part00',
+              '.github/wiki-cursor-gz/part01',
+              '.github/wiki-cursor-gz/part02',
+              '.github/wiki-cursor-stage/part00.b64',
+              '.github/workflows/temp-apply-wiki-cursor.yml',
               '.github/workflows/temp-export-wiki-cursor-source.yml',
               'apps/eliotr-core/src/http-api-dispatch.ts',
               'apps/eliotr-core/src/wiki-service.ts',
