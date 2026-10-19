@@ -257,8 +257,8 @@ export interface WikiProposalReadResult {
   readonly risk_class: WikiDraftRiskClass;
   readonly state: "PROPOSED" | "PUBLISHED";
   readonly source_freshness: {
-    readonly state: "CURRENT_REVISIONS" | "PREVIOUS_REVISIONS";
-    readonly checked_at: string;
+    readonly state: "CURRENT_REVISIONS" | "PREVIOUS_REVISIONS" | "UNKNOWN";
+    readonly checked_at?: string;
     readonly changed_sources: readonly {
       readonly source_id: string;
       readonly saved_revision_ref: string;

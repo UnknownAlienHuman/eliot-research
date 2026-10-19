@@ -4,7 +4,6 @@ import {
   prepareOwnerScopeHistoricalReadAuthorization as prepareOwnerScopeHistoricalReadAuthorizationInLibrary,
   prepareOwnerScopeReadAuthorization as prepareOwnerScopeReadAuthorizationInLibrary,
   prepareOwnerScopeReauthorization as prepareOwnerScopeReauthorizationInLibrary,
-  prepareWikiProposalHistoricalReadAuthorization as prepareWikiProposalHistoricalReadAuthorizationInLibrary,
   prepareWikiProposalReadAuthorization as prepareWikiProposalReadAuthorizationInLibrary,
   prepareWikiProposalReauthorization as prepareWikiProposalReauthorizationInLibrary,
   type WikiProposalReadAuthorization,
@@ -66,12 +65,5 @@ export function prepareWikiProposalReadAuthorization(
   return prepareWikiProposalReadAuthorizationInLibrary(runtime(env), verifiedActor(context), page);
 }
 
-export function prepareWikiProposalHistoricalReadAuthorization(
-  env: Pick<Env, "CORE_DB">,
-  context: EvidenceAccessContext,
-  page: WikiPageRevision,
-): Promise<WikiProposalReadAuthorization> {
-  return prepareWikiProposalHistoricalReadAuthorizationInLibrary(runtime(env), verifiedActor(context), page);
-}
 
 export type { ScopeSnapshot };

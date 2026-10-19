@@ -131,10 +131,16 @@ export function createWikiReadApi(deps: WikiReadDependencies) {
   }
 
   function sourceFreshness(value: unknown): WikiSourceFreshness {
-    const data = record(value, ['state', 'checked_at', 'changed_sources']);
+    const data = record(value, ['state', 'changed_sources'], ['checked_at']);
+    if (!Array.isArray(data.changed_sources) || data.changed_sources.length > 64) invalid('source_freshness.changed_sources is invalid');
+    if (data.state === 'UNKNOWN') {
+      if (Object.hasOwn(data, 'checked_at') || data.changed_sources.length !== 0) {
+        invalid('unknown source freshness cannot claim an observation');
+      }
+      return { state: 'UNKNOWN', changed_sources: [] };
+    }
     if (data.state !== 'CURRENT_REVISIONS' && data.state !== 'PREVIOUS_REVISIONS') invalid('source_freshness.state is invalid');
     const checkedAt = timestamp(data.checked_at, 'source_freshness.checked_at');
-    if (!Array.isArray(data.changed_sources) || data.changed_sources.length > 64) invalid('source_freshness.changed_sources is invalid');
     const seen = new Set<string>();
     const changedSources = data.changed_sources.map((entry, index) => {
       const row = record(entry, ['source_id', 'saved_revision_ref', 'head_revision_ref']);

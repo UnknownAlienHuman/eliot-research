@@ -124,6 +124,47 @@ describe('studio wiki list decoder', () => {
     expect(() => read.decodeWikiProposalRead(envelope)).toThrow('WIKI_RESPONSE_INVALID:502');
   });
 
+  it('accepts explicit unknown freshness without inventing a check time', () => {
+    const read = api({});
+    const envelope = {
+      data: {
+        protocol: 'eliotr.wiki-proposal-read.v2',
+        proposal_ref: PROPOSAL,
+        page,
+        risk_class: 'D2_ANALYTICAL',
+        state: 'PROPOSED',
+        source_freshness: { state: 'UNKNOWN', changed_sources: [] },
+      },
+      trace_id: 'trace-1',
+      deployment_generation: GENERATION,
+    };
+    expect(read.decodeWikiProposalRead(envelope).source_freshness).toEqual({
+      state: 'UNKNOWN',
+      changed_sources: [],
+    });
+  });
+
+  it('rejects unknown freshness that claims an observation', () => {
+    const read = api({});
+    const envelope = {
+      data: {
+        protocol: 'eliotr.wiki-proposal-read.v2',
+        proposal_ref: PROPOSAL,
+        page,
+        risk_class: 'D2_ANALYTICAL',
+        state: 'PROPOSED',
+        source_freshness: {
+          state: 'UNKNOWN',
+          checked_at: '2026-10-03T12:00:00.000Z',
+          changed_sources: [],
+        },
+      },
+      trace_id: 'trace-1',
+      deployment_generation: GENERATION,
+    };
+    expect(() => read.decodeWikiProposalRead(envelope)).toThrow('WIKI_RESPONSE_INVALID:502');
+  });
+
   it('rejects a v1 body that carries source freshness', () => {
     const read = api({});
     const envelope = {

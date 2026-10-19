@@ -306,11 +306,3 @@ export async function prepareWikiProposalReadAuthorization(
 ): Promise<WikiProposalReadAuthorization> {
   return prepareOwnerScopeReadAuthorization(runtime, context, page.scope_snapshot_ref);
 }
-
-export async function prepareWikiProposalHistoricalReadAuthorization(
-  runtime: WikiDatabaseRuntime,
-  context: WikiVerifiedActor,
-  page: WikiPageRevision,
-): Promise<WikiProposalReadAuthorization> {
-  return prepareOwnerScopeHistoricalReadAuthorization(runtime, context, page.scope_snapshot_ref);
-}
