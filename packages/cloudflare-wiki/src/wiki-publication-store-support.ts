@@ -1,4 +1,5 @@
 import {
+  IsoDateTimeSchema,
   VersionedRefSchema,
   WikiPageRevisionSchema,
   type VersionedRef,
@@ -58,6 +59,48 @@ export interface ProposalSummaryRow {
   risk_class: unknown;
   state: unknown;
   created_at: unknown;
+}
+
+export interface ProposalListCursor {
+  readonly created_at: string;
+  readonly proposal_id: string;
+}
+
+const PROPOSAL_CURSOR_SEPARATOR = "|";
+const MAX_PROPOSAL_CURSOR_BYTES = 1024;
+
+/** A cursor is only a keyset position; the query always reapplies owner authority. */
+export function decodeProposalListCursor(value: string | null): ProposalListCursor | null {
+  if (value === null) return null;
+  if (typeof value !== "string" || value.length < 3 ||
+      new TextEncoder().encode(value).byteLength > MAX_PROPOSAL_CURSOR_BYTES ||
+      /[\u0000-\u001f\u007f]/u.test(value)) {
+    fail("WIKI_INPUT_INVALID", "Wiki proposal cursor is invalid");
+  }
+  const separator = value.indexOf(PROPOSAL_CURSOR_SEPARATOR);
+  if (separator < 1 || separator !== value.lastIndexOf(PROPOSAL_CURSOR_SEPARATOR)) {
+    fail("WIKI_INPUT_INVALID", "Wiki proposal cursor is invalid");
+  }
+  const createdAt = value.slice(0, separator);
+  const proposalId = value.slice(separator + 1);
+  if (!IsoDateTimeSchema.safeParse(createdAt).success || !SAFE_REF.test(proposalId) ||
+      proposalId.includes("..") || proposalId.includes("\\")) {
+    fail("WIKI_INPUT_INVALID", "Wiki proposal cursor is invalid");
+  }
+  return Object.freeze({ created_at: createdAt, proposal_id: proposalId });
+}
+
+export function encodeProposalListCursor(row: Pick<ProposalSummaryRow, "created_at" | "proposal_id">): string {
+  if (typeof row.created_at !== "string" || !IsoDateTimeSchema.safeParse(row.created_at).success ||
+      typeof row.proposal_id !== "string" || !SAFE_REF.test(row.proposal_id) ||
+      row.proposal_id.includes("..") || row.proposal_id.includes("\\")) {
+    fail("WIKI_PROPOSAL_READBACK_MISMATCH", "Wiki proposal cursor source is malformed");
+  }
+  const cursor = `${row.created_at}${PROPOSAL_CURSOR_SEPARATOR}${row.proposal_id}`;
+  if (new TextEncoder().encode(cursor).byteLength > MAX_PROPOSAL_CURSOR_BYTES) {
+    fail("WIKI_PROPOSAL_READBACK_MISMATCH", "Wiki proposal cursor exceeds its byte bound");
+  }
+  return cursor;
 }
 
 export interface AuthorityRow {
@@ -395,21 +438,28 @@ export async function loadProposalSummaryRows(
   database: D1Database,
   principalRef: string,
   limit: number,
+  cursor: ProposalListCursor | null,
 ): Promise<readonly ProposalSummaryRow[]> {
   const principal = validPrincipal(principalRef);
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 20) {
     fail("WIKI_INPUT_INVALID", "Wiki proposal list limit is invalid");
   }
   try {
-    const result = await database.prepare(
+    const base =
       "SELECT proposal_id,proposal_revision,page_id,page_revision," +
       "CASE WHEN json_valid(page_json) THEN json_extract(page_json,'$.page_ref.id') END AS page_json_id," +
       "CASE WHEN json_valid(page_json) THEN json_extract(page_json,'$.page_ref.revision') END AS page_json_revision," +
       "CASE WHEN json_valid(page_json) THEN json_extract(page_json,'$.title') END AS title," +
       "CASE WHEN json_valid(page_json) THEN json_extract(page_json,'$.page_type') END AS page_type," +
-      "risk_class,state,created_at FROM wiki_publication_proposal " +
-      "WHERE principal_ref=?1 ORDER BY created_at DESC,proposal_id DESC LIMIT ?2",
-    ).bind(principal, limit + 1).all<ProposalSummaryRow>();
+      "risk_class,state,created_at FROM wiki_publication_proposal ";
+    const result = cursor === null
+      ? await database.prepare(
+        base + "WHERE principal_ref=?1 ORDER BY created_at DESC,proposal_id DESC LIMIT ?2",
+      ).bind(principal, limit + 1).all<ProposalSummaryRow>()
+      : await database.prepare(
+        base + "WHERE principal_ref=?1 AND (created_at<?2 OR (created_at=?2 AND proposal_id<?3)) " +
+        "ORDER BY created_at DESC,proposal_id DESC LIMIT ?4",
+      ).bind(principal, cursor.created_at, cursor.proposal_id, limit + 1).all<ProposalSummaryRow>();
     if (!result.success || !Array.isArray(result.results) || result.results.length > limit + 1) {
       fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki proposal list readback is unavailable", true);
     }

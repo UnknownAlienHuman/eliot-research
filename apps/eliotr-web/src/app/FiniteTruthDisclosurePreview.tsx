@@ -203,7 +203,7 @@ function createEnvironment(scenario: Scenario, holdDiagnostic: boolean) {
     }
     if (url.pathname === '/api/v1/research/wiki/proposals' && !url.search) {
       audit.proposals += 1;
-      const page = { protocol: 'eliotr.wiki-proposals.v1', items: [], has_more: false };
+      const page = { protocol: 'eliotr.wiki-proposals.v1', items: [], has_more: false, next_cursor: null };
       return json(scenario === 'disclosure' ? { ...page, ...rawMaterial } : page);
     }
     if (url.pathname === '/api/v1/research/runs' && !url.search) {

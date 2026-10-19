@@ -52,7 +52,7 @@ export function StudioPreview({ historyReadFailure = false }: { readonly history
         return json({ protocol: 'eliotr.research-runs.v3', runs: [], saved_drafts: [], configuration_state: 'INSTALLED', checked_at: stamp });
       }
       if (url.pathname === '/api/v1/system/research-configuration') return json({ protocol: 'eliotr.research-configuration-readiness.v1', configuration: 'present', model_transport: 'available', qualification_state: 'current', run_readiness: 'ready', readiness_reason: 'QUALIFICATION_PROOFS_CURRENT', model_route: 'research-route', qualification_expires_at: '2027-01-01T00:00:00.000Z', missing_fields: [], invalid_fields: [], checked_at: stamp });
-      if (url.pathname === '/api/v1/research/wiki/proposals') return json({ protocol: 'eliotr.wiki-proposals.v1', items: created ? [summary(1), summary(2)] : [summary(1)], has_more: false });
+      if (url.pathname === '/api/v1/research/wiki/proposals') return json({ protocol: 'eliotr.wiki-proposals.v1', items: created ? [summary(1), summary(2)] : [summary(1)], has_more: false, next_cursor: null });
       if (url.pathname === '/api/v1/research/wiki/proposals/from-edit' && init?.method === 'POST') {
         const body = String(init.body), headers = new Headers(init.headers), key = headers.get('idempotency-key');
         const request: unknown = JSON.parse(body);

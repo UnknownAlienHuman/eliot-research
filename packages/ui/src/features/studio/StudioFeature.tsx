@@ -103,7 +103,7 @@ export interface StudioFeatureProps {
   readonly copy: StudioFeatureCopy;
   readonly state: StudioFeatureState;
   /** The accepted proposal list view, already decoded by the root. */
-  readonly proposals?: Pick<WikiProposalListView, "items" | "has_more">;
+  readonly proposals?: Pick<WikiProposalListView, "items" | "has_more" | "next_cursor">;
   /** The accepted read view for the selected proposal, already decoded by the root. */
   readonly selected?: SelectedProposal;
   /** Native heading refs let the root hand focus across its keyed proposal lifecycle. */
@@ -143,6 +143,8 @@ export interface StudioFeatureProps {
   readonly onOpenArtifact?: (artifactRef: { readonly id: string; readonly revision: number }) => void;
   readonly onReviseSection?: (sectionId: string) => void;
   readonly onOpenProposal: (summary: WikiProposalSummaryItem) => void;
+  readonly onLoadMore?: () => void;
+  readonly loadingMore?: boolean;
   readonly onCreateEdit: (input: {
     readonly baseProposalRef: { readonly id: string; readonly revision: number };
     readonly basePageRef: { readonly id: string; readonly revision: number };
@@ -206,6 +208,8 @@ export function StudioFeature({
   artifactRef,
   declaredSectionRefs,
   onOpenProposal,
+  onLoadMore,
+  loadingMore = false,
   onOpenArtifact,
   onCreateEdit,
   onPublish,
@@ -318,7 +322,13 @@ export function StudioFeature({
                 </li>
               ))}
               {proposals.has_more ? (
-                <li className="er-studio-live__more">{copy.has_more}</li>
+                <li className="er-studio-live__more">
+                  {onLoadMore === undefined ? copy.has_more : (
+                    <Button variant="text" disabled={loadingMore} onClick={onLoadMore}>
+                      {loadingMore ? copy.loading : copy.more_pages}
+                    </Button>
+                  )}
+                </li>
               ) : null}
             </ul>
           )}

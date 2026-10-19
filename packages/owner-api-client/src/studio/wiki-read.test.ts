@@ -54,7 +54,7 @@ function api(extra: Partial<Omit<WikiReadDependencies, 'epoch'>>, epoch = create
 }
 
 const listEnvelope = (items: unknown[] = [], hasMore = false) => ({
-  data: { protocol: 'eliotr.wiki-proposals.v1', items, has_more: hasMore },
+  data: { protocol: 'eliotr.wiki-proposals.v1', items, has_more: hasMore, next_cursor: hasMore ? '2026-10-03T12:00:00.000Z|proposal-1' : null },
   trace_id: 'trace-1',
   deployment_generation: GENERATION,
 });
@@ -192,9 +192,17 @@ describe('studio wiki reads over the seam', () => {
   it('requests the proposal list and returns the decoded view', async () => {
     const { deps, calls } = recorder(listEnvelope([summary]));
     const read = createWikiReadApi({ ...deps, epoch: createSessionEpoch() });
-    const view = await read.readWikiProposals(GENERATION);
+    const view = await read.readWikiProposals(null, GENERATION);
     expect(view.items).toHaveLength(1);
     expect(calls[0]?.path).toBe('/api/v1/research/wiki/proposals');
+  });
+
+  it('requests the next proposal page with the opaque cursor', async () => {
+    const cursor = '2026-10-03T12:00:00.000Z|proposal-1';
+    const { deps, calls } = recorder(listEnvelope());
+    const read = createWikiReadApi({ ...deps, epoch: createSessionEpoch() });
+    await read.readWikiProposals(cursor, GENERATION);
+    expect(calls[0]?.path).toBe(`/api/v1/research/wiki/proposals?cursor=${encodeURIComponent(cursor)}`);
   });
 
   it('requests a single proposal by encoded id', async () => {
@@ -317,7 +325,7 @@ describe('studio wiki reads over the seam', () => {
     epoch.close();
     const { deps, calls } = recorder(listEnvelope([summary]));
     const read = createWikiReadApi({ ...deps, epoch });
-    await expect(read.readWikiProposals(GENERATION)).rejects.toThrow('API_SESSION_CLOSED:503');
+    await expect(read.readWikiProposals(null, GENERATION)).rejects.toThrow('API_SESSION_CLOSED:503');
     expect(calls).toHaveLength(0);
   });
 });

@@ -197,7 +197,7 @@ function createInboxStudioEnvironment(): InboxStudioEnvironment {
       qualification_expires_at: "2027-01-01T00:00:00.000Z", missing_fields: [], invalid_fields: [], checked_at: stamp,
     });
     if (url.pathname === "/api/v1/research/wiki/proposals") return json({
-      protocol: "eliotr.wiki-proposals.v1", items: [summary(firstId), summary(secondId)], has_more: false,
+      protocol: "eliotr.wiki-proposals.v1", items: [summary(firstId), summary(secondId)], has_more: false, next_cursor: null,
     });
     const proposalMatch = /^\/api\/v1\/research\/wiki\/proposals\/(wiki-proposal-first|wiki-proposal-second)(\/body)?$/u.exec(url.pathname);
     if (proposalMatch) {

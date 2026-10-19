@@ -151,7 +151,7 @@ export function ResearchPreview({ designReview = false, historyState, historyLab
         visibility_scan: { runs: 'SOURCE_EXHAUSTED', saved_drafts: 'SOURCE_EXHAUSTED' },
         configuration_state: 'INSTALLED', checked_at: stamp });
       }
-      if (url.pathname === '/api/v1/research/wiki/proposals') return json({ protocol: 'eliotr.wiki-proposals.v1', items: [], has_more: false });
+      if (url.pathname === '/api/v1/research/wiki/proposals') return json({ protocol: 'eliotr.wiki-proposals.v1', items: [], has_more: false, next_cursor: null });
       if (url.pathname === '/api/v1/research/run' && init?.method === 'POST') {
         const headers = new Headers(init.headers), body = String(init.body), key = headers.get('idempotency-key');
         if (!key || headers.get('x-eliotr-csrf') !== '1' || (!designReview && mints !== 1)) throw new Error('Run intent or CSRF changed');
