@@ -255,7 +255,7 @@ model, and its chat/transcript products are not selected.
 
 Cloudflare references checked 2026-10-18:
 [Agents with Workflows](https://developers.cloudflare.com/agents/runtime/execution/run-workflows/),
-[readonly connections](https://developers.cloudflare.com/agents/runtime/lifecycle/readonly-connections/) and
+[readonly connections](https://developers.cloudflare.com/agents/runtime/communication/readonly-connections/) and
 [Agent client SDK](https://developers.cloudflare.com/agents/communication-channels/chat/client-sdk/).
 Upstream implementation inspected at `cloudflare/agents@7dd51c5`, including `packages/agents/src/workflows.ts`.
 
