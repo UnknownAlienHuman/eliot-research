@@ -1,8 +1,8 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import type { AuthenticatedRequestContext } from "@eliotr/interfaces";
 import type { WikiPageRevision } from "@eliotr/contracts";
-import { count, db, principal, runtime, setupOrientationDatabase } from "./orientation-fixture.js";
-import { createWikiProposalService, publishWikiProposal } from "../src/wiki-service.js";
+import { count, db, observeDatabase, principal, runtime, setupOrientationDatabase } from "./orientation-fixture.js";
+import { createWikiProposalReaderService, createWikiProposalService, publishWikiProposal } from "../src/wiki-service.js";
 import { recordWikiPublicationAuthority } from "@eliotr/cloudflare-wiki/wiki-publication-store-support";
 import { wikiPublicationScope } from "./wiki-publication-authority-fixture.js";
 
@@ -67,6 +67,37 @@ describe("Wiki semantic service", () => {
     await service(context("wiki-service-conflict"), { page, risk_class: "D2_ANALYTICAL" });
     await expect(service(context("wiki-service-conflict"), { page: { ...page, title: "changed" }, risk_class: "D2_ANALYTICAL" }))
       .rejects.toMatchObject({ code: "WIKI_PROPOSAL_READBACK_MISMATCH" });
+  });
+
+  it("lists and reopens owner proposals without replaying historical scope or loading the evidence map", async () => {
+    const page = await candidate("owner-read");
+    const ctx = context("wiki-service-owner-read");
+    const proposal = await createWikiProposalService(runtime)(ctx, { page, risk_class: "D2_ANALYTICAL" }) as unknown as {
+      proposal_ref: { id: string; revision: number };
+    };
+    await runtime.WORK_BUCKET.delete(page.evidence_map_ref);
+
+    const observedSql: string[] = [];
+    const forbidden = /scope_snapshot|scope_access_grant|source_revision|source_namespace_ownership/iu;
+    const ownerReadsOnly = observeDatabase(async (sql, phase, batchSql) => {
+      if (phase !== "before") return;
+      const statements = sql === "BATCH" ? batchSql ?? [] : [sql];
+      for (const statement of statements) {
+        observedSql.push(statement);
+        if (forbidden.test(statement)) throw new Error(`owner Wiki read replayed historical authority: ${statement}`);
+      }
+    });
+    const reader = createWikiProposalReaderService({ CORE_DB: ownerReadsOnly, WORK_BUCKET: runtime.WORK_BUCKET });
+
+    const listed = await reader.listWikiProposals(ctx);
+    expect(listed.items.some((item) => item.proposal_ref.id === proposal.proposal_ref.id)).toBe(true);
+    expect(observedSql.filter((sql) => sql.includes("FROM wiki_publication_proposal"))).toHaveLength(1);
+
+    const read = await reader.readWikiProposal(ctx, proposal.proposal_ref);
+    expect(read.source_freshness).toEqual({ state: "UNKNOWN", changed_sources: [] });
+
+    const body = await reader.readWikiProposalBody(ctx, proposal.proposal_ref);
+    expect(await body.text()).toBe("# owner-read\n\nVerified source body.\n");
   });
 
   it("keeps publication server-side, requires admitted authority, and derives reviewer from owner context", async () => {

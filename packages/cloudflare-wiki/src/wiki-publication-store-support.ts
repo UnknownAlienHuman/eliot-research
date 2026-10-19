@@ -46,6 +46,20 @@ export interface ProposalRow {
   created_at: string;
 }
 
+export interface ProposalSummaryRow {
+  proposal_id: unknown;
+  proposal_revision: unknown;
+  page_id: unknown;
+  page_revision: unknown;
+  page_json_id: unknown;
+  page_json_revision: unknown;
+  title: unknown;
+  page_type: unknown;
+  risk_class: unknown;
+  state: unknown;
+  created_at: unknown;
+}
+
 export interface AuthorityRow {
   proposal_id: string;
   proposal_revision: number;
@@ -377,22 +391,25 @@ export function decodeWikiOwnerEditReviewReceipt(bytes: Uint8Array): WikiOwnerEd
   return value as unknown as WikiOwnerEditReviewReceipt;
 }
 
-export async function loadProposalRows(
+export async function loadProposalSummaryRows(
   database: D1Database,
   principalRef: string,
   limit: number,
-): Promise<readonly ProposalRow[]> {
+): Promise<readonly ProposalSummaryRow[]> {
   const principal = validPrincipal(principalRef);
   if (!Number.isSafeInteger(limit) || limit < 1 || limit > 20) {
     fail("WIKI_INPUT_INVALID", "Wiki proposal list limit is invalid");
   }
   try {
     const result = await database.prepare(
-      "SELECT proposal_id, proposal_revision, principal_ref, idempotency_key, request_sha256, page_id, " +
-      "page_revision, page_sha256, page_json, risk_class, body_size, evidence_map_sha256, " +
-      "evidence_map_size, dependency_refs_sha256, state, created_at FROM wiki_publication_proposal " +
-      "WHERE principal_ref = ?1 ORDER BY created_at DESC, proposal_id DESC LIMIT ?2",
-    ).bind(principal, limit + 1).all<ProposalRow>();
+      "SELECT proposal_id,proposal_revision,page_id,page_revision," +
+      "CASE WHEN json_valid(page_json) THEN json_extract(page_json,'$.page_ref.id') END AS page_json_id," +
+      "CASE WHEN json_valid(page_json) THEN json_extract(page_json,'$.page_ref.revision') END AS page_json_revision," +
+      "CASE WHEN json_valid(page_json) THEN json_extract(page_json,'$.title') END AS title," +
+      "CASE WHEN json_valid(page_json) THEN json_extract(page_json,'$.page_type') END AS page_type," +
+      "risk_class,state,created_at FROM wiki_publication_proposal " +
+      "WHERE principal_ref=?1 ORDER BY created_at DESC,proposal_id DESC LIMIT ?2",
+    ).bind(principal, limit + 1).all<ProposalSummaryRow>();
     if (!result.success || !Array.isArray(result.results) || result.results.length > limit + 1) {
       fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki proposal list readback is unavailable", true);
     }

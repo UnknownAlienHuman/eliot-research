@@ -1,7 +1,9 @@
 import {
   IdentifierSchema,
+  IsoDateTimeSchema,
   VersionedRefSchema,
   WikiPageRevisionSchema,
+  WikiPageTypeSchema,
   type VersionedRef,
   type WikiPageRevision,
 } from "@eliotr/contracts";
@@ -19,11 +21,10 @@ import {
   type DraftRiskClass,
   type WikiHeadCommit,
 } from "@eliotr/research";
-import { CatalogInputError, readSourceRevisionFreshness } from "@eliotr/cloudflare-navigation";
+import { CatalogInputError } from "@eliotr/cloudflare-navigation";
 import type { WikiRuntime, WikiStorageRuntime, WikiVerifiedActor } from "./wiki-runtime.js";
 import {
   prepareWikiProposalReadAuthorization,
-  prepareWikiProposalHistoricalReadAuthorization,
 } from "./wiki-proposal-reauthorization.js";
 import { admitWikiOwnerEditReview } from "./wiki-owner-edit-review-admission.js";
 import { admitWikiOwnerReview } from "./wiki-review-admission.js";
@@ -31,16 +32,16 @@ import { createD1R2WikiPublicationPort } from "./wiki-publication-store.js";
 import type { WikiOwnerPublicationGuardWitness } from "./wiki-owner-publication-guard.js";
 import {
   MAX_BODY_BYTES,
-  MAX_EVIDENCE_MAP_BYTES,
   decodeProposal,
   dependencyDigest,
   loadProposalRow,
-  loadProposalRows,
+  loadProposalSummaryRows,
   pageJson,
   readObject,
   textDigest,
   validIdempotency,
   type ProposalRow,
+  type ProposalSummaryRow,
 } from "./wiki-publication-store-support.js";
 
 const RISK_CLASSES = new Set<DraftRiskClass>([
@@ -286,16 +287,21 @@ export async function proposeWiki(
 interface CheckedProposal {
   readonly row: ProposalRow;
   readonly proposal: ReturnType<typeof decodeProposal>;
-  readonly authorization: Awaited<ReturnType<typeof prepareWikiProposalHistoricalReadAuthorization>>;
-  readonly requireCurrent: () => Promise<void>;
   readonly body?: Uint8Array;
 }
 
+/**
+ * Read one owner-owned proposal without replaying the scope/policy graph that
+ * produced it. The proposal row is already bound to the authenticated owner.
+ * Metadata reads verify the immutable page manifest; body reads additionally
+ * verify the exact R2 bytes. Evidence-map and source freshness are separate
+ * concerns and never hide the owner's saved draft.
+ */
 async function checkedProposal(
   runtime: WikiStorageRuntime,
   context: WikiVerifiedActor,
   proposalRef: VersionedRef,
-  verifyObjects: boolean,
+  readBody: boolean,
 ): Promise<CheckedProposal> {
   requireOwner(context);
   const row = await loadProposalRow(runtime.database, proposalRef, context.principal_ref);
@@ -305,31 +311,35 @@ async function checkedProposal(
       await dependencyDigest(proposal.page) !== row.dependency_refs_sha256) {
     fail("WIKI_PROPOSAL_READBACK_MISMATCH", "Wiki proposal digest is corrupt", 409);
   }
-  const authorization = await prepareWikiProposalHistoricalReadAuthorization(runtime, context, proposal.page);
-  if (!verifyObjects) return { row, proposal, authorization, requireCurrent: authorization.requireCurrent };
+  if (!readBody) return { row, proposal };
   const body = await readObject(runtime.work_bucket, proposal.page.body_object_ref, MAX_BODY_BYTES);
-  const evidence = await readObject(runtime.work_bucket, proposal.page.evidence_map_ref, MAX_EVIDENCE_MAP_BYTES);
-  if (body.sha256 !== proposal.page.body_sha256 || body.bytes.byteLength !== row.body_size ||
-      evidence.sha256 !== row.evidence_map_sha256 || evidence.bytes.byteLength !== row.evidence_map_size) {
-    fail("WIKI_PROPOSAL_READBACK_MISMATCH", "Wiki proposal object readback differs from its durable identity", 409);
+  if (body.sha256 !== proposal.page.body_sha256 || body.bytes.byteLength !== row.body_size) {
+    fail("WIKI_PROPOSAL_READBACK_MISMATCH", "Wiki proposal body differs from its durable identity", 409);
   }
-  await authorization.requireCurrent();
-  return { row, proposal, authorization, requireCurrent: authorization.requireCurrent, body: body.bytes };
+  return { row, proposal, body: body.bytes };
 }
 
-function errorCode(error: unknown): string | undefined {
-  if (error === null || typeof error !== "object" || !("code" in error)) return undefined;
-  const code = (error as { readonly code?: unknown }).code;
-  return typeof code === "string" ? code : undefined;
-}
-
-function isExpectedStaleRead(error: unknown): boolean {
-  const code = errorCode(error);
-  return code === "WIKI_POLICY_DENIED" || code === "SCOPE_SNAPSHOT_STALE" ||
-    code === "NAVIGATION_SCOPE_NOT_CURRENT" || code === "NAVIGATION_SCOPE_MISMATCH" ||
-    code === "EVIDENCE_SCOPE_INVALIDATED" || code === "EVIDENCE_SCOPE_EXPIRED" ||
-    code === "EVIDENCE_AUTHORIZATION_DENIED" || code === "EVIDENCE_SOURCE_NOT_LIVE" ||
-    code === "EVIDENCE_OWNER_GENERATION_MISMATCH" || code === "EVIDENCE_SCOPE_MISMATCH";
+function summary(row: ProposalSummaryRow): WikiProposalSummary {
+  const proposalRef = VersionedRefSchema.safeParse({ id: row.proposal_id, revision: row.proposal_revision });
+  const pageRef = VersionedRefSchema.safeParse({ id: row.page_id, revision: row.page_revision });
+  const pageType = WikiPageTypeSchema.safeParse(row.page_type);
+  const createdAt = IsoDateTimeSchema.safeParse(row.created_at);
+  if (!proposalRef.success || proposalRef.data.revision !== 1 || !pageRef.success ||
+      row.page_json_id !== pageRef.data.id || row.page_json_revision !== pageRef.data.revision ||
+      typeof row.title !== "string" || row.title.length < 1 || !pageType.success ||
+      typeof row.risk_class !== "string" || !RISK_CLASSES.has(row.risk_class as DraftRiskClass) ||
+      (row.state !== "PROPOSED" && row.state !== "PUBLISHED") || !createdAt.success) {
+    fail("WIKI_PROPOSAL_READBACK_MISMATCH", "Wiki proposal summary is malformed", 409);
+  }
+  return {
+    proposal_ref: proposalRef.data,
+    page_ref: pageRef.data,
+    title: row.title,
+    page_type: pageType.data,
+    risk_class: row.risk_class as DraftRiskClass,
+    state: row.state,
+    created_at: createdAt.data,
+  };
 }
 
 export async function readProposal(
@@ -338,14 +348,14 @@ export async function readProposal(
   proposalRef: VersionedRef,
 ): Promise<WikiProposalReadResult> {
   try {
-    const checked = await checkedProposal(runtime, context, proposalRef, true);
+    const checked = await checkedProposal(runtime, context, proposalRef, false);
     return {
       protocol: WIKI_PROPOSAL_READ_PROTOCOL,
       proposal_ref: checked.proposal.proposal_ref,
       page: checked.proposal.page,
       risk_class: checked.proposal.risk_class,
       state: checked.row.state as "PROPOSED" | "PUBLISHED",
-      source_freshness: await readSourceRevisionFreshness(runtime.database, checked.authorization),
+      source_freshness: { state: "UNKNOWN", changed_sources: [] },
     };
   } catch (error) { mapWiki(error); }
 }
@@ -356,42 +366,12 @@ export async function listProposals(
 ): Promise<WikiProposalListResult> {
   try {
     requireOwner(context);
-    const rows = await loadProposalRows(runtime.database, context.principal_ref, MAX_WIKI_PROPOSALS);
-    const items: WikiProposalSummary[] = [];
-    const currentChecks: Array<() => Promise<void>> = [];
-    for (const row of rows.slice(0, MAX_WIKI_PROPOSALS)) {
-      let checked: CheckedProposal;
-      try {
-        checked = await checkedProposal(runtime, context, { id: row.proposal_id, revision: row.proposal_revision }, false);
-      } catch (error) {
-        if (isExpectedStaleRead(error)) continue;
-        throw error;
-      }
-      if (typeof row.created_at !== "string" || Number.isNaN(Date.parse(row.created_at)) || !row.created_at.endsWith("Z")) {
-        fail("WIKI_PROPOSAL_READBACK_MISMATCH", "Wiki proposal creation time is malformed", 409);
-      }
-      currentChecks.push(checked.requireCurrent);
-      items.push({
-        proposal_ref: checked.proposal.proposal_ref,
-        page_ref: { ...checked.proposal.page.page_ref },
-        title: checked.proposal.page.title,
-        page_type: checked.proposal.page.page_type,
-        risk_class: checked.proposal.risk_class,
-        state: checked.row.state as "PROPOSED" | "PUBLISHED",
-        created_at: row.created_at,
-      });
-    }
-    for (const requireCurrent of currentChecks) {
-      try {
-        await requireCurrent();
-      } catch (error) {
-        if (isExpectedStaleRead(error)) {
-          fail("WIKI_POLICY_DENIED", "Wiki proposal list changed during read", 410);
-        }
-        throw error;
-      }
-    }
-    return { protocol: WIKI_PROPOSAL_LIST_PROTOCOL, items, has_more: rows.length > MAX_WIKI_PROPOSALS };
+    const rows = await loadProposalSummaryRows(runtime.database, context.principal_ref, MAX_WIKI_PROPOSALS);
+    return {
+      protocol: WIKI_PROPOSAL_LIST_PROTOCOL,
+      items: rows.slice(0, MAX_WIKI_PROPOSALS).map(summary),
+      has_more: rows.length > MAX_WIKI_PROPOSALS,
+    };
   } catch (error) { mapWiki(error); }
 }
 
