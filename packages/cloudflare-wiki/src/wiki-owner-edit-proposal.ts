@@ -23,7 +23,7 @@ export interface OwnerEditInput { readonly base_proposal_ref: VersionedRef; read
 export interface EditMetadata { readonly base_body_sha256: string; readonly base_coverage_receipt_ref: VersionedRef; readonly base_dependency_refs_sha256: string; readonly base_evidence_map_ref: string; readonly base_evidence_map_sha256: string; readonly base_page_ref: VersionedRef; readonly base_page_sha256: string; readonly base_proposal_ref: VersionedRef; readonly edit_note: string; readonly edit_request_sha256: string; readonly expected_head_revision: number; readonly protocol: typeof WIKI_OWNER_EDIT_PROTOCOL; }
 export interface EditBindingRow { readonly proposal_id: string; readonly proposal_revision: number; readonly principal_ref: string; readonly idempotency_key: string; readonly request_sha256: string; readonly proposal_page_sha256: string; readonly base_proposal_id: string; readonly base_proposal_revision: number; readonly base_page_id: string; readonly base_page_revision: number; readonly base_page_sha256: string; readonly created_at: string; }
 export interface PublishedRevisionRow { readonly proposal_id: string; readonly proposal_revision: number; readonly page_sha256: string; readonly page_json: string; readonly body_object_ref: string; readonly body_sha256: string; }
-export interface CanonicalBase { readonly proposal: ProposalRow; readonly page: WikiPageRevision; readonly page_sha256: string; readonly evidence_map_sha256: string; readonly dependency_refs_sha256: string; readonly authorization: Awaited<ReturnType<typeof prepareOwnerScopeReadAuthorization>>; readonly port: WikiPublicationPort; readonly head: { readonly page_ref: VersionedRef; readonly manifest_ref: string; readonly outbox_ref: string; }; }
+export interface CanonicalBase { readonly proposal: ProposalRow; readonly page: WikiPageRevision; readonly page_sha256: string; readonly evidence_map_sha256: string; readonly dependency_refs_sha256: string; readonly authorization: Awaited<ReturnType<typeof prepareOwnerScopeReadAuthorization>>; readonly port: WikiPublicationPort; readonly head: { readonly page_ref: VersionedRef; readonly manifest_ref: string; }; }
 function fail(code: string, message: string, status = 400, retryable = false, cause?: unknown): never {
   throw new CatalogInputError(code, message, status, retryable, cause);
 }
@@ -204,7 +204,7 @@ export async function readCanonicalBase(
   await authorization.requireCurrent();
   const settledHead = await port.readHead(page.page_ref.id);
   if (settledHead === null || !sameRef(settledHead.page_ref, head.page_ref) ||
-      settledHead.manifest_ref !== head.manifest_ref || settledHead.outbox_ref !== head.outbox_ref) {
+      settledHead.manifest_ref !== head.manifest_ref) {
     fail("WIKI_HEAD_CONFLICT", "base Wiki head changed during readback", 409);
   }
   return {
@@ -218,7 +218,6 @@ export async function readCanonicalBase(
     head: {
       page_ref: { ...head.page_ref },
       manifest_ref: head.manifest_ref,
-      outbox_ref: head.outbox_ref,
     },
   };
 }
@@ -553,7 +552,7 @@ export async function proposeWikiFromOwnerEdit(
   await base.authorization.requireCurrent();
   const currentHead = await base.port.readHead(base.page.page_ref.id);
   if (currentHead === null || !sameRef(currentHead.page_ref, base.head.page_ref) ||
-      currentHead.manifest_ref !== base.head.manifest_ref || currentHead.outbox_ref !== base.head.outbox_ref) {
+      currentHead.manifest_ref !== base.head.manifest_ref) {
     fail("WIKI_HEAD_CONFLICT", "base Wiki head changed before owner edit proposal", 409);
   }
   let proposalRef: VersionedRef;

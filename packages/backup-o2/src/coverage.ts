@@ -77,7 +77,6 @@ export const CANONICAL_EXPORTED_TABLES: ReadonlySet<string> = new Set([
   "wiki_publication_authority",
   "wiki_publication_revision",
   "wiki_publication_head",
-  "wiki_publication_outbox",
   "wiki_owner_edit_binding",
   "source_namespace_initialization",
   "raw_ingest_erasure_member",

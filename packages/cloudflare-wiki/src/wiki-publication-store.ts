@@ -210,229 +210,231 @@ export function createD1R2WikiPublicationPort(
       return page.data;
     },
 
-          async commitHeadAndOutbox(input: WikiHeadCommit): Promise<WikiHeadCommitDisposition> {
-        const proposal = active;
-        if (proposal === null || input.proposal_ref.id !== proposal.proposal_id
-            || input.proposal_ref.revision !== proposal.proposal_revision) {
-          fail("WIKI_HEAD_CONFLICT", "Wiki commit is not bound to the active proposal");
-        }
-        const current = await this.readHead(input.page.page_ref.id);
-        if (current !== null && current.page_ref.revision === input.page.page_ref.revision) {
-          return current.manifest_ref === input.manifest_ref ? "EXISTING" : "CONFLICT";
-        }
-        const currentRevision = current?.page_ref.revision ?? null;
-        if (currentRevision !== input.expected_head_revision) return "CONFLICT";
+    async commitHead(input: WikiHeadCommit): Promise<WikiHeadCommitDisposition> {
+      const proposal = active;
+      if (proposal === null || input.proposal_ref.id !== proposal.proposal_id
+          || input.proposal_ref.revision !== proposal.proposal_revision) {
+        fail("WIKI_HEAD_CONFLICT", "Wiki commit is not bound to the active proposal");
+      }
 
-        const encoded = pageJson(input.page);
-        const pageSha = await textDigest(encoded);
-        const outboxRef = `wiki-outbox-${(await textDigest(
-          `${input.page.page_ref.id}:${input.page.page_ref.revision}:${input.manifest_ref}`,
-        )).slice(0, 48)}`;
-        const timestamp = nowIso(context);
-        const revisionValues = [
-          input.page.page_ref.id,
-          input.page.page_ref.revision,
-          proposal.proposal_id,
-          proposal.proposal_revision,
-          input.manifest_ref,
-          pageSha,
-          encoded,
-          input.page.body_object_ref,
-          input.page.body_sha256,
-          input.committer_ref,
-          timestamp,
-        ] as const;
+      const encoded = pageJson(input.page);
+      const pageSha = await textDigest(encoded);
+      // Keep the acknowledged change identity stable across the outbox-table removal.
+      // The identifier is data; no outbox row or delivery lifecycle remains.
+      const changeRef = `wiki:wiki-outbox-${(await textDigest(
+        `${input.page.page_ref.id}:${input.page.page_ref.revision}:${input.manifest_ref}`,
+      )).slice(0, 48)}`;
+      const subjectRef = `wiki-page:${input.page.page_ref.id}`;
+      const timestamp = nowIso(context);
+      const metadataJson = JSON.stringify({ state: "PUBLISHED" });
 
-        const revisionStatement = input.expected_head_revision === null
-          ? database.prepare(
-            "INSERT OR IGNORE INTO wiki_publication_revision " +
-            "(page_id, revision, proposal_id, proposal_revision, manifest_ref, page_sha256, page_json, " +
-            "body_object_ref, body_sha256, committer_ref, created_at) " +
-            "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11 " +
-            "WHERE NOT EXISTS (SELECT 1 FROM wiki_publication_head WHERE page_id = ?1)",
-          ).bind(...revisionValues)
-          : database.prepare(
-            "INSERT OR IGNORE INTO wiki_publication_revision " +
-            "(page_id, revision, proposal_id, proposal_revision, manifest_ref, page_sha256, page_json, " +
-            "body_object_ref, body_sha256, committer_ref, created_at) " +
-            "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11 " +
-            "WHERE EXISTS (SELECT 1 FROM wiki_publication_head WHERE page_id = ?1 AND revision = ?12)",
-          ).bind(...revisionValues, input.expected_head_revision);
-
-        const exactRevision =
-          "EXISTS (SELECT 1 FROM wiki_publication_revision " +
-          "WHERE page_id = ?1 AND revision = ?2 AND manifest_ref = ?3 " +
-          "AND page_sha256 = ?7 AND proposal_id = ?8 AND proposal_revision = ?9)";
-        const headStatement = input.expected_head_revision === null
-          ? database.prepare(
-            "INSERT OR IGNORE INTO wiki_publication_head " +
-            "(page_id, revision, manifest_ref, outbox_ref, updated_at) " +
-            "SELECT ?1,?2,?3,?4,?5 WHERE NOT EXISTS " +
-            "(SELECT 1 FROM wiki_publication_head WHERE page_id = ?1) AND " + exactRevision,
-          ).bind(
-            input.page.page_ref.id,
-            input.page.page_ref.revision,
-            input.manifest_ref,
-            outboxRef,
-            timestamp,
-            null,
-            pageSha,
-            proposal.proposal_id,
-            proposal.proposal_revision,
-          )
-          : database.prepare(
-            "UPDATE wiki_publication_head SET revision = ?2, manifest_ref = ?3, " +
-            "outbox_ref = ?4, updated_at = ?5 WHERE page_id = ?1 AND revision = ?6 AND " + exactRevision,
-          ).bind(
-            input.page.page_ref.id,
-            input.page.page_ref.revision,
-            input.manifest_ref,
-            outboxRef,
-            timestamp,
-            input.expected_head_revision,
-            pageSha,
-            proposal.proposal_id,
-            proposal.proposal_revision,
-          );
-
-        let guardStatement: D1PreparedStatement;
+      const readClosure = async (): Promise<boolean> => {
+        let closure: {
+          revision_manifest_ref: string;
+          revision_page_sha256: string;
+          revision_proposal_id: string;
+          revision_proposal_revision: number;
+          proposal_state: string;
+          change_ref: string;
+          change_kind: string;
+          change_subject_ref: string;
+          change_subject_revision: number;
+          change_payload_ref: string;
+          change_payload_sha256: string;
+          change_principal_ref: string | null;
+        } | null;
         try {
-          if (context.read_owner_publication_guard_witness === undefined) {
-            fail("WIKI_POLICY_DENIED", "Wiki publication currentness witness is unavailable");
-          }
-          const witness = await context.read_owner_publication_guard_witness({ ...input, page_sha256: pageSha });
-          guardStatement = buildWikiOwnerPublicationGuardStatement(database, witness);
-        } catch (cause) {
-          if (cause instanceof WikiPublicationError) throw cause;
-          fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki publication currentness witness is unavailable", true, cause);
-        }
-
-        const statements = [
-          guardStatement,
-          revisionStatement,
-          headStatement,
-          database.prepare(
-            "INSERT OR IGNORE INTO wiki_publication_outbox " +
-            "(outbox_ref, page_id, revision, manifest_ref, payload_sha256, state, created_at) " +
-            "SELECT ?1,?2,?3,?4,?5,'PENDING',?6 WHERE EXISTS " +
-            "(SELECT 1 FROM wiki_publication_head WHERE page_id = ?2 AND revision = ?3 " +
-            "AND manifest_ref = ?4 AND outbox_ref = ?1)",
-          ).bind(
-            outboxRef,
-            input.page.page_ref.id,
-            input.page.page_ref.revision,
-            input.manifest_ref,
-            pageSha,
-            timestamp,
-          ),
-          database.prepare(
-            "UPDATE wiki_publication_proposal SET state = 'PUBLISHED', published_at = ?3 " +
-            "WHERE proposal_id = ?1 AND proposal_revision = ?2 AND state IN ('PROPOSED','PUBLISHED') " +
-            "AND EXISTS (SELECT 1 FROM wiki_publication_head WHERE page_id = ?4 AND revision = ?5 " +
-            "AND manifest_ref = ?6 AND outbox_ref = ?7)",
-          ).bind(
-            proposal.proposal_id,
-            proposal.proposal_revision,
-            timestamp,
-            input.page.page_ref.id,
-            input.page.page_ref.revision,
-            input.manifest_ref,
-            outboxRef,
-          ),
-        ];
-
-        let batchCause: unknown = undefined;
-        try {
-          await database.batch(statements);
-        } catch (cause) {
-          batchCause = cause;
-        }
-
-        const settled = await this.readHead(input.page.page_ref.id);
-        if (settled !== null && settled.page_ref.revision === input.page.page_ref.revision
-            && settled.manifest_ref === input.manifest_ref && settled.outbox_ref === outboxRef) {
-          let closure: {
+          closure = await database.prepare(
+            "SELECT r.manifest_ref AS revision_manifest_ref, r.page_sha256 AS revision_page_sha256, " +
+            "r.proposal_id AS revision_proposal_id, r.proposal_revision AS revision_proposal_revision, " +
+            "p.state AS proposal_state, c.change_ref AS change_ref, c.kind AS change_kind, " +
+            "c.subject_ref AS change_subject_ref, c.subject_revision AS change_subject_revision, " +
+            "c.payload_ref AS change_payload_ref, c.payload_sha256 AS change_payload_sha256, " +
+            "c.visibility_principal_ref AS change_principal_ref " +
+            "FROM wiki_publication_revision r " +
+            "JOIN wiki_publication_proposal p ON p.proposal_id=r.proposal_id " +
+            "AND p.proposal_revision=r.proposal_revision " +
+            "JOIN research_change_feed c ON c.change_ref=?3 " +
+            "WHERE r.page_id=?1 AND r.revision=?2 LIMIT 1",
+          ).bind(input.page.page_ref.id, input.page.page_ref.revision, changeRef).first<{
             revision_manifest_ref: string;
             revision_page_sha256: string;
             revision_proposal_id: string;
             revision_proposal_revision: number;
-            outbox_ref: string;
-            outbox_manifest_ref: string;
-            outbox_payload_sha256: string;
             proposal_state: string;
-          } | null;
-          try {
-            closure = await database.prepare(
-              "SELECT r.manifest_ref AS revision_manifest_ref, r.page_sha256 AS revision_page_sha256, " +
-              "r.proposal_id AS revision_proposal_id, r.proposal_revision AS revision_proposal_revision, " +
-              "o.outbox_ref AS outbox_ref, o.manifest_ref AS outbox_manifest_ref, " +
-              "o.payload_sha256 AS outbox_payload_sha256, p.state AS proposal_state " +
-              "FROM wiki_publication_revision r JOIN wiki_publication_outbox o " +
-              "ON o.page_id = r.page_id AND o.revision = r.revision " +
-              "JOIN wiki_publication_proposal p ON p.proposal_id = r.proposal_id " +
-              "AND p.proposal_revision = r.proposal_revision " +
-              "WHERE r.page_id = ?1 AND r.revision = ?2 LIMIT 1",
-            ).bind(input.page.page_ref.id, input.page.page_ref.revision).first<{
-              revision_manifest_ref: string;
-              revision_page_sha256: string;
-              revision_proposal_id: string;
-              revision_proposal_revision: number;
-              outbox_ref: string;
-              outbox_manifest_ref: string;
-              outbox_payload_sha256: string;
-              proposal_state: string;
-            }>();
-          } catch (cause) {
-            fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki publication closure readback is unavailable", true, cause);
-          }
-          if (closure !== null
-              && closure.revision_manifest_ref === input.manifest_ref
-              && closure.revision_page_sha256 === pageSha
-              && closure.revision_proposal_id === proposal.proposal_id
-              && closure.revision_proposal_revision === proposal.proposal_revision
-              && closure.outbox_ref === outboxRef
-              && closure.outbox_manifest_ref === input.manifest_ref
-              && closure.outbox_payload_sha256 === pageSha
-              && closure.proposal_state === "PUBLISHED") {
-            return "COMMITTED";
-          }
-          fail(
-            "WIKI_SETTLEMENT_UNCERTAIN",
-            "Wiki head exists without exact revision, outbox and proposal closure",
-            true,
-            batchCause,
-          );
+            change_ref: string;
+            change_kind: string;
+            change_subject_ref: string;
+            change_subject_revision: number;
+            change_payload_ref: string;
+            change_payload_sha256: string;
+            change_principal_ref: string | null;
+          }>();
+        } catch (cause) {
+          fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki publication closure readback is unavailable", true, cause);
         }
+        return closure !== null
+          && closure.revision_manifest_ref === input.manifest_ref
+          && closure.revision_page_sha256 === pageSha
+          && closure.revision_proposal_id === proposal.proposal_id
+          && closure.revision_proposal_revision === proposal.proposal_revision
+          && closure.proposal_state === "PUBLISHED"
+          && closure.change_ref === changeRef
+          && closure.change_kind === "WIKI_PUBLISHED"
+          && closure.change_subject_ref === subjectRef
+          && closure.change_subject_revision === input.page.page_ref.revision
+          && closure.change_payload_ref === input.manifest_ref
+          && closure.change_payload_sha256 === pageSha
+          && closure.change_principal_ref === principal;
+      };
 
-        const authorityMoved = current === null
-          ? settled !== null
-          : settled === null
-            || settled.page_ref.revision !== current.page_ref.revision
-            || settled.manifest_ref !== current.manifest_ref
-            || settled.outbox_ref !== current.outbox_ref;
-        if (authorityMoved) return "CONFLICT";
-        if (batchCause !== undefined) {
-          fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki head and outbox transaction is uncertain", true, batchCause);
+      const current = await this.readHead(input.page.page_ref.id);
+      if (current !== null && current.page_ref.revision === input.page.page_ref.revision) {
+        if (current.manifest_ref !== input.manifest_ref) return "CONFLICT";
+        if (await readClosure()) return "EXISTING";
+        fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki head exists without exact revision, proposal and change closure", true);
+      }
+      const currentRevision = current?.page_ref.revision ?? null;
+      if (currentRevision !== input.expected_head_revision) return "CONFLICT";
+
+      const revisionValues = [
+        input.page.page_ref.id,
+        input.page.page_ref.revision,
+        proposal.proposal_id,
+        proposal.proposal_revision,
+        input.manifest_ref,
+        pageSha,
+        encoded,
+        input.page.body_object_ref,
+        input.page.body_sha256,
+        input.committer_ref,
+        timestamp,
+      ] as const;
+
+      const revisionStatement = input.expected_head_revision === null
+        ? database.prepare(
+          "INSERT OR IGNORE INTO wiki_publication_revision " +
+          "(page_id, revision, proposal_id, proposal_revision, manifest_ref, page_sha256, page_json, " +
+          "body_object_ref, body_sha256, committer_ref, created_at) " +
+          "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11 " +
+          "WHERE NOT EXISTS (SELECT 1 FROM wiki_publication_head WHERE page_id=?1)",
+        ).bind(...revisionValues)
+        : database.prepare(
+          "INSERT OR IGNORE INTO wiki_publication_revision " +
+          "(page_id, revision, proposal_id, proposal_revision, manifest_ref, page_sha256, page_json, " +
+          "body_object_ref, body_sha256, committer_ref, created_at) " +
+          "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11 " +
+          "WHERE EXISTS (SELECT 1 FROM wiki_publication_head WHERE page_id=?1 AND revision=?12)",
+        ).bind(...revisionValues, input.expected_head_revision);
+
+      const headStatement = input.expected_head_revision === null
+        ? database.prepare(
+          "INSERT OR IGNORE INTO wiki_publication_head(page_id,revision,manifest_ref,updated_at) " +
+          "SELECT ?1,?2,?3,?4 WHERE NOT EXISTS " +
+          "(SELECT 1 FROM wiki_publication_head WHERE page_id=?1) AND EXISTS " +
+          "(SELECT 1 FROM wiki_publication_revision WHERE page_id=?1 AND revision=?2 " +
+          "AND manifest_ref=?3 AND page_sha256=?5 AND proposal_id=?6 AND proposal_revision=?7)",
+        ).bind(
+          input.page.page_ref.id, input.page.page_ref.revision, input.manifest_ref, timestamp,
+          pageSha, proposal.proposal_id, proposal.proposal_revision,
+        )
+        : database.prepare(
+          "UPDATE wiki_publication_head SET revision=?2,manifest_ref=?3,updated_at=?4 " +
+          "WHERE page_id=?1 AND revision=?5 AND EXISTS " +
+          "(SELECT 1 FROM wiki_publication_revision WHERE page_id=?1 AND revision=?2 " +
+          "AND manifest_ref=?3 AND page_sha256=?6 AND proposal_id=?7 AND proposal_revision=?8)",
+        ).bind(
+          input.page.page_ref.id, input.page.page_ref.revision, input.manifest_ref, timestamp,
+          input.expected_head_revision, pageSha, proposal.proposal_id, proposal.proposal_revision,
+        );
+
+      let guardStatement: D1PreparedStatement;
+      try {
+        if (context.read_owner_publication_guard_witness === undefined) {
+          fail("WIKI_POLICY_DENIED", "Wiki publication currentness witness is unavailable");
         }
-        return "CONFLICT";
-      },
+        const witness = await context.read_owner_publication_guard_witness({ ...input, page_sha256: pageSha });
+        guardStatement = buildWikiOwnerPublicationGuardStatement(database, witness);
+      } catch (cause) {
+        if (cause instanceof WikiPublicationError) throw cause;
+        fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki publication currentness witness is unavailable", true, cause);
+      }
 
-async readHead(pageId): Promise<WikiHeadReadback | null> {
+      const proposalStatement = database.prepare(
+        "UPDATE wiki_publication_proposal SET state='PUBLISHED',published_at=?3 " +
+        "WHERE proposal_id=?1 AND proposal_revision=?2 AND state IN ('PROPOSED','PUBLISHED') " +
+        "AND EXISTS (SELECT 1 FROM wiki_publication_head WHERE page_id=?4 AND revision=?5 AND manifest_ref=?6)",
+      ).bind(
+        proposal.proposal_id, proposal.proposal_revision, timestamp,
+        input.page.page_ref.id, input.page.page_ref.revision, input.manifest_ref,
+      );
+
+      // This statement is the transaction's final closure guard.  It always
+      // attempts one insert; a stale/zero-row head or proposal transition
+      // yields NULL for the NOT NULL change_ref and rolls the whole batch back.
+      const changeStatement = database.prepare(
+        "INSERT INTO research_change_feed(" +
+        "change_ref,kind,subject_ref,subject_revision,payload_ref,payload_sha256," +
+        "visibility_principal_ref,visibility_snapshot_id,visibility_snapshot_revision,occurred_at,metadata_json) " +
+        "VALUES (CASE WHEN EXISTS (SELECT 1 FROM wiki_publication_head h " +
+        "JOIN wiki_publication_revision r ON r.page_id=h.page_id AND r.revision=h.revision " +
+        "JOIN wiki_publication_proposal p ON p.proposal_id=r.proposal_id " +
+        "AND p.proposal_revision=r.proposal_revision " +
+        "WHERE h.page_id=?9 AND h.revision=?3 AND h.manifest_ref=?4 " +
+        "AND r.page_sha256=?5 AND p.principal_ref=?6 AND p.state='PUBLISHED') " +
+        "THEN ?1 ELSE NULL END,'WIKI_PUBLISHED',?2,?3,?4,?5,?6,NULL,NULL,?7,?8)",
+      ).bind(
+        changeRef, subjectRef, input.page.page_ref.revision, input.manifest_ref, pageSha,
+        principal, timestamp, metadataJson, input.page.page_ref.id,
+      );
+
+      let batchCause: unknown = undefined;
+      try {
+        await database.batch([guardStatement, revisionStatement, headStatement, proposalStatement, changeStatement]);
+      } catch (cause) {
+        batchCause = cause;
+      }
+
+      const settled = await this.readHead(input.page.page_ref.id);
+      if (settled !== null && settled.page_ref.revision === input.page.page_ref.revision
+          && settled.manifest_ref === input.manifest_ref) {
+        if (await readClosure()) return "COMMITTED";
+        fail(
+          "WIKI_SETTLEMENT_UNCERTAIN",
+          "Wiki head exists without exact revision, proposal and change closure",
+          true,
+          batchCause,
+        );
+      }
+
+      const authorityMoved = current === null
+        ? settled !== null
+        : settled === null
+          || settled.page_ref.revision !== current.page_ref.revision
+          || settled.manifest_ref !== current.manifest_ref;
+      if (authorityMoved) return "CONFLICT";
+      if (batchCause !== undefined) {
+        fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki head transaction is uncertain", true, batchCause);
+      }
+      return "CONFLICT";
+    },
+
+    async readHead(pageId): Promise<WikiHeadReadback | null> {
       validRef(pageId, "Wiki page id");
       let row: HeadRow | null;
       try {
         row = await database.prepare(
-          "SELECT page_id, revision, manifest_ref, outbox_ref FROM wiki_publication_head WHERE page_id = ?1 LIMIT 1",
+          "SELECT page_id,revision,manifest_ref FROM wiki_publication_head WHERE page_id=?1 LIMIT 1",
         ).bind(pageId).first<HeadRow>();
       } catch (cause) {
         fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki head readback is unavailable", true, cause);
       }
       if (row === null) return null;
       if (row.page_id !== pageId || !Number.isSafeInteger(row.revision) || row.revision < 1
-          || !SAFE_REF.test(row.manifest_ref) || !SAFE_REF.test(row.outbox_ref)) {
+          || !SAFE_REF.test(row.manifest_ref)) {
         fail("WIKI_IMMUTABLE_READBACK_MISMATCH", "Wiki head row is malformed");
       }
-      return { page_ref: { id: row.page_id, revision: row.revision }, manifest_ref: row.manifest_ref, outbox_ref: row.outbox_ref };
+      return { page_ref: { id: row.page_id, revision: row.revision }, manifest_ref: row.manifest_ref };
     },
   };
 }

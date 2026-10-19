@@ -139,18 +139,7 @@ export const DURABLE_CORE_TABLE_SPECS_B: readonly TableSpec[] = [
       "page_id": "text",
       "revision": "int",
       "manifest_ref": "text",
-      "outbox_ref": "text",
       "updated_at": "text"
-  }, required: false },
-  { manifest: "heads", table: "wiki_publication_outbox", order_by: "outbox_ref", columns: {
-      "outbox_ref": "text",
-      "page_id": "text",
-      "revision": "int",
-      "manifest_ref": "text",
-      "payload_sha256": "text",
-      "state": "text",
-      "created_at": "text",
-      "delivered_at": "text-or-null"
   }, required: false },
   { manifest: "heads", table: "wiki_owner_edit_binding", order_by: "proposal_id, proposal_revision", columns: {
       "proposal_id": "text",

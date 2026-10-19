@@ -54,7 +54,6 @@ export interface WikiImmutableRevisionReceipt {
 export interface WikiHeadReadback {
   readonly page_ref: VersionedRef;
   readonly manifest_ref: string;
-  readonly outbox_ref: string;
 }
 
 export interface WikiHeadCommit {
@@ -69,8 +68,8 @@ export interface WikiHeadCommit {
 export type WikiHeadCommitDisposition = "COMMITTED" | "EXISTING" | "CONFLICT";
 
 /**
- * Runtime port. commitHeadAndOutbox MUST atomically insert the immutable revision metadata,
- * compare-and-swap wiki_head, supersede the former row when applicable, and append the outbox intent.
+ * Runtime port. commitHead MUST atomically insert immutable revision metadata,
+ * compare-and-swap the Wiki head, settle the proposal and append the owner-visible change row.
  */
 export interface WikiPublicationPort {
   saveProposal(page: WikiPageRevision, riskClass: DraftRiskClass): Promise<VersionedRef>;
@@ -82,7 +81,7 @@ export interface WikiPublicationPort {
   validateDependencyClosure(page: WikiPageRevision): Promise<boolean>;
   writeImmutableRevision(page: WikiPageRevision): Promise<WikiImmutableRevisionReceipt>;
   readImmutableRevision(pageRef: VersionedRef, manifestRef: string): Promise<WikiPageRevision | null>;
-  commitHeadAndOutbox(input: WikiHeadCommit): Promise<WikiHeadCommitDisposition>;
+  commitHead(input: WikiHeadCommit): Promise<WikiHeadCommitDisposition>;
   readHead(pageId: string): Promise<WikiHeadReadback | null>;
 }
 
@@ -306,7 +305,6 @@ async function reconcileHead(
   catch { return "UNKNOWN"; }
   if (!sameRef(headRef, page.page_ref)
     || !nonEmpty(head.manifest_ref)
-    || !nonEmpty(head.outbox_ref)
     || (manifestRef !== undefined && head.manifest_ref !== manifestRef)) {
     return "DIFFERENT";
   }
@@ -391,7 +389,7 @@ async function publishStored(
   };
   let disposition: WikiHeadCommitDisposition;
   try {
-    disposition = await port.commitHeadAndOutbox(commit);
+    disposition = await port.commitHead(commit);
   } catch (cause) {
     const reconciled = await reconcileHead(port, published, immutable.manifest_ref);
     if (reconciled === "MATCH") return published;
@@ -407,7 +405,7 @@ async function publishStored(
   const reconciled = await reconcileHead(port, published, immutable.manifest_ref);
   if (reconciled === "MATCH") return published;
   if (reconciled === "DIFFERENT") fail("WIKI_HEAD_CONFLICT", "wiki head readback belongs to another revision");
-  fail("WIKI_SETTLEMENT_UNCERTAIN", "wiki publication lacks exact head and outbox readback", true);
+  fail("WIKI_SETTLEMENT_UNCERTAIN", "wiki publication lacks exact revision, head, proposal and change readback", true);
 }
 
 export function createWikiPublisher(port: WikiPublicationPort): WikiPublisher {

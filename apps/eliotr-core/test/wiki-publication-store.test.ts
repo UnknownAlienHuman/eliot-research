@@ -64,22 +64,27 @@ async function admit(value: Awaited<ReturnType<typeof fixture>>) {
 }
 
 describe("D1/R2 Wiki publication storage", () => {
-  it("captures exact body/evidence bytes, requires authority, then commits immutable revision, head and outbox", async () => {
+  it("captures exact body/evidence bytes, requires authority, then commits immutable revision, head and change", async () => {
     const value = await fixture("publish");
     await expect(value.publisher.publish(value.proposalRef, 0, "reviewer-1"))
       .rejects.toMatchObject({ code: "WIKI_PUBLICATION_INCOMPLETE" });
     await admit(value);
     const published = await value.publish();
     expect(published).toMatchObject({ status: "PUBLISHED", reviewer_ref: principal });
-    const head = await db.prepare("SELECT revision, manifest_ref, outbox_ref FROM wiki_publication_head WHERE page_id = ?1")
-      .bind(value.page.page_ref.id).first<{ revision: number; manifest_ref: string; outbox_ref: string }>();
+    const head = await db.prepare("SELECT revision, manifest_ref FROM wiki_publication_head WHERE page_id = ?1")
+      .bind(value.page.page_ref.id).first<{ revision: number; manifest_ref: string }>();
     expect(head?.revision).toBe(1);
     expect(head?.manifest_ref).toContain("wiki/revisions/");
-    expect(head?.outbox_ref).toContain("wiki-outbox-");
     expect(await runtime.WORK_BUCKET.get(head?.manifest_ref ?? "missing")).not.toBeNull();
-    const outbox = await db.prepare("SELECT state FROM wiki_publication_outbox WHERE outbox_ref = ?1")
-      .bind(head?.outbox_ref).first<{ state: string }>();
-    expect(outbox?.state).toBe("PENDING");
+    const change = await db.prepare(
+      "SELECT kind,payload_ref,visibility_principal_ref FROM research_change_feed " +
+      "WHERE subject_ref=?1 AND subject_revision=1 LIMIT 1",
+    ).bind(`wiki-page:${value.page.page_ref.id}`).first<{
+      kind: string; payload_ref: string; visibility_principal_ref: string;
+    }>();
+    expect(change).toEqual({
+      kind: "WIKI_PUBLISHED", payload_ref: head?.manifest_ref, visibility_principal_ref: principal,
+    });
   });
 
   it("replays proposal and publication without duplicate durable effects", async () => {
@@ -92,10 +97,11 @@ describe("D1/R2 Wiki publication storage", () => {
     expect(second).toEqual(first);
     const revisions = await db.prepare("SELECT COUNT(*) AS n FROM wiki_publication_revision WHERE page_id = ?1")
       .bind(value.page.page_ref.id).first<number>("n");
-    const outbox = await db.prepare("SELECT COUNT(*) AS n FROM wiki_publication_outbox WHERE page_id = ?1")
-      .bind(value.page.page_ref.id).first<number>("n");
+    const changes = await db.prepare(
+      "SELECT COUNT(*) AS n FROM research_change_feed WHERE kind='WIKI_PUBLISHED' AND subject_ref=?1",
+    ).bind(`wiki-page:${value.page.page_ref.id}`).first<number>("n");
     expect(revisions).toBe(1);
-    expect(outbox).toBe(1);
+    expect(changes).toBe(1);
   });
 
   it("elects one expected-head CAS winner for two different immutable revisions", async () => {
@@ -137,17 +143,17 @@ describe("D1/R2 Wiki publication storage", () => {
       const revisionCount = await db.prepare(
         "SELECT COUNT(*) AS n FROM wiki_publication_revision WHERE page_id = ?1",
       ).bind(pageId).first<number>("n");
-      const outboxCount = await db.prepare(
-        "SELECT COUNT(*) AS n FROM wiki_publication_outbox WHERE page_id = ?1",
-      ).bind(pageId).first<number>("n");
+      const changeCount = await db.prepare(
+        "SELECT COUNT(*) AS n FROM research_change_feed WHERE kind='WIKI_PUBLISHED' AND subject_ref=?1",
+      ).bind(`wiki-page:${pageId}`).first<number>("n");
       const publishedCount = await db.prepare(
         "SELECT COUNT(*) AS n FROM wiki_publication_proposal WHERE page_id = ?1 AND state = 'PUBLISHED'",
       ).bind(pageId).first<number>("n");
       const proposedCount = await db.prepare(
         "SELECT COUNT(*) AS n FROM wiki_publication_proposal WHERE page_id = ?1 AND state = 'PROPOSED'",
       ).bind(pageId).first<number>("n");
-      expect({ revisionCount, outboxCount, publishedCount, proposedCount }).toEqual({
-        revisionCount: 1, outboxCount: 1, publishedCount: 1, proposedCount: 1,
+      expect({ revisionCount, changeCount, publishedCount, proposedCount }).toEqual({
+        revisionCount: 1, changeCount: 1, publishedCount: 1, proposedCount: 1,
       });
   });
 

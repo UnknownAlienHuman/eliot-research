@@ -426,36 +426,10 @@ export function createResearchChangesService(
       try {
         const result = await runtime.database.prepare(
           "SELECT c.sequence,c.change_ref,c.kind,c.subject_ref,c.subject_revision,c.payload_ref,c.payload_sha256," +
-          "CASE WHEN c.kind='WIKI_PUBLISHED' THEN p.principal_ref ELSE c.visibility_principal_ref END AS visibility_principal_ref," +
-          "CASE WHEN c.kind='WIKI_PUBLISHED' THEN json_extract(r.page_json,'$.scope_snapshot_ref.id') ELSE c.visibility_snapshot_id END AS visibility_snapshot_id," +
-          "CASE WHEN c.kind='WIKI_PUBLISHED' THEN json_extract(r.page_json,'$.scope_snapshot_ref.revision') ELSE c.visibility_snapshot_revision END AS visibility_snapshot_revision," +
-          "c.occurred_at,c.metadata_json " +
-          "FROM research_change_feed c " +
-          "LEFT JOIN wiki_publication_outbox o ON c.kind='WIKI_PUBLISHED' " +
-          "AND c.change_ref='wiki:' || o.outbox_ref " +
-          "LEFT JOIN wiki_publication_revision r ON c.kind='WIKI_PUBLISHED' " +
-          "AND r.page_id=o.page_id AND r.revision=o.revision AND r.manifest_ref=o.manifest_ref " +
-          "AND r.page_sha256=o.payload_sha256 AND json_valid(r.page_json) " +
-          "LEFT JOIN wiki_publication_proposal p ON c.kind='WIKI_PUBLISHED' " +
-          "AND p.proposal_id=r.proposal_id AND p.proposal_revision=r.proposal_revision " +
-          "AND p.page_id=r.page_id AND p.page_revision=r.revision " +
-          "WHERE " + sequenceClause +
-          " AND ((c.kind='WIKI_PUBLISHED' AND p.principal_ref=?2) OR " +
-          "(c.kind<>'WIKI_PUBLISHED' AND (c.visibility_principal_ref IS NULL OR c.visibility_principal_ref=?2)))" +
-          " AND (c.kind<>'WIKI_PUBLISHED' OR (" +
-          "o.outbox_ref IS NOT NULL AND r.page_id IS NOT NULL AND p.proposal_id IS NOT NULL " +
-          "AND c.change_ref='wiki:' || o.outbox_ref " +
-          "AND c.subject_ref IS ('wiki-page:' || r.page_id) " +
-          "AND c.subject_revision IS r.revision " +
-          "AND c.payload_ref IS r.manifest_ref " +
-          "AND c.payload_sha256 IS r.page_sha256 " +
-          "AND json_type(r.page_json,'$.scope_snapshot_ref.id')='text' " +
-          "AND json_type(r.page_json,'$.scope_snapshot_ref.revision')='integer' " +
-          "AND (c.visibility_principal_ref IS NULL OR c.visibility_principal_ref IS p.principal_ref) " +
-          "AND ((c.visibility_snapshot_id IS NULL AND c.visibility_snapshot_revision IS NULL) OR " +
-          "(c.visibility_snapshot_id IS json_extract(r.page_json,'$.scope_snapshot_ref.id') " +
-          "AND c.visibility_snapshot_revision IS json_extract(r.page_json,'$.scope_snapshot_ref.revision')))" +
-          "))" + kindClause + ` ORDER BY c.sequence ${order} LIMIT ?3`,
+          "c.visibility_principal_ref,c.visibility_snapshot_id,c.visibility_snapshot_revision," +
+          "c.occurred_at,c.metadata_json FROM research_change_feed c WHERE " + sequenceClause +
+          " AND (c.visibility_principal_ref IS NULL OR c.visibility_principal_ref=?2)" +
+          kindClause + ` ORDER BY c.sequence ${order} LIMIT ?3`,
         ).bind(boundary, principalRef, batchLimit, ...request.kinds).all<ChangeRow>();
         if (result.success !== true || !Array.isArray(result.results)) {
           fail("RESEARCH_CHANGES_SETTLEMENT_UNCERTAIN", "changes query did not settle", 503, true);
