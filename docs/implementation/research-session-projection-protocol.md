@@ -44,8 +44,8 @@ identity and delete the alias.
 | Paid model attempt and durable retry boundaries | Cloudflare Workflow |
 | Completed public Markdown | immutable public-output object |
 | Saved result | `research_report` / `research_report_revision` and R2 report object |
-| Coarse live phase, last public byte offset and terminal hint | ResearchSession Agent state |
-| Provisional Markdown batches | live Agent WebSocket broadcast only |
+| Coarse live phase and terminal hint | ResearchSession Agent state |
+| Provisional Markdown batches and byte ranges | live Agent WebSocket broadcast only |
 | Browser rendering and local provisional buffer | React/query state |
 | SDK workflow tracking row | Agent↔Workflow operational correlation only |
 
@@ -107,20 +107,18 @@ type ResearchPresentationState = {
   run_kind: "ordinary" | "deep";
   phase: "queued" | "preparing" | "generating" | "saving" |
     "completed" | "cancelled" | "failed";
-  public_offset: number;
   report_ref?: { id: string; revision: number };
   safe_error?: string;
   updated_at: string;
 };
 ```
 
-This state contains no source bodies, prompts, provider frames, reasoning, complete answer, receipts, scope
-snapshots or policy authority. `public_offset` says how much provisional UTF-8 output the run has emitted; it is not
-a persisted transcript cursor.
+This state contains no source bodies, prompts, provider frames, reasoning, complete answer, text offset, receipts,
+scope snapshots or policy authority.
 
-At coarse durable milestones use `step.mergeAgentState()` or `step.updateAgentState()`. These are SDK-provided
-durable Workflow steps and broadcast state to connected clients. Do not persist a state update for every token,
-search result or internal step.
+For every durable phase change, settle and read back the canonical D1 transition first, then call
+`step.mergeAgentState()` or `step.updateAgentState()`. Agent projection may lag D1; it must never lead it. Do not
+persist a state update for every token, search result or internal step.
 
 Use `step.reportComplete()` / `step.reportError()` for the SDK tracking lifecycle after the canonical D1 result or
 failure has settled. `onWorkflowComplete` and `onWorkflowError` may emit a safe terminal presentation hint; they do
@@ -148,7 +146,7 @@ Rules:
 - never forward prompts, reasoning, raw provider events, credentials or tool payloads;
 - bound every frame and the aggregate public output independently;
 - do not await a browser acknowledgement before continuing generation;
-- do not store frames in Agent state, Agent SQLite, D1 or R2;
+- do not store frames or their current offset in Agent state, Agent SQLite, D1 or R2;
 - do not replay every frame after reconnect.
 
 `broadcastToClients()` is non-durable and may repeat when a Workflow attempt retries. The client accepts the exact
@@ -211,7 +209,7 @@ Replace the call-only adapter with one thin connection owner that:
 
 - opens `AgentClient` for `ResearchSession` named by `operation_id`;
 - consumes validated state updates;
-- consumes only the two selected custom frame types (text and terminal/gap hint);
+- consumes only the selected custom text/terminal frame types;
 - closes on owner session disposal;
 - never calls `setState`, never starts a Workflow and never becomes a transcript store.
 
