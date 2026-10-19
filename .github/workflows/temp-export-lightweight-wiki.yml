@@ -17,19 +17,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          sha256sum --check <<'SUMS'
-          f39d915ac8e838a1358f50f7af1ae2fada5328182857fe2af80fbfbd751ddab9  .github/lightweight-wiki-stage2/part00.b64
-          9967724cbc091bfebf22640a81ed970ae47386205cd59e3e1c1c627272ccbff2  .github/lightweight-wiki-stage2/part01.b64
-          8545910aa1c2f538c28da5df1475c098ffc77a649982a9e6c74697408d446aed  .github/lightweight-wiki-stage2/part02.b64
-          a390d90b57d41ada55eb63ee9dff5c3c3b3511d394758815d0da2004764c5eeb  .github/lightweight-wiki-stage2/part03.b64
-          638ce36c287d73f05255c1bc4b91784a5e07522e4bdb83efeac28f99c6c5223b  .github/lightweight-wiki-stage2/part04.b64
-          585de183287e309d256b808bdcf2e70278f18dc37e95a5529251b624a311d79b  .github/lightweight-wiki-stage2/part05.b64
-          8c04b484e783e6844c15c7f88d9e235c4ed25cdbabedbf4031a367d5deacc309  .github/lightweight-wiki-stage2/part06.b64
-          f2530d338c62c2a61e3337a6355c11885b1bfeece18953c093f96ebe3e2f8b54  .github/lightweight-wiki-stage2/part07.b64
-          b10fe14246adade2af0313201e063a9bd2075c7e63cca5522f0088731e0f99a3  .github/lightweight-wiki-stage2/part08.b64
-          d2de75d590a7d8980600143f3ec2bf50105f238220db094bdd98b58869046568  .github/lightweight-wiki-stage2/part09.b64
-          344f0c1a0d480e2b67d9b9ca782dca868c9c079a1301d4e55eafe38dd1f2d2f9  .github/lightweight-wiki-stage2/part10.b64
-          SUMS
+          # GitHub's text Contents API may append a final newline to each base64
+          # transport fragment. base64 ignores that whitespace, so integrity is
+          # checked on the reconstructed binary archive rather than its carriers.
           cat .github/lightweight-wiki-stage2/part*.b64 | base64 --decode > /tmp/lightweight-wiki-files.tar.gz
           printf '%s  %s\n' '6ab4d60019c428edb3f15a8ae7bb81f6eaa0c561ef947314f03d7cdaab7d3047' '/tmp/lightweight-wiki-files.tar.gz' | sha256sum --check
           python - <<'PY'
@@ -47,9 +37,13 @@ jobs:
               'packages/owner-api-client/src/studio/wiki-read.ts',
           }
           with tarfile.open('/tmp/lightweight-wiki-files.tar.gz', 'r:gz') as archive:
-              names = {member.name for member in archive.getmembers() if member.isfile()}
+              members = [member for member in archive.getmembers() if member.isfile()]
+              names = {member.name for member in members}
               if names != expected:
                   raise SystemExit(f'unexpected archive members: {sorted(names ^ expected)}')
+              for member in members:
+                  if member.name.startswith('/') or '..' in member.name.split('/'):
+                      raise SystemExit(f'unsafe archive member: {member.name}')
           PY
           tar -xzf /tmp/lightweight-wiki-files.tar.gz
           rm -rf .github/lightweight-wiki-stage .github/lightweight-wiki-stage2
