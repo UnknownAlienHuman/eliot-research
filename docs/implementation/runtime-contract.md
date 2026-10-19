@@ -189,17 +189,18 @@ Responsibilities remain distinct:
 
 - D1 run/application state: request, authority, budget, cancellation, terminal phase and result ref;
 - Workflow: durable execution and paid-effect retry boundaries;
-- Agent state: bounded phase, public output offset and terminal report hint;
-- Agent broadcasts: provisional public Markdown only;
+- Agent state: bounded phase and terminal report hint;
+- Agent broadcasts: provisional public Markdown with non-durable byte ranges;
 - browser: ephemeral buffer and rendering.
 
-At coarse phase changes, use durable `step.mergeAgentState()` / `step.updateAgentState()`. Use
-`step.reportComplete()` / `step.reportError()` only after canonical D1 settlement. The SDK's tracked workflow row is
-Agent↔Workflow correlation, not product history or result authority.
+Every product phase transition settles in canonical D1 first. Only then may the Workflow call durable
+`step.mergeAgentState()` / `step.updateAgentState()`. Agent projection can lag; it cannot lead or authorize an effect.
+Use `step.reportComplete()` / `step.reportError()` only after canonical D1 settlement. The SDK's tracked workflow row
+is Agent↔Workflow correlation, not product history or result authority.
 
 Public Markdown broadcasts are non-durable and may repeat. Batch them with explicit `from_byte`/`to_byte` ranges.
-The client ignores a fully repeated range and marks a forward/overlap gap. Never persist every frame, replay a token
-journal or derive completion from a broadcast.
+The client ignores a fully repeated range and marks a forward/overlap gap. Keep current offsets out of durable Agent
+state. Never persist every frame, replay a token journal or derive completion from a broadcast.
 
 The owner WebSocket is authenticated by the existing outer Access route and one bounded current-run ownership read.
 Mark it readonly with the SDK hook. Expose no browser callable that starts/cancels/retries paid work: readonly blocks
