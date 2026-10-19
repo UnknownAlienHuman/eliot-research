@@ -6,7 +6,8 @@
 -- Existing WIKI_PUBLISHED rows are first rebound to their owner directly and
 -- detached from historical scope replay. The migration then removes outbox_ref
 -- from the Wiki head and drops the outbox table. Forward-only: a failed guard
--- aborts the D1 migration and leaves the old schema intact.
+-- aborts this migration file, so its temporary trigger removal and visibility
+-- update roll back before any destructive DROP is retained.
 
 -- The immutable-feed trigger is temporarily removed so old Wiki rows can be
 -- converted from scope-derived visibility to direct owner visibility.
