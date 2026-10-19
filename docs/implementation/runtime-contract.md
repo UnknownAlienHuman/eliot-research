@@ -2,7 +2,8 @@
 
 Read only for work at these boundaries. Product purpose lives in the
 [manifesto](../architecture/ELIOT_RESEARCH.md); [the plan](backend-entrypoints.md) selects implementation;
-[source lifecycle](source-lifecycle.md) and [ordinary answer](research-full-answer-v1.md) own their flows.
+[source lifecycle](source-lifecycle.md), [ordinary answer](research-full-answer-v1.md) and
+[research presentation](research-session-projection-protocol.md) own their flows.
 
 ## Authentication and untrusted data
 
@@ -175,17 +176,56 @@ An explicitly selected AI revision uses the normal model-attempt owner, retains 
 only its server label map, then writes `AI_EDIT` with the actual operation. It does not use the current
 `artifact-section-revise` Workflow, REPORT witness renewal, COW child artifact or publication acceptance prerequisite.
 
-## Workflow, Queue and ResearchSession
+## Native Agent–Workflow presentation
 
-One Workflow owns a research run. Queue accelerates existing persisted work. ResearchSession carries authorized
-coarse progress and provisional public text; it owns neither execution nor canonical output.
+One `operation_id` names the canonical D1 run, its ResearchSession Agent and its research Workflow instance.
+Admission persists D1 first, then invokes a server-only method on that Agent. The Agent validates the exact admitted
+row and starts `RESEARCH_WORKFLOW` with `runWorkflow(..., { id: operation_id })`.
+
+`ResearchWorkflow` extends `AgentWorkflow<ResearchSession, ...>`. Move the unrelated `EXHAUSTIVE_QUERY` branch to a
+small direct `ExhaustiveQueryWorkflow`; do not pass fake Agent origin fields or retain mixed `workflow_kind` params.
+
+Responsibilities remain distinct:
+
+- D1 run/application state: request, authority, budget, cancellation, terminal phase and result ref;
+- Workflow: durable execution and paid-effect retry boundaries;
+- Agent state: bounded phase, public output offset and terminal report hint;
+- Agent broadcasts: provisional public Markdown only;
+- browser: ephemeral buffer and rendering.
+
+At coarse phase changes, use durable `step.mergeAgentState()` / `step.updateAgentState()`. Use
+`step.reportComplete()` / `step.reportError()` only after canonical D1 settlement. The SDK's tracked workflow row is
+Agent↔Workflow correlation, not product history or result authority.
+
+Public Markdown broadcasts are non-durable and may repeat. Batch them with explicit `from_byte`/`to_byte` ranges.
+The client ignores a fully repeated range and marks a forward/overlap gap. Never persist every frame, replay a token
+journal or derive completion from a broadcast.
+
+The owner WebSocket is authenticated by the existing outer Access route and one bounded current-run ownership read.
+Mark it readonly with the SDK hook. Expose no browser callable that starts/cancels/retries paid work: readonly blocks
+state writes but cannot undo side effects performed before a callable writes state. Close connections at Access
+expiry; reconnect repeats Access and D1 checks.
+
+Do not replay investigation scope, historical source authority, handler generation or original credential/deployment
+proofs merely to display progress. Actual source/citation/report reads enforce their own current deletion and
+access/disclosure rules.
+
+Remove the custom session bootstrap row, stage/final-receipt snapshot reconstruction, `connection.send` monkey-patch,
+protocol suppression and call-only client wrapper after old runs settle. Use installed AgentClient state sync,
+message events and reconnect. Do not use AIChatAgent/resumable chat storage; no transcript is selected.
+
+## Queue and cancellation
+
+Queue accelerates existing persisted work; it does not own a run. The authenticated D1 cancellation mutation remains
+canonical. After that decision, the server may terminate the Agent-tracked Workflow. Workflow/Agent callbacks update
+presentation only and cannot reverse or mint cancellation.
 
 Ordinary execution chooses its path before old handler/checkpoint assembly. Explicit deep research uses one bounded
-search/read/finish loop. Both save through the same research-report writer. Old executors serve only already-admitted
-runs while they settle; completed research reports are read directly.
+search/read/finish loop. Both use the same Agent-tracked Workflow bridge and research-report writer. Old executors
+serve only already-admitted runs while they settle; completed research reports are read directly.
 
-A slow/disconnected subscriber cannot block generation or save. Do not persist every token/event. Reconnect reads
-canonical status/result and may resume new provisional deltas with an explicit gap.
+A slow/disconnected subscriber cannot block generation or save. Reconnect reads Agent presentation state and then
+the canonical D1 status/result. It may receive only new provisional ranges with an explicit gap.
 
 ## Run status and owner lists
 
@@ -196,8 +236,8 @@ Status describes product behavior, not internal graph topology:
 - safe failure/cancellation;
 - terminal result availability and research-report reference.
 
-Do not expose `next_stage_index`, stage 18, handler generation or provider frames as the durable contract. A temporary
-old-run adapter is removed after real old runs settle.
+Do not expose `next_stage_index`, stage 18, handler generation, Agent workflow tracking rows or provider frames as
+the durable contract. A temporary old-run adapter is removed after real old runs settle.
 
 Owner lists read D1 metadata only: run ID, time, question, recorded state and research-report ref/title/summary.
 Report bodies and citation bytes load on demand. Project attribution is captured at admission; do not infer it from
@@ -263,5 +303,7 @@ the actual producer, stored locator and readers in the changed path.
 Cloudflare references checked 2026-10-18:
 [R2 conditional writes and consistency](https://developers.cloudflare.com/r2/reference/consistency/),
 [R2 Workers API](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/),
-[D1 batch transactions](https://developers.cloudflare.com/d1/worker-api/d1-database/) and
-[Workflow retry rules](https://developers.cloudflare.com/workflows/build/rules-of-workflows/).
+[D1 batch transactions](https://developers.cloudflare.com/d1/worker-api/d1-database/),
+[Workflow retry rules](https://developers.cloudflare.com/workflows/build/rules-of-workflows/),
+[Agents with Workflows](https://developers.cloudflare.com/agents/runtime/execution/run-workflows/) and
+[readonly Agent connections](https://developers.cloudflare.com/agents/runtime/lifecycle/readonly-connections/).
