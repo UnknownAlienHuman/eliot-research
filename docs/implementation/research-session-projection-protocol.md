@@ -25,7 +25,7 @@ presentation projection. D1/R2 remain canonical. Browser disconnect never cancel
 
 | Current source | Observed behavior | Replacement |
 |---|---|---|
-| `research-run-service.ts` | Starts `env.RESEARCH_WORKFLOW.create()` directly. | Persist admission, then ask the run's ResearchSession to start the Workflow with deterministic identity and native tracking. |
+| `research-run-service.ts` | Starts `env.RESEARCH_WORKFLOW.create()` directly. | Persist admission, then ask the run's ResearchSession to start/adopt the deterministic Workflow through `runWorkflow()`. |
 | `research-workflow.ts` | Plain `WorkflowEntrypoint`; also hosts unrelated `EXHAUSTIVE_QUERY`. | Research runs use `AgentWorkflow`; exhaustive query moves to its own direct Workflow class/binding. |
 | `research-session-bootstrap.ts` | Rebuilds a session record from D1 stage-1 manifest, handler generation and investigation identity before every Agent route. | One Agent is named by `operation_id`; on connect it reads one bounded canonical run summary when presentation state needs hydration. |
 | `research-session-http-projection.ts` | Duplicates run state in DO storage and reconstructs stage/checkpoint/final-receipt authority. | Remove. Current D1 run phase/result is the reconnect truth. |
@@ -57,9 +57,12 @@ terminal retention; D1 history remains.
 
 Use `operation_id` for all three identities:
 
-- D1 run ID;
+- D1 `research_workflow_run.operation_id`;
 - ResearchSession Agent name;
 - Workflow instance ID.
+
+The existing D1 row is already the binding. Do not add `workflow_instance_id`, a dispatch receipt or another mapping
+table merely to restate `operation_id`.
 
 Validate at ingress that the admitted ID satisfies both Eliot's identifier contract and Cloudflare Workflow instance
 ID requirements. Current UUID-shaped run IDs already begin with an allowed alphanumeric character. Do not silently
@@ -78,7 +81,7 @@ Admission remains an authenticated HTTP operation:
 5. it reconciles the deterministic Workflow identity as described below;
 6. only when no instance exists, call
    `runWorkflow("RESEARCH_WORKFLOW", params, { id: operation_id, metadata: { operation_id }, agentBinding: "RESEARCH_SESSION" })`;
-7. bind/read back the same Workflow ID in canonical D1 before returning success.
+7. read back the same D1 row and observed Workflow status before returning the existing `operation_id`.
 
 ### Close the SDK create-before-track gap
 
@@ -86,15 +89,15 @@ In exact `agents 0.27.0`, `runWorkflow()` calls `workflow.create()` first and in
 A Worker/DO failure or lost acknowledgement can therefore leave a real running Workflow with no SDK tracking row.
 Treat the three observations separately:
 
-1. `getWorkflow(operation_id)` returns the exact tracked `RESEARCH_WORKFLOW`: adopt it and compare/bind D1.
+1. `getWorkflow(operation_id)` returns the exact tracked `RESEARCH_WORKFLOW`: adopt it and compare the admitted D1 row.
 2. Tracking is absent, but `getWorkflowStatus("RESEARCH_WORKFLOW", operation_id)` observes a real instance: adopt
-   that instance and compare/bind D1. Do not call `runWorkflow()` again merely to recreate tracking.
-3. Tracking and direct binding observation both establish absence, and D1 is not already bound: call
-   `runWorkflow()` once with the deterministic ID, then compare/bind D1.
+   that instance and compare the admitted D1 row. Do not call `runWorkflow()` again merely to recreate tracking.
+3. Tracking and direct binding observation both establish absence, while the exact admitted D1 row remains current:
+   call `runWorkflow()` once with the deterministic ID, then re-observe the same ID.
 
 A status observation failure is `UNKNOWN`, not absence and not permission to create. A tracking row naming another
-workflow, a D1 binding naming another instance, or incompatible admitted params is an identity conflict. The D1 bind
-uses expected-unbound-or-exact semantics; a zero-row result is read back and compared, never treated as success.
+workflow or incompatible admitted params is an identity conflict. If concurrent/retried `runWorkflow()` reports
+“already exists” or “already tracked”, re-observe the deterministic ID; never allocate a replacement ID.
 
 SDK tracking may remain absent in the rare create-before-track recovery case. That is acceptable because canonical
 D1 owns product state and the Workflow params already contain the Agent origin. Do not add another tracking table or
