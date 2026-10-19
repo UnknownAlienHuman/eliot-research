@@ -1,0 +1,203 @@
++        "WHERE proposal_id=?1 AND proposal_revision=?2 AND state IN ('PROPOSED','PUBLISHED') " +
++        "AND EXISTS (SELECT 1 FROM wiki_publication_head WHERE page_id=?4 AND revision=?5 AND manifest_ref=?6)",
++      ).bind(
++        proposal.proposal_id, proposal.proposal_revision, timestamp,
++        input.page.page_ref.id, input.page.page_ref.revision, input.manifest_ref,
++      );
++
++      // This statement is the transaction's final closure guard.  It always
++      // attempts one insert; a stale/zero-row head or proposal transition
++      // yields NULL for the NOT NULL change_ref and rolls the whole batch back.
++      const changeStatement = database.prepare(
++        "INSERT INTO research_change_feed(" +
++        "change_ref,kind,subject_ref,subject_revision,payload_ref,payload_sha256," +
++        "visibility_principal_ref,visibility_snapshot_id,visibility_snapshot_revision,occurred_at,metadata_json) " +
++        "VALUES (CASE WHEN EXISTS (SELECT 1 FROM wiki_publication_head h " +
++        "JOIN wiki_publication_revision r ON r.page_id=h.page_id AND r.revision=h.revision " +
++        "JOIN wiki_publication_proposal p ON p.proposal_id=r.proposal_id " +
++        "AND p.proposal_revision=r.proposal_revision " +
++        "WHERE h.page_id=?9 AND h.revision=?3 AND h.manifest_ref=?4 " +
++        "AND r.page_sha256=?5 AND p.principal_ref=?6 AND p.state='PUBLISHED') " +
++        "THEN ?1 ELSE NULL END,'WIKI_PUBLISHED',?2,?3,?4,?5,?6,NULL,NULL,?7,?8)",
++      ).bind(
++        changeRef, subjectRef, input.page.page_ref.revision, input.manifest_ref, pageSha,
++        principal, timestamp, metadataJson, input.page.page_ref.id,
++      );
++
++      let batchCause: unknown = undefined;
++      try {
++        await database.batch([guardStatement, revisionStatement, headStatement, proposalStatement, changeStatement]);
++      } catch (cause) {
++        batchCause = cause;
++      }
++
++      const settled = await this.readHead(input.page.page_ref.id);
++      if (settled !== null && settled.page_ref.revision === input.page.page_ref.revision
++          && settled.manifest_ref === input.manifest_ref) {
++        if (await readClosure()) return "COMMITTED";
++        fail(
++          "WIKI_SETTLEMENT_UNCERTAIN",
++          "Wiki head exists without exact revision, proposal and change closure",
++          true,
++          batchCause,
++        );
++      }
++
++      const authorityMoved = current === null
++        ? settled !== null
++        : settled === null
++          || settled.page_ref.revision !== current.page_ref.revision
++          || settled.manifest_ref !== current.manifest_ref;
++      if (authorityMoved) return "CONFLICT";
++      if (batchCause !== undefined) {
++        fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki head transaction is uncertain", true, batchCause);
++      }
++      return "CONFLICT";
++    },
+ 
+-async readHead(pageId): Promise<WikiHeadReadback | null> {
++    async readHead(pageId): Promise<WikiHeadReadback | null> {
+       validRef(pageId, "Wiki page id");
+       let row: HeadRow | null;
+       try {
+         row = await database.prepare(
+-          "SELECT page_id, revision, manifest_ref, outbox_ref FROM wiki_publication_head WHERE page_id = ?1 LIMIT 1",
++          "SELECT page_id,revision,manifest_ref FROM wiki_publication_head WHERE page_id=?1 LIMIT 1",
+         ).bind(pageId).first<HeadRow>();
+       } catch (cause) {
+         fail("WIKI_SETTLEMENT_UNCERTAIN", "Wiki head readback is unavailable", true, cause);
+       }
+       if (row === null) return null;
+       if (row.page_id !== pageId || !Number.isSafeInteger(row.revision) || row.revision < 1
+-          || !SAFE_REF.test(row.manifest_ref) || !SAFE_REF.test(row.outbox_ref)) {
++          || !SAFE_REF.test(row.manifest_ref)) {
+         fail("WIKI_IMMUTABLE_READBACK_MISMATCH", "Wiki head row is malformed");
+       }
+-      return { page_ref: { id: row.page_id, revision: row.revision }, manifest_ref: row.manifest_ref, outbox_ref: row.outbox_ref };
++      return { page_ref: { id: row.page_id, revision: row.revision }, manifest_ref: row.manifest_ref };
+     },
+   };
+ }
+diff --git a/packages/contracts/src/core-table-specs-b.ts b/packages/contracts/src/core-table-specs-b.ts
+index 5f65ef91c2470b72c59ec9599ee130c61e95fcd4..c346cdecaf09fdacb86b181012ea80ed5920785e 100644
+--- a/packages/contracts/src/core-table-specs-b.ts
++++ b/packages/contracts/src/core-table-specs-b.ts
+@@ -139,19 +139,8 @@ export const DURABLE_CORE_TABLE_SPECS_B: readonly TableSpec[] = [
+       "page_id": "text",
+       "revision": "int",
+       "manifest_ref": "text",
+-      "outbox_ref": "text",
+       "updated_at": "text"
+   }, required: false },
+-  { manifest: "heads", table: "wiki_publication_outbox", order_by: "outbox_ref", columns: {
+-      "outbox_ref": "text",
+-      "page_id": "text",
+-      "revision": "int",
+-      "manifest_ref": "text",
+-      "payload_sha256": "text",
+-      "state": "text",
+-      "created_at": "text",
+-      "delivered_at": "text-or-null"
+-  }, required: false },
+   { manifest: "heads", table: "wiki_owner_edit_binding", order_by: "proposal_id, proposal_revision", columns: {
+       "proposal_id": "text",
+       "proposal_revision": "int",
+diff --git a/packages/research/src/wiki.test.ts b/packages/research/src/wiki.test.ts
+index afffd77ec0eae010dd568c55692d5e121fd2daaa..a7cd95ddb6e459bfd81022d2785c787b8c1ff0b9 100644
+--- a/packages/research/src/wiki.test.ts
++++ b/packages/research/src/wiki.test.ts
+@@ -102,17 +102,15 @@ class MemoryWikiPort implements WikiPublicationPort {
+     return this.corruptImmutableReadback ? { ...clone(value), title: `${value.title} changed` } : clone(value);
+   }
+ 
+-  public async commitHeadAndOutbox(input: WikiHeadCommit): Promise<WikiHeadCommitDisposition> {
++  public async commitHead(input: WikiHeadCommit): Promise<WikiHeadCommitDisposition> {
+     this.events.push(`d1:commit:${input.manifest_ref}`);
+     const current = this.heads.get(input.page.page_ref.id);
+     const currentRevision = current?.page_ref.revision ?? null;
+     if (currentRevision !== input.expected_head_revision) return "CONFLICT";
+-    const outboxRef = `outbox-${input.manifest_ref}`;
+     this.commits.push(clone(input));
+     this.heads.set(input.page.page_ref.id, {
+       page_ref: clone(input.page.page_ref),
+       manifest_ref: input.manifest_ref,
+-      outbox_ref: outboxRef,
+     });
+     if (this.loseCommitAcknowledgement) throw new Error("lost commit acknowledgement");
+     return "COMMITTED";
+@@ -138,7 +136,7 @@ const autoAuthority: WikiAutoPromotionReceipt = {
+ };
+ 
+ describe("Wiki publisher", () => {
+-  it("publishes only after exact immutable readback and atomically records the head plus outbox", async () => {
++  it("publishes only after exact immutable readback and atomically records the head plus change", async () => {
+     const port = new MemoryWikiPort();
+     const publisher = createWikiPublisher(port);
+     const proposalRef = await publisher.propose(page(), "D1_LOW_RISK_ADDITIVE");
+@@ -202,7 +200,7 @@ describe("Wiki publisher", () => {
+     expect(port.commits).toHaveLength(0);
+   });
+ 
+-  it("reconciles a lost D1 acknowledgement through exact head, outbox and immutable readback", async () => {
++  it("reconciles a lost D1 acknowledgement through exact head, change and immutable readback", async () => {
+     const port = new MemoryWikiPort();
+     port.loseCommitAcknowledgement = true;
+     const publisher = createWikiPublisher(port);
+diff --git a/packages/research/src/wiki.ts b/packages/research/src/wiki.ts
+index fd114aad1aa404cd33831615b47baf514c130e4f..7ace1ad01f17766d22a39fe82be046a50db498f4 100644
+--- a/packages/research/src/wiki.ts
++++ b/packages/research/src/wiki.ts
+@@ -54,7 +54,6 @@ export interface WikiImmutableRevisionReceipt {
+ export interface WikiHeadReadback {
+   readonly page_ref: VersionedRef;
+   readonly manifest_ref: string;
+-  readonly outbox_ref: string;
+ }
+ 
+ export interface WikiHeadCommit {
+@@ -69,8 +68,8 @@ export interface WikiHeadCommit {
+ export type WikiHeadCommitDisposition = "COMMITTED" | "EXISTING" | "CONFLICT";
+ 
+ /**
+- * Runtime port. commitHeadAndOutbox MUST atomically insert the immutable revision metadata,
+- * compare-and-swap wiki_head, supersede the former row when applicable, and append the outbox intent.
++ * Runtime port. commitHead MUST atomically insert immutable revision metadata,
++ * compare-and-swap the Wiki head, settle the proposal and append the owner-visible change row.
+  */
+ export interface WikiPublicationPort {
+   saveProposal(page: WikiPageRevision, riskClass: DraftRiskClass): Promise<VersionedRef>;
+@@ -82,7 +81,7 @@ export interface WikiPublicationPort {
+   validateDependencyClosure(page: WikiPageRevision): Promise<boolean>;
+   writeImmutableRevision(page: WikiPageRevision): Promise<WikiImmutableRevisionReceipt>;
+   readImmutableRevision(pageRef: VersionedRef, manifestRef: string): Promise<WikiPageRevision | null>;
+-  commitHeadAndOutbox(input: WikiHeadCommit): Promise<WikiHeadCommitDisposition>;
++  commitHead(input: WikiHeadCommit): Promise<WikiHeadCommitDisposition>;
+   readHead(pageId: string): Promise<WikiHeadReadback | null>;
+ }
+ 
+@@ -306,7 +305,6 @@ async function reconcileHead(
+   catch { return "UNKNOWN"; }
+   if (!sameRef(headRef, page.page_ref)
+     || !nonEmpty(head.manifest_ref)
+-    || !nonEmpty(head.outbox_ref)
+     || (manifestRef !== undefined && head.manifest_ref !== manifestRef)) {
+     return "DIFFERENT";
+   }
+@@ -391,7 +389,7 @@ async function publishStored(
+   };
+   let disposition: WikiHeadCommitDisposition;
+   try {
+-    disposition = await port.commitHeadAndOutbox(commit);
++    disposition = await port.commitHead(commit);
+   } catch (cause) {
+     const reconciled = await reconcileHead(port, published, immutable.manifest_ref);
+     if (reconciled === "MATCH") return published;
+@@ -407,7 +405,7 @@ async function publishStored(
+   const reconciled = await reconcileHead(port, published, immutable.manifest_ref);
+   if (reconciled === "MATCH") return published;
+   if (reconciled === "DIFFERENT") fail("WIKI_HEAD_CONFLICT", "wiki head readback belongs to another revision");
+-  fail("WIKI_SETTLEMENT_UNCERTAIN", "wiki publication lacks exact head and outbox readback", true);
++  fail("WIKI_SETTLEMENT_UNCERTAIN", "wiki publication lacks exact revision, head, proposal and change readback", true);
+ }
+ 
+ export function createWikiPublisher(port: WikiPublicationPort): WikiPublisher {
