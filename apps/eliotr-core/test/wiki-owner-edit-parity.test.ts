@@ -247,7 +247,7 @@ describe("S25 invalid inputs and safe readback", () => {
     }
   });
 
-  it("rejects corrupted stored evidence without creating a review, head or outbox", async () => {
+  it("rejects corrupted stored evidence without creating a review, head or change", async () => {
     const value = await base("corrupt");
     const input = edit(value, "original note");
     const ctx = context("edit-corrupt");
