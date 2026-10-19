@@ -1,6 +1,6 @@
 # Code and responsibility map
 
-Checked against source baseline `3dd3a028`. This locates current owners and selected replacement destinations.
+Checked against source baseline `19cf0b9d`. This locates current owners and selected replacement destinations.
 It is not a package blueprint and does not require preserving every named layer.
 [The plan](backend-entrypoints.md) selects work.
 
@@ -16,7 +16,8 @@ It is not a package blueprint and does not require preserving every named layer.
 | Public output | Completed model Markdown retained before report saving |
 | Research report | Revisioned saved Markdown plus compact citations; not an execution manifest, proof bundle or generic content type |
 | Report revision origin | `GENERATED`, `MANUAL_EDIT` or `AI_EDIT`; only generated/AI revisions have an originating operation |
-| Wiki / Inbox | Reused content and proposed changes; they may share small revision helpers, not the old artifact proof graph |
+| Wiki page / revision | Owner-selected reusable knowledge with one current head and immutable full-body revisions |
+| Inbox proposal | Pending owner decision over one immutable proposed Wiki payload; not another page head or proof authority |
 | ResearchSession | Authorized progress/provisional-text projection, not executor or result store |
 | Connected agent / task | External worker and task/result, not a source-ownership federation protocol |
 
@@ -33,51 +34,51 @@ It is not a package blueprint and does not require preserving every named layer.
 | Durable dispatch | `apps/eliotr-core/src/research-workflow.ts` | One native Workflow; choose ordinary/deep before old application/handler assembly |
 | Ordinary context | `packages/policy/src/context-compiler.ts` | Extract direct packing over typed admitted blocks; delete manifests/receipts/hashing from the packing loop |
 | Ordinary model stream | `packages/cloudflare-model-control/src/research-model-prompt.ts`; `packages/cloudflare-model-transport/src/model-gateway-{http-request,execution,response}.ts` | Stream selected provider API, normalize public deltas/final usage and retain public Markdown once |
-| Current report materialization | `packages/cloudflare-research/src/research-artifact-draft.ts`, `research-materialize-result.ts`; `packages/cloudflare-artifacts/src/artifact-draft*.ts`; migrations `0032`, `0041` | Replace, do not wrap. Add `packages/cloudflare-artifacts/src/research-report-store.ts` and `packages/contracts/src/research-report.ts` inside existing packages |
-| Current report contract | `packages/contracts/src/publication.ts` | Remove report dependence on ArtifactSpec, section contracts, EvidenceFreeze, dependency manifests and verification receipts |
-| Current report storage | `artifact_revision`, `artifact_draft_reservation/head/binding/object`, `research_report_admission` | Convert retained reports to `research_report` + `research_report_revision`; one R2 object contains Markdown/citations; one expected-head D1 commit |
-| Revision origin binding | Current run/materialization lineage and report edit routes | `origin_kind` is closed; `origin_operation_id` is required/unique for `GENERATED` and `AI_EDIT`, absent for `MANUAL_EDIT`. Manual edits never mint a fake run |
-| Current report acceptance | `apps/eliotr-web/src/app/ArtifactActions.tsx`; owner client `studio/artifact.ts`; `artifact-publication*.ts`; migration `0098_artifact_publication_authority.sql` | Remove owner-acceptance decisions, verification/currentness receipts, publication head/mutation guard and `artifact.accepted` outbox. A saved report is usable; explicit Wiki/Inbox reuse is separate |
-| Current report revision | Core `artifact-section-revise.ts`; `artifact-report-admission.ts`; cloudflare-research/artifacts COW modules and revise Workflow tables | Replace section COW/model/proof workflow with a full report revision. AI-assisted revision, when selected, retains Markdown through the normal model owner then calls the same report writer |
-| Current report read | `artifact-draft-read-service.ts`, `artifact-draft-reauthorization.ts`, `artifact-draft-read-authority.ts`; owner client `evidence/report/manifest.ts` | Direct research-report authorization/readback; optional freshness and citation opening are separate operations; remove v1/v2/v3 reauthorization DTOs |
-| Backup inventory | `packages/backup-o2/src/coverage.ts`; `packages/contracts/src/core-table-specs-*.ts`; coherent-cut/restore fixtures | If this backup path remains selected, export `research_report`/`research_report_revision` and their exact R2 object locators. Remove old artifact/admission/publication/COW entries; inventory tests do not justify keeping dead schema |
-| Erasure/retention | `packages/cloudflare-erasure/src/`; `erasure_target`, `erasure_hold`, `purge_ledger`; artifact-publication erasure invalidation | Report deletion hides the report immediately. Physical object removal uses the existing exact target/hold/purge lifecycle after no live revision references the key. Remove publication-head invalidation; do not build a report-specific erasure engine |
+| Current report materialization | `packages/cloudflare-research/src/research-artifact-draft.ts`, `research-materialize-result.ts`; `packages/cloudflare-artifacts/src/artifact-draft*.ts`; migrations `0032`, `0041` | Replace, do not wrap. Add `packages/cloudflare-artifacts/src/research-report-store.ts` and `packages/contracts/src/research-report.ts` |
+| Current report storage/read/edit | artifact/publication/COW modules, report clients and React report actions | Convert to `research_report` + `research_report_revision`, one R2 object and expected-head full revisions; remove proof/acceptance/COW cohorts |
+| Report backup/erasure | backup table specs/coverage; `cloudflare-erasure` | Move exact report rows/object locators; update inventory instead of retaining dead tables |
 | Recent runs/reports | `packages/cloudflare-research-runtime/src/research-run-list.ts`; client history modules | Stored run/report summaries and continuation; no Workflow/checkpoint/admission reconstruction for a list |
-| Deep research | `packages/cloudflare-research-runtime/src/`; existing Workflow/search/read/model/save owners | Add one bounded search/read/finish loop and use the same research-report writer; delete old branch/stage graph after drain |
+| Deep research | `packages/cloudflare-research-runtime/src/`; existing Workflow/search/read/model/save owners | Add one bounded search/read/finish loop and use the compact report writer; delete old branch/stage graph after drain |
 | Progress/live text | `apps/eliotr-core/src/research-session.ts`; owner client `research/session-projection/` | One bounded typed presentation channel; no transcript or second executor |
-| Run status | `packages/cloudflare-research-runtime/src/research-session-status-application.ts`; `packages/interfaces/src/semantic-api.ts`; owner-client decoder | Behavior phase/result, not stage 18 or handler-generation membership |
-| Wiki | `packages/cloudflare-wiki/src/` | Keep only expected-revision body/provenance/head behavior; remove publication witnesses, proof epochs and in-place text mutation when its callers move |
-| External agents | `packages/cloudflare-computer-agent/src/`; Core route composition | Existing connection/task/result lifecycle and selected MCP interface |
+| Run status | `research-session-status-application.ts`; `packages/interfaces/src/semantic-api.ts`; owner-client decoder | Behavior phase/result, not stage 18 or handler-generation membership |
+| Wiki/Inbox UI | `apps/eliotr-web/src/app/StudioPanel.tsx`; `query/studio.ts`; Inbox selection helpers | Separate pending Inbox proposals from current Wiki pages; keyset pagination and read-based mutation reconciliation |
+| Wiki owner client | `packages/owner-api-client/src/studio/wiki-{create,read,publish,types}.ts`; PWA Wiki clients | One current proposal/page client; remove duplicate protocol decoders and deployment-history families with cutover |
+| Wiki proposal from report | `packages/cloudflare-wiki/src/wiki-proposal-from-research-run.ts` | Read one compact report object and copy selected Markdown/citations; remove historical Workflow/artifact/coverage replay |
+| Wiki proposal list/read | `packages/cloudflare-wiki/src/wiki-service.ts`; `wiki-proposal-reauthorization.ts` | Owner-scoped D1 summaries + exact object read; no per-row scope freeze/fingerprint or freshness gate |
+| Wiki acceptance | `wiki-service.ts`; `wiki-review-admission.ts`; `wiki-owner-edit-review-admission.ts` | Owner decision + expected-head transaction. Remove claim-audit/coverage/dependency review receipts and guard witness |
+| Wiki storage | `wiki-publication-store*.ts`; `packages/research/src/wiki.ts`; migrations `0042`, `0062`, `0063` | Replace with `wiki_page`, `wiki_page_revision`, `wiki_inbox_proposal`; one object, one head, direct change-feed insert |
+| Wiki direct edit | `wiki-owner-edit-proposal.ts`; owner edit binding/review path | Direct full-body expected-head page revision; no edit proposal/evidence map/review receipt |
+| Legacy Wiki schema | `wiki_revision/wiki_head` in migration `0001`; backup/erasure consumers | Inventory/convert real rows with publication schema into the one new Wiki state, then remove both predecessors |
+| Wiki change feed | `wiki_publication_outbox`; trigger to `research_change_feed`; changes reader | Insert change event directly in page-head transaction; remove fake outbox and outbox ref from head |
+| External agents | `packages/cloudflare-computer-agent/src/`; Core route composition | Existing connection/task/result lifecycle and selected MCP interface; no implicit Wiki authority |
 
-The target report files above are concrete replacement locations inside existing packages, not a new content
-platform. Extract a shared revision helper only after research reports and Wiki both use the same small operation and
-the helper removes code.
+The target report and Wiki files are concrete locations inside existing packages, not a new content platform.
+Extract a shared immutable-object/expected-head helper only after both current writers use the same small operation
+and the helper removes code.
 
-The base artifact schema includes a stored `PUBLISHED` status. Separately, the publication subsystem starts from a
-DRAFT and synthesizes public `VERIFIED/ACCEPTED` dispositions from its own receipt and publication head. These are two
-status systems, not a mapping that must be preserved. The research-report DTO records origin and revision, not a
-truth certificate.
+The old report acceptance status and Wiki publication evidence status are not truth certificates to preserve.
+Reports record origin and citations; Wiki records owner-selected revisions and proposal decisions.
 
 Names in current source describe the old implementation, not permanent product concepts. A replacement is complete
 only when callers move and the superseded exports, tests, packages and schema are removed.
 [Source lifecycle](source-lifecycle.md), [ordinary answer](research-full-answer-v1.md),
-[deep research](deep-research.md) and [owner reads](owner-read-paths.md) give the exact cuts.
+[deep research](deep-research.md), [Wiki and Inbox](wiki-inbox.md) and
+[owner reads](owner-read-paths.md) give the exact cuts.
 
 ## State and dependency direction
 
-D1 Core owns source/project metadata, current run/task state, mutable heads and saved-result references.
-R2 owns source/readable/public-output/research-report bytes. AI Search and retained lexical data are derived views.
-Workflow owns durable execution; ResearchSession and browser query state are projections.
+D1 Core owns source/project metadata, current run/task state, report/Wiki heads, Inbox decisions and saved-result
+references. R2 owns source/readable/public-output/report/Wiki bytes. AI Search and retained lexical data are derived
+views. Workflow owns durable research execution; ResearchSession and browser query state are projections.
 
-For a research report, R2 immutable object creation precedes one D1 revision/head transaction. Generated/AI-edited
-revisions also attach the exact result to their originating operation in that transaction; manual edits do not.
-No D1 transaction contains network/R2/model work, and no report receipt/outbox is required when the same Worker is
-committing its own result. A queue outbox remains only for a real asynchronous delivery consumer. Repository search
-currently finds `artifact.accepted` only at its producer, not at a consuming integration.
+For reports, Wiki proposals and Wiki revisions, conditional R2 object creation precedes one short D1 transaction.
+No D1 transaction contains network/R2/model work. No receipt/outbox is required for an internal same-Worker save.
+A Queue/outbox remains only for a real asynchronous delivery consumer. Wiki acceptance writes its real
+`research_change_feed` row directly in the same D1 transaction.
 
-Backup and erasure consumers move with the schema. An exhaustive table manifest or closure test is a caller to
-update, not a compatibility veto. Orphan cleanup only removes an old object after a grace period and a current D1
-check proves no `research_report_revision` references its key; it never bypasses an erasure hold.
+Backup and erasure consumers move with schema changes. Exhaustive table manifests and closure tests are callers to
+update, not compatibility vetoes. Orphan cleanup waits for a grace period and proves no live revision/proposal
+references the exact key; it never bypasses an erasure hold.
 
 Core remains the sole deployable Worker. Browser code uses the one owner client and never imports server bindings.
 A pure helper needs no port, repository package or cryptographic envelope. When consolidating, update callers,
