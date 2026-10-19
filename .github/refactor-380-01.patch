@@ -1,0 +1,215 @@
++      OR p.proposal_id IS NULL
++      OR c.subject_ref IS NOT ('wiki-page:' || r.page_id)
++      OR c.subject_revision IS NOT r.revision
++      OR c.payload_ref IS NOT r.manifest_ref
++      OR c.payload_sha256 IS NOT r.page_sha256
++      OR c.visibility_principal_ref IS NOT p.principal_ref
++      OR c.visibility_snapshot_id IS NOT NULL
++      OR c.visibility_snapshot_revision IS NOT NULL
++    )
++) THEN 1 ELSE 0 END;
++DROP TABLE wiki_publication_change_guard_0167;
++
++CREATE TRIGGER research_change_feed_no_update
++BEFORE UPDATE ON research_change_feed
++BEGIN
++  SELECT RAISE(ABORT, 'RESEARCH_CHANGE_IMMUTABLE');
++END;
++
++DROP TRIGGER IF EXISTS wiki_publication_outbox_change_feed;
++DROP INDEX IF EXISTS idx_wiki_publication_outbox_pending;
++
++ALTER TABLE wiki_publication_head DROP COLUMN outbox_ref;
++DROP TABLE wiki_publication_outbox;
++
++PRAGMA foreign_keys = ON;
+diff --git a/packages/backup-o2/src/coverage.ts b/packages/backup-o2/src/coverage.ts
+index c3f8a446eac4dffd559ac57088cf4b19eafca75e..4c994efab85c35842f966f01fda52f3120e10248 100644
+--- a/packages/backup-o2/src/coverage.ts
++++ b/packages/backup-o2/src/coverage.ts
+@@ -77,7 +77,6 @@ export const CANONICAL_EXPORTED_TABLES: ReadonlySet<string> = new Set([
+   "wiki_publication_authority",
+   "wiki_publication_revision",
+   "wiki_publication_head",
+-  "wiki_publication_outbox",
+   "wiki_owner_edit_binding",
+   "source_namespace_initialization",
+   "raw_ingest_erasure_member",
+diff --git a/packages/cloudflare-research-runtime/src/research-changes.ts b/packages/cloudflare-research-runtime/src/research-changes.ts
+index dd2daed0deedc06430d36a9a1dd8671539c181ea..fe304924f2fb4c93b643f7885ef027badfc7e378 100644
+--- a/packages/cloudflare-research-runtime/src/research-changes.ts
++++ b/packages/cloudflare-research-runtime/src/research-changes.ts
+@@ -426,36 +426,10 @@ export function createResearchChangesService(
+       try {
+         const result = await runtime.database.prepare(
+           "SELECT c.sequence,c.change_ref,c.kind,c.subject_ref,c.subject_revision,c.payload_ref,c.payload_sha256," +
+-          "CASE WHEN c.kind='WIKI_PUBLISHED' THEN p.principal_ref ELSE c.visibility_principal_ref END AS visibility_principal_ref," +
+-          "CASE WHEN c.kind='WIKI_PUBLISHED' THEN json_extract(r.page_json,'$.scope_snapshot_ref.id') ELSE c.visibility_snapshot_id END AS visibility_snapshot_id," +
+-          "CASE WHEN c.kind='WIKI_PUBLISHED' THEN json_extract(r.page_json,'$.scope_snapshot_ref.revision') ELSE c.visibility_snapshot_revision END AS visibility_snapshot_revision," +
+-          "c.occurred_at,c.metadata_json " +
+-          "FROM research_change_feed c " +
+-          "LEFT JOIN wiki_publication_outbox o ON c.kind='WIKI_PUBLISHED' " +
+-          "AND c.change_ref='wiki:' || o.outbox_ref " +
+-          "LEFT JOIN wiki_publication_revision r ON c.kind='WIKI_PUBLISHED' " +
+-          "AND r.page_id=o.page_id AND r.revision=o.revision AND r.manifest_ref=o.manifest_ref " +
+-          "AND r.page_sha256=o.payload_sha256 AND json_valid(r.page_json) " +
+-          "LEFT JOIN wiki_publication_proposal p ON c.kind='WIKI_PUBLISHED' " +
+-          "AND p.proposal_id=r.proposal_id AND p.proposal_revision=r.proposal_revision " +
+-          "AND p.page_id=r.page_id AND p.page_revision=r.revision " +
+-          "WHERE " + sequenceClause +
+-          " AND ((c.kind='WIKI_PUBLISHED' AND p.principal_ref=?2) OR " +
+-          "(c.kind<>'WIKI_PUBLISHED' AND (c.visibility_principal_ref IS NULL OR c.visibility_principal_ref=?2)))" +
+-          " AND (c.kind<>'WIKI_PUBLISHED' OR (" +
+-          "o.outbox_ref IS NOT NULL AND r.page_id IS NOT NULL AND p.proposal_id IS NOT NULL " +
+-          "AND c.change_ref='wiki:' || o.outbox_ref " +
+-          "AND c.subject_ref IS ('wiki-page:' || r.page_id) " +
+-          "AND c.subject_revision IS r.revision " +
+-          "AND c.payload_ref IS r.manifest_ref " +
+-          "AND c.payload_sha256 IS r.page_sha256 " +
+-          "AND json_type(r.page_json,'$.scope_snapshot_ref.id')='text' " +
+-          "AND json_type(r.page_json,'$.scope_snapshot_ref.revision')='integer' " +
+-          "AND (c.visibility_principal_ref IS NULL OR c.visibility_principal_ref IS p.principal_ref) " +
+-          "AND ((c.visibility_snapshot_id IS NULL AND c.visibility_snapshot_revision IS NULL) OR " +
+-          "(c.visibility_snapshot_id IS json_extract(r.page_json,'$.scope_snapshot_ref.id') " +
+-          "AND c.visibility_snapshot_revision IS json_extract(r.page_json,'$.scope_snapshot_ref.revision')))" +
+-          "))" + kindClause + ` ORDER BY c.sequence ${order} LIMIT ?3`,
++          "c.visibility_principal_ref,c.visibility_snapshot_id,c.visibility_snapshot_revision," +
++          "c.occurred_at,c.metadata_json FROM research_change_feed c WHERE " + sequenceClause +
++          " AND (c.visibility_principal_ref IS NULL OR c.visibility_principal_ref=?2)" +
++          kindClause + ` ORDER BY c.sequence ${order} LIMIT ?3`,
+         ).bind(boundary, principalRef, batchLimit, ...request.kinds).all<ChangeRow>();
+         if (result.success !== true || !Array.isArray(result.results)) {
+           fail("RESEARCH_CHANGES_SETTLEMENT_UNCERTAIN", "changes query did not settle", 503, true);
+diff --git a/packages/cloudflare-wiki/src/wiki-owner-edit-proposal.ts b/packages/cloudflare-wiki/src/wiki-owner-edit-proposal.ts
+index ab03bc0960320d182a4dc6683932a2e5a461527a..d3c4fc426bbc69943e5b45e157002c9d067e2534 100644
+--- a/packages/cloudflare-wiki/src/wiki-owner-edit-proposal.ts
++++ b/packages/cloudflare-wiki/src/wiki-owner-edit-proposal.ts
+@@ -23,7 +23,7 @@ export interface OwnerEditInput { readonly base_proposal_ref: VersionedRef; read
+ export interface EditMetadata { readonly base_body_sha256: string; readonly base_coverage_receipt_ref: VersionedRef; readonly base_dependency_refs_sha256: string; readonly base_evidence_map_ref: string; readonly base_evidence_map_sha256: string; readonly base_page_ref: VersionedRef; readonly base_page_sha256: string; readonly base_proposal_ref: VersionedRef; readonly edit_note: string; readonly edit_request_sha256: string; readonly expected_head_revision: number; readonly protocol: typeof WIKI_OWNER_EDIT_PROTOCOL; }
+ export interface EditBindingRow { readonly proposal_id: string; readonly proposal_revision: number; readonly principal_ref: string; readonly idempotency_key: string; readonly request_sha256: string; readonly proposal_page_sha256: string; readonly base_proposal_id: string; readonly base_proposal_revision: number; readonly base_page_id: string; readonly base_page_revision: number; readonly base_page_sha256: string; readonly created_at: string; }
+ export interface PublishedRevisionRow { readonly proposal_id: string; readonly proposal_revision: number; readonly page_sha256: string; readonly page_json: string; readonly body_object_ref: string; readonly body_sha256: string; }
+-export interface CanonicalBase { readonly proposal: ProposalRow; readonly page: WikiPageRevision; readonly page_sha256: string; readonly evidence_map_sha256: string; readonly dependency_refs_sha256: string; readonly authorization: Awaited<ReturnType<typeof prepareOwnerScopeReadAuthorization>>; readonly port: WikiPublicationPort; readonly head: { readonly page_ref: VersionedRef; readonly manifest_ref: string; readonly outbox_ref: string; }; }
++export interface CanonicalBase { readonly proposal: ProposalRow; readonly page: WikiPageRevision; readonly page_sha256: string; readonly evidence_map_sha256: string; readonly dependency_refs_sha256: string; readonly authorization: Awaited<ReturnType<typeof prepareOwnerScopeReadAuthorization>>; readonly port: WikiPublicationPort; readonly head: { readonly page_ref: VersionedRef; readonly manifest_ref: string; }; }
+ function fail(code: string, message: string, status = 400, retryable = false, cause?: unknown): never {
+   throw new CatalogInputError(code, message, status, retryable, cause);
+ }
+@@ -204,7 +204,7 @@ export async function readCanonicalBase(
+   await authorization.requireCurrent();
+   const settledHead = await port.readHead(page.page_ref.id);
+   if (settledHead === null || !sameRef(settledHead.page_ref, head.page_ref) ||
+-      settledHead.manifest_ref !== head.manifest_ref || settledHead.outbox_ref !== head.outbox_ref) {
++      settledHead.manifest_ref !== head.manifest_ref) {
+     fail("WIKI_HEAD_CONFLICT", "base Wiki head changed during readback", 409);
+   }
+   return {
+@@ -218,7 +218,6 @@ export async function readCanonicalBase(
+     head: {
+       page_ref: { ...head.page_ref },
+       manifest_ref: head.manifest_ref,
+-      outbox_ref: head.outbox_ref,
+     },
+   };
+ }
+@@ -553,7 +552,7 @@ export async function proposeWikiFromOwnerEdit(
+   await base.authorization.requireCurrent();
+   const currentHead = await base.port.readHead(base.page.page_ref.id);
+   if (currentHead === null || !sameRef(currentHead.page_ref, base.head.page_ref) ||
+-      currentHead.manifest_ref !== base.head.manifest_ref || currentHead.outbox_ref !== base.head.outbox_ref) {
++      currentHead.manifest_ref !== base.head.manifest_ref) {
+     fail("WIKI_HEAD_CONFLICT", "base Wiki head changed before owner edit proposal", 409);
+   }
+   let proposalRef: VersionedRef;
+diff --git a/packages/cloudflare-wiki/src/wiki-publication-store-support.ts b/packages/cloudflare-wiki/src/wiki-publication-store-support.ts
+index 20c85cefd923329f251d54d83bc41b01d59ce963..ab13e0cbaf4eb053b1be01dbdb67c1a4550984f6 100644
+--- a/packages/cloudflare-wiki/src/wiki-publication-store-support.ts
++++ b/packages/cloudflare-wiki/src/wiki-publication-store-support.ts
+@@ -65,7 +65,6 @@ export interface HeadRow {
+   page_id: string;
+   revision: number;
+   manifest_ref: string;
+-  outbox_ref: string;
+ }
+ 
+ export interface WikiStoreContext {
+diff --git a/packages/cloudflare-wiki/src/wiki-publication-store.ts b/packages/cloudflare-wiki/src/wiki-publication-store.ts
+index 12e8ec46a5277b0f43e8b62c2eb7eee7d44481cc..32d35927bd8640eafdfd6ddc88016e267811d685 100644
+--- a/packages/cloudflare-wiki/src/wiki-publication-store.ts
++++ b/packages/cloudflare-wiki/src/wiki-publication-store.ts
+@@ -210,229 +210,231 @@ export function createD1R2WikiPublicationPort(
+       return page.data;
+     },
+ 
+-          async commitHeadAndOutbox(input: WikiHeadCommit): Promise<WikiHeadCommitDisposition> {
+-        const proposal = active;
+-        if (proposal === null || input.proposal_ref.id !== proposal.proposal_id
+-            || input.proposal_ref.revision !== proposal.proposal_revision) {
+-          fail("WIKI_HEAD_CONFLICT", "Wiki commit is not bound to the active proposal");
+-        }
+-        const current = await this.readHead(input.page.page_ref.id);
+-        if (current !== null && current.page_ref.revision === input.page.page_ref.revision) {
+-          return current.manifest_ref === input.manifest_ref ? "EXISTING" : "CONFLICT";
+-        }
+-        const currentRevision = current?.page_ref.revision ?? null;
+-        if (currentRevision !== input.expected_head_revision) return "CONFLICT";
+-
+-        const encoded = pageJson(input.page);
+-        const pageSha = await textDigest(encoded);
+-        const outboxRef = `wiki-outbox-${(await textDigest(
+-          `${input.page.page_ref.id}:${input.page.page_ref.revision}:${input.manifest_ref}`,
+-        )).slice(0, 48)}`;
+-        const timestamp = nowIso(context);
+-        const revisionValues = [
+-          input.page.page_ref.id,
+-          input.page.page_ref.revision,
+-          proposal.proposal_id,
+-          proposal.proposal_revision,
+-          input.manifest_ref,
+-          pageSha,
+-          encoded,
+-          input.page.body_object_ref,
+-          input.page.body_sha256,
+-          input.committer_ref,
+-          timestamp,
+-        ] as const;
+-
+-        const revisionStatement = input.expected_head_revision === null
+-          ? database.prepare(
+-            "INSERT OR IGNORE INTO wiki_publication_revision " +
+-            "(page_id, revision, proposal_id, proposal_revision, manifest_ref, page_sha256, page_json, " +
+-            "body_object_ref, body_sha256, committer_ref, created_at) " +
+-            "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11 " +
+-            "WHERE NOT EXISTS (SELECT 1 FROM wiki_publication_head WHERE page_id = ?1)",
+-          ).bind(...revisionValues)
+-          : database.prepare(
+-            "INSERT OR IGNORE INTO wiki_publication_revision " +
+-            "(page_id, revision, proposal_id, proposal_revision, manifest_ref, page_sha256, page_json, " +
+-            "body_object_ref, body_sha256, committer_ref, created_at) " +
+-            "SELECT ?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11 " +
+-            "WHERE EXISTS (SELECT 1 FROM wiki_publication_head WHERE page_id = ?1 AND revision = ?12)",
+-          ).bind(...revisionValues, input.expected_head_revision);
+-
+-        const exactRevision =
+-          "EXISTS (SELECT 1 FROM wiki_publication_revision " +
+-          "WHERE page_id = ?1 AND revision = ?2 AND manifest_ref = ?3 " +
+-          "AND page_sha256 = ?7 AND proposal_id = ?8 AND proposal_revision = ?9)";
+-        const headStatement = input.expected_head_revision === null
+-          ? database.prepare(
+-            "INSERT OR IGNORE INTO wiki_publication_head " +
+-            "(page_id, revision, manifest_ref, outbox_ref, updated_at) " +
+-            "SELECT ?1,?2,?3,?4,?5 WHERE NOT EXISTS " +
+-            "(SELECT 1 FROM wiki_publication_head WHERE page_id = ?1) AND " + exactRevision,
+-          ).bind(
+-            input.page.page_ref.id,
+-            input.page.page_ref.revision,
+-            input.manifest_ref,
+-            outboxRef,
+-            timestamp,
+-            null,
+-            pageSha,
+-            proposal.proposal_id,
+-            proposal.proposal_revision,
+-          )
+-          : database.prepare(
+-            "UPDATE wiki_publication_head SET revision = ?2, manifest_ref = ?3, " +
+-            "outbox_ref = ?4, updated_at = ?5 WHERE page_id = ?1 AND revision = ?6 AND " + exactRevision,
+-          ).bind(
