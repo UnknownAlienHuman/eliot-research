@@ -306,4 +306,4 @@ Cloudflare references checked 2026-10-18:
 [D1 batch transactions](https://developers.cloudflare.com/d1/worker-api/d1-database/),
 [Workflow retry rules](https://developers.cloudflare.com/workflows/build/rules-of-workflows/),
 [Agents with Workflows](https://developers.cloudflare.com/agents/runtime/execution/run-workflows/) and
-[readonly Agent connections](https://developers.cloudflare.com/agents/runtime/lifecycle/readonly-connections/).
+[readonly Agent connections](https://developers.cloudflare.com/agents/runtime/communication/readonly-connections/).
