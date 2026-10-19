@@ -1,0 +1,32 @@
+name: temp-remove-wiki-auto-promotion
+on:
+  push:
+    branches:
+      - refactor/380-remove-wiki-auto-promotion
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Remove the unused capability and temporary files
+        shell: bash
+        run: |
+          set -euo pipefail
+          python .github/refactor-380-remove-wiki-auto-promotion.py
+          if git grep -n -E 'autoPromote|WikiAutoPromotion|auto_promotion_policy_receipt_ref|wikiMayAutoPromote' -- '*.ts'; then
+            echo 'Wiki auto-promotion code remains' >&2
+            exit 1
+          fi
+          rm .github/refactor-380-remove-wiki-auto-promotion.py \
+            .github/workflows/temp-remove-wiki-auto-promotion.yml
+          git add -A
+          git diff --cached --check
+          git config user.name "Iurii Lisenkov"
+          git config user.email "71514792+UnknownAlienHuman@users.noreply.github.com"
+          git commit -m "refactor: remove unused Wiki auto-promotion (#380)"
+          git push origin HEAD:refactor/380-remove-wiki-auto-promotion
