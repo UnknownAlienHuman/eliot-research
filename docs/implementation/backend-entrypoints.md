@@ -15,8 +15,9 @@ Start from one owner action and trace browser → API → application → durabl
 writer and readers together. Delete the predecessor, exports, decoders, fixtures, dependencies and obsolete
 instructions in the same integration. A facade or parallel “clean” implementation is unfinished.
 
-Use Cloudflare storage, native search, Workflow and the existing ResearchSession. Do not add a service,
-scheduler, database, generic graph engine, research DSL, proof ledger or compatibility framework. Preserve real
+Use Cloudflare storage, native search, Workflow and the existing ResearchSession. Use the installed native
+Agent–Workflow bridge for live presentation instead of a second session protocol. Do not add a service, scheduler,
+database, generic graph engine, research DSL, proof ledger or compatibility framework. Preserve real
 source/report/task data and acknowledged paid work—not abandoned protocols and old tests.
 
 Independent outcomes may proceed in parallel when files do not overlap. The manager serializes shared routes,
@@ -68,19 +69,22 @@ citation.
 
 ## 3. One ordinary answer and one compact research report
 
-Use [the ordinary-answer contract](research-full-answer-v1.md).
+Use [the ordinary-answer contract](research-full-answer-v1.md) and
+[native presentation contract](research-session-projection-protocol.md).
 
 **Change**
 
 - `apps/eliotr-web/src/app/ResearchPanel.tsx`, `ReportPanel.tsx`, `ArtifactActions.tsx`;
 - owner client `research/runs/`, `research/session-projection/`, report and artifact-product modules;
 - `apps/eliotr-core/src/research-run-service.ts`, `research-workflow.ts`, `research-session.ts`,
-  `artifact-product-http.ts`, `artifact-section-revise.ts` and report-admission composition;
+  session bootstrap/projection/transport files, `artifact-product-http.ts`, `artifact-section-revise.ts` and
+  report-admission composition;
+- Wrangler/env bindings for research and exhaustive-query Workflows;
 - `packages/cloudflare-research-runtime/src/` ordinary dispatch/status;
 - `packages/policy/src/context-compiler.ts`;
 - model prompt/HTTP/execution/response code under `cloudflare-model-control` and
   `cloudflare-model-transport`;
-- `packages/contracts/src/publication.ts` and the report DTO;
+- `packages/contracts/src/publication.ts`, session-binding contracts and the report DTO;
 - `packages/cloudflare-research/src/research-artifact-draft.ts`,
   `research-materialize-result.ts`, report admission and artifact COW callers;
 - `packages/cloudflare-artifacts/src/artifact-draft*.ts`, `artifact-publication*.ts`,
@@ -95,6 +99,16 @@ Preserve V5 execution intent:
 For `lookup`, dispatch before installed inquiry-protocol compilation and before the 18-stage application.
 The ordinary Workflow has four responsibilities: prepare, generate, save, finish. It performs one model attempt,
 retains completed public Markdown once and saves one research-report revision.
+
+Admission first persists the canonical D1 run, then invokes the `ResearchSession` named by `operation_id` through a
+server-only DO method. The Agent verifies the admitted row and calls `runWorkflow()` with that same ID.
+`ResearchWorkflow` extends `AgentWorkflow`; it uses durable Agent state only for coarse phase/result projection and
+non-durable bounded broadcasts for provisional public text. The browser connection is readonly and cannot start,
+cancel or retry paid work.
+
+The current `ResearchWorkflow` also contains `EXHAUSTIVE_QUERY`. Move that unrelated direct job to
+`ExhaustiveQueryWorkflow` and its own binding rather than inventing optional Agent context or a hybrid Workflow base.
+Remove the mixed `workflow_kind` parameter after both callers move.
 
 The current artifact writer is not reusable target infrastructure. `ArtifactRevision` requires an evidence freeze,
 dependency manifest and section verification. `artifact_draft_*` adds reservations, planned-object receipts,
@@ -144,8 +158,9 @@ may generate new Markdown through the normal model-attempt owner and then use th
 need section COW, a separate revision Workflow or renewed historical proof witnesses.
 
 After converting retained reports and switching current callers, delete the old artifact draft/admission/freeze/
-manifest/verification/publication/COW cohort and its protocol generations. Do not retain dual report readers or an
-acceptance-status client.
+manifest/verification/publication/COW cohort and its protocol generations. Delete the custom session bootstrap,
+stage-based snapshot RPC and call-only client wrapper after old runs settle. Do not retain dual report readers or an
+acceptance/session-status compatibility client.
 
 **Result:** source → progressive answer → one saved report object → exact citation → reopen/edit/reuse.
 
@@ -154,9 +169,9 @@ acceptance-status client.
 Use [deep research](deep-research.md). Add one cohesive
 `packages/cloudflare-research-runtime/src/deep-research-loop.ts` and dispatch explicit-deep admissions to it.
 
-Reuse the existing Workflow, scoped AI Search, exact source reads, selected model transport, ResearchSession and the
-same compact report writer. Initial tool surface: bounded **search**, exact bounded **read**, **finish**. Saving and
-cancellation are host operations.
+Reuse the same Agent-tracked Workflow, scoped AI Search, exact source reads, selected model transport,
+ResearchSession and compact report writer. Initial tool surface: bounded **search**, exact bounded **read**,
+**finish**. Saving and cancellation are host operations.
 
 No swarm, critic panel, arbitrary Python prerequisite, `ObligationGraph`, `SearchProgramIR`, stage graph,
 coverage ledger or trajectory database. Checkpoints retain unresolved questions, accepted compact citations,
@@ -168,7 +183,7 @@ accepted evidence after one changed strategy. Return an honest partial report at
 Stop new old-graph admissions, settle real active attempts, convert/read saved reports, then delete obsolete
 branch/stage factories, codecs and fixtures.
 
-**Result:** bounded iterative research using the same search/read/model/report operations.
+**Result:** bounded iterative research using the same search/read/model/report/presentation operations.
 
 ## 5. Lightweight owner reads and normal edits
 
@@ -215,6 +230,8 @@ Each row is a caller-driven replacement, not a preservation list.
 | Report/artifact drafts | Research report/revision/head, one R2 object, compact citations | EvidenceFreeze, manifests, section receipts, residency objects, stage-17 admission |
 | Artifact acceptance/publication | Direct saved report; explicit edit/Wiki proposal | Acceptance decisions, verification/currentness receipts, publication head/outbox/UI |
 | Artifact section revision | Full report revision through the same writer | Section COW Workflow, REPORT witness renewal and child artifact graph |
+| ResearchSession projection | Native Agent state/broadcast + canonical D1 status | Session bootstrap rows, scope replay, snapshot-only RPC, send monkey-patch and RPC-only client wrapper |
+| Workflow dispatch | Agent-tracked research Workflow; separate exhaustive Workflow | Direct research create/get dispatch and mixed research/exhaustive params |
 | Historical research executors | Settle active attempts; direct saved-result readers | Old factories, dispatch, codecs and fixtures |
 | Ordinary inquiry protocol | Direct ordinary mode | Lookup obligations/planning/branch handler and stage-18 status |
 | Backup/restore | Ordinary downloads and credential/erasure work still used | Unselected backup/restore execution platform |
@@ -249,6 +266,9 @@ Use [the donor register](donors.md), not donor topologies. Perplexity informs sm
 continuation. NotebookLM informs selected-source grounding and saved outputs. EdgeQuake informs shared preparation
 and source-scoped updates. SurfSense informs server labels, disconnect-safe finalization and batched deltas—but not
 a transcript database or frame replay. WeKnora informs expected-version edits and body-free history.
+
+Cloudflare Agents supplies the selected Agent↔Workflow operations, readonly connections, state sync and broadcasts.
+Use those operations, not its chat transcript product or generic workflow list as Eliot's product model.
 
 ThinkEx usefully distinguishes a readable retained result from optional enhancement, but its provider extraction and
 publication occur in one Workflow step. Eliot separates paid generation from report publication because Workflow
