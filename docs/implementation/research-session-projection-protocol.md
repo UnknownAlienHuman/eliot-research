@@ -1,7 +1,7 @@
 # ResearchSession: native Agent–Workflow presentation
 
 Checked 2026-10-18 against Eliot `main` at `19cf0b9d`, installed `agents 0.27.0`, current Cloudflare
-Agents/Workflows documentation and upstream Agents source. This note owns live research presentation for
+Agents/Workflows documentation and the exact installed upstream tag. This note owns live research presentation for
 [ordinary answers](research-full-answer-v1.md) and [explicit deep research](deep-research.md). It does not create
 another run, transcript, event journal or result store.
 
@@ -238,7 +238,7 @@ public-output/report storage and exact citation reads.
 
 ## Platform decision
 
-Cloudflare's installed stack already supplies the required operations:
+The exact installed `agents 0.27.0` tag already supplies the required operations:
 
 - `Agent.runWorkflow()` with explicit instance ID and metadata;
 - `AgentWorkflow` with typed Agent RPC;
@@ -255,7 +255,9 @@ Cloudflare references checked 2026-10-18:
 [Agents with Workflows](https://developers.cloudflare.com/agents/runtime/execution/run-workflows/),
 [readonly connections](https://developers.cloudflare.com/agents/runtime/communication/readonly-connections/) and
 [Agent client SDK](https://developers.cloudflare.com/agents/communication-channels/chat/client-sdk/).
-Upstream implementation inspected at `cloudflare/agents@7dd51c5`, including `packages/agents/src/workflows.ts`.
+Exact installed upstream inspected at tag `agents@0.27.0`, commit
+`e335186331f99be12609a5eb0c64c7863c3ccafd`, including `packages/agents/src/index.ts`,
+`packages/agents/src/workflows.ts`, `docs/agents/readonly-connections.md` and `docs/agents/client-sdk.md`.
 
 ## Completion
 
