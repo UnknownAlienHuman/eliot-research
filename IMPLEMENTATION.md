@@ -9,6 +9,7 @@ remain true. Keep it in the lead developer's context; do not copy it into each t
 | How are sources stored, indexed and cited? | [Source lifecycle](docs/implementation/source-lifecycle.md) |
 | How does an ordinary answer work? | [Ordinary answer](docs/implementation/research-full-answer-v1.md) |
 | How does explicit deep research work? | [Deep research](docs/implementation/deep-research.md) |
+| How do Wiki and Inbox proposals, acceptance and edits work? | [Wiki and Inbox](docs/implementation/wiki-inbox.md) |
 | Which existing code owns behavior/data? | [Code map](docs/implementation/dependency-map.md) |
 | Which storage/effect/access details matter? | [Runtime notes](docs/implementation/runtime-contract.md) |
 | What may be reused from donors? | [Donor register](docs/implementation/donors.md) |
