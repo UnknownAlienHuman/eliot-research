@@ -2,49 +2,47 @@
 
 Purpose and non-negotiable behavior live in the
 [manifesto](../architecture/ELIOT_RESEARCH.md). Existing owners are in the
-[code map](dependency-map.md). This document says what to write, where to write it and what must disappear.
-It is not an approval graph or compatibility promise.
+[code map](dependency-map.md). This document says what to change, where to change it and what must disappear.
+It is not an approval graph, compatibility promise or instruction to preserve every current package.
 
-The plan reflects source/donor work through 2026-10-18. Cloudflare, Perplexity, NotebookLM, EdgeQuake,
-SurfSense, OpenViking, WeKnora and other donors contribute specific mechanisms and counterexamples;
-none becomes a new Eliot platform.
+The plan incorporates source and donor work through 2026-10-18. Cloudflare, Perplexity, NotebookLM,
+EdgeQuake, SurfSense, OpenViking, WeKnora and other donors contribute specific mechanisms and
+counterexamples; none becomes a new Eliot platform.
 
 ## Working rule
 
-Start from one owner action and trace browser → API → application → durable result. Change real callers, writer and
-readers together. Delete the predecessor, exports, decoders, fixtures, dependencies and obsolete instructions in
-the same coherent integration. A facade or parallel “clean” implementation is unfinished.
+Start from one owner action and trace browser → API → application → durable result. Change the real callers,
+writer and readers together. Delete the predecessor, exports, decoders, fixtures, dependencies and obsolete
+instructions in the same integration. A facade or parallel “clean” implementation is unfinished.
 
-Use existing Cloudflare storage, native search, Workflow and ResearchSession. No new service, scheduler, database,
-generic graph engine, research DSL, proof ledger or compatibility framework. Preserve real source/report/task data
-and acknowledged paid work—not abandoned protocols and old tests.
+Use Cloudflare storage, native search, Workflow and the existing ResearchSession. Do not add a service,
+scheduler, database, generic graph engine, research DSL, proof ledger or compatibility framework. Preserve real
+source/report/task data and acknowledged paid work—not abandoned protocols and old tests.
 
 Independent outcomes may proceed in parallel when files do not overlap. The manager serializes shared routes,
-manifests and migrations. Tooling/history cleanup never blocks product code.
+contracts and migrations. Tooling cleanup never blocks product code.
 
 ## 1. One browser client and one served interface
 
 **Change**
 
 - `apps/eliotr-web/src/app/runtime.ts`;
-- `packages/owner-api-client/src/legacy/http.ts`;
-- canonical source/run/session methods under `packages/owner-api-client/src/`;
-- callers in `packages/pwa-source-workspace` and `packages/pwa-research-workspace`;
+- canonical methods under `packages/owner-api-client/src/`;
+- remaining callers in `packages/pwa-source-workspace` and `packages/pwa-research-workspace`;
 - Core fixtures that import old browser packages.
 
-Make all React callers share one client, epoch, cancellation and error model. Migrate raw upload and research
-separately, then delete legacy seams. Finish React/Vite + Worker assets, standalone Inbox/recovery and old
-service-worker retirement. Delete Astro, old PWA controllers/styles and unused `pwa-*` packages after cutover.
-Keep a rollback artifact, not two maintained UIs.
+Make all React callers share one client, session epoch, cancellation and error model. Finish React/Vite + Worker
+assets, Inbox/recovery and service-worker retirement. Delete Astro, old PWA controllers/styles and unused
+`pwa-*` packages after cutover. Keep a rollback artifact, not two maintained UIs.
 
-**Result:** selected owner journeys use one served React app and one client.
+**Result:** one served React app and one owner client.
 
 ## 2. One source lifecycle and compact citation
 
 Use [source lifecycle](source-lifecycle.md). Change together:
 
 - `packages/cloudflare-raw-ingest/src/` and `packages/platform-cloudflare/src/d1-ingest-commit.ts`;
-- source/head/object writers;
+- source/revision/head and object writers;
 - `packages/retrieval/src/structural-projector.ts`;
 - `packages/cloudflare-ai/src/project-search*.ts`;
 - evidence contracts/resolvers/readers;
@@ -61,58 +59,108 @@ conditional raw write
 → compact retained citation
 ```
 
-Remove the giant ingest guard/fan-out, policy snapshots, witnesses, reservation/readiness bureaucracy,
+Remove the giant ingest guard/fan-out, policy snapshots, witnesses, TTL reservation/readiness bureaucracy,
 seven-domain residency, EvidenceHandle receipt system and index-generation authority after caller migration and
-one-time data conversion. Direct source reading works before indexing. A newer head never moves an active/saved
+one deliberate data conversion. Direct reading works before indexing. A newer head never moves an active or saved
 citation.
 
 **Result:** upload/read/search/cite without proof or promotion platforms.
 
-## 3. One ordinary source-backed answer
+## 3. One ordinary answer and one compact research report
 
 Use [the ordinary-answer contract](research-full-answer-v1.md).
 
 **Change**
 
-- `apps/eliotr-web/src/app/ResearchPanel.tsx`;
-- owner client `research/runs/authority.ts` and `research/session-projection/`;
-- `apps/eliotr-core/src/research-run-service.ts`, `research-workflow.ts`, `research-session.ts`;
-- `packages/cloudflare-research-runtime/src/research-workflow-application.ts` callers and status application;
+- `apps/eliotr-web/src/app/ResearchPanel.tsx`, `ReportPanel.tsx`, `ArtifactActions.tsx`;
+- owner client `research/runs/`, `research/session-projection/`, report and artifact-product modules;
+- `apps/eliotr-core/src/research-run-service.ts`, `research-workflow.ts`, `research-session.ts`,
+  `artifact-product-http.ts`, `artifact-section-revise.ts` and report-admission composition;
+- `packages/cloudflare-research-runtime/src/` ordinary dispatch/status;
 - `packages/policy/src/context-compiler.ts`;
-- model prompt/HTTP/execution/response code under `cloudflare-model-control` and `cloudflare-model-transport`;
-- retained public-output store plus existing artifact/report writer;
-- `packages/interfaces/src/semantic-api.ts`.
+- model prompt/HTTP/execution/response code under `cloudflare-model-control` and
+  `cloudflare-model-transport`;
+- `packages/contracts/src/publication.ts` and the report DTO;
+- `packages/cloudflare-research/src/research-artifact-draft.ts`,
+  `research-materialize-result.ts`, report admission and artifact COW callers;
+- `packages/cloudflare-artifacts/src/artifact-draft*.ts`, `artifact-publication*.ts`,
+  `artifact-product-service.ts`;
+- D1 report/artifact/publication migrations and current owner/delegated report readers.
 
-Preserve V5 `method` as execution intent:
+Preserve V5 execution intent:
 
 - `lookup → ordinary`;
 - `evidence_review → explicit deep`.
 
-For `lookup`, skip installed inquiry protocol compilation, planning sources/manifest, obligations, handler-generation
-selection, qualification renewal and the 18-stage application. Dispatch before old handler assembly to one ordinary
-function with four responsibilities: prepare, generate, save, finish.
+For `lookup`, dispatch before installed inquiry-protocol compilation and before the 18-stage application.
+The ordinary Workflow has four responsibilities: prepare, generate, save, finish. It performs one model attempt,
+retains completed public Markdown once and saves one research-report revision.
 
-Stream public Markdown through the selected provider API. Preserve one Gateway attempt, metadata-only logging,
-cache bypass and `cf-aig-max-attempts: 1`. Retain completed public text once, then save report/compact citations.
-Delivery failure never repeats generation.
+The current artifact writer is not reusable target infrastructure. `ArtifactRevision` requires an evidence freeze,
+dependency manifest and section verification. `artifact_draft_*` adds reservations, planned-object receipts,
+residency records and an outbox. `research_report_admission` is fenced to stage 17. Replace this cohort instead of
+supplying dummy proof objects.
 
-Replace status stage index/handler generation with run kind, product phase and result reference. Change server,
-canonical client and React together; delete the old PWA decoder rather than maintaining another protocol family.
+The separate publication/acceptance layer is also not a retained product requirement. It adds owner acceptance
+decisions, verification/currentness arrays, operation intent/attempt/receipt/outbox, publication receipts and a
+second publication head. Its only repository-visible `artifact.accepted` topic has no consumer outside the producer.
+An “accepted” flag does not make model prose true. A completed generated report is saved and usable immediately;
+editing or explicitly proposing material to Wiki/Inbox are the meaningful owner actions.
 
-**Result:** source → progressive answer → saved report → exact citation → reopen, with no old ordinary graph.
+Selected state is deliberately research-specific, not another generic content platform:
+
+```text
+research_report
+  report id, owner, head revision, deletion state, timestamps
+
+research_report_revision
+  report + revision,
+  origin kind: GENERATED | MANUAL_EDIT | AI_EDIT,
+  origin operation id: required for GENERATED/AI_EDIT, absent for MANUAL_EDIT,
+  title/summary/language,
+  one immutable R2 report object locator + checksum + size,
+  exact saved source revision set, created time
+```
+
+A non-null origin operation is unique to one report revision. Generated/AI-edited revisions attach that exact
+revision to their originating run; manual edits have no invented run. This removes the ambiguity of a mandatory
+`run_id` on every edit without introducing a generic origin registry.
+
+The R2 report object contains Markdown, compact citation refs and bounded generation/edit metadata. Head advancement
+is one expected-revision D1 transition. Project attribution belongs to the admitted run relation, not JSON-tree scans
+or a report-specific graph. A report export is rendered from the same Markdown; no export manifest is stored.
+
+Write immutable R2 bytes first with conditional create. Then atomically insert the revision and advance the head.
+For GENERATED/AI_EDIT, attach the result to the exact origin operation in that same short D1 transaction. A failed
+D1 commit leaves an unreferenced immutable object that can be reconciled/cleaned; it does not justify two-phase
+commit, receipts or another outbox.
+
+Read the exact revision directly. Owner access checks current ownership/deletion of the report; connected clients
+check their current selected operation/project grant. Source freshness is optional. Citation opening is a separate
+bounded source-revision read. Neither read reconstructs the producing Workflow or original scope lease.
+
+Manual editing writes a complete new report revision with expected-head CAS. An explicitly requested AI revision
+may generate new Markdown through the normal model-attempt owner and then use the same report writer; it does not
+need section COW, a separate revision Workflow or renewed historical proof witnesses.
+
+After converting retained reports and switching current callers, delete the old artifact draft/admission/freeze/
+manifest/verification/publication/COW cohort and its protocol generations. Do not retain dual report readers or an
+acceptance-status client.
+
+**Result:** source → progressive answer → one saved report object → exact citation → reopen/edit/reuse.
 
 ## 4. One explicit deep-research loop
 
 Use [deep research](deep-research.md). Add one cohesive
 `packages/cloudflare-research-runtime/src/deep-research-loop.ts` and dispatch explicit-deep admissions to it.
 
-Reuse existing Workflow, scoped AI Search, exact source reads, selected model transport, ResearchSession and report
-writer. Initial tool surface: bounded **search**, exact bounded **read**, **finish**. Saving/cancellation are host
-operations.
+Reuse the existing Workflow, scoped AI Search, exact source reads, selected model transport, ResearchSession and the
+same compact report writer. Initial tool surface: bounded **search**, exact bounded **read**, **finish**. Saving and
+cancellation are host operations.
 
 No swarm, critic panel, arbitrary Python prerequisite, `ObligationGraph`, `SearchProgramIR`, stage graph,
 coverage ledger or trajectory database. Checkpoints retain unresolved questions, accepted compact citations,
-small facts/counters and locators—not bodies/tokens/candidates.
+small facts/counters and locators—not bodies, tokens or candidate dumps.
 
 Stop on cancellation, budget, deadline, supported final result, required fields complete/unavailable, or no new
 accepted evidence after one changed strategy. Return an honest partial report at limits.
@@ -120,20 +168,21 @@ accepted evidence after one changed strategy. Return an honest partial report at
 Stop new old-graph admissions, settle real active attempts, convert/read saved reports, then delete obsolete
 branch/stage factories, codecs and fixtures.
 
-**Result:** bounded iterative deep research; predecessor graph removed.
+**Result:** bounded iterative research using the same search/read/model/report operations.
 
 ## 5. Lightweight owner reads and normal edits
 
-Use [owner reads](owner-read-paths.md) as separate changes.
+Use [owner reads](owner-read-paths.md) as separate caller-complete changes.
 
-- **Projects/Library:** bounded D1 metadata reads; preserve empty owned projects separately from source-witness
-  catalogue. Optional index readiness is not access.
-- **History:** store/query positive project attribution and run/report summaries; filter before pagination; no
-  checkpoint/R2 reconstruction for a list. Replace six client history generations with one current shape.
-- **Report/freshness:** read saved report independently. Return exact change count plus bounded details/truncation or
-  `UNKNOWN`; freshness failure cannot hide content.
-- **Wiki/report edit:** one expected-revision body/provenance/head/outbox transition. Zero rows is conflict.
-  Decoration is render-time or new revision.
+- **Projects/Library:** bounded D1 metadata reads. Preserve empty owned projects separately from source-witness
+  discovery. Optional index readiness is not access.
+- **History:** read run/report summaries and continuation. Filter positive project attribution before pagination.
+  Do not reconstruct checkpoints or open R2 bodies for a list.
+- **Report:** read the compact report revision directly. Freshness failure cannot hide content.
+- **Edit:** write a new full-body revision with one expected-head transition. Link decoration is render-time or
+  another revision, never an in-place rewrite.
+- **Reuse:** an explicit Wiki/Inbox proposal is a separate product action; it does not require first minting an
+  artifact acceptance receipt.
 
 Mark affected derived output stale and refresh on explicit request, selected maintenance or meaningful reuse.
 Never substring-match or union contributor sets so deleted support reappears.
@@ -145,7 +194,7 @@ Never substring-match or union contributor sets so deleted support reappears.
 Use [Cloudflare native path](cloudflare-native-path.md) and source lifecycle.
 
 Keep D1 source/membership/deletion state and canonical R2 bytes. AI Search is a derived locator. Use one selected
-native hybrid configuration and one ingestion feed. Provider snippets/scores are not evidence.
+native hybrid configuration and one ingestion feed. Provider snippets and scores are not evidence.
 
 Respect metadata/filter bounds. Never truncate allowed revisions or post-filter global top-k while claiming scoped
 completeness. Use a project projection only for a demonstrated recurring scope that native filtering cannot express.
@@ -158,19 +207,22 @@ per-project copies and writer-exclusive managed-item intent/receipt code after m
 
 ## 7. Retire unselected cohorts
 
-Each row is a separate caller-driven change.
+Each row is a caller-driven replacement, not a preservation list.
 
-| Cohort | Keep/move | Remove |
+| Cohort | Keep / move | Remove after transition |
 |---|---|---|
-| Residency/ownership machinery | Source/revision + actual locators | Seven-domain derivation, owner transfer and proof machinery |
-| Backup/restore | Ordinary downloads, needed credential migration and cleanup used by erasure | Unselected backup/restore execution platform |
-| Drive Exchange/federation | `gemini-mcp`, selected task/result paths | Unselected routes, cron/Queue and exclusive adapters |
+| Source residency/ownership | Source/revision + actual locators | Seven-domain derivation, transfer and proof machinery |
+| Report/artifact drafts | Research report/revision/head, one R2 object, compact citations | EvidenceFreeze, manifests, section receipts, residency objects, stage-17 admission |
+| Artifact acceptance/publication | Direct saved report; explicit edit/Wiki proposal | Acceptance decisions, verification/currentness receipts, publication head/outbox/UI |
+| Artifact section revision | Full report revision through the same writer | Section COW Workflow, REPORT witness renewal and child artifact graph |
 | Historical research executors | Settle active attempts; direct saved-result readers | Old factories, dispatch, codecs and fixtures |
-| Ordinary inquiry protocol | Explicit deep loop and direct ordinary mode | Lookup obligations/planning/branch handler and stage-18 status |
+| Ordinary inquiry protocol | Direct ordinary mode | Lookup obligations/planning/branch handler and stage-18 status |
+| Backup/restore | Ordinary downloads and credential/erasure work still used | Unselected backup/restore execution platform |
+| Drive Exchange/federation | `gemini-mcp`, selected task/result paths | Unselected routes, cron/Queue and exclusive adapters |
 | Historical documentation | Distilled facts in current docs; Git history | Superseded plans/status/checkpoints after last live reference |
 
-Inspect deployed migrations before destructive schema work. Unapplied prototypes need no compatibility. Applied
-data receives one deliberate conversion, not permanent dual systems.
+Inspect deployed migrations and retained rows before destructive schema work. Unapplied prototypes need no
+compatibility. Applied data receives one deliberate conversion, not permanent dual systems.
 
 ## 8. Remove development bureaucracy
 
@@ -186,18 +238,21 @@ Retire remaining work-packet/AST-shape machinery independently:
 | Finding | Required result |
 |---|---|
 | C01/C02/C11 | Native conditional immutable R2 create and bounded observation of same bytes/conflict/unavailable |
-| C03 | Align HTTP, stored input and compact Workflow checkpoints; one large immutable value behind a locator |
+| C03 | Align HTTP, stored input and compact Workflow state; one large immutable value behind a locator |
 | C05/C10 | Exact freshness count plus bounded detail/truncation; set membership, no decoder mismatch |
 | C06 | Local size/cardinality checks before an explicitly requested paid verifier; none for ordinary answers |
-| C07/#378/#379 | After assembly, repair retained assertions and delete canceled-behavior cases with their code |
+| C07/#378/#379 | After assembly, repair retained assertions and delete cancelled behavior with its code |
 
 ## Donors and evaluation
 
 Use [the donor register](donors.md), not donor topologies. Perplexity informs small tool surfaces and compact
 continuation. NotebookLM informs selected-source grounding and saved outputs. EdgeQuake informs shared preparation
-and source-scoped updates. SurfSense informs server labels, output reserve, disconnect-safe finalization and batched
-deltas—but not a transcript database or in-memory replay of every frame. OpenViking informs overview-before-detail,
-not a context filesystem. WeKnora informs expected-version edits, not blind auto-link writes.
+and source-scoped updates. SurfSense informs server labels, disconnect-safe finalization and batched deltas—but not
+a transcript database or frame replay. WeKnora informs expected-version edits and body-free history.
+
+ThinkEx usefully distinguishes a readable retained result from optional enhancement, but its provider extraction and
+publication occur in one Workflow step. Eliot separates paid generation from report publication because Workflow
+steps are individually retryable: a save retry must not repeat a paid model call.
 
 WANDR/DRACO-style grading is bounded offline evaluation after the feature exists, not a runtime judge chain.
 Record provider/model/tool/scope/budget with results; separate retrieval, support, report quality, latency,

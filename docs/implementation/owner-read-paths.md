@@ -1,155 +1,260 @@
-# Owner reads: lists, saved reports and freshness
+# Owner reads: lists, history, research reports and freshness
 
-Implementation for task 3 in [the plan](backend-entrypoints.md), not another product specification.
-Source inspected at `a5f53d0d` on 2026-10-18. The changes below are selected work, not completed fixes.
-Implement catalog, history and freshness as separate end-to-end changes with their actual callers.
+Implementation for the lightweight read/edit slice in [the plan](backend-entrypoints.md).
+Checked 2026-10-18 against source at `3dd3a028`. These are selected replacements, not completed runtime fixes.
+Implement each behavior with its real server, client and React callers; delete the replaced reader/decoder.
 
-## 1. Project and Library lists: metadata is not a research operation
+## 1. Project and Library lists are metadata reads
 
-**Code:** `packages/cloudflare-navigation/src/project-owner-service.ts`, `project-owner-storage.ts`,
-`catalog-service.ts`, `catalog-queries.ts` and `orientation-authority.ts`.
-Core routes compose them; `packages/owner-api-client` owns their browser decoding.
+**Start here:** `packages/cloudflare-navigation/src/project-owner-service.ts`, `project-owner-storage.ts`,
+`catalog-service.ts`, `catalog-queries.ts`, their Core routes and owner-client decoders.
 
-Keep the distinction already present in the code. `createProjectOwnerCapability.list` selects projects by
-`project_owner`; `readCatalog` selects projects with a readable source witness. The latter deliberately
-omits empty projects. It is not a replacement for the owner's project list. Empty owned projects must remain
-visible, including after removing their last attachment. Library metadata and delegated discovery are also
-not interchangeable access surfaces.
+Keep the existing product distinction:
 
-The current catalog already batches SQL and does not read R2 here. Its excess work is the subsequent
-`authority.sources` loading, repeated policy/admission decoding, per-source policy-closure computation,
-`orientation_authority_epoch` reads and `catalogTimeFrontier`. That frontier includes unrelated admissions
-and memberships. Do not report this as an R2 optimization or remove all source authorization wholesale.
+- the owner's project list includes empty owned projects;
+- source-witness/delegated discovery may omit empty projects;
+- Library metadata is not a research operation;
+- project membership does not own or duplicate source bytes.
 
-For the owner path, query the authenticated owner's metadata and current attachment/deletion state directly.
-Use actual ownership associations: `project_owner`, and namespace provenance such as
-`source_namespace_initialization.principal_ref`; a system ID is not a principal ID. Verify/backfill an
-unmapped retained namespace once from its real provenance, not by granting the current caller every row.
-Move the relevant writer with the query. Namespace creation, source admission and recorded indexing state
-remain distinct facts; an indexing failure does not make a retained Library item disappear.
+For the owner path, query authenticated ownership, attachment and deletion state directly. Page metadata first;
+join or batch optional readiness for those IDs. Missing readiness is `UNKNOWN` for that item, not missing access,
+false readiness or failure of the whole list. Do not call a model, open R2 bodies, hydrate complete source authority
+or generate summaries during a list.
 
-Replace the owner list's expiring policy/fingerprint chain with that direct ownership predicate. Do not
-change a delegated caller into an owner: retain its operation/project check at ingress and query filtering.
-Keep shared helpers only for remaining real consumers, not as permanent forwarding wrappers.
+Remove the owner list's policy snapshots, global mutation frontiers, orientation epochs and repeated source-policy
+closure once callers use direct ownership. Keep an explicit current project/operation predicate for delegated callers;
+do not turn them into owners.
 
-Page metadata first, then fetch optional readiness rows for those IDs in one bounded batch, or join them
-without multiplying the page. Missing/invalid optional readiness is UNKNOWN for that item, not false READY
-or failure of an otherwise authorized list. A bad identity or an unestablished access boundary is not optional.
-Do not call the provider, hydrate complete source authority or create summaries by opening files during a list.
+### Continuation is position, not authority
 
-### Continuation belongs to the query, not a deployment proof
+Use stable keyset pagination with `limit + 1` and the last emitted unique key. Authenticate every request. A cursor is
+bounded untrusted query position/filter data; it needs no SHA-256, deployment generation, mutation epoch or lease.
+Changing the filter resets pages. Do not replace keyset paging with deep OFFSET, full COUNT or a snapshot registry.
 
-Keep existing ID ordering for projects/sources. Use `limit + 1` and the last emitted key. Authorize every
-request independently; a cursor is untrusted position/filter data, never authority. Validate its bounded
-shape and query association. It needs no SHA-256, session/deployment generation, global mutation epoch or
-five-minute lease. Remove those owner-cursor producers, decoders and retry loops together.
+## 2. Run history lists saved facts
 
-Use a stable unique tie-breaker for any non-unique sort. Do not replace keyset paging with deep OFFSET or
-full COUNT on every page. [SQLite's scrolling-window example](https://www.sqlite.org/rowvalue.html#scrolling_window_queries)
-explains this tradeoff. Live browsing is not a frozen snapshot: concurrent inserts may appear on refresh;
-changing a filter resets its pages. Deduplicate by stable row identity. Do not promise snapshot completeness
-or build a snapshot registry for navigation. This replaces the cursor contract, not the whole routing stack.
+**Start here:** `packages/cloudflare-research-runtime/src/research-run-list.ts`,
+`research-history-project.ts`, owner-client history modules and `apps/eliotr-web/src/query/research.ts`.
 
-## 2. Run history: list saved facts, not reconstructed execution
+The current reader scans up to 32 candidates to show eight. Candidate authorization can reconstruct Workflow,
+report-admission and artifact lineage, read R2 and repeat currentness checks. The client decodes multiple history
+and nested status generations. These bounds do not bound the work inside each candidate.
 
-**Code:** `packages/cloudflare-research-runtime/src/research-run-list.ts`,
-`research-history-project.ts`; `packages/cloudflare-research-stages/src/research-historical-coverage-reader.ts`;
-`packages/owner-api-client/src/research/history-changes/history.ts`; `apps/eliotr-web/src/query/research.ts`.
+Use the existing history surface with one compact row:
 
-`scanVisibleRecent` currently scans up to 32 candidates per collection to emit eight. Candidate processing
-calls run/artifact authorization; report association can read MATERIALIZE/COVERAGE lineage and R2, then
-repeat currentness checks. These bounds do not bound the work inside each candidate. The client decodes six
-history generations and a full nested run-status object. None of that is needed to display a recent row.
+```text
+run id, created time, saved question, run kind, recorded phase,
+research-report ref/title/summary when present
+```
 
-Use the existing `/api/v1/research/runs` surface and one compact summary DTO: run ID, creation time, saved
-question when present, recorded execution state and saved artifact reference when present. Do not synthesize
-completion from a report locator or turn recorded status into a claim of live engine observation. Detailed
-progress is the existing selected-run read. Do not poll each historical Workflow while listing.
+The list reads D1 only. It does not poll historical Workflows, open a report object, calculate freshness, reconstruct
+MATERIALIZE/COVERAGE stages or infer completion from a locator. Detailed live status belongs to the selected run.
 
-Join existing D1 run/admission/artifact bindings and the actual owner-reader origins. Preserve owner-visible
-agent results through `owner_machine_run_origin` / `owner_artifact_read_origin`, not the agent's expired
-execution lease. Enforce current report/metadata deletion and access disposition in this read. No list-time
-`prepare_artifact_read`, historical checkpoint reconstruction or fallback R2 locator lookup is required.
+Persist genuinely missing summary/association fields on run admission and compact report commit. Do not add a second
+synchronized read-model database. Backfill retained rows once and remove old list callbacks/decoders.
 
-The admission and report writer own missing summary facts. `research_report_admission`,
-`artifact_draft_binding`, `artifact_revision` and the saved question already provide much of the association;
-use them before adding storage. Persist a genuinely missing locator with the report commit. Backfill actual
-retained results once; no per-request migration or second synchronized summary database. Remove the old list
-callbacks and unused history-version branches with the server/client replacement.
+### Project filtering occurs before pagination
 
-**Project filtering:** the current SQL searches every `project_id` in `json_tree`, including an EXCEPT
-right-hand operand. `scopeIncludesProject` then rejects that row after selection. Excluded-project matches
-therefore spend the 32-candidate budget and can hide older matching history behind BUDGET_STOPPED.
-Resolve positive project attribution once in admission using the existing scope walker; EXCEPT contributes
-only its left side. Store/query those associations with the run, using the existing captured relation where
-it suffices; a missing indexed run-to-project relation belongs to that same writer, not a new service.
-Do not infer historical attribution from today's source attachments. Validate/convert older scope associations
-once rather than retaining the post-filter scan as a hidden fallback.
+Current SQL searches every `project_id` inside the stored scope expression, including the excluded side of `EXCEPT`,
+then rejects that row after selection. Excluded matches can consume the candidate budget and hide older valid runs.
 
-Keep separate continuations for runs and saved drafts; one collection exhausting its page does not exhaust
-the other. Order by `(created_at, operation_id)` and `(created_at, artifact_id, revision)` respectively, with
-matching predicates and indexes. Preserve eight as the current default display size, not a completeness claim.
-Add continuation to the existing client/query/UI together. It must remain possible to reach older reports.
+Capture positive run-to-project attribution at admission with the existing scope walker: `EXCEPT` contributes only
+its left side. Query that relation before ordering/limit. Do not infer history from today's source attachments or
+retain JSON-tree post-filtering as a fallback.
 
-## 3. Reopen and freshness: useful content must not depend on optional enrichment
+Order by `(created_at, operation_id)`. Keep independent continuations for runs and reports when both collections
+remain visible. It must be possible to reach older results; eight is a display default, not completeness.
 
-**Code:** `packages/cloudflare-artifacts/src/artifact-draft-read-service.ts` (`prepare`, `reopen`),
-`packages/cloudflare-wiki/src/wiki-service.ts`, navigation `source-revision-freshness.ts`,
-client `evidence/report/manifest.ts`, `studio/wiki-read.ts` and `studio/wiki-types.ts`.
+## 3. Replace artifact-draft reports with direct research-report revisions
 
-The current report reader finishes content authorization/readback and then awaits freshness; a failure there
-still rejects reopening. The server emits all changed scope members, while the inspected report and Wiki
-client decoders cap details at 64. The server also repeats `refs.includes` inside a loop despite already
-checking each page's membership. Raising one cap or adding another retry does not resolve this contract.
+**Current cohort:**
 
-Authorize the saved report itself, then load its stored content. Head freshness is advisory enrichment;
-run/model qualification, search readiness and current source-head equality do not establish report access.
-A newer source revision makes the report historical, not invalid. A failed optional comparison yields UNKNOWN
-without discarding a successfully authorized report. Do not turn an authorization error, purged/withdrawn
-report or unknown report-access disposition into a successful read through a catch-all fallback.
+- `packages/contracts/src/publication.ts`;
+- `packages/cloudflare-research/src/research-artifact-draft.ts` and `research-materialize-result.ts`;
+- `packages/cloudflare-artifacts/src/artifact-draft*.ts`;
+- migrations `0032_artifact_drafts.sql`, `0041_research_report_admission.sql` and later authority extensions;
+- `packages/cloudflare-artifacts/src/artifact-draft-read-service.ts`, reauthorization/read-authority modules;
+- owner client `src/evidence/report/manifest.ts` and React `ReportPanel.tsx`.
 
-Use one shared freshness schema for the server and both current clients, with three outcomes:
+This is not a reusable simple report store:
 
-- CURRENT_REVISIONS: the complete retained source set was compared, zero changes.
-- PREVIOUS_REVISIONS: exact `changed_source_count`, and up to 64 `changed_sources` in stable order;
-  `changes_truncated` explicitly says whether the details are only a sample.
-- UNKNOWN: no successful count or currentness claim; carry a bounded unavailable reason, not invented zeroes.
+- `ArtifactRevision` requires `ArtifactSpec`, EvidenceFreeze and dependency manifest;
+- each section requires a body object, evidence ledger and verification receipt;
+- the draft writer adds reservation, binding, head, planned-object receipts, residency keys and outbox;
+- report admission is tied to active Workflow stage 17;
+- owner/delegated reads reconstruct original scope/grant/policy lineage;
+- the client decodes three reauthorization protocols and receives authorization receipts/policy authorities.
 
-Put the schema in `packages/contracts/src/source-freshness.ts` and replace the duplicated interface/client
-rules. Keep this one concrete shared contract, not a generic decoder framework or another protocol generation.
-Use the admitted source-identifier type rather than independently narrowing its alphabet/length in each UI.
-Update `packages/interfaces/src/semantic-api.ts`, server producers and current browser consumers together.
-Migrate still-served PWA callers to the same decoder or retire them at cutover, not to another copied schema.
+Do not create placeholder freezes/manifests/receipts to call this writer. Replace it with research-specific state:
 
-Compare the saved revision set with current heads in SQL; compute the total independently of the bounded
-detail sample, in the same read transaction/batch when split. Use set membership for any residual in-memory
-validation. Missing expected source-head rows make the comparison UNKNOWN, not current or an exact
-smaller change count. Do not traverse R2 or rebuild scope/grant proofs to calculate head differences. Do not compute whole-report freshness in every history row.
-Exact citation opening remains a separate source-revision/range read. An unavailable citation does not get
-silently redirected to current bytes. Apply real deletion policy to derived private content; this separation
-is not permission to keep serving a report that itself must be removed.
+```text
+research_report(
+  report id, owner, head revision, deletion state, timestamps
+)
 
-## 4. Reuse donor operations, not their accidental semantics
+research_report_revision(
+  report/revision,
+  origin kind: GENERATED | MANUAL_EDIT | AI_EDIT,
+  origin operation id: required for GENERATED/AI_EDIT and absent for MANUAL_EDIT,
+  title/summary/language,
+  one R2 object locator/hash/size,
+  exact source revisions,
+  created time
+)
+```
 
-[WeKnora at `005627b1`](https://github.com/Tencent/WeKnora/blob/005627b180c6c7509660b0a14401e463f48d53f8/internal/application/repository/wiki_page.go)
-separates `ListRevisions` (no content body) from `GetRevision`, and has `UpdateWithRevision` plus expected-
-version handling. Apply those ideas to existing Eliot readers/writers. Do not copy GORM, its COUNT+OFFSET
-paging, multi-dialect code or a second revision store.
+A non-null origin operation is unique to one research-report revision. Generated/AI-edited revisions attach that
+exact revision to the operation. Manual edits do not invent a run.
 
-Its `UpdateAutoLinkedContent` writes content by ID without an expected-version predicate or version increment.
-Do not copy that mutation into immutable reports/Wiki history: it could overwrite a concurrent edit or alter
-what a saved revision means. Presentation-only link decoration stays a view; substantive persisted edits
-create a revision through the existing writer. [D1 batch](https://developers.cloudflare.com/d1/worker-api/d1-database/)
-rolls back failed statements, not a successful zero-row update; dependent writes need the same successful
-transition predicate. A post-batch row-count check alone cannot undo already committed companion writes.
+One immutable R2 object carries Markdown, compact citation refs and bounded generation/edit metadata. Markdown
+headings are view structure, not durable section objects. A full-body revision is simpler and coherent for generated
+reports.
 
-References were inspected on 2026-10-18; donor code is a pinned pattern reference, not imported source.
-No new library, read-model service, compatibility layer, audit registry or cryptographic cursor is selected.
+Create the object conditionally, then in one D1 transaction insert the revision and advance the expected head.
+For `GENERATED`/`AI_EDIT`, attach the exact report revision to the originating operation in that transaction.
+No report admission decision, object residency graph, verification receipt or outbox is required. A real Queue
+consumer may still have a real outbox.
 
-## Finish the behavior
+## 4. Remove the report acceptance/publication ceremony
 
-During implementation use scoped compile/lint. After assembly exercise empty projects, independent paging,
-equal sort timestamps, EXCEPT-only matches before a real match, 65 changed sources, unavailable optional
-freshness and actual access/deletion failures. Report list D1/R2/Workflow call counts separately from latency.
-Verify that still-needed metadata is written on the actual mutation path and the replaced readers/codecs
-are gone. Do not create another test campaign, metric gate or approval sequence before implementing this.
+**Current cohort:**
+
+- React `ArtifactActions.tsx`;
+- owner client `studio/artifact.ts` and legacy PWA artifact-product modules;
+- `packages/cloudflare-artifacts/src/artifact-publication*.ts`, publication policy/product service;
+- migration `0098_artifact_publication_authority.sql` and later extensions;
+- operation intent/attempt/receipt/outbox rows used only for `ARTIFACT_PUBLISH`;
+- publication receipts, publication head and mutation guard.
+
+The current owner action says “Accept this report”. The server then revalidates section receipts and evidence
+currentness, records a signed-looking owner decision/provenance, appends operation/outbox records and advances a
+second publication head. Separately, the base artifact schema already contains a `PUBLISHED` status, while the
+publication subsystem starts from a DRAFT and synthesizes its own `VERIFIED/ACCEPTED` dispositions. This does not
+make model prose true, and repository search finds `artifact.accepted` only at its producer—not at a consuming
+integration.
+
+Selected behavior:
+
+- a completed generated report is saved and usable immediately;
+- UI labels revision origin (`generated` or `edited`), never “truth accepted”;
+- owner may edit it, download it or explicitly propose derived material to Wiki/Inbox;
+- Wiki/Inbox proposal/review is its own meaningful action with its own target, not a prerequisite acceptance receipt;
+- source changes appear through advisory freshness and exact citations, not a publication disposition.
+
+Delete the acceptance button/status/receipt details and server/client routes after report cutover. Do not replace the
+system with `accepted_at`, another publication table or a proof badge absent a concrete product action.
+
+## 5. Reopen the saved report before optional freshness
+
+The current read path reauthorizes a historical scope, compares authorization snapshots, reads section/manifest
+objects and then awaits source freshness. Freshness failure can still hide otherwise readable content. A saved
+report also leaks internal authorization fields into the browser DTO.
+
+Selected owner read:
+
+1. authenticate the owner;
+2. select the exact `research_report_revision` through owner and non-deleted report state;
+3. read its exact R2 object and verify the stored hash/size;
+4. return report ref, origin, title, summary, language, Markdown and compact citations;
+5. calculate freshness separately and optionally.
+
+The owner does not need the producing credential generation, deployment generation, policy lease, original scope
+expression or stage lineage to read a retained private report they still own. A connected client must still prove
+its current explicit report/operation/project grant. Report deletion/purge remains authoritative.
+
+Remove `artifact-draft-reauthorization.v1/v2/v3`, scope authorization objects and policy/receipt fields from the
+current client. Server and React change together; do not add another compatibility generation.
+
+## 6. Freshness is advisory
+
+A newer source revision makes the report historical, not invalid. Use one current schema:
+
+- `CURRENT_REVISIONS`: complete saved source set compared, zero changes;
+- `PREVIOUS_REVISIONS`: exact changed count plus up to 64 stable detail rows and an explicit truncation flag;
+- `UNKNOWN`: no successful currentness/count claim, with a bounded reason.
+
+Compare `research_report_revision.source_revision_refs_json` with current heads in D1. Compute total independently
+of the bounded detail sample. A missing expected head makes the result `UNKNOWN`, not current or a smaller exact
+count. Do not traverse R2, replay scopes, open every citation or compute freshness for every history row.
+
+Exact citation opening remains separate: authenticate, load the retained source revision/readable object, apply
+actual deletion/disclosure, and return the bounded range. Never redirect to the latest bytes.
+
+## 7. Edits are expected-head full revisions
+
+Current `artifact-section-revise.ts` starts another Workflow, renews REPORT admission/source witnesses, creates a COW
+child artifact, invokes a model and reconciles another attempt state. That is another research engine hidden behind
+“Revise this section”.
+
+Selected manual edit:
+
+1. read exact current research-report revision;
+2. submit bounded complete Markdown plus citation references and expected head;
+3. server-resolve every citation against the retained representation, range bounds, current report owner and actual
+   source deletion/disclosure; reject unknown, inaccessible, malformed or out-of-range references;
+4. canonicalize/deduplicate accepted citations and derive `source_revision_refs_json` from them—the browser never
+   supplies that source set as authority;
+5. create one immutable object;
+6. insert one `research_report_revision` with `origin_kind=MANUAL_EDIT` and no origin operation;
+7. conditionally move `research_report.head_revision`; zero affected rows is a conflict.
+
+The browser may preserve/remove citations from the current report and add only references obtained through an
+explicit server source/citation selection path. It cannot mint a citation by choosing bytes or supplying quoted
+text. Display text and anchors are presentation; the server's exact revision/range is canonical.
+
+No in-place mutation of body/provenance and no section child graph. Reports are bounded generated documents; a full
+body is the simplest coherent edit unit.
+
+If AI-assisted revision is selected, admit one explicit model attempt against the chosen report/source refs, retain
+its completed Markdown, resolve only the server-issued label map, then write `origin_kind=AI_EDIT` with the exact
+origin operation. It does not get a COW Workflow, report-admission witness, section ledger or acceptance prerequisite.
+
+Wiki should follow the same expected-version rule even before storage is consolidated. WeKnora's useful pattern is
+`expected version → snapshot/write atomically` and body-free revision listings. Do not copy its auto-link/meta
+updates that write by page ID without the same expected version. Decoration is render-time or a new revision.
+
+Extract a shared revision helper only after both research reports and Wiki use the same small operation and it
+removes code. Do not build a generic content framework first.
+
+## 8. Data transition and deletion
+
+Before destructive migration, inspect deployed retained rows. Convert each real saved report once:
+
+- preserve stable report identity/revision where practical;
+- read the verified current Markdown and compact/convert its citations;
+- preserve originating operation for generated revisions, title, language and creation time;
+- assign `GENERATED`; do not fabricate an operation for later manual revisions;
+- derive the saved source revision set from converted canonical citations;
+- write the new immutable object and research-report rows;
+- verify object hashes/counts and run/report associations.
+
+The conversion does not migrate artifact-publication receipts as product truth. If an old report was accepted,
+preserve that only as bounded migration diagnostics when needed to audit the conversion; do not recreate the
+acceptance platform or expose the old receipt in the new product.
+
+Switch current writer, status, history, report read, export, edit and React callers. Then delete the old report-
+specific artifact/admission/freeze/manifest/verification/publication/COW tables, code, contracts, routes, protocol
+decoders and fixtures. Do not keep a fallback reader; Git history is the archive.
+
+## Donor and platform decisions
+
+- **SurfSense:** generation outlives the follower; finalization is disconnect-safe; adjacent deltas are batched.
+  Do not copy its transcript DB or in-memory replay list of every frame.
+- **WeKnora:** expected-version writes and body-free history. Do not copy GORM topology, COUNT+OFFSET or blind
+  auto-link/meta writes.
+- **ThinkEx:** retaining a readable result when optional enhancement fails is useful. Its provider work and publish
+  occur in one Workflow step; Eliot splits paid generation from report save because the step can retry.
+- **Cloudflare:** R2 conditional create and D1 batch transaction are sufficient. They do not form a distributed
+  transaction; an unreferenced immutable object is reconciled/cleaned rather than wrapped in two-phase proof.
+
+No donor code or dependency is imported.
+
+## Completion
+
+During implementation use scoped compile/lint. After assembly exercise empty projects, independent pagination,
+EXCEPT filtering, save failure after completed generation, report head conflicts, unavailable optional freshness,
+65 changed sources, forged/out-of-range edit citations, actual access/deletion failures, manual edit conflict and
+conversion of retained reports.
+
+Complete means the new writer/readers/edits work through real callers and the old report artifact, acceptance and COW
+cohorts are gone—not hidden behind adapters.
