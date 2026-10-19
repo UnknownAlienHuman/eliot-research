@@ -2,7 +2,8 @@
 
 Read only for work at these boundaries. Product purpose lives in the
 [manifesto](../architecture/ELIOT_RESEARCH.md); [the plan](backend-entrypoints.md) selects implementation;
-[source lifecycle](source-lifecycle.md) and [ordinary answer](research-full-answer-v1.md) own their flows.
+[source lifecycle](source-lifecycle.md), [ordinary answer](research-full-answer-v1.md) and
+[Wiki/Inbox](wiki-inbox.md) own their flows.
 
 ## Authentication and untrusted data
 
@@ -13,14 +14,15 @@ Validate external request/provider data at entry and use typed values internally
 a write, cancellation, deletion or actual disclosure can change the result. Do not carry grant/deployment proof
 chains through owner lists or private helper calls.
 
-Source text is untrusted data. It cannot add tools, change scope/budget/model/system instructions, create citation
-labels or authorize an effect. Keep prompts, reasoning, credentials and raw provider frames out of browser output.
+Source, report and proposal text are untrusted data. They cannot add tools, change scope/budget/model/system
+instructions, create citation labels or authorize an effect. Keep prompts, reasoning, credentials and raw provider
+frames out of browser output.
 
 ## Source and citation lifetime
 
 A run captures exact selected source revisions. A newer head or project detach does not rewrite an active owner's
-selection or a saved research report. Purge/redaction/deletion can make bytes unavailable. External clients are
-rechecked at their current disclosure boundary.
+selection, saved research report, Wiki proposal or Wiki page. Purge/redaction/deletion can make bytes unavailable.
+External clients are rechecked at their current disclosure boundary.
 
 A citation is the retained readable revision plus exact byte range and optional display coordinate. Opening it
 authenticates the reader, loads that revision, applies current deletion/disclosure state and performs one bounded
@@ -28,31 +30,31 @@ range read. Never substitute the latest head. A checksum identifies observed sto
 or function call.
 
 Neither a model nor a browser can mint a canonical citation. Generation resolves only labels from the server-owned
-context map. Manual edits may preserve/remove existing refs and add refs obtained through an explicit server
-source/citation selection path; the server still revalidates revision, representation, range bounds and current
-access/deletion before saving. Quoted/display text is not authority.
+context map. Manual report/Wiki edits may preserve/remove existing refs and add refs obtained through an explicit
+server selection path; the server revalidates revision, representation, range bounds and current access/deletion
+before saving. Quoted/display text is not authority.
 
 ## D1 and R2
 
 D1 owns short metadata transactions. R2 owns immutable large bytes. There is no cross-product transaction and no
 reason to simulate one with receipt graphs.
 
-For source, public output or research-report bytes:
+For source, public output, research-report, Wiki proposal or Wiki-page bytes:
 
 1. choose a deterministic immutable object key;
 2. use conditional R2 create;
 3. on uncertain acknowledgement, read that exact key and distinguish same bytes, conflict and unavailable;
-4. commit the D1 pointer/head/result through one expected-state transaction;
+4. commit the D1 pointer/head/result/decision through one expected-state transaction;
 5. leave an unreferenced object for bounded reconciliation/cleanup if D1 does not commit.
 
 R2 conditional writes are atomic and reads are strongly consistent after a successful write. D1 `batch()` is one
 SQL transaction: a failed statement rolls back the sequence. A successful zero-row `UPDATE` is not a failure, so
-revision insert, head change and dependent result update must share predicates or an explicit aborting guard.
-No model, HTTP or R2 operation runs inside that D1 transaction.
+revision insert, head change and dependent result/proposal/change-feed writes must share predicates or an explicit
+aborting guard. No model, HTTP or R2 operation runs inside that D1 transaction.
 
 Do not create operation intents, outbox rows, residency receipts or per-object readback receipts for an internal
-same-Worker report save. Keep an outbox only when a real asynchronous consumer needs delivery. Store one checksum,
-size and locator per retained object; do not duplicate the body or its digest through every layer.
+same-Worker save. Keep an outbox only when a real asynchronous consumer needs delivery. Store one checksum, size and
+locator per retained object; do not duplicate the body or its digest through every layer.
 
 ## Provider execution and streaming
 
@@ -140,40 +142,99 @@ A completed research report is usable immediately. User confidence comes from ci
 freshness and edits. Explicitly proposing content to Wiki/Inbox is a separate target-specific action. Do not replace
 publication receipts with `accepted_at` or another badge absent a concrete product need.
 
-## Research-report access and reopening
+## Research-report access and edits
 
-Owner access checks the current authenticated owner, research-report ownership and deletion state. It does not replay
-the original scope expression, credential generation, policy lease, deployment generation, stage lineage or
-publication receipt. A connected client checks its current explicit report/operation/project grant.
+Owner access checks current authenticated ownership and deletion state. It does not replay the original scope,
+credential generation, policy lease, deployment generation, stage lineage or publication receipt. A connected client
+checks its current explicit report/operation/project grant.
 
-Reopening:
+Reopening reads the exact revision row/object, verifies size/checksum, returns Markdown/citations/metadata, computes
+freshness separately and opens citations through the source reader. A newer source head makes the report historical,
+not unauthorized. Freshness failure returns `UNKNOWN` without hiding readable content.
 
-1. reads the exact `research_report_revision` row;
-2. loads the exact R2 object and verifies stored size/checksum;
-3. returns origin, Markdown, compact citations and stable metadata;
-4. computes source-head freshness separately and optionally;
-5. opens a citation only through the source-revision/range reader.
+Manual expected-head edits authorize the current owner/head, validate complete bounded Markdown and canonical
+citations, conditionally create one object, insert `MANUAL_EDIT` and move the head atomically. An explicitly selected
+AI revision uses the normal model-attempt owner, retains completed Markdown and writes `AI_EDIT`; it does not use the
+artifact section-COW Workflow or acceptance platform.
 
-A newer source head makes the report historical, not unauthorized. Freshness failure returns `UNKNOWN` without
-hiding readable content. A purged/deleted report or failed report authorization remains unavailable. Do not expose
-authorization receipts, policy authorities, acceptance receipts or reauthorization protocol generations in the
-browser DTO.
+## Wiki and Inbox state
 
-## Research-report edits
+Wiki is owner-selected reusable knowledge. Inbox is a review queue for changes proposed from a saved research report.
+The first selected state is:
 
-Manual expected-head edits are ordinary request/application work:
+```text
+wiki_page
+  page_id, owner_principal_ref, head_revision,
+  deleted_at, created_at, updated_at
 
-1. authorize the current owner/report head;
-2. validate one complete bounded Markdown body, expected head and citation references;
-3. resolve each citation against retained representation/range bounds and current owner/deletion/disclosure;
-4. reject unknown, inaccessible, malformed or out-of-range refs;
-5. canonicalize/deduplicate accepted refs and derive the source-revision set;
-6. conditionally create one immutable object;
-7. insert `MANUAL_EDIT` with no origin operation and move the expected head atomically.
+wiki_page_revision
+  page_id, revision,
+  origin_kind: REPORT_REUSE | MANUAL_EDIT,
+  origin_report_ref, accepted_proposal_id,
+  page_type, title,
+  object_key, object_sha256, object_size,
+  source_revision_refs_json,
+  editor_principal_ref, created_at
 
-An explicitly selected AI revision uses the normal model-attempt owner, retains completed public Markdown, resolves
-only its server label map, then writes `AI_EDIT` with the actual operation. It does not use the current
-`artifact-section-revise` Workflow, REPORT witness renewal, COW child artifact or publication acceptance prerequisite.
+wiki_inbox_proposal
+  proposal_id, owner_principal_ref,
+  source_report_ref,
+  target_page_id, expected_head_revision,
+  page_type, title,
+  object_key, object_sha256, object_size,
+  source_revision_refs_json,
+  state: PENDING | ACCEPTED | REJECTED,
+  accepted_page_revision,
+  idempotency_key, created_at, decided_at
+```
+
+This is deliberately not a generic proposal/event/content framework. No polymorphic origin registry or implicit
+connected-agent Wiki authority.
+
+A proposal object and a page-revision object have the same bounded payload shape: Markdown, compact citations,
+visible limitations and small origin metadata. Accepting unchanged reuses the proposal object; it does not copy R2
+bytes or create a manifest/evidence map.
+
+## Inbox reads and decisions
+
+Inbox list is one owner-scoped keyset-paginated D1 summary query. It does not open R2, calculate freshness, replay
+historical scopes or validate every citation. Opening one proposal reads one exact object and verifies size/checksum.
+
+Accept unchanged performs one D1 transaction:
+
+1. require owner + `PENDING` proposal;
+2. require exact expected Wiki head (or no page for expected zero);
+3. insert immutable page revision referencing the proposal object;
+4. create/advance `wiki_page.head_revision`;
+5. set proposal `ACCEPTED` with exact revision/time;
+6. insert the real Wiki change row directly into `research_change_feed`.
+
+A zero-row head CAS must abort the transaction. Repeating an already accepted proposal returns its existing revision.
+A rejected proposal cannot be accepted. Unknown acknowledgement is reconciled by proposal/page reads.
+
+Edit-and-apply validates one complete edited body and server-resolves its citations, conditionally creates one object,
+then uses the same acceptance transaction. Reject performs only `PENDING → REJECTED` and creates no page revision or
+change-feed publication.
+
+Direct owner create/edit bypasses Inbox and writes one `MANUAL_EDIT` full-body revision under expected-head CAS.
+The model may prepare a proposal; only the owner can apply it. Optional audit/freshness can be displayed but cannot
+become a mandatory publication proof chain.
+
+## No Wiki publication proof platform
+
+Remove the current parallel Wiki systems after retained-data conversion:
+
+- `wiki_revision/wiki_head` from the initial schema;
+- `wiki_publication_revision/wiki_publication_head` from the runtime publication schema;
+- `wiki_publication_authority`, owner publication guard/witness, review admissions and review/integrity receipts;
+- evidence maps, dependency/coverage requirements and scope/source fingerprint replay for private owner reads;
+- `wiki_owner_edit_binding` and edit-proposal provenance graph;
+- operation receipts and both outboxes used only to publish Wiki revisions;
+- `WikiPublicationPort`, generic publisher and unused runtime auto-promotion.
+
+`wiki_publication_outbox` has no delivery worker in the inspected runtime; its insert trigger creates a
+`research_change_feed` row. Insert that real row directly in the head transaction. Add a Queue/outbox only when a
+real external consumer exists.
 
 ## Workflow, Queue and ResearchSession
 
@@ -184,8 +245,9 @@ Ordinary execution chooses its path before old handler/checkpoint assembly. Expl
 search/read/finish loop. Both save through the same research-report writer. Old executors serve only already-admitted
 runs while they settle; completed research reports are read directly.
 
-A slow/disconnected subscriber cannot block generation or save. Do not persist every token/event. Reconnect reads
-canonical status/result and may resume new provisional deltas with an explicit gap.
+Wiki proposal creation from a saved report and Wiki owner decisions are normal request/application operations, not
+new Workflows. A slow/disconnected browser cannot create a duplicate decision; idempotency and read reconciliation
+belong to the proposal/page state.
 
 ## Run status and owner lists
 
@@ -196,60 +258,39 @@ Status describes product behavior, not internal graph topology:
 - safe failure/cancellation;
 - terminal result availability and research-report reference.
 
-Do not expose `next_stage_index`, stage 18, handler generation or provider frames as the durable contract. A temporary
-old-run adapter is removed after real old runs settle.
-
-Owner lists read D1 metadata only: run ID, time, question, recorded state and research-report ref/title/summary.
-Report bodies and citation bytes load on demand. Project attribution is captured at admission; do not infer it from
-today's attachments or post-filter a bounded candidate page. Acceptance/publication status is not part of the list.
+Do not expose `next_stage_index`, stage 18, handler generation or provider frames as the durable contract. Owner lists
+read D1 metadata only. Report/Wiki/proposal bodies and citation bytes load on demand. Acceptance/publication proof
+status is not part of any list.
 
 ## Backup, deletion, erasure and orphan cleanup
 
-The current backup inventory explicitly exports `artifact_head`, `artifact_revision`, artifact-draft tables,
-`research_report_admission`, publication receipts/heads and section-revise runs. Those manifests, explicit table
-specs, coherent-cut readers and restore fixtures are callers of the old schema. Update or remove them with report
-cutover; do not keep dead tables because an exhaustive-inventory test still names them.
+Backup/table-spec/restore code is a schema caller. Move selected portable state to:
 
-If the retained backup path remains selected:
+- `research_report` and `research_report_revision`;
+- `wiki_page`, `wiki_page_revision` and `wiki_inbox_proposal`;
+- exact R2 object locator/checksum/size.
 
-- export `research_report` and `research_report_revision` plus the exact R2 object locator/checksum/size;
-- restore immutable objects before their D1 references and re-establish heads/result associations through the new
-  schema's ordinary integrity checks;
-- never restore old acceptance receipts as current product state;
-- classify retired artifact/admission/publication/COW tables as removed, not historical authority to recreate.
+Do not keep old artifact/Wiki tables because an exhaustive inventory names them. Restore immutable objects before
+D1 references and re-establish heads/result/proposal decisions through the new schema's ordinary integrity checks.
+Old acceptance/review receipts are not restored as current product state.
 
-Logical deletion sets `research_report.deleted_at` (or the selected equivalent) and immediately removes the report
-from owner/delegated reads. Physical R2 deletion is an existing erasure/retention operation over the exact object key:
-respect current holds, record the real target, and remove bytes only after no live `research_report_revision`
-references the key. The old publication-head `PENDING_REVALIDATION`/`REDACTED_DEPENDENCY` path disappears with the
-publication system; source erasure can make a compact citation unavailable without deleting unrelated report prose
-unless the actual erasure policy requires derived-content removal.
+Logical report/page deletion immediately hides content. Physical R2 deletion uses the existing exact
+erasure target/hold/purge lifecycle after no live revision references the key. Source erasure may make compact
+citations unavailable without deleting unrelated prose unless actual policy requires derived-content removal.
 
-Orphan cleanup is not erasure. It may delete an object only after a grace period and a fresh D1 check proves no live
-research-report revision references that exact key. It must not bypass an erasure hold or race a deterministic retry.
-No report-specific erasure coordinator, closure ledger or backup platform is added.
+Proposal/orphan cleanup is not erasure. It waits for a grace period and performs a fresh D1 reference check. An
+accepted proposal object is retained because a Wiki revision references it. Cleanup never races deterministic retry
+or bypasses an erasure hold. No report- or Wiki-specific erasure coordinator is added.
 
 ## Migration and deletion
 
-Inventory retained reports before changing schema. Convert each real saved report once, preserving stable identity/
-revision where practical, body text, server-validated citations, originating operation, title, language and creation
-time. Assign `GENERATED` to old generated reports, derive the source set from canonical citations and do not invent
-operations for manual edits. Verify row/object counts and hashes, switch current server/client reads and writes, then
-remove:
+Inventory retained report and Wiki rows before changing schema. For Wiki, inspect both old page/head families and
+proposal state. Convert identical page identities once; when the same page/revision has different bytes, stop that
+page's migration and report the conflict rather than choosing silently.
 
-- `artifact_revision` report use;
-- `artifact_draft_reservation`, `artifact_draft_head`, `artifact_draft_binding`, `artifact_draft_object` report use;
-- `research_report_admission` and stage-17 report fences;
-- report EvidenceFreeze/manifest/verification/residency objects;
-- `artifact_publication_receipt`, `artifact_publication_head`, `artifact_publication_mutation_guard` and publication-
-  only operation/outbox rows;
-- artifact acceptance routes/client/UI/policy/readiness code;
-- artifact section revise Workflow/COW/model/child-materialization code and tables;
-- old backup/table-spec/restore entries and publication erasure invalidation tied only to that cohort;
-- v1/v2/v3 report reauthorization DTOs and their fixtures.
-
-Old acceptance receipts are conversion diagnostics at most; they do not become product state in the new schema.
-Do not keep a fallback reader after conversion. Git history is the archive.
+Map old `PROPOSED → PENDING` and `PUBLISHED → ACCEPTED`, preserve actual page bodies/citations/origins, verify rows,
+objects, heads and opens, then switch server/client/UI/backup/erasure/change-feed callers. Remove old schemas and
+fallback readers in the same completed cutover. Git history is the archive.
 
 ## Limits
 
