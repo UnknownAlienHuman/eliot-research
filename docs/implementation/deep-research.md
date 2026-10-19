@@ -100,8 +100,8 @@ The model may see a bounded relevant history and a compact summary of accepted w
 source identities, unresolved requirements, budget state or the locator of a paid result. A summary is convenient
 context, not a new authority.
 
-ResearchSession state is not this working state. It carries only a safe product phase, public output offset and
-terminal result hint. The SDK workflow-tracking row is also not the working state or product history.
+ResearchSession state is not this working state. It carries only a safe product phase and terminal result hint.
+Text byte ranges live only in non-durable broadcasts; the SDK workflow row is not working state or product history.
 
 ## Loop behavior
 
@@ -161,13 +161,13 @@ provider effect remains tied to the original attempt and is reconciled rather th
 Admission persists the canonical run, then invokes the ResearchSession named by `operation_id`; that Agent starts
 `RESEARCH_WORKFLOW` with the same ID. The Workflow extends `AgentWorkflow` and can use the installed native bridge.
 
-Use durable `step.mergeAgentState()` only for coarse product phases such as preparing, generating, saving and
-terminal state. Use non-durable `broadcastToClients()` only for bounded public final-generation text or a small
+A product phase is written/read back in canonical D1 first; only then use durable `step.mergeAgentState()` for its
+coarse presentation. Use non-durable `broadcastToClients()` only for bounded public final-generation text or a small
 user-useful progress message. Do not publish every iteration, candidate, tool argument or intermediate fact.
 
 Broadcasts may repeat and are not replayed. Public text frames carry monotonic UTF-8 ranges; the client deduplicates
-or reports a provisional gap. Accepted evidence, compact state, completed public output and the final report remain
-durable independently of every subscriber.
+or reports a provisional gap. Keep those offsets out of Agent state. Accepted evidence, compact state, completed
+public output and the final report remain durable independently of every subscriber.
 
 The browser Agent connection is readonly and exposes no callable that can start/cancel/retry paid work. Disconnect
 is not cancellation. On reconnect, Access and run ownership are checked again, the client receives current small
