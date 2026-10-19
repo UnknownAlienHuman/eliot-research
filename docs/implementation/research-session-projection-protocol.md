@@ -25,7 +25,7 @@ presentation projection. D1/R2 remain canonical. Browser disconnect never cancel
 
 | Current source | Observed behavior | Replacement |
 |---|---|---|
-| `research-run-service.ts` | Starts `env.RESEARCH_WORKFLOW.create()` directly. | Persist admission, then ask the run's ResearchSession to start the tracked Workflow with `runWorkflow()`. |
+| `research-run-service.ts` | Starts `env.RESEARCH_WORKFLOW.create()` directly. | Persist admission, then ask the run's ResearchSession to start the Workflow with deterministic identity and native tracking. |
 | `research-workflow.ts` | Plain `WorkflowEntrypoint`; also hosts unrelated `EXHAUSTIVE_QUERY`. | Research runs use `AgentWorkflow`; exhaustive query moves to its own direct Workflow class/binding. |
 | `research-session-bootstrap.ts` | Rebuilds a session record from D1 stage-1 manifest, handler generation and investigation identity before every Agent route. | One Agent is named by `operation_id`; on connect it reads one bounded canonical run summary when presentation state needs hydration. |
 | `research-session-http-projection.ts` | Duplicates run state in DO storage and reconstructs stage/checkpoint/final-receipt authority. | Remove. Current D1 run phase/result is the reconnect truth. |
@@ -61,6 +61,10 @@ Use `operation_id` for all three identities:
 - ResearchSession Agent name;
 - Workflow instance ID.
 
+Validate at ingress that the admitted ID satisfies both Eliot's identifier contract and Cloudflare Workflow instance
+ID requirements. Current UUID-shaped run IDs already begin with an allowed alphanumeric character. Do not silently
+mint a second Workflow ID when an admitted ID is incompatible.
+
 Do not retain a separate `session_id`, an Agent-side investigation revision or handler generation. Those are old
 executor details. A presentation frame needs `operation_id`, protocol version and product phase, not the original
 credential/deployment proof chain.
@@ -69,17 +73,38 @@ Admission remains an authenticated HTTP operation:
 
 1. validate and persist the canonical run/request;
 2. obtain `RESEARCH_SESSION` by `operation_id`;
-3. invoke one server-only Agent method, not a browser `@callable`;
-4. the Agent verifies the exact admitted D1 row and calls
-   `runWorkflow("RESEARCH_WORKFLOW", params, { id: operation_id, metadata: { operation_id } })`;
-5. read back the tracked workflow ID/status or the canonical run dispatch binding before returning success.
+3. invoke one plain public server RPC method, not a browser `@callable`;
+4. the Agent verifies the exact admitted D1 row;
+5. it reconciles the deterministic Workflow identity as described below;
+6. only when no instance exists, call
+   `runWorkflow("RESEARCH_WORKFLOW", params, { id: operation_id, metadata: { operation_id }, agentBinding: "RESEARCH_SESSION" })`;
+7. bind/read back the same Workflow ID in canonical D1 before returning success.
 
-A lost acknowledgement is reconciled with the Agent's tracked workflow (`getWorkflow` / `getWorkflowStatus`) and
-the D1 dispatch binding. It never calls `runWorkflow` again merely because the response was lost.
+### Close the SDK create-before-track gap
+
+In exact `agents 0.27.0`, `runWorkflow()` calls `workflow.create()` first and inserts `cf_agents_workflows` second.
+A Worker/DO failure or lost acknowledgement can therefore leave a real running Workflow with no SDK tracking row.
+Treat the three observations separately:
+
+1. `getWorkflow(operation_id)` returns the exact tracked `RESEARCH_WORKFLOW`: adopt it and compare/bind D1.
+2. Tracking is absent, but `getWorkflowStatus("RESEARCH_WORKFLOW", operation_id)` observes a real instance: adopt
+   that instance and compare/bind D1. Do not call `runWorkflow()` again merely to recreate tracking.
+3. Tracking and direct binding observation both establish absence, and D1 is not already bound: call
+   `runWorkflow()` once with the deterministic ID, then compare/bind D1.
+
+A status observation failure is `UNKNOWN`, not absence and not permission to create. A tracking row naming another
+workflow, a D1 binding naming another instance, or incompatible admitted params is an identity conflict. The D1 bind
+uses expected-unbound-or-exact semantics; a zero-row result is read back and compared, never treated as success.
+
+SDK tracking may remain absent in the rare create-before-track recovery case. That is acceptable because canonical
+D1 owns product state and the Workflow params already contain the Agent origin. Do not add another tracking table or
+repeat a paid run to repair optional operational metadata. Status/cancellation code retains a direct Workflow-binding
+fallback for this case.
 
 Browser connections cannot start, restart, terminate or approve workflows. Cancellation remains the authenticated
-run mutation. After the canonical cancellation decision, the server may terminate the tracked Workflow through the
-Agent. Agent callbacks do not decide cancellation.
+run mutation. After the canonical cancellation decision, the server terminates the exact Workflow through Agent
+tracking when present or directly through the Workflow binding when tracking is absent. Agent callbacks do not decide
+or reverse cancellation.
 
 ## Split the overloaded Workflow binding
 
@@ -120,9 +145,14 @@ For every durable phase change, settle and read back the canonical D1 transition
 `step.mergeAgentState()` or `step.updateAgentState()`. Agent projection may lag D1; it must never lead it. Do not
 persist a state update for every token, search result or internal step.
 
-Use `step.reportComplete()` / `step.reportError()` for the SDK tracking lifecycle after the canonical D1 result or
-failure has settled. `onWorkflowComplete` and `onWorkflowError` may emit a safe terminal presentation hint; they do
-not write the canonical result.
+Wrap the whole research `run()` in one application-level failure boundary. Expected or unexpected failure first
+attempts the canonical D1 terminal/unknown settlement. Only afterward call `step.reportError()` or rethrow. The SDK's
+automatic unhandled-error callback is a presentation hint; `onWorkflowError` must read canonical D1 before showing a
+terminal failed phase. If canonical settlement is unavailable, show unknown/refresh status rather than minting
+failure from the callback.
+
+Use `step.reportComplete()` for SDK tracking only after the canonical D1 result has settled. `onWorkflowComplete`
+may emit a safe terminal presentation hint; it does not write the canonical result.
 
 ## Public text channel
 
@@ -240,11 +270,12 @@ public-output/report storage and exact citation reads.
 
 The exact installed `agents 0.27.0` tag already supplies the required operations:
 
-- `Agent.runWorkflow()` with explicit instance ID and metadata;
+- `Agent.runWorkflow()` with explicit instance ID, metadata and Agent binding;
 - `AgentWorkflow` with typed Agent RPC;
 - durable `step.mergeAgentState()` / `step.reportComplete()`;
 - non-durable `broadcastToClients()` / `reportProgress()`;
-- lifecycle callbacks and workflow status reconciliation;
+- `getWorkflow()` tracking and direct `getWorkflowStatus()` observation;
+- lifecycle callbacks;
 - readonly connections that survive hibernation;
 - AgentClient state sync and reconnect.
 
@@ -257,13 +288,15 @@ Cloudflare references checked 2026-10-18:
 [Agent client SDK](https://developers.cloudflare.com/agents/communication-channels/chat/client-sdk/).
 Exact installed upstream inspected at tag `agents@0.27.0`, commit
 `e335186331f99be12609a5eb0c64c7863c3ccafd`, including `packages/agents/src/index.ts`,
-`packages/agents/src/workflows.ts`, `docs/agents/readonly-connections.md` and `docs/agents/client-sdk.md`.
+`packages/agents/src/workflows.ts`, `packages/agents/src/workflow-types.ts`,
+`docs/agents/readonly-connections.md` and `docs/agents/client-sdk.md`.
 
 ## Completion
 
 Complete means:
 
-- new research admission starts one Agent-tracked Workflow with `operation_id` as the single identity;
+- new research admission starts/adopts one Agent-origin Workflow with `operation_id` as the single identity;
+- the create-before-track failure window cannot cause a second Workflow;
 - ordinary/deep execution extends `AgentWorkflow`; Q8 uses its separate direct Workflow;
 - durable phase state and non-durable bounded text reach readonly clients;
 - disconnect/slow clients cannot stop generation or saving;
@@ -272,4 +305,4 @@ Complete means:
 - no token/frame transcript or second run store exists;
 - old bootstrap, snapshot RPC, stage reconstruction and client wrapper are removed;
 - the changed Core/client packages compile and lint; assembled tests cover two tabs, expiry, disconnect, retry,
-  cancellation, repeated text frame, gap and completion without a subscriber.
+  create-before-track recovery, cancellation, repeated text frame, gap and completion without a subscriber.
