@@ -281,6 +281,8 @@ export interface WikiProposalListResult {
   readonly protocol: "eliotr.wiki-proposals.v1";
   readonly items: readonly WikiProposalSummary[];
   readonly has_more: boolean;
+  /** Opaque keyset position. Null means the owner reached the end. */
+  readonly next_cursor: string | null;
 }
 
 export type ResearchChangeKind =
@@ -495,7 +497,7 @@ export interface SemanticApi {
   /** The owner service performs strict decoding of the bounded transport body. */
   publishWiki(context: AuthenticatedRequestContext, request: unknown): Promise<WikiPublicationResult>;
   readWikiProposal(context: AuthenticatedRequestContext, proposalRef: VersionedRef): Promise<WikiProposalReadResult>;
-  listWikiProposals(context: AuthenticatedRequestContext): Promise<WikiProposalListResult>;
+  listWikiProposals(context: AuthenticatedRequestContext, cursor: string | null): Promise<WikiProposalListResult>;
   readWikiProposalBody(context: AuthenticatedRequestContext, proposalRef: VersionedRef): Promise<Response>;
   trace(context: AuthenticatedRequestContext, traceRef: VersionedRef): Promise<RetrievalTrace>;
   changes(context: AuthenticatedRequestContext, request: ResearchChangesRequest): Promise<ResearchChangesResult>;

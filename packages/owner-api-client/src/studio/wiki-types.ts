@@ -56,6 +56,7 @@ export interface WikiProposalListView {
   readonly protocol: typeof WIKI_PROPOSAL_LIST_PROTOCOL;
   readonly items: readonly WikiProposalSummary[];
   readonly has_more: boolean;
+  readonly next_cursor: string | null;
   readonly deployment_generation: string;
 }
 

@@ -176,9 +176,14 @@ export function createWikiReadApi(deps: WikiReadDependencies) {
   }
   function decodeWikiProposalList(raw: unknown, expectedDeploymentGeneration?: string): WikiProposalListView {
     const checked = envelope(raw, expectedDeploymentGeneration);
-    const data = record(checked.data, ['protocol', 'items', 'has_more']);
-    if (data.protocol !== WIKI_PROPOSAL_LIST_PROTOCOL || !Array.isArray(data.items) || data.items.length > MAX_WIKI_PROPOSALS || typeof data.has_more !== 'boolean') invalid('Wiki proposal list is invalid');
+    const data = record(checked.data, ['protocol', 'items', 'has_more', 'next_cursor']);
+    const nextCursor = data.next_cursor === null ? null
+      : typeof data.next_cursor === 'string' && data.next_cursor.length > 0 && data.next_cursor.length <= 1024 &&
+        !/[\u0000-\u001f\u007f]/u.test(data.next_cursor) ? data.next_cursor : invalid('Wiki proposal cursor is invalid');
+    if (data.protocol !== WIKI_PROPOSAL_LIST_PROTOCOL || !Array.isArray(data.items) || data.items.length > MAX_WIKI_PROPOSALS ||
+        typeof data.has_more !== 'boolean' || data.has_more !== (nextCursor !== null)) invalid('Wiki proposal list is invalid');
     const seen = new Set<string>();
+    if (nextCursor !== null && data.items.length === 0) invalid('Wiki proposal cursor cannot continue an empty page');
     const items = data.items.map((value, index) => {
       const item = record(value, ['proposal_ref', 'page_ref', 'title', 'page_type', 'risk_class', 'state', 'created_at']);
       const proposalRef = versionedRef(item.proposal_ref, `items[${index}].proposal_ref`);
@@ -199,7 +204,8 @@ export function createWikiReadApi(deps: WikiReadDependencies) {
         created_at: timestamp(item.created_at, `items[${index}].created_at`),
       };
     });
-    return { protocol: WIKI_PROPOSAL_LIST_PROTOCOL, items, has_more: data.has_more, deployment_generation: checked.deployment_generation };
+    return { protocol: WIKI_PROPOSAL_LIST_PROTOCOL, items, has_more: data.has_more, next_cursor: nextCursor,
+      deployment_generation: checked.deployment_generation };
   }
 
   function decodeWikiProposalRead(raw: unknown, expectedDeploymentGeneration?: string): WikiProposalReadView {
@@ -225,11 +231,17 @@ export function createWikiReadApi(deps: WikiReadDependencies) {
   }
 
   async function readWikiProposals(
+    cursor: string | null,
     expectedDeploymentGeneration?: string,
     signal?: AbortSignal,
   ): Promise<WikiProposalListView> {
     const captured = currentOrStale();
-    const raw = await http.requestApi('/api/v1/research/wiki/proposals', signal === undefined ? {} : { signal });
+    if (cursor !== null && (cursor.length < 1 || cursor.length > 1024 || /[\u0000-\u001f\u007f]/u.test(cursor))) {
+      throw errors({ status: 400, code: 'WIKI_INPUT_INVALID', message: 'Wiki proposal cursor is invalid', traceId: null, retryable: false });
+    }
+    const path = cursor === null ? '/api/v1/research/wiki/proposals'
+      : `/api/v1/research/wiki/proposals?cursor=${encodeURIComponent(cursor)}`;
+    const raw = await http.requestApi(path, signal === undefined ? {} : { signal });
     const view = decodeWikiProposalList(raw, expectedDeploymentGeneration);
     if (!epoch.isCurrent(captured)) stale();
     return view;

@@ -259,7 +259,7 @@ function StudioPublishReadbackPreview() {
       if (url.pathname === '/api/v1/research/wiki/proposals') return json({
         protocol: 'eliotr.wiki-proposals.v1',
         items: [summary(readbackId), summary(staleId), summary(decoderId)],
-        has_more: false,
+        has_more: false, next_cursor: null,
       });
       const proposalMatch = /^\/api\/v1\/research\/wiki\/proposals\/(wiki-proposal-readback|wiki-proposal-stale|wiki-proposal-decoder)(\/body)?$/u.exec(url.pathname);
       if (proposalMatch) {

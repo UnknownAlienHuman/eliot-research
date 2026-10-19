@@ -33,7 +33,9 @@ import type { WikiOwnerPublicationGuardWitness } from "./wiki-owner-publication-
 import {
   MAX_BODY_BYTES,
   decodeProposal,
+  decodeProposalListCursor,
   dependencyDigest,
+  encodeProposalListCursor,
   loadProposalRow,
   loadProposalSummaryRows,
   pageJson,
@@ -363,14 +365,21 @@ export async function readProposal(
 export async function listProposals(
   runtime: WikiStorageRuntime,
   context: WikiVerifiedActor,
+  cursorValue: string | null,
 ): Promise<WikiProposalListResult> {
   try {
     requireOwner(context);
-    const rows = await loadProposalSummaryRows(runtime.database, context.principal_ref, MAX_WIKI_PROPOSALS);
+    const cursor = decodeProposalListCursor(cursorValue);
+    const rows = await loadProposalSummaryRows(runtime.database, context.principal_ref, MAX_WIKI_PROPOSALS, cursor);
+    const visible = rows.slice(0, MAX_WIKI_PROPOSALS);
+    const hasMore = rows.length > MAX_WIKI_PROPOSALS;
+    const last = visible.at(-1);
+    const nextCursor = hasMore && last !== undefined ? encodeProposalListCursor(last) : null;
     return {
       protocol: WIKI_PROPOSAL_LIST_PROTOCOL,
-      items: rows.slice(0, MAX_WIKI_PROPOSALS).map(summary),
-      has_more: rows.length > MAX_WIKI_PROPOSALS,
+      items: visible.map(summary),
+      has_more: nextCursor !== null,
+      next_cursor: nextCursor,
     };
   } catch (error) { mapWiki(error); }
 }

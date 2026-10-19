@@ -359,9 +359,14 @@ export async function dispatchHttpApiRoute(
       );
     }
     case "research.wiki.proposal.list": {
-      requireNoQuery(url);
+      for (const key of url.searchParams.keys()) {
+        if (key !== "cursor") throw new HttpRequestError(
+          "UNKNOWN_QUERY_PARAMETER", 400, "Wiki proposal list query contains an unknown parameter",
+        );
+      }
+      const cursor = singleQueryValue(url, "cursor") ?? null;
       await requireEmptyRequestBody(request, "Wiki proposal listing does not accept a request body");
-      return apiResult(request, env, await application.services.semantic.listWikiProposals(context));
+      return apiResult(request, env, await application.services.semantic.listWikiProposals(context, cursor));
     }
     case "research.wiki.proposal.read": {
       requireNoQuery(url);

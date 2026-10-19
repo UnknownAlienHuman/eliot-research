@@ -1,6 +1,6 @@
 # Wiki and Inbox: one proposal path, one page history
 
-Checked 2026-10-18 against Eliot source at `19cf0b9d`. This is the implementation contract for Wiki and Inbox.
+Checked 2026-10-19 against Eliot source at `677de8eb`. This is the implementation contract for Wiki and Inbox.
 It describes selected replacement work, not completed runtime behavior. Product purpose remains in the
 [manifesto](../architecture/ELIOT_RESEARCH.md); the [implementation plan](backend-entrypoints.md) owns sequencing;
 [compact citations](source-lifecycle.md) and [runtime boundaries](runtime-contract.md) remain authoritative.
@@ -34,7 +34,7 @@ the useful epistemic information.
 
 | Current source | Observed behavior | Selected replacement |
 |---|---|---|
-| `packages/cloudflare-wiki/src/wiki-service.ts` | Listing 20 proposals reconstructs historical scope/source authority per row and rechecks all rows; the route accepts no cursor although it returns `has_more`. | One owner-scoped D1 summary query with keyset continuation. Body/freshness load only when opened. |
+| `packages/cloudflare-wiki/src/wiki-service.ts` | Owner list/read are now direct: one owner-scoped D1 summary page, exact metadata reopen, and R2 body only on open. The remaining list defect is lack of a usable continuation cursor. | Use the same `(created_at, proposal_id)` keyset across server, owner client and React; cursor position never carries authority. |
 | `wiki-proposal-reauthorization.ts` | Owner reads can freeze/reauthorize scopes, compare source-owner/participant generations and rebuild a source fingerprint. | Current owner + proposal/page deletion/state. Source availability is checked when a citation is opened, not to list private drafts. |
 | `wiki-proposal-from-research-run.ts` | Reopens the old 18-stage result, EvidenceFreeze, coverage, dependency manifest, sections and receipts, then writes body plus a second giant evidence map. | Read one compact `research_report_revision`, copy selected Markdown/citations into one immutable Wiki proposal object. |
 | `wiki-review-admission.ts` | Publication requires a reconstructed claim audit, coverage proof, dependencies and an immutable review receipt. | Owner review is the decision. Optional audit metadata may be displayed; it never becomes a mandatory runtime gate. |
@@ -153,8 +153,10 @@ The list is one bounded D1 metadata read. It does not:
 - skip stale rows after consuming the page budget.
 
 Opening one proposal authenticates the current owner, reads its exact row/object, verifies stored size/checksum and
-returns Markdown/citations. Optional source freshness is separate. `has_more` without a continuation is not a usable
-contract; replace server, owner client and React query together rather than adding another protocol generation.
+returns Markdown/citations. Optional source freshness is separate. A page with more rows returns one bounded
+`next_cursor` derived from its last visible `(created_at, proposal_id)`. The next query reapplies the authenticated
+owner filter; the cursor is never signed or treated as authorization. Server, owner client and React advance the same
+contract without another protocol generation.
 
 ## Accept, edit-and-apply, reject
 

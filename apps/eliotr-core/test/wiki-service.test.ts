@@ -89,7 +89,7 @@ describe("Wiki semantic service", () => {
     });
     const reader = createWikiProposalReaderService({ CORE_DB: ownerReadsOnly, WORK_BUCKET: runtime.WORK_BUCKET });
 
-    const listed = await reader.listWikiProposals(ctx);
+    const listed = await reader.listWikiProposals(ctx, null);
     expect(listed.items.some((item) => item.proposal_ref.id === proposal.proposal_ref.id)).toBe(true);
     expect(observedSql.filter((sql) => sql.includes("FROM wiki_publication_proposal"))).toHaveLength(1);
 

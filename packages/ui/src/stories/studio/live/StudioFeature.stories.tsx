@@ -132,7 +132,7 @@ const ARTIFACT_REF = { id: "artifact-1", revision: 4 };
 const DECLARED_SECTIONS = ["section-1"];
 
 const DATA: OptionalOverrides = {
-  proposals: { items: PROPOSALS, has_more: false },
+  proposals: { items: PROPOSALS, has_more: false, next_cursor: null },
   selected: {
     proposal_ref: { id: "proposal-1", revision: 1 },
     page: PAGE,

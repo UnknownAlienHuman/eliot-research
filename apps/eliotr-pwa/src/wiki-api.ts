@@ -33,6 +33,7 @@ export interface WikiProposalListView {
   readonly protocol: "eliotr.wiki-proposals.v1";
   readonly items: readonly WikiProposalSummary[];
   readonly has_more: boolean;
+  readonly next_cursor: string | null;
   readonly deployment_generation: string;
 }
 
@@ -160,9 +161,14 @@ function envelope(raw: unknown, expectedDeploymentGeneration?: string): { readon
 
 export function decodeWikiProposalList(raw: unknown, expectedDeploymentGeneration?: string): WikiProposalListView {
   const checked = envelope(raw, expectedDeploymentGeneration);
-  const data = record(checked.data, ["protocol", "items", "has_more"]);
-  if (data.protocol !== "eliotr.wiki-proposals.v1" || !Array.isArray(data.items) || data.items.length > MAX_WIKI_PROPOSALS || typeof data.has_more !== "boolean") invalid("Wiki proposal list is invalid");
+  const data = record(checked.data, ["protocol", "items", "has_more", "next_cursor"]);
+  const nextCursor = data.next_cursor === null ? null
+    : typeof data.next_cursor === "string" && data.next_cursor.length > 0 && data.next_cursor.length <= 1024 &&
+      !/[\u0000-\u001f\u007f]/u.test(data.next_cursor) ? data.next_cursor : invalid("Wiki proposal cursor is invalid");
+  if (data.protocol !== "eliotr.wiki-proposals.v1" || !Array.isArray(data.items) || data.items.length > MAX_WIKI_PROPOSALS ||
+      typeof data.has_more !== "boolean" || data.has_more !== (nextCursor !== null)) invalid("Wiki proposal list is invalid");
   const seen = new Set<string>();
+  if (nextCursor !== null && data.items.length === 0) invalid("Wiki proposal cursor cannot continue an empty page");
   const items = data.items.map((value, index) => {
     const item = record(value, ["proposal_ref", "page_ref", "title", "page_type", "risk_class", "state", "created_at"]);
     const proposalRef = versionedRef(item.proposal_ref, `items[${index}].proposal_ref`);
@@ -182,7 +188,8 @@ export function decodeWikiProposalList(raw: unknown, expectedDeploymentGeneratio
       created_at: timestamp(item.created_at, `items[${index}].created_at`),
     };
   });
-  return { protocol: "eliotr.wiki-proposals.v1", items, has_more: data.has_more, deployment_generation: checked.deployment_generation };
+  return { protocol: "eliotr.wiki-proposals.v1", items, has_more: data.has_more, next_cursor: nextCursor,
+    deployment_generation: checked.deployment_generation };
 }
 
 export function decodeWikiProposalRead(raw: unknown, expectedDeploymentGeneration?: string): WikiProposalReadView {
@@ -227,8 +234,13 @@ async function sha256(bytes: Uint8Array): Promise<string> {
   return [...new Uint8Array(digest)].map((part) => part.toString(16).padStart(2, "0")).join("");
 }
 
-export async function readWikiProposals(expectedDeploymentGeneration?: string, signal?: AbortSignal): Promise<WikiProposalListView> {
-  const raw = await requestApi("/api/v1/research/wiki/proposals", signal === undefined ? {} : { signal });
+export async function readWikiProposals(expectedDeploymentGeneration?: string, signal?: AbortSignal, cursor: string | null = null): Promise<WikiProposalListView> {
+  if (cursor !== null && (cursor.length < 1 || cursor.length > 1024 || /[\u0000-\u001f\u007f]/u.test(cursor))) {
+    throw new ApiRequestError({ status: 400, code: "WIKI_INPUT_INVALID", message: "Wiki proposal cursor is invalid" });
+  }
+  const path = cursor === null ? "/api/v1/research/wiki/proposals"
+    : `/api/v1/research/wiki/proposals?cursor=${encodeURIComponent(cursor)}`;
+  const raw = await requestApi(path, signal === undefined ? {} : { signal });
   return decodeWikiProposalList(raw, expectedDeploymentGeneration);
 }
 

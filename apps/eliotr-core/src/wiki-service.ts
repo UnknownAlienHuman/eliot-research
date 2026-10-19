@@ -84,8 +84,8 @@ export function createWikiProposalReaderService(
   return {
     readWikiProposal: (context, proposalRef): Promise<WikiProposalReadResult> =>
       readProposal(runtime, wikiVerifiedActor(context), proposalRef),
-    listWikiProposals: (context): Promise<WikiProposalListResult> =>
-      listProposals(runtime, wikiVerifiedActor(context)),
+    listWikiProposals: (context, cursor): Promise<WikiProposalListResult> =>
+      listProposals(runtime, wikiVerifiedActor(context), cursor),
     readWikiProposalBody: (context, proposalRef) =>
       readProposalBody(runtime, wikiVerifiedActor(context), proposalRef),
   };

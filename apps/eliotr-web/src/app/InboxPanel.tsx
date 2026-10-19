@@ -1,10 +1,11 @@
+import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router";
 import { Button, DecisionInbox, OperationAnnouncement, Status, type DecisionItem, type DecisionRisk } from "@eliotr/ui";
 import type { WikiProposalListView } from "@eliotr/owner-api-client";
 import type { BoundWorkspaceApis } from "./runtime";
 import type { PrivacyController, SessionContext } from "./privacy";
-import { studioQueryOptions } from "../query/studio";
+import { mergeWikiProposalPages, studioQueryOptions } from "../query/studio";
 import { usePaneAnnouncement } from "./usePaneAnnouncement";
 import { createInboxStudioSelection, inboxProposalItemId } from "./inboxStudioSelection";
 
@@ -12,12 +13,12 @@ const copy = {
   en: {
     lead: "Agents propose and you decide. Low-risk edits apply by project policy; analysis, deletion and permissions wait for you here.",
     loading: "Reading proposals.", loaded: "Proposals loaded.", error: "Proposals could not be read.", retry: "Try again",
-    open: "Open in Studio", wiki: "Wiki page",
+    open: "Open in Studio", wiki: "Wiki page", more: "More proposals",
   },
   ru: {
     lead: "Агенты предлагают, решаете вы. Безопасные правки применяются по правилам проекта; анализ, удаление и права ждут вас здесь.",
     loading: "Читаются предложения.", loaded: "Предложения прочитаны.", error: "Не удалось прочитать предложения.", retry: "Повторить",
-    open: "Открыть в Студии", wiki: "Страница вики",
+    open: "Открыть в Студии", wiki: "Страница вики", more: "Ещё предложения",
   },
 } as const;
 
@@ -36,8 +37,20 @@ export function InboxPanel({ locale, apis, privacy, context }: {
   const text = copy[locale];
   const navigate = useNavigate();
   const client = useQueryClient();
-  const proposalsQuery = studioQueryOptions(apis.studio, privacy, context, () => undefined).proposals();
+  const proposalOptions = studioQueryOptions(apis.studio, privacy, context, () => undefined);
+  const proposalsQuery = proposalOptions.proposals();
   const proposals = useQuery(proposalsQuery);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const loadMore = () => {
+    const snapshot = proposals.data, cursor = snapshot?.next_cursor;
+    if (snapshot === undefined || cursor === null || loadingMore || !privacy.isCurrent(context)) return;
+    setLoadingMore(true);
+    void client.fetchQuery(proposalOptions.proposals(cursor)).then(next => {
+      if (!privacy.isCurrent(context)) return;
+      client.setQueryData<WikiProposalListView>(proposalsQuery.queryKey, current =>
+        current === snapshot ? mergeWikiProposalPages(current, next) : current);
+    }).catch(() => undefined).finally(() => setLoadingMore(false));
+  };
   const announcement = usePaneAnnouncement(proposals.isFetching ? text.loading : proposals.isError ? text.error : proposals.data ? text.loaded : "");
   const date = (iso: string) => {
     const value = new Date(iso);
@@ -67,6 +80,11 @@ export function InboxPanel({ locale, apis, privacy, context }: {
         const selection = createInboxStudioSelection(proposal, context);
         if (selection) void navigate("/studio", { state: selection, preventScrollReset: true });
       }} /> : null}
+    {proposals.isSuccess && proposals.data.next_cursor !== null ? (
+      <Button variant="text" disabled={loadingMore} onClick={loadMore}>
+        {loadingMore ? text.loading : text.more}
+      </Button>
+    ) : null}
   </>;
 }
 
@@ -76,5 +94,5 @@ export function InboxCount({ apis, privacy, context }: {
 }) {
   const proposals = useQuery({ ...studioQueryOptions(apis.studio, privacy, context, () => undefined).proposals(), enabled: false });
   const count = proposals.data?.items.filter(item => item.state === "PROPOSED").length ?? 0;
-  return count > 0 ? <span className="er-shell-badge">{count > 99 ? "99+" : count}</span> : null;
+  return count > 0 ? <span className="er-shell-badge">{proposals.data?.has_more ? `${Math.min(count, 99)}+` : count > 99 ? "99+" : count}</span> : null;
 }

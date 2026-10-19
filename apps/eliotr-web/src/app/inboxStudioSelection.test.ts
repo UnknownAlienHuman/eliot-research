@@ -25,7 +25,7 @@ function proposal(id: string, title: string): WikiProposalListView["items"][numb
 }
 
 function proposalList(items: readonly WikiProposalListView["items"][number][]): WikiProposalListView {
-  return { protocol: "eliotr.wiki-proposals.v1", items, has_more: false, deployment_generation: context.deploymentGeneration };
+  return { protocol: "eliotr.wiki-proposals.v1", items, has_more: false, next_cursor: null, deployment_generation: context.deploymentGeneration };
 }
 
 function request(value: WikiProposalListView["items"][number], owner = context): InboxStudioSelection {

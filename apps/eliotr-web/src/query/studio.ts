@@ -10,7 +10,7 @@
  * foreign page can never be presented as the requested body.
  */
 import { queryOptions } from "@tanstack/react-query";
-import type { VersionedRef, WikiProposalReadView } from "@eliotr/owner-api-client";
+import type { VersionedRef, WikiProposalListView, WikiProposalReadView } from "@eliotr/owner-api-client";
 import type { BoundWorkspaceApis } from "../app/runtime";
 import type { PrivacyController, SessionContext } from "../app/privacy";
 import { protectedQueryKey, runProtectedRead } from "./client";
@@ -30,12 +30,12 @@ export function studioQueryOptions(
   const key = protectedQueryKey(context, "studio");
 
   return {
-    proposals() {
+    proposals(cursor: string | null = null) {
       return queryOptions({
-        queryKey: [...key, "proposals"],
+        queryKey: [...key, "proposals", cursor ?? "first"],
         refetchOnMount: false,
         queryFn: ({ signal }) => runProtectedRead(privacy, context, signal,
-          readSignal => apis.read.readWikiProposals(generation, readSignal)),
+          readSignal => apis.read.readWikiProposals(cursor, generation, readSignal)),
       });
     },
 
@@ -85,6 +85,20 @@ export function studioQueryOptions(
   };
 }
 
-/** The truthful continuation note the panel shows when the server reports more proposals. */
-export const STUDIO_PROPOSALS_MORE_NOTE =
-  "More proposals exist only the first page is available.";
+/** Merge one exact keyset page into the first-page cache without duplicating proposal identities. */
+export function mergeWikiProposalPages(
+  current: WikiProposalListView,
+  next: WikiProposalListView,
+): WikiProposalListView {
+  if (current.protocol !== next.protocol || current.deployment_generation !== next.deployment_generation) {
+    throw new Error("Wiki proposal pages belong to different contracts");
+  }
+  const seen = new Set(current.items.map(item => `${item.proposal_ref.id}:${item.proposal_ref.revision}`));
+  const appended = next.items.filter(item => {
+    const key = `${item.proposal_ref.id}:${item.proposal_ref.revision}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  return { ...current, items: [...current.items, ...appended], has_more: next.has_more, next_cursor: next.next_cursor };
+}

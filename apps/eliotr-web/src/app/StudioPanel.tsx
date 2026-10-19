@@ -2,13 +2,13 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { skipToken, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from 'react-router';
 import { Button, OperationAnnouncement, Status, StudioFeature, STUDIO_COPY } from '@eliotr/ui';
-import type { ResearchRunHistoryView, VersionedRef, WikiProposalReadView, WikiProposalFromRunView, WikiPublicationView } from '@eliotr/owner-api-client';
+import type { ResearchRunHistoryView, VersionedRef, WikiProposalListView, WikiProposalReadView, WikiProposalFromRunView, WikiPublicationView } from '@eliotr/owner-api-client';
 import { classifyMutationOutcome } from '@eliotr/owner-api-client';
 import type { BoundWorkspaceApis } from './runtime';
 import { isWorkspaceRequestError } from './runtime';
 import type { PrivacyController, SessionContext } from './privacy';
 import { protectedQueryKey, runProtectedRead } from '../query/client';
-import { studioQueryOptions } from '../query/studio';
+import { mergeWikiProposalPages, studioQueryOptions } from '../query/studio';
 import { researchQueryOptions } from '../query/research';
 import { ReportPanel } from './ReportPanel';
 import { usePaneAnnouncement } from './usePaneAnnouncement';
@@ -97,7 +97,8 @@ export function StudioPanel({ apis, privacy, context, locale }: {
   const memory = useQuery<StudioMemory>({ queryKey: memoryKey, queryFn: skipToken, gcTime: Infinity });
   let proposalKey: (string | number)[] = [];
   const options = studioQueryOptions(apis.studio, privacy, context, () => client.getQueryData<WikiProposalReadView>(proposalKey));
-  const proposals = useQuery(options.proposals());
+  const proposalListOptions = options.proposals();
+  const proposals = useQuery(proposalListOptions);
   const selectedOptions = memory.data?.selected ? options.proposal(memory.data.selected) : undefined;
   proposalKey = selectedOptions?.queryKey ?? [...protectedQueryKey(context, 'studio'), 'proposal-unselected'];
   const selected = useQuery(selectedOptions ?? { queryKey: proposalKey, queryFn: skipToken });
@@ -105,7 +106,8 @@ export function StudioPanel({ apis, privacy, context, locale }: {
   const body = useQuery(view ? options.body(view) : { queryKey: [...protectedQueryKey(context, 'studio'), 'body-unselected'], queryFn: skipToken });
   const research = researchQueryOptions({ ...apis.research, configuration: apis.connections.configuration }, privacy, context);
   const history = useQuery(research.history());
-  const [busy, setBusy] = useState(false), [inboxSelectionFailed, setInboxSelectionFailed] = useState(false);
+  const [busy, setBusy] = useState(false), [loadingMore, setLoadingMore] = useState(false);
+  const [inboxSelectionFailed, setInboxSelectionFailed] = useState(false);
   const [inboxSelectionPending, setInboxSelectionPending] = useState(false), [handledInboxLocation, setHandledInboxLocation] = useState<string | undefined>();
   const inFlightInboxLocation = useRef<{ readonly key: string; readonly token: symbol } | undefined>(undefined);
   const running = useRef(false), mounted = useRef(true), controller = useRef<AbortController | undefined>(undefined);
@@ -358,6 +360,16 @@ export function StudioPanel({ apis, privacy, context, locale }: {
     }
     pendingProposalFocus.current = undefined;
   }, [client, context, privacy, proposalKey, saved?.artifact, saved?.selected, selected.isError, selected.isFetching, view]);
+  const loadMoreProposals = () => {
+    const snapshot = proposals.data, cursor = snapshot?.next_cursor;
+    if (snapshot === undefined || cursor === null || loadingMore || !privacy.isCurrent(context)) return;
+    setLoadingMore(true);
+    void client.fetchQuery(options.proposals(cursor)).then(next => {
+      if (!privacy.isCurrent(context)) return;
+      client.setQueryData<WikiProposalListView>(proposalListOptions.queryKey, current =>
+        current === snapshot ? mergeWikiProposalPages(current, next) : current);
+    }).catch(() => undefined).finally(() => { if (mounted.current) setLoadingMore(false); });
+  };
   const displayTime = (iso: string) => {
     const date = new Date(iso);
     return Number.isFinite(date.getTime()) ? new Intl.DateTimeFormat(locale, { dateStyle: 'medium', timeStyle: 'short' }).format(date) : iso;
@@ -374,7 +386,7 @@ export function StudioPanel({ apis, privacy, context, locale }: {
     : selected.isError || body.isError ? text.failed
     : proposals.isError ? featureCopy.error
     : history.isError ? reportText.failed
-    : selected.isFetching || body.isFetching || proposals.isFetching || history.isPending || history.isFetching ? text.reading
+    : selected.isFetching || body.isFetching || proposals.isFetching || loadingMore || history.isPending || history.isFetching ? text.reading
     : view?.state === 'PUBLISHED' || publicationForSelected ? text.published
     : view && saved?.edited && sameRef(view.proposal_ref, saved.edited.proposal_ref) ? text.edited : proposals.data ? text.loaded : '');
   if (saved?.artifact && !routeSelectionActive && !inboxSelectionFailed) return <ReportPanel key={`${saved.artifact.id}:${saved.artifact.revision}`} locale={locale} apis={apis} privacy={privacy} context={context} artifactRef={saved.artifact}
@@ -383,7 +395,7 @@ export function StudioPanel({ apis, privacy, context, locale }: {
   return <>
     <OperationAnnouncement>{announcement}</OperationAnnouncement>
     {inboxSelectionFailed ? <Status tone="error">{inboxSelectionCopy[locale]}</Status> : null}
-    <div className="er-live-actions"><Button variant="text" disabled={proposals.isFetching || busy} onClick={() => { void proposals.refetch(); void history.refetch(); }}>{text.read}</Button></div>
+    <div className="er-live-actions"><Button variant="text" disabled={proposals.isFetching || loadingMore || busy} onClick={() => { void proposals.refetch(); void history.refetch(); }}>{text.read}</Button></div>
     {saved?.intent?.phase === 'unknown' && <div><Status>{text.unknown}</Status><Button variant="tonal" disabled={busy} onClick={reconcile}>{text.recover}</Button></div>}
     {saved?.intent?.phase === 'rejected' && <div><Status tone="error">{refusedText}</Status><Button variant="text" disabled={busy} onClick={reviewRefusal}>{text.review}</Button></div>}
     {(view?.state === 'PUBLISHED' || publicationForSelected) && <Status>{text.published}</Status>}
@@ -409,12 +421,14 @@ export function StudioPanel({ apis, privacy, context, locale }: {
         libraryHeadingRef={libraryHeading} readerHeadingRef={readerHeading}
         bodyLoading={view !== undefined && (body.isPending || body.isFetching) && (body.data === undefined || body.isError)}
         {...(currentProposals ? { proposals: currentProposals } : {})}
+        loadingMore={loadingMore}
+        {...(currentProposals?.next_cursor ? { onLoadMore: loadMoreProposals } : {})}
         {...(view ? { selected: view } : {})}
         {...(body.data && !body.isError && !selected.isError ? { body: body.data } : {})}
         {...(expectedPublishHead !== undefined && !body.isError && body.data ? { expectedPublishHead } : {})}
         cowVerified={expectedPublishHead !== undefined && body.data !== undefined && !body.isError && view !== undefined && body.data.body_sha256 === view.page.body_sha256}
         onOpenProposal={summary => {
-          if (privacy.isCurrent(context) && client.getQueryData(options.proposals().queryKey) === proposals.data &&
+          if (privacy.isCurrent(context) && client.getQueryData(proposalListOptions.queryKey) === proposals.data &&
             proposals.data?.items.some(row => sameRef(row.proposal_ref, summary.proposal_ref))) {
             pendingProposalFocus.current = { context, target: summary.proposal_ref };
             write(old => ({ ...old, selected: summary.proposal_ref }));
