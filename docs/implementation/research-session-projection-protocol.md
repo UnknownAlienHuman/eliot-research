@@ -13,13 +13,14 @@ authenticated HTTP admission
 → ResearchSession named by operation_id
 → Agent.runWorkflow(RESEARCH_WORKFLOW, ..., id = operation_id)
 → ResearchWorkflow extends AgentWorkflow
-→ durable coarse phase in Agent state
+→ best-effort coarse phase in Agent state
 → non-durable bounded public-text broadcasts
 → canonical D1/R2 status and research report
 ```
 
-Workflow owns durable execution. ResearchSession owns the authenticated real-time connection and a small
-presentation projection. D1/R2 remain canonical. Browser disconnect never cancels or repeats paid work.
+Workflow owns durable execution. ResearchSession owns the authenticated real-time connection and a small optional
+presentation projection. D1/R2 remain canonical. Browser disconnect or presentation failure never cancels, delays or
+repeats paid work.
 
 ## What the current code actually does
 
@@ -44,7 +45,7 @@ identity and delete the alias.
 | Paid model attempt and durable retry boundaries | Cloudflare Workflow |
 | Completed public Markdown | immutable public-output object |
 | Saved result | `research_report` / `research_report_revision` and R2 report object |
-| Coarse live phase and terminal hint | ResearchSession Agent state |
+| Coarse live phase and terminal hint | optional ResearchSession Agent state, rehydratable from D1 |
 | Provisional Markdown batches and byte ranges | live Agent WebSocket broadcast only |
 | Browser rendering and local provisional buffer | React/query state |
 | SDK workflow tracking row | Agent↔Workflow operational correlation only |
@@ -144,23 +145,29 @@ type ResearchPresentationState = {
 This state contains no source bodies, prompts, provider frames, reasoning, complete answer, text offset, receipts,
 scope snapshots or policy authority.
 
-For every durable phase change, settle and read back the canonical D1 transition first, then call
-`step.mergeAgentState()` or `step.updateAgentState()`. Agent projection may lag D1; it must never lead it. Do not
-persist a state update for every token, search result or internal step.
+For every product phase change, settle and read back canonical D1 first. Then make one best-effort
+`reportProgress({ operation_id, phase })` call and catch presentation failure locally. `onWorkflowProgress` treats the
+callback only as a wake-up signal: it reads the current D1 row, validates the Workflow ID and calls `setState()` with
+that safe projection. Agent state may lag or be absent; it must never lead D1 or block the next research step.
+
+Do **not** put `step.mergeAgentState()` / `step.updateAgentState()` in the critical research path. In exact 0.27.0
+those helpers create durable `step.do` operations with retry, so an optional Agent projection failure could delay
+model execution or report saving. They remain useful SDK primitives, but this product does not need their stronger
+coupling.
 
 Wrap the whole research `run()` in one application-level failure boundary. Expected or unexpected failure first
-attempts the canonical D1 terminal/unknown settlement. Only afterward call `step.reportError()` or rethrow. The SDK's
-automatic unhandled-error callback is a presentation hint; `onWorkflowError` must read canonical D1 before showing a
-terminal failed phase. If canonical settlement is unavailable, show unknown/refresh status rather than minting
-failure from the callback.
+attempts the canonical D1 terminal/unknown settlement. Only afterward call durable `step.reportError()` or rethrow.
+The SDK's automatic unhandled-error callback is a presentation hint; `onWorkflowError` must read canonical D1 before
+showing a terminal failed phase. If canonical settlement is unavailable, show unknown/refresh status rather than
+minting failure from the callback.
 
-Use `step.reportComplete()` for SDK tracking only after the canonical D1 result has settled. `onWorkflowComplete`
-may emit a safe terminal presentation hint; it does not write the canonical result.
+Use durable `step.reportComplete()` for SDK tracking only after the canonical D1 result has settled. If reporting to
+the Agent retries or remains unavailable, the saved report and D1 completion remain usable; no model or save effect
+is repeated. `onWorkflowComplete` reads D1 before emitting a terminal hint.
 
 ## Public text channel
 
-Workflow model execution receives one small presentation port. It batches only public Markdown and calls
-`broadcastToClients()` with frames such as:
+Workflow model execution batches only public Markdown and calls `broadcastToClients()` with frames such as:
 
 ```ts
 type ResearchTextFrame = {
@@ -182,9 +189,10 @@ Rules:
 - do not store frames or their current offset in Agent state, Agent SQLite, D1 or R2;
 - do not replay every frame after reconnect.
 
-`broadcastToClients()` is non-durable and may repeat when a Workflow attempt retries. The client accepts the exact
-next range, ignores a fully repeated range and marks a gap for a forward jump or overlap conflict. The immutable
-completed public-output object and saved report are the only complete text.
+In exact 0.27.0, `broadcastToClients()` is explicitly non-durable and does not await the Agent RPC. It may repeat when
+a Workflow attempt retries. The client accepts the exact next range, ignores a fully repeated range and marks a gap
+for a forward jump or overlap conflict. The immutable completed public-output object and saved report are the only
+complete text.
 
 Deep research uses the same channel only for bounded user-useful progress or final-generation text. It does not
 broadcast every search/read/tool event.
@@ -216,7 +224,7 @@ public readonly/state/message APIs of the installed SDK.
 `AgentClient` already reconnects and receives current Agent state. Reconnect behavior is:
 
 1. Access and current run ownership are checked again;
-2. receive the small current presentation state;
+2. receive any current small presentation state;
 3. read canonical D1 run status through the normal owner API;
 4. if completed, open the canonical research report;
 5. if active, accept only new text ranges;
@@ -275,8 +283,9 @@ The exact installed `agents 0.27.0` tag already supplies the required operations
 
 - `Agent.runWorkflow()` with explicit instance ID, metadata and Agent binding;
 - `AgentWorkflow` with typed Agent RPC;
-- durable `step.mergeAgentState()` / `step.reportComplete()`;
-- non-durable `broadcastToClients()` / `reportProgress()`;
+- best-effort `reportProgress()` and non-durable `broadcastToClients()`;
+- durable `step.reportComplete()` / `step.reportError()` after canonical settlement;
+- durable state helpers that are deliberately not placed on the critical path;
 - `getWorkflow()` tracking and direct `getWorkflowStatus()` observation;
 - lifecycle callbacks;
 - readonly connections that survive hibernation;
@@ -301,11 +310,12 @@ Complete means:
 - new research admission starts/adopts one Agent-origin Workflow with `operation_id` as the single identity;
 - the create-before-track failure window cannot cause a second Workflow;
 - ordinary/deep execution extends `AgentWorkflow`; Q8 uses its separate direct Workflow;
-- durable phase state and non-durable bounded text reach readonly clients;
-- disconnect/slow clients cannot stop generation or saving;
+- optional phase state and non-durable bounded text reach readonly clients without entering the critical path;
+- disconnect, Agent presentation failure or slow clients cannot stop generation or saving;
 - reconnect reads the same canonical run/report and detects provisional gaps;
 - no paid work is callable from the browser Agent connection;
 - no token/frame transcript or second run store exists;
 - old bootstrap, snapshot RPC, stage reconstruction and client wrapper are removed;
-- the changed Core/client packages compile and lint; assembled tests cover two tabs, expiry, disconnect, retry,
-  create-before-track recovery, cancellation, repeated text frame, gap and completion without a subscriber.
+- the changed Core/client packages compile and lint; assembled tests cover two tabs, expiry, disconnect, Agent
+  unavailability, retry, create-before-track recovery, cancellation, repeated text frame, gap and completion without
+  a subscriber.
