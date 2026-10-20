@@ -1,0 +1,54 @@
+name: temp-c03-workflow-object-bound
+on:
+  push:
+    branches:
+      - refactor/380-separate-workflow-object-bound
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.13.0
+      - name: Apply C03 repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '\n__END_OF_FILE__\n' >> apps/eliotr-core/test/research-protocol-freeze.test.ts
+          python .github/refactor-380-separate-workflow-object-bound.py
+          sed -i '/^__END_OF_FILE__$/d' apps/eliotr-core/test/research-protocol-freeze.test.ts
+          rm .github/refactor-380-separate-workflow-object-bound.py \
+            .github/workflows/temp-c03-workflow-object-bound.yml
+          git diff --check
+      - name: Install current package-manager signing keys
+        run: npm install --global corepack@0.34.7
+      - run: corepack enable
+      - run: corepack prepare pnpm@11.23.0 --activate
+      - name: Install frozen dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck changed packages
+        run: |
+          pnpm --filter @eliotr/cloudflare-research-runtime typecheck
+          pnpm --filter @eliotr/cloudflare-research-branches typecheck
+      - name: Native C03 regression
+        run: >-
+          pnpm --dir apps/eliotr-core exec vitest run
+          test/research-protocol-freeze.test.ts
+          --maxWorkers=1
+          --reporter=verbose
+      - name: Commit verified change
+        shell: bash
+        run: |
+          set -euo pipefail
+          git add -A
+          git diff --cached --check
+          git config user.name "Iurii Lisenkov"
+          git config user.email "71514792+UnknownAlienHuman@users.noreply.github.com"
+          git commit -m "fix: separate Workflow object and receipt bounds (#380)"
+          git push origin HEAD:refactor/380-separate-workflow-object-bound
