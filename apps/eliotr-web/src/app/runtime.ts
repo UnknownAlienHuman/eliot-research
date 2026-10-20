@@ -104,8 +104,8 @@ function createBoundApis(ports: WorkspaceRuntimePorts, epoch: ReturnType<typeof 
     fetch: ports.fetch, baseUrl: ports.baseUrl, timers: ports.timers, epoch,
     onAuthorizationLoss(observation: { readonly current: boolean }) { if (observation.current) ports.onAuthorizationLoss(); },
   };
-  const http = createLegacyHttpAdapter(clientPorts, errorFactory);
   const binary = createOwnerApiClient(clientPorts);
+  const http = createLegacyHttpAdapter(binary, errorFactory);
   const models = createResearchModelConfigurationApi(http, errorFactory, epoch);
   const serviceModels = createServiceModelSettingsApi(http, errorFactory, epoch);
   const bundleWire = createBundleWireApi(http, binary, errorFactory, epoch, { now: ports.now });
@@ -172,7 +172,7 @@ function createBoundApis(ports: WorkspaceRuntimePorts, epoch: ReturnType<typeof 
         fail: details => errorFactory({ ...details, traceId: null, retryable: details.retryable ?? false }) }),
       mintIntent: ports.mint,
     },
-    dispose() { projection.dispose(); http.dispose(); binary.dispose(); },
+    dispose() { projection.dispose(); binary.dispose(); },
   };
 }
 
@@ -187,7 +187,8 @@ export function createWorkspaceRuntime(ports: WorkspaceRuntimePorts) {
       if (disposed || signal.aborted) return undefined;
       // Bootstrap denial must not recursively invalidate privacy's verification attempt.
       const probeEpoch = createSessionEpoch();
-      const probeHttp = createLegacyHttpAdapter({ fetch: ports.fetch, baseUrl: ports.baseUrl, timers: ports.timers, epoch: probeEpoch }, errorFactory);
+      const probeClient = createOwnerApiClient({ fetch: ports.fetch, baseUrl: ports.baseUrl, timers: ports.timers, epoch: probeEpoch });
+      const probeHttp = createLegacyHttpAdapter(probeClient, errorFactory);
       try {
         const health = await createHealthApi(probeHttp, errorFactory, probeEpoch).getSystemHealth(signal);
         if (disposed || signal.aborted) return undefined;
@@ -199,7 +200,7 @@ export function createWorkspaceRuntime(ports: WorkspaceRuntimePorts) {
           deploymentGeneration: health.deployment_generation, expiresAt: session.expires_at,
         };
       } catch { return undefined; }
-      finally { probeEpoch.dispose(); probeHttp.dispose(); }
+      finally { probeClient.dispose(); probeEpoch.dispose(); }
     },
     bind(context: SessionContext) {
       if (disposed || !ports.isCurrent(context)) return;
@@ -215,5 +216,3 @@ export function createWorkspaceRuntime(ports: WorkspaceRuntimePorts) {
   };
 }
 export type WorkspaceRuntime = ReturnType<typeof createWorkspaceRuntime>;
-
-

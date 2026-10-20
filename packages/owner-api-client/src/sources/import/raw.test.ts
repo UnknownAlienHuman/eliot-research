@@ -30,7 +30,7 @@ function setup(reply: (path: string, init: RequestInit) => Promise<Response> = a
   const timers = { setTimeout: () => 1, clearTimeout: () => {} };
   const ports = { fetch: transport, timers, epoch, baseUrl: 'https://owner.example/' };
   const binary = createOwnerApiClient(ports);
-  const http = createLegacyHttpAdapter(ports, errors);
+  const http = createLegacyHttpAdapter(binary, errors);
   const api = createRawFileApi(binary, http, { digest }, errors, epoch, (value): value is RequestError => value instanceof RequestError);
   return { api, epoch, transport, binary, http };
 }

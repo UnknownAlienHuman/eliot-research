@@ -31,9 +31,10 @@ contracts and migrations. Tooling cleanup never blocks product code.
 - remaining callers in `packages/pwa-source-workspace`, `packages/pwa-research-workspace` and `apps/eliotr-pwa`;
 - Core fixtures that import old browser packages.
 
-Make all React callers share one client, session epoch, cancellation and error model. Finish React/Vite + Worker
-assets, standalone Inbox/recovery and service-worker retirement. Delete Astro, old PWA controllers/styles and unused
-`pwa-*` packages after cutover. Keep a rollback artifact, not two maintained UIs.
+The React root now injects one `OwnerApiClient` into both the binary APIs and the legacy request-shape adapter;
+the adapter owns no second transport, epoch or disposal lifecycle. Continue migrating legacy method modules onto the
+same client, then finish React/Vite + Worker assets, standalone Inbox/recovery and service-worker retirement. Delete
+Astro, old PWA controllers/styles and unused `pwa-*` packages after cutover. Keep a rollback artifact, not two UIs.
 
 **Result:** one served React app and one owner client.
 
