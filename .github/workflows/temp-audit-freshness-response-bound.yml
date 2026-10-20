@@ -50,6 +50,65 @@ jobs:
           path.write_text(text.replace(old, new), encoding='utf-8')
           PY
           python .github/audit-380-freshness-response-bound.py
+          python - <<'PY'
+          from pathlib import Path
+
+          def change(path: str, old: str, new: str, count: int = 1) -> None:
+              file = Path(path)
+              text = file.read_text(encoding='utf-8')
+              found = text.count(old)
+              if found != count:
+                  raise SystemExit(f'{path}: expected {count} postprocess matches, found {found}')
+              file.write_text(text.replace(old, new), encoding='utf-8')
+
+          change(
+              'packages/owner-api-client/src/evidence/report/manifest.ts',
+              '''    const changedSourceCount = data.changed_source_count;
+              const changedSourcesTruncated = data.changed_sources_truncated;
+          ''',
+              '''    const changedSourceCount = data.changed_source_count as number;
+              const changedSourcesTruncated = data.changed_sources_truncated as boolean;
+          ''',
+          )
+          change(
+              'packages/owner-api-client/src/studio/artifact.test.ts',
+              "source_freshness: overrides.source_freshness ?? { state: 'UNKNOWN', changed_sources: [] },",
+              "source_freshness: overrides.source_freshness ?? { state: 'UNKNOWN', changed_source_count: 0, changed_sources_truncated: false, changed_sources: [] },",
+          )
+          change(
+              'packages/ui/src/stories/studio/live/StudioFeature.stories.tsx',
+              '''  state: "PREVIOUS_REVISIONS",
+              checked_at: "2026-10-04T12:00:00.000Z",
+              changed_sources: [
+          ''',
+              '''  state: "PREVIOUS_REVISIONS",
+              checked_at: "2026-10-04T12:00:00.000Z",
+              changed_source_count: 1,
+              changed_sources_truncated: false,
+              changed_sources: [
+          ''',
+          )
+          change(
+              'packages/ui/src/stories/studio/live/StudioFeature.stories.tsx',
+              '''        state: "CURRENT_REVISIONS",
+              checked_at: "2026-10-04T12:00:00.000Z",
+              changed_sources: [],
+          ''',
+              '''        state: "CURRENT_REVISIONS",
+              checked_at: "2026-10-04T12:00:00.000Z",
+              changed_source_count: 0,
+              changed_sources_truncated: false,
+              changed_sources: [],
+          ''',
+          )
+          change(
+              'apps/eliotr-web/src/query/reports.test.ts',
+              "source_freshness: { state: 'UNKNOWN', changed_sources: [] }, deployment_generation: 'deployment' };
+          ",
+              "source_freshness: { state: 'UNKNOWN', changed_source_count: 0, changed_sources_truncated: false, changed_sources: [] }, deployment_generation: 'deployment' };
+          ",
+          )
+          PY
           rm .github/audit-380-freshness-response-bound.py \
             .github/workflows/temp-audit-freshness-response-bound.yml
           git diff --check
