@@ -198,14 +198,25 @@ export async function persistResearchSessionRunPayload(
       413);
   }
   const sha256 = await digest(bytes);
-  if ((await ports.work_bucket.head(objectKey).catch(() => null)) === null) {
-    await ports.work_bucket.put(objectKey, bytes, { sha256 });
+  try {
+    await ports.work_bucket.put(objectKey, bytes, {
+      onlyIf: { etagDoesNotMatch: "*" },
+      sha256,
+    });
+  } catch {
+    // A conditional conflict and a committed write with a lost acknowledgement
+    // are both settled by exact readback below.
   }
-  const currentPayload = await ports.work_bucket.get(objectKey).catch(() => null);
+  const currentPayload = await ports.work_bucket.get(objectKey).catch(() =>
+    ports.fail("RESEARCH_SETTLEMENT_UNCERTAIN", "payload readback is unavailable", 503, true));
   if (currentPayload === null) {
     ports.fail("RESEARCH_SETTLEMENT_UNCERTAIN", "payload readback is unavailable", 503, true);
   }
-  const currentBytes = new Uint8Array(await currentPayload.arrayBuffer());
+  if (currentPayload.size !== bytes.byteLength) {
+    ports.fail("RESEARCH_CONFLICT", "idempotency identity is bound to different bytes", 409);
+  }
+  const currentBytes = new Uint8Array(await currentPayload.arrayBuffer().catch(() =>
+    ports.fail("RESEARCH_SETTLEMENT_UNCERTAIN", "payload body readback is unavailable", 503, true)));
   if ((await digest(currentBytes)) !== sha256 || currentBytes.byteLength !== bytes.byteLength) {
     ports.fail("RESEARCH_CONFLICT", "idempotency identity is bound to different bytes", 409);
   }
@@ -257,16 +268,23 @@ export async function persistResearchSessionRunApplication(
       };
     },
   };
+  const readPayloadHead = async (): Promise<R2Object | null> => ports.work_bucket.head(payloadKey);
   const handles = {
-    has: async (ref: string) => (await ports.work_bucket.head(ref).catch(() => null)) !== null,
+    has: async (ref: string) => ref === payloadKey && await readPayloadHead() !== null,
     digestFor: async (ref: string) => {
-      const head = await ports.work_bucket.head(ref).catch(() => null);
-      if (head === null) return null;
-      const raw = (head as unknown as { checksums?: { sha256?: unknown } }).checksums?.sha256;
-      if (raw instanceof ArrayBuffer) {
-        return Array.from(new Uint8Array(raw), (byte) => byte.toString(16).padStart(2, "0")).join("");
+      if (ref !== payloadKey) return null;
+      const head = await readPayloadHead();
+      if (head === null || head.size !== payloadBytes.byteLength) return null;
+      const observed = head.checksums.sha256;
+      if (observed !== undefined) {
+        if (observed.byteLength !== 32) return null;
+        return Array.from(new Uint8Array(observed),
+          (byte) => byte.toString(16).padStart(2, "0")).join("");
       }
-      return payloadHash;
+      const object = await ports.work_bucket.get(payloadKey);
+      if (object === null || object.size !== payloadBytes.byteLength) return null;
+      const observedBytes = new Uint8Array(await object.arrayBuffer());
+      return observedBytes.byteLength === payloadBytes.byteLength ? digest(observedBytes) : null;
     },
   };
   const ledger = createInvestigationLedgerService(ports.ledger_store, fences, handles);
