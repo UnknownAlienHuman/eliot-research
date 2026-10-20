@@ -56,24 +56,42 @@ A practical initial profile should bound at least model turns, native searches, 
 provider spend and wall time. Values belong in the selected run configuration, not scattered constants or a new
 policy service. Exceeding a limit returns a partial result with the reason; it does not silently buy more work.
 
-## Small callable surface
+## Small callable surface and one durable turn
 
-The model receives only operations available to this run. The first slice needs three conceptual actions:
+The model receives only operations admitted for this run. The first slice has two callable tools:
 
-1. **Search** — one bounded native hybrid search inside the admitted source scope. The request carries a focused
-   query, a small result limit and optional known-source restriction. Native query rewriting/reranking is used
-   once where helpful; do not add another local rewrite or reranker around it.
-2. **Read** — open exact stored material for a selected source revision and bounded range, with optional adjacent
-   text/section expansion. A search snippet is a locator, not evidence.
-3. **Finish** — return the final public answer/report draft and identify the accepted source labels it uses.
+1. **Search** — one bounded native hybrid search inside the admitted source scope, with a focused query and small
+   result limit. Native rewriting/reranking may run once; no local planner or second reranker surrounds it.
+2. **Read** — open exact stored material for a selected source revision and bounded range, optionally including a
+   small adjacent section. A search snippet is a locator, not evidence.
 
-Saving is host-owned, not a model tool. Cancellation is an existing mutation. Optional computation or file work
-uses an already selected connected-agent/tool route only when a real task requires it; arbitrary Python execution
-is not a prerequisite for research over the owner's sources. No `spawn_agent` tool is exposed initially.
+Completion is final public text, not a fake `finish` tool. Saving is host-owned and cancellation is the existing
+mutation. Computation, external web and connected-agent work are omitted unless the admitted task explicitly enables
+them. Tool discovery is not authorization and source text cannot add a capability.
 
-Use the selected provider's real tool-call/event format through the current transport. If a provider adapter lacks
-the required action shape, normalize one small internal union at that boundary. Do not build `SearchProgramIR`, a
-workflow DSL or adapters for hypothetical models.
+Each Workflow iteration performs **one paid model turn**. Prefer the qualified single-turn AI SDK adapter from the
+ordinary path:
+
+- one `generateText` call with `search`/`read` schemas and no automatic `execute` callback or SDK multi-step loop;
+- exactly one normalized result: `action { turn_id, call_id, name, arguments }` or `final { text_locator }`;
+- Eliot creates `turn_id`; preserve the provider/AI-SDK tool-call identity as `call_id`;
+- initially disable parallel tool calls where supported and reject zero/multiple/unknown/malformed calls;
+- persist the completed normalized turn before executing a tool or publishing a report;
+- store the host result by `(turn_id, call_id)` and replay that same result for a repeated observed action;
+- persist only the bounded continuation message needed by the next turn, not raw HTTP/SSE or a growing transcript.
+
+Never correlate tool results by array position or completion order. A reviewed Vane/Perplexica path started parallel
+calls, appended results in completion order and later paired them to original call IDs by index; Eliot's identity-keyed
+record prevents that class of error even while the first implementation remains sequential.
+
+Budget exhaustion returns an honest stored partial result from accepted work. It does not buy an extra “summarize”
+call. Do not add `ToolLoopAgent`, Think, LangGraph, Code Mode, a Skill registry or another agent harness around two
+read-only operations. A route that cannot prove the selected tool/usage/error behavior is not offered for deep mode;
+it does not silently fall back to another paid model.
+
+References checked 2026-10-19:
+https://developers.cloudflare.com/agents/models/ai-sdk/ and
+https://github.com/ItzCrazyKns/Vane/tree/348feca3e378fb4157b217724ed508dc707f853f.
 
 ## Compact working state
 

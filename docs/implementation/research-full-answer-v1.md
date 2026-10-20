@@ -109,32 +109,39 @@ EvidenceHandle parsing/hashing, selection receipts and repeated serialization of
 stable blocks, maintain separate byte/token bounds and validate the final request. A documented conservative token
 estimate is acceptable when the selected tokenizer is unavailable; it is not an exact count.
 
-## One normalized model stream
+## One normalized model turn
 
-Ordinary output is Markdown with server-issued passage labels. It is not escaped Markdown inside JSON and not the
-deep `material_claims` schema.
+The current provider-native request/response path is completed-text only: selected requests set `stream:false`,
+provider JSON is buffered, and tool blocks are not a supported ordinary-answer result. Do not grow another full
+OpenAI/Anthropic mapper and SSE parser around that predecessor.
 
-Add one normalized streaming surface under `packages/cloudflare-model-transport/`:
+For each retained route, add one small turn adapter inside `packages/cloudflare-model-transport`:
 
-- public text delta;
-- final usage and observed provider/model identity;
-- terminal reason;
-- safe transport failure.
+- prefer the pinned `agents/models/ai-sdk` `createAI()` provider plus AI SDK v7 when it reaches the exact registered
+  provider/model/base and preserves the required stream, usage and error semantics;
+- declare `@ai-sdk/provider` and a vendor package only in the caller-complete migration that actually uses it; do not
+  install every provider family in advance or dynamically import a catalog string;
+- ordinary answer performs one `streamText` call with tools omitted;
+- consume one typed stream for the bounded public-output accumulator and best-effort ResearchSession batches;
+- normalize public text deltas, terminal reason, final usage and observed provider/model identity; never expose raw
+  frames, prompts, source bodies or reasoning;
+- require a valid terminal SDK/provider event. HTTP 200 or EOF alone is not completion.
 
-Implement the selected APIs actually used (`chat completions`, `responses`, `messages` or a selected custom API).
-Do not build adapters for hypothetical providers or force all models through a compatibility endpoint that loses a
-required capability.
+AI SDK is a codec/transport here, not another harness. Do not use `ToolLoopAgent`, `stopWhen`, automatic tool
+`execute`, framework memory or an SDK-owned transcript. Set SDK retries to zero for the paid turn, keep Gateway
+attempts at one, disable fallback/dynamic routing and cache for private dynamic work, and keep payload logging off.
+An ambiguous dispatched call remains the original unknown attempt; a session, tool or report-save failure never
+starts another model call.
 
-Preserve metadata-only Gateway logging, cache bypass and `cf-aig-max-attempts: 1`. A paid stream with uncertain
-outcome remains one application attempt. Raw provider frames, prompts and reasoning never reach the browser/report.
+A narrow raw adapter may remain for a real probe/non-stream caller or one selected custom route the pinned provider
+cannot represent exactly. It is not a fallback in the ordinary path. Move one route with its callers, qualify it,
+then delete the replaced request/response projection and raw-response persistence when no caller remains.
 
-The decoder must bound frame/aggregate bytes, decode UTF-8 incrementally, keep private reasoning private, verify
-selected provider/model identity, retain final usage and require a valid terminal event. HTTP 200 or EOF alone is not
-completion. A provider without streaming capability reports that honestly; do not replay a buffered response as a
-fake stream or silently choose another paid model.
+Cloudflare documents `createAI` as a beta full AI SDK provider supporting `generateText`, `streamText`, tools and
+structured output. That capability is useful; beta status and route-specific semantics are why Eliot qualifies an
+exact route instead of creating a universal provider abstraction.
 
-The existing buffered path may remain for a real probe/non-stream caller. Move ordinary callers, then delete raw
-provider-response persistence and decoders that have no remaining caller.
+Reference checked 2026-10-19: https://developers.cloudflare.com/agents/models/ai-sdk/.
 
 ## Retain completed public output
 
