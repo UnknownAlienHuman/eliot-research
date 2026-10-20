@@ -9,10 +9,10 @@ branch, including the optional CI provenance job and UI harness history command.
 [Git history](https://github.com/UnknownAlienHuman/eliot-research/tree/f0f2376570216dd987f213e62631764c2232ea98/docs/agent-work),
 not an optional legacy subsystem to maintain. Product/visual CI jobs remain.
 
-The generic work-packet manifest/checker still exists. Its coordinated retirement must remove root-script,
-negative-fixture and documentation-index dependencies together; this frontend cleanup does not complete that
-separate task. The remaining ER-47/48 fragment paths match their documents but reserve no current scope.
-Do not add packets, claim JSON, prerequisite commits or status manifests to start authorized work.
+The generic work-packet checker, manifest, JSON fragments, CI/package callers and packet-only negative fixtures
+have also been removed. Historical `Owned paths` sections are explanatory source maps only; they reserve no scope.
+Git history retains the deleted packet data. Do not restore packets, claim JSON, prerequisite commits or status
+manifests to coordinate authorized work.
 
 For UI work use the [delivery map](frontend-owner-execution-map.md) and [Material guidance](frontend-material-agent-playbook.md).
 The owner reviews the integrated result, not each internal edit. Compile/lint during implementation;

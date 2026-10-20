@@ -113,9 +113,6 @@ jobs:
       - name: Prove forbidden imports fail closed
         if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: pnpm boundaries:negative
-      - name: Verify swarm work packets
-        if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
-        run: pnpm work-packets:check
       - name: Verify branch and worktree hygiene
         if: ${{ !cancelled() && steps.dependencies.outcome == 'success' }}
         run: pnpm branch-hygiene:check
