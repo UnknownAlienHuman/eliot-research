@@ -95,8 +95,9 @@ export async function readSourceRevisionFreshness(
     throw new CatalogInputError("WIKI_POLICY_DENIED", "saved Wiki scope is no longer available", 410);
   }
   const refs = original.snapshot.member_source_revision_refs.map((ref) => identifier(ref, "saved source revision"));
+  const refSet = new Set(refs);
   const profile = await readOwnerScopeProfile(database, original.snapshot);
-  if (refs.length > profile.max_sources || new Set(refs).size !== refs.length) corrupt("saved Wiki scope source set is malformed");
+  if (refs.length > profile.max_sources || refSet.size !== refs.length) corrupt("saved Wiki scope source set is malformed");
   const navigationScope = authorization.navigation.scope;
   if (canonicalEvidenceJson([...navigationScope.member_source_revision_refs].sort()) !== canonicalEvidenceJson([...refs].sort()) ||
       canonicalEvidenceJson(navigationScope.source_owner_generations) !== canonicalEvidenceJson(original.snapshot.source_owner_generations)) {
@@ -129,7 +130,7 @@ export async function readSourceRevisionFreshness(
   const byRevision = new Map<string, { readonly source_id: string; readonly head_revision_ref: string }>();
   for (const row of rows) {
     const savedRevisionRef = identifier(row.saved_revision_ref, "source revision");
-    if (byRevision.has(savedRevisionRef) || !refs.includes(savedRevisionRef)) corrupt("Wiki source head identity is inconsistent");
+    if (byRevision.has(savedRevisionRef) || !refSet.has(savedRevisionRef)) corrupt("Wiki source head identity is inconsistent");
     byRevision.set(savedRevisionRef, {
       source_id: identifier(row.source_id, "source id"),
       head_revision_ref: identifier(row.head_revision_ref, "source head revision"),
