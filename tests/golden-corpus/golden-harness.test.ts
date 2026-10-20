@@ -91,7 +91,7 @@ describe("golden corpus harness", () => {
     );
     expect(targets).toHaveLength(2);
     const collapsed = runCollapsingExtractor(targets);
-    expect(() => assertGoldenPromotionGate(collapsed)).toThrow("GOLDEN_PROMOTION_BLOCKED");
+    expect(() => assertGoldenPromotionGate(collapsed, targets.map((entry) => entry.case_id))).toThrow("GOLDEN_PROMOTION_BLOCKED");
     for (const result of collapsed) {
       const golden = targets.find((entry) => entry.case_id === result.case_id);
       if (golden === undefined) throw new Error("missing golden case");

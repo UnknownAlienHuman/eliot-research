@@ -53,7 +53,7 @@ export interface GoldenRunResult {
 export interface GoldenHarness {
   load(path: string): Promise<readonly GoldenCase[]>;
   run(cases: readonly GoldenCase[], generationRef: string): Promise<readonly GoldenRunResult[]>;
-  assertPromotionGate(results: readonly GoldenRunResult[]): void;
+  assertPromotionGate(results: readonly GoldenRunResult[], expectedCaseIds: readonly string[]): void;
 }
 
 export const GOLDEN_CORPUS_PROTOCOL = "eliotr.golden-corpus.v1" as const;
@@ -523,9 +523,45 @@ export function validateGoldenCases(cases: readonly GoldenCase[]): readonly stri
   return errors;
 }
 
-export function assertGoldenPromotionGate(results: readonly GoldenRunResult[]): void {
+export function assertGoldenPromotionGate(
+  results: readonly GoldenRunResult[],
+  expectedCaseIds: readonly string[],
+): void {
+  if (expectedCaseIds.length === 0) {
+    throw new Error("GOLDEN_PROMOTION_BLOCKED:EMPTY_EXPECTED_CASE_SET");
+  }
+  const expected = new Set<string>();
+  for (const caseId of expectedCaseIds) {
+    if (typeof caseId !== "string" || caseId.length < 1 || caseId.length > MAX_GOLDEN_CASE_ID_CHARS) {
+      throw new Error("GOLDEN_PROMOTION_BLOCKED:MALFORMED_EXPECTED_CASE_ID");
+    }
+    if (expected.has(caseId)) {
+      throw new Error(`GOLDEN_PROMOTION_BLOCKED:DUPLICATE_EXPECTED_CASE_ID:${caseId}`);
+    }
+    expected.add(caseId);
+  }
   if (results.length === 0) {
     throw new Error("GOLDEN_PROMOTION_BLOCKED:EMPTY_RESULT_SET");
+  }
+  const observed = new Set<string>();
+  const duplicates = new Set<string>();
+  for (const result of results) {
+    if (typeof result.case_id !== "string" || result.case_id.length < 1 ||
+        result.case_id.length > MAX_GOLDEN_CASE_ID_CHARS) {
+      throw new Error("GOLDEN_PROMOTION_BLOCKED:MALFORMED_RESULT_CASE_ID");
+    }
+    if (observed.has(result.case_id)) duplicates.add(result.case_id);
+    observed.add(result.case_id);
+  }
+  if (duplicates.size > 0) {
+    throw new Error(`GOLDEN_PROMOTION_BLOCKED:DUPLICATE_RESULT_CASE_ID:${[...duplicates].sort().join(",")}`);
+  }
+  const missing = [...expected].filter((caseId) => !observed.has(caseId)).sort();
+  const unexpected = [...observed].filter((caseId) => !expected.has(caseId)).sort();
+  if (missing.length > 0 || unexpected.length > 0) {
+    throw new Error(
+      `GOLDEN_PROMOTION_BLOCKED:CASE_SET_MISMATCH:missing=${missing.join(",")};unexpected=${unexpected.join(",")}`,
+    );
   }
   const failed = results.filter((result) => {
     const diagnostics = goldenRunDiagnosticsFor(result);
