@@ -17,7 +17,7 @@ import {
 import type { InvestigationLedgerStore, LedgerHead } from "@eliotr/research";
 import {
   digest,
-  MAX_WORKFLOW_RECEIPT_BYTES,
+  MAX_WORKFLOW_OUTPUT_BYTES,
   textDigest,
   type StageRequest,
   type WorkflowPrincipal,
@@ -137,7 +137,7 @@ function sameRef(left: VersionedRef, right: VersionedRef): boolean {
 }
 
 function parsePayload(bytes: Uint8Array): RunPayload {
-  if (bytes.byteLength > MAX_WORKFLOW_RECEIPT_BYTES) fail("RESEARCH_PROTOCOL_FREEZE_INPUT_INVALID", "run payload exceeds the checkpoint bound");
+  if (bytes.byteLength > MAX_WORKFLOW_OUTPUT_BYTES) fail("RESEARCH_PROTOCOL_FREEZE_INPUT_INVALID", "run payload exceeds the workflow object bound");
   let value: unknown;
   try {
     value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
@@ -315,7 +315,7 @@ function checkpointBytes(value: ProtocolScopeCheckpoint): Uint8Array {
     fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_INVALID", "checkpoint content identities do not match their definitions");
   }
   const bytes = new TextEncoder().encode(canonicalEvidenceJson(parsed));
-  if (bytes.byteLength > MAX_WORKFLOW_RECEIPT_BYTES) fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_INVALID", "protocol scope checkpoint exceeds 64 KiB");
+  if (bytes.byteLength > MAX_WORKFLOW_OUTPUT_BYTES) fail("RESEARCH_PROTOCOL_FREEZE_AUTHORITY_INVALID", "protocol scope checkpoint exceeds the workflow object bound");
   return bytes;
 }
 
@@ -416,7 +416,7 @@ export function createFreezeProtocolAndScopeStageHandler(
 
 /** Strict parser shared by a later FREEZE_EVIDENCE authority reader. */
 export function decodeProtocolScopeCheckpoint(bytes: Uint8Array): ProtocolScopeCheckpoint {
-  if (bytes.byteLength > MAX_WORKFLOW_RECEIPT_BYTES) fail("RESEARCH_PROTOCOL_FREEZE_INPUT_INVALID", "protocol scope checkpoint exceeds 64 KiB");
+  if (bytes.byteLength > MAX_WORKFLOW_OUTPUT_BYTES) fail("RESEARCH_PROTOCOL_FREEZE_INPUT_INVALID", "protocol scope checkpoint exceeds the workflow object bound");
   let value: unknown;
   try { value = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)); }
   catch (cause) { fail("RESEARCH_PROTOCOL_FREEZE_INPUT_INVALID", "protocol scope checkpoint is not valid JSON", cause); }
