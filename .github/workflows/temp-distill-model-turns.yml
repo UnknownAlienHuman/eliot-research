@@ -17,6 +17,32 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('.github/refactor-380-distill-model-turns.py')
+          text = path.read_text(encoding='utf-8')
+          marker = 'replace_once(\n    "docs/implementation/backend-entrypoints.md",'
+          start = text.rfind(marker)
+          if start < 0:
+              raise SystemExit('backend replacement block not found')
+          replacement = r'''
+          file = Path("docs/implementation/backend-entrypoints.md")
+          plan = file.read_text(encoding="utf-8")
+          insertion_marker = "The current artifact writer is not reusable target infrastructure."
+          insertion = """Move one exact retained model route at a time to a single-turn adapter in `cloudflare-model-transport`. Prefer the
+          pinned Cloudflare AI SDK provider when it preserves that route's stream/tool/usage/error behavior. Ordinary work uses
+          one tool-free stream; deep work uses one action-or-final turn per Workflow iteration. Persist a completed turn before
+          its tool/save effect and correlate every tool result by `(turn_id, call_id)`. Do not add all vendor packages, an SDK
+          loop, Agent-owned Workflow dispatch, dynamic fallback or another transcript store in advance.
+
+          """
+          if plan.count(insertion_marker) != 1:
+              raise SystemExit("implementation insertion marker is not unique")
+          file.write_text(plan.replace(insertion_marker, insertion + insertion_marker).rstrip() + "\n", encoding="utf-8")
+          '''
+          path.write_text(text[:start] + replacement.lstrip(), encoding='utf-8')
+          PY
           python .github/refactor-380-distill-model-turns.py
           rm .github/refactor-380-distill-model-turns.py \
             .github/workflows/temp-distill-model-turns.yml
