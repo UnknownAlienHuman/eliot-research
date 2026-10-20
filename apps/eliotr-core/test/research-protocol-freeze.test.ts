@@ -1,7 +1,7 @@
 import { applyD1Migrations, reset } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { expect, describe, it } from "vitest";
-import { canonicalEvidenceJson, createNavigationReadAuthority, evidenceSha256 } from "@eliotr/cloudflare-evidence";
+import { createNavigationReadAuthority, evidenceSha256 } from "@eliotr/cloudflare-evidence";
 import {
   createD1ScopeService,
   createOwnerScopeAuthority,
