@@ -217,3 +217,5 @@ export function createOwnerApiClient(ports: OwnerClientPorts) {
     dispose() { if (!disposed) { disposed = true; ownedEpoch?.dispose(); for (const cancel of active) cancel(); } },
   };
 }
+
+export type OwnerApiClient = ReturnType<typeof createOwnerApiClient>;

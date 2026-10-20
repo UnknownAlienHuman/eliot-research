@@ -1,20 +1,14 @@
-/** Legacy-compatible request seam over the accepted side-effect-free transport.
+/** Legacy request-shape seam over one injected side-effect-free owner client.
  *
- * C1.4 owns no product code: the legacy package keeps its own transport until U6 retires it. This
- * adapter only lets existing callers keep their request shapes while the injected owner client
- * provides path policy, protected headers, deadlines and authorization observation. The module
- * never imports the legacy package, so `instanceof` for legacy errors stays with the caller's
+ * The adapter owns no transport, epoch, active request set or disposal lifecycle. Existing callers
+ * keep their request signatures while the shared owner client provides path policy, protected
+ * headers, deadlines and authorization observation. Legacy error identity stays with the caller's
  * factory and applies to every typed failure, including body-parser errors.
  */
 
-import { createOwnerApiClient, OwnerClientError } from '../transport/client';
+import { OwnerClientError } from '../transport/client';
 import { OwnerBodyError } from '../transport/body';
-import type { OwnerClientPorts, RequestOptions } from '../transport/client';
-import type { SessionEpoch } from '../transport/session/epoch';
-
-export interface LegacyHttpPorts extends OwnerClientPorts {
-  readonly epoch: SessionEpoch;
-}
+import type { OwnerApiClient, RequestOptions } from '../transport/client';
 
 export interface LegacyErrorDetails {
   readonly code: string;
@@ -115,11 +109,9 @@ export interface LegacyHttpAdapter {
   requestApiBytes(path: string, signal?: AbortSignal, maximumBytes?: number, expectedContentType?: string): Promise<LegacyBytesResponse>;
   requestReauthorizedSectionBytes(path: string, signal?: AbortSignal): Promise<LegacyBytesResponse>;
   requestApiText(path: string, signal?: AbortSignal, maximumBytes?: number): Promise<LegacyTextResponse>;
-  dispose(): void;
 }
 
-export function createLegacyHttpAdapter(ports: LegacyHttpPorts, errorFactory: LegacyErrorFactory): LegacyHttpAdapter {
-  const client = createOwnerApiClient(ports);
+export function createLegacyHttpAdapter(client: OwnerApiClient, errorFactory: LegacyErrorFactory): LegacyHttpAdapter {
 
   /** Every typed transport failure keeps its legacy class through the caller factory. */
   const adapterCall = async <T>(operation: Promise<T>): Promise<T> => {
@@ -170,9 +162,6 @@ export function createLegacyHttpAdapter(ports: LegacyHttpPorts, errorFactory: Le
         });
       }
       return { text, headers: response.headers };
-    },
-    dispose() {
-      client.dispose();
     },
   };
 }

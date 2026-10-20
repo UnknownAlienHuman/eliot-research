@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { bindAuthorizationCleared } from './browser';
-import { createLegacyHttpAdapter, type LegacyErrorFactory, type LegacyHttpPorts } from './http';
-import { OwnerClientError, type AuthorizationLoss } from '../transport/client';
+import { createLegacyHttpAdapter, type LegacyErrorFactory } from './http';
+import { createOwnerApiClient, OwnerClientError, type AuthorizationLoss } from '../transport/client';
 import { createSessionEpoch } from '../transport/session/epoch';
 
 class LegacyError extends OwnerClientError {
@@ -29,14 +29,14 @@ const problem = (status: number, code: string) =>
 type Epoch = ReturnType<typeof createSessionEpoch>;
 
 const build = (fetchImpl: typeof fetch, epoch: Epoch, sink: AuthorizationLoss[] = []) => {
-  const ports: LegacyHttpPorts = {
+  const client = createOwnerApiClient({
     fetch: fetchImpl,
     baseUrl: 'https://owner.test/',
     timers: { setTimeout: () => 0, clearTimeout: () => {} },
     epoch,
     onAuthorizationLoss: (observation) => sink.push(observation),
-  };
-  return { adapter: createLegacyHttpAdapter(ports, legacyError), sink };
+  });
+  return { adapter: createLegacyHttpAdapter(client, legacyError), client, sink };
 };
 
 const binderFor = (epoch: Epoch) => {
@@ -175,11 +175,11 @@ describe('legacy http seam', () => {
     expect((error as OwnerClientError).code).toBe('API_STATUS_INVALID');
   });
 
-  it('disposes only the client and leaves the external epoch untouched', async () => {
+  it('shares client disposal while leaving the external epoch untouched', async () => {
     const epoch = createSessionEpoch();
-    const { adapter } = build((async () => json(200, { ok: true })) as typeof fetch, epoch);
+    const { adapter, client } = build((async () => json(200, { ok: true })) as typeof fetch, epoch);
     expect(epoch.capture()).toBeDefined();
-    adapter.dispose();
+    client.dispose();
     expect(epoch.capture()).toBeDefined();
     expect(epoch.isCurrent(epoch.capture())).toBe(true);
     const error = await adapter.requestApi('/api/v1/after').catch((caught: unknown) => caught);
@@ -190,9 +190,9 @@ describe('legacy http seam', () => {
 describe("reauthorized section legacy error identity", () => {
   it("retains the caller's typed failure and exact transport without direct fetch", async () => {
     const epoch = createSessionEpoch();
-    const ports: LegacyHttpPorts = { fetch: async () => new Response(new Uint8Array([42]), { status: 206, headers: { "content-type": "application/octet-stream" } }), baseUrl: "https://owner.test", epoch, timers: { setTimeout: () => 0, clearTimeout() {} } };
-    const api = createLegacyHttpAdapter(ports, legacyError);
+    const client = createOwnerApiClient({ fetch: async () => new Response(new Uint8Array([42]), { status: 206, headers: { "content-type": "application/octet-stream" } }), baseUrl: "https://owner.test", epoch, timers: { setTimeout: () => 0, clearTimeout() {} } });
+    const api = createLegacyHttpAdapter(client, legacyError);
     await expect(api.requestReauthorizedSectionBytes("/api/v1/research/artifact/artifact-1%3A1/sections/section-1%3A1/reauthorize")).rejects.toBeInstanceOf(LegacyError);
-    api.dispose();
+    client.dispose();
   });
 });

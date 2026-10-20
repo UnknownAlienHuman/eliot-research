@@ -8,7 +8,7 @@ import { createCitationApi } from './citations.js';
 import { createReauthorizationApi } from './reauthorization.js';
 import type { ResearchRunRequest } from '../../research/runs/authority.js';
 import type { LegacyErrorDetails, LegacyErrorFactory } from '../../legacy/http.js';
-import type { EpochPort } from '../../transport/client.js';
+import { createOwnerApiClient, type EpochPort } from '../../transport/client.js';
 
 const errors: LegacyErrorFactory = (details: LegacyErrorDetails) =>
   Object.assign(new Error(details.message), details);
@@ -219,10 +219,8 @@ describe('C3-EC reauthorized section citations', () => {
     // One shared real epoch governs the legacy adapter and both citation modules, so the whole read
     // is checked against a single currentness authority.
     const sharedEpoch: SessionEpoch = createSessionEpoch();
-    const legacy = createLegacyHttpAdapter(
-      { fetch: fetchImpl, baseUrl: 'https://owner.example', timers, epoch: sharedEpoch },
-      errors,
-    );
+    const client = createOwnerApiClient({ fetch: fetchImpl, baseUrl: 'https://owner.example', timers, epoch: sharedEpoch });
+    const legacy = createLegacyHttpAdapter(client, errors);
     const citations = createCitationApi({
       request: legacy.requestApiWithStatuses,
       errors,
@@ -251,5 +249,6 @@ describe('C3-EC reauthorized section citations', () => {
     expect(call?.headers.get('x-eliotr-csrf')).toBe('1');
     expect(view.cited_evidence).toHaveLength(1);
     expect(view.protocol).toBe('eliotr.artifact-draft-citations-reauthorization.v1');
+    client.dispose();
   });
 });
