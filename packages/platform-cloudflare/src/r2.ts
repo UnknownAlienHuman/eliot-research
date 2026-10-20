@@ -378,6 +378,20 @@ function immutableConflict(key: string, cause: unknown): never {
   );
 }
 
+function readbackProvesImmutableConflict(error: R2IntegrityError): boolean {
+  return error.code === "R2_READBACK_SIZE_MISMATCH"
+    || error.code === "R2_READBACK_DIGEST_MISMATCH"
+    || error.code === "R2_READBACK_METADATA_MISMATCH";
+}
+
+function preserveReadbackFailure(error: R2IntegrityError, writeError?: unknown): never {
+  if (writeError === undefined) throw error;
+  throw new R2IntegrityError(error.code, error.message, error.retryable, {
+    write_error: writeError,
+    readback_error: error,
+  });
+}
+
 async function reconcileConditionalWrite(
   bucket: R2Bucket,
   key: string,
@@ -399,8 +413,11 @@ async function reconcileConditionalWrite(
       createSink,
     );
   } catch (readbackError) {
-    if (readbackError instanceof R2IntegrityError && readbackError.code !== "R2_READBACK_MISSING") {
-      immutableConflict(key, readbackError);
+    if (readbackError instanceof R2IntegrityError) {
+      if (readbackProvesImmutableConflict(readbackError)) immutableConflict(key, readbackError);
+      if (readbackError.code !== "R2_READBACK_MISSING") {
+        preserveReadbackFailure(readbackError, writeError);
+      }
     }
     if (writeError !== undefined) {
       throw new R2IntegrityError(
