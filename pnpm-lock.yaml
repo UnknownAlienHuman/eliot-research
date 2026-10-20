@@ -50,9 +50,6 @@ importers:
 
   apps/eliotr-core:
     dependencies:
-      '@cloudflare/ai-chat':
-        specifier: 0.12.1
-        version: 0.12.1(agents@0.27.0(@ai-sdk/provider@4.0.26)(@babel/core@8.0.7)(@babel/runtime@7.29.10)(@modelcontextprotocol/client@2.2.0)(@modelcontextprotocol/sdk@1.31.0(@cfworker/json-schema@4.1.1)(supports-color@10.2.2)(zod@4.4.3))(@modelcontextprotocol/server@2.0.0)(ai@7.0.136(zod@4.4.3))(react@19.3.0)(rolldown@1.2.6)(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.1)(jiti@2.7.0)(yaml@2.9.0))(zod@4.4.3))(ai@7.0.136(zod@4.4.3))(react@19.3.0)
       '@eliotr/cloudflare-access':
         specifier: workspace:*
         version: link:../../packages/cloudflare-access
@@ -1444,19 +1441,6 @@ packages:
   '@clack/prompts@1.8.0':
     resolution: {integrity: sha512-PXzLZ8N34rxmuo4dJg3xtOXhcBse94qGjDqsteoEYrFrrZ5FSjIGwMAuOcv64ln8rHVBBD06XeVGr+/JX+plcA==}
     engines: {node: '>= 20.12.0'}
-
-  '@cloudflare/ai-chat@0.12.1':
-    resolution: {integrity: sha512-ksWvcmTB0ytu5Ya7kQ+wfCoZ8eA2Ds3lKqPCUHeZGLvVzJgkfb/opAyat1Sx2xR8uiNf9NwgDrOi1ioOzmzQTw==}
-    peerDependencies:
-      '@ai-sdk/react': ^3.0.0 || ^4.0.0
-      agents: '>=0.25.0 <1.0.0'
-      ai: ^6.0.0 || ^7.0.0
-      react: ^19.0.0
-    peerDependenciesMeta:
-      '@ai-sdk/react':
-        optional: true
-      react:
-        optional: true
 
   '@cloudflare/kv-asset-handler@0.5.0':
     resolution: {integrity: sha512-jxQYkj8dSIzc0cD6cMMNdOc1UVjqSqu8BZdor5s8cGjW2I8BjODt/kWPVdY+u9zj3ms75Q5qaZgnxUad83+eAg==}
@@ -5604,14 +5588,6 @@ snapshots:
       fast-string-width: 3.0.2
       fast-wrap-ansi: 0.2.2
       sisteransi: 1.0.5
-
-  '@cloudflare/ai-chat@0.12.1(agents@0.27.0(@ai-sdk/provider@4.0.26)(@babel/core@8.0.7)(@babel/runtime@7.29.10)(@modelcontextprotocol/client@2.2.0)(@modelcontextprotocol/sdk@1.31.0(@cfworker/json-schema@4.1.1)(supports-color@10.2.2)(zod@4.4.3))(@modelcontextprotocol/server@2.0.0)(ai@7.0.136(zod@4.4.3))(react@19.3.0)(rolldown@1.2.6)(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.1)(jiti@2.7.0)(yaml@2.9.0))(zod@4.4.3))(ai@7.0.136(zod@4.4.3))(react@19.3.0)':
-    dependencies:
-      agents: 0.27.0(@ai-sdk/provider@4.0.26)(@babel/core@8.0.7)(@babel/runtime@7.29.10)(@modelcontextprotocol/client@2.2.0)(@modelcontextprotocol/sdk@1.31.0(@cfworker/json-schema@4.1.1)(supports-color@10.2.2)(zod@4.4.3))(@modelcontextprotocol/server@2.0.0)(ai@7.0.136(zod@4.4.3))(react@19.3.0)(rolldown@1.2.6)(vite@8.2.2(@types/node@26.4.0)(esbuild@0.28.1)(jiti@2.7.0)(yaml@2.9.0))(zod@4.4.3)
-      ai: 7.0.136(zod@4.4.3)
-      nanoid: 5.1.16
-    optionalDependencies:
-      react: 19.3.0
 
   '@cloudflare/kv-asset-handler@0.5.0': {}
 

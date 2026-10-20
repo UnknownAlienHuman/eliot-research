@@ -50,8 +50,7 @@ or durable message table.
 Do **not** convert ResearchSession to `AIChatAgent/useAgentChat` merely for resumable text. Current Cloudflare Chat
 Agents documentation states that resumable streaming buffers all chunks in SQLite. That would create the token/
 event journal and transcript store this design intentionally avoids, duplicating the canonical output/report.
-If `@cloudflare/ai-chat` has no other real caller after the audit, remove that dependency rather than keeping it for
-hypothetical reuse.
+No production caller remained, so `@cloudflare/ai-chat` was removed instead of being retained for hypothetical reuse.
 
 The offset/sequence detects order and gaps. It is not signed, globally unique or persisted as an audit log.
 Server and client reject malformed, oversized, wrong-run and stale-deployment frames.

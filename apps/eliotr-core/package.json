@@ -13,7 +13,6 @@
     "deploy": "node ../../scripts/deploy-cloudflare.mjs --confirm-live"
   },
   "dependencies": {
-    "@cloudflare/ai-chat": "0.12.1",
     "@eliotr/cloudflare-access": "workspace:*",
     "@eliotr/cloudflare-ai": "workspace:*",
     "@eliotr/cloudflare-artifacts": "workspace:*",
