@@ -120,8 +120,9 @@ Do not run native chat generation and then another Eliot synthesis over its answ
 
 Read the actual SDK/types before implementation. The binding reference contains prose/type/example differences
 around stream return values and filter notation; do not solve that with speculative runtime-shape fallbacks.
-Core already lists `agents 0.27.0`, `@cloudflare/ai-chat 0.12.1`, `ai 7.0.136` and Wrangler `4.143.1` at this
-source baseline. Use the installed suitable adapter before writing new provider parsers or upgrading the stack.
+Core lists `agents 0.27.0`, `ai 7.0.136` and Wrangler `4.143.1` at this source baseline.
+`@cloudflare/ai-chat` was removed after no production caller was found; do not restore it for hypothetical replay.
+Use the installed suitable adapter before writing new provider parsers or upgrading the stack.
 Native local-development `remote: true` examples perform remote work; they are not Eliot's isolated fixture profile.
 
 Cloudflare's [citation example](https://developers.cloudflare.com/ai-search/how-to/chunk-citations/) lists retrieved
