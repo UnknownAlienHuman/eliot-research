@@ -1,0 +1,28 @@
+name: temp-distill-model-turns
+on:
+  push:
+    branches:
+      - refactor/380-distill-model-turns
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - name: Distill model-turn and session decisions
+        shell: bash
+        run: |
+          set -euo pipefail
+          python .github/refactor-380-distill-model-turns.py
+          rm .github/refactor-380-distill-model-turns.py \
+            .github/workflows/temp-distill-model-turns.yml
+          git add -A
+          git diff --cached --check
+          git config user.name "Iurii Lisenkov"
+          git config user.email "71514792+UnknownAlienHuman@users.noreply.github.com"
+          git commit -m "docs: distill model turns and session ownership (#380)"
+          git push origin HEAD:refactor/380-distill-model-turns
