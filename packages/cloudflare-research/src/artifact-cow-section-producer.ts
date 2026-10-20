@@ -286,6 +286,14 @@ export function createArtifactCowSectionProducer(dependencies: ArtifactCowSectio
     }
     await dependencies.validate_evidence_classes({ contract, claims: normalized.claims, evidence_pack: pack });
     const cited = await validateCitedEvidence(normalized.cited_handle_refs, pack, parent, dependencies.resolve_current_evidence);
+    const bodyBytes = new TextEncoder().encode(normalized.section_text);
+    if (bodyBytes.byteLength > contract.maximum_utf8_bytes) fail("normalized section exceeds its contract byte limit");
+    const bodySha = await evidenceSha256Bytes(bodyBytes);
+    const trusted = dependencies.trusted_audit_inputs({ claims: normalized.claims, evidence_pack: pack });
+    if (trusted.length !== normalized.claims.length || trusted.some((item, index) =>
+      !sameRef(item.claim.claim_ref, normalized.claims[index]?.claim_ref ?? { id: "", revision: 0 }))) {
+      fail("trusted independent-verifier inputs do not exactly cover normalized claims");
+    }
     const auditInputBytes = canonicalBytes({
       protocol: "eliotr.artifact-section-independent-verification-input.v1",
       operation_id: dependencies.attempt.request.operation_id,
@@ -305,15 +313,7 @@ export function createArtifactCowSectionProducer(dependencies: ArtifactCowSectio
       evidence_input_sha256: expectedInputSha,
       claims: normalized.claims as never,
     });
-    const trusted = dependencies.trusted_audit_inputs({ claims: normalized.claims, evidence_pack: pack });
-    if (trusted.length !== normalized.claims.length || trusted.some((item, index) =>
-      !sameRef(item.claim.claim_ref, normalized.claims[index]?.claim_ref ?? { id: "", revision: 0 }))) {
-      fail("trusted independent-verifier inputs do not exactly cover normalized claims");
-    }
     const translated = translateSemanticVerifierBatch(semanticBatch, trusted);
-    const bodyBytes = new TextEncoder().encode(normalized.section_text);
-    const bodySha = await evidenceSha256Bytes(bodyBytes);
-    if (bodyBytes.byteLength > contract.maximum_utf8_bytes) fail("normalized section exceeds its contract byte limit");
     const ledgerBytes = new TextEncoder().encode(canonicalEvidenceJson(pack));
     const ledgerSha = await evidenceSha256Bytes(ledgerBytes);
     const identity = await canonicalDigest({
