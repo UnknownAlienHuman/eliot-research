@@ -298,8 +298,9 @@ Model token window, serialized request bytes, response bytes, Workflow step resu
 memory are different limits. Reserve output capacity before filling context. FULL rejects overflow; it never silently
 truncates. Whole selected sources can be read before search indexing finishes.
 
-The earlier C03 256-KiB HTTP versus 64-KiB persisted-input mismatch is a source finding, not a desired limit. Align
-the actual producer, stored locator and readers in the changed path.
+Research HTTP, immutable R2 objects and compact receipts have separate bounds. The HTTP JSON envelope remains
+256 KiB; initial run payloads and protocol checkpoints use the existing bounded WorkflowObject/R2 profile; only
+compact D1/step receipt documents use the 64 KiB receipt profile. Writers and readers enforce the same object bound.
 
 Cloudflare references checked 2026-10-18:
 [R2 conditional writes and consistency](https://developers.cloudflare.com/r2/reference/consistency/),

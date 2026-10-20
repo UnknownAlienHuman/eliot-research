@@ -268,7 +268,6 @@ Retire remaining work-packet/AST-shape machinery independently:
 | Finding | Required result |
 |---|---|
 | C01/C02/C11 | Native conditional immutable R2 create and bounded observation of same bytes/conflict/unavailable |
-| C03 | Align HTTP, stored input and compact Workflow state; one large immutable value behind a locator |
 | C05/C10 | Exact freshness count plus bounded detail/truncation; set membership, no decoder mismatch |
 | C06 | Local size/cardinality checks before an explicitly requested paid verifier; none for ordinary answers |
 | C07/#378/#379 | After assembly, repair retained assertions and delete cancelled behavior with its code |

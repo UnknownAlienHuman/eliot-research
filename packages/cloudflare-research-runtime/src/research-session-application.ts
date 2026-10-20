@@ -1,5 +1,5 @@
 import {
-  MAX_WORKFLOW_RECEIPT_BYTES,
+  MAX_WORKFLOW_OUTPUT_BYTES,
   WorkflowCheckpointStore,
   WorkflowObjectSchema,
   digest,
@@ -192,9 +192,9 @@ export async function persistResearchSessionRunPayload(
     }),
     ...(input.planning_manifest === undefined ? {} : { planning_manifest: input.planning_manifest }),
   }));
-  if (bytes.byteLength > MAX_WORKFLOW_RECEIPT_BYTES) {
+  if (bytes.byteLength > MAX_WORKFLOW_OUTPUT_BYTES) {
     ports.fail("RESEARCH_INPUT_LIMIT",
-      `research workflow input exceeds ${MAX_WORKFLOW_RECEIPT_BYTES} UTF-8 bytes; partition the requested scope or shorten the question`,
+      `research workflow input object exceeds ${MAX_WORKFLOW_OUTPUT_BYTES} UTF-8 bytes; partition the requested scope or shorten the question`,
       413);
   }
   const sha256 = await digest(bytes);

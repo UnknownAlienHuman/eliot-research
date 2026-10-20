@@ -20,6 +20,8 @@ import {
   createWorkflowCheckpointExecutor,
   digest,
   fail,
+  MAX_WORKFLOW_OUTPUT_BYTES,
+  MAX_WORKFLOW_RECEIPT_BYTES,
   installedInquiryProtocolDefinition,
   readWorkflowObject,
   type StageRequest,
@@ -32,6 +34,9 @@ import {
   readFreezeProtocolAndScopeCheckpoint,
 } from "../../../packages/cloudflare-research/src/research-protocol-freeze.js";
 import type { EvidenceGrade, ScopeSnapshot, VersionedRef } from "@eliotr/contracts";
+import type { QueryRequest } from "@eliotr/interfaces";
+import { persistResearchSessionRunPayload } from
+  "@eliotr/cloudflare-research-runtime/research-session-application.js";
 import {
   importAndProject,
   prepareQ1Namespace,
@@ -111,7 +116,6 @@ async function createProtocolFreezeFixture(
       .bind(principal.deployment_generation, now),
   ]);
 
-  const payloadKey = `protocol-freeze-input-${tag}`;
   const installedDefinition = protocolRef === undefined ? null : installedInquiryProtocolDefinition(protocolRef);
   const sourceRow = await db.prepare(
     "SELECT sr.source_revision_ref, sr.source_id, s.source_class, s.source_namespace_id, " +
@@ -132,23 +136,40 @@ async function createProtocolFreezeFixture(
     definition: installedDefinition,
     sources: [sourceRow],
   });
-  const payload = {
-    investigation_id: `protocol-investigation-${tag}`,
-    operation_id: `protocol-run-${tag}`,
+  const runRequest: QueryRequest = {
     query: question,
-    scope_snapshot_ref: { id: scope.snapshot_id, revision: scope.revision },
+    product: "RESEARCH",
+    scope_expression: { kind: "SELECTED_SOURCES", source_ids: [sourceId] },
+    literals: [],
     evidence_grade: evidenceGrade,
-    principal_ref: principal.principal_ref,
-    ...(protocolRef === undefined ? {} : { inquiry_protocol_ref: protocolRef }),
+    budget_ref: `protocol-budget-${tag}`,
+    max_results: 1,
+    ...(protocolRef === undefined ? {} : {
+      request_version: "eliotr.research-run-request.v2" as const,
+      inquiry_protocol_ref: protocolRef,
+    }),
+  };
+  const persistedPayload = await persistResearchSessionRunPayload({
+    request: runRequest,
+    operation_id: `protocol-run-${tag}`,
+    investigation_id: `protocol-investigation-${tag}`,
+    payload_suffix: tag,
+    scope_ref: { id: scope.snapshot_id, revision: scope.revision },
     ...(planningManifest === undefined ? {} : { planning_manifest: planningManifest }),
-  } as const;
-  const payloadBytes = new TextEncoder().encode(canonicalEvidenceJson(payload));
-  const payloadDigest = await digest(payloadBytes);
-  await bucket.put(payloadKey, payloadBytes, { sha256: payloadDigest });
+    principal_ref: principal.principal_ref,
+  }, {
+    work_bucket: bucket,
+    fail: (code, message, status = 500, retryable = false): never => {
+      throw Object.assign(new Error(message), { code, status, retryable });
+    },
+  });
+  const payloadKey = persistedPayload.object_key;
+  const payloadBytes = persistedPayload.bytes;
+  const payloadDigest = persistedPayload.sha256;
 
   const ledgerInput: CreateLedgerInput = {
     investigation_id: `protocol-investigation-${tag}`,
-    goal: payload.query,
+    goal: question,
     scope_snapshot_id: scope.snapshot_id,
     scope_snapshot_revision: scope.revision,
     evidence_grade: evidenceGrade,
@@ -478,13 +499,19 @@ describe("research protocol freeze stage over actual admitted/indexed D1/R2", ()
 });
 
 
-describe("S24 exact long question protocol freeze", () => {
-  it("freezes and replays the formatted question through existing ledger/R2/checkpoints", async () => {
-    const question = "  English question\r\n\t- Русский пункт 😀\n> quoted evidence\n".repeat(180);
-    const fixture = await createProtocolFreezeFixture("s24-long", question, INSTALLED_INQUIRY_PROTOCOL_REFS.lookup);
+describe("C03 persisted workflow object bounds", () => {
+  it("freezes and replays R2 input and checkpoint objects larger than the receipt bound", async () => {
+    const question = "  English question\r\n\t- Русский пункт 😀\n> quoted evidence\n".repeat(1_200);
+    const fixture = await createProtocolFreezeFixture("c03-large-object", question, INSTALLED_INQUIRY_PROTOCOL_REFS.lookup);
+    expect(fixture.request.input_manifest.byte_length).toBeGreaterThan(MAX_WORKFLOW_RECEIPT_BYTES);
+    expect(fixture.request.input_manifest.byte_length).toBeLessThanOrEqual(MAX_WORKFLOW_OUTPUT_BYTES);
+
     const handler = createFreezeProtocolAndScopeStageHandler({ navigation: fixture.navigation, ledger: fixture.ledger });
     const first = await fixture.executor.execute(fixture.request, principal, handler);
     const bytes = await readWorkflowObject(fixture.bucket, first.output_manifest, true);
+    expect(first.output_manifest.byte_length).toBeGreaterThan(MAX_WORKFLOW_RECEIPT_BYTES);
+    expect(first.output_manifest.byte_length).toBeLessThanOrEqual(MAX_WORKFLOW_OUTPUT_BYTES);
+
     const checkpoint = decodeProtocolScopeCheckpoint(bytes);
     expect(checkpoint.protocol_profile.question).toBe(question);
     expect((await fixture.ledger.read(fixture.request.investigation_ref.id))?.head.goal).toBe(question);
@@ -493,5 +520,5 @@ describe("S24 exact long question protocol freeze", () => {
     const readback = await readFreezeProtocolAndScopeCheckpoint({ request: fixture.request, principal, database: fixture.db,
       bucket: fixture.bucket, navigation: fixture.navigation, ledger: fixture.ledger });
     expect(readback.protocol_profile.question).toBe(question);
-  });
+  }, 30_000);
 });
