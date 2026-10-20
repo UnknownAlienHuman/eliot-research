@@ -23,6 +23,11 @@ jobs:
           printf '\n__END_OF_FILE__\n' >> apps/eliotr-core/test/research-protocol-freeze.test.ts
           python .github/refactor-380-separate-workflow-object-bound.py
           sed -i '/^__END_OF_FILE__$/d' apps/eliotr-core/test/research-protocol-freeze.test.ts
+          python - <<'PY'
+          from pathlib import Path
+          path = Path("apps/eliotr-core/test/research-protocol-freeze.test.ts")
+          path.write_text(path.read_text(encoding="utf-8").rstrip() + "\n", encoding="utf-8")
+          PY
           rm .github/refactor-380-separate-workflow-object-bound.py \
             .github/workflows/temp-c03-workflow-object-bound.yml
           git diff --check
