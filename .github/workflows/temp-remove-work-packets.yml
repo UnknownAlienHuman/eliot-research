@@ -1,0 +1,45 @@
+name: temp-remove-work-packets
+on:
+  push:
+    branches:
+      - refactor/380-remove-work-packet-bureaucracy
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+      - name: Remove obsolete work-packet machinery
+        shell: bash
+        run: |
+          set -euo pipefail
+          python .github/refactor-380-remove-work-packets.py
+          test ! -e scripts/check-work-packets.mjs
+          test ! -e docs/agent-work/manifest.json
+          test ! -e docs/agent-work/packets
+          if grep -R -n -E 'work-packets:check|scripts/check-work-packets\.mjs|docs/agent-work/manifest\.json|docs/agent-work/packets/' \
+            package.json .github/workflows scripts docs/agent-work/README.md docs/implementation/backend-entrypoints.md; then
+            echo 'active work-packet reference remains' >&2
+            exit 1
+          fi
+          node --check scripts/test-boundary-negative.mjs
+          node scripts/check-docs-index.mjs
+          corepack enable
+          corepack prepare pnpm@11.23.0 --activate
+          pnpm install --frozen-lockfile
+          node scripts/test-boundary-negative.mjs
+          rm .github/refactor-380-remove-work-packets.py \
+            .github/workflows/temp-remove-work-packets.yml
+          git add -A
+          git diff --cached --check
+          git config user.name "Iurii Lisenkov"
+          git config user.email "71514792+UnknownAlienHuman@users.noreply.github.com"
+          git commit -m "refactor: remove work-packet bureaucracy (#380)"
+          git push origin HEAD:refactor/380-remove-work-packet-bureaucracy
