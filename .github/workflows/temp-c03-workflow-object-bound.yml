@@ -20,6 +20,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          path = Path(".github/refactor-380-separate-workflow-object-bound.py")
+          text = path.read_text(encoding="utf-8")
+          text = text.replace("  const request: QueryRequest = {", "  const runRequest: QueryRequest = {")
+          text = text.replace("    request,\n    operation_id:", "    request: runRequest,\n    operation_id:")
+          path.write_text(text, encoding="utf-8")
+          PY
           printf '\n__END_OF_FILE__\n' >> apps/eliotr-core/test/research-protocol-freeze.test.ts
           python .github/refactor-380-separate-workflow-object-bound.py
           sed -i '/^__END_OF_FILE__$/d' apps/eliotr-core/test/research-protocol-freeze.test.ts
