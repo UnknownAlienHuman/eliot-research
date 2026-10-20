@@ -73,7 +73,7 @@ describe("Golden Corpus gates", () => {
       resolved_handle_refs: [],
       coverage_kind: "complete_scope",
       diagnostics_ref: "diag-1",
-    }])).toThrow("GOLDEN_PROMOTION_BLOCKED");
+    }], ["case-1"])).toThrow("GOLDEN_PROMOTION_BLOCKED");
   });
 
   it("fails a deliberately collapsing extractor on recommendation-vs-decision and hypothesis-vs-observation", () => {
@@ -81,7 +81,7 @@ describe("Golden Corpus gates", () => {
     expect(collapsed).toHaveLength(2);
     expect(collapsed[0]?.observed_forbidden_collapses).toEqual(["recommendation promoted to decision"]);
     expect(collapsed[1]?.observed_forbidden_collapses).toEqual(["hypothesis presented as measured result"]);
-    expect(() => assertGoldenPromotionGate(collapsed)).toThrow("GOLDEN_PROMOTION_BLOCKED:GC-001-recommendation-vs-decision,GC-002-hypothesis-vs-observation");
+    expect(() => assertGoldenPromotionGate(collapsed, [recommendationCase.case_id, hypothesisCase.case_id])).toThrow("GOLDEN_PROMOTION_BLOCKED:GC-001-recommendation-vs-decision,GC-002-hypothesis-vs-observation");
     const verdict = adjudicateGoldenCase(recommendationCase, {
       atoms: [],
       forbidden: collapsed[0]?.observed_forbidden_collapses ?? [],
@@ -124,7 +124,7 @@ describe("Golden Corpus gates", () => {
       ]),
     );
     expect(results[0]?.passed).toBe(true);
-    expect(() => assertGoldenPromotionGate(results)).not.toThrow();
+    expect(() => assertGoldenPromotionGate(results, [recommendationCase.case_id])).not.toThrow();
   });
 
   it("bounds and adjudicates unknown observation containers before retaining values", () => {
@@ -211,7 +211,7 @@ describe("Golden Corpus gates", () => {
       new Map([[recommendationCase.case_id, observed]]),
     );
     expect(results[0]?.passed).toBe(false);
-    expect(() => assertGoldenPromotionGate(results)).toThrow("GOLDEN_PROMOTION_BLOCKED");
+    expect(() => assertGoldenPromotionGate(results, [recommendationCase.case_id])).toThrow("GOLDEN_PROMOTION_BLOCKED");
   });
 
   it("keeps the historical v1 result wire shape while retaining adjudication diagnostics internally", () => {
@@ -235,7 +235,7 @@ describe("Golden Corpus gates", () => {
       diagnostics_ref: `fail-${recommendationCase.case_id}`,
     });
     Object.assign(result, { passed: true });
-    expect(() => assertGoldenPromotionGate(results)).toThrow("GOLDEN_PROMOTION_BLOCKED");
+    expect(() => assertGoldenPromotionGate(results, [recommendationCase.case_id])).toThrow("GOLDEN_PROMOTION_BLOCKED");
   });
 
   it("preserves historical v1 parsing of blank and duplicate acceptable unknowns", () => {
@@ -310,6 +310,6 @@ describe("Golden Corpus gates", () => {
   it("fails evaluation when an observation is missing", () => {
     const results = evaluateGoldenRun([recommendationCase], new Map());
     expect(results[0]?.passed).toBe(false);
-    expect(() => assertGoldenPromotionGate(results)).toThrow("GOLDEN_PROMOTION_BLOCKED");
+    expect(() => assertGoldenPromotionGate(results, [recommendationCase.case_id])).toThrow("GOLDEN_PROMOTION_BLOCKED");
   });
 });
