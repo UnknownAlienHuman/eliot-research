@@ -20,6 +20,35 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('.github/audit-380-freshness-response-bound.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''# Typed fixtures most frequently reused by the current React path.
+          for path in (
+              "apps/eliotr-web/src/app/InboxStudioSelectionRegression.stories.tsx",
+              "apps/eliotr-web/src/query/studio.test.ts",
+          ):
+              replace(path,
+                  'source_freshness: { state: "CURRENT_REVISIONS", checked_at: stamp, changed_sources: [] },',
+                  'source_freshness: { state: "CURRENT_REVISIONS", checked_at: stamp, changed_source_count: 0, changed_sources_truncated: false, changed_sources: [] },')
+          '''
+          new = '''# Typed fixtures most frequently reused by the current React path.
+          replace(
+              "apps/eliotr-web/src/app/InboxStudioSelectionRegression.stories.tsx",
+              'source_freshness: { state: "CURRENT_REVISIONS", checked_at: stamp, changed_sources: [] },',
+              'source_freshness: { state: "CURRENT_REVISIONS", checked_at: stamp, changed_source_count: 0, changed_sources_truncated: false, changed_sources: [] },',
+          )
+          replace(
+              "apps/eliotr-web/src/query/studio.test.ts",
+              "source_freshness: { state: 'UNKNOWN', changed_sources: [] },",
+              "source_freshness: { state: 'UNKNOWN', changed_source_count: 0, changed_sources_truncated: false, changed_sources: [] },",
+          )
+          '''
+          if text.count(old) != 1:
+              raise SystemExit('typed fixture rewrite block not found exactly once')
+          path.write_text(text.replace(old, new), encoding='utf-8')
+          PY
           python .github/audit-380-freshness-response-bound.py
           rm .github/audit-380-freshness-response-bound.py \
             .github/workflows/temp-audit-freshness-response-bound.yml
