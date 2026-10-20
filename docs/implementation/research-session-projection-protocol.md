@@ -89,14 +89,29 @@ while no client was connected, the retained public-output object and materialize
 A terminal provider interruption may retain one bounded partial-output object for honest display. It is not a
 completed report and reconnect never turns it into another model invocation.
 
-## Native Workflow events
+## Native Workflow events without moving execution into the Agent
 
-Use native Workflow instance subscriptions for execution progress where the deployed binding supports them.
-Filter and map events to safe phases; never forward raw params, output or error bodies. Event retention is not
-product result retention.
+Use native Workflow instance events for execution progress where the deployed binding supports them. Filter and map
+events to safe phases; never forward raw params, output or error bodies. Event retention is not product-result
+retention. Workflow events are not model text deltas: ResearchSession receives public text from the model path and
+coarse progress from Workflow state/events, without duplicating either into a D1 event journal.
 
-Workflow events are not model text deltas. ResearchSession receives public text from the ordinary model execution
-path and coarse progress from Workflow state/events. Do not duplicate both streams into a D1 event journal.
+Cloudflare also provides `Agent.runWorkflow()` and `AgentWorkflow`. They are useful when an Agent owns a task's
+real-time state and launches its durable pipeline. That is **not** the selected Eliot ownership:
+
+- authenticated admission and canonical D1 run state already own request, budget, cancellation and result identity;
+- the existing Workflow already owns durable execution and paid-effect boundaries;
+- ResearchSession is a readonly presentation relay.
+
+Moving Workflow launch into ResearchSession would add Agent dispatch/tracking/state as another recovery boundary
+beside the admitted run and direct deterministic Workflow instance. Keep admission → Workflow dispatch direct and
+use ResearchSession only for authorized projection. Reconsider `AgentWorkflow` only as a complete measured
+replacement that deletes the existing dispatch/bootstrap path and leaves one canonical state owner—not as a bridge
+layer added beside it.
+
+References checked 2026-10-19:
+https://developers.cloudflare.com/agents/runtime/execution/run-workflows/ and
+https://developers.cloudflare.com/agents/concepts/workflows/.
 
 ## Client cutover
 

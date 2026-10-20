@@ -96,6 +96,12 @@ For `lookup`, dispatch before installed inquiry-protocol compilation and before 
 The ordinary Workflow has four responsibilities: prepare, generate, save, finish. It performs one model attempt,
 retains completed public Markdown once and saves one research-report revision.
 
+Move one exact retained model route at a time to a single-turn adapter in `cloudflare-model-transport`. Prefer the
+pinned Cloudflare AI SDK provider when it preserves that route's stream/tool/usage/error behavior. Ordinary work uses
+one tool-free stream; deep work uses one action-or-final turn per Workflow iteration. Persist a completed turn before
+its tool/save effect and correlate every tool result by `(turn_id, call_id)`. Do not add all vendor packages, an SDK
+loop, Agent-owned Workflow dispatch, dynamic fallback or another transcript store in advance.
+
 The current artifact writer is not reusable target infrastructure. It requires EvidenceFreeze, dependency/allowed
 reference manifests, section objects/ledgers/verification receipts, reservations, residency records, stage-17 report
 admission and another publication/acceptance platform. Replace the cohort instead of fabricating dummy inputs.
