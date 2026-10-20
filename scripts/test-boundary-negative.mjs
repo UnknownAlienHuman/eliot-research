@@ -5,11 +5,6 @@ import { fileURLToPath } from "node:url";
 import { tmpdir } from "node:os";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const workPacketPath = resolve(
-  root,
-  "docs/agent-work/ER-17-access-observability-and-runtime-limits.md",
-);
-
 function runGate(script, expectedStatus, expectedFragments, label, cwd = root, args = []) {
   const result = spawnSync(process.execPath, [script, ...args], {
     cwd,
@@ -140,27 +135,6 @@ async function proveCheckoutPathsArePortable() {
   }
 }
 
-async function withWorkPacketMutation(label, mutate, expectedFragments) {
-  const original = await readFile(workPacketPath, "utf8");
-  const normalized = original.replaceAll("\r\n", "\n");
-  const mutated = mutate(normalized);
-  if (mutated === normalized) {
-    throw new Error(`${label} fixture did not change ER-17`);
-  }
-
-  try {
-    await writeFile(workPacketPath, mutated, "utf8");
-    runGateExpectingFailure(
-      "scripts/check-work-packets.mjs",
-      expectedFragments,
-      label,
-    );
-    console.log(`${label}: PASS`);
-  } finally {
-    await writeFile(workPacketPath, original, "utf8");
-  }
-}
-
 async function proveForbiddenImportFailsClosed() {
   const fixture = resolve(
     root,
@@ -218,63 +192,11 @@ async function proveUnregisteredPendingStateFailsClosed() {
   }
 }
 
-async function proveWorkPacketParityFailsClosed() {
-  const firstOwnedPath =
-    "packages/cloudflare-access/**";
-  const secondOwnedPath =
-    "packages/platform-cloudflare/src/observability.ts";
-  const finalPath =
-    "packages/platform-cloudflare/src/runtime-limits.test.ts";
-  const injectedPath =
-    "packages/platform-cloudflare/src/__eliotr_manifest_drift__.test.ts";
-
-  await withWorkPacketMutation(
-    "Work-packet document-only ownership drift negative boundary",
-    (original) =>
-      original.replace(
-        `- \`${finalPath}\`\n`,
-        `- \`${finalPath}\`\n- \`${injectedPath}\`\n`,
-      ),
-    [
-      `ER-17: packet document owns path absent from manifest: ${injectedPath}`,
-    ],
-  );
-
-  await withWorkPacketMutation(
-    "Work-packet manifest-only ownership drift negative boundary",
-    (original) => original.replace(`- \`${secondOwnedPath}\`\n`, ""),
-    [
-      `ER-17: manifest owns path absent from packet document: ${secondOwnedPath}`,
-    ],
-  );
-
-  await withWorkPacketMutation(
-    "Work-packet ownership order drift negative boundary",
-    (original) =>
-      original.replace(
-        `- \`${firstOwnedPath}\`\n- \`${secondOwnedPath}\`\n`,
-        `- \`${secondOwnedPath}\`\n- \`${firstOwnedPath}\`\n`,
-      ),
-    ["ER-17: manifest and packet document owned paths use different order"],
-  );
-
-  await withWorkPacketMutation(
-    "Work-packet malformed ownership entry negative boundary",
-    (original) =>
-      original.replace(`- \`${firstOwnedPath}\`\n`, `- ${firstOwnedPath}\n`),
-    [
-      "ER-17: ER-17-access-observability-and-runtime-limits.md:",
-      "has malformed owned-path entry",
-    ],
-  );
-}
-
 if (!process.argv.includes("--owner-web") && !process.argv.includes("--owner-client") &&
     !process.argv.includes("--source-budgets")) {
   await proveCheckoutPathsArePortable();
   await proveForbiddenImportFailsClosed();
   await proveUnregisteredPendingStateFailsClosed();
-  await proveWorkPacketParityFailsClosed();
 }
 
 // Owner-web and UI are registered browser roots. Each fixture below fails

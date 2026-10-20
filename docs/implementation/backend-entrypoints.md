@@ -257,12 +257,11 @@ compatibility. Applied data receives one deliberate conversion, not permanent du
 
 ## 9. Remove development bureaucracy
 
-Retire remaining work-packet/AST-shape machinery independently:
+The work-packet checker, manifest, packet fragments, CI/package callers and packet-only fixtures are removed.
+Historical ER documents reserve no paths and Git history is the archive. Do not restore that registry.
 
-- remove `check-work-packets.mjs`, package callers, manifest coupling and packet-only fixtures;
-- keep the small current-doc/broken-link check;
-- remove exact source-layout requirements from `check-launch-code.mjs`;
-- do not replace them with another registry or always-success stub.
+Keep the small current-doc/broken-link check. Remove remaining exact source-layout requirements from
+`check-launch-code.mjs` without replacing them with another registry or an always-success stub.
 
 ## Retained correctness work
 
