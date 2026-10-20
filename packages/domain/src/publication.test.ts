@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { WikiPageRevision } from "@eliotr/contracts";
 import {
-  wikiMayAutoPromote,
   wikiMayBePublished,
   wikiPublicationIssues,
   wikiTargetsExpectedHead,
-  type WikiAutoPromotionAuthority,
 } from "./publication.js";
 
 function page(fields: Partial<WikiPageRevision> = {}): WikiPageRevision {
@@ -29,18 +27,6 @@ function page(fields: Partial<WikiPageRevision> = {}): WikiPageRevision {
     ...fields,
   };
 }
-
-const authority: WikiAutoPromotionAuthority = {
-  explicit_project_policy: true,
-  policy_receipt_ref: "policy-receipt-1",
-  exact_evidence_complete: true,
-  evidence_receipt_ref: "evidence-receipt-1",
-  dependency_closure_complete: true,
-  coverage_complete: true,
-  independent_verifier_receipt_ref: "verifier-receipt-1",
-  conflict_count: 0,
-  changes_current_state: false,
-};
 
 describe("wiki publication domain", () => {
   it("accepts a fully bound draft and binds each revision to its exact predecessor", () => {
@@ -77,19 +63,5 @@ describe("wiki publication domain", () => {
       "DEPENDENCY_INVALID",
       "DEPENDENCY_SELF_REFERENCE",
     ]));
-  });
-
-  it("permits D0/D1 auto-promotion only with exact explicit authority and never permits D2/D3", () => {
-    expect(wikiMayAutoPromote(page(), "D1_LOW_RISK_ADDITIVE", authority)).toBe(true);
-    expect(wikiMayAutoPromote(page(), "D2_ANALYTICAL", authority)).toBe(false);
-    expect(wikiMayAutoPromote(page(), "D3_AUTHORITY_SENSITIVE", authority)).toBe(false);
-    expect(wikiMayAutoPromote(page(), "D1_LOW_RISK_ADDITIVE", {
-      ...authority,
-      explicit_project_policy: false,
-    })).toBe(false);
-    expect(wikiMayAutoPromote(page({ page_type: "Hypothesis" }), "D1_LOW_RISK_ADDITIVE", authority)).toBe(false);
-    expect(wikiMayAutoPromote(page({
-      statement_labels: { "claim-1": "DERIVED_INFERENCE" },
-    }), "D1_LOW_RISK_ADDITIVE", authority)).toBe(false);
   });
 });

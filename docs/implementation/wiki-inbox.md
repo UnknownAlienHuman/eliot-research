@@ -39,7 +39,7 @@ the useful epistemic information.
 | `wiki-proposal-from-research-run.ts` | Reopens the old 18-stage result, EvidenceFreeze, coverage, dependency manifest, sections and receipts, then writes body plus a second giant evidence map. | Read one compact `research_report_revision`, copy selected Markdown/citations into one immutable Wiki proposal object. |
 | `wiki-review-admission.ts` | Publication requires a reconstructed claim audit, coverage proof, dependencies and an immutable review receipt. | Owner review is the decision. Optional audit metadata may be displayed; it never becomes a mandatory runtime gate. |
 | `wiki-owner-edit-proposal.ts` and `wiki-owner-edit-review-admission.ts` | A direct owner edit becomes another proposal, evidence map, binding, integrity receipt, review receipt and publication. | Direct owner edit writes one full Wiki revision under expected-head CAS. No Inbox round trip. |
-| `packages/research/src/wiki.ts` | Generic publisher validates evidence/coverage/dependencies, writes a manifest and requires `commitHeadAndOutbox`; unused runtime auto-promotion remains. | Small concrete proposal/read/accept/reject/edit operations in `cloudflare-wiki`; delete the proof-oriented port and `autoPromote`. |
+| `packages/research/src/wiki.ts` | Generic publisher still validates evidence/coverage/dependencies and writes a manifest; unused runtime auto-promotion has been removed. | Small concrete proposal/read/accept/reject/edit operations in `cloudflare-wiki`; delete the remaining proof-oriented port. |
 | `wiki-publication-store.ts` and migration `0042` | Proposal, authority, immutable revision, second head, operation records, global outbox, Wiki outbox and mutation guard are committed together. | One proposal row/object; one page revision/head transaction. Direct change-feed insert replaces the fake Wiki outbox. |
 | migrations `0001` and `0042` | `wiki_revision/wiki_head` coexist with the runtime `wiki_publication_revision/wiki_publication_head`. | Inventory and convert both into one current Wiki schema, then remove both predecessors. |
 | `StudioPanel.tsx` | Pending and published proposals share one list; owner edits create more proposals; publication receipts are retained in browser mutation state. | Separate Inbox proposals from current Wiki pages. Reconcile an uncertain accept by rereading proposal/page state. |
@@ -290,7 +290,7 @@ After conversion and caller cutover, delete:
 - `wiki_publication_revision`, `wiki_publication_head`, `wiki_publication_outbox`;
 - obsolete `wiki_revision` / `wiki_head` predecessor rows/schema;
 - operation intent/attempt/receipt and outbox rows used only by Wiki publication;
-- `WikiPublicationPort`, `createWikiPublisher`, risk-class auto-promotion and `autoPromote` when no real caller remains;
+- `WikiPublicationPort` and `createWikiPublisher` when their remaining real callers move to concrete Wiki operations;
 - historical scope reauthorization/fingerprint helpers used only by owner Wiki reads;
 - duplicate PWA Wiki clients, old DTO generations and cohort-only fixtures;
 - old backup/table-spec/erasure/change-feed entries tied to removed tables.

@@ -6,15 +6,13 @@ import {
   type WikiPageRevision,
 } from "@eliotr/contracts";
 import {
-  wikiMayAutoPromote,
   wikiMayBePublished,
   wikiTargetsExpectedHead,
   type DraftRiskClass,
-  type WikiAutoPromotionAuthority,
 } from "@eliotr/domain";
 
 export type { EvidenceLabel as StatementLabel, WikiPageRevision, WikiPageType } from "@eliotr/contracts";
-export type { DraftRiskClass, WikiAutoPromotionAuthority } from "@eliotr/domain";
+export type { DraftRiskClass } from "@eliotr/domain";
 
 export type WikiPublicationErrorCode =
   | "WIKI_INPUT_INVALID"
@@ -62,7 +60,6 @@ export interface WikiHeadCommit {
   readonly expected_head_revision: number | null;
   readonly manifest_ref: string;
   readonly committer_ref: string;
-  readonly auto_promotion_policy_receipt_ref?: string;
 }
 
 export type WikiHeadCommitDisposition = "COMMITTED" | "EXISTING" | "CONFLICT";
@@ -76,7 +73,7 @@ export interface WikiPublicationPort {
   readProposal(proposalRef: VersionedRef): Promise<WikiProposalRecord | null>;
   validateEvidenceMap(page: WikiPageRevision): Promise<boolean>;
   validateCoverage(page: WikiPageRevision): Promise<boolean>;
-  /** Optional server-owned manual-review coverage; never used by auto promotion. */
+  /** Optional server-owned manual-review coverage. */
   validateReviewedCoverage?(page: WikiPageRevision): Promise<boolean>;
   validateDependencyClosure(page: WikiPageRevision): Promise<boolean>;
   writeImmutableRevision(page: WikiPageRevision): Promise<WikiImmutableRevisionReceipt>;
@@ -85,18 +82,9 @@ export interface WikiPublicationPort {
   readHead(pageId: string): Promise<WikiHeadReadback | null>;
 }
 
-export interface WikiAutoPromotionReceipt extends WikiAutoPromotionAuthority {
-  readonly publisher_ref: string;
-}
-
 export interface WikiPublisher {
   propose(page: WikiPageRevision, riskClass: DraftRiskClass): Promise<VersionedRef>;
   publish(proposalRef: VersionedRef, expectedHeadRevision: number, committerRef: string): Promise<WikiPageRevision>;
-  autoPromote(
-    proposalRef: VersionedRef,
-    expectedHeadRevision: number,
-    authority: WikiAutoPromotionReceipt,
-  ): Promise<WikiPageRevision>;
 }
 
 const RISK_CLASSES: readonly DraftRiskClass[] = [
@@ -335,8 +323,6 @@ async function publishStored(
   stored: WikiProposalRecord,
   expectedHeadRevision: number,
   committerRef: string,
-  autoPromotionPolicyReceiptRef?: string,
-  allowReviewedCoverage = false,
 ): Promise<WikiPageRevision> {
   const expected = expectedRevision(expectedHeadRevision);
   if (!wikiMayBePublished(stored.page)) {
@@ -358,7 +344,7 @@ async function publishStored(
     fail("WIKI_HEAD_CONFLICT", "wiki head no longer matches the expected revision");
   }
 
-  await validatePublication(port, stored.page, allowReviewedCoverage);
+  await validatePublication(port, stored.page, true);
 
   let immutable: WikiImmutableRevisionReceipt;
   try {
@@ -383,9 +369,6 @@ async function publishStored(
     expected_head_revision: expected,
     manifest_ref: immutable.manifest_ref,
     committer_ref: committerRef,
-    ...(autoPromotionPolicyReceiptRef === undefined
-      ? {}
-      : { auto_promotion_policy_receipt_ref: autoPromotionPolicyReceiptRef }),
   };
   let disposition: WikiHeadCommitDisposition;
   try {
@@ -433,24 +416,7 @@ export function createWikiPublisher(port: WikiPublicationPort): WikiPublisher {
     async publish(rawProposalRef, expectedHeadRevision, committerRef) {
       const proposalRef = parseRef(rawProposalRef, "proposal reference");
       const stored = await readProposal(port, proposalRef);
-      return publishStored(port, stored, expectedHeadRevision, committerRef, undefined, true);
-    },
-
-    async autoPromote(rawProposalRef, expectedHeadRevision, authority) {
-      const proposalRef = parseRef(rawProposalRef, "proposal reference");
-      const stored = await readProposal(port, proposalRef);
-      if (!nonEmpty(authority.publisher_ref)
-        || !wikiMayAutoPromote(stored.page, stored.risk_class, authority)) {
-        fail("WIKI_POLICY_DENIED", "wiki draft is not eligible for automatic promotion");
-      }
-      return publishStored(
-        port,
-        stored,
-        expectedHeadRevision,
-        authority.publisher_ref,
-        authority.policy_receipt_ref,
-        false,
-      );
+      return publishStored(port, stored, expectedHeadRevision, committerRef);
     },
   };
 }
