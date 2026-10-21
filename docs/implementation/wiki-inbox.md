@@ -1,21 +1,15 @@
 # Wiki and Inbox: one proposal path, one page history
 
-Checked 2026-10-19 against Eliot source at `677de8eb`. This is the implementation contract for Wiki and Inbox.
-It describes selected replacement work, not completed runtime behavior. Product purpose remains in the
-[manifesto](../architecture/ELIOT_RESEARCH.md); the [implementation plan](backend-entrypoints.md) owns sequencing;
-[compact citations](source-lifecycle.md) and [runtime boundaries](runtime-contract.md) remain authoritative.
+Checked 2026-10-21 against `main@4655df4d`. This owns remaining Wiki/Inbox replacement work. Product purpose remains
+in the [manifesto](../architecture/ELIOT_RESEARCH.md); [the plan](backend-entrypoints.md) owns sequencing;
+[compact citations](source-lifecycle.md) and [runtime boundaries](runtime-contract.md) own shared boundaries.
 
 ## Product result
 
-Wiki is retained owner knowledge. Inbox is a bounded review queue for proposed Wiki changes.
-They are not a publication-compliance platform.
-
-Selected journeys:
-
 ```text
-saved research report
-→ propose selected content to Inbox
-→ owner reads the proposal
+saved research-report revision
+→ create one Inbox proposal
+→ owner opens it
 → accept unchanged, edit-and-apply, or reject
 → one Wiki page revision becomes current
 ```
@@ -23,313 +17,179 @@ saved research report
 ```text
 owner creates or edits a Wiki page
 → one complete expected-head revision
-→ page reopens with exact citations
+→ reopen exact Markdown and citations
 ```
 
-The model may prepare a proposal. It cannot accept its own proposal. An accepted Wiki revision is owner-selected
-content, not a certificate that every statement is true. Citations, visible limitations and optional freshness carry
-the useful epistemic information.
+The model may prepare content; only the owner applies it. An accepted Wiki revision is selected knowledge, not a
+certificate that every statement is true.
 
-## What the current code actually does
+## Foundations already merged
 
-| Current source | Observed behavior | Selected replacement |
-|---|---|---|
-| `packages/cloudflare-wiki/src/wiki-service.ts` | Owner list/read are now direct: one owner-scoped D1 summary page, exact metadata reopen, and R2 body only on open. The remaining list defect is lack of a usable continuation cursor. | Use the same `(created_at, proposal_id)` keyset across server, owner client and React; cursor position never carries authority. |
-| `wiki-proposal-reauthorization.ts` | Owner reads can freeze/reauthorize scopes, compare source-owner/participant generations and rebuild a source fingerprint. | Current owner + proposal/page deletion/state. Source availability is checked when a citation is opened, not to list private drafts. |
-| `wiki-proposal-from-research-run.ts` | Reopens the old 18-stage result, EvidenceFreeze, coverage, dependency manifest, sections and receipts, then writes body plus a second giant evidence map. | Read one compact `research_report_revision`, copy selected Markdown/citations into one immutable Wiki proposal object. |
-| `wiki-review-admission.ts` | Publication requires a reconstructed claim audit, coverage proof, dependencies and an immutable review receipt. | Owner review is the decision. Optional audit metadata may be displayed; it never becomes a mandatory runtime gate. |
-| `wiki-owner-edit-proposal.ts` and `wiki-owner-edit-review-admission.ts` | A direct owner edit becomes another proposal, evidence map, binding, integrity receipt, review receipt and publication. | Direct owner edit writes one full Wiki revision under expected-head CAS. No Inbox round trip. |
-| `packages/research/src/wiki.ts` | Generic publisher still validates evidence/coverage/dependencies and writes a manifest; unused runtime auto-promotion has been removed. | Small concrete proposal/read/accept/reject/edit operations in `cloudflare-wiki`; delete the remaining proof-oriented port. |
-| `wiki-publication-store.ts` and migration `0042` | Proposal, authority, immutable revision, second head, operation records, global outbox, Wiki outbox and mutation guard are committed together. | One proposal row/object; one page revision/head transaction. Direct change-feed insert replaces the fake Wiki outbox. |
-| migrations `0001` and `0042` | `wiki_revision/wiki_head` coexist with the runtime `wiki_publication_revision/wiki_publication_head`. | Inventory and convert both into one current Wiki schema, then remove both predecessors. |
-| `StudioPanel.tsx` | Pending and published proposals share one list; owner edits create more proposals; publication receipts are retained in browser mutation state. | Separate Inbox proposals from current Wiki pages. Reconcile an uncertain accept by rereading proposal/page state. |
+Do not reopen these as new implementation work:
 
-Names above locate the predecessor. They are not permanent concepts.
+- Owner proposal list/read use direct owner-scoped metadata; R2 body loads only when opening one proposal.
+- Server, owner client and React use keyset continuation over `(created_at, proposal_id)`; `has_more` is no longer a
+  first-page-only flag.
+- `wiki_publication_outbox`, its head reference, pending index, trigger staging role and special change-reader joins
+  are removed. Publication commits the real owner-visible change-feed row directly.
+- Runtime Wiki auto-promotion and its proof/policy types are removed; owner decision is the only current publish path.
+
+Those changes simplify the current predecessor but do not yet consolidate its two page stores or remove the
+proposal-authority/review/evidence machinery.
+
+## Remaining predecessor
+
+Current runtime still has:
+
+- initial `wiki_revision/wiki_head` plus `wiki_publication_revision/wiki_publication_head`;
+- proposal authority, review/integrity receipts, evidence maps, dependency/coverage gates and publication witness;
+- `wiki_owner_edit_binding` and a direct-edit path that creates another proposal/review;
+- generic `WikiPublicationPort`/publisher and duplicate old client protocol families;
+- backup/erasure/table inventories coupled to both old page families.
+
+`wiki-proposal-from-research-run.ts` still reconstructs old Workflow/artifact proof history rather than reading one
+compact research report. These names locate code to replace; they are not permanent product concepts.
 
 ## Selected state
 
-Use Wiki-specific tables, not a generic content framework:
+Use Wiki-specific state, not a generic content/proposal platform:
 
 ```text
 wiki_page
-  page_id
-  owner_principal_ref
-  head_revision
-  deleted_at
-  created_at
-  updated_at
+  page_id, owner_principal_ref, head_revision,
+  deleted_at, created_at, updated_at
 
 wiki_page_revision
-  page_id + revision
-  origin_kind: REPORT_REUSE | MANUAL_EDIT
-  origin_report_id + origin_report_revision       # required only for REPORT_REUSE
-  accepted_proposal_id                            # required only for accepted Inbox work
-  page_type
-  title
-  object_key + object_sha256 + object_size
-  source_revision_refs_json
-  editor_principal_ref
-  created_at
+  page_id, revision,
+  origin_kind: REPORT_REUSE | MANUAL_EDIT,
+  origin_report_id, origin_report_revision,
+  accepted_proposal_id,
+  page_type, title,
+  object_key, object_sha256, object_size,
+  source_revision_refs_json,
+  editor_principal_ref, created_at
 
 wiki_inbox_proposal
-  proposal_id
-  owner_principal_ref
-  source_report_id + source_report_revision
-  target_page_id
-  expected_head_revision                         # 0 means create
-  page_type
-  title
-  object_key + object_sha256 + object_size
-  source_revision_refs_json
-  state: PENDING | ACCEPTED | REJECTED
-  accepted_page_revision
-  idempotency_key
-  created_at
-  decided_at
+  proposal_id, owner_principal_ref,
+  source_report_id, source_report_revision,
+  target_page_id, expected_head_revision,
+  page_type, title,
+  object_key, object_sha256, object_size,
+  source_revision_refs_json,
+  state: PENDING | ACCEPTED | REJECTED,
+  accepted_page_revision,
+  idempotency_key, created_at, decided_at
 ```
 
-The first selected Inbox producer is a saved research report. Do not add a polymorphic origin registry, generic
-proposal bus or implicit connected-agent Wiki authority. A later selected connected-task producer must name its real
-caller and access boundary before extending this closed schema.
+The first producer is a saved research report. Do not add a polymorphic origin registry, generic proposal bus,
+automatic memory extraction or implicit connected-agent Wiki authority.
 
-Each Wiki/proposal object is one bounded immutable R2 value containing Markdown, compact citation refs, visible
-limitations and small origin metadata. No evidence map, dependency closure object, section ledger, review receipt or
-publication manifest is stored.
+A proposal/page revision uses one bounded immutable R2 object with Markdown, compact citations, visible limitations
+and small origin metadata. `wiki_page.head_revision` is the only current-page pointer; proposal state is not another
+page head.
 
-`wiki_page_revision` is immutable. `wiki_page.head_revision` is the sole current-page pointer. Proposal state is not
-another page head.
+## Proposal from a report
 
-## Proposal from a research report
-
-Change together:
-
-- React report/Studio actions;
-- owner client Wiki create/read methods;
-- Core Wiki routes and composition;
-- `packages/cloudflare-wiki/src/wiki-proposal-from-research-run.ts`;
-- the compact research-report reader and citation resolver.
-
-The browser sends the exact report revision, target page (or new-page intent), expected Wiki head, title and page type.
-It never sends report bytes, an authoritative source set or arbitrary citation ranges.
+Change React report/Studio actions, owner client methods, Core routes, `wiki-proposal-from-research-run.ts` and the
+compact report reader together.
 
 Server operation:
 
-1. authenticate the owner and read the exact non-deleted research-report revision;
+1. authenticate the owner and read the exact non-deleted report revision;
 2. load and verify its one R2 object;
-3. select/copy the requested Markdown and already canonical compact citations;
-4. derive the source-revision set from those citations;
-5. encode one bounded Wiki proposal object;
-6. create the deterministic R2 key conditionally;
-7. insert one `PENDING` proposal bound to owner/idempotency key and exact target head;
-8. read back the row/object before returning.
+3. copy selected Markdown and canonical citations;
+4. derive source revisions from citations;
+5. conditionally create one deterministic proposal object;
+6. insert one idempotent `PENDING` proposal bound to owner and exact target head;
+7. read back row/object before returning.
 
-The proposal preserves its source report reference for navigation. It does not replay the producing Workflow,
-coverage stage, scope lease, model qualification, claim audit or artifact proof objects. A newer source head makes the
-proposal historical; it does not silently rewrite its citations.
+Do not replay the producing Workflow, coverage stage, scope lease, claim audit or artifact proof graph. A failed D1
+insert leaves an unreferenced object for deterministic retry/guarded cleanup, not a proposal outbox.
 
-A failed D1 insert after R2 creation leaves an unreferenced object for deterministic retry or later guarded cleanup.
-Do not add a proposal outbox or two-phase receipt protocol.
+## Inbox list and open
 
-## Inbox list and proposal read
+Keep the merged owner-scoped keyset contract. Default list returns `PENDING`; optional filters may expose decided
+history. Summary rows contain proposal/target/source-report refs, title/type/state/times and accepted page ref. The
+list performs one bounded D1 read—no R2, freshness, citation validation or historical scope replay.
 
-The Inbox default query returns `PENDING` proposals only. Optional state filters may show accepted/rejected history.
-Use keyset pagination over `(created_at, proposal_id)` with `limit + 1` and a bounded cursor. The cursor is query
-position, not authority.
+Opening one proposal authenticates current ownership, loads its exact object and verifies stored size/checksum.
+Freshness is separate advisory metadata. Cursor data is bounded untrusted position; every page reapplies owner/filter
+predicates.
 
-A summary row contains only:
-
-```text
-proposal id, target page/head, source report ref,
-title, page type, state, created/decided time, accepted page ref when present
-```
-
-The list is one bounded D1 metadata read. It does not:
-
-- open R2;
-- reauthorize historical source scopes;
-- calculate source freshness;
-- reconstruct the report/Workflow;
-- validate every citation;
-- skip stale rows after consuming the page budget.
-
-Opening one proposal authenticates the current owner, reads its exact row/object, verifies stored size/checksum and
-returns Markdown/citations. Optional source freshness is separate. A page with more rows returns one bounded
-`next_cursor` derived from its last visible `(created_at, proposal_id)`. The next query reapplies the authenticated
-owner filter; the cursor is never signed or treated as authorization. Server, owner client and React advance the same
-contract without another protocol generation.
-
-## Accept, edit-and-apply, reject
+## Owner decisions
 
 ### Accept unchanged
 
-The proposal object already has the exact Wiki page payload. Acceptance needs no new R2 write.
+Reuse the proposal object. In one D1 transaction:
 
-In one short D1 transaction:
+1. require owned `PENDING` proposal;
+2. require exact expected page head, or page absence for create;
+3. insert immutable page revision referencing the proposal object;
+4. create/advance `wiki_page.head_revision`;
+5. set proposal `ACCEPTED` with exact revision/time;
+6. append one owner-visible Wiki change to `research_change_feed`.
 
-1. require the proposal to be `PENDING` and owned by the current owner;
-2. require `wiki_page.head_revision` to equal `expected_head_revision` (or require no page when expected is zero);
-3. insert immutable `wiki_page_revision` pointing to the proposal object;
-4. insert/create or conditionally advance `wiki_page.head_revision`;
-5. set the proposal to `ACCEPTED` with the exact page revision and decision time;
-6. append one `WIKI_PUBLISHED`/selected Wiki-change row directly to `research_change_feed`.
-
-The expected-head mutation and every dependent write must share a successful predicate or an explicit aborting guard.
-D1 `batch()` rolls back on a failed statement; a successful zero-row update is not failure by itself. A stale head is
-a conflict, never partial acceptance.
-
-A retry/reread of the same accepted proposal returns the existing accepted page revision. A rejected proposal cannot
-be accepted. An uncertain acknowledgement is reconciled by reading proposal state and page head—not by creating a
-second revision.
+All dependent writes share a successful predicate or explicit aborting guard. A zero-row CAS is a conflict. Repeating
+an already accepted proposal returns its existing revision; unknown acknowledgement reconciles by proposal/page
+reads, never a duplicate revision.
 
 ### Edit and apply
 
-The owner may alter title, page type, complete Markdown and citation refs before applying. The server validates the
-bounded body and re-resolves every submitted citation against retained representation/range bounds and current
-owner/deletion/disclosure. It derives the source set; browser text and quoted strings are not authority.
-
-Create one immutable edited object, then perform the same D1 acceptance transaction pointing the page revision to
-that object. Do not create an edit proposal, integrity receipt, review receipt or another Inbox item.
+Validate complete bounded Markdown/title/type and server-resolve citations. Create one edited object, then use the
+same decision transaction. Do not create another proposal, integrity receipt or review receipt.
 
 ### Reject
 
-One owner-scoped expected-state update changes `PENDING → REJECTED` and records decision time. It creates no page
-revision and no change-feed publication event. The immutable proposal object becomes cleanup-eligible only after a
-grace period and a fresh reference check.
+One expected-state update performs `PENDING → REJECTED`; no page revision or publication event.
 
-## Direct Wiki create and edit
+## Direct owner edit
 
-Direct owner create/edit bypasses Inbox:
+Direct create/edit bypasses Inbox. Validate one full body and citations, conditionally create one object, insert one
+`MANUAL_EDIT` revision, expected-head CAS and direct change-feed row. Decoration is render-time or a new revision;
+never a blind in-place page-ID update.
 
-1. authenticate current page ownership (or new-page intent);
-2. validate complete bounded Markdown/title/type and server-resolve citations;
-3. conditionally create one immutable object;
-4. in one D1 transaction insert a `MANUAL_EDIT` revision and create/advance the expected page head;
-5. append the selected Wiki change-feed row directly.
+A later selected AI-assisted edit uses the ordinary model-attempt owner then the same page writer. It does not gain a
+Wiki-specific Workflow, judge or proof system.
 
-Zero affected head rows is a conflict. No in-place body/provenance rewrite. Automatic link decoration is render-time
-or a new expected-head revision. Do not copy WeKnora's page-ID-only auto-link/meta updates.
+## Data conversion and deletion
 
-If AI-assisted Wiki editing is later selected, it uses the normal model-attempt owner to produce completed Markdown,
-then calls this same revision writer. It does not receive a Wiki-specific Workflow, claim judge or publication proof
-system.
+Before destructive migration, inspect both old page/head families, proposal rows, referenced R2 objects and retained
+owner-edit/publication evidence needed only to map data.
 
-## Access, citations and source changes
+Convert once:
 
-Owner page/proposal reads check current authenticated ownership and deletion/state. They do not replay the original
-scope snapshot, credential generation, policy lease, deployment generation or source-owner generations.
+1. verify referenced bodies/objects;
+2. map every distinct page revision to one new object/revision;
+3. deduplicate identical `(page_id, revision, bytes)` entries;
+4. stop a page-local conversion when the same identity has different bytes;
+5. map `PROPOSED → PENDING`, `PUBLISHED → ACCEPTED` and bind accepted proposals to converted revisions;
+6. preserve owner, title/type, time, canonical citations and source-report origin;
+7. verify counts, heads, decisions and opens;
+8. switch server/client/React/backup/erasure/change-feed callers;
+9. remove both old schemas and fallback readers in the same completed cutover.
 
-A connected client receives no Wiki access unless a selected interface grants the specific page/operation. Do not
-turn a service task into workspace ownership.
+Do not migrate policy/coverage/review receipts as current authority. After cutover delete publication authority,
+review/integrity admissions/readers, giant evidence maps, dependency/coverage gates, owner-edit binding/graph,
+`wiki_publication_*`, old `wiki_revision/wiki_head`, publication-only operation records, generic publisher/port,
+historical owner-scope helpers, duplicate clients/DTOs and cohort-only fixtures.
 
-Compact citations are validated when a proposal/revision is written and when a passage is opened. Source deletion or
-redaction may make a citation unavailable. A newer source revision makes the Wiki page historical, not unauthorized.
-Derived-content erasure follows the actual selected policy; it is not implemented by a universal scope invalidation
-chain.
-
-## Change feed: no fake outbox
-
-`wiki_publication_outbox` has no delivery worker or state transition in the inspected runtime. Its insert trigger
-creates a `research_change_feed` row. Therefore it is a staging table for another D1 insert, not a real asynchronous
-outbox.
-
-Write the change-feed row directly in the page-head transaction and remove:
-
-- `wiki_publication_outbox`;
-- its pending index and delivery-state contract;
-- the outbox-to-change-feed trigger;
-- outbox refs from Wiki heads/readbacks;
-- tests that require an unconsumed outbox.
-
-If a future real external consumer needs asynchronous delivery, add the existing Queue/outbox pattern for that
-concrete consumer. Do not preserve a fake queue in advance.
-
-## Data conversion
-
-Before destructive migration, inspect deployed rows and R2 objects from both Wiki generations:
-
-- `wiki_revision` / `wiki_head`;
-- `wiki_publication_proposal`;
-- `wiki_publication_revision` / `wiki_publication_head`;
-- owner-edit bindings and publication authority only as conversion evidence.
-
-Convert actual retained data once:
-
-1. read and verify referenced body/manifest objects;
-2. map each distinct page revision to one new Wiki object/revision;
-3. deduplicate identical `(page_id, revision, bytes)` rows across the two old schemas;
-4. stop and report a page-local conflict when the same identity has different bytes—never silently prefer one;
-5. map `PROPOSED → PENDING`, `PUBLISHED → ACCEPTED` and bind accepted proposals to the converted page revision;
-6. preserve owner, title/type, creation time, canonical citations and source-report origin where available;
-7. verify row/object counts, page heads, proposal decisions and citation opens;
-8. switch current routes, clients, React Wiki/Inbox, backup and erasure readers;
-9. remove the predecessor in the same release once the conversion is verified.
-
-Do not migrate policy/coverage/review receipts as current product authority. They may appear in a bounded conversion
-log and then disappear with the old schema. No fallback reader remains after conversion.
+Keep compact citations, expected-head conflict, idempotent proposal creation, uncertain-outcome reconciliation,
+page history and the real change feed.
 
 ## Backup, erasure and cleanup
 
-Move backup manifests/table specs/restore fixtures to `wiki_page`, `wiki_page_revision` and
-`wiki_inbox_proposal` plus their exact R2 locator/checksum/size. Inventory tests are callers to update, not a reason to
-keep both old Wiki schemas.
+Move selected backup/restore/table specs to the three new tables plus exact object locator/checksum/size. Logical
+page deletion hides content immediately. Existing erasure target/hold/purge owns physical removal after no live
+revision references the key.
 
-Logical page deletion immediately hides the page. Physical object removal uses the existing erasure target/hold/purge
-lifecycle after no live page revision references the key. Rejecting a proposal is not physical deletion.
-
-Proposal/orphan cleanup waits for a grace period and rechecks that no proposal or page revision references the exact
-object key. It never races deterministic retry or bypasses an erasure hold. No Wiki-specific erasure engine is added.
-
-## Physical deletion cohort
-
-After conversion and caller cutover, delete:
-
-- `wiki_publication_authority` and owner publication guard/witness machinery;
-- research/owner-edit review admission, proof readers and immutable review/integrity receipts;
-- giant evidence maps, dependency-closure and coverage prerequisites for Wiki publication;
-- `wiki_owner_edit_binding` and edit-proposal provenance graph;
-- `wiki_publication_revision`, `wiki_publication_head`, `wiki_publication_outbox`;
-- obsolete `wiki_revision` / `wiki_head` predecessor rows/schema;
-- operation intent/attempt/receipt and outbox rows used only by Wiki publication;
-- `WikiPublicationPort` and `createWikiPublisher` when their remaining real callers move to concrete Wiki operations;
-- historical scope reauthorization/fingerprint helpers used only by owner Wiki reads;
-- duplicate PWA Wiki clients, old DTO generations and cohort-only fixtures;
-- old backup/table-spec/erasure/change-feed entries tied to removed tables.
-
-Keep the React Inbox/Wiki product behavior, compact citations, expected-head conflict, idempotent proposal creation,
-uncertain-outcome reconciliation and actual research change feed.
-
-## Donor and platform decisions
-
-- **WeKnora:** take expected-version writes, atomic revision transition and body-free history. Reject GORM topology,
-  COUNT+OFFSET and blind page-ID auto-link/meta mutation.
-- **NotebookLM/Gemini Notebook:** take explicit source-grounded saved material and deliberate reuse. Reject implicit
-  memory extraction or another knowledge store.
-- **Cloudflare D1:** one failed statement rolls back a `batch`; explicitly turn stale/zero-row head changes into a
-  failure so dependent writes cannot commit.
-- **Cloudflare R2:** conditional create is atomic and successful writes are immediately readable; use one object and
-  exact readback, not receipt graphs.
-
-No donor code or dependency is imported.
+Rejected/unreferenced proposal cleanup is not erasure: wait for a grace period and fresh reference check. An accepted
+proposal object remains because a Wiki revision references it. Do not add a Wiki-specific erasure engine.
 
 ## Completion
 
-Complete when real callers demonstrate:
+Complete when real callers demonstrate proposal creation from a compact report, multi-page Inbox list/open, all three
+decisions, direct expected-head edit, read-based reconciliation, retained-data conversion and backup/erasure updates;
+then both old page stores and proof/review/edit-proposal cohorts are physically gone.
 
-1. Inbox lists more than 20 proposals through a real cursor without per-row scope reconstruction.
-2. Opening one proposal reads one exact object; optional freshness failure does not hide it.
-3. Accept unchanged reuses the proposal object and atomically commits revision/head/proposal/change feed.
-4. Edit-and-apply writes one object and one page revision without another proposal/review receipt.
-5. Reject creates no page revision.
-6. Direct owner edit uses expected-head CAS and preserves the prior revision.
-7. An uncertain accept is reconciled by reads and never duplicates a revision.
-8. Report-to-Wiki reuse reads the compact report, not old Workflow/artifact proof history.
-9. Both old Wiki schemas and the publication/review/outbox machinery are removed after verified conversion.
-10. Backup, erasure and change-feed readers use only the new Wiki state.
-
-During implementation run scoped TypeScript compile/lint. Product tests and acceptance follow assembly. Report only
-checks actually executed and deployed-data migration status; this document is not runtime completion.
-
-Cloudflare references checked 2026-10-18:
-[D1 batch transactions](https://developers.cloudflare.com/d1/worker-api/d1-database/),
-[R2 conditional operations](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/) and
-[R2 consistency](https://developers.cloudflare.com/r2/reference/consistency/).
+During implementation run scoped compile/lint. Product tests and deployment/data acceptance follow assembly. This
+document does not claim the remaining cutover is complete.
