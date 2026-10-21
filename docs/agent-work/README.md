@@ -8,14 +8,15 @@ Nothing in this directory reserves paths, creates prerequisites or authorizes a 
 
 Use selectively for React owner-interface work:
 
-- [owner execution map](frontend-owner-execution-map.md);
-- [Material UI playbook](frontend-material-agent-playbook.md);
-- [NotebookLM visual reference](frontend-notebooklm-material-reference.md);
-- [UI acceptance/manager boundary](frontend-autonomous-manager-runbook.md).
+- [owner execution map](frontend-owner-execution-map.md) — user-visible outcomes and integration;
+- [UI implementation guide](frontend-material-agent-playbook.md) — design/application workflow;
+- [NotebookLM/Material reference](frontend-notebooklm-material-reference.md) — donor observations;
+- [owner-web manager boundary](frontend-autonomous-manager-runbook.md);
+- [owner-web design specification](../design/OWNER_WEB_UI.md).
 
-The current technical cutover is [frontend-platform-migration.md](../implementation/frontend-platform-migration.md).
+The technical cutover is [frontend-platform-migration.md](../implementation/frontend-platform-migration.md).
 Root rules own coordination and verification timing. Do not restore claim JSON, packet manifests, ancestry checks,
-approval queues or a second frontend manager protocol.
+checkpoint codes, approval queues or a second frontend manager protocol.
 
 ## Historical ER documents
 
