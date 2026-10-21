@@ -69,6 +69,22 @@ for (const document of currentImplementation) {
   }
 }
 
+const currentUi = [
+  "frontend-owner-execution-map.md",
+  "frontend-material-agent-playbook.md",
+  "frontend-notebooklm-material-reference.md",
+  "frontend-autonomous-manager-runbook.md",
+];
+const uiIndex = read("docs/agent-work/README.md");
+for (const document of currentUi) {
+  if (!uiIndex.includes(`(${document})`)) {
+    errors.push(`docs/agent-work/README.md: does not link current UI document ${document}`);
+  }
+}
+if (!uiIndex.includes("(../design/OWNER_WEB_UI.md)")) {
+  errors.push("docs/agent-work/README.md: does not link current owner-web design");
+}
+
 const checkedDocuments = [
   "README.md",
   "AGENTS.md",
@@ -79,6 +95,12 @@ const checkedDocuments = [
   "docs/architecture/LANGUAGE_RUNTIME_CONTRACT.md",
   "docs/implementation/README.md",
   ...currentImplementation.map((name) => `docs/implementation/${name}`),
+  "docs/agent-work/README.md",
+  ...currentUi.map((name) => `docs/agent-work/${name}`),
+  "docs/design/README.md",
+  "docs/design/OWNER_WEB_UI.md",
+  "apps/eliotr-web/README.md",
+  "apps/eliotr-web/AGENTS.md",
 ];
 for (const document of checkedDocuments) {
   const directory = dirname(join(root, document));
