@@ -1,20 +1,16 @@
-# ELIOT Research
+# Eliot Research
 
-A single-owner research workspace: bring sources into projects, ask questions, inspect citations,
-save and reuse reports, maintain a Wiki, and work with connected agents.
+A NotebookLM-style research workspace for one owner and the AI agents working with them: bring sources into
+notebooks, ask questions with exact citations, keep answers as pages and a wiki, run explicit deep research,
+and let agents connected over MCP take tasks and propose changes for review. Runs entirely on Cloudflare.
 
-**Refactoring is in progress.** Cloudflare and React/Vite are the selected stack. Astro is rejected;
-the integrated React cutover and runtime simplification are not reported complete.
+**Status:** the project is being rebuilt from a clean slate (decided 2026-10-21). The previous implementation is
+frozen at git tag `legacy-final` (to be created in Phase 0) and is not developed further.
 
 | Read | For |
 |---|---|
-| [Product manifesto](docs/architecture/ELIOT_RESEARCH.md) | Purpose, requirements and principles; persistent lead-developer context |
-| [Implementation](IMPLEMENTATION.md) | Concrete work, existing source owners and donor choices |
-| [Working rules](AGENTS.md) | Coordination and verification |
-| [Start here](docs/START-HERE.md) | How to use the documents without reading the entire archive |
+| [AGENTS.md](AGENTS.md) | Rules for every contributor, human or AI — read first |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | What the product is, how it works, what is out of scope |
+| [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md) | Files, schema, APIs, algorithms and the build plan |
 
-[ADR-0019](docs/adr/0019-compact-refactoring.md) records the scope change.
-[Issue #380](https://github.com/UnknownAlienHuman/eliot-research/issues/380) contains the audit;
-its dated findings are not a requirement to preserve discarded mechanisms.
-
-MIT. See [LICENSE](LICENSE).
+These are the only current documents. MIT — see [LICENSE](LICENSE).

@@ -1,18 +1,7 @@
-## Work packet
+## What changed for the user
 
-`ER-__`
+## How I verified it
 
-## Contract preserved
+Commands run and their result; the acceptance journey steps walked in the running app.
 
-- [ ] Public wire fields/enums unchanged
-- [ ] No new infrastructure authority or service boundary
-- [ ] Negative acceptance case implemented
-- [ ] Idempotency, budget, cancellation, and readback behavior documented
-
-## Verification
-
-```text
-pnpm check:affected
-```
-
-Paste command output or link the CI run.
+## Not done / known issues
