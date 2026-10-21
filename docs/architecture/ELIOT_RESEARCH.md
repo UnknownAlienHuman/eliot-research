@@ -33,6 +33,10 @@ repeat paid work. Changing project membership is not deleting the source from th
 Private material and credentials are protected with established mechanisms, proportionate to real access.
 Connected agents receive the access their selected task needs, not implicit ownership of the workspace.
 
+Availability belongs to the requested operation. An unavailable model, search index or optional connector must not
+hide saved work that is still accessible. Advertised capability, configured infrastructure and observed success are
+different facts. Readiness comes from working user journeys, not source layout, status labels or approval records.
+
 ## Shape of the system
 
 One owner, one coherent application, one current implementation of each behavior. Keep Cloudflare as
@@ -59,7 +63,8 @@ make an unselected feature worth keeping. Donors supply useful solutions, not an
 Backward compatibility with discarded prototypes is not a product requirement. Replace a design and
 remove its predecessor; do not grow a second permanent generation around it. Preserve actual user content
 and acknowledged work through a deliberate transition, not every historical mechanism that produced it.
-Old tests, speculative clients and archived plans do not dictate the future product.
+Old tests, speculative clients and archived plans do not dictate the future product. A release transition must
+protect retained data and work already in progress; an old executable alone is not a recovery plan.
 
 Success is a useful product whose behavior can be understood and changed locally: fewer independent
 mechanisms, duplicated decisions, round trips and failure states. Line counts are diagnostic evidence,

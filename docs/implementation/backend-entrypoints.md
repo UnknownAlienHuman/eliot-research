@@ -5,7 +5,7 @@ Purpose and non-negotiable behavior live in the
 [code map](dependency-map.md). This document selects what to change, where to change it and what must disappear.
 It is not an approval graph, compatibility promise or instruction to preserve every current package.
 
-The plan incorporates source and donor work through 2026-10-18. Cloudflare, Perplexity, NotebookLM,
+The plan incorporates source and donor work through 2026-10-21. Cloudflare, Perplexity, NotebookLM,
 EdgeQuake, SurfSense, OpenViking, WeKnora and other donors contribute specific mechanisms and counterexamples;
 none becomes a new Eliot platform.
 
@@ -143,8 +143,8 @@ Use [deep research](deep-research.md). Add one cohesive
 `packages/cloudflare-research-runtime/src/deep-research-loop.ts` and dispatch explicit-deep admissions to it.
 
 Reuse the existing Workflow, scoped AI Search, exact source reads, selected model transport, ResearchSession and the
-same compact report writer. Initial tool surface: bounded **search**, exact bounded **read**, **finish**. Saving and
-cancellation are host operations.
+same compact report writer. Initial tools are bounded **search** and exact bounded **read**. A final public-text
+turn completes the loop; there is no `finish` tool. Saving and cancellation are host operations.
 
 No swarm, critic panel, arbitrary Python prerequisite, `ObligationGraph`, `SearchProgramIR`, stage graph,
 coverage ledger or trajectory database. Checkpoints retain unresolved questions, accepted compact citations,
@@ -192,9 +192,10 @@ Use [Wiki and Inbox](wiki-inbox.md).
 - migrations `0001`, `0042`, `0043`, `0062`, `0063` and later Wiki authority extensions;
 - backup/table specs, erasure invalidation and research change-feed consumers.
 
-The current implementation has two parallel page stores (`wiki_revision/wiki_head` and
-`wiki_publication_revision/wiki_publication_head`) plus proposal authority, review receipts, source-scope replay,
-operation receipts and two outboxes. Owner edit creates another proposal and another review. Replace, do not wrap.
+Two page stores (`wiki_revision/wiki_head` and `wiki_publication_revision/wiki_publication_head`) and the
+proposal/review authority remain. Owner edit still creates another proposal and review. The fake publication outbox,
+owner-read scope replay and unused auto-promotion are already removed; Inbox already has keyset continuation. Keep
+those simplifications while replacing the remaining stores and writers, rather than rebuilding them behind a facade.
 
 Selected state:
 
@@ -213,9 +214,9 @@ the page revision, expected-head CAS, proposal decision and direct `research_cha
 state only. Direct owner create/edit bypasses Inbox and uses the same expected-head page writer.
 
 Remove runtime claim-audit/coverage/dependency gates, owner publication witness, `wiki_publication_authority`,
-`wiki_owner_edit_binding`, fake `wiki_publication_outbox`, generic `WikiPublicationPort`, unused `autoPromote`, old
-scope reauthorization and both predecessor page schemas after verified conversion. A model prepares content; only the
-owner applies it.
+`wiki_owner_edit_binding`, generic `WikiPublicationPort`, remaining mutation-side scope reauthorization and both
+predecessor page schemas after verified conversion. Do not recreate the removed outbox or auto-promotion. A model
+prepares content; only the owner applies it.
 
 **Result:** report → Inbox → owner decision → one Wiki revision; direct edit → one Wiki revision.
 
@@ -245,7 +246,7 @@ Each row is a caller-driven replacement, not a preservation list.
 | Report/artifact drafts | Research report/revision/head, one R2 object, compact citations | EvidenceFreeze, manifests, section receipts, residency objects, stage-17 admission |
 | Artifact acceptance/publication | Direct saved report; explicit edit/Wiki proposal | Acceptance decisions, verification/currentness receipts, publication head/outbox/UI |
 | Artifact section revision | Full report revision through the same writer | Section COW Workflow, REPORT witness renewal and child artifact graph |
-| Wiki publication/review | Wiki page/revision + Inbox proposal + direct change feed | Authority/review receipts, dual heads, fake outbox, scope replay, edit-proposal graph |
+| Wiki publication/review | Wiki page/revision + Inbox proposal + existing direct change feed | Remaining authority/review receipts, dual heads, mutation-side scope replay and edit-proposal graph |
 | Historical research executors | Settle active attempts; direct saved-result readers | Old factories, dispatch, codecs and fixtures |
 | Ordinary inquiry protocol | Direct ordinary mode | Lookup obligations/planning/branch handler and stage-18 status |
 | Backup/restore | Ordinary downloads and selected portable data | Unselected backup/restore execution platform and dead table manifests |
@@ -260,17 +261,32 @@ compatibility. Applied data receives one deliberate conversion, not permanent du
 The work-packet checker, manifest, packet fragments, CI/package callers and packet-only fixtures are removed.
 Historical ER documents reserve no paths and Git history is the archive. Do not restore that registry.
 
-Keep the small current-doc/broken-link check. Remove remaining exact source-layout requirements from
-`check-launch-code.mjs` without replacing them with another registry or an always-success stub.
+Use [release and schema transitions](production-readiness-plan.md) for the remaining caller-complete change:
+
+- extract the actual pure capability calculation from Core composition; use the same built function in Worker and
+  deployment tooling, with explicit public inputs and existing routes, not a new JSON capability registry;
+- move `deploy-cloudflare.mjs`, `provision-cloudflare-core.mjs` and `deployment-maintenance.mjs` off source AST and
+  status-text interpretation. Preserve actual target/binding/auth checks and the existing D1 migration-ledger reader;
+- distinguish declared configuration, observed resource health and completed user journeys. A temporary D1 read
+  failure is unknown/unavailable, not `SCHEMA_NOT_APPLIED` or permission to migrate;
+- retire `implementation-status.json`, its checker/source markers and `launch-operation-composition.mjs` with all
+  real callers. Remove source-shape-only fixtures, not retained behavioral failure checks;
+- retain the small current-doc/broken-link check and truthful unavailable responses. No replacement registry,
+  general release engine, mandatory universal federation or always-success stub.
+
+A code rollback does not revert D1/R2. Incompatible schema changes use an explicit bounded cutover, settling affected
+writers/runs and verifying retained data before deletion. No permanent dual reader, automatic reset or blind old
+Worker rollback. This documentation selects the implementation; the old deployment/status tooling still exists.
 
 ## Retained correctness work
 
 | Finding | Required result |
 |---|---|
-| C01/C02/C11 | Native conditional immutable R2 create and bounded observation of same bytes/conflict/unavailable |
-| C05/C10 | Exact freshness count plus bounded detail/truncation; set membership, no decoder mismatch |
-| C06 | Local size/cardinality checks before an explicitly requested paid verifier; none for ordinary answers |
-| C07/#378/#379 | After assembly, repair retained assertions and delete cancelled behavior with its code |
+| C01/C02/C11 | Conditional payload creation, observed checksum and readback-error classification are merged; retain these semantics in replacements, without new proof objects |
+| C03 | Stored WorkflowObject and compact receipt bounds are separated; retain one bounded immutable input behind its locator |
+| C05/C10 | Set membership is merged; exact freshness counts and bounded client-compatible details remain work |
+| C06 | Pre-verifier size/claim checks are merged; ordinary answers still do not acquire a verifier |
+| C07/#378/#379 | Exact Golden case-set checking is merged; repair other retained assertions after assembly and delete cancelled cases with their code |
 
 ## Donors and evaluation
 

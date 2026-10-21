@@ -1,91 +1,61 @@
 # Scoped verification
 
-`pnpm check:affected` is deprecated. It prints a warning and delegates to `pnpm check:full`; it never
-selects checks from changed files or packages. `pnpm check:full` is the explicit name for the existing
-complete repository check, and `pnpm check` remains its original entry point. No affected-dependency
-selector is implemented.
+Implement first. Use the existing checks for the code being changed, not a prerequisite testing programme.
+[Release and schema transitions](production-readiness-plan.md) owns assembled-product acceptance.
 
-## Code-first edit loop
+## Edit loop
 
-Run compile and lint checks against the changed package and source files. For a TypeScript project, use:
+For a changed TypeScript package and its source files:
 
 ```sh
 pnpm exec tsc -b packages/<package>/tsconfig.json --pretty false
 pnpm exec eslint <changed-source-file-1> <changed-source-file-2>
 ```
 
-The TypeScript build follows that project's declared references. ESLint receives only the named files.
-For example, the current report-freshness task can be checked with:
-
-```sh
-pnpm --filter @eliotr/cloudflare-navigation typecheck
-pnpm exec eslint packages/cloudflare-navigation/src/source-revision-freshness.ts
-```
-
-For SQL changes, run the installed cross-migration compiler:
-
-```sh
-pnpm d1:depth
-```
-
-For a changed Rust crate, compile and lint that crate with:
+The build follows declared project references; lint receives the named files. For SQL, use the installed migration
+compiler (`pnpm d1:depth`). Compilation does not prove retained-row conversion or a remote migration was applied.
+For a changed Rust crate:
 
 ```sh
 cargo check -p <crate> --all-features --locked
 cargo clippy -p <crate> --all-targets --all-features --locked -- -D warnings
 ```
 
-After product-code assembly, run a relevant focused regression using its exact test path:
+For documentation, inspect the exact diff, local links and agreement between the manifesto and current technical
+notes. Update the existing owner document rather than append another audit/status ledger.
 
-```sh
-pnpm exec vitest run <exact-test-path>
-```
+## Behavioral verification after assembly
 
-Broad behavioral, browser, native, mutation, and live acceptance stays pending until product-code assembly
-unless the task explicitly calls for a narrow reproduction.
+Run the existing relevant regression by exact path, using its owning Vitest configuration. Worker/native tests need
+their Worker configuration; do not run them in a Node configuration and call that platform verification. A focused
+bug reproduction during audit is allowed; state its stubs/emulator and scope, not a claimed live result.
 
-The existing inbox outer-Assets verifier uses the built PWA output and starts
-Wrangler/workerd before checking real response headers and browser framing:
+Browser, restart, concurrency, cancellation and paid-provider acceptance follow the assembled path. Existing automatic
+CI runs separately; record its actual result on the exact head. Not run, skipped and still running are not PASS.
+No mandatory all-workspace Rust port, coverage/mutation campaign or independent approval queue precedes useful code.
+
+The retained standalone Inbox verifier uses built assets and starts workerd before checking headers/browser framing:
 
 ```sh
 pnpm --filter @eliotr/core exec node --test test/agent-inbox-assets-routing.test.mjs
 ```
 
-Use an existing PWA build, or run `pnpm build:pwa` when its source has changed.
-Playwright uses its default browser discovery unless
-`ELIOTR_TEST_CHROMIUM_EXECUTABLE_PATH` names an absolute existing Chromium/Chrome
-executable. The override selects the installed executable without installing a
-browser. This local verifier does not establish authenticated production flows
-or live edge readback.
+Before React cutover it consumes the PWA build. Move that caller with the actual assets; do not retain Astro for a
+fixture. `ELIOTR_TEST_CHROMIUM_EXECUTABLE_PATH` may select an absolute installed Chromium/Chrome executable.
+This local check does not establish production Access or live edge behavior.
 
-## Source diagnostics and emitted budgets
+## Measurements and legacy commands
 
-`pnpm budgets:check` and the bare `node scripts/check-budgets.mjs` entry point report source-line and
-source-byte observations as advisory diagnostics. The existing `--source` option has the same semantics.
-Unknown options, unreadable source and scanner failures still fail. Inventory and diagnostic thresholds
-are unchanged, including colocated tests; formatting or source relocation cannot establish runtime savings.
-The existing isolated source-budget regression is
-`node scripts/test-boundary-negative.mjs --source-budgets`; it runs the actual checker through both CLI
-entries and verifies LF/CRLF, Unicode byte counts and preserved scanner/argument failures.
+`pnpm budgets:check` and `node scripts/check-budgets.mjs` report source diagnostics, not runtime savings. Unknown
+options and unreadable source still fail. Emitted artifacts are measured separately by `budgets:emitted` or
+`budgets:emitted:check`; use the existing owner-web mode for that artifact. Retain the current 4 MiB gzip Worker and
+600 KiB initial owner-web JavaScript release limits until explicitly changed. Record the actual build and unsupported
+measurements; do not satisfy a size limit by moving code into another package or excluding it from measurement.
 
-`pnpm budgets:emitted` and `pnpm budgets:emitted:check` inspect emitted evidence separately. The existing
-owner-web mode is `node scripts/check-emitted-budgets.mjs --owner-web` (add `--check-only` for retained
-receipt validation). Worker ≤4 MiB gzip and initial owner-web JavaScript ≤600 KiB gzip remain release
-limits. Missing/stale artifacts, incomplete startup observations and unsupported native measurements do
-not establish readiness. Startup/CPU/heap/workload acceptance uses the applicable S96 measurements on the
-assembled build; request, reader, SQL and model security limits are unaffected. Historical acceptance
-programs do not expand the selected product scope in ADR-0019.
+`check:affected` currently warns and delegates to `check:full`; it does not select affected files. The existing full
+chain still includes status-registry and broad Rust obligations pending the tooling replacement. It is an available
+command, not the selected definition of product readiness or a required loop for every edit. Remove obsolete callers
+with their retired checks; do not replace them by success stubs or silence real failures.
 
-## Full repository and release checks
-
-After assembly, run the explicit full repository chain:
-
-```sh
-pnpm check:full
-```
-
-This runs the unchanged `pnpm check` chain, including repository checks, tests, and `pnpm rust:check`. It is
-not affected-file selection and does not establish live acceptance. Select the product/platform checks
-for the five owner paths and current profile from
-[`production-readiness-plan.md`](production-readiness-plan.md) and [ADR-0019](../adr/0019-compact-refactoring.md).
-Archived audit programs and optional Rust ports are not prerequisites for those paths (#377).
+Measure first visible text, final save, dependency calls, cost and reconnect behavior for the selected journey.
+A configured binding, global schema marker, green CI, local dry-run or completed Workflow is not proof of that journey.
