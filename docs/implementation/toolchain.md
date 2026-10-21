@@ -1,165 +1,82 @@
-# Toolchain contract
+# Toolchain
 
-This file records the pinned tools and bootstrap commands. The manager serializes toolchain changes and
-regenerates affected lockfiles; leaves do not upgrade tools incidentally. **ER-00** retains the capability
-map. Use [scoped verification](scoped-verification.md) during implementation and the applicable toolchain
-acceptance after assembly; this inventory does not require a full setup or test campaign before each task.
+Use the versions and commands already declared by executable repository configuration. This note is a small operator
+map, not a second package manifest, Rust promotion programme or requirement to install every verification tool before
+editing product code.
 
-## Pinned baseline
+## Sources of truth
 
-### TypeScript and Cloudflare
+| Concern | Current owner |
+|---|---|
+| Node/pnpm and JavaScript dependencies | root `package.json` and `pnpm-lock.yaml` |
+| TypeScript project graph | root/leaf `tsconfig*.json` |
+| Lint rules | `eslint.config.mjs` |
+| Cloudflare build and bindings | `apps/eliotr-core/package.json`, Wrangler configs and generated `worker-configuration.d.ts` |
+| Rust compiler, workspace and dependency locks | `rust-toolchain.toml`, `Cargo.toml`, `Cargo.lock` |
+| Deep Rust verification | `.github/workflows/rust-deep-verification.yml` and its pinned tools |
 
-| Tool | Version / minimum | Reason |
-|---|---:|---|
-| Node.js | `>=22.13.0` | Satisfies the runtime floor of the pinned ESLint 10 release. |
-| pnpm | `11.23.0` | TypeScript workspace and lockfile owner. |
-| TypeScript | `6.0.3` | Latest compiler line accepted by the pinned `typescript-eslint` peer range. |
-| typescript-eslint | `8.68.0` | Flat-config TypeScript lint integration. |
-| ESLint | `10.9.1` | Repository lint engine. |
-| @eslint/js | `10.0.1` | Published flat JavaScript config package. |
-| Wrangler | `4.143.1` | Worker build, generated binding types, dry-run, migrations and deploy. |
-| @cloudflare/vitest-plugin | `1.3.2` | Workers runtime integration tests. Do not restore the retired pool package. |
-| @cloudflare/workers-types | `5.20260926.1` | Compile-time Worker API declarations, matching current manifests. Generated binding types remain authoritative for `Env`. |
-| Vite | `8.2.2` | Selected React owner-web build and current PWA compatibility tooling. |
-| Vitest | `4.1.11` | Node and browser-independent unit harness. |
-| sharp (workspace override) | `0.35.4` | Transitive security floor for Astro and Wrangler/Miniflare until upstream dependency pins are patched. |
-| Zod | `4.4.3` | Strict wire validation; load-bearing objects use `.strict()`. |
+Do not copy version tables from an old audit into a new authority. When a pin changes, change its executable owner and
+lockfile together; update this note only when the normal operator command changes.
 
-TypeScript 7 is intentionally **not** admitted yet. The pinned `typescript-eslint` release declares a
-TypeScript peer range below 6.1; choosing TypeScript 7 would make the dependency graph unsupported before
-product code runs.
+## Current baseline
 
-### Rust deterministic kernel
+The root currently declares Node `>=22.13.0`, pnpm `11.23.0`, TypeScript `6.0.3`, ESLint `10.9.1`, Vite `8.2.2`,
+Vitest `4.1.11` and Wrangler `4.143.1`. Rust is pinned by `rust-toolchain.toml` and Cargo files. Treat those files as
+canonical if this dated summary diverges.
 
-| Tool | Version | Gate |
-|---|---:|---|
-| Rust | `1.98.0` | Workspace MSRV, build, format, lint and native-test compiler. |
-| Verification nightly | `nightly-2026-08-31` | Branch-aware coverage plus scheduled Miri and fuzz verification. |
-| Cargo resolver | `3` | Edition-2024 workspace feature resolution. |
-| target | `wasm32-unknown-unknown` | Portable embedded kernel target. |
-| cargo-nextest | `0.9.143` | Native workspace test runner. |
-| cargo-deny | `0.20.2` | Advisory, license, duplicate and source policy. |
-| cargo-llvm-cov | `0.9.0` | Branch-aware deterministic-core coverage. |
-| cargo-fuzz | `0.13.2` | Scheduled fuzz harness. |
-| libfuzzer-sys | `0.4.13` | Exact fuzz target runtime dependency. |
-| cargo-mutants | `27.1.0` | Scheduled mutation gate. |
+Astro is not the target UI. A transitive package retained solely by the old PWA disappears with that caller; do not
+turn its temporary version constraint into a permanent platform requirement.
 
-The stable workspace has no third-party runtime dependencies in M1. `fuzz/` is an excluded, separately
-locked harness so `libfuzzer-sys` cannot enter the product dependency graph. Internal path dependencies
-carry exact `=0.1.0` requirements; the dependency policy continues to deny wildcard requirements.
+## Bootstrap
 
-Stable Rust remains authoritative for product compilation. The pinned nightly is invoked explicitly only
-where the requested verification feature is nightly-only; it does not change the workspace MSRV or release
-compiler.
+For TypeScript/Worker work:
 
-Merge CI installs the three stable Cargo utilities from their pinned GitHub releases through
-`taiki-e/install-action` pinned to commit `1ed6d7be6168f6c9046541087ff549b6bc581fdf`, with checksum
-verification enabled and fallback installation disabled. CI then verifies each executable's exact version.
-Official GitHub actions are commit-pinned to `actions/checkout` `3d3c42e5aac5ba805825da76410c181273ba90b1`
-(`v7.0.1`) and `actions/setup-node` `820762786026740c76f36085b0efc47a31fe5020` (`v7.0.0`).
-
-## M1 scope guard
-
-M1 creates the workspace and proof machinery only:
-
-- `eliotr-canonical` owns bounded, allocation-free UTF-8 transport validation, not canonical JSON;
-- `eliotr-test-vectors` owns the strict shared fixture frame;
-- `eliotr-kernel-wasm` proves the same fixture bytes execute under native Rust and
-  `wasm32-unknown-unknown`;
-- TypeScript remains the product authority until the M2–M7 differential promotion sequence.
-
-The fixture frame has one cross-runtime resource contract: 1 MiB complete UTF-8 frame, 4,096 cases,
-128-byte ASCII case IDs, 256 KiB decoded input/output fields and canonical unsigned 32-bit `max_bytes`.
-Rust and TypeScript reject every overflow before payload allocation or semantic execution.
-
-The feature-gated `eliotr_m1_verify_embedded_vectors_v1` symbol is a CI-only scalar self-test. It is not a
-product ABI operation and is absent from the default build. CI inspects the default artifact before the
-feature build overwrites the target path, then permits only the self-test symbol in the second artifact.
-Both artifacts must have zero runtime imports and remain under the compressed M1 budget. Rust 2024
-requires the self-test's `no_mangle` attribute to be acknowledged as unsafe; the adapter contains no
-unsafe block or memory access. Pure crates use `#![forbid(unsafe_code)]`.
-
-## Complete environment bootstrap
-
-This is the complete environment/reference sequence. An already provisioned checkout uses only the
-tools needed by its current task. Run `pnpm check` and runtime acceptance after product assembly as
-described in the current implementation router.
-
-```bash
+```sh
 corepack enable
 corepack prepare pnpm@11.23.0 --activate
-
-rustup toolchain install 1.98.0 \
-  --profile minimal \
-  --component clippy \
-  --component llvm-tools-preview \
-  --component rustfmt \
-  --target wasm32-unknown-unknown
-rustup default 1.98.0
-
-rustup toolchain install nightly-2026-08-31 \
-  --profile minimal \
-  --component llvm-tools-preview
-
-cargo install cargo-nextest --version 0.9.143 --locked
-cargo install cargo-deny --version 0.20.2 --locked
-cargo install cargo-llvm-cov --version 0.9.0 --locked
-
 pnpm install --frozen-lockfile
-cargo metadata --all-features --locked --format-version 1 > /dev/null
-cargo metadata --manifest-path fuzz/Cargo.toml --locked --format-version 1 > /dev/null
-pnpm check
-pnpm cf:types
-pnpm cf:dry-run
 ```
 
-No bootstrap or dry-run command authorizes a live deployment.
+Use an already provisioned Rust toolchain for Rust changes. Do not install nightly, fuzzing, mutation or coverage tools
+for an unrelated TypeScript task. Missing optional deep-verification tools make that check unrun; they do not justify
+changing product source or lockfiles.
 
-## Verification registry
+## Task-sized checks
 
-| Command | Meaning |
-|---|---|
-| `pnpm boundaries:negative` | Prove boundary/budget gates on space/Unicode/#/% checkout paths; reject forbidden imports, unregistered pending state and work-packet drift. |
-| `pnpm rust:boundaries` | Enforce pure-core dependency/runtime exclusions and synthetic negatives. |
-| `pnpm rust:vectors` | Parse and execute the bounded committed corpus through the TypeScript reference. |
-| `pnpm rust:fmt` | Check `rustfmt` without mutation. |
-| `pnpm rust:clippy` | Lint every target and feature with warnings denied. |
-| `pnpm rust:test` | Run native tests with nextest plus Rust documentation tests. |
-| `pnpm rust:deny` | Enforce advisory, license, duplicate and source policy. |
-| `pnpm rust:wasm` | Inspect the default artifact, then execute and inspect the feature-gated self-test artifact. |
-| `pnpm rust:coverage` | Use the pinned nightly to enforce at least 90% line coverage with branch instrumentation and `--locked`. |
-| `pnpm rust:check` | Run every M1 Rust merge gate. |
-| `pnpm check` | Run TypeScript/Cloudflare gates and `pnpm rust:check`. |
+Follow [scoped verification](scoped-verification.md): compile and lint the changed package/files first. For Rust,
+run `cargo check` and minimal Clippy for the changed crate. For D1/SQL, use the existing migration/depth tooling that
+covers the changed stream. Product and browser acceptance follow assembly.
 
-`.github/workflows/rust-deep-verification.yml` additionally runs pinned Miri, fuzz and mutation jobs on a
-weekly schedule or explicit dispatch. A scheduled gate failure remains a failure; it is never converted
-to `NOT EXECUTED`.
+Useful existing entry points include:
 
-## Windows verification scope
+```sh
+pnpm typecheck
+pnpm lint
+pnpm d1:depth
+pnpm cf:types
+pnpm cf:dry-run
+pnpm check:full
+```
 
-The `windows-tooling` CI job runs the real boundary and source-budget checks, their negative fixtures,
-and deployment HTTP/ordering tests on a native Windows runner with CRLF checkout line endings. A
-synthetic checkout uses spaces, Cyrillic, Japanese, `#` and `%`, and invokes the gate from an unrelated
-working directory. Filesystem roots use `fileURLToPath`, not URL `pathname`; diagnostics use repository
-`/` separators. Fixture edits are restored byte-for-byte and CI rejects a dirty checkout.
+`pnpm check:full` is broad repository verification, not a prerequisite for every edit and not proof of live product
+readiness. Source budgets are diagnostics; emitted/runtime limits are verified separately. Historical work-packet,
+status-registry and Rust-first programmes do not expand the selected task.
 
-This closes portability of these Node tooling checks, not the complete local startup or live platform
-path. The bootstrap example above uses Bash syntax; PowerShell must adapt line continuations and output
-redirection. Building the PWA, applying both local D1 migration streams, authenticating and configuring
-remote-only bindings are still required before a usable local application session. Linux remains the
-full TypeScript/Worker/Rust verification runner; no Windows Rust/Worker qualification is implied.
+## Local and deployment commands
+
+Use [local launch](local-launch.md) for `local:prepare`, `local:dev`, `local:smoke` and `local:owner`.
+Use [release and schema transitions](production-readiness-plan.md) for provisioning/deployment and data cutovers.
+A build, dry-run or bootstrap never authorizes remote deployment, credential change or data mutation.
 
 ## Upgrade rule
 
-A toolchain update is one atomic ER-00 change:
+A tool update is one caller-complete change:
 
-1. change root/leaf pins together;
-2. regenerate `pnpm-lock.yaml`, `Cargo.lock`, and `fuzz/Cargo.lock`;
-3. regenerate Wrangler binding types when the Cloudflare toolchain changes;
-4. run contract, boundary, budget, branch-hygiene and work-packet checks;
-5. run lint, project-reference typecheck, unit and Workers integration tests;
-6. run all Rust merge gates and the minified Wrangler dry-run;
-7. record exact versions and generation impact in the PR.
+1. update the actual root/leaf pins and relevant lockfiles;
+2. regenerate Cloudflare binding types when their source changes;
+3. run the affected compiler/linter/build checks;
+4. run the product checks that exercise the upgraded tool;
+5. record compatibility impact and unrun environment checks in the PR.
 
-No leaf packet may add a second compiler, linter, test runner, package manager, Cloudflare deployment
-entrypoint, or mutable authority implementation.
+Do not add a second package manager, compiler, linter, test runner or deployment entrypoint merely to avoid updating
+the current one. Do not preserve a tool because an archived launch packet names it.
