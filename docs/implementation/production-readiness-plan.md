@@ -1,648 +1,141 @@
----
-title: "Eliot Research production readiness plan"
-protocol: "eliotr.production-readiness.v1"
-version: "1.1"
-date: 2026-10-17
-status: "selected-profile acceptance; historical full-product phases retained below"
-baseline_commit: "4e15fadfb3cf40285bdb55112abe5d91fc8af7b3"
-authority: "acceptance reference for enabled product paths; current work order is backend-entrypoints.md"
-target: "selected OWNER_SINGLE service; other profiles require their own applicable acceptance"
----
-
-# Eliot Research production readiness plan
-
-## 0. What `production-ready` means
-
-Eliot Research may be called **production-ready for a named profile** only when its enabled product paths
-and applicable acceptance are complete. [ADR-0018](../adr/0018-owner-single-function-first-profile.md),
-[ADR-0019](../adr/0019-compact-refactoring.md) and
-[#377](https://github.com/UnknownAlienHuman/eliot-research/issues/377) supersede the old all-slices/Rust-first
-launch order. Current source tasks are in [backend-entrypoints.md](backend-entrypoints.md).
-A green unit-test run, a local Wrangler dry-run, a successful provider request, or a deployed Worker by
-itself is not production readiness.
-
-```text
-production-ready =
-  selected product paths implemented and usable end to end
-  + actual platform/provider results for those paths
-  + applicable correctness, citation, replay, recovery and workload acceptance
-  + truthful capability/limitation reporting and a usable deployment rollback
-```
-
-### Mandatory launch profile
-
-For this owner service the selected paths are sources/project/question/cited report/reopen; project upload
-to managed search; Inbox publication; connected agents; and task assignment. Measure ADR-0018's ordinary
-answer/read targets on the named corpus/model/build, with honest coverage and exact opened citations.
-The target UI is React/Vite; ADR-0016/0017's integrated build, inbox, service-worker retirement and rollback
-acceptance precede its actual cutover. Until then the served PWA remains compatibility.
-
-Rust M2–M7, optional federation/Drive Exchange, specialist research and the canceled S52 registry are not
-prerequisites for those paths. Backup/export/restore execution remains owner-deferred; existing retention,
-erasure and recovery duties still apply to retained data. Enabling a deferred feature later requires its
-actual acceptance; do not report it ready or advertise an unsupported endpoint now.
-
-The implementation phase is compile/lint first. Test suites and broader native/browser/live qualification
-follow assembly, not every edit. The historical phases below retain detailed acceptance references for a
-selected capability; they are not an active queue or a mandate to execute all of them before owner work.
-
-### Mechanical release rule
-
-Production release is blocked while any of the following is true:
-
-- a mandatory route or authority path remains `SCAFFOLD_FAIL_CLOSED` or `IN_PROGRESS`;
-- a required contour is only `IMPLEMENTED_NOT_LIVE`;
-- any P0 or P1 row remains in `gap-register.md` for the selected launch profile;
-- TypeScript and Rust both remain permanent authority for the same promoted domain decision;
-- a live gate is represented only by a mock, local emulator, typecheck, dry-run, provider acceptance,
-  Queue acknowledgement, D1 change count, or Workflow completion;
-- an enabled path exposes an unresolved material citation as verified, hides unknown coverage, resurrects
-  erased data, loses an uncertain mutation, exposes credentials, or lacks a viable deployment rollback.
-
-Current source capability/status checks must be reconciled with the selected profile as its routes are
-implemented. Do not remove a fail-closed sentinel or claim a broad slice LIVE just to silence an old
-full-profile gate. This documentation revision changes no runtime readiness state or CI behavior.
-
-## 1. Historical baseline
-
-Baseline: `main@4e15fadfb3cf40285bdb55112abe5d91fc8af7b3`.
-
-The lists in this section describe the 2026-09-01 baseline, not current route availability. Use
-`pnpm check:implementation-status`, `pnpm launch:code` and `gap-register.md` for the current state.
-The selected `gemini-mcp` Workspace profile is governed by the profile-specific requirements below;
-the separate Drive Exchange OAuth path and optional Google Cloud profiles are not its prerequisites.
-
-### Implemented but not live-qualified
-
-- Cloudflare Access-protected HTTP dispatch and owner catalog;
-- deterministic immutable ScopeSnapshot persistence and currentness authority;
-- deterministic Corpus Lens SourceCard/DocumentMap/ProjectAtlas orientation with explicit omissions;
-- governed normalized-bundle ingest and SourceAdmissionDecision;
-- D1 outbox, Queue inbox, retry and ACK discipline;
-- deterministic projection execution and generation activation;
-- exact EvidenceHandle and citation-resolution paths;
-- exact erasure closure and purge ledger;
-- Gemini Spark/Antigravity MCP planning and Google orchestration boundary.
-
-### Still unavailable or not composed
-
-- ER-31 public Worker API composition and automatic navigation materialization;
-- `research.query`;
-- `research.run` and the governed Research Workflow;
-- Wiki proposal/promotion and dependency tracking;
-- artifact compilation, trace and change products;
-- production Drive cursor/OAuth/tamper path.
-
-### Not yet proven on the real platform
-
-- production Cloudflare resource provisioning and deployed smoke;
-- remote D1/R2 authority readback;
-- Queue duplicate/redelivery/DLQ behavior;
-- Durable Object hibernation/reconnect;
-- Workflow retry/resume/cancellation/budget behavior;
-- managed AI Search generation promotion and locator-to-evidence path;
-- selected-profile Google Workspace and Drive exact write/readback;
-- external federation provider execution;
-- clean-account backup restore with purge-ledger replay;
-- representative T2/T3 corpus quality and T6 workload results.
-
-### Language migration state
-
-`eliotr.language-runtime.v1` M0 and M1 are complete. M2–M7 are not complete. The current TypeScript
-domain code remains the active transitional executable specification; no product authority moved to Rust
-during M1.
-
-## 2. Ordered critical path
-
-The numbered phases below preserve the former full-product order and capability-specific acceptance.
-Select only what the current product task needs; #377's cancellations and ADR-0019 take precedence.
-Independent tasks use disjoint files in one manager checkout. A historical phase's remaining checkbox
-does not freeze the current owner product.
-
-## 3. Phase 1 — keep the source of truth accurate
-
-**Owners:** ER-00, integration owner.
-
-- [x] Establish the language/runtime contract.
-- [x] Enforce one-task/one-branch discipline and automated branch cleanup.
-- [ ] Replace stale README claims with the current implementation state.
-- [ ] Link this plan from `README.md`, `IMPLEMENTATION.md`, `implementation-status.md` and
-      `gap-register.md`.
-- [ ] Make every implementation PR update both `implementation-status.json` and `gap-register.md` when
-      a contour changes state.
-- [ ] Prohibit release notes from claiming `LIVE_QUALIFIED` without a retained live receipt reference.
-
-**Exit evidence**
-
-- repository status documents agree with machine-readable implementation state;
-- no mandatory gap exists only in prose or only in source code;
-- `pnpm check` remains green.
-
-## 4. Phase 2 — establish the Rust verification foundation (M1)
-
-**Owners:** ER-00, ER-01, Rust migration owner.
-
-**Status:** COMPLETE on 2026-09-01. Implementation evidence commit `9e9a4d6bbfd5f2a67427714e7adfb9d71eb6c296` passed CI run
-`33522427515` with both the legacy TypeScript/Cloudflare job and the Rust M1 job successful. This closes only
-the verification foundation: M2–M7 and every live platform/provider receipt remain open.
-
-Create the initial workspace without changing the active TypeScript Worker entrypoint:
-
-```text
-Cargo.toml
-rust-toolchain.toml
-deny.toml
-.config/nextest.toml
-crates/eliotr-test-vectors
-crates/eliotr-canonical
-crates/eliotr-kernel-wasm
-```
-
-- [x] Pin the Rust toolchain and `wasm32-unknown-unknown` target.
-- [x] Add `cargo fmt --check`.
-- [x] Add Clippy for all targets/features with warnings denied.
-- [x] Add `cargo nextest`, documentation tests and `cargo deny`.
-- [x] Add release Wasm build and compressed-size reporting.
-- [x] Add branch-aware coverage for deterministic core crates.
-- [x] Add scheduled Miri, fuzz and mutation-test jobs for critical pure crates.
-- [x] Create one versioned fixture format consumed by TypeScript, native Rust and Rust/Wasm.
-- [x] Enforce `#![forbid(unsafe_code)]` in pure crates.
-- [x] Enforce that pure crates cannot import Cloudflare, network, filesystem, process, hidden clock or
-      random-state dependencies.
-
-**Exit evidence**
-
-```text
-cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
-cargo nextest run --workspace --all-features --locked
-cargo test --doc --workspace --all-features --locked
-cargo deny check
-cargo build --workspace --target wasm32-unknown-unknown --release --locked
-cargo +nightly-2026-08-31 llvm-cov --package eliotr-canonical --package eliotr-test-vectors --all-features --locked --branch --fail-under-lines 90 --text
-```
-
-The existing TypeScript Worker must still pass all current CI and Wrangler dry-run gates.
-
-Retained deterministic evidence on `9e9a4d6bbfd5f2a67427714e7adfb9d71eb6c296`:
-
-- 28/28 native Rust tests passed; formatting, Clippy, doctests and `cargo deny` passed;
-- default Wasm: 363 raw / 258 gzip bytes, zero imports, no product ABI;
-- feature-gated self-test Wasm: 8,790 raw / 4,142 gzip bytes, zero imports;
-- coverage: 99.60% lines, 96.75% branches, 100% functions and 97.38% regions;
-- the separately excluded fuzz dependency graph is frozen in `fuzz/Cargo.lock`;
-- Cloudflare, Google, provider, recovery and workload receipts: `NOT EXECUTED`.
-
-## 5. Phase 3 — migrate canonical identity and serialization (M2)
-
-**Owners:** ER-01, ER-02, Rust canonical/identity owners.
-
-- [ ] Implement canonical JSON/body serialization in Rust.
-- [ ] Implement stable IDs, SHA-256 body rules and generation-token validation in Rust.
-- [ ] Port owner-cutover, residency, operation, receipt and handle golden vectors.
-- [ ] Run every vector through TypeScript, native Rust and compiled Wasm.
-- [ ] Require byte-for-byte output, digest, result and typed-error parity.
-- [ ] Add property tests for map ordering, unknown fields, Unicode, numeric boundaries and duplicate
-      identity fields.
-- [ ] Run Rust/Wasm in shadow mode without changing canonical state.
-- [ ] Promote one canonical family at a time and remove its superseded TypeScript authority.
-
-**Exit evidence**
-
-- no canonical body or stable ID has two permanent owners;
-- all differential fixtures pass;
-- bundle, startup and Wasm-memory budgets pass;
-- rollback instructions exist for each promoted family.
-
-## 6. Phase 4 — migrate deterministic domain authority (M3–M4)
-
-**Owners:** ER-02, ER-03 and the owning capability packets.
-
-Move pure decisions, not Cloudflare I/O:
-
-- [ ] source-owner and source-lifecycle state machines;
-- [ ] scope algebra;
-- [ ] policy, disclosure, residency, retention and qualification invariants;
-- [ ] SourceAdmissionDecision logic;
-- [ ] projection and precision-ceiling algorithms;
-- [ ] EvidenceHandle, citation and CoverageReceipt logical invariants;
-- [ ] erasure, federation and Research Workflow disposition logic;
-- [ ] claim-audit and completion-disposition rules.
-
-Every operation receives explicit time, generation, policy and observed-state inputs. Rust performs no
-D1, R2, Queue, Workflow, provider or model effect.
-
-**Exit evidence**
-
-- native Rust, Wasm and transitional TypeScript fixtures agree;
-- critical pure crates satisfy the coverage threshold or document an approved exception;
-- fuzz/property/mutation tests cover state transitions and impossible dispositions;
-- TypeScript may reject malformed transport input but cannot strengthen a Rust decision.
-
-## 7. Phase 5 — promote the Wasm kernel and remove duplicate authority (M5–M7)
-
-**Owners:** ER-00, ER-24, capability owners.
-
-- [ ] Implement the versioned canonical-byte ABI from `eliotr.language-runtime.v1`.
-- [ ] Add bounded Wasm allocation and typed-error mapping.
-- [ ] Run deterministic shadow comparisons without duplicating external effects.
-- [ ] Persist content-free mismatch receipts and fail closed on divergence.
-- [ ] Measure bundle size, startup, memory and p50/p95 CPU.
-- [ ] Promote Rust results capability by capability.
-- [ ] Add a rollback switch for every promotion.
-- [ ] Remove superseded TypeScript domain implementations after the observation window.
-- [ ] Update `implementation-status.json` to name the Rust authority owner.
-
-**Exit evidence**
-
-- no production-critical domain decision has permanent dual authority;
-- TypeScript remains the sole Cloudflare control plane;
-- Rust/Wasm remains effect-free and portable;
-- Worker limits remain within the architecture budgets.
-
-## 8. Phase 6 — close all fail-closed mandatory product code
-
-### 8.1 Federation — ER-22
-
-- [x] Compose the durable federation service locally; remote independent-peer qualification remains pending.
-- [ ] Bind submission to principal, immutable scope, policy, generation, canonical request digest and
-      idempotency key.
-- [ ] Persist request, job, attempts, cancellation, results and receipts in D1/R2 authority.
-- [ ] Implement `submit`, `status`, bounded `result` cursor/range reads and monotone `cancel`.
-- [ ] Keep provider completion, transport completion and research completion separate.
-- [ ] Reject forged provider citations and over-strong absence/completeness dispositions.
-- [ ] Register exact erasure dependencies.
-
-### 8.2 Persisted scopes — ER-10/ER-30
-
-- [x] Wire deterministic `UNION`, `INTERSECT` and `EXCEPT` evaluation to an immutable
-      ScopeSnapshot repository contract with created/exact-replay/readback semantics.
-- [x] Bind snapshot digest to exact revisions, owner generations, member-policy closure, purge-ledger
-      revision, disclosure closure, client fence and expiry.
-- [x] Implement deterministic currentness checks and exact invalidation.
-- [ ] Compose principal grants and the remote D1 ScopeSnapshot repository.
-- [ ] Prevent retrieval, evidence resolution and research execution from using an unfrozen scope.
-
-### 8.3 Managed retrieval and Corpus Lens — ER-06/ER-07/ER-16/ER-31
-
-- [ ] Strictly decode AI Search output as locator candidates only.
-- [ ] Reject oversized, malformed and fake-handle provider fields.
-- [ ] Implement exact, lexical, semantic, literal and structure lanes with bounded degradation.
-- [ ] Keep D1 FTS fallback operational when managed search is degraded.
-- [ ] Recheck owner generation, policy, scope and purge state after retrieval.
-- [x] Implement deterministic orientation without treating top-k as completeness proof.
-- [x] Persist immutable scope-bound navigation artifacts and provide request-scoped D1 navigation
-      composition with local identity, authorization-race and purge tests.
-- [ ] Compose production scope/policy observations, grant issuance and materialization into public
-      `research.orient`; implement the QueryResult/evidence/trace contract and `research.query`.
-- [x] Implement SourceCard, DocumentMap and ProjectAtlas with explicit omissions and coverage limits.
-
-### 8.4 Governed Research Workflow — ER-08/ER-09/ER-10
-
-- [ ] Replace the Workflow skeleton with the complete monotone stage machine.
-- [ ] Persist Investigation, protocol, obligations, hypotheses, branches and checkpoints.
-- [ ] Check cancellation and budget before and after every expensive boundary.
-- [ ] Persist model/provider output before acknowledging the call.
-- [ ] Prove retry after lost acknowledgement does not execute or pay twice.
-- [ ] Require Evidence Freeze before synthesis and explicit reopen for later evidence.
-- [ ] Execute counter-search, claim audit and coverage accounting.
-- [ ] Return one of exactly nine honest `CompletionDisposition` values.
-- [ ] Keep Workflow `COMPLETED` separate from research completion.
-
-### 8.5 Wiki and artifact materialization — ER-11/ER-12
-
-- [x] Implement immutable Wiki revisions with expected-head CAS. Owner editing and
-      publication of a second revision with preserved first-revision bytes were
-      [verified live on 2026-09-14](live-document-project-acceptance-2026-09-14.md#owner-edits-with-preserved-wiki-history).
-      Concurrent-client publication was not exercised in that acceptance.
-- [ ] Implement proposal, review, promotion and dependency closure.
-- [ ] Implement Artifact Compiler with copy-on-write section updates.
-- [ ] Require complete citation-resolution receipts before publication.
-- [ ] Make purge invalidate or mark dependent sections pending revalidation.
-- [ ] Enable `research.artifact`, `research.wiki.propose`, `research.trace` and `research.changes`.
-
-### 8.6 Required ChatGPT Drive Exchange — ER-18/ER-19/ER-20; optional Gemini ER-36
-
-See [ADR-0006](../adr/0006-google-external-transport-profiles.md). The checklist below is
-profile-aware: the legacy server-owned requirements are mandatory for explicit `drive-exchange`,
-while selected `gemini-mcp` uses the separate pending authenticated Workspace admission/readback
-gate. Common product gates remain mandatory for both profiles.
-
-- [ ] Finish exact Drive schema provisioning and generation activation.
-- [ ] Implement append/import/readback/reconnect and cursor reconciliation.
-- [ ] Detect historical-row mutation and tamper.
-- [ ] Store refresh tokens encrypted and expose `REAUTH_REQUIRED` without losing canonical artifacts.
-- [ ] Implement the Day-0 ChatGPT Drive Exchange from canonical §§12.3–12.12 and ADR-0003 when that
-      server-owned ChatGPT transport profile is selected; interface-only ports and the optional Gemini
-      planner do not satisfy this item. The current 2026-09-09 user-selected Workspace/Gemini profile
-      leaves this unfinished path separate and does not authorize Google Cloud project/client setup.
-- [ ] Select exactly one active ChatGPT write transport within the selected ChatGPT profile; a future
-      qualified native app replaces Drive rather than adding a simultaneous writer. Workspace/Gemini
-      client orchestration is a separate profile, not an implicit replacement or Cloud prerequisite.
-- [ ] When the optional Gemini service is explicitly selected, separately qualify Access/MCP and exact
-      readbacks for each selected profile. The default user profile is Workspace/Drive; gcloud,
-      Google Cloud, Vertex and Google AI Studio/Gemini API are independent optional profiles.
-      Self-reported v1 observations cannot substitute for these gates.
-      Preserve existing mutual-exclusion guards until the reviewed production profile is composed.
-
-### 8.7 Owner PWA — ER-25
-
-- [ ] Implement persistent Library, Investigation and Evidence panels.
-- [ ] Add projects/sources, ingest progress, readiness, retrieval, evidence viewer, Wiki, reports and jobs.
-- [ ] Preserve typed API problems, trace IDs and retryability.
-- [ ] Show health, freshness, coverage, omissions, policy denial, budget stop and connector degradation.
-- [ ] Implement WebSocket/job reconnect and bounded offline behavior.
-- [ ] Add Playwright tests for complete owner loops and degraded dependencies.
-- [ ] Keep PWA initial JavaScript within the architecture gzip budget.
-
-**Phase exit evidence**
-
-- no mandatory product route returns `IMPLEMENTATION_SLICE_PENDING`;
-- no mandatory source marker remains `SCAFFOLD_FAIL_CLOSED` or `IN_PROGRESS`;
-- unit, property, negative and migration fixtures pass;
-- optional Slice 7 routes remain explicitly disabled rather than partially implemented.
-
-## 9. Phase 7 — provision a real staging environment
-
-**Owners:** ER-17, ER-26, platform owner.
-
-Provision by exact name and read back:
-
-```text
-1 Worker + Static Assets
-2 D1 databases
-2 R2 buckets
-1 Queue + DLQ
-1 ResearchSession Durable Object
-1 ResearchWorkflow
-1 AI Search namespace and versioned instances
-2 AI Gateways
-1 Access application family
-1 Analytics Engine dataset
-scheduled triggers
-```
-
-Google staging requirements depend on the selected profile:
-
-```text
-Workspace profile: external Workspace OAuth/consent for the selected Drive/Docs/Sheets action
-Cloud profile (optional): Google Cloud project plus gcloud OAuth/ADC
-ChatGPT Drive Exchange (separate legacy profile): dedicated account, exact exchange spreadsheet/folder,
-  and its own server OAuth configuration when that profile is explicitly selected
-```
-
-- [ ] Create least-privilege Cloudflare and Google credentials.
-- [ ] Put secrets only in approved secret storage.
-- [ ] Run `pnpm cf:preflight:remote`.
-- [ ] Provision create-or-verify resources; reject profile drift.
-- [ ] Apply additive D1 migrations before incompatible code activation.
-- [ ] Deploy one staging Worker generation and retain the deployment receipt.
-- [ ] Verify generated bindings, routes, DO/Workflow exports and exact resource IDs.
-- [ ] Confirm staging contains no production data.
-
-**Exit evidence**
-
-- staging deployment receipt;
-- exact Cloudflare resource inventory;
-- migration readback;
-- authenticated health/capability smoke;
-- rollback target retained.
-
-## 10. Phase 8 — execute T4 live platform conformance
-
-**Owners:** ER-27 plus each capability owner.
-
-Run real, disposable, retained fixtures:
-
-- [ ] owner Access JWT allow and deny;
-- [ ] service-principal allow-list and class-boundary denial;
-- [ ] D1 write, CAS conflict, transaction rollback, restart and readback;
-- [ ] R2 multipart upload, immutable promotion, conditional range read and digest verification;
-- [ ] Queue duplicate delivery, lost ACK, retry, poison message and DLQ;
-- [ ] Durable Object hibernation, reconnect and persist-before-notify;
-- [ ] Workflow checkpoint retry, lost ACK, cancellation, budget stop and resume;
-- [ ] D1 Search shadow activation and rollback;
-- [ ] AI Search upload, item readback, generation promotion, canary query and deletion;
-- [ ] AI Search locator resolved through exact authorized R2 bytes into EvidenceHandle;
-- [ ] ingest prepare/upload/commit through deployed HTTP and Access;
-- [ ] exact erasure deletion and absence readback across all selected locations;
-- [ ] federation submit/status/result/cancel through a real provider adapter;
-- [ ] Gemini MCP and selected Google transport exact mutation/readback/reconnect.
-
-**Exit evidence**
-
-Every required `IMPLEMENTED_NOT_LIVE` entry becomes `LIVE_QUALIFIED` only with a retained receipt reference.
-Failures remain explicit and do not silently reduce the test profile.
-
-## 11. Phase 9 — build and adjudicate the real T2/T3 corpus
-
-**Owners:** ER-23, ER-31, ER-32.
-
-**ER-23 2026-09-08 update:** deterministic expansion landed as `golden-er23-2026-09-08` with adjudicated GC-009 RU recommendation-vs-decision, GC-010 code literal-exact, GC-011 table number-with-conditions, and GC-012 EN dissent-negative; LF SHA-256 pins, promotion thresholds (zero forbidden collapses, full atom/handle recall, complete_scope where named), collapsing-extractor must-fail harness, and malformed/empty/oversized negatives. Long documents, conversation exports, mixed-quality sources, per-product threshold tuning, measured false-positive/negative and locator/citation accuracy, and retained rollback generations remain open for ER-31/ER-32; live model/provider qualification NOT_EXECUTED.
-
-- [ ] Add representative Russian and English documents.
-- [ ] Add repositories/code, tables, long documents, conversation exports and mixed-quality sources.
-- [ ] Adjudicate exact, phrase, literal, semantic, structure, multi-project and exhaustive cases.
-- [ ] Include stale revision, purge, unsupported precision, prompt injection and absent-answer cases.
-- [ ] Define promotion thresholds by product, not one blended retrieval score.
-- [ ] Measure false positive, false negative, locator resolution and citation accuracy.
-- [ ] Require T2/T3 before parser, embedding, reranker, prompt or index-generation promotion.
-- [ ] Retain rollback generations after promotion.
-
-**Exit evidence**
-
-- versioned corpus with adjudication records;
-- explicit thresholds and forbidden regressions;
-- selected production index/model/parser generations pass;
-- no completeness or absence claim exceeds the frozen denominator.
-
-## 12. Phase 10 — execute T5 security, privacy and failure hardening
-
-**Owners:** ER-03, ER-17, ER-28, ER-33, ER-34.
-
-- [ ] Threat-model every owner, service, MCP, Google and federation boundary.
-- [ ] Prove source instructions cannot gain system, tool or policy authority.
-- [ ] Prove side-effect tools are absent from research generation.
-- [ ] Verify disclosure, inference, source/task and client policies independently.
-- [ ] Verify logs and metrics reject credentials, prompt bodies, source text and evidence excerpts.
-- [ ] Exercise stale generation, dual writer, cutover failure, cross-residency dedup and key-reuse cases.
-- [ ] Exercise model/provider/Drive/AI Search/Queue/D1/R2 outages and degraded-state behavior.
-- [ ] Exercise blocked legal hold, partial purge, restart and exact absence proof.
-- [ ] Revoke and reconnect OAuth/Access credentials.
-- [ ] Run dependency, secret, license and vulnerability audits for TypeScript and Rust.
-
-**Exit evidence**
-
-- T5 report with retained negative fixtures;
-- no critical/high unresolved security finding;
-- overdue erasure and unresolved disclosure violations block release;
-- documented incident and credential-rotation procedures.
-
-## 13. Phase 11 — implement backup, restore and disaster recovery
-
-**Owners:** ER-34, platform owner.
-
-- [ ] Define immutable backup epochs for D1, R2 manifests, configuration and required receipts.
-- [ ] Exclude ephemeral Queue, DO and projection state from authority assumptions.
-- [ ] Preserve current purge-ledger revision with every backup epoch.
-- [ ] Restore into a clean account/environment.
-- [ ] Apply the current purge ledger before any restored payload can be exposed.
-- [ ] Rebuild D1 Search and AI Search from canonical authority.
-- [ ] Verify erased content does not reappear.
-- [ ] Verify Investigation, Wiki, artifact, source and receipt heads.
-- [ ] Measure and approve RPO/RTO.
-- [ ] Test Worker/index rollback independently from data restore.
-
-**Exit evidence**
-
-- clean-account restore receipt;
-- purge-ledger replay receipt;
-- RPO/RTO measurement;
-- tested rollback and disaster runbook.
-
-## 14. Phase 12 — establish observability, SLOs and spend controls
-
-**Owners:** ER-17, ER-26, ER-35.
-
-- [ ] Publish content-free metrics for auth denial, latency, D1 conflict, outbox age, retries, DLQ,
-      projection readiness, index drift, citation failure, provider degradation and erasure deadlines.
-- [ ] Create owner-visible health and incident snapshots.
-- [ ] Alert on stale generations, missing connectors, overdue erasure, DLQ growth and uncertain settlement.
-- [ ] Activate AI Gateway budgets/routes and Cloudflare spend limits.
-- [ ] Define SLOs and error budgets for owner API, ingest, retrieval, evidence open, research jobs and
-      external transports.
-- [ ] Verify 100% sampling for security, erasure and DEEP/AUDIT/REPORT failures without content leakage.
-- [ ] Record per-run usage and cost without storing prompts or source content in telemetry.
-
-**Exit evidence**
-
-- dashboards and alert routes exercised;
-- spend-limit and budget-stop receipts;
-- operational owner can identify and diagnose a failed user loop without direct database access.
-
-## 15. Phase 13 — execute T6 workload and performance qualification
-
-**Owners:** ER-35 and platform owners.
-
-Measure at least:
-
-```text
-5 / 20 / 50 concurrent read agents
-5 interactive Research sessions
-10 queued ingestion/projection jobs
-2 concurrent long Research Workflows
-```
-
-- [ ] Measure p50/p95/p99 latency, CPU, memory and cost by operation.
-- [ ] Measure D1 contention, CAS conflicts and overloaded/retry behavior.
-- [ ] Measure R2 and AI Search throughput and generation-promotion duration.
-- [ ] Measure Queue lag, redelivery and DLQ behavior.
-- [ ] Measure DO/WebSocket reconnect and Workflow checkpoint overhead.
-- [ ] Compare promoted Rust/Wasm operations with the transitional TypeScript baseline.
-- [ ] Verify emitted Worker ≤ 4 MiB gzip, startup ≤ 400 ms, first-party heap target ≤ 32 MiB and
-      initial owner-web JavaScript ≤ 600 KiB gzip on the pinned build. Include reachable JS/Wasm in the
-      native aggregate Worker payload and distinguish observed initial eager/shared scripts from lazy
-      chunks, standalone inbox assets and total dist. Missing/stale/unsupported measurements remain
-      unmeasured. Source-line/raw-source-byte diagnostics are advisory and cannot prove runtime size or
-      savings; security/input/model byte limits remain unchanged. S90 build-size evidence and S96
-      startup/CPU/heap/workload acceptance retain their separate scopes.
-- [ ] Establish capacity limits and explicit overload responses.
-
-**Exit evidence**
-
-- reproducible T6 report;
-- approved capacity envelope and cost model;
-- no hidden unbounded loop, corpus load, response or persisted session state;
-- p95/SLO and spend targets pass for the selected production profile.
-
-## 16. Phase 14 — production launch
-
-**Owners:** release owner, ER-26, ER-27.
-
-- [ ] All mandatory P0 and P1 gaps are closed.
-- [ ] All mandatory implementation entries are `LIVE_QUALIFIED` with receipt references.
-- [ ] Rust M1–M7 is complete for production-critical deterministic authority.
-- [ ] T0–T6 gates pass for the selected release generations.
-- [ ] Release checklist and security checklist are complete.
-- [ ] D1 migrations and backfills are applied and read back.
-- [ ] AI Search generation is promoted with retained rollback generation.
-- [ ] Production Access, secrets, budgets and spend limits are active.
-- [ ] DLQ is empty and overdue erasure count is zero.
-- [ ] Deployment generation, configuration fingerprint and rollback target are recorded.
-- [ ] Canary user loops pass:
-  - ingest one source;
-  - retrieve and reopen exact evidence;
-  - run one governed investigation;
-  - publish one Wiki page or artifact with fully resolved citations;
-  - submit and read one federation job;
-  - exercise the selected Google transport;
-  - execute a disposable erasure and verify absence;
-  - restore a clean disposable environment without resurrecting erased data.
-- [ ] Observe the canary window and approve production head explicitly.
-
-**Production declaration**
-
-The release receipt must name:
-
-```text
-Worker generation
-D1 schema generations
-R2 residency profiles
-D1 Search generation
-AI Search instance/profile/generation
-Rust kernel schema and Wasm digest
-PWA asset digest
-Access application/audience
-Google transport generation
-provider route fingerprints
-T2/T3/T4/T5/T6 report references
-rollback targets
-```
-
-Only after this receipt is complete may the repository and product state say `production-ready`.
-
-## 17. After launch — optional specialist profiles
-
-Slice 7 capabilities are separate promotions:
-
-- code intelligence;
-- scholarly metadata;
-- conversation episodes;
-- structured-data profiles;
-- optional Browser Rendering or large tabular infrastructure.
-
-Each requires its own measured benefit, exact-handle behavior, security review, corpus thresholds,
-operational cost and rollback. No optional profile may weaken the base production contract.
-
-## 18. Recommended next PR sequence
-
-The immediate sequence from the current baseline is:
-
-1. **ER-00 / M1:** Cargo workspace, Rust CI and shared test vectors.
-2. **ER-01/02 / M2:** canonical JSON, digests, IDs and generation tokens.
-3. **ER-22:** durable generic federation implementation.
-4. **ER-30:** persisted immutable ScopeSnapshot authority.
-5. **ER-06/16/31:** strict managed-search decoding and Corpus Lens query/orientation.
-6. **ER-09:** governed Research Workflow and durable checkpoints.
-7. **ER-11/12:** minimum Wiki and Artifact Compiler.
-8. **ER-18/19/20:** mandatory ChatGPT Drive code and real qualification when the explicit
-   `drive-exchange` profile is selected; **ER-36:** selected-profile Workspace admission/readback
-   qualification for `gemini-mcp`.
-9. **ER-25:** complete owner PWA loops.
-10. **ER-26/27:** staging deployment and T4 live conformance.
-11. **ER-23/31/32:** T2/T3 real corpus and generation promotion.
-12. **ER-28/33/34:** T5, erasure/offsite paths and clean restore.
-13. **ER-35:** T6 workload/cost qualification.
-14. **Release:** canary, rollback verification and production readiness receipt.
-
-The Rust migration and remaining product code may proceed in parallel, but neither track may be omitted
-from the final production declaration.
-
-## Local-first launch checkpoint — 2026-09-05
-
-The active owner metadata orientation/trace loop is implemented through PWA -> HTTP -> explicit D1
-read policy -> frozen scope/grant -> immutable navigation -> durable result/trace. This does not close
-the full query, investigation, federation, Wiki, Rust promotion or live launch gates above.
-`local:prepare` builds assets and applies both local migration streams; `local:dev` is loopback-only.
-The deploy orchestrator now rejects known pending mandatory product paths before any remote effect.
-This negative guard is not a substitute for complete source audit or T0–T6 exit evidence.
+# Release and schema transitions
+
+Current implementation decision, checked 2026-10-21 against `main@b920ea2f`. Runtime cutover is not complete.
+[The manifesto](../architecture/ELIOT_RESEARCH.md) selects the product; [the plan](backend-entrypoints.md) selects work.
+This replaces the historical full-product/Rust-first release programme, not the existing deployment tools by itself.
+
+## Three different observations
+
+| Question | Evidence | Not evidence |
+|---|---|---|
+| What can this build offer? | Actual route/handler composition and explicit configuration | A registered filename, source comment or old ER packet |
+| Can this operation use its resources now? | Bounded read-only observations of its required resources | A binding name, successful upload or a global slice label |
+| Does the owner journey work? | Its result on the named build/environment, with limitations recorded | Typecheck, dry-run, HTTP 200 or Workflow completion alone |
+
+A source-code change, a deployment and a product acceptance are separate actions. Do not run remote provisioning,
+change secrets, apply migrations or buy model calls just to inspect capabilities. A search/model/connector outage
+blocks operations using it, not unrelated reads of retained reports, sources or Wiki. Authorization/deletion failures
+remain mandatory at the affected disclosure boundary; they are not optional freshness failures.
+
+## Why the current release gate must change
+
+The inspected source still has four overlapping authorities:
+
+- `apps/eliotr-core/src/composition-root.ts` declares runtime capabilities;
+- `scripts/check-launch-code.mjs` interprets its TypeScript syntax and requires broad legacy slices, including
+  `FEDERATION`, regardless of the selected concrete integration;
+- `scripts/lib/launch-operation-composition.mjs` walks factories/aliases to infer callable handlers;
+- `implementation-status.json` and `check-implementation-status.mjs` maintain exact source-comment/status/packet
+  correspondence. Maintenance deployment also reads that registry via `readFullReleaseBlockers()`.
+
+None is a proof that a user operation works. Removing only one AST condition leaves the competing interpreters.
+Do not extend them to recognize more syntax, turn every registry row green, or hide actual unavailable operations.
+
+There is also a narrower readiness defect: `readiness.ts` converts every D1 read error into `null`, then reports
+`*_SCHEMA_NOT_APPLIED`. Its accepted `core-v11-owner-orientation` marker predates later migrations, including Wiki
+outbox removal. The marker alone cannot establish their presence or the required table shape. Deployment already
+has a separate applied-name reader in `scripts/lib/deployment-migrations.mjs`; preserve that useful check.
+These are source findings, not a statement about the actual production database.
+
+## Replace the interpreters, not the deployment checks
+
+1. Extract the pure `capabilities()` calculation into `apps/eliotr-core/src/capabilities.ts`. Pass public configuration
+   facts and the existing route table explicitly. Keep one concrete function, not a plugin/capability registry or
+   another hand-maintained list of handler names. The Worker calls it; tooling imports its emitted module from the
+   same checked build without importing the Worker entrypoint, starting bindings or reading secrets.
+2. Move `deploy-cloudflare.mjs`, `provision-cloudflare-core.mjs` and `deployment-maintenance.mjs` to that value.
+   Keep transport selection, target identity, safe route/auth comparisons and authenticated post-deploy readback.
+   A declared or configured feature is not promoted to healthy or production-ready by this function.
+3. Stop parsing schema constants from TypeScript source. Share the required schema values with `readiness.ts` through
+   ordinary exports. At deployment, compare the existing `d1_migrations` applied-name set with the selected migration
+   files; do not accept only the largest filename or invent another generation ledger. For a changed table, verify
+   the needed shape/query as part of that cutover. A local SQL digest does not prove which bytes ran remotely.
+4. Keep health reads bounded and operation-specific. Missing required schema, incompatible schema and observation
+   failure have different outcomes. Unknown observation never permits initialization, repair or migration. Do not
+   enumerate the entire schema, open every report or call a model on each health/navigation request.
+5. With callers moved, remove `readFullReleaseBlockers`, status-registry dependencies, `check-implementation-status`
+   and its source sentinels, AST-only capability/factory/schema parsing and their exclusive fixtures. Keep only useful
+   value validation/CLI glue from `check-launch-code.mjs`, or move its remaining consumers and delete it entirely.
+   Update package/CI callers and old entrypoint documents in that integration; no compatibility command or PASS stub.
+
+Do not add a new service, signed receipt inventory, release DSL, config interpreter or mandatory status file.
+A normal PR/build log can name what changed, what was checked and what is still unknown. The current tooling and
+actual deployment authorization remain in force until this code replacement; editing this document bypasses neither.
+
+## Small deployment path
+
+Keep the pinned Wrangler toolchain and existing one-Worker topology. The target is build → inspect affected changes
+→ explicitly apply approved deployment/migrations → authenticated readback. Use native Worker version/deployment
+identities and one selected configuration, not a bespoke promotion/signature framework.
+
+Before a remote effect, identify the actual account, Worker, database/resource IDs, configuration, built assets and
+pending schema changes. Do not silently provision a missing dependency, broaden Access or switch the provider.
+Use the existing read-only migration inspection; applying migrations is a separately explicit operation.
+
+Verify the selected compiled artifact locally, then confirm the actual deployed version, routes/authentication,
+required bindings and affected journey. A local binding proxy is an emulator, not live evidence. A capability
+preview endpoint must not become an unauthenticated path to private data or paid work.
+
+Ordinary same-schema updates need a known compatible prior Worker version. A breaking source/API/schema cutover
+needs the transition below. Native gradual deployment is not permission to run incompatible old/new writers against
+one database. No automatic restore or rollback to a version whose data contract no longer holds.
+
+## Destructive data cutover without permanent legacy
+
+Choose a bounded maintenance window for the affected write path when a direct incompatible conversion is smaller
+than maintaining two implementations. This is an explicit deployment decision, not permission to reset the product.
+
+- Stop new affected writes/admissions, including relevant Queue/cron producers, and settle or explicitly stop affected
+  active work without repeating paid effects. An empty browser is not proof that durable writers have drained.
+- Inspect actual retained rows and the applied migration ledger. Capture a usable recovery point and retain required
+  immutable R2 bytes; do not schedule their deletion during the rollback window.
+- Convert once, verify identities/counts/heads/citations and the affected query, then switch server/client together.
+  A failed conversion stays closed with diagnostics; it never silently chooses between conflicting saved revisions.
+- Remove predecessor callers and schemas when their migration is verified. Retain a recovery artifact only for the
+  bounded transition, not a permanent fallback reader or old executor. Clear/reopen old browser sessions safely;
+  never resubmit an uncertain write from an obsolete tab.
+- Resume the selected write path only after readback. If new writes already exist, prefer a forward correction;
+  restoring old D1 state is a separate data-recovery decision that must account for those writes and current deletion
+  state. Restoring metadata cannot recover already-purged R2 bytes or undo a provider charge.
+
+Worker rollback changes code/configuration/assets, not D1/R2 contents. Durable Object class lifecycle changes can
+also prevent rollback across the change. Record a realistic recovery option for the actual migration, not merely
+“keep old bundle.” Do not promise a global atomic deployment across Worker, D1, R2, Queue and external providers.
+
+## Acceptance of the assembled product
+
+Use a bounded representative corpus and the exact selected provider/model/settings. Check the actual owner journeys:
+
+| Journey | Required observation |
+|---|---|
+| Import/project/read | Exact retained source opens; empty projects remain visible; indexing is separate |
+| Ordinary answer | Progressive public text, one intended generation, saved report and exact citation reopen |
+| Explicit deep research | Bounded search/read actions, visible progress, honest partial result and cancellation |
+| Wiki/Inbox | Real continuation, owner decision or direct edit, one revision and visible expected-head conflict |
+| Connected agent | Actual connection, one accepted task and its result under the selected access boundary |
+
+Also check foreign/expired access, source deletion, duplicate delivery, uncertain acknowledgements, concurrent edits,
+reconnect/slow subscribers and a selected dependency outage on the assembled paths. Use retained focused cases;
+do not add a universal acceptance engine or run model judges around every answer.
+
+Measure first visible text and final save separately; record total model/tool calls, D1/R2 operations and failures.
+State corpus size, cold/warm conditions and cache hits. A cached report open is not fresh generation latency.
+Use the current agreed performance/bundle limits; source-line reductions and emulator timings are not live savings.
+
+The release note identifies build/environment, affected journeys, checks actually completed, known limitations and
+recovery/data-transition status. Existing CI remains useful evidence within its scope. No mandatory all-family Rust
+port, universal federation, Drive Exchange, backup platform or canceled search-generation programme is restored.
+
+## Platform references
+
+Checked 2026-10-21; use the installed toolchain, not an unreviewed upgrade:
+
+- [Worker versions and deployments](https://developers.cloudflare.com/workers/versions-and-deployments/): versioned
+  code/assets/configuration are distinct from associated storage state.
+- [Worker rollbacks](https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/) and
+  [Durable Object lifecycle changes](https://developers.cloudflare.com/workers/versions-and-deployments/gradual-deployments/with-durable-objects/): recovery has resource/schema constraints.
+- [D1 migrations](https://developers.cloudflare.com/d1/reference/migrations/) and
+  [Time Travel](https://developers.cloudflare.com/d1/reference/time-travel/): use the native applied-migration ledger
+  and point-in-time recovery where available; neither restores other products or external effects.
+- [Wrangler API](https://developers.cloudflare.com/workers/wrangler/api/): local binding proxies are not proof of
+  production behavior. Native tooling is a dependency, not another Eliot abstraction layer.

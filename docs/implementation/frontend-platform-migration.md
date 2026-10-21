@@ -41,10 +41,11 @@ No prompts, reasoning, credentials, raw provider frames or fabricated source coo
 
 ## Retirement and acceptance
 
-Keep a known-good online rollback artifact with the inert service-worker behavior. After callers and
-served assets switch, delete Astro source, old controllers/styles and unused client dependencies.
-A retained rollback artifact does not require two maintained codebases. Do not retain an old client only
-because a Core fixture imports it; move that fixture with the production callers.
+Keep a known-good rollback artifact with inert service-worker behavior only while its API/data contract remains
+compatible. Worker rollback does not restore D1/R2; use [the data-cutover procedure](production-readiness-plan.md)
+when changing storage. Old tabs must reopen safely, not replay uncertain writes against a new schema.
+After callers and served assets switch, delete Astro source, old controllers/styles and unused client dependencies.
+A bounded recovery artifact does not require two maintained codebases. Move Core fixture imports with real callers.
 
 Compile/lint while implementing; browser/product checks follow assembly. Check actual response headers,
 Inbox recovery, old tabs/bfcache, focus, source opening and rollback against the integrated build.
