@@ -46,6 +46,7 @@ const currentImplementation = [
   "research-full-answer-v1.md",
   "deep-research.md",
   "research-session-projection-protocol.md",
+  "gemini-spark-mcp.md",
   "wiki-inbox.md",
   "owner-read-paths.md",
   "frontend-platform-migration.md",

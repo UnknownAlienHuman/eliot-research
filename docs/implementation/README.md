@@ -17,6 +17,7 @@ relevant row below and its actual source callers. Do not load every old audit, l
 | Ordinary source-backed answer and report | [Ordinary answer](research-full-answer-v1.md) |
 | Explicit bounded deep research | [Deep research](deep-research.md) |
 | Progress, live text and reconnect | [ResearchSession delivery](research-session-projection-protocol.md) |
+| Selected MCP/connected-agent transport | [MCP transport](gemini-spark-mcp.md) |
 | Wiki pages, Inbox proposals, decisions and edits | [Wiki and Inbox](wiki-inbox.md) |
 | Owner lists, history, reopening and report edits | [Owner reads](owner-read-paths.md) |
 | React/Vite cutover and old UI removal | [Frontend cutover](frontend-platform-migration.md) |

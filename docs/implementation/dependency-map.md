@@ -1,6 +1,6 @@
 # Code and responsibility map
 
-Checked against `main@4655df4d` on 2026-10-21. This locates current owners and selected replacement destinations.
+Checked against `main@bc78c207` on 2026-10-21. This locates current owners and selected replacement destinations.
 It is not a package blueprint and does not require preserving every named layer. [The plan](backend-entrypoints.md)
 selects work; merged foundations below must not be rebuilt as new tasks.
 
@@ -38,6 +38,7 @@ selects work; merged foundations below must not be rebuilt as new tasks.
 | Run/report lists | `cloudflare-research-runtime/src/research-run-list.ts`; owner history modules | D1 summaries and keyset continuation; no Workflow/checkpoint/body reconstruction for a list |
 | Wiki Inbox read | `packages/cloudflare-wiki/src/wiki-service.ts`; owner client/React Studio | Direct owner-scoped metadata list with merged `(created_at, proposal_id)` continuation; body loads on open |
 | Wiki decision/storage | current `wiki_publication_*`, review and owner-edit code | Convert to one page/revision history plus one Inbox proposal; expected-head decision transaction and direct change-feed row |
+| MCP transport/tools | `cloudflare-workspace-mcp/src/gemini-mcp*.ts`; Core `mcp-research-service.ts` | One exact Access boundary over existing application services; profile-filtered selected tools; no Drive Exchange/second engine |
 | External agents | `packages/cloudflare-computer-agent/src/`; selected MCP task/result routes | Keep explicit connection/task/result lifecycle; no implicit Wiki/workspace ownership |
 | Capability/release tooling | Core `capabilities`; deploy/provision/maintenance scripts | One pure capability computation shared by Worker/tooling; observed resources and user-journey evidence remain separate |
 
@@ -56,6 +57,14 @@ selects work; merged foundations below must not be rebuilt as new tasks.
 These fixes do not complete the broader source/report/Wiki/research cutovers. Do not recreate the removed mechanisms
 or describe them as required new work.
 
+## Current MCP findings
+
+Runtime source supports `service-token | managed-oauth | hybrid`, but deployment receipt/reconciliation currently
+accepts only the first two. Unify that existing caller chain before claiming hybrid deployable; do not add another
+profile registry. Core's managed-owner catalog path also performs one discarded duplicate context-construction call
+after the actual read; remove it. The broad tool registry is not automatically selected scope—trace configured clients
+and remove tools/adapters with no current product caller.
+
 ## State and dependency direction
 
 D1 Core owns short source/project/run/task metadata, report/Wiki heads, Inbox decisions and result references. R2 owns
@@ -66,6 +75,7 @@ No D1 transaction contains network, model or R2 work. Conditional R2 creation pr
 transaction. A Queue/outbox exists only for a real asynchronous delivery consumer. Backup/erasure/table inventories
 move with schema callers; they do not veto deletion of dead state.
 
-Core remains the one Worker. Browser code uses one owner client and never imports server bindings. Extract a shared
-helper only after two current callers perform the same small operation and the helper removes code. A replacement is
-complete when callers move and predecessor exports, tests, packages and schema disappear.
+Core remains the one Worker. Browser code uses one owner client and never imports server bindings. MCP delegates to
+existing Core services and owns no second state engine. Extract a shared helper only after two current callers perform
+the same small operation and the helper removes code. A replacement is complete when callers move and predecessor
+exports, tests, packages and schema disappear.
