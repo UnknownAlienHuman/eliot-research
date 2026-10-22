@@ -52,8 +52,10 @@ only after a real responsibility becomes hard to read. Do not create transport-s
 
 ## 2. Cloudflare Access is the only sign-in boundary
 
-Attach Access to the Worker so custom domains, routes, `workers.dev` and preview URLs cannot bypass it. Browser/API
-traffic and `/mcp` may use separate Access applications/audiences when their policies differ, while remaining one Worker.
+Attach Worker-level Access as the default deny so custom domains, routes, `workers.dev` and preview URLs cannot
+bypass it. When MCP policy or Managed OAuth differs from the owner's browser policy, route a dedicated MCP hostname
+(or a verified path-specific Access application) to the same Worker and validate that route's own audience. Do not use
+the browser application's owner session as proof of an independently revocable agent identity.
 Validate signature, issuer, expected audience and expiry once per HTTP request or WebSocket upgrade using cached JWKS.
 Create an actor context and pass it to internal functions, DO calls and jobs; do not sign internal objects or exchange
 another token between modules.
@@ -120,13 +122,16 @@ result; a selected Gateway retry/fallback is part of the pinned route and the ac
 Incoming MCP lets external agents use Eliot. Outgoing MCP lets Eliot use selected remote tools. They are separate.
 
 Use one owner Tool Connection Agent with the Agents SDK MCP client manager. D1 is authoritative for desired connection
-identity, URL, enabled projects/tools and side-effect class. The Agent's SQL owns SDK registration, OAuth/token state,
-connection lifecycle and the live discovered catalogue for the same stable connection ID. On wake/configuration change,
-reconcile runtime state to D1; neither store silently overwrites the other.
+identity, URL, enabled projects/tools, approved catalogue digest and side-effect class. The Agent's SQL owns SDK
+registration, OAuth/token state, connection lifecycle and the live discovered catalogue for the same stable connection
+ID. On wake/configuration change, reconcile runtime state to D1; neither store silently overwrites the other. Static
+credentials, when unavoidable, remain in Cloudflare-managed secrets and are represented in D1 only by status/reference.
 
 The Agent exposes bounded RPC to read the approved catalogue and execute one
-`{connectionId, toolName, arguments, invocationId}` call. Chat/research create host-owned AI SDK wrappers from the
-approved discovered schema. Check actor/project scope, tool allowlist, call ceilings and side-effect class before RPC.
+`{connectionId, toolName, catalogueDigest, arguments, invocationId}` call. Chat/research create host-owned AI SDK wrappers
+from the approved discovered schema. A turn/job freezes connection ID, tool name, catalogue digest and side-effect class.
+Before invocation, compare the live digest; if the schema or classification changed, stop and require an explicit refresh
+instead of silently calling a redefined tool. Check actor/project scope, tool allowlist and call ceilings before RPC.
 Do not copy execute closures between DOs. One failed remote server removes only its tools. Bound per-connection
 concurrency and timeouts; do not pre-emptively create a connector microservice or one DO per tool.
 
@@ -152,26 +157,32 @@ content signatures or JSON business logic in triggers.
 | `model_connection` | Name, route/provider/Gateway, credential reference/status, enabled state, available/manual model IDs and bounded defaults |
 | `mcp_connection` | Stable ID, name, URL, auth/status reference, enabled projects/tools and side-effect classes; no secret |
 | `project` | ID, title, description, archived state, default model/response/tool settings, agent edit mode and timestamps |
-| `source` | Canonical Library identity, current revision, metadata summary, state and timestamps |
+| `source` | Canonical Library identity, nullable current **usable** revision, metadata summary, state and timestamps |
 | `source_author`, `source_tag`, `source_identifier` | Filterable authors/tags and normalized DOI/arXiv/ISBN/provider IDs |
 | `source_revision` | Source, content hash, R2 keys, parser/profile, sizes, warnings and extraction/index/card state |
 | `project_source` | Project/source membership, retrieval enabled and project-local note/priority |
 | `search_item` | Revision, instance, key/ID, block/range/kind and publication state |
 | `page` | Project, kind (`note/digest/report/wiki/map/audit`), optional Wiki slug, current revision and summary |
 | `page_revision` | Page, base revision, immutable R2 body, actor/decision, origin operation and timestamps |
-| `page_input` | Page revision → source/page revisions used; indexed in both directions |
+| `page_input` | Page revision → exactly one source revision or page revision used; indexed in both directions |
 | `chat` | ID, immutable destination project, title and timestamps; transcript/state remains in the chat DO |
-| `chat_input` | Chat/message → source/page revisions actually used; query projection only, no transcript or quote duplication |
+| `chat_input` | Chat/message → exactly one frozen source/page revision; query projection only, no transcript or quote duplication |
 | `job` | Type, project, actor, immutable input key, Workflow ID, state/cancellation/progress, local ceilings/usage and result |
-| `job_input` | Job → frozen source/page revisions; query projection for impact, cleanup and migration |
+| `job_input` | Job → exactly one frozen source/page revision; query projection for impact, cleanup and migration |
 | `agent` | Verified identity/profile, enabled state, allowed projects/operations, outgoing-tool and paid-work permissions |
-| `task` | Destination project, operation/instructions, requested source scope, offer/claimant/state/result and timestamps |
+| `task` | Destination project, operation/instructions, scope mode, offer/claimant/state/result and timestamps |
+| `task_input` | Task → requested source identity and the exact revision frozen when work is claimed |
 | `activity` | Successful attributed mutation: actor, project/subject, kind, operation ID and safe short metadata |
 
-`chat_input` and `job_input` close a necessary gap: citations may remain in the chat DO and full job input in R2, but
-source replacement/deletion, stale indicators, export and migration need bounded D1 queries to identify affected work.
-Populate these projections when a turn/job freezes its inputs. They are rebuildable relationships, not a second content
-store.
+Implement each source/page input relation with two nullable foreign keys plus a CHECK that exactly one is non-null and
+a uniqueness constraint for its owner revision/message/job. Do not use an unchecked polymorphic string or JSON array.
+
+`chat_input`, `job_input` and `task_input` close a necessary gap: citations may remain in the chat DO and full job input
+in R2, but source replacement/deletion, stale indicators, export and migration need bounded D1 queries to identify
+affected work. Insert a job and its frozen `job_input` rows in one D1 batch before Workflow creation. Allocate a stable
+chat message/turn ID and insert its frozen `chat_input` rows before any paid dispatch; a failed generation may leave a
+safe over-approximation until reconciliation, but never an unrecorded dependency. Resolve/freeze `task_input` at claim.
+These are rebuildable relationships, not a second content store.
 
 R2 keys are immutable and identity-specific:
 
@@ -206,7 +217,10 @@ the same operation with bounded concurrency and per-item results.
    by ID; never create a replacement source merely because a response was lost.
 4. Extract readable UTF-8 outside D1. Plain text/Markdown/CSV are deterministic. Supported files use `toMarkdown`.
    Retain parser identity, warnings and whether image text is OCR or generated description.
-5. Produce deterministic outline and structural block map; publish readable material even if indexing/generation fails.
+5. Store canonical text, outline and structural block map, then conditionally advance `source.current_revision` only
+   after the readable representation is valid. A failed replacement remains a visible failed/raw revision and leaves
+   the previous usable head intact. A first-ever unreadable source keeps a null current revision and an explicit
+   `stored_needs_conversion` state. Index or optional generation failure does not roll back readable publication.
 6. Publish deterministic search items with bounded concurrency, per-item status and backoff. The Workers binding exposes
    individual item uploads, so do not serialize an unbounded one-request-per-block loop or invent a batch API. Coalesce
    small adjacent blocks, cap concurrent uploads, persist each returned item ID and reconcile an exact key after loss.
@@ -245,6 +259,12 @@ and UTF-8 boundaries. Long tables repeat caption, headers and units in `search_p
 canonical bytes. Code fences remain intact where practical. Generated descriptions are labelled and never quoted as
 source text.
 
+Configure the AI Search instance with `chunk_overlap: 0` and a verified `chunk_size` large enough for the emitted
+locator + prefix + block. Keep the emitted maximum at or below that accepted size so one structural item normally yields
+one native search chunk. The accepted range varies by embedding model/API version: if the instance rejects the chosen
+size, reduce the block maximum rather than relying on a second opaque chunking layer. Verify the returned prefix/body
+boundary; if the provider still splits an item, citation mapping must resolve the exact returned subrange.
+
 Each block is one AI Search item, for example `r/<revision>/b/<block>.md`, containing a small machine-readable locator,
 non-quotable prefix and exact body. Store its key/ID in `search_item`. Also publish one `record_kind=source_card` item per
 revision for orientation. Evidence search filters `record_kind=block`; source cards never enter the citation set.
@@ -281,6 +301,10 @@ Initial text profile:
 
 - `@cf/qwen/qwen3-embedding-0.6b` for multilingual English/Russian retrieval;
 - native BM25 + vector hybrid retrieval with RRF;
+- the `porter` keyword tokenizer as the natural-language baseline, with Russian exact/inflected terms, identifiers and
+  numbers measured explicitly; use `trigram` only after a demonstrated recall benefit because changing tokenizer
+  requires a full reindex;
+- `keyword_match_mode: "and"` for the focused default; use `"or"` only for an explicit broadened search/research step;
 - `match_threshold: 0`, because that threshold filters by vector similarity and can remove lexical-only hits;
 - `context_expansion: 0`, because canonical block/section hydration owns surrounding context;
 - query rewriting disabled for first-turn/exact queries and enabled only for a genuinely ambiguous follow-up with the
@@ -329,9 +353,10 @@ destination project; there is no server-global active project. Persist selected 
 explicit versus empty selection, model/response override and selected outbound tools in supported chat state. Each turn
 records the resolved route, exact revision/projection IDs and structured citations; populate `chat_input`.
 
-Known small material is read directly; otherwise perform one retrieval preparation and one streamed synthesis. The
-model distinguishes source statements, Eliot inference and unsupported gaps. “Not found” differs from still-indexing,
-unavailable or partially searched.
+Known small material is read directly; otherwise perform one retrieval preparation and one streamed synthesis. Each
+ordinary turn has an explicit input/context budget, output-token cap, provider timeout and one synthesis call. An agent
+using Eliot's `ask` tool follows the same turn limits. The model distinguishes source statements, Eliot inference and
+unsupported gaps. “Not found” differs from still-indexing, unavailable or partially searched.
 
 Override durable recovery initially so disconnect/restart persists the partial result but does not automatically buy a
 continuation. Catalog/dynamic streams may resume through the binding; vendor-model streams may not. Stop persists and
@@ -385,7 +410,8 @@ requested. Audit never deletes or repairs data by itself.
 ## 10. Durable jobs and deep research
 
 A job row plus immutable R2 input pins destination project, actor, selected project/source/page revisions, projection
-instances, model route/settings, approved outgoing tools, mode, question/focus and hard limits. Populate `job_input`.
+instances, model route/settings, approved outgoing tool names/catalogue digests/classifications, mode, question/focus
+and hard limits. Populate `job_input`.
 Workflow checkpoints hold short counters/IDs/object references; larger findings live in R2.
 
 `ResearchWorkflow` supports `distill_source`, `compare`, `deep_research`, `refresh_wiki`, `refresh_map` and
@@ -496,13 +522,17 @@ never source text or secret values. Owner UI shows safe errors and operation IDs
 | Delete from Library | Tombstone first, immediately exclude new use, preview impact, then clean exact objects/items |
 | Erase derived copies | Separate explicit scope covering copied page/chat/export text; source deletion alone does not promise this |
 
-Impact preview uses bounded queries over `project_source`, `page_input`, `chat_input`, `job_input`, tasks and current
-producers. Do not scan DO transcripts or R2 bodies to discover relationships that should already be projected.
+Impact preview uses bounded queries over `project_source`, `page_input`, `chat_input`, `job_input`, `task_input` and
+current producers. Do not scan DO transcripts or R2 bodies to discover relationships that should already be projected.
 
-Tombstone in D1 before calling AI Search/R2. Search outage cannot delay logical deletion. Writers check tombstone before
-and after external writes. Cleanup operates on exact stored keys/item IDs, reconciles unknown create acknowledgements,
-waits for known producers/in-flight effects to settle, removes late writes, and repeats until no unresolved producer or
-item remains. Missing items are already gone; other failures remain visible/retryable.
+Tombstone in D1 before calling AI Search/R2. Search outage cannot delay logical deletion. Preserve tombstoned `source`,
+`source_revision` and input-reference identities/coordinates so historical citations can resolve as unavailable; do not
+cascade-delete dependency rows during ordinary Library deletion. Cleanup removes exact bytes/items, not the historical
+identity needed by saved work. Wider metadata/derived-text erasure is a separate explicit operation.
+
+Writers check tombstone before and after external writes. Cleanup operates on exact stored keys/item IDs, reconciles
+unknown create acknowledgements, waits for known producers/in-flight effects to settle, removes late writes, and repeats
+until no unresolved producer or item remains. Missing items are already gone; other failures remain visible/retryable.
 
 Old reports retain their text and show unavailable evidence. Historical citations never relink to matching text in a
 new revision. Routine optimization may remove disposable old projections, temporary job outputs and unreferenced R2
@@ -539,8 +569,10 @@ Clippy only when Rust changes. Do not recreate source-text gates, ancestry claim
 
 After assembly, exercise concrete risks:
 
-- duplicate/lost upload acknowledgement and partial projection publication;
-- Russian↔English retrieval, exact identifiers, late-paper facts, tables/equations/code and contradictory sources;
+- duplicate/lost upload acknowledgement, bounded concurrent item publication and partial projection publication;
+- a failed replacement extraction leaving the previous usable source head intact;
+- Russian↔English retrieval, Porter versus measured alternatives, exact identifiers, late-paper facts,
+  tables/equations/code and contradictory sources;
 - explicit scope beyond 50 sources and beyond verified filter payload limits;
 - source replacement/deletion while chats/jobs/pages reference old revisions;
 - non-ASCII citation ranges and ambiguous repeated text;
@@ -555,9 +587,10 @@ Verify against installed/current platform behavior rather than prose:
 - `createAI` route IDs, BYOK alias/fallback, payload logging and stream-resume limits;
 - AI Search item API, key length, metadata types, filter/payload limits, current file/instance/cross-instance limits and
   pricing;
-- exact item-key → block mapping after native chunking;
+- configured chunk size/overlap producing the expected item-to-chunk mapping, and exact item-key → canonical subrange
+  mapping when it does not;
 - Access route audiences, Managed OAuth assertion and supported service/client identities;
-- MCP client/server package versions and Tool Connection Agent RPC shape;
+- MCP client/server package versions, approved catalogue-digest behavior and Tool Connection Agent RPC shape;
 - `toMarkdown` quality on actual PDFs, Cyrillic, scans and tables;
 - chat DO export/import and supported persisted metadata.
 
