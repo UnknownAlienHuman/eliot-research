@@ -177,22 +177,27 @@ content signatures or JSON business logic in triggers.
 | `job_input` | Job → exactly one frozen source/page revision; query projection for impact, cleanup and migration |
 | `agent` | Verified identity/profile, enabled state, allowed projects/operations, outgoing-tool and paid-work permissions |
 | `task` | Destination project, operation/instructions, scope mode (`pinned` or `current_at_claim`), offer/claimant/state/result and timestamps |
-| `task_input` | Task → requested source identity and exact source revision frozen at the selected scope boundary |
+| `task_scope` | Task → exactly one requested logical source or page before exact revision freeze |
+| `task_input` | Task → exactly one exact source revision or page revision frozen at creation or claim |
 | `activity` | Successful attributed mutation: actor, project/subject, kind, operation ID and safe short metadata |
 
-Implement each source/page input relation with two nullable foreign keys and a CHECK that exactly one is non-null. Add
-partial unique indexes on `(owner_id, source_revision_id)` where the source FK is set and on
-`(owner_id, page_revision_id)` where the page FK is set. Do not add owner-only uniqueness, use an unchecked polymorphic
-string or hide the relationship in a JSON array.
+Implement `page_input`, `chat_input`, `job_input` and `task_input` with two nullable revision foreign keys and a CHECK
+that exactly one is non-null. Add partial unique indexes on `(owner_id, source_revision_id)` where the source FK is set
+and on `(owner_id, page_revision_id)` where the page FK is set. Implement `task_scope` the same way against logical
+`source`/`page` identities. Do not add owner-only uniqueness, use an unchecked polymorphic string or hide relationships
+in JSON arrays.
 
-`chat_input`, `job_input` and `task_input` close a necessary gap: citations may remain in the chat DO and full job input
-in R2, but source replacement/deletion, stale indicators, export and migration need bounded D1 queries to identify
-affected work. Insert a job and its frozen `job_input` rows in one D1 batch before Workflow creation. Allocate a stable
-chat message/turn ID and insert its frozen `chat_input` rows before any paid dispatch; a failed generation may leave a
-safe over-approximation until reconciliation, but never an unrecorded dependency. For tasks, `pinned` scope resolves and
-writes `task_input` at creation; `current_at_claim` resolves and writes it atomically with the successful claim. A later
-source head change never rewrites an existing task's frozen inputs. These are rebuildable relationships, not a second
-content store.
+`chat_input`, `job_input`, `task_scope` and `task_input` close a necessary gap: citations may remain in the chat DO and
+full job input in R2, but source/page replacement or deletion, stale indicators, export and migration need bounded D1
+queries to identify affected work. Insert a job and its frozen `job_input` rows in one D1 batch before Workflow creation.
+Allocate a stable chat message/turn ID and insert its frozen `chat_input` rows before any paid dispatch; a failed
+generation may leave a safe over-approximation until reconciliation, but never an unrecorded dependency.
+
+At task creation, write `task_scope`. A `pinned` task resolves the selected current revisions and writes exact
+`task_input` rows in the same creation transaction. A `current_at_claim` task has only logical scope until a successful
+claim transaction resolves current source/page heads and inserts exact `task_input` rows atomically with
+`open/offered → in_progress`. The claimant receives those exact revisions. A later source/page head change never
+rewrites existing task inputs. These projections are relationships, not a second content store.
 
 R2 keys are immutable and identity-specific:
 
@@ -211,10 +216,11 @@ Write an object first, then conditionally publish the short D1 head. A failed pu
 retry/cleanup. Hash exact bytes once for deduplication; title/URL alone never merges sources. DOI/external IDs produce
 owner-visible duplicate/version candidates.
 
-Every page edit supplies the head it read. Conditionally insert revision, dependencies and activity and advance the head
-in one D1 batch; inspect `meta.changes`. Proposal acceptance checks proposal state and displayed head. Stable mutation
-IDs return the prior result on exact retries and conflict when reused with different input. Task claim is one conditional
-`open/offered → in_progress`; only claimant or owner can complete/release it.
+Every page edit supplies the head it read. All revision/dependency/activity inserts and the head update share the same
+expected-head precondition in one D1 batch; a stale head inserts nothing. Inspect every statement's `meta.changes` before
+reporting success. Proposal acceptance also checks proposal state and displayed head. Stable mutation IDs return the
+prior result on exact retries and conflict when reused with different input. Only a task claimant or owner can
+complete/release it.
 
 ## 5. Ingest, extraction and source versions
 
@@ -340,6 +346,17 @@ Verify installed binding types. The result limit is not a source-selection limit
 top-k searches and merge incomparable ranks as if they were one corpus. For a scope beyond a verified filter/request
 bound, use one native cross-instance search over deterministic projections, a durable exhaustive/per-source comparison,
 or request narrower scope. Report partial scope explicitly.
+
+After every native search, resolve each returned `item.key` through `search_item` and require all of the following before
+reading R2 bytes: the projection instance belongs to the frozen instance list, `record_kind` is allowed for the current
+operation, the resolved revision is in the frozen permitted revision set, and the source is not Library-tombstoned.
+Drop and record any provider result that violates those checks; do not let provider metadata widen scope. Recheck the
+source tombstone immediately before canonical hydration and before saving a new citation.
+
+Replacing a source or changing project membership after admission does not retarget an already frozen turn/job.
+Detach, exclude or archive affects future scopes. Library deletion is stronger: once its tombstone is observed, no
+not-yet-read bytes from that source enter later context or effects. Already dispatched external calls cannot be recalled;
+preserve their known partial outcome and mark the source/citation unavailable rather than repeating the call.
 
 | Request | Preparation |
 |---|---|
@@ -509,9 +526,10 @@ Large file bytes use an authenticated short-lived upload reference, not base64 i
 an agent's project grant are rejected. Source contribution, task work, paid Eliot jobs, outgoing tools and Library
 deletion are separate permissions. A task narrows an existing grant; claiming it grants nothing else.
 
-Task creation explicitly chooses `pinned` or `current_at_claim` source semantics. An owner offer defaults to `pinned` so
-the material seen during delegation cannot silently change before acceptance. A reusable open task may choose
-`current_at_claim`; its exact revisions become visible to the claimant and are frozen by the claim transaction.
+Task creation explicitly chooses `pinned` or `current_at_claim` semantics and stores logical source/page scope in
+`task_scope`. An owner offer defaults to `pinned` so the exact material seen during delegation cannot silently change
+before acceptance. A reusable open task may choose `current_at_claim`; its exact current revisions are inserted by the
+claim transaction, returned to the claimant and retained as task history.
 
 Agent setup shows the real endpoint/client instructions, verified identity/profile, allowed projects/operations and
 limits. Disabling it takes effect on the next operation. Results/proposals remain attributable and survive reconnects.
@@ -530,6 +548,15 @@ step, hard limits, partial findings and Stop.
 All project-dependent routes, query keys, mutations, drafts, chat IDs and jobs carry project/chat ID. Opening another tab
 or switching project does not retarget a stream/write. Late responses update their keyed project. Cross-project work
 freezes the union of permitted enabled revisions and explicit destination, deduplicating shared Library sources.
+
+Use one audited Markdown renderer for source/page/report/model text. Raw HTML is disabled or strictly sanitized, external
+URL schemes are validated, citation controls are created from structured references rather than arbitrary Markdown, and
+code/table overflow stays inside the reading surface. Do not use unaudited `innerHTML`.
+
+Private source/page/evidence bytes and chat messages remain in memory or server state, not `localStorage`, IndexedDB, a
+root service worker or a private offline cache. Persist only non-sensitive UI preferences locally. Clear protected query
+caches and rendered views on sign-out, principal change or revocation; late responses cannot restore cleared data.
+Server-saved drafts/pages, not hidden browser copies, own recoverable research work.
 
 Lists use indexed D1 queries and keyset pagination. Project open never loads source bodies, transcripts, page bodies,
 remote model catalogs or remote MCP catalogs. Poll only active work with backoff and stop in hidden views. Batch D1
@@ -560,8 +587,9 @@ never source text or secret values. Owner UI shows safe errors and operation IDs
 | Delete from Library | Tombstone first, immediately exclude new use, preview impact, then clean exact objects/items |
 | Erase derived copies | Separate explicit scope covering copied page/chat/export text; source deletion alone does not promise this |
 
-Impact preview uses bounded queries over `project_source`, `page_input`, `chat_input`, `job_input`, `task_input` and
-current producers. Do not scan DO transcripts or R2 bodies to discover relationships that should already be projected.
+Impact preview uses bounded queries over `project_source`, `page_input`, `chat_input`, `job_input`, `task_scope`,
+`task_input` and current producers. Do not scan DO transcripts or R2 bodies to discover relationships that should already
+be projected.
 
 Tombstone in D1 before calling AI Search/R2. Search outage cannot delay logical deletion. Preserve tombstoned `source`,
 `source_revision` and input-reference identities/coordinates so historical citations can resolve as unavailable; do not
@@ -571,6 +599,11 @@ identity needed by saved work. Wider metadata/derived-text erasure is a separate
 Writers check tombstone before and after external writes. Cleanup operates on exact stored keys/item IDs, reconciles
 unknown create acknowledgements, waits for known producers/in-flight effects to settle, removes late writes, and repeats
 until no unresolved producer or item remains. Missing items are already gone; other failures remain visible/retryable.
+
+Deleting Eliot's retained bytes cannot recall content already dispatched to a model, search or external-tool provider,
+or remove independent exports/backups controlled elsewhere. The Models/Connections UI exposes the selected route's
+logging/retention mode where known. Payload logging is disabled by default for source-bearing Gateway calls, but the UI
+must not promise cryptographic or third-party erasure that Eliot cannot perform.
 
 Old reports retain their text and show unavailable evidence. Historical citations never relink to matching text in a
 new revision. Routine optimization may remove disposable old projections, temporary job outputs and unreferenced R2
@@ -614,13 +647,16 @@ After assembly, exercise concrete risks:
 - Russian↔English retrieval, Porter versus measured alternatives, exact identifiers, late-paper facts,
   tables/equations/code and contradictory sources;
 - explicit scope beyond 50 sources and beyond verified filter payload limits;
+- provider results outside the frozen scope and source tombstone races before hydration/citation save;
 - source replacement/deletion while chats/jobs/pages/tasks reference old revisions;
 - non-ASCII citation ranges and ambiguous repeated text;
-- competing page edits, proposal rejection, pinned/current-at-claim task semantics, task reclaim and agent disconnect;
+- competing page edits, proposal rejection, pinned/current-at-claim task semantics for source and page inputs,
+  task reclaim and agent disconnect;
 - cancellation before/during paid calls and unknown provider completion;
-- two projects in separate tabs with different models/scopes, shared source and concurrent jobs;
+- two projects in separate tabs with different models/scopes, shared sources and concurrent jobs;
 - ordinary no-tool versus explicitly tool-assisted chat, outgoing tool schema/catalogue changes, read/write/external-spend
   approval and unknown mutation result;
+- safe Markdown, sign-out/revocation cache clearing and absence of private browser persistence/offline caches;
 - chat recovery, export/import and migration rehearsal.
 
 Verify against installed/current platform behavior rather than prose:
