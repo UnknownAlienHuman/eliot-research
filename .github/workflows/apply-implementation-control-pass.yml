@@ -1,0 +1,45 @@
+name: Apply implementation control pass
+
+on:
+  push:
+    branches:
+      - docs/rebuild-architecture
+    paths:
+      - .github/workflows/apply-implementation-control-pass.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: docs/rebuild-architecture
+          fetch-depth: 0
+      - name: Replace audited implementation document
+        run: |
+          python - <<'PY'
+          import base64
+          import gzip
+          from pathlib import Path
+
+          parts = sorted(Path('.github/implementation-control-pass').glob('part-*'))
+          payload = ''.join(path.read_text().strip() for path in parts)
+          data = gzip.decompress(base64.b64decode(payload))
+          Path('docs/IMPLEMENTATION.md').write_bytes(data)
+          PY
+          git diff --check
+      - name: Commit control-pass corrections
+        run: |
+          if git diff --quiet -- docs/IMPLEMENTATION.md; then
+            echo 'No changes required'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add docs/IMPLEMENTATION.md
+          git commit -m 'docs: resolve control-pass lifecycle and ownership gaps'
+          git push origin HEAD:docs/rebuild-architecture
