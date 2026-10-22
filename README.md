@@ -1,18 +1,22 @@
 # Eliot Research
 
-A NotebookLM-style research workspace for one owner and the AI agents working with them: bring sources into
-notebooks, ask questions with exact citations, keep answers as pages and a wiki, run explicit deep research,
-and let agents connected over MCP take tasks and propose changes for review. Runs on Cloudflare; external
-models are reached through Cloudflare AI Gateway.
+A research workspace for one human owner and connected agents: a shared library, exact source passages,
+cited answers, document distillation, versioned reports, Wiki and explicit deep research on Cloudflare.
 
-**Status:** the project is being rebuilt from a clean slate (decided 2026-10-21). The previous implementation is
-frozen at git tag `legacy-final` (to be created in Phase 0) and is not developed further.
+**The compact replacement is specified; it is not yet implemented or deployed.** Existing application code
+is a donor and migration source. This documentation pass does not change the running application.
 
-| Read | For |
+| Document | Purpose |
 |---|---|
-| [AGENTS.md](AGENTS.md) | Rules for every contributor, human or AI — read first |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | What the product is, how it works, what is out of scope |
-| [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md) | Files, schema, APIs, algorithms and the build plan |
+| [Architecture](docs/ARCHITECTURE.md) | Product, required capabilities and boundaries; persistent developer context |
+| [Implementation](docs/IMPLEMENTATION.md) | Concrete storage, algorithms, platform APIs and failure behaviour |
+| [Map and work order](docs/MAP.md) | Current code → replacement responsibility; integration sequence |
+| [Donors and primary sources](docs/DONORS.md) | Ready-made APIs, useful donor mechanisms and what not to copy |
+| [Audits](.github/audits/README.md) | Current findings and preserved historical evidence |
+| [Working rules](AGENTS.md) | Reading, implementation, coordination and verification |
 
-These are the only current documents. Until Phase 0 removes it, the legacy code is still in the tree;
-ignore it. MIT — see [LICENSE](LICENSE).
+[Issue #380](https://github.com/UnknownAlienHuman/eliot-research/issues/380) explains the earlier failure.
+Its dated counts and recommendations are checked against source in the current audit, not repeated as
+current production facts. Superseded specifications remain reachable through pinned historical links.
+
+MIT. See [LICENSE](LICENSE).
