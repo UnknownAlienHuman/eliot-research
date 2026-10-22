@@ -9,8 +9,9 @@ parallel specification or claim that code has been repaired.
 
 - [2026-10-22 — implementation viability and documentation integrity](2026-10-22/README.md): removes the opaque
   documentation rewrite path and corrects queryable source-use projections, replacement-head publication, native
-  chunking/keyword defaults, MCP identity/catalogue drift, Access audiences, deletion retention, spend-limit semantics
-  and reindex/recovery boundaries.
+  chunking/keyword defaults, no-tool versus tool-assisted chat, Access topology, public URL acquisition limits,
+  broad-discovery ranking, task revision semantics, MCP identity/catalogue drift, deletion retention, spend limits and
+  reindex/recovery boundaries.
 - [2026-10-21/22 — PR #414 replacement architecture audit](2026-10-21/README.md): compares the original draft,
   corrected revisions, executable legacy code, Cloudflare APIs and selected donors; covers retrieval, outgoing MCP,
   Corpus Map/audits, migration, billing and product-function preservation.

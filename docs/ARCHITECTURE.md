@@ -39,7 +39,7 @@ merely because Eliot generated or saved it.
 | Retrieval | Find exact identifiers and semantic matches across English and Russian material; filter by project, source, author, date, language, type and tags; preserve source scope before retrieval; return coherent sections and table context rather than arbitrary fragments; distinguish relevant hits from complete coverage. |
 | Evidence | Open every citation against retained revision bytes; preserve old citations after source replacement; expose missing, ambiguous, deleted, still-indexing and partially searched evidence honestly; never let a model invent source IDs or byte ranges. |
 | Models | Configure Workers AI, AI Gateway catalog/BYOK routes and compatible custom endpoints through an owner UI; choose global and project defaults plus chat/job overrides; display the resolved route and billing mode; keep credentials in Cloudflare, not application tables or browser storage. |
-| Chat | Ask ordinary questions over explicit/default/empty source scope; stream one grounded synthesis; keep response style/length/instructions and selected model/tools; follow up without losing scope; stop or reconnect; reopen conversations; save a cited answer as knowledge. |
+| Chat | Ask ordinary questions over explicit/default/empty source scope; stream a grounded synthesis; keep response style/length/instructions and selected model/tools; follow up without losing scope; stop or reconnect; reopen conversations; save a cited answer as knowledge. A no-tool turn performs one synthesis. A tool-assisted turn is explicitly selected, exposes only approved tools and has a short hard-capped tool loop; it never silently becomes deep research. |
 | Distillation | Create a quick guide, full source digest, multi-source comparison or research report; process long sources by sections; preserve methods, findings, limitations, disagreements and negative results; record covered, skipped and failed material. |
 | Knowledge | Save, edit, compare, export and reopen notes, digests, reports and Wiki pages with immutable history; mark affected pages stale when inputs change; refresh only affected knowledge; preserve owner edits and rejected proposals. |
 | Corpus Map | Provide a compact navigational map of sources, topics, versions/timeline, source families, contradictions, gaps and suggested reading routes. Map edges are derived navigation with exact source links, not a graph database or evidence authority. |
@@ -79,10 +79,11 @@ than silently relinked. Removing a project membership does not delete the shared
 
 ### Execution and spending stay bounded
 
-Ordinary answers use bounded context preparation and one synthesis. Long work runs durably and preserves completed
-steps. Cancellation stops admission of later effects once observed; an already dispatched provider call may still
-finish or be billed. Cloudflare Gateway limits are used where they fit; Eliot keeps only job-local limits and
-state needed to explain and resume the work. Unknown cost remains unknown.
+A no-tool ordinary answer uses bounded context preparation and one synthesis. A tool-assisted turn is explicitly
+selected, caps model/tool steps and still ends in one grounded synthesis; it does not enter the durable research
+workflow. Long work runs durably and preserves completed steps. Cancellation stops admission of later effects once
+observed; an already dispatched provider call may still finish or be billed. Cloudflare Gateway limits are used where
+they fit; Eliot keeps only job-local limits and state needed to explain and resume the work. Unknown cost remains unknown.
 
 ### Authentication is practical
 

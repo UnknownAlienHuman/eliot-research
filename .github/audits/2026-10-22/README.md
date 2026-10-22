@@ -1,33 +1,38 @@
-# Fourth-pass audit — implementation viability and documentation integrity
+# Implementation viability and documentation integrity audit
 
-**Reviewed:** 2026-10-22 UTC.
-**Branch baseline:** [`aac9586`](https://github.com/UnknownAlienHuman/eliot-research/tree/aac9586b6a3865c2941c346b71f18209648c4deb), after the third documentation pass.
+**Reviewed:** 2026-10-22 UTC.  
+**Initial branch baseline:** [`aac9586`](https://github.com/UnknownAlienHuman/eliot-research/tree/aac9586b6a3865c2941c346b71f18209648c4deb), after the third documentation pass.  
 **Legacy baseline:** [`main@7c034569`](https://github.com/UnknownAlienHuman/eliot-research/tree/7c034569b908d3b03a8b821b7c537477a24b10f7).
 
-This pass checked the current Architecture/Implementation/Map/Donors against representative legacy code, issues #377/#380
-and current Cloudflare documentation for AI Search, AI Gateway, Access, Agents/MCP, Workflows, D1/R2 and chat recovery.
-It is a documentation audit, not a runtime test, migration, deployment or performance result.
+This continued audit checked Architecture/Implementation/Map/Donors against representative legacy code,
+issues #377/#380 and current Cloudflare documentation for AI Search, AI Gateway, Access, Agents/MCP,
+Workflows, D1/R2, Browser Run and chat recovery. It is a documentation audit, not a runtime test,
+migration, deployment or performance result.
 
 ## Findings corrected in the owning documents
 
 | # | Severity | Finding | Correction |
 |---|---|---|---|
 | 1 | P1 | **Canonical Implementation was produced by a write-enabled workflow from five opaque gzip/base64 payload files.** The normal PR diff could be replaced by bot output, contradicting reviewability and the anti-bureaucracy rules. | Delete `.github/workflows/apply-implementation-control-pass.yml` and `.github/implementation-control-pass/*`. Canonical docs are ordinary Markdown committed directly. |
-| 2 | P1 | **Deletion/change impact was promised but not queryable.** Page dependencies existed in `page_input`, while chat citations lived only in chat DOs, job inputs only in R2 and task source scope was not normalized. A bounded D1 impact preview could not identify affected chats/messages/jobs/tasks without scanning bodies. | Add rebuildable `chat_input`, `job_input` and `task_input` relationships. Freeze job inputs before Workflow creation, chat inputs before paid dispatch and task revisions at claim. Keep transcript/body authority in DO/R2; use projections only for impact, staleness, cleanup, export and migration. |
+| 2 | P1 | **Deletion/change impact was promised but not queryable.** Page dependencies existed in `page_input`, while chat citations lived only in chat DOs, job inputs only in R2 and task source scope was not normalized. A bounded D1 impact preview could not identify affected chats/messages/jobs/tasks without scanning bodies. | Add rebuildable `chat_input`, `job_input` and `task_input` relationships. Freeze job inputs before Workflow creation, chat inputs before paid dispatch and task revisions at the selected task boundary. Keep transcript/body authority in DO/R2; use projections only for impact, staleness, cleanup, export and migration. |
 | 3 | P1 | **Managed OAuth identity was described too strongly.** Access may authenticate the human owner while several clients share that identity; a client-supplied name is not a distinct agent principal. | Distinct agent revocation/limits require a distinct service/client identity. Otherwise use one explicit owner-delegated MCP profile with shared scope/limits. |
 | 4 | P1 | **Search-item publication could become a slow serial network loop.** The current AI Search Workers binding exposes individual item uploads, while the design publishes one item per structural block. | Coalesce small blocks, cap per-source upload concurrency, persist every item result and reconcile deterministic keys. Do not invent an undocumented batch API or serialize an unbounded number of uploads. |
-| 5 | P1 | **Native search context could duplicate Eliot's canonical hydration.** The third pass did not state the initial `context_expansion`/query-rewrite policy after switching to block items. | Start with `context_expansion: 0`; direct canonical hydration owns parent context. Disable query rewriting for first-turn/exact queries and enable it only for ambiguous follow-ups with identical frozen scope. |
-| 6 | P1 | **Access policy for UI/API and MCP was underspecified.** Managed OAuth/service-token policies may need a different Access application/audience from browser traffic even though all routes share one Worker. | Validate the expected audience per route. Use separate Access applications for `/mcp` and browser/API when policies differ; do not create another auth service. |
+| 5 | P1 | **Native search context could duplicate Eliot's canonical hydration.** The earlier design did not state the initial `context_expansion`/query-rewrite policy after switching to block items. | Start with `context_expansion: 0`; direct canonical hydration owns parent context. Disable query rewriting for first-turn/exact queries and enable it only for ambiguous follow-ups with identical frozen scope. |
+| 6 | P1 | **Access policy for UI/API and MCP was underspecified.** Worker-wide Access, hostname/path applications, Managed OAuth and service-token policies cannot be assumed to layer in the desired order. | Select one tested topology: Worker-wide policy when one policy fits, otherwise explicit protected UI/API and MCP hostnames/apps on the same Worker. Disable/protect every alternate domain/preview and validate route-specific audiences. |
 | 7 | P2 | **Platform spend limits can overshoot and do not automatically identify service-token agents.** Treating them as a complete hard admission fence would be wrong. | Use server-supplied actor/project/job metadata, note eventual consistency and keep only local per-job hard call/token/time/concurrency ceilings. No duplicate daily billing ledger. |
 | 8 | P2 | **One owner Tool Connection Agent needed an explicit state boundary and failure behavior.** D1 desired configuration and SDK Agent runtime state could otherwise compete. | D1 owns desired connection/scope/policy; Agent SQL owns SDK/OAuth/live catalogue. Reconcile by stable connection ID, bound per-connection concurrency and isolate remote failures. |
 | 9 | P2 | **The projection topology needed a transparent reindex path.** Embedding/tokenizer/block-format changes cannot silently mutate active jobs or bring back the old generation registry. | Build a new instance, verify it, switch one small settings pointer for future work, let active jobs finish on frozen instance IDs, then remove old projections. |
 | 10 | P2 | **Current docs did not clearly separate stream resume capabilities.** Catalog/dynamic routes may resume through the binding; vendor model object streams do not have the same guarantee. | Record route type and keep chat recovery from automatically purchasing continuation. Reconnect never claims exactly-once billing. |
 | 11 | P1 | **One structural item could be split again by AI Search, weakening item-key → exact-byte citation mapping.** A deterministic block key identifies the item, not necessarily a single native chunk. | Configure zero overlap and a verified chunk size at least as large as every emitted locator/prefix/block item. Reduce Eliot block size when the instance cannot accept it; exact-subrange mapping remains mandatory if provider splitting still occurs. |
 | 12 | P1 | **A failed replacement extraction could accidentally become the source head.** That would make an existing readable source suddenly unreadable even though the old revision remained valid. | Advance `source.current_revision` only after canonical readable text/outline/block map is valid. Keep the previous usable head on failed replacement; a first unreadable import has a null current head plus explicit conversion state. |
-| 13 | P1 | **Dependency rows were underspecified as “source/page revisions”.** A generic polymorphic ID or JSON array would lose foreign-key integrity and bounded reverse queries. | Use two nullable foreign keys with a CHECK that exactly one is set and uniqueness per owner revision/message/job. D1 projections may safely over-approximate a failed turn until reconciliation, but must never undercount source use. |
-| 14 | P1 | **Outgoing MCP allowlists did not pin the discovered tool schema/classification.** A remote server could redefine a tool after owner approval and before a job invocation. | Persist an approved catalogue digest; freeze digest/name/classification in the turn/job and compare live state before execution. Refuse changed tools until explicit refresh/reapproval. |
+| 13 | P1 | **Dependency rows were underspecified as “source/page revisions”.** A generic polymorphic ID or JSON array would lose foreign-key integrity and bounded reverse queries. | Use two nullable foreign keys with a CHECK that exactly one is set and partial composite unique indexes for source and page inputs. D1 projections may safely over-approximate a failed turn until reconciliation, but must never undercount source use. |
+| 14 | P1 | **Outgoing MCP allowlists did not pin the discovered tool schema/classification.** A remote server could redefine a tool after owner approval and before a job invocation. | Persist an approved catalogue digest; freeze digest/name/classification in the turn/job and compare live state before execution. Refuse changed tools until explicit refresh/reapproval. Remote annotations are hints, not authority. |
 | 15 | P1 | **Ordinary Library deletion could cascade away the metadata needed to show historical citations as unavailable.** | Preserve tombstoned source/revision identities, ranges and input rows; cleanup removes bytes/search items. Wider metadata or derived-text erasure is a separate owner action. |
 | 16 | P2 | **Keyword retrieval policy was left to defaults.** Porter/trigram and `and`/`or` materially change Russian, identifier and broad-topic recall and tokenizer changes require reindexing. | Start with Porter + `and`, explicitly measure Russian exact/inflected queries and use `or` or trigram only for demonstrated broadened-recall cases. |
+| 17 | P1 | **Architecture permitted owner-selected external tools in chat while Implementation categorically said ordinary chat never called an external tool.** The contradiction would produce either missing functionality or an accidental agent loop. | Split the paths: no-tool chat is one model call; explicitly tool-assisted chat gets one selection pass, at most three approved read calls and one final synthesis. Mutations/external spend retain approval rules. Iterative work becomes an explicit job. |
+| 18 | P1 | **URL acquisition claimed redirect/private-network validation as if ordinary Workers fetch provided dedicated DNS pinning.** That guarantee is not established by the chosen runtime. | Validate observable URLs/hops, schemes, credentials, ports, size/time/type and keep the path outside private VPC bindings. For hostile arbitrary URLs requiring stronger protection, use Browser Run guardrails or a separately qualified egress service; otherwise reject. Do not claim parity with an IP-pinning donor. |
+| 19 | P2 | **Broad discovery said to “union” D1 metadata, source cards and block hits without defining comparable rank.** Implementers could merge unrelated raw scores or let a generated card dominate evidence. | Use exact normalized metadata matches plus one native mixed source-card/block ranking, deduplicate by source, preserve channel/rank and then run block-only evidence retrieval in the frozen candidate scope. Cards never become evidence. |
+| 20 | P1 | **Task inputs were frozen only “at claim” without defining what an owner offer meant if a source changed before acceptance.** | Add explicit `pinned` and `current_at_claim` modes. Owner offers default to `pinned` and write exact inputs at creation; reusable open tasks may resolve atomically at claim. Existing task inputs never follow newer heads. |
 
 ## Platform facts used
 
@@ -44,7 +49,11 @@ It is a documentation audit, not a runtime test, migration, deployment or perfor
 - `createAI` is the current Agents SDK provider for Workers AI, Gateway catalog/dynamic routes and vendor model objects.
   BYOK alias/fallback, logging and stream-resume behavior differ by route and must be verified with installed types.
 - AI Gateway Spend Limits are eventually consistent. Service-token traffic does not automatically receive `cf.user_id`.
+- Access can protect an entire Worker or explicit applications, but Eliot must verify the chosen hostname/path topology
+  and each audience rather than assume two policy layers compose.
 - Access Managed OAuth may deliver an opaque client token while the origin receives `Cf-Access-Jwt-Assertion`.
+- Browser Run guardrails restrict permitted HTTP(S) hostnames. They do not justify claiming that ordinary Workers fetch
+  implements an application-controlled IP-pinning public URL fetcher.
 - Workflow durable steps do not make external effects or billing exactly once.
 
 Primary references are linked from [DONORS](../../../docs/DONORS.md) and the corrected
@@ -52,7 +61,8 @@ Primary references are linked from [DONORS](../../../docs/DONORS.md) and the cor
 
 ## Remaining unverified work
 
-The corrected documentation still requires implementation evidence for actual filter payload limits, accepted chunk
-size, block publication throughput, Russian/English lexical and semantic retrieval quality, table extraction,
-item-key/subrange anchoring, Access client identities, outgoing MCP catalogue-digest behavior, chat DO export/import,
-cancellation races and full migration fidelity. Performance targets remain targets.
+The corrected documentation still requires implementation evidence for the actual Access topology, filter payload
+limits, accepted chunk size, block publication throughput, Russian/English lexical and semantic retrieval quality,
+table extraction, item-key/subrange anchoring, direct-fetch/Browser Run egress behavior, supported client identities,
+outgoing MCP catalogue-digest behavior, chat DO export/import, cancellation races and full migration fidelity.
+Performance targets remain targets.

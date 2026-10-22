@@ -1,6 +1,6 @@
 # Eliot Research — Implementation
 
-Target implementation, fourth audit 2026-10-22. It implements [ARCHITECTURE](ARCHITECTURE.md).
+Target implementation, continued audit 2026-10-22. It implements [ARCHITECTURE](ARCHITECTURE.md).
 [MAP](MAP.md) owns delivery order and legacy source locations. [DONORS](DONORS.md) records current
 Cloudflare APIs and donor mechanisms. This document specifies the replacement; it is not evidence that the
 replacement is deployed, migrated or fast.
@@ -52,13 +52,18 @@ only after a real responsibility becomes hard to read. Do not create transport-s
 
 ## 2. Cloudflare Access is the only sign-in boundary
 
-Attach Worker-level Access as the default deny so custom domains, routes, `workers.dev` and preview URLs cannot
-bypass it. When MCP policy or Managed OAuth differs from the owner's browser policy, route a dedicated MCP hostname
-(or a verified path-specific Access application) to the same Worker and validate that route's own audience. Do not use
-the browser application's owner session as proof of an independently revocable agent identity.
-Validate signature, issuer, expected audience and expiry once per HTTP request or WebSocket upgrade using cached JWKS.
-Create an actor context and pass it to internal functions, DO calls and jobs; do not sign internal objects or exchange
-another token between modules.
+Choose one explicit Access topology and test every reachable hostname:
+
+- When one policy fits browser/API/MCP, attach Access to the Worker so all associated production domains,
+  `workers.dev` and protected previews inherit the deny-by-default policy.
+- When MCP needs a different Managed OAuth or service-token policy, expose explicit UI/API and MCP hostnames (or a
+  documented path-specific application) that route to the same Worker. Protect each with its own Access application,
+  and disable or separately protect every alternate `workers.dev`, route and preview URL.
+
+Do not assume that Worker-level Access and a second hostname/path application compose in the desired order; verify the
+actual dashboard/API configuration and expected audience for each route. Validate signature, issuer, route-specific
+audience and expiry once per HTTP request or WebSocket upgrade using cached JWKS. Create an actor context and pass it to
+internal functions, DO calls and jobs; do not sign internal objects or exchange another token between modules.
 
 Use:
 
@@ -136,9 +141,10 @@ Do not copy execute closures between DOs. One failed remote server removes only 
 concurrency and timeouts; do not pre-emptively create a connector microservice or one DO per tool.
 
 Connections UI supports endpoint setup, OAuth/token continuation, catalogue inspection, project/tool allowlists and
-`read | write | external-spend | unknown` classification. Enabled read-only tools may run without repeated ceremony.
-Mutating or external-spend tools require approval at the actual operation or an explicit pre-authorized job grant.
-Source text cannot enable a server or widen an allowlist.
+`read | write | external-spend | unknown` classification. Treat remote MCP annotations as hints, not authority; an
+unknown or contradictory tool remains `unknown` until the owner classifies it. Enabled read-only tools may run without
+repeated ceremony. Mutating or external-spend tools require approval at the actual operation or an explicit
+pre-authorized job grant. Source text cannot enable a server or widen an allowlist.
 
 MCP resources may be previewed and explicitly captured through normal ingest; prompt templates may be selected as
 instructions. Tool output is transient untrusted context until explicitly saved/captured and is not citeable evidence
@@ -170,19 +176,23 @@ content signatures or JSON business logic in triggers.
 | `job` | Type, project, actor, immutable input key, Workflow ID, state/cancellation/progress, local ceilings/usage and result |
 | `job_input` | Job → exactly one frozen source/page revision; query projection for impact, cleanup and migration |
 | `agent` | Verified identity/profile, enabled state, allowed projects/operations, outgoing-tool and paid-work permissions |
-| `task` | Destination project, operation/instructions, scope mode, offer/claimant/state/result and timestamps |
-| `task_input` | Task → requested source identity and the exact revision frozen when work is claimed |
+| `task` | Destination project, operation/instructions, scope mode (`pinned` or `current_at_claim`), offer/claimant/state/result and timestamps |
+| `task_input` | Task → requested source identity and exact source revision frozen at the selected scope boundary |
 | `activity` | Successful attributed mutation: actor, project/subject, kind, operation ID and safe short metadata |
 
-Implement each source/page input relation with two nullable foreign keys plus a CHECK that exactly one is non-null and
-a uniqueness constraint for its owner revision/message/job. Do not use an unchecked polymorphic string or JSON array.
+Implement each source/page input relation with two nullable foreign keys and a CHECK that exactly one is non-null. Add
+partial unique indexes on `(owner_id, source_revision_id)` where the source FK is set and on
+`(owner_id, page_revision_id)` where the page FK is set. Do not add owner-only uniqueness, use an unchecked polymorphic
+string or hide the relationship in a JSON array.
 
 `chat_input`, `job_input` and `task_input` close a necessary gap: citations may remain in the chat DO and full job input
 in R2, but source replacement/deletion, stale indicators, export and migration need bounded D1 queries to identify
 affected work. Insert a job and its frozen `job_input` rows in one D1 batch before Workflow creation. Allocate a stable
 chat message/turn ID and insert its frozen `chat_input` rows before any paid dispatch; a failed generation may leave a
-safe over-approximation until reconciliation, but never an unrecorded dependency. Resolve/freeze `task_input` at claim.
-These are rebuildable relationships, not a second content store.
+safe over-approximation until reconciliation, but never an unrecorded dependency. For tasks, `pinned` scope resolves and
+writes `task_input` at creation; `current_at_claim` resolves and writes it atomically with the successful claim. A later
+source head change never rewrites an existing task's frozen inputs. These are rebuildable relationships, not a second
+content store.
 
 R2 keys are immutable and identity-specific:
 
@@ -231,10 +241,18 @@ AI Search limits require `stored_needs_conversion`. Never label an oversized/unr
 agent may provide normalized Markdown plus mapping metadata through the same revision writer. Re-extraction/correction
 creates a new source revision; old citations remain on old bytes.
 
-URL capture retains requested/final URL, time, content type and bytes. Use bounded public HTTP(S) fetch with redirect,
-size and timeout limits; send no user credentials. Reject/revalidate loopback, link-local, private and cloud-metadata
-destinations across DNS and redirects. Browser Run is explicit and uses host guardrails. Paywall/fetch failure is a lead,
-not evidence. A remote Drive/MCP source is an imported snapshot; `refresh_source` captures a new revision.
+URL capture retains requested/final URL, retrieval time, response content type, bounded redirect observations and raw
+bytes. Direct Worker fetch is allowed only for an owner/authorized public HTTP(S) locator after rejecting credentials,
+unsupported ports/schemes, obvious private/literal addresses and disallowed hosts; follow redirects manually and
+revalidate every observable hop. Do not attach a private VPC binding to this path. Bound redirects, time, bytes and
+content type, and send no user credentials.
+
+Regular Workers `fetch()` does not expose an application-level DNS-pinning contract equivalent to a dedicated public
+URL fetcher. Do not claim complete DNS-rebinding/private-address parity from hostname checks alone. For arbitrary or
+hostile URLs that require a stronger guarantee, use a Browser Run session with explicit hostname guardrails or a
+separately qualified egress service; otherwise reject the route. Browser Run is an explicit rendered-page/capture
+option, not evidence authority. Paywall/fetch failure remains a lead. A remote Drive/MCP source is an imported snapshot;
+`refresh_source` captures a new revision.
 
 Metadata (title, authors, date, language, kind, URL, identifiers, tags) is separate from generated summaries. Metadata
 edits do not alter cited bytes. The viewer can compare retained revisions from deterministic block maps and show changed
@@ -268,7 +286,12 @@ boundary; if the provider still splits an item, citation mapping must resolve th
 Each block is one AI Search item, for example `r/<revision>/b/<block>.md`, containing a small machine-readable locator,
 non-quotable prefix and exact body. Store its key/ID in `search_item`. Also publish one `record_kind=source_card` item per
 revision for orientation. Evidence search filters `record_kind=block`; source cards never enter the citation set.
-Broad discovery unions D1 metadata, source-card and block matches so a generated/omitted card cannot hide a source.
+
+Broad discovery performs one AI Search request over both source-card and block items in the same instance/ranking,
+then unions normalized exact D1 metadata matches. Exact DOI/arXiv/ISBN/title matches rank first. Deduplicate by source
+identity and preserve the native rank/channel; do not blend raw scores from separate metadata/card/block systems.
+After selecting candidate sources, evidence retrieval runs block-only in the frozen scope. A generated, stale or omitted
+source card therefore cannot hide a source or become evidence.
 
 Use at most the five current custom metadata fields, initially:
 
@@ -322,7 +345,7 @@ or request narrower scope. Report partial scope explicitly.
 |---|---|
 | Known source/section/quote | Direct outline/range read or bounded literal scan; no embedding/model required |
 | Focused question | One scoped block hybrid search, overlap/deduplication, limited source diversity, then canonical hydration |
-| Broad topic | Union D1 metadata, source-card and evidence-block candidates; cards orient but never gate evidence |
+| Broad topic | Exact D1 metadata candidates plus one mixed source-card/block native ranking; deduplicate by source, then run block-only evidence retrieval |
 | Table/equation/code | Hydrate caption/headers/units/definition/enclosing block; show extraction failure |
 | Compare selected documents | Establish per-document coverage, then open supporting passages for every requested document; use a job when broad |
 | Ambiguous follow-up | Optional native rewrite from bounded messages with identical frozen scope |
@@ -337,10 +360,12 @@ AI Search returns `item.key`. Resolve it through `search_item` and the retained 
 `{revisionId, blockId, startByte, endByte}`. The non-quotable prefix length is known; returned body text must match the
 canonical block or an explicitly mapped subrange. Repeated text must not resolve via first `indexOf`.
 
-Server labels, not the model, map to ranges. The model receives compact labels; saved Markdown and resolved references
-are written together. Remove unknown labels from rendered citations and record unsupported citation output. Byte ranges
-are UTF-8 `[start,end)`; one tested utility converts them for browser highlighting. Missing or ambiguous anchoring is
-visible and triggers a canonical read, never a fabricated page/range.
+Context frames label `search_prefix` as navigation metadata and `exact_body` as citeable source text. A model claim
+supported only by a title/heading/card is unsupported until the canonical body is opened. Server labels, not the model,
+map to ranges. The model receives compact labels; saved Markdown and resolved references are written together. Remove
+unknown labels from rendered citations and record unsupported citation output. Byte ranges are UTF-8 `[start,end)`; one
+tested utility converts them for browser highlighting. Missing or ambiguous anchoring is visible and triggers a
+canonical read, never a fabricated page/range.
 
 Opening a citation reads the retained original revision after replacement/reindexing. Deleted evidence is unavailable.
 Derived pages may be selected as context, but retain their original citations and never count as independent primary
@@ -353,18 +378,27 @@ destination project; there is no server-global active project. Persist selected 
 explicit versus empty selection, model/response override and selected outbound tools in supported chat state. Each turn
 records the resolved route, exact revision/projection IDs and structured citations; populate `chat_input`.
 
-Known small material is read directly; otherwise perform one retrieval preparation and one streamed synthesis. Each
-ordinary turn has an explicit input/context budget, output-token cap, provider timeout and one synthesis call. An agent
-using Eliot's `ask` tool follows the same turn limits. The model distinguishes source statements, Eliot inference and
-unsupported gaps. “Not found” differs from still-indexing, unavailable or partially searched.
+A no-tool ordinary turn reads known small material directly or performs one retrieval preparation, then one streamed
+synthesis. It has an explicit input/context budget, output-token cap, provider timeout and one model call. An agent using
+Eliot's `ask` tool follows the same limits and receives no outgoing tools unless its grant and request explicitly select
+them.
+
+A tool-assisted chat turn is a separate visible choice. Initially allow one model tool-selection pass, at most three
+approved read-only tool invocations, and one final grounded synthesis; mutating/external-spend tools still require the
+approval/grant from §3. These are adjustable product caps, not a recursive agent loop. Tool output is labelled untrusted
+and non-citeable until captured through ingest. If the request needs iterative exploration, delegation or durable waiting,
+start an explicit research job instead.
+
+The model distinguishes source statements, Eliot inference and unsupported gaps. “Not found” differs from still-indexing,
+unavailable or partially searched.
 
 Override durable recovery initially so disconnect/restart persists the partial result but does not automatically buy a
 continuation. Catalog/dynamic streams may resume through the binding; vendor-model streams may not. Stop persists and
 blocks new continuation. An explicit Continue uses retained context and a stable operation ID. Transport reconnect never
 implies exactly-once provider billing.
 
-Ordinary chat does not silently become deep research, call an external tool, import web results or refresh the Wiki.
-Those are visible owner actions.
+Ordinary chat does not silently become deep research, invoke an unselected external tool, import web results or refresh
+the Wiki. Those are visible owner actions.
 
 ## 9. Knowledge, distillation, Corpus Map and audits
 
@@ -475,6 +509,10 @@ Large file bytes use an authenticated short-lived upload reference, not base64 i
 an agent's project grant are rejected. Source contribution, task work, paid Eliot jobs, outgoing tools and Library
 deletion are separate permissions. A task narrows an existing grant; claiming it grants nothing else.
 
+Task creation explicitly chooses `pinned` or `current_at_claim` source semantics. An owner offer defaults to `pinned` so
+the material seen during delegation cannot silently change before acceptance. A reusable open task may choose
+`current_at_claim`; its exact revisions become visible to the claimant and are frozen by the claim transaction.
+
 Agent setup shows the real endpoint/client instructions, verified identity/profile, allowed projects/operations and
 limits. Disabling it takes effect on the next operation. Results/proposals remain attributable and survive reconnects.
 Do not build an agent harness or scheduler inside Eliot.
@@ -502,11 +540,11 @@ Initial product targets, not promises:
 - project navigation p95 under 500 ms server time without optional-service probes;
 - retrieval/context preparation under 1 s for a warm 50-source project and under 2 s for a representative 500-source
   project, excluding provider generation;
-- first answer text equals model first-token latency plus at most about 1 s of Eliot overhead for ordinary work;
+- first answer text equals model first-token latency plus at most about 1 s of Eliot overhead for ordinary no-tool work;
 - no request count proportional to all project sources on open.
 
-Measure extraction, index publication, search, hydration and model time separately. Remove responsible work/round trips
-before adding caches or another service.
+Measure extraction, index publication, search, hydration, optional tool time and model time separately. Remove responsible
+work/round trips before adding caches or another service.
 
 Use Workers traces and Gateway metadata/cost/latency. Attach operation, actor/profile, project, chat/job and model IDs;
 never source text or secret values. Owner UI shows safe errors and operation IDs. Unknown state is valid.
@@ -571,15 +609,18 @@ After assembly, exercise concrete risks:
 
 - duplicate/lost upload acknowledgement, bounded concurrent item publication and partial projection publication;
 - a failed replacement extraction leaving the previous usable source head intact;
+- owner/agent URL capture through redirect, blocked-address, oversize and stronger-egress-required cases without
+  claiming unproven DNS pinning;
 - Russian↔English retrieval, Porter versus measured alternatives, exact identifiers, late-paper facts,
   tables/equations/code and contradictory sources;
 - explicit scope beyond 50 sources and beyond verified filter payload limits;
-- source replacement/deletion while chats/jobs/pages reference old revisions;
+- source replacement/deletion while chats/jobs/pages/tasks reference old revisions;
 - non-ASCII citation ranges and ambiguous repeated text;
-- competing page edits, proposal rejection, task claim/reclaim and agent disconnect;
+- competing page edits, proposal rejection, pinned/current-at-claim task semantics, task reclaim and agent disconnect;
 - cancellation before/during paid calls and unknown provider completion;
 - two projects in separate tabs with different models/scopes, shared source and concurrent jobs;
-- outgoing MCP read/write/external-spend approval and unknown mutation result;
+- ordinary no-tool versus explicitly tool-assisted chat, outgoing tool schema/catalogue changes, read/write/external-spend
+  approval and unknown mutation result;
 - chat recovery, export/import and migration rehearsal.
 
 Verify against installed/current platform behavior rather than prose:
@@ -589,8 +630,10 @@ Verify against installed/current platform behavior rather than prose:
   pricing;
 - configured chunk size/overlap producing the expected item-to-chunk mapping, and exact item-key → canonical subrange
   mapping when it does not;
-- Access route audiences, Managed OAuth assertion and supported service/client identities;
-- MCP client/server package versions, approved catalogue-digest behavior and Tool Connection Agent RPC shape;
+- Access topology for Worker/all domains versus explicit UI/MCP hostnames, route audiences, Managed OAuth assertion and
+  supported service/client identities;
+- MCP client/server package versions, canonical catalogue-digest behavior and Tool Connection Agent RPC shape;
+- direct fetch/Browser Run/qualified-egress boundaries for user-supplied URLs;
 - `toMarkdown` quality on actual PDFs, Cyrillic, scans and tables;
 - chat DO export/import and supported persisted metadata.
 
