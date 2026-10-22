@@ -53,7 +53,8 @@ functions `(env, actor, input)` rather than duplicating storage or authorization
 ### Model connections
 
 Model setup is an owner feature. The Models screen supports connect, edit, disable, rotate/remove credentials,
-discover available models lazily, add a supported manual model ID, and set defaults.
+discover available models lazily, add a supported manual model ID, and set defaults. Project/chat settings also store
+response length/style and an optional owner research goal/instruction; they are ordinary prompt settings, not policy.
 
 Resolution order is:
 
@@ -61,8 +62,8 @@ Resolution order is:
 explicit turn/job choice → chat override → project default → global default
 ```
 
-A resolved turn/job pins connection ID, gateway/route, provider/model ID, billing mode and generation settings.
-Changing a default affects future work, not an active stream or admitted job.
+A resolved turn/job pins connection ID, gateway/route, provider/model ID, billing mode, payload-logging/ZDR choice
+and generation settings. Changing a default affects future work, not an active stream or admitted job.
 
 | Connection kind | Route |
 |---|---|
@@ -82,25 +83,40 @@ For BYOK-only routes enable Gateway `byok_only` or send `cf-aig-no-wholesale: tr
 consult the `default` BYOK alias; non-default aliases require a compatible provider-native/passthrough route.
 Do not accidentally forward a placeholder provider key. Unified Billing remains an explicit selectable mode.
 
+Source-bearing model calls default to Gateway metadata/cost logging without prompt/response payload storage
+(`cf-aig-collect-log-payload: false` or the reviewed SDK equivalent). Full payload logging is an explicit diagnostics
+choice. Unified Billing ZDR may be selected only for models/routes that advertise it; ZDR does not apply to BYOK and
+does not replace the separate Gateway logging setting. Lack of ZDR is visible route metadata, not a global application
+lock.
+
 A connection check is user-requested or performed once during setup. There is no recurring qualification,
-proof bundle or preflight model call before every chat.
+proof bundle or preflight model call before every chat. Configure request timeout, provider/Gateway retries and any
+dynamic-route fallback deliberately. Paid model calls default to no hidden application retry; an owner-selected
+Gateway fallback is part of the pinned route, and the actual model that answered is recorded.
 
 Primary references:
 [Agents models](https://developers.cloudflare.com/agents/models/),
 [AI SDK provider](https://developers.cloudflare.com/agents/models/ai-sdk/),
 [BYOK](https://developers.cloudflare.com/ai-gateway/configuration/bring-your-own-keys/),
 [custom providers](https://developers.cloudflare.com/ai-gateway/configuration/custom-providers/),
-[Unified Billing](https://developers.cloudflare.com/ai-gateway/features/unified-billing/).
+[Unified Billing](https://developers.cloudflare.com/ai-gateway/features/unified-billing/),
+[Gateway logging](https://developers.cloudflare.com/ai-gateway/observability/logging/).
 
 ### Outgoing MCP connections
 
 Incoming MCP lets agents use Eliot. Outgoing MCP lets Eliot use external tools. They are separate features.
 
-Use one owner `ToolConnectionAgent` Durable Object with the Agents SDK MCP client manager. It owns remote connection
-state, OAuth continuation and the live discovered tool/resource/prompt catalogue. D1 stores only connection name,
-URL, enabled state, project availability, selected tool names/classes, side-effect policy and last safe status.
-Static tokens, when unavoidable, live in Cloudflare secret storage; OAuth tokens use the SDK's durable connection
-mechanism. Do not implement the MCP transport or OAuth protocol.
+Use one owner `ToolConnectionAgent` Durable Object with the Agents SDK MCP client manager. D1 is authoritative for
+the desired connection identity, URL, enabled projects/tools and side-effect policy. The Agent's SQL owns only the
+SDK registration, OAuth/token state, connection lifecycle and live discovered catalogue for the same stable connection
+ID. On wake or configuration change it reconciles runtime state to D1; neither store silently overwrites the other.
+Static tokens, when unavoidable, live in Cloudflare secret storage. Do not implement the MCP transport or OAuth protocol.
+
+Tool execute functions cannot be copied between Durable Objects. The connection Agent therefore exposes a bounded RPC:
+read the approved catalogue and execute one `{connectionId, toolName, arguments, invocationId}` call. Chat/research
+build host-owned AI SDK wrappers from the approved discovered schema using the installed SDK helper and invoke that
+RPC. Approval, project/actor scope, ceilings and mutation class are checked before RPC. A mutating call is never
+automatically retried after an unknown result.
 
 The Connections UI can:
 
@@ -115,9 +131,17 @@ Read-only tools may run after the owner enables them for the chat/job. Mutating 
 one human approval at the actual operation or an explicit pre-authorized job grant. Do not ask for approval at every
 internal read and do not let source text enable a new server/tool.
 
-A chat/job resolves the selected connections and tool allowlist once. Failure of one remote server removes only its
-tools and does not block document reading or other projects. External tool output is transient context until the user
-or host explicitly saves/captures it as a source; it is not citeable Library evidence merely because a tool returned it.
+A chat/job resolves the selected connections and tool allowlist once. An incoming agent's job intersects that list
+with the agent's explicit outgoing-tool permission; paid-job permission alone does not grant external tools. Failure
+of one remote server removes only its tools and does not block document reading or other projects. MCP resources may
+be previewed and explicitly captured through normal ingest; prompt templates may be selected as instructions.
+External tool output remains transient untrusted context until the user or host explicitly saves/captures it as a
+source, and is not citeable Library evidence merely because a tool returned it. A saved report/export may also be
+published to an explicitly selected remote destination (for example Drive/Docs) as a separate action over the already
+retained page revision; delivery failure never regenerates Research or changes that revision. Use one stable invocation
+ID, retain provider-created IDs and read back a provider-supported canonical representation/status when available.
+A lost creation acknowledgement is reconciled by that ID/provider lookup or remains `unknown`; never blindly create a
+second remote copy. Eliot's page revision remains the content authority.
 
 References:
 [Agents MCP client](https://developers.cloudflare.com/agents/model-context-protocol/apis/client-api/),
@@ -193,9 +217,14 @@ same operation with bounded concurrency and per-item results.
    acknowledgement by ID; do not create a replacement source.
 4. Extract readable UTF-8 outside D1. Plain text/Markdown/CSV are deterministic. Supported files use
    `env.AI.toMarkdown`; retain parser identity, warnings and whether image text is OCR or generated description.
+   Conversion/OCR spend is a separate visible ingest allowance, not silently charged to chat/research. If it is not
+   admitted, keep the raw revision as `stored_needs_conversion`; a permitted agent may supply a normalized revision.
 5. Produce a deterministic outline/block map from canonical text. Publish the readable revision even if indexing or
    optional generation later fails.
-6. Publish search projection items and observe actual item status.
+6. Publish search projection items with deterministic keys and observe actual item status. A duplicate-key response
+   or lost acknowledgement is reconciled by reading that exact item/key; keep the state `unknown` when the provider
+   cannot establish the outcome. Never invent an alternate key or upload a second logical projection to make a retry
+   appear successful.
 7. Build a deterministic source card from metadata/outline immediately. A model-enhanced card or digest is optional
    and explicitly budgeted; source readiness never depends on it.
 
@@ -208,13 +237,19 @@ Separate limits:
   same revision writer. It remains associated with the original bytes and parser identity.
 - Re-extraction or owner correction creates a new source revision. Old citations stay on old bytes.
 
-For URLs retain requested/final URL, capture time, content type and captured bytes. Use bounded HTTP(S) fetch with
-normal redirect/size/time controls and no forwarded credentials. Browser Run is selected only for a rendered page.
-Paywall/fetch failure remains a lead. Never claim a URL means embedded media or linked pages were captured.
+For URLs retain requested/final URL, capture time, content type and captured bytes. Use bounded public HTTP(S) fetch
+with redirect/size/time limits, no forwarded credentials, and rejection/revalidation of loopback, link-local, private
+and cloud-metadata destinations across DNS and redirects. Browser Run is selected only for a rendered page and uses
+host guardrails appropriate to the capture. Paywall/fetch failure remains a lead. Never claim a URL means embedded
+media or linked pages were captured. See [Browser Run guardrails](https://developers.cloudflare.com/browser-run/features/guardrails/).
 
 Metadata can be supplied, extracted or edited. Store title, authors, date, language, document kind, canonical URL,
 external IDs and tags separately from generated summaries. Metadata edits do not alter cited bytes; changing the
-canonical representation does.
+canonical representation does. The source viewer can compare any two retained revisions using their canonical
+outline/block maps and show changed sections plus affected current knowledge; it does not ask a model merely to diff
+bytes. A remote/Drive/MCP-backed source is still an imported snapshot: `refresh_source`
+recaptures it into a new revision after an explicit owner/agent action or configured job. Remote mutation never changes
+bytes behind an existing citation, and a connector marketplace is not required.
 
 ## 5. Canonical block map and search projection
 
@@ -227,7 +262,7 @@ Parse canonical Markdown into bounded structural blocks:
 
 ```text
 block_id
-kind: heading | prose | table | code | list | figure_caption | generated_image_description
+kind: heading | prose | table | equation | code | list | figure_caption | generated_image_description
 heading_path
 start_byte / end_byte in canonical text
 page/table/figure hints when available
@@ -235,9 +270,11 @@ exact_body
 search_prefix (title + heading path + table headers), explicitly non-quotable
 ```
 
-Prefer blocks around 800–1,600 tokens and split only at structural/UTF-8 boundaries. Long tables repeat their caption,
-column headers and units in `search_prefix` while each row group maps to exact canonical ranges. Code fences remain
-intact when possible. Generated descriptions are labelled and cannot become verbatim source quotes.
+Prefer coalesced structural blocks around 800–1,600 tokens and split only at structural/UTF-8 boundaries. Adjacent
+short prose under one heading is combined; do not create one indexed file per paragraph or table row. Long tables
+repeat their caption, column headers and units in `search_prefix` while each row group maps to exact canonical ranges.
+Code fences remain intact when possible. Generated descriptions are labelled and cannot become verbatim source quotes.
+Track items per source and total hybrid-instance capacity; topology changes before the provider file limit is reached.
 
 Publish each block as an AI Search item whose key encodes the revision and block:
 
@@ -255,8 +292,10 @@ the old `structural-projector.ts`; discard its policy, generation and proof laye
 ### Source-card items
 
 Also publish one `record_kind=source_card` item per revision with title, authors, date, type, language, abstract/owner
-summary, topics and outline labels. It is used for broad source selection and Corpus Map navigation, never quoted as
-primary evidence. Source-card generation must disclose sampled/generated fields.
+summary, topics and outline labels. It is used for broad source orientation, project overview and Corpus Map
+navigation, never quoted as primary evidence. Source-card generation must disclose sampled/generated fields.
+A card is not an exclusive semantic gate: broad discovery unions card matches, metadata candidates and evidence-block
+matches so an omitted/generated summary cannot make a relevant document unreachable.
 
 Use at most five AI Search custom metadata fields. Suggested fields:
 
@@ -265,7 +304,8 @@ revision_id, source_id, record_kind, language, published_at
 ```
 
 Project membership, authors, tags and richer filters stay authoritative in D1. D1 resolves candidate revision IDs
-before AI Search.
+before AI Search. Evidence retrieval filters `record_kind=block`; source-card results are used only in the explicit
+source-orientation pass and can never leak into the evidence/citation set.
 
 ## 6. Search topology and scoped retrieval
 
@@ -278,7 +318,14 @@ product invariant.
 Cloudflare supports native cross-instance namespace search (up to the documented instance limit). If measurement shows
 that a large revision filter, item count or isolation requirement is a real bottleneck, migrate disposable projections
 to deterministic shards or project projections and query them through the namespace. D1/R2 identities and citations
-do not change. Do not create an instance per project pre-emptively.
+do not change. Do not create an instance per project pre-emptively. At the 2026-10-22 review, Cloudflare documents five
+custom metadata fields, up to 500k files for paid hybrid instances and ten instances per cross-instance request; treat
+these as deployment-time provider facts, not permanent product constants, and check current limits/pricing before rollout.
+
+Embedding, tokenizer or projection-format changes create new instance IDs. Populate and check the new projection,
+then switch one small D1 `settings` pointer/list for future turns. Active jobs keep their frozen projection IDs until
+they complete; old instances/items are removed later by audit-guided cleanup. This is a simple reindex cutover, not
+a generation/promotion registry.
 
 Do not issue several independent `$in` searches and merge their ranks as if scores were globally comparable.
 For a scope larger than the verified filter/request limit, choose one of:
@@ -330,7 +377,7 @@ the turn/job. Omitted selection uses enabled project sources. Explicit empty sel
 |---|---|
 | Known source/section/quote | Outline/range read or bounded literal scan; no embedding/model required |
 | Focused question | One scoped block hybrid search; merge overlap/duplicates; preserve limited source diversity; hydrate only required canonical blocks/parent sections |
-| Broad topic | Search source-card items first, select relevant revisions, then search/hydrate evidence blocks |
+| Broad topic | Union metadata candidates with source-card and evidence-block matches; use cards to orient/rank sources, never as the sole gate; then hydrate supporting evidence blocks |
 | Table/equation/code | Hydrate caption/headers/units/definition/enclosing block; extraction failure is visible |
 | Compare selected documents | Establish per-document coverage from source cards/outlines/digests; open supporting passages for each; use a durable job when selection is broad |
 | Ambiguous follow-up | Use bounded chat messages and native query rewriting only when needed, with identical frozen scope |
@@ -362,8 +409,11 @@ Citation validation proves provenance, not truth. The synthesis prompt distingui
 absence of support. No second judge model is required.
 
 Known small selected material may be read directly. Otherwise prepare context once from search and canonical reads,
-then make one streamed synthesis. Reserve context for instructions/history/output and use a conservative multilingual
-token estimate. A large model window is not permission to send the whole Library on every question.
+then make one streamed synthesis. An explicitly selected note/report/Wiki revision may contribute derived context, but
+its original citations remain attached and it is not counted as independent source support. Underlying source bytes
+outside the frozen permitted scope are not read implicitly; the UI offers an explicit scope expansion or marks those
+references unavailable. Reserve context for instructions/history/output and use a conservative multilingual token
+estimate. A large model window is not permission to send the whole Library on every question.
 
 ## 8. Knowledge, Corpus Map and audits
 
@@ -376,6 +426,11 @@ Every page revision records all source/page revision inputs, not only visible qu
 Changed inputs make affected current pages stale through `page_input`; no global refresh bus. Refresh creates a
 proposal/revision and replaces its dependency set. Old revisions remain.
 
+`refresh_wiki` reads the current accepted page, its owner edits, changed/removed inputs and bounded related source/map
+metadata. It proposes a coherent diff that preserves unsupported-but-explicit owner text as an owner statement, marks
+obsolete support and incorporates genuine disagreement. It does not rewrite every Wiki page or silently replace the
+head. A rejected proposal is not regenerated until the owner requests it or the relevant inputs actually change.
+
 ### Distillation
 
 A source guide is short orientation and says `full` or `sampled`. A full digest:
@@ -384,16 +439,22 @@ A source guide is short orientation and says `full` or `sampled`. A full digest:
 2. reads bounded ranges;
 3. extracts compact findings with server labels;
 4. persists completed section results;
-5. reduces them into findings, method/data, limitations, disagreements and exact citations;
+5. reduces them into findings, method/data, limitations, disagreements and exact citations; quantitative or
+   conditional findings retain units, population/scope, modality/uncertainty and relevant time/version;
 6. records covered/skipped/failed ranges.
 
-Comparison reports use exact source revisions and preserve per-source coverage. Completed section/digest results are
-reused only when revision, focus and relevant settings match.
+Comparison reports use exact source revisions and preserve per-source coverage. Compact structured findings may live
+inside the page body for rendering/comparison, but there is no canonical EvidenceAtom table or blanket LLM compilation
+at ingest, and a derived finding is never an independent source. Completed section/digest results are reused only when
+revision, focus and relevant settings match.
 
 ### Corpus Map
 
 `refresh_map` creates a versioned `page.kind=map` JSON/Markdown object from deterministic source cards, metadata,
-existing digests and exact passages opened for proposed claim relations.
+existing digests and exact passages opened for proposed claim relations. Its top-level project guide contains a concise
+current overview, represented-source count/coverage, major themes/disagreements and three to five suggested questions.
+Opening a project reads the last guide/map immediately and shows staleness; it never starts a paid regeneration merely
+because the page was opened.
 
 Finite nodes:
 
@@ -408,9 +469,14 @@ discusses | version_of | cites | supports | contradicts | qualifies | supersedes
 ```
 
 Metadata/version/topic edges can be deterministic. Support/contradiction/qualification are generated candidates
-with exact passage labels, conditions/time and `generated` or `owner_confirmed` status. They never overwrite source
-facts or become citation authority. The UI can render the same object as list, tree, timeline or mind map.
-Refresh only changed inputs and preserve owner annotations. No graph database or graph retrieval is added.
+with exact passage labels, units/population/conditions, `observed_at`/`valid_from`/`valid_to` where relevant, and
+`generated`, `owner_confirmed`, `rejected` or `stale` status. Different periods or conditions become qualifications,
+not false contradictions. They never overwrite source facts or become citation authority. The UI can render the same
+logical revision as overview, list, tree, timeline or
+mind map. Large maps keep a bounded summary plus paginated/partitioned R2 sections under one page revision rather than
+loading every node into D1 or the browser. Interactive expansion has explicit node/edge/byte/depth caps and reports
+its stop reason/coverage. Refresh only changed inputs and preserve owner annotations. No graph database or graph
+retrieval is added.
 
 ### Product audit
 
@@ -425,8 +491,7 @@ Refresh only changed inputs and preserve owner annotations. No graph database or
 - derived outputs eligible for cleanup;
 - actual latency/usage outliers available from stored safe metrics.
 
-The audit saves a `page.kind=audit` report with proposed actions and links. Cleanup, re-index, re-extract, merge,
-archive or delete remain explicit owner actions. The activity feed records successful changes without source bodies,
+The audit saves a `page.kind=audit` report with proposed actions and links. Cleanup, re-index, re-extract, link-as-duplicate/version, detach/archive or delete remain explicit owner actions. The activity feed records successful changes without source bodies,
 prompts, provider frames or cryptographic attestations.
 
 ## 9. Ordinary chat
@@ -468,6 +533,8 @@ This is one executor with operation-specific readable functions, not an 18-stage
 
 A job input pins actor, destination project, selected revisions/pages, resolved model/tool connections, operation,
 question/focus and ceilings. R2 holds large intermediate findings; Workflow state holds IDs/counters/small references.
+The same stable operation/job ID is attached to Workflow events, AI Gateway metadata and safe MCP/tool diagnostics so
+Cloudflare logs can correlate one user action without an Eliot trace/event-sourcing platform.
 
 `step.do` is a retry boundary, not exactly-once external billing. Before retrying, read deterministic completed output.
 Persist model/tool output before later publication. If provider completion is unknown and cannot be queried/deduplicated,
@@ -478,9 +545,16 @@ mark the step interrupted with uncertain cost. Resume is explicit; reconnect nev
 1. orient from source cards/outlines/current map;
 2. keep a short list of subquestions/gaps;
 3. search/read or call an explicitly selected read tool for the next gap;
-4. change strategy once for a concrete unresolved issue;
-5. stop when supported/unresolved, no useful new evidence, cancellation or ceiling;
-6. save cited partial or final report.
+4. for each material provisional conclusion, make one bounded pass for counterevidence, scope conditions or a
+   conflicting version when the selected corpus can answer it;
+5. change strategy once for a concrete unresolved issue;
+6. stop when supported/unresolved, no useful new evidence, cancellation or ceiling;
+7. save cited partial or final report.
+
+A job may explicitly delegate one bounded subquestion to an already connected agent: create/offer the normal task and
+use `step.waitForEvent` for its accepted result. Timeout, decline or cancellation preserves partial work; reconnect does
+not recreate the task. Before synthesis, validate the returned page/revision, actor, project/source scope and citations.
+This is the same task lifecycle exposed through MCP, not a federation executor or polling protocol.
 
 No default swarm, critic panel, obligation compiler or automatic model fallback.
 
@@ -504,11 +578,16 @@ Cancellation sets `cancel_requested`, stops new dispatch, aborts supported in-fl
 the Workflow as appropriate. Recheck immediately before every paid or mutating tool call. Preserve completed findings.
 A terminated Workflow is not blindly restarted because restart can repeat effects.
 
-### Web mode
+### Web discovery and deep web mode
 
-Cloudflare Web Search returns leads. Capture selected URLs through normal ingest before citation. The owner may choose
-from candidates, or an explicitly delegated job may capture within a visible candidate/byte budget. Store final URL,
-capture time and exact revision IDs. A library-only job never sends private text as a public query or calls web search.
+`discover_sources` is a lightweight owner action: one bounded Cloudflare Web Search returns a small candidate list with
+URL/title/provider snippet and an Eliot relevance note. It neither imports nor cites the hits. The owner selects Add,
+which captures each URL through normal ingest. It needs no ResearchWorkflow or full report.
+
+An explicitly enabled deep job may issue several bounded searches and capture candidates within a visible query/count/
+byte budget. Store final URL, capture time and exact revision IDs; only captured canonical passages become evidence.
+A library-only ask/job never sends private source text as a public query or calls web search. Web Search failure does
+not block Library research.
 
 ## 11. Incoming MCP, agents and tasks
 
@@ -551,7 +630,13 @@ Use:
 - Cloudflare Secrets Store/Worker secrets for provider and static integration secrets.
 
 Managed OAuth client tokens may be opaque; Eliot validates the Access assertion received at origin, not an imagined
-client JWT. A long-running admitted job retains its actor identity and does not require the browser cookie at every step.
+client JWT. For a service token, map the validated application token's service-token identity (`common_name` /
+service-token ID), not the empty user `sub`. A long-running admitted job retains its actor identity and does not
+require the browser cookie at every step.
+
+Local development uses isolated local D1/R2/DO state and a localhost-only development actor. Production secrets,
+remote production writes and live cleanup bindings are absent by default. Explicit development AI Search/model/tool
+resources enable only those features; missing optional bindings do not block stored local reads.
 
 Validate upload/range/URL sizes, mutation Origin/CSRF boundaries and WebSocket origin. Render untrusted Markdown without
 raw HTML and validate link schemes. Keep secrets/raw provider errors out of logs. Source/tool text cannot change
@@ -562,6 +647,11 @@ proof receipts or a global integration-readiness gate.
 
 ## 13. UI, multi-project behavior and performance
 
+Retain one Material-based design system, English/Russian UI, light/dark themes, responsive project/source/research
+layouts and practical keyboard/focus/accessibility behavior. Do not introduce another component system. Source/page
+bytes, model/MCP secrets and protected responses are not persisted in browser storage; bounded unsaved drafts are
+cleared on sign-out or identity change.
+
 Primary destinations:
 
 1. **Projects / Sources** — project switcher, Library/memberships, import, metadata, viewer, revisions, Corpus Map and audit.
@@ -570,7 +660,7 @@ Primary destinations:
 4. **Connections** — models, outgoing MCP tools, incoming agent setup and safe status.
 
 Visible actions include project create/rename/archive; batch file/URL/text import; attach/detach/exclude/archive/replace/
-delete; re-extract/correct representation; guide/full digest; Ask/Compare/Deep Research; save/edit/history/refresh/export;
+delete; re-extract/correct representation and compare retained revisions; guide/full digest; Ask/Compare/Deep Research; save/edit/history/refresh/export;
 map/audit/optimize; model/tool/agent configuration and task offers.
 
 Every project-dependent route, query key, mutation, draft and chat carries project/chat ID. Late responses update their
@@ -592,6 +682,20 @@ Measure Eliot overhead separately from providers after assembly:
 These are engineering targets, not present measurements or provider SLAs. Remove unnecessary round trips before adding
 caches or coordination layers.
 
+### Native diagnostics
+
+Use Cloudflare Workers traces/metrics and AI Gateway log metadata before adding wrappers or a monitoring vendor.
+Correlate them with the stable operation/job ID and add custom spans only around missing product boundaries such as
+retrieval preparation, exact citation resolution, model/tool attempt and final publication. Trace/metric failure never
+changes the product result or retry decision.
+
+The owner sees structured state (`waiting`, `running`, `unknown`, `failed`, `partial`, `completed`), first known cause,
+last durable progress, provider/model actually used, calls/tokens/cost when known and recovery action. Missing sampled
+telemetry or unknown pricing remains unknown, never zero/success. Trace attributes and UI errors exclude raw queries,
+source excerpts, prompts, credentials, bearer URLs and hidden reasoning. No custom OTel backend, telemetry schema for every row or second control plane is required.
+References: [Workers traces](https://developers.cloudflare.com/workers/observability/traces/) and
+[AI Gateway logging](https://developers.cloudflare.com/ai-gateway/observability/logging/).
+
 ## 14. Cleanup, export, migration and retirement
 
 ### Source lifecycle
@@ -602,12 +706,15 @@ caches or coordination layers.
 | Exclude | Keep readable/history, omit from new project retrieval |
 | Archive | Keep all bytes/history, hide from ordinary active selection |
 | Replace/reparse | New immutable revision; old citations remain; dependents become stale |
-| Delete from Library | Tombstone first, stop new reads/context, then reconcile/remove exact search items and R2 revision objects |
+| Delete from Library | Show affected projects/pages/chats/active jobs; after one explicit destructive confirmation, tombstone first, stop new reads/context, then reconcile/remove exact search items and R2 revision objects |
 | Erase derived copies | Separate explicit scope identifying affected pages/chats/exports |
 
-Tombstone in D1 before external deletion. Writers check tombstone around external publication. `CleanupWorkflow` waits
+The impact preview is a bounded D1 query over memberships, `page_input`, active jobs and citation references; it is
+not another approval packet. Tombstone in D1 before external deletion. Writers check tombstone around external publication. `CleanupWorkflow` waits
 for known producers/unknown acknowledgements, removes exact item IDs/keys and R2 objects, then sweeps revision prefixes.
 Saved report text remains but missing citations are visible. Detaching or optimization never deletes canonical originals.
+Active jobs and retained page/chat citations count as references; old projection items remain until no admitted job may
+search them. Historical citations then require retained canonical bytes, not the search item itself.
 
 Optimization is an owner action using audit findings: remove obsolete search projections, completed temporary job data
 and truly unreferenced orphan objects after a grace period/fresh reference check; reuse exact duplicates and unchanged
@@ -628,7 +735,8 @@ This PR performs no migration or deletion. Before live cutover:
 2. close legacy writes/paid admissions and drain or explicitly interrupt active producers;
 3. take a recoverable final D1/R2/DO export independent of the new system;
 4. import with stable old→new identity mapping, preserving retained bytes/history and unresolved legacy references;
-5. re-enter unavailable credentials rather than exporting raw secrets;
+5. re-enter unavailable model/static credentials and re-authorize outgoing MCP OAuth connections rather than
+   exporting raw secrets or tokens;
 6. verify counts, exact representative bytes/citations/history, projects and the assembled journeys;
 7. switch traffic in an authorized deployment; retain rollback/export until owner acceptance;
 8. then remove superseded apps/packages/crates/migrations/routes/gates/bindings coherently.
@@ -652,8 +760,9 @@ After the vertical product is assembled, exercise:
 - two projects in separate tabs with different drafts/models/tools, shared sources and concurrent jobs;
 - chat reconnect/stop/continue without duplicate paid continuation;
 - competing page edits, proposal accept/edit/reject and selective Wiki/map refresh;
-- outgoing read/mutating MCP tool approval and failure isolation;
-- incoming agent scope, offer/decline/claim/result and paid permission;
+- outgoing read/mutating MCP tool approval, remote report publication and failure isolation;
+- incoming agent scope, offer/decline/claim/result, Workflow `waitForEvent`, paid permission and one independent
+  standard MCP wire client;
 - cancel before/within a paid call, Gateway limit response and unknown provider completion;
 - audit proposals, cleanup, export/import and rollback boundary.
 
