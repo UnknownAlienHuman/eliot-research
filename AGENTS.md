@@ -10,7 +10,7 @@ for a product that holds 15 sources. Do not repeat that.
    [docs/IMPLEMENTATION.md](docs/IMPLEMENTATION.md) for your task. Then open the real files you will change.
 2. This file, ARCHITECTURE.md and IMPLEMENTATION.md are the only instructions in the repository. The legacy
    code (git tag `legacy-final`; still in the tree until Phase 0 removes it) is history: do not modify it, read
-   a legacy file only when IMPLEMENTATION.md names it as a donor, and never copy legacy patterns.
+   a legacy file only when IMPLEMENTATION.md names it (donors §12, data import §11), and never copy legacy patterns.
 3. If the docs do not cover what you need, or the docs and the code disagree, **stop and ask the owner**.
    Do not invent a mechanism, and do not "fix" the architecture silently.
 

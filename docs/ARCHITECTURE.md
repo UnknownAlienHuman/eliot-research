@@ -57,7 +57,7 @@ Use these words, in code and docs, with exactly these meanings. Do not invent sy
 | Agent | An external AI client that connects over MCP. Identified by its Access identity. |
 | Actor | Who performed an action: the owner or a named agent. Stored on every write. |
 | Notebook | A research container: sources, chats, pages, tasks, research runs. |
-| Source | Imported material: the original file plus its extracted Markdown **text**. Immutable once ready. |
+| Source | Imported material: the original file plus its extracted Markdown **text**. File and text never change once ready. |
 | Source guide | Short generated summary and topics of one source. Navigation, never evidence. |
 | Passage | A character range `[start, end)` of one source's text. |
 | Citation | A link from a page or answer to one passage, written `[n]` in Markdown. |
@@ -65,7 +65,7 @@ Use these words, in code and docs, with exactly these meanings. Do not invent sy
 | Page | A saved Markdown document in a notebook. Kind: `note`, `report` or `wiki`. |
 | Revision | One immutable version of a page. Status: `accepted`, `proposed` or `rejected`. |
 | Proposal | A `proposed` revision waiting for the owner's decision. |
-| Inbox | The owner's queue: proposals and tasks that need attention. |
+| Inbox | The owner's review queue: all proposals, across notebooks. |
 | Research run | One explicit deep-research job. Produces a `report` page. |
 | Task | A work item the owner gives to agents. |
 | Event | One line in a notebook's activity feed. |
@@ -119,12 +119,14 @@ custom observability stack. Add one only when a journey cannot work without it, 
 
 1. Upload / URL / text arrives. The original bytes are stored once in R2 by SHA-256 (identical files share
    one object). A `source` row is created with status `processing` and an `IngestWorkflow` starts.
-2. The workflow extracts Markdown text (plain text as is; PDF, Office, HTML and images via Workers AI
-   `toMarkdown`; URLs via `fetch`, or Browser Run when the page needs a browser), writes it to R2, marks the
+2. The workflow extracts Markdown text (plain text as is; PDF, Office and HTML via Workers AI `toMarkdown`;
+   images via `toMarkdown`, which returns a generated description; URLs via `fetch`, or Browser Run when the
+   page needs a browser), writes it to R2, marks the
    source `ready`, generates the source guide, uploads the text to the notebook's AI Search instance and waits
    until it is indexed.
-3. A ready source never changes. Re-importing a changed file or URL creates a **new source**; the old one gets
-   `replaced_by`. Citations therefore never move.
+3. A ready source's file and text never change, so citations never move. "Replace with new version" (upload a
+   new file or refetch the URL) creates a **new source**; when it becomes ready the old one gets `replaced_by`.
+   There is no automatic matching of "the same" document.
 4. A source is readable and usable in direct context as soon as its text exists; search works after indexing.
    The UI shows both states.
 5. Deleting a source deletes its text, its index item and (if no other source uses it) the original file.
@@ -153,8 +155,10 @@ custom observability stack. Add one only when a journey cannot work without it, 
 - Owner saves are `accepted` immediately, using an expected-current-revision check (conflict → the UI shows
   both versions).
 - Agent saves are `proposed` by default (per-notebook setting may allow direct agent edits). Proposals appear in
-  the Inbox; the owner accepts (becomes current), edits and accepts, or rejects.
-- Wiki pages (`kind = wiki`) have a unique slug per notebook. The notebook's wiki index (titles + first line)
+  the Inbox; the owner accepts (becomes current), edits and accepts, or rejects. A proposal based on an older
+  revision is shown as a diff against the current one and needs an explicit "accept anyway".
+- Tasks are not in the Inbox; their result pages are reviewed like any other agent page.
+- Wiki pages (`kind = wiki`) have a unique slug per notebook. The notebook's wiki index (titles + summaries)
   is computed from the table, not stored.
 - When a model reads a page, the page's own citations are relabelled as passages, so knowledge reused from the
   wiki still cites the original sources. Pages are never treated as sources.
@@ -169,8 +173,9 @@ Explicit button or MCP call only. One `ResearchWorkflow` instance per run:
 3. **Check** — one model call lists gaps; at most one extra round of sub-questions.
 4. **Write** — one model call writes the report from the findings; it is saved as a `report` page.
 
-Budgets (tokens, tool steps, wall time) are checked before every step. When a budget is exhausted or the owner
-cancels, the run skips to **Write** and produces an honest partial report that states what was not covered.
+Budgets (tokens, tool steps, wall time) are checked at the start of every Investigate step and before Check.
+When a budget is exhausted or the owner cancels, the run skips to **Write** and produces an honest partial
+report that states what was not covered; if nothing was found yet, the run ends `cancelled` without a report.
 Progress is a short text in the run row; the UI polls it. No judge models, critic panels or agent swarms.
 
 ### 6.5 Agents and tasks
@@ -203,14 +208,17 @@ Measured on the deployed app with realistic data (≈ 50 sources per notebook). 
 
 1. **Cloudflare Access protects the whole hostname**: owner by email policy; agents by service tokens (headless)
    or Access managed OAuth (interactive MCP clients).
-2. **The Worker verifies the Access JWT on every request** (`Cf-Access-Jwt-Assertion`: signature via cached
+2. **The Worker verifies the Access JWT on every API, chat and MCP request** (`Cf-Access-Jwt-Assertion`: signature via cached
    JWKS, audience, issuer, expiry) and maps it to an actor. Unknown identity → 403. That is the only
    authorization check; there are no per-object permissions.
 3. **Secrets** live in Worker secrets or AI Gateway (BYOK). Never in D1, R2, logs or the browser.
 4. **Untrusted content stays data.** Markdown is rendered without raw HTML. Source text is delimited in prompts.
    Models inside Eliot have only read tools; every write is done by host code.
 5. **Agent page edits are proposals** unless the owner enables direct edits for a notebook.
-6. **Mutations are JSON-only**, so browsers cannot forge them cross-site with the Access cookie.
+6. **No cross-site forgery:** every mutation must carry `Content-Type: application/json` or, for file
+   uploads, the header `X-Eliot-Upload: 1`. Both force a CORS preflight, which the Worker never approves.
+7. **Local development only:** when `ENVIRONMENT=development` and the request comes to `localhost`, the
+   `DEV_ACTOR` variable stands in for Access. Production never sets either.
 
 Not required, and not to be built without an owner decision: per-object ACLs, grants, re-authorization on reads,
 content hash chains, signatures, receipts, custom encryption, custom OAuth, rate limiting, audit ledgers.
@@ -220,7 +228,7 @@ Backups are D1 Time Travel (30 days) plus the notebook export.
 
 **Version 1:** journeys 1–5; files (PDF with a text layer, DOCX, XLSX, ODS/ODT, HTML, Markdown, text, CSV, images),
 URLs and pasted text; chat with citations; pages with history; wiki; inbox; deep research over notebook
-sources; MCP; tasks; activity feed; notebook export as a Markdown ZIP.
+sources; MCP; tasks; activity feed; notebook export as a Markdown ZIP; UI in English and Russian.
 
 **Later, when the owner asks:** Studio presets (briefing, FAQ, timeline, study guide), web discovery in deep
 research, wiki maintenance from new sources, audio overview, YouTube transcripts, OCR for scanned PDFs,
