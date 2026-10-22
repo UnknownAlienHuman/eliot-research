@@ -1,40 +1,38 @@
 # Audit evidence
 
-The current product decisions live in [Architecture](../../docs/ARCHITECTURE.md) and
-[Implementation](../../docs/IMPLEMENTATION.md). Audits describe a dated baseline and consequences;
-they are not a parallel specification, approval programme or claim that code has already been repaired.
+Current product decisions live in [Architecture](../../docs/ARCHITECTURE.md),
+[Implementation](../../docs/IMPLEMENTATION.md), [Map](../../docs/MAP.md) and
+[Donors](../../docs/DONORS.md). Audits are dated evidence and limitations; they are not an approval programme,
+parallel specification or claim that code has been repaired.
 
 ## Current review
 
-[2026-10-21 — replacement architecture and PR #414 review](2026-10-21/README.md)
-checks the draft against current source, source lifecycle requirements and Cloudflare APIs.
-It distinguishes verified source observations from unverified production counts, and records the
-preservation requirements carried into the replacement [work map](../../docs/MAP.md).
-Its [2026-10-22 follow-up](2026-10-21/README.md#follow-up-coverage-review--2026-10-22-utc)
-compares the first replacement revision with the old UI/API and closes gaps in model setup, concurrent
-projects, visible research actions, agent offers and retrieval quality.
+[2026-10-21/22 — PR #414 replacement architecture audit](2026-10-21/README.md)
 
-The revised documents address the draft's design problems. Implementation and real product measurements
-are still required; this documentation change does not certify the legacy runtime or deploy a replacement.
+The review compares the original Claude draft, two corrected revisions, executable legacy code, official Cloudflare
+APIs and selected donors. The third pass identifies and resolves missing outgoing MCP, fragile whole-document citation
+mapping, invalid large-scope rank merging, lost Corpus Map/audit functions, duplicated billing controls, insufficient
+research metadata and premature one-index/tokenizer assumptions.
+
+The current documents specify the replacement. Runtime implementation, live migration and measured product quality
+remain future work.
 
 ## Historical evidence
 
-These immutable links preserve context without keeping superseded programmes as active instructions.
-
 | Reference | Use |
 |---|---|
-| [2026-10-17 audit reconciliation](https://github.com/UnknownAlienHuman/eliot-research/blob/7c034569b908d3b03a8b821b7c537477a24b10f7/.github/audits/2026-10-17/README.md) | Which issue #380 findings were verified, fixed, stale or unverified at that baseline |
-| [2026-10-08 code integrity audit](https://github.com/UnknownAlienHuman/eliot-research/blob/7c034569b908d3b03a8b821b7c537477a24b10f7/.github/audits/2026-10-08/CODE-INTEGRITY-AUDIT.md) | Earlier concrete defects and their reproduction context; not current status |
-| [Full prior audit archive](https://github.com/UnknownAlienHuman/eliot-research/tree/7c034569b908d3b03a8b821b7c537477a24b10f7/.github/audits) | Original reports and evidence at the preserved main baseline |
-| [Issue #380](https://github.com/UnknownAlienHuman/eliot-research/issues/380) | User-reported complexity and code-quality problems; measurements require baseline/context |
-| [Issue #377](https://github.com/UnknownAlienHuman/eliot-research/issues/377) | Cancellation of custom-index/generation machinery and return to native Cloudflare retrieval |
-| [Original PR #414 architecture](https://github.com/UnknownAlienHuman/eliot-research/blob/42d728716bf0c6ee2450fcee3f9b50cbaed061f8/docs/ARCHITECTURE.md) and [implementation](https://github.com/UnknownAlienHuman/eliot-research/blob/42d728716bf0c6ee2450fcee3f9b50cbaed061f8/docs/IMPLEMENTATION.md) | Exact draft reviewed, before corrections in this PR |
-| [Prior documentation](https://github.com/UnknownAlienHuman/eliot-research/tree/7c034569b908d3b03a8b821b7c537477a24b10f7/docs) | Full historical ideas, contracts, design and migration notes for bounded reference/import work |
-| [69-repository donor catalogue](https://github.com/UnknownAlienHuman/eliot-research/blob/7c034569b908d3b03a8b821b7c537477a24b10f7/docs/implementation/donors.md), [NotebookLM study](https://github.com/UnknownAlienHuman/eliot-research/blob/7c034569b908d3b03a8b821b7c537477a24b10f7/docs/implementation/notebooklm-donor.md), [EdgeQuake study](https://github.com/UnknownAlienHuman/eliot-research/blob/7c034569b908d3b03a8b821b7c537477a24b10f7/docs/implementation/edgequake-donor.md) | Wider research history; the active selected mechanisms are in [DONORS](../../docs/DONORS.md) |
+| [2026-10-17 audit reconciliation](https://github.com/UnknownAlienHuman/eliot-research/blob/7c034569b908d3b03a8b821b7c537477a24b10f7/.github/audits/2026-10-17/README.md) | Verified/fixed/stale/unverified issue #380 findings at that baseline |
+| [2026-10-08 code integrity audit](https://github.com/UnknownAlienHuman/eliot-research/blob/7c034569b908d3b03a8b821b7c537477a24b10f7/.github/audits/2026-10-08/CODE-INTEGRITY-AUDIT.md) | Earlier concrete defects and reproduction context; not current status |
+| [Full prior audit archive](https://github.com/UnknownAlienHuman/eliot-research/tree/7c034569b908d3b03a8b821b7c537477a24b10f7/.github/audits) | Original reports/evidence at pinned legacy main |
+| [Issue #380](https://github.com/UnknownAlienHuman/eliot-research/issues/380) | Owner's architecture/code-quality audit and measured legacy hot-path evidence |
+| [Issue #377](https://github.com/UnknownAlienHuman/eliot-research/issues/377) | Live-product priorities and cancellation of custom index/generation/Rust programmes |
+| [Original PR #414 draft](https://github.com/UnknownAlienHuman/eliot-research/tree/42d728716bf0c6ee2450fcee3f9b50cbaed061f8) | Exact Claude draft before review |
+| [Prior product documentation](https://github.com/UnknownAlienHuman/eliot-research/tree/7c034569b908d3b03a8b821b7c537477a24b10f7/docs) | Historical capabilities and useful implementation ideas for bounded import |
+| [Old donor catalogue](https://github.com/UnknownAlienHuman/eliot-research/blob/7c034569b908d3b03a8b821b7c537477a24b10f7/docs/implementation/donors.md) | Wider research history; active selections are in current DONORS |
 
-## Keep findings useful
+## Recording future findings
 
-Name the inspected commit, exact source or primary documentation, observed behaviour and its user impact.
-Separate a present defect, a design risk, a fixed historical finding and an unmeasured hypothesis.
-Put the resulting change in the owning implementation section or code; do not create another registry,
-recertification chain or mandatory audit packet before ordinary development can proceed.
+A useful finding names the inspected commit/API version, exact code or primary documentation, observed behavior,
+user impact and owning correction. Separate present defect, design risk, fixed historical finding and unmeasured
+hypothesis. Put the change in the owning document/code instead of creating another registry, certification packet,
+claim file, gate or execution diary.
