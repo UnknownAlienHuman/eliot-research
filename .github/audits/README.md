@@ -10,6 +10,9 @@ they are not a parallel specification, approval programme or claim that code has
 checks the draft against current source, source lifecycle requirements and Cloudflare APIs.
 It distinguishes verified source observations from unverified production counts, and records the
 preservation requirements carried into the replacement [work map](../../docs/MAP.md).
+Its [2026-10-22 follow-up](2026-10-21/README.md#follow-up-coverage-review--2026-10-22-utc)
+compares the first replacement revision with the old UI/API and closes gaps in model setup, concurrent
+projects, visible research actions, agent offers and retrieval quality.
 
 The revised documents address the draft's design problems. Implementation and real product measurements
 are still required; this documentation change does not certify the legacy runtime or deploy a replacement.

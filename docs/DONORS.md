@@ -1,6 +1,6 @@
 # Active donors and selected runtime
 
-**Product decision date:** 2026-10-21, America/New_York.
+**Product decision date:** 2026-10-21; capability/retrieval follow-up 2026-10-22.
 
 **Reference check:** official Cloudflare docs and current donor heads/files checked 2026-10-22 UTC. EdgeQuake retains
 the user-selected snapshot reviewed 2026-10-18.
@@ -18,14 +18,16 @@ references. It makes no claim that donor performance transfers to Eliot and does
 |---|---|---|
 | One deployable app | Cloudflare Workers + Vite + `@cloudflare/vite-plugin`; React, React Router, TanStack Query | One Worker serves UI, Hono API, chat and MCP. Vite plugin runs the Worker locally in `workerd`; see the [plugin docs](https://developers.cloudflare.com/workers/vite-plugin/). |
 | UI | Existing Material tokens and useful primitives | Keep the current NotebookLM/Material visual intent, layout and component path. No Tailwind or shadcn migration is selected. |
-| Model calls | `agents` + `ai` + `@ai-sdk/provider`; `createAI` from `agents/models/ai-sdk`; AI SDK `streamText` / `generateText` | Cloudflare's [AI SDK guide](https://developers.cloudflare.com/agents/models/ai-sdk/) documents Workers AI and AI Gateway routes; the provider is beta and requires AI SDK `^7` and provider `^4`. Add a vendor SDK only for a configured vendor model object. Pin a compatible release set at implementation. |
+| Model calls | `agents` + `ai` + `@ai-sdk/provider`; `createAI` from `agents/models/ai-sdk`; AI SDK `streamText` / `generateText` | Cloudflare's [AI SDK guide](https://developers.cloudflare.com/agents/models/ai-sdk/) documents Workers AI and AI Gateway routes; the provider is beta and requires AI SDK `^7` and provider `^4`. Optional [AI Gateway BYOK](https://developers.cloudflare.com/ai-gateway/configuration/bring-your-own-keys/) stores provider keys in Cloudflare Secrets Store. Add a vendor SDK only for a configured vendor model object. Pin a compatible release set at implementation. |
 | Chat | `AIChatAgent` from `@cloudflare/ai-chat`; `useAgentChat` from `@cloudflare/ai-chat/react` | Use the Durable Object for chat persistence and reconnectable streaming only; do not put ingest or deep research state in it. See the [chat-agent guide](https://developers.cloudflare.com/agents/communication-channels/chat/chat-agents/); confirm package/API version at implementation. |
 | MCP server | `createMcpHandler` from `agents/mcp/server` + `@modelcontextprotocol/server` v2 | Cloudflare's [handler API guide](https://developers.cloudflare.com/agents/model-context-protocol/apis/handler-api/) (2026-07-28) identifies the stateless handler. Use it for a new surface; `McpAgent` is deprecated and feature-frozen. MCP tools call the same service functions as the UI. |
 | Durable jobs | Cloudflare Workflows: `WorkflowEntrypoint`, `step.do`, `step.waitForEvent` | `IngestWorkflow` handles ingestion; one `ResearchWorkflow` serves research, distillation and Wiki modes; `CleanupWorkflow` handles tombstoned-source cleanup. The [overview](https://developers.cloudflare.com/workflows/) documents durable steps, retry and external-event waits. Make each paid/external effect and save boundary intentional. |
 | Optional web discovery | Cloudflare Web Search API via `env.AI.websearch` or the supported Agents SDK web-search tool | Available only in explicit, budgeted deep mode. Capture chosen URLs through the ordinary ingest path before citing them; see the [API overview](https://developers.cloudflare.com/web-search/) and [Agents tool](https://developers.cloudflare.com/agents/tools/web-search/). Beta/provider failure does not block library research. |
-| Search | One shared Cloudflare AI Search instance and Worker binding; `search()` with native hybrid retrieval, reranking and metadata filters | Filter scalar `revision_id` using `$in` over selected IDs **before retrieval**. The [filter docs](https://developers.cloudflare.com/ai-search/configuration/retrieval/filtering/) (updated 2026-08-26) say `$in` matches scalar fields, not stored arrays; verify actual metadata indexing and request limits during implementation. No direct Vectorize, custom FTS, second index or global-top-k post-filtering. |
+| Search | One shared Cloudflare AI Search instance and Worker binding; Qwen3 multilingual embeddings, native BM25/vector RRF and metadata filters | Filter scalar `revision_id` using `$in` over selected IDs **before retrieval**. The [filter docs](https://developers.cloudflare.com/ai-search/configuration/retrieval/filtering/) (updated 2026-08-26) say `$in` matches scalar fields, not stored arrays; verify actual metadata indexing and request limits during implementation. No direct Vectorize, custom FTS, second index or global-top-k post-filtering. |
+| Optional multilingual ranking | One Cohere `rerank-v5.0-fast` request through AI Gateway over native Search candidates | [Cloudflare's provider route](https://developers.cloudflare.com/ai-gateway/usage/providers/cohere/) and [Cohere v2](https://docs.cohere.com/reference/rerank) supply the API; [Cohere documents Russian support](https://docs.cohere.com/docs/rerank). Verify the composed v2 Gateway route at integration. This is a configured extra call with visible cost, not an AI Search native reranker or a second retrieval engine. |
 | Durable product data | D1 + R2 bindings | D1 holds global source records, immutable source revisions, notebook memberships, page metadata and immutable page revisions. R2 holds original, readable and derived bodies. Exact schema/transaction semantics belong in IMPLEMENTATION.md. |
 | Extraction | Workers AI `toMarkdown`; Browser Run for pages needing browser rendering | A readable representation is useful before search indexing finishes. Extraction is a platform choice, not a claim of perfect OCR, coordinates or table fidelity. |
+| Interactive MCP authentication | Cloudflare Access Managed OAuth | Use the [Managed OAuth flow](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/) for compatible interactive MCP clients; Eliot must validate the Access JWT. Headless clients use the selected Access service-token path. No custom OAuth issuer. |
 | API / validation | Hono + zod; `jose` for Access JWT checks | Keep route handlers thin and share service functions with MCP. No new repository/adapter framework. |
 
 These are selected APIs and dependencies in the current implementation plan. Material and NotebookLM references
@@ -35,7 +37,9 @@ describe hierarchy, density and source-reading affordances; they do not imply a 
 
 Google's [source help](https://support.google.com/gemininotebook/answer/16215270?hl=en),
 [chat help](https://support.google.com/gemininotebook/answer/16179559?hl=en) and [notes help](https://support.google.com/gemininotebook/answer/16262519?hl=en)
-document selected sources, source-opening citations, notes and imported representations.
+document source-panel selection, source-opening citations, notes and imported representations. Chat settings include
+conversational style and response length; saving a response as a note preserves its formatting, tables and clickable
+citations. These are UX references, not hidden implementation details or a code dependency.
 The reviewed [NotebookLM Enterprise API](https://docs.cloud.google.com/gemini/enterprise/notebooklm-enterprise/docs/overview)
 has notebook/source management and audio-overview APIs; those references do not establish a general conversational API.
 
@@ -43,13 +47,48 @@ has notebook/source management and audio-overview APIs; those references do not 
 
 - `createAI` from `agents/models/ai-sdk` is the selected Workers AI / AI Gateway provider entry point. The current
   guide documents `generateText`, `streamText`, tool calls and structured output through AI SDK v7; it marks the
-  provider beta, so pin the installed versions and qualify each model route before relying on its behavior.
+  provider beta, so pin the installed versions and verify the configured route during integration. This does
+  not require a runtime model-qualification service or repeated preflight calls.
 - A catalog model string can use the gateway without a vendor SDK. Add `@ai-sdk/anthropic`, `@ai-sdk/openai` or
   another vendor provider only if Eliot sends that vendor's model object. Avoid a provider catalogue assembled in
   advance.
+- AI Gateway [BYOK](https://developers.cloudflare.com/ai-gateway/configuration/bring-your-own-keys/) can keep provider
+  credentials in Cloudflare Secrets Store and supports rotation. Use it only for configured routes; keep keys out of
+  Worker/browser code and preserve Eliot's explicit retry/fallback policy.
+- The [AI Search chunker](https://developers.cloudflare.com/ai-search/configuration/indexing/chunking/) recursively
+  splits at paragraph/sentence boundaries and exposes instance-level chunk-size and overlap controls. Tune those
+  controls against real Eliot papers, table-heavy files and answer-context budgets: smaller chunks increase index
+  volume, while large chunks/result counts increase context, latency and cost. Donor benchmarks do not supply Eliot's
+  values.
+- [Keyword search](https://developers.cloudflare.com/ai-search/configuration/indexing/keyword-search/) defaults to
+  Porter stemming for natural-language text; trigram is aimed at code and is recommended for Japanese, Chinese and
+  Korean. Tokenizer changes require a full reindex. Start with Porter; after assembly compare English
+  and Russian queries, abbreviations, identifiers, numbers and literal phrases. Do not infer language quality from
+  the tokenizer name alone. Per-query `or` mode broadens recall but returns more matches; reserve it for deliberate
+  broadened search, not every ask.
+- Native [reranking](https://developers.cloudflare.com/ai-search/configuration/retrieval/reranking/) is a second
+  model step; the supported BGE-Reranker-Base is documented for English/Chinese and has a 512-token input limit.
+  Keep it off in the initial mixed-language baseline; measure its usefulness rather than assuming Russian support.
+  See the [supported models](https://developers.cloudflare.com/ai-search/configuration/models/supported-models/)
+  and [BAAI model card](https://huggingface.co/BAAI/bge-reranker-base). A selected multilingual ranking profile uses
+  the one Cohere call above instead. Direct known-passage reads need neither reranker.
+- The explicit embedding choice is `@cf/qwen/qwen3-embedding-0.6b`; [Qwen's model card](https://github.com/QwenLM/Qwen3-Embedding/blob/main/README.md)
+  documents Russian/English and cross-language retrieval. Cloudflare's hosted limit applies. Set the native
+  hybrid `match_threshold` deliberately: it filters by vector similarity, not the fused RRF score, and can drop
+  lexical-only hits. The initial value is zero; inspect relevance in retained passages instead of treating a score
+  as evidence. [Result controls](https://developers.cloudflare.com/ai-search/configuration/retrieval/result-controls/).
+- Do not enable AI Search [similarity response caching](https://developers.cloudflare.com/ai-search/configuration/retrieval/cache/)
+  for revision-filtered requests until a same-prompt/different-scope test proves isolation. The docs describe reuse
+  for similar prompts and invalidation when dependent chunks change/delete, but do not state that `$in` scope is part
+  of the cache identity.
+  Cloudflare separately [warns against Gateway caching/rate limits](https://developers.cloudflare.com/ai-search/configuration/models/ai-gateway/)
+  on the Gateway used by AI Search because these can disturb embeddings and indexing.
 - `createMcpHandler` is the current stateless handler entry point. The current Cloudflare guide pairs it with
   `@modelcontextprotocol/server` v2; `McpAgent` is marked deprecated and feature-frozen. Eliot's MCP calls remain
   thin wrappers over the same notebook/page/source/task services.
+- Cloudflare Access [Managed OAuth](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/)
+  supports interactive MCP clients on an MCP Access application; the server must validate the `Cf-Access-Jwt-Assertion`
+  JWT. Use this supported flow where compatible, not a new Eliot OAuth server.
 - A Workflow step is a durable retry boundary. Keep model output available before a report-save retry so a D1/R2
   failure does not repeat paid synthesis. A workflow retry is not a promise that an external call had no effect.
 - AI Search metadata filtering is pre-retrieval. Store `revision_id` as one scalar field per indexed source item and
@@ -60,6 +99,14 @@ has notebook/source management and audio-overview APIs; those references do not 
   successful HTTP response is not evidence that every selected revision was searched.
 - AI Search result `chunks` and `context_expansion` are search context. A citation still resolves through R2-readable
   text and the requested revision/range rather than treating a returned snippet as the canonical source body.
+- AI Search's recursive chunker does not promise that every split table row retains its column header or section
+  context. Dify's [parent/child processor](https://github.com/langgenius/dify/blob/5c59b9cbf649c3fffd52c980e11ea85670c0891c/api/core/rag/index_processor/processor/parent_child_index_processor.py)
+  and Docling's pinned [HybridChunker](https://github.com/docling-project/docling-core/blob/b359e1c377aa8e3846ffb4100f7b513eb89ebd0c/docling_core/transforms/chunker/hybrid_chunker.py)
+  provide useful patterns: retrieve a focused child passage with its heading/table context, then hydrate the exact
+  canonical parent section. Eliot's bounded R2 section reads can provide that hierarchy without duplicate parent
+  vectors. If representative table tests still lose headers, consider a same-index derived table projection with
+  repeated caption/header and a map back to original UTF-8 ranges; add it only when the failure is observed. Docling
+  remains a Python design reference, not a Worker parser/runtime.
 - Native [query rewriting](https://developers.cloudflare.com/ai-search/configuration/retrieval/query-rewriting/)
   uses the `messages` request shape and adds a model operation. Use it for follow-up ambiguity, with the same
   selected-source filter, not automatically on every standalone question or beside another local rewrite.

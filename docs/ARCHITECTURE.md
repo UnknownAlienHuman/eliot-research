@@ -1,6 +1,6 @@
 # Eliot Research — Architecture
 
-Target design, 2026-10-21. This document defines the product and its boundaries; it does not
+Target design, revised 2026-10-22. This document defines the product and its boundaries; it does not
 claim that the replacement is built or deployed. [Implementation](IMPLEMENTATION.md) chooses
 the mechanics; [map](MAP.md) locates the work; [donors](DONORS.md) justify reuse;
 [audits](../.github/audits/README.md) retain evidence.
@@ -20,17 +20,20 @@ Distillation, Wiki maintenance and removing obsolete material belong to this pro
 | Capability | What must work |
 |---|---|
 | Library and notebooks | Store a source once; attach it to several notebooks. Upload batches, add URLs/text, inspect extraction quality, replace a source, exclude it from search, detach it or delete it deliberately. |
+| Several projects | Work in multiple notebooks concurrently, including separate browser tabs. Keep each project's chats, drafts, selection, model defaults and jobs independent. Explicitly search/compare several selected projects without duplicating shared sources. |
 | Reading and orientation | Open the original and readable text; navigate its outline; obtain a short guide with stated coverage. Large collections use paginated lists and bounded overviews. |
-| Retrieval | Find exact terms and semantic matches within the selected material; return useful context and links to the retained source revision. Read a known passage directly without a model. |
-| Answers | Stream an ordinary answer quickly. Source selection is explicit, follow-ups preserve it, and citations open actual passages. Ordinary questions do not start deep research. |
+| Retrieval | Find exact terms and semantic matches, including Russian questions over English papers. Return coherent evidence with headings, table context and links to retained revisions; avoid duplicate excerpts. Distinguish a relevant-passage answer from coverage of every selected document. |
+| Models and settings | Connect supported providers, Cloudflare models and compatible custom endpoints; manage credentials through Cloudflare. Choose global/project defaults and a model for a chat or job. Show the selected route and billing mode without recurring qualification steps. |
+| Answers | Stream an ordinary answer quickly. Visible source selection, model, response preferences and follow-ups remain under the owner's control. Citations open actual passages; insufficient evidence is stated. Ordinary questions do not start deep research. |
 | Distillation | Produce concise source digests and comparative reports with findings, methods, limitations, disagreements and evidence. Show what was read and what remains uncovered. |
 | Saved knowledge | Save, reopen, edit, compare and export notes, digests, reports and Wiki pages with immutable history. Refresh affected knowledge when sources change; preserve useful dissent and owner edits. |
 | Deep research | An explicit background investigation with visible progress, sources, spending limits and cancellation. It can research the library or use explicitly enabled web discovery and capture. |
-| Agents | Connect through standard MCP, discover a notebook, search/read, contribute sources, take tasks and save results. External agents can use their own models; reading and writing do not require Eliot to buy another model call. |
+| Agents | Connect through standard MCP, discover projects, search/read, contribute sources, accept or decline owner-offered work and save results. External agents can use their own models; reading and writing do not require Eliot to buy another model call. |
 | Collaboration | Attribute changes; prevent lost edits; review agent proposals in Inbox or enable direct edits for a chosen notebook. Tasks and saved results survive reconnects. |
 | Data ownership | Download originals and retained text, export knowledge with citations and revision metadata, and preserve real content during replacement of the old implementation. |
 
-A notebook is a project view over the library, not ownership of a separate copy of each document.
+A notebook is the project's stored/UI unit; do not create parallel project and notebook hierarchies.
+It is a view over the shared library, not ownership of a separate copy of each document.
 A source revision is an immutable captured/extracted representation. A page revision is derived knowledge.
 A citation refers to source revision bytes; a model's statement and a source's statement remain distinguishable.
 
@@ -40,6 +43,8 @@ A citation refers to source revision bytes; a model's statement and a source's s
 substitutes for the original. Source replacement, parser changes and reindexing do not move old citations.
 A citation shows where a claim came from; it does not certify that the claim is true.
 An unavailable or deleted source is shown honestly. A top-k search never claims whole-corpus coverage.
+Tables, exceptions, contradictory findings and exact identifiers need their surrounding meaning. Native
+search locates candidates; canonical section reads and explicit coverage make them useful evidence.
 
 **Saved work remains useful.** The library is readable while indexing or optional model services are down.
 Removing a notebook membership does not delete the source. Archival retains historical evidence.
@@ -57,9 +62,15 @@ admitted; an already dispatched call may still finish/be billed. Partial finding
 Reconnect resumes observation of the same work. Ambiguous provider completion is disclosed, not treated as
 permission for an invisible repeat charge.
 
-**Access is practical.** Use standard authentication and a small explicit owner/agent permission check.
+**Access is practical.** Cloudflare Access handles sign-in; use its standard service-token or managed
+OAuth flows for MCP and a small explicit owner/agent permission check at the application boundary.
 Protect secrets, reject unsafe browser content and enforce selected source scope. Optional-service readiness,
 credential refresh and historical audit programmes do not become global locks on opening the application.
+Do not add signatures, encryption keys, proof receipts or repeated token exchanges between internal steps.
+
+**Projects do not interfere.** Switching projects does not erase drafts, retarget a stream or cancel a
+background job. An explicit cross-project request reads only its chosen permitted scope and saves into a
+chosen destination. One project's model error or job limit cannot block another project's readable work.
 
 ## System shape
 
