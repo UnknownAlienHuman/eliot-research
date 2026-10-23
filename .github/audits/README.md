@@ -10,6 +10,7 @@ what still lacks runtime evidence. It does not repeat product decisions.
 
 ## Current reviews
 
+- [2026-10-23 — extraction, structural fidelity and citations](2026-10-23/EXTRACTION-CITATION.md): findings 32–38 separate direct Markdown Conversion from AI Search OCR, define supported-format discovery and additive-tolerant provider parsing, distinguish canonical byte ranges from page/layout hints, keep generated image descriptions out of literal evidence and narrow reuse of the old projector and Docling mechanisms.
 - [2026-10-23 — model capability and portable chat state](2026-10-23/MODEL-CHAT-PORTABILITY.md): adds explicit
   context/output/tool/structured capability profiles, disables automatic tool-result continuation, defines supported
   ChatAgent snapshot/import without private SQLite, retains unusually large finalized bodies through referenced R2
