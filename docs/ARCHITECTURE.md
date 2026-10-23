@@ -65,7 +65,8 @@ canonical section. Broad comparisons first identify relevant sources and coverag
 Tables retain captions, headers, units and relevant rows. Duplicate excerpts do not consume the context budget.
 A global top-k result never certifies that every selected document was examined. Indexing failures and unreadable
 parts remain in the coverage denominator; a successful search response is not complete-corpus evidence. Processing
-all extracted text is not proof that extraction retained every figure, table or appendix.
+all extracted text is not proof that extraction retained every figure, table or appendix. Reading all sections also
+does not make a truncated final synthesis complete: retain coverage and output-completion status separately.
 
 ### Several projects do not interfere
 
@@ -73,7 +74,9 @@ There is no server-global active project. Every route, cache key, chat, draft, j
 or chat identity. Switching UI tabs does not retarget a stream or write. Cross-project work freezes an explicit
 union of permitted source revisions and a destination project. Shared sources remain one Library object. Narrowing
 a chat's source scope also narrows model-bound history; old answers cannot silently reintroduce excluded evidence.
-Server-saved drafts survive reload without copying private research into browser persistence.
+Server-saved drafts survive reload without copying private research into browser persistence. Pending chat messages
+keep their submitted settings. Project-local contribution does not implicitly authorize rewriting a shared Library
+source for every other project; global source changes are explicit owner-authorized operations.
 
 ### Knowledge changes visibly
 
@@ -92,6 +95,7 @@ observed; an already dispatched provider call may still finish or be billed. Clo
 they fit; Eliot keeps only job-local limits and state needed to explain and resume the work. Unknown cost remains unknown.
 Retries, recovery and timeouts are configured at every actual SDK/provider/Workflow boundary; a logging hook is not
 a spend-control mechanism. Saving an already generated answer again does not generate or purchase it again.
+Model context limits and temporary Workflow retention must not delete the owner's saved research history.
 
 ### Authentication is practical
 

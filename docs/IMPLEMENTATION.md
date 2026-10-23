@@ -1,6 +1,6 @@
 # Eliot Research — Implementation
 
-Target implementation, lifecycle/retrieval audit 2026-10-23. It implements [ARCHITECTURE](ARCHITECTURE.md).
+Target implementation, native-runtime and shared-data review 2026-10-23. It implements [ARCHITECTURE](ARCHITECTURE.md).
 [MAP](MAP.md) owns delivery order and legacy source locations. [DONORS](DONORS.md) records current
 Cloudflare APIs and donor mechanisms. This document specifies the replacement; it is not evidence that the
 replacement is deployed, migrated or fast.
@@ -80,8 +80,18 @@ An admitted background job keeps its stored actor and frozen input; it does not 
 step. Authentication failure blocks access. A missing model, index or external tool blocks only that capability, not
 reading already stored sources and knowledge.
 
-No custom OAuth issuer, cookie-encryption service, row encryption keys, proof receipts, per-stage reauthorization or
-historical qualification chain.
+Route only the intended chat instances after resolving their D1 destination and actor permission; do not hand every
+`/agents/<class>/<name>` path to generic `routeAgentRequest` with all bindings. Tool Connection Agent execution stays
+internal DO RPC; only owner-authorized connection setup/OAuth routes are public. Internal methods need no `@callable`.
+Use SDK hooks, not protocol monkey-patches. Synced client state contains editable preferences/drafts, never credentials,
+actor authority, usage or approval decisions. `validateStateChange` checks shape/immutable fields synchronously;
+asynchronous permission checks belong in the operation handler, not a post-persistence notification.
+For a new command on an existing WebSocket, check the stored session expiry and current actor/operation permission;
+reconnect requires normal Access authentication. An admitted response may finish. No JWT re-verification per token,
+internal proof chain or global readiness gate is added.
+[Routing](https://developers.cloudflare.com/agents/runtime/communication/routing/),
+[state validation](https://developers.cloudflare.com/agents/runtime/lifecycle/state/) and
+[internal RPC](https://developers.cloudflare.com/agents/runtime/lifecycle/callable-methods/).
 
 ## 3. Model and outgoing-tool connections
 
@@ -238,9 +248,13 @@ job/<id>/input.json
 job/<id>/step/<stable-name>.json
 ```
 
-Write an object first, then conditionally publish the short D1 head. A failed publication leaves a known orphan for
-retry/cleanup. Hash exact bytes once for deduplication; title/URL alone never merges sources. DOI/external IDs produce
-owner-visible duplicate/version candidates.
+Create immutable R2 objects with native `put(..., { onlyIf: new Headers({ "If-None-Match": "*" }) })`, then conditionally
+publish the short D1 head. A failed precondition returns `null`: it is not write success. On an exact retry, read the
+same key and compare the recorded checksum/size or actual bytes; mismatched content conflicts and an unavailable read
+stays unavailable. Never use `head().catch(() => null)` followed by unconditional overwrite, or substitute an expected
+checksum for an observed one. A failed D1 publication leaves a known orphan for retry/cleanup. Hash bytes once for
+deduplication, not on every read; title/URL alone never merges sources. DOI/external IDs produce owner-visible candidates.
+[R2 conditional writes](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/).
 
 Every page edit supplies the head it read. All revision/dependency/activity inserts and the head update share the same
 expected-head precondition in one D1 batch; a stale head inserts nothing. Inspect every statement's `meta.changes` before
@@ -358,9 +372,14 @@ ten instances per cross-instance search; verify current limits/pricing at deploy
 
 Measure items per source, total files, filter payloads, indexing throughput and query quality. If real capacity or
 isolation limits are reached, move to deterministic native shards/project projections and namespace-level search. Do not
-create one instance per project pre-emptively. Embedding/tokenizer/projection changes build a new instance, populate and
-check it, then atomically switch the small settings pointer for future work. Active jobs retain frozen instance IDs.
-This is a reindex cutover, not a generation/promotion registry.
+create one instance per project pre-emptively. Embedding/tokenizer/projection changes build a new instance beside the old.
+A copied initial inventory is not sufficient while imports, replacements and card updates continue. At final handoff,
+briefly hold only source-head/card publication, settle their known publishers, catch up current revisions/cards and
+removals from D1, verify readiness, then switch the settings pointer and release pending publication. Upload retention,
+reads, chat and page edits stay available. A failed/expired handoff releases the hold with the old pointer unchanged;
+no producer or stored upload is discarded. Pending publication uses the new pointer. Active jobs retain their original
+instance IDs; newly acquired evidence records its own projection choice (§10). Use existing settings/jobs and expected
+state updates, not a generation registry, permanent dual writer or rollout framework.
 
 ## 7. Retrieval and exact evidence
 
@@ -397,10 +416,12 @@ Initial text profile:
 - native BGE reranking off in the mixed-language baseline; optional one-pass Cohere multilingual rerank only when
   configured, budgeted and measured useful.
 
-Verify installed binding types. The result limit is not a source-selection limit. Do not issue independent filtered
-top-k searches and merge incomparable ranks as if they were one corpus. For a scope beyond a verified filter/request
-bound, use one native cross-instance search over deterministic projections, a durable exhaustive/per-source comparison,
-or request narrower scope. Report partial scope explicitly.
+Verify installed binding types. The result limit is not a source-selection limit. Namespace search adds instance IDs
+but still uses request retrieval filters; sharding alone does not make an oversized revision filter smaller. Use it
+only when the selected projections themselves express the required scope or the remaining complete filter fits.
+Otherwise use direct/per-source background reading or a narrower explicit scope. Never drop the filter or merge
+independent top-k ranks as one global ranking. Report incomplete coverage rather than inventing completeness.
+[Namespace request](https://developers.cloudflare.com/ai-search/api/search/workers-binding/).
 
 After every native search, resolve each returned `item.key` through `search_item` and require all of the following before
 reading R2 bytes: the projection instance belongs to the frozen instance list, `record_kind` is allowed for the current
@@ -409,9 +430,12 @@ Drop and record any provider result that violates those checks; do not let provi
 source tombstone immediately before canonical hydration and before saving a new citation.
 
 Replacing a source or changing project membership after admission does not retarget an already frozen turn/job.
-Detach, exclude or archive affects future scopes. Library deletion is stronger: once its tombstone is observed, no
-not-yet-read bytes from that source enter later context or effects. Already dispatched external calls cannot be recalled;
-preserve their known partial outcome and mark the source/citation unavailable rather than repeating the call.
+Detach, exclude or archive affects future scopes. Library deletion is stronger: the existing pre-dispatch guard checks
+prepared context dependencies in one bounded/batched read together with cancellation/budget checks. An observed
+tombstone removes source excerpts already buffered but not yet dispatched; rebuild within the remaining budget or
+return a partial result. An explicitly selected saved page retained by ordinary deletion may still supply derived
+context, with unavailable support clearly marked rather than recited as verified primary evidence. Do not check every
+token or rehash objects. Already dispatched calls cannot be recalled; preserve known outcomes without replay.
 
 | Request | Preparation |
 |---|---|
@@ -465,7 +489,8 @@ each result instead of reconstructing labels from today's search.
 A no-tool ordinary turn reads known small material directly or performs one retrieval preparation, then one streamed
 synthesis. It has an explicit input/context budget, output-token cap, provider timeout and one model call. An agent using
 Eliot's `ask` tool follows the same limits and receives no outgoing tools unless its grant and request explicitly select
-them.
+them. Set `waitForMcpConnections = false` on chat: connections live in the separate Tool Connection Agent. Only a selected
+tool call may wait, within its own deadline; unrelated connection recovery cannot delay a document answer.
 
 A tool-assisted chat turn is a separate visible choice. Initially allow one model tool-selection pass, at most three
 approved read-only tool invocations, and one final grounded synthesis; mutating/external-spend tools still require the
@@ -481,8 +506,16 @@ without another model call, including failure before the first chunk. Catalog/dy
 binding; vendor-model streams may not. Stop intent remains durable. Explicit Continue gets one new attempt ID under the
 same turn, reuses completed outputs, preserves old citations and uses labels unique across the appended message; repeated
 delivery of that Continue observes the same attempt. Reconnect never allocates a new attempt or implies exactly-once
-billing. Set `messageConcurrency: "queue"` for same-chat submissions rather than overlapping model calls. Use
-`persistMessages` for storage-only transcript changes; `saveMessages` triggers a new response and is not an autosave API. [Chat recovery](https://developers.cloudflare.com/agents/communication-channels/chat/chat-agents/).
+billing. Set `messageConcurrency: "queue"` for same-chat submissions. Persist each submission's validated requested
+source/page/tool selection and resolved model/settings under its request ID, rather than reading mutable whole-chat
+settings when it reaches the front. Resolve current source heads once at that turn's admission and record exact inputs
+before dispatch; disclose intervening replacements. Pending requests and the active turn have separate visible cancel
+actions. Queue order alone does not freeze intent or authorize a later operation.
+Use `persistMessages` for storage-only changes; `saveMessages` triggers a response. Do not set `maxPersistedMessages` to
+implement an LLM context budget: it deletes old stored messages. Bound the model-bound history with token-aware selection
+and `pruneMessages`, retain the transcript, and keep large tool bodies in R2 with bounded message references so SDK row
+compaction cannot silently destroy the only saved copy. No second transcript store or protocol fork is needed.
+[Chat API](https://developers.cloudflare.com/agents/communication-channels/chat/chat-agents/).
 
 Ordinary chat does not silently become deep research, invoke an unselected external tool, import web results or refresh
 the Wiki. Those are visible owner actions.
@@ -516,6 +549,24 @@ Reducers carry the original revision/ranges and coverage forward, not section-lo
 Quantitative findings retain units, population, conditions, time/version and uncertainty. Full coverage is relative to
 explicit requested readable sections; extraction omissions and unprocessed figures remain visible. A polished reduction
 cannot turn failed/skipped sections into complete coverage.
+
+Budget the **rendered** input, including instructions, labels, findings and reserved output. Pack adjacent sections
+into calls; if their findings do not fit one reduction, reduce bounded groups through as many levels as the actual
+budget needs, retaining original ranges and coverage at every level. Never concatenate all summaries into an oversized
+final prompt or silently drop its tail. If the requested synthesis cannot fit the remaining output budget, preserve
+completed findings and name unfinished sections in a partial report. No model call per paragraph, parallel critic or
+generic graph executor is needed.
+Use AI SDK structured output with a small schema only where code consumes structured findings/map fields; ordinary
+chat and reports remain Markdown. An invalid/incomplete structured result is not repaired into apparent success by regex.
+
+Input coverage and output completion are separate facts. Inspect the terminal SDK `finishReason` and actual output:
+`length`, `content-filter`, `error` or `interrupted` cannot yield an automatically completed digest/report. Retain useful
+partial text, citations and a specific reason; an explicit continuation consumes the remaining budget. Thrown provider/SDK
+errors follow the same rule. A final synthesis must not treat `tool-calls` or an unknown finish reason as completion;
+`stop` still requires nonempty usable output and, for structured results, schema validation. Never re-run synthesis merely
+to save or re-open it. Apply this same finalization rule to chat, comparison, Wiki and Map generation without a judge-model pass.
+[AI SDK results](https://ai-sdk.dev/docs/reference/ai-sdk-core/generate-text) and
+[structured output](https://ai-sdk.dev/docs/ai-sdk-core/generating-structured-data).
 
 ### Wiki refresh
 
@@ -551,7 +602,11 @@ requested. Audit never deletes or repairs data by itself.
 A job row plus immutable R2 input pins destination project, actor, selected project/source/page revisions, projection
 instances, model route/settings, approved outgoing tool names/catalogue digests/classifications, mode, question/focus
 and hard limits. Populate `job_input`.
-Workflow checkpoints hold short counters/IDs/object references; larger findings live in R2.
+Workflow checkpoints hold short counters/IDs/object references; larger findings live in R2. Persist final result/page
+references and the settled outcome in D1 before the Workflow finishes. Completed native state has finite retention
+(currently 3 days Free / 30 days Paid); a later native `not found` must neither turn a completed research result into
+failure nor trigger paid rerun. Reopen history from D1/R2; consult Workflow status only to reconcile active/unknown work.
+[Workflow retention](https://developers.cloudflare.com/workflows/reference/limits/).
 
 `ResearchWorkflow` supports `distill_source`, `compare`, `deep_research`, `refresh_wiki`, `refresh_map` and
 `run_audit`. It is one readable switch with shared citation/page writers, not a workflow DSL.
@@ -610,9 +665,10 @@ or automatic report. A deep job may search/capture within its visible query/coun
 capture selected URLs through normal ingest before citation and retain time/origin. A failed capture remains unverified.
 Keep the initial job input immutable, but append each admitted captured revision and returned task/page dependency to
 `job_input` before using it; retain the capture/result reference in the step output. Final report inputs and cleanup/impact
-then cover acquired evidence as well as the original Library selection. Do not freeze the job so rigidly that web mode
-cannot add evidence, or omit those new dependencies. Library-only work never searches the web or sends private source
-bodies as public queries.
+then cover acquired evidence as well as the original Library selection. A capture after an index cutover records its
+actual projection instance in that step output, without rewriting the initial scope; read retained text directly while
+its projection is pending. Do not freeze the job so rigidly that web mode cannot add evidence, or omit those dependencies.
+Library-only work never searches the web or sends private source bodies as public queries.
 
 ## 11. Incoming MCP and agent work
 
@@ -633,6 +689,13 @@ on demand.
 Large file bytes use an authenticated short-lived upload reference, not base64 in MCP JSON. Source IDs guessed outside
 an agent's project grant are rejected. Source contribution, task work, paid Eliot jobs, outgoing tools and Library
 deletion are separate permissions. A task narrows an existing grant; claiming it grants nothing else.
+Project contribution permits new sources and project-local membership/exclusion/notes; attaching an existing source
+requires existing read permission. It does not authorize changing shared Library content through one membership.
+Replacement/reparse, shared bibliographic metadata and Library archive require the owner or an explicit `manage_library`
+operation permission; Library delete remains separate. Show affected projects for these global actions. The owner may
+pre-authorize them in agent setup, without approval on every internal step. Do not create per-project source copies or
+an ownership-transfer system. Saving a cross-project report makes its derived text available in the destination project;
+restricted source links are not a redaction mechanism. Keep that destination visible before saving.
 
 Task creation explicitly chooses `pinned` or `current_at_claim` semantics and stores logical source/page scope in
 `task_scope`. An owner offer defaults to `pinned` so the exact material seen during delegation cannot silently change
@@ -778,6 +841,12 @@ After assembly, exercise concrete risks:
 - SDK/Gateway/Workflow retry defaults, mid-stream timeout and failed publication after successful synthesis;
 - delayed same-agent task completion after reclaim and a committed result whose wake event failed;
 - 500-source D1 scope writes within statement/query limits and server draft reopen/conflicts;
+- SDK route/state boundaries, long-lived WebSocket commands and internal-only tool execution;
+- queued turns retaining their own scope/model settings and no-tool chat independent of MCP recovery;
+- immutable R2 collision/null handling and retained history after SDK/Workflow retention boundaries;
+- source mutation through one shared membership and deletion after context preparation but before dispatch;
+- reindex handoff with concurrent imports/card edits and acquired evidence after a pointer switch;
+- reductions larger than one model window, output truncation and partial structured results;
 - chat recovery, export/import and migration rehearsal.
 
 Verify against installed/current platform behavior rather than prose:

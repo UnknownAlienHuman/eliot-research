@@ -67,3 +67,42 @@ No application build/test, paid provider call, production query, deployment, mig
 The selected API behavior is supported by documentation; actual Cyrillic/table extraction, offset fidelity, retrieval
 recall, latency, retries/recovery and multi-project behavior still require the assembled implementation. Documentation
 can remove these contradictions; it cannot certify code that has not been built.
+
+## Continued review: native runtime and shared data
+
+**Additional baseline:** [`1219530`](https://github.com/UnknownAlienHuman/eliot-research/tree/1219530a007c8746e3115e91be47ab425574d4bf), checked 2026-10-23.
+These are further design corrections, not newly reproduced runtime incidents. No new service, database, deployment,
+agent harness or mandatory review workflow is selected. Existing MAP stages retain their owners and order.
+
+| # | Remaining gap | Correction in Implementation |
+|---|---|---|
+| 13 | **Project contribution and global source editing were conflated.** Updating one shared source can change every attached project's future inputs; a restricted source link also does not redact text copied into a report. | §11 separates project-local operations from explicit owner/`manage_library` changes and shows global impact. Report destination determines who receives its derived text. No per-project duplicate-source architecture or repeated approval chain. |
+| 14 | **Ingress authentication did not define the native SDK exposure boundary.** Generic Agent routes can address classes/instances, WebSocket commands outlive their upgrade, and client-synced state can be persisted before a notification hook runs. | §2 limits public chat routing, keeps tool execution internal DO RPC, validates client state before persistence and checks new external commands against current actor permission/session expiry. No JWT verification per chunk or SDK protocol patch. |
+| 15 | **Immutable R2 names did not specify create-only storage semantics.** A retry could overwrite the same object or treat a failed condition as a successful write. | §4 uses native conditional `put`, handles its `null` result and reconciles observed same-key content. An unavailable read is not absence. This preserves the old lifecycle's useful fix without carrying its proof machinery. |
+| 16 | **A reindex pointer swap did not settle concurrent source/card publication, and namespace search was treated as a possible filter-size escape.** | §§6–7 catch up live changes during a bounded final publication handoff; normal reading/chat remain available. Namespace search still needs an expressible complete scope. §10 records projection identity for evidence acquired after a cutover. |
+| 17 | **Deletion checks excluded unread bytes but left prepared source excerpts awaiting dispatch ambiguous.** | §7 checks prepared dependencies in the existing dispatch guard and removes tombstoned source excerpts before a later call. Retained explicitly selected derived pages remain usable as derived context with unavailable support; ordinary deletion is not wider text erasure. |
+| 18 | **SDK queueing and storage defaults were not the product's scope, latency or history policy.** | §8 keeps per-submission intent rather than reading subsequently edited chat settings; no-tool chat does not wait for MCP restoration. Model history budgeting does not use `maxPersistedMessages`, which deletes stored history. Large retained outputs use existing R2 references instead of depending on SDK row compaction. |
+| 19 | **Full section processing could still end in an oversized or truncated synthesis.** | §9 bounds rendered inputs and reduction groups, uses additional reduction levels only when needed, retains provenance/coverage, and separates input coverage from output completion. Inspect finish reason and structured validation; save useful partial output without claiming a complete report or adding a judge model. |
+| 20 | **Durable Workflow execution was not distinguished from permanent research history.** | §10 persists settled product results in D1/R2 before native completion. Expiry of native completed state does not fail or regenerate saved work. |
+
+### Additional primary evidence
+
+- [Agent routing](https://developers.cloudflare.com/agents/runtime/communication/routing/),
+  [state validation](https://developers.cloudflare.com/agents/runtime/lifecycle/state/) and
+  [internal RPC versus callable methods](https://developers.cloudflare.com/agents/runtime/lifecycle/callable-methods/)
+  document the native boundaries used by §2.
+- [R2 Workers API](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/) documents conditional writes
+  and `null` on a failed put precondition; unique key naming alone is not write protection.
+- [AIChatAgent](https://developers.cloudflare.com/agents/communication-channels/chat/chat-agents/) separates queueing,
+  MCP connection waits, stored-message retention, model context and automatic large-message compaction.
+- [AI Search request shape](https://developers.cloudflare.com/ai-search/api/search/workers-binding/) adds instance IDs
+  for namespace search but retains retrieval options; it does not establish an unlimited revision filter.
+- [AI SDK results](https://ai-sdk.dev/docs/reference/ai-sdk-core/generate-text) and
+  [structured output](https://ai-sdk.dev/docs/ai-sdk-core/generating-structured-data) expose completion/validation instead
+  of requiring a separate model to guess whether a structured response finished.
+- [Workflow limits](https://developers.cloudflare.com/workflows/reference/limits/) distinguish durable execution from
+  finite completed-state retention. Product history already has its own D1/R2 owner.
+
+The three edited baseline files were reconstructed and matched against their Git blob hashes before modification.
+This continuation changes only Architecture, Implementation and this existing audit. Scoped diff/Markdown checks
+are not product tests; no runtime build, deployment, paid call, migration or performance measurement was performed.
