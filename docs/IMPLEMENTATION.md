@@ -1,15 +1,26 @@
 # Eliot Research — Implementation
 
-Target implementation, native intake/storage and scope review 2026-10-23. It implements
+Target implementation, legacy-data and construction handoff reviewed 2026-10-23. It implements
 [ARCHITECTURE](ARCHITECTURE.md). [MAP](MAP.md) owns delivery order and legacy source locations.
 [DONORS](DONORS.md) records current platform APIs and donor mechanisms. This document specifies the
 replacement; it is not evidence that the replacement is deployed, migrated or fast.
+
+| Work on | Read |
+|---|---|
+| Start the replacement | [Runtime](#1-one-product-one-runtime), [Access](#2-cloudflare-access-is-the-sign-in-boundary), [connections](#3-model-and-outgoing-tool-connections), [MAP stage 0](MAP.md#delivery-order) |
+| Store/read/search sources | [Data](#4-compact-durable-data), [ingest](#5-ingest-conversion-and-source-versions), [projection](#6-deterministic-structural-projection), [retrieval](#7-retrieval-and-exact-evidence) |
+| Chat and saved knowledge | [Chat](#8-ordinary-chat), [pages and distillation](#9-knowledge-distillation-corpus-map-and-audits), [UI](#12-ui-concurrency-and-latency) |
+| Long work and agents | [Jobs](#10-durable-jobs-deep-research-and-spending), [MCP/tasks](#11-incoming-mcp-and-agent-work) |
+| Lifecycle and migration | [Cleanup](#13-source-lifecycle-impact-and-cleanup), [export/import](#14-portable-export-migration-and-cutover), [actual legacy stores](MAP.md#legacy-data-extraction-map) |
 
 ## 1. One product, one runtime
 
 Build one pnpm package, one Cloudflare Worker and one React/Vite application. The Worker serves the owner UI,
 JSON API, incoming MCP endpoint, Durable Object classes and Workflow entry points. The legacy `apps/`, `packages/`,
 `crates/` and migrations remain donor/migration material until cutover; do not wrap them as the new system.
+The replacement lives in root `src/`; [MAP](MAP.md#delivery-order) defines the single change that switches root package,
+configuration and CI to it while retaining legacy source. Do not add a second workspace package or import `@eliotr/*`
+wrappers to make the shell compile.
 
 | Responsibility | Selected implementation |
 |---|---|
@@ -30,7 +41,7 @@ JSON API, incoming MCP endpoint, Durable Object classes and Workflow entry point
 
 Pin compatible released dependencies and a Wrangler compatibility date in the implementation commit. Read installed
 types and current official docs. The dated [SDK candidate](DONORS.md#reviewed-sdk-candidate-not-an-installed-build) is not an
-installed or compiled replacement lockfile; do not silently update the donor workspace. Generate Worker bindings/runtime
+installed or compiled replacement lockfile; do not bulk-upgrade donor dependencies. Generate Worker bindings/runtime
 types with `wrangler types` from the actual config, include that output in TypeScript, and compile against it.
 `wrangler types --check` checks recorded input headers, not the declaration body; regenerate and inspect the diff when
 verifying declarations. Do not carry hand-written binding lookalikes or duplicate ambient `workers-types` into the new app.
@@ -326,9 +337,14 @@ operation; the viewer, indexer and export read exactly the published bytes witho
 During legacy import, decode an old envelope once into the target representation and validate its existing decoded-body
 references; do not reinterpret JSON-envelope offsets as body offsets.
 
-Every page edit supplies the head it read. Revision/dependency/activity inserts and head update share the same expected
-head in one D1 batch; stale writes insert nothing. Inspect statement changes. Proposal acceptance also checks proposal
-state and displayed head. Stable mutation IDs return prior result on exact retries and conflict on changed input.
+Every page edit supplies the head it read. D1 [batches](https://developers.cloudflare.com/d1/worker-api/d1-database/#batch)
+roll back on statement errors; an [UPDATE matching zero rows](https://www.sqlite.org/lang_update.html) is not an error.
+Before the head update, gate each revision/dependency insert in SQL with the same expected-head, nondeleted-state and
+applicable proposal-state predicate, using `INSERT ... SELECT ... WHERE EXISTS` and null-safe first-publication handling.
+Perform the head CAS in that batch; gate subsequent activity/job/proposal-state writes on the newly committed revision
+and mutation identity. Inspect the CAS change count before success. A stale page write inserts nothing; checking the
+count after unconditional inserts cannot provide that guarantee. Stable mutation IDs return the prior result on exact
+retries and conflict on changed input. A retained, noncurrent source replacement follows its separate rule in section 5.
 
 ## 5. Ingest, conversion and source versions
 
@@ -991,6 +1007,10 @@ after grace period and fresh reference check; originals are never deleted becaus
 
 ## 14. Portable export, migration and cutover
 
+Downloading one page/report returns its retained body and references without generation; every declared body/section
+must be available for a complete download. A partial research result remains labelled partial even when all of its saved
+bytes are exported. This everyday action is separate from the portable project/Library export below.
+
 Portable export streams a manifest, metadata, selected originals/readable revisions, conversion profiles/warnings/anchor
 fidelity, page histories/references, tasks and usable chat history. Stable IDs, timestamps, origin URLs and filenames make
 reimport possible without title matching. A text-only ZIP is not backup. D1 Time Travel and Durable Object PITR are useful
@@ -1009,10 +1029,22 @@ effects. Inventory actual rows/objects and all writers; a migration filename or 
 Use one temporary export/import manifest with inventory, ID mappings, unresolved effects and readback results; no new
 runtime registries or permanent dual writer.
 
-Classify legacy chat storage first. The inspected `ResearchSession extends Agent` is a Workflow/D1 projection, not an
-`AIChatAgent` transcript. Extract its actual retained user history/results into the portable format; do not assume the
-new D1 `chat` inventory or ChatAgent message APIs already exist in legacy. The following contract governs the target and
-any genuinely compatible SDK-backed source cohort.
+Start from the [checked legacy extraction map](MAP.md#legacy-data-extraction-map), then reconcile actual deployed rows
+and objects. Enumerate owned projects independently of source memberships, including empty projects. Preserve captured
+originals that have not reached normalized admission; `source_revision.original_r2_key` alone is not their inventory.
+Copy retained normalized bytes unchanged, including BOM/line endings, and distinguish their digest from the original-file
+digest. A newly normalized representation is a new revision, not a repair of old citation coordinates.
+
+Import task payloads, recorded results/progress and outstanding owner offers before considering any resumption. Keep a
+saved result whose notification failed; do not rerun the external agent or model to reconstruct it. Legacy leases,
+credentials and pending dispatches do not become live permissions. Import saves state only; any resumed/new work follows
+fresh target authorization and admission. Keep report drafts, Wiki proposals and accepted heads distinct.
+
+At the checked code revision, `ResearchSession extends Agent` stores a bounded session/run projection and rejects
+`/get-messages` with `410 SESSION_CHAT_HISTORY_DISABLED`. It is not a ChatAgent transcript exporter. Extract questions,
+run/checkpoint outcomes and saved reports from their recorded D1/R2 stores; do not fabricate messages from status events.
+Code does not prove older deployed DOs are empty: any different historical cohort still needs its actual storage reader.
+The following snapshot contract governs the replacement ChatAgent and only independently verified compatible cohorts.
 
 ### Chat snapshot contract
 

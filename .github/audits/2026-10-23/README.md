@@ -147,3 +147,38 @@ modification. Diff/Markdown checks cover the edited documents, not every histori
 CI and deployment configuration are unchanged. No application tests/build, paid call, production query, deployment,
 migration or performance/retrieval benchmark was performed. New page indexing/typed scope, same-scope repair, replacement
 conflicts, historical freshness and MCP payload behavior still require their implemented user journeys.
+
+## Legacy extraction and implementation handoff
+
+**Checked 2026-10-23 at [PR head `09cd2ac6`](https://github.com/UnknownAlienHuman/eliot-research/tree/09cd2ac6c12c8a4c6ca7264f32267446ff5390aa).**
+This pass follows selected DDL, writers and readers, not just schema names. Findings below are concrete omissions or
+ambiguities in the implementation/migration handoff; they are not claims of reproduced production data loss.
+
+| # | Evidence and consequence | Correction |
+|---|---|---|
+| 39 | Root `package.json`/`pnpm-workspace.yaml` still select the predecessor. `fast-ci.yml` builds that workspace; `frontend-owner.yml` filters legacy source paths. “New package” did not specify how active tooling changes while legacy source remains. | MAP stage 0 explicitly switches root package/config/CI to new `src/` together, retains donor source and distinguishes this from live cutover. The old machine-status fixture is a build consumer, not runtime data. |
+| 40 | [Normalized admission](../../../packages/platform-cloudflare/src/d1-ingest-commit.ts) writes `source_revision.original_r2_key = NULL`; [raw capture](../../../packages/cloudflare-raw-ingest/src/raw-ingest.ts) separately records original object key, bytes/hash and identity. Captures may exist before normalized admission. | Export both capture and admitted-revision inventories. Preserve raw originals and exact normalized bytes/digests independently; NULL on a normalized row is not evidence that no original exists. |
+| 41 | [ResearchSession](../../../apps/eliotr-core/src/research-session.ts) persists bounded run/session state and returns 410 for `/get-messages`. [Run payloads](../../../packages/cloudflare-research-runtime/src/research-session-application.ts), checkpoints and report readers are different stores. | Map actual run/history outcomes, without manufacturing chat messages. The ChatAgent snapshot contract is for the replacement or a separately verified compatible cohort. Actual older DO contents remain unknown. |
+| 42 | [External-task DDL](../../../infra/d1/core/migrations/0085_external_agent_task_delivery.sql), payload DDL and result writer retain task/result/progress JSON in D1; [computer-agent dispatch](../../../packages/cloudflare-computer-agent/src/computer-agent-dispatch-store.ts) is a second assignment family. A notification is not the result's storage authority. | Preserve both families, committed results and outstanding decisions before delivery retirement. Import does not reactivate credentials/leases or rerun an agent/model after a lost wake. |
+| 43 | The later [Wiki writer](../../../packages/cloudflare-wiki/src/wiki-publication-store.ts) uses `wiki_publication_*`; initial DDL also defines `wiki_revision`/`wiki_head`. Report drafts store manifests/section bodies and supporting reference objects separately. | Inventory both Wiki cohorts and report body/reference objects. Preserve proposal versus accepted state and owner-edit bases; do not infer old tables empty or treat one Markdown report download as backup. |
+| 44 | D1 batch rollback handles statement failure; SQLite's conditional UPDATE may successfully affect zero rows. A final change-count check cannot undo earlier unconditional revision/dependency inserts. | Implementation section 4 now specifies SQL guards for pre-head inserts and post-head effects, then checks CAS success. The legacy Wiki conditional-write mechanism is a bounded donor; its guard/receipt framework is not required. |
+| 45 | [Project owner service](../../../packages/cloudflare-navigation/src/project-owner-service.ts) lists owned projects independently of source witnesses; zero-source projects are meaningful. The inspected service exposes create/update, not project archive. | Migration enumerates owned projects separately from attachments. Keep target archive as required new behavior; do not claim old archive parity from project types. |
+
+The concrete stores, paths and target dispositions live once in [MAP's extraction map](../../../docs/MAP.md#legacy-data-extraction-map).
+The [D1 batch API](https://developers.cloudflare.com/d1/worker-api/d1-database/#batch) and
+[SQLite UPDATE semantics](https://www.sqlite.org/lang_update.html) support finding 44. The
+[current AI Search binding](https://developers.cloudflare.com/ai-search/api/search/workers-binding/) and
+[Search API schema](https://developers.cloudflare.com/api/resources/ai_search/subresources/instances/methods/search/)
+were rechecked: no new documented maximum resolves the full 50/500-source filter question. It remains an integration
+requirement, with no new search engine or partition-score merge selected.
+
+### Verification and remaining inventory
+
+A bounded local snapshot was reconstructed through GitHub API; fetched files were compared with the complete pinned
+Git tree's blob IDs before editing. Canonical-document changes use ordinary Markdown. Link/anchor, fence/table and diff
+checks cover the edited documents; no application code, dependency lockfile, SQL, CI or deployment configuration changed.
+
+This is not exhaustive review of every repository file or every historical donor. Applied production migrations,
+actual D1/R2/DO contents, all raw-normalization/Google/copy/backup/cleanup writers, effective grant mappings and remaining
+UI/analytical journeys still need reconciliation. No product tests, build, Clippy, live service/model call, data export,
+migration or deployment was run. The existing register retains these limits; the next build step is MAP stage 0.

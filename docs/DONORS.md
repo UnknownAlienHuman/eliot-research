@@ -11,6 +11,15 @@ with the old [NotebookLM](https://github.com/UnknownAlienHuman/eliot-research/bl
 and [EdgeQuake](https://github.com/UnknownAlienHuman/eliot-research/blob/7c034569b908d3b03a8b821b7c537477a24b10f7/docs/implementation/edgequake-donor.md)
 reviews. Use those as research history, not another work programme.
 
+## Keeping references current
+
+Each pin/date records inspected evidence, not an automatic dependency update. Before changing a selected mechanism,
+read its official changelog/API and installed types, or the donor's diff from the recorded commit. Follow the exact
+entrypoint named below and identify what it replaces in Eliot. Update that entry's pin/date, limitation and owning
+Implementation section together; use the existing review register for unresolved checks. Keep source-reviewed,
+installed/compiled and exercised evidence distinct. Check the selected file's license before copying code.
+Do not resurvey every donor or repin the whole stack for an unrelated edit.
+
 ## Selected Cloudflare runtime
 
 | Product need | Selected API/library | Boundary |
@@ -40,7 +49,9 @@ See [Agents manifest](https://github.com/cloudflare/agents/blob/agents@0.30.0/pa
 [chat manifest](https://github.com/cloudflare/agents/blob/agents@0.30.0/packages/ai-chat/package.json),
 [AI SDK release](https://github.com/vercel/ai/releases/tag/ai%407.0.150) and
 [Workers SDK releases](https://github.com/cloudflare/workers-sdk/releases). These are upstream pins, not proof of an
-installed replacement lockfile or successful compilation. Keep the legacy workspace unchanged as donor material.
+installed replacement lockfile or successful compilation. Preserve legacy source/package manifests as donors;
+[MAP's root-package cut-in](MAP.md#delivery-order) switches active development tooling to the replacement. The pinned
+legacy commit preserves the old workspace configuration.
 
 `agents@0.27.0` does not support the same catalogue/dynamic string route surface as `0.30.0`; the model provider remains
 experimental. Import chat directly rather than the obsolete `agents/ai-chat-agent` entry, which throws.
@@ -49,6 +60,16 @@ Generate runtime/binding declarations from actual Wrangler config and compile ag
 compares recorded input hashes/headers, not declaration contents. Regeneration/diff and compilation remain necessary.
 
 ## Primary Cloudflare references checked
+
+### D1 publication and data limits
+
+Checked 2026-10-23: native [batch transactions](https://developers.cloudflare.com/d1/worker-api/d1-database/#batch),
+[query limits](https://developers.cloudflare.com/d1/platform/limits/) and
+[read replication](https://developers.cloudflare.com/d1/best-practices/read-replication/).
+Use guarded SQL and inspect conditional-write results; successful execution does not mean a head matched.
+The [legacy Wiki writer](../packages/cloudflare-wiki/src/wiki-publication-store.ts) already uses conditional revision
+inserts and head updates: reuse that small mechanism, not its authority/receipt stack.
+No live D1 operation or replica behavior was measured in this pass.
 
 ### Worker, Access and acquisition
 

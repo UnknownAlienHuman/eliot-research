@@ -6,6 +6,10 @@ cited answers, document distillation, versioned reports, Wiki and explicit deep 
 **The compact replacement is specified; it is not yet implemented or deployed.** Existing application code
 is a donor and migration source. This documentation pass does not change the running application.
 
+Continue with [the root-package cut-in and stage 0](docs/MAP.md#delivery-order).
+The [review register](.github/audits/REVIEW-REGISTER.md) distinguishes completed source review from open implementation
+questions; its pending runtime checks are not prerequisites for starting the shell.
+
 | Document | Purpose |
 |---|---|
 | [Architecture](docs/ARCHITECTURE.md) | Product, required capabilities and boundaries; persistent developer context |
@@ -13,6 +17,7 @@ is a donor and migration source. This documentation pass does not change the run
 | [Map and work order](docs/MAP.md) | Current code → replacement responsibility; integration sequence |
 | [Donors and primary sources](docs/DONORS.md) | Ready-made APIs, useful donor mechanisms and what not to copy |
 | [Audits](.github/audits/README.md) | Current findings and preserved historical evidence |
+| [Review status](.github/audits/REVIEW-REGISTER.md) | Checked areas, remaining gaps and the current handoff |
 | [Working rules](AGENTS.md) | Reading, implementation, coordination and verification |
 
 [Issue #380](https://github.com/UnknownAlienHuman/eliot-research/issues/380) explains the earlier failure.

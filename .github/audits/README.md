@@ -10,9 +10,9 @@ what still lacks runtime evidence. It does not repeat product decisions.
 
 ## Current reviews
 
+- [2026-10-23 — legacy extraction and implementation handoff](2026-10-23/README.md#legacy-extraction-and-implementation-handoff): maps actual original/normalized stores, empty projects, run/session history, both task families and Wiki/report data; specifies the root-package/CI transition and guarded D1 writes. Source inventory is bounded; deployed contents remain unknown.
 - [2026-10-23 — Cloudflare native reuse](2026-10-23/CLOUDFLARE-REUSE.md): replaces custom transport/codecs with createAI, distinguishes same-run replay from paid retries, selects native web-search tools, and records the BYOK documentation conflict plus citation/retention boundaries. Continuation from `5aafdbab` with native progress/retry/chat/readiness, keyword mode and maintained Markdown parsing; runtime evidence remains pending.
 - [2026-10-23 — recheck of the unpublished review bundle and integration contracts](2026-10-23/RECHECK.md): reproduces stale apply anchors, corrects evidence status, Access topology, MCP readiness, context/persistence assumptions, analytical profiles, table mappings and permission-preserving migration.
-
 - [2026-10-23 — extraction, structural fidelity and citations](2026-10-23/EXTRACTION-CITATION.md): findings 32–38 separate direct Markdown Conversion from AI Search OCR, define supported-format discovery and additive-tolerant provider parsing, distinguish canonical byte ranges from page/layout hints, keep generated image descriptions out of literal evidence and narrow reuse of the old projector and Docling mechanisms.
 - [2026-10-23 — model capability and portable chat state](2026-10-23/MODEL-CHAT-PORTABILITY.md): adds explicit
   context/output/tool/structured capability profiles, disables automatic tool-result continuation, defines supported
