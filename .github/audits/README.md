@@ -7,9 +7,14 @@ parallel specification or claim that code has been repaired.
 
 ## Current reviews
 
+- [2026-10-23 — model capability and portable chat state](2026-10-23/MODEL-CHAT-PORTABILITY.md): adds explicit
+  context/output/tool/structured capability profiles, disables automatic tool-result continuation, defines supported
+  ChatAgent snapshot/import without private SQLite, retains unusually large finalized bodies through referenced R2
+  objects and separates declarative Durable Object `exports` from D1 SQL migrations.
 - [2026-10-23 — retrieval coverage, knowledge freshness and effect recovery](2026-10-23/README.md): fixes partial search
   interpretation, native range use, table context, scoped chat history, transitive/new-source dependencies, card refresh,
-  retry/deadline settings, D1 scope bounds, task claims/wake delivery and server draft recovery.
+  retry/deadline settings, D1 scope bounds, task claims/wake delivery, server draft recovery, searchable accepted
+  knowledge, same-scope repair, expected-head replacement and snapshot freshness.
 - [2026-10-22 — implementation viability and documentation integrity](2026-10-22/README.md): removes the opaque
   documentation rewrite path and corrects queryable source/page use, replacement-head publication, native
   chunking/keyword defaults, no-tool versus tool-assisted chat, Access topology, public URL acquisition limits,
