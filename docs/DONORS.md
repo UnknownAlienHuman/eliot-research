@@ -175,6 +175,7 @@ The [adapter guide](https://developers.cloudflare.com/ai-search/agent-sdks/ai-sd
 - [Chunking](https://developers.cloudflare.com/ai-search/configuration/indexing/chunking/)
 - [Keyword search/tokenizers](https://developers.cloudflare.com/ai-search/configuration/indexing/keyword-search/)
 - [Metadata filters](https://developers.cloudflare.com/ai-search/configuration/retrieval/filtering/)
+- [Custom metadata schema and upload values](https://developers.cloudflare.com/ai-search/configuration/indexing/metadata/)
 - [Result controls](https://developers.cloudflare.com/ai-search/configuration/retrieval/result-controls/)
 - [Reranking](https://developers.cloudflare.com/ai-search/configuration/retrieval/reranking/)
 - [Query rewriting](https://developers.cloudflare.com/ai-search/configuration/retrieval/query-rewriting/)
@@ -193,6 +194,12 @@ the exact uploaded/prefixed text and canonical range, and do not add the lookup 
 The Search API can return partial internal failure and namespace `errors` alongside chunks. Inspect coverage/status, not
 HTTP success alone. Items are ready after observed completion, not upload acceptance. D1 statement parameter limits mean
 large scope preparation uses set-based queries and guarded batches, not one oversized list or hundreds of round trips.
+
+Rechecked 2026-10-23: define the five custom fields on the instance and supply authoritative scalar values through Items
+upload metadata. `record_kind` combines source/page ownership and block kind. The concrete revision/kind `$in` request
+lives in [Implementation](IMPLEMENTATION.md#7-retrieval-and-exact-evidence); D1 resolves membership/bibliographic predicates.
+Items pagination is inventory, not ranked-search continuation. The public Search schema still declares no candidate-array
+or serialized-filter maximum; the complete 500-ID request remains unexercised.
 
 The hybrid baseline remains Porter + focused `and`; Russian inflections, IDs and numbers require corpus measurement.
 Caller-selected keyword retrieval uses `retrieval.retrieval_type: "keyword"` on that same instance, without a second FTS
@@ -223,6 +230,12 @@ recall or scientific-table extraction. Keep the existing structural/corpus check
 Use native subscriptions for the visible job, not a parallel ResearchSession/progress DO or Queue. Keep results in D1/R2;
 events are temporary observation. Safe projections, cursor replay and disposal belong in one authenticated stream route.
 Native step context and retry delays replace duplicated execution bookkeeping only where retries are safe.
+
+The [Workers API](https://developers.cloudflare.com/workflows/build/workers-api/) was rechecked 2026-10-23: `create` accepts
+a caller ID, duplicate IDs conflict within native retention, and `restart` reruns the selected and later steps. Use the
+existing D1 job for durable operation identity/start recovery; native instance expiry never authorizes repetition.
+[Workflow events](https://developers.cloudflare.com/workflows/build/events-and-parameters/) retain the creation context
+across replay. Entry writes must be idempotent across the D1-write/checkpoint gap; no new dispatch service is selected.
 
 For chat, keep the SDK's `messageConcurrency = "queue"`, React history/reconnect handling and
 `cancelOnClientAbort: false`; explicit Stop is distinct from unmount. Preserve accepted per-submission settings and host
@@ -394,7 +407,12 @@ From pinned legacy main, preserve behavior—not the surrounding architecture:
 - expected-head Wiki/page writes and Inbox decisions;
 - explicit project/source membership and owner-visible history;
 - external task claim/result identity and `waitForEvent` lesson;
-- Material/NotebookLM owner UI intent;
+- Material/NotebookLM owner UI intent, the verified excerpt display in
+  [EvidenceFeature](../packages/ui/src/features/research/evidence/EvidenceFeature.tsx) and navigation contract in
+  [DocumentReader](../packages/ui/src/features/sources/document/DocumentReader.tsx). Their legacy callers do not connect
+  citations to the reader; implement that missing journey without importing proof DTOs or global project state;
+- verified identity, expiry and operation/scope checks in
+  [client-grant-authority](../packages/cloudflare-navigation/src/client-grant-authority.ts), without its epoch/trigger framework;
 - real import/migration knowledge in old source lifecycle and cutover documents.
 
 The current [MAP](MAP.md) names their legacy owners. Do not keep old executors, generations, qualification packets,

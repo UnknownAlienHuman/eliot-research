@@ -1,6 +1,6 @@
 # Eliot Research — Implementation
 
-Target implementation, legacy-data and construction handoff reviewed 2026-10-23. It implements
+Target implementation, user journeys, retrieval scope and migration writers reviewed 2026-10-23. It implements
 [ARCHITECTURE](ARCHITECTURE.md). [MAP](MAP.md) owns delivery order and legacy source locations.
 [DONORS](DONORS.md) records current platform APIs and donor mechanisms. This document specifies the
 replacement; it is not evidence that the replacement is deployed, migrated or fast.
@@ -284,9 +284,9 @@ content signatures or JSON business logic in triggers.
 | `page_input` | Page revision → exactly one source or page revision used; resolved `follow_current`/`snapshot` mode per dependency; indexed both directions |
 | `chat` | Stable ID, immutable destination project, title, snapshot/export state and timestamps; transcript/state remains in its DO |
 | `chat_input` | Chat/turn → exactly one frozen source/page revision; query projection only |
-| `job` | Type, project, actor, immutable input key, Workflow ID, state/cancellation/progress, local ceilings/usage and result |
+| `job` | Type, project, actor, operation/input identity, immutable input key, Workflow ID/creation time, start/execution state, cancellation/progress, local ceilings/usage and result |
 | `job_input` | Job → exactly one frozen source/page revision; includes admitted acquired evidence before use |
-| `agent` | Verified identity/profile, enabled state, projects/operations, outgoing-tool and paid-work permissions |
+| `agent` | Verified identity/profile, enabled state, effective project/operation restrictions and expiries, outgoing-tool and paid-work permissions |
 | `task` | Destination project, instructions, scope mode, claimant/claim sequence, state/result, waiting job/wake state and timestamps |
 | `task_scope` | Task → exactly one requested logical source/page before exact revision freeze |
 | `task_input` | Task → exactly one exact source/page revision frozen at creation or claim |
@@ -297,11 +297,12 @@ referencing entity: page revision, `(chat_id, turn_id)`, job or task combined wi
 uses the same exactly-one rule and remote identity `(instance_id, item_key)`. Do not use unchecked polymorphic strings or
 opaque JSON arrays for queryable relationships.
 
-Insert job + frozen inputs before Workflow creation. Allocate a stable chat turn/request ID and insert its inputs before
-paid dispatch; a failed generation may leave a safe over-approximation but never an unrecorded dependency. `pinned` tasks
-freeze exact revisions at creation. `current_at_claim` resolves current heads atomically with claim. Increment claim
-sequence on every claim; progress/completion compares task, claimant and sequence. Reassignment retains prior inputs;
-fresh inputs require an explicit new task.
+Insert job + frozen inputs before Workflow creation; section 10 owns start acknowledgement and recovery. Allocate a stable
+chat turn/request ID and insert its inputs before paid dispatch; a failed generation may leave a safe over-approximation
+but never an unrecorded dependency. `pinned` tasks
+freeze exact revisions at creation. `current_at_claim` freezes current heads atomically with the first successful claim.
+Every reclaim/reassignment increments claim sequence but retains those exact `task_input` rows; obtaining newer heads
+requires a new task. Progress/completion compares task, claimant and sequence.
 
 Scope reads/writes fit D1 limits. Use set-based `INSERT ... SELECT` or bounded parameter groups in one guarded
 `db.batch()`; 500 sources must not become one oversized placeholder list or 500 round trips. Preparation completes before
@@ -539,7 +540,14 @@ descriptions never enter the literal quotation set. Use five metadata fields ini
 revision_id, document_id, record_kind, language, published_at
 ```
 
-`document_id` is source or page according to kind; D1 retains typed FKs, memberships, tags, authors and identifiers.
+`record_kind` combines owner and block kind, for example `source:prose`, `source:table`, `source:card`,
+`source:generated_image_description` or `page:prose`; query code selects a finite allowlist for the requested target and
+evidence use. This keeps source/page distinction inside the five-field budget. `document_id` identifies that source/page;
+D1 retains typed FKs, memberships, tags, authors and identifiers. Declare the instance's custom metadata schema first and
+pass host-authored values in `items.upload(key, content, { metadata })`; source text/model output cannot supply identity.
+Use compact scalar IDs/kinds within the filterable prefix and omit unknown dates rather than inventing them. See
+[metadata attributes](https://developers.cloudflare.com/ai-search/configuration/indexing/metadata/) and
+[upload metadata](https://developers.cloudflare.com/ai-search/api/items/workers-binding/#upload-with-metadata).
 
 ### Saved knowledge is searchable
 
@@ -573,6 +581,22 @@ evidence records the projection it actually used.
 Resolve actor, project memberships, target, metadata filters and selection in D1 first. Freeze exact source/page revision
 IDs and projection IDs for the turn/job. Omitted selection uses enabled material in selected project/target; explicit
 empty means empty. If nothing remains, return scoped empty without Search. Never fall back to global top-k.
+
+Construct `ai_search_options.retrieval.filters` from that frozen selection:
+
+```ts
+const filters = {
+  revision_id: { $in: frozenRevisionIds },
+  record_kind: { $in: allowedRecordKinds }
+};
+```
+
+The [current filter syntax](https://developers.cloudflare.com/ai-search/configuration/retrieval/filtering/) matches stored
+scalars against these candidate arrays and ANDs the fields. Resolve project/author/tag/date/language predicates in D1;
+do not require an extra target field, project-membership arrays or stale indexed bibliographic metadata to express them.
+The example specifies the request shape, not proof that a 500-ID filter is accepted. Scope restriction and exhaustive
+reading differ: top-k may omit eligible documents. An all-selected comparison enumerates the frozen revisions and their
+canonical sections directly. Items-list pagination does not paginate relevance search.
 
 Return compact coverage: requested/stored/readable/search-ready counts per target, conversion warnings/known omissions,
 incomplete items/reasons and sections actually used. Upload acknowledgement is not readiness. If a new usable source head
@@ -620,7 +644,8 @@ Keep compact scalar revision IDs; resolve many-to-many projects/authors/tags in 
 
 Do not promote Vectorize's sub-2048-byte filter rule or Items-list `metadata_filter` schema limit into a verified AI Search
 `search()` limit: its current OpenAPI search filter has no declared maximum. Measure the real binding/service path once
-in integration with complete 50/500-source selections, including all kind/date/language clauses; no per-turn remote probe.
+in integration with complete 50/500-source selections, the source/page-kind conjunction and D1-resolved metadata predicates;
+no per-turn remote probe.
 Native projection selection is usable only when it preserves the frozen scope. If the required scope cannot fit, retain
 it and offer bounded direct reading or an explicitly admitted long comparison; never silently narrow, launch a full job,
 remove filters or merge partition-local scores as one global ranking. A fast 500-source path is still an open delivery
@@ -808,6 +833,27 @@ findings live in R2; Workflow state contains short IDs/counters. Persist settled
 Workflow completion. Native completed-state retention is finite; later `not found` must not fail or regenerate saved work.
 Reopen history from D1/R2 and consult Workflow only for active/unknown reconciliation.
 
+Store the stable caller-chosen Workflow ID and immutable operation/input identity on the job before `create`; exact
+request retries return that job, while changed input conflicts. Expose `start_pending` until entry is recorded. After an
+uncertain create acknowledgement, use `get`/status for that ID; an explicit start retry may call `create` with the same
+ID/params only while the matching job has not entered. A duplicate-ID response is reconciliation, not a reason for
+`restart()` or a new ID. Passive status/history reads never dispatch work.
+
+If reconciliation confirms a native `errored` instance and the job is still unbound and `start_pending`, atomically close
+it as `start_failed`; this write must lose if entry already bound the job. A later explicit Retry creates a separately
+admitted operation/job with a new ID and the requested frozen input. It does not restart the old instance. Active or
+unknown native status cannot take this path, and cancellation remains authoritative. Retries of the new request use
+its own stable operation identity, so duplicate submissions do not create several replacements.
+
+Before effects, the first durable step atomically binds the job to the native `workflowName`, `instanceId` and creation
+`timestamp` from `WorkflowEvent`, only while the job is nonterminal and not cancelled. Allow re-entry with that same
+binding/input so a crash after the D1 write but before the step checkpoint can recover; reject a different binding.
+A terminal job never starts again. An entered job with missing native state remains unresolved until its saved outputs/
+effects are reconciled, even after native retention expires.
+This uses the existing job row; step replay still needs the effect rules below and provides no exactly-once billing.
+See [create/get/restart](https://developers.cloudflare.com/workflows/build/workers-api/) and
+[immutable Workflow events](https://developers.cloudflare.com/workflows/build/events-and-parameters/).
+
 Native non-stream step results/events have a 1 MiB payload boundary. Return short result references rather than a full
 converted document, all findings or an entire export. Current JavaScript Workflows also support a returned fresh unlocked
 `ReadableStream<Uint8Array>` for transient larger output; this still uses finite instance storage/retention. Use it only
@@ -817,7 +863,9 @@ and useful partial results stay in R2 with short Workflow references. See
 
 `ResearchWorkflow` supports `distill_source`, `compare`, `deep_research` (including the analytical profiles above),
 `revise_section`, `refresh_wiki`, `refresh_map` and `run_audit`.
-One readable switch and shared writers replace an 18-stage graph.
+Build its bounded job/Workflow foundation with stage 4's distillation/comparison/analytical actions; stage 7 extends that
+same Workflow for adaptive investigation, captured web and delegation. Progress, safe cancellation and retained partial
+outputs belong to the first long operation. One readable switch and shared writers replace an 18-stage graph.
 
 A deep run orients from frozen scope, keeps a short subquestion/gap list, performs next useful search/read/approved tool,
 performs bounded counterevidence work, and stops when supported/unresolved, no progress, cancellation or hard ceiling.
@@ -942,11 +990,22 @@ only the selected model/profile initially; provider catalogues and connection di
 fan-out on project open. Server drafts survive reload; browser memory is only a cache.
 
 Composer shows destination, source/knowledge scope, model, tools and mode (`Ask`, `Compare`, `Distil`, `Deep research`).
+Within research, expose `fact_check`, `hypothesis_review` and `project_vs_literature` as named analysis choices. Collect
+the claim list, hypothesis/predictions or project requirements respectively; show supporting/contrary evidence and
+unresolved limitations, and save the cited result through the shared report/page writer. These use the same research
+controls and operation-specific capability checks; corpus maintenance remains a separate action.
 History reopens chats/jobs/partial/failed/cancelled results/reports. Source rows separate stored, needs-conversion,
 readable-with-warnings, readable, indexed and guide-ready states. The source viewer shows converter/profile, known
 omissions and anchor fidelity without making the owner inspect internal receipts. Pages show history/inputs/freshness/
 index status. Jobs show progress/current step/limits/partial findings/Stop. Model picker shows capability bounds and
 disables/explains incompatible tool/structured/large-context choices rather than failing after work starts.
+
+Every primary-source citation opens its exact retained source revision and canonical byte range in the reader, with surrounding
+context and a route that can reopen that revision/range. Preserve the originating project/chat/page; an old citation does
+not open today's head. Keep the evidence rail usable when original coordinates are unavailable. Original page/table/
+figure navigation is a separate fidelity-labelled control. Missing/deleted/revoked content shows its unavailable state
+without substitution. A derived-page reference opens its retained page revision and is labelled derived; its original
+source support has separate controls. Reading either reference requires no model or search call.
 
 Every route/query/mutation/draft/chat/job carries project/chat ID. Switching tabs cannot retarget stream/write; late
 responses update keyed state. Cross-project work freezes permitted union and destination, deduplicating shared sources.
@@ -1034,6 +1093,26 @@ and objects. Enumerate owned projects independently of source memberships, inclu
 originals that have not reached normalized admission; `source_revision.original_r2_key` alone is not their inventory.
 Copy retained normalized bytes unchanged, including BOM/line endings, and distinguish their digest from the original-file
 digest. A newly normalized representation is a new revision, not a repair of old citation coordinates.
+
+Raw originals, conversion output and admitted normalized bundles are separate byte families. Preserve exact referenced
+conversion output and its warnings/provenance; provider output is not guaranteed reproducible. Workspace candidate bindings
+link these records but own no additional file. Keep pending captures/promotions visible with their actual state and recorded
+temporary keys; do not admit them, delete them or derive new object keys merely to simplify import.
+
+Resolve legacy grants from their latest revision, including revoked/expired state, exact verified actor, project,
+operations and namespace ceiling. Preserve historical attribution, but map only representable current authority to the
+target; an unmappable restriction leaves that operation disabled, never upgraded to `manage_library`. Match verified
+identity, not a display name. Preserve disabled agent connections and Google disconnect/reconnect outcomes. Connection
+references may need reauthorization; raw or encrypted refresh tokens are not portable product content and cannot confer
+target access. This does not require copying the old grant triggers, token vault or qualification framework.
+
+Inventory primary/offsite backup copies separately from canonical Library objects. Keep the recorded copy locators,
+decryption-key references, expiry/hold/deletion state and sufficient old recovery machinery until their disposition and
+replacement export are verified; do not place key material in the product export. A new backup from surviving sources
+does not reproduce an older encrypted copy or recover already deleted bytes. Before restoring any older snapshot,
+reconcile current tombstones, revocations and pending erasures so restore cannot revive deleted content or access.
+Rebuild search/index plans. Do not restart old backup writers by importing their configuration or recreate their proof
+engine in the replacement. Unknown deployed copies block retirement of those copies, not unrelated implementation.
 
 Import task payloads, recorded results/progress and outstanding owner offers before considering any resumption. Keep a
 saved result whose notification failed; do not rerun the external agent or model to reconstruct it. Legacy leases,
