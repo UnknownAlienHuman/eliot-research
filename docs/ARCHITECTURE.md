@@ -38,8 +38,8 @@ and are labelled derived knowledge; they do not turn generated prose into an ind
 | Reading | Open the original and canonical readable representation, navigate headings/pages/tables/code, inspect retained revisions and obtain a short source card whose coverage is stated. Reading must work while search or model services are unavailable. |
 | Retrieval | Find exact identifiers and semantic matches across English and Russian material; filter by project, source, author, date, language, type and tags; preserve source scope before retrieval; return coherent sections and table context rather than arbitrary fragments; distinguish relevant hits from complete coverage. |
 | Evidence | Open every citation against retained revision bytes; preserve old citations after source replacement; expose missing, ambiguous, deleted, still-indexing and partially searched evidence honestly; never let a model invent source IDs or byte ranges. |
-| Models | Configure Workers AI, AI Gateway catalog/BYOK routes and compatible custom endpoints through an owner UI; choose global and project defaults plus chat/job overrides; display the resolved route and billing mode; keep credentials in Cloudflare, not application tables or browser storage. |
-| Chat | Ask ordinary questions over explicit/default/empty source scope; stream a grounded synthesis; keep response style/length/instructions and selected model/tools; follow up without losing scope; stop or reconnect; reopen conversations; save a cited answer as knowledge. A no-tool turn performs one synthesis. A tool-assisted turn is explicitly selected, exposes only approved tools and has a short hard-capped tool loop; it never silently becomes deep research. |
+| Models | Configure Workers AI, AI Gateway catalog/BYOK routes and compatible custom endpoints through an owner UI; keep a visible capability profile for each selectable model/route (context/output bounds, streaming, tools, structured output and supported input types); choose simple global/project chat and research defaults plus turn/job overrides; never dispatch an operation to a route that does not meet its declared minimum; display the resolved route and billing mode; keep credentials in Cloudflare, not application tables or browser storage. |
+| Chat | Ask ordinary questions over explicit/default/empty source scope; stream a grounded synthesis; keep response style/length/instructions and selected model/tools; follow up without losing scope; stop or reconnect; reopen conversations; save a cited answer as knowledge. A no-tool turn performs one synthesis. A tool-assisted turn is explicitly selected, exposes only approved tools and has a short hard-capped tool loop; SDK tool-result auto-continuation is disabled and Eliot admits at most one controlled continuation for the submitted attempt. It never silently becomes deep research. |
 | Distillation | Create a quick guide, full source digest, multi-source comparison or research report; process long sources by sections; preserve methods, findings, limitations, disagreements and negative results; record covered, skipped and failed material. |
 | Knowledge | Save, search by content, edit, compare, export and reopen accepted notes, digests, reports and Wiki pages with immutable history; mark affected pages stale when inputs change; refresh only affected knowledge; preserve owner edits and rejected proposals. |
 | Corpus Map | Provide a compact navigational map of sources, topics, versions/timeline, source families, contradictions, gaps and suggested reading routes. Map edges are derived navigation with exact source links, not a graph database or evidence authority. |
@@ -48,7 +48,7 @@ and are labelled derived knowledge; they do not turn generated prose into an ind
 | Incoming MCP | Expose Eliot to external agents through standard Streamable HTTP MCP: projects, source search/read/add/update, pages, jobs, tasks and results. Agents may reason with their own models without buying Eliot answer generation; native search/indexing still uses Cloudflare resources. |
 | Outgoing MCP | Let the owner connect selected remote MCP servers as tools for Eliot chat/research using the Cloudflare Agents SDK client. Tools are scoped and explicitly enabled; mutating tools require an owner decision or a pre-authorized job, not repeated ceremony around read-only calls. |
 | Agent collaboration | Bind a connected agent to verified identity, project scope and operations; let it accept/decline owner offers or claim open tasks; save one attributable result; use review or direct-edit mode per project; make paid Eliot jobs a separate permission. |
-| Data ownership | Export originals, readable revisions, metadata, knowledge history, citations, tasks and usable chat history. Preserve real data and acknowledged outcomes during replacement of the old implementation. |
+| Data ownership | Export originals, readable revisions, metadata, knowledge history, citations, tasks and usable chat history. Chat export is a versioned product snapshot built from supported Agent message/state APIs and retained large-body references, not a dump of private SDK tables. Preserve real data and acknowledged outcomes during replacement of the old implementation. |
 
 ## What the owner can rely on
 
@@ -94,12 +94,14 @@ overwrite a source head published by another operation.
 
 A no-tool ordinary answer uses bounded context preparation and one synthesis. A tool-assisted turn is explicitly
 selected, caps model/tool steps and still ends in one grounded synthesis; it does not enter the durable research
-workflow. Long work runs durably and preserves completed steps. Cancellation stops admission of later effects once
-observed; an already dispatched provider call may still finish or be billed. Cloudflare Gateway limits are used where
-they fit; Eliot keeps only job-local limits and state needed to explain and resume the work. Unknown cost remains unknown.
-Retries, recovery and timeouts are configured at every actual SDK/provider/Workflow boundary; a logging hook is not
-a spend-control mechanism. Saving an already generated answer again does not generate or purchase it again.
-Model context limits and temporary Workflow retention must not delete the owner's saved research history.
+workflow. Model capability/context limits are resolved before rendered context is admitted; an unknown custom route
+uses conservative text-only bounds until the owner supplies verified settings. Tool results and approvals cannot trigger
+unbounded SDK continuations. Long work runs durably and preserves completed steps. Cancellation stops admission of later
+effects once observed; an already dispatched provider call may still finish or be billed. Cloudflare Gateway limits are
+used where they fit; Eliot keeps only job-local limits and state needed to explain and resume the work. Unknown cost
+remains unknown. Retries, recovery and timeouts are configured at every actual SDK/provider/Workflow boundary; a logging
+hook is not a spend-control mechanism. Saving an already generated answer again does not generate or purchase it again.
+Model context limits and temporary Workflow/SDK retention must not delete the owner's saved research history.
 
 ### Authentication is practical
 
@@ -134,15 +136,16 @@ Use one Cloudflare Worker deployment containing:
 - one React/Vite owner application;
 - one Hono JSON API;
 - one incoming MCP endpoint;
-- `AIChatAgent` Durable Objects for chats;
-- one small owner Tool Connection Agent for outbound MCP connections;
+- SQLite-backed `AIChatAgent` Durable Objects for chats;
+- one small SQLite-backed owner Tool Connection Agent for outbound MCP connections;
 - Cloudflare Workflows for ingestion, research/distillation/map/audit and cleanup.
 
-D1 owns product metadata, relationships and short state. R2 owns originals, canonical readable bodies and larger
-immutable derived objects. One AI Search namespace owns disposable search instances. Start with one shared Library
-instance; keep topology behind the retrieval module so measured platform limits can later justify native
-cross-instance projections without changing product identity or citations. AI Gateway and AI SDK own model routes.
-Cloudflare Access owns sign-in.
+Declare new Durable Object classes through Cloudflare's current declarative `exports` lifecycle; keep D1 SQL migrations
+separate. D1 owns product metadata, relationships and short state. R2 owns originals, canonical readable bodies and larger
+immutable derived/chat bodies. One AI Search namespace owns disposable search instances. Start with one shared Library
+instance; keep topology behind the retrieval module so measured platform limits can later justify native cross-instance
+projections without changing product identity or citations. AI Gateway and AI SDK own model routes. Cloudflare Access
+owns sign-in.
 
 Browser, HTTP, incoming MCP and background jobs call the same product functions. A module exists for a product
 responsibility, not to mirror every transport or donor.
