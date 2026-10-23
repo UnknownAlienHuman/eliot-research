@@ -1,6 +1,6 @@
 # Eliot Research — Implementation
 
-Target implementation, model-capability and portable-chat review 2026-10-23. It implements
+Target implementation, extraction-fidelity and coverage review 2026-10-23. It implements
 [ARCHITECTURE](ARCHITECTURE.md). [MAP](MAP.md) owns delivery order and legacy source locations.
 [DONORS](DONORS.md) records current platform APIs and donor mechanisms. This document specifies the
 replacement; it is not evidence that the replacement is deployed, migrated or fast.
@@ -22,7 +22,8 @@ JSON API, incoming MCP endpoint, Durable Object classes and Workflow entry point
 | Incoming agents | `createMcpHandler` + `@modelcontextprotocol/server` v2 over Streamable HTTP |
 | Durable work | `IngestWorkflow`, one mode-based `ResearchWorkflow`, and `CleanupWorkflow` |
 | Authentication | Cloudflare Access; `jose` validates the route's Access assertion at ingress |
-| Extraction | Plain UTF-8 directly; Workers AI `toMarkdown`; Browser Run only for explicitly rendered URLs |
+| Conversion | Deterministic local UTF-8 for Markdown/text/CSV; Workers AI Markdown Conversion for currently supported formats; explicit retained OCR/normalized-Markdown path when needed |
+| Web acquisition | Bounded public fetch; Browser Run only for explicitly rendered URLs or stronger guarded capture |
 | Web discovery | Cloudflare Web Search for explicit Find sources or enabled deep-research mode |
 | Export | Streaming ZIP/JSON/Markdown plus versioned chat snapshots and a stable manifest |
 
@@ -43,7 +44,7 @@ Target modules are responsibilities, not mandatory layers:
 | `auth.ts` | Access assertion validation, actor mapping and small operation/scope checks |
 | `models.ts` | Model connections, capability profiles, settings resolution, dispatch and usage metadata |
 | `tools.ts` | Outgoing MCP configuration, discovery and bounded invocation |
-| `library.ts`, `ingest.ts` | Projects, Library, source metadata/revisions, extraction and index publication |
+| `library.ts`, `ingest.ts` | Projects, Library, source metadata/revisions, conversion and index publication |
 | `retrieval.ts`, `citations.ts` | Scope resolution, native search, canonical hydration and exact reference mapping |
 | `knowledge.ts`, `maps.ts`, `audits.ts` | Page history/proposals, Corpus Map and maintenance audits |
 | `research.ts` | Distillation, comparison, research, map/audit refresh and cancellation |
@@ -199,14 +200,14 @@ content signatures or JSON business logic in triggers.
 
 | Table | Minimum facts |
 |---|---|
-| `settings` | Global defaults and current search namespace/instance/profile IDs |
+| `settings` | Global defaults, cached conversion-support check time/data and current search namespace/instance/profile IDs |
 | `model_connection` | Name, route/provider/Gateway, credential reference/status and enabled state |
 | `model_profile` | Connection/model or route ID, capability-profile version, context/output bounds, streaming/tools/structured/modalities, provenance and checked time |
 | `mcp_connection` | Stable ID, URL, auth/status reference, enabled projects/tools, approved descriptor digests and side-effect classes; no secret |
 | `project` | ID, title, description, archived state, chat/research defaults, response/tool settings, agent edit mode, corpus version and timestamps |
 | `source` | Canonical Library identity, nullable current usable revision, metadata summary/version, state and timestamps |
 | `source_author`, `source_tag`, `source_identifier` | Filterable authors/tags and normalized DOI/arXiv/ISBN/provider IDs |
-| `source_revision` | Source, content hash, canonical R2 keys, current card ID/key, parser/profile, sizes, warnings and extraction/index/card state |
+| `source_revision` | Source, original/content hash and R2 keys; readable state; converter ID/version/options/result ID; readable format/digest/size; warnings/known omissions; anchor-fidelity summary; current card; extraction/index/card state |
 | `project_source` | Project/source membership, retrieval enabled and project-local note/priority |
 | `search_item` | Exactly one source- or page-revision FK, instance, key/ID, block/range/kind and publication state |
 | `page` | Project, kind (`note/digest/report/wiki/map/audit`), state/retrieval flag, optional slug, accepted head, draft key/version and summary |
@@ -242,6 +243,7 @@ R2 keys are immutable and identity-specific:
 ```text
 source/<revision>/original
 source/<revision>/text.md
+source/<revision>/conversion.json
 source/<revision>/outline.json
 source/<revision>/blocks.json
 source/<revision>/card/<card-id>.json
@@ -262,31 +264,77 @@ Every page edit supplies the head it read. Revision/dependency/activity inserts 
 head in one D1 batch; stale writes insert nothing. Inspect statement changes. Proposal acceptance also checks proposal
 state and displayed head. Stable mutation IDs return prior result on exact retries and conflict on changed input.
 
-## 5. Ingest, extraction and source versions
+## 5. Ingest, conversion and source versions
 
 `addSource` accepts a file stream, URL or text and returns stable source/revision/job identity quickly. Batch import uses
 the same operation with bounded concurrency and per-item results.
 
-1. Validate actor, project, format and raw-size limit once; allocate stable IDs.
-2. Stream original bytes to immutable R2. Resolve exact-byte duplicates before paid extraction.
+### Admission and conversion
+
+1. Validate actor, project, raw-size limit, filename and observed MIME; allocate stable source/revision/job IDs.
+2. Stream original bytes to immutable R2. Resolve exact-byte duplicates before paid conversion.
 3. Commit source/revision/job metadata and create `IngestWorkflow` with that Workflow ID. Reconcile lost acknowledgement
    by ID; do not create a replacement source because a response was lost.
-4. Extract readable UTF-8 outside D1. Plain text/Markdown/CSV are deterministic; supported files use `toMarkdown`.
-   Retain parser identity, warnings and whether image text is OCR/generated description.
-5. Store canonical text, outline and structural block map, then advance `source.current_revision` only after readable
-   representation is valid. Failed replacement remains a visible raw/failed revision and preserves previous usable head.
-6. Publish deterministic search items with bounded concurrency/per-item status/backoff. Coalesce adjacent blocks, persist
-   returned IDs and reconcile exact keys; do not invent an undocumented batch API or serialize an unbounded loop.
+4. Produce one retained readable representation outside D1:
+   - valid UTF-8 Markdown/text/CSV use the deterministic local path;
+   - other currently supported formats use Workers AI Markdown Conversion;
+   - owner/agent-supplied normalized Markdown plus optional mapping uses the same revision writer;
+   - an explicit future OCR converter is admissible only when it returns retained ordered text, converter provenance,
+     known omissions and page/region mapping. It is not the AI Search index silently exposing OCR chunks.
+5. Store `text.md`, `conversion.json`, outline and block map. Advance `source.current_revision` only when the readable
+   state is `readable` or `readable_with_warnings`. A first or replacement revision that is empty, unsupported or unusable
+   remains `stored_needs_conversion`; a failed replacement never removes the previous usable head.
+6. Publish deterministic search items with bounded concurrency/per-item status/backoff. Persist returned IDs and reconcile
+   exact keys; do not invent an undocumented batch API or serialize an unbounded one-request-per-block loop.
 7. Build a deterministic card from metadata/outline. Model enhancement is optional and budgeted.
+
+At application setup or an owner-requested diagnostic, call `env.AI.toMarkdown().supported()` and cache the returned
+extension/MIME list with `checked_at`. Do not call it before every upload. Admission considers filename, observed MIME and
+the cached current list without pretending any one of them proves format correctness.
+
+Parse Cloudflare conversion results by required fields and stable discriminants: ID, input name, format, MIME, tokens,
+data or error. Enforce byte/token/deadline bounds, but ignore unknown additive fields. Do not copy the legacy exact-object
+whitelist, proof receipts or large dispatch-state algebra. A timeout after dispatch has unknown provider outcome, but the
+immutable original and deterministic revision/job identity make reconciliation possible without creating another source.
+
+Direct Markdown Conversion is not treated as OCR. Current direct PDF behavior parses pages sequentially, uses a PDF
+`StructTree` when available and otherwise returns page text as-is. It may produce useful page headings, but that does not
+prove reading order, layout or tables. If a scan produces no usable direct text, retain the original and expose
+`stored_needs_conversion`; do not enable AI Search OCR and then cite unretained index text as primary evidence.
+
+Record in `conversion.json` and short D1 fields:
+
+```text
+converter_id / version / options / supported-list checked_at
+provider_result_id and output format
+original and readable digest/bytes/tokens
+state: readable | readable_with_warnings | stored_needs_conversion
+warnings and known omissions
+anchor fidelity: verified | observed | unavailable by anchor kind
+whether any text is generated description, retained OCR or owner-supplied normalization
+```
+
+The minimal publication rule is deterministic: successful result, nonempty valid UTF-8, retained output within bounds,
+no explicit provider error/truncation and a valid conversion report. Cheap warnings may flag suspiciously low text density,
+missing expected page output, generated descriptions, first-frame-only GIF handling, unsupported objects or uncertain
+layout. Warnings do not reject a language or claim semantic correctness.
+
+Image conversion descriptions are generated model output. Store them only as `generated_image_description` with
+converter/model provenance. They may support discovery or a labelled visual summary, not an exact quotation, number or
+label visible in the image. Animated GIF conversion covers only the first frame unless a later explicit converter says
+otherwise; coverage must disclose the omission.
+
+### Replacement, metadata and URLs
 
 Replacement/reparse captures `expected_current_revision` in the operation input. Publish with CAS against that captured
 value and nondeleted source state. If two replacements start from the same head, only one advances. Retain the other as
 readable/not-current and let the owner explicitly select it against the current head. Do not re-extract or overwrite.
 
-Separate raw retention from conversion/index limits. A retained large original can be `stored_needs_conversion`.
+Separate raw retention from converter/index limits. A retained large original can be `stored_needs_conversion`.
 Successfully converted Markdown may be indexed as bounded items without redoing conversion. Coverage names the readable
 representation and known extraction omissions; processing all extracted text does not prove every figure/table/appendix
-was captured. Owner/agent may provide normalized Markdown plus mapping metadata as another revision.
+was captured. Re-conversion, OCR correction or mapping correction creates a new source revision; old citations remain on
+old readable bytes.
 
 URL capture retains requested/final URL, time, content type, redirect observations and bytes. Direct Worker fetch is
 allowed only for an authorized public HTTP(S) locator after rejecting credentials, unsupported schemes/ports, obvious
@@ -300,32 +348,48 @@ revision, metadata version and generated/sampled fields. Metadata edit/enhanceme
 the current-card pointer only when expected metadata/card still match. A late card cannot replace newer metadata. D1
 metadata remains display/filter authority; title correction need not re-embed every evidence block.
 
-## 6. Deterministic search projection
+References: [Markdown Conversion binding](https://developers.cloudflare.com/workers-ai/features/markdown-conversion/usage/binding/),
+[how conversion works](https://developers.cloudflare.com/workers-ai/features/markdown-conversion/how-it-works/),
+[conversion options](https://developers.cloudflare.com/workers-ai/features/markdown-conversion/conversion-options/),
+[AI Search OCR boundary](https://developers.cloudflare.com/ai-search/configuration/data-source/).
 
-Canonical Markdown is split into bounded structural blocks:
+## 6. Deterministic structural projection
+
+The structural parser reads only the retained immutable Markdown. It is deterministic and conservative; no model call
+assigns structure. Reuse the old projector's tested UTF-8 range, heading/fence and deterministic-key ideas, not its old
+32–64 KiB sizing or generic assumption that any oversized line can be cut safely.
+
+Each block stores:
 
 ```text
 block_id
 kind: heading | prose | table | equation | code | list | figure_caption | generated_image_description
 heading_path
-start_byte / end_byte in canonical text
-page/table/figure hints
+start_byte / end_byte in canonical readable text
+anchor_hints: page/table/figure value + fidelity (verified | observed | unavailable)
 context_ranges: exact canonical heading/caption/header/unit/definition ranges
 exact_body: canonical range, not another full-text copy
-search_prefix: title + heading path + table headers, non-quotable
+search_prefix: title + heading path + exact repeated table headers, non-quotable
 ```
 
-Coalesce short prose under one heading; start around 800–1,600 tokens and split only at structural/UTF-8 boundaries.
-Long tables repeat caption/headers/units in non-quotable prefix while row groups map to exact bytes. Hydrate required
-headers/definitions from `context_ranges` with their own labels; a synthetic prefix cannot support a quantitative claim.
+Recognize a table only when a complete valid Markdown table is observed. If conversion preserved no reliable table, keep
+it as prose. Keep code fences intact. Coalesce short prose under one heading. Start around 800–1,600 tokens and split at
+structural/UTF-8 boundaries. For long or wide tables, produce valid row/column groups and repeat exact headers, following
+the selected Docling mechanism; never split through cells and present the fragment as a valid table. Hydrate exact
+caption/header/unit/definition ranges with their own labels. A copied or synthetic prefix cannot support a claim.
+
+Original-file page/table/figure hints are navigation only. `verified` means the converter supplied a retained mapping that
+was checked against its output; `observed` means an explicit marker exists in retained text but exact original geometry is
+not guaranteed; `unavailable` is honest absence. Never derive an exact page number from a guessed heading or remap an old
+citation to a new conversion.
 
 Configure AI Search with zero overlap and a verified chunk size at least as large as emitted locator/prefix/block items.
 Reduce Eliot's block maximum if the instance rejects it. If provider splitting still occurs, map the returned subrange
 exactly; item key alone is not citation identity.
 
 Block key: `r/<source-revision>/b/<block>.md`. Page block key: `p/<page-revision>/b/<block>.md`. Source cards use their
-current card ID. Store key/ID in `search_item`. Evidence search filters block kinds; cards never enter the citation set.
-Use five metadata fields initially:
+current card ID. Store key/ID in `search_item`. Evidence search filters block kinds; source cards and generated image
+descriptions never enter the literal quotation set. Use five metadata fields initially:
 
 ```text
 revision_id, document_id, record_kind, language, published_at
@@ -366,10 +430,11 @@ Resolve actor, project memberships, target, metadata filters and selection in D1
 IDs and projection IDs for the turn/job. Omitted selection uses enabled material in selected project/target; explicit
 empty means empty. If nothing remains, return scoped empty without Search. Never fall back to global top-k.
 
-Return compact coverage: requested/readable/search-ready counts per target, incomplete revisions/items/reasons and
-sections actually used. Upload acknowledgement is not readiness. If a new usable source head is still indexing, read it
-directly within budget or show partial coverage; never substitute its old indexed head. Strict all-document comparison
-waits or returns explicit partial job.
+Return compact coverage: requested/stored/readable/search-ready counts per target, conversion warnings/known omissions,
+incomplete items/reasons and sections actually used. Upload acknowledgement is not readiness. If a new usable source head
+is still indexing, read it directly within budget or show partial coverage; never substitute its old indexed head. A
+`stored_needs_conversion` revision is not searchable evidence. Strict all-document comparison waits or returns an explicit
+partial job.
 
 Use `retrieval.return_on_failure: false` for ordinary evidence search so internal failure is not mistaken for no evidence.
 Inspect namespace `errors` alongside chunks. A successful top-k request proves search ran, not that every document was
@@ -394,7 +459,9 @@ background reading or ask for narrower scope. Never drop filters or merge unrela
 
 For every result resolve `item.key` through `search_item` and require frozen instance, allowed kind, frozen permitted
 revision and nondeleted owner before R2 hydration. Recheck deletion before hydration and before saving references. Drop and
-record mismatches; provider metadata cannot widen scope. Default knowledge search freezes accepted page heads at admission.
+record mismatches; provider metadata cannot widen scope. A chunk produced by AI Search OCR is never accepted as canonical
+primary evidence unless it maps to the same retained readable revision bytes. Default knowledge search freezes accepted
+page heads at admission.
 
 Library deletion observed before dispatch removes source excerpts already prepared but not sent; rebuild within remaining
 budget or return partial. Explicitly selected retained page may still supply derived context with unavailable support
@@ -405,30 +472,34 @@ marked. Already dispatched external calls cannot be recalled.
 | Known source/section/quote | Direct outline/range read or bounded literal scan; no embedding/model |
 | Focused question | One scoped hybrid search, overlap/deduplication/source diversity, canonical hydration |
 | Broad topic | Exact D1 metadata + one mixed card/block native ranking, dedupe sources, then block-only evidence retrieval |
-| Table/equation/code | Hydrate caption/headers/units/definition/enclosing block; expose extraction failure |
-| Compare selected documents | Establish per-document coverage, open passages for every requested document; job when broad |
+| Table/equation/code | Hydrate exact caption/headers/units/definition/enclosing block; expose conversion/structure failure |
+| Compare selected documents | Establish per-document storage/readability/search/section coverage, open passages for every requested document; job when broad |
 | Ambiguous follow-up | Optional bounded rewrite with identical frozen scope |
 | Missing/contradictory evidence | Expose gap; one targeted same-scope repair when concrete and budgeted |
 
-A same-scope repair may switch `and`→`or`, adjust query once, literal-scan a known revision or open adjacent canonical
-context. It never adds documents, web or a model-routing/judge call and never runs by default after sufficient evidence.
-Report both passes and stop after useful result or no progress.
+A same-scope repair may switch `and`→`or`, adjust query once, literal-scan a known readable revision or open adjacent
+canonical context. It never adds documents, web or a model-routing/judge call and never runs by default after sufficient
+evidence. Report both passes and stop after useful result or no progress.
 
 Hydrate R2 ranges in batches, merge overlaps and reuse request-local reads. Duplicate imports, old revisions, digests and
 Wiki restatements are not independent support.
 
 ### Reference mapping
 
-Source citation: `{revisionId, blockId, startByte, endByte}`. Page reference uses page revision plus its own byte range and
-remains derived. AI Search returns `item.key`; resolve retained block map and exclude non-quotable prefix. Repeated text
-must not use first `indexOf`. The Items API chunk-range lookup may resolve a split item; verify offsets against the actual
-uploaded/prefixed text and canonical slice. If a narrow excerpt cannot be uniquely mapped, use a verified whole-block
-reference labelled broader rather than fabricate coordinates.
+Source citation identity is `{revisionId, blockId, startByte, endByte}` over UTF-8 bytes of retained `text.md`. Page
+reference uses page revision plus its own byte range and remains derived. Optional original-file navigation is a separate
+`{kind, value, fidelity}` hint. It may be absent without weakening the exact canonical citation.
+
+AI Search returns `item.key`; resolve the retained block map and exclude non-quotable prefix. Repeated text must not use
+first `indexOf`. The Items API chunk-range lookup may resolve a split item; verify offsets against the exact uploaded/
+prefixed text and canonical slice. If a narrow excerpt cannot be uniquely mapped, use a verified whole-block reference
+labelled broader rather than fabricate coordinates.
 
 Models receive short server labels and cite labels only. Unknown labels are removed/count unsupported. Save Markdown and
-resolved objects together. Byte ranges are UTF-8 `[start,end)` with one tested browser conversion utility. Derived pages
-retain original citations but do not count as independent primary support; underlying sources outside frozen scope are
-not read implicitly.
+resolved objects together. One tested utility converts UTF-8 `[start,end)` ranges for browser highlighting. Generated
+image descriptions may be referenced only as explicitly generated visual summaries, never as literal source quotations.
+Derived pages retain original citations but do not count as independent primary support; underlying sources outside frozen
+scope are not read implicitly.
 
 ## 8. Ordinary chat
 
@@ -446,11 +517,10 @@ permits one selection pass, at most three approved read tool calls and one final
 approval/pre-authorized job rules. Iterative exploration/delegation becomes a durable job.
 
 Set `waitForMcpConnections = false`: no-tool document answers do not wait for unrelated MCP recovery. Set
-`autoContinueAfterToolResult: false` in `useAgentChat`. Client tool results and approvals otherwise continue by default.
-After the selected tool calls settle, Eliot's host performs one awaited budget/cancel/scope check and admits **at most
-one** continuation under the same request/attempt ID, including an approval denial when a final explanatory answer is
-needed. Duplicate tool-result delivery observes the recorded continuation; it cannot buy another model call. A mutation
-with unknown outcome is not automatically continued/retried.
+`autoContinueAfterToolResult: false` in `useAgentChat`. After selected tool calls settle, host code performs one awaited
+budget/cancel/scope check and admits **at most one** continuation under the same request/attempt ID. Duplicate tool-result
+delivery observes the recorded continuation; it cannot buy another model call. A mutation with unknown outcome is not
+automatically continued or retried.
 
 Use `onChatRecovery()` with `{ continue: false }` initially. Persist partial/settled work without another model call.
 Explicit Continue creates one new attempt under the same turn, reuses completed outputs and unique labels; transport
@@ -465,12 +535,9 @@ row-compaction threshold; message carries a bounded preview/reference/digest and
 in the chat DO. This is not a second transcript database: the ordered message list/state remain authoritative, while R2
 owns only explicitly referenced large bodies needed for reopen/export.
 
-The model distinguishes source statements, inference and unsupported gaps. `not found`, still indexing, unavailable and
-partially searched differ. Ordinary chat never silently becomes deep research, invokes unselected tools, imports web
-results or refreshes Wiki.
-
-Reference: [AIChatAgent](https://developers.cloudflare.com/agents/communication-channels/chat/chat-agents/) — including
-`autoContinueAfterToolResult`, `persistMessages`, storage/context separation and compaction behavior.
+The model distinguishes source statements, inference and unsupported gaps. `not found`, needs conversion, conversion
+warning, still indexing, unavailable and partially searched differ. Ordinary chat never silently becomes deep research,
+invokes unselected tools, imports web results or refreshes Wiki.
 
 ## 9. Knowledge, distillation, Corpus Map and audits
 
@@ -489,11 +556,12 @@ from the new page's freshness trigger.
 
 A guide declares `full` or `sampled`. A full digest enumerates canonical sections, reads bounded ranges, extracts compact
 findings with server labels, persists completed section results, reduces findings/method/limitations/disagreement/negative
-results, and records covered/skipped/failed ranges.
+results, and records covered/skipped/failed/unextractable ranges and conversion omissions.
 
-Reuse only when exact inputs, focus and relevant settings match. Comparison establishes coverage for every requested
-source, uses digests only for orientation and reopens passages before new claims. Reducers carry original ranges/coverage,
-not section-local labels. Quantitative findings retain units, population, conditions, time/version and uncertainty.
+Reuse only when exact inputs, focus and relevant settings match. Comparison establishes storage/readability/section
+coverage for every requested source, uses digests only for orientation and reopens passages before new claims. Reducers
+carry original ranges/coverage, not section-local labels. Quantitative findings retain units, population, conditions,
+time/version and uncertainty.
 
 Budget rendered input including instructions/labels/findings/reserved output. Pack adjacent sections; if findings do not
 fit one reduction, reduce bounded groups through only as many levels as needed while retaining provenance/coverage.
@@ -522,10 +590,10 @@ No graph DB, graph retrieval, per-edge platform or centrality qualification.
 
 ### Product audit
 
-Audit deterministic facts first: extraction/index/card/page state, duplicate/version candidates, stale pages/maps,
-missing references, incomplete coverage, abandoned jobs/tasks, orphan search items/R2 objects and inactive derived data.
-Return impact counts, links and proposed actions. Optional model summarizes only on explicit request. Audit never repairs
-or deletes by itself.
+Audit deterministic facts first: conversion/readability/index/card/page state, warnings/known omissions,
+duplicate/version candidates, stale pages/maps, missing references, incomplete coverage, abandoned jobs/tasks, orphan
+search items/R2 objects and inactive derived data. Return impact counts, links and proposed actions. Optional model
+summarizes only on explicit request. Audit never repairs or deletes by itself.
 
 ## 10. Durable jobs, deep research and spending
 
@@ -557,8 +625,8 @@ supported. Definitively rejected-before-execution differs from unknown completio
 Use AI Gateway Spend Limits for known-price routes with server-supplied actor/project/job metadata. They are eventually
 consistent; keep job-local hard limits for call/tool count, model tokens, wall time, concurrency and reserved synthesis.
 Check before every paid dispatch, including planning/rewrite/rerank/generation/capture/conversion/external tool. This is
-not a daily billing ledger. AI Search indexing/query usage is separate from answer-generation/Gateway spend and remains
-visible/bounded; agent-owned reasoning avoids Eliot generation but not native Search cost.
+not a daily billing ledger. AI Search indexing/query/OCR usage is separate from answer-generation/Gateway spend and
+remains visible/bounded; agent-owned reasoning avoids Eliot generation but not native Search cost.
 
 Cancellation sets `cancel_requested`, checked before every paid/external call. Once observed, admit no later effect.
 Already dispatched call may finish/be billed; preserve findings and stop reason.
@@ -579,8 +647,8 @@ first and exact bodies on demand.
 | Tools | Purpose |
 |---|---|
 | `list_projects`, `project_overview` | Project metadata, readiness, knowledge titles and active work |
-| `list_sources`, `read_source`, `search` | Paginated metadata, outline/ranges and scoped source/knowledge excerpts |
-| `add_source`, `source_status`, `update_source` | Add/attach/replace/exclude/detach/archive; Library delete separate |
+| `list_sources`, `read_source`, `search` | Paginated metadata, conversion status/warnings, outline/ranges and scoped source/knowledge excerpts |
+| `add_source`, `source_status`, `update_source` | Add/attach/replace/exclude/detach/archive or supply normalized Markdown; Library delete separate |
 | `list_pages`, `read_page`, `write_page` | Knowledge/history and expected-head write/proposal with validated references |
 | `start_job`, `job_status`, `cancel_job` | Explicit Eliot-funded operations with same limits/cancellation |
 | `list_tasks`, `claim_task`, `decline_task`, `complete_task`, `release_task` | Offers/open tasks and one canonical result |
@@ -609,10 +677,11 @@ Primary surfaces: Projects/Library, source viewer, Chat/Research, Studio (saved 
 Connections/Agents.
 
 Composer shows destination, source/knowledge scope, model, tools and mode (`Ask`, `Compare`, `Distil`, `Deep research`).
-History reopens chats/jobs/partial/failed/cancelled results/reports. Source rows separate stored/readable/indexed/guide
-states. Pages show history/inputs/freshness/index status. Jobs show progress/current step/limits/partial findings/Stop.
-Model picker shows capability bounds and disables/explains incompatible tool/structured/large-context choices rather
-than failing after work starts.
+History reopens chats/jobs/partial/failed/cancelled results/reports. Source rows separate stored, needs-conversion,
+readable-with-warnings, readable, indexed and guide-ready states. The source viewer shows converter/profile, known
+omissions and anchor fidelity without making the owner inspect internal receipts. Pages show history/inputs/freshness/
+index status. Jobs show progress/current step/limits/partial findings/Stop. Model picker shows capability bounds and
+disables/explains incompatible tool/structured/large-context choices rather than failing after work starts.
 
 Every route/query/mutation/draft/chat/job carries project/chat ID. Switching tabs cannot retarget stream/write; late
 responses update keyed state. Cross-project work freezes permitted union and destination, deduplicating shared sources.
@@ -639,7 +708,7 @@ Targets, not promises:
 - ordinary first text equals provider first-token latency plus at most about 1 s Eliot overhead;
 - no open-project request count proportional to all sources.
 
-Measure extraction, indexing, search, hydration, tool and model time separately. Use Workers traces and Gateway metadata
+Measure conversion, indexing, search, hydration, tool and model time separately. Use Workers traces and Gateway metadata
 with operation/actor/project/chat/job/model IDs, never source text/secrets. Unknown state remains unknown.
 
 ## 13. Source lifecycle, impact and cleanup
@@ -649,7 +718,7 @@ with operation/actor/project/chat/job/model IDs, never source text/secrets. Unkn
 | Detach | Remove one membership; shared source remains |
 | Exclude | Keep readable/history, omit from new project retrieval |
 | Archive | Keep Library bytes/history, hide from ordinary new selection |
-| Replace/reparse | New immutable revision; old references remain; affected work queryable |
+| Replace/reparse/reconvert | New immutable revision; old references remain; affected work queryable |
 | Delete from Library | Preview/confirm impact, tombstone before external cleanup, stop new source use |
 | Erase derived copies | Separate explicit scope for copied page/chat/export text |
 
@@ -660,7 +729,8 @@ identity. Wider metadata/derived-text erasure is separate.
 
 Writers check tombstone around external writes. Cleanup uses exact keys/item IDs, reconciles unknown acknowledgements,
 waits for known producers/effects, removes late writes and repeats until settled. Missing item is already gone; other
-failure remains visible/retryable.
+failure remains visible/retryable. A conversion failure or unretained AI Search OCR output is not a hidden retained copy;
+cleanup and export operate only on identities/objects Eliot actually records.
 
 Deleting Eliot bytes cannot recall data already dispatched to model/search/tool providers or independent exports/backups.
 Expose known route logging/retention and disable source-bearing Gateway payload logs by default, but promise no
@@ -670,10 +740,10 @@ after grace period and fresh reference check; originals are never deleted becaus
 
 ## 14. Portable export, migration and cutover
 
-Portable export streams a manifest, metadata, selected originals/readable revisions, page histories/references, tasks and
-usable chat history. Stable IDs, timestamps, origin URLs and filenames make reimport possible without title matching. A
-text-only ZIP is not backup. D1 Time Travel and Durable Object PITR are useful same-resource recovery features; neither
-covers R2 nor constitutes portable cross-namespace/application migration.
+Portable export streams a manifest, metadata, selected originals/readable revisions, conversion profiles/warnings/anchor
+fidelity, page histories/references, tasks and usable chat history. Stable IDs, timestamps, origin URLs and filenames make
+reimport possible without title matching. A text-only ZIP is not backup. D1 Time Travel and Durable Object PITR are useful
+same-resource recovery features; neither covers R2 nor constitutes portable cross-namespace/application migration.
 
 ### Chat snapshot contract
 
@@ -708,12 +778,12 @@ reauthorized rather than exported.
 
 Build replacement beside legacy with isolated schema/bindings. Before live migration:
 
-1. inventory actual projects, sources/revisions/memberships, metadata, pages/proposals, D1 chat IDs, tasks, model/tool
-   references, agent scopes and active/unknown effects;
+1. inventory actual projects, sources/revisions/memberships, conversion states/profiles/warnings, metadata, pages/proposals,
+   D1 chat IDs, tasks, model/tool references, agent scopes and active/unknown effects;
 2. close legacy writes and paid admissions; drain writers or record partial/unknown outcomes;
 3. take recoverable D1 + R2 + versioned ChatAgent snapshots independent of replacement;
-4. import with stable old→new IDs, preserving shared sources, retained revisions, exact bytes, page decisions and usable
-   ordered chat state; unresolved legacy citations remain unresolved;
+4. import with stable old→new IDs, preserving shared sources, retained originals/readable bytes, conversion reports,
+   exact references, page decisions and usable ordered chat state; unresolved legacy citations remain unresolved;
 5. recreate model/tool references without raw secrets and reauthorize outgoing MCP OAuth;
 6. compare counts, representative bytes/references/histories/chat snapshot checksums and assembled user journeys;
 7. switch route only in authorized deployment; retain export/mapping until owner acceptance;
@@ -729,12 +799,18 @@ only if Rust changes. Do not recreate source-text gates, ancestry claims, packet
 
 After assembly exercise:
 
+- current `toMarkdown().supported()` discovery and additive provider response fields without false failure;
+- deterministic local UTF-8 conversion; native English/Russian PDF; scanned PDF; two-column paper; long/wide table;
+  footnotes; equation/code; office document; static HTML; rendered page; image and animated GIF;
+- retained bytes/digests, readable state/warnings/known omissions and verified/observed/unavailable anchor fidelity for
+  representative fixtures; exact non-ASCII range reopening;
+- direct Markdown Conversion versus AI Search OCR separation; unretained OCR chunks never become primary evidence;
 - duplicate/lost upload acknowledgement, conditional R2 collision/null and partial item publication;
 - failed/out-of-order replacement preserving prior/current heads;
-- Cyrillic/scans/tables, exact IDs, late-paper facts, contradicting sources and extraction omissions;
+- exact IDs, late-paper facts, contradicting sources and extraction omissions;
 - scopes over 50/500 sources within D1/Search limits; partial namespace errors; readable heads still indexing;
 - wrong-scope/tombstoned search results and deletion after context preparation but before dispatch;
-- exact non-ASCII/repeated-text references and provider item subrange mapping;
+- exact repeated-text references and provider item subrange mapping;
 - source/page search targets, accepted knowledge indexing and drafts/superseded-head exclusion;
 - two projects/tabs with different scopes/models/tools, shared sources and concurrent jobs;
 - model profile/context/output enforcement; incompatible tools/structured output and conservative custom/dynamic routes;
@@ -757,11 +833,12 @@ After assembly exercise:
 Verify current installed behavior before implementation claims:
 
 - `createAI` route IDs, model capabilities, BYOK/fallback/logging and stream-resume limits;
-- AI Search item/key/metadata/filter/chunk/instance limits and pricing;
+- Markdown Conversion result/types, `supported()` and actual quality/limits for the representative corpus;
+- AI Search item/key/metadata/filter/chunk/instance/OCR limits and pricing;
 - Access topology/audiences/Managed OAuth identities;
 - Agents/AIChatAgent/MCP package APIs, `autoContinueAfterToolResult`, message/state persistence and compaction;
 - declarative Durable Object `exports`, SQLite storage and portability boundaries versus PITR;
-- direct fetch/Browser Run egress; `toMarkdown` quality; chat snapshot readback.
+- direct fetch/Browser Run egress and chat snapshot readback.
 
 A failure blocks that feature's readiness, not unrelated development. Performance and quality numbers become claims only
 after measurement on representative Eliot material.
