@@ -26,8 +26,8 @@ A **project** and a **notebook** are the same stored/UI object. Do not create pa
 The **Library** owns a source once. Projects attach sources through memberships. A source can belong to many
 projects without duplicating its canonical bytes. Every captured or reparsed representation is an immutable
 **source revision**. Notes, digests, reports, maps, audits and Wiki pages are versioned **knowledge pages**.
-A citation points to exact bytes in a retained source revision. Derived prose never becomes primary evidence
-merely because Eliot generated or saved it.
+Primary evidence citations point to exact source-revision bytes. Saved-page references open the retained page revision
+and are labelled derived knowledge; they do not turn generated prose into an independent primary source.
 
 ## Required capabilities
 
@@ -41,11 +41,11 @@ merely because Eliot generated or saved it.
 | Models | Configure Workers AI, AI Gateway catalog/BYOK routes and compatible custom endpoints through an owner UI; choose global and project defaults plus chat/job overrides; display the resolved route and billing mode; keep credentials in Cloudflare, not application tables or browser storage. |
 | Chat | Ask ordinary questions over explicit/default/empty source scope; stream a grounded synthesis; keep response style/length/instructions and selected model/tools; follow up without losing scope; stop or reconnect; reopen conversations; save a cited answer as knowledge. A no-tool turn performs one synthesis. A tool-assisted turn is explicitly selected, exposes only approved tools and has a short hard-capped tool loop; it never silently becomes deep research. |
 | Distillation | Create a quick guide, full source digest, multi-source comparison or research report; process long sources by sections; preserve methods, findings, limitations, disagreements and negative results; record covered, skipped and failed material. |
-| Knowledge | Save, edit, compare, export and reopen notes, digests, reports and Wiki pages with immutable history; mark affected pages stale when inputs change; refresh only affected knowledge; preserve owner edits and rejected proposals. |
+| Knowledge | Save, search by content, edit, compare, export and reopen accepted notes, digests, reports and Wiki pages with immutable history; mark affected pages stale when inputs change; refresh only affected knowledge; preserve owner edits and rejected proposals. |
 | Corpus Map | Provide a compact navigational map of sources, topics, versions/timeline, source families, contradictions, gaps and suggested reading routes. Map edges are derived navigation with exact source links, not a graph database or evidence authority. |
 | Audits and maintenance | Show unreadable or unindexed sources, duplicate/version candidates, stale pages, unresolved citations, incomplete coverage, abandoned work and removable derived/index data. Produce proposed actions; never auto-delete originals or accepted knowledge. Keep a small attributable activity history. |
 | Deep research | Find candidate sources through a lightweight explicit search, or start an explicit durable investigation over selected library scope, optional web discovery and selected external tools; show progress, sources, spending limits, partial findings and cancellation; capture web evidence before citing it. |
-| Incoming MCP | Expose Eliot to external agents through standard Streamable HTTP MCP: projects, source search/read/add/update, pages, jobs, tasks and results. Agents may reason with their own models without buying an Eliot model call. |
+| Incoming MCP | Expose Eliot to external agents through standard Streamable HTTP MCP: projects, source search/read/add/update, pages, jobs, tasks and results. Agents may reason with their own models without buying Eliot answer generation; native search/indexing still uses Cloudflare resources. |
 | Outgoing MCP | Let the owner connect selected remote MCP servers as tools for Eliot chat/research using the Cloudflare Agents SDK client. Tools are scoped and explicitly enabled; mutating tools require an owner decision or a pre-authorized job, not repeated ceremony around read-only calls. |
 | Agent collaboration | Bind a connected agent to verified identity, project scope and operations; let it accept/decline owner offers or claim open tasks; save one attributable result; use review or direct-edit mode per project; make paid Eliot jobs a separate permission. |
 | Data ownership | Export originals, readable revisions, metadata, knowledge history, citations, tasks and usable chat history. Preserve real data and acknowledged outcomes during replacement of the old implementation. |
@@ -61,7 +61,9 @@ Wiki page helps navigate; evidence still opens the source revision that supporte
 ### Retrieval is a staged read, not “top-k chunks”
 
 Known material is read directly. Focused questions use scoped hybrid retrieval and then hydrate the necessary
-canonical section. Broad comparisons first identify relevant sources and coverage, then open supporting sections.
+canonical section. Bounded same-scope reading/refinement needs no new owner instruction. Sources, saved knowledge
+and a deliberate combined view are distinct search targets; drafts and repeated generated reports cannot masquerade
+as additional evidence. Broad comparisons first identify relevant sources and coverage, then open supporting sections.
 Tables retain captions, headers, units and relevant rows. Duplicate excerpts do not consume the context budget.
 A global top-k result never certifies that every selected document was examined. Indexing failures and unreadable
 parts remain in the coverage denominator; a successful search response is not complete-corpus evidence. Processing
@@ -84,7 +86,9 @@ A source update marks dependent pages/maps/audits stale but does not rewrite the
 revision or proposal. Owner edits are not discarded by regeneration. Deleted evidence becomes unavailable rather
 than silently relinked. Removing a project membership does not delete the shared source. Dependencies remain visible
 through digest → Wiki → report reuse. A newly added source can make a project-wide overview incomplete even though
-no previous report cited it; show that distinction without regenerating every page.
+no previous report cited it; show that distinction without regenerating every page. Deliberately historical snapshots
+remain historical; a new source version does not make them failed current reviews. Concurrent replacement cannot silently
+overwrite a source head published by another operation.
 
 ### Execution and spending stay bounded
 

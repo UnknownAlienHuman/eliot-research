@@ -106,3 +106,44 @@ agent harness or mandatory review workflow is selected. Existing MAP stages reta
 The three edited baseline files were reconstructed and matched against their Git blob hashes before modification.
 This continuation changes only Architecture, Implementation and this existing audit. Scoped diff/Markdown checks
 are not product tests; no runtime build, deployment, paid call, migration or performance measurement was performed.
+
+## Continued review: searchable knowledge and useful retrieval
+
+**Baseline:** [`dd3fa22`](https://github.com/UnknownAlienHuman/eliot-research/tree/dd3fa22cf6be658b91ad08de3d89066182bd252d), reviewed 2026-10-23.
+This pass follows user actions through the existing design and removes avoidable interaction barriers. The six findings
+below concern documented behavior, not reproduced production incidents. Architecture and MAP carry the resulting
+requirements/delivery; Implementation remains the only mechanics owner.
+
+| # | Design gap | Correction |
+|---|---|---|
+| 21 | **Saved knowledge could be opened by ID but not found reliably by its content.** The index/schema/query path covered sources and source cards, not accepted notes, reports or Wiki. | §§4, 6–7, 11–12 reuse the same native index, structural projection and IngestWorkflow for typed page-revision items. Search selects sources/knowledge/both before retrieval; drafts/proposals/history do not silently enter current discovery. Page references remain derived and preserve original provenance. Acceptance/readability does not wait for indexing. MAP stage 4 owns this journey. |
+| 22 | **Overly rigid retrieval rules moved useful work back to the owner.** A valid empty search required another instruction to broaden within the already authorized scope; deep work could change strategy only once regardless of its remaining budget. | §§7–8 allow one targeted same-scope repair for a concrete missing passage/context, with no extra routing/judge model or default second search. §10 uses the existing total ceilings and no-progress stop for adaptive gap/counterevidence work. Scope expansion, web and deep mode remain explicit. |
+| 23 | **Agent efficiency had no complete response budget.** Bounded hit count alone neither bounds tool-result text nor guarantees immediately usable evidence; returning only IDs would add a read per hit. | §11 returns compact canonical excerpts/references and coverage under a whole-result byte/token cap, then exact read locators. Lists retain real cursors; native top-k has no invented pagination. SDK structured/text compatibility is retained without feeding both copies to Eliot's model. These are application defaults, not provider limits. |
+| 24 | **Successful replacement jobs could publish out of order.** “Conditionally advance after extraction” did not specify the head observed when replacement began, despite explicit page CAS. | §5 retains the captured expected source head in the operation input and compares it at readable publication. A losing replacement stays readable/not-current; owner selection needs no re-extraction. This preserves an actual legacy behavior without its proof/authority stack. |
+| 25 | **Every dependency change was treated like a living-page freshness failure.** Deliberate historical comparisons could appear permanently stale; inherited A1 → B1 → A2 provenance could immediately invalidate A2 against its own ancestor. | §§4, 9 distinguish `follow_current` from an explicit `snapshot`, preserve all evidence/availability checks, and exclude self-ancestor links only from freshness triggers. No dependency engine or automatic rewrite is introduced. |
+| 26 | **No Eliot answer-model call could be mistaken for no model/search cost.** Gateway model limits do not cover AI Search's separate usage. | §10 separates Search requests/indexed content from generation/rewrite/external-model usage, with native usage visibility and bounded operations. It does not introduce a daily D1 ledger or gate ordinary authorized search on answer-generation permission. Architecture uses the narrower “no Eliot answer-generation call” wording. |
+
+### Evidence and limits of this continuation
+
+- [OpenNotebook search handler, pinned `a0f6f30`](https://github.com/lfnovo/open-notebook/blob/a0f6f3081ae06328f0a451b3a3ef2959ca25721d/api/routers/search.py)
+  passes separate source/note targets and notebook scope to its search functions. This is a concrete product mechanism,
+  not a reason to adopt its Python/LangGraph runtime or empty-scope semantics.
+- [Legacy expected-head implementation](https://github.com/UnknownAlienHuman/eliot-research/blob/7c034569b908d3b03a8b821b7c537477a24b10f7/packages/platform-cloudflare/src/d1-ingest-source-head.ts)
+  reads the raw capture's expected head and rejects a stale replacement. The new documentation keeps that useful condition.
+- Official [Search binding](https://developers.cloudflare.com/ai-search/api/search/workers-binding/),
+  [metadata](https://developers.cloudflare.com/ai-search/configuration/indexing/metadata/) and
+  [filtering](https://developers.cloudflare.com/ai-search/configuration/retrieval/filtering/) support the same-index typed
+  projection within the existing five metadata fields. This review does not prove its installed implementation or recall.
+- [AI Search pricing](https://developers.cloudflare.com/ai-search/platform/limits-pricing/), page revision October 1,
+  checked October 23, schedules billing from November 1, 2026. It includes native embeddings/reranking in Search usage;
+  those calls are not separately billed as Workers AI or recorded in Gateway logs. Generation/rewrite/external inference
+  remains separate. No price or limit is a permanent architecture guarantee.
+- [MCP Tools, protocol 2026-07-28](https://modelcontextprotocol.io/specification/2026-07-28/server/tools) specifies tool
+  pagination, deterministic ordering, output schemas and recommended structured/text compatibility. The excerpt/byte/token
+  defaults in Implementation are Eliot design choices, not protocol requirements.
+
+All four edited files were reconstructed from the inspected baseline and their original Git blob hashes matched before
+modification. Diff/Markdown checks cover the edited documents, not every historical donor link. Runtime code, migrations,
+CI and deployment configuration are unchanged. No application tests/build, paid call, production query, deployment,
+migration or performance/retrieval benchmark was performed. New page indexing/typed scope, same-scope repair, replacement
+conflicts, historical freshness and MCP payload behavior still require their implemented user journeys.

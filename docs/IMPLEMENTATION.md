@@ -1,6 +1,6 @@
 # Eliot Research — Implementation
 
-Target implementation, native-runtime and shared-data review 2026-10-23. It implements [ARCHITECTURE](ARCHITECTURE.md).
+Target implementation, knowledge-retrieval and usability review 2026-10-23. It implements [ARCHITECTURE](ARCHITECTURE.md).
 [MAP](MAP.md) owns delivery order and legacy source locations. [DONORS](DONORS.md) records current
 Cloudflare APIs and donor mechanisms. This document specifies the replacement; it is not evidence that the
 replacement is deployed, migrated or fast.
@@ -192,9 +192,9 @@ content signatures or JSON business logic in triggers.
 | `source_author`, `source_tag`, `source_identifier` | Filterable authors/tags and normalized DOI/arXiv/ISBN/provider IDs |
 | `source_revision` | Source, content hash, canonical R2 keys, current card ID/key, parser/profile, sizes, warnings and extraction/index/card state |
 | `project_source` | Project/source membership, retrieval enabled and project-local note/priority |
-| `search_item` | Revision, instance, key/ID, block/range/kind and publication state |
-| `page` | Project, kind (`note/digest/report/wiki/map/audit`), optional Wiki slug, nullable accepted head, draft key/version and summary |
-| `page_revision` | Page, base revision, immutable R2 body, actor/decision, origin operation and timestamps |
+| `search_item` | Exactly one source-revision or page-revision FK, instance, key/ID, block/range/kind and publication state |
+| `page` | Project, kind (`note/digest/report/wiki/map/audit`), state/retrieval-enabled flag, optional Wiki slug, nullable accepted head, draft key/version and summary |
+| `page_revision` | Page, base revision, immutable R2 body, actor/decision, freshness mode (`follow_current` or `snapshot`), origin operation and timestamps |
 | `page_input` | Page revision → exactly one source revision or page revision used; indexed in both directions |
 | `chat` | ID, immutable destination project, title and timestamps; transcript/state remains in the chat DO |
 | `chat_input` | Chat/message → exactly one frozen source/page revision; query projection only, no transcript or quote duplication |
@@ -211,7 +211,8 @@ that exactly one is non-null. Partial uniqueness uses the referencing entity, no
 for `page_input`, `(chat_id, turn_id)` for `chat_input`, job ID for `job_input` and task ID for `task_input`, each combined
 with the non-null source/page revision FK. Implement `task_scope` the same way against logical
 `source`/`page` identities. Do not add owner-only uniqueness, use an unchecked polymorphic string or hide relationships
-in JSON arrays.
+in JSON arrays. `search_item` uses the same exactly-one-FK rule for source/page revisions; constrain its
+`record_kind` to the matching target. Its remote identity is `(instance_id, item_key)`, not a provider-global item ID.
 
 `chat_input`, `job_input`, `task_scope` and `task_input` close a necessary gap: citations may remain in the chat DO and
 full job input in R2, but source/page replacement or deletion, stale indicators, export and migration need bounded D1
@@ -281,6 +282,13 @@ the same operation with bounded concurrency and per-item results.
    individual item uploads, so do not serialize an unbounded one-request-per-block loop or invent a batch API. Coalesce
    small adjacent blocks, cap concurrent uploads, persist each returned item ID and reconcile an exact key after loss.
 7. Build a deterministic source card from metadata/outline. A model-enhanced card/digest is optional and budgeted.
+
+Replacement/reparse captures `expected_current_revision` in its existing operation input. Publish the usable head
+with a compare-and-swap against that value and the source's nondeleted state, not against a head reread after extraction.
+If two replacements started from the same head, only one may advance it. Retain the other's converted revision as
+readable but not current; show the conflict and let the owner explicitly select it against the now-current head.
+Do not re-extract, silently overwrite the winner, or block unrelated imports. This preserves the useful expected-head
+behavior of the legacy ingest writer without its authority/proof stack.
 
 Separate raw retention from conversion/index limits. Eliot may retain a 25 MiB original in R2 while current converter or
 AI Search limits require `stored_needs_conversion`. Never label an oversized/unreadable file indexed. Owner or permitted
@@ -358,11 +366,46 @@ complete source discovery. A card never becomes evidence.
 Use at most the five current custom metadata fields, initially:
 
 ```text
-revision_id, source_id, record_kind, language, published_at
+revision_id, document_id, record_kind, language, published_at
 ```
 
+`document_id` is the source or page ID according to `record_kind`; D1 retains explicit typed foreign keys.
 Project membership, authors, tags and identifiers remain in D1. Search-item files are disposable; canonical text and
 citation identity are not.
+
+### Saved knowledge is searchable
+
+A Library-only index cannot answer “what did we conclude?” when the answer exists only in a saved report or Wiki.
+Reuse the same AI Search instance, structural projector, publisher and readers for accepted knowledge:
+
+- `record_kind=page_block`, key `p/<page-revision>/b/<block>.md`, projects/permissions resolved in D1;
+- current accepted notes, digests, reports and Wiki pages by default; drafts, pending/rejected proposals, chat messages,
+  Map/Audit output and older page versions are not automatically indexed into that default view;
+- an explicit historical selection remains directly readable. Maps/audits can be included explicitly as derived pages,
+  not silently mixed into normal evidence search.
+
+Page acceptance creates a small existing `job` for `IngestWorkflow` with a page-revision target. It skips file conversion
+and model synthesis and reuses only structural projection/index publication. Commit the accepted head and pending job
+in the same D1 batch; start/reconcile that Workflow by its stable ID afterwards. Saving, listing and direct reading do
+not wait for indexing. A late publisher cannot make an older page head current. Display incomplete index coverage and
+retire superseded projection items using the same cleanup path after active readers settle.
+
+Expose `search(target: sources | knowledge | both)` in UI/MCP. Default document answers to `sources`; use `knowledge`
+for saved work and `both` only when chosen. Resolve exact allowed source/page revisions before native retrieval; send
+one scoped native query where the complete filter fits, then hydrate each result through its typed reader. An empty
+explicit selection in one target does not silently expand another. Never run a source search and call it knowledge search.
+
+A page hit carries its page revision, author/decision, freshness and a **derived-page reference**, plus its original
+source citations. Page ranges address UTF-8 bytes of the immutable decoded Markdown body, not the escaped JSON envelope;
+load a bounded page body once per request and reuse it. Do not invent a source revision for a generated page. Only source
+ranges actually reopened in the permitted scope become primary evidence in a new answer; page text may still explain
+our saved conclusions with its status disclosed. Several reports repeating one paper are not independent corroboration.
+Preserve both the direct page dependency and inherited provenance. Page exclusion/archival removes it from new search;
+explicit page erasure makes its historical references unavailable rather than relinking them to a replacement.
+
+This reuses the source/note distinction in
+[OpenNotebook's pinned search API](https://github.com/lfnovo/open-notebook/blob/a0f6f3081ae06328f0a451b3a3ef2959ca25721d/api/routers/search.py),
+not its Python runtime, graph or empty-scope behavior. No second search engine, embedding service or canonical source copy is added.
 
 ### Topology
 
@@ -374,21 +417,23 @@ Measure items per source, total files, filter payloads, indexing throughput and 
 isolation limits are reached, move to deterministic native shards/project projections and namespace-level search. Do not
 create one instance per project pre-emptively. Embedding/tokenizer/projection changes build a new instance beside the old.
 A copied initial inventory is not sufficient while imports, replacements and card updates continue. At final handoff,
-briefly hold only source-head/card publication, settle their known publishers, catch up current revisions/cards and
-removals from D1, verify readiness, then switch the settings pointer and release pending publication. Upload retention,
-reads, chat and page edits stay available. A failed/expired handoff releases the hold with the old pointer unchanged;
+briefly hold searchable source/card/page-head publication, settle their known publishers, catch up current source/page
+revisions, cards and removals from D1, verify readiness, then switch the settings pointer and release pending publication.
+Upload retention, reads, chat and draft edits stay available; accepted-head publication may wait for this bounded
+handoff. A failed/expired handoff releases the hold with the old pointer unchanged;
 no producer or stored upload is discarded. Pending publication uses the new pointer. Active jobs retain their original
 instance IDs; newly acquired evidence records its own projection choice (§10). Use existing settings/jobs and expected
 state updates, not a generation registry, permanent dual writer or rollout framework.
 
 ## 7. Retrieval and exact evidence
 
-Resolve actor, project memberships, metadata filters and source selection in D1 first. Freeze exact revision IDs and
-projection instance IDs for the turn/job. Omitted selection means enabled project sources; explicit empty means empty.
+Resolve actor, project memberships, target, metadata filters and source/page selection in D1 first. Freeze exact revision
+IDs and projection instance IDs for the turn/job. Omitted selection uses enabled material in the selected project/target;
+explicit empty means empty. Default source search contains source blocks, not page blocks or generated cards.
 If no permitted revision remains, return an empty scoped result without calling AI Search. Never fall back to global top-k.
 
 Retain the requested denominator separately from searched/read material. Return compact coverage: requested/readable/
-search-ready counts, incomplete revisions/items and reasons, plus which originals/sections actually reached context.
+search-ready counts per source/page target, incomplete revisions/items and reasons, plus the sections actually used.
 An upload acknowledgement is not index readiness; reconcile per-item `completed` status and expected item count outside
 the chat hot path. If the new usable head is still indexing, read it directly within budget or show partial coverage;
 never silently substitute its old indexed head. Strict all-document comparison waits or returns an explicit partial job.
@@ -407,7 +452,7 @@ Initial text profile:
 - the `porter` keyword tokenizer as the natural-language baseline, with Russian exact/inflected terms, identifiers and
   numbers measured explicitly; use `trigram` only after a demonstrated recall benefit because changing tokenizer
   requires a full reindex;
-- `keyword_match_mode: "and"` for the focused default; use `"or"` only for an explicit broadened search/research step;
+- `keyword_match_mode: "and"` initially; `"or"` is available for the bounded same-scope repair below or explicit research;
 - `match_threshold: 0`, because that threshold filters by vector similarity and can remove lexical-only hits;
 - `context_expansion: 0`, because canonical block/section hydration owns surrounding context;
 - query rewriting disabled for first-turn/exact queries and enabled only for a genuinely ambiguous follow-up with the
@@ -425,9 +470,10 @@ independent top-k ranks as one global ranking. Report incomplete coverage rather
 
 After every native search, resolve each returned `item.key` through `search_item` and require all of the following before
 reading R2 bytes: the projection instance belongs to the frozen instance list, `record_kind` is allowed for the current
-operation, the resolved revision is in the frozen permitted revision set, and the source is not Library-tombstoned.
-Drop and record any provider result that violates those checks; do not let provider metadata widen scope. Recheck the
-source tombstone immediately before canonical hydration and before saving a new citation.
+operation, the resolved source/page revision is in its frozen permitted set, and its owning source/page is not deleted.
+Default knowledge discovery freezes current accepted, search-enabled page heads at admission; a later head change
+does not retarget that turn or invalidate its frozen revision. Drop and record mismatches; provider metadata cannot
+widen scope. Recheck deletion before canonical hydration and saving a new reference.
 
 Replacing a source or changing project membership after admission does not retarget an already frozen turn/job.
 Detach, exclude or archive affects future scopes. Library deletion is stronger: the existing pre-dispatch guard checks
@@ -445,15 +491,25 @@ token or rehash objects. Already dispatched calls cannot be recalled; preserve k
 | Table/equation/code | Hydrate caption/headers/units/definition/enclosing block; show extraction failure |
 | Compare selected documents | Establish per-document coverage, then open supporting passages for every requested document; use a job when broad |
 | Ambiguous follow-up | Optional native rewrite from bounded messages with identical frozen scope |
-| Missing/contradictory evidence | Expose the gap; broaden only on explicit user/research action |
+| Missing context or empty valid retrieval | One targeted same-scope repair within the existing budget; otherwise state the gap. New scope/web/deep work stays explicit. |
 
 Hydrate selected blocks through R2 range reads, merging overlaps and reusing request-local reads. A duplicate import,
 old revision, digest and Wiki restatement are not independent support.
 
+An authorized question already authorizes ordinary reading of its selected material. Do not ask the owner to approve
+fetching a missing table header, resolving a known section or refining an empty search within that scope. The focused
+path starts with one native search; allow at most one targeted additional search when the successful first response
+has no usable mapped passages or a required identifier/context is missing. Known-range hydration needs no second search.
+Keep quoted identifiers/numbers, do not merge incomparable scores, and choose the usable repaired set or canonical read.
+Do not trigger repair merely because a similarity score seems low, or retry an outage as “no evidence.” There is no paid
+routing/judge model and no default second call on successful questions. The same deadline, byte/token and call budgets
+apply; record the repair reason/count, not raw query text, in existing diagnostics. Scope expansion, web access and
+deep work remain explicit.
+
 ### Citation mapping
 
-AI Search returns `item.key`. Resolve it through `search_item` and the retained block map to exact
-`{revisionId, blockId, startByte, endByte}`. The non-quotable prefix length is known; returned body text must match the
+AI Search returns `item.key`. For source-block hits, resolve it through `search_item` and the retained block map to
+`{revisionId, blockId, startByte, endByte}`; page hits use the distinct derived-page reference from §6. The non-quotable prefix length is known; returned body text must match the
 canonical block or an explicitly mapped subrange. Repeated text must not resolve via first `indexOf`.
 The current Items API also provides `items.get(itemId).chunks({limit, offset})` with chunk IDs/text and byte offsets.
 Use a bounded item-level lookup when needed to resolve a returned chunk, not a full-library scan. Verify what those
@@ -487,8 +543,8 @@ merging section results, so `S1` from two turns/papers cannot point to the wrong
 each result instead of reconstructing labels from today's search.
 
 A no-tool ordinary turn reads known small material directly or performs one retrieval preparation, then one streamed
-synthesis. It has an explicit input/context budget, output-token cap, provider timeout and one model call. An agent using
-Eliot's `ask` tool follows the same limits and receives no outgoing tools unless its grant and request explicitly select
+synthesis. It has an explicit input/context budget, output-token cap, provider timeout and one answer-generation call. An agent
+using Eliot's `ask` tool follows the same limits and receives no outgoing tools unless its grant and request explicitly select
 them. Set `waitForMcpConnections = false` on chat: connections live in the separate Tool Connection Agent. Only a selected
 tool call may wait, within its own deadline; unrelated connection recovery cannot delay a document answer.
 
@@ -531,6 +587,15 @@ The edited page's `base_revision` is lineage, not a freshness dependency on its 
 inputs forward instead of making every edit immediately stale.
 This makes source → digest → Wiki → report change/deletion impact queryable without a graph service or body scan.
 Flattened provenance does not authorize reads of those sources or count generated prose as independent corroboration.
+Acceptance also schedules the existing page projection path (§6), not another summary/model call.
+
+Store `freshness_mode` with the page revision: `follow_current` for a living Wiki/current review, `snapshot` for an
+explicit historical/version comparison. Both retain exact input revisions. A newer head is informative for a snapshot,
+not a reason to call that deliberate historical result broken or regenerate it; unavailable/deleted support is shown
+in both modes. When evaluating currentness, exclude ancestors belonging to the edited page itself from freshness
+triggers, while retaining them as provenance. For example, A1 → B1 → A2 must not make A2 immediately stale merely because
+it retains A1 through B1. Changes to other followed inputs still appear. This is a page setting and bounded relational
+comparison, not a dependency policy engine or automatic refresh loop.
 
 ### Distillation
 
@@ -577,8 +642,8 @@ A rejected proposal is regenerated only after owner request or relevant input ch
 
 New sources have no existing `page_input` edge. For project-wide guides/maps/reviews, record the requested project/filter
 scope and each project's corpus version alongside covered revisions. Bump that simple version on membership, source-head
-or filter-relevant metadata changes, not on indexing retries. Show `new material / scope changed` when it differs;
-explicit-selection digests are unaffected by unrelated additions. The activity feed identifies changed inputs for a
+or filter-relevant metadata changes, not on indexing retries. For `follow_current`, show `new material / scope changed`
+when it differs; snapshots retain an as-of view, and explicit-selection digests are unaffected by unrelated additions. The activity feed identifies changed inputs for a
 bounded refresh. Do not regenerate on open or mark every page stale just because an unrelated source arrived.
 
 ### Corpus Map
@@ -616,12 +681,15 @@ A deep run:
 1. orients from the question, frozen scope, source cards/outlines and current knowledge;
 2. maintains a short subquestion/gap list;
 3. performs the next useful scoped search/read or approved tool call;
-4. changes strategy once for a concrete gap/contradiction;
-5. performs one bounded counterevidence pass before final synthesis;
+4. adapts the next query/read to the unresolved gap, reusing completed findings instead of repeating identical actions;
+5. checks material provisional conclusions against counterevidence/conditions where the permitted corpus can answer;
 6. stops when questions are supported/unresolved, no useful evidence remains, cancellation is observed or a hard limit
    is reached;
 7. saves a cited complete or partial report.
 
+The existing overall call/time/token ceilings and a no-progress stop bound exploration; a global “change strategy only
+once” rule is not a substitute. Stop an action sequence that repeats the same query/scope or returns no new useful
+material, unless a concrete different target remains within budget. Do not run a fixed countersearch for every sentence.
 Default to one coordinator loop. Optional delegation assigns one bounded subquestion to a connected agent through the
 normal task lifecycle and waits durably with `step.waitForEvent`; no default researcher swarm or critic panel.
 Persist a completed task's canonical result before sending its wake event. Store the waiting job ID and a small pending
@@ -658,6 +726,14 @@ saves completed findings deterministically. Gateway/SDK telemetry observes calls
 Cancellation sets `cancel_requested` and is checked before every paid/external call. Once observed, admit no later call.
 An already dispatched call may finish or be billed. Preserve completed findings and label why the job stopped.
 
+Native retrieval is not free merely because an agent supplies its own answer model. Count Search requests and indexed
+content separately from Eliot generation. As reviewed 2026-10-23, Cloudflare schedules AI Search billing from November 1,
+2026; embedding/native reranking are included in that service rather than billed/logged as separate Workers AI calls.
+Generation, rewriting and external providers remain separate usage. Gateway dollar limits do not cap the separate
+AI Search bill. Use bounded requests/publication and the provider's usage/limits; do not invent a D1 billing ledger or
+block ordinary authorized search behind an answer-model permission. Show unknown usage as unknown, never zero.
+[AI Search pricing and included inference](https://developers.cloudflare.com/ai-search/platform/limits-pricing/).
+
 ### Web mode
 
 Find sources is an explicit lightweight action: one bounded Web Search and a candidate list, without a ResearchWorkflow
@@ -678,13 +754,25 @@ on demand.
 | Tools | Purpose |
 |---|---|
 | `list_projects`, `project_overview` | Project metadata, source readiness, knowledge titles and active work |
-| `list_sources`, `read_source`, `search` | Paginated sources, outline/ranges and scoped passages; explicit projects for cross-project work |
+| `list_sources`, `read_source`, `search` | Paginated sources, guide/outline/ranges and ready-to-use scoped passages; `search` selects sources/knowledge/both and explicit project scope |
 | `add_source`, `source_status`, `update_source` | Add/attach/replace/exclude/detach/archive; Library delete is a separate permission |
 | `list_pages`, `read_page`, `write_page` | Knowledge history and expected-head write/proposal with validated citations |
 | `start_job`, `job_status`, `cancel_job` | Explicit Eliot-funded jobs using the same limits/cancellation |
 | `list_tasks`, `claim_task`, `decline_task`, `complete_task`, `release_task` | Owner offers/open tasks and one canonical result |
 | `create_task`, `update_task` | Owner or explicitly permitted coordinator offers/reassigns/cancels work |
 | `ask` | Optional Eliot-funded ordinary answer; agents may instead search/read/write with their own model |
+
+`search` returns canonical excerpts with compact title/heading/revision/reference metadata and coverage, not just IDs
+that force another call for every hit. Cap the **whole** serialized result, not only hit count: initial product defaults
+are up to 12 hits, about 6,000 context tokens and 64 KiB text, whichever bounds first. These are tunable application
+choices, not MCP/Cloudflare limits. Report omitted context and its reason; return exact read locators for continuation,
+not fabricated pagination over native top-k. Lists use real cursors; `read_source`/`read_page` accept requested ranges
+and return a next-range locator when the body exceeds budget. Known metadata/guide/outline reads do not generate a summary.
+Reuse the same prepared passage set for UI, MCP and `ask`. Use SDK structured results with the specification-recommended
+compatibility text;
+Eliot's own consumer must not insert both encodings of the same result into model context. Keep tool names/order/schema
+stable and small. A tool-result byte cap is a response budget, not another approval or cryptographic protocol.
+[MCP tools specification](https://modelcontextprotocol.io/specification/2026-07-28/server/tools).
 
 Large file bytes use an authenticated short-lived upload reference, not base64 in MCP JSON. Source IDs guessed outside
 an agent's project grant are rejected. Source contribution, task work, paid Eliot jobs, outgoing tools and Library
@@ -714,7 +802,9 @@ Connections/Agents.
 The composer always shows destination project, source scope, model, outbound tools and mode (`Ask`, `Compare`,
 `Distil`, `Deep research`). History reopens chats, jobs, partial/failed/cancelled results and reports. Source rows separate
 stored, readable, indexed and guide-ready states. Pages show history, inputs and staleness. Jobs show progress, current
-step, hard limits, partial findings and Stop.
+step, hard limits, partial findings and Stop. Search offers Sources / Saved knowledge / Both, with typed results and
+page freshness visible. A report can be found by its content without remembering its title. Neither saving a chat answer
+nor opening Studio automatically includes generated material as primary evidence in later source-only questions.
 
 All project-dependent routes, query keys, mutations, drafts, chat IDs and jobs carry project/chat ID. Opening another tab
 or switching project does not retarget a stream/write. Late responses update their keyed project. Cross-project work
@@ -818,7 +908,10 @@ Clippy only when Rust changes. Do not recreate source-text gates, ancestry claim
 After assembly, exercise concrete risks:
 
 - duplicate/lost upload acknowledgement, bounded concurrent item publication and partial projection publication;
-- a failed replacement extraction leaving the previous usable source head intact;
+- a failed replacement leaving the previous usable head, and two out-of-order successful replacements with one CAS winner;
+- accepted-page content search, excluded drafts/old heads, no recursive corroboration, and source-only scope remaining source-only;
+- one bounded same-scope repair versus an outage/no-op, useful canonical MCP results within the whole-response budget;
+- a historical snapshot and A1 → B1 → A2 provenance without self-invalidating freshness;
 - owner/agent URL capture through redirect, blocked-address, oversize and stronger-egress-required cases without
   claiming unproven DNS pinning;
 - Russian↔English retrieval, Porter versus measured alternatives, exact identifiers, late-paper facts,
