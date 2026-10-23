@@ -1,6 +1,6 @@
 # Eliot Research — Implementation
 
-Target implementation, extraction-fidelity and coverage review 2026-10-23. It implements
+Target implementation, integration and review-artifact recheck 2026-10-23. It implements
 [ARCHITECTURE](ARCHITECTURE.md). [MAP](MAP.md) owns delivery order and legacy source locations.
 [DONORS](DONORS.md) records current platform APIs and donor mechanisms. This document specifies the
 replacement; it is not evidence that the replacement is deployed, migrated or fast.
@@ -17,7 +17,7 @@ JSON API, incoming MCP endpoint, Durable Object classes and Workflow entry point
 | Durable product data | D1 for identities, relationships and short state; R2 for originals, canonical readable text and immutable larger objects |
 | Retrieval | One AI Search namespace; initially one shared hybrid Library instance; deterministic source/page block items; native filters and namespace search only where complete scope remains expressible |
 | Models | `createAI` from `agents/models/ai-sdk`, AI SDK `streamText`/`generateText`, AI Gateway and supported vendor providers |
-| Chat | `AIChatAgent` + `useAgentChat`, one SQLite Durable Object per chat |
+| Chat | `AIChatAgent` from `@cloudflare/ai-chat`, `useAgentChat` from `@cloudflare/ai-chat/react`; one SQLite Durable Object per chat |
 | Outgoing tools | One SQLite owner Tool Connection Agent using the Agents SDK MCP client manager |
 | Incoming agents | `createMcpHandler` + `@modelcontextprotocol/server` v2 over Streamable HTTP |
 | Durable work | `IngestWorkflow`, one mode-based `ResearchWorkflow`, and `CleanupWorkflow` |
@@ -28,7 +28,12 @@ JSON API, incoming MCP endpoint, Durable Object classes and Workflow entry point
 | Export | Streaming ZIP/JSON/Markdown plus versioned chat snapshots and a stable manifest |
 
 Pin compatible released dependencies and a Wrangler compatibility date in the implementation commit. Read installed
-types and current official docs. Platform APIs and limits are integration facts, not permanent prose constants.
+types and current official docs. The dated [SDK candidate](DONORS.md#reviewed-sdk-candidate-not-an-installed-build) is not an
+installed or compiled replacement lockfile; do not silently update the donor workspace. Generate Worker bindings/runtime
+types with `wrangler types` from the actual config, include that output in TypeScript, and compile against it.
+`wrangler types --check` checks recorded input headers, not the declaration body; regenerate and inspect the diff when
+verifying declarations. Do not carry hand-written binding lookalikes or duplicate ambient `workers-types` into the new app.
+Platform APIs and limits are integration facts, not permanent prose constants.
 
 New Durable Object classes use Cloudflare's current declarative `exports` lifecycle with `storage: "sqlite"` and
 explicit bindings in `wrangler.jsonc`. D1 SQL changes remain ordinary files in `migrations/`. Do not mix legacy Durable
@@ -59,12 +64,21 @@ only after a real responsibility becomes hard to read. Do not create transport-s
 
 ## 2. Cloudflare Access is the sign-in boundary
 
-Choose one explicit Access topology and test every reachable hostname:
+Use one Worker with two Custom Domains and hostname-based Access applications:
 
-- when one policy fits browser/API/MCP, attach Access to the Worker so production domains, `workers.dev` and protected
-  previews inherit deny-by-default protection;
-- when MCP needs a different Managed OAuth or service-token policy, expose explicit UI/API and MCP hostnames/apps on the
-  same Worker, protect each, and disable or separately protect every alternate route and preview.
+| Hostname | Surface | Access policy |
+|---|---|---|
+| `research.<domain>` | Owner UI, JSON API, chat WebSocket and outgoing-tool setup/OAuth callback | Owner browser session |
+| `mcp.research.<domain>` | Incoming `/mcp` only | Managed OAuth for interactive clients; distinct Service Auth tokens for headless clients |
+
+Each host has its own expected audience. Reject unintended host/path combinations before dispatch; do not trust a caller's
+project or actor name. Disable `workers_dev` and `preview_urls` for production; separately authorize any deliberate preview.
+Ensure static-asset routing cannot intercept API, MCP, OAuth or WebSocket routes.
+
+Do not attach Worker-level Access to this WebSocket application: the current documented feature rejects upgrades with
+403. Use the hostname applications above. Keep one ingress assertion validation: the current Static Assets router does
+not forward `ctx.access` to the user Worker, so its absence is not a safe reason to bypass authentication or assume that
+a Vite deployment supplies it. See [Access runtime limitations](https://developers.cloudflare.com/workers/configuration/cloudflare-access/).
 
 Do not assume two Access applications compose in the desired order. Validate signature, issuer, route-specific audience
 and expiry once per HTTP request or WebSocket upgrade using cached JWKS. Create an actor context and pass it to internal
@@ -75,6 +89,11 @@ Managed OAuth for compatible interactive MCP clients. Managed OAuth tokens may b
 `Cf-Access-Jwt-Assertion` supplied at origin. Agent-specific revocation requires a distinct verified service/client
 identity. Several clients sharing only the owner's identity form one explicit owner-delegated profile; a client-supplied
 name is never authentication.
+
+For browser mutations and WebSocket upgrades, require the configured UI Origin and the expected request format; reject
+cross-origin commands even when a browser sends a valid Access cookie. OAuth callbacks use the SDK's bound state/PKCE
+flow rather than an Origin requirement that would reject legitimate redirects. Non-browser MCP/service-token calls may
+omit Origin but still require their own verified identity and scope. CORS is not authorization.
 
 An admitted background job retains its stored actor and frozen inputs without requiring a live browser cookie on every
 step. Missing model/search/tool capability blocks that capability, not reading stored sources and knowledge.
@@ -155,7 +174,7 @@ Source-bearing calls default to metadata/cost logs without prompt/response bodie
 or reviewed equivalent). Full payload logging is an explicit diagnostic setting. ZDR is shown only where supported.
 
 Paid calls use explicit timeout/retry policy. Set `maxRetries: 0` in AI SDK calls and Gateway `maxAttempts: 1` for the
-default route; no hidden dynamic fallback. A deliberate retry/fallback profile is visible and consumes the same total
+default route; no hidden dynamic fallback. Omit AI SDK `streamRetries` and do not request retries from `onError` by default. A deliberate retry/fallback profile is visible and consumes the same total
 budget. Enforce a total stream deadline and abort signal because Gateway request timeout bounds first response, not the
 entire stream. Budget/cancel checks run in awaited dispatch code, not observational callbacks. Disable SDK telemetry
 input/output recording independently of Gateway payload logs.
@@ -173,6 +192,12 @@ Use one owner Tool Connection Agent with the Agents SDK MCP client manager. D1 i
 identity, URL, enabled projects/tools, approved descriptor digest and side-effect class. Agent SQL owns SDK registration,
 OAuth/token state, connection lifecycle and live discovered catalogue for the same stable connection ID. Reconcile by ID;
 neither store silently overwrites the other. Static credentials remain in Cloudflare-managed secrets.
+
+For explicit manager setup use `registerServer` → `connectToServer` → `discoverIfConnected` and inspect the result/state.
+`connected` means transport established, not tools ready; only selected `ready` connections contribute tools.
+`listTools` reads descriptors, `getAITools` converts schemas, and `callTool` invokes a selected tool. The manager's
+`waitForConnections({ timeout })` is a bounded manager-wide wait, not a per-server readiness assertion. Do not let an
+unrelated reconnect block ordinary Ask or advertise an undiscovered connection as usable.
 
 The Agent exposes bounded internal RPC to read the approved catalogue and execute one
 `{connectionId, toolName, descriptorDigest, arguments, invocationId}` call. Chat/research build host-owned AI SDK wrappers
@@ -211,8 +236,8 @@ content signatures or JSON business logic in triggers.
 | `project_source` | Project/source membership, retrieval enabled and project-local note/priority |
 | `search_item` | Exactly one source- or page-revision FK, instance, key/ID, block/range/kind and publication state |
 | `page` | Project, kind (`note/digest/report/wiki/map/audit`), state/retrieval flag, optional slug, accepted head, draft key/version and summary |
-| `page_revision` | Page, base revision, immutable body, actor/decision, freshness mode (`follow_current`/`snapshot`), origin and timestamps |
-| `page_input` | Page revision → exactly one source or page revision used; indexed both directions |
+| `page_revision` | Page, base revision, immutable body, actor/decision, default freshness mode (`follow_current`/`snapshot`), origin and timestamps |
+| `page_input` | Page revision → exactly one source or page revision used; resolved `follow_current`/`snapshot` mode per dependency; indexed both directions |
 | `chat` | Stable ID, immutable destination project, title, snapshot/export state and timestamps; transcript/state remains in its DO |
 | `chat_input` | Chat/turn → exactly one frozen source/page revision; query projection only |
 | `job` | Type, project, actor, immutable input key, Workflow ID, state/cancellation/progress, local ceilings/usage and result |
@@ -377,6 +402,11 @@ it as prose. Keep code fences intact. Coalesce short prose under one heading. St
 structural/UTF-8 boundaries. For long or wide tables, produce valid row/column groups and repeat exact headers, following
 the selected Docling mechanism; never split through cells and present the fragment as a valid table. Hydrate exact
 caption/header/unit/definition ranges with their own labels. A copied or synthetic prefix cannot support a claim.
+For an assembled item, retain ordered item-byte → canonical-byte segments in the block map: repeated headers and column
+projections are not one contiguous source slice. Map citations only through exact copied segments; synthesized separators
+have no source range. A citation spanning disjoint segments returns multiple exact ranges or a labelled wider canonical
+block. Prefer contiguous row groups; an oversized cell/fence remains directly readable with partial indexing disclosed,
+not silently cut into a purported complete table/code block.
 
 Original-file page/table/figure hints are navigation only. `verified` means the converter supplied a retained mapping that
 was checked against its output; `observed` means an explicit marker exists in retained text but exact original geometry is
@@ -520,7 +550,8 @@ Set `waitForMcpConnections = false`: no-tool document answers do not wait for un
 `autoContinueAfterToolResult: false` in `useAgentChat`. After selected tool calls settle, host code performs one awaited
 budget/cancel/scope check and admits **at most one** continuation under the same request/attempt ID. Duplicate tool-result
 delivery observes the recorded continuation; it cannot buy another model call. A mutation with unknown outcome is not
-automatically continued or retried.
+automatically continued or retried. This is a server-side admission rule for every entry path, including crafted client
+frames, approvals and programmatic/recovery calls; the React option alone is not a spending or authorization boundary.
 
 Use `onChatRecovery()` with `{ continue: false }` initially. Persist partial/settled work without another model call.
 Explicit Continue creates one new attempt under the same turn, reuses completed outputs and unique labels; transport
@@ -529,9 +560,15 @@ submission's own scope/model/tools/settings under request ID before it waits. Re
 admission. Pending requests and active turn have separate visible cancel actions.
 
 Use `persistMessages` for storage-only changes; `saveMessages` triggers model response. Do not use
-`maxPersistedMessages` as context budget because it deletes stored history. Use token-aware `pruneMessages` for model
-context. Store unusually large finalized assistant/tool bodies in immutable R2 `chat/.../body/...` objects below the SDK
-row-compaction threshold; message carries a bounded preview/reference/digest and typed citations. Ordinary messages remain
+`maxPersistedMessages` as context budget because it deletes stored history. `pruneMessages` removes selected message
+parts; it neither counts tokens nor enforces a context limit. Apply the rendered model-specific budget after pruning,
+keeping complete tool-call/result groups and reserving output. Use a conservative labelled estimate when no tokenizer
+is available; do not silently truncate evidence or delete the stored transcript.
+
+Retain unusually large assistant/tool bodies in immutable R2 `chat/.../body/...` objects through an awaited host-owned
+collection path before submitting the reduced preview/reference/digest and typed citations to SDK persistence.
+`sanitizeMessageForPersistence` is synchronous and follows built-in sanitation; `onChatResponse` runs after persistence.
+Neither is an asynchronous pre-loss backup hook. A failed large-body write leaves the attempt partial, not fully saved. Ordinary messages remain
 in the chat DO. This is not a second transcript database: the ordered message list/state remain authoritative, while R2
 owns only explicitly referenced large bodies needed for reopen/export.
 
@@ -547,7 +584,8 @@ source/page inputs. When a page is reused, carry its recorded provenance into ne
 the direct page revision. Deduplicate in SQL. Published immutable inputs prevent cycles. `base_revision` is edit lineage,
 not automatically a freshness dependency on the page's own prior head.
 
-Each dependency can be `follow_current` or `snapshot`. Living guides/Wiki/maps follow current inputs and become stale when
+Each `page_input` stores its resolved `follow_current` or `snapshot` mode, including inherited provenance; the revision
+default is only the value for newly added dependencies without an explicit choice. Living guides/Wiki/maps follow current inputs and become stale when
 they change. Historical comparisons remain valid snapshots while missing/deleted support is visible. When inherited
 provenance points to an ancestor of the page being edited, retain it for provenance but exclude that self-lineage link
 from the new page's freshness trigger.
@@ -569,6 +607,19 @@ Never concatenate all summaries into an oversized final prompt or silently drop 
 are separate. Inspect terminal AI SDK finish reason and actual output. `length`, filter, error, interruption, tool-calls or
 unknown finish cannot auto-complete a digest/report. Save useful partial text/citations/reason; explicit continuation uses
 remaining budget. Validate structured results when code consumes them; ordinary reports remain Markdown. No judge model.
+
+### Analytical profiles and targeted revision
+
+Keep `fact_check`, `hypothesis_review` and `project_vs_literature` as explicit `deep_research` profiles using the same
+retrieval, findings and page writers. Fact checking records supported/partial/contradicted/insufficient evidence per claim;
+hypothesis review preserves predictions, falsifiers and alternatives; project-versus-literature review distinguishes the
+project's assertion from source evidence and an inferred implementation gap. An enum or prompt alone is not a completed
+product path. `run_audit` remains corpus maintenance, not a substitute for these analytical outputs.
+
+`revise_section` takes an accepted page revision, selected heading/range and instruction, reads only necessary inputs,
+and proposes the changed section with its citations/dependencies. Reassemble the new immutable page with unchanged
+sections preserved; ordinary expected-head acceptance applies. Do not regenerate a whole report to edit one section or
+introduce a separate block database, report compiler or mandatory judge-model pass.
 
 ### Wiki freshness and project-wide scope
 
@@ -603,7 +654,8 @@ findings live in R2; Workflow state contains short IDs/counters. Persist settled
 Workflow completion. Native completed-state retention is finite; later `not found` must not fail or regenerate saved work.
 Reopen history from D1/R2 and consult Workflow only for active/unknown reconciliation.
 
-`ResearchWorkflow` supports `distill_source`, `compare`, `deep_research`, `refresh_wiki`, `refresh_map` and `run_audit`.
+`ResearchWorkflow` supports `distill_source`, `compare`, `deep_research` (including the analytical profiles above),
+`revise_section`, `refresh_wiki`, `refresh_map` and `run_audit`.
 One readable switch and shared writers replace an 18-stage graph.
 
 A deep run orients from frozen scope, keeps a short subquestion/gap list, performs next useful search/read/approved tool,
@@ -642,7 +694,10 @@ indexing. Library-only work never searches web or sends private source bodies as
 ## 11. Incoming MCP and agent work
 
 Serve stateless Streamable HTTP through current MCP handler and the same product functions as UI/API. Return bounded lists
-first and exact bodies on demand.
+first and exact bodies on demand. Use `createMcpHandler` from `agents/mcp/server` with a v2 server factory and a
+request-local verified actor. Configure its exact route, Host/Origin allowlists and CORS deliberately; do not pass v1-only
+stateful transport/storage options. Retain SDK-provided stateless protocol compatibility needed by actual clients; do
+not require `legacy: "reject"` before checking the required client handshakes or build a custom compatibility layer.
 
 | Tools | Purpose |
 |---|---|
@@ -674,7 +729,15 @@ agent harness or scheduler inside Eliot.
 ## 12. UI, concurrency and latency
 
 Primary surfaces: Projects/Library, source viewer, Chat/Research, Studio (saved knowledge/Map/Audit/Inbox), Models and
-Connections/Agents.
+Connections/Agents. Project work uses `/p/:projectId/research`, `/p/:projectId/sources`, `/p/:projectId/studio` and
+`/p/:projectId/chat/:chatId`. A last-project convenience only chooses the home-page default; it never overrides an open URL.
+Store `project_default | explicit | empty` scope mode and compact source/page IDs per project/chat, not cached page
+objects or an ambiguous empty array. Switching projects restores their working state. Studio is project-scoped; an
+owner-wide aggregate labels each destination. Cross-project comparison freezes its destination before submission.
+
+Opening a project reads stored summaries and active-job status only. Generating/refreshing a guide is explicit. Resolve
+only the selected model/profile initially; provider catalogues and connection diagnostics load on demand, not per-provider
+fan-out on project open. Server drafts survive reload; browser memory is only a cache.
 
 Composer shows destination, source/knowledge scope, model, tools and mode (`Ask`, `Compare`, `Distil`, `Deep research`).
 History reopens chats/jobs/partial/failed/cancelled results/reports. Source rows separate stored, needs-conversion,
@@ -687,7 +750,8 @@ Every route/query/mutation/draft/chat/job carries project/chat ID. Switching tab
 responses update keyed state. Cross-project work freezes permitted union and destination, deduplicating shared sources.
 
 Use one audited Markdown renderer. Disable/strictly sanitize raw HTML, validate URL schemes, create citation controls from
-structured refs and contain code/table overflow. No unaudited `innerHTML`.
+structured refs and contain code/table overflow. No unaudited `innerHTML`. Do not automatically load remote images or
+active HTML/SVG from source/tool Markdown; use approved captured assets or explicit external navigation.
 
 Private source/page/evidence/chat bytes stay in memory/server state, not localStorage, IndexedDB, root service worker or
 private offline cache. Persist only nonsensitive UI preferences. Clear protected caches/views on sign-out, principal
@@ -718,7 +782,7 @@ with operation/actor/project/chat/job/model IDs, never source text/secrets. Unkn
 | Detach | Remove one membership; shared source remains |
 | Exclude | Keep readable/history, omit from new project retrieval |
 | Archive | Keep Library bytes/history, hide from ordinary new selection |
-| Replace/reparse/reconvert | New immutable revision; old references remain; affected work queryable |
+| Replace/reparse/reconvert | New immutable revision; old references remain |
 | Delete from Library | Preview/confirm impact, tombstone before external cleanup, stop new source use |
 | Erase derived copies | Separate explicit scope for copied page/chat/export text |
 
@@ -745,6 +809,24 @@ fidelity, page histories/references, tasks and usable chat history. Stable IDs, 
 reimport possible without title matching. A text-only ZIP is not backup. D1 Time Travel and Durable Object PITR are useful
 same-resource recovery features; neither covers R2 nor constitutes portable cross-namespace/application migration.
 
+### Legacy product extraction
+
+Use a new compact schema, not the legacy Core/Search migration chains or a table-for-table copy. Preserve originals,
+readable bytes/conversion reports, identities/memberships, accepted histories/proposals/decisions, useful drafts, exact
+references, completed/partial outcomes, tasks and known unresolved effects. Rebuild indexes/readiness. Retain connection
+references and effective actor/project/operation restrictions, including disabled/revoked state; simplifying old grants
+must never widen authority. Ambiguous actors remain disabled until mapped, not silently promoted to owner.
+
+Retire proof/qualification/fixed-stage/receipt machinery only after extracting the product facts and settling its live
+effects. Inventory actual rows/objects and all writers; a migration filename or table definition does not prove live data.
+Use one temporary export/import manifest with inventory, ID mappings, unresolved effects and readback results; no new
+runtime registries or permanent dual writer.
+
+Classify legacy chat storage first. The inspected `ResearchSession extends Agent` is a Workflow/D1 projection, not an
+`AIChatAgent` transcript. Extract its actual retained user history/results into the portable format; do not assume the
+new D1 `chat` inventory or ChatAgent message APIs already exist in legacy. The following contract governs the target and
+any genuinely compatible SDK-backed source cohort.
+
 ### Chat snapshot contract
 
 D1 `chat` rows are the authoritative chat inventory; do not rely on dashboard/analytics enumeration of Durable Object
@@ -770,7 +852,10 @@ not unrelated development.
 Import into an empty target ChatAgent under the same stable chat ID. Validate schema/project/actor mappings and R2 refs,
 restore supported state, then call `persistMessages` with ordered messages — never `saveMessages`, which would generate a
 new response. Read back message IDs/order/count, typed references, state and large-body digests. Import is idempotent for
-the same snapshot checksum and conflicts with nonempty/different target state. Do not scrape/copy SDK-private SQLite or
+the same snapshot checksum: reserve an internal import marker before state/message writes, keep the target closed to
+normal turns until readback succeeds, and resume only that same interrupted import. Unrelated nonempty/different state
+conflicts. Imported pending approvals/tool requests are inactive history until a fresh authorized action; import cannot
+trigger them. Do not scrape/copy SDK-private SQLite or
 assume SDK internal tables remain stable. Tool Connection Agent desired configuration comes from D1; OAuth/token state is
 reauthorized rather than exported.
 
@@ -779,15 +864,16 @@ reauthorized rather than exported.
 Build replacement beside legacy with isolated schema/bindings. Before live migration:
 
 1. inventory actual projects, sources/revisions/memberships, conversion states/profiles/warnings, metadata, pages/proposals,
-   D1 chat IDs, tasks, model/tool references, agent scopes and active/unknown effects;
+   actual legacy chat/history stores, tasks, model/tool references, effective agent scopes, every writer and active/unknown effects;
 2. close legacy writes and paid admissions; drain writers or record partial/unknown outcomes;
-3. take recoverable D1 + R2 + versioned ChatAgent snapshots independent of replacement;
+3. take recoverable D1 + R2 + portable chat/history exports through the appropriate source extractors, independent of replacement;
 4. import with stable old→new IDs, preserving shared sources, retained originals/readable bytes, conversion reports,
    exact references, page decisions and usable ordered chat state; unresolved legacy citations remain unresolved;
 5. recreate model/tool references without raw secrets and reauthorize outgoing MCP OAuth;
 6. compare counts, representative bytes/references/histories/chat snapshot checksums and assembled user journeys;
 7. switch route only in authorized deployment; retain export/mapping until owner acceptance;
-8. then remove predecessor code/resources coherently.
+8. then disable/remove predecessor routes, Workers, DO writers, Workflows, queues and crons coherently; retain unrelated
+   managers' branches and resources unless their retirement is explicitly authorized.
 
 Before replacement writes, rollback may reopen frozen predecessor. Afterwards reconcile replacement writes/effects or
 recover forward; route switch alone is not data rollback. No permanent bidirectional compatibility layer.
@@ -819,15 +905,16 @@ After assembly exercise:
 - reconnect/stop/Continue without duplicate paid generation; queued turns retaining submitted settings;
 - large assistant/tool R2 body references surviving SDK compaction and reopen;
 - page conflicts/proposals/freshness, source→digest→Wiki→report provenance and new project material;
-- bounded multi-level reduction, output truncation and partial structured results;
+- bounded multi-level reduction, output truncation and partial structured results; analytical profiles and selected-section revision;
 - task claim sequence, committed result with failed wake, agent revocation and MCP whole-result budgets;
-- Access coverage, long-lived WebSocket commands and internal-only tool execution;
+- Access host/AUD/Origin coverage, long-lived WebSocket commands, required MCP client handshakes and internal-only tool execution;
 - direct URL acquisition/Browser Run guardrails without unproven DNS-pinning claims;
 - cancellation before/during paid calls, explicit SDK/Gateway/Workflow retry settings and unknown outcomes;
 - reindex handoff with concurrent source/card/page publication;
-- server draft conflicts, safe Markdown and private-cache clearing;
+- server draft conflicts, project-bearing URL reload, zero model work on open, safe Markdown and private-cache clearing;
 - chat snapshot export/import to an empty namespace using `persistMessages` with **no** model call, preserving order,
-  citations, partial attempts and large-body refs; rejection of private-SQL copy and nonempty conflicting target;
+  citations, partial attempts and large-body refs; resume of the same interrupted import, inactive historical approvals,
+  rejection of private-SQL copy and unrelated nonempty target; effective access restrictions cannot broaden;
 - full D1/R2/chat export/import rehearsal and rollback boundary.
 
 Verify current installed behavior before implementation claims:

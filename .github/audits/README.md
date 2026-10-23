@@ -10,6 +10,8 @@ what still lacks runtime evidence. It does not repeat product decisions.
 
 ## Current reviews
 
+- [2026-10-23 — recheck of the unpublished review bundle and integration contracts](2026-10-23/RECHECK.md): reproduces stale apply anchors, corrects evidence status, Access topology, MCP readiness, context/persistence assumptions, analytical profiles, table mappings and permission-preserving migration.
+
 - [2026-10-23 — extraction, structural fidelity and citations](2026-10-23/EXTRACTION-CITATION.md): findings 32–38 separate direct Markdown Conversion from AI Search OCR, define supported-format discovery and additive-tolerant provider parsing, distinguish canonical byte ranges from page/layout hints, keep generated image descriptions out of literal evidence and narrow reuse of the old projector and Docling mechanisms.
 - [2026-10-23 — model capability and portable chat state](2026-10-23/MODEL-CHAT-PORTABILITY.md): adds explicit
   context/output/tool/structured capability profiles, disables automatic tool-result continuation, defines supported

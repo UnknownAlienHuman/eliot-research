@@ -35,7 +35,7 @@ they do not turn generated prose into an independent primary source.
 
 | Area | The complete product must provide |
 |---|---|
-| Projects | Create, rename, archive, open and switch projects; use several projects in separate tabs; preserve each project's drafts, source selection, chat history, model/tool settings and jobs independently; explicitly compare selected projects and choose where the result is saved. |
+| Projects | Create, rename, archive, open and switch projects; identify each open project/chat in its URL so separate tabs restore independently; preserve each project's drafts, source selection, chat history, model/tool settings and jobs independently; explicitly compare selected projects and choose where the result is saved. |
 | Library | Batch upload files, add URLs or text, keep originals, inspect extraction quality and omissions, edit metadata, detect exact duplicates, attach one source to several projects, replace/reparse into a new revision, exclude from retrieval, detach, archive or deliberately delete. Unsupported, empty or unreliable conversions remain stored and visibly need conversion; they are not silently indexed as readable. |
 | Reading | Open the original and canonical readable representation, navigate headings and only observed or verified page/table/figure anchors, inspect retained revisions and obtain a short source card whose coverage is stated. Reading must work while search or model services are unavailable. |
 | Retrieval | Find exact identifiers and semantic matches across English and Russian material; filter by project, source, author, date, language, type and tags; preserve source scope before retrieval; return coherent sections and table context rather than arbitrary fragments; distinguish relevant hits from complete coverage. |
@@ -43,7 +43,8 @@ they do not turn generated prose into an independent primary source.
 | Models | Configure Workers AI, AI Gateway catalog/BYOK routes and compatible custom endpoints through an owner UI; keep a visible capability profile for each selectable model/route (context/output bounds, streaming, tools, structured output and supported input types); choose simple global/project chat and research defaults plus turn/job overrides; never dispatch an operation to a route that does not meet its declared minimum; display the resolved route and billing mode; keep credentials in Cloudflare, not application tables or browser storage. |
 | Chat | Ask ordinary questions over explicit/default/empty source scope; stream a grounded synthesis; keep response style/length/instructions and selected model/tools; follow up without losing scope; stop or reconnect; reopen conversations; save a cited answer as knowledge. A no-tool turn performs one synthesis. A tool-assisted turn is explicitly selected, exposes only approved tools and has a short hard-capped tool loop; SDK tool-result auto-continuation is disabled and Eliot admits at most one controlled continuation for the submitted attempt. It never silently becomes deep research. |
 | Distillation | Create a quick guide, full source digest, multi-source comparison or research report; process long sources by sections; preserve methods, findings, limitations, disagreements and negative results; record covered, skipped, failed and unextractable material. |
-| Knowledge | Save, search by content, edit, compare, export and reopen accepted notes, digests, reports and Wiki pages with immutable history; mark affected pages stale when inputs change; refresh only affected knowledge; preserve owner edits and rejected proposals. |
+| Analytical reviews | Check claims, review hypotheses and compare project requirements/claims with literature; retain supporting and contrary evidence, conditions, alternatives and unresolved questions. These are profiles of the shared research operation, not a second audit engine. |
+| Knowledge | Save, search by content, edit selected sections without regenerating unrelated text, compare, export and reopen accepted notes, digests, reports and Wiki pages with immutable history; mark affected pages stale when inputs change; refresh only affected knowledge; preserve owner edits and rejected proposals. |
 | Corpus Map | Provide a compact navigational map of sources, topics, versions/timeline, source families, contradictions, gaps and suggested reading routes. Map edges are derived navigation with exact source links, not a graph database or evidence authority. |
 | Audits and maintenance | Show unreadable or unindexed sources, duplicate/version candidates, stale pages, unresolved citations, incomplete extraction/search coverage, abandoned work and removable derived/index data. Produce proposed actions; never auto-delete originals or accepted knowledge. Keep a small attributable activity history. |
 | Deep research | Find candidate sources through a lightweight explicit search, or start an explicit durable investigation over selected library scope, optional web discovery and selected external tools; show progress, sources, spending limits, partial findings and cancellation; capture web evidence before citing it. |
@@ -88,6 +89,7 @@ There is no server-global active project. Every route, cache key, chat, draft, j
 or chat identity. Switching UI tabs does not retarget a stream or write. Cross-project work freezes an explicit
 union of permitted source revisions and a destination project. Shared sources remain one Library object. Narrowing
 a chat's source scope also narrows model-bound history; old answers cannot silently reintroduce excluded evidence.
+Default project scope, an explicit selection and no document scope are distinct intents; an empty list cannot mean both all and none.
 Server-saved drafts survive reload without copying private research into browser persistence. Pending chat messages
 keep their submitted settings. Project-local contribution does not implicitly authorize rewriting a shared Library
 source for every other project; global source changes are explicit owner-authorized operations.
@@ -113,11 +115,13 @@ effects once observed; an already dispatched provider call may still finish or b
 used where they fit; Eliot keeps only job-local limits and state needed to explain and resume the work. Unknown cost
 remains unknown. Retries, recovery and timeouts are configured at every actual SDK/provider/Workflow boundary; a logging
 hook is not a spend-control mechanism. Saving an already generated answer again does not generate or purchase it again.
+Opening a project, reconnecting, loading a catalogue or polling status does not admit new model work; generating a guide is explicit.
 Model context limits and temporary Workflow/SDK retention must not delete the owner's saved research history.
 
 ### Authentication is practical
 
-Cloudflare Access is the authentication boundary. Browser/API requests, incoming MCP Managed OAuth and service
+Cloudflare Access is the authentication boundary, with WebSocket-compatible browser/API protection and a separate
+incoming MCP hostname on the same Worker. Browser/API requests, incoming MCP Managed OAuth and service
 tokens resolve to an actor once at ingress. Internal functions receive that server-created actor context.
 Eliot does not sign every intermediate object, invent an OAuth issuer, encrypt rows with application keys, exchange
 proof tickets between modules or require historical qualification before ordinary work.
@@ -187,4 +191,5 @@ Audio/video studio products, public multi-user sharing, enterprise tenancy, a co
 memory extraction, general graph analytics, autonomous self-modification and a Rust/Wasm rewrite are later choices.
 
 Useful content, completed outcomes and known active work from the old system remain until verified migration and
-owner-approved cutover. Documentation authorizes no deployment, production mutation or live-data deletion.
+owner-approved cutover. Simplifying the schema must preserve effective access restrictions and revocations, not only bodies.
+Documentation authorizes no deployment, production mutation or live-data deletion.

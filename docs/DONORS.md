@@ -16,9 +16,9 @@ reviews. Use those as research history, not another work programme.
 | Product need | Selected API/library | Boundary |
 |---|---|---|
 | One deployable product | Workers + React/Vite + `@cloudflare/vite-plugin`; Hono, React Router, TanStack Query | One Worker serves owner UI, API, incoming MCP and runtime classes. Do not deploy another application merely to mirror a layer. |
-| Authentication | Cloudflare Access browser sessions, service tokens and Managed OAuth; `jose` at ingress | Use Worker-wide Access when one policy fits; otherwise explicit protected UI/API and MCP hostnames/apps on the same Worker. Verify every alternate domain/preview and route-specific audience. No custom OAuth issuer. |
+| Authentication | Cloudflare Access browser sessions, service tokens and Managed OAuth; `jose` at ingress | Use separate hostname-based UI/API/WebSocket and MCP Access apps on the same Worker; Worker-level Access currently rejects WebSocket upgrades. Verify every alternate domain/preview and route-specific audience. No custom OAuth issuer. |
 | Models | `agents` + `ai` + AI SDK v7/provider v4; `createAI` from `agents/models/ai-sdk`; `streamText`/`generateText` | Supports Workers AI, Gateway catalog/dynamic routes and vendor model objects. Pin compatible installed versions. Model keys stay in AI Gateway BYOK/Secrets Store. |
-| Chat | `AIChatAgent` and `useAgentChat` | Chat DO owns ordered messages/reconnectable stream. No-tool turns stay one synthesis; explicitly selected tools use a small capped loop with automatic result continuation disabled. |
+| Chat | `AIChatAgent` from `@cloudflare/ai-chat`; `useAgentChat` from `@cloudflare/ai-chat/react` | Chat DO owns ordered messages/reconnectable stream. No-tool turns stay one synthesis; explicitly selected tools use a small capped loop with automatic result continuation disabled. |
 | Incoming MCP | `createMcpHandler` from `agents/mcp/server` + `@modelcontextprotocol/server` v2 | Stateless Streamable HTTP wrappers over the same product functions as UI/API. `McpAgent` is deprecated/frozen for new work. |
 | Outgoing MCP | Agents SDK MCP client manager inside one owner Tool Connection Agent | Reuse discovery/OAuth/tool conversion. D1 owns desired scope and approved selected-tool descriptors; Agent SQL owns SDK/OAuth/live connection state. Do not build a connector protocol. |
 | Durable work | Workflows: `WorkflowEntrypoint`, `step.do`, `step.waitForEvent` | `IngestWorkflow`, one mode-based `ResearchWorkflow` and `CleanupWorkflow`. Durable steps do not make external effects exactly once. |
@@ -29,6 +29,23 @@ reviews. Use those as research history, not another work programme.
 | OCR and images | No implicit canonical OCR path; AI Search OCR is a separate indexing feature | An OCR search chunk is not primary evidence unless the same ordered text and mapping are retained as a source revision. Generated image descriptions are labelled discovery/visual-summary data, not literal text. |
 | Web acquisition | Direct bounded public fetch within documented policy; Browser Run for explicit rendered capture | Workers fetch does not provide a portable DNS-pinning guarantee. Use Browser Run guardrails or qualified egress for stronger hostile-URL requirements, otherwise reject. |
 | Durable data | D1 + R2 | D1 stores short identities/relations/projections; R2 stores originals, canonical text and immutable larger bodies. D1 Time Travel or DO PITR is not an R2/application backup. |
+
+## Reviewed SDK candidate, not an installed build
+
+Source review on 2026-10-23 selected `agents 0.30.0`, `@cloudflare/ai-chat 0.12.2`, `ai 7.0.150`,
+`@ai-sdk/react 4.0.154`, `@ai-sdk/provider 4.0.33`, MCP client/server `2.3.1` and SDK `1.32.1`,
+Wrangler `4.151.3` and Vite plugin `1.65.0` as a candidate for the new package.
+See [Agents manifest](https://github.com/cloudflare/agents/blob/agents@0.30.0/packages/agents/package.json),
+[chat manifest](https://github.com/cloudflare/agents/blob/agents@0.30.0/packages/ai-chat/package.json),
+[AI SDK release](https://github.com/vercel/ai/releases/tag/ai%407.0.150) and
+[Workers SDK releases](https://github.com/cloudflare/workers-sdk/releases). These are upstream pins, not proof of an
+installed replacement lockfile or successful compilation. Keep the legacy workspace unchanged as donor material.
+
+`agents@0.27.0` does not support the same catalogue/dynamic string route surface as `0.30.0`; the model provider remains
+experimental. Import chat directly rather than the obsolete `agents/ai-chat-agent` entry, which throws.
+Generate runtime/binding declarations from actual Wrangler config and compile against them. Per the current
+[TypeScript documentation](https://developers.cloudflare.com/workers/languages/typescript/), `wrangler types --check`
+compares recorded input hashes/headers, not declaration contents. Regeneration/diff and compilation remain necessary.
 
 ## Primary Cloudflare references checked
 
@@ -45,6 +62,8 @@ Access may give the MCP client an opaque OAuth token while the origin receives `
 Validate the assertion/audience for the actual route. A distinct agent profile requires a distinct verified service/client
 identity; owner login alone does not distinguish several clients. Guardrails constrain browser HTTP(S) hostnames but are
 not a reason to claim that ordinary Workers fetch implements a dedicated DNS-pinning public URL fetcher.
+The Access documentation also states that Static Assets' internal router does not forward `ctx.access`; keep verified
+origin assertions for this Vite/static-assets topology rather than inventing an authentication bypass.
 
 ### Models, Gateway and chat
 
@@ -67,7 +86,11 @@ AI SDK request retries, optional stream recovery and observational callbacks are
 retries explicitly and perform admission in awaited host code. Gateway request timeout bounds first response, not the
 whole stream; Eliot also sets a total deadline. Chat recovery uses documented hooks and native same-chat serialization.
 Use `persistMessages` for storage-only transcript changes; `saveMessages` may start a model response. Set
-`autoContinueAfterToolResult: false` and admit one continuation in host code when the selected tool turn requires it.
+`autoContinueAfterToolResult: false` and enforce the continuation allowance at every server dispatch path. The client
+option is not authority. `pruneMessages` is structural pruning, not token budgeting; see its
+[pinned implementation](https://github.com/vercel/ai/blob/ai@7.0.150/packages/ai/src/generate-text/prune-messages.ts).
+The chat persistence sanitizer is synchronous and runs after built-in sanitation; `onChatResponse` is post-persistence.
+Retain required oversized bodies in the awaited collection path, not by assuming either hook is an async backup hook.
 
 ### Markdown Conversion and extraction
 
@@ -128,12 +151,15 @@ Current capacity/price numbers are deployment facts, not architecture constants.
 ### Agents/MCP and Workflows
 
 - [MCP handler API](https://developers.cloudflare.com/agents/model-context-protocol/apis/handler-api/)
-- [MCP client API](https://developers.cloudflare.com/agents/model-context-protocol/client/)
+- [MCP client API](https://developers.cloudflare.com/agents/model-context-protocol/apis/client-api/)
 - [MCP authorization](https://developers.cloudflare.com/agents/model-context-protocol/protocol/authorization/)
 - [Workflows](https://developers.cloudflare.com/workflows/)
 - [Rules of Workflows](https://developers.cloudflare.com/workflows/build/rules-of-workflows/)
 
-Use the SDK's client/OAuth/discovery path and a stable approved selected-tool descriptor. Remote annotations are hints;
+Use the SDK's client/OAuth/discovery path and a stable approved selected-tool descriptor. With the manager-level API,
+`registerServer` and `connectToServer` must be followed by `discoverIfConnected`; inspect `ready` before exposing tools.
+`waitForConnections` waits manager-wide and does not certify an individual connection. Preserve vendor-provided stateless
+wire compatibility until required client handshakes are checked; no application compatibility framework is needed. Remote annotations are hints;
 owner classification and host policy decide whether a tool is read, write, external-spend or unknown. `step.do` retries
 do not make provider charges or mutations exactly once. Persist known output/effect identity before later publication and
 expose unknown outcomes. Non-idempotent dispatch steps require explicit zero retries unless provider-supported idempotency
