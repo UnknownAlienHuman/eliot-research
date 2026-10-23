@@ -1,6 +1,6 @@
 # Eliot Research — Implementation
 
-Target implementation, integration and review-artifact recheck 2026-10-23. It implements
+Target implementation, Cloudflare native-reuse review 2026-10-23. It implements
 [ARCHITECTURE](ARCHITECTURE.md). [MAP](MAP.md) owns delivery order and legacy source locations.
 [DONORS](DONORS.md) records current platform APIs and donor mechanisms. This document specifies the
 replacement; it is not evidence that the replacement is deployed, migrated or fast.
@@ -24,7 +24,7 @@ JSON API, incoming MCP endpoint, Durable Object classes and Workflow entry point
 | Authentication | Cloudflare Access; `jose` validates the route's Access assertion at ingress |
 | Conversion | Deterministic local UTF-8 for Markdown/text/CSV; Workers AI Markdown Conversion for currently supported formats; explicit retained OCR/normalized-Markdown path when needed |
 | Web acquisition | Bounded public fetch; Browser Run only for explicitly rendered URLs or stronger guarded capture |
-| Web discovery | Cloudflare Web Search for explicit Find sources or enabled deep-research mode |
+| Web discovery | `createAIWebSearch` / `webSearchTool` from Agents SDK for explicit Find sources or enabled deep research |
 | Export | Streaming ZIP/JSON/Markdown plus versioned chat snapshots and a stable manifest |
 
 Pin compatible released dependencies and a Wrangler compatibility date in the implementation commit. Read installed
@@ -115,6 +115,15 @@ References: [Agent routing](https://developers.cloudflare.com/agents/runtime/com
 
 ### Model connections and capabilities
 
+Use `createAI` as the only model transport, not another adapter underneath the legacy transport stack. String IDs need
+no vendor package; wrap a vendor's AI SDK model object only for its required native features or credential route. Keep
+provider-native model IDs unchanged. The SDK owns request encoding, response/stream parsing and provider transport.
+`models.ts` owns selection, rendered-context limits, admission and storing normalized output/usage. Do not port the old
+provider-response whitelists, request-body signatures, fingerprint qualification or a parallel fallback/SSE engine.
+`workers-ai-provider` and `ai-gateway-provider` are deprecated; neither belongs in the replacement. Read optional
+`providerMetadata.cloudflare` and SDK errors for diagnostics; a missing log ID must not invalidate an otherwise saved
+answer. The selected API is still version-sensitive; this is a source-reviewed design, not an installed-build claim.
+
 The Models screen supports connect, edit, disable, rotate/remove credentials, lazy catalog discovery, supported manual
 model IDs and defaults. Keep two simple default roles instead of a stage matrix:
 
@@ -168,21 +177,44 @@ Use AI Gateway BYOK/Secrets Store. D1 stores connection/profile metadata and cre
 values. The write-only key field is cleared after submission and never returned. Owner-only Cloudflare management calls
 use a narrowly scoped account token in Worker secrets; an existing Gateway can be attached without granting management.
 
-For BYOK-only routes use Gateway `byok_only` or `cf-aig-no-wholesale: true`. Catalog/Unified Billing paths consult the
-`default` alias; non-default aliases need a compatible provider-native/passthrough route. Unified Billing is explicit.
-Source-bearing calls default to metadata/cost logs without prompt/response bodies (`cf-aig-collect-log-payload: false`
-or reviewed equivalent). Full payload logging is an explicit diagnostic setting. ZDR is shown only where supported.
+For BYOK-only routes use Gateway `byok_only` or `cf-aig-no-wholesale: true`; Unified Billing is an explicit choice.
+The SDK normally leaves credential selection to Gateway. A vendor constructor may use its documented placeholder with
+the SDK's default header stripping; never forward that placeholder as a real key. `vendorKey: "request"` is explicit for
+a real configured key and belongs to that model, not automatically to its fallback.
+**Documentation conflict, checked 2026-10-23:** `createAI` sends `byokAlias` for catalog models, but the Unified Billing
+guide still says that only `default` is honored on that path. Header emission does not prove credential resolution.
+Use the documented provider-native route for a required non-default alias until the actual route is confirmed at setup;
+do not add a per-request qualification call or block unrelated connections. Keep BYOK-only fallback prevention enabled.
 
-Paid calls use explicit timeout/retry policy. Set `maxRetries: 0` in AI SDK calls and Gateway `maxAttempts: 1` for the
-default route; no hidden dynamic fallback. Omit AI SDK `streamRetries` and do not request retries from `onError` by default. A deliberate retry/fallback profile is visible and consumes the same total
-budget. Enforce a total stream deadline and abort signal because Gateway request timeout bounds first response, not the
-entire stream. Budget/cancel checks run in awaited dispatch code, not observational callbacks. Disable SDK telemetry
-input/output recording independently of Gateway payload logs.
+Source-bearing calls default to metadata/cost logs without prompt/response bodies (`cf-aig-collect-log-payload: false`
+or reviewed equivalent). `collectLog: false` disables logging rather than expressing metadata-only logging. Disable SDK
+telemetry input/output recording independently. Full payload logging is an explicit diagnostic setting. Per-call `zdr`
+is currently applied to vendor model objects, not catalog/dynamic string routes; do not show an ignored flag as a privacy
+guarantee. Temporary stream replay storage is distinct from diagnostic logging and permanent Eliot history.
+
+Set AI SDK `maxRetries: 0` and Gateway `retries: { maxAttempts: 1 }` for the ordinary dispatch. Omit AI SDK `streamRetries`
+and do not request a fresh generation from `onError`. An owner-selected fallback uses the SDK's native `fallback`, only
+before output; reserve its configured call/token allowance before the first dispatch and use the common capability
+floor. Do not implement a second chain. Gateway catalog provider routing and a dynamic route's own fallback are separate:
+these settings do not prove exactly one upstream provider attempt. Surface the configured route and observed result instead of manufacturing a single-attempt/billing guarantee.
+
+Allow native **same-run stream replay** where `createAI` provides it: catalog/dynamic streams through the AI binding.
+It replays the existing Gateway run, not a new generation. It does not cover Workers AI streams, vendor model objects,
+arbitrary REST calls or recovery after losing the application process. Do not copy the SDK's private replay endpoints
+or event counter. Retain partial output when replay fails/expires; a fresh Continue still needs the ordinary admission.
+Explicit abort/Stop does not replay. Enforce a total deadline/abort signal, since Gateway timeout bounds first response,
+not the whole stream. Admission remains awaited host code; observational callbacks do not authorize new effects.
+
+Use native prompt/prefix reuse where supported; it is not permission to reuse an answer from another source selection.
+Response caching is a separate explicit setting after scope resolution, using the complete request rather than a
+question-only `cacheKey`. No application cache database or cross-project answer cache is required.
 
 References: [Agents models](https://developers.cloudflare.com/agents/models/),
 [AI SDK provider](https://developers.cloudflare.com/agents/models/ai-sdk/),
 [AI SDK `streamText`](https://ai-sdk.dev/docs/reference/ai-sdk-core/stream-text),
-[Gateway request handling](https://developers.cloudflare.com/ai-gateway/configuration/request-handling/).
+[Gateway request handling](https://developers.cloudflare.com/ai-gateway/configuration/request-handling/),
+[October 21 createAI release](https://developers.cloudflare.com/changelog/post/2026-10-21-createai/),
+[credential precedence](https://developers.cloudflare.com/ai-gateway/features/unified-billing/).
 
 ### Outgoing MCP
 
@@ -361,12 +393,20 @@ representation and known extraction omissions; processing all extracted text doe
 was captured. Re-conversion, OCR correction or mapping correction creates a new source revision; old citations remain on
 old readable bytes.
 
-URL capture retains requested/final URL, time, content type, redirect observations and bytes. Direct Worker fetch is
-allowed only for an authorized public HTTP(S) locator after rejecting credentials, unsupported schemes/ports, obvious
-private/literal addresses and disallowed hosts; follow redirects manually and revalidate observable hops. Bound time,
-redirects, bytes and type; send no user credentials and no private VPC binding. Ordinary Workers fetch does not provide a
-portable DNS-pinning guarantee. Use Browser Run guardrails or qualified egress for hostile arbitrary URLs requiring
-stronger protection; otherwise reject. Remote Drive/MCP content is an imported snapshot; refresh creates a new revision.
+URL capture retains requested/final URL, time, content type, redirect observations and original/readable bytes from the
+same acquisition. Use `fetchWeb` from `agents/webfetch` for an explicitly requested transient preview, with its host,
+redirect, byte and deadline controls; do not build another preview parser. The default result is a converted page, not
+an original-file archive or complete conversion report. A retained import still uses the raw-first writer above; use an
+SDK capture path only when it preserves that same input and output, never a second fetch to reconstruct the original.
+Preview is not a mandatory step before import. Search leads, previews and HTTP error pages are not automatically
+admitted evidence.
+
+For retained capture, follow only authorized public HTTP(S) locators, reject credentials/unsupported ports/private or
+local hosts, revalidate redirects, and bound bytes/time/type. Send no user credentials or private VPC binding. The SDK
+host checks and ordinary Workers fetch do not provide DNS pinning. Use Browser Run guardrails or qualified egress only
+where stronger protection/rendering is actually needed. Remote Drive/MCP content is a snapshot; refresh creates a revision.
+Reading a retained page continues by revision/range, never by refetching its URL. SDK preview offsets count characters,
+not Eliot's UTF-8 citation bytes; do not substitute them for canonical ranges.
 
 Metadata is separate from generated summaries and cited bytes. Source cards have immutable IDs and record source
 revision, metadata version and generated/sampled fields. Metadata edit/enhancement writes a new card/item and CAS-advances
@@ -470,6 +510,13 @@ Use `retrieval.return_on_failure: false` for ordinary evidence search so interna
 Inspect namespace `errors` alongside chunks. A successful top-k request proves search ran, not that every document was
 read.
 
+Call the native binding's `search`, then perform canonical hydration and one selected-model synthesis. Do not add
+`ai-search-provider` merely to wrap a binding Eliot already uses, or call `chatCompletions`/adapter chat before hydration:
+those paths couple retrieval and generation and would bypass this preparation or buy an extra answer. The current adapter
+guide targets AI SDK v6; its compatibility with the selected v7 stack has not been established. Native Items info/logs/
+chunks support reconciliation; item `download` returns the uploaded original, not a retained OCR transcript. None replaces
+the source/version store. The search response's item key alone supplies no exact canonical byte range.
+
 Initial profile:
 
 - `@cf/qwen/qwen3-embedding-0.6b` for multilingual English/Russian semantics;
@@ -554,6 +601,8 @@ automatically continued or retried. This is a server-side admission rule for eve
 frames, approvals and programmatic/recovery calls; the React option alone is not a spending or authorization boundary.
 
 Use `onChatRecovery()` with `{ continue: false }` initially. Persist partial/settled work without another model call.
+This does not disable SDK transport replay of the same Gateway run or ChatAgent's reconnectable delivery to the browser;
+reuse both native mechanisms instead of a second stream server, polling transcript or paid recovery loop.
 Explicit Continue creates one new attempt under the same turn, reuses completed outputs and unique labels; transport
 reconnect never allocates an attempt or implies exactly-once billing. Queue same-chat submissions but persist every
 submission's own scope/model/tools/settings under request ID before it waits. Resolve source heads at that request's
@@ -563,7 +612,10 @@ Use `persistMessages` for storage-only changes; `saveMessages` triggers model re
 `maxPersistedMessages` as context budget because it deletes stored history. `pruneMessages` removes selected message
 parts; it neither counts tokens nor enforces a context limit. Apply the rendered model-specific budget after pruning,
 keeping complete tool-call/result groups and reserving output. Use a conservative labelled estimate when no tokenizer
-is available; do not silently truncate evidence or delete the stored transcript.
+is available; do not silently truncate evidence or delete the stored transcript. When rebuilding model history, use
+`convertToModelMessages(scopedMessages, { tools })` with the retained host-approved tool definitions/output transforms.
+Preserve native `toModelOutput` when adding admission wrappers, so compact tool results do not expand back to full JSON
+on the next turn. Scope filtering and whole-request budgeting still apply; tool formatting is not an authorization check.
 
 Retain unusually large assistant/tool bodies in immutable R2 `chat/.../body/...` objects through an awaited host-owned
 collection path before submitting the reduced preview/reference/digest and typed citations to SDK persistence.
@@ -685,11 +737,22 @@ Already dispatched call may finish/be billed; preserve findings and stop reason.
 
 ### Web mode
 
-Find sources is one bounded Web Search and candidate list without ResearchWorkflow/report. Deep job may search/capture
-within visible query/count/byte limits. Hits are leads; capture through ingest before citation. Keep initial job input
-immutable, but append each admitted captured revision and returned task/page dependency to `job_input` **before use** and
-retain reference in step output. Captures after reindex record actual projection instance and can be read directly while
-indexing. Library-only work never searches web or sends private source bodies as public queries.
+Find sources calls `createAIWebSearch` from `agents/websearch` directly and returns candidates: no model or
+ResearchWorkflow is needed to perform a user-supplied search. For enabled deep research, use the SDK `webSearchTool` from
+`agents/websearch/ai-sdk` and its bounded model-output projection. Provider/Gateway/credentials, result limits and timeouts
+are host settings; forward cancellation and add only the existing admission/result-saving wrapper. Do not rebuild the
+search transport, schemas or formatter. Reuse settled step output for the same admitted input; a new query is new work,
+not pagination over old results.
+
+Search hits and transient `fetchWeb` previews are leads, not primary evidence. Capture selected material through ingest
+before citing it; subsequent reads/windowing use that retained revision. The stock fetch tool refetches on continuation,
+so it is not the reader for a multi-part Eliot source. Do not re-fetch/re-convert once per model window or add a browser
+agent to perform a plain GET. Keep initial job input immutable, but append admitted captured revisions and returned
+page/task dependencies to `job_input` before use. Captures after reindex record the actual projection and remain directly
+readable while indexing. Library-only work neither searches the web nor sends private source bodies as public queries.
+
+References: [Web Search SDK](https://developers.cloudflare.com/agents/tools/web-search/),
+[Web Fetch SDK and limits](https://developers.cloudflare.com/agents/tools/web-fetch/).
 
 ## 11. Incoming MCP and agent work
 
@@ -919,7 +982,9 @@ After assembly exercise:
 
 Verify current installed behavior before implementation claims:
 
-- `createAI` route IDs, model capabilities, BYOK/fallback/logging and stream-resume limits;
+- `createAI` route IDs, actual BYOK alias/billing and ZDR behavior; distinguish native same-run replay, browser reconnect
+  and new paid attempts, including Stop, expired replay and provider routing;
+- SDK web-search compact output on initial call and history replay; retained web capture without repeated fetch/conversion;
 - Markdown Conversion result/types, `supported()` and actual quality/limits for the representative corpus;
 - AI Search item/key/metadata/filter/chunk/instance/OCR limits and pricing;
 - Access topology/audiences/Managed OAuth identities;

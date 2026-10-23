@@ -24,10 +24,10 @@ reviews. Use those as research history, not another work programme.
 | Durable work | Workflows: `WorkflowEntrypoint`, `step.do`, `step.waitForEvent` | `IngestWorkflow`, one mode-based `ResearchWorkflow` and `CleanupWorkflow`. Durable steps do not make external effects exactly once. |
 | Search | One AI Search namespace and initial shared hybrid Library instance; Qwen3 multilingual embeddings; BM25/vector RRF; metadata filters | Deterministic source/page block items and exact R2 hydration. Use native namespace search only where complete scope remains expressible. No Vectorize/custom FTS/second search engine. |
 | Optional multilingual ranking | One Cohere multilingual rerank request through AI Gateway over existing candidates | Configured and budgeted only when measured useful. Never stack native and external rerankers or treat scores as evidence. |
-| Web discovery | Cloudflare Web Search API via AI binding/Agents tool | Explicit Find sources or enabled deep-research mode. Search hits are leads; capture selected pages through ingest before citation. |
+| Web discovery | `createAIWebSearch` / `webSearchTool` from `agents/websearch` and `/ai-sdk` | Direct Find sources needs no model. Reuse native compact output; capture leads before citation. |
 | Conversion | Deterministic local UTF-8 for Markdown/text/CSV; Workers AI Markdown Conversion for currently supported formats; `toMarkdown().supported()` for setup/diagnostics | Retain output before calling it canonical. Decode required result fields while tolerating additive fields. Direct `toMarkdown` is not assumed to OCR scans. |
 | OCR and images | No implicit canonical OCR path; AI Search OCR is a separate indexing feature | An OCR search chunk is not primary evidence unless the same ordered text and mapping are retained as a source revision. Generated image descriptions are labelled discovery/visual-summary data, not literal text. |
-| Web acquisition | Direct bounded public fetch within documented policy; Browser Run for explicit rendered capture | Workers fetch does not provide a portable DNS-pinning guarantee. Use Browser Run guardrails or qualified egress for stronger hostile-URL requirements, otherwise reject. |
+| Web acquisition | `agents/webfetch` for transient previews; raw-first ingest for retained captures; Browser Run only when needed | SDK converted pages are not original-file archives. Read saved revisions rather than refetching each window; host checks are not DNS pinning. |
 | Durable data | D1 + R2 | D1 stores short identities/relations/projections; R2 stores originals, canonical text and immutable larger bodies. D1 Time Travel or DO PITR is not an R2/application backup. |
 
 ## Reviewed SDK candidate, not an installed build
@@ -67,6 +67,7 @@ origin assertions for this Vite/static-assets topology rather than inventing an 
 
 ### Models, Gateway and chat
 
+- [October 21: createAI replaces the two old providers](https://developers.cloudflare.com/changelog/post/2026-10-21-createai/)
 - [Agents models overview](https://developers.cloudflare.com/agents/models/)
 - [Agents AI SDK provider](https://developers.cloudflare.com/agents/models/ai-sdk/)
 - [AIChatAgent](https://developers.cloudflare.com/agents/communication-channels/chat/chat-agents/)
@@ -76,14 +77,24 @@ origin assertions for this Vite/static-assets topology rather than inventing an 
 - [Spend Limits](https://developers.cloudflare.com/ai-gateway/features/spend-limits/)
 - [Disable log payloads](https://developers.cloudflare.com/ai-gateway/observability/logging/)
 
-`createAI` is the selected entry point for Workers AI, catalog/dynamic routes and vendor model objects. The provider is
-version-sensitive. BYOK aliases, wholesale fallback, payload logging, retries/fallback, capabilities and stream-resume
-behavior differ by route; resolve them against installed types and one real configured call. Spend Limits are eventually
-consistent and service-token requests do not automatically carry `cf.user_id`, so Eliot supplies trusted metadata and
-retains job-local hard execution ceilings.
+`createAI` was already selected; the October 21 release makes the replacement boundary concrete. Retire the custom
+model transport/codecs and the deprecated `workers-ai-provider`/`ai-gateway-provider`, not just rename their constructors.
+Use string IDs without a vendor package where sufficient; native vendor objects keep their vendor parser. Eliot retains
+capability/context/spend decisions and canonical result storage, not another SDK. See the inspected
+[SDK transport](https://github.com/cloudflare/agents/blob/agents@0.30.0/packages/agents/src/models/ai-sdk/transport.ts).
 
-AI SDK request retries, optional stream recovery and observational callbacks are separate controls. Disable hidden
-retries explicitly and perform admission in awaited host code. Gateway request timeout bounds first response, not the
+The native [same-run replay](https://github.com/cloudflare/agents/blob/agents@0.30.0/packages/agents/src/models/core/resume.ts)
+can recover a catalog/dynamic binding stream without starting generation again. Keep it distinct from new inference,
+provider fallback, process-crash recovery and browser reconnect. Do not port its private endpoints/event buffering.
+Spend Limits are eventually consistent; Eliot keeps local ceilings and trusted actor/project/job metadata.
+
+**Unresolved upstream documentation discrepancy, 2026-10-23:** the createAI guide sends `byokAlias` on catalog calls;
+the Unified Billing guide still documents `default` only there. Use provider-native routing for a required named alias
+until actual resolution is confirmed. Header serialization alone is not proof. Per-call `zdr` does not apply to catalog/
+dynamic string routes. Logging controls, transient replay retention and provider retention are separate concerns.
+
+AI SDK request retries, native same-run replay and observational callbacks are separate controls. Disable unapproved
+new-generation retries, not same-run transport recovery; perform admission in awaited host code. Gateway request timeout bounds first response, not the
 whole stream; Eliot also sets a total deadline. Chat recovery uses documented hooks and native same-chat serialization.
 Use `persistMessages` for storage-only transcript changes; `saveMessages` may start a model response. Set
 `autoContinueAfterToolResult: false` and enforce the continuation allowance at every server dispatch path. The client
@@ -91,6 +102,19 @@ option is not authority. `pruneMessages` is structural pruning, not token budget
 [pinned implementation](https://github.com/vercel/ai/blob/ai@7.0.150/packages/ai/src/generate-text/prune-messages.ts).
 The chat persistence sanitizer is synchronous and runs after built-in sanitation; `onChatResponse` is post-persistence.
 Retain required oversized bodies in the awaited collection path, not by assuming either hook is an async backup hook.
+
+### Web search and fetch: reuse without losing snapshots
+
+Use [Web Search](https://developers.cloudflare.com/agents/tools/web-search/) and
+[Web Fetch](https://developers.cloudflare.com/agents/tools/web-fetch/) directly from the selected Agents SDK.
+Their [search entry](https://github.com/cloudflare/agents/blob/agents@0.30.0/packages/agents/src/web/search/index.ts) and
+[fetch entry](https://github.com/cloudflare/agents/blob/agents@0.30.0/packages/agents/src/web/fetch/index.ts) expose normal
+functions as well as tool adapters. This avoids a new harness or a model call merely to execute a search.
+
+Preserve SDK `toModelOutput` through tool wrapping/history conversion. The application may retain the full result while
+the model receives a compact list. The [direct fetch source](https://github.com/cloudflare/agents/blob/agents@0.30.0/packages/agents/src/web/fetch/source.ts)
+handles GET redirects, host policy and bounded conversion, but returns a converted page, not all raw bytes/provenance.
+Do not make preview mandatory before capture or use URL-refetch pagination for immutable research evidence.
 
 ### Markdown Conversion and extraction
 
@@ -116,6 +140,11 @@ first frame. These outputs may aid discovery or an explicitly labelled visual su
 or quantitative evidence. Store model/converter provenance and disclose omitted frames/image text.
 
 ### AI Search
+
+The October 21 provider migration points old `createAISearch` users to `ai-search-provider`; it does not require an adapter
+when using native bindings. Eliot keeps binding `search` → canonical hydration → one selected-model synthesis.
+The [adapter guide](https://developers.cloudflare.com/ai-search/agent-sdks/ai-sdk/) currently targets AI SDK v6;
+`chatCompletions`/adapter chat performs generation before Eliot's own evidence preparation. No second synthesis is needed.
 
 - [AI Search overview](https://developers.cloudflare.com/ai-search/)
 - [Workers search binding](https://developers.cloudflare.com/ai-search/api/search/workers-binding/)
@@ -146,7 +175,10 @@ large scope preparation uses set-based queries and guarded batches, not one over
 The initial keyword baseline is Porter + focused `and`; Russian exact/inflected terms, identifiers and numbers are
 measured. Trigram is an instance-wide alternative with a reindex cost. `match_threshold` starts at zero to preserve
 lexical-only candidates. Scoped similarity caching remains off until same-query/different-scope isolation is demonstrated.
-Current capacity/price numbers are deployment facts, not architecture constants.
+Current capacity/price numbers are deployment facts, not architecture constants. Native item info/logs/chunks are useful
+for reconciliation; item download returns the original upload, not a canonical OCR transcript. The current model list
+still supports the selected Qwen3 baseline; a new CJK tokenizer or multimodal model does not establish better Russian
+recall or scientific-table extraction. Keep the existing structural/corpus checks instead of adding another index.
 
 ### Agents/MCP and Workflows
 
@@ -165,6 +197,24 @@ do not make provider charges or mutations exactly once. Persist known output/eff
 expose unknown outcomes. Non-idempotent dispatch steps require explicit zero retries unless provider-supported idempotency
 makes repetition safe. Persist a task result before its Workflow wake event; notification failure is not failure of the
 completed research. Catalogue refresh compares the selected approved tool, not an unrelated server-wide change.
+
+## Other October updates: selective adoption
+
+[Clairic preview, October 19](https://developers.cloudflare.com/changelog/post/2026-10-19-clairic-workers-ai/) is a candidate
+to replace an optional generative field-extraction call, not a new mandatory ingest/retrieval stage. Deterministic metadata
+extraction stays first. Its text spans use input character positions; verify against retained text and convert to UTF-8
+ranges before citing. Computed values, estimates and forecasts are not literal evidence. As the
+[extraction guide](https://developers.cloudflare.com/workers-ai/concepts/extraction-models/) notes, type correctness,
+confidence and null/empty results do not prove semantic correctness or absence. Adoption needs English/Russian precision
+and total-cost evidence; it is not selected as OCR, a summarizer or a judge.
+
+[Cloudflare MCP endpoints, October 22](https://developers.cloudflare.com/changelog/post/2026-10-22-cloudflare-mcp-servers-retire-sse/)
+now require `/mcp`; their `/sse` URLs return 410. Update an affected configured connection and reauthorize when needed,
+not a custom compatibility proxy. This endpoint retirement does not justify rejecting all older clients of Eliot's
+stateless handler. [Pi 1.4, October 22](https://developers.cloudflare.com/changelog/post/2026-10-22-pi-harness-pi-1-4/)
+improves Pi recovery but includes new-turn retries and a one-way storage migration. Do not add Pi/Think, a browser harness
+or Code Mode beside ChatAgent/Workflows just to use createAI/web tools. A future replacement must remove a real component,
+not create a second orchestrator or weaken saved-result/cost semantics.
 
 ## NotebookLM as a behavior reference
 
