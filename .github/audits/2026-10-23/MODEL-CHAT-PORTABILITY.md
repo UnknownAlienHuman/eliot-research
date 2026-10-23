@@ -39,11 +39,13 @@ message database or migration framework is selected.
 
 ## Verification boundary
 
-The three canonical files were read from the named baseline before publication. This audit is ordinary Markdown and
-adds no workflow, generated payload, runtime dependency, database migration or deployment change. The resulting branch
-diff must be checked separately after publication.
+The canonical files were read from the named baseline before publication. The published Git comparison from `6e1377a`
+changes only Architecture, Implementation, Map, this audit and the audit index; the current files were read back from the
+branch and their blob identities matched the write results. The local relative references among the canonical documents
+and audit resolve to existing branch paths. This is ordinary Markdown: no workflow, encoded payload, runtime dependency,
+SQL migration or deployment configuration was added.
 
 No installed-package integration, application build/test, live model call, chat snapshot, production Durable Object
 query, deployment, migration or performance measurement was performed. Actual model metadata completeness, custom-route
 capability accuracy, SDK message/state snapshot shape, large-body threshold and import readback remain implementation
-checks in their owning vertical slices.
+checks in their owning vertical slices. GitHub CI runs independently and is not runtime/product evidence.
