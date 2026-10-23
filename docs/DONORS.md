@@ -1,6 +1,6 @@
 # Active donors and primary sources
 
-**Decision/audit date:** 2026-10-22.  
+**Decision/audit date:** 2026-10-23 (follow-up to the 2026-10-22 selections).
 This file selects current platform APIs and concrete donor mechanisms for
 [ARCHITECTURE](ARCHITECTURE.md), [IMPLEMENTATION](IMPLEMENTATION.md) and [MAP](MAP.md).
 It does not select a donor platform or claim that donor benchmarks transfer to Eliot.
@@ -24,7 +24,7 @@ reviews. Use those as research history, not another work programme.
 | Durable work | Workflows: `WorkflowEntrypoint`, `step.do`, `step.waitForEvent` | `IngestWorkflow`, one mode-based `ResearchWorkflow` and `CleanupWorkflow`. Durable steps do not make external effects exactly once. |
 | Search | One AI Search namespace and initial shared hybrid Library instance; Qwen3 multilingual embeddings; BM25/vector RRF; metadata filters | Deterministic structural items and exact R2 hydration. Use native namespace search when measured instance/filter limits require it. No Vectorize/custom FTS/second search engine. |
 | Optional multilingual ranking | One Cohere multilingual rerank request through AI Gateway over existing candidates | Configured and budgeted only when measured useful. Never stack native and external rerankers or treat scores as evidence. |
-| Web discovery | Cloudflare Web Search API via AI binding/Agents tool | Explicit deep-research mode only. Search hits are leads; capture selected pages through ingest before citation. |
+| Web discovery | Cloudflare Web Search API via AI binding/Agents tool | Explicit Find sources or enabled deep-research mode. Search hits are leads; capture selected pages through ingest before citation. |
 | Extraction/acquisition | Plain UTF-8, Workers AI `toMarkdown`; direct bounded public fetch only within a documented policy; Browser Run for explicit rendered capture | `toMarkdown`/Browser output is not perfect OCR or evidence until retained. Workers fetch does not give Eliot a portable DNS-pinning guarantee; use Browser Run guardrails or qualified egress for stronger hostile-URL requirements, otherwise reject. |
 | Durable data | D1 + R2 | D1 stores short identities/relations/projections; R2 stores originals, canonical text and immutable larger bodies. D1 Time Travel is not an R2/DO backup. |
 
@@ -61,12 +61,20 @@ behavior differ by route; resolve them against installed types and one real conf
 consistent and service-token requests do not automatically carry `cf.user_id`, so Eliot supplies trusted metadata and
 retains job-local hard execution ceilings.
 
+The [AI SDK v7 reference](https://ai-sdk.dev/docs/reference/ai-sdk-core/stream-text) documents two request retries by
+default, optional stream retries and observational callbacks whose exceptions do not stop generation. Disable hidden
+retries explicitly and perform admission in awaited host code. [Gateway request handling](https://developers.cloudflare.com/ai-gateway/configuration/request-handling/)
+bounds first response, not the whole stream; Eliot also sets a total deadline. Chat recovery uses the documented
+`onChatRecovery` hook, and same-chat submissions use native `messageConcurrency`, not another queue. Use
+`persistMessages` for storage-only transcript changes: `saveMessages` can start a new model response.
+These details were rechecked against the live references on 2026-10-23; they are not runtime verification.
+
 ### AI Search
 
 - [AI Search overview](https://developers.cloudflare.com/ai-search/)
 - [Workers search binding](https://developers.cloudflare.com/ai-search/api/search/workers-binding/)
 - [Items binding](https://developers.cloudflare.com/ai-search/api/items/workers-binding/)
-- [Hybrid search](https://developers.cloudflare.com/ai-search/configuration/retrieval/hybrid-search/)
+- [Hybrid search](https://developers.cloudflare.com/ai-search/configuration/indexing/hybrid-search/)
 - [Chunking](https://developers.cloudflare.com/ai-search/configuration/indexing/chunking/)
 - [Keyword search/tokenizers](https://developers.cloudflare.com/ai-search/configuration/indexing/keyword-search/)
 - [Metadata filters](https://developers.cloudflare.com/ai-search/configuration/retrieval/filtering/)
@@ -74,7 +82,7 @@ retains job-local hard execution ceilings.
 - [Reranking](https://developers.cloudflare.com/ai-search/configuration/retrieval/reranking/)
 - [Query rewriting](https://developers.cloudflare.com/ai-search/configuration/retrieval/query-rewriting/)
 - [Similarity cache](https://developers.cloudflare.com/ai-search/configuration/retrieval/cache/)
-- [Namespaces and cross-instance search](https://developers.cloudflare.com/ai-search/configuration/namespaces/)
+- [Namespaces and cross-instance search](https://developers.cloudflare.com/ai-search/how-to/search-multiple-sources/)
 - [Limits and pricing](https://developers.cloudflare.com/ai-search/platform/limits-pricing/)
 - [Supported models](https://developers.cloudflare.com/ai-search/configuration/models/supported-models/)
 
@@ -82,6 +90,14 @@ The current API returns `item.key`, supports hybrid BM25/vector RRF and pre-retr
 item key through its deterministic block record and retained canonical bytes; provider chunks are not citation identity.
 AI Search recursively chunks an item, so Eliot sets zero overlap and verifies a chunk size large enough for the emitted
 structural item or reduces the item maximum. Exact subrange recovery remains required when native splitting occurs.
+The Items binding also exposes `items.get(id).chunks({limit, offset})`, returning chunk text and `start_byte`/`end_byte`.
+Use it when needed to resolve a split item, then verify coordinates against the uploaded/prefixed text and canonical
+range; do not assume provider offsets already refer to the original file or add this lookup to every hot-path read.
+
+The Search API defaults `retrieval.return_on_failure` to true; a partial internal failure must not look like no evidence.
+Namespace search can also return an `errors` array alongside successful chunks. Inspect coverage/status, not HTTP success
+alone. Items are ready after observed completion, not upload acceptance. [D1 limits](https://developers.cloudflare.com/d1/platform/limits/)
+currently cap each SQL statement at 100 bound parameters; use set-based queries and guarded batches for large selections.
 
 The initial keyword baseline is Porter + focused `and`; Russian exact/inflected terms, identifiers and numbers are
 measured. Trigram is an instance-wide alternative with a reindex cost, not an automatic “multilingual” switch.
@@ -103,7 +119,11 @@ native first scaling option; do not resurrect a generation/promotion registry.
 Use the SDK's client/OAuth/discovery path and a stable approved catalogue digest. A remote tool's annotations are hints;
 owner classification and host policy decide whether it is read, write, external-spend or unknown. `step.do` retries do
 not make provider charges or mutations exactly once. Persist known output/effect identity before later publication and
-expose unknown outcomes.
+expose unknown outcomes. [Workflow retries](https://developers.cloudflare.com/workflows/build/sleeping-and-retrying/)
+default to five; non-idempotent dispatch steps therefore require explicit zero retries unless supported idempotency makes
+repetition safe. Persist the task result before its [Workflow wake event](https://developers.cloudflare.com/workflows/build/events-and-parameters/);
+notification failure is not failure of the completed research. Catalogue refresh compares the selected approved tool,
+not an unrelated server-wide change.
 
 ## NotebookLM as a behavior reference
 
@@ -134,7 +154,7 @@ These are code/design references, not deployed dependencies.
 | [LightRAG purge contract `aaebfe1`](https://github.com/HKUDS/LightRAG/blob/aaebfe1bb8d55deb6a4304d357a3bf4c92fcd40a/docs/design/PurgeRecoveryContract.md) | Attribute derived data before mutation and reconcile cleanup. | Graph purge/runtime or automatic deletion of retained report text. |
 | [SurfSense citation resolver `e3de9e0`](https://github.com/MODSetter/SurfSense/blob/e3de9e0d293b2ebb1fb813628ecc1d6f26909396/surfsense_local/backend/modules/chat/prompt.py) | Server-issued labels, per-document grouping, unknown-label removal and no-hit/indexing distinctions. | Regex as a security boundary or Python chat runtime. |
 | [WeKnora Wiki writer `e28c68c`](https://github.com/Tencent/WeKnora/blob/e28c68cf552cc1aba2fc923a73b0ab23a33bcb55/internal/application/repository/wiki_page.go) | Expected-version update and previous-revision snapshot in one transaction. | GORM, blind force writes or a second Wiki store. |
-| [OpenNotebook context/chat `a0f6f30`](https://github.com/lfnovo/open-notebook/blob/a0f6f3081ae06328f0a451b3a3ef2959ca25721d/open_notebook/graphs/chat.py) | Focused normal chat distinct from multi-step ask/research. | Empty selection meaning all, silent source skips or Python graph runtime. |
+| [OpenNotebook context/chat `a0f6f30`](https://github.com/lfnovo/open-notebook/blob/a0f6f3081ae06328f0a451b3a3ef2959ca25721d/open_notebook/graphs/chat.py) | Focused normal chat distinct from multi-step ask/research; its [context builder](https://github.com/lfnovo/open-notebook/blob/a0f6f3081ae06328f0a451b3a3ef2959ca25721d/open_notebook/utils/context_builder.py) budgets the actually rendered source/insight content and includes a truncation notice. | Empty selection meaning all, silent source skips, prefix truncation presented as complete reading, or Python graph runtime. |
 | [EdgeQuake query hydration `c8e84b8`](https://github.com/raphaelmansuy/edgequake/blob/c8e84b832b47ccffcf94bcda97c9555a0158dcf7/edgequake/crates/edgequake-query/src/chunk_hydration.rs) | Reuse one prepared passage set and batch-hydrate selected bodies. | Graph server, extra embedding stack, graph retrieval or benchmark claims. |
 | [PipesHub public URL fetcher invariant `e598631`](https://github.com/pipeshub-ai/pipeshub-ai/blob/e598631009b22b64b60e4366803f11d9d958e5e7/backend/python/app/utils/public_http.py) | Validate each redirect, bound bytes and separate fetch from admission. | Its IP-pinning code in Workers. Eliot's own prior donor audit records that literal-IP pinning is not directly portable; use the narrowest Cloudflare-native egress or reject the stronger route. |
 

@@ -7,6 +7,9 @@ parallel specification or claim that code has been repaired.
 
 ## Current reviews
 
+- [2026-10-23 — retrieval coverage, knowledge freshness and effect recovery](2026-10-23/README.md): fixes partial search
+  interpretation, native range use, table context, scoped chat history, transitive/new-source dependencies, card refresh,
+  retry/deadline settings, D1 scope bounds, task claims/wake delivery and server draft recovery.
 - [2026-10-22 — implementation viability and documentation integrity](2026-10-22/README.md): removes the opaque
   documentation rewrite path and corrects queryable source/page use, replacement-head publication, native
   chunking/keyword defaults, no-tool versus tool-assisted chat, Access topology, public URL acquisition limits,

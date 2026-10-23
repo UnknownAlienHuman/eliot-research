@@ -1,6 +1,6 @@
 # Eliot Research — Implementation
 
-Target implementation, continued audit 2026-10-22. It implements [ARCHITECTURE](ARCHITECTURE.md).
+Target implementation, lifecycle/retrieval audit 2026-10-23. It implements [ARCHITECTURE](ARCHITECTURE.md).
 [MAP](MAP.md) owns delivery order and legacy source locations. [DONORS](DONORS.md) records current
 Cloudflare APIs and donor mechanisms. This document specifies the replacement; it is not evidence that the
 replacement is deployed, migrated or fast.
@@ -23,7 +23,7 @@ JSON API, incoming MCP endpoint, Durable Object classes and Workflow entry point
 | Durable work | `IngestWorkflow`, one `ResearchWorkflow` with operation modes, and `CleanupWorkflow` |
 | Authentication | Cloudflare Access; `jose` validates the route's Access assertion at ingress |
 | Extraction | Plain UTF-8 directly; Workers AI `toMarkdown`; Browser Run only for explicitly rendered URLs |
-| Web discovery | Cloudflare Web Search only in explicit deep-research mode |
+| Web discovery | Cloudflare Web Search for an explicit Find sources action or enabled deep-research mode |
 | Export | Streaming ZIP/JSON/Markdown with a manifest and stable revision references |
 
 Pin compatible released dependencies and a Wrangler compatibility date in the implementation commit. Read installed
@@ -96,6 +96,9 @@ explicit turn/job choice → chat override → project default → global defaul
 
 A turn/job pins connection ID, Gateway/route, provider/model ID, billing mode, generation settings, payload-logging/ZDR
 choice and any configured fallback. Editing defaults affects future work, never an active stream or admitted job.
+A remote Gateway dynamic route is mutable: its name alone cannot freeze its rules. Long work requiring a fixed model
+uses an explicit model route; a deliberately selected dynamic route records the actual answering provider/model and
+does not promise immutable remote rules. Do not poll the Gateway management API before every call.
 
 | Connection kind | Route |
 |---|---|
@@ -121,6 +124,14 @@ selected route supports it; it is not a substitute for disabling Gateway payload
 Connection checks are owner-requested or performed once during setup. Paid calls have explicit timeout and retry policy.
 There is no recurring qualification request before chat. Application retries default to zero after an uncertain paid
 result; a selected Gateway retry/fallback is part of the pinned route and the actual answering model is recorded.
+Use explicit `maxRetries: 0` in AI SDK calls; omit stream retries and do not request them in error callbacks. Set Gateway
+`maxAttempts: 1` (or `cf-aig-max-attempts: 1`) for the default paid route; no hidden dynamic-route fallback. A deliberate
+retry profile is visible and consumes the same overall call/time budget. Enforce a total deadline and abort signal:
+Gateway request timeout bounds first response, not the duration of the entire stream. Budget/cancel checks run in the
+awaited dispatch function, not observational hooks such as `onStepStart`, whose errors can be swallowed by the SDK.
+Disable SDK telemetry input/output recording as well as Gateway payload logs; neither setting implies the other.
+[AI SDK v7](https://ai-sdk.dev/docs/reference/ai-sdk-core/stream-text),
+[Gateway request handling](https://developers.cloudflare.com/ai-gateway/configuration/request-handling/).
 
 ### Outgoing MCP
 
@@ -135,8 +146,10 @@ credentials, when unavoidable, remain in Cloudflare-managed secrets and are repr
 The Agent exposes bounded RPC to read the approved catalogue and execute one
 `{connectionId, toolName, catalogueDigest, arguments, invocationId}` call. Chat/research create host-owned AI SDK wrappers
 from the approved discovered schema. A turn/job freezes connection ID, tool name, catalogue digest and side-effect class.
-Before invocation, compare the live digest; if the schema or classification changed, stop and require an explicit refresh
-instead of silently calling a redefined tool. Check actor/project scope, tool allowlist and call ceilings before RPC.
+Catalogue change detection is not a global lock: compare the approved descriptor of the **selected tool** with the
+live SDK catalogue; adding/changing an unrelated tool must not stop it. A changed selected schema, description or
+classification requires refresh/reapproval of that tool. Reuse the SDK catalogue/change notifications rather than a
+network rediscovery before every call. Check actor/project scope, tool allowlist and call ceilings before RPC.
 Do not copy execute closures between DOs. One failed remote server removes only its tools. Bound per-connection
 concurrency and timeouts; do not pre-emptively create a connector microservice or one DO per tool.
 
@@ -149,7 +162,9 @@ pre-authorized job grant. Source text cannot enable a server or widen an allowli
 MCP resources may be previewed and explicitly captured through normal ingest; prompt templates may be selected as
 instructions. Tool output is transient untrusted context until explicitly saved/captured and is not citeable evidence
 merely because a tool returned it. Publishing a retained page to Drive/Docs or another destination is a separate delivery
-action with a stable invocation ID; delivery failure never regenerates research or changes the page revision.
+action with a stable invocation ID; delivery failure never regenerates research or changes the page revision. That
+local ID does not make a remote mutation idempotent: retain its returned remote object ID/status and reconcile an
+uncertain result using provider-supported readback, or leave it `unknown` instead of creating a second copy.
 
 ## 4. Compact durable data
 
@@ -162,13 +177,13 @@ content signatures or JSON business logic in triggers.
 | `settings` | Small global defaults and current search namespace/instance IDs |
 | `model_connection` | Name, route/provider/Gateway, credential reference/status, enabled state, available/manual model IDs and bounded defaults |
 | `mcp_connection` | Stable ID, name, URL, auth/status reference, enabled projects/tools and side-effect classes; no secret |
-| `project` | ID, title, description, archived state, default model/response/tool settings, agent edit mode and timestamps |
-| `source` | Canonical Library identity, nullable current **usable** revision, metadata summary, state and timestamps |
+| `project` | ID, title, description, archived state, default model/response/tool settings, agent edit mode, corpus version and timestamps |
+| `source` | Canonical Library identity, nullable current **usable** revision, metadata summary/version, state and timestamps |
 | `source_author`, `source_tag`, `source_identifier` | Filterable authors/tags and normalized DOI/arXiv/ISBN/provider IDs |
-| `source_revision` | Source, content hash, R2 keys, parser/profile, sizes, warnings and extraction/index/card state |
+| `source_revision` | Source, content hash, canonical R2 keys, current card ID/key, parser/profile, sizes, warnings and extraction/index/card state |
 | `project_source` | Project/source membership, retrieval enabled and project-local note/priority |
 | `search_item` | Revision, instance, key/ID, block/range/kind and publication state |
-| `page` | Project, kind (`note/digest/report/wiki/map/audit`), optional Wiki slug, current revision and summary |
+| `page` | Project, kind (`note/digest/report/wiki/map/audit`), optional Wiki slug, nullable accepted head, draft key/version and summary |
 | `page_revision` | Page, base revision, immutable R2 body, actor/decision, origin operation and timestamps |
 | `page_input` | Page revision → exactly one source revision or page revision used; indexed in both directions |
 | `chat` | ID, immutable destination project, title and timestamps; transcript/state remains in the chat DO |
@@ -176,14 +191,15 @@ content signatures or JSON business logic in triggers.
 | `job` | Type, project, actor, immutable input key, Workflow ID, state/cancellation/progress, local ceilings/usage and result |
 | `job_input` | Job → exactly one frozen source/page revision; query projection for impact, cleanup and migration |
 | `agent` | Verified identity/profile, enabled state, allowed projects/operations, outgoing-tool and paid-work permissions |
-| `task` | Destination project, operation/instructions, scope mode (`pinned` or `current_at_claim`), offer/claimant/state/result and timestamps |
+| `task` | Destination project, operation/instructions, scope mode (`pinned` or `current_at_claim`), offer/claimant/claim sequence, state/result, waiting job/wake status and timestamps |
 | `task_scope` | Task → exactly one requested logical source or page before exact revision freeze |
 | `task_input` | Task → exactly one exact source revision or page revision frozen at creation or claim |
 | `activity` | Successful attributed mutation: actor, project/subject, kind, operation ID and safe short metadata |
 
 Implement `page_input`, `chat_input`, `job_input` and `task_input` with two nullable revision foreign keys and a CHECK
-that exactly one is non-null. Add partial unique indexes on `(owner_id, source_revision_id)` where the source FK is set
-and on `(owner_id, page_revision_id)` where the page FK is set. Implement `task_scope` the same way against logical
+that exactly one is non-null. Partial uniqueness uses the referencing entity, not the human owner's ID: page revision
+for `page_input`, `(chat_id, turn_id)` for `chat_input`, job ID for `job_input` and task ID for `task_input`, each combined
+with the non-null source/page revision FK. Implement `task_scope` the same way against logical
 `source`/`page` identities. Do not add owner-only uniqueness, use an unchecked polymorphic string or hide relationships
 in JSON arrays.
 
@@ -197,7 +213,17 @@ At task creation, write `task_scope`. A `pinned` task resolves the selected curr
 `task_input` rows in the same creation transaction. A `current_at_claim` task has only logical scope until a successful
 claim transaction resolves current source/page heads and inserts exact `task_input` rows atomically with
 `open/offered → in_progress`. The claimant receives those exact revisions. A later source/page head change never
-rewrites existing task inputs. These projections are relationships, not a second content store.
+rewrites existing task inputs. A released/reassigned task retains its first frozen inputs; choosing fresh inputs creates
+a new task explicitly. Increment a small integer claim sequence on every claim; progress/completion compares task,
+claimant and sequence, preventing a delayed result from an earlier claim by the same agent from completing new work.
+These projections are relationships, not a second content store or authorization: inherited dependencies never widen
+permitted source reads.
+
+Scope reads and writes must fit D1's real bounds (currently 100 bound parameters per statement). Use set-based `INSERT ... SELECT`
+for relational selections, or bounded parameter groups in **one** guarded `db.batch()` for atomic writes; 500 sources must not become a
+500-placeholder query or 500 network round trips. The head/state transition is last and all dependent statements share
+its precondition. Larger scope preparation uses the existing job in `preparing` state and cannot dispatch until complete;
+it never publishes a truncated input set. [D1 limits](https://developers.cloudflare.com/d1/platform/limits/).
 
 R2 keys are immutable and identity-specific:
 
@@ -206,7 +232,7 @@ source/<revision>/original
 source/<revision>/text.md
 source/<revision>/outline.json
 source/<revision>/blocks.json
-source/<revision>/card.json
+source/<revision>/card/<card-id>.json
 page/<revision>.json
 job/<id>/input.json
 job/<id>/step/<stable-name>.json
@@ -245,7 +271,10 @@ the same operation with bounded concurrency and per-item results.
 Separate raw retention from conversion/index limits. Eliot may retain a 25 MiB original in R2 while current converter or
 AI Search limits require `stored_needs_conversion`. Never label an oversized/unreadable file indexed. Owner or permitted
 agent may provide normalized Markdown plus mapping metadata through the same revision writer. Re-extraction/correction
-creates a new source revision; old citations remain on old bytes.
+creates a new source revision; old citations remain on old bytes. Distinguish an index file-size limit from an extractor
+limit: a successfully converted large document can be indexed as bounded Markdown items without redoing conversion.
+Coverage names the readable representation and known extraction omissions; processing all extracted text does not prove
+that a scanned figure, table or appendix was captured. Unknown original-file coverage stays unknown.
 
 URL capture retains requested/final URL, retrieval time, response content type, bounded redirect observations and raw
 bytes. Direct Worker fetch is allowed only for an owner/authorized public HTTP(S) locator after rejecting credentials,
@@ -264,6 +293,14 @@ Metadata (title, authors, date, language, kind, URL, identifiers, tags) is separ
 edits do not alter cited bytes. The viewer can compare retained revisions from deterministic block maps and show changed
 sections plus affected knowledge without paying a model merely to diff bytes.
 
+Source cards have their own immutable ID and record source revision, metadata version and generated/sampled fields.
+Metadata edits or optional enhancement create a new `card/<card-id>.json` and `r/<revision>/c/<card-id>.md` item, then
+advance the current-card pointer only if the expected metadata version and previous card still match; never overwrite
+a create-once card or re-extract its source. A late enhancement cannot replace a card for newer metadata.
+Until then show the previous card as stale. Retire superseded card items after publication; discovery ignores their
+stale IDs. D1 metadata filters/display use current metadata. Existing block prefixes are capture-time navigation,
+not current bibliographic authority; a title correction alone need not re-embed every evidence block.
+
 ## 6. Deterministic search projection
 
 Canonical Markdown is split into bounded structural blocks:
@@ -274,14 +311,17 @@ kind: heading | prose | table | equation | code | list | figure_caption | genera
 heading_path
 start_byte / end_byte in canonical text
 page/table/figure hints when available
-exact_body
+context_ranges: exact canonical ranges for necessary headings, captions, headers, units or definitions
+exact_body: obtained from the canonical range, not another stored full-text copy
 search_prefix: title + heading path + table headers, explicitly non-quotable
 ```
 
 Coalesce adjacent short prose under one heading. Aim initially for roughly 800–1,600 tokens and split only at structural
 and UTF-8 boundaries. Long tables repeat caption, headers and units in `search_prefix` while each row group maps to exact
 canonical bytes. Code fences remain intact where practical. Generated descriptions are labelled and never quoted as
-source text.
+source text. Store ranges/structure in `blocks.json`, not duplicate source bodies. Required table headers/units and
+formula definitions are hydrated from `context_ranges` and receive their own source labels. Copied/synthetic search
+prefixes alone cannot support a quantitative claim; use multiple original ranges rather than fabricate a contiguous quote.
 
 Configure the AI Search instance with `chunk_overlap: 0` and a verified `chunk_size` large enough for the emitted
 locator + prefix + block. Keep the emitted maximum at or below that accepted size so one structural item normally yields
@@ -291,13 +331,15 @@ boundary; if the provider still splits an item, citation mapping must resolve th
 
 Each block is one AI Search item, for example `r/<revision>/b/<block>.md`, containing a small machine-readable locator,
 non-quotable prefix and exact body. Store its key/ID in `search_item`. Also publish one `record_kind=source_card` item per
-revision for orientation. Evidence search filters `record_kind=block`; source cards never enter the citation set.
+revision for orientation using its current card ID. Evidence search filters `record_kind=block`; source cards never enter the citation set.
 
 Broad discovery performs one AI Search request over both source-card and block items in the same instance/ranking,
 then unions normalized exact D1 metadata matches. Exact DOI/arXiv/ISBN/title matches rank first. Deduplicate by source
 identity and preserve the native rank/channel; do not blend raw scores from separate metadata/card/block systems.
-After selecting candidate sources, evidence retrieval runs block-only in the frozen scope. A generated, stale or omitted
-source card therefore cannot hide a source or become evidence.
+After selecting candidate sources, evidence retrieval runs block-only in the frozen scope. Cards are not an exclusive
+gate: matching evidence blocks can introduce a source even when its card is missing. If stale/duplicate cards exhaust
+the bounded candidate list, report that limitation or perform the explicitly budgeted block-only pass; do not claim
+complete source discovery. A card never becomes evidence.
 
 Use at most the five current custom metadata fields, initially:
 
@@ -325,6 +367,19 @@ This is a reindex cutover, not a generation/promotion registry.
 Resolve actor, project memberships, metadata filters and source selection in D1 first. Freeze exact revision IDs and
 projection instance IDs for the turn/job. Omitted selection means enabled project sources; explicit empty means empty.
 If no permitted revision remains, return an empty scoped result without calling AI Search. Never fall back to global top-k.
+
+Retain the requested denominator separately from searched/read material. Return compact coverage: requested/readable/
+search-ready counts, incomplete revisions/items and reasons, plus which originals/sections actually reached context.
+An upload acknowledgement is not index readiness; reconcile per-item `completed` status and expected item count outside
+the chat hot path. If the new usable head is still indexing, read it directly within budget or show partial coverage;
+never silently substitute its old indexed head. Strict all-document comparison waits or returns an explicit partial job.
+
+Set `retrieval.return_on_failure: false` for ordinary evidence search so an internal failed search stage is not mistaken
+for no evidence. Namespace search can independently return `errors` alongside chunks: inspect that field and report
+missing instances/scope even on HTTP success. Partial answers remain usable when labelled. A successful top-k request
+only means that search ran, not that every document was read.
+[Search API](https://developers.cloudflare.com/ai-search/api/search/workers-binding/),
+[namespace failures](https://developers.cloudflare.com/ai-search/how-to/search-multiple-sources/).
 
 Initial text profile:
 
@@ -376,6 +431,12 @@ old revision, digest and Wiki restatement are not independent support.
 AI Search returns `item.key`. Resolve it through `search_item` and the retained block map to exact
 `{revisionId, blockId, startByte, endByte}`. The non-quotable prefix length is known; returned body text must match the
 canonical block or an explicitly mapped subrange. Repeated text must not resolve via first `indexOf`.
+The current Items API also provides `items.get(itemId).chunks({limit, offset})` with chunk IDs/text and byte offsets.
+Use a bounded item-level lookup when needed to resolve a returned chunk, not a full-library scan. Verify what those
+coordinates address against the exact uploaded bytes, subtract the known prefix/locator bytes, and then compare the
+canonical slice; do not assume extraction/normalization preserved offsets. Normal known-block hydration needs no extra
+provider call. If a precise excerpt cannot be mapped, a verified whole-block reference is still usable as a clearly
+labelled broader citation. [Items API](https://developers.cloudflare.com/ai-search/api/items/workers-binding/).
 
 Context frames label `search_prefix` as navigation metadata and `exact_body` as citeable source text. A model claim
 supported only by a title/heading/card is unsupported until the canonical body is opened. Server labels, not the model,
@@ -394,6 +455,12 @@ One `AIChatAgent` DO owns each chat's message persistence and reconnectable stre
 destination project; there is no server-global active project. Persist selected project/source/page IDs, default versus
 explicit versus empty selection, model/response override and selected outbound tools in supported chat state. Each turn
 records the resolved route, exact revision/projection IDs and structured citations; populate `chat_input`.
+History is not an evidence bypass. On a changed/empty source scope, do not resend previous source excerpts, tool outputs
+or grounded assistant answers whose recorded dependencies lie outside that scope. Keep the visible transcript, but omit
+those bodies from model context and mark that boundary; an explicitly selected saved answer is derived context, not a
+new source. Apply the same rule to follow-up rewriting. Build labels fresh per turn/section, or namespace them before
+merging section results, so `S1` from two turns/papers cannot point to the wrong revision. Save resolved references with
+each result instead of reconstructing labels from today's search.
 
 A no-tool ordinary turn reads known small material directly or performs one retrieval preparation, then one streamed
 synthesis. It has an explicit input/context budget, output-token cap, provider timeout and one model call. An agent using
@@ -409,10 +476,13 @@ start an explicit research job instead.
 The model distinguishes source statements, Eliot inference and unsupported gaps. “Not found” differs from still-indexing,
 unavailable or partially searched.
 
-Override durable recovery initially so disconnect/restart persists the partial result but does not automatically buy a
-continuation. Catalog/dynamic streams may resume through the binding; vendor-model streams may not. Stop persists and
-blocks new continuation. An explicit Continue uses retained context and a stable operation ID. Transport reconnect never
-implies exactly-once provider billing.
+Use the supported `onChatRecovery()` hook returning `{ continue: false }` initially: persist partial/settled work
+without another model call, including failure before the first chunk. Catalog/dynamic streams may resume through the
+binding; vendor-model streams may not. Stop intent remains durable. Explicit Continue gets one new attempt ID under the
+same turn, reuses completed outputs, preserves old citations and uses labels unique across the appended message; repeated
+delivery of that Continue observes the same attempt. Reconnect never allocates a new attempt or implies exactly-once
+billing. Set `messageConcurrency: "queue"` for same-chat submissions rather than overlapping model calls. Use
+`persistMessages` for storage-only transcript changes; `saveMessages` triggers a new response and is not an autosave API. [Chat recovery](https://developers.cloudflare.com/agents/communication-channels/chat/chat-agents/).
 
 Ordinary chat does not silently become deep research, invoke an unselected external tool, import web results or refresh
 the Wiki. Those are visible owner actions.
@@ -421,7 +491,13 @@ the Wiki. Those are visible owner actions.
 
 Notes, digests, reports, Wiki pages, maps and audits share one page/revision writer. Owner writes are accepted; agent
 writes are proposals unless the project enables direct mode. Lists return summaries; bodies load on demand. Every page
-revision records all source/page revision inputs in `page_input`.
+revision records all source/page revision inputs in `page_input`. When a page is used as input, carry forward its
+recorded source/page dependencies into the new page/chat/job/task input projection as well as the direct page revision.
+Deduplicate in SQL. Only already-published immutable input revisions are admissible, so these links cannot create a cycle.
+The edited page's `base_revision` is lineage, not a freshness dependency on its own previous head; carry its supporting
+inputs forward instead of making every edit immediately stale.
+This makes source → digest → Wiki → report change/deletion impact queryable without a graph service or body scan.
+Flattened provenance does not authorize reads of those sources or count generated prose as independent corroboration.
 
 ### Distillation
 
@@ -436,6 +512,10 @@ A source guide is short orientation and declares `full` or `sampled`. A full dig
 
 Reuse only when exact input revisions, focus and relevant settings match. Multi-source comparison establishes coverage
 for each requested source, uses digests for orientation and reopens supporting passages before new claims.
+Reducers carry the original revision/ranges and coverage forward, not section-local labels or summaries without support.
+Quantitative findings retain units, population, conditions, time/version and uncertainty. Full coverage is relative to
+explicit requested readable sections; extraction omissions and unprocessed figures remain visible. A polished reduction
+cannot turn failed/skipped sections into complete coverage.
 
 ### Wiki refresh
 
@@ -444,11 +524,19 @@ changed/removed inputs and bounded related metadata. It proposes a coherent diff
 marks obsolete support and adds genuine disagreement. It does not rewrite every Wiki page or silently advance the head.
 A rejected proposal is regenerated only after owner request or relevant input change.
 
+New sources have no existing `page_input` edge. For project-wide guides/maps/reviews, record the requested project/filter
+scope and each project's corpus version alongside covered revisions. Bump that simple version on membership, source-head
+or filter-relevant metadata changes, not on indexing retries. Show `new material / scope changed` when it differs;
+explicit-selection digests are unaffected by unrelated additions. The activity feed identifies changed inputs for a
+bounded refresh. Do not regenerate on open or mark every page stale just because an unrelated source arrived.
+
 ### Corpus Map
 
 Store one versioned project Map page with bounded nodes/edges and exact references. Views may render list, tree,
 timeline or mind map. Node types are finite: source, topic, time/version, claim/question and gap. Relations such as
 `version-of`, `supports`, `contradicts`, `qualifies` and `missing` are generated navigation unless owner-confirmed.
+Claim relations point to canonical passages and retain relevant time/population/conditions so differing studies are not
+labelled contradictory solely because their numbers differ. Preserve owner annotations and rejected relations on refresh.
 No graph database, graph retrieval path, one-row-per-edge platform or centrality qualification.
 
 ### Product audit
@@ -481,10 +569,24 @@ A deep run:
 
 Default to one coordinator loop. Optional delegation assigns one bounded subquestion to a connected agent through the
 normal task lifecycle and waits durably with `step.waitForEvent`; no default researcher swarm or critic panel.
+Persist a completed task's canonical result before sending its wake event. Store the waiting job ID and a small pending
+wake flag on the same task; completion retries or explicit retry-wake resend only the notification, never the research.
+A bounded wait timeout also reconciles the saved result without relying on another poller/queue. The waiting job reads task state before waiting,
+after a matching event, and once on timeout. Events carry task/result/claim sequence; duplicates or late events cannot
+complete a different task/claim. Validate the saved result's scope/citations and review state before use; an agent proposal
+may be labelled input, not silently promoted. Decline/timeout preserves partial work without recreating the task.
+[Workflow events](https://developers.cloudflare.com/workflows/build/events-and-parameters/).
 
-Workflow steps can retry; external effects are not exactly once. Use deterministic output keys and provider idempotency
-where supported. Persist paid output before later publication. If provider completion is unknown and cannot be queried,
-mark it unknown; reconnect never silently repeats it.
+Workflow steps can retry; external effects are not exactly once. Put the non-idempotent provider/tool dispatch in a
+step with `retries: { limit: 0 }`, and separate retriable deterministic saves/publication. Default Workflow retries would
+otherwise repeat a failed paid call even with SDK retries disabled. Persist the attempt-start fact in job-owned storage
+before dispatch, and the result under its deterministic step key afterwards; successful Workflow checkpointing alone
+cannot record an effect whose enclosing step crashed. Use provider idempotency/readback where supported. A started attempt
+without a known result is `unknown`, not permission to resend after process loss. Completed output is saved before final
+page publication; retrying a failed page save reads that output. Reads and exact-key idempotent saves may retry with bounded
+backoff. A definitively rejected-before-execution request may use an explicit bounded retry policy; an unknown outcome
+is different. Cancellation, unknown effects and permanent configuration errors never trigger generic provider retries.
+[Workflow retry configuration](https://developers.cloudflare.com/workflows/build/sleeping-and-retrying/).
 
 ### Spending
 
@@ -493,18 +595,24 @@ requests do not automatically have `cf.user_id`, so never trust client metadata 
 endpoint-level and eventually consistent; bursts may overshoot.
 
 Eliot therefore keeps only job-local hard ceilings needed for bounded execution: max calls/tool calls, model tokens,
-wall time, concurrency and reserved synthesis capacity. Check them before each paid dispatch. This is not a second daily
-billing ledger.
+wall time, concurrency and reserved synthesis capacity. Check them in awaited host code before each dispatch, counting
+planning, rewrite, rerank, generation, capture/conversion and explicitly enabled external tools. This is not a second
+daily billing ledger. A cancelled run does not buy final synthesis; a budget stop uses only its pre-reserved capacity or
+saves completed findings deterministically. Gateway/SDK telemetry observes calls but is not the admission check.
 
 Cancellation sets `cancel_requested` and is checked before every paid/external call. Once observed, admit no later call.
 An already dispatched call may finish or be billed. Preserve completed findings and label why the job stopped.
 
 ### Web mode
 
-Cloudflare Web Search is explicit. Results are leads. Show a bounded candidate list or allow a delegated job to capture
-within stated limits. Capture selected URLs through normal ingest before citation and retain time/origin. Failed captures
-remain unverified leads. Library-only work never invokes web search and private source bodies are never exported as
-public search queries.
+Find sources is an explicit lightweight action: one bounded Web Search and a candidate list, without a ResearchWorkflow
+or automatic report. A deep job may search/capture within its visible query/count/byte allowance. Results are leads;
+capture selected URLs through normal ingest before citation and retain time/origin. A failed capture remains unverified.
+Keep the initial job input immutable, but append each admitted captured revision and returned task/page dependency to
+`job_input` before using it; retain the capture/result reference in the step output. Final report inputs and cleanup/impact
+then cover acquired evidence as well as the original Library selection. Do not freeze the job so rigidly that web mode
+cannot add evidence, or omit those new dependencies. Library-only work never searches the web or sends private source
+bodies as public queries.
 
 ## 11. Incoming MCP and agent work
 
@@ -529,7 +637,7 @@ deletion are separate permissions. A task narrows an existing grant; claiming it
 Task creation explicitly chooses `pinned` or `current_at_claim` semantics and stores logical source/page scope in
 `task_scope`. An owner offer defaults to `pinned` so the exact material seen during delegation cannot silently change
 before acceptance. A reusable open task may choose `current_at_claim`; its exact current revisions are inserted by the
-claim transaction, returned to the claimant and retained as task history.
+claim transaction, returned to the claimant and retained as task history. Claims/results carry the claim sequence from §4.
 
 Agent setup shows the real endpoint/client instructions, verified identity/profile, allowed projects/operations and
 limits. Disabling it takes effect on the next operation. Results/proposals remain attributable and survive reconnects.
@@ -556,7 +664,13 @@ code/table overflow stays inside the reading surface. Do not use unaudited `inne
 Private source/page/evidence bytes and chat messages remain in memory or server state, not `localStorage`, IndexedDB, a
 root service worker or a private offline cache. Persist only non-sensitive UI preferences locally. Clear protected query
 caches and rendered views on sign-out, principal change or revocation; late responses cannot restore cleared data.
-Server-saved drafts/pages, not hidden browser copies, own recoverable research work.
+Use debounced server draft saves keyed by project/chat/page, with expected draft version and a visible saved/unsaved state.
+Chat drafts use supported chat DO state. Each page autosave writes a new `draft/<page>/<save-id>` R2 object, then CAS-updates
+the existing page's draft key/version; never overwrite a shared draft object before checking its version. A new draft page
+may have no accepted head. Publish freezes a page revision and clears only the saved draft version.
+Autosave does not create accepted revisions or Inbox proposals on every keystroke; concurrent saves detect conflicts.
+A reload can restore saved work without private browser persistence; a network failure leaves the current editor intact.
+Stage 3 includes the minimal draft/page writer needed by Save answer; stage 4 extends that same writer.
 
 Lists use indexed D1 queries and keyset pagination. Project open never loads source bodies, transcripts, page bodies,
 remote model catalogs or remote MCP catalogs. Poll only active work with backoff and stop in hidden views. Batch D1
@@ -584,7 +698,7 @@ never source text or secret values. Owner UI shows safe errors and operation IDs
 | Exclude | Keep readable/history but omit from new project retrieval |
 | Archive | Keep Library bytes/history; omit from ordinary new selection |
 | Replace/reparse | Create new immutable revision; old citations remain; affected knowledge/chats/jobs are identifiable |
-| Delete from Library | Tombstone first, immediately exclude new use, preview impact, then clean exact objects/items |
+| Delete from Library | Preview impact and confirm the chosen scope, then tombstone before any external cleanup and stop new use |
 | Erase derived copies | Separate explicit scope covering copied page/chat/export text; source deletion alone does not promise this |
 
 Impact preview uses bounded queries over `project_source`, `page_input`, `chat_input`, `job_input`, `task_scope`,
@@ -657,6 +771,13 @@ After assembly, exercise concrete risks:
 - ordinary no-tool versus explicitly tool-assisted chat, outgoing tool schema/catalogue changes, read/write/external-spend
   approval and unknown mutation result;
 - safe Markdown, sign-out/revocation cache clearing and absence of private browser persistence/offline caches;
+- narrowed/empty chat scope after a prior sourced answer and repeated section/turn-local citation labels;
+- source → digest → Wiki → report dependency changes and new material added to a project-wide review;
+- metadata/card refresh without source re-extraction, canonical table-header ranges and readable-but-partly-indexed heads;
+- native search partial failures, per-instance errors, item chunk offsets and coverage denominators;
+- SDK/Gateway/Workflow retry defaults, mid-stream timeout and failed publication after successful synthesis;
+- delayed same-agent task completion after reclaim and a committed result whose wake event failed;
+- 500-source D1 scope writes within statement/query limits and server draft reopen/conflicts;
 - chat recovery, export/import and migration rehearsal.
 
 Verify against installed/current platform behavior rather than prose:

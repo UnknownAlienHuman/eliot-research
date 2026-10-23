@@ -1,6 +1,6 @@
 # Eliot Research — Architecture
 
-Target design, audited 2026-10-22. This document defines the product, guarantees and boundaries.
+Target design, audited 2026-10-23. This document defines the product, guarantees and boundaries.
 It does not claim that the replacement is implemented or deployed. [IMPLEMENTATION](IMPLEMENTATION.md)
 selects mechanisms, [MAP](MAP.md) locates the work, [DONORS](DONORS.md) records reusable solutions,
 and [audits](../.github/audits/README.md) retain dated evidence.
@@ -44,7 +44,7 @@ merely because Eliot generated or saved it.
 | Knowledge | Save, edit, compare, export and reopen notes, digests, reports and Wiki pages with immutable history; mark affected pages stale when inputs change; refresh only affected knowledge; preserve owner edits and rejected proposals. |
 | Corpus Map | Provide a compact navigational map of sources, topics, versions/timeline, source families, contradictions, gaps and suggested reading routes. Map edges are derived navigation with exact source links, not a graph database or evidence authority. |
 | Audits and maintenance | Show unreadable or unindexed sources, duplicate/version candidates, stale pages, unresolved citations, incomplete coverage, abandoned work and removable derived/index data. Produce proposed actions; never auto-delete originals or accepted knowledge. Keep a small attributable activity history. |
-| Deep research | Start an explicit durable investigation over selected library scope, optional web discovery and selected external tools; show progress, sources, spending limits, partial findings and cancellation; capture web evidence before citing it. |
+| Deep research | Find candidate sources through a lightweight explicit search, or start an explicit durable investigation over selected library scope, optional web discovery and selected external tools; show progress, sources, spending limits, partial findings and cancellation; capture web evidence before citing it. |
 | Incoming MCP | Expose Eliot to external agents through standard Streamable HTTP MCP: projects, source search/read/add/update, pages, jobs, tasks and results. Agents may reason with their own models without buying an Eliot model call. |
 | Outgoing MCP | Let the owner connect selected remote MCP servers as tools for Eliot chat/research using the Cloudflare Agents SDK client. Tools are scoped and explicitly enabled; mutating tools require an owner decision or a pre-authorized job, not repeated ceremony around read-only calls. |
 | Agent collaboration | Bind a connected agent to verified identity, project scope and operations; let it accept/decline owner offers or claim open tasks; save one attributable result; use review or direct-edit mode per project; make paid Eliot jobs a separate permission. |
@@ -63,19 +63,25 @@ Wiki page helps navigate; evidence still opens the source revision that supporte
 Known material is read directly. Focused questions use scoped hybrid retrieval and then hydrate the necessary
 canonical section. Broad comparisons first identify relevant sources and coverage, then open supporting sections.
 Tables retain captions, headers, units and relevant rows. Duplicate excerpts do not consume the context budget.
-A global top-k result never certifies that every selected document was examined.
+A global top-k result never certifies that every selected document was examined. Indexing failures and unreadable
+parts remain in the coverage denominator; a successful search response is not complete-corpus evidence. Processing
+all extracted text is not proof that extraction retained every figure, table or appendix.
 
 ### Several projects do not interfere
 
 There is no server-global active project. Every route, cache key, chat, draft, job and write carries its project
 or chat identity. Switching UI tabs does not retarget a stream or write. Cross-project work freezes an explicit
-union of permitted source revisions and a destination project. Shared sources remain one Library object.
+union of permitted source revisions and a destination project. Shared sources remain one Library object. Narrowing
+a chat's source scope also narrows model-bound history; old answers cannot silently reintroduce excluded evidence.
+Server-saved drafts survive reload without copying private research into browser persistence.
 
 ### Knowledge changes visibly
 
 A source update marks dependent pages/maps/audits stale but does not rewrite them. Refresh creates an inspectable
 revision or proposal. Owner edits are not discarded by regeneration. Deleted evidence becomes unavailable rather
-than silently relinked. Removing a project membership does not delete the shared source.
+than silently relinked. Removing a project membership does not delete the shared source. Dependencies remain visible
+through digest → Wiki → report reuse. A newly added source can make a project-wide overview incomplete even though
+no previous report cited it; show that distinction without regenerating every page.
 
 ### Execution and spending stay bounded
 
@@ -84,6 +90,8 @@ selected, caps model/tool steps and still ends in one grounded synthesis; it doe
 workflow. Long work runs durably and preserves completed steps. Cancellation stops admission of later effects once
 observed; an already dispatched provider call may still finish or be billed. Cloudflare Gateway limits are used where
 they fit; Eliot keeps only job-local limits and state needed to explain and resume the work. Unknown cost remains unknown.
+Retries, recovery and timeouts are configured at every actual SDK/provider/Workflow boundary; a logging hook is not
+a spend-control mechanism. Saving an already generated answer again does not generate or purchase it again.
 
 ### Authentication is practical
 
