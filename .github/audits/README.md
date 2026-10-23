@@ -5,6 +5,9 @@ Current product decisions live in [Architecture](../../docs/ARCHITECTURE.md),
 [Donors](../../docs/DONORS.md). Audits are dated evidence and limitations; they are not an approval programme,
 parallel specification or claim that code has been repaired.
 
+The compact [review coverage register](REVIEW-REGISTER.md) records what has been checked, what remains partial and
+what still lacks runtime evidence. It does not repeat product decisions.
+
 ## Current reviews
 
 - [2026-10-23 — model capability and portable chat state](2026-10-23/MODEL-CHAT-PORTABILITY.md): adds explicit
