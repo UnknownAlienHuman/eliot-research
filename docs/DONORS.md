@@ -21,7 +21,8 @@ reviews. Use those as research history, not another work programme.
 | Chat | `AIChatAgent` from `@cloudflare/ai-chat`; `useAgentChat` from `@cloudflare/ai-chat/react` | Chat DO owns ordered messages/reconnectable stream. No-tool turns stay one synthesis; explicitly selected tools use a small capped loop with automatic result continuation disabled. |
 | Incoming MCP | `createMcpHandler` from `agents/mcp/server` + `@modelcontextprotocol/server` v2 | Stateless Streamable HTTP wrappers over the same product functions as UI/API. `McpAgent` is deprecated/frozen for new work. |
 | Outgoing MCP | Agents SDK MCP client manager inside one owner Tool Connection Agent | Reuse discovery/OAuth/tool conversion. D1 owns desired scope and approved selected-tool descriptors; Agent SQL owns SDK/OAuth/live connection state. Do not build a connector protocol. |
-| Durable work | Workflows: `WorkflowEntrypoint`, `step.do`, `step.waitForEvent` | `IngestWorkflow`, one mode-based `ResearchWorkflow` and `CleanupWorkflow`. Durable steps do not make external effects exactly once. |
+| Durable work | Workflows: `WorkflowEntrypoint`, `step.do`, `step.waitForEvent`, `WorkflowInstance.subscribe` | Three Workflow classes; native retry/context and cursor-based live progress instead of a second progress/retry runtime. External effects are not exactly once. |
+| Markdown structure | `unified`, `remark-parse`, `remark-gfm`, `remark-math` | Fixed parse-only mdast pipeline; Eliot owns grouping and exact UTF-8 mapping, not Markdown grammar or a plugin platform. |
 | Search | One AI Search namespace and initial shared hybrid Library instance; Qwen3 multilingual embeddings; BM25/vector RRF; metadata filters | Deterministic source/page block items and exact R2 hydration. Use native namespace search only where complete scope remains expressible. No Vectorize/custom FTS/second search engine. |
 | Optional multilingual ranking | One Cohere multilingual rerank request through AI Gateway over existing candidates | Configured and budgeted only when measured useful. Never stack native and external rerankers or treat scores as evidence. |
 | Web discovery | `createAIWebSearch` / `webSearchTool` from `agents/websearch` and `/ai-sdk` | Direct Find sources needs no model. Reuse native compact output; capture leads before citation. |
@@ -172,11 +173,17 @@ The Search API can return partial internal failure and namespace `errors` alongs
 HTTP success alone. Items are ready after observed completion, not upload acceptance. D1 statement parameter limits mean
 large scope preparation uses set-based queries and guarded batches, not one oversized list or hundreds of round trips.
 
-The initial keyword baseline is Porter + focused `and`; Russian exact/inflected terms, identifiers and numbers are
-measured. Trigram is an instance-wide alternative with a reindex cost. `match_threshold` starts at zero to preserve
-lexical-only candidates. Scoped similarity caching remains off until same-query/different-scope isolation is demonstrated.
-Current capacity/price numbers are deployment facts, not architecture constants. Native item info/logs/chunks are useful
-for reconciliation; item download returns the original upload, not a canonical OCR transcript. The current model list
+The hybrid baseline remains Porter + focused `and`; Russian inflections, IDs and numbers require corpus measurement.
+Caller-selected keyword retrieval uses `retrieval.retrieval_type: "keyword"` on that same instance, without a second FTS
+index or model router. Disable rewrite/rerank for this path and verify literal claims against retained bytes; stemming and
+top-k are not exact/exhaustive search. Trigram changes the instance and requires reindexing. `match_threshold: 0` preserves
+lexical-only hybrid candidates; scoped similarity caching remains off until isolation is demonstrated.
+
+The Items binding already offers `uploadAndPoll`, `info`, processing logs and chunk ranges. Use the bounded helper only
+where waiting is requested; bulk ingest saves IDs and resumes status reads with native Workflow sleeps. A returned timeout
+or non-completed status does not certify indexing and must not trigger a blind second upload. These helpers replace
+plumbing, not canonical bytes, input scope or coverage. Current capacity/pricing remains a deployment fact.
+Item download returns the original upload, not a canonical OCR transcript. The current model list
 still supports the selected Qwen3 baseline; a new CJK tokenizer or multimodal model does not establish better Russian
 recall or scientific-table extraction. Keep the existing structural/corpus checks instead of adding another index.
 
@@ -187,6 +194,18 @@ recall or scientific-table extraction. Keep the existing structural/corpus check
 - [MCP authorization](https://developers.cloudflare.com/agents/model-context-protocol/protocol/authorization/)
 - [Workflows](https://developers.cloudflare.com/workflows/)
 - [Rules of Workflows](https://developers.cloudflare.com/workflows/build/rules-of-workflows/)
+- [Instance subscriptions, September 15 release](https://developers.cloudflare.com/changelog/post/2026-09-15-instance-event-subscriptions/)
+- [Instance subscription API](https://developers.cloudflare.com/workflows/build/subscribe-to-instance-events/)
+- [Step context](https://developers.cloudflare.com/workflows/build/step-context/)
+- [Native sleep/retry configuration](https://developers.cloudflare.com/workflows/build/sleeping-and-retrying/)
+
+Use native subscriptions for the visible job, not a parallel ResearchSession/progress DO or Queue. Keep results in D1/R2;
+events are temporary observation. Safe projections, cursor replay and disposal belong in one authenticated stream route.
+Native step context and retry delays replace duplicated execution bookkeeping only where retries are safe.
+
+For chat, keep the SDK's `messageConcurrency = "queue"`, React history/reconnect handling and
+`cancelOnClientAbort: false`; explicit Stop is distinct from unmount. Preserve accepted per-submission settings and host
+admission, not a second scheduler. Current documentation was checked; installed behavior remains an integration check.
 
 Use the SDK's client/OAuth/discovery path and a stable approved selected-tool descriptor. With the manager-level API,
 `registerServer` and `connectToServer` must be followed by `discoverIfConnected`; inspect `ready` before exposing tools.
@@ -215,6 +234,17 @@ stateless handler. [Pi 1.4, October 22](https://developers.cloudflare.com/change
 improves Pi recovery but includes new-turn retries and a one-way storage migration. Do not add Pi/Think, a browser harness
 or Code Mode beside ChatAgent/Workflows just to use createAI/web tools. A future replacement must remove a real component,
 not create a second orchestrator or weaken saved-result/cost semantics.
+
+## Ready-made Markdown parsing
+
+[remark-parse](https://github.com/remarkjs/remark/tree/main/packages/remark-parse) provides CommonMark mdast;
+[remark-gfm](https://github.com/remarkjs/remark-gfm) adds tables/footnotes and
+[remark-math](https://github.com/remarkjs/remark-math/tree/main/packages/remark-math) adds math syntax. Use a fixed parse-only
+pipeline and the same syntax options in rendering, not a new converter service or configurable plugin ecosystem.
+[unist positions](https://github.com/syntax-tree/unist#point) are UTF-16 code units; the small Eliot mapper converts them
+once to retained UTF-8 boundaries. Citation text comes from source slices, not node values or serialized Markdown.
+Generated nodes lack source positions; syntax recognition cannot repair missing PDF layout. The existing structural
+context/table policies still apply. Pin/build the dependencies in the replacement; no installation is claimed here.
 
 ## NotebookLM as a behavior reference
 

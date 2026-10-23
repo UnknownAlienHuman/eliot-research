@@ -1,6 +1,6 @@
 # Eliot Research — Implementation
 
-Target implementation, Cloudflare native-reuse review 2026-10-23. It implements
+Target implementation, native progress/parsing/retrieval review 2026-10-23. It implements
 [ARCHITECTURE](ARCHITECTURE.md). [MAP](MAP.md) owns delivery order and legacy source locations.
 [DONORS](DONORS.md) records current platform APIs and donor mechanisms. This document specifies the
 replacement; it is not evidence that the replacement is deployed, migrated or fast.
@@ -20,7 +20,8 @@ JSON API, incoming MCP endpoint, Durable Object classes and Workflow entry point
 | Chat | `AIChatAgent` from `@cloudflare/ai-chat`, `useAgentChat` from `@cloudflare/ai-chat/react`; one SQLite Durable Object per chat |
 | Outgoing tools | One SQLite owner Tool Connection Agent using the Agents SDK MCP client manager |
 | Incoming agents | `createMcpHandler` + `@modelcontextprotocol/server` v2 over Streamable HTTP |
-| Durable work | `IngestWorkflow`, one mode-based `ResearchWorkflow`, and `CleanupWorkflow` |
+| Durable work | `IngestWorkflow`, one mode-based `ResearchWorkflow`, and `CleanupWorkflow`; native instance subscriptions for visible progress |
+| Markdown structure | Fixed `unified`/`remark-parse` pipeline with GFM/math syntax; small source-range/grouping code, not a homemade Markdown grammar |
 | Authentication | Cloudflare Access; `jose` validates the route's Access assertion at ingress |
 | Conversion | Deterministic local UTF-8 for Markdown/text/CSV; Workers AI Markdown Conversion for currently supported formats; explicit retained OCR/normalized-Markdown path when needed |
 | Web acquisition | Bounded public fetch; Browser Run only for explicitly rendered URLs or stronger guarded capture |
@@ -345,6 +346,14 @@ the same operation with bounded concurrency and per-item results.
    exact keys; do not invent an undocumented batch API or serialize an unbounded one-request-per-block loop.
 7. Build a deterministic card from metadata/outline. Model enhancement is optional and budgeted.
 
+Use the native [Items API](https://developers.cloudflare.com/ai-search/api/items/workers-binding/) for processing status
+and diagnostics. `uploadAndPoll` is a bounded convenience for an explicit small upload-and-wait path, not the bulk-ingest
+scheduler. Inspect its returned status; timeout, `skipped` or `error` is not `completed`. Durable ingest normally uploads
+once, saves the item ID, and groups bounded `items.get(id).info()` reads between native Workflow sleeps, skipping settled
+items. Resume waiting on the same IDs after timeout; do not rerun the combined upload-and-poll operation blindly.
+Use item `logs()` only for diagnostics and paginated `chunks()` only when range reconciliation needs it. No second
+index-state service, custom polling framework or readiness probe before every document read.
+
 At application setup or an owner-requested diagnostic, call `env.AI.toMarkdown().supported()` and cache the returned
 extension/MIME list with `checked_at`. Do not call it before every upload. Admission considers filename, observed MIME and
 the cached current list without pretending any one of them proves format correctness.
@@ -420,9 +429,20 @@ References: [Markdown Conversion binding](https://developers.cloudflare.com/work
 
 ## 6. Deterministic structural projection
 
-The structural parser reads only the retained immutable Markdown. It is deterministic and conservative; no model call
-assigns structure. Reuse the old projector's tested UTF-8 range, heading/fence and deterministic-key ideas, not its old
-32–64 KiB sizing or generic assumption that any oversized line can be cut safely.
+Parse retained immutable Markdown with a fixed `unified` + `remark-parse` + `remark-gfm` + `remark-math` pipeline.
+Use its mdast nodes for headings, paragraphs, lists, code fences, table rows/cells, footnotes and math; no model call or
+homemade Markdown grammar. Pin these dependencies with the new package and share syntax options with the renderer.
+Eliot adds only bounded grouping, heading/context associations, deterministic keys and source-range mapping; reuse the
+legacy UTF-8 checks as evidence, not its 32–64 KiB scanner or receipt machinery. Do not add a plugin registry.
+
+Parse without stringifying or rewriting the retained text. unist offsets are UTF-16 code units, not UTF-8 bytes: build
+one boundary map from the exact retained text, preserving line endings and accounting for any BOM. Use original source
+slices, not decoded node values, for citations. Generated/unpositioned nodes never create evidence coordinates.
+A table/math node proves recognized syntax, not faithful PDF extraction or scientific correctness. Keep byte/node bounds;
+an oversized or unsupported structure remains readable with an explicit projection warning rather than blocking the file.
+References: [remark-parse](https://github.com/remarkjs/remark/tree/main/packages/remark-parse),
+[GFM](https://github.com/remarkjs/remark-gfm), [math](https://github.com/remarkjs/remark-math/tree/main/packages/remark-math),
+[unist positions](https://github.com/syntax-tree/unist#point).
 
 Each block stores:
 
@@ -517,7 +537,15 @@ guide targets AI SDK v6; its compatibility with the selected v7 stack has not be
 chunks support reconciliation; item `download` returns the uploaded original, not a retained OCR transcript. None replaces
 the source/version store. The search response's item key alone supplies no exact canonical byte range.
 
-Initial profile:
+Use the same hybrid-enabled instance for an optional caller-selected keyword mode:
+`ai_search_options.retrieval.retrieval_type: "keyword"`. Keep the identical source/page scope and turn off query rewriting
+and reranking for this lexical path. It needs no second FTS database or model-based query router. Known IDs still resolve
+in D1 and known passages read directly; ordinary semantic questions remain hybrid. Keyword results are candidates,
+not literal-match proof: Porter stemming/punctuation and top-k limits require canonical verification of quoted text or
+identifiers, and a miss is not proof of absence. One existing same-scope repair may use hybrid when appropriate.
+Expose this as an option on the existing search operation, not another endpoint or an automatic extra search.
+
+Initial hybrid profile:
 
 - `@cf/qwen/qwen3-embedding-0.6b` for multilingual English/Russian semantics;
 - native BM25 + vector RRF;
@@ -548,6 +576,7 @@ marked. Already dispatched external calls cannot be recalled.
 |---|---|
 | Known source/section/quote | Direct outline/range read or bounded literal scan; no embedding/model |
 | Focused question | One scoped hybrid search, overlap/deduplication/source diversity, canonical hydration |
+| Explicit keyword search | Native keyword retrieval in the same instance/scope, then canonical literal verification; no rewrite/rerank |
 | Broad topic | Exact D1 metadata + one mixed card/block native ranking, dedupe sources, then block-only evidence retrieval |
 | Table/equation/code | Hydrate exact caption/headers/units/definition/enclosing block; expose conversion/structure failure |
 | Compare selected documents | Establish per-document storage/readability/search/section coverage, open passages for every requested document; job when broad |
@@ -604,9 +633,13 @@ Use `onChatRecovery()` with `{ continue: false }` initially. Persist partial/set
 This does not disable SDK transport replay of the same Gateway run or ChatAgent's reconnectable delivery to the browser;
 reuse both native mechanisms instead of a second stream server, polling transcript or paid recovery loop.
 Explicit Continue creates one new attempt under the same turn, reuses completed outputs and unique labels; transport
-reconnect never allocates an attempt or implies exactly-once billing. Queue same-chat submissions but persist every
-submission's own scope/model/tools/settings under request ID before it waits. Resolve source heads at that request's
-admission. Pending requests and active turn have separate visible cancel actions.
+reconnect never allocates an attempt or implies exactly-once billing. Set native `messageConcurrency = "queue"` for
+same-chat user submissions; do not build a second queue or serialize different chats/projects together. Eliot still saves
+each accepted submission's scope/model/tools/settings under request ID before it waits: SDK serialization alone is not
+proof of durable product intent. Resolve source heads at that request's admission. Pending requests and the active turn
+have separate cancel actions. Keep `useAgentChat`'s `resume: true` and `cancelOnClientAbort: false`: navigation/unmount is
+not Stop; explicit `stop()` remains cancellation. Regeneration, tool/approval continuation and programmatic submissions
+still pass the server admission rules, not just the user-message concurrency option.
 
 Use `persistMessages` for storage-only changes; `saveMessages` triggers model response. Do not use
 `maxPersistedMessages` as context budget because it deletes stored history. `pruneMessages` removes selected message
@@ -726,6 +759,36 @@ deterministic step key. Started attempt without known result is `unknown`, not p
 saved before final page publication; failed publication retries read saved output. Use provider idempotency/readback where
 supported. Definitively rejected-before-execution differs from unknown completion.
 
+For safe reads and demonstrably idempotent publication, use native `step.do` retry configuration and bounded dynamic
+`retries.delay: ({ ctx, error }) => ...` where a parsed Retry-After helps. Permanent failures use `NonRetryableError`; pending
+indexing uses `step.sleep`, not repeated upload or an in-memory timer. Native `WorkflowStepContext` supplies step name,
+occurrence and retry attempt for diagnostics; these counters are not external idempotency keys. Keep the existing small
+effect/output records, not a parallel retry/checkpoint engine. New-generation retries and uncertain external mutations
+remain separately admitted. A later failure does not roll back retained research/originals through generic saga cleanup.
+
+### Visible progress without a second event system
+
+Use `WorkflowInstance.subscribe({ cursor, filter })` for an open job. An authorized route on the existing UI/API host
+maps native events to compact SSE progress; browsers never obtain a raw Workflow handle. Resume after the last processed
+`eventId`, keyed by job/instance, and coalesce historical replay. Filter steps/waits/terminal events needed by the view;
+project safe state/step labels only, not raw parameters, outputs, configuration or provider error messages.
+
+Keep the RPC subscription alive for the response stream and dispose it when that stream ends, the client disconnects
+or its authorized viewing lifetime expires. Do not return a stream from a `using` scope that immediately disposes its
+subscription. Reconnect resumes observation, never restarts work. A terminal event or native end-of-stream prompts one
+read of saved job/result state; temporary event retention is not history. D1/R2 keep semantic progress, partial findings
+and final results at existing save boundaries, without copying every native event into another journal.
+
+Lists/non-streaming clients use bounded active-status reads; the detail view does not simultaneously poll and subscribe.
+Do not add a progress Durable Object, custom replay buffer, message broker or account-to-Queue event subscription for
+this UI. Native subscriptions expose execution, not token-by-token synthesis or proof that a result was saved.
+References: [instance subscription](https://developers.cloudflare.com/workflows/build/subscribe-to-instance-events/),
+[Workers API](https://developers.cloudflare.com/workflows/build/workers-api/),
+[retry configuration](https://developers.cloudflare.com/workflows/build/sleeping-and-retrying/),
+[step context](https://developers.cloudflare.com/workflows/build/step-context/).
+
+### Spending and cancellation
+
 Use AI Gateway Spend Limits for known-price routes with server-supplied actor/project/job metadata. They are eventually
 consistent; keep job-local hard limits for call/tool count, model tokens, wall time, concurrency and reserved synthesis.
 Check before every paid dispatch, including planning/rewrite/rerank/generation/capture/conversion/external tool. This is
@@ -824,8 +887,9 @@ Use debounced server drafts with expected version and visible saved/unsaved stat
 Page autosave writes create-once draft object then CAS-updates page draft pointer/version; publish freezes page revision
 and clears only saved draft version. Autosave does not create accepted revisions/proposals on every keystroke.
 
-Lists use indexed/keyset D1 queries. Project open never loads all bodies/transcripts/catalogues. Poll only active work
-with backoff and stop hidden-view polling. Batch D1 metadata and R2 ranges; avoid N+1.
+Lists use indexed/keyset D1 queries. Project open never loads all bodies/transcripts/catalogues. The visible job detail
+uses the native subscription described above; lists and non-streaming clients read only active summaries with backoff.
+Close hidden-view subscriptions/polling without cancelling the job. Batch D1 metadata and R2 ranges; avoid N+1.
 
 Targets, not promises:
 
@@ -954,9 +1018,11 @@ After assembly exercise:
 - retained bytes/digests, readable state/warnings/known omissions and verified/observed/unavailable anchor fidelity for
   representative fixtures; exact non-ASCII range reopening;
 - direct Markdown Conversion versus AI Search OCR separation; unretained OCR chunks never become primary evidence;
-- duplicate/lost upload acknowledgement, conditional R2 collision/null and partial item publication;
+- duplicate/lost upload acknowledgement, conditional R2 collision/null and partial item publication; native upload/poll
+  timeout resumes status reads without a second upload, and non-completed status stays incomplete;
 - failed/out-of-order replacement preserving prior/current heads;
-- exact IDs, late-paper facts, contradicting sources and extraction omissions;
+- exact IDs, late-paper facts, contradicting sources and extraction omissions; native keyword versus hybrid scope and
+  literal verification; parser UTF-16→UTF-8 mapping over Cyrillic, astral characters, BOM/CRLF, escaped tables and math;
 - scopes over 50/500 sources within D1/Search limits; partial namespace errors; readable heads still indexing;
 - wrong-scope/tombstoned search results and deletion after context preparation but before dispatch;
 - exact repeated-text references and provider item subrange mapping;
@@ -965,7 +1031,8 @@ After assembly exercise:
 - model profile/context/output enforcement; incompatible tools/structured output and conservative custom/dynamic routes;
 - no-tool versus tool-assisted chat with `autoContinueAfterToolResult: false`, duplicate tool results and one controlled
   continuation under stable request ID;
-- reconnect/stop/Continue without duplicate paid generation; queued turns retaining submitted settings;
+- reconnect/stop/Continue without duplicate paid generation; native queued turns retaining submitted settings;
+  navigation/unmount leaves admitted server work running while explicit Stop cancels;
 - large assistant/tool R2 body references surviving SDK compaction and reopen;
 - page conflicts/proposals/freshness, source→digest→Wiki→report provenance and new project material;
 - bounded multi-level reduction, output truncation and partial structured results; analytical profiles and selected-section revision;
@@ -973,6 +1040,8 @@ After assembly exercise:
 - Access host/AUD/Origin coverage, long-lived WebSocket commands, required MCP client handshakes and internal-only tool execution;
 - direct URL acquisition/Browser Run guardrails without unproven DNS-pinning claims;
 - cancellation before/during paid calls, explicit SDK/Gateway/Workflow retry settings and unknown outcomes;
+- native progress replay/cursors, safe event projection, terminal reconciliation and subscription disposal on disconnect;
+  no duplicate polling, retry engine or progress journal;
 - reindex handoff with concurrent source/card/page publication;
 - server draft conflicts, project-bearing URL reload, zero model work on open, safe Markdown and private-cache clearing;
 - chat snapshot export/import to an empty namespace using `persistMessages` with **no** model call, preserving order,

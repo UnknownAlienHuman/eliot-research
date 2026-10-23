@@ -101,13 +101,37 @@ not a reason to create a proxy or prohibit SDK compatibility for every Eliot cli
 new-turn retry behavior and one-way schema migration are not the same as createAI same-run replay. No Pi/Think/Code Mode
 runtime is added beside the already selected ChatAgent/Workflows merely to obtain model and web SDK functions.
 
+## 7. Continuation from `5aafdbab`: native observation, readiness and parsing
+
+**Rechecked 2026-10-23.** This continuation also revisits earlier platform releases; it does not label them newly
+released today. Architecture requirements and MAP delivery ownership are unchanged.
+
+| Reviewed capability | Replacement decision | Boundary retained |
+|---|---|---|
+| [Workflow instance subscriptions, September 15](https://developers.cloudflare.com/changelog/post/2026-09-15-instance-event-subscriptions/) and [API](https://developers.cloudflare.com/workflows/build/subscribe-to-instance-events/) | A small authenticated event projection for the visible job instead of periodic status polling and a progress DO/broker/replay journal. | Native replay is observation; saved results remain in D1/R2. Close/dispose the subscription with its stream, preserve job identity/cursor and never forward raw outputs/errors. |
+| [Step context](https://developers.cloudflare.com/workflows/build/step-context/) and [retry delays](https://developers.cloudflare.com/workflows/build/sleeping-and-retrying/) | Use native step/attempt diagnostics, sleep and bounded safe retry configuration instead of a parallel retry/checkpoint engine. | Counts are not external idempotency keys; unknown mutations or model generations are not retried automatically. |
+| [AI Search modes](https://developers.cloudflare.com/ai-search/api/search/workers-binding/) | Optional keyword mode on the same scoped search operation/index; ordinary document questions stay hybrid. | Porter stemming and top-k require canonical literal verification; no claim of exhaustive absence or Russian-quality improvement. |
+| [Items binding](https://developers.cloudflare.com/ai-search/api/items/workers-binding/) | Native status/log/chunk APIs and bounded `uploadAndPoll` where appropriate. | Bulk ingestion still records upload IDs and resumes waiting; timeout/skipped/error cannot become ready or a second upload. |
+| [Current chat API](https://developers.cloudflare.com/agents/communication-channels/chat/chat-agents/) | Native per-chat queue and React reconnect/history; `cancelOnClientAbort: false` distinguishes navigation from Stop. | Product settings, cancellation and server-side paid admission remain explicit; the queue is not proof of durable intent. |
+| [remark-parse](https://github.com/remarkjs/remark/tree/main/packages/remark-parse), [GFM](https://github.com/remarkjs/remark-gfm), [math](https://github.com/remarkjs/remark-math/tree/main/packages/remark-math) | A fixed maintained parser replaces a homemade Markdown grammar; Eliot keeps grouping/context and exact source mapping. | [unist offsets](https://github.com/syntax-tree/unist#point) count UTF-16 units, not UTF-8 bytes. Do not cite decoded values, generated nodes or a reserialized document. |
+
+The inspected legacy [projector](https://github.com/UnknownAlienHuman/eliot-research/blob/7c034569b908d3b03a8b821b7c537477a24b10f7/packages/retrieval/src/structural-projector.ts)
+starts with its own line/byte splitting and 32/64 KiB defaults; only its useful exact-range lessons are retained. Native
+recursive chunking is not documented as a complete table/heading parser, so removing all structural context on that basis
+would be unjustified. The selected parse library is a local dependency, not another deployed platform.
+
+The same register now calls out subscription replay/disposal, native queue/Stop, keyword-mode scope, timeout readiness
+and UTF-16→UTF-8 conversion as unimplemented checks. No new audit registry, live calls or speculative quality claim.
+
 ## Scope and verification boundary
 
 Reviewed the current Architecture and Implementation, Donors, coverage register, relevant legacy transport paths and the
 named upstream source/docs. Architecture's product requirements and MAP's delivery ownership remain unchanged. This is
 not a complete reread of every repository or a claim of measured quality parity.
 
-The patch changes ordinary Markdown only. No dependency upgrade/install, TypeScript application build, product test,
+The continuation uses an exact-blob-verified bounded documentation checkout at `5aafdbab`, not a full application clone.
+It updates Implementation, Donors, this existing audit/index and the existing register; no new audit file or runtime
+subsystem is added. The patch changes ordinary Markdown only. No dependency upgrade/install, TypeScript application build, product test,
 model/search/conversion call, deployment, live-data inventory, migration or deletion was performed. Native APIs still need
 integration evidence. The [single register](../REVIEW-REGISTER.md) retains those open checks; no new runtime gate or
 parallel tracking system is introduced.
