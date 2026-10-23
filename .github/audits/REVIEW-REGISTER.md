@@ -13,6 +13,9 @@ Markdown edits. Upstream source/API review is not installed-SDK evidence, comple
 The [Cloudflare native-reuse pass](2026-10-23/CLOUDFLARE-REUSE.md) checks the October 19–22 releases and selected
 `agents@0.30.0` sources. Its continuation from `5aafdbab` covers native Workflow subscriptions/retries, chat concurrency,
 AI Search keyword/readiness APIs and maintained Markdown parsing. Upstream availability is not installed/runtime proof.
+The continuation from `fb88b4c5` adds a pinned Cloudflare-native application survey and conditional crawl/portal,
+scratch/Git/converter choices in [Donors](../../docs/DONORS.md#cloudflare-native-neighboring-applications). These do not
+expand the required runtime or establish quality parity.
 
 ## Status meanings
 
@@ -34,7 +37,9 @@ AI Search keyword/readiness APIs and maintained Markdown parsing. Upstream avail
 | Structural parsing, tables and exact coordinates | covered; findings 2, 5, 34–36, 38 | partial | runtime pending | Compile the fixed remark pipeline; verify UTF-16→UTF-8 boundaries, escaped tables/math, segment maps and declared oversized-node omissions. |
 | AI Search publication, readiness and reindex | covered; findings 1, 5, 16, 21, 26, 33 | partial | runtime pending | Verify native status/chunk APIs, upload/poll timeout without reupload, exact-key reconciliation, live reindex handoff, OCR separation and current limits. |
 | Retrieval, citation mapping and coverage | covered; findings 1–3, 16–17, 21–23, 34–36 | partial | runtime pending | Measure hybrid and explicit native-keyword modes on the same scoped English/Russian corpus; literal verification, late facts, tables and all-document coverage remain pending. |
-| Web discovery and capture | rechecked; SDK search/fetch reuse | SDK exports/direct fetch checked | runtime pending | Verify compact history output, cancelled search, retained raw/readable capture and no URL refetch per saved-source window. |
+| Web discovery and capture | rechecked; SDK helpers and optional native crawl | SDK sources and current crawl guide checked | runtime pending | Verify one-URL snapshots; for selected site import verify native job/page status, result pagination/retention and snapshot provenance without URL refetch. |
+| Cloudflare-native neighboring applications | pinned survey recorded | three selected source paths plus official OS README; not exhaustive | not run | Trace useful notebook/MCP, shared research and intermediate-artifact journeys; check licenses before copying; no fork or quality-parity claim. |
+| Optional platform substitutions | crawl/portal considered; Computer/Artifacts/converter conditional | primary docs and Docling image documentation reviewed | not selected or not integrated | Add only for an actual missing operation; check portal subtool semantics, native limits and converter corpus quality before changing the runtime. |
 | Distillation and multi-document comparison | covered; findings 4, 12, 19 | partial | runtime pending | Exercise multi-level reduction, output truncation, negative findings, quantitative conditions and partial completion. |
 | Saved knowledge, Wiki freshness, Map and audits | covered; findings 4, 19–21, 25 | partial | runtime pending | Trace source→digest→Wiki→report, per-dependency freshness, targeted section revision and analytical versus maintenance outputs. |
 | Multiple projects and shared-source concurrency | covered; findings 13, 18, 24 | partial | runtime pending | Exercise two tabs, independent models/scopes/jobs, shared-source replacement and cross-project report destination. |

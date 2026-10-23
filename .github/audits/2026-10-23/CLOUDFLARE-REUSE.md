@@ -123,15 +123,51 @@ would be unjustified. The selected parse library is a local dependency, not anot
 The same register now calls out subscription replay/disposal, native queue/Stop, keyword-mode scope, timeout readiness
 and UTF-16→UTF-8 conversion as unimplemented checks. No new audit registry, live calls or speculative quality claim.
 
+## 8. Neighboring applications and conditional platform reuse
+
+**Survey baseline:** `fb88b4c57fe3343eb7dcd299b86d16af8eec78c6`, checked 2026-10-23.
+The [Donors survey](../../../docs/DONORS.md#cloudflare-native-neighboring-applications) records exact pins, source paths,
+useful mechanisms and exclusions. This pass did not run those applications or convert their READMEs into acceptance.
+
+Three source-reviewed examples cover complementary parts of Eliot: `SoraKumo001/cloud-notebook` (`b684523f`, July 5)
+provides the notebook/RAG/MCP shape; `G4brym/workers-research` (`c7ae7399`, March 15) provides one Workflow with web/library
+strategies and saved-report follow-up; `YSahloul/deep-research-app` (`0ac0cc73`, April 18) exposes intermediate workspace
+files beside chat. `cloudflare/cloudflare-os` (`03cf8766`, October 23) is an official broader collaboration reference;
+only its README was reviewed here. Its internal-adoption statement is a company self-report, not an independent benchmark.
+
+Static source inspection also found reasons not to fork blindly. Cloud Notebook's empty search can trigger corpus
+re-embedding in the answer path; low score selects a general prompt; its MCP getter stops at 50 chunks without a cursor.
+The intake stream reader throws a server error inside a catch that discards parse failures. Preserve per-file progress
+and batch hydration ideas, not these paths, its custom credentials stack or browser-only intake. Workers Research's
+historical quota issue is user evidence, not proof the current pinned implementation reproduces it. None was copied;
+license verification remains required before code reuse.
+
+The [capability matrix](../../../docs/DONORS.md#additional-cloudflare-capabilities-when-they-remove-work) separates small
+reuse opportunities from new deployments. Native `/crawl` can replace a custom site spider for a bounded explicit import;
+an existing MCP portal can replace application-side aggregation. Neither is added to ordinary Ask. Browser crawl events
+are account-wide Queue notifications, unlike the Workflow instance subscriptions selected for the UI. Results still pass
+through retained source revisions and existing scope/coverage rules.
+
+Computer is a candidate for actual scratch-file tools, not another store for notes already saved by jobs. Artifacts is a
+candidate for Git exchange, not the canonical PDF library. A CPU Docling converter on Containers is a feasibility option
+only after native extraction has a demonstrated gap: image/resources/startup and scientific/Russian fidelity remain
+unmeasured. The old blanket donor-platform exclusion is clarified so it cannot forbid a bounded necessary converter,
+while the ban on a second RAG platform remains. No application, schema, dependency or deployment is added by this survey.
+
+Official AI Search recipes already cover source-linked chat and approved knowledge updates, but their dependency examples
+are not uniformly current: the October 12 approval recipe still uses the deprecated provider and AI SDK 6. Read a recipe
+for the mechanism; integrate with the selected current SDK and existing page writer, not a second execution runtime.
+
 ## Scope and verification boundary
 
 Reviewed the current Architecture and Implementation, Donors, coverage register, relevant legacy transport paths and the
 named upstream source/docs. Architecture's product requirements and MAP's delivery ownership remain unchanged. This is
 not a complete reread of every repository or a claim of measured quality parity.
 
-The continuation uses an exact-blob-verified bounded documentation checkout at `5aafdbab`, not a full application clone.
-It updates Implementation, Donors, this existing audit/index and the existing register; no new audit file or runtime
-subsystem is added. The patch changes ordinary Markdown only. No dependency upgrade/install, TypeScript application build, product test,
+Earlier continuations updated the owning Implementation sections. This survey uses a bounded documentation checkout
+reconstructed at `fb88b4c5` and verified against remote Git blobs, not a full application clone. It changes only Donors,
+this existing audit and the existing register; Architecture, Implementation and MAP are unchanged. Candidate integrations
+are not promoted to mandatory product components. No new audit file or runtime subsystem is added. The patch changes ordinary Markdown only. No dependency upgrade/install, TypeScript application build, product test,
 model/search/conversion call, deployment, live-data inventory, migration or deletion was performed. Native APIs still need
 integration evidence. The [single register](../REVIEW-REGISTER.md) retains those open checks; no new runtime gate or
 parallel tracking system is introduced.

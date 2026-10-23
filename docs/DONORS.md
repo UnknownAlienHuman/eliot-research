@@ -262,6 +262,88 @@ The [NotebookLM Enterprise API overview](https://docs.cloud.google.com/gemini/en
 documents notebook/source and audio-overview operations. It does not establish NotebookLM's internal chunking, ranking,
 agent count or a general chat API. Do not invent those internals or add another Google search/index service beside Eliot.
 
+## Cloudflare-native neighboring applications
+
+**Inspected 2026-10-23.** These are evidence-ranked references, not replacement platforms. Pins identify inspected snapshots;
+dates are commit dates, not release or SDK-compatibility claims. No example was deployed or benchmarked here. Read source,
+not only a feature list; a deployment report is not evidence of retrieval quality.
+
+| Reference and inspected revision | Evidence and useful mechanism | Do not import |
+|---|---|---|
+| [Cloud Notebook](https://github.com/SoraKumo001/cloud-notebook/tree/b684523fc1abf23c8da5fd6dc905da16c177b951), `b684523f`, 2026-07-05 | Closest checked NotebookLM-style shape: Workers/Hono, React notebooks, D1/R2, browser PDF parsing, cited chat and MCP. Inspected chat, intake hook and MCP tools. Reuse interaction ideas, per-file progress and one-query passage hydration. | Browser-only parsing as the only intake path; custom Vectorize/embedding stack beside AI Search; custom auth/key encryption/provider codecs; empty-result reindex; generic-answer fallback; truncated source reads presented without continuation. |
+| [Workers Research](https://github.com/G4brym/workers-research/tree/c7ae739907d5f27980fd56e94331aea83f0c7809), `c7ae7399`, 2026-03-15 | Inspected Workflow source: one research function accepts web or AutoRAG strategy, accumulates findings and develops follow-up questions. Latest reviewed commit adds saved-report Q&A. Useful reference for one shared research path rather than separate engines. | Old model/API choices, accumulated summaries without Eliot's context budget, swallowed search errors as empty success, unexamined paid-step retries or breadth/depth recursion as a quality guarantee. |
+| [Deep Research App](https://github.com/YSahloul/deep-research-app/tree/0ac0cc7321e376592055034fd5191bea7c7612be), `0ac0cc73`, 2026-04-18 | Inspected Worker entry: Think plus a persistent SQLite/R2 workspace and file listing/reading beside chat. Useful interaction: inspect saved intermediate material and reopen a report, not just watch status text. | A second Think runtime, old `@cloudflare/shell` APIs, private `_getAllPaths`, deprecated model provider, silent model fallback or unrestricted generic file routes. Existing job step objects can provide the useful view. |
+| [Cloudflare OS](https://github.com/cloudflare/cloudflare-os/tree/03cf8766ecebd6e6b59b7bdd1902eeefc45643eb), `03cf8766`, 2026-10-23 | Official broader human/agent workspace. README inspected, not its complete implementation. Cloudflare reports daily internal use but calls v2 early access. Useful design reference: agents and humans operate on the same visible artifacts/API. | Whole Gadget/Dynamic Worker/Facet OS, per-service Gatekeepers, speculative external-write simulation, sharing/tenancy platform or claims of independently verified research quality. |
+
+### Specific source checks
+
+Cloud Notebook's [chat path](https://github.com/SoraKumo001/cloud-notebook/blob/b684523fc1abf23c8da5fd6dc905da16c177b951/packages/backend/src/chat.ts)
+re-embeds stored chunks when scoped Vectorize search returns zero hits, then searches again. It also falls back to a
+general prompt below a fixed similarity threshold and injects notebook notes. These are not Eliot defaults: Ask must not
+repair the index, buy an unrequested corpus operation or turn missing evidence into an ungrounded answer.
+Its [MCP source getter](https://github.com/SoraKumo001/cloud-notebook/blob/b684523fc1abf23c8da5fd6dc905da16c177b951/packages/backend/src/mcp-tools.ts)
+limits the returned chunks to 50 without a continuation cursor; `chunkCount` counts those returned rows. Keep Eliot's
+explicit coverage and range continuation. Its
+[intake stream reader](https://github.com/SoraKumo001/cloud-notebook/blob/b684523fc1abf23c8da5fd6dc905da16c177b951/packages/frontend/src/hooks/useIngestPipeline.ts)
+throws on an error event inside a catch that ignores parse failures. This static path can swallow a server error;
+it was not executed in this pass. Do not port the hook wholesale.
+
+Workers Research's [shared Workflow](https://github.com/G4brym/workers-research/blob/c7ae739907d5f27980fd56e94331aea83f0c7809/src/workflows.ts)
+is a concrete small orchestration example, not a reason to add its search transport. A
+[June 2025 user report](https://github.com/G4brym/workers-research/issues/9) describes quota exhaustion during recursive
+research; it remained open when checked. That historical report is not a reproduced defect of the March 2026 pin.
+Retain Eliot's current partial-result, scope and total-budget rules instead of assuming recursion or a successful demo
+proves them. The [Think sample entry](https://github.com/YSahloul/deep-research-app/blob/0ac0cc7321e376592055034fd5191bea7c7612be/src/server.ts)
+is likewise a mechanism/UI reference, not an installed SDK recipe or an authorization template.
+
+No third-party code was copied. License compatibility must be checked at the selected file/revision before copying;
+Cloud Notebook's root `LICENSE` lookup returned 404, which is unresolved licensing evidence, not a legal conclusion.
+None of these inspected paths establishes the complete Eliot requirement set: shared versioned library, exact retained
+citations, full-document coverage, knowledge refresh and independently verified English/Russian research quality.
+
+## Additional Cloudflare capabilities: when they remove work
+
+These are optional reuse choices, not additional requirements for the initial shell. Existing Architecture/Implementation
+remain authoritative. A candidate must replace a concrete responsibility; availability alone does not justify another
+store, execution loop or deployment.
+
+| Need | Native option and current evidence | Eliot decision |
+|---|---|---|
+| Explicit bounded website import | [Browser Run `/crawl`](https://developers.cloudflare.com/browser-run/quick-actions/crawl-endpoint/) (beta; guide updated October 10): asynchronous site traversal, page/depth/pattern limits, HTML/Markdown output, optional JS rendering | Prefer it over building a crawler fleet when site-wide capture is requested. Reuse ingest/version writers; ordinary one-URL capture and Ask do not start a crawl. |
+| Several already configured remote MCP servers | [MCP server portals](https://developers.cloudflare.com/cloudflare-one/access-controls/ai-controls/mcp-portals/): managed aggregation, upstream authorization and selected tool exposure | An existing portal may be one outgoing connection, not a new Eliot proxy or custom OAuth broker. Ordinary direct connections remain sufficient. |
+| Agent file editing or calculations over scratch material | [Cloudflare Computer](https://developers.cloudflare.com/agents/tools/filesystem/): `@cloudflare/computer` Workspace in Durable Object SQLite, file tools and optional execution backend | Defer until a real job needs file operations. Existing saved step objects suffice for intermediate notes. No second canonical Library or required Think runtime. |
+| Hard PDF/OCR extraction missing from the native path | [Containers](https://developers.cloudflare.com/containers/) plus the [Docling Serve CPU image](https://github.com/docling-project/docling-serve#container-images) | Feasibility candidate for one bounded converter, not a selected deployment. Compare native extraction first; preserve originals, ordered output, warnings and mappings through the existing revision writer. |
+| Git-compatible exchange of curated Markdown | [Artifacts](https://developers.cloudflare.com/artifacts/) and [limits](https://developers.cloudflare.com/artifacts/platform/limits/) | Defer to an actual Git-export/branching consumer. Do not replace D1/R2 or introduce bidirectional canonical writes. The October 21 limits page gives new repositories a 1 GB ceiling; this is not an unrestricted PDF archive. |
+
+For `/crawl`, request HTML and Markdown together when both are needed, and retain returned representations plus actual
+provenance before temporary results expire. Rendered HTML is a browser snapshot, not proof of original HTTP bytes; never
+refetch a changing URL to manufacture that association. Use static fetching when it suffices. Inspect page outcomes and
+paginate retained results; job completion and the `skipped` list do not prove whole-site coverage. Respect scope, cached
+age and denied pages. Account-wide Queue events carry lifecycle, not page content; bounded status polling inside the
+existing Workflow is sufficient initially, without a new broker. This is distinct from Workflow UI subscriptions.
+
+A portal's ordinary exposed tools fit Eliot's existing discovery/classification. Context-optimized discovery/execution is
+conditional: a generic execute tool must not become blanket approval for hidden write/spend operations. Resolve the
+selected underlying tool and keep its scope/classification, or restrict that portal to an approved read-only set. Use
+native curated exposure rather than rebuilding a portal; no recurring qualification or per-read approval is added.
+
+Computer scratch files are not approved research pages. Keep captured inputs read-only and publish through the existing
+page writer. Artifacts is an optional exchange format, not a second source of truth. Container feasibility is also not a
+quality result: [current instance/image limits](https://developers.cloudflare.com/containers/platform/limits/), model
+weights, startup, memory, throughput and Russian/table fidelity must fit the chosen converter. The published Docling CPU
+image is multi-gigabyte, so do not assume the smallest instance or a cheap cold start. No container was built here.
+
+### Official recipes versus a complete research product
+
+Cloudflare supplies [search with a separate generation model](https://developers.cloudflare.com/ai-search/how-to/bring-your-own-generation-model/),
+[fetch/index a page](https://developers.cloudflare.com/ai-search/how-to/fetch-and-index-web-pages/),
+[source citations](https://developers.cloudflare.com/ai-search/how-to/chunk-citations/) and
+[human-approved knowledge writes](https://developers.cloudflare.com/ai-search/how-to/human-in-the-loop-knowledge-base/).
+These confirm supported building blocks, not exact-revision provenance or independent answer-quality measurements.
+The October 12 approval tutorial still installs `ai@6` and `workers-ai-provider` and uses experimental Code Mode; reconcile
+it with the October 21 provider migration rather than pasting its installation/runtime over Eliot's selected SDKs.
+Keep the existing proposals/page writer and direct-edit option; do not mandate a pause before every contribution.
+
 ## Selected donor mechanisms
 
 These are code/design references, not deployed dependencies.
@@ -271,7 +353,7 @@ These are code/design references, not deployed dependencies.
 | [Dify parent/child processor `5c59b9c`](https://github.com/langgenius/dify/blob/5c59b9cbf649c3fffd52c980e11ea85670c0891c/api/core/rag/index_processor/processor/parent_child_index_processor.py) | Retrieve a focused child while hydrating meaningful parent/heading context. | Dify runtime, pipeline builder, licensing-sensitive platform code or a second index. |
 | [RAGFlow budget-stop agent `e2401e5`](https://github.com/infiniflow/ragflow/blob/e2401e54947db7eb5e542b6de26755d89886f783/internal/agentic_rag/agent.go) | Preserve gathered findings and synthesis reserve at a budget stop. | Detached cancellation, whole agent framework or default multi-agent research. |
 | [RAGFlow knowledge compilation docs](https://ragflow.io/docs/v1.0.0-rc2/knowledge_compilation/overview) | Show changed inputs and make knowledge refresh explicit. | Whole-dataset compiler, graph store or silent Wiki regeneration. |
-| [Docling HybridChunker `b359e1c`](https://github.com/docling-project/docling-core/blob/b359e1c377aa8e3846ffb4100f7b513eb89ebd0c/docling_core/transforms/chunker/hybrid_chunker.py) | Token-aware structure, exact heading/caption context, repeated table headers and valid row/column table groups when splitting. | Python parser service, semantic assumptions absent from retained Markdown or claims of perfect original coordinates. |
+| [Docling HybridChunker `b359e1c`](https://github.com/docling-project/docling-core/blob/b359e1c377aa8e3846ffb4100f7b513eb89ebd0c/docling_core/transforms/chunker/hybrid_chunker.py) | Token-aware structure, exact heading/caption context, repeated table headers and valid row/column table groups when splitting. | A Python service merely to split retained Markdown, semantic assumptions absent from it or claims of perfect original coordinates. |
 | [LightRAG purge contract `aaebfe1`](https://github.com/HKUDS/LightRAG/blob/aaebfe1bb8d55deb6a4304d357a3bf4c92fcd40a/docs/design/PurgeRecoveryContract.md) | Attribute derived data before mutation and reconcile cleanup. | Graph purge/runtime or automatic deletion of retained report text. |
 | [SurfSense citation resolver `e3de9e0`](https://github.com/MODSetter/SurfSense/blob/e3de9e0d293b2ebb1fb813628ecc1d6f26909396/surfsense_local/backend/modules/chat/prompt.py) | Server-issued labels, per-document grouping, unknown-label removal and no-hit/indexing distinctions. | Regex as a security boundary or Python chat runtime. |
 | [WeKnora Wiki writer `e28c68c`](https://github.com/Tencent/WeKnora/blob/e28c68cf552cc1aba2fc923a73b0ab23a33bcb55/internal/application/repository/wiki_page.go) | Expected-version update and previous-revision snapshot in one transaction. | GORM, blind force writes or a second Wiki store. |
@@ -300,7 +382,8 @@ function lives nearby.
 
 ## Explicit exclusions
 
-- Do not deploy Dify, RAGFlow, LightRAG, Docling, SurfSense, WeKnora, OpenNotebook, OpenViking or EdgeQuake as Eliot services.
+- Do not deploy donor research platforms as the default Eliot runtime. The conditional Docling converter above is a
+  bounded extraction candidate, not permission to deploy a second RAG/Wiki platform or a converter marketplace.
 - Do not add direct Vectorize, custom FTS, another retrieval provider, graph database, generic workflow builder,
   connector framework, converter marketplace, agent harness, judge chain or automatic memory subsystem without a measured missing capability.
 - Do not use AI Search OCR as unretained canonical evidence or generated image descriptions as literal source text.
