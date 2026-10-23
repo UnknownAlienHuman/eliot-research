@@ -26,37 +26,47 @@ A **project** and a **notebook** are the same stored/UI object. Do not create pa
 The **Library** owns a source once. Projects attach sources through memberships. A source can belong to many
 projects without duplicating its canonical bytes. Every captured or reparsed representation is an immutable
 **source revision**. Notes, digests, reports, maps, audits and Wiki pages are versioned **knowledge pages**.
-Primary evidence citations point to exact source-revision bytes. Saved-page references open the retained page revision
-and are labelled derived knowledge; they do not turn generated prose into an independent primary source.
+Primary evidence citations point to exact UTF-8 byte ranges in the retained readable representation of one source
+revision. Original-file page, table and figure coordinates are separate navigation hints with explicit fidelity; they do
+not replace the canonical range. Saved-page references open the retained page revision and are labelled derived knowledge;
+they do not turn generated prose into an independent primary source.
 
 ## Required capabilities
 
 | Area | The complete product must provide |
 |---|---|
 | Projects | Create, rename, archive, open and switch projects; use several projects in separate tabs; preserve each project's drafts, source selection, chat history, model/tool settings and jobs independently; explicitly compare selected projects and choose where the result is saved. |
-| Library | Batch upload files, add URLs or text, keep originals, inspect extraction quality, edit metadata, detect exact duplicates, attach one source to several projects, replace/reparse into a new revision, exclude from retrieval, detach, archive or deliberately delete. |
-| Reading | Open the original and canonical readable representation, navigate headings/pages/tables/code, inspect retained revisions and obtain a short source card whose coverage is stated. Reading must work while search or model services are unavailable. |
+| Library | Batch upload files, add URLs or text, keep originals, inspect extraction quality and omissions, edit metadata, detect exact duplicates, attach one source to several projects, replace/reparse into a new revision, exclude from retrieval, detach, archive or deliberately delete. Unsupported, empty or unreliable conversions remain stored and visibly need conversion; they are not silently indexed as readable. |
+| Reading | Open the original and canonical readable representation, navigate headings and only observed or verified page/table/figure anchors, inspect retained revisions and obtain a short source card whose coverage is stated. Reading must work while search or model services are unavailable. |
 | Retrieval | Find exact identifiers and semantic matches across English and Russian material; filter by project, source, author, date, language, type and tags; preserve source scope before retrieval; return coherent sections and table context rather than arbitrary fragments; distinguish relevant hits from complete coverage. |
-| Evidence | Open every citation against retained revision bytes; preserve old citations after source replacement; expose missing, ambiguous, deleted, still-indexing and partially searched evidence honestly; never let a model invent source IDs or byte ranges. |
+| Evidence | Open every citation against retained readable-revision bytes; preserve old citations after source replacement; expose missing, ambiguous, deleted, still-indexing, partially extracted and partially searched evidence honestly; never let a model invent source IDs, byte ranges or original-page coordinates. Generated image descriptions are discovery aids, not literal quotations or OCR. |
 | Models | Configure Workers AI, AI Gateway catalog/BYOK routes and compatible custom endpoints through an owner UI; keep a visible capability profile for each selectable model/route (context/output bounds, streaming, tools, structured output and supported input types); choose simple global/project chat and research defaults plus turn/job overrides; never dispatch an operation to a route that does not meet its declared minimum; display the resolved route and billing mode; keep credentials in Cloudflare, not application tables or browser storage. |
 | Chat | Ask ordinary questions over explicit/default/empty source scope; stream a grounded synthesis; keep response style/length/instructions and selected model/tools; follow up without losing scope; stop or reconnect; reopen conversations; save a cited answer as knowledge. A no-tool turn performs one synthesis. A tool-assisted turn is explicitly selected, exposes only approved tools and has a short hard-capped tool loop; SDK tool-result auto-continuation is disabled and Eliot admits at most one controlled continuation for the submitted attempt. It never silently becomes deep research. |
-| Distillation | Create a quick guide, full source digest, multi-source comparison or research report; process long sources by sections; preserve methods, findings, limitations, disagreements and negative results; record covered, skipped and failed material. |
+| Distillation | Create a quick guide, full source digest, multi-source comparison or research report; process long sources by sections; preserve methods, findings, limitations, disagreements and negative results; record covered, skipped, failed and unextractable material. |
 | Knowledge | Save, search by content, edit, compare, export and reopen accepted notes, digests, reports and Wiki pages with immutable history; mark affected pages stale when inputs change; refresh only affected knowledge; preserve owner edits and rejected proposals. |
 | Corpus Map | Provide a compact navigational map of sources, topics, versions/timeline, source families, contradictions, gaps and suggested reading routes. Map edges are derived navigation with exact source links, not a graph database or evidence authority. |
-| Audits and maintenance | Show unreadable or unindexed sources, duplicate/version candidates, stale pages, unresolved citations, incomplete coverage, abandoned work and removable derived/index data. Produce proposed actions; never auto-delete originals or accepted knowledge. Keep a small attributable activity history. |
+| Audits and maintenance | Show unreadable or unindexed sources, duplicate/version candidates, stale pages, unresolved citations, incomplete extraction/search coverage, abandoned work and removable derived/index data. Produce proposed actions; never auto-delete originals or accepted knowledge. Keep a small attributable activity history. |
 | Deep research | Find candidate sources through a lightweight explicit search, or start an explicit durable investigation over selected library scope, optional web discovery and selected external tools; show progress, sources, spending limits, partial findings and cancellation; capture web evidence before citing it. |
 | Incoming MCP | Expose Eliot to external agents through standard Streamable HTTP MCP: projects, source search/read/add/update, pages, jobs, tasks and results. Agents may reason with their own models without buying Eliot answer generation; native search/indexing still uses Cloudflare resources. |
 | Outgoing MCP | Let the owner connect selected remote MCP servers as tools for Eliot chat/research using the Cloudflare Agents SDK client. Tools are scoped and explicitly enabled; mutating tools require an owner decision or a pre-authorized job, not repeated ceremony around read-only calls. |
 | Agent collaboration | Bind a connected agent to verified identity, project scope and operations; let it accept/decline owner offers or claim open tasks; save one attributable result; use review or direct-edit mode per project; make paid Eliot jobs a separate permission. |
-| Data ownership | Export originals, readable revisions, metadata, knowledge history, citations, tasks and usable chat history. Chat export is a versioned product snapshot built from supported Agent message/state APIs and retained large-body references, not a dump of private SDK tables. Preserve real data and acknowledged outcomes during replacement of the old implementation. |
+| Data ownership | Export originals, readable revisions, conversion profiles and warnings, metadata, knowledge history, citations, tasks and usable chat history. Chat export is a versioned product snapshot built from supported Agent message/state APIs and retained large-body references, not a dump of private SDK tables. Preserve real data and acknowledged outcomes during replacement of the old implementation. |
 
 ## What the owner can rely on
 
 ### Canonical data before derived convenience
 
 Original bytes and canonical readable text are retained independently of indexes, guides and model output.
-A parser change creates a new revision. A search index is disposable. A source card, digest, corpus map or
-Wiki page helps navigate; evidence still opens the source revision that supported the statement.
+A parser, OCR path or corrected mapping creates a new revision. Exact citations address the immutable readable text;
+page/table/figure anchors remain separately typed as verified, observed or unavailable. A search index is disposable.
+A source card, digest, generated image description, corpus map or Wiki page helps navigate; evidence still opens the
+source revision that supported the statement.
+
+Direct Workers AI Markdown Conversion and OCR inside AI Search are not treated as the same pipeline. Eliot publishes a
+usable readable head only when it has retained ordered text. A scan whose direct conversion is empty or unreliable remains
+`stored_needs_conversion` until an explicit converter returns retained text with declared mapping, or the owner/agent
+provides normalized Markdown as a new revision. Hidden index OCR never becomes canonical evidence merely because search
+returned a chunk.
 
 ### Retrieval is a staged read, not “top-k chunks”
 
@@ -64,11 +74,13 @@ Known material is read directly. Focused questions use scoped hybrid retrieval a
 canonical section. Bounded same-scope reading/refinement needs no new owner instruction. Sources, saved knowledge
 and a deliberate combined view are distinct search targets; drafts and repeated generated reports cannot masquerade
 as additional evidence. Broad comparisons first identify relevant sources and coverage, then open supporting sections.
-Tables retain captions, headers, units and relevant rows. Duplicate excerpts do not consume the context budget.
-A global top-k result never certifies that every selected document was examined. Indexing failures and unreadable
-parts remain in the coverage denominator; a successful search response is not complete-corpus evidence. Processing
-all extracted text is not proof that extraction retained every figure, table or appendix. Reading all sections also
-does not make a truncated final synthesis complete: retain coverage and output-completion status separately.
+Tables retain exact captions, headers, units and relevant rows when conversion actually preserved them; uncertain layout
+stays prose rather than becoming a fabricated table. Duplicate excerpts do not consume the context budget.
+A global top-k result never certifies that every selected document was examined. Indexing failures, unreadable parts,
+unprocessed frames/figures and extraction omissions remain in the coverage denominator; a successful search response is
+not complete-corpus evidence. Processing all extracted text is not proof that extraction retained every figure, table or
+appendix. Reading all sections also does not make a truncated final synthesis complete: retain coverage and output-
+completion status separately.
 
 ### Several projects do not interfere
 
@@ -118,8 +130,9 @@ authorization instructions. Tool availability, source scope and budgets are host
 Each source revision has:
 
 - normalized bibliographic metadata and origin;
-- canonical readable text;
-- a deterministic block/outline map with byte ranges and page/table hints;
+- original bytes and one immutable canonical readable representation when available;
+- converter identity/options, output digest, warnings, known omissions and anchor fidelity;
+- a deterministic block/outline map with exact readable-text ranges and optional typed page/table/figure hints;
 - an optional generated source card or digest with explicit coverage.
 
 A project may have a versioned Corpus Map rendered as a list, tree, timeline or mind map. Its finite node types
@@ -159,10 +172,12 @@ responsibility, not to mirror every transport or donor.
 5. Add an abstraction only when it removes existing duplication or isolates a changing platform API.
 6. Keep SQL relational and short. Put workflow decisions in readable TypeScript, not triggers or JSON policy algebra.
 7. No custom search engine, billing ledger, OAuth issuer, cryptographic proof chain, event-sourcing platform,
-   workflow DSL, generic agent governor or model-qualification service.
+   workflow DSL, generic agent governor, converter marketplace or model-qualification service.
 8. Do not run a model merely to route every request, approve every chunk or restate a provider result.
-9. Audits identify reproducible product problems and proposed actions. They are not an approval bureaucracy.
-10. Build vertical slices with scoped compile/lint checks. Evaluate quality and performance on the assembled product,
+9. Parse provider responses for required fields and stable discriminants; do not fail because an API added an unrelated
+   field or recreate the old exact-shape contract stack.
+10. Audits identify reproducible product problems and proposed actions. They are not an approval bureaucracy.
+11. Build vertical slices with scoped compile/lint checks. Evaluate quality and performance on the assembled product,
     then change the measured bottleneck instead of adding speculative machinery.
 
 ## Scope boundary
