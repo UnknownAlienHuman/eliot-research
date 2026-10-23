@@ -16,6 +16,9 @@ AI Search keyword/readiness APIs and maintained Markdown parsing. Upstream avail
 The continuation from `fb88b4c5` adds a pinned Cloudflare-native application survey and conditional crawl/portal,
 scratch/Git/converter choices in [Donors](../../docs/DONORS.md#cloudflare-native-neighboring-applications). These do not
 expand the required runtime or establish quality parity.
+The [intake/storage and scope pass](2026-10-23/CLOUDFLARE-REUSE.md#9-retained-bytes-streaming-intake-and-honest-large-scope-limits)
+checks current native byte/stream boundaries. It resolves the page JSON/range mismatch in the design and explicitly
+retains the large-selection search path as unresolved rather than calling it a completed feature.
 
 ## Status meanings
 
@@ -33,11 +36,12 @@ expand the required runtime or establish quality parity.
 | Model connections, BYOK and capability profiles | rechecked; native createAI boundary | selected upstream/legacy transport paths checked | runtime pending | Compile the native provider; confirm named-alias billing conflict, route-specific ZDR and actual fallback behavior. |
 | Ordinary chat, recovery and bounded tool continuation | covered; findings 3, 6, 18, 28, 30 | partial | runtime pending | Verify native queue with frozen submission settings, navigation versus Stop, same-run replay versus new paid attempts, server continuation, rendered budgets/output projections and large-body retention. |
 | Portable chat history | covered; findings 29–31 | partial | runtime pending | Classify actual legacy history stores; prove large-body readback and resumable target import with no model/tool execution. |
-| File intake and readable representation | covered; findings 32–35, 37–38 | partial | runtime pending | Verify installed conversion types and exercise representative PDF/HTML/office/image inputs; no live quality claim yet. |
+| File intake and readable representation | rechecked; actual-byte/converter/parse ceilings | native limits/docs checked; conversion quality partial | runtime pending | Exercise headerless intake, known-length and bounded-buffer/multipart intake, streaming hash/storage, converter/AST memory and representative PDF/HTML/office/image inputs. |
+| Retained source/page bodies | rechecked; plain Markdown plus structured sidecar | R2 range and Workflow stream APIs checked | runtime pending | Verify UTF-8 ranged reads, short bodies, atomic revision references, old-envelope import and no duplicate large checkpoints. |
 | Structural parsing, tables and exact coordinates | covered; findings 2, 5, 34–36, 38 | partial | runtime pending | Compile the fixed remark pipeline; verify UTF-16→UTF-8 boundaries, escaped tables/math, segment maps and declared oversized-node omissions. |
 | AI Search publication, readiness and reindex | covered; findings 1, 5, 16, 21, 26, 33 | partial | runtime pending | Verify native status/chunk APIs, upload/poll timeout without reupload, exact-key reconciliation, live reindex handoff, OCR separation and current limits. |
-| Retrieval, citation mapping and coverage | covered; findings 1–3, 16–17, 21–23, 34–36 | partial | runtime pending | Measure hybrid and explicit native-keyword modes on the same scoped English/Russian corpus; literal verification, late facts, tables and all-document coverage remain pending. |
-| Web discovery and capture | rechecked; SDK helpers and optional native crawl | SDK sources and current crawl guide checked | runtime pending | Verify one-URL snapshots; for selected site import verify native job/page status, result pagination/retention and snapshot provenance without URL refetch. |
+| Retrieval, citation mapping and coverage | large-selection path unresolved; other design covered | filter/result limits and OpenAPI checked; binding behavior partial | runtime pending | Prove complete 50/500-source scope fits the chosen path; then measure English/Russian recall, literal verification, late facts, tables and all-document coverage. |
+| Web discovery and capture | rechecked; negotiated Markdown and optional native crawl | SDK/crawl docs plus October 9 Markdown release checked | runtime pending | Verify one-acquisition Markdown/HTML provenance, missing headers, error pages and representation-aware refresh; crawl results still need retention and pagination. |
 | Cloudflare-native neighboring applications | pinned survey recorded | three selected source paths plus official OS README; not exhaustive | not run | Trace useful notebook/MCP, shared research and intermediate-artifact journeys; check licenses before copying; no fork or quality-parity claim. |
 | Optional platform substitutions | crawl/portal considered; Computer/Artifacts/converter conditional | primary docs and Docling image documentation reviewed | not selected or not integrated | Add only for an actual missing operation; check portal subtool semantics, native limits and converter corpus quality before changing the runtime. |
 | Distillation and multi-document comparison | covered; findings 4, 12, 19 | partial | runtime pending | Exercise multi-level reduction, output truncation, negative findings, quantitative conditions and partial completion. |
@@ -52,10 +56,11 @@ expand the required runtime or establish quality parity.
 
 ## Active queue
 
-1. **Installed Cloudflare SDK contract pass.** Build from the reviewed candidate using native createAI/web tools, generate declarations and compile; do not port old transport/codecs. Compile native subscribe/status/keyword APIs and the fixed parser too; confirm replay/alias/ZDR/output-projection semantics in the first integrations.
-2. **Access and MCP integration.** Verify the selected two-host deployment, browser/WebSocket Origin, actual identities and required client handshakes; no production change is authorized by this review.
-3. **Legacy-data and capability reconciliation.** Complete source-to-user-action traces and actual data/writer inventory, including research profiles and legacy chat stores. Never broaden permissions while removing old machinery.
-4. **UI and multi-project pass.** Follow real user journeys through remaining legacy screens and the target data model.
-5. **Runtime evidence after assembly.** Representative conversion/retrieval benchmark, concurrency/race exercises, export/import and latency/cost measurements. Evaluate optional Clairic only as a replacement for an existing extraction call, never as a new gate.
+1. **Large-scope retrieval feasibility.** Validate the exact 50/500-source filter/projection path with the installed binding; distinguish search limits from related Items/Vectorize limits. Do not mark ordinary large-project search complete on fallback-to-narrowing alone.
+2. **Installed Cloudflare SDK contract pass.** Build from the reviewed candidate using native createAI/web tools, generate declarations and compile; do not port old transport/codecs. Compile native subscribe/status/keyword/range APIs and the fixed parser; verify streaming intake/page-sidecar publication without buffering the corpus; confirm replay/alias/ZDR/output-projection semantics in the first integrations.
+3. **Access and MCP integration.** Verify the selected two-host deployment, browser/WebSocket Origin, actual identities and required client handshakes; no production change is authorized by this review.
+4. **Legacy-data and capability reconciliation.** Complete source-to-user-action traces and actual data/writer inventory, including research profiles and legacy chat stores. Never broaden permissions while removing old machinery.
+5. **UI and multi-project pass.** Follow real user journeys through remaining legacy screens and the target data model.
+6. **Runtime evidence after assembly.** Representative conversion/retrieval benchmark, concurrency/race exercises, export/import and latency/cost measurements. Evaluate optional Clairic only as a replacement for an existing extraction call, never as a new gate.
 
 The active queue is reordered only when a new finding changes risk or dependency order. Completed work is linked to a dated audit; canonical decisions are changed in their owning document rather than copied here.

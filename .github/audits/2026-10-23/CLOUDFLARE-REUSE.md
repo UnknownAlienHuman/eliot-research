@@ -158,16 +158,108 @@ Official AI Search recipes already cover source-linked chat and approved knowled
 are not uniformly current: the October 12 approval recipe still uses the deprecated provider and AI SDK 6. Read a recipe
 for the mechanism; integrate with the selected current SDK and existing page writer, not a second execution runtime.
 
+## 9. Retained bytes, streaming intake and honest large-scope limits
+
+**Rechecked:** 2026-10-23, baseline `f284a579f39416b6a7b5361145fc30cd060bfd80`.
+This pass changes the owning Implementation sections and the existing register, not the product scope or runtime.
+
+### Negotiated Markdown removes a conversion, not the obligation to retain the source
+
+The [October 9 streaming-conversion release](https://developers.cloudflare.com/changelog/post/2026-10-09-markdown-for-agents-in-process-conversion/)
+removed generated token-count headers and `Content-Length`; the current
+[Markdown for Agents guide](https://developers.cloudflare.com/fundamentals/reference/markdown-for-agents/)
+also documents representation-aware `Vary: Accept` and removal of original-body validators. The guide's 6 MiB limit is
+on decompressed HTML input at the serving zone, not Eliot's captured output size or available parse memory.
+
+**Decision:** a successful negotiated Markdown response takes Eliot's existing local UTF-8 path and is retained as the
+actual captured representation. Do not call `toMarkdown` again, insist on removed headers, copy third-party response
+headers onto a private reader, or fetch HTML afterward and pretend it is the original of an earlier snapshot. A request
+for original/rendered HTML stays explicit. Status/challenge/error content cannot become ordinary source evidence simply
+because it is Markdown. This is one acquisition and one canonical representation, not a new converter abstraction.
+
+### JSON-envelope storage did not match direct byte-range reading
+
+The baseline Implementation stored `page/<revision>.json` but defined page offsets over decoded Markdown and called for
+R2 range hydration. R2 ranges address stored object bytes; escaping, JSON structure and decoded text are different byte
+sequences. A reader could decode the whole envelope correctly, but would lose the intended bounded-read advantage.
+This is a specification mismatch, not a reproduced runtime corruption.
+
+**Decision:** store `page/<revision>/body.md` plus optional `data.json` for resolved citations and structured Map/Audit
+payloads. The existing revision writer publishes the needed references together; the sidecar never duplicates body text.
+Source and page readers share the native [R2 range operation](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/#ranged-reads).
+Merge useful adjacent ranges, bound concurrent reads, consume/cancel bodies and verify returned length. No invented R2
+batch-get method, whole-document reload per hit, extra search store or per-read cryptographic verification is introduced.
+Old envelopes are decoded once by import; their offsets are not blindly applied to their JSON serialization.
+
+### Streaming storage does not make full parsing memory-free
+
+Current [Workers limits](https://developers.cloudflare.com/workers/platform/limits/) document 128 MB per isolate and six
+simultaneous outbound connections per request; an isolate can handle multiple requests. A native conversion example that
+uses `arrayBuffer()` is not evidence that arbitrary-size uploads plus decoded text and AST fit. A parse library still
+materializes structure. The prior donor review's optional CPU converter remains an escape hatch, not a compulsory service.
+
+**Decision:** distinguish stored-file, converter and parse ceilings. Stream/count actual intake bytes; use native
+[DigestStream](https://developers.cloudflare.com/workers/runtime-apis/web-crypto/#constructors) for the existing one-time
+intake hash without an unread tee branch accumulating the payload. Keep original retention independent of conversion;
+never call a retained/truncated prefix a complete document. Use bounded document/section processing rather than loading
+a whole comparison corpus. Storage and metadata must finish before a durable-upload acknowledgement.
+
+The inspected [workerd R2 writer](https://github.com/cloudflare/workerd/blob/e9930cbd5804153499ba161c877f61b35a7affe4/src/workerd/api/r2-rpc.c++#L243-L260)
+requires a known identity length for stream input. The inspected bucket call supplies no alternative length. An arbitrary
+transform or headerless converted response therefore cannot be assumed directly acceptable merely because its TypeScript
+type is `ReadableStream`. This is source evidence, not a deployed upload reproduction.
+
+**Correction:** preserve an exact known length (or `FixedLengthStream`), use bounded bytes for small unknown-length input,
+and choose native [multipart](https://developers.cloudflare.com/r2/objects/upload-objects/) only for an actual larger-input
+requirement. Parts must have known sizes; use a fresh attempt key and publish its reference after complete/readback rather
+than assuming multipart completion supports the same create-only precondition as `put`. Retain cleanup of incomplete
+uploads. No separate upload service, request-body buffering without a ceiling or invented native stream support.
+
+Current [Workflow limits](https://developers.cloudflare.com/workflows/reference/limits/) and
+[step result rules](https://developers.cloudflare.com/workflows/build/rules-of-workflows/#keep-non-stream-step-return-values-under-1-mib)
+allow byte-stream results in JavaScript as well as non-stream results under 1 MiB. Streams still consume finite instance
+storage and are not long-term export. Retained results continue to use R2 plus references; native stream checkpoints are
+only a candidate for transient output that would otherwise need extra plumbing. No second copy by default.
+
+### Scope capacity is still an integration/design risk, not merely a benchmark
+
+The [AI Search limits](https://developers.cloudflare.com/ai-search/platform/limits-pricing/),
+[filter guide](https://developers.cloudflare.com/ai-search/configuration/retrieval/filtering/) and
+[search API](https://developers.cloudflare.com/ai-search/api/search/workers-binding/) establish five custom fields,
+64 filterable UTF-8 bytes per string, ten instances per namespace query and at most fifty returned chunks. They do not
+say only fifty sources may be selected. Stored arrays cannot implement arbitrary many-to-many membership with `$in`.
+
+The inspected Cloudflare OpenAPI search operation leaves `filters` as an object without a size maximum. By contrast,
+the [Items-list schema](https://developers.cloudflare.com/api/typescript/resources/ai_search/subresources/namespaces/subresources/instances/subresources/items/methods/list/)
+limits `metadata_filter` to 2048 characters and [Vectorize](https://developers.cloudflare.com/vectorize/reference/metadata-filtering/)
+limits compact JSON filters to less than 2048 bytes. These related limits are a warning, not proof of an identical limit
+on every AI Search retrieval mode. No live AI Search call was made to settle that question.
+A local compact-JSON size calculation using 36-character UUIDs plus `record_kind: {"$in":["prose","table","code"]}`
+produced 2,022 bytes for 50 revision IDs and 19,572 bytes for 500. This demonstrates sensitivity to encoding and clauses,
+not an observed AI Search rejection or a recommended fixed source-count cap.
+
+**Decision:** measure the complete filter and validate the actual required 50/500-source path during integration, not on
+every turn. Do not discard a selection, trust arrays as indexed membership, confuse result count with selected-source
+capacity or call partition-local ranks a single global ranking. A scope-preserving native projection or bounded direct
+read may fit; automatic narrowing and silently launching full research do not. The register explicitly leaves the fast
+large-selection path unresolved; its advertised latency target is not proof of a deployable solution.
+
+Implementation's duplicated final acceptance list is replaced with links to MAP and a short list of integration-specific
+checks. Existing feature/cancellation/import requirements remain in their owning sections; no new approval checklist.
+
 ## Scope and verification boundary
 
 Reviewed the current Architecture and Implementation, Donors, coverage register, relevant legacy transport paths and the
 named upstream source/docs. Architecture's product requirements and MAP's delivery ownership remain unchanged. This is
 not a complete reread of every repository or a claim of measured quality parity.
 
-Earlier continuations updated the owning Implementation sections. This survey uses a bounded documentation checkout
-reconstructed at `fb88b4c5` and verified against remote Git blobs, not a full application clone. It changes only Donors,
-this existing audit and the existing register; Architecture, Implementation and MAP are unchanged. Candidate integrations
-are not promoted to mandatory product components. No new audit file or runtime subsystem is added. The patch changes ordinary Markdown only. No dependency upgrade/install, TypeScript application build, product test,
-model/search/conversion call, deployment, live-data inventory, migration or deletion was performed. Native APIs still need
-integration evidence. The [single register](../REVIEW-REGISTER.md) retains those open checks; no new runtime gate or
-parallel tracking system is introduced.
+The latest continuation uses one bounded documentation checkout reconstructed at `f284a579` and checked against the
+remote Git blob IDs, not a full application clone. It changes Implementation, this existing audit and the single register;
+Architecture requirements and MAP delivery order remain unchanged. No new audit file or runtime subsystem is added.
+The related OpenAPI schemas and selected workerd R2 write path were inspected; no live limit/upload behavior was inferred
+from a successful production call. Earlier donor/code checks remain dated evidence, not a claim of a fresh exhaustive review.
+
+Only Markdown changed. No dependency upgrade/install, TypeScript application build, product test, model/search/conversion
+call, deployment, live-data inventory, migration or deletion was performed. Native APIs still need integration evidence.
+The [single register](../REVIEW-REGISTER.md) retains those checks, particularly the unresolved large-selection retrieval
+path; no new runtime gate or parallel tracking system is introduced.

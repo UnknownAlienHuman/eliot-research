@@ -1,6 +1,6 @@
 # Eliot Research — Implementation
 
-Target implementation, native progress/parsing/retrieval review 2026-10-23. It implements
+Target implementation, native intake/storage and scope review 2026-10-23. It implements
 [ARCHITECTURE](ARCHITECTURE.md). [MAP](MAP.md) owns delivery order and legacy source locations.
 [DONORS](DONORS.md) records current platform APIs and donor mechanisms. This document specifies the
 replacement; it is not evidence that the replacement is deployed, migrated or fast.
@@ -269,7 +269,7 @@ content signatures or JSON business logic in triggers.
 | `project_source` | Project/source membership, retrieval enabled and project-local note/priority |
 | `search_item` | Exactly one source- or page-revision FK, instance, key/ID, block/range/kind and publication state |
 | `page` | Project, kind (`note/digest/report/wiki/map/audit`), state/retrieval flag, optional slug, accepted head, draft key/version and summary |
-| `page_revision` | Page, base revision, immutable body, actor/decision, default freshness mode (`follow_current`/`snapshot`), origin and timestamps |
+| `page_revision` | Page, base revision, immutable Markdown body key/size plus optional structured-data key, actor/decision, default freshness mode (`follow_current`/`snapshot`), origin and timestamps |
 | `page_input` | Page revision → exactly one source or page revision used; resolved `follow_current`/`snapshot` mode per dependency; indexed both directions |
 | `chat` | Stable ID, immutable destination project, title, snapshot/export state and timestamps; transcript/state remains in its DO |
 | `chat_input` | Chat/turn → exactly one frozen source/page revision; query projection only |
@@ -305,7 +305,8 @@ source/<revision>/conversion.json
 source/<revision>/outline.json
 source/<revision>/blocks.json
 source/<revision>/card/<card-id>.json
-page/<revision>.json
+page/<revision>/body.md
+page/<revision>/data.json
 chat/<chat-id>/body/<message-id>.json
 job/<id>/input.json
 job/<id>/step/<stable-name>.json
@@ -318,14 +319,22 @@ unavailable read is not absence. Never use failed `head()` as permission to over
 for an observed one. A failed D1 publication leaves a known orphan for cleanup. Hash bytes once for deduplication, not on
 every read. Titles/URLs never merge sources; external IDs produce owner-visible candidates.
 
+Store page Markdown as plain UTF-8 bytes in `body.md`, not a JSON string inside an envelope. The optional `data.json`
+holds resolved citation objects and structured Map/Audit data, never a duplicate of the body. Publish both references
+with the same page revision after required writes complete. Source/page range readers then use the same R2 byte-range
+operation; the viewer, indexer and export read exactly the published bytes without JSON-unescaping or reserialization.
+During legacy import, decode an old envelope once into the target representation and validate its existing decoded-body
+references; do not reinterpret JSON-envelope offsets as body offsets.
+
 Every page edit supplies the head it read. Revision/dependency/activity inserts and head update share the same expected
 head in one D1 batch; stale writes insert nothing. Inspect statement changes. Proposal acceptance also checks proposal
 state and displayed head. Stable mutation IDs return prior result on exact retries and conflict on changed input.
 
 ## 5. Ingest, conversion and source versions
 
-`addSource` accepts a file stream, URL or text and returns stable source/revision/job identity quickly. Batch import uses
-the same operation with bounded concurrency and per-item results.
+`addSource` accepts a file stream, URL or text. Its durable-upload acknowledgement follows completed original storage
+and metadata commit; conversion/indexing remain asynchronous. A reserved upload ID is not proof that bytes arrived.
+Batch import uses the same operation with bounded concurrency and per-item results.
 
 ### Admission and conversion
 
@@ -345,6 +354,23 @@ the same operation with bounded concurrency and per-item results.
 6. Publish deterministic search items with bounded concurrency/per-item status/backoff. Persist returned IDs and reconcile
    exact keys; do not invent an undocumented batch API or serialize an unbounded one-request-per-block loop.
 7. Build a deterministic card from metadata/outline. Model enhancement is optional and budgeted.
+
+Bound actual bytes while reading, including responses without `Content-Length`; do not buffer an entire upload simply to
+hash it. Use native `crypto.DigestStream` for the one intake digest with a backpressured write path, and await storage and
+digest completion before publication. Do not drain a hash branch while leaving a cloned/teed storage branch unread.
+R2 `put` still requires a known-length stream. A generic counting/hash transform can lose that property. Preserve the
+native body length or use `FixedLengthStream` only with the exact decoded byte length; never invent a length from a
+compressed-body header. For an unknown-length response, use a strictly capped small byte buffer and conditional `put`;
+this is bounded format handling, not a whole-corpus allocation. Only an actual large-input requirement justifies native
+multipart with bounded, sized parts. Such an upload uses a fresh attempt-specific object key referenced by D1 after
+completion; retry/readback reconciles that attempt, and aborted/incomplete parts are cleaned up. Do not complete competing
+uploads onto the same immutable key or treat an unknown completion as permission to overwrite.
+
+The raw-file limit, converter input limit and in-memory parsing limit are different. A small compressed input or accepted
+R2 upload does not prove that decoded text, AST, block maps and parallel conversions fit the Worker isolate. Parse one
+bounded readable representation at a time, release the AST after projection, and keep all-document distillation as bounded
+section reads. A larger original remains retained with an explicit conversion requirement; never index a truncated prefix
+as the complete document or add an unrestricted parser service. The conditional converter choice in DONORS remains optional.
 
 Use the native [Items API](https://developers.cloudflare.com/ai-search/api/items/workers-binding/) for processing status
 and diagnostics. `uploadAndPoll` is a bounded convenience for an explicit small upload-and-wait path, not the bulk-ingest
@@ -402,20 +428,28 @@ representation and known extraction omissions; processing all extracted text doe
 was captured. Re-conversion, OCR correction or mapping correction creates a new source revision; old citations remain on
 old readable bytes.
 
-URL capture retains requested/final URL, time, content type, redirect observations and original/readable bytes from the
-same acquisition. Use `fetchWeb` from `agents/webfetch` for an explicitly requested transient preview, with its host,
-redirect, byte and deadline controls; do not build another preview parser. The default result is a converted page, not
-an original-file archive or complete conversion report. A retained import still uses the raw-first writer above; use an
-SDK capture path only when it preserves that same input and output, never a second fetch to reconstruct the original.
-Preview is not a mandatory step before import. Search leads, previews and HTTP error pages are not automatically
-admitted evidence.
+URL capture retains requested/final URL, time, actual response MIME, redirect observations and the bytes received.
+Prefer `Accept: text/markdown, text/html;q=0.9` for readable public captures. On a successful valid UTF-8 Markdown
+response, retain that response as the captured representation and take the local text path: no second `toMarkdown`
+call, model or HTML refetch. It is a Markdown snapshot, not a claim to possess the site's unconverted HTML. An explicitly
+requested original-HTML/rendered-layout capture uses that representation instead; it is not silently substituted.
 
-For retained capture, follow only authorized public HTTP(S) locators, reject credentials/unsupported ports/private or
-local hosts, revalidate redirects, and bound bytes/time/type. Send no user credentials or private VPC binding. The SDK
-host checks and ordinary Workers fetch do not provide DNS pinning. Use Browser Run guardrails or qualified egress only
-where stronger protection/rendering is actually needed. Remote Drive/MCP content is a snapshot; refresh creates a revision.
-Reading a retained page continues by revision/range, never by refetching its URL. SDK preview offsets count characters,
-not Eliot's UTF-8 citation bytes; do not substitute them for canonical ranges.
+Use `fetchWeb` from `agents/webfetch` for bounded transient previews where its converted result is sufficient. For retained
+imports use its documented source/injection seam only if it preserves the same fetched bytes and guards, otherwise the
+small ingest capture path. Do not preview and then download again by default. Inspect status/content/challenge signals:
+a Markdown error page is not the requested research source. HTML falls through to one conversion of the retained capture.
+
+Markdown for Agents streams its body and no longer emits token-count or `Content-Length` headers; converted responses
+also drop original-body validators. Those fields are optional hints, never admission/readiness requirements. Enforce the
+actual byte ceiling while reading, estimate tokens locally when needed and record the negotiated representation. If using
+HTTP caches/validators, separate representations with `Accept`/`Vary`; refresh without a usable validator compares retained
+bytes, not an invented ETag. Never copy third-party response headers, cookies or cache policy onto Eliot's private reader.
+
+Saved-source continuation reads immutable R2 bytes, not the stock fetch tool's refetch-per-window path; its character
+offsets are not citation UTF-8 offsets. Neither SDK host filtering nor ordinary Workers fetch proves DNS pinning. Keep
+public HTTP(S) only, reject embedded credentials/unsupported ports/private or local hosts, and revalidate every redirect.
+Send no user credentials/private VPC binding and bound bytes/time/type. Use Browser Run only for required rendering or
+stronger guarded capture. Remote Drive/MCP content is a snapshot; refresh creates a revision.
 
 Metadata is separate from generated summaries and cited bytes. Source cards have immutable IDs and record source
 revision, metadata version and generated/sampled fields. Metadata edit/enhancement writes a new card/item and CAS-advances
@@ -425,7 +459,11 @@ metadata remains display/filter authority; title correction need not re-embed ev
 References: [Markdown Conversion binding](https://developers.cloudflare.com/workers-ai/features/markdown-conversion/usage/binding/),
 [how conversion works](https://developers.cloudflare.com/workers-ai/features/markdown-conversion/how-it-works/),
 [conversion options](https://developers.cloudflare.com/workers-ai/features/markdown-conversion/conversion-options/),
-[AI Search OCR boundary](https://developers.cloudflare.com/ai-search/configuration/data-source/).
+[AI Search OCR boundary](https://developers.cloudflare.com/ai-search/configuration/data-source/),
+[Markdown for Agents](https://developers.cloudflare.com/fundamentals/reference/markdown-for-agents/),
+[streaming intake digest](https://developers.cloudflare.com/workers/runtime-apis/web-crypto/#constructors),
+[Worker memory/connections](https://developers.cloudflare.com/workers/platform/limits/),
+[R2 upload methods](https://developers.cloudflare.com/r2/objects/upload-objects/).
 
 ## 6. Deterministic structural projection
 
@@ -498,7 +536,7 @@ indexing. Late publication cannot make an older page head current.
 Expose `search(target: sources | knowledge | both)`. Default document answers to `sources`; `knowledge` and `both` are
 explicit. Resolve exact allowed source/page revisions before native retrieval. An empty selection in one target cannot
 expand another. Page hits carry page revision, author/decision/freshness, derived-page reference and original source
-citations. Page ranges address decoded immutable Markdown bytes, not a JSON envelope. Reopen permitted source ranges to
+citations. Page ranges address the immutable `body.md` bytes, not the structured-data sidecar. Reopen permitted source ranges to
 claim primary support; page prose explains saved conclusions as derived knowledge. Repeated reports over one paper are
 not independent evidence.
 
@@ -558,9 +596,19 @@ Initial hybrid profile:
 - native English/Chinese BGE reranking off for mixed Russian/English baseline; optional one configured multilingual
   Cohere rerank over the same bounded candidates when measured useful.
 
-Namespace search still needs complete expressible scope; sharding does not shrink an oversized revision filter by magic.
-Use it only where projection selection expresses the scope or the remaining filter fits. Otherwise use direct/per-source
-background reading or ask for narrower scope. Never drop filters or merge unrelated top-k ranks as global ranking.
+Namespace search still needs complete expressible scope; sharding does not shrink an oversized revision filter.
+Budget the complete serialized filter, selected instances and candidate count separately. Current AI Search documents
+five custom fields, a 64-UTF-8-byte filterable string prefix, ten instances per namespace request and at most fifty returned
+chunks; none means "at most fifty source documents". Stored metadata arrays cannot express project membership via `$in`.
+Keep compact scalar revision IDs; resolve many-to-many projects/authors/tags in D1 before constructing native filters.
+
+Do not promote Vectorize's sub-2048-byte filter rule or Items-list `metadata_filter` schema limit into a verified AI Search
+`search()` limit: its current OpenAPI search filter has no declared maximum. Measure the real binding/service path once
+in integration with complete 50/500-source selections, including all kind/date/language clauses; no per-turn remote probe.
+Native projection selection is usable only when it preserves the frozen scope. If the required scope cannot fit, retain
+it and offer bounded direct reading or an explicitly admitted long comparison; never silently narrow, launch a full job,
+remove filters or merge partition-local scores as one global ranking. A fast 500-source path is still an open delivery
+requirement, not a completed capability merely because a latency target appears below.
 
 For every result resolve `item.key` through `search_item` and require frozen instance, allowed kind, frozen permitted
 revision and nondeleted owner before R2 hydration. Recheck deletion before hydration and before saving references. Drop and
@@ -587,8 +635,13 @@ A same-scope repair may switch `and`→`or`, adjust query once, literal-scan a k
 canonical context. It never adds documents, web or a model-routing/judge call and never runs by default after sufficient
 evidence. Report both passes and stop after useful result or no progress.
 
-Hydrate R2 ranges in batches, merge overlaps and reuse request-local reads. Duplicate imports, old revisions, digests and
-Wiki restatements are not independent support.
+Hydrate plain source/page bodies with native R2 `get(key, { range: { offset: startByte, length: endByte - startByte } })`.
+Merge overlapping/adjacent requested ranges within the context budget and use a small bounded pool; there is no assumed
+multi-range/batch-get API. Release each pool slot only after its response body has been consumed or cancelled. Verify the returned
+range/length and UTF-8 boundaries; a short/missing body is partial/unavailable, not a complete citation. Reuse request-local
+reads instead of fetching the whole document for each hit. Never pass decoded-Markdown offsets into a JSON envelope.
+Duplicate imports, old revisions, digests and Wiki restatements are not independent support. See the
+[R2 range API](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/#ranged-reads).
 
 ### Reference mapping
 
@@ -738,6 +791,13 @@ approved tools/descriptors/classes, operation, question/focus and hard limits. `
 findings live in R2; Workflow state contains short IDs/counters. Persist settled result/page references in D1/R2 before
 Workflow completion. Native completed-state retention is finite; later `not found` must not fail or regenerate saved work.
 Reopen history from D1/R2 and consult Workflow only for active/unknown reconciliation.
+
+Native non-stream step results/events have a 1 MiB payload boundary. Return short result references rather than a full
+converted document, all findings or an entire export. Current JavaScript Workflows also support a returned fresh unlocked
+`ReadableStream<Uint8Array>` for transient larger output; this still uses finite instance storage/retention. Use it only
+when it removes temporary plumbing. Do not checkpoint the same large body both there and in R2; retained sources, reports
+and useful partial results stay in R2 with short Workflow references. See
+[step return values](https://developers.cloudflare.com/workflows/build/rules-of-workflows/#keep-non-stream-step-return-values-under-1-mib).
 
 `ResearchWorkflow` supports `distill_source`, `compare`, `deep_research` (including the analytical profiles above),
 `revise_section`, `refresh_wiki`, `refresh_map` and `run_audit`.
@@ -1007,59 +1067,20 @@ recover forward; route switch alone is not data rollback. No permanent bidirecti
 
 ## 15. Construction checks and unresolved platform facts
 
-During construction implement [MAP](MAP.md) vertical slices. Run changed TypeScript compile/lint/build and minimal Clippy
-only if Rust changes. Do not recreate source-text gates, ancestry claims, packet locks or a testing bureaucracy.
+[MAP](MAP.md#delivery-order) owns vertical slices and [assembled-product checks](MAP.md#quality-gates-that-are-not-bureaucracy).
+Do not copy that checklist into another execution programme. While constructing a slice, implement first and run scoped
+TypeScript compile/lint/build; use minimal Clippy only if Rust changes. Runtime evidence is recorded separately from
+source/document review in the existing review register.
 
-After assembly exercise:
+Verify the installed APIs in the slice that uses them: `createAI` routes/alias billing/replay/logging; conversion formats
+and output; AI Search filters/item identity/chunks; Access identities; chat persistence/continuation/queue; MCP handshakes;
+Workflow subscriptions/stream results; Wrangler generated types/declarative exports. No remote qualification call before
+every product operation. Unknown provider fields are not a reason to recreate exact-shape contracts.
 
-- current `toMarkdown().supported()` discovery and additive provider response fields without false failure;
-- deterministic local UTF-8 conversion; native English/Russian PDF; scanned PDF; two-column paper; long/wide table;
-  footnotes; equation/code; office document; static HTML; rendered page; image and animated GIF;
-- retained bytes/digests, readable state/warnings/known omissions and verified/observed/unavailable anchor fidelity for
-  representative fixtures; exact non-ASCII range reopening;
-- direct Markdown Conversion versus AI Search OCR separation; unretained OCR chunks never become primary evidence;
-- duplicate/lost upload acknowledgement, conditional R2 collision/null and partial item publication; native upload/poll
-  timeout resumes status reads without a second upload, and non-completed status stays incomplete;
-- failed/out-of-order replacement preserving prior/current heads;
-- exact IDs, late-paper facts, contradicting sources and extraction omissions; native keyword versus hybrid scope and
-  literal verification; parser UTF-16→UTF-8 mapping over Cyrillic, astral characters, BOM/CRLF, escaped tables and math;
-- scopes over 50/500 sources within D1/Search limits; partial namespace errors; readable heads still indexing;
-- wrong-scope/tombstoned search results and deletion after context preparation but before dispatch;
-- exact repeated-text references and provider item subrange mapping;
-- source/page search targets, accepted knowledge indexing and drafts/superseded-head exclusion;
-- two projects/tabs with different scopes/models/tools, shared sources and concurrent jobs;
-- model profile/context/output enforcement; incompatible tools/structured output and conservative custom/dynamic routes;
-- no-tool versus tool-assisted chat with `autoContinueAfterToolResult: false`, duplicate tool results and one controlled
-  continuation under stable request ID;
-- reconnect/stop/Continue without duplicate paid generation; native queued turns retaining submitted settings;
-  navigation/unmount leaves admitted server work running while explicit Stop cancels;
-- large assistant/tool R2 body references surviving SDK compaction and reopen;
-- page conflicts/proposals/freshness, source→digest→Wiki→report provenance and new project material;
-- bounded multi-level reduction, output truncation and partial structured results; analytical profiles and selected-section revision;
-- task claim sequence, committed result with failed wake, agent revocation and MCP whole-result budgets;
-- Access host/AUD/Origin coverage, long-lived WebSocket commands, required MCP client handshakes and internal-only tool execution;
-- direct URL acquisition/Browser Run guardrails without unproven DNS-pinning claims;
-- cancellation before/during paid calls, explicit SDK/Gateway/Workflow retry settings and unknown outcomes;
-- native progress replay/cursors, safe event projection, terminal reconciliation and subscription disposal on disconnect;
-  no duplicate polling, retry engine or progress journal;
-- reindex handoff with concurrent source/card/page publication;
-- server draft conflicts, project-bearing URL reload, zero model work on open, safe Markdown and private-cache clearing;
-- chat snapshot export/import to an empty namespace using `persistMessages` with **no** model call, preserving order,
-  citations, partial attempts and large-body refs; resume of the same interrupted import, inactive historical approvals,
-  rejection of private-SQL copy and unrelated nonempty target; effective access restrictions cannot broaden;
-- full D1/R2/chat export/import rehearsal and rollback boundary.
+For intake/storage, include headerless negotiated Markdown, known-length versus bounded-buffer/multipart upload,
+non-ASCII R2 ranges, page body/sidecar publication and oversized conversion/AST/step results. For retrieval, prove the full 50/500-source path without dropped
+filters or confusing source count with fifty returned chunks. Preserve the existing cancellation, partial-result,
+permission-preserving import and no-model/no-tool execution during restoration requirements in their owning sections.
 
-Verify current installed behavior before implementation claims:
-
-- `createAI` route IDs, actual BYOK alias/billing and ZDR behavior; distinguish native same-run replay, browser reconnect
-  and new paid attempts, including Stop, expired replay and provider routing;
-- SDK web-search compact output on initial call and history replay; retained web capture without repeated fetch/conversion;
-- Markdown Conversion result/types, `supported()` and actual quality/limits for the representative corpus;
-- AI Search item/key/metadata/filter/chunk/instance/OCR limits and pricing;
-- Access topology/audiences/Managed OAuth identities;
-- Agents/AIChatAgent/MCP package APIs, `autoContinueAfterToolResult`, message/state persistence and compaction;
-- declarative Durable Object `exports`, SQLite storage and portability boundaries versus PITR;
-- direct fetch/Browser Run egress and chat snapshot readback.
-
-A failure blocks that feature's readiness, not unrelated development. Performance and quality numbers become claims only
-after measurement on representative Eliot material.
+A failure blocks that feature's readiness, not unrelated development. Quality, latency, cost and capacity targets become
+claims only after measurement on representative Eliot material; accepting a request is not evidence of complete coverage.
