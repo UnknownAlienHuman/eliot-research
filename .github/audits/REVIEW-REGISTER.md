@@ -1,6 +1,6 @@
 # Review coverage register
 
-**Updated:** 2026-10-23 at `dc714ed`. This is the single coverage register for PR #414.
+**Updated:** 2026-10-23 at `9d99a6a`. This is the single coverage register for PR #414.
 Canonical product decisions remain in [Architecture](../../docs/ARCHITECTURE.md),
 [Implementation](../../docs/IMPLEMENTATION.md), [Map](../../docs/MAP.md) and
 [Donors](../../docs/DONORS.md). Dated audits contain findings and evidence. This file records only
@@ -22,8 +22,8 @@ what has been checked, what remains partial, and what still needs implementation
 | Model connections, BYOK and capability profiles | covered; findings 27, 31 | partial | runtime pending | Read installed provider types/catalog metadata and exercise one Workers AI, catalog, BYOK and conservative custom/dynamic route. |
 | Ordinary chat, recovery and bounded tool continuation | covered; findings 3, 6, 18, 28, 30 | partial | runtime pending | Verify current `AIChatAgent` APIs, duplicate tool-result handling, stop/reconnect and one host-admitted continuation. |
 | Portable chat history | covered; findings 29–31 | partial | runtime pending | Prove snapshot/state/message API shape, large-body references and `persistMessages` import with no model call. |
-| File intake and readable representation | audited; findings 32–35, 37–38 | partial | runtime pending | Fold the direct-conversion/OCR boundary, supported-format discovery and simple quality states into canonical docs; then exercise representative PDF/HTML/office/image inputs. |
-| Structural parsing, tables and exact coordinates | audited; findings 2, 5, 34–36, 38 | partial | runtime pending | Fold typed anchor fidelity and conservative structure rules into canonical docs; then verify projector/page/table behavior on retained bytes. |
+| File intake and readable representation | covered; findings 32–35, 37–38 | partial | runtime pending | Verify installed conversion types and exercise representative PDF/HTML/office/image inputs; no live quality claim yet. |
+| Structural parsing, tables and exact coordinates | covered; findings 2, 5, 34–36, 38 | partial | runtime pending | Implement and verify conservative projector/page/table behavior against retained bytes and the representative corpus. |
 | AI Search publication, readiness and reindex | covered; findings 1, 5, 16, 21, 26, 33 | partial | runtime pending | Verify installed binding types, item/chunk identity, exact-key reconciliation, live reindex handoff, OCR separation and current limits. |
 | Retrieval, citation mapping and coverage | covered; findings 1–3, 16–17, 21–23, 34–36 | partial | runtime pending | Run a fixed English/Russian corpus benchmark covering exact IDs, late facts, tables, code, contradiction and all-document comparison. |
 | Distillation and multi-document comparison | covered; findings 4, 12, 19 | partial | runtime pending | Exercise multi-level reduction, output truncation, negative findings, quantitative conditions and partial completion. |
@@ -34,15 +34,14 @@ what has been checked, what remains partial, and what still needs implementation
 | Source lifecycle, deletion and cleanup | covered; findings 5, 12, 15, 17, 33–37 | partial | runtime pending | Trace all active writers and retained-copy locations; exercise unreadable revisions, deletion between preparation/dispatch and late item/object cleanup. |
 | Export, migration, rollback and retirement | covered; findings 20, 29–31 | partial | runtime pending | Produce an actual legacy inventory, stable mapping and full D1/R2/ChatAgent rehearsal before any cutover claim. |
 | UI safety, drafts and project state | covered; findings 3, 10, 13, 18 | partial | runtime pending | Inspect the remaining owner UI paths, safe Markdown, sign-out cache clearing, autosave conflicts and accessibility. |
-| Performance, retrieval quality and operating cost | targets only | partial | runtime pending | Measure request counts, extraction/index/search/hydration latency, first-token overhead, recall/precision and representative spend. |
+| Performance, retrieval quality and operating cost | targets only | partial | runtime pending | Measure request counts, conversion/index/search/hydration latency, first-token overhead, recall/precision and representative spend. |
 
 ## Active queue
 
-1. **Fold extraction findings 32–38 into Architecture, Implementation, Map and Donors.** Keep one converter path, explicit OCR boundary, typed anchor fidelity and no strict provider-contract machinery.
-2. **Installed Cloudflare SDK contract pass.** Pin package versions and verify the actual `AIChatAgent`, MCP, AI Search, Workflows and Wrangler types used by the replacement.
-3. **Access topology pass.** Turn the abstract browser/API/MCP alternatives into one deployable topology and a small verification checklist.
-4. **Legacy-data and capability reconciliation.** Inventory retained source/page/chat/task/model/tool data and produce the final preserve/replace/retire map.
-5. **UI and multi-project pass.** Follow real user journeys through remaining legacy screens and the target data model.
-6. **Runtime evidence after assembly.** Retrieval benchmark, concurrency/race exercises, export/import rehearsal and latency/cost measurements.
+1. **Installed Cloudflare SDK contract pass.** Pin package versions and verify the actual `AIChatAgent`, MCP, AI Search, Workflows, Markdown Conversion and Wrangler types used by the replacement.
+2. **Access topology pass.** Turn the abstract browser/API/MCP alternatives into one deployable topology and a small verification checklist.
+3. **Legacy-data and capability reconciliation.** Inventory retained source/page/chat/task/model/tool data and produce the final preserve/replace/retire map.
+4. **UI and multi-project pass.** Follow real user journeys through remaining legacy screens and the target data model.
+5. **Runtime evidence after assembly.** Representative conversion/retrieval benchmark, concurrency/race exercises, export/import rehearsal and latency/cost measurements.
 
 The active queue is reordered only when a new finding changes risk or dependency order. Completed work is linked to a dated audit; canonical decisions are changed in their owning document rather than copied here.
