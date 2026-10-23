@@ -1,6 +1,6 @@
 # Review coverage register
 
-**Updated:** 2026-10-23 at `9d99a6a`. This is the single coverage register for PR #414.
+**Updated:** 2026-10-23 for the current PR #414 branch. This is the single coverage register for the review.
 Canonical product decisions remain in [Architecture](../../docs/ARCHITECTURE.md),
 [Implementation](../../docs/IMPLEMENTATION.md), [Map](../../docs/MAP.md) and
 [Donors](../../docs/DONORS.md). Dated audits contain findings and evidence. This file records only
