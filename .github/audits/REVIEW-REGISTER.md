@@ -9,7 +9,7 @@ The [Cloudflare blog/platform sweep](2026-10-23/CLOUDFLARE-BLOG-PLATFORM-SWEEP.m
 [storage/secrets/deployment continuation](2026-10-23/CLOUDFLARE-STORAGE-DEPLOYMENT-SWEEP.md) check the Birthday Week
 roundup, linked product posts, current docs/changelogs and relevant releases. They confirm the product architecture while
 making the handoff concrete: reproducible build pins, Preview isolation, Worker-scoped roles, native observability,
-explicit—not invisible—AI routing/safety/browser/container use, one-instance AI Search authority, disabled public
+explicit—not invisible—AI routing/safety/cache/browser/container use, one-instance AI Search authority, disabled public
 endpoints, separate secret administration, whole-product jurisdiction, mixed-version deployment rules, optional bounded
 R2 retention and a non-cacheable private entrypoint. Source review is not an installed build, deployed Preview, residency
 certification or live service call.
@@ -38,14 +38,15 @@ pre-build qualification programme.
 | Durable Object lifecycle | declarative `exports`, compatibility keep-alive, mixed-version pinning and atomic non-rollbackable lifecycle changes covered | pending | Exercise create/redeploy/eviction/disconnect; keep full deploy initially; test old/new RPC/state compatibility before gradual rollout; deploy rename/delete/transfer separately after callers are gone and export exists. |
 | Worker private-cache policy | Workers Cache can skip Worker code, share entries across hostnames/service bindings and heuristically cache headerless responses | pending | Set default entrypoint cache off; emit `private, no-store` on all UI/API/MCP/source/chat/job responses; verify no private `HIT` across domains/bindings. Cache only immutable public hashed assets separately. |
 | Access, browser/API/MCP identity | two-host topology, Origin, Managed OAuth, strict Service Auth, Gateway Access distinction and MCP step-up covered | pending | Verify WebSocket/static-assets routing, 401/403/repeated headers, exact assertion claims, owner-visible `insufficient_scope`, distinct revocation and no public Gateway endpoint. |
-| Native operations/observability | Logs, Traces, Issues, source maps, profiling and R2 access-log limitations covered | pending | Enable sampled payload-free telemetry; exercise one source-mapped failure/trace/profile; prove D1/R2 remain authority and issue agents cannot deploy. |
+| Native operations/observability | Logs, Traces, Issues, source maps, profiling, read-only local tracing and R2 access-log limitations covered | pending | Enable sampled payload-free telemetry; exercise one source-mapped failure/trace/profile and read-only Local Explorer diagnosis; prove D1/R2 remain authority and issue agents cannot deploy or mutate local product data. |
 | Model connections/BYOK | `createAI`, profiles, named-alias/ZDR uncertainty and actual-model capture covered | pending | Compile chosen versions; exercise Workers AI/catalog/dynamic/vendor routes, billing/logging/fallback and provider/model readback without recurring qualification. |
 | Model lifecycle/deprecation | automatic alias to a newer potentially higher-priced model reproduced from current changelog | pending | Store requested/observed model IDs; detect lifecycle/catalog drift; invalidate capability/cost profile and block default use until owner review. |
 | Model privacy/licenses | stateless Workers AI ZDR/no-training versus stateful/Gateway/provider retention and model-specific license/AUP covered | pending | Verify each selectable profile's logging/cache/replay/storage/ZDR/license fields; no blanket privacy badge or unreviewed third-party model. |
 | DLP/Guardrails | streaming buffering, extra billed calls, incomplete attachment inspection and missing Russian support covered | disabled by default | If selected, use explicit policy/gateway; test request-only versus response scanning, latency, language/coverage, logs/cost and changed stream shape. Never treat it as evidence validation. |
 | Auto Router | changing pool, classification, fallback and routing headers covered; excluded as default | not selected | If owner enables an auxiliary route, constrain pool/common floor, reserve fallback budget and retain routed model/reason/decision; compare quality before promotion. |
 | User Insights | task/anomaly/savings analytics, payload/privacy and trust boundaries covered | not selected by default | Evaluate only with payload-free trusted metadata; verify it never changes routing/defaults or replaces local hard limits. |
-| Cost accounting | provider/search usage, Gateway logs and Unified Billing credit fee separated | pending | Exercise BYOK/credits/Web Search/model routes; display actual usage plus credit overhead without list-price guarantee or double counting. |
+| AI Gateway response cache | default exact-request key versus custom key override, implicit custom-key TTL and volatile concurrent fills covered | disabled globally | Ordinary chat/research must send skip-cache. If one immutable derived operation opts in, use the complete server-owned equivalence boundary; forbid question-only/client keys, store HIT/MISS and test no cross-project/revision/profile reuse. |
+| Cost accounting | provider/search usage, Gateway logs, cache tokens and Unified Billing credit fee separated | pending | Exercise BYOK/credits/Web Search/model/cache routes; display actual usage plus credit overhead without list-price guarantee, concurrent-call assumptions or double counting. |
 | Ordinary chat/recovery/tools | queue, frozen submission, same-run replay vs fresh attempt, controlled continuation and large bodies covered | pending | Exercise navigation vs Stop, reconnect/DO reset, mixed-version calls, process failure, approvals/tools and no duplicate paid generation. |
 | Portable chat history | supported snapshot/import covered; inspected legacy ResearchSession has run projection, not messages | pending | Inventory different deployed DO cohorts; prove empty-target import preserves order/parts/R2 bodies without model/tool execution. |
 | File intake/conversion | actual-byte intake, local text path, Markdown Conversion, scan/visual omissions and profiles covered | pending | Exercise headerless/known-length/bounded uploads and representative English/Russian PDF, office, HTML, image and scan inputs. |
@@ -84,11 +85,12 @@ pre-build qualification programme.
 2. **MAP stages 1–2 — Library and complete scoped retrieval.** Preserve originals/revisions; decide any bounded R2 lock
    profile; keep Local Uploads off unless proven; bind only one AI Search instance, freeze short metadata, disable public
    endpoints, and prove exact frozen-selection behavior for representative 50/500-source scopes.
-3. **Integrate native APIs in owning slices.** Access identities, model routes/lifecycle/privacy, conversion, Search,
+3. **Integrate native APIs in owning slices.** Access identities, model routes/lifecycle/privacy/cache, conversion, Search,
    Web Search, Workflow subscriptions and MCP handshakes/step-up are verified where used, not in a preliminary
    certification project.
-4. **Use native operations carefully.** Add sampled payload-free Logs/Traces/Issues/profiling; keep operational signals
-   out of product authority. DLP/Guardrails remain off unless one explicit policy is measured and accepted.
+4. **Use native operations carefully.** Add sampled payload-free Logs/Traces/Issues/profiling and read-only local tracing;
+   keep operational signals out of product authority. DLP/Guardrails and Gateway response caching remain off unless one
+   explicit bounded operation is measured and accepted.
 5. **Deploy compatibly.** Use full deployment initially. Introduce gradual rollout only after mixed Worker/DO version
    contract tests. Keep DO lifecycle changes separate, owner-approved and preceded by removal of callers plus export.
 6. **Finish deployed-data reconciliation before cutover.** Inventory live migrations/rows/objects, old Wiki/DO cohorts,
