@@ -1,0 +1,68 @@
+# Cloudflare blog and platform sweep
+
+**Reviewed:** 2026-10-23. **Branch baseline:**
+[`a212880d`](https://github.com/UnknownAlienHuman/eliot-research/tree/a212880d5faaaf984962cb05bfb0a42c8e30e874).
+
+This pass reads the 2026 Birthday Week roundup, linked product announcements, current product changelogs,
+current documentation and latest relevant GitHub releases. It checks every announced Developer Platform/AI/storage
+capability for a concrete Eliot responsibility. A release enters the target only when it removes work or changes an
+implementation invariant; availability or marketing claims alone do not expand the product.
+
+This is source review, not an installed build, deployed preview, live model/search call, benchmark or migration rehearsal.
+
+## Findings
+
+| # | Evidence and interpretation | Owning correction |
+|---|---|---|
+| 63 | Workers Builds now requires an exact `packageManager` value when present; version ranges are rejected. The build image has moving default Node/package-manager versions, and `engines.npm` is not the pin. | Stage 0 must commit an exact `packageManager` value, pin Node with `.node-version` or `NODE_VERSION`, and use the same versions in local CI and Workers Builds. A green build on a moving default is not reproducibility. |
+| 64 | Wrangler/Vite deployment now uploads source maps by default and can send dependency names/versions through dependency instrumentation. Both are useful operational features but disclose implementation metadata. | Keep private Worker source maps for remapped failures, prevent browser maps from entering public assets, and set dependency instrumentation explicitly rather than inheriting a default. Do not log source text, prompts, tool bodies or credentials. |
+| 65 | Worker Previews isolate code/configuration/URL/observability and automatically isolate Durable Objects and Containers. D1, R2, KV and other account resources require separate preview resources; service bindings can still target a production Worker, Workflow bindings address a deployed Workflow, and preview Queue producers can affect a real queue. | A preview is not a complete sandbox. Use dedicated preview D1/R2/Search/Gateway/Workflow resources, reject production service/Queue bindings, protect the preview hostname with its own Access audience and test OAuth callbacks there. No preview may mutate predecessor or production replacement data. |
+| 66 | Cloudflare now offers Worker-scoped Metadata Read-Only, Content Read-Only, Editor and Admin roles. Durable Objects inherit the implementing Worker's permissions. | CI receives Worker-scoped **Editor**, never Admin; debugging agents receive **Metadata Read-Only**; code reviewers receive **Content Read-Only**. Keep a separate, narrowly scoped account token only for management operations that cannot be covered by a Worker role. |
+| 67 | Workers Logs, Traces, Issues, source-map remapping and on-demand CPU/memory profiling cover most operational diagnostics. Issues groups exceptions, 5xx responses and error logs and can send webhooks/MCP Events. Trace sampling and storage are billed; event/log delivery is not product history. | Use native observability before building another error database, telemetry pipeline or incident agent. Sample traces; keep payload capture off for private research data; treat Issues/MCP events as debugging signals. An agent may investigate or open a PR, but the owner reviews and deploys. Product activity, job state and evidence remain D1/R2 facts. |
+| 68 | New AI Gateway customers use Workers Logs pricing/retention. User Insights classifies logged conversations and tool traffic to show tasks, anomalies and potential savings. Its recommendations are asynchronous analytics, not a guarantee that a cheaper model preserves research quality. | Keep prompt/response payload logging disabled by default. User Insights is optional operations analysis over trusted opaque actor/project/job metadata; it never routes a live turn, alters a model profile, certifies quality or replaces local admission/spend limits. |
+| 69 | Auto Router builds a changing eligible model pool, classifies the task, balances expected quality/cost and can fall back when a provider or router fails. It records routed model/reason/decision, but the pool and selected model may change. | Do not make `cloudflare/auto` the default for evidence-sensitive chat/research. It may be an owner-enabled auxiliary/low-stakes route only with an allowlisted model pool, one conservative common capability/privacy floor, reserved fallback budget, and retained actual model/routing reason. It provides no single-provider-attempt or stable-model guarantee. |
+| 70 | Web Search API is an open-beta AI Gateway product over Ceramic, Exa and Linkup. The providers expose a normalized result shape, support Cloudflare ZDR, use Gateway credits at provider list price or BYOK, and appear in Gateway logs/analytics. | Keep the selected Agents SDK/direct Web Search path as the single discovery transport. Store provider, credential mode, Gateway and ZDR/logging profile; bound search spend separately from generation. Results remain leads and must be captured before citation. |
+| 71 | The persistent Agents browser can preserve tabs, cookies and logins while the remote Browser Run session lives, normally ten idle minutes. Expiry/crash loses that state. Kitesurf/WebMCP and browser sessions remain beta/remote automation surfaces. | Browser state is temporary acquisition state, never canonical evidence, authorization or durable job state. Never share a persistent browser across owner/project/connection scopes. Capture representations and provenance before expiry; classify WebMCP actions like any other remote tool. |
+| 72 | The current Container API is `ctx.container` with Durable Object scheduling; snapshots are beta. The older Container/Sandbox class is maintenance-only through 2026-12-31. | If native conversion fails and the bounded Docling candidate is selected, use the current Container API, pin image/runtime, measure startup/memory/Russian/table fidelity and publish through the existing revision writer. A filesystem snapshot is not Library storage or backup, and no generic agent computer is added. |
+| 73 | R2 Data Access Logs cover object reads/writes/lists/multipart/deletes across bindings and APIs, but delivery is asynchronous and best effort and events can be delayed or omitted. | Enable them for operational investigation where useful, never as an authoritative activity ledger, deletion receipt or proof of export completeness. Eliot's D1 activity/cleanup/export state remains authoritative. |
+| 74 | Durable Objects with compatibility date `2026-10-01+` remain active while qualifying I/O, RPC, container monitoring, `waitUntil` or timers are pending after the client disconnects. Runtime updates now provide longer grace, but WebSockets can still disconnect. | Pin a compatibility date deliberately and test its behavior. Navigation/unmount is still not Stop; pending work may continue, but DO liveness is not durable history or a replacement for Workflows. Reconnect and explicit cancellation remain required. |
+| 75 | Cloudflare API MCP can send Workers Issues as signed MCP Events and request missing scopes through OAuth step-up. Both require supporting clients and additional permissions. | These are optional development-operations integrations, not Eliot runtime dependencies. Scope the event subscription to the one Worker, surface exact requested scopes, fall back to explicit reauthorization, and never grant Notifications/Observability write permission to ordinary research agents. |
+| 76 | Artifacts, K2, Basin, KV Instant and Cloudflare OS are broad new platforms. Artifacts is beta Git exchange, K2 is an ordered event stream, Basin is an analytics/data-lake stack, KV Instant is a new key-value store, and OS is a multi-service agent workspace. | None replaces D1/R2/Workflows/AI Search for the initial one-owner product. Artifacts remains conditional on a real Git consumer; K2/Basin/KV Instant add stores/brokers without a missing operation; Cloudflare OS remains a mechanism reference, not a runtime. |
+| 77 | Clef/Clairic-style bounded extraction/classification can return typed spans, categories or decisions, including image-aware decisions. | Consider it only when it replaces a measured model extraction/classification call. It is not OCR, citation authority, a model router, judge chain, absence proof or mandatory ingest gate. English/Russian precision, UTF-8 mapping, cost and null/error behavior must be measured. |
+| 78 | The `cf` CLI and `cloudflare.config.ts` v2 are beta; Forge generates SDK/CLI surfaces. Stable Vite plugin v1 now deliberately uses Wrangler configuration. | Stage 0 stays on released Wrangler plus stable Vite v1 and `wrangler.jsonc`. `cf docs search` is acceptable read-only discovery; do not introduce `cf migrate/deploy`, a second project profile, Forge output or v2 config until a measured migration benefit justifies replacing the stable path. |
+| 79 | Cloudflare's own inference-cost work reports large savings from measuring duplicate context, model fit and real token traffic rather than adding more orchestration. | Measure rendered prompts, cache tokens, per-operation request counts and answer quality before changing models or adding agents. Remove duplicate context first. A marketing percentage does not transfer to Eliot's corpus or providers. |
+| 80 | The current reviewed releases remain `agents 0.30.1`, `@cloudflare/ai-chat 0.12.2`, AI SDK `7.0.152`, React adapter `4.0.156`, Wrangler `4.151.3` and Vite plugin `1.65.0`. The latest Agents patch is PiHarness-specific; AI SDK `7.0.152` only updates its Gateway dependency. | Keep these as source-reviewed candidates. Stage 0 owns one compatible installed lockfile and generated-type/build evidence; version recency alone does not select Pi, beta tooling or another harness. |
+
+## Disposition by product family
+
+| Family | Decision for Eliot |
+|---|---|
+| Workers Builds/Vite/Wrangler | Adopt stable path with exact package-manager/Node/compatibility pins and explicit metadata/source-map policy. |
+| Access/Worker roles/Previews | Adopt hostname Access and least-privilege roles; use previews only with isolated resources. |
+| Logs/Traces/Issues/profiling | Adopt as operational diagnostics; never as product state, evidence history or autonomous deployment authority. |
+| AI Gateway/User Insights | Adopt metadata-only logging, local hard limits and optional analytics; do not let analytics silently change models. |
+| Auto Router | Conditional owner-enabled route with allowlisted pool and common floor; not the default. |
+| Web Search | Selected explicit discovery transport; capture before citation and account for search separately. |
+| Browser Run/Kitesurf/WebMCP | Conditional explicit interactive/rendered acquisition; temporary state and ordinary tool approval rules. |
+| Containers | Conditional bounded converter/execution replacement using current API; no generic second runtime. |
+| Artifacts/K2/Basin/KV Instant | Not selected until a concrete missing operation exists. |
+| Clef/Clairic | Conditional replacement for one measured extraction/classification call. |
+| `cf`/Forge/config v2 | Read-only exploration only; stable stage 0 remains Wrangler/Vite v1. |
+
+## Canonical-document impact
+
+The product architecture remains correct: one Worker, D1/R2 authority, disposable AI Search, explicit long jobs and
+portable export. The new evidence tightens implementation handoff rather than adding services:
+
+1. stage 0 needs exact build/runtime pins, explicit deployment metadata controls, isolated previews and scoped roles;
+2. operational visibility should reuse native Logs/Traces/Issues/profiling without becoming another product subsystem;
+3. dynamic model routing and analytics remain explicit optional settings with recorded actual outcomes;
+4. browser/container/session state must be captured into existing source/job writers before it can affect evidence;
+5. every new Cloudflare platform stays excluded unless it removes a named responsibility.
+
+## Verification boundary
+
+The Birthday Week roundup, linked Cloudflare blog posts, current product changelogs/docs and current upstream releases
+were inspected. No Cloudflare account configuration, preview, role, Worker build, trace, Issue webhook, Auto Router call,
+Web Search query, browser session, container, model invocation, migration or deployment was exercised. Those checks belong
+to the owning MAP stages and remain runtime pending.
