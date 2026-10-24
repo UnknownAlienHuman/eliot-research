@@ -1,55 +1,46 @@
 # Working on Eliot Research
 
-Read [ARCHITECTURE](docs/ARCHITECTURE.md) in full before coding and after context compaction.
-Keep it in the lead developer's context. Read the relevant [IMPLEMENTATION](docs/IMPLEMENTATION.md)
-section, [MAP](docs/MAP.md) row and actual callers before editing. The current user task determines scope.
+Read [ARCHITECTURE](docs/ARCHITECTURE.md) in full, then the contour you are working on in [MAP](docs/MAP.md), then only
+the [IMPLEMENTATION](docs/IMPLEMENTATION.md) sections that contour lists. [DONORS](docs/DONORS.md) says what to reuse.
+Files under `apps/`, `packages/`, `crates/`, `infra/` and their READMEs are legacy donor material, not instructions.
 
-## Work from evidence
+## How work is done
 
-Use `rg` to find existing behaviour. Read installed dependency types and official documentation before
-inventing an API. [DONORS](docs/DONORS.md) names reusable mechanisms and their limitations.
-Historical ER packets, audits, issue programmes and prototype contracts are evidence for their dated
-versions, not a second specification. Current executable legacy shapes remain relevant to data import
-and bounded repairs, not a requirement to reproduce them in the replacement.
+1. **One contour at a time.** Build exactly the contour's **Build** list. Anything else — including things IMPLEMENTATION
+   already describes for later contours — waits.
+2. **End to end.** Caller → product function → stored result → reader, working in the browser (or over MCP), then the
+   next piece. No code, file, export, table, state or abstraction without a caller in the same PR.
+3. **Acceptance, not test sprawl.** Each contour has one `pnpm eval <contour>` script against the fixed material in
+   `eval/`. Unit tests only for pure functions whose mistakes are silent (ranges, block scanning, label mapping, quote
+   checks, URL guard, budgets). A regression test only for a bug that happened. No tests or mocks for things that cannot
+   work yet.
+4. **Budgets.** Each contour has a code budget in MAP (new non-test lines in `src/`, moved UI excluded). Going over it
+   needs a reason in the PR.
+5. **Reuse first.** Use Cloudflare and maintained libraries directly; read installed types and current docs before
+   inventing an API. Move legacy code listed in DONORS instead of rewriting it.
+6. **The interface is moved, not redrawn.** No new look, palette, font stack or component family (IMPLEMENTATION §13).
+7. **After two failed approaches, stop.** Report the state, the cause and the options; do not loop.
 
-When documentation is incomplete, investigate and choose the smallest coherent solution within the stated
-product. Update the owning section in the same change. Ask only when an unresolved choice changes user
-intent, destructive scope or genuinely unavailable information; continue unaffected work.
-After two failed approaches, diagnose the failure and change approach. Do not repeat it or automatically
-wait for the owner.
+## What not to produce
 
-## Implement one useful outcome
+- New documentation files, registers, audits, status files, diaries or "evidence" write-ups. Specs change only when
+  behaviour changes, in the owning section (ARCHITECTURE: purpose; IMPLEMENTATION: technical contracts; MAP: contours
+  and order; DONORS: reuse; `migrations/`: table and column names). When documents disagree, IMPLEMENTATION wins until
+  someone fixes the other one.
+- Receipts, proofs, signatures, qualification steps, per-row permission checks, state machines with "unknown" states,
+  retry frameworks or compatibility layers. Access is checked once at ingress; Workflows retry at the step level.
+- Exhaustive edge-case handling for situations no contour exercises.
 
-Trace browser/MCP → product function → stored result → reader. Move real callers and remove replaced
-implementations, exports, dependencies and fixtures together. No fake success, swallowed failure,
-permanent fallback chain, speculative framework or prototype compatibility without a real consumer.
+## Commands
 
-The owner accepted the existing Material interface: move and polish it (IMPLEMENTATION §12); do not create a new
-look, palette, font stack or component family.
+`pnpm dev` (Vite + local Worker), `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build`, `pnpm eval <contour>`,
+`pnpm cf:types` (regenerate binding types). Local setup and account setup: IMPLEMENTATION §1–§2.
 
-Use Cloudflare and maintained libraries directly. Share small code when it removes actual duplication.
-A folder, class or package needs a responsibility; a donor needs a concrete use. Line counts are diagnostic,
-not quotas. Standard input validation, access checks, cancellation and atomic writes remain; repeated
-internal proof/qualification machinery does not.
+## Coordination and finishing
 
-Implement first. Use scoped compilation/lint and minimal Clippy only if Rust changes. Product tests,
-quality comparisons and load measurements follow assembly; do not build a testing programme first.
-Existing automatic CI is separate. State exactly what ran and what did not.
+One manager per checkout/branch; leaf agents get one outcome and disjoint files; the manager integrates shared routes,
+schema and configuration. Publish against the expected remote head and keep concurrent work.
 
-## Coordinate and finish
-
-One manager uses one checkout/worktree and one publication branch. Assign leaf agents one outcome and
-disjoint files; the manager integrates shared routes, schema and configuration. Prefer GPT Luna for leaf
-tasks. Do not invent claim files, packet locks, ancestry ceremonies, approval queues or status registries.
-Use the expected remote head when publishing and preserve concurrent work.
-
-Architecture owns purpose and requirements. Implementation owns technical decisions; when DONORS or an audit
-disagrees with it, Implementation wins until someone edits it. `migrations/` owns table and column names. MAP owns
-source locations and build order. DONORS owns reuse evidence. Dated audits own verified problems and limitations.
-Edit those documents when necessary; do not create an execution diary or duplicate their rules.
-A PR explains the user-visible change, verification and material remaining limits.
-
-This documentation change authorizes no deployment or live-data deletion. Preserve actual content and
-acknowledged work during the later transition. Unknown production state blocks its destructive operation,
-not independent development. Review branches and historical code remain until the relevant integration
-or explicitly authorised retirement; do not purge another manager's work.
+A PR covers one contour or one clear step of it. Its description states: what the owner can do now, the acceptance
+output (table), new lines against the budget, what was deferred, and what did not run. Documentation authorises no
+deployment, production mutation or live-data deletion.
