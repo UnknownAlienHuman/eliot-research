@@ -2,6 +2,7 @@ packages: []
 
 # pnpm 11 requires lifecycle-script access to be explicit.
 allowBuilds:
+  core-js-pure: false
   esbuild: true
   workerd: true
 
