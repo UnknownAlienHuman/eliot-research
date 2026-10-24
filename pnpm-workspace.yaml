@@ -6,12 +6,13 @@ allowBuilds:
   esbuild: true
   workerd: true
 
-# These exact releases were source-reviewed in PR #414 before the Stage 0 cut-in.
+# These exact releases were source-reviewed or required by the selected Vite plugin peer contract.
 minimumReleaseAgeExclude:
   - '@ai-sdk/gateway@4.0.125'
   - '@ai-sdk/react@4.0.156'
   - 'agents@0.30.1'
   - 'ai@7.0.152'
+  - 'wrangler@4.152.0'
 
 overrides:
   '@modelcontextprotocol/client': 2.3.1
