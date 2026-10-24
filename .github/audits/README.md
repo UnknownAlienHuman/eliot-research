@@ -9,6 +9,11 @@ The [review coverage register](REVIEW-REGISTER.md) records checked areas, partia
 
 ## Current reviews
 
+- [2026-10-24 — Cloudflare MCP authentication, transport and effect sweep](2026-10-24/CLOUDFLARE-MCP-AUTH-TRANSPORT-SWEEP.md):
+  selects stateless SDK-v2 `/mcp`, Access OAuth and exact Host/Origin policy; removes `McpAgent`, `/sse` and session-state
+  assumptions; separates connection recovery from tool-effect recovery; freezes ready catalog digests and explicit scope
+  step-up; and keeps portals, generic execute, Events and remote Skills out initially. Runtime compatibility/OAuth/effect
+  evidence remains pending.
 - [2026-10-24 — Cloudflare AI chat state, recovery and portability sweep](2026-10-24/CLOUDFLARE-AI-CHAT-STATE-RECOVERY-SWEEP.md):
   captures the selected package's one-way first-wake storage migration, bounded hydration versus full streamed history,
   experimental Sessions adapter, provider-specific recovery spend, explicit disconnect/Stop/concurrency/tool boundaries,
