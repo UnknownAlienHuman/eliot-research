@@ -5,15 +5,16 @@ Canonical decisions remain in [Architecture](../../docs/ARCHITECTURE.md),
 [Implementation](../../docs/IMPLEMENTATION.md), [Map](../../docs/MAP.md) and
 [Donors](../../docs/DONORS.md). Dated audits retain evidence. This file records only coverage and remaining proof.
 
-The [Cloudflare Workflows control sweep](2026-10-24/CLOUDFLARE-WORKFLOWS-CONTROL-SWEEP.md),
+The [AI Search GA/projection sweep](2026-10-24/CLOUDFLARE-AI-SEARCH-GA-SWEEP.md),
+[Cloudflare Workflows control sweep](2026-10-24/CLOUDFLARE-WORKFLOWS-CONTROL-SWEEP.md),
 [Cloudflare blog/platform sweep](2026-10-23/CLOUDFLARE-BLOG-PLATFORM-SWEEP.md) and
 [storage/secrets/deployment continuation](2026-10-23/CLOUDFLARE-STORAGE-DEPLOYMENT-SWEEP.md) check linked engineering
 posts, current docs/changelogs and relevant releases. They confirm the compact product architecture while making the
 handoff concrete: reproducible build pins, Preview isolation, Worker-scoped roles, native observability, explicit—not
-invisible—AI routing/safety/cache/browser/container use, one-instance AI Search authority, disabled public endpoints,
-separate secret administration, whole-product jurisdiction, mixed-version deployment rules, bounded R2 retention,
-non-cacheable private entrypoints and exact Workflow step/rollback/restart/terminate/delete semantics. Source review is
-not an installed build, deployed Preview, residency certification or live service call.
+invisible—AI routing/safety/cache/browser/container use, one-instance AI Search authority and versioned projection,
+disabled public endpoints, separate secret administration, whole-product jurisdiction, mixed-version deployment rules,
+bounded R2 retention, non-cacheable private entrypoints and exact Workflow step/rollback/restart/terminate/delete
+semantics. Source review is not an installed build, deployed Preview, residency certification or live service call.
 
 Earlier reviews map legacy stores/writers, user journeys, retrieval contracts, Access/MCP shape, model/chat portability
 and migration boundaries. Their unresolved deployed-data/runtime questions remain below; they do not create a serial
@@ -50,7 +51,7 @@ pre-build qualification programme.
 | Auto Router | changing pool, classification, fallback and routing headers covered; excluded as default | not selected | If owner enables an auxiliary route, constrain pool/common floor, reserve fallback budget and retain routed model/reason/decision; compare quality before promotion. |
 | User Insights | task/anomaly/savings analytics, payload/privacy and trust boundaries covered | not selected by default | Evaluate only with payload-free trusted metadata; verify it never changes routing/defaults or replaces local hard limits. |
 | AI Gateway response cache | default exact-request key versus custom key override, implicit custom-key TTL and volatile concurrent fills covered | disabled globally | Ordinary chat/research must send skip-cache. If one immutable derived operation opts in, use the complete server-owned equivalence boundary; forbid question-only/client keys, store HIT/MISS and test no cross-project/revision/profile reuse. |
-| Cost accounting | provider/search usage, Gateway logs, cache tokens and Unified Billing credit fee separated | pending | Exercise BYOK/credits/Web Search/model/cache routes; display actual usage plus credit overhead without list-price guarantee, concurrent-call assumptions or double counting. |
+| Cost accounting | provider/Web Search/Gateway/cache-token/credit overhead and AI Search ingestion/storage/full-text/hybrid meters separated | pending | Exercise BYOK/credits/Web Search/model/cache/Search routes; compare AI Search usage metrics with Gateway/model usage without expecting embeddings/reranking in Gateway logs; display actual usage without list-price guarantees or double counting. |
 | Ordinary chat/recovery/tools | queue, frozen submission, same-run replay vs fresh attempt, controlled continuation and large bodies covered | pending | Exercise navigation vs Stop, reconnect/DO reset, mixed-version calls, process failure, approvals/tools and no duplicate paid generation. |
 | Portable chat history | supported snapshot/import covered; inspected legacy ResearchSession has run projection, not messages | pending | Inventory different deployed DO cohorts; prove empty-target import preserves order/parts/R2 bodies without model/tool execution. |
 | File intake/conversion | actual-byte intake, local text path, Markdown Conversion, scan/visual omissions and profiles covered | pending | Exercise headerless/known-length/bounded uploads and representative English/Russian PDF, office, HTML, image and scan inputs. |
@@ -59,10 +60,13 @@ pre-build qualification programme.
 | Conditional Container converter | current `ctx.container`, beta snapshots and legacy-class retirement covered | not selected | Build only after native conversion misses a required corpus case; measure image/startup/memory/Russian/table fidelity and publish through revision writer. |
 | Retained source/page bodies | R2 immutable bodies/ranges and exact old-reference behavior covered | pending | Verify UTF-8 ranged reads, short/large bodies, atomic references and no duplicate large Workflow checkpoints. |
 | Structural parsing/tables/coordinates | fixed remark pipeline and UTF-16→UTF-8 mapping covered; Docling mechanism rechecked | pending | Compile parser; exercise escaped tables, math/code, repeated headers, oversized nodes and original-anchor fidelity. |
-| AI Search runtime authority | namespace create/list/delete authority versus one-instance binding reviewed; public endpoints unauthenticated by default | pending | Bind only dedicated Library instance; prove routes/MCP cannot get raw update/delete authority; keep public endpoints off and verify default/generated hostname unavailable. |
-| AI Search metadata contract | five fields, full-reindex schema changes, 10 KiB envelope, 64-byte filter prefix and 128-char item keys covered | pending | Freeze schema; use short opaque IDs; test exact revision/kind conjunction and ensure no long URL/hash/composite filter silently truncates. |
-| AI Search publication/readiness | async upload, 300s poll ceiling, exact-key lookup, delete/cache behavior and reindex rules covered | pending | Save IDs before polling; verify timeout without duplicate upload; delete by ID then confirm exact key/search absence and cache purge before settling projection cleanup. |
-| Retrieval/citation/coverage | revision/kind filter explicit; hydration/citation donors rechecked; complete large scope unresolved | pending | Prove 50/500-source scope/filter acceptance; measure English/Russian recall, exact identifiers, late facts, tables and all-document coverage. |
+| AI Search runtime authority | one pre-existing instance binding versus namespace-wide administration; public Search/Chat/MCP exposure covered | pending | Bind only the dedicated Library instance; prove UI/API/MCP cannot obtain namespace create/list/update/delete authority; keep public/default endpoints unavailable and route all access through Eliot authorization/hydration. |
+| AI Search index configuration | GA hybrid default, vector/keyword method, tokenizer, match/fusion mode, full-reindex tokenizer changes and unproven Russian behavior covered | pending | Commit an explicit `search_config_version`; build an isolated instance; benchmark English/Russian identifiers, morphology, tables and long-tail facts; treat index-shaping changes as reindex/verify/cutover rather than mutable defaults. |
+| AI Search metadata and ranking | five fields, 10 KiB envelope, 64-byte filter prefix, reserved names and three-field boost ceiling covered | pending | Freeze short typed opaque fields; assemble scope filters server-side before ranking; prove long URL/hash/JSON scope cannot truncate silently and boosts never cross project/revision/visibility scope. |
+| AI Search item publication | 128-char key, key uniqueness per source, duplicate-key `409`, async upload/300s poll ceiling and exact key+source lookup covered | pending | Save item ID/key/source before polling; reconcile timeout and `409` without random suffix/duplicate upload; publish and verify a new revision before removing old item; confirm exact key/search absence before settling cleanup. |
+| AI Search storage and input limits | built-in R2/Vectorize projection, external-item original download gap, 4/10 MiB limits, OCR/image token billing and conversion/chunk failures covered | pending | Keep D1/R2 originals/export authoritative; split large projection items with retained page/byte mapping; exercise limits/failures and label OCR/caption/image embeddings as generated retrieval aids rather than exact evidence. |
+| AI Search generated-response cache | Search returns chunks; Chat generates; similarity cache defaults to 48h with a documented 10-minute minimum and instance-wide purge | not selected | Evidence flows use raw Search plus Eliot hydration/generation and never AI Search Chat/public/MCP generation. If later selected for a non-evidentiary feature, test cache disclosure, minimum TTL, invalidation/purge and no promotion as fresh evidence. |
+| Retrieval/citation/coverage | one shared Library instance, raw Search/hydration, explicit exact/full-text/semantic/hybrid modes and cross-instance limit of ten covered | pending | Prove representative 50/500-source metadata scope in one instance; measure English/Russian recall/precision, exact identifiers, late facts, tables, all-document coverage, latency and cost by retrieval mode. |
 | Markdown-for-Agents acquisition | negotiated streaming Markdown, 6 MiB decompressed limit, `Vary: Accept`, removed validators/token headers and content-signal behavior covered | pending | Treat it as an edge-generated representation, not original bytes; retain headers/provenance, calculate tokens locally and never associate a later HTML refetch as the same snapshot. |
 | Web Search | provider/ZDR/BYOK/Gateway billing/logging and direct no-model use covered | pending | Exercise Ceramic/Exa/Linkup selection, cost/error/partial behavior and capture-before-citation without duplicate transport. |
 | Public URL fetch/egress | bounded redirects/bytes plus beta Workers VPC/Gateway policy option reviewed; no DNS-rebinding proof claimed | pending | Exercise ordinary fetch; if stronger route needed, isolate VPC binding, deny private/link-local/ULA/multicast ranges, allow public HTTP(S), validate every redirect and run rebinding tests. Otherwise reject route. |
@@ -77,7 +81,7 @@ pre-build qualification programme.
 | Source lifecycle/cleanup | capture→conversion→admission ownership and replacement-safe cleanup covered | pending | Inventory pending captures/promotions/copies; keep old generation until replacement wins; exercise deletion/holds/index cleanup/late cleanup separately. |
 | Export/migration/rollback | extraction map includes originals, normalized data, tasks, grants, Google state, Wiki/report and backups | pending | Inventory live migrations/rows/objects/destinations; rehearse storage-only export/import and old-backup restore without resurrecting deletion/revocation. |
 | UI safety/drafts/project state | reader/profile controls, safe rendering and server-draft/conflict requirements covered | pending | Verify exact reopen navigation, unsaved/saved state, sign-out cache clearing, multi-tab isolation and accessibility. |
-| Performance/quality/cost | required measurements named; Search/Workflow/Gateway/Web Search/observability accounting covered | pending | Measure rendered prompt/cache tokens, request/step counts, indexing/search/hydration/first-token latency, recall/precision, storage and spend before adding agents or switching models. |
+| Performance/quality/cost | required measurements named; Search/Workflow/Gateway/Web Search/observability accounting covered | pending | Measure rendered prompt/cache tokens, Workflow request/step counts, AI Search ingestion/query/storage, indexing/search/hydration/first-token latency, English/Russian recall/precision and total spend before adding agents or switching models. |
 
 ## Active queue
 
@@ -87,23 +91,27 @@ pre-build qualification programme.
    Worker-scoped CI/diagnostic roles, separate secret setup and production-inaccessible Preview resources from an explicit
    jurisdiction matrix. Declare same-Worker Workflows once in `exports` with explicit contract version, step limits and
    retention; call them through `ctx.exports` rather than duplicate bindings.
-2. **MAP stages 1–2 — Library and complete scoped retrieval.** Preserve originals/revisions; decide any bounded R2 lock
-   profile; keep Local Uploads off unless proven; bind only one AI Search instance, freeze short metadata, disable public
-   endpoints, and prove exact frozen-selection behavior for representative 50/500-source scopes.
+2. **MAP stages 1–2 — Library and complete scoped retrieval.** Preserve D1/R2 originals/revisions; decide any bounded R2
+   lock profile; keep Local Uploads off unless proven; bind one shared AI Search instance only; commit an explicit hybrid
+   candidate and short metadata schema; use raw Search plus Eliot hydration/generation; disable public endpoints; publish
+   replacement items before cleanup; prove exact frozen-selection behavior for representative 50/500-source scopes and
+   measure English/Russian quality, latency and AI Search cost by mode.
 3. **Integrate native APIs in owning slices.** Access identities, model routes/lifecycle/privacy/cache, conversion, Search,
    Web Search, Workflow lifecycle/subscriptions and MCP handshakes/step-up are verified where used, not in a preliminary
-   certification project. Workflow Retry creates a new admitted instance; restart/delete are not product controls.
+   certification project. Workflow Retry creates a new admitted instance; restart/delete are not product controls. AI
+   Search Chat/similarity-generated responses are not evidence paths.
 4. **Use native operations carefully.** Add sampled payload-free Logs/Traces/Issues/profiling and read-only local tracing;
    keep operational signals out of product authority. DLP/Guardrails and Gateway response caching remain off unless one
    explicit bounded operation is measured and accepted.
-5. **Deploy compatibly.** Use full deployment initially. Introduce gradual rollout only after mixed Worker/DO version and
-   active Workflow step/output-reader contract tests. Keep DO lifecycle changes separate, owner-approved and preceded by
-   removal of callers plus export. Keep failed compensation and unknown effects visible across deploys.
+5. **Deploy compatibly.** Use full deployment initially. Introduce gradual rollout only after mixed Worker/DO version,
+   active Workflow step/output-reader and AI Search projection-config compatibility tests. Keep DO lifecycle changes
+   separate, owner-approved and preceded by removal of callers plus export. Keep failed compensation, unknown effects and
+   old projection items visible until their replacement is verified.
 6. **Finish deployed-data reconciliation before cutover.** Inventory live migrations/rows/objects, old Wiki/DO cohorts,
    residual writers, backup destinations and effective restrictions. Preserve data and current revocations.
 7. **Assemble UI/multi-project journeys, then measure.** Run representative conversion/retrieval, concurrency/
-   cancellation, Workflow restart/terminate/delete protection, export/import, quality, latency and cost checks. Evaluate
-   Auto Router, User Insights, persistent browser, Workers VPC, Container/Clef or another new platform only against a
-   measured missing operation.
+   cancellation, Workflow restart/terminate/delete protection, projection replacement/rebuild, export/import, quality,
+   latency and cost checks. Evaluate Auto Router, User Insights, persistent browser, Workers VPC, Container/Clef or
+   another new platform only against a measured missing operation.
 
 Pending integration work does not authorize deployment or live-data deletion and does not create another status system.
