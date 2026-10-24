@@ -9,6 +9,11 @@ The [review coverage register](REVIEW-REGISTER.md) records checked areas, partia
 
 ## Current reviews
 
+- [2026-10-24 — Cloudflare Workflows control and recovery sweep](2026-10-24/CLOUDFLARE-WORKFLOWS-CONTROL-SWEEP.md):
+  fixes the exact meaning of deterministic step identity, saga compensation, Stop, terminate, restart, instance delete,
+  retention, replaying subscriptions and same-Worker Workflow exports. Product Retry is a new admitted instance, native
+  restart is not exposed, delete is not cancellation, and rollback failure remains owner-reconcilable. Runtime lifecycle
+  and compensation evidence remains pending.
 - [2026-10-23 — Cloudflare data consistency and Access credential sweep](2026-10-23/CLOUDFLARE-DATA-CONSISTENCY-AUTH.md):
   distinguishes hidden D1 read retries from product attempts, keeps beta read replication/Sessions out until measured,
   uses R2 strong consistency and atomic create-once writes instead of custom storage reconciliation, keeps presigned
