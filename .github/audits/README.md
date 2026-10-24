@@ -9,11 +9,16 @@ The [review coverage register](REVIEW-REGISTER.md) records checked areas, partia
 
 ## Current reviews
 
+- [2026-10-23 — Cloudflare storage, secrets and deployment sweep](2026-10-23/CLOUDFLARE-STORAGE-DEPLOYMENT-SWEEP.md):
+  closes hidden authority/cutover gaps in Secrets Store, immutable jurisdiction choices, mixed Worker/DO versions,
+  atomic non-rollbackable DO lifecycle changes, R2 locks/Local Uploads and Workers Cache. Ordinary CI cannot receive
+  account Secrets Store Edit; residency is a whole-product profile; private entrypoints are never cacheable. Runtime
+  deployment, migration, residency and recovery evidence remains pending.
 - [2026-10-23 — Cloudflare blog and platform sweep](2026-10-23/CLOUDFLARE-BLOG-PLATFORM-SWEEP.md): reads the Birthday
   Week roundup, linked product blogs, current changelogs/docs and latest relevant releases. It adds reproducible build
-  pins, incomplete Preview-isolation rules, Worker-scoped roles, native observability/privacy boundaries, Auto Router and
-  User Insights limits, Web Search billing/ZDR facts, persistent-browser/container boundaries and explicit rejection of
-  K2/Basin/KV Instant/Forge unless a concrete missing operation appears. Runtime evidence remains pending.
+  pins, incomplete Preview isolation, Worker-scoped roles, native observability/privacy boundaries, optional Auto Router/
+  User Insights/Web Search/browser/container use, AI Gateway DLP/Guardrails and model-lifecycle limits, one-instance AI
+  Search authority, disabled public endpoints and conditional VPC/Gateway egress. Runtime evidence remains pending.
 - [2026-10-23 — Cloudflare release and donor recheck](2026-10-23/CLOUDFLARE-DONOR-RECHECK.md): rechecks newest package
   candidates and exact selected donor files; records stable Vite-v1 configuration, source-map defaults, D1's seven-day
   undelete boundary, strict Access service tokens, AI Search billing, Workflow retention/step costs, MCP step-up and recent
