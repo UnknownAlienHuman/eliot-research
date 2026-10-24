@@ -1,227 +1,203 @@
 # Active donors and primary sources
 
-**Rechecked:** 2026-10-23 against PR #414 through
-[`f262d088`](https://github.com/UnknownAlienHuman/eliot-research/tree/f262d088abce1f40e3616fff6975e8a9ad6ae551).
-
-This file selects current platform APIs and bounded donor mechanisms for
+**Rechecked:** 2026-10-23 for PR #414. This is the active platform/donor handoff for
 [Architecture](ARCHITECTURE.md), [Implementation](IMPLEMENTATION.md) and [MAP](MAP.md).
-It does not select a donor platform, certify an uninstalled SDK or transfer donor marketing/benchmarks to Eliot.
+It selects mechanisms, not donor platforms, and does not turn source review into an installed or exercised claim.
 
-Detailed dated evidence:
+Detailed evidence:
 
 - [Cloudflare blog and platform sweep](../.github/audits/2026-10-23/CLOUDFLARE-BLOG-PLATFORM-SWEEP.md);
 - [Cloudflare release and donor recheck](../.github/audits/2026-10-23/CLOUDFLARE-DONOR-RECHECK.md);
-- [pre-sweep active register at `4b812daa`](https://github.com/UnknownAlienHuman/eliot-research/blob/4b812daa7206527c24d3bd1b80bcdfb2b82c82ef/docs/DONORS.md);
-- [wider historical catalogue at `main@7c034569`](https://github.com/UnknownAlienHuman/eliot-research/blob/7c034569b908d3b03a8b821b7c537477a24b10f7/docs/implementation/donors.md).
+- [pre-sweep register at `4b812daa`](https://github.com/UnknownAlienHuman/eliot-research/blob/4b812daa7206527c24d3bd1b80bcdfb2b82c82ef/docs/DONORS.md);
+- [historical catalogue at `main@7c034569`](https://github.com/UnknownAlienHuman/eliot-research/blob/7c034569b908d3b03a8b821b7c537477a24b10f7/docs/implementation/donors.md).
 
 ## Evidence discipline
 
 Keep three states separate:
 
-1. **source-reviewed** — official documentation or exact source was inspected;
-2. **installed/compiled** — the replacement lockfile, configuration and generated types build together;
-3. **exercised** — the assembled operation worked against representative local or remote resources.
+1. **source-reviewed** — official docs or exact source inspected;
+2. **installed/compiled** — one pinned lockfile/configuration/generated-type set builds;
+3. **exercised** — representative real operations prove behavior, quality, latency and cost.
 
-This register establishes source review only. Stage 0 owns the installed lockfile/build. Each later vertical slice owns
-its real service call, correctness, quality, latency and cost. Update one entry with its owning Implementation/MAP rule;
-do not repin the whole stack for an unrelated edit. Check the selected file/revision's license before copying code.
+This file establishes only the first state. Stage 0 owns installation/build. Each vertical slice owns its live proof.
+Check the selected file/revision's license before copying code. Do not repin the whole stack for an unrelated edit.
 
-## Selected Cloudflare runtime
+## Selected runtime
 
-| Product need | Selected API/library | Boundary |
+| Need | Selected mechanism | Boundary |
 |---|---|---|
-| One product | Workers, React/Vite, stable `@cloudflare/vite-plugin` v1, Hono, React Router and TanStack Query | One Worker serves UI, API, incoming MCP and runtime classes. Stable Vite v1 uses `wrangler.jsonc`; do not add beta `cloudflare.config.ts` beside it. |
-| Authentication | Cloudflare Access browser sessions, Managed OAuth and distinct Service Auth tokens; `jose` at ingress | Separate hostname applications for UI/API/WebSocket and MCP. Resolve one verified actor; do not build an OAuth issuer or trust client names. |
-| Models | `createAI` from `agents/models/ai-sdk`, AI SDK v7, AI Gateway and supported vendor models | Retire `workers-ai-provider`, `ai-gateway-provider` and the legacy transport stack. D1 stores profiles/secret references, never credentials. |
-| Chat | `AIChatAgent`, `useAgentChat` and one SQLite Durable Object per chat | Ordered messages and reconnectable delivery. No-tool chat stays one synthesis; explicit tool mode is hard-capped and host-admitted. |
-| Incoming MCP | `createMcpHandler` plus MCP SDK v2 over stateless Streamable HTTP | Serve `/mcp`. Do not recreate protocol sessions or an `/sse` compatibility service. |
-| Outgoing MCP | Agents SDK MCP client manager in one owner Tool Connection Agent | Reuse discovery/OAuth/tool conversion. Eliot owns desired scope, selected-tool digest/classification and approvals. |
-| Durable work | Workflows `WorkflowEntrypoint`, `step.do`, `step.waitForEvent` and instance subscriptions | Product results live in D1/R2; native state/subscriptions are temporary execution/observation, not permanent history. |
-| Search | One AI Search namespace and initially one shared hybrid Library instance | Deterministic source/page items, D1 scope resolution and retained-byte hydration. No custom FTS, direct Vectorize or second search engine without measured need. |
-| Markdown structure | `unified`, `remark-parse`, `remark-gfm`, `remark-math` | Fixed parse-only mdast pipeline. Eliot owns grouping and UTF-16→UTF-8 mapping, not another Markdown grammar. |
-| Conversion | Local UTF-8 for Markdown/text/CSV; Workers AI Markdown Conversion for supported formats | Retain output/options/warnings/mapping before publication. Direct conversion is not assumed to OCR scans. |
-| Web discovery | Cloudflare Web Search API through Agents SDK/direct function | One explicit discovery transport. Search results are leads; capture retained evidence before citation. |
-| Web acquisition | Bounded fetch; Browser Run only for explicit rendering/interaction or stronger guarded capture | Converted previews/browser state are not original-file archives, durable jobs or evidence authority. |
-| Durable data and exit | D1 for short relational state; R2 for originals/readable text/larger immutable bodies; portable export | D1 recovery and DO PITR are same-resource recovery aids. Neither covers R2 or replaces export/import. |
-| Operations | Workers Logs, Traces, Issues, source maps and on-demand profiling | Reuse native diagnostics. They are sampled/best-effort/billed operational signals, not product activity, job state or research history. |
+| Product | One Worker, React/Vite, Hono, React Router, TanStack Query | One deployment serves UI, API, incoming MCP, Durable Objects and Workflows. Stable Vite v1 uses `wrangler.jsonc`; no parallel beta config. |
+| Authentication | Access browser sessions, Managed OAuth, distinct Service Auth tokens; `jose` at ingress | Separate UI/API/WebSocket and MCP hostname apps. Server creates the actor; client names/metadata are not identity. |
+| Models | `createAI`, AI SDK v7, AI Gateway, supported vendor models | Retire legacy providers/transports. D1 stores profiles and secret references, never credentials. |
+| Chat | `AIChatAgent`, `useAgentChat`, one SQLite DO per chat | Ordered messages/reconnectable delivery; no-tool turns use one synthesis; explicit tools are host-bounded. |
+| Incoming MCP | `createMcpHandler` + MCP SDK v2 over Streamable HTTP | `/mcp` only; no custom session or `/sse` compatibility layer. |
+| Outgoing MCP | Agents SDK MCP client manager in one owner Tool Connection Agent | Reuse discovery/OAuth/tool conversion; Eliot owns selected-tool digest, scope and approval. |
+| Durable work | Workflows + native subscriptions | D1/R2 own product results; Workflow state/events are temporary execution/observation. |
+| Retrieval | One AI Search namespace and initially one shared hybrid Library instance | D1 resolves scope; deterministic item keys hydrate retained R2 bytes. No second search engine without measured need. |
+| Structure | Fixed `unified`/remark parse-only pipeline | Eliot owns grouping and UTF-16→UTF-8 mapping, not another Markdown grammar. |
+| Conversion | Local UTF-8 for Markdown/text/CSV; Workers AI Markdown Conversion for supported formats | Retain output/options/warnings/mapping before publication. Direct conversion is not OCR. |
+| Web discovery | Web Search API through Agents SDK/direct function | One explicit discovery transport. Results are leads; capture retained evidence before citation. |
+| Web acquisition | Bounded fetch; Browser Run only for explicit rendering/interaction | Browser/preview state is not original-file storage, durable work or evidence authority. |
+| Data/exit | D1 + R2 + portable export | Time Travel, undelete and DO PITR do not cover R2 or replace export/import. |
+| Operations | Workers Logs, Traces, Issues, source maps, profiling | Sampled/best-effort operational signals, never product history/activity authority. |
 
-## Reviewed package candidate — not an installed lockfile
+## Reviewed package candidate — not a lockfile
 
-Latest upstream versions reviewed on 2026-10-23:
-
-| Package | Reviewed version | Result |
+| Package | Reviewed version | Note |
 |---|---:|---|
-| `agents` | `0.30.1` | Selected `createAI`, Web Search/Fetch and MCP surfaces were reviewed at `0.30.0`; `0.30.1` is a PiHarness wake fix. Eliot does not select Pi. |
-| `@cloudflare/ai-chat` | `0.12.2` | Direct package remains the selected chat entrypoint; do not use obsolete compatibility imports. |
-| `ai` | `7.0.152` | Pair AI SDK v7 with React adapter v4. This patch only updates its Gateway dependency. |
-| `@ai-sdk/react` | `4.0.156` | Must match the selected AI SDK major. |
-| `@ai-sdk/provider` | `4.0.33` | Manifest-reviewed; install evidence remains pending. |
-| `@modelcontextprotocol/client` / `server` | `2.3.1` | Selected client/stateless handler generation. |
-| `@modelcontextprotocol/sdk` | `1.32.1` | Protocol SDK reviewed with the Agents manifests. |
-| `wrangler` | `4.151.3` | Current reviewed stable CLI candidate. |
-| `@cloudflare/vite-plugin` | `1.65.0` | Stable v1 supports Wrangler configuration only. |
+| `agents` | `0.30.1` | `0.30.1` is PiHarness-specific; Eliot does not select Pi. |
+| `@cloudflare/ai-chat` | `0.12.2` | Selected direct chat package. |
+| `ai` | `7.0.152` | Pair with React adapter v4; patch updates Gateway dependency. |
+| `@ai-sdk/react` | `4.0.156` | Matching major. |
+| `@ai-sdk/provider` | `4.0.33` | Manifest-reviewed. |
+| MCP client/server | `2.3.1` | Selected protocol generation. |
+| MCP SDK | `1.32.1` | Reviewed transitive SDK. |
+| `wrangler` | `4.151.3` | Stable CLI candidate. |
+| `@cloudflare/vite-plugin` | `1.65.0` | Stable v1, Wrangler configuration only. |
 
-Primary release/manifests:
-[Agents 0.30.1](https://github.com/cloudflare/agents/releases/tag/agents%400.30.1),
-[Agents manifest](https://github.com/cloudflare/agents/blob/agents@0.30.1/packages/agents/package.json),
-[AI Chat manifest](https://github.com/cloudflare/agents/blob/agents@0.30.1/packages/ai-chat/package.json),
-[AI SDK 7.0.152](https://github.com/vercel/ai/releases/tag/ai%407.0.152) and
+Primary references:
+[Agents releases](https://github.com/cloudflare/agents/releases),
+[AI SDK releases](https://github.com/vercel/ai/releases) and
 [Workers SDK releases](https://github.com/cloudflare/workers-sdk/releases).
 
-Stage 0 selects one compatible exact set, commits the lockfile, generates Worker declarations and compiles. A patch being
-newer does not by itself authorize Pi, a beta CLI/config format or a second harness.
+Stage 0 selects one exact compatible set, commits the lockfile, generates declarations and compiles. Version recency does
+not select Pi, beta tooling or another harness.
 
-## Build, deployment and access controls
+## Stage-0 platform controls
 
-### Reproducible stage 0
+### Reproducible builds
 
-Workers Builds now treats `packageManager` as an exact runtime pin and rejects ranges. Its Node/package-manager defaults
-can move independently of the repository. Stage 0 therefore commits:
-
-- exact `packageManager` in root `package.json`;
-- exact Node major/minor through `.node-version` or `NODE_VERSION`;
-- the same versions in local CI and Workers Builds;
-- one explicit `compatibility_date`, with only required compatibility flags;
-- an explicit `dependencies_instrumentation.enabled` decision;
-- an explicit source-map policy.
-
-`engines.npm` is not the package-manager pin. A green build against a moving default is not reproducibility.
+Commit an exact root `packageManager`, exact Node version (`.node-version` or `NODE_VERSION`), one explicit
+`compatibility_date`, only required flags, and matching local/CI/Workers Builds versions. `engines.npm` is not the package
+manager pin. Set `dependencies_instrumentation.enabled` and source-map behavior explicitly.
 
 References:
-[Workers Builds package-manager pinning](https://developers.cloudflare.com/changelog/post/2026-10-23-workers-builds-package-manager-version/),
-[build image defaults](https://developers.cloudflare.com/workers/ci-cd/builds/build-image/) and
-[source maps on by default](https://developers.cloudflare.com/changelog/post/2026-10-20-source-maps-on-by-default/).
+[package-manager pinning](https://developers.cloudflare.com/changelog/post/2026-10-23-workers-builds-package-manager-version/),
+[build image](https://developers.cloudflare.com/workers/ci-cd/builds/build-image/) and
+[source maps](https://developers.cloudflare.com/changelog/post/2026-10-20-source-maps-on-by-default/).
 
-### Stable Vite and private source maps
+Stable Vite v1 stays on `wrangler.jsonc`; `cloudflare.config.ts` belongs to v2 beta. Keep private Worker source maps for
+remapped failures and exclude public browser maps. Inspect emitted assets instead of assuming one flag covers both.
 
-Vite plugin `1.65.0` removed `experimental.newConfig` from v1. Stable v1 accepts Wrangler configuration;
-`cloudflare.config.ts` requires v2 beta. Keep `wrangler.jsonc` for the replacement shell.
+### Preview isolation
 
-Wrangler `4.150.0+` and Vite plugin `1.64.0+` generate/upload Worker maps by default. The intended baseline is private
-Worker map upload for remapped production failures and no public browser `.map` files. Inspect emitted assets; do not
-assume one setting governs both environments. Dependency instrumentation also exposes package metadata and must be an
-explicit owner decision rather than a silent default.
-
-### Preview isolation is explicit
-
-Worker Previews isolate code/configuration/URL/observability and automatically isolate Durable Objects and Containers.
-They do **not** automatically isolate account resources such as D1/R2/KV. Service bindings may still target a production
-Worker, Workflow bindings point to a deployed Workflow, and Queue producers can affect a real queue.
-
-Use dedicated preview D1, R2, Search, Gateway and Workflow resources. Reject production service/Queue bindings. Protect a
-custom preview hostname with its own Access audience and test OAuth callbacks there. No preview may mutate predecessor or
-production replacement data.
+Worker Previews isolate code/configuration/URL/observability and automatically isolate DOs/Containers, but account
+resources are not automatically isolated. Use dedicated preview D1/R2/Search/Gateway/Workflow resources; reject
+production service/Queue bindings; protect a custom preview hostname with its own Access audience. No preview may mutate
+predecessor or production replacement data.
 
 Reference: [Worker Previews](https://developers.cloudflare.com/workers/configuration/previews/).
 
 ### Least privilege
 
-Cloudflare Worker-scoped roles are selected as follows:
-
-| Principal | Role/scope |
+| Principal | Cloudflare access |
 |---|---|
-| CI deployment token | **Editor** on the replacement Worker only; no delete permission |
-| Debugging/incident agent | **Metadata Read-Only** on the replacement Worker only |
-| Code-review agent | **Content Read-Only** on the replacement Worker only |
-| Owner administration | Separate interactive/admin identity; use Admin only when deletion is actually required |
-| Management automation outside Worker scope | Separate narrowly scoped account token for the exact API operation |
+| CI | **Editor** on the replacement Worker only; no deletion |
+| Diagnostic agent | **Metadata Read-Only** on that Worker |
+| Code reviewer | **Content Read-Only** on that Worker |
+| Owner | Interactive admin; Admin only when deletion is required |
+| Management automation | Separate token for the exact account API operation |
 
-Durable Objects inherit the implementing Worker's permissions. Do not hand CI or ordinary agents an account-wide token
-merely because one setup path needs account management.
+DO permissions inherit the implementing Worker. Do not give CI or ordinary agents account-wide authority.
 
 Reference: [granular Worker permissions](https://developers.cloudflare.com/changelog/post/2026-09-15-granular-worker-permissions/).
 
-### Access identities
-
-Strict service-token authentication is the expected headless-client mode. With it enabled, only Service Auth policies
-authorize service-token requests; failures are `401`/`403`, Access ignores an accompanying `CF_Authorization` cookie and
-does not mint one after success. Clients resend token headers for every request. New Zero Trust organizations created on
-or after 2026-10-05 have this mode enabled permanently.
-
-Worker-level Access still rejects WebSocket upgrades with `403`; use the already selected hostname applications.
+Strict service-token mode authorizes only Service Auth policies, returns `401`/`403`, ignores `CF_Authorization` cookies
+and never mints one. Headless clients resend token headers. Worker-level Access still rejects WebSocket upgrades; keep the
+selected hostname apps.
 
 References:
-[strict service-token release](https://developers.cloudflare.com/changelog/post/2026-10-02-strict-service-token-authentication/),
-[service tokens](https://developers.cloudflare.com/cloudflare-one/access-controls/service-credentials/service-tokens/) and
-[Worker Access limitations](https://developers.cloudflare.com/workers/configuration/cloudflare-access/).
+[strict service tokens](https://developers.cloudflare.com/changelog/post/2026-10-02-strict-service-token-authentication/)
+and [Access limitations](https://developers.cloudflare.com/workers/configuration/cloudflare-access/).
 
-## Operational observability without another platform
+## Native operations, not another subsystem
 
-Use native Workers Logs, Traces, Issues, source-map remapping and on-demand CPU/memory profiling before adding any custom
-operational store. Automatic Worker→DO/RPC tracing and custom spans can describe boundaries without logging every token.
+Use Workers Logs, Traces, Issues, source-map remapping and on-demand profiling before adding a custom operational store.
+Automatic Worker→DO/RPC tracing and custom spans should describe boundaries without logging every token.
 
-Rules:
-
-- sample traces and retain only operational fields needed to debug;
+- sample traces;
 - keep source text, prompts, tool bodies, credentials and citation payloads out of logs;
-- use private Worker source maps; do not publish browser maps;
-- treat Issues and signed MCP/webhook events as investigation triggers, not product truth;
-- an agent may investigate/open a PR; the owner reviews and deploys;
-- do not infer complete activity from logs or traces;
-- product activity, jobs, effects and research history remain D1/R2 facts.
+- use private Worker maps only;
+- treat Issues/webhooks/MCP Events as debugging triggers, not product truth;
+- an agent may investigate/open a PR; the owner deploys;
+- D1/R2 remain authority for jobs, effects, activity and history.
 
-New AI Gateway customers also use Workers Logs pricing/retention. Full Agent trace replay can expose system/user messages,
-reasoning and tool arguments/results, so it is opt-in diagnosis only, never the default for private research.
+Agent trace replay can expose system/user messages, reasoning and tool traffic; it is opt-in diagnosis only. R2 Data
+Access Logs are asynchronous/best effort, not deletion receipts or export proof.
 
 References:
-[Workers Observability](https://developers.cloudflare.com/workers/observability/),
-[Workers Issues](https://developers.cloudflare.com/workers/observability/issues/),
-[Workers tracing](https://developers.cloudflare.com/workers/observability/traces/) and
-[production profiling](https://developers.cloudflare.com/workers/observability/dev-tools/production-profiling/).
+[Workers observability](https://developers.cloudflare.com/workers/observability/),
+[Issues](https://developers.cloudflare.com/workers/observability/issues/),
+[tracing](https://developers.cloudflare.com/workers/observability/traces/),
+[profiling](https://developers.cloudflare.com/workers/observability/dev-tools/production-profiling/) and
+[R2 Data Access Logs](https://developers.cloudflare.com/r2/buckets/data-access-logs/).
 
-R2 Data Access Logs may help investigations but are asynchronous and best effort; delayed or missing events are allowed.
-They are not the activity ledger, deletion receipt or export proof.
+## Models and AI Gateway
 
-Reference: [R2 Data Access Logs](https://developers.cloudflare.com/r2/buckets/data-access-logs/).
+### Transport, logging and retries
 
-## Models, Gateway and analytics
+`createAI` replaces feature-frozen `workers-ai-provider`/`ai-gateway-provider`. Use provider/model strings where sufficient
+and vendor models only for required native features. Eliot keeps capability/context/spend admission and canonical output
+storage.
 
-### Selected model transport
-
-`createAI` replaces feature-frozen `workers-ai-provider` and `ai-gateway-provider`. Use provider/model strings where
-sufficient and vendor models only for required native features. Eliot retains capability/context/spend admission and
-canonical output storage, not another transport layer.
-
-Keep AI SDK new-generation retries disabled unless explicitly admitted. Native Gateway same-run replay, browser stream
-reconnect, provider fallback and a fresh Continue are distinct. Source-bearing requests default to metadata/cost logging
-with `cf-aig-collect-log-payload: false` or the reviewed equivalent.
-
-The documented `byokAlias` behavior for non-default aliases on catalog routes remains inconsistent with Unified Billing
-documentation. Use the provider-native route when a named alias is required until the installed path is exercised.
+Disable unapproved new-generation retries. Same-run Gateway replay, browser reconnect, provider fallback and fresh
+Continue are distinct. Source-bearing requests default to metadata/cost logging with payload storage disabled. The
+`byokAlias` non-default catalog behavior remains inconsistent; use provider-native routing until exercised.
 
 References:
 [`createAI`](https://developers.cloudflare.com/changelog/post/2026-10-21-createai/),
-[Agents models](https://developers.cloudflare.com/agents/models/),
-[AI Gateway logging](https://developers.cloudflare.com/ai-gateway/observability/logging/) and
+[Gateway logging](https://developers.cloudflare.com/ai-gateway/observability/logging/) and
 [Unified Billing](https://developers.cloudflare.com/ai-gateway/features/unified-billing/).
 
-### User Insights is optional analytics
+### Model lifecycle is not transparent
 
-User Insights may classify logged conversations/tool traffic and surface anomalous usage or potential savings. It is
-asynchronous operations analysis, not a live quality oracle. Keep prompt/response payload logging disabled by default.
-Use only trusted opaque actor/project/job metadata; never raw source content or client-supplied authority.
+Workers AI may automatically alias a deprecated ID to a newer model with different capabilities and higher price. Every
+result stores requested and observed provider/model IDs. Model profiles include lifecycle/deprecation status. Alias or
+catalog change invalidates the checked capability/cost profile and blocks new default use until owner review; it is not a
+silent fallback.
 
-User Insights never:
+Reference: [planned model deprecations](https://developers.cloudflare.com/changelog/post/2026-05-08-planned-model-deprecations/).
 
-- routes a live turn;
-- edits model profiles/defaults;
-- certifies that a cheaper model preserves research quality;
-- replaces local hard limits or owner decisions.
+### DLP and Guardrails are explicit policy changes
 
-Reference: [User Insights](https://developers.cloudflare.com/ai-gateway/observability/user-insights/).
+AI Gateway DLP/Guardrails stay disabled by default for ordinary Eliot chat/research:
 
-### Auto Router is conditional, not default
+- DLP response inspection buffers the entire SSE response; request-only inspection preserves streaming;
+- DLP does not decode base64 attachments or follow URLs;
+- Guardrails adds billed Llama Guard calls, can split long content into several evaluations and does not support Russian;
+- Gateway streaming with Guardrails becomes a buffered non-streamed response;
+- neither mechanism validates evidence, authorization or complete file coverage.
 
-`cloudflare/auto` builds a changing pool, classifies the task, balances expected quality/cost and may fall back when the
-provider/router fails. Do not use it by default for evidence-sensitive chat/research.
+A separate explicitly selected policy/gateway may use request-only DLP for secret/identifier leakage. Response DLP or
+Guardrails must disclose latency, additional cost/calls, language/coverage gaps, payload logging and changed streaming.
 
-It may be exposed as an owner-enabled auxiliary/low-stakes route only when:
+References:
+[DLP](https://developers.cloudflare.com/ai-gateway/features/dlp/),
+[Guardrails considerations](https://developers.cloudflare.com/ai-gateway/features/guardrails/usage-considerations/) and
+[Gateway pricing](https://developers.cloudflare.com/ai-gateway/reference/pricing/).
 
-- the allowed provider/model pool is explicit;
-- every candidate meets one conservative capability/privacy/context floor;
-- fallback calls are included in admission and budget;
-- the actual routed model, reason and decision ID are retained;
-- the UI does not promise one stable model or one upstream attempt.
+### Identity, User Insights and costs
+
+Eliot creates actor/project/job metadata server-side. AI Gateway derives verified `cf.user_id` only behind an
+Access-protected Gateway custom domain; Eliot does not expose a direct public Gateway endpoint. If that ever changes,
+Access is mandatory and client metadata does not substitute for identity.
+
+User Insights is optional asynchronous operations analysis. It never routes live work, edits defaults, certifies a
+cheaper model or replaces local hard limits. Keep payload logging off by default.
+
+Unified Billing credit purchases currently add a 5% fee even where provider inference/search prices are passed through.
+Cost displays distinguish provider usage, Gateway/search usage and credit-purchase overhead; no exact list-price promise.
+
+References:
+[identity-aware controls](https://developers.cloudflare.com/ai-gateway/changelog/#2026-08-05),
+[User Insights](https://developers.cloudflare.com/ai-gateway/observability/user-insights/) and
+[Gateway pricing](https://developers.cloudflare.com/ai-gateway/reference/pricing/).
+
+### Auto Router is conditional
+
+`cloudflare/auto` uses a changing pool, task classification and fallback. It is not the default for evidence-sensitive
+chat/research. An owner-enabled auxiliary route requires an explicit allowed pool, conservative common capability/privacy
+floor, fallback budget, and retained actual model/reason/decision. It provides no stable-model or single-attempt guarantee.
 
 Reference: [Auto Router](https://developers.cloudflare.com/ai-gateway/features/auto-router/).
 
@@ -229,13 +205,9 @@ Reference: [Auto Router](https://developers.cloudflare.com/ai-gateway/features/a
 
 ### AI Search
 
-AI Search is GA and usage billing begins 2026-11-01. Managed Workers AI embedding/reranking is accounted in AI Search,
-not Workers AI/Gateway logs; generation/query rewriting/external providers remain separate usage.
-
-OCR may index scanned PDFs, but indexed OCR is not canonical evidence. Current documented ceilings are 10 MiB for
-plain text/code and PDFs with OCR and 4 MiB for PDFs without OCR/other formats. Keep the selected metadata/filter shape,
-exact retained-byte hydration and unresolved complete 50/500-source exercise. Items pagination is inventory, not ranked
-continuation.
+AI Search is GA; managed embedding/reranking is accounted in AI Search rather than Gateway logs. OCR may index scans but
+is not canonical evidence. Keep exact retained-byte hydration and the unresolved complete 50/500-source exercise. Items
+pagination is inventory, not ranked continuation.
 
 References:
 [AI Search GA](https://developers.cloudflare.com/changelog/post/2026-10-01-ai-search-generally-available/) and
@@ -243,143 +215,115 @@ References:
 
 ### Web Search
 
-Web Search API is an open-beta Gateway service over Ceramic, Exa and Linkup. All currently documented providers support
-Cloudflare ZDR and normalized results; use Gateway credits at list price or BYOK.
-
-Store the selected provider, credential/billing mode, Gateway and logging/ZDR profile. Bound search spend independently
-from answer generation. Use the direct Agents SDK search function for Find sources without a model. Search results remain
-leads; capture and retain the source representation before citation.
+Web Search is an open-beta Gateway service over Ceramic, Exa and Linkup. Store provider, credential/billing mode, Gateway
+and logging/ZDR profile. Bound search spend separately from generation. Use the direct Agents SDK function for Find
+sources without a model. Results remain leads and must be captured before citation. Cost reporting includes any Gateway
+credit-purchase overhead.
 
 References:
-[Web Search](https://developers.cloudflare.com/web-search/),
-[providers](https://developers.cloudflare.com/web-search/providers/) and
-[Agents SDK tool/function](https://developers.cloudflare.com/agents/tools/web-search/).
+[Web Search](https://developers.cloudflare.com/web-search/) and
+[Agents tool/function](https://developers.cloudflare.com/agents/tools/web-search/).
 
-### Browser Run and persistent sessions
+### Browser sessions
 
-Persistent Agents browser sessions can preserve tabs/cookies/logins while the remote session lives, normally ten idle
-minutes; expiry/crash loses them. They are temporary acquisition convenience, not durable state.
-
-- never share a persistent browser across owner/project/connection scopes;
-- use it only for an explicit rendered/interactive task;
-- capture representations/provenance into the normal ingest writer before expiry;
-- classify WebMCP/browser actions as untrusted remote tools;
-- do not make a login cookie research evidence or application authorization.
+Persistent browser tabs/cookies/logins survive only while the remote Browser Run session lives and may vanish on expiry
+or crash. Never share sessions across owner/project/connection scopes. Capture representations/provenance through normal
+ingest before expiry; classify WebMCP/browser actions as untrusted tools. A cookie is neither evidence nor Eliot auth.
 
 References:
-[persistent browser](https://developers.cloudflare.com/agents/tools/browser/) and
+[Agents browser](https://developers.cloudflare.com/agents/tools/browser/) and
 [Browser Run](https://developers.cloudflare.com/browser-run/).
 
-## Durable execution and recovery
+## Durable work and recovery
 
-New Paid Workflows retain completed/errored native state for seven days by default; maximum remains 30 days. Product
-results must settle in D1/R2 before native completion. Billing includes requests, CPU, persisted state and steps; sleeps
-and event waits count as steps. Keep steps coarse and return object references rather than large payloads.
+New Paid Workflows retain terminal native state seven days by default; billing includes requests, CPU, storage and steps.
+Sleeps/event waits count as steps. Settle results in D1/R2, keep steps coarse and return object references.
 
-Durable Objects with compatibility date `2026-10-01+` remain alive while qualifying pending I/O/RPC/container monitor/
-`waitUntil`/timers exist after the client disconnects. This helps finish accepted work but is not Workflow durability or
-product history. Navigation/unmount is not Stop; WebSockets may disconnect during runtime updates and must reconnect.
+DOs with compatibility date `2026-10-01+` remain alive for qualifying pending I/O after disconnect. This helps finish
+accepted work but is not Workflow durability/history. Navigation is not Stop; reconnect/cancellation remain required.
 
 References:
 [Workflow retention](https://developers.cloudflare.com/changelog/post/2026-09-10-paid-retention-default/),
-[Workflow pricing](https://developers.cloudflare.com/workflows/reference/pricing/) and
-[pending I/O keep-alive](https://developers.cloudflare.com/changelog/post/2026-10-01-pending-io-keep-alive/).
+[pricing](https://developers.cloudflare.com/workflows/reference/pricing/) and
+[pending I/O](https://developers.cloudflare.com/changelog/post/2026-10-01-pending-io-keep-alive/).
 
-D1 undelete accepts only databases deleted within the previous seven days. Time Travel/undelete/DO PITR do not cover R2,
-external provider state or portable migration.
+D1 undelete accepts only databases deleted within seven days. It does not cover R2 or portable migration.
 
-Reference: [D1 undelete limit](https://developers.cloudflare.com/changelog/post/2026-10-23-undelete-seven-day-window/).
+Reference: [D1 undelete](https://developers.cloudflare.com/changelog/post/2026-10-23-undelete-seven-day-window/).
 
-## Optional Cloudflare substitutions — selected only when they remove work
+## Optional substitutions — only when they remove work
 
-| Capability | Current decision |
+| Capability | Decision |
 |---|---|
-| Browser Run `/crawl` | Prefer over building a crawler fleet for explicit bounded site import; retain actual results/provenance and inspect skipped/partial pages. |
-| MCP server portals | An existing portal may be one outgoing connection; generic execute tools never become blanket approval for hidden write/spend actions. |
-| Cloudflare Computer | Defer until a real job needs scratch file operations; never a second canonical Library. |
-| Containers + Docling | Conditional bounded converter using current `ctx.container`; measure image/runtime/startup/memory/Russian/table fidelity first. |
-| Artifacts | Defer until a real Git exchange consumer exists; not D1/R2 replacement or bidirectional source of truth. |
-| K2 | Not selected; D1/Workflows already own product state/execution and no ordered event broker is missing. |
-| Basin | Not selected; a one-owner research workspace does not need a data-lake/analytics platform. |
-| KV Instant | Not selected; does not replace relational D1 or immutable R2 bodies. |
-| Clef/Clairic | Conditional replacement for one measured extraction/classification call; never OCR, judge, model router or absence proof. |
-| `cf` CLI/config v2 | `cf docs search` may be used read-only; stable implementation remains Wrangler/Vite v1 until a measured migration benefit exists. |
-| Forge | Not selected; Eliot is not generating another SDK/CLI platform. |
-| Cloudflare OS | Mechanism reference only; do not import Gadget/Dynamic Worker/Facet/Gatekeeper/tenancy platform. |
+| Browser Run `/crawl` | Prefer over a crawler fleet for explicit bounded site import; retain actual results/provenance and partial/skipped status. |
+| MCP portals | An existing portal may be one connection; generic execute never grants hidden write/spend approval. |
+| Cloudflare Computer | Defer until a real job needs scratch files; never a second Library. |
+| Containers + Docling | Conditional bounded converter on current `ctx.container`; measure image/startup/memory/Russian/table fidelity. |
+| Artifacts | Defer until a real Git exchange consumer exists; not D1/R2 replacement. |
+| K2 | Not selected; no missing event broker. |
+| Basin | Not selected; no data-lake requirement. |
+| KV Instant | Not selected; does not replace relational D1/immutable R2. |
+| Clef/Clairic | Conditional replacement for one measured extraction/classification call; never OCR/router/judge/absence proof. |
+| `cf`/config v2/Forge | `cf docs search` read-only is acceptable; stable implementation remains Wrangler/Vite v1. |
+| Cloudflare OS | Mechanism reference only; no Gadget/Dynamic Worker/Facet/Gatekeeper/tenancy platform. |
 
-The older Container/Sandbox class is maintenance-only through 2026-12-31. A future selected converter uses the current
-Container API and publishes through the existing source-revision writer. A filesystem snapshot is not Library storage or
-backup.
+The older Container/Sandbox class is maintenance-only through 2026-12-31. A selected converter uses the current API and
+publishes through the source-revision writer. Filesystem snapshots are not Library storage or backup.
 
 ## Cloudflare-native neighboring applications
 
-These are source references, not replacement platforms. None was deployed or benchmarked here.
-
-| Reference and inspected revision | Useful mechanism | Do not import |
+| Reference | Keep | Do not import |
 |---|---|---|
-| [Cloud Notebook `b684523f`](https://github.com/SoraKumo001/cloud-notebook/tree/b684523fc1abf23c8da5fd6dc905da16c177b951) | Notebook/file progress, cited chat and MCP interaction ideas. | Browser-only canonical parsing, custom Vectorize stack, empty-result reindex, generic-answer fallback or truncated reads without continuation. Root license lookup still returns 404; copy nothing until resolved. |
-| [Workers Research `c7ae7399`](https://github.com/G4brym/workers-research/tree/c7ae739907d5f27980fd56e94331aea83f0c7809) | One shared research Workflow and saved-report Q&A. | Recursive breadth/depth as a quality guarantee, swallowed search errors, old providers or unbounded paid retries. |
-| [Deep Research App `0ac0cc73`](https://github.com/YSahloul/deep-research-app/tree/0ac0cc7321e376592055034fd5191bea7c7612be) | Visible intermediate workspace and reopenable report. | Think/shell runtime, private APIs, silent fallback or unrestricted generic file routes. |
-| [Cloudflare OS `835de9e`](https://github.com/cloudflare/cloudflare-os/tree/835de9e8776429fc16781edbe66367d879a64b87) | Shared visible artifacts, queued text steering, streamed scoped PDF conversion and honest unknown external outcomes. | Whole OS/Gatekeeper/Dynamic Worker/tenancy platform or the claim that cancellation reverses an already completed provider effect. |
+| [Cloud Notebook `b684523f`](https://github.com/SoraKumo001/cloud-notebook/tree/b684523fc1abf23c8da5fd6dc905da16c177b951) | File progress, cited chat and MCP interaction ideas. | Browser-only canonical parsing, custom Vectorize, empty-result reindex, generic-answer fallback, truncated reads. Root license is unresolved. |
+| [Workers Research `c7ae7399`](https://github.com/G4brym/workers-research/tree/c7ae739907d5f27980fd56e94331aea83f0c7809) | One shared research Workflow and saved-report Q&A. | Recursion as quality proof, swallowed errors, old providers, unbounded retries. |
+| [Deep Research App `0ac0cc73`](https://github.com/YSahloul/deep-research-app/tree/0ac0cc7321e376592055034fd5191bea7c7612be) | Visible intermediates and reopenable report. | Think/shell runtime, private APIs, silent fallback, unrestricted files. |
+| [Cloudflare OS `835de9e`](https://github.com/cloudflare/cloudflare-os/tree/835de9e8776429fc16781edbe66367d879a64b87) | Shared visible artifacts, queued steering, streamed scoped PDF conversion and honest unknown effects. | Whole OS/Gatekeeper/Dynamic Worker/tenancy platform or claims that cancellation reverses completed effects. |
 
-Cloudflare OS's `readPdf()` is an implementation clue, not a converter selection: it streams a scoped Drive PDF through
-Markdown Conversion and returns no text for scans, but neither retains originals nor adds OCR. Eliot already owns raw
-capture, revision publication and `stored_needs_conversion`.
+Cloudflare OS `readPdf()` is a streaming clue, not a converter selection: it neither retains originals nor adds OCR.
 
 ## Selected donor mechanisms
 
-Pins remain reproducible. The exact selected mechanism, not repository feature lists, was compared with current source.
-
-| Donor and pin | Keep | Recheck result / do not copy |
+| Donor and pin | Keep | Do not copy |
 |---|---|---|
-| [Dify parent/child processor `5c59b9c`](https://github.com/langgenius/dify/blob/5c59b9cbf649c3fffd52c980e11ea85670c0891c/api/core/rag/index_processor/processor/parent_child_index_processor.py) | Retrieve a focused child while hydrating meaningful parent/heading context. | Selected file unchanged. Do not import Dify runtime, pipeline builder or another index. |
-| [RAGFlow budget-stop agent `e2401e5`](https://github.com/infiniflow/ragflow/blob/e2401e54947db7eb5e542b6de26755d89886f783/internal/agentic_rag/agent.go) | Preserve gathered findings and a synthesis reserve at a budget stop. | Selected file unchanged. Do not import the agent framework. |
-| [RAGFlow knowledge compilation](https://ragflow.io/docs/v1.0.0-rc2/knowledge_compilation/overview) | Show changed inputs and make refresh explicit. | No whole-dataset compiler, graph store or silent Wiki rewrite. |
-| [Docling HybridChunker `b359e1c`](https://github.com/docling-project/docling-core/blob/b359e1c377aa8e3846ffb4100f7b513eb89ebd0c/docling_core/transforms/chunker/hybrid_chunker.py) | Token-aware structural splitting, heading/caption context and valid table groups. | Selected file unchanged. Do not deploy Python merely to split retained Markdown or infer missing coordinates. |
-| [LightRAG purge contract `aaebfe1`](https://github.com/HKUDS/LightRAG/blob/aaebfe1bb8d55deb6a4304d357a3bf4c92fcd40a/docs/design/PurgeRecoveryContract.md) | Record attribution before mutation; make cleanup resumable/fail closed when ownership is unknown. | Selected contract unchanged. Do not import graph storage/purge or auto-delete accepted research. |
-| [SurfSense citation prompt `e3de9e0`](https://github.com/MODSetter/SurfSense/blob/e3de9e0d293b2ebb1fb813628ecc1d6f26909396/surfsense_local/backend/modules/chat/prompt.py) | Server-issued labels, per-document grouping and explicit no-hit/still-indexing states. | Selected file unchanged. Regex is presentation cleanup, never citation authority/security. |
-| [WeKnora Wiki writer `e28c68c`](https://github.com/Tencent/WeKnora/blob/e28c68cf552cc1aba2fc923a73b0ab23a33bcb55/internal/application/repository/wiki_page.go) | Snapshot superseded revision and expected-version update in one transaction. | Invariant remains. Do not import GORM, force writes or another Wiki store. |
-| [OpenNotebook chat/context `a0f6f30`](https://github.com/lfnovo/open-notebook/tree/a0f6f3081ae06328f0a451b3a3ef2959ca25721d) | Keep focused chat distinct from research; budget rendered context and disclose truncation. | Selected files unchanged. Do not use empty-selection-as-all, silent skips or Python graph runtime. |
-| [EdgeQuake hydration `c8e84b8`](https://github.com/raphaelmansuy/edgequake/blob/c8e84b832b47ccffcf94bcda97c9555a0158dcf7/edgequake/crates/edgequake-query/src/chunk_hydration.rs) | Batch-hydrate one prepared passage set and reuse it. | Selected file unchanged on `edgequake-main`. Do not import graph retrieval or another embedding stack. |
-| [PipesHub public fetcher `e598631`](https://github.com/pipeshub-ai/pipeshub-ai/blob/e598631009b22b64b60e4366803f11d9d958e5e7/backend/python/app/utils/public_http.py) | Validate every redirect, bound bytes and separate fetch from admission. | Selected file unchanged. Its IP-pinning implementation does not transfer to Workers; use native guarded egress or reject the stronger route. |
+| [Dify parent/child `5c59b9c`](https://github.com/langgenius/dify/blob/5c59b9cbf649c3fffd52c980e11ea85670c0891c/api/core/rag/index_processor/processor/parent_child_index_processor.py) | Focused child retrieval with meaningful parent/heading context. | Runtime, pipeline builder, second index. |
+| [RAGFlow budget stop `e2401e5`](https://github.com/infiniflow/ragflow/blob/e2401e54947db7eb5e542b6de26755d89886f783/internal/agentic_rag/agent.go) | Preserve findings and synthesis reserve. | Agent framework/default multi-agent research. |
+| [RAGFlow knowledge compilation](https://ragflow.io/docs/v1.0.0-rc2/knowledge_compilation/overview) | Explicit changed inputs/refresh. | Whole compiler/graph/silent Wiki rewrite. |
+| [Docling HybridChunker `b359e1c`](https://github.com/docling-project/docling-core/blob/b359e1c377aa8e3846ffb4100f7b513eb89ebd0c/docling_core/transforms/chunker/hybrid_chunker.py) | Token-aware structure, heading/caption and valid table groups. | Python service merely for Markdown splitting or invented coordinates. |
+| [LightRAG purge contract `aaebfe1`](https://github.com/HKUDS/LightRAG/blob/aaebfe1bb8d55deb6a4304d357a3bf4c92fcd40a/docs/design/PurgeRecoveryContract.md) | Attribution before mutation; resumable fail-closed cleanup. | Graph purge/runtime or auto-deleting accepted research. |
+| [SurfSense citation prompt `e3de9e0`](https://github.com/MODSetter/SurfSense/blob/e3de9e0d293b2ebb1fb813628ecc1d6f26909396/surfsense_local/backend/modules/chat/prompt.py) | Server labels, document grouping, no-hit/indexing states. | Regex as authority/security or Python runtime. |
+| [WeKnora Wiki writer `e28c68c`](https://github.com/Tencent/WeKnora/blob/e28c68cf552cc1aba2fc923a73b0ab23a33bcb55/internal/application/repository/wiki_page.go) | Previous-revision snapshot + expected-version update transaction. | GORM, force writes, another Wiki store. |
+| [OpenNotebook `a0f6f30`](https://github.com/lfnovo/open-notebook/tree/a0f6f3081ae06328f0a451b3a3ef2959ca25721d) | Focused chat distinct from research; rendered-context budget/truncation notice. | Empty-selection-as-all, silent skips, Python graph runtime. |
+| [EdgeQuake hydration `c8e84b8`](https://github.com/raphaelmansuy/edgequake/blob/c8e84b832b47ccffcf94bcda97c9555a0158dcf7/edgequake/crates/edgequake-query/src/chunk_hydration.rs) | Batch-hydrate one prepared passage set. | Graph retrieval/another embeddings stack. |
+| [PipesHub fetcher `e598631`](https://github.com/pipeshub-ai/pipeshub-ai/blob/e598631009b22b64b60e4366803f11d9d958e5e7/backend/python/app/utils/public_http.py) | Validate redirects, bound bytes, separate fetch/admission. | IP-pinning code in Workers; use native guarded egress or reject stronger route. |
 
-### New donor lessons retained
+Additional retained lessons:
 
-- [WeKnora `640fcb6`](https://github.com/Tencent/WeKnora/commit/640fcb618af7df80c1948026f102c0f5fc953ceb)
-  physically reclaims old chunks/revisions only after a newer replacement processed and indexed successfully. Eliot keeps
-  the previous readable/search generation until replacement publication wins.
-- [RAGFlow `14133cc`](https://github.com/infiniflow/ragflow/commit/14133cc5f79ef841256ad14b163143379e12fb54)
-  makes parser-setting scope visible: new defaults affect new files; existing files require explicit reparse.
-  [RAGFlow `66bd055`](https://github.com/infiniflow/ragflow/commit/66bd0554b394970833b7404932428ac2297aa8ce)
-  tests the real dataset-config→stored document→consumer chain. Eliot records which revision used which profile.
-- [PipesHub `14c3a844`](https://github.com/pipeshub-ai/pipeshub-ai/commit/14c3a844196103749b1d8bc0b3404106222ea680)
-  adds organization scope and explicit bounds/truncation/errors. Eliot likewise returns continuation or explicit partial
-  status, never a cut result that appears complete.
-
-These lessons reinforce existing target rules; they do not authorize importing donor platforms.
+- [WeKnora `640fcb6`](https://github.com/Tencent/WeKnora/commit/640fcb618af7df80c1948026f102c0f5fc953ceb): reclaim old chunks only after replacement processing/indexing succeeds.
+- [RAGFlow `14133cc`](https://github.com/infiniflow/ragflow/commit/14133cc5f79ef841256ad14b163143379e12fb54) and [RAGFlow `66bd055`](https://github.com/infiniflow/ragflow/commit/66bd0554b394970833b7404932428ac2297aa8ce): new parser defaults do not silently rewrite old documents; test writer→stored document→consumer.
+- [PipesHub `14c3a844`](https://github.com/pipeshub-ai/pipeshub-ai/commit/14c3a844196103749b1d8bc0b3404106222ea680): scope first and return continuation/explicit partial status rather than complete-looking truncation.
 
 ## Existing Eliot mechanisms worth preserving
 
-From pinned legacy main preserve behavior, not surrounding architecture:
+Preserve behavior, not architecture:
 
-- immutable raw/source revisions and exact retained-byte citation readback;
-- deterministic local UTF-8 conversion without exact-provider whitelists or proof-oriented dispatch machinery;
-- tested UTF-8 ranges, heading/fence handling and deterministic keys, not generic 32–64 KiB target semantics;
-- expected-head page/Wiki writes, proposals and owner decisions;
+- immutable originals/readable revisions and exact retained-byte citations;
+- deterministic local UTF-8 conversion;
+- tested ranges, heading/fence handling and deterministic keys;
+- expected-head pages, proposals and owner decisions;
 - project/source membership and owner-visible history;
-- task claim/result identity and result-before-wake behavior;
-- verified identity/expiry/scope checks without epoch/trigger machinery;
-- Material/NotebookLM interaction intent, verified excerpt display and source reader navigation;
-- actual extraction/migration knowledge recorded in MAP.
+- task claim/result identity and result-before-wake;
+- verified identity/expiry/scope checks;
+- verified excerpt→reader navigation;
+- actual extraction/migration knowledge in MAP.
 
 ## Explicit exclusions
 
 Do not add a second search engine, graph database, event broker, data lake, workflow builder, connector framework,
-converter marketplace, agent harness, judge chain, automatic memory subsystem, custom cryptographic proof layer or
-recurring model-qualification service without a measured missing operation. Do not use AI Search OCR as unretained
-canonical evidence, generated image descriptions as quotations, operational logs as activity proof, browser/container
-state as durable history, Auto Router as an invisible model switch, or current limits/marketing percentages as permanent
-architecture.
+converter marketplace, agent harness, judge chain, automatic memory subsystem, proof layer or recurring model
+qualification service without a measured missing operation. Do not treat index OCR as canonical evidence, operational
+logs as activity proof, browser/container state as durable history, DLP/Guardrails as evidence validation, deprecated
+model aliases as transparent continuity, Auto Router as an invisible switch, or current limits/marketing percentages as
+permanent architecture.
 
-A mechanism enters Eliot only when it replaces concrete work in an owning vertical slice. The change must name the
-source, license, retained idea, removed duplicate, measured evidence and remaining limitation.
+A mechanism enters Eliot only when it removes concrete work in an owning slice. Name the source, license, retained idea,
+removed duplicate, measured evidence and remaining limitation.
