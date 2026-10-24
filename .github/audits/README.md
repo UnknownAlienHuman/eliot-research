@@ -9,6 +9,11 @@ The [review coverage register](REVIEW-REGISTER.md) records checked areas, partia
 
 ## Current reviews
 
+- [2026-10-24 — Cloudflare AI chat state, recovery and portability sweep](2026-10-24/CLOUDFLARE-AI-CHAT-STATE-RECOVERY-SWEEP.md):
+  captures the selected package's one-way first-wake storage migration, bounded hydration versus full streamed history,
+  experimental Sessions adapter, provider-specific recovery spend, explicit disconnect/Stop/concurrency/tool boundaries,
+  terminal persistence and non-destructive product retry. Old chats are not woken in place, silent retention trimming and
+  destructive regenerate are disabled, and portable import runs without model/tool execution. Runtime evidence pending.
 - [2026-10-24 — Cloudflare AI Search GA and projection sweep](2026-10-24/CLOUDFLARE-AI-SEARCH-GA-SWEEP.md):
   fixes GA billing/observability, explicit hybrid/tokenizer configuration, one-instance topology, deterministic item
   replacement, built-in-storage authority, file/OCR limits, raw Search versus cached Chat generation, metadata/filter/
@@ -54,8 +59,8 @@ The [review coverage register](REVIEW-REGISTER.md) records checked areas, partia
   Markdown Conversion from AI Search OCR, defines supported-format discovery/additive parsing and distinguishes exact
   canonical byte ranges from page/layout hints and generated image descriptions.
 - [2026-10-23 — model capability and portable chat state](2026-10-23/MODEL-CHAT-PORTABILITY.md): defines model capability
-  profiles, bounded tool continuation, supported ChatAgent snapshot/import, retained large bodies and declarative Durable
-  Object exports separate from D1 migrations.
+  profiles and the earlier package-baseline chat portability assumptions; the 2026-10-24 chat sweep supersedes findings
+  29–30 for the selected `@cloudflare/ai-chat 0.12.2`/Sessions storage path.
 - [2026-10-23 — retrieval, freshness and effect recovery](2026-10-23/README.md): covers partial search, table context,
   scoped history, transitive/new-source dependencies, card refresh, retries/deadlines, task claim/wake, drafts, searchable
   accepted knowledge, expected-head replacement and snapshot freshness.
