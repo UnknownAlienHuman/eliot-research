@@ -1,18 +1,19 @@
 # Review coverage register
 
-**Updated:** 2026-10-23 for PR #414. This is the single review-coverage register.
+**Updated:** 2026-10-24 for PR #414. This is the single review-coverage register.
 Canonical decisions remain in [Architecture](../../docs/ARCHITECTURE.md),
 [Implementation](../../docs/IMPLEMENTATION.md), [Map](../../docs/MAP.md) and
 [Donors](../../docs/DONORS.md). Dated audits retain evidence. This file records only coverage and remaining proof.
 
-The [Cloudflare blog/platform sweep](2026-10-23/CLOUDFLARE-BLOG-PLATFORM-SWEEP.md) and
-[storage/secrets/deployment continuation](2026-10-23/CLOUDFLARE-STORAGE-DEPLOYMENT-SWEEP.md) check the Birthday Week
-roundup, linked product posts, current docs/changelogs and relevant releases. They confirm the product architecture while
-making the handoff concrete: reproducible build pins, Preview isolation, Worker-scoped roles, native observability,
-explicit—not invisible—AI routing/safety/cache/browser/container use, one-instance AI Search authority, disabled public
-endpoints, separate secret administration, whole-product jurisdiction, mixed-version deployment rules, optional bounded
-R2 retention and a non-cacheable private entrypoint. Source review is not an installed build, deployed Preview, residency
-certification or live service call.
+The [Cloudflare Workflows control sweep](2026-10-24/CLOUDFLARE-WORKFLOWS-CONTROL-SWEEP.md),
+[Cloudflare blog/platform sweep](2026-10-23/CLOUDFLARE-BLOG-PLATFORM-SWEEP.md) and
+[storage/secrets/deployment continuation](2026-10-23/CLOUDFLARE-STORAGE-DEPLOYMENT-SWEEP.md) check linked engineering
+posts, current docs/changelogs and relevant releases. They confirm the compact product architecture while making the
+handoff concrete: reproducible build pins, Preview isolation, Worker-scoped roles, native observability, explicit—not
+invisible—AI routing/safety/cache/browser/container use, one-instance AI Search authority, disabled public endpoints,
+separate secret administration, whole-product jurisdiction, mixed-version deployment rules, bounded R2 retention,
+non-cacheable private entrypoints and exact Workflow step/rollback/restart/terminate/delete semantics. Source review is
+not an installed build, deployed Preview, residency certification or live service call.
 
 Earlier reviews map legacy stores/writers, user journeys, retrieval contracts, Access/MCP shape, model/chat portability
 and migration boundaries. Their unresolved deployed-data/runtime questions remain below; they do not create a serial
@@ -36,6 +37,9 @@ pre-build qualification programme.
 | Secrets Store/BYOK authority | account-global beta store, scopes/roles and CI requirement for Account Secrets Store Edit covered | pending | Keep Secrets Store bindings/key association out of routine Worker CI; exercise owner/Deployer setup and rotation without returning values or widening CI authority. |
 | Product data-location profile | immutable D1/R2/DO jurisdictions versus global/unknown Search, Secrets, models, logs, browser and tools covered | pending | Create matching preview/production resources from an explicit matrix; prove endpoints/bindings; display every unverified row as not guaranteed; rehearse jurisdiction change via export/import/cutover. |
 | Durable Object lifecycle | declarative `exports`, compatibility keep-alive, mixed-version pinning and atomic non-rollbackable lifecycle changes covered | pending | Exercise create/redeploy/eviction/disconnect; keep full deploy initially; test old/new RPC/state compatibility before gradual rollout; deploy rename/delete/transfer separately after callers are gone and export exists. |
+| Workflow declaration and step contract | same-Worker `exports`/`ctx.exports`, deterministic step cache keys, occurrence count/type and dynamic parallel execution covered | pending | Declare each Workflow once with explicit contract version, retention and step limit; compile the `ctx.exports` launcher; exercise re-entry and old/new code against stable step names/output readers. No paid or mutating effects under `Promise.race`/`Promise.any`. |
+| Workflow lifecycle and compensation | pause/resume queueing, cooperative Stop, terminate with/without rollback, restart prefix reuse, delete-without-rollback and reverse-start-order saga semantics covered | pending | Exercise Stop after partial save; forced terminate both ways; failed-step rollback with missing output; one failed compensator stopping later handlers; ensure UI/API/MCP expose neither restart nor delete as Retry/cancel. Keep unresolved compensation visible. |
+| Workflow retention and subscriptions | explicit seven-day retention, replay-then-live subscriptions and retention-bound event availability covered | pending | Reconnect a visible subscription and deduplicate replay; expire/delete native state and reopen from D1/R2 without generation; prove native events never duplicate product activity or become history authority. |
 | Worker private-cache policy | Workers Cache can skip Worker code, share entries across hostnames/service bindings and heuristically cache headerless responses | pending | Set default entrypoint cache off; emit `private, no-store` on all UI/API/MCP/source/chat/job responses; verify no private `HIT` across domains/bindings. Cache only immutable public hashed assets separately. |
 | Access, browser/API/MCP identity | two-host topology, Origin, Managed OAuth, strict Service Auth, Gateway Access distinction and MCP step-up covered | pending | Verify WebSocket/static-assets routing, 401/403/repeated headers, exact assertion claims, owner-visible `insufficient_scope`, distinct revocation and no public Gateway endpoint. |
 | Native operations/observability | Logs, Traces, Issues, source maps, profiling, read-only local tracing and R2 access-log limitations covered | pending | Enable sampled payload-free telemetry; exercise one source-mapped failure/trace/profile and read-only Local Explorer diagnosis; prove D1/R2 remain authority and issue agents cannot deploy or mutate local product data. |
@@ -69,7 +73,7 @@ pre-build qualification programme.
 | Knowledge/Wiki/freshness | expected-head CAS, transactional history, proposals and transitive/new-source freshness covered | pending | Verify stale-CAS rollback, targeted edit, source→digest→Wiki→report propagation and old/current Wiki cohort import. |
 | Multiple projects/shared sources | project identity in routes/cache/jobs/writes and cross-project destination rules covered | pending | Exercise two tabs, independent settings/jobs, shared-source replacement and deliberate global edit. |
 | Incoming/outgoing MCP/tasks | stateless `/mcp`, selected-tool digests, frozen inputs, both task families, step-up and optional Issues events covered | pending | Verify handshakes/readiness, strict identity, least-privilege event scopes, claim races, result-before-wake and no silent scope/lease/credential revival. |
-| Durable research/Workflow cost | create/re-entry/expiry, D1/R2 result authority, seven-day retention and step billing covered | pending | Exercise create-ACK loss, D1-write/checkpoint replay, Retry, subscriptions, cancellation and step/storage/request/CPU usage. |
+| Durable research/Workflow cost | stable create/re-entry, deterministic steps, new-instance Retry, cooperative Stop, finite retention, subscriptions and step/storage billing covered | pending | Exercise create-ACK loss on the same ID; D1-write/checkpoint replay; bounded retries; partial-save Stop; forced termination; compensation failure; native-state expiry; explicit step/storage/request/CPU usage. Prove platform limits and batch APIs do not replace job admission. |
 | Source lifecycle/cleanup | capture→conversion→admission ownership and replacement-safe cleanup covered | pending | Inventory pending captures/promotions/copies; keep old generation until replacement wins; exercise deletion/holds/index cleanup/late cleanup separately. |
 | Export/migration/rollback | extraction map includes originals, normalized data, tasks, grants, Google state, Wiki/report and backups | pending | Inventory live migrations/rows/objects/destinations; rehearse storage-only export/import and old-backup restore without resurrecting deletion/revocation. |
 | UI safety/drafts/project state | reader/profile controls, safe rendering and server-draft/conflict requirements covered | pending | Verify exact reopen navigation, unsaved/saved state, sign-out cache clearing, multi-tab isolation and accessibility. |
@@ -81,22 +85,25 @@ pre-build qualification programme.
    package-manager/Node/compatibility pins; use stable Vite v1 with `wrangler.jsonc`; generate declarations; configure
    private Worker/browser source maps, dependency instrumentation and non-cacheable private entrypoint; create
    Worker-scoped CI/diagnostic roles, separate secret setup and production-inaccessible Preview resources from an explicit
-   jurisdiction matrix.
+   jurisdiction matrix. Declare same-Worker Workflows once in `exports` with explicit contract version, step limits and
+   retention; call them through `ctx.exports` rather than duplicate bindings.
 2. **MAP stages 1–2 — Library and complete scoped retrieval.** Preserve originals/revisions; decide any bounded R2 lock
    profile; keep Local Uploads off unless proven; bind only one AI Search instance, freeze short metadata, disable public
    endpoints, and prove exact frozen-selection behavior for representative 50/500-source scopes.
 3. **Integrate native APIs in owning slices.** Access identities, model routes/lifecycle/privacy/cache, conversion, Search,
-   Web Search, Workflow subscriptions and MCP handshakes/step-up are verified where used, not in a preliminary
-   certification project.
+   Web Search, Workflow lifecycle/subscriptions and MCP handshakes/step-up are verified where used, not in a preliminary
+   certification project. Workflow Retry creates a new admitted instance; restart/delete are not product controls.
 4. **Use native operations carefully.** Add sampled payload-free Logs/Traces/Issues/profiling and read-only local tracing;
    keep operational signals out of product authority. DLP/Guardrails and Gateway response caching remain off unless one
    explicit bounded operation is measured and accepted.
-5. **Deploy compatibly.** Use full deployment initially. Introduce gradual rollout only after mixed Worker/DO version
-   contract tests. Keep DO lifecycle changes separate, owner-approved and preceded by removal of callers plus export.
+5. **Deploy compatibly.** Use full deployment initially. Introduce gradual rollout only after mixed Worker/DO version and
+   active Workflow step/output-reader contract tests. Keep DO lifecycle changes separate, owner-approved and preceded by
+   removal of callers plus export. Keep failed compensation and unknown effects visible across deploys.
 6. **Finish deployed-data reconciliation before cutover.** Inventory live migrations/rows/objects, old Wiki/DO cohorts,
    residual writers, backup destinations and effective restrictions. Preserve data and current revocations.
 7. **Assemble UI/multi-project journeys, then measure.** Run representative conversion/retrieval, concurrency/
-   cancellation, export/import, quality, latency and cost checks. Evaluate Auto Router, User Insights, persistent browser,
-   Workers VPC, Container/Clef or another new platform only against a measured missing operation.
+   cancellation, Workflow restart/terminate/delete protection, export/import, quality, latency and cost checks. Evaluate
+   Auto Router, User Insights, persistent browser, Workers VPC, Container/Clef or another new platform only against a
+   measured missing operation.
 
 Pending integration work does not authorize deployment or live-data deletion and does not create another status system.
