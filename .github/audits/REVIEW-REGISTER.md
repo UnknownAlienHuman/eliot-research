@@ -9,7 +9,8 @@ The [latest Cloudflare/donor recheck](2026-10-23/CLOUDFLARE-DONOR-RECHECK.md) co
 2026-10-23 platform/package releases and the exact selected donor files. It confirms the architecture but corrects the
 stage-0 handoff: stable Vite v1 uses `wrangler.jsonc`; source-map behavior must be explicit; D1 undelete is seven days;
 strict service-token clients use Service Auth/header authentication; AI Search billing and Workflow retention/step costs
-must be observed. Upstream review is not an installed lockfile or runtime evidence.
+must be observed. Cloudflare API MCP step-up authorization adds one client-integration check, not another authority layer.
+Upstream review is not an installed lockfile or runtime evidence.
 
 Earlier reviews map the legacy stores/writers, user journeys, retrieval contracts, Access/MCP shape, model/chat
 portability and migration boundaries. Their unresolved deployed-data/runtime questions remain below; they do not create a
@@ -43,7 +44,7 @@ serial pre-build qualification programme.
 | Distillation/comparison/analytical reviews | bounded reductions, partial completion and distinct profile outputs covered | pending | Ship start/status/reopen/stop/partial-save in stage 4; exercise truncation, negative findings, quantitative conditions and coverage. |
 | Knowledge/Wiki/freshness | expected-head CAS, transactional history, proposals and transitive/new-source freshness covered; WeKnora invariant rechecked | pending | Verify stale-CAS rollback, targeted edit, source→digest→Wiki→report propagation and old/current Wiki cohort import. |
 | Multiple projects/shared sources | project identity in routes/cache/jobs/writes and cross-project destination rules covered | pending | Exercise two tabs, independent settings/jobs, shared-source replacement and deliberate global edit. |
-| Incoming/outgoing MCP/tasks | stateless `/mcp`, selected-tool descriptors, first-claim frozen inputs and both legacy task families covered | pending | Verify protocol handshakes, per-connection readiness, strict service identity, claim races, result-before-wake and no lease/credential revival. |
+| Incoming/outgoing MCP/tasks | stateless `/mcp`, selected-tool descriptors, first-claim frozen inputs, both legacy task families and remote `insufficient_scope` step-up behavior covered | pending | Verify protocol handshakes, per-connection readiness, strict service identity, owner-visible scope challenge or safe reauthorization, claim races, result-before-wake and no silent scope/lease/credential revival. |
 | Durable research/Workflow cost | lost-create/re-entry/expiry semantics, D1/R2 result authority, seven-day default retention and step billing covered | pending | Exercise create-ACK loss, D1-write/checkpoint replay, explicit Retry, subscriptions, cancellation and step/storage/request/CPU usage. |
 | Source lifecycle/cleanup | capture→conversion→admission ownership and replacement-safe cleanup rules covered; donor reparse cleanup rechecked | pending | Inventory pending captures/promotions/copies; keep old generation until replacement wins; exercise deletion, holds and late cleanup. |
 | Export/migration/rollback | extraction map includes originals, normalized data, tasks, grants, Google state, Wiki/report and backup copies | pending | Inventory applied migrations/live rows/objects/destinations; rehearse storage-only export/import and old-backup restore without resurrecting deleted/revoked state. |
@@ -57,7 +58,7 @@ serial pre-build qualification programme.
 2. **MAP stages 1–2 — Library and complete scoped retrieval.** Preserve originals/revisions, then prove the exact
    frozen-selection path for representative 50/500-source scopes before calling broad comparison complete.
 3. **Integrate native APIs in their owning slices.** Access identities, model routes, conversion, Search,
-   Workflow subscriptions and MCP handshakes are verified where used, not in a preliminary certification project.
+   Workflow subscriptions and MCP handshakes/step-up challenges are verified where used, not in a preliminary certification project.
 4. **Finish deployed-data reconciliation before cutover.** Inventory real migrations/rows/objects, old Wiki/DO cohorts,
    residual writers, backup destinations and effective restrictions. Preserve data and current revocations.
 5. **Assemble UI/multi-project journeys, then gather runtime evidence.** Run representative conversion/retrieval,
