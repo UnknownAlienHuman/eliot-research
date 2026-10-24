@@ -30,10 +30,10 @@ Check the selected file/revision's license before copying code. Do not repin the
 | Authentication | Access browser sessions, Managed OAuth, distinct Service Auth tokens; `jose` at ingress | Separate UI/API/WebSocket and MCP hostname apps. Server creates the actor; client names/metadata are not identity. |
 | Models | `createAI`, AI SDK v7, AI Gateway, supported vendor models | Retire legacy providers/transports. D1 stores profiles and secret references, never credentials. |
 | Chat | `AIChatAgent`, `useAgentChat`, one SQLite DO per chat | Ordered messages/reconnectable delivery; no-tool turns use one synthesis; explicit tools are host-bounded. |
-| Incoming MCP | `createMcpHandler` + MCP SDK v2 over Streamable HTTP | `/mcp` only; no custom session or `/sse` compatibility layer. |
+| Incoming MCP | `createMcpHandler` + MCP SDK v2 over Streamable HTTP | Eliot's authenticated `/mcp` only; no custom session or `/sse` compatibility layer. |
 | Outgoing MCP | Agents SDK MCP client manager in one owner Tool Connection Agent | Reuse discovery/OAuth/tool conversion; Eliot owns selected-tool digest, scope and approval. |
 | Durable work | Workflows + native subscriptions | D1/R2 own product results; Workflow state/events are temporary execution/observation. |
-| Retrieval | One AI Search namespace and initially one shared hybrid Library instance | D1 resolves scope; deterministic item keys hydrate retained R2 bytes. No second search engine without measured need. |
+| Retrieval | One `ai_search` **instance binding** to the shared Library instance | D1 resolves scope; deterministic item keys hydrate retained R2 bytes. No runtime namespace binding, public Search/MCP endpoint or second search engine. |
 | Structure | Fixed `unified`/remark parse-only pipeline | Eliot owns grouping and UTF-16→UTF-8 mapping, not another Markdown grammar. |
 | Conversion | Local UTF-8 for Markdown/text/CSV; Workers AI Markdown Conversion for supported formats | Retain output/options/warnings/mapping before publication. Direct conversion is not OCR. |
 | Web discovery | Web Search API through Agents SDK/direct function | One explicit discovery transport. Results are leads; capture retained evidence before citation. |
@@ -149,14 +149,22 @@ References:
 [Gateway logging](https://developers.cloudflare.com/ai-gateway/observability/logging/) and
 [Unified Billing](https://developers.cloudflare.com/ai-gateway/features/unified-billing/).
 
-### Model lifecycle is not transparent
+### Model lifecycle and privacy are not transparent
 
 Workers AI may automatically alias a deprecated ID to a newer model with different capabilities and higher price. Every
 result stores requested and observed provider/model IDs. Model profiles include lifecycle/deprecation status. Alias or
-catalog change invalidates the checked capability/cost profile and blocks new default use until owner review; it is not a
-silent fallback.
+catalog change invalidates the checked capability/cost profile and blocks new default use until owner review.
 
-Reference: [planned model deprecations](https://developers.cloudflare.com/changelog/post/2026-05-08-planned-model-deprecations/).
+Workers AI's zero-data-retention/no-training commitment applies to standard stateless inference. Storage, Gateway
+logging/caching, async/batch work, uploads/adapters and other selected stateful features retain content under their own
+lifecycle. Third-party providers apply their own retention/terms, and each model may have a separate license/AUP.
+
+Privacy profiles therefore record provider, route, payload logging, cache, replay/storage, ZDR scope and license/AUP
+review date. Do not display a blanket “Cloudflare ZDR” badge merely because one hop uses Workers AI.
+
+References:
+[model deprecations](https://developers.cloudflare.com/changelog/post/2026-05-08-planned-model-deprecations/) and
+[Workers AI data usage](https://developers.cloudflare.com/workers-ai/platform/data-usage/).
 
 ### DLP and Guardrails are explicit policy changes
 
@@ -201,17 +209,51 @@ floor, fallback budget, and retained actual model/reason/decision. It provides n
 
 Reference: [Auto Router](https://developers.cloudflare.com/ai-gateway/features/auto-router/).
 
-## Search and acquisition
+## AI Search authority, metadata and lifecycle
 
-### AI Search
+### Bind one instance, not a namespace
 
-AI Search is GA; managed embedding/reranking is accounted in AI Search rather than Gateway logs. OCR may index scans but
-is not canonical evidence. Keep exact retained-byte hydration and the unresolved complete 50/500-source exercise. Items
-pagination is inventory, not ranked continuation.
+`ai_search_namespaces` grants runtime create/list/delete authority over every instance in a namespace. The product Worker
+instead receives one `ai_search` instance binding for the shared Library. Namespace/instance creation and deletion use an
+explicit owner/CI setup path with a separate management token. Product functions receive narrow search/items wrappers,
+not the raw binding; ordinary UI/API/MCP routes cannot update instance configuration or delete instances.
 
 References:
-[AI Search GA](https://developers.cloudflare.com/changelog/post/2026-10-01-ai-search-generally-available/) and
-[limits/pricing](https://developers.cloudflare.com/ai-search/platform/limits-pricing/).
+[Search binding](https://developers.cloudflare.com/ai-search/api/search/workers-binding/) and
+[instance binding](https://developers.cloudflare.com/ai-search/api/instances/workers-binding/).
+
+### Freeze short metadata
+
+An instance supports five custom fields. Changing the schema triggers full reindex. Metadata shares a 10 KiB envelope
+per vector, and only the first 64 UTF-8 bytes of each string are filterable. Freeze the selected five-field schema in
+stage 1. Use short stable opaque IDs/codes; D1 resolves authors, tags, URLs and bibliographic predicates. Do not filter on
+long URLs, digests or composite JSON. Item keys are deterministic and at most 128 characters.
+
+Reference: [metadata](https://developers.cloudflare.com/ai-search/configuration/indexing/metadata/).
+
+### No public endpoint
+
+AI Search public `/search`, `/chat/completions` and `/mcp` endpoints are unauthenticated by design; CORS is not access
+control. Keep them disabled. Incoming agents use Eliot's authenticated `/mcp`; UI/API call product functions.
+
+A future deliberately approved external endpoint must use a custom domain + Access and set
+`default_domain_enabled:false` on every full settings update, then verify the generated hostname returns `404`. Omitting
+the field can re-enable unauthenticated access.
+
+Reference: [public endpoint and Access](https://developers.cloudflare.com/ai-search/configuration/retrieval/public-endpoint/cloudflare-access/).
+
+### Publication and deletion are observed operations
+
+`items.uploadAndPoll` waits at most 300 seconds. Save item ID/key before polling; a timeout/nonterminal state never causes
+blind duplicate upload. Cleanup deletes by recorded ID, verifies exact key/source absence and search exclusion, purges any
+similarity/query cache, then marks projection cleanup complete. D1 keeps tombstone/unavailable references. Index deletion
+never implies canonical R2/source-history deletion; instance deletion is owner-only catastrophic administration.
+
+References:
+[Items binding](https://developers.cloudflare.com/ai-search/api/items/workers-binding/) and
+[exact-key lookup](https://developers.cloudflare.com/changelog/post/2026-07-08-ai-search-list-items-key-filter/).
+
+## Web discovery and acquisition
 
 ### Web Search
 
@@ -233,6 +275,21 @@ ingest before expiry; classify WebMCP/browser actions as untrusted tools. A cook
 References:
 [Agents browser](https://developers.cloudflare.com/agents/tools/browser/) and
 [Browser Run](https://developers.cloudflare.com/browser-run/).
+
+### Stronger arbitrary-URL egress remains conditional
+
+Workers VPC can send public Internet egress through Gateway DNS/HTTP/Network policies, but `cf1:network` is beta and can
+also reach the account's private Tunnel/Mesh/WAN routes. It is not automatically an SSRF boundary.
+
+Use ordinary bounded fetch for accepted public captures. A future stronger arbitrary-URL path may use an isolated
+VPC/Gateway binding only after explicit deny rules cover private, loopback, link-local, ULA and multicast ranges; only
+public HTTP(S) is allowed; every redirect/scheme/byte limit remains application-validated; and DNS-rebinding/redirect
+adversarial tests pass. Otherwise reject that route rather than copying IP-pinning code or exposing the private network.
+Gateway logs are diagnostics, not admission proof.
+
+References:
+[Workers VPC](https://developers.cloudflare.com/workers-vpc/) and
+[Gateway egress](https://developers.cloudflare.com/changelog/post/2026-06-05-gateway-egress/).
 
 ## Durable work and recovery
 
@@ -259,6 +316,7 @@ Reference: [D1 undelete](https://developers.cloudflare.com/changelog/post/2026-1
 | MCP portals | An existing portal may be one connection; generic execute never grants hidden write/spend approval. |
 | Cloudflare Computer | Defer until a real job needs scratch files; never a second Library. |
 | Containers + Docling | Conditional bounded converter on current `ctx.container`; measure image/startup/memory/Russian/table fidelity. |
+| Workers VPC/Gateway | Conditional stronger public egress only after deny-policy and DNS-rebinding tests; never an implicit route to private networks. |
 | Artifacts | Defer until a real Git exchange consumer exists; not D1/R2 replacement. |
 | K2 | Not selected; no missing event broker. |
 | Basin | Not selected; no data-lake requirement. |
@@ -294,7 +352,7 @@ Cloudflare OS `readPdf()` is a streaming clue, not a converter selection: it nei
 | [WeKnora Wiki writer `e28c68c`](https://github.com/Tencent/WeKnora/blob/e28c68cf552cc1aba2fc923a73b0ab23a33bcb55/internal/application/repository/wiki_page.go) | Previous-revision snapshot + expected-version update transaction. | GORM, force writes, another Wiki store. |
 | [OpenNotebook `a0f6f30`](https://github.com/lfnovo/open-notebook/tree/a0f6f3081ae06328f0a451b3a3ef2959ca25721d) | Focused chat distinct from research; rendered-context budget/truncation notice. | Empty-selection-as-all, silent skips, Python graph runtime. |
 | [EdgeQuake hydration `c8e84b8`](https://github.com/raphaelmansuy/edgequake/blob/c8e84b832b47ccffcf94bcda97c9555a0158dcf7/edgequake/crates/edgequake-query/src/chunk_hydration.rs) | Batch-hydrate one prepared passage set. | Graph retrieval/another embeddings stack. |
-| [PipesHub fetcher `e598631`](https://github.com/pipeshub-ai/pipeshub-ai/blob/e598631009b22b64b60e4366803f11d9d958e5e7/backend/python/app/utils/public_http.py) | Validate redirects, bound bytes, separate fetch/admission. | IP-pinning code in Workers; use native guarded egress or reject stronger route. |
+| [PipesHub fetcher `e598631`](https://github.com/pipeshub-ai/pipeshub-ai/blob/e598631009b22b64b60e4366803f11d9d958e5e7/backend/python/app/utils/public_http.py) | Validate redirects, bound bytes, separate fetch/admission. | IP-pinning code in Workers; use a proven native egress boundary or reject the stronger route. |
 
 Additional retained lessons:
 
@@ -322,8 +380,8 @@ Do not add a second search engine, graph database, event broker, data lake, work
 converter marketplace, agent harness, judge chain, automatic memory subsystem, proof layer or recurring model
 qualification service without a measured missing operation. Do not treat index OCR as canonical evidence, operational
 logs as activity proof, browser/container state as durable history, DLP/Guardrails as evidence validation, deprecated
-model aliases as transparent continuity, Auto Router as an invisible switch, or current limits/marketing percentages as
-permanent architecture.
+model aliases as transparent continuity, AI Search public endpoints as internal APIs, namespace bindings as harmless
+runtime access, Auto Router as an invisible switch, or current limits/marketing percentages as permanent architecture.
 
 A mechanism enters Eliot only when it removes concrete work in an owning slice. Name the source, license, retained idea,
 removed duplicate, measured evidence and remaining limitation.
