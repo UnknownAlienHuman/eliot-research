@@ -26,6 +26,7 @@ deploy, migration or residency certification.
 | 101 | Beginning 2026-12-01, Workers Logs, Workers/Cloudflare Traces, Container logs, R2 Data Access Logs, AI Gateway logs and Workers Issues share account-level Observability ingestion/storage pricing. Shared datasets default to seven-day retention. Ingestion is metered before compression and includes enriched/custom attributes; sampling before storage reduces both meters. Paid plans include finite ingestion/storage allowances and continue billing after exhaustion. Agent traces are explicitly incomplete and may truncate payloads. | Set explicit head sampling and per-span/log field budgets before enabling production observability. Keep seven-day operational retention and no full payload/reasoning/tool replay by default. Track ingestion/storage estimates and alert before allowance exhaustion. Do not use traces/logs as conversation history, evidence archive or a lossless audit trail; durable product history remains D1/R2. |
 | 102 | Logpush is available with usage-based internal/external export pricing, and Transformers can filter, redact and reshape supported datasets before delivery. Export introduces another retained copy and destination policy; it does not make best-effort/source logs complete. | Do not enable Logpush in the initial product. Add it only for a named external incident/SIEM/long-retention consumer, with payload-free allowlisted fields, transformation/redaction before delivery, documented destination jurisdiction/retention/deletion and explicit export cost. It is operational telemetry, never workspace backup or activity authority. |
 | 103 | Remote bindings let locally executing code call deployed D1/R2/KV/DO and other resources. They are opt-in per binding, but Workers AI always runs remotely and AI Search has no local implementation, so their local development paths necessarily call a Cloudflare account resource. `wrangler dev --local` disables configured remote bindings for simulatable resources, not Workers AI or an AI Search operation that requires remote mode. Local model/search calls can incur usage and mutate deployed indexes. | Default development uses local simulated D1/R2/DO plus synthetic fixtures and `wrangler dev --local`; committed production bindings do not carry `remote:true`. Separate explicit dev/integration environments bind only dedicated non-production AI Search/Gateway/Workers AI resources, with hard spend limits and disposable data. Local agents cannot point at production resources or run indexing/model calls without the explicit integration profile. |
+| 104 | AI Gateway's default/global rate limit is gateway-wide, not a durable per-job budget. Unified Billing additionally has a hard platform limit of 200 Cloudflare-managed-credential requests per 60 seconds per gateway and returns `429`; BYOK requests are exempt from that specific limit. Using gateway ID `default` can auto-create a gateway on first use and silently apply its current logging/cache/rate-limit/guardrail configuration. | Eliot always uses an explicit configured gateway ID and never relies on auto-created `default`. Host admission/concurrency and job-local call/token ceilings remain authoritative. Treat `429` as an observed provider/gateway outcome under the existing partial/retry policy; do not split gateways merely to evade the platform limit or claim a gateway rate limit is per actor/project/job. Record credential mode because Unified Billing and BYOK have different platform limits. |
 
 ## Secrets and deployment decision
 
@@ -37,7 +38,7 @@ deploy, migration or residency certification.
 | Create production/preview/dev storage jurisdiction | Explicit setup manifest before resource creation |
 | Change jurisdiction | New resource + export/import/verification/cutover; no in-place mutation |
 | Configure R2 lock/Local Uploads | Explicit owner storage policy; absent from ordinary application deploy |
-| Configure AI Gateway response cache | Off globally; explicit server-owned immutable-operation exception only |
+| Configure AI Gateway | Explicit named gateway, cache off, reviewed rate/spend/retry/logging policy; no auto-created default |
 | Configure production observability | Sampled payload-free seven-day operations profile with cost budget |
 | Configure Logpush | Off initially; separate owner-approved external telemetry integration only |
 | Configure local development | Local simulated bindings by default; separate disposable remote integration profile only |
@@ -59,7 +60,7 @@ R2 bucket-lock rules and retain-until policy
 Durable Object jurisdiction
 AI Search availability/location claim: verified or none
 Workers AI / AI Gateway / vendor route retention and location
-AI Gateway response cache: disabled | explicit operation/profile
+AI Gateway ID, credential mode, cache/rate/retry/spend/log policy
 Secrets Store global/beta status
 Logs/traces/issues destination, sampling, field budget and retention
 Logpush destination/transform/retention: disabled | explicit
@@ -88,7 +89,7 @@ D1 migration and old/new code compatibility
 R2 object envelope/manifest reader
 AI Search item/metadata schema
 DO exports lifecycle
-Worker or AI Gateway cache policy/key
+Worker or AI Gateway cache/rate/retry policy
 observability fields/sampling/export
 local/preview/production binding IDs
 ```
@@ -100,8 +101,8 @@ deployment. DO lifecycle changes remain a separate atomic operation.
 ## Verification boundary
 
 The Secrets Store access-control/integration docs, D1/R2/DO data-location docs, R2 locks/Local Uploads, Workers Cache,
-AI Gateway response cache, Markdown for Agents, Local Explorer/tracing, Observability/Logpush pricing and retention,
-remote-binding/local-development behavior, gradual-deployment docs and declarative DO lifecycle constraints were
-inspected. No secret was created/rotated, no role/token/lock/cache/telemetry export or remote binding was provisioned, no
-jurisdictional or Local Uploads bucket was created, no local model/index call was made, no mixed-version deployment was
-run and no PITR/rollback was exercised. These remain stage-owned runtime checks.
+AI Gateway response cache/rate/platform limits, Markdown for Agents, Local Explorer/tracing, Observability/Logpush pricing
+and retention, remote-binding/local-development behavior, gradual-deployment docs and declarative DO lifecycle constraints
+were inspected. No secret was created/rotated, no role/token/lock/cache/rate/telemetry export or remote binding was
+provisioned, no jurisdictional or Local Uploads bucket was created, no local model/index call was made, no mixed-version
+deployment was run and no PITR/rollback was exercised. These remain stage-owned runtime checks.
