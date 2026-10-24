@@ -8,8 +8,9 @@ Canonical decisions remain in [Architecture](../../docs/ARCHITECTURE.md),
 The [Cloudflare blog/platform sweep](2026-10-23/CLOUDFLARE-BLOG-PLATFORM-SWEEP.md) checks the Birthday Week roundup,
 linked product posts, current docs/changelogs and latest relevant releases. It confirms the product architecture while
 making the implementation handoff concrete: exact build/runtime pins, Preview isolation, Worker-scoped roles, native
-observability, explicit—not invisible—Auto Router/User Insights/browser/container use, and non-transparent DLP/
-Guardrails/model-alias behavior. Source review is not an installed lockfile, deployed Preview or live service call.
+observability, explicit—not invisible—Auto Router/User Insights/browser/container use, non-transparent DLP/Guardrails/
+model-alias behavior, one-instance AI Search authority, disabled public endpoints and a conditional VPC/Gateway egress
+candidate. Source review is not an installed lockfile, deployed Preview or live service call.
 
 Earlier reviews map legacy stores/writers, user journeys, retrieval contracts, Access/MCP shape, model/chat portability
 and migration boundaries. Their unresolved deployed-data/runtime questions remain below; they do not create a serial
@@ -34,7 +35,8 @@ pre-build qualification programme.
 | Access, browser/API/MCP identity | two-host topology, Origin, Managed OAuth, strict Service Auth, Gateway Access distinction and MCP step-up covered | pending | Verify WebSocket/static-assets routing, 401/403/repeated headers, exact assertion claims, owner-visible `insufficient_scope`, distinct revocation and no public Gateway endpoint. |
 | Native operations/observability | Logs, Traces, Issues, source maps, profiling and R2 access-log limitations covered | pending | Enable sampled payload-free telemetry; exercise one source-mapped failure/trace/profile; prove D1/R2 remain authority and issue agents cannot deploy. |
 | Model connections/BYOK | `createAI`, profiles, named-alias/ZDR uncertainty and actual-model capture covered | pending | Compile chosen versions; exercise Workers AI/catalog/dynamic/vendor routes, billing/logging/fallback and provider/model readback without recurring qualification. |
-| Model lifecycle/deprecation | automatic alias to a newer potentially higher-priced model reproduced from current changelog | pending | Store requested and observed model IDs; detect lifecycle/catalog drift; invalidate capability/cost profile and block default use until owner review. |
+| Model lifecycle/deprecation | automatic alias to a newer potentially higher-priced model reproduced from current changelog | pending | Store requested/observed model IDs; detect lifecycle/catalog drift; invalidate capability/cost profile and block default use until owner review. |
+| Model privacy/licenses | stateless Workers AI ZDR/no-training versus stateful/Gateway/provider retention and model-specific license/AUP covered | pending | Verify each selectable profile's logging/cache/replay/storage/ZDR/license fields; no blanket privacy badge or unreviewed third-party model. |
 | DLP/Guardrails | streaming buffering, extra billed calls, incomplete attachment inspection and missing Russian support covered | disabled by default | If selected, use explicit policy/gateway; test request-only versus response scanning, latency, language/coverage, logs/cost and changed stream shape. Never treat it as evidence validation. |
 | Auto Router | changing pool, classification, fallback and routing headers covered; excluded as default | not selected | If owner enables an auxiliary route, constrain pool/common floor, reserve fallback budget and retain routed model/reason/decision; compare quality before promotion. |
 | User Insights | task/anomaly/savings analytics, payload/privacy and trust boundaries covered | not selected by default | Evaluate only with payload-free trusted metadata; verify it never changes routing/defaults or replaces local hard limits. |
@@ -46,9 +48,12 @@ pre-build qualification programme.
 | Conditional Container converter | current `ctx.container`, beta snapshots and legacy-class retirement covered | not selected | Build only after native conversion misses a required corpus case; measure image/startup/memory/Russian/table fidelity and publish through revision writer. |
 | Retained source/page bodies | R2 immutable bodies/ranges and exact old-reference behavior covered | pending | Verify UTF-8 ranged reads, short/large bodies, atomic references and no duplicate large Workflow checkpoints. |
 | Structural parsing/tables/coordinates | fixed remark pipeline and UTF-16→UTF-8 mapping covered; Docling mechanism rechecked | pending | Compile parser; exercise escaped tables, math/code, repeated headers, oversized nodes and original-anchor fidelity. |
-| AI Search publication/readiness | GA/billing/accounting, item readiness/chunks, typed metadata and reindex rules covered | pending | Verify exact-key upload/poll/reconciliation, partial errors, OCR separation, reindex handoff and actual cost telemetry. |
+| AI Search runtime authority | namespace create/list/delete authority versus one-instance binding reviewed; public endpoints are unauthenticated by default | pending | Bind only the dedicated Library instance; prove routes/MCP cannot get raw update/delete authority; keep public endpoints off and verify generated/default hostname is unavailable. |
+| AI Search metadata contract | five fields, full-reindex schema changes, 10 KiB envelope, 64-byte filter prefix and 128-char item keys covered | pending | Freeze the schema; use short opaque IDs; test exact revision/kind conjunction and ensure no long URL/hash/composite filter silently truncates. |
+| AI Search publication/readiness | async upload, 300s poll ceiling, exact-key lookup, delete/cache behavior and reindex rules covered | pending | Save IDs before polling; verify timeout without duplicate upload; delete by ID then confirm exact key/search absence and cache purge before settling projection cleanup. |
 | Retrieval/citation/coverage | revision/kind filter explicit; hydration/citation donors rechecked; complete large scope unresolved | pending | Prove 50/500-source scope/filter acceptance; measure English/Russian recall, exact identifiers, late facts, tables and all-document coverage. |
 | Web Search | provider/ZDR/BYOK/Gateway billing/logging and direct no-model use covered | pending | Exercise Ceramic/Exa/Linkup selection, cost/error/partial behavior and capture-before-citation without duplicate transport. |
+| Public URL fetch/egress | bounded redirects/bytes plus beta Workers VPC/Gateway policy option reviewed; no DNS-rebinding proof claimed | pending | Exercise ordinary fetch; if stronger route is needed, isolate VPC binding, deny all private/link-local/ULA/multicast ranges, allow public HTTP(S), validate every redirect and run rebinding tests. Otherwise reject the route. |
 | Web fetch/crawl | native Fetch and optional Browser Run crawl boundaries covered | pending | Verify one-acquisition provenance, redirects/errors, rendered/static distinction, retained pagination and stronger-egress rejection. |
 | Neighboring Cloudflare apps | Cloud Notebook, Workers Research, Deep Research App and current Cloudflare OS mechanisms inspected | not run | Reuse only concrete interaction/streaming/cancellation lessons; resolve license before copying; no fork or quality-parity claim. |
 | Optional platform substitutions | portals, Computer, Artifacts, K2, Basin, KV Instant, Clef/Clairic, `cf`/Forge classified | not selected | Add only when one concrete missing operation is measured and the candidate removes—not adds—a store/runtime/authority. |
@@ -57,7 +62,7 @@ pre-build qualification programme.
 | Multiple projects/shared sources | project identity in routes/cache/jobs/writes and cross-project destination rules covered | pending | Exercise two tabs, independent settings/jobs, shared-source replacement and deliberate global edit. |
 | Incoming/outgoing MCP/tasks | stateless `/mcp`, selected-tool digests, frozen inputs, both task families, step-up and optional Issues events covered | pending | Verify handshakes/readiness, strict identity, least-privilege event scopes, claim races, result-before-wake and no silent scope/lease/credential revival. |
 | Durable research/Workflow cost | create/re-entry/expiry, D1/R2 result authority, seven-day retention and step billing covered | pending | Exercise create-ACK loss, D1-write/checkpoint replay, Retry, subscriptions, cancellation and step/storage/request/CPU usage. |
-| Source lifecycle/cleanup | capture→conversion→admission ownership and replacement-safe cleanup covered | pending | Inventory pending captures/promotions/copies; keep old generation until replacement wins; exercise deletion/holds/late cleanup. |
+| Source lifecycle/cleanup | capture→conversion→admission ownership and replacement-safe cleanup covered | pending | Inventory pending captures/promotions/copies; keep old generation until replacement wins; exercise deletion/holds/index cleanup/late cleanup separately. |
 | Export/migration/rollback | extraction map includes originals, normalized data, tasks, grants, Google state, Wiki/report and backups | pending | Inventory live migrations/rows/objects/destinations; rehearse storage-only export/import and old-backup restore without resurrecting deletion/revocation. |
 | UI safety/drafts/project state | reader/profile controls, safe rendering and server-draft/conflict requirements covered | pending | Verify exact reopen navigation, unsaved/saved state, sign-out cache clearing, multi-tab isolation and accessibility. |
 | Performance/quality/cost | required measurements named; Search/Workflow/Gateway/Web Search/observability accounting covered | pending | Measure rendered prompt/cache tokens, request/step counts, indexing/search/hydration/first-token latency, recall/precision, storage and spend before adding agents or switching models. |
@@ -68,16 +73,18 @@ pre-build qualification programme.
    package-manager/Node/compatibility pins; use stable Vite v1 with `wrangler.jsonc`; generate declarations; configure
    private Worker/browser source maps and dependency instrumentation; create Worker-scoped CI/diagnostic roles and a
    production-inaccessible Preview resource set.
-2. **MAP stages 1–2 — Library and complete scoped retrieval.** Preserve originals/revisions, then prove the exact
-   frozen-selection path for representative 50/500-source scopes before calling broad comparison complete.
-3. **Integrate native APIs in owning slices.** Access identities, model routes/lifecycle, conversion, Search, Web Search,
-   Workflow subscriptions and MCP handshakes/step-up are verified where used, not in a preliminary certification project.
+2. **MAP stages 1–2 — Library and complete scoped retrieval.** Preserve originals/revisions; bind only one AI Search
+   instance, freeze the short metadata schema, keep public endpoints disabled, and prove exact frozen-selection behavior
+   for representative 50/500-source scopes before calling broad comparison complete.
+3. **Integrate native APIs in owning slices.** Access identities, model routes/lifecycle/privacy, conversion, Search,
+   Web Search, Workflow subscriptions and MCP handshakes/step-up are verified where used, not in a preliminary
+   certification project.
 4. **Use native operations carefully.** Add sampled payload-free Logs/Traces/Issues/profiling; keep operational signals
    out of product authority. DLP/Guardrails remain off unless one explicit policy is measured and accepted.
 5. **Finish deployed-data reconciliation before cutover.** Inventory live migrations/rows/objects, old Wiki/DO cohorts,
    residual writers, backup destinations and effective restrictions. Preserve data and current revocations.
 6. **Assemble UI/multi-project journeys, then measure.** Run representative conversion/retrieval, concurrency/
    cancellation, export/import, quality, latency and cost checks. Evaluate Auto Router, User Insights, persistent browser,
-   Container/Clef or another new platform only against a measured missing operation.
+   Workers VPC, Container/Clef or another new platform only against a measured missing operation.
 
 Pending integration work does not authorize deployment or live-data deletion and does not create another status system.
