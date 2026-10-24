@@ -9,11 +9,16 @@ The [review coverage register](REVIEW-REGISTER.md) records checked areas, partia
 
 ## Current reviews
 
+- [2026-10-23 — Cloudflare data consistency and Access credential sweep](2026-10-23/CLOUDFLARE-DATA-CONSISTENCY-AUTH.md):
+  distinguishes hidden D1 read retries from product attempts, keeps beta read replication/Sessions out until measured,
+  uses R2 strong consistency and atomic create-once writes instead of custom storage reconciliation, keeps presigned
+  bearer URLs out of private source paths and defines tested Access service-token rotation. Runtime race/replica/rotation
+  evidence remains pending.
 - [2026-10-23 — Cloudflare storage, secrets and deployment sweep](2026-10-23/CLOUDFLARE-STORAGE-DEPLOYMENT-SWEEP.md):
   closes hidden authority/cutover gaps in Secrets Store, immutable jurisdiction choices, mixed Worker/DO versions,
-  atomic non-rollbackable DO lifecycle changes, R2 locks/Local Uploads and Workers Cache. Ordinary CI cannot receive
-  account Secrets Store Edit; residency is a whole-product profile; private entrypoints are never cacheable. Runtime
-  deployment, migration, residency and recovery evidence remains pending.
+  atomic non-rollbackable DO lifecycle changes, R2 locks/Local Uploads, Workers/AI Gateway caches, remote local bindings,
+  named Gateway/rate-limit semantics and observability retention/export. Runtime deployment, migration, residency and
+  recovery evidence remains pending.
 - [2026-10-23 — Cloudflare blog and platform sweep](2026-10-23/CLOUDFLARE-BLOG-PLATFORM-SWEEP.md): reads the Birthday
   Week roundup, linked product blogs, current changelogs/docs and latest relevant releases. It adds reproducible build
   pins, incomplete Preview isolation, Worker-scoped roles, native observability/privacy boundaries, optional Auto Router/
