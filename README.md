@@ -1,20 +1,27 @@
-# ELIOT Research
+# Eliot Research
 
-A single-owner research workspace: bring sources into projects, ask questions, inspect citations,
-save and reuse reports, maintain a Wiki, and work with connected agents.
+A research workspace for one human owner and connected agents: a shared library, exact source passages,
+cited answers, document distillation, versioned reports, Wiki and explicit deep research on Cloudflare.
 
-**Refactoring is in progress.** Cloudflare and React/Vite are the selected stack. Astro is rejected;
-the integrated React cutover and runtime simplification are not reported complete.
+**The compact replacement is specified; it is not yet implemented or deployed.** Existing application code
+is a donor and migration source. This documentation pass does not change the running application.
 
-| Read | For |
+Continue with [the root-package cut-in and stage 0](docs/MAP.md#delivery-order).
+The [review register](.github/audits/REVIEW-REGISTER.md) distinguishes completed source review from open implementation
+questions; its pending runtime checks are not prerequisites for starting the shell.
+
+| Document | Purpose |
 |---|---|
-| [Product manifesto](docs/architecture/ELIOT_RESEARCH.md) | Purpose, requirements and principles; persistent lead-developer context |
-| [Implementation](IMPLEMENTATION.md) | Concrete work, existing source owners and donor choices |
-| [Working rules](AGENTS.md) | Coordination and verification |
-| [Start here](docs/START-HERE.md) | How to use the documents without reading the entire archive |
+| [Architecture](docs/ARCHITECTURE.md) | Product, required capabilities and boundaries; persistent developer context |
+| [Implementation](docs/IMPLEMENTATION.md) | Concrete storage, algorithms, platform APIs and failure behaviour |
+| [Map and work order](docs/MAP.md) | Current code → replacement responsibility; integration sequence |
+| [Donors and primary sources](docs/DONORS.md) | Ready-made APIs, useful donor mechanisms and what not to copy |
+| [Audits](.github/audits/README.md) | Current findings and preserved historical evidence |
+| [Review status](.github/audits/REVIEW-REGISTER.md) | Checked areas, remaining gaps and the current handoff |
+| [Working rules](AGENTS.md) | Reading, implementation, coordination and verification |
 
-[ADR-0019](docs/adr/0019-compact-refactoring.md) records the scope change.
-[Issue #380](https://github.com/UnknownAlienHuman/eliot-research/issues/380) contains the audit;
-its dated findings are not a requirement to preserve discarded mechanisms.
+[Issue #380](https://github.com/UnknownAlienHuman/eliot-research/issues/380) explains the earlier failure.
+Its dated counts and recommendations are checked against source in the current audit, not repeated as
+current production facts. Superseded specifications remain reachable through pinned historical links.
 
 MIT. See [LICENSE](LICENSE).

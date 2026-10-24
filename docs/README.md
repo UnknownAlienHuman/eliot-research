@@ -1,27 +1,12 @@
 # Documentation
 
-[START-HERE](START-HERE.md) explains what belongs in the developer's context.
+Read [Architecture](ARCHITECTURE.md) for the product, [Implementation](IMPLEMENTATION.md) for the design,
+[MAP](MAP.md) for build order and [DONORS](DONORS.md) for selected reusable solutions.
+[Working rules](../AGENTS.md) govern development; [audits](../.github/audits/README.md) preserve evidence.
+[Review status](../.github/audits/REVIEW-REGISTER.md) records the handoff and remaining checks;
+[MAP stage 0](MAP.md#delivery-order) is the next implementation step.
 
-| Document | Job |
-|---|---|
-| [Product manifesto](architecture/ELIOT_RESEARCH.md) | Persistent context: why the product exists, what it does, requirements and principles |
-| [Implementation entry](../IMPLEMENTATION.md) | Navigation to concrete work, existing code and technical details |
-| [Implementation plan](implementation/backend-entrypoints.md) | What to change, where, how, what to borrow and what to remove |
-| [Working rules](../AGENTS.md) | Coordination, verification timing and document discipline |
-
-## Reference collections — read selectively
-
-| Directory | Use |
-|---|---|
-| [architecture/](architecture/) | The manifesto; the existing [language reference](architecture/LANGUAGE_RUNTIME_CONTRACT.md) is a technical implementation note, not additional persistent context |
-| [implementation/](implementation/README.md) | Current technical notes and dated source/operating records; the index distinguishes their roles |
-| [adr/](adr/) | Reasons for past decisions; current scope is not the sum of every historical ADR |
-| [agent-work/](agent-work/README.md) | UI guidance and historical capability maps, not path locks or a mandatory work queue |
-| [design/](design/README.md) | UI references and proposals, not additional backend requirements |
-| [contracts/](contracts/) | Notes for existing interfaces; read with their current callers |
-| [generated/](generated/) | Generated projections, not another manually maintained authority |
-| [s92/](s92/README.md) | Historical setup/scenario material; not the default implementation programme |
-
-Put file paths, algorithms, donors, migration mechanics, commands and checked-at operational facts in
-implementation notes. Put product purpose and enduring principles in the manifesto. Do not duplicate
-one into the other, manufacture additional status records, or turn historical evidence into prerequisites.
+`implementation/implementation-status.json` is a legacy build/check fixture, not runtime data or the replacement backlog.
+Retire it with its final checker/script/CI consumers at the root-tooling transition. `contracts/` contains legacy schema
+exports and compatibility fixtures; trace their separate build/protocol consumers before retirement. Neither defines the
+replacement architecture. Keep needed legacy source available through migration; do not replace either with a new status system.
