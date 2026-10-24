@@ -55,6 +55,26 @@ create acknowledgement loss reconciles the same stable instance ID
 local delete/recreate and isolated deployed lifecycle tests use the pinned toolchain
 ```
 
+## Primary sources
+
+- [Rules of Workflows](https://developers.cloudflare.com/workflows/build/rules-of-workflows/): deterministic step names and concurrency hazards.
+- [Workers API and instance lifecycle](https://developers.cloudflare.com/workflows/build/workers-api/) and
+  [Trigger Workflows](https://developers.cloudflare.com/workflows/build/trigger-workflows/): create, pause, resume,
+  restart, terminate, delete and batch operations.
+- [Sleeping, retrying and rollback](https://developers.cloudflare.com/workflows/build/sleeping-and-retrying/) and
+  [How Cloudflare built saga rollbacks](https://blog.cloudflare.com/rollbacks-for-workflows/): compensation eligibility,
+  order, failure and retry semantics.
+- [Subscribe to instance events](https://developers.cloudflare.com/workflows/build/subscribe-to-instance-events/) and
+  [Workflows limits](https://developers.cloudflare.com/workflows/reference/limits/): replay, retention and bounded state.
+- [Workflow exports](https://developers.cloudflare.com/changelog/post/2026-09-24-workflow-exports/) and
+  [`ctx.exports` invocation](https://developers.cloudflare.com/changelog/post/2026-09-27-workflow-ctx-exports/):
+  same-Worker declaration and invocation.
+- [Workflows control-plane rearchitecture](https://blog.cloudflare.com/workflows-v2/) and
+  [Workflow diagram execution model](https://blog.cloudflare.com/workflow-diagrams/): engineering implementation and
+  dynamic execution context, used as background rather than a public exactly-once guarantee.
+- [Vite plugin 1.65.0 release](https://github.com/cloudflare/workers-sdk/releases/tag/%40cloudflare%2Fvite-plugin%401.65.0):
+  pinned-candidate local Workflow fixes.
+
 ## Verification boundary
 
 The current Workflows Workers API, trigger/lifecycle, retry/rollback, deterministic-step, subscriptions, retention and
