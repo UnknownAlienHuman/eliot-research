@@ -5,7 +5,8 @@ Canonical decisions remain in [Architecture](../../docs/ARCHITECTURE.md),
 [Implementation](../../docs/IMPLEMENTATION.md), [Map](../../docs/MAP.md) and
 [Donors](../../docs/DONORS.md). Dated audits retain evidence. This file records only coverage and remaining proof.
 
-The [AI chat state/recovery sweep](2026-10-24/CLOUDFLARE-AI-CHAT-STATE-RECOVERY-SWEEP.md),
+The [MCP authentication/transport sweep](2026-10-24/CLOUDFLARE-MCP-AUTH-TRANSPORT-SWEEP.md),
+[AI chat state/recovery sweep](2026-10-24/CLOUDFLARE-AI-CHAT-STATE-RECOVERY-SWEEP.md),
 [AI Search GA/projection sweep](2026-10-24/CLOUDFLARE-AI-SEARCH-GA-SWEEP.md),
 [Cloudflare Workflows control sweep](2026-10-24/CLOUDFLARE-WORKFLOWS-CONTROL-SWEEP.md),
 [Cloudflare blog/platform sweep](2026-10-23/CLOUDFLARE-BLOG-PLATFORM-SWEEP.md) and
@@ -13,10 +14,11 @@ The [AI chat state/recovery sweep](2026-10-24/CLOUDFLARE-AI-CHAT-STATE-RECOVERY-
 source, linked engineering posts, current docs/changelogs and relevant releases. They confirm the compact product
 architecture while making the handoff concrete: reproducible build pins, Preview isolation, Worker-scoped roles, native
 observability, explicit—not invisible—AI routing/safety/cache/browser/container use, one-instance AI Search authority and
-versioned projection, disabled public endpoints, separate secret administration, whole-product jurisdiction,
-mixed-version deployment rules, bounded R2 retention, non-cacheable private entrypoints, exact Workflow lifecycle and an
-explicit no-rollback ChatAgent storage/recovery/import boundary. Source review is not an installed build, deployed
-Preview, residency certification or live service call.
+versioned projection, stateless authenticated MCP with explicit connection/effect boundaries, disabled public endpoints,
+separate secret administration, whole-product jurisdiction, mixed-version deployment rules, bounded R2 retention,
+non-cacheable private entrypoints, exact Workflow lifecycle and an explicit no-rollback ChatAgent
+storage/recovery/import boundary. Source review is not an installed build, deployed Preview, residency certification or
+live service call.
 
 Earlier reviews map legacy stores/writers, user journeys, retrieval contracts, Access/MCP shape, model/chat portability
 and migration boundaries. Their unresolved deployed-data/runtime questions remain below; they do not create a serial
@@ -44,7 +46,13 @@ pre-build qualification programme.
 | Workflow lifecycle and compensation | pause/resume queueing, cooperative Stop, terminate with/without rollback, restart prefix reuse, delete-without-rollback and reverse-start-order saga semantics covered | pending | Exercise Stop after partial save; forced terminate both ways; failed-step rollback with missing output; one failed compensator stopping later handlers; ensure UI/API/MCP expose neither restart nor delete as Retry/cancel. Keep unresolved compensation visible. |
 | Workflow retention and subscriptions | explicit seven-day retention, replay-then-live subscriptions and retention-bound event availability covered | pending | Reconnect a visible subscription and deduplicate replay; expire/delete native state and reopen from D1/R2 without generation; prove native events never duplicate product activity or become history authority. |
 | Worker private-cache policy | Workers Cache can skip Worker code, share entries across hostnames/service bindings and heuristically cache headerless responses | pending | Set default entrypoint cache off; emit `private, no-store` on all UI/API/MCP/source/chat/job responses; verify no private `HIT` across domains/bindings. Cache only immutable public hashed assets separately. |
-| Access, browser/API/MCP identity | two-host topology, Origin, Managed OAuth, strict Service Auth, Gateway Access distinction and MCP step-up covered | pending | Verify WebSocket/static-assets routing, 401/403/repeated headers, exact assertion claims, owner-visible `insufficient_scope`, distinct revocation and no public Gateway endpoint. |
+| Access browser/API identity | two-host topology, Origin, strict browser/Service Auth, assertion verification and WebSocket limitation covered | pending | Verify WebSocket/static-assets routing, 401/403/repeated headers, exact assertion claims, distinct browser/service revocation and sign-out cache clearing. |
+| Incoming MCP server/transport | MCP SDK v2 factory, fresh stateless server per request, `/mcp` only, no `McpAgent`/DO session/SSE and bounded 2025 Stateless compatibility covered | pending | Compile exact Agents/MCP peers; prove concurrent requests cannot share server state; exercise 2026 and named 2025 clients; verify no `/sse`, session ID, GET/DELETE lifecycle, replay or pushed server request dependency. Return D1 job handles for long work. |
+| Incoming MCP auth/Host/Origin | Access Managed OAuth, server-created actor context, exact custom-domain Host/Origin policy and token secrecy covered | pending | Exercise browser and origin-less clients; reject wrong Host, malformed/opaque Origin and wildcard bypass; verify Access JWT/actor/project/grant derivation and ensure bearer/assertion/AuthInfo values never reach logs, product state, tool output or export. |
+| Outgoing MCP connections/catalog | one Tool Connection Agent, persisted OAuth/options/reconnect, bounded wait for ready, explicit connection replacement, catalog fingerprints and selected-tool digests covered | pending | Register one reviewed HTTPS server, hibernate/reconnect, replace same-name endpoint without duplicate active connections, verify fixed callback path/hidden identity, invalidate drafts/turns on catalog drift and prove unavailable required tools fail before inference. |
+| MCP OAuth and scope step-up | fixed callback path/state/PKCE, minimal initial scopes, `insufficient_scope`, unsupported-client path and provider-side revocation distinction covered | pending | Complete OAuth and step-up with owner consent; preserve prior grants without broad pre-grant; retry under the same logical effect identity only after ready/catalog revalidation; prove disconnect does not falsely claim remote revocation. |
+| MCP tool effects and elicitation | connection retries versus tool-call outcome, D1 effect intent, unknown timeout/disconnect state, memory-only elicitation and MRTR semantics covered | pending | Interrupt a mutating tool after remote receipt and keep it unknown without replay; reconcile with idempotency/provider lookup or owner decision. Keep elicitation disabled initially; if enabled, use retained operation identity and no secret form fields. |
+| MCP portals, Events and remote Skills | portal generic `query/execute`, service-token full upstream authority, experimental signed Events and remote instruction files covered | not selected | Keep absent from initial config/runtime. Any later portal is one named allowlisted connection with Eliot approvals/effects; any Event is signature-verified/deduplicated investigation-only; remote Skills are captured untrusted reference material and never auto-installed/executed/system policy. |
 | Native operations/observability | Logs, Traces, Issues, source maps, profiling, read-only local tracing and R2 access-log limitations covered | pending | Enable sampled payload-free telemetry; exercise one source-mapped failure/trace/profile and read-only Local Explorer diagnosis; prove D1/R2 remain authority and issue agents cannot deploy or mutate local product data. |
 | Model connections/BYOK | `createAI`, profiles, named-alias/ZDR uncertainty and actual-model capture covered | pending | Compile chosen versions; exercise Workers AI/catalog/dynamic/vendor routes, billing/logging/fallback and provider/model readback without recurring qualification. |
 | Model lifecycle/deprecation | automatic alias to a newer potentially higher-priced model reproduced from current changelog | pending | Store requested/observed model IDs; detect lifecycle/catalog drift; invalidate capability/cost profile and block default use until owner review. |
@@ -84,12 +92,12 @@ pre-build qualification programme.
 | Distillation/comparison/analytical reviews | bounded reductions, partial completion and distinct profile outputs covered | pending | Ship start/status/reopen/stop/partial-save; exercise truncation, negative findings, quantitative conditions and coverage. |
 | Knowledge/Wiki/freshness | expected-head CAS, transactional history, proposals and transitive/new-source freshness covered | pending | Verify stale-CAS rollback, targeted edit, source→digest→Wiki→report propagation and old/current Wiki cohort import. |
 | Multiple projects/shared sources | project identity in routes/cache/jobs/writes and cross-project destination rules covered | pending | Exercise two tabs, independent settings/jobs, shared-source replacement and deliberate global edit. |
-| Incoming/outgoing MCP/tasks | stateless `/mcp`, selected-tool digests, frozen inputs, both task families, step-up and optional Issues events covered | pending | Verify handshakes/readiness, strict identity, least-privilege event scopes, claim races, result-before-wake and no silent scope/lease/credential revival. |
+| Agent tasks and event wake | frozen inputs, both task families, claim/result identity, result-before-wake and optional Issues-event trigger covered | pending | Verify least-privilege event scope, signed/deduplicated trigger if ever selected, claim races, result-before-wake and no silent scope/lease/credential revival. Events remain investigation input, not authority. |
 | Durable research/Workflow cost | stable create/re-entry, deterministic steps, new-instance Retry, cooperative Stop, finite retention, subscriptions and step/storage billing covered | pending | Exercise create-ACK loss on the same ID; D1-write/checkpoint replay; bounded retries; partial-save Stop; forced termination; compensation failure; native-state expiry; explicit step/storage/request/CPU usage. Prove platform limits and batch APIs do not replace job admission. |
 | Source lifecycle/cleanup | capture→conversion→admission ownership and replacement-safe cleanup covered | pending | Inventory pending captures/promotions/copies; keep old generation until replacement wins; exercise deletion/holds/index cleanup/late cleanup separately. |
 | Export/migration/rollback | extraction map includes originals, normalized data, tasks, grants, Google state, Wiki/report, backups and versioned chat snapshots | pending | Inventory live migrations/rows/objects/destinations/chat cohorts; rehearse D1/R2/chat export/import and old-backup restore without waking/migrating predecessors or resurrecting deletion/revocation. |
 | UI safety/drafts/project state | reader/profile controls, safe rendering and server-draft/conflict requirements covered | pending | Verify exact reopen navigation, unsaved/saved state, sign-out cache clearing, multi-tab isolation and accessibility. |
-| Performance/quality/cost | required measurements named; Search/Workflow/chat recovery/Gateway/Web Search/observability accounting covered | pending | Measure rendered prompt/cache tokens, chat recovery/provider attempts, Workflow request/step counts, AI Search ingestion/query/storage, indexing/search/hydration/first-token latency, English/Russian recall/precision and total spend before adding agents or switching models. |
+| Performance/quality/cost | required measurements named; Search/Workflow/chat recovery/MCP/Gateway/Web Search/observability accounting covered | pending | Measure rendered prompt/cache tokens, chat recovery/provider attempts, MCP connect/discovery/tool outcomes, Workflow request/step counts, AI Search ingestion/query/storage, indexing/search/hydration/first-token latency, English/Russian recall/precision and total spend before adding agents or switching models. |
 
 ## Active queue
 
@@ -97,31 +105,32 @@ pre-build qualification programme.
    package-manager/Node/compatibility pins; use stable Vite v1 with `wrangler.jsonc`; generate declarations; configure
    private Worker/browser source maps, dependency instrumentation and non-cacheable private entrypoint; create
    Worker-scoped CI/diagnostic roles, separate secret setup and production-inaccessible Preview resources from an explicit
-   jurisdiction matrix. Declare same-Worker Workflows once in `exports` with explicit contract version, step limits and
-   retention; call them through `ctx.exports`. Pin/compile the exact Agents/AI Chat/AI SDK set and create a new replacement
-   ChatAgent namespace; do not wake predecessor chats under the selected one-way storage lift.
+   jurisdiction matrix. Pin exact Agents/AI Chat/MCP/AI SDK peers, create a new replacement ChatAgent namespace and serve
+   one stateless authenticated SDK-v2 `/mcp`; do not wake predecessor chats or add MCP session/SSE infrastructure.
 2. **MAP stages 1–2 — Library and complete scoped retrieval.** Preserve D1/R2 originals/revisions; decide any bounded R2
    lock profile; keep Local Uploads off unless proven; bind one shared AI Search instance only; commit an explicit hybrid
    candidate and short metadata schema; use raw Search plus Eliot hydration/generation; disable public endpoints; publish
    replacement items before cleanup; prove exact frozen-selection behavior for representative 50/500-source scopes and
    measure English/Russian quality, latency and AI Search cost by mode.
 3. **Integrate native APIs in owning slices.** Access identities, model routes/lifecycle/privacy/cache, conversion, Search,
-   Web Search, chat recovery/concurrency/tools/portable state, Workflow lifecycle/subscriptions and MCP handshakes/step-up
-   are verified where used, not in a preliminary certification project. Chat and Workflow Retry create new retained
-   turns/instances; destructive regenerate, Workflow restart/delete and AI Search Chat/similarity generation are not
-   product controls or evidence paths.
+   Web Search, chat recovery/concurrency/tools/portable state, Workflow lifecycle/subscriptions and MCP auth/catalog/
+   step-up/effect boundaries are verified where used, not in a preliminary certification project. Chat and Workflow Retry
+   create new retained turns/instances; destructive regenerate, Workflow restart/delete, AI Search Chat/similarity
+   generation and MCP connection retry as tool replay are not product controls/evidence paths.
 4. **Use native operations carefully.** Add sampled payload-free Logs/Traces/Issues/profiling and read-only local tracing;
    keep operational signals out of product authority. DLP/Guardrails and Gateway response caching remain off unless one
-   explicit bounded operation is measured and accepted.
+   explicit bounded operation is measured and accepted. MCP portals, Events and remote Skills remain absent initially.
 5. **Deploy compatibly.** Use full deployment initially. Introduce gradual rollout only after mixed Worker/DO version,
-   ChatAgent storage/recovery/import, active Workflow step/output-reader and AI Search projection-config compatibility
-   tests. Keep DO lifecycle changes separate, owner-approved and preceded by removal of callers plus export. Keep failed
-   compensation, unknown tool effects and old projection/chat state visible until replacements are verified.
+   ChatAgent storage/recovery/import, active Workflow step/output-reader, MCP client/catalog and AI Search projection-config
+   compatibility tests. Keep DO lifecycle changes separate, owner-approved and preceded by removal of callers plus export.
+   Keep failed compensation, unknown tool effects and old projection/chat state visible until replacements are verified.
 6. **Finish deployed-data reconciliation before cutover.** Inventory live migrations/rows/objects, old Wiki/DO/chat
-   cohorts, residual writers, backup destinations and effective restrictions. Preserve data and current revocations.
+   cohorts, residual writers, MCP connections/grants, backup destinations and effective restrictions. Preserve data and
+   current revocations.
 7. **Assemble UI/multi-project journeys, then measure.** Run representative chat migration/reconnect/recovery/approval,
-   conversion/retrieval, concurrency/cancellation, Workflow restart/terminate/delete protection, projection replacement/
-   rebuild, export/import, quality, latency and cost checks. Evaluate Auto Router, User Insights, persistent browser,
-   Workers VPC, Container/Clef or another new platform only against a measured missing operation.
+   MCP OAuth/step-up/catalog-drift/unknown-effect, conversion/retrieval, concurrency/cancellation, Workflow
+   restart/terminate/delete protection, projection replacement/rebuild, export/import, quality, latency and cost checks.
+   Evaluate Auto Router, User Insights, persistent browser, Workers VPC, Container/Clef or another new platform only
+   against a measured missing operation.
 
 Pending integration work does not authorize deployment or live-data deletion and does not create another status system.
