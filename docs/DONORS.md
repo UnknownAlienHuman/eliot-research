@@ -102,7 +102,7 @@ state or portable application migration. Preserve portable D1/R2/chat exports an
 backup work because a dashboard recovery feature exists.
 
 Reference:
-[D1 undelete limit](https://developers.cloudflare.com/changelog/post/2026-10-23-d1-database-undelete-seven-days/).
+[D1 undelete limit](https://developers.cloudflare.com/changelog/post/2026-10-23-undelete-seven-day-window/).
 
 ### AI Search is a paid disposable projection
 
