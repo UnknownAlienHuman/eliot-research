@@ -9,6 +9,11 @@ The [review coverage register](REVIEW-REGISTER.md) records checked areas, partia
 
 ## Current reviews
 
+- [2026-10-24 — Cloudflare AI Search GA and projection sweep](2026-10-24/CLOUDFLARE-AI-SEARCH-GA-SWEEP.md):
+  fixes GA billing/observability, explicit hybrid/tokenizer configuration, one-instance topology, deterministic item
+  replacement, built-in-storage authority, file/OCR limits, raw Search versus cached Chat generation, metadata/filter/
+  boost boundaries and versioned reindex cutover. AI Search remains a disposable projection over D1/R2, not evidence or
+  authorization authority. Runtime indexing, quality, scope and billing evidence remains pending.
 - [2026-10-24 — Cloudflare Workflows control and recovery sweep](2026-10-24/CLOUDFLARE-WORKFLOWS-CONTROL-SWEEP.md):
   fixes the exact meaning of deterministic step identity, saga compensation, Stop, terminate, restart, instance delete,
   retention, replaying subscriptions and same-Worker Workflow exports. Product Retry is a new admitted instance, native
