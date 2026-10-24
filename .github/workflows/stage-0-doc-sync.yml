@@ -1,0 +1,59 @@
+name: stage-0-doc-sync
+
+on:
+  push:
+    branches: [impl/stage-0-shell]
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: impl/stage-0-shell
+      - name: Correct the compiled package evidence
+        shell: python
+        run: |
+          from pathlib import Path
+
+          donors = Path("docs/DONORS.md")
+          text = donors.read_text()
+          replacements = {
+              "This file establishes only source review. Stage 0 owns installation/build. Each vertical slice owns its live proof.":
+                  "PR #415 establishes installed/compiled evidence for the exact Stage 0 shell set. Live service behavior, quality, latency and cost remain owned by the vertical slices.",
+              "## Reviewed package candidate — not a lockfile":
+                  "## Reviewed package candidate and Stage 0 lockfile",
+              "| `wrangler` | `4.151.3` | Stable CLI candidate. |":
+                  "| `wrangler` | `4.152.0` | Installed and compiled in PR #415; minimum peer accepted by `@cloudflare/vite-plugin 1.65.0`. |",
+              "Stage 0 chooses one exact compatible set, commits the lockfile, generates declarations and compiles. Version recency does":
+                  "Stage 0 selected one exact compatible set, committed the lockfile and compiled the Worker/React shell. Version recency does",
+          }
+          for old, new in replacements.items():
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"Expected one DONORS match for {old!r}, found {count}")
+              text = text.replace(old, new)
+          donors.write_text(text)
+
+          audit = Path(".github/audits/2026-10-23/CLOUDFLARE-BLOG-PLATFORM-SWEEP.md")
+          text = audit.read_text()
+          old = "Wrangler `4.151.3` and Vite plugin `1.65.0`."
+          new = "Wrangler `4.152.0` and Vite plugin `1.65.0`. The earlier `4.151.3` candidate was rejected by the plugin's enforced peer check during PR #415."
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f"Expected one audit match, found {count}")
+          audit.write_text(text.replace(old, new))
+      - name: Commit correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add docs/DONORS.md .github/audits/2026-10-23/CLOUDFLARE-BLOG-PLATFORM-SWEEP.md
+          git commit -m "docs: record compiled Wrangler peer correction"
+          git push origin HEAD:impl/stage-0-shell
