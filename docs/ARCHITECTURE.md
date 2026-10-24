@@ -129,6 +129,16 @@ proof tickets between modules or require historical qualification before ordinar
 Secrets remain in Cloudflare-managed storage. Source text and external tool output are untrusted data, not
 authorization instructions. Tool availability, source scope and budgets are host-owned settings.
 
+### The owner interface is kept and polished, not redrawn
+
+The existing Material 3 Expressive owner interface (`packages/ui` and `apps/eliotr-web` at the pinned baseline) is the
+accepted design. The replacement moves it into the new application and connects it to the new product functions; it
+does not introduce another visual language. Keep its colour/type/shape/motion tokens, self-hosted Google Sans, colourful
+light and dark themes, the top app bar with navigation rail (bottom bar on phones), the Sources | conversation/reader |
+Agents-and-tools panes with one stable scroll owner each, 48 dp touch targets and geometry that does not jump while
+answers stream. Changes are polish: plain owner language, fixes for observed usability problems and new screens built
+from the same tokens and components. A different look requires an explicit owner decision.
+
 ## Corpus understanding without a graph platform
 
 Each source revision has:
@@ -175,7 +185,8 @@ responsibility, not to mirror every transport or donor.
 4. Replace callers and remove the predecessor after migration; do not stack `v2`, `v3` and compatibility wrappers.
 5. Add an abstraction only when it removes existing duplication or isolates a changing platform API.
 6. Keep SQL relational and short. Put workflow decisions in readable TypeScript, not triggers or JSON policy algebra.
-7. No custom search engine, billing ledger, OAuth issuer, cryptographic proof chain, event-sourcing platform,
+7. No custom search engine, billing ledger (per-turn/job usage counters and records of mutating tool calls are ordinary
+   D1 state, not a ledger), OAuth issuer, cryptographic proof chain, event-sourcing platform,
    workflow DSL, generic agent governor, converter marketplace or model-qualification service.
 8. Do not run a model merely to route every request, approve every chunk or restate a provider result.
 9. Parse provider responses for required fields and stable discriminants; do not fail because an API added an unrelated

@@ -24,6 +24,9 @@ Trace browser/MCP → product function → stored result → reader. Move real c
 implementations, exports, dependencies and fixtures together. No fake success, swallowed failure,
 permanent fallback chain, speculative framework or prototype compatibility without a real consumer.
 
+The owner accepted the existing Material interface: move and polish it (IMPLEMENTATION §12); do not create a new
+look, palette, font stack or component family.
+
 Use Cloudflare and maintained libraries directly. Share small code when it removes actual duplication.
 A folder, class or package needs a responsibility; a donor needs a concrete use. Line counts are diagnostic,
 not quotas. Standard input validation, access checks, cancellation and atomic writes remain; repeated
@@ -40,8 +43,9 @@ disjoint files; the manager integrates shared routes, schema and configuration. 
 tasks. Do not invent claim files, packet locks, ancestry ceremonies, approval queues or status registries.
 Use the expected remote head when publishing and preserve concurrent work.
 
-Architecture owns purpose and requirements. Implementation owns technical decisions. MAP owns source
-locations and build order. DONORS owns reuse evidence. Dated audits own verified problems and limitations.
+Architecture owns purpose and requirements. Implementation owns technical decisions; when DONORS or an audit
+disagrees with it, Implementation wins until someone edits it. `migrations/` owns table and column names. MAP owns
+source locations and build order. DONORS owns reuse evidence. Dated audits own verified problems and limitations.
 Edit those documents when necessary; do not create an execution diary or duplicate their rules.
 A PR explains the user-visible change, verification and material remaining limits.
 
