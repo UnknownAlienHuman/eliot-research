@@ -1,164 +1,21 @@
-# Contract compatibility policy
+# Legacy contract compatibility record
 
-Registry generation 14 admits RFC 3986 unreserved `~` in opaque model IDs, including
-the published OpenRouter alias IDs. The 13 affected model-use, service-model and
-catalog-preference schemas advance to schema version 2, generation 1, with explicit
-`BREAKING` successors: old readers reject those model IDs. Wire protocol strings
-remain unchanged; deploy the public catalog projection and owner decoder together.
-All prior compatibility entries and canonical fixtures are retained. Provider,
-route, operation and credential identifier grammars remain unchanged. Catalog
-listing grants no account entitlement, pricing or inference authority; missing
-models.dev prices remain an explicit blocking error before inference, and model
-response identities must still match exactly without alias guessing.
+This path documents the predecessor contract registry. Its complete reviewed policy remains preserved at
+[`main@7c034569/docs/contracts/compatibility.md`](https://github.com/UnknownAlienHuman/eliot-research/blob/7c034569b908d3b03a8b821b7c537477a24b10f7/docs/contracts/compatibility.md),
+alongside the exact generated schemas, fixtures and compatibility history that still exist in this directory.
 
-The compatibility registry is append-only. A current schema is identified by
-`(export_name, schema_version, schema_generation)` and by its generation-specific `$id`. Versions,
-generations and registry ordinals are canonical unsigned 32-bit positive integers.
+It does **not** govern the replacement application. Current product and implementation decisions live in
+[Architecture](../ARCHITECTURE.md), [Implementation](../IMPLEMENTATION.md), [MAP](../MAP.md) and
+[Donors](../DONORS.md). Historical registry generations, M2/T-level gates, qualification packets and the requirement to
+append an entry for every schema-byte change are predecessor rules, not the target development process.
 
-## Change classes
+Until [MAP stage 0](../MAP.md#delivery-order) removes the final old workspace/CI consumers:
 
-- **INITIAL** — first published generated schema; it has no predecessor.
-- **BACKWARD_COMPATIBLE** — old readers can safely interpret the new shape. Keep the schema version,
-  increment the generation and point `supersedes_schema_id` to the previous entry.
-- **BREAKING** — an old reader can reject or, worse, misinterpret the new shape. Increment the schema
-  version and retain a migration note.
-- **RETIRED** — the generation is no longer admitted as current. Keep the version, advance the
-  generation and retain the predecessor. Retirement never deletes history.
+- preserve the committed generated artifacts for decoding, migration and differential checks;
+- do not add replacement schemas or roadmap state to the legacy registry;
+- when an unavoidable pre-cutover predecessor wire fix is made, follow the pinned historical policy and update the old
+  package, registry and fixtures consistently;
+- do not treat a passing legacy contract check as evidence that the replacement compiles or works.
 
-Every export has one linear history: exactly one `INITIAL` root, no branch, and exactly one terminal
-entry. Every non-initial entry must reference an existing predecessor with the same export name and
-family. An entry cannot supersede itself, cross families, move backward in generation, or create a cycle.
-The schema URN must encode exactly the entry's family, export name, version and generation.
-
-The generated current index must point to the unique terminal entry for every active export. A terminal
-`RETIRED` entry must be absent from the current index; an active terminal entry must be present with the
-same schema ID, digest, structural class, version and generation. This reconciliation prevents a stale
-index from silently retaining a superseded contract.
-
-Any generated JSON Schema byte change requires a new registry entry. Updating only the digest under an
-existing version/generation is forbidden because it destroys reproducibility.
-
-## Breaking changes
-
-Treat a change as breaking when it can alter identity, authority, disclosure, retention, residency,
-completion disposition, required evidence, effect permissions, or the meaning of an existing field.
-Examples include removing or renaming a field, adding a required field, widening a closed enum, changing
-a conditional invariant, weakening strict-object rejection, or changing canonical number/string rules.
-
-An optional field is backward-compatible only when absence preserves the old meaning and old readers may
-safely ignore it. Load-bearing optional fields normally require a new version or an explicitly gated
-reader generation.
-
-## Required evidence
-
-Every schema change must include:
-
-1. updated Zod and cross-field validation;
-2. regenerated corpus and index;
-3. an appended compatibility entry with a specific note;
-4. canonical fixture review and a new fixture/digest when wire-visible bytes change;
-5. positive JSON round-trip and negative unknown/forbidden-value tests;
-6. T0/T1, plus T2/T3/T4/T5 where the changed contract affects models, retrieval, platform behavior,
-   security, erasure or recovery.
-
-Transport completion and research completion remain independent. A transport state such as `COMPLETED`
-may never be added to `CompletionDispositionSchema` as a convenience mapping.
-
-## Active Library readiness and Workspace MCP publication
-
-Registry generation 3 reserved the `library-readiness` and `workspace-mcp` families for independent
-version 1 contracts. These contracts do not change the existing Library catalog or Workspace MCP v1
-wire shapes. The family-name enum is closed, so adding names is a breaking metadata change: the
-registry schema family advances to version 2, generation 1. Version 1 registry readers must retain
-their previous corpus or explicitly upgrade before consuming these families. Compatibility history
-retains all previous schema identities and digests; current registry exports supersede their previous
-entries with `BREAKING` records. The registry document protocol remains version 1 because its transport
-shape is unchanged; `registry_generation` identifies each publication.
-
-Registry generation 4 adds five initial v1/g1 schemas to the existing `workspace-mcp` family for the
-MCP client diagnostic create, consume, issued-challenge, latest-status and confirmed-result surfaces.
-The challenge token appears only in the issued challenge response; status and consume readback remain
-closed and reject token or verified-actor fields. These additions keep the family version at v1/g1,
-preserve every generation 3 identity and digest, and are recorded as `INITIAL` entries with dedicated
-canonical issued and confirmed JSON fixtures.
-
-## Computer agent and research branch schema publication
-
-Registry generation 7 registers 48 existing strict schemas in the `computer-agent` family and six existing research branch and read-extract checkpoint schemas in the `research` family, each at version 1, generation 1. These 54 contracts receive `INITIAL` entries.
-
-Adding `computer-agent` widens the closed schema-family enum. All 15 registry-family schemas advance from version 2, generation 1 to version 3, generation 1, with `BREAKING` entries that supersede their exact previous schema identities. Version 2 readers must retain the previous catalog or explicitly upgrade before consuming this publication. The compatibility ledger preserves every historical identity and digest. The registry document protocol remains version 1; `registry_generation` advances from 6 to 7.
-
-This metadata publication does not require D1/R2 migration or change normalized-bundle and owner-cutover bytes. Canonical fixtures remain governed by their existing schema identities and digests. Runtime composition and live platform qualification retain their separate acceptance requirements.
-
-## Research Provider Key schema registration
-
-Registry generation 8 adds the twelve already-exported Research Provider Key configuration and model-use schemas to the existing `research` family at version 1, generation 1. Each receives an `INITIAL` history entry because it has no prior generated schema identity; all generation 7 schema identities and compatibility entries remain unchanged. The generated corpus, index, and canonical-fixture registry are refreshed at registry generation 8. This registration does not change the Zod wire shapes, widen the closed schema-family enum, or require a D1/R2 migration.
-
-## Research session binding metadata
-
-Registry generation 11 adds `ResearchSessionBindingDescriptorSchema` and `ResearchSessionLocatorSchema`
-to the existing `research` family at version 1, generation 1. Both receive `INITIAL` compatibility
-entries. Existing schema identities, schema digests, and compatibility history are preserved; no
-existing wire contract changes and no D1/R2 migration is required.
-
-The descriptor is a strict eight-field metadata response: the current canonical investigation reference
-and original persisted handler and authority tuple. It grants no execution authority. Session and
-operation identifiers must match; revisions must be positive safe integers. These semantic constraints
-remain enforced by Zod. The generated JSON Schema carries the closed structural shape and stable URN;
-it does not encode the identifier equality refinement. The dedicated JSON fixture round-trips through
-the runtime schema and its canonical digest is registered. Extra authority fields and split identifiers
-are rejected by the runtime contract.
-
-## Global provider catalog contracts and branch-query compatibility
-
-Registry generation 12 registers the existing strict global service-model schemas in the `model` family,
-plus the previously unregistered `AiUsageObservationSchema`, four managed-ranking schemas,
-`ArtifactRevisionReadSchema`, current computer-agent dispatch list and summary schemas, and
-`ResearchRunHistoryQuerySchema`. These initial entries publish schema shape only:
-provider credential values are absent, catalog visibility remains presentation metadata, and catalog
-registration does not grant model-use or qualification authority.
-
-The g3 branch-query and V2 checkpoint digests recorded at generation 11 remain unchanged in history.
-The later `d37e72fd` source change added the optional aggregate `budget_exhaustion` receipt, tightened
-budget-stop validation, and made plan pairing reject historical unversioned retrieval traces. Those
-changes are breaking for strict g3 readers, so current identities advance by schema version:
-`BranchQueryLegResultSchema` v1:g3 to v2:g1, `BranchQueryResultSchema` v1:g3 to v2:g1, and the four
-V2 checkpoint/result schemas v2:g3 to v3:g1. The payload protocol literals remain unchanged.
-The new aggregate budget receipt is covered by the registered
-`research-branch-query-budget-exhaustion-v1` canonical fixture.
-
-`decodeLegacyResearchBranchCheckpointReadback` retains structural readback for g3 checkpoint/result
-objects and labels every result `READBACK_ONLY`. It does not run current cross-record authority
-refinements and is not used by workflow execution, model-use admission, or evidence-freeze admission.
-Current execution continues to require the request-digest and trace bindings enforced by the current
-schemas. The registry change does not require a D1/R2 migration.
-
-## Exact catalog model-use registration
-
-Registry generation 13 registers the five existing catalog model-use request, receipt, state, phase
-and failure-code schemas in the `research` family at version 1, generation 1. Each receives an
-`INITIAL` compatibility entry. Every earlier schema identity, digest, compatibility entry and
-canonical fixture remains unchanged. The new request fixture selects an exact generic provider/model
-tuple through an existing provider operation and rejects credentials and caller-supplied authority.
-
-This publication does not change those runtime wire schemas. Migrations 0157, 0158 and 0159 separately
-provide provider catalog preferences, exact catalog model-use authorization and provider-native v2
-evidence/revocation history. Their backup specs cover every persisted column and are selected only
-when the corresponding migrations are present; earlier backup inventories retain their existing
-shape. Registering metadata or retaining a qualification record does not grant inference permission
-or renew execution authority.
-
-## Persisted project guide registration
-
-Registry generation 15 adds the five existing project guide language, request, claim, document and view
-schemas to the `research` family at version 1, generation 1. Each receives an `INITIAL` entry. All 276
-previous schema identities and digests, compatibility entries and canonical fixtures remain unchanged.
-The request fixture admits only protocol and language. The partial-view fixture retains three represented
-sources out of ten, seven explicit omissions, evidence references and the saved report locator; it cannot
-be relabeled `READY`. Runtime Zod refinements enforce audited claim roles, distinct claims, exact source
-basis and current report requirements beyond the generated JSON Schema's closed structural shape.
-
-Migration 0166 separately introduces the durable `project_guide_binding` reservation and report locator.
-Its backup entry exports all sixteen columns and is selected only when that migration is present.
-Registering these contracts does not dispatch a guide, renew execution authority or change existing
-Research admission, model, spend, source-currentness or report-read validation.
+After the last consumer is traced and retired, remove this fixture set coherently rather than carrying the registry into
+the new root application.

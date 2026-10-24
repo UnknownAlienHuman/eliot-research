@@ -1,49 +1,37 @@
-# Public contract artifacts
+# Legacy contract artifacts
 
-`packages/contracts/src` is the runtime authority for public wire structure and semantic validation.
-Registry tooling is exported separately through `@eliotr/contracts/registry`, so normal Worker and PWA
-imports do not construct the schema corpus. This directory contains deterministic, reviewable artifacts
-derived from that tooling boundary.
+This directory belongs to the predecessor application retained at
+[`main@7c034569`](https://github.com/UnknownAlienHuman/eliot-research/tree/7c034569b908d3b03a8b821b7c537477a24b10f7).
+It remains in the branch only while the predecessor workspace, tests and CI still consume its generated schemas and
+fixtures. It is **not** canonical product documentation, target runtime authority or a roadmap for the replacement.
 
-## Committed artifacts
+Current replacement decisions live in [Architecture](../ARCHITECTURE.md),
+[Implementation](../IMPLEMENTATION.md), [MAP](../MAP.md) and [Donors](../DONORS.md).
+[MAP stage 0](../MAP.md#delivery-order) traces the final consumers and removes the old contract/status checks together
+with the active legacy workspace. Do not delete the generated files earlier: they may still be needed to decode and
+verify predecessor data during migration.
 
-- `schema-corpus.v1.json` — one Draft 2020-12 document for every public Zod schema;
-- `schema-index.v1.json` — stable schema identity, family, version, generation, structural class and
-  SHA-256 of each compact canonical JSON Schema document;
-- `compatibility-registry.v1.json` — append-only linear compatibility history;
-- `canonical-fixtures.v1.json` — exact committed normative fixture paths and byte digests;
-- `compatibility.md` — the change and migration policy.
+## Retained predecessor fixtures
 
-Every generated object schema with declared properties must be closed with
-`additionalProperties: false`. Explicit record/map schemas remain open only through a declared
-`additionalProperties` value schema. Registry identities fail closed when the URN disagrees with the
-entry's family, export name, version or generation. Registry ordinals are bounded to positive `u32`
-values, and the current index must match each history chain's unique active terminal generation.
+- `schema-corpus.v1.json` and `schema-index.v1.json` — generated structural schemas and identities;
+- `compatibility-registry.v1.json` — predecessor compatibility history;
+- `canonical-fixtures.v1.json` and `fixtures/` — exact legacy examples and digests;
+- `compatibility.md` — historical predecessor policy, preserved through a pinned source link;
+- `generate.mjs` — the predecessor generator used by `@eliotr/contracts`.
 
-## Authority boundary
+These artifacts describe old wire shapes. They do not require the replacement to keep the old registry, generations,
+qualification programme, Rust canonicalization plan or compatibility bureaucracy. Target contracts are implemented at
+the replacement's actual external boundaries and versioned only when a real compatibility requirement exists.
 
-Generated JSON Schema is a structural interchange artifact. It does not replace Zod `superRefine`,
-`packages/contracts/src/validation/cross-field.ts`, or any domain invariant. Cutover agreement,
-coverage closure, research disposition, erasure closure and similar semantic rules must still pass the
-runtime validators.
+## Maintenance before retirement
 
-The registry serializer is tooling-only. It uses deterministic code-unit ordering, preserves hostile
-property names such as `__proto__` without prototype mutation, rejects cyclic/non-finite/non-plain values,
-and does not define the future M2 product canonical-JSON authority.
-
-No artifact in this directory moves canonical serialization or domain authority into Rust. M2 starts
-only after this registry is merged and its fixture identities are available for differential tests.
-
-## Regeneration
+Change or regenerate this directory only when repairing the predecessor before cutover. In that exceptional case, keep
+`packages/contracts`, generated artifacts and compatibility history mutually consistent and use the old package commands:
 
 ```bash
 pnpm --filter @eliotr/contracts artifacts:check
 pnpm --filter @eliotr/contracts artifacts:write
 ```
 
-`artifacts:write` rewrites derived corpus/index/fixture files but deliberately refuses to invent or
-rewrite compatibility history. A schema change must first make an explicit version/generation decision
-and append the corresponding compatibility entry.
-
-`--bootstrap` is reserved for the initial ER-01 publication and must not be used after
-`compatibility-registry.v1.json` exists.
+Do not use those commands as acceptance for the replacement. A documentation-only change must not rewrite generated
+fixtures, and new replacement work must not append entries to the legacy registry.
