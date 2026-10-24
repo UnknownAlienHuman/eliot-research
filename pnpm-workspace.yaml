@@ -1,21 +1,20 @@
-packages:
-  - "apps/*"
-  - "packages/*"
+packages: []
 
-# pnpm 11 removed onlyBuiltDependencies. Review lifecycle-script access explicitly.
+# pnpm 11 requires lifecycle-script access to be explicit.
 allowBuilds:
   core-js-pure: false
   esbuild: true
   workerd: true
 
+# These exact releases were source-reviewed or required by the selected Vite plugin peer contract.
 minimumReleaseAgeExclude:
-  - '@ai-sdk/gateway@4.0.110'
-  - '@ai-sdk/provider-utils@5.0.58'
-  - '@ai-sdk/provider@4.0.26'
-  - ai@7.0.136
+  - '@ai-sdk/gateway@4.0.125'
+  - '@ai-sdk/react@4.0.156'
+  - 'agents@0.30.1'
+  - 'ai@7.0.152'
+  - 'wrangler@4.152.0'
 
 overrides:
-  'miniflare@5.20260916.0-alpha>undici': 7.29.1
-  sharp: 0.35.5
-  '@modelcontextprotocol/client': 2.2.0
-  '@modelcontextprotocol/sdk': 1.31.0
+  '@modelcontextprotocol/client': 2.3.1
+  '@modelcontextprotocol/server': 2.3.1
+  '@modelcontextprotocol/sdk': 1.32.1

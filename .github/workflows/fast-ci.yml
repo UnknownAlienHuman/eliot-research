@@ -2,7 +2,7 @@ name: fast-ci
 
 on:
   push:
-    branches: [main]
+    branches: [main, impl/stage-0-shell]
   pull_request:
   workflow_dispatch:
 
@@ -15,119 +15,33 @@ concurrency:
 
 jobs:
   product:
-    name: Typecheck, lint, unit and build smoke
+    name: Replacement shell compile and package
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: 22.13.0
+          node-version: 22.18.0
       - name: Install current package-manager signing keys
         run: npm install --global corepack@0.34.7
       - run: corepack enable
       - run: corepack prepare pnpm@11.23.0 --activate
       - name: Install frozen dependencies
         run: pnpm install --frozen-lockfile
-      - name: Typecheck
-        run: pnpm typecheck
-      - name: Worker and browser dependency boundaries
-        run: node scripts/check-boundaries.mjs
       - name: Lint
         run: pnpm lint
-      - name: Source sections, exact evidence and owner Research regressions
-        run: >-
-          pnpm exec vitest run --config vitest.config.ts
-          packages/retrieval/src/structural-projector.test.ts
-          packages/retrieval/src/evidence-resolver.test.ts
-          packages/retrieval/src/query-persistence.test.ts
-          packages/retrieval/src/retrieval.test.ts
-          packages/retrieval/src/service-managed-admission.test.ts
-          apps/eliotr-web/src/query/research.test.ts
-          apps/eliotr-web/src/query/projectAttachment.test.ts
-          packages/owner-api-client/src/sources/import/raw.test.ts
-          packages/cloudflare-research-runtime/src/research-run-list.test.ts
-          apps/eliotr-web/src/query/modelSettings.test.ts
-          apps/eliotr-web/src/query/globalModelSettings.test.ts
-          packages/owner-api-client/src/research/runs/authority.test.ts
-          packages/owner-api-client/src/evidence/citations/audit.test.ts
-          packages/owner-api-client/src/evidence/citations/reauthorization.test.ts
-          apps/eliotr-web/src/query/reports.test.ts
-          packages/cloudflare-model-control/src/research-model-gateway-binding.test.ts
-          packages/cloudflare-model-control/src/research-model-catalog.test.ts
-          packages/owner-api-client/src/research/configuration/models.test.ts
-          packages/contracts/src/service-model.test.ts
-          packages/contracts/src/artifact-readback.test.ts
-          packages/owner-api-client/src/connections/service-models.test.ts
-          packages/cloudflare-model-control/src/service-model-provider-service.test.ts
-          packages/cloudflare-ai/src/service-model-provider-management.test.ts
-          packages/cloudflare-ai/src/custom-provider-rest-codec.test.ts
-          packages/cloudflare-ai/src/provider-key-rest-codec.test.ts
-          packages/cloudflare-ai/src/provider-key-rest.test.ts
-          packages/cloudflare-ai/src/project-search-item.test.ts
-          packages/cloudflare-ai/src/project-search.test.ts
-          packages/cloudflare-model-execution/src/model-route-failure.test.ts
-          packages/cloudflare-research-configuration/src/research-provider-key-model-pricing-catalog.test.ts
-          packages/cloudflare-model-transport/src/model-gateway-http-request.test.ts
-          packages/cloudflare-workspace-mcp/src/gemini-mcp.test.ts
-          packages/cloudflare-workspace-mcp/src/workspace-mcp-env.test.ts
-          packages/cloudflare-workspace-mcp/src/gemini-mcp-service-token.test.ts
-          packages/cloudflare-workspace-mcp/src/gemini-mcp-client-diagnostics.test.ts
-          packages/cloudflare-workspace-mcp/src/computer-agent-dispatch-mcp.test.ts
-          packages/cloudflare-research-configuration/src/research-run-configuration-admission.test.ts
-          packages/cloudflare-research-branches/src/research-branch-v7-reconciliation-freeze.test.ts
-          packages/cloudflare-research-branches/src/research-evidence-freeze-synthesis-empty-pack.test.ts
-          packages/cloudflare-research-stages/src/research-verification-candidate-failure.test.ts
-          apps/eliotr-core/test/research-model-gateway-runtime.test.ts
-          --reporter=verbose
-      - name: Native Worker model settings and Gateway contracts
-        run: >-
-          pnpm --dir apps/eliotr-core exec vitest run
-          test/service-model-settings-http.test.ts
-          test/research-model-gateway-runtime.test.ts
-          test/research-model-qualification-gateway.test.ts
-          test/research-semantic-run-configuration-bindings.test.ts
-          test/mcp-client-diagnostic-http.test.ts
-          test/mcp-client-diagnostic-roundtrip.test.ts
-          test/doctor-mcp-delivery.test.ts
-          test/scheduled-isolation.test.ts
-          test/project-scope-currentness.test.ts
-          test/mcp-computer-agent-dispatch-adapter.test.ts
-          src/research-run-configuration.test.ts
-          src/research-run-configuration-admission.test.ts
-          test/research-provider-key-model-use.test.ts
-          test/research-provider-key-model-use-global.test.ts
-          test/research-provider-key-model-pricing-authority.test.ts
-          test/research-provider-key-model-use-failure-contract.test.ts
-          test/research-provider-key-configuration.test.ts
-          test/research-prepared-model-transport.test.ts
-          test/research-client-execution.test.ts
-          test/delegated-report-reservation.test.ts
-          test/raw-normalized-admission-http.test.ts
-          test/research-native-global-default.test.ts
-          --reporter=verbose
-      - name: Preserve existing model use data when enabling global provider models
-        run: node scripts/test-global-provider-model-use-migration.mjs
-      - name: Native owner report byte headers
-        run: pnpm --dir apps/eliotr-core exec vitest run test/artifact-draft-reader.test.ts --testNamePattern 'reads one historical section body' --reporter=dot
-      - name: Build served assets and owner web
-        run: |
-          pnpm build:pwa
-          pnpm --dir apps/eliotr-web exec vite build --manifest
-      - name: Worker packaging smoke without remote changes
-        run: pnpm --dir apps/eliotr-core exec wrangler deploy --dry-run --minify --outdir dist
-      - name: Save the checked Worker bundle for routine Wrangler deployment
+      - name: Typecheck
+        run: pnpm typecheck
+      - name: Build Worker and React shell
+        run: pnpm build
+      - name: Wrangler packaging smoke
+        run: pnpm exec wrangler deploy --dry-run --minify --outdir dist/worker
+      - name: Upload checked build
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: worker-build-${{ github.sha }}
-          path: apps/eliotr-core/dist
-          if-no-files-found: error
-          retention-days: 7
-      - name: Save the checked owner web assets
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: owner-web-build-${{ github.sha }}
-          path: apps/eliotr-web/dist
+          name: replacement-shell-${{ github.sha }}
+          path: dist
           if-no-files-found: error
           retention-days: 7
           include-hidden-files: true

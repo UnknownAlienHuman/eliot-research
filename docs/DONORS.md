@@ -25,7 +25,7 @@ Keep three states separate:
 2. **installed/compiled** — one pinned lockfile/configuration/generated-type set builds;
 3. **exercised** — representative operations prove behavior, quality, latency and cost.
 
-This file establishes only source review. Stage 0 owns installation/build. Each vertical slice owns its live proof.
+PR #415 establishes installed/compiled evidence for the exact Stage 0 shell set. Live service behavior, quality, latency and cost remain owned by the vertical slices.
 Check a selected file/revision's license before copying code. Do not repin the whole stack for an unrelated edit.
 
 ## Selected runtime
@@ -47,7 +47,7 @@ Check a selected file/revision's license before copying code. Do not repin the w
 | Data/exit | D1 + R2 + versioned chat snapshot + portable export | Time Travel, undelete, native Workflow state and DO PITR do not cover the whole product or replace export/import. |
 | Operations | Workers Logs, Traces, Issues, source maps and profiling | Sampled/best-effort operational signals, never product history/activity authority. |
 
-## Reviewed package candidate — not a lockfile
+## Reviewed package candidate and Stage 0 lockfile
 
 | Package | Reviewed version | Note |
 |---|---:|---|
@@ -58,7 +58,7 @@ Check a selected file/revision's license before copying code. Do not repin the w
 | `@ai-sdk/provider` | `4.0.33` | Manifest-reviewed. |
 | MCP client/server | `2.3.1` | Selected MCP 2026-07-28 generation; exact peer required by installed Agents release. |
 | MCP SDK | `1.32.1` | Historical/transitive predecessor only; new server path uses the v2 client/server packages. |
-| `wrangler` | `4.151.3` | Stable CLI candidate. |
+| `wrangler` | `4.152.0` | Installed and compiled in PR #415; minimum peer accepted by `@cloudflare/vite-plugin 1.65.0`. |
 | `@cloudflare/vite-plugin` | `1.65.0` | Stable v1, Wrangler configuration only; includes local Workflow lifecycle fixes that remain version-bound. |
 
 Primary references:
@@ -68,7 +68,7 @@ Primary references:
 [AI SDK releases](https://github.com/vercel/ai/releases) and
 [Workers SDK releases](https://github.com/cloudflare/workers-sdk/releases).
 
-Stage 0 chooses one exact compatible set, commits the lockfile, generates declarations and compiles. Version recency does
+Stage 0 selected one exact compatible set, committed the lockfile and compiled the Worker/React shell. Version recency does
 not select Pi, beta tooling or another harness.
 
 ## Stage-0 platform controls

@@ -1,137 +1,20 @@
 {
-  "files": [],
-  "references": [
-    {
-      "path": "packages/pwa-http-client"
-    },
-    {
-      "path": "packages/pwa-source-workspace"
-    },
-    {
-      "path": "packages/cloudflare-artifacts"
-    },
-    {
-      "path": "packages/cloudflare-access"
-    },
-    {
-      "path": "packages/cloudflare-workspace-mcp"
-    },
-    {
-      "path": "packages/contracts"
-    },
-    {
-      "path": "packages/domain"
-    },
-    {
-      "path": "packages/policy"
-    },
-    {
-      "path": "packages/retrieval"
-    },
-    {
-      "path": "packages/research"
-    },
-    {
-      "path": "packages/backup-o2"
-    },
-    {
-      "path": "packages/platform-cloudflare"
-    },
-    {
-      "path": "packages/cloudflare-federation"
-    },
-    {
-      "path": "packages/cloudflare-ai"
-    },
-    {
-      "path": "packages/cloudflare-markdown"
-    },
-    {
-      "path": "packages/cloudflare-raw-ingest"
-    },
-    {
-      "path": "packages/cloudflare-projection"
-    },
-    {
-      "path": "packages/cloudflare-erasure"
-    },
-    {
-      "path": "packages/cloudflare-evidence"
-    },
-    {
-      "path": "packages/google-drive-exchange"
-    },
-    {
-      "path": "packages/interfaces"
-    },
-    {
-      "path": "packages/testkit"
-    },
-    {
-      "path": "apps/eliotr-pwa"
-    },
-    {
-      "path": "apps/eliotr-core"
-    },
-    {
-      "path": "packages/cloudflare-navigation"
-    },
-    {
-      "path": "packages/cloudflare-research"
-    },
-    {
-      "path": "packages/cloudflare-research-stages"
-    },
-    {
-      "path": "packages/cloudflare-workflows"
-    },
-    {
-      "path": "packages/cloudflare-backup"
-    },
-    {
-      "path": "packages/pwa-research-workspace"
-    },
-    {
-      "path": "packages/cloudflare-model-control"
-    },
-    {
-      "path": "packages/cloudflare-model-execution"
-    },
-    {
-      "path": "packages/cloudflare-research-branches"
-    },
-    {
-      "path": "packages/cloudflare-computer-agent"
-    },
-    {
-      "path": "packages/cloudflare-wiki"
-    },
-    {
-      "path": "packages/cloudflare-native-models"
-    },
-    {
-      "path": "packages/cloudflare-erasure-operations"
-    },
-    {
-      "path": "packages/cloudflare-model-transport"
-    },
-    {
-      "path": "packages/cloudflare-research-runtime"
-    },
-    {
-      "path": "packages/cloudflare-research-configuration"
-    },
-    {
-      "path": "packages/cloudflare-http-protocol"
-    },
-    {
-      "path": "packages/ui"
-    },
-    {
-      "path": "apps/eliotr-web"
-    },
-    {
-      "path": "packages/owner-api-client"
-    }
-  ]
+  "compilerOptions": {
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "useDefineForClassFields": true,
+    "types": ["@cloudflare/workers-types", "vite/client"]
+  },
+  "include": ["src", "vite.config.ts"]
 }
