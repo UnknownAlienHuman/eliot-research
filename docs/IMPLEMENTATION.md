@@ -26,7 +26,7 @@ wrappers to make the shell compile.
 |---|---|
 | UI and API | Worker static assets, React/Vite, React Router, TanStack Query, Hono and zod at external boundaries |
 | Durable product data | D1 for identities, relationships and short state; R2 for originals, canonical readable text and immutable larger objects |
-| Retrieval | One AI Search namespace; initially one shared hybrid Library instance; deterministic source/page block items; native filters and namespace search only where complete scope remains expressible |
+| Retrieval | One pre-existing AI Search **instance binding** (`ai_search`) to the shared hybrid Library instance; deterministic source/page block items; native filters. No runtime namespace binding: namespace/instance administration is an owner setup operation (see [DONORS](DONORS.md#bind-one-instance-not-a-namespace)) |
 | Models | `createAI` from `agents/models/ai-sdk`, AI SDK `streamText`/`generateText`, AI Gateway and supported vendor providers |
 | Chat | `AIChatAgent` from `@cloudflare/ai-chat`, `useAgentChat` from `@cloudflare/ai-chat/react`; one SQLite Durable Object per chat |
 | Outgoing tools | One SQLite owner Tool Connection Agent using the Agents SDK MCP client manager |
@@ -40,8 +40,8 @@ wrappers to make the shell compile.
 | Export | Streaming ZIP/JSON/Markdown plus versioned chat snapshots and a stable manifest |
 
 Pin compatible released dependencies and a Wrangler compatibility date in the implementation commit. Read installed
-types and current official docs. The dated [SDK candidate](DONORS.md#reviewed-sdk-candidate-not-an-installed-build) is not an
-installed or compiled replacement lockfile; do not bulk-upgrade donor dependencies. Generate Worker bindings/runtime
+types and current official docs. The [Stage 0 lockfile](DONORS.md#reviewed-package-candidate-and-stage-0-lockfile) is the compiled
+baseline; do not bulk-upgrade donor dependencies. Generate Worker bindings/runtime
 types with `wrangler types` from the actual config, include that output in TypeScript, and compile against it.
 `wrangler types --check` checks recorded input headers, not the declaration body; regenerate and inspect the diff when
 verifying declarations. Do not carry hand-written binding lookalikes or duplicate ambient `workers-types` into the new app.
@@ -68,11 +68,60 @@ Target modules are responsibilities, not mandatory layers:
 | `chat.ts` | `AIChatAgent`, controlled tool continuations and portable chat snapshots |
 | `tasks.ts`, `mcp.ts` | Connected agents, tasks and incoming MCP tools |
 | `cleanup.ts`, `export.ts` | Source cleanup, index/derived optimization and portable export/import |
-| `src/web/`, `src/shared/` | Owner screens and only types genuinely shared with the Worker |
+| `src/web/`, `src/web/ui/`, `src/shared/` | Owner screens and routes; the moved legacy design system (tokens, fonts, primitives, feature components and CSS); only types genuinely shared with the Worker |
 | `migrations/`, `wrangler.jsonc` | Compact D1 schema; bindings and declarative Worker/DO exports |
 
 Browser, HTTP, MCP, chat and Workflow handlers call the same product functions `(env, actor, input)`. Split a module
 only after a real responsibility becomes hard to read. Do not create transport-specific service stacks.
+
+### HTTP API
+
+The owner host serves JSON under `/api/` (Hono + zod). The MCP host serves only `POST /mcp` (section 11). Conventions:
+
+- errors are `{ "error": { "code", "message" } }` with codes `invalid`, `not_found`, `conflict`, `forbidden`, `busy`,
+  `unavailable`; messages are plain owner language, never provider payloads;
+- lists use keyset `?cursor=&limit=` and return `{ items, nextCursor }`;
+- every mutation accepts `Idempotency-Key` (the stable operation ID): an exact retry returns the first result, a changed
+  body under the same key is `conflict`. The browser never retries a mutation automatically;
+- page writes send `expectedHead`, draft saves send `expectedVersion`; a stale write is `conflict`;
+- project work is addressed by `:projectId` in the path, never by a server-side "current project".
+
+| Route | Purpose | Stage |
+|---|---|---|
+| `GET /api/health`, `GET /api/me` | Liveness; resolved actor, global defaults and which services are configured | 0 |
+| `GET/PATCH /api/settings` | Global chat/research defaults, search instance/profile status | 1–3 |
+| `GET/POST /api/projects`, `GET/PATCH /api/projects/:projectId` | List, create, open (summaries + active jobs), rename, archive, defaults | 1 |
+| `GET /api/sources?projectId=&q=&cursor=` | Library list with readable/index/card state | 1 |
+| `POST /api/sources` | Add files (`multipart/form-data`, one file per part), a URL or text; optional `projectId`; returns source, revision and ingest job | 1 |
+| `GET/PATCH/DELETE /api/sources/:sourceId` | Metadata, authors/tags/IDs, archive; DELETE returns an impact preview, `?confirm=1` starts cleanup | 1, 8 |
+| `GET/POST /api/sources/:sourceId/revisions` | History; replace, reparse or supply normalized Markdown as a new revision | 1 |
+| `PUT/DELETE /api/projects/:projectId/sources/:sourceId` | Attach, exclude/include, note; detach | 1 |
+| `GET /api/revisions/:revisionId` | Outline, conversion profile, warnings, anchor fidelity | 1 |
+| `GET /api/revisions/:revisionId/text?start=&end=` | Exact UTF-8 byte range of `text.md` for the reader and citations | 1 |
+| `GET /api/revisions/:revisionId/original` | Original file download | 1 |
+| `GET /api/projects/:projectId/activity` | Attributed activity history | 1 |
+| `POST /api/projects/:projectId/search` | Scoped search: `query`, `mode` (`hybrid`/`keyword`), `target` (`sources`/`knowledge`/`both`), selection | 2 |
+| `GET/POST /api/models/connections`, `PATCH/DELETE …/:id` | Model connections; write-only credential field | 3 |
+| `GET /api/models/connections/:id/catalog`, `POST …/:id/check` | On-demand catalog and one owner-requested check | 3 |
+| `GET/PUT /api/models/profiles/:id` | Capability profiles shown in the model picker | 3 |
+| `GET/POST /api/projects/:projectId/chats`, `GET/PATCH /api/chats/:chatId` | Chat list, create, rename, archive | 3 |
+| `GET /agents/chat/:chatId` (WebSocket) | Checked against D1 and the actor, then handed to that chat's `AIChatAgent` | 3 |
+| `GET/POST /api/projects/:projectId/pages?kind=` | Knowledge list; create a note or save a chat answer | 3 |
+| `GET /api/pages/:pageId`, `GET …/:pageId/revisions` | Page head, freshness, history | 3 |
+| `GET /api/page-revisions/:revisionId/body?start=&end=` | Exact page body range | 3 |
+| `PUT /api/pages/:pageId/draft`, `POST …/:pageId/revisions` | Autosave draft; publish or propose with `expectedHead` | 4 |
+| `POST /api/page-revisions/:revisionId/decision` | Accept or reject a proposal | 4 |
+| `GET/POST /api/projects/:projectId/jobs` | Job list; start `distill_source`, `compare`, `deep_research` (+ profile), `revise_section`, `refresh_*`, `run_audit` | 4–7 |
+| `GET /api/jobs/:jobId`, `GET …/:jobId/events` (SSE) | Saved state and partial results; live progress from the native subscription | 4 |
+| `POST /api/jobs/:jobId/cancel`, `POST …/:jobId/retry` | Cancel; retry as a new job with the same frozen input | 4 |
+| `GET/POST /api/tools/connections`, `PATCH/DELETE …/:id`, `GET/PUT …/:id/tools` | Outgoing MCP connections and the approved tool selection | 6 |
+| `GET /api/tools/oauth/callback` | OAuth callback for outgoing MCP connections | 6 |
+| `GET/POST /api/agents`, `PATCH /api/agents/:id`, `PUT/DELETE …/:id/projects/:projectId` | Connected agents and their project access | 6 |
+| `GET/POST /api/projects/:projectId/tasks`, `GET/PATCH /api/tasks/:taskId` | Offers, open tasks, results, owner decisions | 6 |
+| `POST /api/projects/:projectId/find-sources` | Web Search candidates; capture selected ones through `POST /api/sources` | 7 |
+| `POST /api/exports`, `GET /api/exports/:jobId` | Start a portable export; status and download | 8 |
+
+Incoming MCP tools (section 11) call the same product functions as these routes; they are not a second API.
 
 ## 2. Cloudflare Access is the sign-in boundary
 
@@ -122,6 +171,18 @@ References: [Agent routing](https://developers.cloudflare.com/agents/runtime/com
 [state validation](https://developers.cloudflare.com/agents/runtime/lifecycle/state/),
 [callable/internal methods](https://developers.cloudflare.com/agents/runtime/lifecycle/callable-methods/),
 [Managed OAuth](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/).
+
+### Local development and setup
+
+Local `vite dev`/`wrangler dev` has no Access. Ingress accepts the fixed actor `owner` only when `ELIOT_LOCAL_DEV=1` comes
+from `.dev.vars` and the request host is `localhost` or `127.0.0.1`; a deployed Worker rejects every request while that
+variable is set. Local runs use local D1/R2 bindings. Remote AI Search, Workers AI and Gateway bindings are opt-in per
+developer, never the default.
+
+Account resources are created by one idempotent `pnpm setup` script, not by hand: D1 database, R2 bucket, the AI Search
+instance and its index config, AI Gateway, both Custom Domains and both Access applications. It runs with an owner
+token outside the product Worker, prints what it created or found and writes the resulting IDs into `wrangler.jsonc`.
+The product Worker never holds that token.
 
 ## 3. Model and outgoing-tool connections
 
@@ -267,34 +328,21 @@ Use UUIDs, integer timestamps, foreign keys, ordinary uniqueness/CHECK constrain
 short conditional SQL. Bodies live in R2 or DO storage. No event sourcing, policy snapshots, receipt registries,
 content signatures or JSON business logic in triggers.
 
-| Table | Minimum facts |
-|---|---|
-| `settings` | Global defaults, cached conversion-support check time/data and current search namespace/instance/profile IDs |
-| `model_connection` | Name, route/provider/Gateway, credential reference/status and enabled state |
-| `model_profile` | Connection/model or route ID, capability-profile version, context/output bounds, streaming/tools/structured/modalities, provenance and checked time |
-| `mcp_connection` | Stable ID, URL, auth/status reference, enabled projects/tools, approved descriptor digests and side-effect classes; no secret |
-| `project` | ID, title, description, archived state, chat/research defaults, response/tool settings, agent edit mode, corpus version and timestamps |
-| `source` | Canonical Library identity, nullable current usable revision, metadata summary/version, state and timestamps |
-| `source_author`, `source_tag`, `source_identifier` | Filterable authors/tags and normalized DOI/arXiv/ISBN/provider IDs |
-| `source_revision` | Source, original/content hash and R2 keys; readable state; converter ID/version/options/result ID; readable format/digest/size; warnings/known omissions; anchor-fidelity summary; current card; extraction/index/card state |
-| `project_source` | Project/source membership, retrieval enabled and project-local note/priority |
-| `search_item` | Exactly one source- or page-revision FK, instance, key/ID, block/range/kind and publication state |
-| `page` | Project, kind (`note/digest/report/wiki/map/audit`), state/retrieval flag, optional slug, accepted head, draft key/version and summary |
-| `page_revision` | Page, base revision, immutable Markdown body key/size plus optional structured-data key, actor/decision, default freshness mode (`follow_current`/`snapshot`), origin and timestamps |
-| `page_input` | Page revision → exactly one source or page revision used; resolved `follow_current`/`snapshot` mode per dependency; indexed both directions |
-| `chat` | Stable ID, immutable destination project, title, snapshot/export state and timestamps; transcript/state remains in its DO |
-| `chat_input` | Chat/turn → exactly one frozen source/page revision; query projection only |
-| `job` | Type, project, actor, operation/input identity, immutable input key, Workflow ID/creation time, start/execution state, cancellation/progress, local ceilings/usage and result |
-| `job_input` | Job → exactly one frozen source/page revision; includes admitted acquired evidence before use |
-| `agent` | Verified identity/profile, enabled state, effective project/operation restrictions and expiries, outgoing-tool and paid-work permissions |
-| `task` | Destination project, instructions, scope mode, claimant/claim sequence, state/result, waiting job/wake state and timestamps |
-| `task_scope` | Task → exactly one requested logical source/page before exact revision freeze |
-| `task_input` | Task → exactly one exact source/page revision frozen at creation or claim |
-| `activity` | Successful attributed mutation: actor, project/subject, kind, operation ID and safe short metadata |
+The starter schema is [`migrations/0001_initial.sql`](../migrations/0001_initial.sql). It owns table, column and state
+names; this section owns the rules. Edit that file in place until its first remote apply, then add numbered migrations.
+It covers models (`model_connection`, `model_profile`, `settings`), outgoing tools (`mcp_connection`, `mcp_tool`), the
+Library (`project`, `source`, `source_author`/`_tag`/`_identifier`, `source_revision`, `project_source`, `search_item`),
+knowledge (`page`, `page_revision`, `page_input`), chat (`chat`, `chat_turn`, `chat_input`), jobs (`job`, `job_input`,
+`tool_effect`), agents (`agent`, `agent_project`, `task`, `task_scope`, `task_input`) and `activity`.
 
-Input/projection tables use two nullable typed FKs plus a CHECK that exactly one is non-null. Partial uniqueness is per
+`chat_turn` is the per-submission admission row: pinned model/profile and scope mode, the single-continuation flag and
+call/token counters. `job` holds the same counters for long work. `tool_effect` records each mutating outgoing tool call
+before it is sent so an interrupted call shows as `unknown`. These are ordinary state rows, not a billing ledger; spend
+limits themselves stay in AI Gateway.
+
+Input/projection tables use two nullable typed FKs plus a CHECK that exactly one is non-null. Uniqueness is per
 referencing entity: page revision, `(chat_id, turn_id)`, job or task combined with the referenced revision. `search_item`
-uses the same exactly-one rule and remote identity `(instance_id, item_key)`. Do not use unchecked polymorphic strings or
+uses the same exactly-one rule and remote identity `(instance, item_key)`. Do not use unchecked polymorphic strings or
 opaque JSON arrays for queryable relationships.
 
 Insert job + frozen inputs before Workflow creation; section 10 owns start acknowledgement and recovery. Allocate a stable
@@ -566,7 +614,7 @@ not independent evidence.
 
 ### Topology and reindex
 
-Use namespace `eliot` and initial hybrid instance `library-v1`. Store current projection list/profile in `settings`.
+Bind the Worker to the pre-existing hybrid instance `library-v1` (created in namespace `eliot` by owner setup, never by the product Worker). Store the current instance/profile in `settings`.
 Start shared; move to deterministic native shards/project projections only after measured capacity/filter/isolation need.
 Do not create an instance per project pre-emptively or revive a generation registry.
 
@@ -605,7 +653,7 @@ is still indexing, read it directly within budget or show partial coverage; neve
 partial job.
 
 Use `retrieval.return_on_failure: false` for ordinary evidence search so internal failure is not mistaken for no evidence.
-Inspect namespace `errors` alongside chunks. A successful top-k request proves search ran, not that every document was
+Inspect any partial-failure `errors` alongside chunks. A successful top-k request proves search ran, not that every document was
 read.
 
 Call the native binding's `search`, then perform canonical hydration and one selected-model synthesis. Do not add
@@ -636,7 +684,8 @@ Initial hybrid profile:
 - native English/Chinese BGE reranking off for mixed Russian/English baseline; optional one configured multilingual
   Cohere rerank over the same bounded candidates when measured useful.
 
-Namespace search still needs complete expressible scope; sharding does not shrink an oversized revision filter.
+If measured limits later justify several instances, cross-instance (namespace) search still needs complete expressible
+scope; sharding does not shrink an oversized revision filter.
 Budget the complete serialized filter, selected instances and candidate count separately. Current AI Search documents
 five custom fields, a 64-UTF-8-byte filterable string prefix, ten instances per namespace request and at most fifty returned
 chunks; none means "at most fifty source documents". Stored metadata arrays cannot express project membership via `$in`.
@@ -723,7 +772,9 @@ delivery observes the recorded continuation; it cannot buy another model call. A
 automatically continued or retried. This is a server-side admission rule for every entry path, including crafted client
 frames, approvals and programmatic/recovery calls; the React option alone is not a spending or authorization boundary.
 
-Use `onChatRecovery()` with `{ continue: false }` initially. Persist partial/settled work without another model call.
+Use `onChatRecovery()` with `{ continue: false }`: persist partial/settled work and mark the `chat_turn` `interrupted`
+without another model call. A per-route recovery profile (provider response retrieval, or one continuation within the
+turn's recorded counters) is added only when measured interruptions justify it.
 This does not disable SDK transport replay of the same Gateway run or ChatAgent's reconnectable delivery to the browser;
 reuse both native mechanisms instead of a second stream server, polling transcript or paid recovery loop.
 Explicit Continue creates one new attempt under the same turn, reuses completed outputs and unique labels; transport
@@ -735,7 +786,8 @@ have separate cancel actions. Keep `useAgentChat`'s `resume: true` and `cancelOn
 not Stop; explicit `stop()` remains cancellation. Regeneration, tool/approval continuation and programmatic submissions
 still pass the server admission rules, not just the user-message concurrency option.
 
-Use `persistMessages` for storage-only changes; `saveMessages` triggers model response. Do not use
+Use `persistMessages` for storage-only status/context messages; `saveMessages` triggers a model response. Whole-history
+import uses the Sessions adapter in section 14, not either call. Do not use
 `maxPersistedMessages` as context budget because it deletes stored history. `pruneMessages` removes selected message
 parts; it neither counts tokens nor enforces a context limit. Apply the rendered model-specific budget after pruning,
 keeping complete tool-call/result groups and reserving output. Use a conservative labelled estimate when no tokenizer
@@ -978,6 +1030,19 @@ agent harness or scheduler inside Eliot.
 
 ## 12. UI, concurrency and latency
 
+Port, do not redraw. `src/web/ui/` is legacy `packages/ui/src` moved with `git mv`: `tokens/` (theme and fonts),
+`primitives/`, `patterns/`, the Material Symbols icon component, the agent-work features and every feature stylesheet.
+Screens use only its semantic tokens (`--md-sys-color-*`, `--eliot-*`); raw colours, font stacks, radii or durations
+outside `tokens/` are defects. When a stage ships a journey, move that feature's component and CSS, keep its markup and
+class names, and change only its prop types (`src/shared` instead of `@eliotr/owner-api-client`) and its copy. Rebuild
+the frame from legacy `Shell.tsx`/`shell.css` with the routes below. Do not port legacy query adapters, transport/runtime
+code, qualification screens, Preview/Regression fixtures or the unused Tailwind import. Storybook is optional.
+
+Owner copy uses product words: project, source, question, answer, report, agent, model. Primary UI never shows engine,
+identity, readback, receipt, manifest, bytes, digest, qualification, admission, projection, generation or stage names;
+technical detail goes behind a Details disclosure. The agent pane (offers, decisions, handoff) is a primary surface,
+not a settings page.
+
 Primary surfaces: Projects/Library, source viewer, Chat/Research, Studio (saved knowledge/Map/Audit/Inbox), Models and
 Connections/Agents. Project work uses `/p/:projectId/research`, `/p/:projectId/sources`, `/p/:projectId/studio` and
 `/p/:projectId/chat/:chatId`. A last-project convenience only chooses the home-page default; it never overrides an open URL.
@@ -1128,13 +1193,15 @@ The following snapshot contract governs the replacement ChatAgent and only indep
 ### Chat snapshot contract
 
 D1 `chat` rows are the authoritative chat inventory; do not rely on dashboard/analytics enumeration of Durable Object
-instances. At export freeze/drain, call a bounded internal method on each known ChatAgent by stable chat ID. It returns a
-versioned product snapshot using supported Agent/chat APIs, not private SQLite tables:
+instances. At export freeze/drain, call a bounded internal method on each known ChatAgent by stable chat ID. It streams
+full history in bounded batches through a small Eliot adapter over the pinned Sessions API
+(`this.sessions.session().history()`), never `this.messages` (a bounded recent window) and never private SQLite tables.
+It returns a versioned product snapshot:
 
 ```text
 snapshot_schema
 chat_id / destination_project / title / timestamps
-ordered UI messages with stable IDs and roles
+ordered UI messages with stable IDs, roles, parent IDs and timestamps
 supported chat state needed to reopen selections/model/tools/drafts
 structured citation, usage, progress and approval data parts
 attempt/stop/partial/unknown status
@@ -1148,13 +1215,14 @@ referenced R2 objects. Missing/unreadable body reference makes that chat export 
 not unrelated development.
 
 Import into an empty target ChatAgent under the same stable chat ID. Validate schema/project/actor mappings and R2 refs,
-restore supported state, then call `persistMessages` with ordered messages — never `saveMessages`, which would generate a
-new response. Read back message IDs/order/count, typed references, state and large-body digests. Import is idempotent for
+restore supported state, then write messages in order with the adapter's `importMessage()` (explicit parent/timestamp, no
+model turn, no change-feed broadcast) — never `persistMessages` (loses parent/timestamp and broadcasts before verification)
+or `saveMessages` (generates a new response). Clients reconnect only after readback. Read back message IDs/order/count, typed references, state and large-body digests. Import is idempotent for
 the same snapshot checksum: reserve an internal import marker before state/message writes, keep the target closed to
 normal turns until readback succeeds, and resume only that same interrupted import. Unrelated nonempty/different state
 conflicts. Imported pending approvals/tool requests are inactive history until a fresh authorized action; import cannot
-trigger them. Do not scrape/copy SDK-private SQLite or
-assume SDK internal tables remain stable. Tool Connection Agent desired configuration comes from D1; OAuth/token state is
+trigger them. Sessions is experimental: keep its calls inside the adapter so an API change touches one file. Do not
+scrape/copy SDK-private SQLite or assume SDK internal tables remain stable. Tool Connection Agent desired configuration comes from D1; OAuth/token state is
 reauthorized rather than exported.
 
 ### Replacement cutover

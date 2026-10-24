@@ -37,13 +37,14 @@ Check a selected file/revision's license before copying code. Do not repin the w
 | Models | `createAI`, AI SDK v7, AI Gateway and reviewed vendor models | Retire legacy providers/transports. D1 stores profiles and secret references, never credential values. |
 | Chat | `AIChatAgent`, `useAgentChat`, one new SQLite DO per chat | Explicit bounded queue and recovery policy; disconnect is not Stop; no predecessor first-wake migration; large bodies stay in R2; portable history uses a pinned Sessions adapter. |
 | Incoming MCP | MCP SDK v2 factory + `createMcpHandler` over stateless Streamable HTTP | Authenticated `POST /mcp` only; fresh server per request, exact Host/Origin policy, no `McpAgent`, DO session, WebSocket or `/sse`. Long work returns an Eliot job handle. |
-| Outgoing MCP | `MCPClientManager` in one owner Tool Connection Agent | Owner-approved exact HTTPS connections; bounded ready wait; frozen catalog/tool digest; minimal OAuth scopes; Eliot effect ledger. Reconnect never replays a tool. |
+| Outgoing MCP | `MCPClientManager` in one owner Tool Connection Agent | Owner-approved exact HTTPS connections; bounded ready wait; frozen catalog/tool digest; minimal OAuth scopes; a `tool_effect` row before each mutating call. Reconnect never replays a tool. |
 | Durable work | Workflows + native subscriptions | D1/R2 own results; Retry creates a new admitted instance; native restart/delete are not product controls; events are temporary observation. |
 | Retrieval | One `ai_search` **instance binding** to the shared Library instance | Explicit versioned index config; raw Search only for evidence; D1 resolves scope and deterministic items hydrate retained R2 bytes. No runtime namespace binding or public Search/Chat/MCP endpoint. |
 | Structure | Fixed `unified`/remark parse-only pipeline | Eliot owns grouping and UTF-16→UTF-8 mapping, not another Markdown grammar. |
 | Conversion | Local UTF-8 for Markdown/text/CSV; Workers AI Markdown Conversion for supported formats | Retain output/options/warnings/mapping before publication. Direct conversion is not OCR. |
 | Web discovery | Web Search API through Agents SDK/direct function | One explicit discovery transport. Results are leads; capture retained evidence before citation. |
 | Web acquisition | Bounded fetch; Browser Run only for explicit rendering/interaction | Browser/preview state is not original storage, durable work or evidence authority. |
+| Owner interface | Legacy `packages/ui` at `7c034569`: M3 Expressive tokens, self-hosted Google Sans (OFL), native primitives, local Material Symbols (Apache-2.0), feature CSS | Moved into `src/web/ui/` with `git mv` and polished; no new design system. |
 | Data/exit | D1 + R2 + versioned chat snapshot + portable export | Time Travel, undelete, native Workflow state and DO PITR do not cover the whole product or replace export/import. |
 | Operations | Workers Logs, Traces, Issues, source maps and profiling | Sampled/best-effort operational signals, never product history/activity authority. |
 
@@ -180,8 +181,9 @@ Chat policy is explicit rather than inherited:
 
 - `messageConcurrency = "queue"`, wrapped by stable request/message IDs, dedup, a small visible queue bound and per-turn admission;
 - browser abort/navigation does not cancel; explicit Stop does;
-- recovery config lives in a class field/constructor and reads an actual D1 call/token/cost/cancel ledger;
-- provider-native response retrieval is preferred; new-generation continuation/retry stays within the frozen turn budget or settles partial/interrupted;
+- recovery config lives in a class field/constructor and starts as `{ continue: false }` (IMPLEMENTATION §8); a later
+  per-route profile reads the `chat_turn` call/token counters and cancellation state;
+- in such a profile, provider-native response retrieval is preferred; new-generation continuation/retry stays within the frozen turn budget or settles partial/interrupted;
 - `autoContinueAfterToolResult = false`; one continuation requires current scope/tool/effect/budget checks;
 - required MCP tools must be ready after a bounded wait or the turn fails before inference;
 - `maxPersistedMessages` remains unset; model-context pruning is separate from retained history;
@@ -190,7 +192,7 @@ Chat policy is explicit rather than inherited:
 
 Sessions exact continuation rows preserve the post-sanitization stored message, not necessarily every provider/tool value:
 the selected source truncates some long provider-executed tool fields. Therefore transcript storage is not evidence/audit
-authority. Effects use Eliot IDs and a D1 ledger; a repaired interrupted tool part does not prove whether mutation happened.
+authority. Effects use Eliot IDs and `tool_effect` rows; a repaired interrupted tool part does not prove whether mutation happened.
 
 References:
 [Chat Agents](https://developers.cloudflare.com/agents/communication-channels/chat/chat-agents/),
@@ -233,7 +235,7 @@ or owner decision under the same effect identity.
 Initial runtime advertises no elicitation. Product UI/chat/task state owns approvals and missing input. Any later URL-mode
 consent or non-secret form uses a retained Eliot operation ID; hibernation settles the in-flight attempt interrupted.
 Portals/generic `query/execute`, service-token full-upstream sessions, MCP Events and remote Skills are not selected. A
-future named portal still uses exact allowlists/approvals/effect ledger; Events are signed/deduplicated investigation-only;
+future named portal still uses exact allowlists/approvals/`tool_effect` rows; Events are signed/deduplicated investigation-only;
 Skills are untrusted reference material, never auto-installed/executed/system policy.
 
 References:
@@ -490,7 +492,7 @@ References:
 ## Durable data, execution, retention and recovery
 
 Declare same-Worker `IngestWorkflow`, `ResearchWorkflow` and `CleanupWorkflow` once in `exports` and call them through a
-narrow `ctx.exports` launcher; do not duplicate bindings. Store `workflow_contract_version`. Step name/type/occurrence and
+narrow `ctx.exports` launcher; do not duplicate bindings. Store the step contract version as `job.workflow_version`. Step name/type/occurrence and
 deterministic iteration order are durable protocol. No paid/mutating step runs under `Promise.race()`/`Promise.any()`.
 
 Product Stop is cooperative: commit cancellation, stop effects, preserve useful partial output and settle visibly. Forced
@@ -500,7 +502,7 @@ cleanup only after D1/R2 outputs/effects are reconciled.
 
 Saga rollback is used only for a provisional external reservation with a safe idempotent inverse. It runs reverse
 step-start order; a failed step may have missing output; one exhausted compensator stops later rollback handlers. Keep
-`compensation_failed` owner-visible in the existing D1 effect ledger.
+a failed compensation owner-visible as a failed `tool_effect` row.
 
 Set explicit seven-day Workflow retention and a deliberately lower step limit per bounded algorithm. Native subscriptions
 replay retained history and then live events; they drive the open progress view, not product history. D1/R2 remain authority
