@@ -5,16 +5,18 @@ Canonical decisions remain in [Architecture](../../docs/ARCHITECTURE.md),
 [Implementation](../../docs/IMPLEMENTATION.md), [Map](../../docs/MAP.md) and
 [Donors](../../docs/DONORS.md). Dated audits retain evidence. This file records only coverage and remaining proof.
 
-The [AI Search GA/projection sweep](2026-10-24/CLOUDFLARE-AI-SEARCH-GA-SWEEP.md),
+The [AI chat state/recovery sweep](2026-10-24/CLOUDFLARE-AI-CHAT-STATE-RECOVERY-SWEEP.md),
+[AI Search GA/projection sweep](2026-10-24/CLOUDFLARE-AI-SEARCH-GA-SWEEP.md),
 [Cloudflare Workflows control sweep](2026-10-24/CLOUDFLARE-WORKFLOWS-CONTROL-SWEEP.md),
 [Cloudflare blog/platform sweep](2026-10-23/CLOUDFLARE-BLOG-PLATFORM-SWEEP.md) and
-[storage/secrets/deployment continuation](2026-10-23/CLOUDFLARE-STORAGE-DEPLOYMENT-SWEEP.md) check linked engineering
-posts, current docs/changelogs and relevant releases. They confirm the compact product architecture while making the
-handoff concrete: reproducible build pins, Preview isolation, Worker-scoped roles, native observability, explicit—not
-invisible—AI routing/safety/cache/browser/container use, one-instance AI Search authority and versioned projection,
-disabled public endpoints, separate secret administration, whole-product jurisdiction, mixed-version deployment rules,
-bounded R2 retention, non-cacheable private entrypoints and exact Workflow step/rollback/restart/terminate/delete
-semantics. Source review is not an installed build, deployed Preview, residency certification or live service call.
+[storage/secrets/deployment continuation](2026-10-23/CLOUDFLARE-STORAGE-DEPLOYMENT-SWEEP.md) check exact selected package
+source, linked engineering posts, current docs/changelogs and relevant releases. They confirm the compact product
+architecture while making the handoff concrete: reproducible build pins, Preview isolation, Worker-scoped roles, native
+observability, explicit—not invisible—AI routing/safety/cache/browser/container use, one-instance AI Search authority and
+versioned projection, disabled public endpoints, separate secret administration, whole-product jurisdiction,
+mixed-version deployment rules, bounded R2 retention, non-cacheable private entrypoints, exact Workflow lifecycle and an
+explicit no-rollback ChatAgent storage/recovery/import boundary. Source review is not an installed build, deployed
+Preview, residency certification or live service call.
 
 Earlier reviews map legacy stores/writers, user journeys, retrieval contracts, Access/MCP shape, model/chat portability
 and migration boundaries. Their unresolved deployed-data/runtime questions remain below; they do not create a serial
@@ -52,8 +54,14 @@ pre-build qualification programme.
 | User Insights | task/anomaly/savings analytics, payload/privacy and trust boundaries covered | not selected by default | Evaluate only with payload-free trusted metadata; verify it never changes routing/defaults or replaces local hard limits. |
 | AI Gateway response cache | default exact-request key versus custom key override, implicit custom-key TTL and volatile concurrent fills covered | disabled globally | Ordinary chat/research must send skip-cache. If one immutable derived operation opts in, use the complete server-owned equivalence boundary; forbid question-only/client keys, store HIT/MISS and test no cross-project/revision/profile reuse. |
 | Cost accounting | provider/Web Search/Gateway/cache-token/credit overhead and AI Search ingestion/storage/full-text/hybrid meters separated | pending | Exercise BYOK/credits/Web Search/model/cache/Search routes; compare AI Search usage metrics with Gateway/model usage without expecting embeddings/reranking in Gateway logs; display actual usage without list-price guarantees or double counting. |
-| Ordinary chat/recovery/tools | queue, frozen submission, same-run replay vs fresh attempt, controlled continuation and large bodies covered | pending | Exercise navigation vs Stop, reconnect/DO reset, mixed-version calls, process failure, approvals/tools and no duplicate paid generation. |
-| Portable chat history | supported snapshot/import covered; inspected legacy ResearchSession has run projection, not messages | pending | Inventory different deployed DO cohorts; prove empty-target import preserves order/parts/R2 bodies without model/tool execution. |
+| Chat package/storage cutover | exact `@cloudflare/ai-chat 0.12.2` first-wake lift to experimental Sessions, old-table drop and empty-conversation rollback hazard covered | pending | Pin/compile exact package set; export predecessor chats before any selected-package wake; migrate disposable fixtures; import into a new declarative ChatAgent namespace and verify before route cutover. Prove an old version cannot be used as rollback. |
+| Chat hydration and retained history | constructor-empty history, `onStart` hydration and 32 MiB recent-window default versus streamed full Sessions history covered | pending | Prove bounded wake hydration and full streamed export above the budget; prohibit constructor reads and unbounded history arrays; keep prompt context separate from retained transcript. |
+| Chat recovery and spend | default persist+continue/retry, provider-specific recovery strategies, class-field timing, no-progress/work/interruption guards and opt-in stream-stall watchdog covered | pending | Configure finite route-specific recovery before `onStart`; exercise pre-stream/partial/stall/deploy/eviction recovery; key actual D1 token/call/cost/cancel ledger by recovery root; stop stale/over-budget incidents with visible terminal reason and no duplicate paid generation. |
+| Chat transport and terminal state | disconnect continues server turn, explicit Stop cancels, reconnect/replay, terminal connection errors and persist-before-done ordering covered | pending | Keep `cancelOnClientAbort:false`; exercise navigation/reload/offline/re-auth and explicit Stop; settle from matching terminal request/outcome and prove replay/broadcast cannot duplicate messages, activity or cost. Empty pre-stream error shells remain failed. |
+| Chat concurrency and autonomous turns | queue/latest/merge/drop/debounce transcript differences, serialized `saveMessages`, functional updater, `waitUntilStable` and sequential `onChatResponse` chaining covered | pending | Select explicit bounded queue with actor/chat request dedup and reject-before-persist overflow; exercise simultaneous tabs and duplicate sends. Gate every programmatic turn and prevent recursive `onChatResponse` model loops with count/depth/no-progress budgets. |
+| Chat tools, approvals and MCP readiness | approval persistence, disabled client auto-continuation, interrupted-part repair, provider tool-ID reuse, persisted client body/schemas and bounded MCP wait covered | pending | Recheck actor/project/tool digest/cancel/effect state at execution and continuation; use Eliot effect IDs instead of provider toolCallId; keep unknown effects blocked after recovery; fail before inference when a required selected MCP connection is unavailable; reject client authority fields. |
+| Portable chat history | versioned product snapshot over pinned experimental Sessions `history()`/`importMessage()` plus R2 references covered; earlier persistMessages assumption superseded | pending | Inventory deployed chat cohorts; stream export IDs/order/parents/timestamps/parts/references; import into an empty target without broadcasts/model/tools; full readback and publish/reconnect only after verification. Keep adapter changes local when Sessions changes. |
+| Chat storage, large bodies and regenerate | exact continuation-row candidate, provider-tool sanitization/truncation, no silent `maxPersistedMessages`, R2 artifact references and destructive AIChatAgent regenerate covered | pending | Round-trip oversized stored text and detect sanitization boundaries; reject oversized untrusted inline input; monitor DO bytes; keep files/large results in R2; disable destructive regenerate and prove Try again preserves both turns. Do not enable experimental chat FTS initially. |
 | File intake/conversion | actual-byte intake, local text path, Markdown Conversion, scan/visual omissions and profiles covered | pending | Exercise headerless/known-length/bounded uploads and representative English/Russian PDF, office, HTML, image and scan inputs. |
 | R2 original retention | application immutability, optional Bucket Lock precedence, Local Uploads placement uncertainty and jurisdiction/logging limits covered | pending | Keep Local Uploads off by default; if bounded lock is selected, record `retain_until`, test blocked deletion/lifecycle, prevent CI rule edits and report `blocked_by_retention` honestly. |
 | Persistent browser acquisition | expiry/crash state, cookie/login scope and WebMCP classification covered | not selected by default | Exercise one explicit rendered/login capture with per-connection isolation; retain evidence before expiry and make restart visible. |
@@ -79,9 +87,9 @@ pre-build qualification programme.
 | Incoming/outgoing MCP/tasks | stateless `/mcp`, selected-tool digests, frozen inputs, both task families, step-up and optional Issues events covered | pending | Verify handshakes/readiness, strict identity, least-privilege event scopes, claim races, result-before-wake and no silent scope/lease/credential revival. |
 | Durable research/Workflow cost | stable create/re-entry, deterministic steps, new-instance Retry, cooperative Stop, finite retention, subscriptions and step/storage billing covered | pending | Exercise create-ACK loss on the same ID; D1-write/checkpoint replay; bounded retries; partial-save Stop; forced termination; compensation failure; native-state expiry; explicit step/storage/request/CPU usage. Prove platform limits and batch APIs do not replace job admission. |
 | Source lifecycle/cleanup | capture→conversion→admission ownership and replacement-safe cleanup covered | pending | Inventory pending captures/promotions/copies; keep old generation until replacement wins; exercise deletion/holds/index cleanup/late cleanup separately. |
-| Export/migration/rollback | extraction map includes originals, normalized data, tasks, grants, Google state, Wiki/report and backups | pending | Inventory live migrations/rows/objects/destinations; rehearse storage-only export/import and old-backup restore without resurrecting deletion/revocation. |
+| Export/migration/rollback | extraction map includes originals, normalized data, tasks, grants, Google state, Wiki/report, backups and versioned chat snapshots | pending | Inventory live migrations/rows/objects/destinations/chat cohorts; rehearse D1/R2/chat export/import and old-backup restore without waking/migrating predecessors or resurrecting deletion/revocation. |
 | UI safety/drafts/project state | reader/profile controls, safe rendering and server-draft/conflict requirements covered | pending | Verify exact reopen navigation, unsaved/saved state, sign-out cache clearing, multi-tab isolation and accessibility. |
-| Performance/quality/cost | required measurements named; Search/Workflow/Gateway/Web Search/observability accounting covered | pending | Measure rendered prompt/cache tokens, Workflow request/step counts, AI Search ingestion/query/storage, indexing/search/hydration/first-token latency, English/Russian recall/precision and total spend before adding agents or switching models. |
+| Performance/quality/cost | required measurements named; Search/Workflow/chat recovery/Gateway/Web Search/observability accounting covered | pending | Measure rendered prompt/cache tokens, chat recovery/provider attempts, Workflow request/step counts, AI Search ingestion/query/storage, indexing/search/hydration/first-token latency, English/Russian recall/precision and total spend before adding agents or switching models. |
 
 ## Active queue
 
@@ -90,28 +98,30 @@ pre-build qualification programme.
    private Worker/browser source maps, dependency instrumentation and non-cacheable private entrypoint; create
    Worker-scoped CI/diagnostic roles, separate secret setup and production-inaccessible Preview resources from an explicit
    jurisdiction matrix. Declare same-Worker Workflows once in `exports` with explicit contract version, step limits and
-   retention; call them through `ctx.exports` rather than duplicate bindings.
+   retention; call them through `ctx.exports`. Pin/compile the exact Agents/AI Chat/AI SDK set and create a new replacement
+   ChatAgent namespace; do not wake predecessor chats under the selected one-way storage lift.
 2. **MAP stages 1–2 — Library and complete scoped retrieval.** Preserve D1/R2 originals/revisions; decide any bounded R2
    lock profile; keep Local Uploads off unless proven; bind one shared AI Search instance only; commit an explicit hybrid
    candidate and short metadata schema; use raw Search plus Eliot hydration/generation; disable public endpoints; publish
    replacement items before cleanup; prove exact frozen-selection behavior for representative 50/500-source scopes and
    measure English/Russian quality, latency and AI Search cost by mode.
 3. **Integrate native APIs in owning slices.** Access identities, model routes/lifecycle/privacy/cache, conversion, Search,
-   Web Search, Workflow lifecycle/subscriptions and MCP handshakes/step-up are verified where used, not in a preliminary
-   certification project. Workflow Retry creates a new admitted instance; restart/delete are not product controls. AI
-   Search Chat/similarity-generated responses are not evidence paths.
+   Web Search, chat recovery/concurrency/tools/portable state, Workflow lifecycle/subscriptions and MCP handshakes/step-up
+   are verified where used, not in a preliminary certification project. Chat and Workflow Retry create new retained
+   turns/instances; destructive regenerate, Workflow restart/delete and AI Search Chat/similarity generation are not
+   product controls or evidence paths.
 4. **Use native operations carefully.** Add sampled payload-free Logs/Traces/Issues/profiling and read-only local tracing;
    keep operational signals out of product authority. DLP/Guardrails and Gateway response caching remain off unless one
    explicit bounded operation is measured and accepted.
 5. **Deploy compatibly.** Use full deployment initially. Introduce gradual rollout only after mixed Worker/DO version,
-   active Workflow step/output-reader and AI Search projection-config compatibility tests. Keep DO lifecycle changes
-   separate, owner-approved and preceded by removal of callers plus export. Keep failed compensation, unknown effects and
-   old projection items visible until their replacement is verified.
-6. **Finish deployed-data reconciliation before cutover.** Inventory live migrations/rows/objects, old Wiki/DO cohorts,
-   residual writers, backup destinations and effective restrictions. Preserve data and current revocations.
-7. **Assemble UI/multi-project journeys, then measure.** Run representative conversion/retrieval, concurrency/
-   cancellation, Workflow restart/terminate/delete protection, projection replacement/rebuild, export/import, quality,
-   latency and cost checks. Evaluate Auto Router, User Insights, persistent browser, Workers VPC, Container/Clef or
-   another new platform only against a measured missing operation.
+   ChatAgent storage/recovery/import, active Workflow step/output-reader and AI Search projection-config compatibility
+   tests. Keep DO lifecycle changes separate, owner-approved and preceded by removal of callers plus export. Keep failed
+   compensation, unknown tool effects and old projection/chat state visible until replacements are verified.
+6. **Finish deployed-data reconciliation before cutover.** Inventory live migrations/rows/objects, old Wiki/DO/chat
+   cohorts, residual writers, backup destinations and effective restrictions. Preserve data and current revocations.
+7. **Assemble UI/multi-project journeys, then measure.** Run representative chat migration/reconnect/recovery/approval,
+   conversion/retrieval, concurrency/cancellation, Workflow restart/terminate/delete protection, projection replacement/
+   rebuild, export/import, quality, latency and cost checks. Evaluate Auto Router, User Insights, persistent browser,
+   Workers VPC, Container/Clef or another new platform only against a measured missing operation.
 
 Pending integration work does not authorize deployment or live-data deletion and does not create another status system.
