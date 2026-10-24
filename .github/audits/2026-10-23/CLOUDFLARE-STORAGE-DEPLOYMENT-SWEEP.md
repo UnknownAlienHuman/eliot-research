@@ -3,10 +3,10 @@
 **Reviewed:** 2026-10-23. **Branch baseline:**
 [`b6c8f650`](https://github.com/UnknownAlienHuman/eliot-research/tree/b6c8f65044476994681dd77065be8fc802a84a5f).
 
-This continuation checks Cloudflare Secrets Store, product jurisdictions, R2 retention and Worker/Durable Object
-runtime/deployment semantics against the selected Eliot shape. It records permissions and cutover rules that are easy to
-miss when reading only product overviews. It is source review, not an account configuration, deploy, migration or
-residency certification.
+This continuation checks Cloudflare Secrets Store, product jurisdictions, R2 retention, cache behavior and
+Worker/Durable Object runtime/deployment semantics against the selected Eliot shape. It records permissions and cutover
+rules that are easy to miss when reading only product overviews. It is source review, not an account configuration,
+deploy, migration or residency certification.
 
 ## Findings
 
@@ -20,6 +20,9 @@ residency certification.
 | 95 | R2 Bucket Locks can block overwrite, delete, multipart completion and lifecycle-rule deletion for a prefix, including existing objects. The strictest overlapping rule wins and the bucket cannot be emptied while rules are configured. This protects against accidental deletion but can also prevent a promised owner erasure or cleanup. | Application immutability remains deterministic unique keys plus no overwrite path. Bucket Lock is an optional owner-selected **bounded grace/compliance policy**, never an implicit indefinite lock. The D1 object row records the governing rule and `retain_until`; deletion can be `blocked_by_retention` rather than falsely completed. CI cannot edit lock rules. Portable export is still required because locks do not protect D1 relationships or prove recoverability. |
 | 96 | R2 Local Uploads is open beta and writes bytes to storage near the client before asynchronously copying them to the bucket, while keeping the object immediately available and strongly consistent. Current reviewed docs do not establish how that temporary placement composes with a jurisdictional residency promise. | Keep Local Uploads off for Eliot originals by default. It may be enabled only in a non-jurisdictional performance profile or after Cloudflare explicitly documents and an integration test proves compatible jurisdiction behavior. Upload latency marketing does not outrank the declared data-location profile. |
 | 97 | Workers Cache can return a cached response without executing Worker code. The cache is shared across custom domains, service bindings and loopback calls for the same Worker; hostname is not in the default key. If a response omits `Cache-Control`, default-cacheable responses can receive heuristic TTLs (for example, a `200` for two hours). Access-cookie requests are not equivalent to an `Authorization` header bypass. | Set `cache.enabled:false` on the default Eliot entrypoint. Every authenticated UI/API/MCP/source/chat/job response explicitly emits `Cache-Control: private, no-store`; no private response relies on heuristic or automatic bypass. Only immutable public hashed assets may use a separate cacheable path/entrypoint, and tests assert `Cf-Cache-Status` never returns a private hit across hostnames or service bindings. |
+| 98 | AI Gateway response caching is disabled by default. Its default key hashes provider, endpoint, model, provider credential header and the complete request body. A custom `cf-aig-cache-key` replaces that boundary, opts the request into caching and can share a response across otherwise different requests; without an explicit/default TTL it still receives a five-minute TTL. Cache writes are volatile, so simultaneous identical calls can both reach the provider. | Keep Gateway response caching globally off. Ordinary chat/research explicitly skips it. A future cacheable immutable derived operation may use either the default exact-request key or a server-generated digest covering the complete response-equivalence boundary: actor/share scope, frozen source/page revisions, prompt/profile/tool versions, selected model route, settings, language/style and relevant retrieval/coverage inputs. Never use a question-only/client key. Store `cf-aig-cache-status`; a HIT is neither freshness nor completeness proof, and a MISS does not prove only one provider charge. |
+| 99 | Markdown for Agents returns an edge-generated streamed Markdown representation when `Accept: text/markdown` is negotiated. Current conversion supports up to 6 MiB of decompressed HTML, preserves origin security/cache headers and Content Signals, adds `Vary: Accept`, removes body validators such as `ETag`/`Last-Modified`, omits `Content-Length` and no longer emits token-count headers. | Treat it as a provider-generated representation with URL, response headers, timestamp and content-signal provenance, not the original HTML. Calculate tokens locally. A later HTML refetch is not the same snapshot and cannot be silently paired with the Markdown. Use it for preview/discovery or retain it explicitly; capture original bytes or both representations in one deliberate acquisition when original provenance is required. |
+| 100 | Local development now exposes correlated OpenTelemetry traces/logs and binding activity through Local Explorer. The observability endpoint is read-only, while other Explorer resource surfaces can mutate local KV/R2/D1 data. Local traces reflect the local runtime/configuration and do not prove deployed Access, Search, provider or network behavior. | Development agents use only the read-only local observability endpoint for diagnosis unless a task explicitly authorizes isolated fixture mutation. Keep local resources synthetic and separate from mounted production data. Record trace IDs and reproduction, but do not treat a local successful trace as deployed acceptance or add a temporary logging service merely for debugging. |
 
 ## Secrets and deployment decision
 
@@ -31,10 +34,12 @@ residency certification.
 | Create production/preview storage jurisdiction | Explicit setup manifest before resource creation |
 | Change jurisdiction | New resource + export/import/verification/cutover; no in-place mutation |
 | Configure R2 lock/Local Uploads | Explicit owner storage policy; absent from ordinary application deploy |
+| Configure AI Gateway response cache | Off globally; explicit server-owned immutable-operation exception only |
 | Deploy ordinary code | Full deploy initially; gradual only after mixed-version contract tests exist |
 | Create/rename/delete/transfer DO class | Separate owner-approved atomic `wrangler deploy`, with pre-removal of callers and portable export |
 | Recover one DO's SQLite state | Native PITR when appropriate; never presented as whole-product rollback |
 | Configure Worker cache | Disabled on default private entrypoint; immutable public asset path only |
+| Diagnose local runtime | Read-only Local Explorer observability over isolated fixtures |
 
 ## Data-location matrix
 
@@ -48,6 +53,7 @@ R2 bucket-lock rules and retain-until policy
 Durable Object jurisdiction
 AI Search availability/location claim: verified or none
 Workers AI / AI Gateway / vendor route retention and location
+AI Gateway response cache: disabled | explicit operation/profile
 Secrets Store global/beta status
 Logs/traces/issues destination and retention
 Browser Run / conversion / container location claim
@@ -73,7 +79,7 @@ D1 migration and old/new code compatibility
 R2 object envelope/manifest reader
 AI Search item/metadata schema
 DO exports lifecycle
-cache policy/key
+Worker or AI Gateway cache policy/key
 ```
 
 A mixed-version deployment is permitted only when every affected row is backward/forward compatible and exercised.
@@ -83,6 +89,7 @@ deployment. DO lifecycle changes remain a separate atomic operation.
 ## Verification boundary
 
 The Secrets Store access-control/integration docs, D1/R2/DO data-location docs, R2 locks/Local Uploads, Workers Cache,
-gradual-deployment docs and declarative DO lifecycle constraints were inspected. No secret was created/rotated, no
-role/token/lock/cache was provisioned, no jurisdictional or Local Uploads bucket was created, no mixed-version deployment
-was run and no PITR/rollback was exercised. These remain stage-owned runtime checks.
+AI Gateway response cache, Markdown for Agents, Local Explorer/tracing, gradual-deployment docs and declarative DO lifecycle
+constraints were inspected. No secret was created/rotated, no role/token/lock/cache was provisioned, no jurisdictional or
+Local Uploads bucket was created, no mixed-version deployment was run and no PITR/rollback was exercised. These remain
+stage-owned runtime checks.
