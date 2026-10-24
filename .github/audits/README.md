@@ -9,10 +9,15 @@ The [review coverage register](REVIEW-REGISTER.md) records checked areas, partia
 
 ## Current reviews
 
-- [2026-10-23 — Cloudflare release and donor recheck](2026-10-23/CLOUDFLARE-DONOR-RECHECK.md): rechecks the newest
-  Cloudflare releases, package candidates and exact selected donor files. It records stable Vite-v1 configuration,
-  source-map defaults, D1's seven-day undelete boundary, strict Access service-token semantics, AI Search billing,
-  Workflow retention/step costs and recent donor lifecycle/scope lessons. Installed/runtime evidence remains pending.
+- [2026-10-23 — Cloudflare blog and platform sweep](2026-10-23/CLOUDFLARE-BLOG-PLATFORM-SWEEP.md): reads the Birthday
+  Week roundup, linked product blogs, current changelogs/docs and latest relevant releases. It adds reproducible build
+  pins, incomplete Preview-isolation rules, Worker-scoped roles, native observability/privacy boundaries, Auto Router and
+  User Insights limits, Web Search billing/ZDR facts, persistent-browser/container boundaries and explicit rejection of
+  K2/Basin/KV Instant/Forge unless a concrete missing operation appears. Runtime evidence remains pending.
+- [2026-10-23 — Cloudflare release and donor recheck](2026-10-23/CLOUDFLARE-DONOR-RECHECK.md): rechecks newest package
+  candidates and exact selected donor files; records stable Vite-v1 configuration, source-map defaults, D1's seven-day
+  undelete boundary, strict Access service tokens, AI Search billing, Workflow retention/step costs, MCP step-up and recent
+  donor lifecycle/scope lessons.
 - [2026-10-23 — user journeys, native scope and remaining writers](2026-10-23/README.md#user-journeys-native-scope-and-remaining-writers):
   connects citations and analytical profiles to real UI actions, fixes the stage-4 Workflow dependency, specifies native
   metadata/filter shape and start recovery, and traces raw Workspace, grants, Google disconnect and backup/restore data.
