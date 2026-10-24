@@ -7,14 +7,13 @@ Canonical decisions remain in [Architecture](../../docs/ARCHITECTURE.md),
 
 The [Cloudflare blog/platform sweep](2026-10-23/CLOUDFLARE-BLOG-PLATFORM-SWEEP.md) checks the Birthday Week roundup,
 linked product posts, current docs/changelogs and latest relevant releases. It confirms the product architecture while
-making the implementation handoff concrete: exact package-manager/Node/compatibility pins; explicit source-map and
-dependency-metadata policy; incomplete Preview isolation; Worker-scoped roles; native observability without another
-product subsystem; optional—not implicit—Auto Router/User Insights/browser/container use. Source review is not an
-installed lockfile, deployed Preview or live service call.
+making the implementation handoff concrete: exact build/runtime pins, Preview isolation, Worker-scoped roles, native
+observability, explicit—not invisible—Auto Router/User Insights/browser/container use, and non-transparent DLP/
+Guardrails/model-alias behavior. Source review is not an installed lockfile, deployed Preview or live service call.
 
-Earlier reviews map the legacy stores/writers, user journeys, retrieval contracts, Access/MCP shape, model/chat
-portability and migration boundaries. Their unresolved deployed-data/runtime questions remain below; they do not create a
-serial pre-build qualification programme.
+Earlier reviews map legacy stores/writers, user journeys, retrieval contracts, Access/MCP shape, model/chat portability
+and migration boundaries. Their unresolved deployed-data/runtime questions remain below; they do not create a serial
+pre-build qualification programme.
 
 ## Status meanings
 
@@ -27,26 +26,29 @@ serial pre-build qualification programme.
 | Area | Documentation/source review | Runtime evidence | Remaining check |
 |---|---|---|---|
 | Product scope and anti-bloat rules | covered; analytical profiles, citation→reader journey and one shared Workflow foundation explicit | pending | Implement named profiles/navigation without registries, proof stacks, event brokers, data lakes or parallel engines. |
-| Reproducible stage-0 build | stable Vite-v1/`wrangler.jsonc`, exact `packageManager`/Node/compatibility pins and latest reviewed SDK candidate recorded | pending | Commit exact pins/lockfile; generate Wrangler types; compile/build replacement `src/`; prove local CI and Workers Builds use the same toolchain and no legacy workspace command. |
-| Deployment metadata/source maps | Wrangler/Vite source-map and dependency-instrumentation defaults reviewed | pending | Keep private Worker maps, exclude public browser maps, set dependency instrumentation explicitly and inspect emitted bundle/metadata. |
-| Preview isolation | code/config/DO/Container isolation versus shared D1/R2/KV/service/Workflow/Queue boundaries covered | pending | Deploy one protected Preview with dedicated D1/R2/Search/Gateway/Workflow resources; prove production bindings and predecessor data cannot be reached. |
-| Cloudflare permissions | Worker-scoped Metadata Read-Only/Content Read-Only/Editor/Admin and DO inheritance covered | pending | Provision CI as Worker Editor, diagnostics as Metadata Read-Only, review as Content Read-Only; keep account-management token separate and minimal. |
-| Durable Object lifecycle | declarative SQLite `exports`, compatibility-date keep-alive behavior and reconnect boundary covered | pending | Compile classes, exercise creation/redeploy/eviction/disconnect; prove pending I/O does not become product history or replace Workflows. |
-| Access, browser/API/MCP identity | two-host topology, route audiences, Origin, Managed OAuth, strict Service Auth and MCP step-up covered | pending | Verify WebSocket/static-assets routing, 401/403/repeated token headers, exact assertion claims, owner-visible `insufficient_scope` challenge and distinct revocation. |
-| Native operations/observability | Logs, Traces, Issues, source maps, profiling and R2 access-log limitations covered | pending | Enable sampled payload-free telemetry; exercise one source-mapped failure/trace/profile; prove product activity/jobs/effects remain D1/R2 authority and issue agents cannot deploy. |
+| Reproducible stage-0 build | stable Vite-v1/`wrangler.jsonc`, exact `packageManager`/Node/compatibility pins and reviewed SDK candidate recorded | pending | Commit exact pins/lockfile; generate types; compile/build replacement `src/`; prove local CI and Workers Builds use the same toolchain and no legacy workspace command. |
+| Deployment metadata/source maps | source-map and dependency-instrumentation defaults reviewed | pending | Keep private Worker maps, exclude public browser maps, set dependency instrumentation explicitly and inspect emitted bundle/metadata. |
+| Preview isolation | code/config/DO/Container isolation versus shared D1/R2/KV/service/Workflow/Queue boundaries covered | pending | Deploy one protected Preview with dedicated D1/R2/Search/Gateway/Workflow resources; prove production bindings/predecessor data cannot be reached. |
+| Cloudflare permissions | Worker-scoped Metadata Read-Only/Content Read-Only/Editor/Admin and DO inheritance covered | pending | Provision CI as Worker Editor, diagnostics as Metadata Read-Only, review as Content Read-Only; keep account-management token separate/minimal. |
+| Durable Object lifecycle | declarative SQLite `exports`, compatibility-date keep-alive and reconnect boundary covered | pending | Compile classes, exercise creation/redeploy/eviction/disconnect; prove pending I/O does not become product history or replace Workflows. |
+| Access, browser/API/MCP identity | two-host topology, Origin, Managed OAuth, strict Service Auth, Gateway Access distinction and MCP step-up covered | pending | Verify WebSocket/static-assets routing, 401/403/repeated headers, exact assertion claims, owner-visible `insufficient_scope`, distinct revocation and no public Gateway endpoint. |
+| Native operations/observability | Logs, Traces, Issues, source maps, profiling and R2 access-log limitations covered | pending | Enable sampled payload-free telemetry; exercise one source-mapped failure/trace/profile; prove D1/R2 remain authority and issue agents cannot deploy. |
 | Model connections/BYOK | `createAI`, profiles, named-alias/ZDR uncertainty and actual-model capture covered | pending | Compile chosen versions; exercise Workers AI/catalog/dynamic/vendor routes, billing/logging/fallback and provider/model readback without recurring qualification. |
-| Auto Router | changing pool, classification, fallback and routing headers covered; excluded as default | not selected | If owner enables an auxiliary route, constrain allowed pool/common floor, reserve fallback budget and retain routed model/reason/decision; compare quality before promotion. |
-| User Insights | task/anomaly/savings analytics and payload/privacy dependency covered | not selected by default | Evaluate only with payload-free trusted metadata; verify it never changes live routing/defaults or replaces local hard limits. |
+| Model lifecycle/deprecation | automatic alias to a newer potentially higher-priced model reproduced from current changelog | pending | Store requested and observed model IDs; detect lifecycle/catalog drift; invalidate capability/cost profile and block default use until owner review. |
+| DLP/Guardrails | streaming buffering, extra billed calls, incomplete attachment inspection and missing Russian support covered | disabled by default | If selected, use explicit policy/gateway; test request-only versus response scanning, latency, language/coverage, logs/cost and changed stream shape. Never treat it as evidence validation. |
+| Auto Router | changing pool, classification, fallback and routing headers covered; excluded as default | not selected | If owner enables an auxiliary route, constrain pool/common floor, reserve fallback budget and retain routed model/reason/decision; compare quality before promotion. |
+| User Insights | task/anomaly/savings analytics, payload/privacy and trust boundaries covered | not selected by default | Evaluate only with payload-free trusted metadata; verify it never changes routing/defaults or replaces local hard limits. |
+| Cost accounting | provider/search usage, Gateway logs and Unified Billing credit fee separated | pending | Exercise BYOK/credits/Web Search/model routes; display actual usage plus credit overhead without list-price guarantee or double counting. |
 | Ordinary chat/recovery/tools | queue, frozen submission, same-run replay vs fresh attempt, controlled continuation and large bodies covered | pending | Exercise navigation vs Stop, reconnect, process failure, approvals/tools and no duplicate paid generation. |
 | Portable chat history | supported snapshot/import covered; inspected legacy ResearchSession has run projection, not messages | pending | Inventory different deployed DO cohorts; prove empty-target import preserves order/parts/R2 bodies without model/tool execution. |
 | File intake/conversion | actual-byte intake, local text path, Markdown Conversion, scan/visual omissions and profiles covered | pending | Exercise headerless/known-length/bounded uploads and representative English/Russian PDF, office, HTML, image and scan inputs. |
-| Persistent browser acquisition | ten-minute/expiry/crash state, cookie/login scope and WebMCP classification covered | not selected by default | Exercise one explicit rendered/login capture with per-connection isolation; retain evidence before expiry and prove restart is visible. |
-| Conditional Container converter | current `ctx.container`, beta snapshots and legacy-class retirement covered | not selected | Build only after native conversion misses a required corpus case; measure image/startup/memory/Russian/table fidelity and publish through source revision writer. |
+| Persistent browser acquisition | expiry/crash state, cookie/login scope and WebMCP classification covered | not selected by default | Exercise one explicit rendered/login capture with per-connection isolation; retain evidence before expiry and make restart visible. |
+| Conditional Container converter | current `ctx.container`, beta snapshots and legacy-class retirement covered | not selected | Build only after native conversion misses a required corpus case; measure image/startup/memory/Russian/table fidelity and publish through revision writer. |
 | Retained source/page bodies | R2 immutable bodies/ranges and exact old-reference behavior covered | pending | Verify UTF-8 ranged reads, short/large bodies, atomic references and no duplicate large Workflow checkpoints. |
 | Structural parsing/tables/coordinates | fixed remark pipeline and UTF-16→UTF-8 mapping covered; Docling mechanism rechecked | pending | Compile parser; exercise escaped tables, math/code, repeated headers, oversized nodes and original-anchor fidelity. |
 | AI Search publication/readiness | GA/billing/accounting, item readiness/chunks, typed metadata and reindex rules covered | pending | Verify exact-key upload/poll/reconciliation, partial errors, OCR separation, reindex handoff and actual cost telemetry. |
 | Retrieval/citation/coverage | revision/kind filter explicit; hydration/citation donors rechecked; complete large scope unresolved | pending | Prove 50/500-source scope/filter acceptance; measure English/Russian recall, exact identifiers, late facts, tables and all-document coverage. |
-| Web Search | provider/ZDR/BYOK/Gateway billing/logging and direct no-model use covered | pending | Exercise Ceramic/Exa/Linkup profile selection, cost/error/partial behavior and capture-before-citation without duplicate search transport. |
+| Web Search | provider/ZDR/BYOK/Gateway billing/logging and direct no-model use covered | pending | Exercise Ceramic/Exa/Linkup selection, cost/error/partial behavior and capture-before-citation without duplicate transport. |
 | Web fetch/crawl | native Fetch and optional Browser Run crawl boundaries covered | pending | Verify one-acquisition provenance, redirects/errors, rendered/static distinction, retained pagination and stronger-egress rejection. |
 | Neighboring Cloudflare apps | Cloud Notebook, Workers Research, Deep Research App and current Cloudflare OS mechanisms inspected | not run | Reuse only concrete interaction/streaming/cancellation lessons; resolve license before copying; no fork or quality-parity claim. |
 | Optional platform substitutions | portals, Computer, Artifacts, K2, Basin, KV Instant, Clef/Clairic, `cf`/Forge classified | not selected | Add only when one concrete missing operation is measured and the candidate removes—not adds—a store/runtime/authority. |
@@ -58,7 +60,7 @@ serial pre-build qualification programme.
 | Source lifecycle/cleanup | capture→conversion→admission ownership and replacement-safe cleanup covered | pending | Inventory pending captures/promotions/copies; keep old generation until replacement wins; exercise deletion/holds/late cleanup. |
 | Export/migration/rollback | extraction map includes originals, normalized data, tasks, grants, Google state, Wiki/report and backups | pending | Inventory live migrations/rows/objects/destinations; rehearse storage-only export/import and old-backup restore without resurrecting deletion/revocation. |
 | UI safety/drafts/project state | reader/profile controls, safe rendering and server-draft/conflict requirements covered | pending | Verify exact reopen navigation, unsaved/saved state, sign-out cache clearing, multi-tab isolation and accessibility. |
-| Performance/quality/cost | required measurements named; Search/Workflow/Gateway/Web Search/observability accounting boundaries covered | pending | Measure rendered prompt/cache tokens, request/step counts, indexing/search/hydration/first-token latency, recall/precision, storage and representative spend before adding agents or switching models. |
+| Performance/quality/cost | required measurements named; Search/Workflow/Gateway/Web Search/observability accounting covered | pending | Measure rendered prompt/cache tokens, request/step counts, indexing/search/hydration/first-token latency, recall/precision, storage and spend before adding agents or switching models. |
 
 ## Active queue
 
@@ -68,10 +70,10 @@ serial pre-build qualification programme.
    production-inaccessible Preview resource set.
 2. **MAP stages 1–2 — Library and complete scoped retrieval.** Preserve originals/revisions, then prove the exact
    frozen-selection path for representative 50/500-source scopes before calling broad comparison complete.
-3. **Integrate native APIs in owning slices.** Access identities, model routes, conversion, Search, Web Search,
+3. **Integrate native APIs in owning slices.** Access identities, model routes/lifecycle, conversion, Search, Web Search,
    Workflow subscriptions and MCP handshakes/step-up are verified where used, not in a preliminary certification project.
-4. **Use native operations carefully.** Add sampled payload-free Logs/Traces/Issues/profiling to the assembled shell;
-   keep operational signals out of product authority and do not enable autonomous deployment.
+4. **Use native operations carefully.** Add sampled payload-free Logs/Traces/Issues/profiling; keep operational signals
+   out of product authority. DLP/Guardrails remain off unless one explicit policy is measured and accepted.
 5. **Finish deployed-data reconciliation before cutover.** Inventory live migrations/rows/objects, old Wiki/DO cohorts,
    residual writers, backup destinations and effective restrictions. Preserve data and current revocations.
 6. **Assemble UI/multi-project journeys, then measure.** Run representative conversion/retrieval, concurrency/
