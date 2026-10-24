@@ -6,6 +6,7 @@ It selects bounded mechanisms, not donor platforms, and does not turn source rev
 
 Dated evidence:
 
+- [Cloudflare MCP authentication, transport and effect sweep](../.github/audits/2026-10-24/CLOUDFLARE-MCP-AUTH-TRANSPORT-SWEEP.md);
 - [Cloudflare AI chat state, recovery and portability sweep](../.github/audits/2026-10-24/CLOUDFLARE-AI-CHAT-STATE-RECOVERY-SWEEP.md);
 - [Cloudflare AI Search GA and projection sweep](../.github/audits/2026-10-24/CLOUDFLARE-AI-SEARCH-GA-SWEEP.md);
 - [Cloudflare Workflows control and recovery sweep](../.github/audits/2026-10-24/CLOUDFLARE-WORKFLOWS-CONTROL-SWEEP.md);
@@ -35,8 +36,8 @@ Check a selected file/revision's license before copying code. Do not repin the w
 | Authentication | Access browser sessions, Managed OAuth, distinct Service Auth tokens; `jose` at ingress | Separate UI/API/WebSocket and MCP hostname apps. The server creates the actor; client metadata/names are not identity. |
 | Models | `createAI`, AI SDK v7, AI Gateway and reviewed vendor models | Retire legacy providers/transports. D1 stores profiles and secret references, never credential values. |
 | Chat | `AIChatAgent`, `useAgentChat`, one new SQLite DO per chat | Explicit bounded queue and recovery policy; disconnect is not Stop; no predecessor first-wake migration; large bodies stay in R2; portable history uses a pinned Sessions adapter. |
-| Incoming MCP | `createMcpHandler` + MCP SDK v2 over Streamable HTTP | Eliot's authenticated `/mcp` only; no custom session or `/sse` compatibility service. |
-| Outgoing MCP | Agents SDK MCP client manager in one owner Tool Connection Agent | Reuse discovery/OAuth/tool conversion; Eliot owns selected-tool digest, scope and approval. |
+| Incoming MCP | MCP SDK v2 factory + `createMcpHandler` over stateless Streamable HTTP | Authenticated `POST /mcp` only; fresh server per request, exact Host/Origin policy, no `McpAgent`, DO session, WebSocket or `/sse`. Long work returns an Eliot job handle. |
+| Outgoing MCP | `MCPClientManager` in one owner Tool Connection Agent | Owner-approved exact HTTPS connections; bounded ready wait; frozen catalog/tool digest; minimal OAuth scopes; Eliot effect ledger. Reconnect never replays a tool. |
 | Durable work | Workflows + native subscriptions | D1/R2 own results; Retry creates a new admitted instance; native restart/delete are not product controls; events are temporary observation. |
 | Retrieval | One `ai_search` **instance binding** to the shared Library instance | Explicit versioned index config; raw Search only for evidence; D1 resolves scope and deterministic items hydrate retained R2 bytes. No runtime namespace binding or public Search/Chat/MCP endpoint. |
 | Structure | Fixed `unified`/remark parse-only pipeline | Eliot owns grouping and UTF-16→UTF-8 mapping, not another Markdown grammar. |
@@ -50,18 +51,19 @@ Check a selected file/revision's license before copying code. Do not repin the w
 
 | Package | Reviewed version | Note |
 |---|---:|---|
-| `agents` | `0.30.1` | Patch is PiHarness-specific; Eliot does not select Pi. Must compile with the selected shared chat layer rather than being repinned independently. |
+| `agents` | `0.30.1` | Patch is PiHarness-specific; Eliot does not select Pi. Exact MCP client/server behavior and the shared chat layer were source-reviewed; compile with selected peers rather than repinning independently. |
 | `@cloudflare/ai-chat` | `0.12.2` | Selected direct chat package. Carries bounded interrupted-attempt recovery and the one-way first-wake migration to experimental Sessions; predecessors are exported, not woken in place. |
 | `ai` | `7.0.152` | Pair with React adapter v4; patch updates Gateway dependency. |
 | `@ai-sdk/react` | `4.0.156` | Matching major. |
 | `@ai-sdk/provider` | `4.0.33` | Manifest-reviewed. |
-| MCP client/server | `2.3.1` | Selected protocol generation. |
-| MCP SDK | `1.32.1` | Reviewed transitive SDK. |
+| MCP client/server | `2.3.1` | Selected MCP 2026-07-28 generation; exact peer required by installed Agents release. |
+| MCP SDK | `1.32.1` | Historical/transitive predecessor only; new server path uses the v2 client/server packages. |
 | `wrangler` | `4.151.3` | Stable CLI candidate. |
 | `@cloudflare/vite-plugin` | `1.65.0` | Stable v1, Wrangler configuration only; includes local Workflow lifecycle fixes that remain version-bound. |
 
 Primary references:
 [Agents releases](https://github.com/cloudflare/agents/releases),
+[`agents 0.30.1` MCP server/client source](https://github.com/cloudflare/agents/tree/agents%400.30.1/packages/agents/src/mcp),
 [`@cloudflare/ai-chat 0.12.2` source/changelog](https://github.com/cloudflare/agents/tree/%40cloudflare%2Fai-chat%400.12.2/packages/ai-chat),
 [AI SDK releases](https://github.com/vercel/ai/releases) and
 [Workers SDK releases](https://github.com/cloudflare/workers-sdk/releases).
@@ -146,8 +148,8 @@ References:
 ### Deployment and private cache
 
 Use full deploy initially. Gradual rollout is allowed only after old/new Worker and DO versions are proven backward/
-forward compatible across HTTP/RPC/state, active ChatAgent storage/readers and active Workflow step/output contracts.
-Different objects can run different versions and observed traffic split may lag.
+forward compatible across HTTP/RPC/state, active ChatAgent storage/readers, MCP client/catalog contracts and active
+Workflow step/output contracts. Different objects can run different versions and observed traffic split may lag.
 
 Declarative DO lifecycle changes are atomic, cannot use gradual deployment or version rollback, and must be a separate
 owner-approved `wrangler deploy`: remove callers, verify no dependencies, export, then rename/delete/transfer.
@@ -195,6 +197,53 @@ References:
 [`@cloudflare/ai-chat 0.12.2` changelog](https://github.com/cloudflare/agents/blob/%40cloudflare%2Fai-chat%400.12.2/packages/ai-chat/CHANGELOG.md),
 [exact selected source](https://github.com/cloudflare/agents/blob/%40cloudflare%2Fai-chat%400.12.2/packages/ai-chat/src/index.ts) and
 [selected-tag Sessions](https://github.com/cloudflare/agents/blob/%40cloudflare%2Fai-chat%400.12.2/docs/agents/sessions.md).
+
+### MCP transport, authorization and external effects
+
+Incoming MCP is one stateless SDK-v2 `createMcpHandler(factory)` at authenticated `POST /mcp`. The factory creates a fresh
+server per request and registers deterministic product tools/resources/prompts; there is no `McpAgent`, protocol DO,
+session ID, WebSocket or `/sse`. Long work admits a D1 job and returns a handle. Native notifications/session replay never
+become product progress/history. Configure exact custom-domain `allowedHostnames` and browser
+`allowedOriginHostnames`; never disable validation with wildcard. Origin-less non-browser clients are valid only after
+Access Managed OAuth and the same server-side actor/project/grant derivation. Bearer/Access/AuthInfo token values are
+never logged, persisted or returned.
+
+Use explicit `legacy:"stateless"` only while named tested 2025 clients require it; it adds no sessions/GET/DELETE/replay/
+pushed server requests. Remove it with `legacy:"reject"` once the current client matrix supports MCP 2026-07-28. There is
+no standalone SSE compatibility service.
+
+Outgoing MCP uses one owner Tool Connection Agent and `MCPClientManager`, but D1 remains authority for connection ID,
+canonical HTTPS endpoint, enabled/disabled owner decision, selected-tool digest, catalog fingerprint and last verification.
+A turn waits a bounded interval for exactly selected connections to reach `ready`. Missing/auth-failed/catalog-changed
+connections fail before inference/tool use; they never silently disappear. Endpoint replacement disables admission,
+removes/verifies the old connection and provider grant where possible, then adds/verifies the new endpoint. Agents and
+clients cannot register arbitrary URLs. SDK literal-IP checks are defense in depth, not DNS/redirect/credential policy.
+
+OAuth uses a fixed callback path with `sendIdentityOnConnect:false`, exact public origin/path, PKCE/state and current owner
+session mapping. Start with minimal scopes. `insufficient_scope` becomes an owner-visible `needs_scope`; no automatic
+approval or broad pre-grant. After explicit consent, revalidate `ready` catalog/digest before the owner retries the same
+logical operation. Unsupported step-up clients receive an actionable failure.
+
+Tool schemas/descriptions/prompts/resources are untrusted. Build model tools only from an allowlisted verified catalog and
+stable digest. Schema conversion failure or catalog drift blocks the dependent turn for re-selection. Every mutation
+writes a D1 effect intent before `callTool`; timeout/disconnect/abort/hibernation after remote receipt is `unknown`, never a
+blind retry. Connection retry restores transport only. Retrying a mutation requires tool-specific idempotency/reconciliation
+or owner decision under the same effect identity.
+
+Initial runtime advertises no elicitation. Product UI/chat/task state owns approvals and missing input. Any later URL-mode
+consent or non-secret form uses a retained Eliot operation ID; hibernation settles the in-flight attempt interrupted.
+Portals/generic `query/execute`, service-token full-upstream sessions, MCP Events and remote Skills are not selected. A
+future named portal still uses exact allowlists/approvals/effect ledger; Events are signed/deduplicated investigation-only;
+Skills are untrusted reference material, never auto-installed/executed/system policy.
+
+References:
+[`agents 0.30.1` MCP server guide](https://github.com/cloudflare/agents/blob/agents%400.30.1/docs/agents/mcp-servers.md),
+[client guide](https://github.com/cloudflare/agents/blob/agents%400.30.1/docs/agents/mcp-client.md),
+[exact client manager](https://github.com/cloudflare/agents/blob/agents%400.30.1/packages/agents/src/mcp/client/index.ts),
+[handler API](https://developers.cloudflare.com/agents/model-context-protocol/apis/handler-api/),
+[Access Managed OAuth](https://developers.cloudflare.com/changelog/post/2026-03-20-managed-oauth/),
+[MCP step-up](https://developers.cloudflare.com/changelog/post/2026-10-19-cloudflare-mcp-step-up/) and
+[`/sse` retirement](https://developers.cloudflare.com/changelog/post/2026-10-22-cloudflare-mcp-servers-retire-sse/).
 
 ## Native operations, not another subsystem
 
@@ -497,7 +546,7 @@ References:
 | Capability | Decision |
 |---|---|
 | Browser Run `/crawl` | Prefer over a crawler fleet for explicit bounded site import; retain results/provenance and partial/skipped status. |
-| MCP portals | Existing portal may be one connection; generic execute never grants hidden write/spend approval. |
+| MCP portals | Not selected initially. A future portal is one named reviewed connection; no generic `execute`, hidden admin credential or service-token full-upstream authority. |
 | Cloudflare Computer | Defer until a real job needs scratch files; never a second Library. |
 | Containers + Docling | Conditional bounded converter on current `ctx.container`; measure image/startup/memory/Russian/table fidelity. |
 | Workers VPC/Gateway | Conditional stronger public egress only after deny-policy and rebinding tests; never an implicit route to private networks. |
@@ -566,8 +615,9 @@ qualification service without a measured missing operation. Do not treat index O
 logs as activity proof, browser/container state as durable history, DLP/Guardrails as evidence validation, model aliases
 as transparent continuity, AI Search public endpoints as internal APIs, namespace bindings as harmless runtime access,
 AI Search Chat/similarity cache as a fresh evidence path, experimental Sessions as an unversioned portable format,
-ChatAgent transcript repair as effect proof, Workers Cache as safe for authenticated data, Auto Router as an invisible
-switch, or current limits/marketing percentages as permanent architecture.
+ChatAgent transcript repair as effect proof, MCP connection retry as permission to replay a tool, portal generic execute
+or service-token sessions as bounded tool authority, remote MCP Skills as trusted code/policy, Workers Cache as safe for
+authenticated data, Auto Router as an invisible switch, or current limits/marketing percentages as permanent architecture.
 
 A mechanism enters Eliot only when it removes concrete work in an owning slice. Name the source, license, retained idea,
 removed duplicate, measured evidence and remaining limitation.
